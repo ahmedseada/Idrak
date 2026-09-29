@@ -1,8 +1,8 @@
 // Image classification with a convolutional network: 16x16 grayscale drawings of circles, squares,
 // triangles and crosses at random positions and sizes, with noise. Conv2d, BatchNorm, MaxPool2d, Dropout.
 //
-//   dotnet run -c Release --project samples/Idrak.Samples.Images            (add --cpu / --cuda)
-//   dotnet run -c Release --project samples/Idrak.Samples.Images -- --predict --input "circle,cross,square"
+//   dotnet run -c Release --project samples/Idrak.Samples.ShapeRecognition            (add --cpu / --cuda)
+//   dotnet run -c Release --project samples/Idrak.Samples.ShapeRecognition -- --predict --input "circle,cross,square"
 //        draw new random images of those shapes and classify them with the saved model
 
 using Idrak;

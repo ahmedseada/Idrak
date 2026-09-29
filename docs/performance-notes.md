@@ -27,9 +27,9 @@ Measured on an RTX 5070 Ti (70 SMs, 16 GB). Resume from here when returning to o
 
    ```
    $common = "--bin D:\TF.NET\POC\TinyCharTransformer\python\data\final_corpus.bin --vocab-file D:\TF.NET\POC\TinyCharTransformer\python\data\final_corpus.vocab --block 512 --batch 8 --dmodel 2048 --heads 16 --layers 24 --steps 3000 --warmup 300 --eval-every 250 --eval-steps 20 --grad-checkpoint --optim8bit --no-save --log-every 250".Split(' ')
-   dotnet run -c Release --project samples/Idrak.Samples.CharGpt -- @common --out checkpoints/cmp-bf16 --loss-log bf16.csv
-   dotnet run -c Release --project samples/Idrak.Samples.CharGpt -- @common --out checkpoints/cmp-fp8 --loss-log fp8.csv --fp8
-   dotnet run -c Release --project samples/Idrak.Samples.CharGpt -- compare bf16.csv fp8.csv --window 250
+   dotnet run -c Release --project samples/Idrak.Samples.GptTraining -- @common --out checkpoints/cmp-bf16 --loss-log bf16.csv
+   dotnet run -c Release --project samples/Idrak.Samples.GptTraining -- @common --out checkpoints/cmp-fp8 --loss-log fp8.csv --fp8
+   dotnet run -c Release --project samples/Idrak.Samples.GptTraining -- compare bf16.csv fp8.csv --window 250
    ```
 
    At this model size FP8 is barely faster than bfloat16 (2%): the quantization passes cost about what the 8-bit
@@ -124,9 +124,9 @@ dotnet run -c Release --project tests/Idrak.Tests                          # 272
 dotnet run -c Release --project tests/Idrak.Tests -- --bench-gemm          # large products, long-k split sweep, 8-bit
 dotnet run -c Release --project tests/Idrak.Tests -- --bench-gemv          # decoding products and attention, 180-row products
 dotnet run -c Release --project tests/Idrak.Tests -- --bench-fp8           # FP8 column quantizers, delayed-scaling error
-dotnet run -c Release --project samples/Idrak.Samples.Pretrained -- profile Qwen/Qwen3-0.6B --cuda --int8 --kv16
-dotnet run -c Release --project samples/Idrak.Samples.Pretrained -- check qwen3.json --cuda --int8 --kv16 --matmul bf16
-dotnet run -c Release --project samples/Idrak.Samples.CharGpt -- <1.25B arguments> --profile [--fp8]
+dotnet run -c Release --project samples/Idrak.Samples.Chat -- profile Qwen/Qwen3-0.6B --cuda --int8 --kv16
+dotnet run -c Release --project samples/Idrak.Samples.Chat -- check qwen3.json --cuda --int8 --kv16 --matmul bf16
+dotnet run -c Release --project samples/Idrak.Samples.GptTraining -- <1.25B arguments> --profile [--fp8]
 ```
 
 Before claiming a speed-up: the tests, the check against transformers, and for training changes the loss comparison

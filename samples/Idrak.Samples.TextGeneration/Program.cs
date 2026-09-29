@@ -2,11 +2,11 @@
 // continue text. It trains on sentences from a small grammar (or your own text via --corpus), saves the
 // model, then generates new text one character at a time.
 //
-//   dotnet run -c Release --project samples/Idrak.Samples.Transformer                       train, save, generate
-//   dotnet run -c Release --project samples/Idrak.Samples.Transformer -- --corpus book.txt  train on your own text
-//   dotnet run -c Release --project samples/Idrak.Samples.Transformer -- --predict --input "the old wizard" --temperature 0.8 --length 400
+//   dotnet run -c Release --project samples/Idrak.Samples.TextGeneration                       train, save, generate
+//   dotnet run -c Release --project samples/Idrak.Samples.TextGeneration -- --corpus book.txt  train on your own text
+//   dotnet run -c Release --project samples/Idrak.Samples.TextGeneration -- --predict --input "the old wizard" --temperature 0.8 --length 400
 //                                                                                                  generate from the saved model
-//   dotnet run -c Release --project samples/Idrak.Samples.Transformer -- --predict --benchmark true
+//   dotnet run -c Release --project samples/Idrak.Samples.TextGeneration -- --predict --benchmark true
 //                                                          compare full recompute, KV cache, CUDA graph and batched sampling
 // The Web API sample (Idrak.Samples.GptApi) serves the same model with a browser UI.
 
