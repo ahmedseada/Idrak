@@ -281,6 +281,11 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                     until--;                                                   // an incomplete character: wait for its other bytes
                 }
 
+                if (ends[r] is null && !final && until > emitted[r] && char.IsHighSurrogate(text[until - 1]))
+                {
+                    until--;                                                   // keep a character's two halves together
+                }
+
                 if (until > emitted[r])
                 {
                     pieces.Add(new BatchChunk(r, text[emitted[r]..until]));
@@ -392,7 +397,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
 
         var generated = new List<int>();
         var text = new System.Text.StringBuilder();
-        int emitted = 0, read = 0, decoded = 0, resets = 0;
+        int emitted = 0, read = 0, decoded = 0, decodedFrom = 0, taken = 0, lastProgress = 0, resets = 0;
         TimeSpan promptDuration = TimeSpan.Zero;
         string? doneReason = null;
 
@@ -410,21 +415,39 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                 read = produced;
             }
 
-            // Byte-level tokenizers can split a character's UTF-8 bytes across tokens: while the new tokens decode to an
-            // incomplete character (ending in U+FFFD), wait for the next ones (at most 4, the longest UTF-8 sequence).
-            // New tokens are decoded after a few earlier ones and only the difference is kept, since decoders may treat
-            // the start of a text specially (SentencePiece decoders drop its leading space).
+            // The text is the decoding of the tokens from `decodedFrom` on, of which the first `taken` characters are in
+            // `text` already. Byte-level tokenizers split a character's UTF-8 bytes across tokens (one token can end a
+            // character and start the next), so a decoding can end in U+FFFD for bytes still to come: those characters
+            // wait, unless four tokens bring nothing new (a character has at most 4 bytes: the bytes are invalid).
+            // Decoding restarts a few tokens back (not at the new ones) now and then, since decoders may treat the start
+            // of a text specially (SentencePiece decoders drop its leading space).
             if (generated.Count > decoded)
             {
-                int from = Math.Max(0, decoded - 4);
                 var ids = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(generated);
-                string before = Tokenizer.Decode(ids[from..decoded]);
-                string after = Tokenizer.Decode(ids[from..]);
-                string pieceText = after.StartsWith(before, StringComparison.Ordinal) ? after[before.Length..] : after[Math.Min(before.Length, after.Length)..];
-                if (final || !pieceText.EndsWith('\uFFFD') || generated.Count - decoded >= 4)
+                string all = Tokenizer.Decode(ids[decodedFrom..]);
+                int whole = all.Length;
+                while (!final && whole > taken && all[whole - 1] == '\uFFFD')
                 {
-                    text.Append(pieceText);
-                    decoded = generated.Count;
+                    whole--;
+                }
+
+                if (whole == taken && generated.Count - lastProgress >= 4)
+                {
+                    whole = all.Length;
+                }
+
+                if (whole > taken)
+                {
+                    text.Append(all, taken, whole - taken);
+                    taken = whole;
+                    lastProgress = generated.Count;
+                }
+
+                decoded = generated.Count;
+                if (taken == all.Length && decoded - decodedFrom >= 64)
+                {
+                    decodedFrom = decoded - 4;
+                    taken = Tokenizer.Decode(ids[decodedFrom..decoded]).Length;
                 }
             }
 
@@ -443,6 +466,11 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
             }
 
             int safe = doneReason is not null || final ? end : Math.Max(emitted, end - holdBack);
+            if (doneReason is null && !final && safe > emitted && char.IsHighSurrogate(text[safe - 1]))
+            {
+                safe--;                                                        // keep a character's two halves together
+            }
+
             string piece = text.ToString(emitted, safe - emitted);
             emitted = safe;
             return piece;

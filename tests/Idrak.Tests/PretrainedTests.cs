@@ -11,7 +11,20 @@ internal static partial class Tests
         ("pretrained: safetensors F32/BF16 round trip; sharded index", SafeTensorsRoundTrip),
         ("pretrained: a Hugging Face-layout checkpoint loads through the registry and matches DecoderSpec; int8; custom architectures", PretrainedCheckpoint),
         ("pretrained: byte-level and SentencePiece-style BPE tokenizers (merges, special tokens, byte fallback, round trips)", BpeTokenizers),
+        ("pretrained: text holding half of a character encodes it as U+FFFD, also through Unicode normalization", LoneSurrogatesEncode),
     ];
+
+    private static void LoneSurrogatesEncode(Device device)
+    {
+        _ = device;
+        var json = JsonNode.Parse(File.ReadAllText(TestData("gguf/tiny-qwen3-q8-hf/tokenizer.json")))!.AsObject();
+        json["normalizer"] = new JsonObject { ["type"] = "NFC" };
+        var tokenizer = BpeTokenizer.FromJson(json);
+        string whole = "today? 😊!";
+        Check(tokenizer.Encode("today? \uD83D").SequenceEqual(tokenizer.Encode("today? \uFFFD")), "a lone high surrogate encodes as U+FFFD");
+        Check(tokenizer.Encode("\uDE0Aok").SequenceEqual(tokenizer.Encode("\uFFFDok")), "a lone low surrogate encodes as U+FFFD");
+        Check(tokenizer.Decode(tokenizer.Encode(whole)) == whole, "a whole emoji still round-trips");
+    }
 
     private static string TempFolder()
     {
