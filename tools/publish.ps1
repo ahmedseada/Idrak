@@ -32,7 +32,8 @@ try {
 
     Write-Host "`nReady to publish to nuget.org (this cannot be undone):"
     $packages | ForEach-Object { Write-Host "  $($_.Name)" }
-    if ((Read-Host "`nType the version ($Version) to publish") -ne $Version) { throw 'Not confirmed: nothing was published.' }
+    $answer = (Read-Host "`nType the version ($Version) and press Enter to publish").Trim().TrimStart('v')
+    if ($answer -ne $Version) { throw "Not confirmed (got '$answer'): nothing was published." }
 
     $secure = Read-Host 'nuget.org API key' -AsSecureString
     $key = [System.Net.NetworkCredential]::new('', $secure).Password
