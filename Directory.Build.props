@@ -8,10 +8,11 @@
   </PropertyGroup>
 
   <!-- NuGet: every project under src/ is a package (samples and tests set IsPackable to false). The release workflow
-       sets Version from the tag (v0.1.0 -> 0.1.0); local packs get VersionPrefix plus a "dev" suffix. -->
+       sets Version from the tag (v0.1.0 -> 0.1.0); any other pack is a prerelease with the time in it
+       (0.1.0-dev.yyMMddHHmm, UTC), so a prerelease tool update always installs the latest local pack. -->
   <PropertyGroup>
     <VersionPrefix>0.1.0</VersionPrefix>
-    <VersionSuffix Condition="'$(Version)' == '' and '$(GITHUB_ACTIONS)' != 'true'">dev</VersionSuffix>
+    <VersionSuffix Condition="'$(Version)' == ''">dev.$([System.DateTime]::UtcNow.ToString("yyMMddHHmm"))</VersionSuffix>
     <Authors>Ahmed Seada</Authors>
     <Copyright>Copyright (c) 2026 Ahmed Seada</Copyright>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
