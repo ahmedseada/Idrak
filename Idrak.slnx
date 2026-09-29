@@ -1,20 +1,21 @@
 <Solution>
   <Folder Name="/samples/">
-    <Project Path="samples/Idrak.Samples.CharGpt/Idrak.Samples.CharGpt.csproj" />
-    <Project Path="samples/Idrak.Samples.Classification/Idrak.Samples.Classification.csproj" />
+    <Project Path="samples/Idrak.Samples.Chat/Idrak.Samples.Chat.csproj" />
+    <Project Path="samples/Idrak.Samples.CodingAgent/Idrak.Samples.CodingAgent.csproj" />
     <Project Path="samples/Idrak.Samples.GptApi/Idrak.Samples.GptApi.csproj" />
+    <Project Path="samples/Idrak.Samples.GptTraining/Idrak.Samples.GptTraining.csproj" />
     <Project Path="samples/Idrak.Samples.HouseApi/Idrak.Samples.HouseApi.csproj" />
     <Project Path="samples/Idrak.Samples.HousePrices/Idrak.Samples.HousePrices.csproj" />
-    <Project Path="samples/Idrak.Samples.Images/Idrak.Samples.Images.csproj" />
     <Project Path="samples/Idrak.Samples.Ocr/Idrak.Samples.Ocr.csproj" />
     <Project Path="samples/Idrak.Samples.OnnxImport/Idrak.Samples.OnnxImport.csproj" />
     <Project Path="samples/Idrak.Samples.Quantization/Idrak.Samples.Quantization.csproj" />
-    <Project Path="samples/Idrak.Samples.Pretrained/Idrak.Samples.Pretrained.csproj" />
     <Project Path="samples/Idrak.Samples.Rag/Idrak.Samples.Rag.csproj" />
     <Project Path="samples/Idrak.Samples.ReRanker/Idrak.Samples.ReRanker.csproj" />
-    <Project Path="samples/Idrak.Samples.Sequences/Idrak.Samples.Sequences.csproj" />
+    <Project Path="samples/Idrak.Samples.Sentiment/Idrak.Samples.Sentiment.csproj" />
+    <Project Path="samples/Idrak.Samples.ShapeRecognition/Idrak.Samples.ShapeRecognition.csproj" />
+    <Project Path="samples/Idrak.Samples.Spirals/Idrak.Samples.Spirals.csproj" />
     <Project Path="samples/Idrak.Samples.Summarizer/Idrak.Samples.Summarizer.csproj" />
-    <Project Path="samples/Idrak.Samples.Transformer/Idrak.Samples.Transformer.csproj" />
+    <Project Path="samples/Idrak.Samples.TextGeneration/Idrak.Samples.TextGeneration.csproj" />
     <Project Path="samples/Idrak.Samples.Xor/Idrak.Samples.Xor.csproj" />
   </Folder>
   <Folder Name="/src/">

@@ -66,11 +66,11 @@ src/Idrak.FineTuning.Cli/           idrak-tune: fine-tune any pretrained model (
 samples/
   Idrak.Samples.Xor                 the classic XOR problem
   Idrak.Samples.HousePrices         regression: predict house prices from a CSV file
-  Idrak.Samples.Classification      multi-class: 3 spirals, softmax + cross-entropy, BatchNorm
-  Idrak.Samples.Images              CNN: classify drawn shapes (Conv2d, MaxPool2d, BatchNorm)
-  Idrak.Samples.Sequences           sentiment with negation: bag-of-words vs LSTM, GRU, Transformer
+  Idrak.Samples.Spirals             multi-class: 3 spirals, softmax + cross-entropy, BatchNorm
+  Idrak.Samples.ShapeRecognition    CNN: classify drawn shapes (Conv2d, MaxPool2d, BatchNorm)
+  Idrak.Samples.Sentiment           sentiment with negation: bag-of-words vs LSTM, GRU, Transformer
   Idrak.Samples.Ocr                 OCR: CNN character recognizer + line segmentation, reads PGM images
-  Idrak.Samples.Transformer         small GPT: character-level causal transformer that generates text
+  Idrak.Samples.TextGeneration      small GPT: character-level causal transformer that generates text
   Idrak.Samples.GptApi              ASP.NET Core Web API + browser UI serving the GPT (Scalar docs, streaming, Ollama-style /api/chat)
   Idrak.Samples.HouseApi            house-price Web API in a few lines (Idrak.AspNetCore + the HousePrices package)
   Idrak.Samples.ReRanker            search re-ranking: BM25 first stage + transformer cross-encoder, listwise training
@@ -78,7 +78,9 @@ samples/
   Idrak.Samples.Rag                 retrieval-augmented generation: hybrid search, re-ranking, a chat model that cites passages
   Idrak.Samples.OnnxImport          imports another framework's .onnx model, runs it on Idrak (CPU/CUDA), checks its outputs
   Idrak.Samples.Quantization        int8 weights and Float16/BFloat16 files: accuracy, size and decoding speed
-  Idrak.Samples.Pretrained          loads a Hugging Face model folder: info, chat, and a check against transformers
+  Idrak.Samples.Chat                chat with a Hugging Face or GGUF language model: info, chat, profile, and a check against transformers
+  Idrak.Samples.CodingAgent         a coding agent (read, search, edit, run commands) on a language model, and a task-suite runner
+  Idrak.Samples.GptTraining         trains a full-size character-level GPT (bfloat16 / FP8 tensor cores, checkpoints, resume)
 tools/pytorch/xor_to_onnx.py        trains XOR in PyTorch and exports it to ONNX with PyTorch's outputs, for OnnxImport
 tools/pytorch/export_models.py      exports a PyTorch CNN or ResNet (skip connections) to ONNX with PyTorch's outputs
   Shared/SampleOptions.cs           command-line options shared by the samples (train / predict modes)
@@ -92,11 +94,11 @@ tests/Idrak.Tests                   self-contained test runner (runs on every av
 |--------|-------|--------------------|
 | `Xor` | smallest possible network | 4/4 correct in 0.1 s |
 | `HousePrices` | CSV loading, scaling, regression, early stopping | R² 0.975, 5.3% mean error, 1 s |
-| `Classification` | softmax + cross-entropy, BatchNorm, AdamW, cosine schedule, confusion matrix | 97.8% accuracy, 2.4 s |
-| `Images` | Conv2d, MaxPool2d, BatchNorm, Flatten on 16×16 images | 100% accuracy, about 11 s |
-| `Sequences` | Embedding, LSTM, GRU, Transformer vs an order-blind baseline | LSTM/GRU/Transformer 99.5–100%, bag of words 70% |
+| `Spirals` | softmax + cross-entropy, BatchNorm, AdamW, cosine schedule, confusion matrix | 97.8% accuracy, 2.4 s |
+| `ShapeRecognition` | Conv2d, MaxPool2d, BatchNorm, Flatten on 16×16 images | 100% accuracy, about 11 s |
+| `Sentiment` | Embedding, LSTM, GRU, Transformer vs an order-blind baseline | LSTM/GRU/Transformer 99.5–100%, bag of words 70% |
 | `Ocr` | CNN over 36 characters, projection-profile segmentation, PGM input | 100% per character, 99.9% of characters across whole lines |
-| `Transformer` | decoder-only GPT: causal attention, sparse cross-entropy, sampling | 89% next-character accuracy, 100% real words generated |
+| `TextGeneration` | decoder-only GPT: causal attention, sparse cross-entropy, sampling | 89% next-character accuracy, 100% real words generated |
 | `GptApi` | serving a model: REST + server-sent events, Scalar, browser UI, Ollama-compatible `/api/chat` | about 600 characters/s on 4 CPU cores |
 | `ReRanker` | two-stage search: BM25 + cross-encoder, hard negatives, listwise loss, placeholder tokens for unseen names | Hit@1 on unseen towns 27.1% (BM25) → 86.6% re-ranked, 6.9 ms per question, 180 s training |
 | `HouseApi` | `AddIdrak().AddPredictor(...)` + `MapPredictor`: the HousePrices package served over HTTP with micro-batching | same prices as `HousePrices --predict` |
@@ -104,7 +106,8 @@ tests/Idrak.Tests                   self-contained test runner (runs on every av
 | `Quantization` | `QuantizeInt8`, int8 KV cache, Float16/BFloat16 files: a trained summarizer compared with float32, and decoding speed and memory of a 98M-parameter GPT | int8 weights + int8 KV cache: same summaries as float32 on all 300 test reports, ⅓ of the file; on 4 CPU threads, weights 373 → 112 MB, KV cache 18 → 4.8 MB, decoding 19.8 → 45.7 tokens/s |
 | `OnnxImport` | `OnnxImport.Load(path, device)` on a PyTorch-exported model (`tools/pytorch/xor_to_onnx.py`, `export_models.py` for a CNN or ResNet), compared with PyTorch's own outputs, then saved as .ikm and reloaded | XOR: same outputs as PyTorch on the RTX 5050 (1e-11), both PyTorch exporters |
 | `Rag` | `RetrievalIndex` (BM25 + trained bi-encoder + rank fusion), `CrossEncoder` re-ranking, `Rag.For(chat)` with a word-level ChatML model that cites passages; hashing and placeholder tokens for unseen names | unseen towns: Hit@1 27.1% (BM25), 85.8% (hybrid), 99.9% (re-ranked); answers 91.1% correct (0% closed book), 99.9% cite the right passage; 14 min training |
-| `Pretrained` | `PretrainedModel.Load(folder)` on a Hugging Face model folder; `chat` in the model's own template (reasoning, tool calls); `check` against a reference from `tools/pytorch/pretrained_reference.py` (token ids, chat templates, logits, greedy output) | on small Qwen3- and Llama-layout models built here (trained `tokenizers` tokenizers, transformers' `apply_chat_template`, a NumPy port of the Hugging Face forward pass): identical ids, templates and greedy text, logits within 1e-5 (F32 and BF16 files, sharded, SentencePiece and byte-level) |
+| `Chat` | `PretrainedModel.Load(folder)` on a Hugging Face model folder; `chat` in the model's own template (reasoning, tool calls); `check` against a reference from `tools/pytorch/pretrained_reference.py` (token ids, chat templates, logits, greedy output) | on small Qwen3- and Llama-layout models built here (trained `tokenizers` tokenizers, transformers' `apply_chat_template`, a NumPy port of the Hugging Face forward pass): identical ids, templates and greedy text, logits within 1e-5 (F32 and BF16 files, sharded, SentencePiece and byte-level) |
+| `CodingAgent` | `CodingAgent` + `CodingTools` on any model `PretrainedModel` loads: `agent` works on a task in a folder (streams reasoning and tool calls); `agent-run` scores a model on a suite of tasks, each verified by its own commands; `agent-check` checks a suite without a model | runs every task in a fresh copy of its workspace |
 
 ### Train and predict modes
 
@@ -114,23 +117,23 @@ Every console sample trains, saves its model under `models/` (next to the execut
 ```bash
 dotnet run -c Release --project samples/Idrak.Samples.HousePrices                       # train + save
 dotnet run -c Release --project samples/Idrak.Samples.HousePrices -- --predict --input "2100,4,2,15,9.5,7,2,0,6500"
-dotnet run -c Release --project samples/Idrak.Samples.Sequences -- --predict --input "the movie was not good;not bad at all"
+dotnet run -c Release --project samples/Idrak.Samples.Sentiment -- --predict --input "the movie was not good;not bad at all"
 dotnet run -c Release --project samples/Idrak.Samples.Ocr -- --predict --input "HELLO WORLD 2026"
 dotnet run -c Release --project samples/Idrak.Samples.Ocr -- --predict --image scan.pgm
 dotnet run -c Release --project samples/Idrak.Samples.ReRanker -- --predict --input "how many people live in armor"
 dotnet run -c Release --project samples/Idrak.Samples.Summarizer -- --predict --input "the lions played the owls in kelso on friday . the owls scored 2 goals . the lions scored 4 goals ."
-dotnet run -c Release --project samples/Idrak.Samples.Transformer -- --predict --input "the old wizard " --temperature 0.8
+dotnet run -c Release --project samples/Idrak.Samples.TextGeneration -- --predict --input "the old wizard " --temperature 0.8
 ```
 
 | Sample | `--input` in predict mode |
 |--------|---------------------------|
 | `Xor` | `"a,b;a,b"` bit pairs |
 | `HousePrices` | 9 features per house, `;` between houses (or `--data file.csv` to price every row) |
-| `Classification` | `"x,y;x,y"` points in [-1, 1] |
-| `Images` | shape names to draw and classify, e.g. `"circle,cross"` |
-| `Sequences` | sentences separated by `;`, judged by all four saved models side by side |
+| `Spirals` | `"x,y;x,y"` points in [-1, 1] |
+| `ShapeRecognition` | shape names to draw and classify, e.g. `"circle,cross"` |
+| `Sentiment` | sentences separated by `;`, judged by all four saved models side by side |
 | `Ocr` | text to render and read (or `--image file.pgm`) |
-| `Transformer` | prompt to continue (`--length`, `--temperature`, `--top-k`) |
+| `TextGeneration` | prompt to continue (`--length`, `--temperature`, `--top-k`) |
 
 Everything a model needs at inference time is saved next to its weights. That includes the scalers for
 house prices, the BatchNorm running statistics, and the GPT's vocabulary and architecture (a `.json`
@@ -158,7 +161,7 @@ The request body is `{ "prompt", "length", "temperature", "topK", "seed", "devic
 The device can change per request, and the model moves between CPU and GPU as needed.
 
 The service loads `Gpt:ModelPath` from `appsettings.json`. Point it at a model saved by the
-`Transformer` sample (or pass `--Gpt:ModelPath path`). When no model exists, the service trains one in
+`TextGeneration` sample (or pass `--Gpt:ModelPath path`). When no model exists, the service trains one in
 the background and reports progress through Idrak telemetry.
 
 The browser UI (`wwwroot/index.html`, dark and light themes, responsive) is laid out in two columns:
@@ -350,7 +353,7 @@ three tools that work together (`CharGpt.Generate` in `samples/Shared/Gpt` shows
   differentiable path.
 
 Measured on the sample GPT (341K parameters) on a 4-core CPU container
-(`dotnet run --project samples/Idrak.Samples.Transformer -- --predict --benchmark true`):
+(`dotnet run --project samples/Idrak.Samples.TextGeneration -- --predict --benchmark true`):
 
 | Mode | chars/s | Speedup |
 |------|---------|---------|
@@ -412,7 +415,7 @@ plain text only continues text. To see reasoning and tool calls, train the small
 ChatML transcripts (reasoning, `web_fetch` calls, answers citing tool results):
 
 ```bash
-dotnet run -c Release --project samples/Idrak.Samples.Transformer -- --chat true   # saves models/chat.weights and runs a two-turn demo
+dotnet run -c Release --project samples/Idrak.Samples.TextGeneration -- --chat true   # saves models/chat.weights and runs a two-turn demo
 ```
 
 ### Optimizers and schedules
@@ -747,8 +750,8 @@ To check a model against transformers on your machine (it needs PyTorch and acce
 ```
 pip install torch transformers huggingface_hub
 python tools/pytorch/pretrained_reference.py --model Qwen/Qwen3-0.6B --out qwen3.json
-dotnet run -c Release --project samples/Idrak.Samples.Pretrained -- check qwen3.json --cuda [--int8] [--kv8]
-dotnet run -c Release --project samples/Idrak.Samples.Pretrained -- chat <model folder> --cuda
+dotnet run -c Release --project samples/Idrak.Samples.Chat -- check qwen3.json --cuda [--int8] [--kv8]
+dotnet run -c Release --project samples/Idrak.Samples.Chat -- chat <model folder> --cuda
 ```
 
 ### Fine-tuning: freezing, a learning rate per group, saving only what changed, LoRA

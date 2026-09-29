@@ -1,8 +1,8 @@
 // Multi-class classification: three interleaved spirals that no straight line can separate.
 // Softmax + cross-entropy, BatchNorm, AdamW with cosine learning-rate schedule, accuracy metric.
 //
-//   dotnet run -c Release --project samples/Idrak.Samples.Classification            (add --cpu / --cuda)
-//   dotnet run -c Release --project samples/Idrak.Samples.Classification -- --predict --input "0.5,0.2;-0.3,-0.6"
+//   dotnet run -c Release --project samples/Idrak.Samples.Spirals            (add --cpu / --cuda)
+//   dotnet run -c Release --project samples/Idrak.Samples.Spirals -- --predict --input "0.5,0.2;-0.3,-0.6"
 //        classify points (x,y in [-1, 1]) with the saved model
 
 using Idrak;

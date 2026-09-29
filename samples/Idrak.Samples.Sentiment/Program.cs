@@ -2,8 +2,8 @@
 // ("not good" is negative, "not bad" positive). A bag-of-words model cannot see word order;
 // LSTM, GRU and a Transformer can. Embedding, LSTM, GRU, PositionalEncoding, TransformerEncoderLayer.
 //
-//   dotnet run -c Release --project samples/Idrak.Samples.Sequences            (add --cpu / --cuda)
-//   dotnet run -c Release --project samples/Idrak.Samples.Sequences -- --predict --input "the movie was not good;not bad at all"
+//   dotnet run -c Release --project samples/Idrak.Samples.Sentiment            (add --cpu / --cuda)
+//   dotnet run -c Release --project samples/Idrak.Samples.Sentiment -- --predict --input "the movie was not good;not bad at all"
 //        classify sentences with every saved model (separate sentences with ';')
 
 using Idrak;

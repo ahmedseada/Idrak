@@ -3,7 +3,7 @@ next-token logits and greedy continuations), so Idrak's own loader can be checke
 
     pip install torch transformers huggingface_hub
     python tools/pytorch/pretrained_reference.py --model Qwen/Qwen3-0.6B --out qwen3.json
-    dotnet run -c Release --project samples/Idrak.Samples.Pretrained -- check qwen3.json --cuda
+    dotnet run -c Release --project samples/Idrak.Samples.Chat -- check qwen3.json --cuda
 
 --model is a Hugging Face model id (downloaded to the local cache) or a local folder. The reference file names the
 folder, so the check reads exactly the files transformers used. --adapter applies a PEFT LoRA adapter (for example one

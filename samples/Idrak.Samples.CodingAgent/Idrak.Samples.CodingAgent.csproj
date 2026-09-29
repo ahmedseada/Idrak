@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Idrak\Idrak.csproj" />
+    <ProjectReference Include="..\..\src\Idrak.Datasets\Idrak.Datasets.csproj" />
+    <ProjectReference Include="..\..\src\Idrak.LanguageModels\Idrak.LanguageModels.csproj" />
+  </ItemGroup>
+
+</Project>
