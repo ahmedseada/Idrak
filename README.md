@@ -18,6 +18,8 @@ Set `IDRAK_DISABLE_CUDA=1` to force the CPU.
 
 ## Install
 
+**Libraries**: add them to a project (`dotnet add package`, run in the project's folder):
+
 ```bash
 dotnet add package Idrak                      # tensors, layers, training, CPU and CUDA backends
 dotnet add package Idrak.LanguageModels       # Hugging Face and GGUF language models, fine-tuning
@@ -26,8 +28,17 @@ dotnet add package Idrak.AspNetCore           # serve models from ASP.NET Core
 dotnet add package Idrak.Mcp                  # Model Context Protocol tools
 dotnet add package Idrak.Onnx                 # ONNX export
 dotnet add package Idrak.Onnx.Runtime         # run ONNX models with ONNX Runtime
-dotnet tool install -g Idrak.FineTuning.Cli   # idrak-tune: fine-tune language models
-dotnet tool install -g Idrak.Datasets.Cli     # idrak-data: inspect and build datasets
+```
+
+**Command-line tools**: install once, then run them from any folder (no project needed; the `.Cli` packages are
+the tools, the others are libraries):
+
+```bash
+dotnet tool install -g Idrak.FineTuning.Cli   # the idrak-tune command: fine-tune, evaluate, chat with and export language models
+dotnet tool install -g Idrak.Datasets.Cli     # the idrak-data command: inspect, download and build datasets
+idrak-tune --help
+idrak-data --help
+dotnet tool update -g Idrak.FineTuning.Cli    # later: update to the newest version (same for Idrak.Datasets.Cli)
 ```
 
 Licensed under the [MIT license](LICENSE). Releases are listed in the [changelog](CHANGELOG.md).
