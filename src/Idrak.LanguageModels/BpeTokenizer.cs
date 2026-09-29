@@ -244,6 +244,7 @@ public sealed class BpeTokenizer : ITokenizer
     /// <inheritdoc />
     public IReadOnlyList<int> Encode(string text)
     {
+        text = WithoutLoneSurrogates(text);
         var ids = new List<int>(text.Length / 3 + 4);
         int last = 0;
         if (_addedPattern is not null)
@@ -258,6 +259,33 @@ public sealed class BpeTokenizer : ITokenizer
 
         EncodeText(text, last, text.Length - last, ids, last == 0);
         return ids;
+    }
+
+    // Half of a surrogate pair is not a character (it has no UTF-8 bytes, and Unicode normalization rejects it): it
+    // becomes U+FFFD, as it does when such text is written as UTF-8.
+    private static string WithoutLoneSurrogates(string text)
+    {
+        int at = text.AsSpan().IndexOfAnyInRange('\uD800', '\uDFFF');
+        if (at < 0)
+        {
+            return text;
+        }
+
+        char[]? copy = null;
+        for (int i = at; i < text.Length; i++)
+        {
+            if (char.IsHighSurrogate(text[i]) && i + 1 < text.Length && char.IsLowSurrogate(text[i + 1]))
+            {
+                i++;
+            }
+            else if (char.IsSurrogate(text[i]))
+            {
+                copy ??= text.ToCharArray();
+                copy[i] = '\uFFFD';
+            }
+        }
+
+        return copy is null ? text : new string(copy);
     }
 
     /// <inheritdoc />
