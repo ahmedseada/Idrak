@@ -12,7 +12,7 @@ const string Usage = """
       idrak-data count <spec…>                rows per source
       idrak-data download <spec…>             fetch every file of the sources into the cache and list them (--refresh: again)
       idrak-data build <spec…|recipe.json> --out <file.jsonl>
-                                               assemble a training set (conversations {"messages"} and / or texts {"text"})
+                                              assemble a training set (conversations {"messages"} and / or texts {"text"})
       idrak-data cache [--clear]              where downloads are kept (and remove them)
 
     A spec is a source with options after '?':
@@ -37,6 +37,7 @@ const string Usage = """
       --refresh           download again even when cached
     """;
 
+Console.OutputEncoding = System.Text.Encoding.UTF8;                       // "…" and emoji on Windows consoles
 var positional = new List<string>();
 string? output = null, evalOutput = null, system = null, cacheFolder = null;
 double evalFraction = 0;
@@ -86,7 +87,6 @@ if (positional.Count == 0 || positional[0] is not ("show" or "count" or "downloa
     return 1;
 }
 
-Console.OutputEncoding = System.Text.Encoding.UTF8;
 var status = new ConsoleStatus();
 var downloads = status.CreateDownloader(cacheFolder: cacheFolder is null ? null : Path.Combine(cacheFolder, "downloads"), refresh: refresh);
 

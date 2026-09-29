@@ -13,9 +13,9 @@ const string Usage = """
     idrak-tune: fine-tune pretrained language models (LoRA / QLoRA) on any dataset, evaluate, chat and export.
 
       idrak-tune train <model> <data…> --out <dir>    tune adapters on the data and write them (PEFT format) with
-                                                       idrak-tuning.json (base model, system prompt, max length)
+                                                      idrak-tuning.json (base model, system prompt, max length)
       idrak-tune evaluate <model> <data…>             loss and answer scores on held-out conversations (greedy answers against
-                                                       the references); with --adapter DIR, the base model and the adapter side by side
+                                                      the references); with --adapter DIR, the base model and the adapter side by side
       idrak-tune chat <model> [message…]              chat, streamed (the messages given, else one per line typed)
       idrak-tune export <model> --out <dir>           merge the adapter into the weights and write a Hugging Face checkpoint
       idrak-tune download <model id…>                 download models and print their folders
@@ -51,6 +51,7 @@ const string Usage = """
                --kv8 | --kv16, --no-think, --matmul fp32|bf16|fp8, --offload, --gpu-memory GiB
     """;
 
+Console.OutputEncoding = System.Text.Encoding.UTF8;                       // "…" and emoji on Windows consoles
 var positional = new List<string>();
 bool int8 = false, bf16 = false, int4 = false, kv8 = false, kv16 = false, noThink = false, profileTraining = false;
 bool shuffleRows = true, dedupRows = true, mixByWeight = false;

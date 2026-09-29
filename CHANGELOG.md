@@ -1,6 +1,10 @@
 # Changelog
 
-## 0.1.0 (unreleased)
+## Unreleased
+
+- `idrak-tune`, `idrak-data`: output is UTF-8, so "…" and emoji show on Windows consoles; the help's second lines line up.
+
+## 0.1.0 (2026-09-29)
 
 First release under the name Idrak.
 
