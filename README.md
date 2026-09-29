@@ -14,6 +14,22 @@ telemetry hooks.
 `Device.Default` picks the first GPU when a driver is present and falls back to the CPU otherwise.
 Set `IDRAK_DISABLE_CUDA=1` to force the CPU.
 
+## Install
+
+```bash
+dotnet add package Idrak                  # tensors, layers, training, CPU and CUDA backends
+dotnet add package Idrak.Pretrained       # Hugging Face and GGUF language models, fine-tuning
+dotnet add package Idrak.Datasets         # datasets from files, Hugging Face, GitHub, Kaggle, Zenodo, URLs
+dotnet add package Idrak.AspNetCore       # serve models from ASP.NET Core
+dotnet add package Idrak.Mcp              # Model Context Protocol tools
+dotnet add package Idrak.Onnx             # ONNX export
+dotnet add package Idrak.Onnx.Runtime     # run ONNX models with ONNX Runtime
+dotnet tool install -g Idrak.FineTuning.Cli   # idrak-tune: fine-tune language models
+dotnet tool install -g Idrak.Datasets.Cli     # idrak-data: inspect and build datasets
+```
+
+Licensed under the [MIT license](LICENSE). Releases are listed in the [changelog](CHANGELOG.md).
+
 ## Layout
 
 ```

@@ -6,4 +6,32 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
+
+  <!-- NuGet: every project under src/ is a package (samples and tests set IsPackable to false). The release workflow
+       sets Version from the tag (v0.1.0 -> 0.1.0); local packs get VersionPrefix plus a "dev" suffix. -->
+  <PropertyGroup>
+    <VersionPrefix>0.1.0</VersionPrefix>
+    <VersionSuffix Condition="'$(Version)' == '' and '$(GITHUB_ACTIONS)' != 'true'">dev</VersionSuffix>
+    <Authors>Ahmed Seada</Authors>
+    <Copyright>Copyright (c) 2026 Ahmed Seada</Copyright>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/ahmedseada/Idrak</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/ahmedseada/Idrak</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>deep-learning;neural-network;machine-learning;cuda;gpu;llm;fine-tuning;lora;transformer;tensor;autograd</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageReleaseNotes>https://github.com/ahmedseada/Idrak/blob/main/CHANGELOG.md</PackageReleaseNotes>
+    <!-- Source Link (built into the SDK): debuggers step into the exact sources of a release. -->
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
+    <EnablePackageValidation>true</EnablePackageValidation>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(IsPackable)' != 'false' and Exists('$(MSBuildProjectDirectory)/README.md')">
+    <None Include="$(MSBuildProjectDirectory)/README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
 </Project>

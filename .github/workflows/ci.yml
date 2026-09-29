@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - run: dotnet build Idrak.slnx -c Release
+      # The runners have no GPU: the tests run on the CPU (the GPU tests are run by hand).
+      - run: dotnet run -c Release --no-build --project tests/Idrak.Tests
+        env:
+          IDRAK_DEVICES: cpu
+      - name: Pack (every project under src/)
+        run: for p in src/*/*.csproj; do dotnet pack "$p" -c Release --no-build -o artifacts; done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: artifacts/*
