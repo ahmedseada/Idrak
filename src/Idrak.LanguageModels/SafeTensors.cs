@@ -4,7 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
-namespace Idrak.Pretrained;
+namespace Idrak.LanguageModels;
 
 /// <summary>The element type of a stored tensor.</summary>
 public enum SafeTensorType

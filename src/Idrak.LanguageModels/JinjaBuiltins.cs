@@ -2,7 +2,7 @@ using System.Collections;
 using System.Globalization;
 using System.Text;
 
-namespace Idrak.Pretrained;
+namespace Idrak.LanguageModels;
 
 public sealed partial class JinjaTemplate
 {

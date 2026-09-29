@@ -4,7 +4,7 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Idrak.Generation;
 
-namespace Idrak.Pretrained;
+namespace Idrak.LanguageModels;
 
 /// <summary>
 /// A byte-pair-encoding tokenizer read from a Hugging Face <c>tokenizer.json</c>: byte-level BPE (GPT-2, Llama 3, Qwen,

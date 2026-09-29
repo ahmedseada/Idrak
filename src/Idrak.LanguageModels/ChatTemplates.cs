@@ -3,7 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Idrak.Generation;
 
-namespace Idrak.Pretrained;
+namespace Idrak.LanguageModels;
 
 /// <summary>
 /// A model's own chat template: the Jinja source from its tokenizer_config.json (or chat_template.jinja), rendered the

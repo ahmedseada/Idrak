@@ -14,7 +14,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="Idrak.Tests" />
     <InternalsVisibleTo Include="Idrak.Onnx" />
-    <InternalsVisibleTo Include="Idrak.Pretrained" />
+    <InternalsVisibleTo Include="Idrak.LanguageModels" />
   </ItemGroup>
 
 </Project>

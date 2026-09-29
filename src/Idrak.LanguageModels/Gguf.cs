@@ -2,7 +2,7 @@ using System.Buffers.Binary;
 using System.Runtime.InteropServices;
 using System.Text;
 
-namespace Idrak.Pretrained;
+namespace Idrak.LanguageModels;
 
 /// <summary>A tensor's entry in a GGUF file.</summary>
 /// <param name="Name">Its name (llama.cpp's naming, e.g. blk.0.attn_q.weight).</param>

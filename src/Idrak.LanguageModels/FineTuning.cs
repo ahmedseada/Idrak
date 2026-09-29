@@ -6,7 +6,7 @@ using Idrak.Generation;
 using Idrak.Layers;
 using Idrak.Optimizers;
 
-namespace Idrak.Pretrained;
+namespace Idrak.LanguageModels;
 
 /// <summary>
 /// One conversation to fine-tune on: messages (system, user, assistant with optional reasoning and tool calls, tool

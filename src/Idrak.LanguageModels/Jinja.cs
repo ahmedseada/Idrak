@@ -1,7 +1,7 @@
 using System.Globalization;
 using System.Text;
 
-namespace Idrak.Pretrained;
+namespace Idrak.LanguageModels;
 
 /// <summary>
 /// A Jinja template interpreter covering what chat templates use: output, if/elif/else, for (with loop variables,

@@ -1,7 +1,7 @@
 using Idrak.Generation;
 using Idrak.Layers;
 
-namespace Idrak.Pretrained;
+namespace Idrak.LanguageModels;
 
 /// <summary>How <see cref="AnswerScorer.Choose"/> rated the candidate answers to one prompt.</summary>
 /// <param name="Best">Index of the most likely answer.</param>

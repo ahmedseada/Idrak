@@ -2,7 +2,7 @@ using System.Text.Json.Nodes;
 using Idrak;
 using Idrak.Generation;
 using Idrak.Layers;
-using Idrak.Pretrained;
+using Idrak.LanguageModels;
 
 internal static partial class Tests
 {

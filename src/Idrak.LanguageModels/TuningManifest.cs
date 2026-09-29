@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
-namespace Idrak.Pretrained;
+namespace Idrak.LanguageModels;
 
 /// <summary>
 /// How an adapter folder was made, written next to the adapter (<see cref="FileName"/>): the base model it was tuned from,
