@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/icon.svg" width="128" alt="Idrak"></p>
+
 # Idrak
 
 A self-contained neural network library for **.NET 10**, written in pure C#. There is **no TensorFlow.dll,
