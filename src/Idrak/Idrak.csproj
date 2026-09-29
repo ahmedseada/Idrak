@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Idrak</RootNamespace>
+    <AssemblyName>Idrak</AssemblyName>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <IsAotCompatible>true</IsAotCompatible>
+    <Optimize>true</Optimize>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <PackageId>Idrak</PackageId>
+    <Description>Self-contained neural network library for .NET: tensors, autograd, layers and optimizers with a SIMD CPU backend and a CUDA backend that talks to the NVIDIA driver directly. No TensorFlow, no native dependencies.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Idrak.Tests" />
+    <InternalsVisibleTo Include="Idrak.Onnx" />
+    <InternalsVisibleTo Include="Idrak.Pretrained" />
+  </ItemGroup>
+
+</Project>

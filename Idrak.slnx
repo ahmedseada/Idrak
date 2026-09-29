@@ -1,0 +1,34 @@
+<Solution>
+  <Folder Name="/samples/">
+    <Project Path="samples/Idrak.Samples.CharGpt/Idrak.Samples.CharGpt.csproj" />
+    <Project Path="samples/Idrak.Samples.Classification/Idrak.Samples.Classification.csproj" />
+    <Project Path="samples/Idrak.Samples.GptApi/Idrak.Samples.GptApi.csproj" />
+    <Project Path="samples/Idrak.Samples.HouseApi/Idrak.Samples.HouseApi.csproj" />
+    <Project Path="samples/Idrak.Samples.HousePrices/Idrak.Samples.HousePrices.csproj" />
+    <Project Path="samples/Idrak.Samples.Images/Idrak.Samples.Images.csproj" />
+    <Project Path="samples/Idrak.Samples.Ocr/Idrak.Samples.Ocr.csproj" />
+    <Project Path="samples/Idrak.Samples.OnnxImport/Idrak.Samples.OnnxImport.csproj" />
+    <Project Path="samples/Idrak.Samples.Quantization/Idrak.Samples.Quantization.csproj" />
+    <Project Path="samples/Idrak.Samples.Pretrained/Idrak.Samples.Pretrained.csproj" />
+    <Project Path="samples/Idrak.Samples.Rag/Idrak.Samples.Rag.csproj" />
+    <Project Path="samples/Idrak.Samples.ReRanker/Idrak.Samples.ReRanker.csproj" />
+    <Project Path="samples/Idrak.Samples.Sequences/Idrak.Samples.Sequences.csproj" />
+    <Project Path="samples/Idrak.Samples.Summarizer/Idrak.Samples.Summarizer.csproj" />
+    <Project Path="samples/Idrak.Samples.Transformer/Idrak.Samples.Transformer.csproj" />
+    <Project Path="samples/Idrak.Samples.Xor/Idrak.Samples.Xor.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/Idrak.AspNetCore/Idrak.AspNetCore.csproj" />
+    <Project Path="src/Idrak.Mcp/Idrak.Mcp.csproj" />
+    <Project Path="src/Idrak.Onnx.Runtime/Idrak.Onnx.Runtime.csproj" />
+    <Project Path="src/Idrak.Onnx/Idrak.Onnx.csproj" />
+    <Project Path="src/Idrak.Datasets.Cli/Idrak.Datasets.Cli.csproj" />
+    <Project Path="src/Idrak.Datasets/Idrak.Datasets.csproj" />
+    <Project Path="src/Idrak.FineTuning.Cli/Idrak.FineTuning.Cli.csproj" />
+    <Project Path="src/Idrak.Pretrained/Idrak.Pretrained.csproj" />
+    <Project Path="src/Idrak/Idrak.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Idrak.Tests/Idrak.Tests.csproj" />
+  </Folder>
+</Solution>

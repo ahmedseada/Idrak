@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Idrak.Mcp</RootNamespace>
+    <AssemblyName>Idrak.Mcp</AssemblyName>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IsAotCompatible>true</IsAotCompatible>
+    <PackageId>Idrak.Mcp</PackageId>
+    <Description>Model Context Protocol for Idrak: use the tools of MCP servers in conversations and the inference engine, and serve Idrak tools to MCP clients.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ModelContextProtocol.Core" Version="2.2.0" />
+    <ProjectReference Include="..\Idrak\Idrak.csproj" />
+  </ItemGroup>
+
+</Project>

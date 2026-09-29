@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Idrak GPT</title>
+<meta name="description" content="Inference playground for a character-level transformer served by Idrak.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%237c5cff'/><path d='M9 22V10l14 12V10' stroke='white' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+<style>
+  :root {
+    --bg: #0b0d14;
+    --bg-glow-1: rgba(124, 92, 255, .18);
+    --bg-glow-2: rgba(0, 200, 170, .10);
+    --panel: rgba(22, 25, 37, .78);
+    --panel-solid: #161925;
+    --panel-2: #1c2030;
+    --border: rgba(255, 255, 255, .08);
+    --border-strong: rgba(255, 255, 255, .14);
+    --text: #e8eaf3;
+    --muted: #9097b0;
+    --faint: #5d6480;
+    --accent: #7c5cff;
+    --accent-2: #00c8aa;
+    --accent-soft: rgba(124, 92, 255, .16);
+    --good: #2fd08a;
+    --warn: #f5b940;
+    --bad: #ff5d73;
+    --shadow: 0 10px 40px rgba(0, 0, 0, .35);
+    --radius: 16px;
+    --mono: ui-monospace, "Cascadia Code", "JetBrains Mono", "SF Mono", Consolas, monospace;
+    --sans: "Inter", "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f4f5fb; --bg-glow-1: rgba(124, 92, 255, .14); --bg-glow-2: rgba(0, 200, 170, .10);
+      --panel: rgba(255, 255, 255, .82); --panel-solid: #ffffff; --panel-2: #f0f1f8;
+      --border: rgba(20, 24, 40, .08); --border-strong: rgba(20, 24, 40, .16);
+      --text: #161a2b; --muted: #5b6380; --faint: #9aa0b8; --accent-soft: rgba(124, 92, 255, .12);
+      --shadow: 0 10px 30px rgba(30, 36, 70, .10);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    min-height: 100vh; font-family: var(--sans); color: var(--text); background: var(--bg);
+    background-image: radial-gradient(900px 500px at 10% -10%, var(--bg-glow-1), transparent 60%),
+                      radial-gradient(800px 500px at 110% 10%, var(--bg-glow-2), transparent 60%);
+    background-attachment: fixed; -webkit-font-smoothing: antialiased; font-size: 14px; line-height: 1.5;
+  }
+  a { color: inherit; }
+
+  /* ---------- header ---------- */
+  header {
+    position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 16px;
+    padding: 14px 28px; backdrop-filter: blur(14px); background: color-mix(in srgb, var(--bg) 70%, transparent);
+    border-bottom: 1px solid var(--border);
+  }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 16px; letter-spacing: -.01em; }
+  .brand .logo {
+    width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2)); box-shadow: 0 4px 16px var(--accent-soft);
+  }
+  .brand small { font-weight: 500; color: var(--muted); font-size: 12px; }
+  .spacer { flex: 1; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px;
+    border: 1px solid var(--border-strong); font-size: 12px; font-weight: 600; background: var(--panel);
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+  .pill.ready .dot { background: var(--good); box-shadow: 0 0 0 4px rgba(47, 208, 138, .18); }
+  .pill.training .dot, .pill.loading .dot { background: var(--warn); animation: pulse 1.2s infinite; }
+  .pill.failed .dot { background: var(--bad); }
+  @keyframes pulse { 50% { opacity: .35; } }
+  .nav-link {
+    text-decoration: none; font-size: 13px; font-weight: 600; color: var(--muted); padding: 7px 12px; border-radius: 10px;
+    border: 1px solid transparent; transition: .15s;
+  }
+  .nav-link:hover { color: var(--text); border-color: var(--border-strong); background: var(--panel); }
+
+  /* ---------- layout ---------- */
+  main {
+    display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(330px, 1fr); gap: 22px;
+    max-width: 1500px; margin: 0 auto; padding: 24px 28px 48px;
+  }
+  @media (max-width: 1020px) {
+    main { grid-template-columns: 1fr; padding: 16px; }
+    main > aside { order: -1; }           /* on narrow screens: inputs first, then output */
+    header { padding: 12px 16px; gap: 10px; }
+  }
+  @media (max-width: 640px) {
+    .brand small, .nav-link.secondary { display: none; }
+    .nav-link { padding: 6px 8px; }
+  }
+  .column { display: flex; flex-direction: column; gap: 22px; min-width: 0; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow);
+    backdrop-filter: blur(12px); overflow: hidden;
+  }
+  .card-head { display: flex; align-items: center; gap: 10px; padding: 16px 20px 0; }
+  .card-head h2 { margin: 0; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+  .card-body { padding: 16px 20px 20px; }
+  .badge { font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
+
+  /* ---------- training banner ---------- */
+  #training { display: none; }
+  #training.show { display: block; }
+  .progress { height: 10px; border-radius: 999px; background: var(--panel-2); overflow: hidden; margin: 12px 0 8px; }
+  .progress > div {
+    height: 100%; width: 0; border-radius: inherit; transition: width .4s ease;
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  }
+  .training-stats { display: flex; flex-wrap: wrap; gap: 18px; color: var(--muted); font-size: 12px; }
+  .training-stats b { color: var(--text); font-variant-numeric: tabular-nums; }
+
+  /* ---------- output ---------- */
+  .toolbar { display: flex; gap: 6px; margin-left: auto; }
+  .icon-btn {
+    border: 1px solid var(--border-strong); background: var(--panel-2); color: var(--muted); border-radius: 9px;
+    padding: 6px 10px; font: 600 12px var(--sans); cursor: pointer; transition: .15s;
+  }
+  .icon-btn:hover { color: var(--text); border-color: var(--accent); }
+  .icon-btn.on { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+  #output {
+    min-height: 260px; max-height: 460px; overflow: auto; padding: 18px 20px; margin: 14px 20px 0;
+    font: 15px/1.9 var(--mono); white-space: pre-wrap; word-break: break-word; border-radius: 12px;
+    background: var(--panel-2); border: 1px solid var(--border);
+  }
+  #output .prompt { color: var(--muted); border-bottom: 2px dotted var(--accent); }
+  #output .tok { border-radius: 3px; cursor: pointer; transition: outline .1s; }
+  #output .tok:hover, #output .tok.selected { outline: 2px solid var(--accent); outline-offset: 1px; }
+  #output.plain .tok { background: none !important; }
+  #output .placeholder { color: var(--faint); font-family: var(--sans); font-size: 14px; }
+  .caret { display: inline-block; width: 8px; height: 1.1em; vertical-align: text-bottom; background: var(--accent); animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .tabs { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 20px 0; }
+  .tabs:empty { display: none; }
+  .tab {
+    border: 1px solid var(--border-strong); background: var(--panel-2); color: var(--muted); border-radius: 9px;
+    padding: 5px 11px; font: 600 12px var(--sans); cursor: pointer; transition: .15s;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+  .metric-note { color: var(--muted); font-size: 12px; margin: -4px 0 12px; }
+  .metric-note:empty { display: none; }
+  .legend { display: flex; align-items: center; gap: 10px; padding: 10px 20px 16px; color: var(--faint); font-size: 12px; }
+  .legend .scale { width: 160px; height: 8px; border-radius: 999px; background: linear-gradient(90deg, hsl(0 80% 55% / .55), hsl(45 90% 55% / .5), hsl(150 70% 45% / .45)); }
+
+  /* ---------- metrics ---------- */
+  .metrics { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+  .metric { padding: 14px 16px; border-radius: 12px; background: var(--panel-2); border: 1px solid var(--border); min-width: 0; }
+  .metric .label { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  .metric .value { font-size: 22px; font-weight: 700; margin-top: 4px; font-variant-numeric: tabular-nums; letter-spacing: -.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .metric .value small { font-size: 12px; font-weight: 600; color: var(--muted); margin-left: 3px; }
+  .metric.hero { background: linear-gradient(135deg, var(--accent-soft), transparent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+
+  .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+  @media (max-width: 640px) { .charts { grid-template-columns: 1fr; } }
+  .chart { padding: 12px 14px 8px; border-radius: 12px; background: var(--panel-2); border: 1px solid var(--border); }
+  .chart .label { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); display: flex; justify-content: space-between; }
+  .chart svg { width: 100%; height: 90px; display: block; margin-top: 6px; }
+
+  /* ---------- token inspector ---------- */
+  .inspector-empty { color: var(--faint); }
+  .alt { display: grid; grid-template-columns: 54px 1fr 58px; gap: 10px; align-items: center; margin: 7px 0; font-variant-numeric: tabular-nums; }
+  .alt code { font: 600 14px var(--mono); background: var(--panel-2); border: 1px solid var(--border); border-radius: 7px; padding: 2px 0; text-align: center; }
+  .alt .bar { height: 8px; border-radius: 999px; background: var(--panel-2); overflow: hidden; }
+  .alt .bar > div { height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+  .alt.chosen code { border-color: var(--accent); color: var(--accent); }
+  .alt span { text-align: right; color: var(--muted); font-size: 12px; }
+
+  /* ---------- controls ---------- */
+  label.field { display: block; margin-bottom: 16px; }
+  .field-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 7px; font-weight: 600; font-size: 13px; }
+  .field-head output, .field-head .hint { color: var(--muted); font: 600 12px var(--mono); }
+  textarea, input[type=number], input[type=text] {
+    width: 100%; border-radius: 11px; border: 1px solid var(--border-strong); background: var(--panel-2); color: var(--text);
+    padding: 11px 13px; font: 14px/1.5 var(--mono); outline: none; transition: border .15s, box-shadow .15s; resize: vertical;
+  }
+  textarea:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+  input[type=range] { width: 100%; accent-color: var(--accent); height: 22px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: -6px 0 16px; }
+  .chip {
+    border: 1px solid var(--border-strong); background: transparent; color: var(--muted); border-radius: 999px;
+    padding: 4px 10px; font: 500 12px var(--mono); cursor: pointer; transition: .15s;
+  }
+  .chip:hover { color: var(--text); border-color: var(--accent); }
+  .row { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: end; }
+  .toggle { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; border-top: 1px solid var(--border); font-weight: 600; font-size: 13px; }
+  .toggle small { display: block; font-weight: 400; color: var(--muted); font-size: 12px; }
+  .switch { position: relative; width: 44px; height: 26px; flex: none; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .switch span { position: absolute; inset: 0; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--border-strong); cursor: pointer; transition: .2s; }
+  .switch span::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: var(--muted); transition: .2s; }
+  .switch input:checked + span { background: var(--accent); border-color: var(--accent); }
+  .switch input:checked + span::after { transform: translateX(18px); background: white; }
+
+  .buttons { display: grid; grid-template-columns: 1fr auto; gap: 10px; margin-top: 8px; }
+  .btn {
+    border: 0; border-radius: 12px; padding: 13px 18px; font: 700 14px var(--sans); cursor: pointer; transition: transform .1s, box-shadow .2s, opacity .2s;
+    display: inline-flex; justify-content: center; align-items: center; gap: 8px;
+  }
+  .btn:active { transform: translateY(1px); }
+  .btn.primary { color: white; background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 60%, var(--accent-2))); box-shadow: 0 8px 24px var(--accent-soft); }
+  .btn.primary:hover { box-shadow: 0 10px 30px rgba(124, 92, 255, .4); }
+  .btn.ghost { background: var(--panel-2); color: var(--text); border: 1px solid var(--border-strong); }
+  .btn:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
+  kbd { font: 600 11px var(--mono); padding: 1px 6px; border-radius: 6px; border: 1px solid rgba(255, 255, 255, .35); opacity: .85; }
+
+  /* device segmented switch */
+  .segmented { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; border-radius: 14px; background: var(--panel-2); border: 1px solid var(--border); }
+  .segmented button {
+    border: 0; background: transparent; color: var(--muted); border-radius: 10px; padding: 12px 10px; cursor: pointer; text-align: left;
+    font: 600 13px var(--sans); transition: .15s; min-width: 0;
+  }
+  .segmented button small { display: block; font-weight: 500; font-size: 11px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .segmented button.active { background: var(--panel-solid); color: var(--text); box-shadow: 0 2px 10px rgba(0, 0, 0, .18), inset 0 0 0 1px var(--accent); }
+  .segmented button:disabled { cursor: not-allowed; opacity: .45; }
+  .device-memory { margin-top: 10px; color: var(--muted); font-size: 12px; }
+
+  /* model table */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  td { padding: 8px 0; border-bottom: 1px solid var(--border); }
+  td:first-child { color: var(--muted); }
+  td:last-child { text-align: right; font: 600 13px var(--mono); }
+  tr:last-child td { border-bottom: 0; }
+  details { margin-top: 12px; }
+  summary { cursor: pointer; color: var(--muted); font-weight: 600; font-size: 13px; }
+  .layers { margin-top: 10px; font: 12px/1.8 var(--mono); color: var(--muted); max-height: 260px; overflow: auto; }
+  .layers div { display: flex; justify-content: space-between; gap: 10px; }
+  .layers b { color: var(--text); font-weight: 500; }
+
+  /* tooltip + toast */
+  #tooltip {
+    position: fixed; z-index: 50; pointer-events: none; opacity: 0; transform: translateY(4px); transition: opacity .12s, transform .12s;
+    background: var(--panel-solid); border: 1px solid var(--border-strong); border-radius: 12px; padding: 10px 12px; box-shadow: var(--shadow);
+    font-size: 12px; min-width: 180px;
+  }
+  #tooltip.show { opacity: 1; transform: none; }
+  #tooltip .t-row { display: flex; justify-content: space-between; gap: 14px; font-family: var(--mono); }
+  #toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(20px); opacity: 0; transition: .25s;
+    background: var(--panel-solid); border: 1px solid var(--bad); color: var(--text); padding: 12px 18px; border-radius: 12px; box-shadow: var(--shadow); z-index: 60;
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%); }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <div class="logo"><svg width="18" height="18" viewBox="0 0 32 32" aria-hidden="true"><path d="M8 24V8l16 16V8" stroke="white" stroke-width="3.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+    <div>Idrak GPT <small>character-level transformer · pure C#</small></div>
+  </div>
+  <div class="spacer"></div>
+  <span id="status" class="pill loading"><span class="dot"></span><span id="status-text">Connecting…</span></span>
+  <a class="nav-link" href="/scalar" target="_blank" rel="noopener">API reference ↗</a>
+  <a class="nav-link secondary" href="/openapi/v1.json" target="_blank" rel="noopener">OpenAPI</a>
+</header>
+
+<main>
+  <!-- ================= left column: output + metrics ================= -->
+  <section class="column" aria-label="Output and metrics">
+    <div id="training" class="card">
+      <div class="card-head"><h2>Training a model</h2><span class="badge" id="train-device"></span></div>
+      <div class="card-body">
+        <div id="train-message" style="color: var(--muted)"></div>
+        <div class="progress"><div id="train-bar"></div></div>
+        <div class="training-stats">
+          <span>Progress <b id="train-pct">0%</b></span>
+          <span>Epoch <b id="train-epoch">–</b></span>
+          <span>Batch <b id="train-batch">–</b></span>
+          <span>Loss <b id="train-loss">–</b></span>
+          <span>Val accuracy <b id="train-acc">–</b></span>
+          <span>Remaining <b id="train-eta">–</b></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>Output</h2>
+        <span class="badge" id="output-badge">idle</span>
+        <div class="toolbar">
+          <button class="icon-btn on" id="heatmap-btn" title="Color characters by the model's confidence">Confidence</button>
+          <button class="icon-btn" id="copy-btn" title="Copy the text">Copy</button>
+          <button class="icon-btn" id="clear-btn" title="Clear the output">Clear</button>
+        </div>
+      </div>
+      <div class="tabs" id="tabs" role="tablist" aria-label="Samples"></div>
+      <div id="output" aria-live="polite"><span class="placeholder">Generated text appears here. Write a prompt on the right and press Generate (Ctrl+Enter). Hover or click any character to see what else the model considered.</span></div>
+      <div class="legend"><span>low confidence</span><span class="scale"></span><span>high confidence</span></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Metrics</h2><span class="badge" id="metrics-device">–</span><span class="badge" id="metrics-mode">–</span></div>
+      <div class="card-body">
+        <div class="metric-note" id="metrics-note"></div>
+        <div class="metrics">
+          <div class="metric hero"><div class="label">Throughput</div><div class="value" id="m-tps">–<small>chars/s</small></div></div>
+          <div class="metric"><div class="label">Total time</div><div class="value" id="m-total">–<small>ms</small></div></div>
+          <div class="metric"><div class="label">First token</div><div class="value" id="m-first">–<small>ms</small></div></div>
+          <div class="metric"><div class="label">Per step</div><div class="value" id="m-per">–<small>ms</small></div></div>
+          <div class="metric"><div class="label">Generated</div><div class="value" id="m-count">–<small>chars</small></div></div>
+          <div class="metric"><div class="label">Samples</div><div class="value" id="m-samples">–</div></div>
+          <div class="metric"><div class="label">Confidence</div><div class="value" id="m-conf">–</div></div>
+          <div class="metric"><div class="label">Perplexity</div><div class="value" id="m-ppl">–</div></div>
+          <div class="metric"><div class="label">Avg entropy</div><div class="value" id="m-ent">–<small>bits</small></div></div>
+          <div class="metric"><div class="label">Device memory</div><div class="value" id="m-mem">–</div></div>
+        </div>
+        <div class="charts">
+          <div class="chart"><div class="label"><span>Confidence per character</span><span id="c-conf-last"></span></div><svg id="chart-conf" viewBox="0 0 300 90" preserveAspectRatio="none"></svg></div>
+          <div class="chart"><div class="label"><span>Latency per step</span><span id="c-lat-last"></span></div><svg id="chart-lat" viewBox="0 0 300 90" preserveAspectRatio="none"></svg></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Token inspector</h2><span class="badge" id="insp-badge">–</span></div>
+      <div class="card-body" id="inspector"><div class="inspector-empty">Click a generated character to see the model's top 5 candidates, with probabilities, entropy and latency.</div></div>
+    </div>
+  </section>
+
+  <!-- ================= right column: inputs, device, model ================= -->
+  <aside class="column" aria-label="Inputs and model">
+    <div class="card">
+      <div class="card-head"><h2>Input</h2></div>
+      <div class="card-body">
+        <label class="field">
+          <div class="field-head">Prompt <span class="hint">Ctrl+Enter</span></div>
+          <textarea id="prompt" rows="3" spellcheck="false">the little robot </textarea>
+        </label>
+        <div class="chips" id="chips"></div>
+        <label class="field">
+          <div class="field-head">Length <output id="length-out">300</output></div>
+          <input id="length" type="range" min="10" max="1000" step="10" value="300">
+        </label>
+        <label class="field">
+          <div class="field-head">Temperature <output id="temp-out">0.70</output></div>
+          <input id="temperature" type="range" min="0.05" max="2" step="0.05" value="0.7">
+        </label>
+        <label class="field">
+          <div class="field-head">Top-k <output id="topk-out">all</output></div>
+          <input id="topk" type="range" min="0" max="40" step="1" value="0">
+        </label>
+        <label class="field">
+          <div class="field-head">Samples <output id="samples-out">1</output></div>
+          <input id="samples" type="range" min="1" max="16" step="1" value="1">
+        </label>
+        <div class="row">
+          <label class="field" style="margin-bottom: 0">
+            <div class="field-head">Seed <span class="hint">empty = random</span></div>
+            <input id="seed" type="number" placeholder="random" min="0">
+          </label>
+          <button class="btn ghost" id="dice" title="Random seed" style="padding: 11px 14px">🎲</button>
+        </div>
+        <div class="toggle" style="margin-top: 16px">
+          <div>Stream tokens<small>Show characters as they are generated (server-sent events)</small></div>
+          <label class="switch"><input type="checkbox" id="stream" checked><span></span><b class="sr-only">Stream tokens</b></label>
+        </div>
+        <div class="toggle">
+          <div>KV cache<small>Process only the newest character each step (off: recompute the whole window)</small></div>
+          <label class="switch"><input type="checkbox" id="cache" checked><span></span><b class="sr-only">KV cache</b></label>
+        </div>
+        <div class="toggle">
+          <div>CUDA graph<small>Replay the recorded decoding step with a single launch (GPU only, needs the cache)</small></div>
+          <label class="switch"><input type="checkbox" id="graph" checked><span></span><b class="sr-only">CUDA graph</b></label>
+        </div>
+        <div class="buttons">
+          <button class="btn primary" id="generate" disabled>Generate <kbd>Ctrl ↵</kbd></button>
+          <button class="btn ghost" id="stop" disabled>Stop</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Compute device</h2></div>
+      <div class="card-body">
+        <div class="segmented" id="devices" role="radiogroup" aria-label="Compute device">
+          <button data-device="cpu" class="active" role="radio">CPU<small>loading…</small></button>
+          <button data-device="cuda" role="radio" disabled>GPU (CUDA)<small>checking…</small></button>
+        </div>
+        <div class="device-memory" id="device-memory"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Model</h2><span class="badge" id="model-name">–</span></div>
+      <div class="card-body">
+        <table id="model-table"><tbody><tr><td>Status</td><td>waiting for the model…</td></tr></tbody></table>
+        <details>
+          <summary>Layer summary</summary>
+          <div class="layers" id="layers"></div>
+        </details>
+      </div>
+    </div>
+  </aside>
+</main>
+
+<div id="tooltip" role="tooltip"></div>
+<div id="toast" role="alert"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const state = { device: "cpu", samples: [[]], active: 0, prompt: "", controller: null, ready: false, selected: -1 };
+const cur = () => state.samples[state.active] ?? [];
+const prompts = ["the little robot ", "every morning, ", "a curious cat ", "the old wizard found ", "last night, "];
+
+// ---------------------------------------------------------------- helpers
+const fmt = (n, d = 0) => n == null || isNaN(n) ? "–" : Number(n).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
+const bytes = b => b == null ? "–" : b >= 1 << 30 ? fmt(b / (1 << 30), 2) + " GiB" : b >= 1 << 20 ? fmt(b / (1 << 20), 1) + " MiB" : fmt(b / 1024, 1) + " KiB";
+const esc = s => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const shown = t => t === "\n" ? "↵" : t === " " ? "␣" : t;
+function setValue(id, value, unit) { $(id).innerHTML = unit ? `${value}<small>${unit}</small>` : value; }
+function toast(message) { const t = $("toast"); t.textContent = message; t.classList.add("show"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 4500); }
+function confidenceColor(p) { const hue = Math.round(150 * Math.pow(p, 0.8)); return `hsl(${hue} 75% 50% / ${0.18 + 0.32 * (1 - p)})`; }
+
+// ---------------------------------------------------------------- status, model and devices
+async function refreshStatus() {
+  try {
+    const s = await (await fetch("/api/status")).json();
+    const pill = $("status");
+    pill.className = "pill " + s.status.toLowerCase();
+    $("status-text").textContent = s.status === "Training" && s.training ? `Training ${fmt(s.training.percent, 0)}%` : s.message;
+    const t = s.training;
+    $("training").classList.toggle("show", s.status === "Training");
+    if (t) {
+      $("train-message").textContent = "No saved model was found, so the server is training one now. Progress comes from Idrak's telemetry hooks.";
+      $("train-device").textContent = t.device;
+      $("train-bar").style.width = t.percent + "%";
+      $("train-pct").textContent = fmt(t.percent, 1) + "%";
+      $("train-epoch").textContent = `${t.epoch}/${t.epochs}`;
+      $("train-batch").textContent = `${t.batch}/${t.batchesPerEpoch}`;
+      $("train-loss").textContent = fmt(t.loss, 4);
+      $("train-acc").textContent = t.validationAccuracy == null ? "–" : fmt(t.validationAccuracy * 100, 1) + "%";
+      $("train-eta").textContent = t.remainingSeconds == null ? "–" : `${Math.floor(t.remainingSeconds / 60)}m ${Math.round(t.remainingSeconds % 60)}s`;
+    }
+    if (s.status === "Ready" && !state.ready) { state.ready = true; $("generate").disabled = false; await Promise.all([loadModel(), loadDevices()]); }
+    if (s.status !== "Ready") setTimeout(refreshStatus, 1000);
+  } catch { setTimeout(refreshStatus, 2000); }
+}
+
+async function loadModel() {
+  const m = await (await fetch("/api/model")).json();
+  $("model-name").textContent = m.name;
+  const rows = [
+    ["Parameters", fmt(m.parameters)], ["Transformer blocks", m.layers], ["Attention heads", m.heads], ["Model width", m.dim],
+    ["Context length", `${m.context} chars`], ["Vocabulary", `${m.vocabularySize} chars`], ["Trained epochs", m.trainedEpochs],
+    ["Validation loss", fmt(m.validationLoss, 4)], ["Validation accuracy", m.validationAccuracy == null ? "–" : fmt(m.validationAccuracy * 100, 2) + "%"],
+    ["Training corpus", m.corpus ?? "–"], ["Trained", m.trainedAt ? new Date(m.trainedAt).toLocaleString() : "–"], ["Weights file", bytes(m.weightsBytes)],
+  ];
+  $("model-table").innerHTML = "<tbody>" + rows.map(([k, v]) => `<tr><td>${k}</td><td>${esc(String(v))}</td></tr>`).join("") + "</tbody>";
+  $("layers").innerHTML = m.summary.map(l => `<div><b style="padding-left:${l.depth * 14}px">${esc(l.name)}</b><span>${l.parameters ? fmt(l.parameters) : ""}</span></div>`).join("");
+  $("topk").max = m.vocabularySize;
+  state.device = m.activeDevice.startsWith("cuda") ? "cuda" : "cpu";
+}
+
+async function loadDevices() {
+  const devices = await (await fetch("/api/devices")).json();
+  const cpu = devices.find(d => d.type === "Cpu"), gpu = devices.find(d => d.type === "Cuda");
+  const [cpuBtn, gpuBtn] = $("devices").querySelectorAll("button");
+  cpuBtn.innerHTML = `CPU<small>${esc(cpu.name)}</small>`;
+  gpuBtn.innerHTML = `GPU (CUDA)<small>${esc(gpu?.name ?? "not available")}</small>`;
+  gpuBtn.disabled = !gpu?.available;
+  if (gpu?.available) gpuBtn.dataset.device = gpu.id;
+  const active = devices.find(d => d.active);
+  if (active) state.device = active.id;
+  paintDevices(devices);
+}
+
+function paintDevices(devices) {
+  $("devices").querySelectorAll("button").forEach(b => {
+    const on = b.dataset.device === state.device || (state.device.startsWith("cuda") && b.dataset.device.startsWith("cuda"));
+    b.classList.toggle("active", on); b.setAttribute("aria-checked", on);
+  });
+  if (devices) $("device-memory").textContent = devices.filter(d => d.available)
+    .map(d => `${d.id}: ${bytes(d.memory?.inUse)} in use, ${bytes(d.memory?.cached)} cached`).join(" · ");
+}
+
+// ---------------------------------------------------------------- output rendering
+function resetOutput(prompt, count) {
+  state.samples = Array.from({ length: count }, () => []); state.active = 0; state.selected = -1; state.prompt = prompt;
+  renderTabs(); renderActive(true);
+  $("inspector").innerHTML = '<div class="inspector-empty">Click a generated character to see the model\'s top 5 candidates, with probabilities, entropy and latency.</div>';
+  $("insp-badge").textContent = "–";
+  drawCharts();
+}
+
+function renderTabs() {
+  const n = state.samples.length;
+  $("tabs").innerHTML = n < 2 ? "" : state.samples.map((_, i) =>
+    `<button class="tab ${i === state.active ? "active" : ""}" role="tab" aria-selected="${i === state.active}" data-i="${i}">Sample ${i + 1}</button>`).join("");
+}
+
+function tokenSpan(t) {
+  const span = document.createElement("span");
+  span.className = "tok"; span.textContent = t.token; span.dataset.i = t.index;
+  span.style.background = confidenceColor(t.probability);
+  return span;
+}
+
+function renderActive(withCaret) {
+  const out = $("output");
+  out.innerHTML = `<span class="prompt">${esc(state.prompt)}</span>`;
+  cur().forEach(t => out.appendChild(tokenSpan(t)));
+  if (withCaret) out.insertAdjacentHTML("beforeend", '<span class="caret"></span>');
+}
+
+function appendToken(t) {
+  state.samples[t.sample].push(t);
+  if (t.sample === state.active) {
+    const out = $("output"), caret = out.querySelector(".caret");
+    out.insertBefore(tokenSpan(t), caret);
+    if (out.scrollHeight - out.scrollTop - out.clientHeight < 80) out.scrollTop = out.scrollHeight;
+  }
+  const total = state.samples.reduce((a, s) => a + s.length, 0);
+  $("output-badge").textContent = `${total} chars`;
+  if (t.sample === state.active && cur().length % 8 === 0) drawCharts();
+}
+
+function finish(metrics) {
+  $("output").querySelector(".caret")?.remove();
+  drawCharts();
+  if (!metrics) return;
+  setValue("m-tps", fmt(metrics.tokensPerSecond, 0), "chars/s");
+  setValue("m-total", fmt(metrics.totalMs, 0), "ms");
+  setValue("m-first", fmt(metrics.firstTokenMs, 1), "ms");
+  setValue("m-per", fmt(metrics.msPerStep, 2), "ms");
+  setValue("m-count", fmt(metrics.totalTokens), "chars");
+  setValue("m-samples", fmt(metrics.samples));
+  setValue("m-conf", fmt(metrics.averageProbability * 100, 1) + "%");
+  setValue("m-ppl", fmt(metrics.perplexity, 3));
+  setValue("m-ent", fmt(metrics.averageEntropyBits, 2), "bits");
+  setValue("m-mem", bytes(metrics.memoryInUseBytes));
+  $("metrics-device").textContent = metrics.device;
+  $("metrics-mode").textContent = metrics.mode;
+  $("metrics-note").textContent = [metrics.graphNote, metrics.contextResets ? `context window re-read ${metrics.contextResets}×` : null,
+    `${fmt(metrics.promptTokens)} prompt chars`].filter(Boolean).join(" · ");
+  loadDevices();
+}
+
+function drawCharts() {
+  const tokens = cur(), n = tokens.length;
+  const line = (values, max, color, id) => {
+    const svg = $(id);
+    if (!n) { svg.innerHTML = ""; return; }
+    const w = 300, h = 90, step = n > 1 ? w / (n - 1) : w;
+    const pts = values.map((v, i) => `${(i * step).toFixed(1)},${(h - 4 - (v / max) * (h - 10)).toFixed(1)}`);
+    svg.innerHTML = `<defs><linearGradient id="${id}-g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity=".35"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs>
+      <polygon points="0,${h} ${pts.join(" ")} ${((n - 1) * step).toFixed(1)},${h}" fill="url(#${id}-g)"/>
+      <polyline points="${pts.join(" ")}" fill="none" stroke="${color}" stroke-width="1.6" vector-effect="non-scaling-stroke"/>`;
+  };
+  const conf = tokens.map(t => t.probability);
+  const lat = tokens.map(t => t.latencyMs);
+  line(conf, 1, "#7c5cff", "chart-conf");
+  line(lat, Math.max(...lat, 0.001) * 1.1, "#00c8aa", "chart-lat");
+  $("c-conf-last").textContent = n ? fmt(conf.reduce((a, b) => a + b, 0) / n * 100, 1) + "% avg" : "";
+  $("c-lat-last").textContent = n ? fmt(Math.max(...lat), 1) + " ms max" : "";
+}
+
+function inspect(i) {
+  const t = cur()[i]; if (!t) return;
+  document.querySelectorAll("#output .tok.selected").forEach(e => e.classList.remove("selected"));
+  document.querySelector(`#output .tok[data-i="${i}"]`)?.classList.add("selected");
+  $("insp-badge").textContent = `position ${i + 1}`;
+  $("inspector").innerHTML = `
+    <div style="display:flex;gap:18px;flex-wrap:wrap;color:var(--muted);font-size:12px;margin-bottom:8px">
+      <span>Chosen <b style="color:var(--text);font-family:var(--mono)">${esc(shown(t.token))}</b></span>
+      <span>Probability <b style="color:var(--text)">${fmt(t.probability * 100, 2)}%</b></span>
+      <span>Entropy <b style="color:var(--text)">${fmt(t.entropy, 2)} bits</b></span>
+      <span>Latency <b style="color:var(--text)">${fmt(t.latencyMs, 2)} ms</b></span>
+    </div>
+    ${t.alternatives.map(a => `<div class="alt ${a.token === t.token ? "chosen" : ""}"><code>${esc(shown(a.token))}</code>
+      <div class="bar"><div style="width:${(a.probability * 100).toFixed(1)}%"></div></div><span>${fmt(a.probability * 100, 1)}%</span></div>`).join("")}`;
+}
+
+// ---------------------------------------------------------------- generation
+function request() {
+  const seed = $("seed").value.trim();
+  return {
+    prompt: $("prompt").value, length: +$("length").value, temperature: +$("temperature").value,
+    topK: +$("topk").value, seed: seed === "" ? null : +seed, device: state.device,
+    samples: +$("samples").value, useCache: $("cache").checked, useGraph: $("graph").checked, chunkSize: 8,
+  };
+}
+
+async function generate() {
+  if (!state.ready || state.controller) return;
+  const body = request();
+  resetOutput(body.prompt, body.samples);
+  state.controller = new AbortController();
+  $("generate").disabled = true; $("stop").disabled = false; $("output-badge").textContent = "generating…";
+  try {
+    if ($("stream").checked) await streamGenerate(body, state.controller.signal);
+    else {
+      const res = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: state.controller.signal });
+      if (!res.ok) throw new Error((await res.json()).detail ?? res.statusText);
+      const result = await res.json();
+      result.samples.forEach(sample => sample.tokens.forEach(appendToken));
+      finish(result.metrics);
+    }
+  } catch (e) {
+    finish(null);
+    if (e.name !== "AbortError") toast(e.message);
+    else $("output-badge").textContent = "stopped";
+  } finally {
+    state.controller = null; $("generate").disabled = false; $("stop").disabled = true;
+  }
+}
+
+async function streamGenerate(body, signal) {
+  const res = await fetch("/api/generate/stream", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal });
+  if (!res.ok) throw new Error((await res.json()).detail ?? res.statusText);
+  const reader = res.body.getReader(), decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let cut;
+    while ((cut = buffer.indexOf("\n\n")) >= 0) {
+      const block = buffer.slice(0, cut); buffer = buffer.slice(cut + 2);
+      let event = "message", data = "";
+      for (const line of block.split("\n")) {
+        if (line.startsWith("event:")) event = line.slice(6).trim();
+        else if (line.startsWith("data:")) data += line.slice(5).trim();
+      }
+      if (!data) continue;
+      const payload = JSON.parse(data);
+      if (event === "token") appendToken(payload);
+      else if (event === "metrics") finish(payload);
+      else if (event === "error") throw new Error(payload.error);
+    }
+  }
+}
+
+// ---------------------------------------------------------------- wiring
+$("chips").innerHTML = prompts.map(p => `<button class="chip" type="button">${esc(p.trim())}…</button>`).join("");
+$("chips").querySelectorAll(".chip").forEach((c, i) => c.onclick = () => { $("prompt").value = prompts[i]; $("prompt").focus(); });
+const bind = (id, out, f) => { const upd = () => $(out).textContent = f($(id).value); $(id).oninput = upd; upd(); };
+bind("length", "length-out", v => v);
+bind("temperature", "temp-out", v => Number(v).toFixed(2));
+bind("topk", "topk-out", v => v === "0" ? "all" : v);
+bind("samples", "samples-out", v => v);
+$("tabs").onclick = e => {
+  const b = e.target.closest(".tab"); if (!b) return;
+  state.active = +b.dataset.i; renderTabs(); renderActive(!!state.controller); drawCharts();
+};
+$("dice").onclick = () => $("seed").value = Math.floor(Math.random() * 1e6);
+$("generate").onclick = generate;
+$("stop").onclick = () => state.controller?.abort();
+$("clear-btn").onclick = () => { state.samples = [[]]; state.active = 0; renderTabs(); $("output").innerHTML = '<span class="placeholder">Cleared.</span>'; drawCharts(); $("output-badge").textContent = "idle"; };
+$("copy-btn").onclick = async () => { await navigator.clipboard.writeText(state.prompt + cur().map(t => t.token).join("")); $("copy-btn").textContent = "Copied"; setTimeout(() => $("copy-btn").textContent = "Copy", 1200); };
+$("heatmap-btn").onclick = e => { e.target.classList.toggle("on"); $("output").classList.toggle("plain"); };
+$("devices").onclick = e => {
+  const b = e.target.closest("button"); if (!b || b.disabled) return;
+  state.device = b.dataset.device; paintDevices();
+};
+document.addEventListener("keydown", e => { if ((e.ctrlKey || e.metaKey) && e.key === "Enter") generate(); });
+
+const tip = $("tooltip");
+$("output").addEventListener("mousemove", e => {
+  const el = e.target.closest(".tok"); if (!el) { tip.classList.remove("show"); return; }
+  const t = cur()[+el.dataset.i];
+  tip.innerHTML = `<div style="margin-bottom:6px;color:var(--muted)">${fmt(t.probability * 100, 1)}% · ${fmt(t.entropy, 2)} bits · ${fmt(t.latencyMs, 1)} ms</div>` +
+    t.alternatives.slice(0, 4).map(a => `<div class="t-row"><span>${esc(shown(a.token))}</span><span>${fmt(a.probability * 100, 1)}%</span></div>`).join("");
+  tip.style.left = Math.min(e.clientX + 14, innerWidth - 220) + "px"; tip.style.top = e.clientY + 16 + "px"; tip.classList.add("show");
+});
+$("output").addEventListener("mouseleave", () => tip.classList.remove("show"));
+$("output").addEventListener("click", e => { const el = e.target.closest(".tok"); if (el) inspect(+el.dataset.i); });
+
+refreshStatus();
+</script>
+</body>
+</html>

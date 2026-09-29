@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Idrak.Datasets.Cli</RootNamespace>
+    <AssemblyName>idrak-data</AssemblyName>
+    <IsAotCompatible>true</IsAotCompatible>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>idrak-data</ToolCommandName>
+    <PackageId>Idrak.Datasets.Cli</PackageId>
+    <Version>0.1.0</Version>
+    <!-- A new package version on every pack (0.1.yyMMdd.HHmm, UTC), so "dotnet tool update" always installs the latest. -->
+    <PackageVersion>0.1.$([System.DateTime]::UtcNow.ToString("yyMMdd")).$([System.DateTime]::UtcNow.ToString("HHmm").TrimStart("0"))</PackageVersion>
+    <Description>idrak-data: inspect, count, download and assemble training datasets from Hugging Face, GitHub, Kaggle, Zenodo, URLs and local files (JSON Lines, JSON, CSV, text, code, Parquet) into JSON Lines any tool can read.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Idrak.Datasets\Idrak.Datasets.csproj" />
+  </ItemGroup>
+
+</Project>

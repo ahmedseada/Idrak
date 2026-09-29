@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Idrak.AspNetCore</RootNamespace>
+    <AssemblyName>Idrak.AspNetCore</AssemblyName>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <PackageId>Idrak.AspNetCore</PackageId>
+    <Description>ASP.NET Core integration for Idrak: registers an InferenceEngine in dependency injection and maps prediction, generation, Ollama-compatible chat and status endpoints.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="..\Idrak\Idrak.csproj" />
+  </ItemGroup>
+
+</Project>

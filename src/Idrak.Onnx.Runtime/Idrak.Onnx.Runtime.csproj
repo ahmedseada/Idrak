@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Idrak.Onnx.Runtime</RootNamespace>
+    <AssemblyName>Idrak.Onnx.Runtime</AssemblyName>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <PackageId>Idrak.Onnx.Runtime</PackageId>
+    <Description>Runs ONNX models (exported by Idrak.Onnx or any other tool) with ONNX Runtime as Idrak modules, so they work with predictors, the inference engine and the ASP.NET Core endpoints.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.30.0" />
+    <ProjectReference Include="..\Idrak\Idrak.csproj" />
+    <ProjectReference Include="..\Idrak.Onnx\Idrak.Onnx.csproj" />
+  </ItemGroup>
+
+</Project>

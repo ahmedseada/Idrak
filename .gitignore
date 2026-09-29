@@ -1,0 +1,12 @@
+bin/
+obj/
+*.user
+.vs/
+.idea/
+
+# Trained models and sample outputs
+models/
+output/
+*.weights
+__pycache__/
+artifacts/

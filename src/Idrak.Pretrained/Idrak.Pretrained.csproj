@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Idrak.Pretrained</RootNamespace>
+    <AssemblyName>Idrak.Pretrained</AssemblyName>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IsAotCompatible>true</IsAotCompatible>
+    <PackageId>Idrak.Pretrained</PackageId>
+    <Description>Pretrained language models for Idrak (no dependencies): models by Hugging Face id (downloaded and cached) or folder, safetensors weights, Hugging Face configurations mapped to DecoderSpec through an extensible architecture registry, BPE tokenizers from tokenizer.json, and chat templates.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Idrak\Idrak.csproj" />
+    <ProjectReference Include="..\Idrak.Datasets\Idrak.Datasets.csproj" />
+  </ItemGroup>
+
+</Project>
