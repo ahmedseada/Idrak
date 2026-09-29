@@ -1,7 +1,7 @@
 using System.Text.Json.Nodes;
 using Idrak.Layers;
 
-namespace Idrak.Pretrained;
+namespace Idrak.LanguageModels;
 
 /// <summary>
 /// How to read one family of pretrained models: its configuration (a Hugging Face <c>config.json</c>) becomes a

@@ -6,7 +6,7 @@ using Idrak;
 using Idrak.Diagnostics;
 using Idrak.Generation;
 using Idrak.Layers;
-using Idrak.Pretrained;
+using Idrak.LanguageModels;
 
 // Pretrained models in the Hugging Face layout, run by Idrak's own engine (CPU or CUDA):
 //

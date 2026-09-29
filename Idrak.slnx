@@ -25,7 +25,7 @@
     <Project Path="src/Idrak.Datasets.Cli/Idrak.Datasets.Cli.csproj" />
     <Project Path="src/Idrak.Datasets/Idrak.Datasets.csproj" />
     <Project Path="src/Idrak.FineTuning.Cli/Idrak.FineTuning.Cli.csproj" />
-    <Project Path="src/Idrak.Pretrained/Idrak.Pretrained.csproj" />
+    <Project Path="src/Idrak.LanguageModels/Idrak.LanguageModels.csproj" />
     <Project Path="src/Idrak/Idrak.csproj" />
   </Folder>
   <Folder Name="/tests/">

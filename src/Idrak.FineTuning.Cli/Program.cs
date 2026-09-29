@@ -7,7 +7,7 @@ using Idrak.Datasets;
 using Idrak.Diagnostics;
 using Idrak.Generation;
 using Idrak.Layers;
-using Idrak.Pretrained;
+using Idrak.LanguageModels;
 
 const string Usage = """
     idrak-tune: fine-tune pretrained language models (LoRA / QLoRA) on any dataset, evaluate, chat and export.

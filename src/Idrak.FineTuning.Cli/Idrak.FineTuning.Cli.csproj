@@ -15,7 +15,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Idrak\Idrak.csproj" />
     <ProjectReference Include="..\Idrak.Datasets\Idrak.Datasets.csproj" />
-    <ProjectReference Include="..\Idrak.Pretrained\Idrak.Pretrained.csproj" />
+    <ProjectReference Include="..\Idrak.LanguageModels\Idrak.LanguageModels.csproj" />
   </ItemGroup>
 
 </Project>

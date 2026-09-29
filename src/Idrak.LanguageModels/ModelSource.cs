@@ -1,7 +1,7 @@
 using System.Text.Json.Nodes;
 using Idrak.Datasets;
 
-namespace Idrak.Pretrained;
+namespace Idrak.LanguageModels;
 
 /// <summary>
 /// Where a model comes from: a local folder, a GGUF file, an Ollama model ("ollama:qwen3:8b", read from Ollama's own

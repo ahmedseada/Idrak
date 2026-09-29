@@ -3,7 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
-namespace Idrak.Pretrained;
+namespace Idrak.LanguageModels;
 
 /// <summary>
 /// Models from GGUF files (llama.cpp's and Ollama's format). <see cref="Prepare"/> writes a small folder with what the

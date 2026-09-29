@@ -2,7 +2,7 @@ using System.Text.Json.Nodes;
 using Idrak.Generation;
 using Idrak.Layers;
 
-namespace Idrak.Pretrained;
+namespace Idrak.LanguageModels;
 
 /// <summary>Settings for <see cref="PretrainedModel.Load"/>.</summary>
 public sealed record PretrainedOptions

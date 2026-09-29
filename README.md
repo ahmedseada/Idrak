@@ -17,13 +17,13 @@ Set `IDRAK_DISABLE_CUDA=1` to force the CPU.
 ## Install
 
 ```bash
-dotnet add package Idrak                  # tensors, layers, training, CPU and CUDA backends
-dotnet add package Idrak.Pretrained       # Hugging Face and GGUF language models, fine-tuning
-dotnet add package Idrak.Datasets         # datasets from files, Hugging Face, GitHub, Kaggle, Zenodo, URLs
-dotnet add package Idrak.AspNetCore       # serve models from ASP.NET Core
-dotnet add package Idrak.Mcp              # Model Context Protocol tools
-dotnet add package Idrak.Onnx             # ONNX export
-dotnet add package Idrak.Onnx.Runtime     # run ONNX models with ONNX Runtime
+dotnet add package Idrak                      # tensors, layers, training, CPU and CUDA backends
+dotnet add package Idrak.LanguageModels       # Hugging Face and GGUF language models, fine-tuning
+dotnet add package Idrak.Datasets             # datasets from files, Hugging Face, GitHub, Kaggle, Zenodo, URLs
+dotnet add package Idrak.AspNetCore           # serve models from ASP.NET Core
+dotnet add package Idrak.Mcp                  # Model Context Protocol tools
+dotnet add package Idrak.Onnx                 # ONNX export
+dotnet add package Idrak.Onnx.Runtime         # run ONNX models with ONNX Runtime
 dotnet tool install -g Idrak.FineTuning.Cli   # idrak-tune: fine-tune language models
 dotnet tool install -g Idrak.Datasets.Cli     # idrak-data: inspect and build datasets
 ```
@@ -54,35 +54,36 @@ src/Idrak/
   Diagnostics/                      Telemetry hub, events, ConsoleLogger, MetricsRecorder,
                                     ChannelTelemetry, JsonLinesLogger
   Backends/Cpu, Backends/Cuda       device implementations (CPU SIMD kernels, PTX kernels)
-src/Idrak.AspNetCore/         optional package: AddIdrak(), MapPredictor, MapGenerate, MapOllamaApi, MapIdrakStatus
-src/Idrak.Mcp/                optional package: tools of Model Context Protocol servers, and serving tools over MCP
-src/Idrak.Onnx/               optional package, no dependencies: export networks to .onnx (opset 17), import .onnx into layers
-src/Idrak.Onnx.Runtime/       optional package: run .onnx models with ONNX Runtime as Idrak modules
-src/Idrak.Pretrained/         optional package, no dependencies: Hugging Face models (safetensors, config.json,
-                                    tokenizer.json, Jinja chat templates) as Idrak decoders
-src/Idrak.Datasets.Cli/       idrak-data: inspect, download and assemble training datasets
-src/Idrak.FineTuning.Cli/     idrak-tune: fine-tune any pretrained model (LoRA / QLoRA) on any dataset, evaluate, chat, export
+src/Idrak.AspNetCore/               optional package: AddIdrak(), MapPredictor, MapGenerate, MapOllamaApi, MapIdrakStatus
+src/Idrak.Mcp/                      optional package: tools of Model Context Protocol servers, and serving tools over MCP
+src/Idrak.Onnx/                     optional package, no dependencies: export networks to .onnx (opset 17), import .onnx into layers
+src/Idrak.Onnx.Runtime/             optional package: run .onnx models with ONNX Runtime as Idrak modules
+src/Idrak.LanguageModels/           optional package, no dependencies: Hugging Face and GGUF language models (safetensors,
+                                    config.json, tokenizer.json, Jinja chat templates) as Idrak decoders; fine-tuning
+                                    (LoRA / QLoRA), evaluation and answer scoring
+src/Idrak.Datasets.Cli/             idrak-data: inspect, download and assemble training datasets
+src/Idrak.FineTuning.Cli/           idrak-tune: fine-tune any pretrained model (LoRA / QLoRA) on any dataset, evaluate, chat, export
 samples/
-  Idrak.Samples.Xor             the classic XOR problem
-  Idrak.Samples.HousePrices     regression: predict house prices from a CSV file
-  Idrak.Samples.Classification  multi-class: 3 spirals, softmax + cross-entropy, BatchNorm
-  Idrak.Samples.Images          CNN: classify drawn shapes (Conv2d, MaxPool2d, BatchNorm)
-  Idrak.Samples.Sequences       sentiment with negation: bag-of-words vs LSTM, GRU, Transformer
-  Idrak.Samples.Ocr             OCR: CNN character recognizer + line segmentation, reads PGM images
-  Idrak.Samples.Transformer     small GPT: character-level causal transformer that generates text
-  Idrak.Samples.GptApi          ASP.NET Core Web API + browser UI serving the GPT (Scalar docs, streaming, Ollama-style /api/chat)
-  Idrak.Samples.HouseApi        house-price Web API in a few lines (Idrak.AspNetCore + the HousePrices package)
-  Idrak.Samples.ReRanker        search re-ranking: BM25 first stage + transformer cross-encoder, listwise training
-  Idrak.Samples.Summarizer      summarization: extractive baselines vs a word-level transformer (WordTokenizer + TextGenerator)
-  Idrak.Samples.Rag             retrieval-augmented generation: hybrid search, re-ranking, a chat model that cites passages
-  Idrak.Samples.OnnxImport      imports another framework's .onnx model, runs it on Idrak (CPU/CUDA), checks its outputs
-  Idrak.Samples.Quantization    int8 weights and Float16/BFloat16 files: accuracy, size and decoding speed
-  Idrak.Samples.Pretrained      loads a Hugging Face model folder: info, chat, and a check against transformers
+  Idrak.Samples.Xor                 the classic XOR problem
+  Idrak.Samples.HousePrices         regression: predict house prices from a CSV file
+  Idrak.Samples.Classification      multi-class: 3 spirals, softmax + cross-entropy, BatchNorm
+  Idrak.Samples.Images              CNN: classify drawn shapes (Conv2d, MaxPool2d, BatchNorm)
+  Idrak.Samples.Sequences           sentiment with negation: bag-of-words vs LSTM, GRU, Transformer
+  Idrak.Samples.Ocr                 OCR: CNN character recognizer + line segmentation, reads PGM images
+  Idrak.Samples.Transformer         small GPT: character-level causal transformer that generates text
+  Idrak.Samples.GptApi              ASP.NET Core Web API + browser UI serving the GPT (Scalar docs, streaming, Ollama-style /api/chat)
+  Idrak.Samples.HouseApi            house-price Web API in a few lines (Idrak.AspNetCore + the HousePrices package)
+  Idrak.Samples.ReRanker            search re-ranking: BM25 first stage + transformer cross-encoder, listwise training
+  Idrak.Samples.Summarizer          summarization: extractive baselines vs a word-level transformer (WordTokenizer + TextGenerator)
+  Idrak.Samples.Rag                 retrieval-augmented generation: hybrid search, re-ranking, a chat model that cites passages
+  Idrak.Samples.OnnxImport          imports another framework's .onnx model, runs it on Idrak (CPU/CUDA), checks its outputs
+  Idrak.Samples.Quantization        int8 weights and Float16/BFloat16 files: accuracy, size and decoding speed
+  Idrak.Samples.Pretrained          loads a Hugging Face model folder: info, chat, and a check against transformers
 tools/pytorch/xor_to_onnx.py        trains XOR in PyTorch and exports it to ONNX with PyTorch's outputs, for OnnxImport
 tools/pytorch/export_models.py      exports a PyTorch CNN or ResNet (skip connections) to ONNX with PyTorch's outputs
-  Shared/SampleOptions.cs             command-line options shared by the samples (train / predict modes)
-  Shared/Gpt/                         GPT model, generation with metrics, training (console + Web API)
-tests/Idrak.Tests             self-contained test runner (runs on every available device)
+  Shared/SampleOptions.cs           command-line options shared by the samples (train / predict modes)
+  Shared/Gpt/                       GPT model, generation with metrics, training (console + Web API)
+tests/Idrak.Tests                   self-contained test runner (runs on every available device)
 ```
 
 ## Samples
@@ -711,7 +712,7 @@ ONNX Runtime on a GPU needs its `.Gpu` (CUDA) or `.DirectML` package instead. `O
 the inference engine and the ASP.NET Core endpoints. The tests run every exported layer in ONNX Runtime and
 import it back, and both must match Idrak within 1e-4.
 
-### Pretrained models: the optional `Idrak.Pretrained` package
+### Pretrained models: the optional `Idrak.LanguageModels` package
 
 ```csharp
 using var model = PretrainedModel.Load("Qwen3-0.6B", new PretrainedOptions { Device = Device.Cuda(), Int8 = true, MaxPositions = 8192 });
