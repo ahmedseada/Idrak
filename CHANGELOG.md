@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Training callbacks: `Trainer.Callbacks` (and `TrainingRun.Callbacks`) take `ITrainerCallback`s, whose optional
+  `OnTrainBegin`, `OnBatchEnd`, `OnEpochEnd` and `OnTrainEnd` run inside `Fit` with a `TrainerContext` (model, optimizer,
+  epoch, step, history, cancellation token); `context.Stop()` ends training after the current batch or epoch and returns
+  the history as usual. Batch losses are read from the device only when a callback sets `NeedsBatchLoss`. Built in:
+  `EarlyStopping` (the same history and weights as `EarlyStoppingPatience`, plus a choice of monitored value),
+  `Checkpoint` (`last.ikw` and `best.ikw`, loaded with `Module.Load`) and `CsvLog`. A cancelled `Fit` now stops after the
+  current batch instead of the current epoch.
+
 ## 0.1.4 (2026-09-30)
 
 - Loading and exporting weights makes fewer full copies (the same values, bit for bit). Measured on the CPU (4 cores)

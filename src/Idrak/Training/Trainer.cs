@@ -112,6 +112,12 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
     /// <summary>Called on the training thread after every epoch, with the same summary telemetry publishes.</summary>
     public Action<EpochCompleted>? OnEpoch { get; init; }
 
+    /// <summary>
+    /// Code run at fixed points of <see cref="Fit"/>, in this order (see <see cref="ITrainerCallback"/>): e.g.
+    /// <see cref="EarlyStopping"/>, <see cref="Checkpoint"/> and <see cref="CsvLog"/>, or your own.
+    /// </summary>
+    public List<ITrainerCallback> Callbacks { get; } = [];
+
     /// <summary>The model being trained.</summary>
     public Module Model { get; } = model;
 
@@ -144,7 +150,12 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
 
     private Device Device => Model.Parameters().FirstOrDefault()?.Device ?? Device.Default;
 
-    /// <summary>Trains for up to <paramref name="epochs"/> passes over <paramref name="train"/>.</summary>
+    /// <summary>
+    /// Trains for up to <paramref name="epochs"/> passes over <paramref name="train"/>. Training ends early when early
+    /// stopping triggers or a callback calls <see cref="TrainerContext.Stop"/> (the history is returned as usual), or when
+    /// <paramref name="cancellationToken"/> is cancelled: the loop ends after the current batch, callbacks see
+    /// <see cref="ITrainerCallback.OnTrainEnd"/>, and <see cref="OperationCanceledException"/> is thrown.
+    /// </summary>
     public TrainingHistory Fit(DataLoader train, int epochs, DataLoader? validation = null, CancellationToken cancellationToken = default)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(epochs);
@@ -155,12 +166,21 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
         int epochsWithoutImprovement = 0;
         long step = 0;
         bool cancelled = false;
+        var callbacks = Callbacks.ToArray();
+        var context = new TrainerContext(this, epochs, history, cancellationToken);
+        bool batchCallbacks = callbacks.Length > 0;
+        bool callbacksNeedLoss = callbacks.Any(c => c.NeedsBatchLoss);
 
         if (Telemetry.IsEnabled(TelemetryLevel.Training))
         {
             Telemetry.TrainingStarted(new TrainingStarted(
                 Model.Summary(), Optimizer.GetType().Name, device, epochs, train.SampleCount, validation?.SampleCount,
                 train.BatchSize, train.BatchCount, Model.ParameterCount, Optimizer.LearningRate, ComputeResources.MaxCpuThreads));
+        }
+
+        foreach (var callback in callbacks)
+        {
+            callback.OnTrainBegin(context);
         }
 
         // Running sums live on the device: [loss, metric 1, metric 2, ...], each weighted by batch size.
@@ -175,6 +195,7 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
                 break;
             }
 
+            context.Epoch = epoch;
             var epochTime = Stopwatch.StartNew();
             Model.Train();
             sums.Backend.Fill(sums.Storage, sums.Size, 0f);
@@ -199,15 +220,43 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
                 Accumulate(sums, batchLoss, predictions, batch.Targets, batch.Size);
                 samples += batch.Size;
                 step++;
+                context.Step = step;
 
-                if (perBatch)
+                if (perBatch || batchCallbacks)
                 {
-                    double lossValue = batchLoss.Item(); // synchronizes, so compute time below is real time
-                    Telemetry.BatchCompleted(new BatchCompleted(epoch, batch.Index + 1, train.BatchCount, step, batch.Size,
-                        lossValue, Optimizer.LearningRate, gradientNorm, dataTime, Stopwatch.GetElapsedTime(computeStart)));
+                    // Reading the loss synchronizes (so compute time is real time); skipped when nobody needs it.
+                    double lossValue = perBatch || callbacksNeedLoss ? batchLoss.Item() : double.NaN;
+                    var completed = new BatchCompleted(epoch, batch.Index + 1, train.BatchCount, step, batch.Size,
+                        lossValue, Optimizer.LearningRate, gradientNorm, dataTime, Stopwatch.GetElapsedTime(computeStart));
+                    if (perBatch)
+                    {
+                        Telemetry.BatchCompleted(completed);
+                    }
+
+                    foreach (var callback in callbacks)
+                    {
+                        callback.OnBatchEnd(context, completed);
+                    }
+                }
+
+                if (context.StopRequested)
+                {
+                    break;
+                }
+
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    cancelled = true;
+                    break;
                 }
 
                 dataStart = Stopwatch.GetTimestamp();
+            }
+
+            if (cancelled)
+            {
+                epoch--;   // the unfinished epoch is not summarized
+                break;
             }
 
             var (trainLoss, trainMetrics) = Read(sums, samples);
@@ -241,11 +290,20 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
 
             OnEpoch?.Invoke(summary);
             _epochCallback?.Invoke(summary);
+            foreach (var callback in callbacks)
+            {
+                callback.OnEpochEnd(context, summary);
+            }
 
             Scheduler?.Step();
             if (EarlyStoppingPatience is { } patience && epochsWithoutImprovement >= patience)
             {
                 history.StoppedEarly = true;
+                break;
+            }
+
+            if (context.StopRequested)
+            {
                 break;
             }
         }
@@ -256,6 +314,11 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
             {
                 parameter.Load(values);
             }
+        }
+
+        foreach (var callback in callbacks)
+        {
+            callback.OnTrainEnd(context, history);
         }
 
         if (Telemetry.IsEnabled(TelemetryLevel.Training))

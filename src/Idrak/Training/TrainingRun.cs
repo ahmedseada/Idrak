@@ -71,6 +71,12 @@ public sealed record TrainingRun
     public Action<EpochCompleted>? OnEpoch { get; init; }
 
     /// <summary>
+    /// <see cref="Trainer.Callbacks"/>, in order. The same callback objects are used by every trainer this run creates;
+    /// the built-in ones reset their state in <see cref="ITrainerCallback.OnTrainBegin"/>.
+    /// </summary>
+    public IReadOnlyList<ITrainerCallback> Callbacks { get; init; } = [];
+
+    /// <summary>
     /// Creates the <see cref="Trainer"/> these settings describe (for <see cref="Trainer.Evaluate"/>,
     /// <see cref="Trainer.Predict"/> or repeated fitting). Dispose it to release the optimizer.
     /// </summary>
@@ -85,6 +91,7 @@ public sealed record TrainingRun
             OnEpoch = OnEpoch,
         };
         trainer.Metrics.AddRange(Metrics);
+        trainer.Callbacks.AddRange(Callbacks);
         return trainer;
     }
 
