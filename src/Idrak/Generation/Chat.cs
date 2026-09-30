@@ -339,26 +339,30 @@ public sealed class ChatOutputParser(ChatTemplate template, bool separateThinkin
     }
 
     /// <summary>
-    /// Calls written as the whole answer instead of in the template's format: small models often reply with only the
-    /// call's JSON ({"name", "arguments"}, or a list of them), bare or in a ``` block. They count as calls only when the
-    /// request has tools and every name is one of them; otherwise null (the answer stays text).
+    /// Calls written in the answer instead of in the template's format: small models often reply with the call's JSON
+    /// ({"name", "arguments"}, or a list of them) as the whole answer, bare or in a ``` block, or end the answer with such
+    /// a block after a sentence ("I'll run it: ```json …```"). They count as calls only when the request has tools and
+    /// every name is one of them; the text before the block is kept. Otherwise null (the answer stays text).
     /// </summary>
-    public IReadOnlyList<ToolCall>? CallsInAnswer(string answer)
+    public (IReadOnlyList<ToolCall> Calls, string Text)? CallsInAnswer(string answer)
     {
         if (toolNames is not { Count: > 0 })
         {
             return null;
         }
 
-        string text = answer.Trim();
-        if (text.StartsWith("```", StringComparison.Ordinal))
+        string text = answer.Trim(), before = "";
+        if (text.Length >= 8 && text.EndsWith("```", StringComparison.Ordinal))
         {
-            int line = text.IndexOf('\n');
-            if (line < 0 || text.Length < line + 4 || !text.EndsWith("```", StringComparison.Ordinal))
+            // The last fenced block, which must end the answer: ```json\n…\n```
+            int open = text.LastIndexOf("```", text.Length - 4, StringComparison.Ordinal);
+            int line = open < 0 ? -1 : text.IndexOf('\n', open);
+            if (line < 0 || line > text.Length - 4)
             {
                 return null;
             }
 
+            before = text[..open].Trim();
             text = text[(line + 1)..^3].Trim();
         }
 
@@ -368,7 +372,7 @@ public sealed class ChatOutputParser(ChatTemplate template, bool separateThinkin
         }
 
         var calls = TryParseCalls(text);
-        return calls is not null && calls.All(c => toolNames.Contains(c.Name)) ? calls : null;
+        return calls is not null && calls.All(c => toolNames.Contains(c.Name)) ? (calls, before) : null;
     }
 
     // One call ({"name", arguments}) or a list of them; null when the text is not calls (then it stays answer text).
