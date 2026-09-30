@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `Losses.CrossEntropy(logits, targets)` and `Losses.SparseCrossEntropy(logits, classIndices)`: two-argument overloads
+  (no label smoothing), so `Loss = Losses.CrossEntropy` compiles as the README shows; the optional `labelSmoothing`
+  parameter kept the method group from converting to `Func<Tensor, Tensor, Tensor>`. The smoothing overloads now take
+  it as a required third argument (calls such as `CrossEntropy(a, b, labelSmoothing: 0.1f)` are unchanged).
 - Chat: a tool call written as JSON in the reply (`{"name", "arguments"}`: the whole reply, bare or in a ``` block, or a
   ``` block that ends the reply after a sentence) counts as that call when the request offers the tool; the sentence
   stays the reply's text. Small models such as Qwen2.5-Coder-1.5B write calls this way instead of in their template's

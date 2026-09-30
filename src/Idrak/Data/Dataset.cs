@@ -59,7 +59,7 @@ public sealed class Dataset
 
     /// <summary>
     /// Creates a classification dataset: <paramref name="labels"/> are class indices in [0, classes) and become
-    /// one-hot target rows, ready for <see cref="Losses.CrossEntropy"/> and <see cref="Training.Metric.Accuracy"/>.
+    /// one-hot target rows, ready for <see cref="Losses.CrossEntropy(Tensor, Tensor)"/> and <see cref="Training.Metric.Accuracy"/>.
     /// </summary>
     public static Dataset FromClassLabels(float[,] features, ReadOnlySpan<int> labels, int classes, IReadOnlyList<string>? classNames = null)
     {
