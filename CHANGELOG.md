@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- Retrieval: each stage is an interface. `IEmbedder` (`TextEncoder` implements it), `IVectorStore` (new
+  `InMemoryVectorStore`: replace and delete by id, metadata filters, exact SIMD search), `IRetriever` (`RetrievalIndex`
+  implements it) and `IReranker` (`CrossEncoder` implements it). `RetrievalIndexBuilder.Embeddings` takes any embedder,
+  `VectorStore(store)` keeps the vectors in a vector database, `BuildAsync` and `RetrievalIndex.SearchAsync` await
+  hosted services, and `Load(path, embedder, store)` re-attaches a saved index to its store. `Rag.For(...).Retrieve` and
+  `Rerank`, and `RetrievalTools.Search`, take any retriever and re-ranker; `RagPipeline.RetrieveAsync` is new and
+  `RagPipeline.Index` is null for a retriever that is not a `RetrievalIndex`. Existing code compiles unchanged, and an
+  index built with a `TextEncoder` and no store is searched and saved as before.
+
 ## 0.1.4 (2026-09-30)
 
 - Loading and exporting weights makes fewer full copies (the same values, bit for bit). Measured on the CPU (4 cores)

@@ -19,6 +19,7 @@ internal static partial class Tests
         ("retrieval: text encoder pools real tokens and normalizes; contrastive training retrieves the pairs", TextEncoderPoolingAndTraining),
         ("retrieval: index with keywords, vectors, reciprocal rank fusion; save/load; builder rules", HybridIndex),
         ("retrieval: cross-encoder re-ranking, RAG prompt and citations, search tool", RerankAndRag),
+        ("retrieval: in-memory vector store (replace, delete, filter, order); an index over any embedder and store; RAG with any retriever and re-ranker", d => { if (d == Device.Cpu) PluggableRetrieval(); }),
         ("mcp: serve a tool registry over MCP and call it from a client (prefix, rules, errors)", d => { if (d == Device.Cpu) McpRoundTrip(); }),
     ];
 
@@ -199,6 +200,101 @@ internal static partial class Tests
         Check(result.Succeeded && result.Content.StartsWith("[1] (corin) The harbour of Corin is busy."), result.Content);
         var none = tools.InvokeAsync(new ToolCall("search_towns", new JsonObject { ["query"] = "zebra" })).GetAwaiter().GetResult();
         Check(none.Content == "No results.", none.Content);
+    }
+
+    // Counts of the letters a-z: a deterministic embedder with nothing to train, enough to find the passage sharing words.
+    private sealed class LetterEmbedder : IEmbedder
+    {
+        public int Calls;
+
+        public ValueTask<float[][]> EmbedAsync(IReadOnlyList<string> texts, CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref Calls);
+            return ValueTask.FromResult(texts.Select(t =>
+            {
+                var v = new float[26];
+                foreach (char c in t.ToLowerInvariant())
+                {
+                    if (c is >= 'a' and <= 'z')
+                    {
+                        v[c - 'a']++;
+                    }
+                }
+
+                return v;
+            }).ToArray());
+        }
+    }
+
+    private sealed class FixedRetriever(params string[] texts) : IRetriever
+    {
+        public ValueTask<IReadOnlyList<RetrievedChunk>> RetrieveAsync(string query, int top, CancellationToken cancellationToken = default) =>
+            ValueTask.FromResult<IReadOnlyList<RetrievedChunk>>([.. texts.Take(top).Select((t, i) => new RetrievedChunk(new Chunk(i, $"web{i}", 0, t), 1.0 / (i + 1), null, null))]);
+    }
+
+    // Keeps the candidates that contain the query's last word, shortest first.
+    private sealed class ContainsReranker : IReranker
+    {
+        public ValueTask<IReadOnlyList<RetrievedChunk>> RerankAsync(string query, IReadOnlyList<RetrievedChunk> candidates, int keep, CancellationToken cancellationToken = default)
+        {
+            string word = query.Split(' ')[^1];
+            return ValueTask.FromResult<IReadOnlyList<RetrievedChunk>>([.. candidates.Where(c => c.Chunk.Text.Contains(word, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(c => c.Chunk.Text.Length).Take(keep).Select(c => c with { Score = 100.0 / c.Chunk.Text.Length })]);
+        }
+    }
+
+    private static void PluggableRetrieval()
+    {
+        // The in-memory store: replacing an id, deleting, metadata filters, best first with ties to the earlier record.
+        var store = new InMemoryVectorStore(2, VectorMetric.Dot);
+        store.UpsertAsync([new("a", [1, 0]), new("b", [0, 1], new Dictionary<string, string> { ["lang"] = "en" }), new("c", [1, 0], new Dictionary<string, string> { ["lang"] = "fr" })]).AsTask().Wait();
+        var hits = store.SearchAsync([1, 0], 3).AsTask().Result;
+        Check(hits.Select(h => h.Id).SequenceEqual(["a", "c", "b"]), string.Join(",", hits.Select(h => h.Id)));
+        Check(store.SearchAsync([1, 0], 3, new Dictionary<string, string> { ["lang"] = "fr" }).AsTask().Result.Single().Id == "c", "filter");
+        store.UpsertAsync([new("a", [0, 2])]).AsTask().Wait();
+        Check(store.SearchAsync([0, 1], 1).AsTask().Result[0] is { Id: "a", Score: 2 }, "an id stored again replaces its record");
+        store.DeleteAsync(["a", "missing"]).AsTask().Wait();
+        Check(store.Count == 2 && store.SearchAsync([0, 1], 5).AsTask().Result.All(h => h.Id != "a"), "delete");
+        store.UpsertAsync([new("d", [3, 0])]).AsTask().Wait();
+        Check(store.Count == 3 && store.SearchAsync([1, 0], 1).AsTask().Result[0].Id == "d", "a freed slot is reused");
+        Throws<ArgumentException>(() => store.UpsertAsync([new("x", [1, 2, 3])]).AsTask().Wait(), "wrong dimensions");
+
+        // An index over another embedder: its own in-memory store by default, or a store given to it (vectors kept there
+        // under the chunk ids with document and position), keyword search fused with it, save/load against the store.
+        var embedder = new LetterEmbedder();
+        var byDefault = RetrievalIndex.Create().Documents(Towns, ChunkUnit.Sentences, 1, 0).Embeddings(embedder, batchSize: 4).Build();
+        Check(byDefault.Store is InMemoryVectorStore && byDefault.Vectors is null && byDefault.Embedder == embedder, "default store");
+        Check(byDefault.Search("the harbour of corin is busy", 1)[0].Chunk.Text == "The harbour of Corin is busy.", "vector search through the embedder");
+        var shared = new InMemoryVectorStore(26);
+        var hybrid = RetrievalIndex.Create().Documents(Towns, ChunkUnit.Sentences, 1, 0).Bm25().Embeddings(embedder).VectorStore(shared).Fusion(60, 5)
+            .BuildAsync().AsTask().Result;
+        Check(shared.Count == hybrid.Chunks.Count, $"{shared.Count} vectors for {hybrid.Chunks.Count} chunks");
+        var found = hybrid.SearchAsync("people in corin", 2).AsTask().Result;
+        var corin = found.SingleOrDefault(r => r.Chunk.Text == "Corin is home to 12000 people.");
+        Check(found.Count == 2 && corin is { KeywordRank: not null, VectorRank: not null } && found.All(r => r.KeywordRank is not null && r.VectorRank is not null),
+            string.Join(" | ", found.Select(r => $"{r.Chunk.Text} k{r.KeywordRank} v{r.VectorRank}")));
+        using (var saved = new MemoryStream())
+        {
+            hybrid.Save(saved);
+            saved.Position = 0;
+            var loaded = RetrievalIndex.Load(saved, embedder, shared);
+            Check(loaded.Search("people in corin", 2).Select(r => r.Chunk.Text).SequenceEqual(found.Select(r => r.Chunk.Text)), "loaded against the same store");
+            saved.Position = 0;
+            Throws<InvalidDataException>(() => RetrievalIndex.Load(saved, (TextEncoder?)null), "a store index needs its store");
+        }
+
+        Throws<InvalidOperationException>(() => RetrievalIndex.Create().Documents(Towns, ChunkUnit.Sentences, 1, 0).Bm25().VectorStore(shared).Build(), "a store needs Embeddings");
+
+        // RAG over any retriever and re-ranker; the search tool over any retriever.
+        var fake = FakeChatModel.Script(FakeChatModel.Answer("It is busy [1]."));
+        var rag = Rag.For(fake).Retrieve(new FixedRetriever("The market is quiet.", "The harbour is busy today.", "Harbour tours leave at nine."), 3)
+            .Rerank(new ContainsReranker(), 1).Build();
+        var answer = rag.AskAsync("how is the harbour").GetAwaiter().GetResult();
+        Check(rag.Index is null && answer.Passages.Single().Chunk.Text == "The harbour is busy today." && answer.Cited.Single().Number == 1,
+            string.Join(" | ", answer.Passages.Select(p => p.Chunk.Text)));
+        var tools = ToolRegistry.Create().Add(RetrievalTools.Search(new FixedRetriever("one", "two"), 1, "search_web", "Searches the web.")).Build();
+        var result = tools.InvokeAsync(new ToolCall("search_web", new JsonObject { ["query"] = "x" })).GetAwaiter().GetResult();
+        Check(result.Content == "[1] (web0) one", result.Content);
     }
 
     private static void McpRoundTrip() => McpRoundTripAsync().GetAwaiter().GetResult();

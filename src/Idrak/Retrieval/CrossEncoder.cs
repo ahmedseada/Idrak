@@ -8,7 +8,7 @@ namespace Idrak.Retrieval;
 /// searching a whole collection. The <see cref="Model"/> maps a batch of encoded pairs [N, ..PairShape] to one
 /// relevance score per pair ([N] or [N, 1]).
 /// </summary>
-public sealed class CrossEncoder
+public sealed class CrossEncoder : IReranker
 {
     /// <summary>Creates the re-ranker.</summary>
     /// <param name="model">Encoded pairs [N, ..pairShape] → scores [N] or [N, 1].</param>
@@ -79,4 +79,9 @@ public sealed class CrossEncoder
         return [.. candidates.Select((c, i) => (c, i)).OrderByDescending(p => scores[p.i]).ThenBy(p => p.i).Take(keep)
             .Select(p => p.c with { Score = scores[p.i] })];
     }
+
+    /// <inheritdoc />
+    public ValueTask<IReadOnlyList<RetrievedChunk>> RerankAsync(string query, IReadOnlyList<RetrievedChunk> candidates, int keep,
+        CancellationToken cancellationToken = default) =>
+        ValueTask.FromResult(Rerank(query, candidates, keep));
 }
