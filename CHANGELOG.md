@@ -55,18 +55,11 @@
 - CUDA with `MixedPrecision` tensor cores: 4 to 8 rows through int8 weights of 32 M values or more (a vocabulary head)
   take the packed product too, whose time stays flat while the GEMV's grows with the rows (RTX 5070 Ti,
   1024 → 151,936: 4 rows 328 → 276 µs, 8 rows 521 → 268 µs). Smaller layers and 1–3 rows keep the GEMV.
-- `TextGenerator` keeps the decoding graph with the kept KV cache (`KeepCache`) and replays it on the next call instead of
-  recording, instantiating and disposing (a full device synchronization) a new one every turn, together with the
-  sampler whose buffers it uses. It is reused only when nothing it froze changed: sampler settings and seed, the
-  sampler's history size, at most as many tokens as its statistics buffer holds, the model's weight storages, the
-  thread's `MixedPrecision`, the cache's capacity, format and device; `ReleaseCache` frees it. A random seed
-  (`GenerationOptions.Seed` null) differs each call, so those calls still record their own graph. Not yet measured on a
-  GPU: `--bench-gemv` prints the time per chat turn with a new graph and with the kept one.
 - CUDA: uploads of up to 4 MB (`Tensor.From`, `Load`) copy the values into a 16 MB pinned staging ring and queue an
   asynchronous copy on the work stream (an event per copy guards its part of the ring) instead of a synchronous copy
   from pageable memory, which waited for all queued GPU work first (1 KB measured at 8–51 µs). Order with the kernels
-  around it is unchanged; larger uploads and uploads while recording a graph keep the synchronous copy. Not yet measured
-  on a GPU: `--bench-gemv` prints idle uploads through both paths and 1 KB uploads behind queued work.
+  around it is unchanged; larger uploads and uploads while recording a graph keep the synchronous copy. RTX 5070 Ti:
+  a 1 KB upload behind queued work holds the host 81.7 → 5.2 µs; idle, 1 MB 78 → 66 µs and 4 MB 192 → 151 µs.
 - `--bench-gemv` also times short prompts (1–96 rows) through int8 weights and host-to-device uploads, for the next
   CUDA changes.
 

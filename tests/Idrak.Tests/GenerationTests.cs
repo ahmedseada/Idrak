@@ -15,54 +15,7 @@ internal static partial class Tests
         ("generation: num_predict, stop sequences, cache/graph/recompute agree", GeneratorBehaviour),
         ("generation: chat end to end yields a final message and stats", ChatEndToEnd),
         ("generation: a kept KV cache reuses shared prompt prefixes without changing the output", PromptCacheReuse),
-        ("generation: the decoding graph kept with the cache is replayed on the next call, same tokens as fresh generations", DecodeGraphReuse),
     ];
-
-    private static void DecodeGraphReuse(Device device)
-    {
-        var (_, tokenizer) = TinyLanguageModel(device, context: 64);
-        var spec = new Idrak.Layers.DecoderSpec
-        {
-            Vocabulary = tokenizer.VocabularySize, Dim = 16, Layers = 2, Heads = 4, KvHeads = 2, HeadDim = 6, FfDim = 24, MaxPositions = 64,
-            QkNorm = true, Rope = new Idrak.Layers.RopeSettings(500f, null, false, null),
-        };
-        using var model = spec.Build(null, new Idrak.Layers.DecoderBuildOptions { Device = device, Seed = 7 });
-        var greedy = new GenerationOptions { Seed = 1, NumPredict = 10, TopK = 1, Temperature = 1f, RepeatPenalty = 1f, NumCtx = 64 };
-        var sampled = greedy with { TopK = 5, Temperature = 0.9f, RepeatPenalty = 1.1f, ChunkSize = 3 };
-        var reused = new TextGenerator(model, tokenizer, 64);
-        string Fresh(string prompt, GenerationOptions options) => new TextGenerator(model, tokenizer, 64) { KeepCache = false }.Generate(prompt, options).Text;
-
-        // Each step: prompt, options, whether the call replays the graph kept by the previous one.
-        (string Prompt, GenerationOptions Options, bool Reuses)[] turns =
-        [
-            ("the quick brown fox", greedy, false),                           // records the graph
-            ("the quick brown fox jumps", greedy, true),                      // same settings: replays it
-            ("the quick brown fox jumps over", greedy with { NumPredict = 6 }, true),   // fewer steps still fit its sampler
-            ("the lazy dog", greedy with { NumPredict = 12 }, false),         // more steps than its sampler holds: recorded again
-            ("the lazy dog sleeps", greedy with { NumPredict = 12 }, true),
-            ("the lazy dog sleeps", sampled, false),                          // other sampler settings
-            ("the lazy dog sleeps all day", sampled, true),
-            ("the lazy dog sleeps all day", sampled with { Seed = 2 }, false), // another seed
-            ("the lazy dog sleeps all day long", sampled with { Seed = 2, UseGraph = false }, false),
-            ("the lazy dog sleeps all day long", sampled with { Seed = 2 }, false), // the call without a graph kept none
-            ("the lazy dog sleeps all day long.", sampled with { Seed = 2 }, true),
-        ];
-        foreach (var (prompt, options, reuses) in turns)
-        {
-            int before = reused.DecodeGraphReuses;
-            string expected = Fresh(prompt, options);
-            string actual = reused.Generate(prompt, options).Text;
-            Check(actual == expected, $"'{prompt}' → '{actual}' replaying the kept graph, '{expected}' fresh");
-            Check(reused.DecodeGraphReuses - before == (reuses ? 1 : 0), $"'{prompt}': graph reused {reused.DecodeGraphReuses - before} times, expected {(reuses ? 1 : 0)}");
-        }
-
-        // Released with the cache; the next call records a new one.
-        reused.ReleaseCache();
-        int released = reused.DecodeGraphReuses;
-        Check(reused.Generate("the quick brown fox", greedy).Text == Fresh("the quick brown fox", greedy), "after ReleaseCache");
-        Check(reused.DecodeGraphReuses == released, "no graph kept after ReleaseCache");
-        reused.ReleaseCache();
-    }
 
     private static void WordTokenizerBehaviour(Device device)
     {

@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using Idrak.Backends;
 using Idrak.Layers;
 
 namespace Idrak.Generation;
@@ -79,84 +78,43 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
     private readonly Lock _keptLock = new();
     private DecodingContext? _kept;
     private List<int> _keptIds = [];
-    private DecodeStep? _keptStep;
 
-    /// <summary>
-    /// Generations that replayed the decoding graph kept from the previous one (with the kept cache) instead of
-    /// recording a new one (for tests and diagnostics).
-    /// </summary>
-    internal int DecodeGraphReuses;
-
-    /// <summary>Frees the KV cache kept between generations (see <see cref="KeepCache"/>), and the decoding graph kept with it.</summary>
+    /// <summary>Frees the KV cache kept between generations (see <see cref="KeepCache"/>).</summary>
     public void ReleaseCache()
     {
         lock (_keptLock)
         {
-            _keptStep?.Dispose();
-            _keptStep = null;
             _kept?.Dispose();
             _kept = null;
             _keptIds = [];
         }
     }
 
-    // Takes the kept cache when it fits this generation (same capacity and format), with the ids it holds and the
-    // decoding step recorded on it.
-    private (DecodingContext? Context, List<int> Ids, DecodeStep? Step) TakeCache(int capacity)
+    // Takes the kept cache when it fits this generation (same capacity and format), with the ids it holds.
+    private (DecodingContext? Context, List<int> Ids) TakeCache(int capacity)
     {
         lock (_keptLock)
         {
-            var (context, ids, step) = (_kept, _keptIds, _keptStep);
-            (_kept, _keptIds, _keptStep) = (null, [], null);
+            var (context, ids) = (_kept, _keptIds);
+            (_kept, _keptIds) = (null, []);
             if (context is not null && (context.Capacity != capacity || context.Format != CacheFormat || context.Device != Device))
             {
-                step?.Dispose();
                 context.Dispose();
-                return (null, [], null);
+                return (null, []);
             }
 
-            return (context, ids, step);
+            return (context, ids);
         }
     }
 
-    private void KeepCacheFor(DecodingContext context, List<int> ids, DecodeStep? step)
+    private void KeepCacheFor(DecodingContext context, List<int> ids)
     {
         lock (_keptLock)
         {
-            _keptStep?.Dispose();
             _kept?.Dispose();
-            (_kept, _keptIds, _keptStep) = (context, ids, step);
+            (_kept, _keptIds) = (context, ids);
         }
     }
-
-    // What a recorded decoding step froze into its kernels besides the kept cache: every sampler setting (kernel
-    // arguments), the sampler's buffers and the model's weight storages (addresses), and the product precision (which
-    // kernels run).
-    private readonly record struct SamplingKey(float Temperature, int TopK, float TopP, float MinP, float RepeatPenalty, int RepeatLastN,
-        float PresencePenalty, float FrequencyPenalty, uint Seed, int HistoryCapacity, MatMulPrecision Precision);
-
-    // A decoding step recorded as a graph on a kept DecodingContext, kept with it across generations together with the
-    // sampler whose buffers it reads and writes. Valid at any cache length (positions live on the device).
-    private sealed class DecodeStep(ComputeGraph graph, TokenSampler sampler, SamplingKey key, Storage[] weights) : IDisposable
-    {
-        public ComputeGraph Graph { get; } = graph;
-
-        public TokenSampler Sampler { get; } = sampler;
-
-        public bool Fits(SamplingKey wanted, int maxSteps, Storage[] current) =>
-            key == wanted && Sampler.MaxSteps >= maxSteps
-            && current.Length == weights.Length && current.AsSpan().SequenceEqual(weights, ReferenceEqualityComparer.Instance)
-            && Array.TrueForAll(current, s => s.Alive && !s.Evicted);
-
-        public void Dispose()
-        {
-            Graph.Dispose();                                    // waits for the device before its buffers go
-            Sampler.Dispose();
-        }
-    }
-
-    // The storages of every weight and buffer of the model (a recorded step reads them by address).
-    private Storage[] WeightStorages() => [.. Model.Parameters().Concat(Model.Buffers()).Select(t => t.Storage)];
 
     /// <summary>Generates the whole continuation of <paramref name="prompt"/>.</summary>
     public (string Text, string DoneReason, GenerationStats Stats) Generate(string prompt, GenerationOptions options, CancellationToken cancellationToken = default)
@@ -423,10 +381,19 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         var stops = options.Stop.Where(s => s.Length > 0).ToArray();
         int holdBack = stops.Length == 0 ? 0 : stops.Max(s => s.Length) - 1;
 
-        var sampling = new SamplingKey(options.Temperature, options.TopK, options.TopP, options.MinP, options.RepeatPenalty, options.RepeatLastN,
-            options.PresencePenalty, options.FrequencyPenalty, (uint)(options.Seed ?? Random.Shared.Next()), Math.Max(1, options.RepeatLastN),
-            MixedPrecision.Current);
-        TokenSampler sampler = null!;                                         // created (or taken with the kept graph) below
+        using var sampler = new TokenSampler(Device, 1, Tokenizer.VocabularySize, limit, Math.Max(1, options.RepeatLastN))
+        {
+            Temperature = options.Temperature,
+            TopK = options.TopK,
+            TopP = options.TopP,
+            MinP = options.MinP,
+            RepeatPenalty = options.RepeatPenalty,
+            RepeatLastN = options.RepeatLastN,
+            PresencePenalty = options.PresencePenalty,
+            FrequencyPenalty = options.FrequencyPenalty,
+            Seed = (uint)(options.Seed ?? Random.Shared.Next()),
+        };
+        sampler.SetHistory(history);
 
         var generated = new List<int>();
         var text = new System.Text.StringBuilder();
@@ -512,47 +479,13 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         Model.Eval();
         {
             // NoGrad is entered per compute call, never held across a yield (it is thread-local state of the caller).
-            var (kept, keptIds, keptStep) = options.UseCache && KeepCache ? TakeCache(context) : (null, [], null);
+            var (kept, keptIds) = options.UseCache && KeepCache ? TakeCache(context) : (null, []);
             var decoding = kept ?? new DecodingContext(Device, 1, context, CacheFormat);
             decoding.LastPositionOnly = true;                                   // the sampler reads the last position only
-            bool keep = false, keepStep = false;
+            bool keep = false;
             ComputeGraph? graph = null;
-            Storage[]? weights = null;                                          // what the graph was recorded against
             try
             {
-                // The decoding graph recorded on the kept cache in an earlier call is replayed again when nothing it froze
-                // changed (sampler settings and seed, weights, precision); its sampler comes with it, restarted.
-                if (keptStep is not null)
-                {
-                    weights = WeightStorages();
-                    if (options.UseGraph && keptStep.Fits(sampling, limit, weights))
-                    {
-                        (graph, sampler) = (keptStep.Graph, keptStep.Sampler);
-                        sampler.Reset();
-                        Interlocked.Increment(ref DecodeGraphReuses);
-                    }
-                    else
-                    {
-                        keptStep.Dispose();
-                        keptStep = null;
-                        weights = null;
-                    }
-                }
-
-                sampler ??= new TokenSampler(Device, 1, Tokenizer.VocabularySize, limit, sampling.HistoryCapacity)
-                {
-                    Temperature = sampling.Temperature,
-                    TopK = sampling.TopK,
-                    TopP = sampling.TopP,
-                    MinP = sampling.MinP,
-                    RepeatPenalty = sampling.RepeatPenalty,
-                    RepeatLastN = sampling.RepeatLastN,
-                    PresencePenalty = sampling.PresencePenalty,
-                    FrequencyPenalty = sampling.FrequencyPenalty,
-                    Seed = sampling.Seed,
-                };
-                sampler.SetHistory(history);
-
                 Tensor Window(int keep)
                 {
                     var values = new float[keep];
@@ -657,7 +590,6 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                     {
                         if (graph is null && options.UseGraph)
                         {
-                            weights = WeightStorages();
                             graph = decoding.CaptureStep(Step);
                         }
 
@@ -681,23 +613,15 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                 }
 
                 // The cache holds the keys and values of history[..Length] (the last sampled token was never fed).
-                // The decoding graph (and the sampler it reads and writes) stays with the cache for the next call.
                 if (options.UseCache && KeepCache && resets == 0 && decoding.Length <= history.Count)
                 {
-                    var step = graph is not null ? keptStep ?? new DecodeStep(graph, sampler, sampling, weights!) : null;
-                    KeepCacheFor(decoding, history.GetRange(0, decoding.Length), step);
+                    KeepCacheFor(decoding, history.GetRange(0, decoding.Length));
                     keep = true;
-                    keepStep = step is not null;
                 }
             }
             finally
             {
-                if (!keepStep)
-                {
-                    graph?.Dispose();
-                    sampler?.Dispose();
-                }
-
+                graph?.Dispose();
                 if (!keep)
                 {
                     decoding.Dispose();

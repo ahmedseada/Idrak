@@ -1030,47 +1030,6 @@ internal static partial class Tests
             Console.WriteLine($"{"100 x 1 KB, host time per upload",-32} {$"{busy / 1000:F1}ms",12} {$"{sync:F1}us",12} {$"{ring:F1}us",14}");
         }
 
-        // Chat turns on a kept KV cache (28 layers, 16 tokens a turn, the prompt growing each turn): replaying the
-        // decoding graph kept from the previous turn, against recording one each turn (another seed per turn keeps the
-        // cache but not the graph: capture, instantiation and the synchronizing disposal every turn).
-        Console.WriteLine();
-        Console.WriteLine($"{"chat turn, 28 layers, 16 tokens",-32} {"new graph",12} {"kept graph",12}");
-        {
-            var chars = new Idrak.Generation.CharTokenizer("abcdefghijklmnopqrstuvwxyz ");
-            var spec = new DecoderSpec
-            {
-                Vocabulary = chars.VocabularySize, Dim = 256, Layers = 28, Heads = 4, KvHeads = 2, HeadDim = 64, FfDim = 768, MaxPositions = 1024,
-                QkNorm = true, Rope = new RopeSettings(10000f),
-            };
-            using var chatModel = spec.Build(null, new DecoderBuildOptions { Device = device, Seed = 1 });
-            double Turns(bool keptGraph)
-            {
-                var generator = new Idrak.Generation.TextGenerator(chatModel, chars, 1024);
-                var options = new Idrak.Generation.GenerationOptions { Seed = 1, NumPredict = 16, TopK = 20, Temperature = 0.7f, RepeatPenalty = 1f, NumCtx = 1024 };
-                string prompt = "hello there";
-                generator.Generate(prompt, options);
-                int reuses = generator.DecodeGraphReuses;
-                var watch = System.Diagnostics.Stopwatch.StartNew();
-                for (int t = 0; t < 10; t++)
-                {
-                    prompt += " and then some more";
-                    generator.Generate(prompt, keptGraph ? options : options with { Seed = t + 2 });
-                }
-
-                double ms = watch.Elapsed.TotalMilliseconds / 10;
-                if ((generator.DecodeGraphReuses - reuses == 10) != keptGraph)
-                {
-                    Console.WriteLine($"    (unexpected: {generator.DecodeGraphReuses - reuses} graph reuses in 10 turns)");
-                }
-
-                generator.ReleaseCache();
-                return ms;
-            }
-
-            double fresh = Turns(false), kept = Turns(true);
-            Console.WriteLine($"{"per turn",-32} {$"{fresh:F2}ms",12} {$"{kept:F2}ms",12}");
-        }
-
         return 0;
     }
 
