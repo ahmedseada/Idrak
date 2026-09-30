@@ -623,6 +623,11 @@ internal sealed unsafe partial class CudaBackend : Backend
     {
         MakeCurrent();
         using var use = UseStream();
+        if (TryUploadAsync(source, destination))
+        {
+            return;                                               // queued on the stream (see CudaBackend.Staging.cs)
+        }
+
         fixed (float* p = source)
         {
             Check(cuMemcpyHtoD(P(destination), p, (nuint)source.Length * sizeof(float)), nameof(cuMemcpyHtoD));

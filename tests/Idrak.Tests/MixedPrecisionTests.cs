@@ -18,7 +18,81 @@ internal static partial class Tests
         ("mixed precision: product + bias in one pass matches the product and a bias addition (output and gradients)", MatMulBiasPass),
         ("optimizer: 8-bit AdamW (dynamic code map, nearest codes, tracks 32-bit AdamW, CPU parity)", EightBitAdam),
         ("decoder: GPT-2 style (learned positions, LayerNorm, GELU, dropout): checkpointed blocks replay the dropout masks", GptStyleDecoder),
+        ("uploads: many small uploads between queued kernels (staging ring wraps, host buffer reused, in-place loads) arrive intact and in order", UploadsWhileBusy),
     ];
+
+    // On CUDA, uploads up to CudaBackend.AsyncUploadBytes are queued on the stream from pinned staging memory instead of
+    // waiting for the GPU: every value must still arrive, in stream order with the kernels around it.
+    private static void UploadsWhileBusy(Device device)
+    {
+        var random = new Random(5);
+        float[] Values(int n) => [.. Enumerable.Range(0, n).Select(_ => random.NextSingle() - 0.5f)];
+        using var a = Tensor.From(Values(384 * 384), [384, 384], device);
+        using var b = Tensor.From(Values(384 * 384), [384, 384], device);
+        int[] sizes = [1, 3, 256, 1000, 65536, 262144, 1 << 20, (1 << 20) + 5];        // up to 4 MB take the ring; the last does not
+        var host = new float[sizes.Max()];
+        using var loaded = Tensor.Zeros([1000], device);                              // reloaded in place while kernels read it
+        using var total = Tensor.Zeros([1000], device);
+        var expectedTotal = new double[1000];
+        var kept = new List<(Tensor Uploaded, Tensor Doubled, float[] Expected)>();
+        long asyncBefore = device.Backend is CudaBackend cuda ? cuda.AsyncUploads : 0;
+        int small = 0;
+        try
+        {
+            for (int i = 0; i < 40; i++)
+            {
+                using (new TensorScope())
+                {
+                    _ = a.MatMul(b).MatMul(b);                                          // queued work (its blocks go back to the pool)
+                }
+
+                int n = sizes[i % sizes.Length];
+                for (int j = 0; j < n; j++)
+                {
+                    host[j] = i * 1000 + j % 997;
+                }
+
+                var uploaded = Tensor.Persistent(host.AsSpan(0, n), [n], device, requiresGrad: false);
+                small += n * 4 <= CudaBackend.AsyncUploadBytes ? 1 : 0;
+                var expected = host[..n];
+                Array.Fill(host, -1f, 0, n);                                          // the upload must not read the buffer later
+                var doubled = Tensor.Empty([n], device, track: false);
+                device.Backend.Affine(uploaded.Storage, doubled.Storage, n, 2f, 0f);   // a kernel reading it right after
+                kept.Add((uploaded, doubled, expected));
+
+                var step = Values(1000);
+                loaded.Load(step);
+                small++;
+                device.Backend.Axpy(loaded.Storage, total.Storage, 1000, 1f);
+                for (int j = 0; j < 1000; j++)
+                {
+                    expectedTotal[j] += step[j];
+                }
+            }
+
+            foreach (var (uploaded, doubled, expected) in kept)
+            {
+                var got = uploaded.ToArray();
+                var twice = doubled.ToArray();
+                for (int j = 0; j < expected.Length; j++)
+                {
+                    Check(got[j] == expected[j] && twice[j] == 2 * expected[j],
+                        $"{expected.Length} values, element {j}: {got[j]} / {twice[j]}, expected {expected[j]} / {2 * expected[j]}");
+                }
+            }
+
+            var sums = total.ToArray();
+            Check(sums.Zip(expectedTotal).All(p => Math.Abs(p.First - p.Second) < 1e-3), "in-place loads between kernels sum up");
+            if (device.Backend is CudaBackend backend)
+            {
+                Check(backend.AsyncUploads - asyncBefore >= small, $"{backend.AsyncUploads - asyncBefore} uploads through the staging ring, expected {small} or more");
+            }
+        }
+        finally
+        {
+            kept.ForEach(k => { k.Uploaded.Dispose(); k.Doubled.Dispose(); });
+        }
+    }
 
     private static void TensorCoreAttention(Device device)
     {
@@ -874,23 +948,127 @@ internal static partial class Tests
             }
         }
 
-        // Host-to-device uploads (Tensor.From: a synchronous copy from pageable memory) against the GPU's copy bandwidth.
+        // Host-to-device uploads (Tensor.From) against the GPU's copy bandwidth, idle GPU: the synchronous copy from
+        // pageable memory, and (up to CudaBackend.AsyncUploadBytes) the pinned staging ring queued on the stream.
         Console.WriteLine();
-        Console.WriteLine($"{"upload (Tensor.From)",-32} {"time",12} {"GB/s",9}");
-        foreach (int floats in new[] { 256, 256 * 1024, 16 * 1024 * 1024 })
+        Console.WriteLine($"{"upload (Tensor.From), idle GPU",-32} {"sync copy",12} {"GB/s",9} {"staging ring",14} {"GB/s",9}");
+        foreach (int floats in new[] { 256, 256 * 1024, 1024 * 1024, 16 * 1024 * 1024 })
         {
             var values = new float[floats];
-            Tensor.From(values, [floats], device).Dispose();
-            device.Synchronize();
-            var watch = System.Diagnostics.Stopwatch.StartNew();
-            for (int i = 0; i < 10; i++)
+            double Upload(bool synchronous)
             {
-                Tensor.From(values, [floats], device).Dispose();
+                CudaBackend.SynchronousUploads = synchronous;
+                try
+                {
+                    Tensor.From(values, [floats], device).Dispose();
+                    device.Synchronize();
+                    var watch = System.Diagnostics.Stopwatch.StartNew();
+                    for (int i = 0; i < 10; i++)
+                    {
+                        Tensor.From(values, [floats], device).Dispose();
+                    }
+
+                    device.Synchronize();
+                    return watch.Elapsed.TotalMilliseconds * 1000 / 10;
+                }
+                finally
+                {
+                    CudaBackend.SynchronousUploads = false;
+                }
             }
 
-            device.Synchronize();
-            double us = watch.Elapsed.TotalMilliseconds * 1000 / 10;
-            Console.WriteLine($"{$"{floats * 4L / 1024} KB",-32} {$"{us:F0}us",12} {floats * 4L / (us * 1e3),9:F1}");
+            double sync = Upload(true), ring = Upload(false);
+            Console.WriteLine($"{$"{floats * 4L / 1024} KB",-32} {$"{sync:F0}us",12} {floats * 4L / (sync * 1e3),9:F1} {$"{ring:F0}us",14} {floats * 4L / (ring * 1e3),9:F1}"
+                + (floats * 4L > CudaBackend.AsyncUploadBytes ? "  (above the ring's limit: synchronous either way)" : ""));
+        }
+
+        // 1 KB uploads while the GPU is busy (8 float32 2048² products queued first): host time per upload until the
+        // host is free again. The synchronous copy waits for everything queued; the staging ring should not.
+        Console.WriteLine();
+        Console.WriteLine($"{"1 KB uploads behind queued work",-32} {"busy work",12} {"sync copy",12} {"staging ring",14}");
+        {
+            using var square = Tensor.From([.. Enumerable.Range(0, 2048 * 2048).Select(_ => random.NextSingle() - 0.5f)], [2048, 2048], device);
+            var small = new float[256];
+            double Busy(bool? synchronous)
+            {
+                CudaBackend.SynchronousUploads = synchronous == true;
+                try
+                {
+                    using var scope = new TensorScope();
+                    _ = square.MatMul(square);
+                    Tensor.From(small, [256], device).Dispose();
+                    device.Synchronize();
+                    var watch = System.Diagnostics.Stopwatch.StartNew();
+                    for (int i = 0; i < 8; i++)
+                    {
+                        _ = square.MatMul(square);
+                    }
+
+                    if (synchronous is null)
+                    {
+                        device.Synchronize();
+                        return watch.Elapsed.TotalMilliseconds * 1000;                  // the busy work alone, in us
+                    }
+
+                    watch.Restart();
+                    for (int i = 0; i < 100; i++)
+                    {
+                        Tensor.From(small, [256], device).Dispose();
+                    }
+
+                    double us = watch.Elapsed.TotalMilliseconds * 1000 / 100;
+                    device.Synchronize();
+                    return us;
+                }
+                finally
+                {
+                    CudaBackend.SynchronousUploads = false;
+                }
+            }
+
+            double busy = Busy(null), sync = Busy(true), ring = Busy(false);
+            Console.WriteLine($"{"100 x 1 KB, host time per upload",-32} {$"{busy / 1000:F1}ms",12} {$"{sync:F1}us",12} {$"{ring:F1}us",14}");
+        }
+
+        // Chat turns on a kept KV cache (28 layers, 16 tokens a turn, the prompt growing each turn): replaying the
+        // decoding graph kept from the previous turn, against recording one each turn (another seed per turn keeps the
+        // cache but not the graph: capture, instantiation and the synchronizing disposal every turn).
+        Console.WriteLine();
+        Console.WriteLine($"{"chat turn, 28 layers, 16 tokens",-32} {"new graph",12} {"kept graph",12}");
+        {
+            var chars = new Idrak.Generation.CharTokenizer("abcdefghijklmnopqrstuvwxyz ");
+            var spec = new DecoderSpec
+            {
+                Vocabulary = chars.VocabularySize, Dim = 256, Layers = 28, Heads = 4, KvHeads = 2, HeadDim = 64, FfDim = 768, MaxPositions = 1024,
+                QkNorm = true, Rope = new RopeSettings(10000f),
+            };
+            using var chatModel = spec.Build(null, new DecoderBuildOptions { Device = device, Seed = 1 });
+            double Turns(bool keptGraph)
+            {
+                var generator = new Idrak.Generation.TextGenerator(chatModel, chars, 1024);
+                var options = new Idrak.Generation.GenerationOptions { Seed = 1, NumPredict = 16, TopK = 20, Temperature = 0.7f, RepeatPenalty = 1f, NumCtx = 1024 };
+                string prompt = "hello there";
+                generator.Generate(prompt, options);
+                int reuses = generator.DecodeGraphReuses;
+                var watch = System.Diagnostics.Stopwatch.StartNew();
+                for (int t = 0; t < 10; t++)
+                {
+                    prompt += " and then some more";
+                    generator.Generate(prompt, keptGraph ? options : options with { Seed = t + 2 });
+                }
+
+                double ms = watch.Elapsed.TotalMilliseconds / 10;
+                if ((generator.DecodeGraphReuses - reuses == 10) != keptGraph)
+                {
+                    Console.WriteLine($"    (unexpected: {generator.DecodeGraphReuses - reuses} graph reuses in 10 turns)");
+                }
+
+                generator.ReleaseCache();
+                return ms;
+            }
+
+            double fresh = Turns(false), kept = Turns(true);
+            Console.WriteLine($"{"per turn",-32} {$"{fresh:F2}ms",12} {$"{kept:F2}ms",12}");
         }
 
         return 0;
