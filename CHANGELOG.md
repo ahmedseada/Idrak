@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.4 (2026-09-30)
 
 - Loading and exporting weights makes fewer full copies (the same values, bit for bit). Measured on the CPU (4 cores)
   with a 78 M-parameter Llama-style model (vocabulary 32,768, dim 1024, 4 layers, tied head):
