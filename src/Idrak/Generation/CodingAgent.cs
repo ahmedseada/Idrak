@@ -275,6 +275,7 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
         int rounds = 0, calls = 0, errors = 0, generated = 0;
         var modelTime = TimeSpan.Zero;
         var toolTime = TimeSpan.Zero;
+        string? previousCalls = null;
         using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         limit.CancelAfter(_options.TimeLimit);
         AgentRun Result(AgentOutcome outcome, string note) =>
@@ -314,8 +315,18 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
                     return Result(final.DoneReason == "length" ? AgentOutcome.OutOfBudget : AgentOutcome.Passed, "");
                 }
 
+                // The same calls as the round before, with nothing in between, cannot give anything new (small models
+                // repeat a call instead of answering from its result): they are not run again, and the model is told so.
+                string key = string.Join("\n", reply.ToolCalls.Select(c => c.Name + " " + c.Arguments.ToJsonString()));
+                bool repeated = key == previousCalls;
+                previousCalls = key;
                 watch.Restart();
-                foreach (var result in await registry.InvokeAsync(reply.ToolCalls, limit.Token).ConfigureAwait(false))
+                IReadOnlyList<ToolResult> results = repeated
+                    ? [.. reply.ToolCalls.Select(c => new ToolResult(c, "", false,
+                        "Not run again: this is the same call as the one just before, and its result is above. Use that result to answer, or make a different call.",
+                        TimeSpan.Zero))]
+                    : await registry.InvokeAsync(reply.ToolCalls, limit.Token).ConfigureAwait(false);
+                foreach (var result in results)
                 {
                     calls++;
                     bool failed = !result.Succeeded || result.Content.StartsWith("Error:", StringComparison.Ordinal);

@@ -6,6 +6,9 @@
   ``` block that ends the reply after a sentence) counts as that call when the request offers the tool; the sentence
   stays the reply's text. Small models such as Qwen2.5-Coder-1.5B write calls this way instead of in their template's
   tags, and the call was taken as the final answer. `ChatOutputParser.CallsInAnswer` does the check.
+- `CodingAgent`: calls identical to the round just before are not run again; the model gets "Not run again: … use
+  that result" in their place (counted as tool errors). A small model ran `dotnet --version` three times instead of
+  answering. The same call after a different one still runs.
 - CodingAgent sample: a typed task (no verification commands) ends with "Done (the task has no checks)", not "Passed".
 
 ## 0.1.1 (2026-09-30)

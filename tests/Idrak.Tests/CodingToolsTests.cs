@@ -12,7 +12,43 @@ internal static partial class Tests
         ("coding tools: run_command starts allowlisted programs without a shell and trims long output", CodingToolsCommands),
         ("coding agent: transcripts written as OpenAI chat JSON read back for fine-tuning", AgentTranscriptJson),
         ("coding agent: a task is copied, run, verified by its commands and recorded", AgentRunsTask),
+        ("coding agent: a call repeated right after itself is not run again, and the model is told to use its result", AgentSkipsRepeatedCalls),
     ];
+
+    // Small models ask for the same call again instead of answering from its result (Qwen2.5-Coder-1.5B ran
+    // dotnet --version three times): the repeat is answered with a note, not run; the same call later still runs.
+    private static void AgentSkipsRepeatedCalls(Device device)
+    {
+        _ = device;
+        string root = Path.Combine(Path.GetTempPath(), "idrak-agent-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        File.WriteAllText(Path.Combine(root, "a.txt"), "alpha");
+        File.WriteAllText(Path.Combine(root, "b.txt"), "beta");
+        try
+        {
+            JsonObject Read(string file) => new() { ["path"] = file };
+            var fake = FakeChatModel.Script(
+                FakeChatModel.ToolCall("read_file", Read("a.txt")),
+                FakeChatModel.ToolCall("read_file", Read("a.txt")),                 // repeated: not run
+                FakeChatModel.ToolCall("read_file", Read("a.txt")),                 // again: not run
+                FakeChatModel.ToolCall("read_file", Read("b.txt")),
+                FakeChatModel.ToolCall("read_file", Read("a.txt")),                 // after another call: runs
+                FakeChatModel.Answer("a.txt says alpha."));
+            var results = new List<ToolResult>();
+            var agent = new CodingAgent(fake) { OnToolResult = results.Add };
+            var run = agent.RunAsync(new AgentTask("typed", "What does a.txt say?"), new CodingTools(root)).GetAwaiter().GetResult();
+            Check(run is { Outcome: AgentOutcome.Passed, Rounds: 6, ToolCalls: 5, ToolErrors: 2 }, $"counts {run.Outcome} {run.Rounds} {run.ToolCalls} {run.ToolErrors}");
+            Check(results.Select(r => r.Succeeded).SequenceEqual([true, false, false, true, true]), "run, skipped, skipped, run, run");
+            Check(results[1].Error!.StartsWith("Not run again", StringComparison.Ordinal), $"the note: {results[1].Error}");
+            Check(fake.Requests[2].Messages[^1] is { Role: "tool", ToolName: "read_file" } note && note.Content.Contains("Not run again", StringComparison.Ordinal),
+                "the model sees the note in place of a result");
+            Check(results[4].Content.Contains("alpha", StringComparison.Ordinal), "the later repeat reads the file");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
 
     private static void AgentTranscriptJson(Device device)
     {
@@ -37,7 +73,7 @@ internal static partial class Tests
     private static void AgentRunsTask(Device device)
     {
         _ = device;
-        string root = Path.Combine(Path.GetTempPath(), "ns-agent-" + Guid.NewGuid().ToString("N"));
+        string root = Path.Combine(Path.GetTempPath(), "idrak-agent-" + Guid.NewGuid().ToString("N"));
         string task = Path.Combine(root, "suite", "csharp", "fix-greeting");
         Directory.CreateDirectory(Path.Combine(task, "workspace", "bin"));
         Directory.CreateDirectory(Path.Combine(task, "verify"));
