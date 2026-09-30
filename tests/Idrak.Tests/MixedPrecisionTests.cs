@@ -826,6 +826,36 @@ internal static partial class Tests
             }
         }
 
+        // 1-8 rows: the GEMV kernels (what runs) against the packed tensor-core product forced to take them, to find the
+        // row count from which the packed product is faster (it depends on the width: 8 rows of the 151936-column head
+        // took 560 us through the GEMV against 280 us for 9 rows packed).
+        Console.WriteLine();
+        int[] fewRows = [1, 2, 3, 4, 5, 6, 7, 8];
+        Console.WriteLine($"{"rows: GEMV / packed forced",-32} " + string.Join(" ", fewRows.Select(r => $"{r,15}")));
+        using (MixedPrecision.BFloat16())
+        {
+            foreach (var (kIn, nOut, layer) in new[] { (1024, 1024, k), (1024, 3072, gate), (3072, 1024, down), (1024, 151936, head) })
+            {
+                Console.WriteLine($"{$"{kIn} -> {nOut}",-32} " + string.Join(" ", fewRows.Select(rows =>
+                {
+                    using var x = Tensor.From([.. Enumerable.Range(0, rows * kIn).Select(_ => random.NextSingle() - 0.5f)], [rows, kIn], device);
+                    using var y = Tensor.Zeros([rows, nOut], device);
+                    string gemv = Eager(() => x.MatMulInt8(layer.Int8!));
+                    CudaBackend.PackedMinRowsOverride = 1;
+                    try
+                    {
+                        var w = layer.Int8!;
+                        string packed = Eager(() => device.Backend.PackedMatMulLarge(0, x.Storage, w.Packed.Storage, w.Scales.Storage, y.Storage, rows, nOut, kIn));
+                        return $"{$"{gemv}/{packed}",15}";
+                    }
+                    finally
+                    {
+                        CudaBackend.PackedMinRowsOverride = null;
+                    }
+                })));
+            }
+        }
+
         // Host-to-device uploads (Tensor.From: a synchronous copy from pageable memory) against the GPU's copy bandwidth.
         Console.WriteLine();
         Console.WriteLine($"{"upload (Tensor.From)",-32} {"time",12} {"GB/s",9}");
