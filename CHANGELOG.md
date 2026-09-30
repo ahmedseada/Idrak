@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.5 (2026-09-30)
 
 - Retrieval: each stage is an interface. `IEmbedder` (`TextEncoder` implements it), `IVectorStore` (new
   `InMemoryVectorStore`: replace and delete by id, metadata filters, exact SIMD search), `IRetriever` (`RetrievalIndex`
