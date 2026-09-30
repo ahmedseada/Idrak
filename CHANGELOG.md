@@ -19,6 +19,10 @@
 - `Idrak.Datasets` Parquet: top-level columns go straight into the row (no tree and merge per cell), dictionary strings are
   decoded once, binary values are checked as UTF-8 instead of throwing per value, and a row group finds its column chunks
   by path once (300,000 rows × 5 columns: 2.5 s and 1.4 GB allocated → 0.49 s and 0.47 GB).
+- CUDA: prompts of 9 to 63 rows through int8, int4 and bfloat16 weights use the packed products (tensor cores with
+  `MixedPrecision`) instead of expanding the whole weight to float32 on every call; 8 rows and fewer keep the GEMV
+  kernels. Before, on an RTX 5070 Ti: 1024 → 151,936 int8 took 2.3 ms for 9–63 rows against 0.36 ms for 64, and
+  1024 → 3072 took 70 µs against 23 µs.
 - `--bench-gemv` also times short prompts (1–96 rows) through int8 weights and host-to-device uploads, for the next
   CUDA changes.
 

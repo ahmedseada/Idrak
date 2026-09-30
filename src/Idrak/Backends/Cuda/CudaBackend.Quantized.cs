@@ -157,7 +157,10 @@ internal sealed unsafe partial class CudaBackend
 
     public override bool PackedMatMulLarge(int kind, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k)
     {
-        if (m < 64 || n < 64 || k < 8)
+        // From 9 rows (8 and fewer take the GEMV kernels): short prompts fill part of one row tile, which the kernels
+        // bound-check, instead of expanding the whole weight to float32 first (--bench-gemv, 1024 -> 151936 int8 on an
+        // RTX 5070 Ti: 9-63 rows 2.3 ms through the float32 copy, 64 rows 0.36 ms packed).
+        if (m <= PtxKernels.GemvRows || n < 64 || k < 8)
         {
             return false;
         }
@@ -165,7 +168,7 @@ internal sealed unsafe partial class CudaBackend
         // Tensor cores (MixedPrecision): the weights unpacked into the bfloat16 tiles as they are loaded.
         int tileRows = PromptTileRows(m);
         string packedKernel = $"gemm_tc_nn_{(kind switch { 0 => "int8w", 1 => "int4w", _ => "bf16w" })}{(tileRows == 64 ? "_m64" : "")}_f32";
-        if (MixedPrecision.UsesTensorCores && m >= 32 && k >= 32 && TensorKernel(packedKernel) is { } tensor)
+        if (MixedPrecision.UsesTensorCores && k >= 32 && TensorKernel(packedKernel) is { } tensor)
         {
             int perWord = kind switch { 0 => 4, 1 => 8, _ => 2 };
             if (_profile is not null)
