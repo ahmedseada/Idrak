@@ -93,6 +93,9 @@ internal static unsafe partial class CudaDriver
     public static partial int cuInit(uint flags);
 
     [LibraryImport(Library)]
+    public static partial int cuDriverGetVersion(out int version);
+
+    [LibraryImport(Library)]
     public static partial int cuDeviceGetCount(out int count);
 
     [LibraryImport(Library)]

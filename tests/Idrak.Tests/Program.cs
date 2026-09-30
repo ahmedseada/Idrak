@@ -38,6 +38,10 @@ if (args is ["--dump-ptx", var ptxPath])
     return 0;
 }
 
+// What the run is on, so a pasted result says where it passed (each GPU's line adds its compute capability and driver).
+Console.WriteLine($"Idrak tests: {System.Runtime.InteropServices.RuntimeInformation.OSDescription} "
+                  + $"({System.Runtime.InteropServices.RuntimeInformation.OSArchitecture}), {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}");
+
 // Every device: the CPU and each CUDA GPU (IDRAK_DEVICES=cpu,cuda:1 … to choose), since the library runs on any of them.
 var devices = new List<Device> { Device.Cpu };
 if (Device.IsCudaAvailable)
