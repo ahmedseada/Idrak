@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Runtime.InteropServices;
 
 namespace Idrak.Data;
 
@@ -303,14 +304,31 @@ public sealed class Dataset
         return new Dataset(features, targets, indices.Length, FeatureNames, TargetNames, [.. FeatureShape]);
     }
 
-    /// <summary>Shuffles the samples and splits them into a training and a test set.</summary>
+    /// <summary>
+    /// Shuffles the samples and splits them into a training and a test set. By default the rows are deduplicated first
+    /// (<see cref="Deduplicate"/> with <paramref name="duplicates"/>, or its default rules: rows with the same features
+    /// count once, the first kept), so no row is in both sets and the test score is on rows the model did not see.
+    /// <paramref name="removeDuplicates"/> false turns the whole step off and keeps every row, identical copies included
+    /// (for augmentation, or when how often a row repeats matters).
+    /// </summary>
     /// <param name="trainFraction">Share of samples for the training set, e.g. 0.8.</param>
     /// <param name="seed">Shuffle seed, for reproducible splits.</param>
-    public (Dataset Train, Dataset Test) Split(double trainFraction, int seed = 0)
+    /// <param name="removeDuplicates">Deduplicate before splitting (the default); false keeps every row.</param>
+    /// <param name="duplicates">The deduplication rules (null: the defaults of <see cref="DeduplicationOptions"/>).</param>
+    public (Dataset Train, Dataset Test) Split(double trainFraction, int seed = 0, bool removeDuplicates = true, DeduplicationOptions? duplicates = null)
     {
         if (trainFraction is <= 0 or >= 1)
         {
             throw new ArgumentOutOfRangeException(nameof(trainFraction), trainFraction, "Must be between 0 and 1.");
+        }
+
+        if (removeDuplicates)
+        {
+            var unique = Deduplicate(duplicates);
+            if (!ReferenceEquals(unique, this))
+            {
+                return unique.Split(trainFraction, seed, removeDuplicates: false);
+            }
         }
 
         int[] order = [.. Enumerable.Range(0, Count)];
@@ -318,6 +336,369 @@ public sealed class Dataset
         int trainCount = (int)Math.Round(Count * trainFraction);
         return (Subset(order.AsSpan(0, trainCount)), Subset(order.AsSpan(trainCount)));
     }
+
+    /// <summary>
+    /// The rows without duplicates, in the original order (the first of each group is kept); the same dataset when there
+    /// are none (datasets are not changed in place, so nothing is copied). Rows are compared bit for
+    /// bit (0 and -0 differ; a NaN equals the same NaN); what counts as a duplicate, and what happens to rows whose
+    /// features repeat with other targets, is set by <paramref name="options"/>; with an embedding, near duplicates go
+    /// too. <see cref="Split"/> runs it by default (<c>removeDuplicates: false</c> keeps every row); on its own it gives
+    /// the deduplicated rows for other uses, and <see cref="DeduplicateWithReport"/> says what was removed.
+    /// </summary>
+    public Dataset Deduplicate(DeduplicationOptions? options = null) => DeduplicateWithReport(options).Data;
+
+    /// <summary>
+    /// <see cref="Deduplicate"/>, with which rows were kept (their indices here) and how many were removed for each reason.
+    /// </summary>
+    public DeduplicationResult DeduplicateWithReport(DeduplicationOptions? options = null)
+    {
+        options ??= new DeduplicationOptions();
+        if (options.Embedding is not null && options.SimilarityThreshold is not (> -1f and <= 1f))
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), options.SimilarityThreshold, "SimilarityThreshold must be in (-1, 1].");
+        }
+
+        // Exact duplicates, without an allocation per row: the rows' hashes (in parallel), then each row joins the group
+        // of the first earlier row equal to it. Groups are named by their first row; rows with the same hash but other
+        // contents are chained through nextFirst.
+        bool withTargets = options.Match == DuplicateMatch.FeaturesAndTargets;
+        int count = Count;
+        var hashes = new int[count];
+        Parallel.For(0, count, row =>
+        {
+            var hash = new HashCode();
+            hash.AddBytes(MemoryMarshal.AsBytes(GetFeatures(row)));
+            if (withTargets)
+            {
+                hash.AddBytes(MemoryMarshal.AsBytes(GetTargets(row)));
+            }
+
+            hashes[row] = hash.ToHashCode();
+        });
+
+        var group = new int[count];                                    // the first row of each row's group
+        var nextFirst = new int[count];                                // the next group's first row with the same hash, or -1
+        var firstByHash = new Dictionary<int, int>(count);
+        for (int row = 0; row < count; row++)
+        {
+            ref int head = ref CollectionsMarshal.GetValueRefOrAddDefault(firstByHash, hashes[row], out bool exists);
+            if (!exists)
+            {
+                head = row;
+                group[row] = row;
+                nextFirst[row] = -1;
+                continue;
+            }
+
+            int candidate = head, last = -1;
+            while (candidate >= 0 && !SameRow(candidate, row, withTargets))
+            {
+                (last, candidate) = (candidate, nextFirst[candidate]);
+            }
+
+            if (candidate >= 0)
+            {
+                group[row] = candidate;
+            }
+            else
+            {
+                group[row] = row;
+                nextFirst[row] = -1;
+                nextFirst[last] = row;
+            }
+        }
+
+        // Groups whose rows have other targets (only when matching on the features alone).
+        var conflict = new bool[count];
+        int exact = 0, conflicting = 0;
+        for (int row = 0; row < count; row++)
+        {
+            int first = group[row];
+            if (first != row)
+            {
+                exact++;
+                if (!withTargets && !conflict[first] && !SameTargets(first, row))
+                {
+                    conflict[first] = true;
+                }
+            }
+        }
+
+        var keep = new bool[count];                                    // reuses nothing else: one byte per row
+        for (int row = 0; row < count; row++)
+        {
+            keep[row] = group[row] == row && !(conflict[row] && options.Conflicts == DuplicateConflicts.DropAll);
+        }
+
+        if (options.Conflicts != DuplicateConflicts.KeepFirst && !withTargets)
+        {
+            var members = new Dictionary<int, List<int>>();            // only the conflicting groups (usually few)
+            for (int row = 0; row < count; row++)
+            {
+                if (conflict[group[row]])
+                {
+                    ref var list = ref CollectionsMarshal.GetValueRefOrAddDefault(members, group[row], out _);
+                    (list ??= []).Add(row);
+                }
+            }
+
+            foreach (var (first, rows) in members)
+            {
+                if (options.Conflicts == DuplicateConflicts.DropAll)
+                {
+                    conflicting += rows.Count;
+                    exact -= rows.Count - 1;
+                    continue;
+                }
+
+                // KeepMostFrequent: the first row of the targets most rows have (the earliest such targets on a tie). One
+                // pass: rows are counted under the first row with their targets, found through the targets' hash.
+                var tally = new Dictionary<int, List<(int First, int Votes)>>();
+                foreach (int row in rows)
+                {
+                    var hash = new HashCode();
+                    hash.AddBytes(MemoryMarshal.AsBytes(GetTargets(row)));
+                    ref var entries = ref CollectionsMarshal.GetValueRefOrAddDefault(tally, hash.ToHashCode(), out _);
+                    entries ??= [];
+                    int at = entries.FindIndex(e => SameTargets(e.First, row));
+                    if (at < 0)
+                    {
+                        entries.Add((row, 1));
+                    }
+                    else
+                    {
+                        entries[at] = (entries[at].First, entries[at].Votes + 1);
+                    }
+                }
+
+                int best = first, bestVotes = 0;
+                foreach (var entries in tally.Values)
+                {
+                    foreach (var (candidate, votes) in entries)
+                    {
+                        if (votes > bestVotes || (votes == bestVotes && candidate < best))
+                        {
+                            (best, bestVotes) = (candidate, votes);
+                        }
+                    }
+                }
+
+                keep[first] = false;
+                keep[best] = true;
+            }
+        }
+
+        int near = 0;
+        if (options.Embedding is { } embed)
+        {
+            near = DropNearDuplicates(keep, embed, options.SimilarityThreshold, withTargets);
+        }
+
+        int kept = 0;
+        foreach (bool k in keep)
+        {
+            kept += k ? 1 : 0;
+        }
+
+        if (kept == count)
+        {
+            return new DeduplicationResult(this, [.. Enumerable.Range(0, count)], 0, 0, 0);   // nothing removed: no copy
+        }
+
+        var indices = new int[kept];
+        for (int row = 0, i = 0; row < count; row++)
+        {
+            if (keep[row])
+            {
+                indices[i++] = row;
+            }
+        }
+
+        return new DeduplicationResult(Subset(indices), indices, exact, conflicting, near);
+    }
+
+    // Greedy, in order: a kept row goes when its embedding is close enough to one kept before it. Rows are taken in blocks:
+    // a block's rows are compared, in parallel, with the kept embeddings one cache-sized tile at a time (a row stops at
+    // its first match), then in order with the rows of the block kept before them. The kept embeddings, normalized, sit in
+    // one growing buffer.
+    private int DropNearDuplicates(bool[] keep, Func<int, float[]> embed, float threshold, bool withTargets)
+    {
+        const int Block = 512, Tile = 1024;
+        int[] candidates = [.. Enumerable.Range(0, keep.Length).Where(r => keep[r])];
+        if (candidates.Length == 0)
+        {
+            return 0;
+        }
+
+        int dimension = -1, stored = 0, near = 0;
+        float[] vectors = [], block = [];
+        int[] owners = new int[Math.Min(candidates.Length, 4096)];
+        var found = new bool[Block];
+        var scores = new float[Block * Tile];
+        var inBlock = new float[Block * Block];
+        var blockIndex = new int[Block];                                // position in the block of each row it kept
+        var tiles = new List<Tensor>();                                 // full tiles of kept embeddings, as tensors
+        try
+        {
+        for (int start = 0; start < candidates.Length; start += Block)
+        {
+            int size = Math.Min(Block, candidates.Length - start);
+            for (int c = 0; c < size; c++)
+            {
+                int row = candidates[start + c];
+                float[] vector = embed(row);                            // the caller's function: not assumed thread-safe
+                if (dimension < 0)
+                {
+                    dimension = vector.Length;
+                    block = new float[Block * dimension];
+                    vectors = new float[owners.Length * dimension];
+                }
+                else if (vector.Length != dimension)
+                {
+                    throw new ArgumentException($"Embeddings of different lengths ({dimension} and {vector.Length}, row {row}).");
+                }
+
+                float norm = MathF.Sqrt(Dot(vector, vector));
+                if (norm == 0 || float.IsNaN(norm))
+                {
+                    throw new ArgumentException($"The embedding of row {row} has no length (all zeros or NaN).");
+                }
+
+                var target = block.AsSpan(c * dimension, dimension);
+                for (int i = 0; i < dimension; i++)
+                {
+                    target[i] = vector[i] / norm;
+                }
+            }
+
+            // The block against the kept embeddings, one tile at a time, as one matrix product per tile (the CPU kernels):
+            // scores[c, k] = cosine of block row c and kept row k. Full tiles never change, so their tensors are kept.
+            Array.Clear(found);
+            if (stored > 0)
+            {
+                using var blockTensor = Tensor.From(block.AsSpan(0, size * dimension), [size, dimension], Device.Cpu);
+                for (int tile = 0, t = 0; tile < stored; tile += Tile, t++)
+                {
+                    int length = Math.Min(Tile, stored - tile);
+                    Tensor tileTensor;
+                    if (length == Tile)
+                    {
+                        if (t == tiles.Count)
+                        {
+                            tiles.Add(Tensor.From(vectors.AsSpan(tile * dimension, Tile * dimension), [Tile, dimension], Device.Cpu));
+                        }
+
+                        tileTensor = tiles[t];
+                    }
+                    else
+                    {
+                        tileTensor = Tensor.From(vectors.AsSpan(tile * dimension, length * dimension), [length, dimension], Device.Cpu);
+                    }
+
+                    try
+                    {
+                        using var product = blockTensor.MatMul(tileTensor, transposeB: true);
+                        product.CopyTo(scores.AsSpan(0, size * length));
+                    }
+                    finally
+                    {
+                        if (length != Tile)
+                        {
+                            tileTensor.Dispose();
+                        }
+                    }
+
+                    int first = tile, offset = start, width = length;
+                    Parallel.For(0, size, c =>
+                    {
+                        if (found[c])
+                        {
+                            return;
+                        }
+
+                        var row = scores.AsSpan(c * width, width);
+                        for (int k = 0; k < width; k++)
+                        {
+                            if (row[k] >= threshold && (!withTargets || SameTargets(candidates[offset + c], owners[first + k])))
+                            {
+                                found[c] = true;
+                                return;
+                            }
+                        }
+                    });
+                }
+            }
+
+            // Then in order within the block: a row goes when it is close to a row of the block kept before it.
+            using (var own = Tensor.From(block.AsSpan(0, size * dimension), [size, dimension], Device.Cpu))
+            using (var similar = own.MatMul(own, transposeB: true))
+            {
+                similar.CopyTo(inBlock.AsSpan(0, size * size));
+            }
+
+            int blockFirst = stored;                                    // this block's kept rows start here
+            for (int c = 0; c < size; c++)
+            {
+                int row = candidates[start + c];
+                var candidate = block.AsSpan(c * dimension, dimension);
+                for (int k = blockFirst; k < stored && !found[c]; k++)
+                {
+                    found[c] = inBlock[c * size + (blockIndex[k - blockFirst])] >= threshold && (!withTargets || SameTargets(row, owners[k]));
+                }
+
+                if (found[c])
+                {
+                    keep[row] = false;
+                    near++;
+                    continue;
+                }
+
+                if (stored == owners.Length)
+                {
+                    Array.Resize(ref owners, Math.Min(candidates.Length, owners.Length * 2));
+                    Array.Resize(ref vectors, owners.Length * dimension);
+                }
+
+                candidate.CopyTo(vectors.AsSpan(stored * dimension));
+                blockIndex[stored - blockFirst] = c;
+                owners[stored++] = row;
+            }
+        }
+        }
+        finally
+        {
+            foreach (var tile in tiles)
+            {
+                tile.Dispose();
+            }
+        }
+
+        return near;
+
+        static float Dot(ReadOnlySpan<float> a, ReadOnlySpan<float> b)
+        {
+            var sum = System.Numerics.Vector<float>.Zero;
+            int width = System.Numerics.Vector<float>.Count, i = 0;
+            for (; i <= a.Length - width; i += width)
+            {
+                sum += new System.Numerics.Vector<float>(a.Slice(i)) * new System.Numerics.Vector<float>(b.Slice(i));
+            }
+
+            float dot = System.Numerics.Vector.Sum(sum);
+            for (; i < a.Length; i++)
+            {
+                dot += a[i] * b[i];
+            }
+
+            return dot;
+        }
+    }
+
+    // Bit for bit, so a NaN matches the same NaN and the comparison agrees with the hash.
+    private bool SameRow(int a, int b, bool withTargets) =>
+        MemoryMarshal.AsBytes(GetFeatures(a)).SequenceEqual(MemoryMarshal.AsBytes(GetFeatures(b))) && (!withTargets || SameTargets(a, b));
+
+    private bool SameTargets(int a, int b) => MemoryMarshal.AsBytes(GetTargets(a)).SequenceEqual(MemoryMarshal.AsBytes(GetTargets(b)));
 
     /// <summary>Returns a copy with features and/or targets transformed by fitted scalers.</summary>
     public Dataset Scale(IScaler? features = null, IScaler? targets = null)

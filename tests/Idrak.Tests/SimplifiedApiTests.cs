@@ -16,6 +16,7 @@ internal static partial class Tests
         ("sequential: inference frees each layer's intermediates; ForwardFirst runs the first layers", SequentialInferenceFreesLayers),
         ("builder: CNN, RNN and GPT shapes; JSON round trip; clear shape errors", BuilderShapesAndJson),
         ("data: Split/Standardize/Batches equal the manual steps", DataExtensionsMatchManual),
+        ("data: Deduplicate keeps the first of exact duplicates in order; targets, conflicts, near duplicates, report", Deduplication),
         ("training: factory Trainer and TrainingRun give the same history as the manual trainer", TrainingRunMatchesTrainer),
         ("training: FitAsync progress and TrainAsync early exit", TrainingAsync),
         ("losses: CrossEntropy and SparseCrossEntropy pass as a Loss (method group) and equal the smoothing overload at 0", LossMethodGroups),
@@ -32,6 +33,122 @@ internal static partial class Tests
         ("engine: instances, queue limit, timeout, keep-alive with a manual clock, load on first use, telemetry", EngineLifecycle),
         ("engine: text generation and chat conversations through the engine", EngineGeneration),
     ];
+
+    private static void Deduplication(Device device)
+    {
+        // rows: 0 [1,2]->a, 1 [3,4]->b, 2 [1,2]->a (exact), 3 [1,2]->b (conflict), 4 [5,6]->a, 5 [3,4]->b (exact), 6 [1,2]->b
+        float[] x = [1, 2, 3, 4, 1, 2, 1, 2, 5, 6, 3, 4, 1, 2];
+        float[] y = [1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1];                          // one-hot: [1,0] = a, [0,1] = b
+        var data = Dataset.FromFlat(x, y, 7, ["x0", "x1"], ["a", "b"]);
+        int[] Rows(Dataset d) => [.. Enumerable.Range(0, d.Count).Select(i => (int)d.GetFeatures(i)[0] * 10 + (d.GetTargets(i)[0] == 1 ? 0 : 1))];
+
+        var first = data.DeduplicateWithReport();
+        Check(first.Kept.SequenceEqual([0, 1, 4]) && first.ExactDuplicates == 4 && first.Removed == 4, $"features: first of each ({string.Join(",", first.Kept)})");
+        Check(Rows(first.Data).SequenceEqual([10, 31, 50]), "features: rows and targets of the first rows, in order");
+        Check(data.Count == 7, "the original dataset is not changed");
+
+        var withTargets = data.DeduplicateWithReport(new DeduplicationOptions { Match = DuplicateMatch.FeaturesAndTargets });
+        Check(withTargets.Kept.SequenceEqual([0, 1, 3, 4]) && withTargets.ExactDuplicates == 3, "features and targets: [1,2]->b is its own row");
+
+        var vote = data.DeduplicateWithReport(new DeduplicationOptions { Conflicts = DuplicateConflicts.KeepMostFrequent });
+        Check(vote.Kept.SequenceEqual([0, 1, 4]), $"most frequent: [1,2] is a twice and b twice, the tie goes to the earlier ({string.Join(",", vote.Kept)})");
+        var majority = Dataset.FromFlat([7, 7, 7], [1, 0, 0, 1, 0, 1], 3, ["x"], ["a", "b"]).DeduplicateWithReport(new DeduplicationOptions { Conflicts = DuplicateConflicts.KeepMostFrequent });
+        Check(majority.Kept.SequenceEqual([1]) && majority.Data.GetTargets(0)[1] == 1, "most frequent: [7] is a once and b twice, so the first b row is kept");
+        var drop = data.DeduplicateWithReport(new DeduplicationOptions { Conflicts = DuplicateConflicts.DropAll });
+        Check(drop.Kept.SequenceEqual([1, 4]) && drop.Conflicting == 4 && drop.ExactDuplicates == 1, "drop all: every [1,2] row goes");
+
+        // Near duplicates from an embedding the caller computes: row 4 points the same way as row 0 ([5,6] ~ [1,2] here).
+        float[][] embeddings = [[1, 0], [0, 1], [1, 0], [1, 0], [0.99f, 0.05f], [0, 1], [1, 0]];
+        var near = data.DeduplicateWithReport(new DeduplicationOptions { Embedding = i => embeddings[i], SimilarityThreshold = 0.95f });
+        Check(near.Kept.SequenceEqual([0, 1]) && near.NearDuplicates == 1, "near duplicates: dropped after the row they resemble");
+        var strict = data.Deduplicate(new DeduplicationOptions { Embedding = i => embeddings[i], SimilarityThreshold = 0.9999f });
+        Check(strict.Count == 3, "near duplicates: a higher threshold keeps them");
+
+        // Blocks and tiles: 3,000 rows (several blocks of 512 and tiles of 1,024), a third of them near copies of earlier
+        // rows, give the same rows as the plain greedy pass (each row against every row kept before it).
+        var random = new Random(11);
+        int many = 3000, dim = 24;
+        var vectors = new float[many][];
+        for (int i = 0; i < many; i++)
+        {
+            vectors[i] = i % 3 == 2
+                ? [.. vectors[random.Next(i)].Select(v => v + ((float)random.NextDouble() - 0.5f) * 0.02f)]
+                : [.. Enumerable.Range(0, dim).Select(_ => (float)random.NextDouble() - 0.5f)];
+        }
+
+        var rows = Dataset.FromFlat([.. Enumerable.Range(0, many).Select(i => (float)i)], [.. Enumerable.Range(0, many).Select(i => (float)(i % 2))], many, ["x"], ["y"]);
+        foreach (bool matchTargets in new[] { false, true })
+        {
+            var options = new DeduplicationOptions
+            {
+                Embedding = i => vectors[i], SimilarityThreshold = 0.97f,
+                Match = matchTargets ? DuplicateMatch.FeaturesAndTargets : DuplicateMatch.Features,
+            };
+            var expected = new List<int>();
+            foreach (int i in Enumerable.Range(0, many))
+            {
+                if (!expected.Any(k => Cosine(vectors[i], vectors[k]) >= 0.97f && (!matchTargets || i % 2 == k % 2)))
+                {
+                    expected.Add(i);
+                }
+            }
+
+            var result = rows.DeduplicateWithReport(options);
+            Check(result.Kept.SequenceEqual(expected) && result.NearDuplicates == many - expected.Count,
+                $"near duplicates in blocks = the plain greedy pass (targets {matchTargets}: kept {result.Kept.Length}, expected {expected.Count})");
+        }
+
+        var unique = Dataset.FromFlat([1, 2, 3], [0, 1, 0], 3, ["x"], ["y"]);
+        Check(unique.Deduplicate().Count == 3, "no duplicates: every row kept");
+        Check(Throws(() => data.Deduplicate(new DeduplicationOptions { Embedding = i => embeddings[i], SimilarityThreshold = 1.5f })), "threshold checked");
+        var (train, test) = data.Deduplicate().Split(0.67, seed: 1);
+        Check(train.Count + test.Count == 3, "Deduplicate().Split(...) splits the clean rows");
+        Check(ReferenceEquals(unique.Deduplicate(), unique), "no duplicates: the same dataset, not a copy");
+
+        // Split deduplicates by default (the default rules, or the ones given); removeDuplicates: false keeps every row.
+        var (defaultTrain, defaultTest) = data.Split(0.5, seed: 1);
+        Check(defaultTrain.Count + defaultTest.Count == 3, $"Split: 7 rows, deduplicated to 3 ({defaultTrain.Count + defaultTest.Count})");
+        var seen = new HashSet<string>();
+        foreach (var part in new[] { defaultTrain, defaultTest })
+        {
+            for (int i = 0; i < part.Count; i++)
+            {
+                Check(seen.Add(string.Join(",", part.GetFeatures(i).ToArray())), "Split: no features in both parts");
+            }
+        }
+
+        var (ruleTrain, ruleTest) = data.Split(0.5, seed: 1, duplicates: new DeduplicationOptions { Match = DuplicateMatch.FeaturesAndTargets });
+        Check(ruleTrain.Count + ruleTest.Count == 4, "Split with rules: features and targets");
+        var (keepTrain, keepTest) = data.Split(0.5, seed: 1, removeDuplicates: false);
+        Check(keepTrain.Count + keepTest.Count == 7, "Split(removeDuplicates: false): every row kept, identical copies included");
+        var (sameTrain, _) = unique.Split(0.67, seed: 4);
+        var (plainTrain, _) = unique.Split(0.67, seed: 4, removeDuplicates: false);
+        Check(sameTrain.Features.SequenceEqual(plainTrain.Features), "no duplicates: the same split either way");
+    }
+
+    private static float Cosine(float[] a, float[] b)
+    {
+        double dot = 0, na = 0, nb = 0;
+        for (int i = 0; i < a.Length; i++)
+        {
+            (dot, na, nb) = (dot + a[i] * b[i], na + a[i] * a[i], nb + b[i] * b[i]);
+        }
+
+        return (float)(dot / Math.Sqrt(na * nb));
+    }
+
+    private static bool Throws(Action action)
+    {
+        try
+        {
+            action();
+            return false;
+        }
+        catch (ArgumentException)
+        {
+            return true;
+        }
+    }
 
     private static void LossMethodGroups(Device device)
     {
