@@ -382,6 +382,45 @@ internal static partial class Tests
             }
         }
 
+        // Short prompts (9-63 rows: part of one row tile) through the packed kernels, with and without tensor cores,
+        // against the same quantized weights on the CPU.
+        foreach (int M in new[] { 9, 17, 33, 63 })
+        {
+            const int K = 320, N = 200;
+            float[] x = [.. Enumerable.Range(0, M * K).Select(_ => random.NextSingle() * 2 - 1)];
+            float[] w = [.. Enumerable.Range(0, K * N).Select(_ => (random.NextSingle() * 2 - 1) * 0.1f)];
+            using var weights = Tensor.From(w, [K, N], device);
+            using var cpuWeights = Tensor.From(w, [K, N], Device.Cpu);
+            using var input = Tensor.From(x, [M, K], device);
+            using var cpuInput = Tensor.From(x, [M, K], Device.Cpu);
+            using Int8Weight int8 = Int8Weight.Quantize(weights), cpuInt8 = Int8Weight.Quantize(cpuWeights);
+            using Int4Weight int4 = Int4Weight.Quantize(weights), cpuInt4 = Int4Weight.Quantize(cpuWeights);
+            using BFloat16Weight bf16 = BFloat16Weight.Convert(weights), cpuBf16 = BFloat16Weight.Convert(cpuWeights);
+            foreach (var (name, run, reference) in new (string, Func<Tensor>, Func<Tensor>)[]
+            {
+                ("int8", () => input.MatMulInt8(int8), () => cpuInput.MatMulInt8(cpuInt8)),
+                ("int4", () => input.MatMulInt4(int4), () => cpuInput.MatMulInt4(cpuInt4)),
+                ("bf16", () => input.MatMulBFloat16(bf16), () => cpuInput.MatMulBFloat16(cpuBf16)),
+            })
+            {
+                float[] expected;
+                using (var y = reference())
+                {
+                    expected = y.ToArray();
+                }
+
+                foreach (var (mode, tolerance) in new[] { (MatMulPrecision.Float32, 1e-3), (MatMulPrecision.BFloat16, 0.01) })
+                {
+                    using (MixedPrecision.Use(mode))
+                    using (var y = run())
+                    {
+                        double error = Relative(expected, y.ToArray());
+                        Check(error < tolerance, $"{name} {M} rows ({mode}): packed short-prompt product differs from the CPU by {error:G3}");
+                    }
+                }
+            }
+        }
+
         // Several layers of one input in one launch (queries/keys/values, gate/up): widths 256 + 128 + 384 and 128 + 128,
         // k 1056 (split); each output must equal that layer's own prompt product.
         foreach (var widths in new[] { new[] { 256, 128, 384 }, new[] { 128, 128 } })
@@ -769,9 +808,9 @@ internal static partial class Tests
             return $"{watch.Elapsed.TotalMilliseconds * 1000 / 20:F0}us";
         }
 
-        // Short prompts through int8 weights, by row count: up to 8 rows take the GEMV kernels, from 64 the packed
-        // tensor-core products; the rows in between expand the whole weight to float32 first (PackedMatMulLarge returns
-        // early below 64 rows). A time per row that jumps between 8 and 64 rows is that expansion.
+        // Short prompts through int8 weights, by row count: up to 8 rows take the GEMV kernels, from 9 the packed
+        // tensor-core products (before, 9-63 rows expanded the whole weight to float32 first: 2.3 ms against 0.36 ms
+        // for the 151936-column head on an RTX 5070 Ti).
         Console.WriteLine();
         int[] rowCounts = [1, 8, 9, 16, 32, 48, 63, 64, 96];
         Console.WriteLine($"{"rows through int8 weights",-32} " + string.Join(" ", rowCounts.Select(r => $"{r,9}")));
