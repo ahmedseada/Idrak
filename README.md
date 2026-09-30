@@ -273,6 +273,36 @@ TrainingHistory history = trainer.Fit(trainLoader, epochs: 400, validation: test
 float[,] predictions = trainer.Predict(test.Scale(x, y));
 ```
 
+#### Callbacks
+
+`Callbacks` run inside `Fit` at fixed points: `OnTrainBegin`, `OnBatchEnd`, `OnEpochEnd` and `OnTrainEnd` (all
+optional). Each receives a `TrainerContext` (model, optimizer, epoch, step, history so far, the cancellation token) and
+can call `context.Stop()` to end training cleanly after the current batch or epoch. Batch losses are only read from the
+device when a callback sets `NeedsBatchLoss`, so callbacks add no synchronization by default. Three are built in:
+
+```csharp
+var trainer = new Trainer(model, new Adam(model.Parameters(), 2e-3f), Losses.MeanSquaredError)
+{
+    Metrics = { Metric.MeanAbsoluteError },
+    Callbacks =
+    {
+        new EarlyStopping(patience: 30),           // = EarlyStoppingPatience = 30; also monitor: "val_mae", maximize: ...
+        new Checkpoint("checkpoints"),             // checkpoints/last.ikw every epoch, best.ikw for the best one (Module.Load)
+        new CsvLog("training.csv"),                // epoch, loss, mae, val_loss, val_mae, learning_rate
+        new StopAtLoss(0.01),                      // your own: an ITrainerCallback
+    },
+};
+TrainingHistory history = trainer.Fit(trainLoader, epochs: 400, validation: testLoader);
+
+sealed class StopAtLoss(double target) : ITrainerCallback
+{
+    public void OnEpochEnd(TrainerContext context, EpochCompleted epoch)
+    {
+        if (epoch.ValidationLoss < target) context.Stop();
+    }
+}
+```
+
 ### Low-level: tensors and a hand-written loop
 
 ```csharp
@@ -559,6 +589,7 @@ var run = new TrainingRun
     Model = model, Loss = Losses.CrossEntropy, Optimizer = p => new AdamW(p, 0.003f),
     Train = split.Train.Batches(64, shuffle: true), Validation = split.Test.Batches(500), Epochs = 40,
     Metrics = [Metric.Accuracy], MaxGradientNorm = 1f,
+    Callbacks = [new EarlyStopping(5), new Checkpoint("checkpoints")],   // = trainer.Callbacks
 };
 TrainingHistory history = run.Fit();
 var clipped = run with { MaxGradientNorm = 0.5f };                    // a variant (give it a fresh Model)

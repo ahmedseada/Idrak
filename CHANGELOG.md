@@ -10,6 +10,13 @@
   `Rerank`, and `RetrievalTools.Search`, take any retriever and re-ranker; `RagPipeline.RetrieveAsync` is new and
   `RagPipeline.Index` is null for a retriever that is not a `RetrievalIndex`. Existing code compiles unchanged, and an
   index built with a `TextEncoder` and no store is searched and saved as before.
+- Training callbacks: `Trainer.Callbacks` (and `TrainingRun.Callbacks`) take `ITrainerCallback`s, whose optional
+  `OnTrainBegin`, `OnBatchEnd`, `OnEpochEnd` and `OnTrainEnd` run inside `Fit` with a `TrainerContext` (model, optimizer,
+  epoch, step, history, cancellation token); `context.Stop()` ends training after the current batch or epoch and returns
+  the history as usual. Batch losses are read from the device only when a callback sets `NeedsBatchLoss`. Built in:
+  `EarlyStopping` (the same history and weights as `EarlyStoppingPatience`, plus a choice of monitored value),
+  `Checkpoint` (`last.ikw` and `best.ikw`, loaded with `Module.Load`) and `CsvLog`. A cancelled `Fit` now stops after the
+  current batch instead of the current epoch.
 
 ## 0.1.4 (2026-09-30)
 
