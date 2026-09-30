@@ -138,8 +138,14 @@ internal sealed unsafe partial class CudaBackend
         }
     }
 
-    /// <summary>Benchmarks only: the fewest rows a packed product takes (normally one more than the GEMV kernels' limit).</summary>
-    internal static int? PackedMinRowsOverride { get; set; }
+    /// <summary>Weights (k·n) from which <see cref="PrefersPackedMatMul"/> sends 4-8 int8 rows to the packed product (tests lower it).</summary>
+    internal static long PackedPreferredWeights { get; set; } = 1L << 25;
+
+    // 4-8 rows through large int8 weights: the GEMV's time grows with the rows while the tensor-core product's stays flat
+    // (--bench-gemv on an RTX 5070 Ti, 1024 -> 151936: 4 rows 328 against 276 us, 8 rows 521 against 268; 1-3 rows and
+    // layers of 1-3 M weights stay on the GEMV, where it is as fast or faster).
+    public override bool PrefersPackedMatMul(int kind, int m, int n, int k) =>
+        kind == 0 && m >= 4 && (long)k * n >= PackedPreferredWeights && MixedPrecision.UsesTensorCores;
 
     /// <summary>Benchmarks only: the row tile (64 or 128) of prompt-sized packed products instead of the heuristic's.</summary>
     internal static int? PromptTileRowsOverride { get; set; }
@@ -160,10 +166,11 @@ internal sealed unsafe partial class CudaBackend
 
     public override bool PackedMatMulLarge(int kind, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k)
     {
-        // From 9 rows (8 and fewer take the GEMV kernels): short prompts fill part of one row tile, which the kernels
-        // bound-check, instead of expanding the whole weight to float32 first (--bench-gemv, 1024 -> 151936 int8 on an
-        // RTX 5070 Ti: 9-63 rows 2.3 ms through the float32 copy, 64 rows 0.36 ms packed).
-        if (m < (PackedMinRowsOverride ?? PtxKernels.GemvRows + 1) || n < 64 || k < 8)
+        // Any row count the caller sends (above the GEMV kernels' limit, or fewer rows when PrefersPackedMatMul): short
+        // prompts fill part of one row tile, which the kernels bound-check, instead of expanding the whole weight to float32
+        // first (--bench-gemv, 1024 -> 151936 int8 on an RTX 5070 Ti: 9-63 rows 2.3 ms through the float32 copy, 64 rows
+        // 0.36 ms packed).
+        if (m < 1 || n < 64 || k < 8)
         {
             return false;
         }

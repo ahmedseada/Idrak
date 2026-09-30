@@ -198,6 +198,12 @@ internal abstract class Backend
     public virtual bool PackedMatMulLarge(int kind, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k) => false;
 
     /// <summary>
+    /// True when <see cref="PackedMatMulLarge"/> is faster than the few-rows kernels for this shape although the rows are
+    /// few enough for them (callers still fall back to those kernels when the packed product returns false).
+    /// </summary>
+    public virtual bool PrefersPackedMatMul(int kind, int m, int n, int k) => false;
+
+    /// <summary>
     /// y = (act(gate) · up) · w for few rows with packed weights w (<paramref name="kind"/> as in
     /// <see cref="PackedMatMulMany"/>; activation 0 = SiLU, 1 = GELU tanh): the gated feed-forward's down projection
     /// without a separate activation pass. Returns false when the device has no fused version.

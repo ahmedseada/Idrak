@@ -382,6 +382,32 @@ internal static partial class Tests
             }
         }
 
+        // 4-8 rows sent to the packed product (PrefersPackedMatMul, threshold lowered to these small weights) equal the GEMV.
+        long preferred = CudaBackend.PackedPreferredWeights;
+        try
+        {
+            const int K = 320, N = 200;
+            using var weights = Tensor.From([.. Enumerable.Range(0, K * N).Select(_ => (random.NextSingle() * 2 - 1) * 0.1f)], [K, N], device);
+            using var int8 = Int8Weight.Quantize(weights);
+            foreach (int M in new[] { 4, 5, 8 })
+            {
+                using var input = Tensor.From([.. Enumerable.Range(0, M * K).Select(_ => random.NextSingle() * 2 - 1)], [M, K], device);
+                using (MixedPrecision.BFloat16())
+                {
+                    CudaBackend.PackedPreferredWeights = long.MaxValue;
+                    using var gemv = input.MatMulInt8(int8);
+                    CudaBackend.PackedPreferredWeights = 1;
+                    using var packed = input.MatMulInt8(int8);
+                    double error = Relative(gemv.ToArray(), packed.ToArray());
+                    Check(error < 0.01, $"int8 {M} rows: preferred packed product differs from the GEMV by {error:G3}");
+                }
+            }
+        }
+        finally
+        {
+            CudaBackend.PackedPreferredWeights = preferred;
+        }
+
         // Short prompts (9-63 rows: part of one row tile) through the packed kernels, with and without tensor cores,
         // against the same quantized weights on the CPU.
         foreach (int M in new[] { 9, 17, 33, 63 })
@@ -826,12 +852,11 @@ internal static partial class Tests
             }
         }
 
-        // 1-8 rows: the GEMV kernels (what runs) against the packed tensor-core product forced to take them, to find the
-        // row count from which the packed product is faster (it depends on the width: 8 rows of the 151936-column head
-        // took 560 us through the GEMV against 280 us for 9 rows packed).
+        // 1-8 rows: the GEMV kernel, the packed tensor-core product, and what MatMulInt8 chooses (PrefersPackedMatMul:
+        // packed from 4 rows for weights of 32 M or more).
         Console.WriteLine();
         int[] fewRows = [1, 2, 3, 4, 5, 6, 7, 8];
-        Console.WriteLine($"{"rows: GEMV / packed forced",-32} " + string.Join(" ", fewRows.Select(r => $"{r,15}")));
+        Console.WriteLine($"{"rows: GEMV / packed / chosen",-32} " + string.Join(" ", fewRows.Select(r => $"{r,21}")));
         using (MixedPrecision.BFloat16())
         {
             foreach (var (kIn, nOut, layer) in new[] { (1024, 1024, k), (1024, 3072, gate), (3072, 1024, down), (1024, 151936, head) })
@@ -841,17 +866,10 @@ internal static partial class Tests
                     using var x = Tensor.From([.. Enumerable.Range(0, rows * kIn).Select(_ => random.NextSingle() - 0.5f)], [rows, kIn], device);
                     using var y = Tensor.Zeros([rows, nOut], device);
                     string gemv = Eager(() => x.MatMulInt8(layer.Int8!));
-                    CudaBackend.PackedMinRowsOverride = 1;
-                    try
-                    {
-                        var w = layer.Int8!;
-                        string packed = Eager(() => device.Backend.PackedMatMulLarge(0, x.Storage, w.Packed.Storage, w.Scales.Storage, y.Storage, rows, nOut, kIn));
-                        return $"{$"{gemv}/{packed}",15}";
-                    }
-                    finally
-                    {
-                        CudaBackend.PackedMinRowsOverride = null;
-                    }
+                    var w = layer.Int8!;
+                    string gemvKernel = Eager(() => device.Backend.Int8MatMul(x.Storage, w.Packed.Storage, w.Scales.Storage, y.Storage, rows, nOut, kIn));
+                    string packed = Eager(() => device.Backend.PackedMatMulLarge(0, x.Storage, w.Packed.Storage, w.Scales.Storage, y.Storage, rows, nOut, kIn));
+                    return $"{$"{gemvKernel}/{packed}/{gemv}",21}";
                 })));
             }
         }
