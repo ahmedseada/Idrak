@@ -29,8 +29,8 @@
   positions, 16 heads of 128: 22.7 → 10.6 ms); the attention kernels' dot products and weighted sums are vectorized
   (float32 cache 9.6 → 6.6 ms, int8 6.0 → 3.8 ms); `MultiHeadAttention` with an int8 cache reads only the filled
   positions; sampling finds the top-k cut-off and the top-5 statistics in one pass and computes the top-p weights once
-  (151,936 tokens: top-k 20 4.5 → 1.5 ms, top-k 20 + top-p 0.95 14.4 → 1.6 ms, top-p alone 20 → 6 ms: the bisection drops the scores below its lower bound as it rises), with the same
-  tokens and statistics as before bit for bit.
+  (151,936 tokens: top-k 20 4.5 → 1.5 ms, top-k 20 + top-p 0.95 14.4 → 1.6 ms, top-p alone 20 → 6 ms, its bisection
+  dropping the scores below its lower bound as it rises), with the same tokens and statistics as before bit for bit.
 - CPU products with a transposed B (`x.MatMul(w, transposeB: true)`, the tied head, backward products) of at most 16
   rows read B in place, one dot product per output, instead of transposing all of B on every call (k = 1536,
   n = 32,000 on 4 cores: 1 row 188 → 9 ms, 8 rows 196 → 19 ms).
