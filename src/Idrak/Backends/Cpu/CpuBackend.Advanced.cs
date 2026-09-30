@@ -392,6 +392,16 @@ internal sealed partial class CpuBackend
         }
     }
 
+    public override void OneHot(Storage indices, Storage y, int count, int classes)
+    {
+        float[] iv = D(indices), yv = D(y);
+        yv.AsSpan(0, count * classes).Clear();
+        for (int i = 0; i < count; i++)
+        {
+            yv[i * classes + CheckIndex(iv[i], classes)] = 1f;
+        }
+    }
+
     public override void GatherBFloat16(Storage packed, Storage indices, Storage y, int count, int dim, int vocabulary)
     {
         var halves = System.Runtime.InteropServices.MemoryMarshal.Cast<float, ushort>(D(packed).AsSpan());

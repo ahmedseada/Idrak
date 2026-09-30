@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- CPU products with a transposed B (`x.MatMul(w, transposeB: true)`, the tied head, backward products) of at most 16
+  rows read B in place, one dot product per output, instead of transposing all of B on every call (k = 1536,
+  n = 32,000 on 4 cores: 1 row 188 → 9 ms, 8 rows 196 → 19 ms).
+- `Tensor.OneHot` writes the rows directly on the device (a new `OneHot` backend operation and `one_hot_f32` kernel)
+  instead of reading them from a classes × classes identity table kept for the life of the process (16,000 classes:
+  1 GB held before, nothing now; `Losses.SparseCrossEntropy`, `Metric.SparseAccuracy` and the trainer use it).
+- `Idrak.Datasets`: a JSON file holding an array of rows is read in linear time; the rows were detached one by one from
+  the front of the array (100,000 rows: 951 → 64 ms, the time of the same rows as JSON Lines).
+- `--bench-gemv` also times short prompts (1–96 rows) through int8 weights and host-to-device uploads, for the next
+  CUDA changes.
+
 ## 0.1.3 (2026-09-30)
 
 - `Idrak.Datasets`: `ITextNormalizer`, the consumer's text rules (the library has none of its own), and

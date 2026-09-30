@@ -360,9 +360,13 @@ public static class DataFiles
         switch (document)
         {
             case JsonArray array:
-                foreach (var item in array.ToList())
+                // Detach all rows at once: removing them one by one from the front shifts the whole array each time (O(n²)).
+                var items = array.ToArray();
+                array.Clear();
+                for (int i = 0; i < items.Length; i++)
                 {
-                    array.Remove(item);
+                    var item = items[i];
+                    items[i] = null;   // a row the caller is done with can be collected
                     yield return item as JsonObject ?? new JsonObject { ["value"] = item };
                 }
 

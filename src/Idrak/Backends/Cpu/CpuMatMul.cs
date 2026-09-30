@@ -26,6 +26,14 @@ internal static class CpuMatMul
     /// <summary>Multiplies the matrices starting at the given element offsets of each array.</summary>
     public static void Multiply(float[] a, int aOffset, float[] b, int bOffset, float[] c, int cOffset, int m, int n, int k, bool transA, bool transB, float beta)
     {
+        if (transB && m <= NtRows)
+        {
+            // Few rows against B stored [n, k] (decoding through a tied head, backward products of one token): every
+            // output is a dot product of an A row with a contiguous B row, so B is read once in place, not transposed.
+            FewRowsTransposedB(a, aOffset, b, bOffset, c, cOffset, m, n, k, transA, beta);
+            return;
+        }
+
         float[]? rented = null;
         if (transB)
         {
@@ -80,6 +88,85 @@ internal static class CpuMatMul
 
     private const int SmallRows = 4;
     private const int SmallColumns = 64;
+
+    /// <summary>Rows of op(A) up to which a product with a transposed B reads B in place instead of transposing it.</summary>
+    private const int NtRows = 16;
+
+    private static void FewRowsTransposedB(float[] a, int aOffset, float[] b, int bOffset, float[] c, int cOffset, int m, int n, int k, bool transA, float beta)
+    {
+        // The A rows contiguous ([m, k]); a transposed A ([k, m]) is gathered once (m·k values, small here).
+        float[]? rows = null;
+        float[] ar = a;
+        int ao = aOffset;
+        if (transA)
+        {
+            rows = ArrayPool<float>.Shared.Rent(m * k);
+            for (int i = 0; i < m; i++)
+            {
+                for (int p = 0; p < k; p++)
+                {
+                    rows[i * k + p] = a[aOffset + p * m + i];
+                }
+            }
+
+            ar = rows;
+            ao = 0;
+        }
+
+        const int Chunk = 64;
+        int chunks = (n + Chunk - 1) / Chunk;
+        if ((long)m * n * k >= ParallelWork && chunks > 1 && ComputeResources.AllowParallel)
+        {
+            Parallel.For(0, chunks, ComputeResources.ParallelOptions, index => DotColumns(ar, ao, b, bOffset, c, cOffset, m, n, k, beta, index * Chunk, Math.Min(n, (index + 1) * Chunk)));
+        }
+        else
+        {
+            DotColumns(ar, ao, b, bOffset, c, cOffset, m, n, k, beta, 0, n);
+        }
+
+        if (rows is not null)
+        {
+            ArrayPool<float>.Shared.Return(rows);
+        }
+    }
+
+    // C[i, j] = A[i, :] · B[j, :] (+ beta · C[i, j]) for the columns j0..j1; each B row is read once for all m rows.
+    private static void DotColumns(float[] a, int aOffset, float[] b, int bOffset, float[] c, int cOffset, int m, int n, int k, float beta, int j0, int j1)
+    {
+        int w = Vector<float>.Count;
+        ref float ra = ref Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(a), aOffset);
+        ref float rb = ref Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(b), bOffset);
+        for (int j = j0; j < j1; j++)
+        {
+            ref float row = ref Unsafe.Add(ref rb, (nint)j * k);
+            for (int i = 0; i < m; i++)
+            {
+                ref float x = ref Unsafe.Add(ref ra, (nint)i * k);
+                var s0 = Vector<float>.Zero;
+                var s1 = Vector<float>.Zero;
+                int p = 0;
+                for (; p <= k - 2 * w; p += 2 * w)
+                {
+                    s0 = Vector.FusedMultiplyAdd(Vector.LoadUnsafe(ref x, (nuint)p), Vector.LoadUnsafe(ref row, (nuint)p), s0);
+                    s1 = Vector.FusedMultiplyAdd(Vector.LoadUnsafe(ref x, (nuint)(p + w)), Vector.LoadUnsafe(ref row, (nuint)(p + w)), s1);
+                }
+
+                for (; p <= k - w; p += w)
+                {
+                    s0 = Vector.FusedMultiplyAdd(Vector.LoadUnsafe(ref x, (nuint)p), Vector.LoadUnsafe(ref row, (nuint)p), s0);
+                }
+
+                float sum = Vector.Sum(s0 + s1);
+                for (; p < k; p++)
+                {
+                    sum = MathF.FusedMultiplyAdd(Unsafe.Add(ref x, p), Unsafe.Add(ref row, p), sum);
+                }
+
+                ref float dst = ref c[cOffset + i * n + j];
+                dst = beta == 0f ? sum : sum + beta * dst;
+            }
+        }
+    }
 
     private static void FewRows(float[] a, int aOffset, float[] b, int bOffset, float[] c, int cOffset, int m, int n, int k, nint rowStride, nint colStride, float beta)
     {
