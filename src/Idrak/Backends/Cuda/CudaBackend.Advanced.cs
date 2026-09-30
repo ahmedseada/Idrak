@@ -73,6 +73,12 @@ internal sealed unsafe partial class CudaBackend
         Launch1D(K("gather_f32"), n, P(table), P(indices), P(y), U(dim), U(vocabulary - 1), U(n));
     }
 
+    public override void OneHot(Storage indices, Storage y, int count, int classes)
+    {
+        int n = count * classes;
+        Launch1D(K("one_hot_f32"), n, P(indices), P(y), U(classes), U(classes - 1), U(n));
+    }
+
     public override void ScatterAdd(Storage dy, Storage indices, Storage dtable, int count, int dim, int vocabulary)
     {
         int n = count * dim;

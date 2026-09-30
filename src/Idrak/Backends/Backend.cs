@@ -392,6 +392,9 @@ internal abstract class Backend
     /// <summary><see cref="Gather"/> from a bfloat16 table packed as in <see cref="BFloat16MatMul"/> ([vocabulary, dim]).</summary>
     public abstract void GatherBFloat16(Storage packed, Storage indices, Storage y, int count, int dim, int vocabulary);
 
+    /// <summary>One-hot rows: y[i, :] = 0 except y[i, indices[i]] = 1, for count indices over classes columns.</summary>
+    public abstract void OneHot(Storage indices, Storage y, int count, int classes);
+
     /// <summary>dtable[indices[i], :] += dy[i, :].</summary>
     public abstract void ScatterAdd(Storage dy, Storage indices, Storage dtable, int count, int dim, int vocabulary);
 

@@ -45,6 +45,12 @@ internal static partial class Tests
             var oneHot = Tensor.OneHot(labels, 3);
             Check(oneHot.Shape.SequenceEqual([2, 2, 3]), "one-hot shape");
             AssertClose([0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 0, 1], oneHot.ToArray(), 0, "one-hot values");
+            using (var wide = Tensor.OneHot(Tensor.From([49_999f, 0f, 12_345f], [3], d), 50_000))
+            {
+                var values = wide.ToArray();
+                Check(values.Sum() == 3 && values[49_999] == 1 && values[50_000] == 1 && values[100_000 + 12_345] == 1, "one-hot over 50,000 classes");
+            }
+
             using var logits = Tensor.From(RandomArray(new Random(40), 12, 2f), [2, 2, 3], d);
             AssertClose([Losses.CrossEntropy(logits, oneHot).Item()], [Losses.SparseCrossEntropy(logits, labels).Item()], 1e-6f, "sparse == dense");
             GradCheck(d, [2, 2, 3], x => Losses.SparseCrossEntropy(x, labels, labelSmoothing: 0.1f), scale: 2f);

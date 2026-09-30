@@ -753,6 +753,59 @@ internal static partial class Tests
             }
         }
 
+        // Eager calls (no graph: the float32 fallback allocates), 20 per timing after one warm-up.
+        string Eager(Action run)
+        {
+            run();
+            device.Synchronize();
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            for (int i = 0; i < 20; i++)
+            {
+                using var calls = new TensorScope();
+                run();
+            }
+
+            device.Synchronize();
+            return $"{watch.Elapsed.TotalMilliseconds * 1000 / 20:F0}us";
+        }
+
+        // Short prompts through int8 weights, by row count: up to 8 rows take the GEMV kernels, from 64 the packed
+        // tensor-core products; the rows in between expand the whole weight to float32 first (PackedMatMulLarge returns
+        // early below 64 rows). A time per row that jumps between 8 and 64 rows is that expansion.
+        Console.WriteLine();
+        int[] rowCounts = [1, 8, 9, 16, 32, 48, 63, 64, 96];
+        Console.WriteLine($"{"rows through int8 weights",-32} " + string.Join(" ", rowCounts.Select(r => $"{r,9}")));
+        using (MixedPrecision.BFloat16())
+        {
+            foreach (var (kIn, nOut, layer) in new[] { (1024, 3072, gate), (1024, 151936, head) })
+            {
+                Console.WriteLine($"{$"{kIn} -> {nOut}",-32} " + string.Join(" ", rowCounts.Select(rows =>
+                {
+                    using var x = Tensor.From([.. Enumerable.Range(0, rows * kIn).Select(_ => random.NextSingle() - 0.5f)], [rows, kIn], device);
+                    return $"{Eager(() => x.MatMulInt8(layer.Int8!)),9}";
+                })));
+            }
+        }
+
+        // Host-to-device uploads (Tensor.From: a synchronous copy from pageable memory) against the GPU's copy bandwidth.
+        Console.WriteLine();
+        Console.WriteLine($"{"upload (Tensor.From)",-32} {"time",12} {"GB/s",9}");
+        foreach (int floats in new[] { 256, 256 * 1024, 16 * 1024 * 1024 })
+        {
+            var values = new float[floats];
+            Tensor.From(values, [floats], device).Dispose();
+            device.Synchronize();
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            for (int i = 0; i < 10; i++)
+            {
+                Tensor.From(values, [floats], device).Dispose();
+            }
+
+            device.Synchronize();
+            double us = watch.Elapsed.TotalMilliseconds * 1000 / 10;
+            Console.WriteLine($"{$"{floats * 4L / 1024} KB",-32} {$"{us:F0}us",12} {floats * 4L / (us * 1e3),9:F1}");
+        }
+
         return 0;
     }
 

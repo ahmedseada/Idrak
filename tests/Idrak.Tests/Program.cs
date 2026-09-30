@@ -402,7 +402,7 @@ internal static partial class Tests
     private static void MatMulReference(Device device)
     {
         var random = new Random(1);
-        foreach (var (m, n, k) in new[] { (1, 1, 1), (3, 5, 2), (17, 33, 9), (64, 48, 70), (130, 67, 91), (1100, 1030, 21) })
+        foreach (var (m, n, k) in new[] { (1, 1, 1), (3, 5, 2), (17, 33, 9), (64, 48, 70), (130, 67, 91), (1100, 1030, 21), (1, 700, 300), (8, 300, 77), (16, 129, 65) })
         {
             foreach (bool ta in new[] { false, true })
             {
