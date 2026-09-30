@@ -12,6 +12,7 @@ internal static partial class Tests
         ("graph replay gives the same tokens as direct execution", GraphReplay),
         ("sampler: distribution, top-k, temperature, determinism, CPU parity", SamplerBehaviour),
         ("sampler: top-p, min-p, repeat/presence/frequency penalties, history", SamplerFilters),
+        ("sampler: the CPU kernel's one-pass top-k, top-p and top-5 equal the scan-per-choice reference exactly", SamplerSinglePass),
         ("cuda: every kernel's declared parameter count is known (launch argument check)", KernelSignatures),
     ];
 
@@ -94,6 +95,16 @@ internal static partial class Tests
             }
 
             Check(context.Length == T, "context length");
+
+            // An int8 cache: prefill and steps close to the full pass (int8 keys and values round to ~1% of their range).
+            using var context8 = new DecodingContext(device, 1, 12, KeyValueFormat.Int8);
+            float range = full.Max(MathF.Abs);
+            AssertClose(full[..(4 * V)], model.ForwardCached(prompt, context8).ToArray(), 0.05f * range, "int8 prefill logits");
+            for (int t = 4; t < T; t++)
+            {
+                using var next = Tensor.From(ids.AsSpan(t, 1), [1, 1], device);
+                AssertClose(full[(t * V)..((t + 1) * V)], model.ForwardCached(next, context8).ToArray(), 0.05f * range, $"int8 cached step {t}");
+            }
         }
     }
 
@@ -393,5 +404,169 @@ internal static partial class Tests
             int differences = a.Zip(b).Count(p => p.First != p.Second);
             Check(differences <= Rows / 200, $"{differences} of {Rows} filtered samples differ between CPU and {device}");
         }
+    }
+
+    private static void SamplerSinglePass(Device device)
+    {
+        if (device.Type != DeviceType.Cpu)
+        {
+            return;
+        }
+
+        var random = new Random(91);
+        const int Rows = 3, Vocabulary = 700;
+        foreach (var (topK, topP, minP, ties) in new[] { (0, 0f, 0f, false), (20, 0f, 0f, false), (20, 0.9f, 0f, true), (0, 0.5f, 0.05f, false),
+                                                         (650, 0.95f, 0f, true), (5, 0f, 0f, true), (40, 0.8f, 0.01f, true), (699, 0f, 0f, false) })
+        {
+            // Ties: scores from a few values (repeated cut-off scores and equal weights among the top five).
+            float[] logits = [.. Enumerable.Range(0, Rows * Vocabulary).Select(_ => ties ? random.Next(-12, 12) * 0.5f : random.NextSingle() * 16 - 8)];
+            if (topK == 699)
+            {
+                logits = [.. logits.Select(v => MathF.Round(v))];                  // fewer distinct scores than k
+            }
+
+            using var z = Tensor.From(logits, [Rows, Vocabulary], device);
+            using var ids = Tensor.Zeros([Rows], device);
+            using var stats = Tensor.Zeros([2 * Rows * 13], device);
+            using var step = Tensor.From([1f], [1], device);
+            device.Backend.SampleRows(z.Storage, ids.Storage, stats.Storage, step.Storage, Rows, Vocabulary, Vocabulary, 0, 0.8f, topK, topP, minP, 5);
+            var (expectedIds, expectedStats) = SampleReference(logits, Rows, Vocabulary, 1, 0.8f, topK, topP, minP, 5);
+            Check(ids.ToArray().SequenceEqual(expectedIds), $"top-k {topK}, top-p {topP}, min-p {minP}: chosen tokens");
+            Check(stats.ToArray().Skip(Rows * 13).SequenceEqual(expectedStats), $"top-k {topK}, top-p {topP}, min-p {minP}: statistics");
+        }
+    }
+
+    // The CPU sampler as it was: a full scan per top-k step, per bisection step and per top-5 entry.
+    private static (float[] Ids, float[] Stats) SampleReference(float[] lv, int rows, int vocabulary, uint stepNumber, float temperature,
+        int topK, float topP, float minP, uint seed)
+    {
+        float invT = 1f / MathF.Max(temperature, 1e-3f);
+        var e = new float[vocabulary];
+        var iv = new float[rows];
+        var sv = new float[rows * 13];
+        Span<int> taken = stackalloc int[5];
+        for (int r = 0; r < rows; r++)
+        {
+            var z = lv.AsSpan(r * vocabulary, vocabulary);
+            float max = float.NegativeInfinity;
+            foreach (float v in z)
+            {
+                max = MathF.Max(max, v * invT);
+            }
+
+            float threshold = float.NegativeInfinity;
+            if (topK > 0 && topK < vocabulary)
+            {
+                threshold = float.PositiveInfinity;
+                for (int k = 0; k < topK; k++)
+                {
+                    float next = float.NegativeInfinity;
+                    foreach (float v in z)
+                    {
+                        float s = v * invT;
+                        if (s < threshold && s > next)
+                        {
+                            next = s;
+                        }
+                    }
+
+                    threshold = next;
+                }
+            }
+
+            if (minP > 0f)
+            {
+                threshold = MathF.Max(threshold, max + MathF.Log(minP));
+            }
+
+            if (topP > 0f && topP < 1f)
+            {
+                float total = 0f;
+                foreach (float v in z)
+                {
+                    float s = v * invT;
+                    total += s >= threshold ? MathF.Exp(s - max) : 0f;
+                }
+
+                float goal = total * topP, lo = MathF.Max(max - 40f, threshold), hi = max;
+                for (int it = 0; it < 24; it++)
+                {
+                    float mid = (lo + hi) * 0.5f, mass = 0f;
+                    foreach (float v in z)
+                    {
+                        float s = v * invT;
+                        mass += s >= threshold && s >= mid ? MathF.Exp(s - max) : 0f;
+                    }
+
+                    if (mass >= goal)
+                    {
+                        lo = mid;
+                    }
+                    else
+                    {
+                        hi = mid;
+                    }
+                }
+
+                threshold = lo;
+            }
+
+            float sum = 0f;
+            for (int j = 0; j < vocabulary; j++)
+            {
+                float s = z[j] * invT;
+                e[j] = s >= threshold ? MathF.Exp(s - max) : 0f;
+                sum += e[j];
+            }
+
+            float target = Idrak.Backends.CounterRandom.Uniform(seed, stepNumber, (uint)r) * sum;
+            int chosen = -1;
+            float cumulative = 0f;
+            for (int j = 0; j < vocabulary; j++)
+            {
+                if (e[j] > 0f)
+                {
+                    chosen = j;
+                    cumulative += e[j];
+                    if (cumulative > target)
+                    {
+                        break;
+                    }
+                }
+            }
+
+            float entropy = 0f;
+            for (int j = 0; j < vocabulary; j++)
+            {
+                if (e[j] > 0f)
+                {
+                    float p = e[j] / sum;
+                    entropy -= p * MathF.Log2(p);
+                }
+            }
+
+            iv[r] = chosen;
+            int o = r * 13;
+            sv[o] = chosen;
+            sv[o + 1] = e[chosen] / sum;
+            sv[o + 2] = entropy;
+            for (int a = 0; a < 5; a++)
+            {
+                int best = -1;
+                for (int j = 0; j < vocabulary; j++)
+                {
+                    if (e[j] > 0f && (best < 0 || e[j] > e[best]) && taken[..a].IndexOf(j) < 0)
+                    {
+                        best = j;
+                    }
+                }
+
+                taken[a] = best;
+                sv[o + 3 + 2 * a] = best;
+                sv[o + 4 + 2 * a] = best < 0 ? 0f : e[best] / sum;
+            }
+        }
+
+        return (iv, sv);
     }
 }

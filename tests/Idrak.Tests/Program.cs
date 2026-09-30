@@ -2,6 +2,7 @@
 //   IDRAK_DEVICES=cpu,cuda:0,cuda:2 …   only these devices
 //   dotnet run --project tests/Idrak.Tests                  run every test on every available device
 //   dotnet run --project tests/Idrak.Tests -- --dump-ptx f  write the generated CUDA kernels to f
+//   … -- --bench-cpu                                                             time the CPU decoding kernels (bfloat16 products, cached attention, sampling)
 //   … -- --bench-gemm / --bench-gemv / --bench-fp8                               time large products / decoding-sized packed products
 //   IDRAK_FILTER=retrieval dotnet run --project tests/Idrak.Tests   only tests whose name contains the text
 //   IDRAK_TIMEOUT=60 …    a test still running after this many seconds (default 300) is reported as HANG and the run stops
@@ -23,6 +24,11 @@ if (args is ["--bench-gemm"])
 if (args is ["--bench-gemv"])
 {
     return Tests.BenchGemv();
+}
+
+if (args is ["--bench-cpu"])
+{
+    return Tests.BenchCpu();
 }
 
 if (args is ["--bench-fp8"])
