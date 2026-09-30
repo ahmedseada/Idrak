@@ -5,6 +5,7 @@
     <AssemblyName>Idrak.LanguageModels</AssemblyName>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <IsAotCompatible>true</IsAotCompatible>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <PackageId>Idrak.LanguageModels</PackageId>
     <Description>Language models for Idrak (no dependencies): load Llama, Qwen, Mistral and Gemma models by Hugging Face id, folder or GGUF file (safetensors and quantized GGUF weights, an extensible architecture registry), with their own BPE tokenizers and chat templates; chat with them, fine-tune them (LoRA / QLoRA) and score their answers.</Description>
   </PropertyGroup>

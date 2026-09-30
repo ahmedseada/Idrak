@@ -186,6 +186,7 @@ public sealed record DecoderSpec
         int maxPositions = options.MaxPositions ?? MaxPositions;
         var random = new Random(options.Seed);
         var created = new List<Module>();
+        Linear? head = null;
         try
         {
             Tensor Tensor(string name, int[] shape, Func<float[]> fallback)
@@ -232,7 +233,7 @@ public sealed record DecoderSpec
                     : LayerNorm.FromWeights(gain, Tensor($"{name}.bias", [features], () => new float[features]), NormEpsilon);
             }
 
-            var embeddingValues = weights is null
+            float[]? embeddingValues = weights is null
                 ? (options.InitStd is { } embedStd ? Normal(Vocabulary * Dim, embedStd) : [.. Enumerable.Range(0, Vocabulary * Dim).Select(_ => (float)(random.NextDouble() * 2 - 1) * 0.02f)])
                 : weights.Read("embed.weight", [Vocabulary, Dim]) ?? throw new InvalidDataException($"The weights have no 'embed.weight' [{Vocabulary}, {Dim}].");
             // Frozen-weight builds keep the table as bfloat16 (half the memory; lossless for bfloat16 checkpoints).
@@ -242,6 +243,14 @@ public sealed record DecoderSpec
                 : Embedding.FromWeights(Idrak.Tensor.Persistent(embeddingValues, [Vocabulary, Dim], device, requiresGrad: true));
             embedding.Name = "embed";
             created.Add(embedding);
+            // A packed tied head gets its own transposed copy of the table: made now, so the table's float values are not
+            // kept alive while every layer is read (a float tied head reads the embedding in place; see below).
+            if (TieEmbeddings && frozen)
+            {
+                head = Projection("head", Dim, Vocabulary, HeadBias, embeddingValues);
+            }
+
+            embeddingValues = null;
             if (EmbeddingScale is { } scale)
             {
                 created.Add(new Scale(scale) { Name = "embed_scale" });
@@ -285,10 +294,10 @@ public sealed record DecoderSpec
             var norm = Normalization("norm", Dim);
             norm.Name = "norm";
             created.Add(norm);
-            // A float tied head reads the embedding table in place; packed heads get their own (transposed) copy.
-            var head = TieEmbeddings && !frozen
+            // A float tied head reads the embedding table in place; packed tied heads were made with the embedding.
+            head ??= TieEmbeddings
                 ? Linear.Tied(embedding, HeadBias ? Tensor("head.bias", [Vocabulary], () => new float[Vocabulary]) : null)
-                : Projection("head", Dim, Vocabulary, HeadBias, TieEmbeddings ? embeddingValues : null);
+                : Projection("head", Dim, Vocabulary, HeadBias);
             head.Name = "head";
             created.Add(head);
             var blocks = created.OfType<DecoderBlock>().ToList();
@@ -304,6 +313,11 @@ public sealed record DecoderSpec
         catch
         {
             created.ForEach(m => m.Dispose());
+            if (head is not null && !created.Contains(head))
+            {
+                head.Dispose();
+            }
+
             throw;
         }
     }

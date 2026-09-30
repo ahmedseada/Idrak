@@ -36,8 +36,8 @@ internal sealed class Float8Weight : IDisposable
             return null;
         }
 
-        var values = Tensor.Persistent(new float[Math.Max(1, columns * padded / 4)], [Math.Max(1, columns * padded / 4)], weight.Device, requiresGrad: false);
-        var scales = Tensor.Persistent(new float[columns], [columns], weight.Device, requiresGrad: false);
+        var values = Tensor.PersistentZeros([Math.Max(1, columns * padded / 4)], weight.Device);
+        var scales = Tensor.PersistentZeros([columns], weight.Device);
         if (!backend.Float8QuantizeWeight(weight.Storage, rows, columns, values.Storage, scales.Storage))
         {
             values.Dispose();

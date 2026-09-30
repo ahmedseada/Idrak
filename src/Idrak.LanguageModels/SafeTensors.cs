@@ -36,6 +36,16 @@ internal interface ITensorStore : IDisposable
     int[] ShapeOf(string name);
 
     float[] Read(string name);
+
+    /// <summary>
+    /// The 2-D tensor <paramref name="name"/> [rows, columns] transposed to [columns, rows]. Stores override this to
+    /// transpose while reading, so the stored-order values never exist as a second full array.
+    /// </summary>
+    float[] ReadTransposed(string name)
+    {
+        var shape = ShapeOf(name);
+        return Idrak.HostParallel.Transpose(Read(name), shape[0], shape[1]);
+    }
 }
 
 /// <summary>
@@ -129,6 +139,83 @@ public sealed class SafeTensorsReader : IDisposable, ITensorStore
                 int width = info.Type == SafeTensorType.F32 ? 4 : 2;
                 ReadAt(handle, buffer.AsSpan(0, n * width), info.Offset + (long)first * width);
                 DecodeInto(buffer, info.Type, values, first, n);
+            }
+        }
+        finally
+        {
+            System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
+        }
+
+        return values;
+    }
+
+    /// <summary>The 2-D tensor <paramref name="name"/> [rows, columns] as float32 values transposed to [columns, rows].</summary>
+    public float[] ReadTransposed(string name)
+    {
+        var info = _tensors.TryGetValue(name, out var t) ? t : throw new KeyNotFoundException($"No tensor named '{name}'.");
+        if (info.Shape.Length != 2)
+        {
+            throw new ArgumentException($"'{name}' is [{string.Join(", ", info.Shape)}], not a matrix.", nameof(name));
+        }
+
+        if (!BitConverter.IsLittleEndian)
+        {
+            return Idrak.HostParallel.Transpose(Read(name), info.Shape[0], info.Shape[1]);
+        }
+
+        // Chunks of stored rows are read through one pooled buffer and scattered, widened, into the transposed result.
+        int rows = info.Shape[0], columns = info.Shape[1], width = info.Type == SafeTensorType.F32 ? 4 : 2;
+        var handle = _files[info.File].SafeFileHandle;
+        var values = GC.AllocateUninitializedArray<float>(checked(rows * columns));
+        int chunkRows = Math.Max(1, (1 << 22) / Math.Max(1, columns));
+        byte[] buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(Math.Max(1, (int)Math.Min(info.Length, (long)chunkRows * columns * width)));
+        try
+        {
+            for (int r0 = 0; r0 < rows; r0 += chunkRows)
+            {
+                int n = Math.Min(chunkRows, rows - r0), first = r0;
+                ReadAt(handle, buffer.AsSpan(0, n * columns * width), info.Offset + (long)r0 * columns * width);
+                var type = info.Type;
+                Idrak.HostParallel.For(columns, Math.Max(1, (1 << 14) / n), (c0, c1) =>
+                {
+                    const int Tile = 64;
+                    for (int t0 = 0; t0 < n; t0 += Tile)
+                    {
+                        int t1 = Math.Min(n, t0 + Tile);
+                        for (int c = c0; c < c1; c++)
+                        {
+                            var column = values.AsSpan(c * rows + first, n);
+                            switch (type)
+                            {
+                                case SafeTensorType.F32:
+                                    var floats = MemoryMarshal.Cast<byte, float>(buffer.AsSpan(0, n * columns * 4));
+                                    for (int r = t0; r < t1; r++)
+                                    {
+                                        column[r] = floats[r * columns + c];
+                                    }
+
+                                    break;
+                                case SafeTensorType.F16:
+                                    var halves = MemoryMarshal.Cast<byte, Half>(buffer.AsSpan(0, n * columns * 2));
+                                    for (int r = t0; r < t1; r++)
+                                    {
+                                        column[r] = (float)halves[r * columns + c];
+                                    }
+
+                                    break;
+                                default:
+                                    var bits = MemoryMarshal.Cast<byte, ushort>(buffer.AsSpan(0, n * columns * 2));
+                                    var target = MemoryMarshal.Cast<float, uint>(column);
+                                    for (int r = t0; r < t1; r++)
+                                    {
+                                        target[r] = (uint)bits[r * columns + c] << 16;
+                                    }
+
+                                    break;
+                            }
+                        }
+                    }
+                });
             }
         }
         finally
@@ -266,6 +353,21 @@ public static class SafeTensorsWriter
         IReadOnlyDictionary<string, string>? metadata = null)
     {
         var list = tensors.ToList();
+        foreach (var (name, shape, values) in list)
+        {
+            Check(name, shape, values);
+        }
+
+        Write(path, [.. list.Select(t => (t.Name, t.Shape, (Func<float[]>)(() => t.Values)))], type, metadata);
+    }
+
+    /// <summary>
+    /// Writes tensors whose values are produced one at a time by <c>Values</c>, as each is written: the header comes from
+    /// the shapes, so only one tensor's values (and one chunk of its bytes) exist at once.
+    /// </summary>
+    internal static void Write(string path, IReadOnlyList<(string Name, int[] Shape, Func<float[]> Values)> tensors, SafeTensorType type,
+        IReadOnlyDictionary<string, string>? metadata)
+    {
         int size = type == SafeTensorType.F32 ? 4 : 2;
         var header = new JsonObject();
         if (metadata is not null)
@@ -280,20 +382,16 @@ public static class SafeTensorsWriter
         }
 
         long offset = 0;
-        foreach (var (name, shape, values) in list)
+        foreach (var (name, shape, _) in tensors)
         {
-            if (values.Length != shape.Aggregate(1, (a, b) => a * b))
-            {
-                throw new ArgumentException($"'{name}': {values.Length} values do not fill [{string.Join(", ", shape)}].");
-            }
-
+            long count = shape.Aggregate(1L, (a, b) => a * b);
             header[name] = new JsonObject
             {
                 ["dtype"] = type.ToString(),
                 ["shape"] = new JsonArray([.. shape.Select(d => (JsonNode)d)]),
-                ["data_offsets"] = new JsonArray(offset, offset + (long)values.Length * size),
+                ["data_offsets"] = new JsonArray(offset, offset + count * size),
             };
-            offset += (long)values.Length * size;
+            offset += count * size;
         }
 
         var headerBytes = Encoding.UTF8.GetBytes(header.ToJsonString());
@@ -304,28 +402,58 @@ public static class SafeTensorsWriter
         stream.Write(length);
         stream.Write(headerBytes);
         stream.Write(Encoding.ASCII.GetBytes(new string(' ', padding)));
-        foreach (var (_, _, values) in list)
+        const int ChunkValues = 1 << 22;
+        byte[] bytes = System.Buffers.ArrayPool<byte>.Shared.Rent(ChunkValues * size);
+        try
         {
-            var bytes = new byte[values.Length * size];
-            for (int i = 0; i < values.Length; i++)
+            foreach (var (name, shape, produce) in tensors)
             {
-                switch (type)
+                var values = produce();
+                Check(name, shape, values);
+                for (int first = 0; first < values.Length; first += ChunkValues)
                 {
-                    case SafeTensorType.F32:
-                        BinaryPrimitives.WriteSingleLittleEndian(bytes.AsSpan(i * 4), values[i]);
-                        break;
-                    case SafeTensorType.F16:
-                        BinaryPrimitives.WriteHalfLittleEndian(bytes.AsSpan(i * 2), (Half)values[i]);
-                        break;
-                    default:
-                        uint bits = BitConverter.SingleToUInt32Bits(values[i]);
-                        ushort b16 = float.IsNaN(values[i]) ? (ushort)0x7FC0 : (ushort)((bits + 0x7FFFu + ((bits >> 16) & 1u)) >> 16);
-                        BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(i * 2), b16);
-                        break;
+                    int n = Math.Min(ChunkValues, values.Length - first), start = first;
+                    Idrak.HostParallel.For(n, 1 << 16, (lo, hi) => Encode(values, start + lo, bytes, lo, hi - lo, type));
+                    stream.Write(bytes, 0, n * size);
                 }
             }
+        }
+        finally
+        {
+            System.Buffers.ArrayPool<byte>.Shared.Return(bytes);
+        }
+    }
 
-            stream.Write(bytes);
+    private static void Check(string name, int[] shape, float[] values)
+    {
+        if (values.Length != shape.Aggregate(1L, (a, b) => a * b))
+        {
+            throw new ArgumentException($"'{name}': {values.Length} values do not fill [{string.Join(", ", shape)}].");
+        }
+    }
+
+    // values[from..from+count] as little-endian `type` into bytes, starting at value index `at` (bfloat16 rounds to nearest
+    // even; NaN stays NaN).
+    private static void Encode(float[] values, int from, byte[] bytes, int at, int count, SafeTensorType type)
+    {
+        for (int k = 0; k < count; k++)
+        {
+            float value = values[from + k];
+            int i = at + k;
+            switch (type)
+            {
+                case SafeTensorType.F32:
+                    BinaryPrimitives.WriteSingleLittleEndian(bytes.AsSpan(i * 4), value);
+                    break;
+                case SafeTensorType.F16:
+                    BinaryPrimitives.WriteHalfLittleEndian(bytes.AsSpan(i * 2), (Half)value);
+                    break;
+                default:
+                    uint bits = BitConverter.SingleToUInt32Bits(value);
+                    ushort b16 = float.IsNaN(value) ? (ushort)0x7FC0 : (ushort)((bits + 0x7FFFu + ((bits >> 16) & 1u)) >> 16);
+                    BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(i * 2), b16);
+                    break;
+            }
         }
     }
 }

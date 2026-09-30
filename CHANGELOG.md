@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- Loading and exporting weights makes fewer full copies (the same values, bit for bit). Measured on the CPU (4 cores)
+  with a 78 M-parameter Llama-style model (vocabulary 32,768, dim 1024, 4 layers, tied head):
+  - `Module.Load` of an int8 / int4 / bfloat16 weights file allocates room for the packed weights instead of first
+    quantizing the model's current (random) weights that the file replaces: int8 3.1 s → 0.15 s and 1.4 GB → 0.36 GB peak
+    working set, int4 9.2 s → 0.1 s and 1.26 → 0.26 GB, bfloat16 3.9 s → 0.27 s and 1.6 → 0.69 GB. Float32 tensors are
+    read and written as their bytes (no second float array).
+  - `Int8Weight.Quantize`, `Int4Weight.Quantize` and `BFloat16Weight.FromValues` read span inputs in place and upload the
+    packed values without copying them first; zero-filled buffers (dequantized weights, FP8 copies) are allocated on the
+    device instead of uploaded from a host array.
+  - Checkpoint matrices are transposed while they are read (safetensors and GGUF), so a tensor no longer exists in the
+    stored order and transposed at once; a packed tied head is made with the embedding, so the table's float values are
+    not kept while every layer is read. Safetensors int8 load: 1.09 → 0.76 GB allocated, peak working set 1.05 → 0.65 GB;
+    bfloat16: 1.9 → 0.73 s, 1.32 → 0.91 GB allocated.
+  - GGUF: tensors dequantize straight into the result on all cores (F16 and BF16 too), and Llama's q / k rows are put back
+    in order in place or while transposing. Load (Q8_0 file): float32 1.4 s → 0.7 s and 1.47 → 1.01 GB peak working set,
+    int8 1.8 → 1.0 s and 1.61 → 0.99 GB; `GgufFile.Dequantize` of 64 MB of Q8_0 plus 32 MB each of F16 and BF16,
+    three times: 1.2 s and 961 MB allocated → 0.38 s and nothing allocated.
+  - `PretrainedModel.SaveHuggingFace` writes the header from the shapes, then copies, transposes and encodes one tensor at
+    a time (in parallel chunks) instead of holding every tensor on the host first (an 8B model held about 32 GB): peak
+    working set 532 → 354 MB, 0.87 → 0.66 s.
+
 - CPU products with a transposed B (`x.MatMul(w, transposeB: true)`, the tied head, backward products) of at most 16
   rows read B in place, one dot product per output, instead of transposing all of B on every call (k = 1536,
   n = 32,000 on 4 cores: 1 row 188 → 9 ms, 8 rows 196 → 19 ms).

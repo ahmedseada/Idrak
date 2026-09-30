@@ -350,6 +350,48 @@ public sealed class Linear : Module
         Int4 = null;
     }
 
+    // Loading packed weights (Module.Load): room for them, allocated without quantizing the current weights that the
+    // file's values replace anyway. The layer drops its float / tied / other packed weights, as the conversions do.
+    internal void LoadAsInt8()
+    {
+        if (Int8 is null)
+        {
+            Int8 = Int8Weight.Empty(InFeatures, OutFeatures, ReleaseWeights());
+        }
+    }
+
+    internal void LoadAsInt4()
+    {
+        if (Int4 is null)
+        {
+            Int4 = Int4Weight.Empty(InFeatures, OutFeatures, ReleaseWeights());
+        }
+    }
+
+    internal void LoadAsBFloat16()
+    {
+        if (BFloat16 is null)
+        {
+            BFloat16 = BFloat16Weight.Empty(InFeatures, OutFeatures, ReleaseWeights());
+        }
+    }
+
+    // Releases the weights (a tied layer only lets go of the table) and returns their device.
+    private Device ReleaseWeights()
+    {
+        var device = Device;
+        _tiedTo = null;
+        _tiedTransposed?.Dispose();
+        _tiedTransposed = null;
+        _weight?.Dispose();
+        _weight = null;
+        Int8?.Dispose();
+        Int4?.Dispose();
+        BFloat16?.Dispose();
+        (Int8, Int4, BFloat16) = (null, null, null);
+        return device;
+    }
+
     internal void QuantizeInt4()
     {
         if (Int4 is not null)

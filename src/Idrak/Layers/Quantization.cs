@@ -60,19 +60,36 @@ public sealed class Int8Weight : IDisposable
     /// Quantizes weights given as host values [rows, columns] and uploads only the bytes to <paramref name="device"/>
     /// (large models never exist as float32 on the device).
     /// </summary>
-    public static Int8Weight Quantize(ReadOnlySpan<float> values, int rows, int columns, Device device) =>
-        Quantize(values.ToArray(), rows, columns, device);
-
-    /// <summary><see cref="Quantize(ReadOnlySpan{float}, int, int, Device)"/> without copying the values first.</summary>
-    internal static Int8Weight Quantize(float[] values, int rows, int columns, Device device)
+    public static unsafe Int8Weight Quantize(ReadOnlySpan<float> values, int rows, int columns, Device device)
     {
         if (values.Length != rows * columns)
         {
             throw new ArgumentException($"{values.Length} values do not fill [{rows}, {columns}].", nameof(values));
         }
 
+        // The worker lambdas cannot capture a span: they read the pinned values through a pointer (no copy).
+        fixed (float* pinned = values)
+        {
+            return Quantize(pinned, rows, columns, device);
+        }
+    }
+
+    /// <summary>
+    /// Packed bytes and scales for [rows, columns] allocated on <paramref name="device"/> without computing anything, for
+    /// loading stored values into (<see cref="Module.Load(string)"/>).
+    /// </summary>
+    internal static Int8Weight Empty(int rows, int columns, Device device)
+    {
         int stride = (columns + 3) / 4 * 4;
-        var source = values;
+        return new Int8Weight(
+            Tensor.PersistentZeros([rows * stride / 4], device),
+            Tensor.PersistentZeros([columns], device),
+            rows, columns);
+    }
+
+    private static unsafe Int8Weight Quantize(float* source, int rows, int columns, Device device)
+    {
+        int stride = (columns + 3) / 4 * 4;
 
         // Column maxima per chunk of rows (all cores), then combined.
         var scales = new float[columns];
@@ -113,7 +130,7 @@ public sealed class Int8Weight : IDisposable
             }
         });
 
-        var packed = MemoryMarshal.Cast<sbyte, float>(bytes).ToArray();
+        var packed = MemoryMarshal.Cast<sbyte, float>(bytes);
         return new Int8Weight(
             Tensor.Persistent(packed, [packed.Length], device, requiresGrad: false),
             Tensor.Persistent(scales, [columns], device, requiresGrad: false),
@@ -123,7 +140,7 @@ public sealed class Int8Weight : IDisposable
     /// <summary>The float weights these bytes stand for, [rows, columns], on the same device.</summary>
     public Tensor Dequantize()
     {
-        var w = Tensor.Persistent(new float[Rows * Columns], [Rows, Columns], Packed.Device, requiresGrad: false);
+        var w = Tensor.PersistentZeros([Rows, Columns], Packed.Device);
         Packed.Backend.Int8Dequantize(Packed.Storage, Scales.Storage, w.Storage, Rows, Columns);
         return w;
     }
@@ -188,21 +205,38 @@ public sealed class Int4Weight : IDisposable
     }
 
     /// <summary>Quantizes host values [rows, columns] and uploads only the nibbles and scales to <paramref name="device"/>.</summary>
-    public static Int4Weight Quantize(ReadOnlySpan<float> values, int rows, int columns, Device device) =>
-        Quantize(values.ToArray(), rows, columns, device);
-
-    /// <summary><see cref="Quantize(ReadOnlySpan{float}, int, int, Device)"/> without copying the values first.</summary>
-    internal static Int4Weight Quantize(float[] values, int rows, int columns, Device device)
+    public static unsafe Int4Weight Quantize(ReadOnlySpan<float> values, int rows, int columns, Device device)
     {
         if (values.Length != rows * columns)
         {
             throw new ArgumentException($"{values.Length} values do not fill [{rows}, {columns}].", nameof(values));
         }
 
+        // The worker lambdas cannot capture a span: they read the pinned values through a pointer (no copy).
+        fixed (float* pinned = values)
+        {
+            return Quantize(pinned, rows, columns, device);
+        }
+    }
+
+    /// <summary>
+    /// Nibbles and scales for [rows, columns] allocated on <paramref name="device"/> without computing anything, for
+    /// loading stored values into (<see cref="Module.Load(string)"/>).
+    /// </summary>
+    internal static Int4Weight Empty(int rows, int columns, Device device)
+    {
+        int words = (columns + 7) / 8, groups = (rows + GroupSize - 1) / GroupSize;
+        return new Int4Weight(
+            Tensor.PersistentZeros([rows * words], device),
+            Tensor.PersistentZeros([groups * words * 8], device),
+            rows, columns);
+    }
+
+    private static unsafe Int4Weight Quantize(float* source, int rows, int columns, Device device)
+    {
         int words = (columns + 7) / 8, groups = (rows + GroupSize - 1) / GroupSize;
         var packed = new uint[rows * words];
         var scales = new float[groups * words * 8];
-        var source = values;
         HostParallel.For(groups, Math.Max(1, (1 << 12) / Math.Max(1, columns)), (first, last) =>
         {
             Span<float> w = stackalloc float[GroupSize];
@@ -272,7 +306,7 @@ public sealed class Int4Weight : IDisposable
         });
 
         return new Int4Weight(
-            Tensor.Persistent(MemoryMarshal.Cast<uint, float>(packed).ToArray(), [packed.Length], device, requiresGrad: false),
+            Tensor.Persistent(MemoryMarshal.Cast<uint, float>(packed), [packed.Length], device, requiresGrad: false),
             Tensor.Persistent(scales, [scales.Length], device, requiresGrad: false),
             rows, columns);
     }
@@ -280,7 +314,7 @@ public sealed class Int4Weight : IDisposable
     /// <summary>The float weights these nibbles stand for, [rows, columns], on the same device.</summary>
     public Tensor Dequantize()
     {
-        var w = Tensor.Persistent(new float[Rows * Columns], [Rows, Columns], Packed.Device, requiresGrad: false);
+        var w = Tensor.PersistentZeros([Rows, Columns], Packed.Device);
         Packed.Backend.Int4Dequantize(Packed.Storage, Scales.Storage, w.Storage, Rows, Columns);
         return w;
     }
@@ -338,20 +372,34 @@ public sealed class BFloat16Weight : IDisposable
     }
 
     /// <summary>Rounds host values [rows, columns] to bfloat16 (to nearest, ties to even) and uploads only those.</summary>
-    public static BFloat16Weight FromValues(ReadOnlySpan<float> values, int rows, int columns, Device device) =>
-        FromValues(values.ToArray(), rows, columns, device);
-
-    /// <summary><see cref="FromValues(ReadOnlySpan{float}, int, int, Device)"/> without copying the values first.</summary>
-    internal static BFloat16Weight FromValues(float[] values, int rows, int columns, Device device)
+    public static unsafe BFloat16Weight FromValues(ReadOnlySpan<float> values, int rows, int columns, Device device)
     {
         if (values.Length != rows * columns)
         {
             throw new ArgumentException($"{values.Length} values do not fill [{rows}, {columns}].", nameof(values));
         }
 
+        // The worker lambdas cannot capture a span: they read the pinned values through a pointer (no copy).
+        fixed (float* pinned = values)
+        {
+            return FromValues(pinned, rows, columns, device);
+        }
+    }
+
+    /// <summary>
+    /// Room for bfloat16 values [rows, columns] on <paramref name="device"/>, allocated without computing anything, for
+    /// loading stored values into (<see cref="Module.Load(string)"/>).
+    /// </summary>
+    internal static BFloat16Weight Empty(int rows, int columns, Device device)
+    {
+        int stride = (columns + 1) / 2 * 2;
+        return new BFloat16Weight(Tensor.PersistentZeros([rows * stride / 2], device), rows, columns);
+    }
+
+    private static unsafe BFloat16Weight FromValues(float* source, int rows, int columns, Device device)
+    {
         int stride = (columns + 1) / 2 * 2;
         var halves = new ushort[rows * stride];
-        var source = values;
         HostParallel.For(rows, Math.Max(1, (1 << 16) / Math.Max(1, columns)), (first, last) =>
         {
             for (int r = first; r < last; r++)
@@ -363,7 +411,7 @@ public sealed class BFloat16Weight : IDisposable
             }
         });
 
-        var packed = MemoryMarshal.Cast<ushort, float>(halves).ToArray();
+        var packed = MemoryMarshal.Cast<ushort, float>(halves);
         return new BFloat16Weight(Tensor.Persistent(packed, [packed.Length], device, requiresGrad: false), rows, columns);
     }
 
@@ -382,7 +430,7 @@ public sealed class BFloat16Weight : IDisposable
     /// <summary>The float weights, [rows, columns], on the same device.</summary>
     public Tensor Dequantize()
     {
-        var w = Tensor.Persistent(new float[Rows * Columns], [Rows, Columns], Packed.Device, requiresGrad: false);
+        var w = Tensor.PersistentZeros([Rows, Columns], Packed.Device);
         Packed.Backend.BFloat16Dequantize(Packed.Storage, w.Storage, Rows, Columns);
         return w;
     }
