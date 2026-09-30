@@ -116,8 +116,16 @@ public sealed class MultiHeadAttention : Module, ICachedModule
         {
             Tensor.WriteKeyValuesInt8(SplitHeads(1), cache.Keys, cache.KeyScales!, context.Position);
             Tensor.WriteKeyValuesInt8(SplitHeads(2), cache.Values, cache.ValueScales!, context.Position);
-            var weights8 = Tensor.AttentionScoresInt8(q, cache).ScaleMaskSoftmax(1f / MathF.Sqrt(dh), context.Mask);
-            output = Tensor.AttentionContextInt8(weights8, cache);
+            if (dh <= Backends.Cuda.PtxKernels.DecodeMaxDim)
+            {
+                // Only the filled positions (as decoder models do), not every slot of the cache behind a mask.
+                output = Tensor.AttentionInt8(q, cache, context.Position, t, 1f / MathF.Sqrt(dh), tiled: t >= 8);
+            }
+            else
+            {
+                var weights8 = Tensor.AttentionScoresInt8(q, cache).ScaleMaskSoftmax(1f / MathF.Sqrt(dh), context.Mask);
+                output = Tensor.AttentionContextInt8(weights8, cache);
+            }
         }
         else
         {

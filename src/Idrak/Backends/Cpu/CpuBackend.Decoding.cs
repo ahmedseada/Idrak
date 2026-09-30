@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Runtime.InteropServices;
 
 namespace Idrak.Backends.Cpu;
@@ -237,35 +238,42 @@ internal sealed partial class CpuBackend
     public override void AttentionBFloat16(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead,
         int steps, int capacity, int dim, float scale, bool tiled)
     {
-        // The filled rows as floats ([heads, filled, dim]), then the float kernel.
-        int filled = Math.Min(capacity, (int)D(position)[0] + steps), stride = (dim + 1) / 2 * 2;
-        var k = Allocate(heads * filled * dim, zeroed: false);
-        var v = Allocate(heads * filled * dim, zeroed: false);
-        try
+        // Straight from the bfloat16 cache: each cached key and value row is widened into a small buffer as it is used,
+        // in parallel over the query rows (no float copy of the whole filled cache per call).
+        float[] qv = D(q), yv = D(y);
+        int position0 = (int)D(position)[0], stride = (dim + 1) / 2 * 2;
+        For(heads * rowsPerHead, (long)heads * rowsPerHead * dim * Math.Max(1, position0), (first, last) =>
         {
             var kh = MemoryMarshal.Cast<float, ushort>(D(keys).AsSpan());
             var vh = MemoryMarshal.Cast<float, ushort>(D(values).AsSpan());
-            float[] kv = D(k), vv = D(v);
-            for (int h = 0; h < heads; h++)
+            var scores = ArrayPool<float>.Shared.Rent(capacity);
+            var widened = ArrayPool<float>.Shared.Rent(dim);
+            var row = widened.AsSpan(0, dim);
+            for (int r = first; r < last; r++)
             {
-                for (int c = 0; c < filled; c++)
+                int h = r / rowsPerHead, count = Math.Min(position0 + r % rowsPerHead % steps, capacity - 1) + 1;
+                var query = qv.AsSpan(r * dim, dim);
+                float max = float.NegativeInfinity;
+                for (int c = 0; c < count; c++)
                 {
-                    int from = (h * capacity + c) * stride, to = (h * filled + c) * dim;
-                    for (int d = 0; d < dim; d++)
-                    {
-                        kv[to + d] = BitConverter.Int32BitsToSingle(kh[from + d] << 16);
-                        vv[to + d] = BitConverter.Int32BitsToSingle(vh[from + d] << 16);
-                    }
+                    WidenBFloat16(kh.Slice((h * capacity + c) * stride, dim), row);
+                    scores[c] = Dot(query, row) * scale;
+                    max = MathF.Max(max, scores[c]);
+                }
+
+                float sum = CpuMath.ExpShifted(scores.AsSpan(0, count), max);
+                var output = yv.AsSpan(r * dim, dim);
+                output.Clear();
+                for (int c = 0; c < count; c++)
+                {
+                    WidenBFloat16(vh.Slice((h * capacity + c) * stride, dim), row);
+                    AddScaled(output, row, scores[c] / sum);
                 }
             }
 
-            AttentionTiled(q, k, v, position, y, null, heads, rowsPerHead, steps, filled, dim, scale);
-        }
-        finally
-        {
-            k.Release();
-            v.Release();
-        }
+            ArrayPool<float>.Shared.Return(scores);
+            ArrayPool<float>.Shared.Return(widened);
+        });
     }
 
     public override void SampleRows(Storage logits, Storage ids, Storage stats, Storage step, int rows, int vocabulary,
@@ -274,7 +282,9 @@ internal sealed partial class CpuBackend
         float[] lv = D(logits), iv = D(ids), sv = D(stats);
         uint stepNumber = (uint)D(step)[0];
         float invT = 1f / MathF.Max(temperature, 1e-3f);
-        Span<float> e = vocabulary <= 4096 ? stackalloc float[vocabulary] : new float[vocabulary];
+        float[] e = ArrayPool<float>.Shared.Rent(vocabulary);
+        float[] top = ArrayPool<float>.Shared.Rent(Math.Max(1, Math.Min(topK, vocabulary)));
+        float[]? candidateScores = null, candidateWeights = null;
         Span<int> taken = stackalloc int[5];
         for (int r = 0; r < rows; r++)
         {
@@ -285,25 +295,42 @@ internal sealed partial class CpuBackend
                 max = MathF.Max(max, v * invT);
             }
 
-            // Top-k: the k-th largest distinct scaled score is the cut-off (ties at the cut-off are kept).
+            // Top-k: the k-th largest distinct scaled score is the cut-off (ties at the cut-off are kept); fewer than k
+            // distinct scores keep everything. One pass keeping the k largest distinct scores, largest first.
             float threshold = float.NegativeInfinity;
             if (topK > 0 && topK < vocabulary)
             {
-                threshold = float.PositiveInfinity;
-                for (int k = 0; k < topK; k++)
+                int count = 0;
+                foreach (float v in z)
                 {
-                    float next = float.NegativeInfinity;
-                    foreach (float v in z)
+                    float sc = v * invT;
+                    if (float.IsNaN(sc) || count == topK && !(sc > top[count - 1]))
                     {
-                        float s = v * invT;
-                        if (s < threshold && s > next)
-                        {
-                            next = s;
-                        }
+                        continue;
                     }
 
-                    threshold = next;
+                    int at = count;
+                    while (at > 0 && top[at - 1] < sc)
+                    {
+                        at--;
+                    }
+
+                    if (at > 0 && top[at - 1] == sc)
+                    {
+                        continue;                                            // already kept
+                    }
+
+                    int last = Math.Min(count, topK - 1);
+                    for (int i = last; i > at; i--)
+                    {
+                        top[i] = top[i - 1];
+                    }
+
+                    top[at] = sc;
+                    count = Math.Min(count + 1, topK);
                 }
+
+                threshold = count == topK ? top[topK - 1] : float.NegativeInfinity;
             }
 
             // Min-p: keep tokens at least minP times as likely as the best: s >= max + ln(minP).
@@ -312,24 +339,38 @@ internal sealed partial class CpuBackend
                 threshold = MathF.Max(threshold, max + MathF.Log(minP));
             }
 
-            // Top-p (nucleus): the highest cut-off whose kept mass is still >= topP of the total, by bisection.
+            // Top-p (nucleus): the highest cut-off whose kept mass is still >= topP of the total, by bisection. Only scores at
+            // or above the bisection's lower bound can count, so their weights are computed once and summed in token order.
             if (topP > 0f && topP < 1f)
             {
-                float total = 0f;
+                float total = 0f, floor = MathF.Max(max - 40f, threshold);
+                candidateScores ??= ArrayPool<float>.Shared.Rent(vocabulary);
+                candidateWeights ??= ArrayPool<float>.Shared.Rent(vocabulary);
+                int candidates = 0;
                 foreach (float v in z)
                 {
-                    float s = v * invT;
-                    total += s >= threshold ? MathF.Exp(s - max) : 0f;
+                    float sc = v * invT;
+                    if (sc >= threshold)
+                    {
+                        float w = MathF.Exp(sc - max);
+                        total += w;
+                        if (sc >= floor)
+                        {
+                            candidateScores[candidates] = sc;
+                            candidateWeights[candidates++] = w;
+                        }
+                    }
                 }
 
-                float goal = total * topP, lo = MathF.Max(max - 40f, threshold), hi = max;
+                float goal = total * topP, lo = floor, hi = max;
+                var scores = candidateScores.AsSpan(0, candidates);
+                var weights = candidateWeights.AsSpan(0, candidates);
                 for (int it = 0; it < 24; it++)
                 {
                     float mid = (lo + hi) * 0.5f, mass = 0f;
-                    foreach (float v in z)
+                    for (int c = 0; c < scores.Length; c++)
                     {
-                        float s = v * invT;
-                        mass += s >= threshold && s >= mid ? MathF.Exp(s - max) : 0f;
+                        mass += scores[c] >= mid ? weights[c] : 0f;
                     }
 
                     if (mass >= goal)
@@ -348,8 +389,8 @@ internal sealed partial class CpuBackend
             float sum = 0f;
             for (int j = 0; j < vocabulary; j++)
             {
-                float s = z[j] * invT;
-                e[j] = s >= threshold ? MathF.Exp(s - max) : 0f;
+                float sc = z[j] * invT;
+                e[j] = sc >= threshold ? MathF.Exp(sc - max) : 0f;
                 sum += e[j];
             }
 
@@ -369,13 +410,32 @@ internal sealed partial class CpuBackend
                 }
             }
 
+            // Entropy, and the five most likely tokens (largest weight first, the lower id on ties) in the same pass.
             float entropy = 0f;
+            int found = 0;
             for (int j = 0; j < vocabulary; j++)
             {
-                if (e[j] > 0f)
+                float w = e[j];
+                if (w > 0f)
                 {
-                    float p = e[j] / sum;
+                    float p = w / sum;
                     entropy -= p * MathF.Log2(p);
+                    if (found < 5 || w > e[taken[4]])
+                    {
+                        int at = Math.Min(found, 4);
+                        while (at > 0 && e[taken[at - 1]] < w)
+                        {
+                            at--;
+                        }
+
+                        for (int i = Math.Min(found, 4); i > at; i--)
+                        {
+                            taken[i] = taken[i - 1];
+                        }
+
+                        taken[at] = j;
+                        found = Math.Min(found + 1, 5);
+                    }
                 }
             }
 
@@ -386,21 +446,21 @@ internal sealed partial class CpuBackend
             sv[o + 2] = entropy;
             for (int a = 0; a < 5; a++)
             {
-                int best = -1;
-                for (int j = 0; j < vocabulary; j++)
-                {
-                    if (e[j] > 0f && (best < 0 || e[j] > e[best]) && taken[..a].IndexOf(j) < 0)
-                    {
-                        best = j;
-                    }
-                }
-
-                taken[a] = best;
+                int best = a < found ? taken[a] : -1;
                 sv[o + 3 + 2 * a] = best;
                 sv[o + 4 + 2 * a] = best < 0 ? 0f : e[best] / sum;
             }
         }
+
+        ArrayPool<float>.Shared.Return(e);
+        ArrayPool<float>.Shared.Return(top);
+        if (candidateScores is not null)
+        {
+            ArrayPool<float>.Shared.Return(candidateScores);
+            ArrayPool<float>.Shared.Return(candidateWeights!);
+        }
     }
+
     public override void PenalizeRows(Storage logits, Storage work, Storage history, Storage length, int rows, int vocabulary,
         int rowStride, int rowOffset, int capacity, int lastN, float repeat, float presence, float frequency)
     {
