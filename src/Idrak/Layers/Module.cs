@@ -278,7 +278,15 @@ public abstract class Module : IDisposable
 
             var type = exact.Contains(p) ? WeightFormat.Float32 : format;
             writer.Write((byte)type);
-            writer.Write(Encode(p.ToArray(), type));
+            var values = p.ToArray();
+            if (type == WeightFormat.Float32 && BitConverter.IsLittleEndian)
+            {
+                writer.Write(MemoryMarshal.AsBytes(values.AsSpan()));                  // the values are the stored bytes
+            }
+            else
+            {
+                writer.Write(Encode(values, type));
+            }
         }
     }
 
@@ -303,7 +311,8 @@ public abstract class Module : IDisposable
 
         if (magic is FileMagic3 or FileMagic4 or FileMagic5)
         {
-            // Layers stored as int8 (or bfloat16) are converted first, so their packed weights have somewhere to go.
+            // Layers stored as int8, int4 or bfloat16 get room for their packed weights first (allocated, not computed: the
+            // file's values replace them).
             var linears = this.Descendants().OfType<Linear>().ToList();
             int quantized = reader.ReadInt32();
             for (int i = 0; i < quantized; i++)
@@ -314,7 +323,7 @@ public abstract class Module : IDisposable
                     throw new InvalidDataException($"The file quantizes Linear layer {index}, but the model has {linears.Count}.");
                 }
 
-                linears[index].QuantizeInt8();
+                linears[index].LoadAsInt8();
             }
 
             int halves = magic is FileMagic4 or FileMagic5 ? reader.ReadInt32() : 0;
@@ -326,7 +335,7 @@ public abstract class Module : IDisposable
                     throw new InvalidDataException($"The file stores Linear layer {index} as bfloat16, but the model has {linears.Count}.");
                 }
 
-                linears[index].ToBFloat16();
+                linears[index].LoadAsBFloat16();
             }
 
             int nibbles = magic == FileMagic5 ? reader.ReadInt32() : 0;
@@ -338,7 +347,7 @@ public abstract class Module : IDisposable
                     throw new InvalidDataException($"The file stores Linear layer {index} as int4, but the model has {linears.Count}.");
                 }
 
-                linears[index].QuantizeInt4();
+                linears[index].LoadAsInt4();
             }
 
             var embeddings = this.Descendants().OfType<Embedding>().ToList();
@@ -351,7 +360,7 @@ public abstract class Module : IDisposable
                     throw new InvalidDataException($"The file stores Embedding {index} as bfloat16, but the model has {embeddings.Count}.");
                 }
 
-                embeddings[index].ToBFloat16();
+                embeddings[index].LoadAsBFloat16();
             }
         }
 
@@ -378,7 +387,14 @@ public abstract class Module : IDisposable
             var type = magic is FileMagic3 or FileMagic4 or FileMagic5 ? (WeightFormat)reader.ReadByte() : WeightFormat.Float32;
             var bytes = new byte[p.Size * (type == WeightFormat.Float32 ? 4 : 2)];
             reader.BaseStream.ReadExactly(bytes);
-            p.Load(Decode(bytes, p.Size, type));
+            if (type == WeightFormat.Float32 && BitConverter.IsLittleEndian)
+            {
+                p.Load(MemoryMarshal.Cast<byte, float>(bytes.AsSpan()));             // the stored bytes are the values
+            }
+            else
+            {
+                p.Load(Decode(bytes, p.Size, type));
+            }
         }
     }
 

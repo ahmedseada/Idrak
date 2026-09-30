@@ -102,6 +102,19 @@ public sealed class Embedding : Module
         _weight = null;
     }
 
+    // Loading a bfloat16 table (Module.Load): room for it, without rounding the current values the file replaces.
+    internal void LoadAsBFloat16()
+    {
+        if (_weight is null)
+        {
+            return;
+        }
+
+        BFloat16 = BFloat16Weight.Empty(Vocabulary, Dim, _weight.Device);
+        _weight.Dispose();
+        _weight = null;
+    }
+
     internal void ToFloat32(bool trainable)
     {
         if (BFloat16 is not { } h)

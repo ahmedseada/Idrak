@@ -319,37 +319,94 @@ public static class GgufModel
         {
             string gguf = _names[name];
             var values = _file.Read(gguf);
-            if (_arch == "llama" && (gguf.Contains(".attn_q.", StringComparison.Ordinal) || gguf.Contains(".attn_k.", StringComparison.Ordinal)))
+            if (Permuted(gguf) is { } heads)
             {
                 // llama.cpp stores Llama's q / k rows with each head's two rotary halves interleaved; put them back.
-                int heads = gguf.Contains(".attn_q.", StringComparison.Ordinal) ? _heads : _kvHeads;
                 var shape = ShapeOf(name);
-                int rows = shape[0], columns = shape.Length > 1 ? shape[1] : 1;
-                values = Unpermute(values, heads, rows, columns);
+                Unpermute(values, heads, shape[0], shape.Length > 1 ? shape[1] : 1);
             }
 
             return values;
         }
 
+        public float[] ReadTransposed(string name)
+        {
+            string gguf = _names[name];
+            var shape = ShapeOf(name);
+            if (shape.Length != 2)
+            {
+                throw new ArgumentException($"'{name}' is [{string.Join(", ", shape)}], not a matrix.", nameof(name));
+            }
+
+            // Chunks of stored rows are dequantized through pooled buffers and scattered into the transposed result (with
+            // Llama's q / k rows put back in order on the way), so the stored order never exists as a full array.
+            int rows = shape[0], columns = shape[1];
+            int? heads = Permuted(gguf);
+            int headDim = heads is { } h ? rows / h : 1, half = headDim / 2;
+            var values = GC.AllocateUninitializedArray<float>(checked(rows * columns));
+            int chunkRows = Math.Max(1, (1 << 22) / Math.Max(1, columns));
+            float[] chunk = System.Buffers.ArrayPool<float>.Shared.Rent(chunkRows * columns);
+            byte[] raw = System.Buffers.ArrayPool<byte>.Shared.Rent(checked((int)(chunkRows * _file.RowBytes(gguf))));
+            try
+            {
+                for (int r0 = 0; r0 < rows; r0 += chunkRows)
+                {
+                    int n = Math.Min(chunkRows, rows - r0), first = r0;
+                    _file.ReadRows(gguf, r0, chunk.AsSpan(0, n * columns), raw);
+                    Idrak.HostParallel.For(columns, Math.Max(1, (1 << 14) / n), (c0, c1) =>
+                    {
+                        const int Tile = 64;
+                        for (int t0 = 0; t0 < n; t0 += Tile)
+                        {
+                            int t1 = Math.Min(n, t0 + Tile);
+                            for (int c = c0; c < c1; c++)
+                            {
+                                int column = c * rows;
+                                for (int r = t0; r < t1; r++)
+                                {
+                                    int from = first + r;
+                                    int to = heads is null ? from : from - from % headDim + (from % headDim % 2) * half + from % headDim / 2;
+                                    values[column + to] = chunk[r * columns + c];
+                                }
+                            }
+                        }
+                    });
+                }
+            }
+            finally
+            {
+                System.Buffers.ArrayPool<float>.Shared.Return(chunk);
+                System.Buffers.ArrayPool<byte>.Shared.Return(raw);
+            }
+
+            return values;
+        }
+
+        // The heads whose q / k rows llama.cpp interleaved in the tensor gguf (Llama only), else null.
+        private int? Permuted(string gguf) =>
+            _arch == "llama" && gguf.Contains(".attn_q.", StringComparison.Ordinal) ? _heads
+            : _arch == "llama" && gguf.Contains(".attn_k.", StringComparison.Ordinal) ? _kvHeads
+            : null;
+
         public void Dispose() => _file.Dispose();
 
-        private static float[] Unpermute(float[] values, int heads, int rows, int columns)
+        // Row h·headDim + 2i + a moves to h·headDim + a·headDim/2 + i, in place (one head's rows are buffered at a time).
+        private static void Unpermute(float[] values, int heads, int rows, int columns)
         {
-            var result = new float[values.Length];
             int headDim = rows / heads, half = headDim / 2;
+            var head = new float[headDim * columns];
             for (int h = 0; h < heads; h++)
             {
+                var block = values.AsSpan(h * headDim * columns, headDim * columns);
+                block.CopyTo(head);
                 for (int i = 0; i < half; i++)
                 {
                     for (int a = 0; a < 2; a++)
                     {
-                        int from = h * headDim + i * 2 + a, to = h * headDim + a * half + i;
-                        Array.Copy(values, (long)from * columns, result, (long)to * columns, columns);
+                        head.AsSpan((i * 2 + a) * columns, columns).CopyTo(block[((a * half + i) * columns)..]);
                     }
                 }
             }
-
-            return result;
         }
 
         private static string? HfName(string name)

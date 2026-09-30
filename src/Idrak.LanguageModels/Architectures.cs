@@ -203,7 +203,6 @@ internal sealed class CheckpointWeights(ITensorStore reader, PretrainedArchitect
 
         Used.Add(stored);
         var storedShape = reader.ShapeOf(stored);
-        var values = reader.Read(stored);
         bool transposed = architecture.Transposed(name);
         int[] expected = transposed ? [.. shape.Reverse()] : [.. shape];
         if (!storedShape.SequenceEqual(expected))
@@ -211,10 +210,8 @@ internal sealed class CheckpointWeights(ITensorStore reader, PretrainedArchitect
             throw new InvalidDataException($"'{stored}' is [{string.Join(", ", storedShape)}]; the model expects [{string.Join(", ", expected)}] for {name}.");
         }
 
-        if (transposed)
-        {
-            values = Idrak.HostParallel.Transpose(values, storedShape[0], storedShape[1]);
-        }
+        // Transposed while reading: one full array per tensor instead of the stored order plus its transpose.
+        var values = transposed ? reader.ReadTransposed(stored) : reader.Read(stored);
 
         if (transposed && Adapter is not null && stored.EndsWith(".weight", StringComparison.Ordinal))
         {

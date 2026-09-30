@@ -9,6 +9,7 @@ internal static partial class Tests
     private static readonly (string Name, Action<Device> Run)[] Pretrained =
     [
         ("pretrained: safetensors F32/BF16 round trip; sharded index", SafeTensorsRoundTrip),
+        ("pretrained: safetensors matrices read transposed (F32, F16, BF16; across read chunks) equal reading then transposing", SafeTensorsTransposed),
         ("pretrained: a Hugging Face-layout checkpoint loads through the registry and matches DecoderSpec; int8; custom architectures", PretrainedCheckpoint),
         ("pretrained: byte-level and SentencePiece-style BPE tokenizers (merges, special tokens, byte fallback, round trips)", BpeTokenizers),
         ("pretrained: text holding half of a character encodes it as U+FFFD, also through Unicode normalization", LoneSurrogatesEncode),
@@ -50,6 +51,40 @@ internal static partial class Tests
             Check(reader.Read("a").SequenceEqual(a), "F32 values are exact");
             AssertClose(b, reader.Read("b"), 0f, "these values are exact in bfloat16");
             Check(reader.Metadata["format"] == "pt", "metadata");
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    private static void SafeTensorsTransposed(Device device)
+    {
+        _ = device;
+        string folder = TempFolder();
+        try
+        {
+            // 3 rows of 2.1M columns take one read chunk (4M values) per row; 7 x 5 is a single chunk.
+            foreach (var (rows, columns) in new[] { (3, 2_100_000), (7, 5) })
+            {
+                var values = new float[rows * columns];
+                for (int i = 0; i < values.Length; i++)
+                {
+                    values[i] = MathF.Sin(i * 0.37f) * (1 + i % 11);
+                }
+
+                values[^1] = float.NaN;
+                foreach (var type in new[] { SafeTensorType.F32, SafeTensorType.F16, SafeTensorType.BF16 })
+                {
+                    string file = Path.Combine(folder, $"m-{rows}-{type}.safetensors");
+                    SafeTensorsWriter.Write(file, [("m", [rows, columns], values)], type);
+                    using var reader = SafeTensorsReader.Open(file);
+                    var expected = Transpose2D(reader.Read("m"), rows, columns);
+                    var actual = reader.ReadTransposed("m");
+                    Check(actual.Length == expected.Length && actual.AsSpan().SequenceEqual(expected),
+                        $"[{rows}, {columns}] {type}: transposed while reading equals read then transposed");
+                }
+            }
         }
         finally
         {
