@@ -363,19 +363,30 @@ internal sealed partial class CpuBackend
                 }
 
                 float goal = total * topP, lo = floor, hi = max;
-                var scores = candidateScores.AsSpan(0, candidates);
-                var weights = candidateWeights.AsSpan(0, candidates);
                 for (int it = 0; it < 24; it++)
                 {
                     float mid = (lo + hi) * 0.5f, mass = 0f;
-                    for (int c = 0; c < scores.Length; c++)
+                    for (int c = 0; c < candidates; c++)
                     {
-                        mass += scores[c] >= mid ? weights[c] : 0f;
+                        mass += candidateScores[c] >= mid ? candidateWeights[c] : 0f;
                     }
 
                     if (mass >= goal)
                     {
+                        // Every later midpoint is at least this one, so scores below it never count again: drop them (in
+                        // order, so the sums add the same values in the same order; the dropped ones only added zeros).
                         lo = mid;
+                        int kept = 0;
+                        for (int c = 0; c < candidates; c++)
+                        {
+                            if (candidateScores[c] >= mid)
+                            {
+                                candidateScores[kept] = candidateScores[c];
+                                candidateWeights[kept++] = candidateWeights[c];
+                            }
+                        }
+
+                        candidates = kept;
                     }
                     else
                     {
