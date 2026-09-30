@@ -104,6 +104,34 @@ public sealed class GgufFile : IDisposable
         return values;
     }
 
+    /// <summary>
+    /// Rows [<paramref name="firstRow"/>, + n) of the 2-D tensor <paramref name="name"/> (shape [rows, columns]) dequantized
+    /// into <paramref name="values"/> (n whole rows), through <paramref name="raw"/> (at least <see cref="RowBytes"/> · n bytes).
+    /// </summary>
+    internal void ReadRows(string name, int firstRow, Span<float> values, byte[] raw)
+    {
+        var info = _tensors[name];
+        long columns = info.Dimensions[0];
+        var (blockValues, _) = BlockSize(info.Type, name);
+        if (columns % blockValues != 0 || values.Length % columns != 0)
+        {
+            throw new InvalidDataException($"{name}: rows of {columns} values are not whole {blockValues}-value blocks.");
+        }
+
+        long rowBytes = RowBytes(name);
+        int bytes = checked((int)(values.Length / columns * rowBytes));
+        ReadAt(raw.AsSpan(0, bytes), info.Offset + firstRow * rowBytes);
+        Dequantize(info.Type, raw.AsSpan(0, bytes), values);
+    }
+
+    /// <summary>Stored bytes per row (innermost dimension) of the tensor <paramref name="name"/>.</summary>
+    internal long RowBytes(string name)
+    {
+        var info = _tensors[name];
+        var (blockValues, blockBytes) = BlockSize(info.Type, name);
+        return info.Dimensions[0] / blockValues * blockBytes;
+    }
+
     /// <summary>Values per block and bytes per block of a ggml type.</summary>
     public static (int Values, int Bytes) BlockSize(int type, string? name = null) => type switch
     {
@@ -135,43 +163,63 @@ public sealed class GgufFile : IDisposable
     };
 
     /// <summary>Dequantizes blocks of <paramref name="type"/> into float32 values (in parallel over blocks).</summary>
-    public static void Dequantize(int type, ReadOnlySpan<byte> raw, Span<float> values)
+    public static unsafe void Dequantize(int type, ReadOnlySpan<byte> raw, Span<float> values)
     {
         var (blockValues, blockBytes) = BlockSize(type);
-        switch (type)
+        int blocks = values.Length / blockValues;
+        if (raw.Length < (long)blocks * blockBytes)
         {
-            case 0:
-                MemoryMarshal.Cast<byte, float>(raw)[..values.Length].CopyTo(values);
-                return;
-            case 1:
-                for (int i = 0; i < values.Length; i++)
-                {
-                    values[i] = (float)BinaryPrimitives.ReadHalfLittleEndian(raw[(2 * i)..]);
-                }
-
-                return;
-            case 30:
-                for (int i = 0; i < values.Length; i++)
-                {
-                    values[i] = BitConverter.Int32BitsToSingle(BinaryPrimitives.ReadUInt16LittleEndian(raw[(2 * i)..]) << 16);
-                }
-
-                return;
+            throw new ArgumentException($"{raw.Length} bytes hold fewer than {blocks} blocks of {TypeName(type)}.", nameof(raw));
         }
 
-        // Blocks are independent: split them across threads (spans cannot be captured, so work on arrays).
-        int blocks = values.Length / blockValues;
-        var input = raw.ToArray();
-        var output = new float[values.Length];
-        Parallel.For(0, (blocks + 1023) / 1024, chunk =>
+        if (type == 0)
         {
-            int first = chunk * 1024, last = Math.Min(blocks, first + 1024);
-            for (int b = first; b < last; b++)
+            MemoryMarshal.Cast<byte, float>(raw)[..values.Length].CopyTo(values);
+            return;
+        }
+
+        // Blocks are independent: split them across threads. The workers cannot capture spans, so they read and write the
+        // pinned memory through pointers (no copies of the input or the output).
+        fixed (byte* input = raw)
+        fixed (float* output = values)
+        {
+            nint source = (nint)input, target = (nint)output;
+            switch (type)
             {
-                DequantizeBlock(type, input.AsSpan(b * blockBytes, blockBytes), output.AsSpan(b * blockValues, blockValues));
+                case 1:
+                    Idrak.HostParallel.For(values.Length, 1 << 16, (first, last) =>
+                    {
+                        var from = new ReadOnlySpan<byte>((byte*)source + 2L * first, 2 * (last - first));
+                        var to = new Span<float>((float*)target + first, last - first);
+                        for (int i = 0; i < to.Length; i++)
+                        {
+                            to[i] = (float)BinaryPrimitives.ReadHalfLittleEndian(from[(2 * i)..]);
+                        }
+                    });
+                    return;
+                case 30:
+                    Idrak.HostParallel.For(values.Length, 1 << 16, (first, last) =>
+                    {
+                        var from = new ReadOnlySpan<byte>((byte*)source + 2L * first, 2 * (last - first));
+                        var to = new Span<float>((float*)target + first, last - first);
+                        for (int i = 0; i < to.Length; i++)
+                        {
+                            to[i] = BitConverter.Int32BitsToSingle(BinaryPrimitives.ReadUInt16LittleEndian(from[(2 * i)..]) << 16);
+                        }
+                    });
+                    return;
             }
-        });
-        output.CopyTo(values);
+
+            Parallel.For(0, (blocks + 1023) / 1024, chunk =>
+            {
+                int first = chunk * 1024, last = Math.Min(blocks, first + 1024);
+                for (int b = first; b < last; b++)
+                {
+                    DequantizeBlock(type, new ReadOnlySpan<byte>((byte*)source + (long)b * blockBytes, blockBytes),
+                        new Span<float>((float*)target + (long)b * blockValues, blockValues));
+                }
+            });
+        }
     }
 
     private static readonly sbyte[] Iq4Values = [-127, -104, -83, -65, -49, -35, -22, -10, 1, 13, 25, 38, 53, 69, 89, 113];

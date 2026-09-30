@@ -283,18 +283,18 @@ public sealed class PretrainedModel : IDisposable
 
         Network.MergeLora();
         Directory.CreateDirectory(folder);
-        var tensors = new List<(string, int[], float[])>();
+        // The header is written from the shapes; each tensor is copied to the host (and transposed) only when it is written.
+        var tensors = new List<(string, int[], Func<float[]>)>();
         void Add(string name, Tensor tensor)
         {
             string stored = CheckpointName(name);
-            var values = tensor.ToArray();
             if (Architecture.Transposed(name) && tensor.Rank == 2)
             {
-                tensors.Add((stored, [tensor.Shape[1], tensor.Shape[0]], HostParallel.Transpose(values, tensor.Shape[0], tensor.Shape[1])));
+                tensors.Add((stored, [tensor.Shape[1], tensor.Shape[0]], () => HostParallel.Transpose(tensor.ToArray(), tensor.Shape[0], tensor.Shape[1])));
             }
             else
             {
-                tensors.Add((stored, [.. tensor.Shape], values));
+                tensors.Add((stored, [.. tensor.Shape], tensor.ToArray));
             }
         }
 
