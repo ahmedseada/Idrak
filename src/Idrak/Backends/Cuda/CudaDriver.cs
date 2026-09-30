@@ -197,6 +197,17 @@ internal static unsafe partial class CudaDriver
     [LibraryImport(Library, EntryPoint = "cuEventDestroy_v2")]
     public static partial int cuEventDestroy(IntPtr e);
 
+    public const uint EventDisableTiming = 2;
+
+    /// <summary>0 when the event's work has completed, ErrorNotReady while it is pending.</summary>
+    [LibraryImport(Library)]
+    public static partial int cuEventQuery(IntPtr e);
+
+    public const int ErrorNotReady = 600;
+
+    [LibraryImport(Library, EntryPoint = "cuMemcpyHtoDAsync_v2")]
+    public static partial int cuMemcpyHtoDAsync(ulong destination, void* source, nuint bytes, IntPtr stream);
+
     [LibraryImport(Library)]
     public static partial int cuMemsetD32Async(ulong destination, uint value, nuint count, IntPtr stream);
 
