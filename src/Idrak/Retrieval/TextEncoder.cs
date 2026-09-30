@@ -12,7 +12,7 @@ namespace Idrak.Retrieval;
 /// an <see cref="Embedding"/> followed by transformer layers); the encoder averages the states of the real tokens
 /// (padding excluded) and scales the result to length 1.
 /// </summary>
-public sealed class TextEncoder
+public sealed class TextEncoder : IEmbedder
 {
     /// <summary>Creates the encoder.</summary>
     /// <param name="model">Token ids [N, T] → hidden states [N, T, D].</param>
@@ -41,6 +41,10 @@ public sealed class TextEncoder
     public int PadId { get; }
 
     private Device Device => Model.Parameters().FirstOrDefault()?.Device ?? Device.Default;
+
+    /// <inheritdoc />
+    public ValueTask<float[][]> EmbedAsync(IReadOnlyList<string> texts, CancellationToken cancellationToken = default) =>
+        ValueTask.FromResult(Encode(texts));
 
     /// <summary>The vector of one text.</summary>
     public float[] Encode(string text) => Encode([text])[0];

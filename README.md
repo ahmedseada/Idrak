@@ -710,6 +710,35 @@ var tools = ToolRegistry.Create().Add(RetrievalTools.Search(index, 3, "search_to
 `Bm25Index`, `VectorIndex` (exact SIMD search, dot or cosine, save/load) and `Chunker.Split` can also be used on
 their own.
 
+Each stage is an interface, so another model, database or service can take its place: `IEmbedder` (`TextEncoder` is
+one), `IVectorStore` (`InMemoryVectorStore`: replace and delete by id, metadata filters), `IRetriever` (`RetrievalIndex`
+is one) and `IReranker` (`CrossEncoder` is one).
+
+```csharp
+public sealed class MyEmbedder(HttpClient http) : IEmbedder            // a hosted embedding model
+{
+    public async ValueTask<float[][]> EmbedAsync(IReadOnlyList<string> texts, CancellationToken ct = default) => await CallApiAsync(http, texts, ct);
+}
+
+var index = await RetrievalIndex.Create()
+    .Documents(documents, ChunkUnit.Sentences, size: 3, overlap: 1)
+    .Bm25()
+    .Embeddings(new MyEmbedder(http))                                    // or a TextEncoder
+    .VectorStore(myQdrantStore)                                          // optional: an IVectorStore (in memory unless set)
+    .Fusion(k: 60, depth: 20)
+    .BuildAsync();
+
+var rag = Rag.For(chatModel)
+    .Retrieve(index, top: 10)                                            // or any IRetriever: a database's full-text search, a web search
+    .Rerank(myHostedReranker, keep: 3)                                   // or a CrossEncoder
+    .Build();
+var passages = await rag.RetrieveAsync("who is the mayor of armorden");
+```
+
+An index over an `IVectorStore` stores each chunk's vector under its id ("0", "1", …) with its document and position as
+metadata; `Save` writes the chunks and settings, and `RetrievalIndex.Load(path, embedder, store)` attaches them to the
+store again.
+
 ### MCP: the optional `Idrak.Mcp` package
 
 ```csharp

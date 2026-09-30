@@ -50,9 +50,9 @@ public static class Rag
 public sealed class RagBuilder
 {
     private readonly IChatModel _model;
-    private RetrievalIndex? _index;
+    private IRetriever? _retriever;
     private int _top;
-    private CrossEncoder? _reranker;
+    private IReranker? _reranker;
     private int _keep;
     private Func<Chunk, string> _label = c => c.DocumentId;
     private Func<string, IReadOnlyList<Citation>, string> _prompt = Rag.DefaultPrompt;
@@ -62,18 +62,26 @@ public sealed class RagBuilder
 
     internal RagBuilder(IChatModel model) => _model = model;
 
-    /// <summary>Searches <paramref name="index"/> for the <paramref name="top"/> best chunks (the candidates, when re-ranking).</summary>
-    public RagBuilder Retrieve(RetrievalIndex index, int top)
+    /// <summary>
+    /// Asks <paramref name="retriever"/> (a <see cref="RetrievalIndex"/> or any <see cref="IRetriever"/>) for the
+    /// <paramref name="top"/> best chunks (the candidates, when re-ranking).
+    /// </summary>
+    public RagBuilder Retrieve(IRetriever retriever, int top)
     {
+        ArgumentNullException.ThrowIfNull(retriever);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(top);
-        _index = index;
+        _retriever = retriever;
         _top = top;
         return this;
     }
 
-    /// <summary>Re-orders the retrieved chunks with <paramref name="reranker"/> and shows the model the best <paramref name="keep"/>.</summary>
-    public RagBuilder Rerank(CrossEncoder reranker, int keep)
+    /// <summary>
+    /// Re-orders the retrieved chunks with <paramref name="reranker"/> (a <see cref="CrossEncoder"/> or any
+    /// <see cref="IReranker"/>) and shows the model the best <paramref name="keep"/>.
+    /// </summary>
+    public RagBuilder Rerank(IReranker reranker, int keep)
     {
+        ArgumentNullException.ThrowIfNull(reranker);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(keep);
         _reranker = reranker;
         _keep = keep;
@@ -118,7 +126,7 @@ public sealed class RagBuilder
     /// <summary>Creates the pipeline.</summary>
     public RagPipeline Build()
     {
-        if (_index is null)
+        if (_retriever is null)
         {
             throw new InvalidOperationException("Call Retrieve(index, top) to choose where passages come from.");
         }
@@ -128,16 +136,16 @@ public sealed class RagBuilder
             throw new InvalidOperationException($"Rerank keeps {_keep} passages but Retrieve finds only {_top} candidates.");
         }
 
-        return new RagPipeline(_model, _index, _top, _reranker, _keep, _label, _prompt, _system, _think, _options);
+        return new RagPipeline(_model, _retriever, _top, _reranker, _keep, _label, _prompt, _system, _think, _options);
     }
 }
 
-/// <summary>Answers questions from an index's passages with citations; create one with <see cref="Rag.For"/>.</summary>
+/// <summary>Answers questions from a retriever's passages with citations; create one with <see cref="Rag.For"/>.</summary>
 public sealed partial class RagPipeline
 {
     private readonly IChatModel _model;
     private readonly int _top;
-    private readonly CrossEncoder? _reranker;
+    private readonly IReranker? _reranker;
     private readonly int _keep;
     private readonly Func<Chunk, string> _label;
     private readonly Func<string, IReadOnlyList<Citation>, string> _prompt;
@@ -145,11 +153,11 @@ public sealed partial class RagPipeline
     private readonly bool? _think;
     private readonly GenerationOptions? _options;
 
-    internal RagPipeline(IChatModel model, RetrievalIndex index, int top, CrossEncoder? reranker, int keep, Func<Chunk, string> label,
+    internal RagPipeline(IChatModel model, IRetriever retriever, int top, IReranker? reranker, int keep, Func<Chunk, string> label,
         Func<string, IReadOnlyList<Citation>, string> prompt, string? system, bool? think, GenerationOptions? options)
     {
         _model = model;
-        Index = index;
+        Retriever = retriever;
         _top = top;
         _reranker = reranker;
         _keep = keep;
@@ -160,19 +168,25 @@ public sealed partial class RagPipeline
         _options = options;
     }
 
-    /// <summary>The index passages come from.</summary>
-    public RetrievalIndex Index { get; }
+    /// <summary>Where passages come from.</summary>
+    public IRetriever Retriever { get; }
+
+    /// <summary>The index passages come from, when the retriever is a <see cref="RetrievalIndex"/> (null for another retriever).</summary>
+    public RetrievalIndex? Index => Retriever as RetrievalIndex;
 
     /// <summary>The outcome of the most recent <see cref="StreamAsync"/>, once its stream has ended.</summary>
     public RagAnswer? LastAnswer { get; private set; }
 
+    /// <summary>The numbered passages the model would be shown for <paramref name="question"/> (waits for <see cref="RetrieveAsync"/>).</summary>
+    public IReadOnlyList<Citation> Retrieve(string question) => RetrieveAsync(question).AsTask().GetAwaiter().GetResult();
+
     /// <summary>The numbered passages the model would be shown for <paramref name="question"/>.</summary>
-    public IReadOnlyList<Citation> Retrieve(string question)
+    public async ValueTask<IReadOnlyList<Citation>> RetrieveAsync(string question, CancellationToken cancellationToken = default)
     {
-        var found = Index.Search(question, _top);
+        var found = await Retriever.RetrieveAsync(question, _top, cancellationToken).ConfigureAwait(false);
         if (_reranker is not null)
         {
-            found = _reranker.Rerank(question, found, _keep);
+            found = await _reranker.RerankAsync(question, found, _keep, cancellationToken).ConfigureAwait(false);
         }
 
         return [.. found.Select((r, i) => new Citation(i + 1, _label(r.Chunk), r.Chunk, r.Score))];
@@ -209,7 +223,7 @@ public sealed partial class RagPipeline
 
     private async IAsyncEnumerable<ChatDelta> RunAsync(string question, Action<RagAnswer> done, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        var passages = Retrieve(question);
+        var passages = await RetrieveAsync(question, cancellationToken).ConfigureAwait(false);
         var request = new ChatRequest(Messages(question, passages), null, _think, _options);
         ChatChunk? final = null;
         await foreach (var chunk in _model.StreamAsync(request, cancellationToken).ConfigureAwait(false))
@@ -244,12 +258,12 @@ public static class RetrievalTools
     /// A tool with one string argument, "query", that returns the <paramref name="top"/> best chunks of
     /// <paramref name="index"/>, one per line as "[n] (label) text", or "No results." when nothing matches.
     /// </summary>
-    /// <param name="index">The index to search.</param>
+    /// <param name="index">What to search: a <see cref="RetrievalIndex"/> or any <see cref="IRetriever"/>.</param>
     /// <param name="top">Chunks per search.</param>
     /// <param name="name">The tool's name, for example "search_documents".</param>
     /// <param name="description">What the model is told the tool searches.</param>
     /// <param name="label">Names a chunk's source (its document id when null).</param>
-    public static Tool Search(RetrievalIndex index, int top, string name, string description, Func<Chunk, string>? label = null)
+    public static Tool Search(IRetriever index, int top, string name, string description, Func<Chunk, string>? label = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(top);
         label ??= c => c.DocumentId;
@@ -262,12 +276,12 @@ public static class RetrievalTools
             },
             ["required"] = new System.Text.Json.Nodes.JsonArray("query"),
         };
-        return Tool.Create(name, description, schema, (arguments, _) =>
+        return Tool.Create(name, description, schema, async (arguments, cancellationToken) =>
         {
-            var hits = index.Search((string?)arguments["query"] ?? "", top);
-            return Task.FromResult(hits.Count == 0
+            var hits = await index.RetrieveAsync((string?)arguments["query"] ?? "", top, cancellationToken).ConfigureAwait(false);
+            return hits.Count == 0
                 ? "No results."
-                : string.Join('\n', hits.Select((h, i) => $"[{i + 1}] ({label(h.Chunk)}) {h.Chunk.Text}")));
+                : string.Join('\n', hits.Select((h, i) => $"[{i + 1}] ({label(h.Chunk)}) {h.Chunk.Text}"));
         });
     }
 }
