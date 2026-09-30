@@ -68,6 +68,26 @@ internal static partial class Tests
         var loaded = VectorIndex.Load(stream);
         Check(loaded.Count == 3 && loaded.Metric == VectorMetric.Cosine && loaded.Search([0, 5, 0.1f], 3).SequenceEqual(cosine.Search([0, 5, 0.1f], 3)), "save/load");
         Throws<ArgumentException>(() => cosine.Add([1, 2]), "wrong dimensions");
+
+        // The kept best hits equal a full sort (score, then id), ties included: vectors from a few values repeat scores.
+        var random = new Random(7);
+        var many = new VectorIndex(4, VectorMetric.Dot);
+        var stored = Enumerable.Range(0, 500).Select(_ => Enumerable.Range(0, 4).Select(_ => (float)random.Next(-2, 3)).ToArray()).ToArray();
+        many.AddRange(stored);
+        float[] query = [1, -1, 2, 0];
+        var sorted = Enumerable.Range(0, stored.Length).Select(i => (Id: i, Score: (double)stored[i].Zip(query, (a, b) => a * b).Sum()))
+            .OrderByDescending(h => h.Score).ThenBy(h => h.Id).ToArray();
+        foreach (int top in new[] { 0, 1, 7, 64, 500, 900 })
+        {
+            Check(many.Search(query, top).Select(h => (h.Id, h.Score)).SequenceEqual(sorted.Take(top)), $"vector top {top} equals a full sort");
+        }
+
+        var words = Enumerable.Range(0, 300).Select(i => string.Join(' ', Enumerable.Range(0, 1 + i % 5).Select(j => $"w{(i * 7 + j * 3) % 11}"))).ToArray();
+        var keywords = new Bm25Index(words);
+        var all = keywords.Search("w1 w4 w9 w1", words.Length);
+        Check(all.Zip(all.Skip(1)).All(p => p.First.Score > p.Second.Score || p.First.Score == p.Second.Score && p.First.Id < p.Second.Id), "bm25 order: score, then id");
+        Check(keywords.Search("w1 w4 w9 w1", 5).SequenceEqual(all.Take(5)), "bm25 top 5 equals the head of the full list");
+        Check(all.Count == words.Count(t => t.Split(' ').Any(w => w is "w1" or "w4" or "w9")), "bm25 scores every text holding a query word");
     }
 
     private static (WordTokenizer Words, Module Model) SmallEncoder(Device device, IEnumerable<string> texts, int dim, int seed)

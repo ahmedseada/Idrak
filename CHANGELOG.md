@@ -10,6 +10,15 @@
   1 GB held before, nothing now; `Losses.SparseCrossEntropy`, `Metric.SparseAccuracy` and the trainer use it).
 - `Idrak.Datasets`: a JSON file holding an array of rows is read in linear time; the rows were detached one by one from
   the front of the array (100,000 rows: 951 → 64 ms, the time of the same rows as JSON Lines).
+- Rotary tables (cos/sin over every position) are built once per model, in parallel, and shared by its attention
+  layers instead of once per layer (28 layers × 40,960 positions on the CPU: 6.6 s and 631 MB → 0.57 s and 65 MB
+  including the layers' weights; on a GPU the same ~570 MB of device memory for Qwen3-0.6B).
+- Retrieval: `Bm25Index` keeps an inverted index (each word's texts and counts) and scores only the texts holding a query
+  word (50,000 texts: 54 → 0.22 ms per query, the same scores); `VectorIndex.Search` and BM25 keep the best hits in a heap
+  instead of sorting every score (the same hits and order, ties to the lower id).
+- `Idrak.Datasets` Parquet: top-level columns go straight into the row (no tree and merge per cell), dictionary strings are
+  decoded once, binary values are checked as UTF-8 instead of throwing per value, and a row group finds its column chunks
+  by path once (300,000 rows × 5 columns: 2.5 s and 1.4 GB allocated → 0.49 s and 0.47 GB).
 - `--bench-gemv` also times short prompts (1–96 rows) through int8 weights and host-to-device uploads, for the next
   CUDA changes.
 

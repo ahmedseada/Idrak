@@ -83,14 +83,20 @@ public sealed class VectorIndex
             Normalize(q);
         }
 
-        var data = CollectionsMarshal.AsSpan(_data);
-        var scores = new double[Count];
-        for (int i = 0; i < scores.Length; i++)
+        int keep = Math.Min(top, Count);
+        if (keep <= 0)
         {
-            scores[i] = Dot(q, data.Slice(i * Dimensions, Dimensions));
+            return [];
         }
 
-        return [.. Enumerable.Range(0, scores.Length).OrderByDescending(i => scores[i]).ThenBy(i => i).Take(top).Select(i => new SearchHit(i, scores[i]))];
+        var data = CollectionsMarshal.AsSpan(_data);
+        var best = new TopHits(keep);
+        for (int i = 0; i < Count; i++)
+        {
+            best.Offer(i, Dot(q, data.Slice(i * Dimensions, Dimensions)));
+        }
+
+        return best.ToArray();
     }
 
     /// <summary>The stored vector with id <paramref name="id"/>.</summary>
