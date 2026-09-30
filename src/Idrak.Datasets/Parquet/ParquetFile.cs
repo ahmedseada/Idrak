@@ -15,8 +15,6 @@ namespace Idrak.Datasets;
 /// </summary>
 public static class ParquetFile
 {
-    private static readonly UTF8Encoding StrictUtf8 = new(false, true);
-
     /// <summary>The number of rows and the column names of a Parquet file (read from its footer only).</summary>
     public static (long Rows, IReadOnlyList<string> Columns) Describe(Stream stream)
     {
@@ -40,11 +38,20 @@ public static class ParquetFile
         {
             var group = (ThriftStruct)node!;
             long rows = group.Long(3) ?? 0;
-            var chunks = group.List(1).Cast<ThriftStruct>().ToList();
+            // Each chunk's column path decoded once per row group (not once per wanted leaf and chunk).
+            var chunks = new Dictionary<string, ThriftStruct>();
+            foreach (var c in group.List(1).Cast<ThriftStruct>())
+            {
+                if (c.Struct(3) is { } m)
+                {
+                    chunks.TryAdd(string.Join('\0', m.List(3).Select(p => Encoding.UTF8.GetString((byte[])p!))), c);
+                }
+            }
+
             var data = new List<ColumnData>();
             foreach (var leaf in wanted)
             {
-                var chunk = chunks.FirstOrDefault(c => c.Struct(3) is { } m && m.List(3).Select(p => Encoding.UTF8.GetString((byte[])p!)).SequenceEqual(leaf.Path))
+                var chunk = chunks.GetValueOrDefault(string.Join('\0', leaf.Path))
                             ?? throw new InvalidDataException($"Parquet row group has no column {string.Join('.', leaf.Path)}.");
                 data.Add(ReadColumn(stream, chunk.Struct(3)!, leaf));
             }
@@ -58,6 +65,14 @@ public static class ParquetFile
                 {
                     var column = data[c];
                     var leaf = column.Leaf;
+                    if (leaf.Steps.Count == 1 && column.Rep is null)
+                    {
+                        // A top-level column (no nesting, no repetition): its value goes straight into the row.
+                        int i = cursors[c]++;
+                        row[leaf.Steps[0].Name] = column.Def is null || column.Def[i] == leaf.MaxDef ? ToNode(leaf.Node, column.Values[valueCursors[c]++]) : null;
+                        continue;
+                    }
+
                     var tree = new JsonObject();
                     do
                     {
@@ -410,6 +425,15 @@ public static class ParquetFile
                     int offset = 0;
                     Plain(raw, ref offset, leaf.Node, h.Int(1) ?? 0, list);
                     dictionary = [.. list];
+
+                    // Entries read as text decoded once here, not again for every row that refers to them.
+                    for (int e = 0; e < dictionary.Length; e++)
+                    {
+                        if (dictionary[e] is byte[] entry && ToNode(leaf.Node, entry) is JsonValue text && text.TryGetValue(out string? decoded))
+                        {
+                            dictionary[e] = decoded;
+                        }
+                    }
                     break;
                 }
 
@@ -869,15 +893,9 @@ public static class ParquetFile
                     return (float)BinaryPrimitives.ReadHalfLittleEndian(bytes);
                 }
 
-                if (node.Type == 6)
+                if (node.Type == 6 && System.Text.Unicode.Utf8.IsValid(bytes))
                 {
-                    try
-                    {
-                        return StrictUtf8.GetString(bytes);
-                    }
-                    catch (DecoderFallbackException)
-                    {
-                    }
+                    return Encoding.UTF8.GetString(bytes);   // valid UTF-8: checked first, as throwing per binary value is slow
                 }
 
                 return Convert.ToBase64String(bytes);

@@ -212,23 +212,7 @@ public sealed class CausalSelfAttention : Module, ICachedModule
         MaxPositions = maxPositions;
         if (rope is not null)
         {
-            var frequencies = rope.Frequencies(headDim);
-            int half = frequencies.Length;
-            var cos = new float[maxPositions * half];
-            var sin = new float[maxPositions * half];
-            for (int p = 0; p < maxPositions; p++)
-            {
-                for (int i = 0; i < half; i++)
-                {
-                    double angle = p * frequencies[i];
-                    cos[p * half + i] = (float)Math.Cos(angle);
-                    sin[p * half + i] = (float)Math.Sin(angle);
-                }
-            }
-
-            var device = query.Device;
-            _cos = Tensor.Persistent(cos, [maxPositions, half], device, requiresGrad: false);
-            _sin = Tensor.Persistent(sin, [maxPositions, half], device, requiresGrad: false);
+            (_cos, _sin) = RopeTables.Acquire(rope, headDim, maxPositions, query.Device);
         }
     }
 
@@ -541,20 +525,20 @@ public sealed class CausalSelfAttention : Module, ICachedModule
     protected internal override void MoveTo(Device device)
     {
         base.MoveTo(device);
-        if (Rope is not null)
+        if (Rope is not null && _cos.Device != device)
         {
-            _cos = MoveTensor(_cos, device);
-            _sin = MoveTensor(_sin, device);
+            RopeTables.Release(Rope, HeadDim, MaxPositions, _cos.Device);
+            (_cos, _sin) = RopeTables.Acquire(Rope, HeadDim, MaxPositions, device);
         }
     }
 
     /// <inheritdoc />
     public override void Dispose()
     {
-        if (Rope is not null)
+        if (Rope is not null && _cos is not null)
         {
-            _cos.Dispose();
-            _sin.Dispose();
+            RopeTables.Release(Rope, HeadDim, MaxPositions, _cos.Device);
+            _cos = _sin = null!;
         }
 
         foreach (var mask in _masks.Values)
@@ -985,4 +969,65 @@ public sealed class Scale(float factor) : Module
 
     /// <inheritdoc />
     public override string ToString() => $"Scale({Factor})";
+}
+
+/// <summary>
+/// The rotary cos/sin tables ([positions, half]), one per settings, head size, length and device, shared by every
+/// attention layer that uses them (a model's layers all do) and freed when the last of those layers is disposed.
+/// </summary>
+internal static class RopeTables
+{
+    private sealed class Entry(Tensor cos, Tensor sin)
+    {
+        public Tensor Cos { get; } = cos;
+        public Tensor Sin { get; } = sin;
+        public int Users;
+    }
+
+    private static readonly Dictionary<(RopeSettings, int, int, Device), Entry> Tables = new();
+    private static readonly Lock Gate = new();
+
+    public static (Tensor Cos, Tensor Sin) Acquire(RopeSettings rope, int headDim, int maxPositions, Device device)
+    {
+        var key = (rope, headDim, maxPositions, device);
+        lock (Gate)
+        {
+            if (!Tables.TryGetValue(key, out var entry))
+            {
+                var frequencies = rope.Frequencies(headDim);
+                int half = frequencies.Length;
+                var cos = new float[maxPositions * half];
+                var sin = new float[maxPositions * half];
+                Parallel.For(0, maxPositions, ComputeResources.ParallelOptions, p =>
+                {
+                    for (int i = 0; i < half; i++)
+                    {
+                        double angle = p * frequencies[i];
+                        cos[p * half + i] = (float)Math.Cos(angle);
+                        sin[p * half + i] = (float)Math.Sin(angle);
+                    }
+                });
+                entry = new Entry(Tensor.Persistent(cos, [maxPositions, half], device, requiresGrad: false),
+                    Tensor.Persistent(sin, [maxPositions, half], device, requiresGrad: false));
+                Tables[key] = entry;
+            }
+
+            entry.Users++;
+            return (entry.Cos, entry.Sin);
+        }
+    }
+
+    public static void Release(RopeSettings rope, int headDim, int maxPositions, Device device)
+    {
+        var key = (rope, headDim, maxPositions, device);
+        lock (Gate)
+        {
+            if (Tables.TryGetValue(key, out var entry) && --entry.Users == 0)
+            {
+                Tables.Remove(key);
+                entry.Cos.Dispose();
+                entry.Sin.Dispose();
+            }
+        }
+    }
 }
