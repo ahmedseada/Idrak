@@ -1,4 +1,6 @@
 using System.Collections;
+using System.Numerics;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -145,11 +147,54 @@ public sealed class Dataset : IEnumerable<JsonObject>
     public Dataset Shuffle(int seed = 0, int buffer = 100_000) => new(() => ShuffleRows(_rows(), seed, buffer), Name);
 
     /// <summary>
-    /// Rows without repeats: two rows are the same when <paramref name="columns"/> (default: all) hold the same values
-    /// (optionally ignoring case and spacing). Keeps the first; remembers 16 bytes per distinct row.
+    /// Rows without repeats: two rows are the same when <paramref name="columns"/> (default: all) hold exactly the same
+    /// values. Keeps the first; remembers 16 bytes per distinct row. To count texts that differ only in form (case,
+    /// spacing, letter forms) as the same, <see cref="Normalize(ITextNormalizer, string, string)"/> them into a key
+    /// column first and deduplicate on that: <c>data.Normalize(rules, "text", into: "key").Deduplicate(["key", "label"])</c>.
     /// </summary>
-    public Dataset Deduplicate(IReadOnlyList<string>? columns = null, bool normalize = false) =>
-        new(() => DistinctRows(_rows(), columns, normalize), Name);
+    public Dataset Deduplicate(IReadOnlyList<string>? columns = null) =>
+        new(() => DistinctRows(_rows(), columns), Name);
+
+    /// <summary>
+    /// The text values of <paramref name="columns"/> rewritten by <paramref name="normalizer"/>, in place (other values
+    /// and missing columns are left as they are). A separate step from <see cref="Deduplicate"/> and the rest: the rules are
+    /// the consumer's (<see cref="ITextNormalizer"/>).
+    /// </summary>
+    public Dataset Normalize(ITextNormalizer normalizer, params string[] columns)
+    {
+        ArgumentNullException.ThrowIfNull(normalizer);
+        return Select(row =>
+        {
+            foreach (string column in columns)
+            {
+                if (row[column] is JsonValue value && value.TryGetValue<string>(out var text))
+                {
+                    row[column] = normalizer.Normalize(text);
+                }
+            }
+
+            return row;
+        });
+    }
+
+    /// <summary>
+    /// <paramref name="column"/>'s text normalized into <paramref name="into"/>, keeping the original: a key to compare
+    /// or group rows by (<see cref="Deduplicate"/>, a split key) while the text itself stays as written. Rows whose
+    /// column is missing or not text get no key.
+    /// </summary>
+    public Dataset Normalize(ITextNormalizer normalizer, string column, string into)
+    {
+        ArgumentNullException.ThrowIfNull(normalizer);
+        return Select(row =>
+        {
+            if (row[column] is JsonValue value && value.TryGetValue<string>(out var text))
+            {
+                row[into] = normalizer.Normalize(text);
+            }
+
+            return row;
+        });
+    }
 
     /// <summary>
     /// Splits into training and evaluation rows by a hash of each row's content (or of <paramref name="key"/>): the same
@@ -266,13 +311,6 @@ public sealed class Dataset : IEnumerable<JsonObject>
         return (BitConverter.ToUInt64(hash) >> 11) * (1.0 / (1UL << 53));
     }
 
-    private static UInt128 Hash128(string text)
-    {
-        Span<byte> hash = stackalloc byte[32];
-        SHA256.HashData(Encoding.UTF8.GetBytes(text), hash);
-        return new UInt128(BitConverter.ToUInt64(hash), BitConverter.ToUInt64(hash[8..]));
-    }
-
     private static IEnumerable<JsonObject> TakeRows(IEnumerable<JsonObject> rows, long count)
     {
         if (count <= 0)
@@ -330,23 +368,94 @@ public sealed class Dataset : IEnumerable<JsonObject>
         }
     }
 
-    private static IEnumerable<JsonObject> DistinctRows(IEnumerable<JsonObject> rows, IReadOnlyList<string>? columns, bool normalize)
+    // One 128-bit hash per row (16 bytes per distinct row kept), taken straight from the values' characters: no joined
+    // string, no UTF-8 copy. A text value hashes its characters; anything else its JSON; a missing column its own tag.
+    private static IEnumerable<JsonObject> DistinctRows(IEnumerable<JsonObject> rows, IReadOnlyList<string>? columns)
     {
         var seen = new HashSet<UInt128>();
         foreach (var row in rows)
         {
-            string text = columns is null
-                ? row.ToJsonString()
-                : string.Join('\u0001', columns.Select(c => row[c] is JsonValue v && v.TryGetValue<string>(out var s) ? s : row[c]?.ToJsonString() ?? ""));
-            if (normalize)
+            var hash = new RowHash();
+            if (columns is null)
             {
-                text = string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)).ToLowerInvariant();
+                hash.Add(2, row.ToJsonString());
+            }
+            else
+            {
+                for (int i = 0; i < columns.Count; i++)
+                {
+                    var node = row[columns[i]];
+                    if (node is null)
+                    {
+                        hash.Add(0, "");
+                    }
+                    else if (node is JsonValue value && value.TryGetValue<string>(out var text))
+                    {
+                        hash.Add(1, text);
+                    }
+                    else
+                    {
+                        hash.Add(2, node.ToJsonString());
+                    }
+                }
             }
 
-            if (seen.Add(Hash128(text)))
+            if (seen.Add(hash.Value))
             {
                 yield return row;
             }
+        }
+    }
+
+    // Two independent 64-bit lanes over 8 bytes at a time, each value closed by its kind and length (so "ab","c" and
+    // "a","bc" differ), then a full avalanche of both lanes. Not cryptographic: accidental collisions only (about one
+    // chance in 2^64 among 2^32 distinct rows).
+    private struct RowHash()
+    {
+        private const ulong P1 = 0x9E3779B185EBCA87UL, P2 = 0xC2B2AE3D27D4EB4FUL, P3 = 0x165667B19E3779F9UL, P4 = 0xD6E8FEB86659FD93UL;
+        private ulong _a = 0x243F6A8885A308D3UL, _b = 0x13198A2E03707344UL;
+
+        public void Add(byte kind, ReadOnlySpan<char> text)
+        {
+            var bytes = MemoryMarshal.AsBytes(text);
+            int i = 0;
+            for (; i + 8 <= bytes.Length; i += 8)
+            {
+                Mix(MemoryMarshal.Read<ulong>(bytes[i..]));
+            }
+
+            ulong tail = 0;
+            for (int shift = 0; i < bytes.Length; i++, shift += 8)
+            {
+                tail |= (ulong)bytes[i] << shift;
+            }
+
+            Mix(tail);
+            Mix(((ulong)kind << 56) | (uint)text.Length);
+        }
+
+        public readonly UInt128 Value
+        {
+            get
+            {
+                ulong a = Avalanche(_a ^ BitOperations.RotateLeft(_b, 29)), b = Avalanche(_b ^ BitOperations.RotateLeft(_a, 43) ^ P3);
+                return new UInt128(a, b);
+            }
+        }
+
+        private void Mix(ulong v)
+        {
+            _a = BitOperations.RotateLeft(_a ^ (v * P1), 31) * P2;
+            _b = BitOperations.RotateLeft(_b + (v * P3), 27) * P4 + _a;
+        }
+
+        private static ulong Avalanche(ulong h)
+        {
+            h ^= h >> 33;
+            h *= 0xFF51AFD7ED558CCDUL;
+            h ^= h >> 33;
+            h *= 0xC4CEB9FE1A85EC53UL;
+            return h ^ (h >> 33);
         }
     }
 
