@@ -9,25 +9,30 @@ internal static partial class Tests
     private static readonly (string Name, Action<Device> Run)[] StreamingText =
     [
         ("generation: streamed text keeps every character whole however tokens split its UTF-8 bytes (emoji, stops)", StreamedCharactersStayWhole),
-        ("chat: a reply that is only a tool call's JSON (bare or in a ``` block) is that call when the request has the tool", CallsWrittenAsTheAnswer),
+        ("chat: a tool call written as JSON in the reply (bare, or a ``` block ending it) is that call when the request has the tool", CallsWrittenAsTheAnswer),
     ];
 
-    // Small models often write a call as the whole answer instead of in the template's tags (Qwen2.5-Coder-1.5B:
-    // a ```json block with {"name", "arguments"}): it counts as the call only when the request offers that tool.
+    // Small models often write a call in the answer instead of in the template's tags (Qwen2.5-Coder-1.5B: a ```json
+    // block with {"name", "arguments"}, alone or after a sentence): it counts as the call only when the request offers
+    // that tool, and the sentence before it is kept as the reply's text.
     private static void CallsWrittenAsTheAnswer(Device device)
     {
         const string Fenced = "```json\n{\n  \"name\": \"run_command\",\n  \"arguments\": {\n    \"command\": \"dotnet --version\"\n  }\n}\n```";
         const string Bare = "{\"name\": \"run_command\", \"arguments\": {\"command\": \"git status\"}}";
+        const string Before = "To determine the installed .NET version, you can use the following function call:";
         ToolDefinition[] tools = [new("run_command", "Run a command", new System.Text.Json.Nodes.JsonObject())];
-        (string Reply, ToolDefinition[]? Tools, string? Command)[] cases =
+        (string Reply, ToolDefinition[]? Tools, string? Command, string Text)[] cases =
         [
-            (Fenced, tools, "dotnet --version"),
-            (Bare, tools, "git status"),
-            (Fenced, [new("read_file")], null),                             // not a tool of this request
-            (Fenced, null, null),                                           // no tools: JSON is just an answer
-            ("Here it is:\n" + Fenced, tools, null),                       // text around it: an answer that shows JSON
+            (Fenced, tools, "dotnet --version", ""),
+            (Bare, tools, "git status", ""),
+            (Before + "\n\n" + Fenced, tools, "dotnet --version", Before),     // a sentence, then the block
+            (Fenced, [new("read_file")], null, ""),                          // not a tool of this request
+            (Fenced, null, null, ""),                                        // no tools: JSON is just an answer
+            (Fenced + "\nThis is how the call looks.", tools, null, ""),      // text after it: an answer that shows JSON
+            ("Call it like this: " + Bare, tools, null, ""),                 // bare JSON inside a sentence
+            ("```bash\ndotnet --version\n```", tools, null, ""),              // a block that is not a call
         ];
-        foreach (var (reply, requestTools, command) in cases)
+        foreach (var (reply, requestTools, command, text) in cases)
         {
             var pieces = new List<byte[]> { "P"u8.ToArray() };
             pieces.AddRange(Encoding.UTF8.GetBytes(reply).Chunk(3));
@@ -37,14 +42,14 @@ internal static partial class Tests
             var request = new ChatRequest([new ChatMessage("user", "What .NET version is installed?")], requestTools,
                 Options: new GenerationOptions { Temperature = 0f, TopK = 1, NumPredict = pieces.Count + 4, UseCache = false, UseGraph = false });
             var message = chat.Stream(request).Last().Message!;
-            string label = $"{(requestTools is null ? "no tools" : string.Join(",", requestTools.Select(t => t.Name)))}: {reply[..Math.Min(20, reply.Length)]}";
+            string label = $"{(requestTools is null ? "no tools" : string.Join(",", requestTools.Select(t => t.Name)))}: {reply[..Math.Min(24, reply.Length)]}";
             if (command is null)
             {
                 Check(message.ToolCalls is null && message.Content == reply, $"{label}: stays text ('{message.Content}')");
             }
             else
             {
-                Check(message.ToolCalls is [{ Name: "run_command" } call] && (string?)call.Arguments["command"] == command && message.Content == "",
+                Check(message.ToolCalls is [{ Name: "run_command" } call] && (string?)call.Arguments["command"] == command && message.Content == text,
                     $"{label}: becomes the call ({message.ToolCalls?.Count ?? 0} calls, content '{message.Content}')");
             }
         }

@@ -157,13 +157,13 @@ public sealed class ChatGenerator(TextGenerator generator, ChatTemplate? templat
         }
     }
 
-    // The finished reply; an answer that is only a call's JSON (not in the template's format) becomes that call.
+    // The finished reply; a call written as JSON in the answer (not in the template's format) becomes that call.
     private static ChatMessage Reply(ChatOutputParser parser, string content, string thinking, List<ToolCall> calls)
     {
         if (calls.Count == 0 && parser.CallsInAnswer(content) is { } written)
         {
-            calls = [.. written];
-            content = "";
+            calls = [.. written.Calls];
+            content = written.Text;
         }
 
         return new ChatMessage("assistant", content.Trim(), thinking.Length > 0 ? thinking.Trim() : null, calls.Count > 0 ? [.. calls] : null);
