@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- `Idrak.Datasets`: `ITextNormalizer`, the consumer's text rules (the library has none of its own), and
+  `Dataset.Normalize(normalizer, columns)` (in place) / `Normalize(normalizer, column, into: key)` (a key column, the
+  text kept as written) as their own step. `Dataset.Deduplicate(columns)` compares values exactly and no longer takes
+  `normalize` (it lower-cased and collapsed spaces, which its name did not say): normalize first, then deduplicate:
+  `data.Normalize(rules, "text", into: "key").Deduplicate(["key", "label"])`.
+- `Idrak.Datasets` `Dataset.Deduplicate` is 2.7 times faster and allocates almost nothing beyond reading: a 128-bit
+  hash straight from the values' characters replaces SHA-256 over a joined UTF-8 copy of each row (400,000 CSV rows:
+  731 ms and 134 MB of garbage before, 275 ms and 21 MB now; reading alone takes 168 ms). Normalize and Deduplicate
+  are streamed steps of one pass over the rows, not two loops.
+
 ## 0.1.2 (2026-09-30)
 
 - `Dataset.Split` removes duplicate rows before splitting (the default), so no row is in both parts;

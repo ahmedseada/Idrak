@@ -465,7 +465,23 @@ internal static partial class Tests
         Check(local.Order().SequenceEqual(Enumerable.Range(0, 1000)), "buffered shuffle keeps every row");
 
         var texts = Dataset.FromRows([new() { ["t"] = "Hello  World" }, new() { ["t"] = "hello world" }, new() { ["t"] = "Hello  World" }, new() { ["t"] = "other" }]);
-        Check(texts.Deduplicate().Count() == 3 && texts.Deduplicate(["t"], normalize: true).Count() == 2, "deduplicate exact and normalized");
+        Check(texts.Deduplicate().Count() == 3, "deduplicate: exact values");
+        var edges = Dataset.FromRows([
+            new() { ["a"] = "ab", ["b"] = "c" }, new() { ["a"] = "a", ["b"] = "bc" },          // same characters, other columns
+            new() { ["a"] = "", ["b"] = "x" }, new() { ["b"] = "x" },                          // empty text and a missing column
+            new() { ["a"] = "5", ["b"] = "x" }, new() { ["a"] = 5, ["b"] = "x" },               // text and a number
+            new() { ["a"] = "ab", ["b"] = "c" },                                                 // a real repeat
+            new() { ["a"] = "طويل جداً " + new string('x', 1000), ["b"] = "c" }, new() { ["a"] = "طويل جداً " + new string('x', 1000), ["b"] = "c" }]);
+        Check(edges.Deduplicate(["a", "b"]).Count() == 7, "deduplicate: column boundaries, missing vs empty, number vs text differ; repeats go");
+        var spacing = new CaseAndSpacing();
+        Check(texts.Normalize(spacing, "t").Deduplicate(["t"]).Select(r => (string)r["t"]!).SequenceEqual(["hello world", "other"]),
+            "normalize in place, then deduplicate");
+        var keyed = texts.Normalize(spacing, "t", into: "key").Deduplicate(["key"]).ToList();
+        Check(keyed.Count == 2 && (string)keyed[0]["t"]! == "Hello  World" && (string)keyed[0]["key"]! == "hello world",
+            "normalize into a key column: the text stays as written, the key deduplicates");
+        Check(texts.Deduplicate().Select(r => (string)r["t"]!).First() == "Hello  World", "normalizing is a separate step: the source rows are untouched");
+        var nonText = Dataset.FromRows([new() { ["t"] = 5 }, new() { ["u"] = "x" }]).Normalize(spacing, "t").ToList();
+        Check((int)nonText[0]["t"]! == 5 && !nonText[1].ContainsKey("t"), "normalize leaves values that are not text, and missing columns, as they are");
 
         var (train, evaluation) = numbers.Split(0.1, seed: 3);
         var trainSet = train.Select(r => (int)r["n"]!).ToHashSet();
@@ -611,4 +627,10 @@ internal static partial class Tests
             return base.ReadAsync(buffer[..(int)Math.Min(buffer.Length, limit - Position)], cancellationToken);
         }
     }
+}
+
+// A consumer's normalizer for the tests: lower case, one space between words.
+internal sealed class CaseAndSpacing : ITextNormalizer
+{
+    public string Normalize(string text) => string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)).ToLowerInvariant();
 }
