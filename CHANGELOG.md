@@ -11,6 +11,11 @@
   hash straight from the values' characters replaces SHA-256 over a joined UTF-8 copy of each row (400,000 CSV rows:
   731 ms and 134 MB of garbage before, 275 ms and 21 MB now; reading alone takes 168 ms). Normalize and Deduplicate
   are streamed steps of one pass over the rows, not two loops.
+- `Idrak.Datasets` `Dataset.Split` uses the same hash (no SHA-256, no UTF-8 copy; a whole row is hashed from its
+  properties, not its JSON text): 400,000 rows, both sides read, 1,070 ms → 379 ms with a key and 1,485 ms → 399 ms
+  on whole rows. The sides are still reproducible for a seed, but rows fall on different sides than in 0.1.2.
+- Tests: the activation-memory check lets pending finalizers run before its first reading (other tests' tensors freed
+  between its two readings made its count negative, now and then).
 
 ## 0.1.2 (2026-09-30)
 

@@ -150,6 +150,10 @@ internal static partial class Tests
                     using var scope = new TensorScope();
                     using var recomputing = recompute ? ActivationMemory.Recompute() : (ActivationMemory.Scope?)null;
                     using var compressing = compress ? ActivationMemory.CompressToBFloat16() : (ActivationMemory.Scope?)null;
+                    // Tensors other tests left to the garbage collector free their memory when finalized; let that happen
+                    // now, not between the two readings (it made "held" negative whenever a collection fell in between).
+                    GC.Collect();
+                    GC.WaitForPendingFinalizers();
                     long before = ComputeResources.GetMemoryUsage(device).InUse;
                     var logits = model.Forward(Tensor.From(tokens, [3, 11], device));
                     var loss = (logits * Tensor.From(weights, [3, 11, spec.Vocabulary], device)).Sum();

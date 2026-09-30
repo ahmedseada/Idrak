@@ -1,7 +1,6 @@
 using System.Collections;
 using System.Numerics;
 using System.Runtime.InteropServices;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -204,7 +203,7 @@ public sealed class Dataset : IEnumerable<JsonObject>
     {
         ArgumentOutOfRangeException.ThrowIfNegative(evaluationFraction);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(evaluationFraction, 1);
-        bool Evaluation(JsonObject row) => Fraction(key?.Invoke(row) ?? row.ToJsonString(), seed) < evaluationFraction;
+        bool Evaluation(JsonObject row) => (key is null ? Fraction(row, seed) : Fraction(key(row), seed)) < evaluationFraction;
         return (new Dataset(() => _rows().Where(r => !Evaluation(r)), Name + " (train)"), new Dataset(() => _rows().Where(Evaluation), Name + " (evaluation)"));
     }
 
@@ -304,11 +303,26 @@ public sealed class Dataset : IEnumerable<JsonObject>
     public override string ToString() => Name;
 
     // A number in [0, 1) from a string, the same on every machine and run.
+    // A row's place in [0, 1) for a seed: the 128-bit hash of the seed and the text (or the whole row), no copy of it.
     internal static double Fraction(string text, int seed)
     {
-        Span<byte> hash = stackalloc byte[32];
-        SHA256.HashData(Encoding.UTF8.GetBytes($"{seed}\u0001{text}"), hash);
-        return (BitConverter.ToUInt64(hash) >> 11) * (1.0 / (1UL << 53));
+        var hash = Seeded(seed);
+        hash.Add(1, text);
+        return ((ulong)hash.Value >> 11) * (1.0 / (1UL << 53));
+    }
+
+    private static double Fraction(JsonObject row, int seed)
+    {
+        var hash = Seeded(seed);
+        hash.AddRow(row);
+        return ((ulong)hash.Value >> 11) * (1.0 / (1UL << 53));
+    }
+
+    private static RowHash Seeded(int seed)
+    {
+        var hash = new RowHash();
+        hash.Add(3, [(char)(seed & 0xFFFF), (char)((uint)seed >> 16)]);
+        return hash;
     }
 
     private static IEnumerable<JsonObject> TakeRows(IEnumerable<JsonObject> rows, long count)
@@ -378,25 +392,13 @@ public sealed class Dataset : IEnumerable<JsonObject>
             var hash = new RowHash();
             if (columns is null)
             {
-                hash.Add(2, row.ToJsonString());
+                hash.AddRow(row);
             }
             else
             {
                 for (int i = 0; i < columns.Count; i++)
                 {
-                    var node = row[columns[i]];
-                    if (node is null)
-                    {
-                        hash.Add(0, "");
-                    }
-                    else if (node is JsonValue value && value.TryGetValue<string>(out var text))
-                    {
-                        hash.Add(1, text);
-                    }
-                    else
-                    {
-                        hash.Add(2, node.ToJsonString());
-                    }
+                    hash.AddValue(row[columns[i]]);
                 }
             }
 
@@ -432,6 +434,33 @@ public sealed class Dataset : IEnumerable<JsonObject>
 
             Mix(tail);
             Mix(((ulong)kind << 56) | (uint)text.Length);
+        }
+
+        // Every property in order: its name, then its value (the same rows as their JSON text would give, without it).
+        public void AddRow(JsonObject row)
+        {
+            foreach (var (name, node) in row)
+            {
+                Add(4, name);
+                AddValue(node);
+            }
+        }
+
+        // A text value hashes its characters; a missing or null value its own tag; anything else its JSON.
+        public void AddValue(JsonNode? node)
+        {
+            if (node is null)
+            {
+                Add(0, "");
+            }
+            else if (node is JsonValue value && value.TryGetValue<string>(out var text))
+            {
+                Add(1, text);
+            }
+            else
+            {
+                Add(2, node.ToJsonString());
+            }
         }
 
         public readonly UInt128 Value
