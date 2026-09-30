@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.3 (2026-09-30)
 
 - `Idrak.Datasets`: `ITextNormalizer`, the consumer's text rules (the library has none of its own), and
   `Dataset.Normalize(normalizer, columns)` (in place) / `Normalize(normalizer, column, into: key)` (a key column, the
