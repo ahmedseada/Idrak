@@ -23,6 +23,9 @@
   `MixedPrecision`) instead of expanding the whole weight to float32 on every call; 8 rows and fewer keep the GEMV
   kernels. Before, on an RTX 5070 Ti: 1024 → 151,936 int8 took 2.3 ms for 9–63 rows against 0.36 ms for 64, and
   1024 → 3072 took 70 µs against 23 µs.
+- CUDA with `MixedPrecision` tensor cores: 4 to 8 rows through int8 weights of 32 M values or more (a vocabulary head)
+  take the packed product too, whose time stays flat while the GEMV's grows with the rows (RTX 5070 Ti,
+  1024 → 151,936: 4 rows 328 → 276 µs, 8 rows 521 → 268 µs). Smaller layers and 1–3 rows keep the GEMV.
 - `--bench-gemv` also times short prompts (1–96 rows) through int8 weights and host-to-device uploads, for the next
   CUDA changes.
 
