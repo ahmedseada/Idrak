@@ -9,7 +9,46 @@ internal static partial class Tests
     private static readonly (string Name, Action<Device> Run)[] StreamingText =
     [
         ("generation: streamed text keeps every character whole however tokens split its UTF-8 bytes (emoji, stops)", StreamedCharactersStayWhole),
+        ("chat: a reply that is only a tool call's JSON (bare or in a ``` block) is that call when the request has the tool", CallsWrittenAsTheAnswer),
     ];
+
+    // Small models often write a call as the whole answer instead of in the template's tags (Qwen2.5-Coder-1.5B:
+    // a ```json block with {"name", "arguments"}): it counts as the call only when the request offers that tool.
+    private static void CallsWrittenAsTheAnswer(Device device)
+    {
+        const string Fenced = "```json\n{\n  \"name\": \"run_command\",\n  \"arguments\": {\n    \"command\": \"dotnet --version\"\n  }\n}\n```";
+        const string Bare = "{\"name\": \"run_command\", \"arguments\": {\"command\": \"git status\"}}";
+        ToolDefinition[] tools = [new("run_command", "Run a command", new System.Text.Json.Nodes.JsonObject())];
+        (string Reply, ToolDefinition[]? Tools, string? Command)[] cases =
+        [
+            (Fenced, tools, "dotnet --version"),
+            (Bare, tools, "git status"),
+            (Fenced, [new("read_file")], null),                             // not a tool of this request
+            (Fenced, null, null),                                           // no tools: JSON is just an answer
+            ("Here it is:\n" + Fenced, tools, null),                       // text around it: an answer that shows JSON
+        ];
+        foreach (var (reply, requestTools, command) in cases)
+        {
+            var pieces = new List<byte[]> { "P"u8.ToArray() };
+            pieces.AddRange(Encoding.UTF8.GetBytes(reply).Chunk(3));
+            pieces.Add("<|im_end|>"u8.ToArray());
+            using var model = ScriptModel(pieces.Count, device);
+            var chat = new ChatGenerator(new TextGenerator(model, new ByteTokens(pieces), contextLength: 512));
+            var request = new ChatRequest([new ChatMessage("user", "What .NET version is installed?")], requestTools,
+                Options: new GenerationOptions { Temperature = 0f, TopK = 1, NumPredict = pieces.Count + 4, UseCache = false, UseGraph = false });
+            var message = chat.Stream(request).Last().Message!;
+            string label = $"{(requestTools is null ? "no tools" : string.Join(",", requestTools.Select(t => t.Name)))}: {reply[..Math.Min(20, reply.Length)]}";
+            if (command is null)
+            {
+                Check(message.ToolCalls is null && message.Content == reply, $"{label}: stays text ('{message.Content}')");
+            }
+            else
+            {
+                Check(message.ToolCalls is [{ Name: "run_command" } call] && (string?)call.Arguments["command"] == command && message.Content == "",
+                    $"{label}: becomes the call ({message.ToolCalls?.Count ?? 0} calls, content '{message.Content}')");
+            }
+        }
+    }
 
     private static void StreamedCharactersStayWhole(Device device)
     {
@@ -100,7 +139,7 @@ internal static partial class Tests
     {
         public int VocabularySize => pieces.Count;
 
-        public IReadOnlyList<int> Encode(string text) => text == "P" ? [0] : throw new ArgumentException(text);
+        public IReadOnlyList<int> Encode(string text) => [0];                     // any prompt: the script starts at token 0
 
         public string Decode(IEnumerable<int> ids) => Encoding.UTF8.GetString([.. ids.SelectMany(i => pieces[i])]);
     }

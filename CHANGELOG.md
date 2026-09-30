@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Chat: a reply that is only a tool call's JSON (`{"name", "arguments"}`, bare or in a ``` block) counts as that call
+  when the request offers the tool. Small models such as Qwen2.5-Coder-1.5B write calls this way instead of in their
+  template's tags, and the call was taken as the final answer. `ChatOutputParser.CallsInAnswer` does the check.
+- CodingAgent sample: a typed task (no verification commands) ends with "Done (the task has no checks)", not "Passed".
+
 ## 0.1.1 (2026-09-30)
 
 - `Device.Name` of a GPU adds its compute capability and the CUDA version of its driver; the test runner prints the

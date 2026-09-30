@@ -338,6 +338,39 @@ public sealed class ChatOutputParser(ChatTemplate template, bool separateThinkin
         return text.Length;
     }
 
+    /// <summary>
+    /// Calls written as the whole answer instead of in the template's format: small models often reply with only the
+    /// call's JSON ({"name", "arguments"}, or a list of them), bare or in a ``` block. They count as calls only when the
+    /// request has tools and every name is one of them; otherwise null (the answer stays text).
+    /// </summary>
+    public IReadOnlyList<ToolCall>? CallsInAnswer(string answer)
+    {
+        if (toolNames is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        string text = answer.Trim();
+        if (text.StartsWith("```", StringComparison.Ordinal))
+        {
+            int line = text.IndexOf('\n');
+            if (line < 0 || text.Length < line + 4 || !text.EndsWith("```", StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            text = text[(line + 1)..^3].Trim();
+        }
+
+        if (text.Length == 0 || text[0] is not ('{' or '['))
+        {
+            return null;
+        }
+
+        var calls = TryParseCalls(text);
+        return calls is not null && calls.All(c => toolNames.Contains(c.Name)) ? calls : null;
+    }
+
     // One call ({"name", arguments}) or a list of them; null when the text is not calls (then it stays answer text).
     private List<ToolCall>? TryParseCalls(string json)
     {

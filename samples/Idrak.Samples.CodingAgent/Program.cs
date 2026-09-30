@@ -218,7 +218,9 @@ switch (positional[0])
             var agent = new CodingAgent(chatModel, agentOptions) { OnDelta = Show, OnToolResult = ShowTool };
             var run = await agent.RunAsync(task, new CodingTools(workspace!, agentOptions.Tools), cancel.Token);
             Console.ResetColor();
-            Console.WriteLine($"\n[{run.Outcome}{(run.Outcome == AgentOutcome.Passed ? "" : ": " + run.VerifyOutput)}; {run.Rounds} replies, {run.ToolCalls} tool calls ({run.ToolErrors} errors), "
+            // A typed task has no verification commands: finishing is all "Passed" can mean, so say that.
+            string outcome = run.Outcome == AgentOutcome.Passed ? "Done (the task has no checks)" : $"{run.Outcome}: {run.VerifyOutput}";
+            Console.WriteLine($"\n[{outcome}; {run.Rounds} replies, {run.ToolCalls} tool calls ({run.ToolErrors} errors), "
                               + $"{run.GeneratedTokens} tokens; model {run.ModelTime.TotalSeconds:F1} s, tools {run.ToolTime.TotalSeconds:F1} s]");
             if (output is not null)
             {

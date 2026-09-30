@@ -120,8 +120,7 @@ public sealed class ChatGenerator(TextGenerator generator, ChatTemplate? templat
             }
 
             string thought = thinking[i].ToString();
-            var message = new ChatMessage("assistant", content[i].ToString().Trim(), thought.Length > 0 ? thought.Trim() : null,
-                calls[i].Count > 0 ? [.. calls[i]] : null);
+            var message = Reply(parsers[i], content[i].ToString(), thought, calls[i]);
             yield return (i, new ChatChunk(delta, true, chunk.DoneReason, message, chunk.Stats));
         }
     }
@@ -148,8 +147,7 @@ public sealed class ChatGenerator(TextGenerator generator, ChatTemplate? templat
             calls.AddRange(delta.ToolCalls);
             if (chunk.Done)
             {
-                var message = new ChatMessage("assistant", content.ToString().Trim(), thinking.Length > 0 ? thinking.ToString().Trim() : null,
-                    calls.Count > 0 ? calls : null);
+                var message = Reply(parser, content.ToString(), thinking.ToString(), calls);
                 yield return new ChatChunk(delta, true, chunk.DoneReason, message, chunk.Stats);
             }
             else if (!delta.IsEmpty)
@@ -157,5 +155,17 @@ public sealed class ChatGenerator(TextGenerator generator, ChatTemplate? templat
                 yield return new ChatChunk(delta);
             }
         }
+    }
+
+    // The finished reply; an answer that is only a call's JSON (not in the template's format) becomes that call.
+    private static ChatMessage Reply(ChatOutputParser parser, string content, string thinking, List<ToolCall> calls)
+    {
+        if (calls.Count == 0 && parser.CallsInAnswer(content) is { } written)
+        {
+            calls = [.. written];
+            content = "";
+        }
+
+        return new ChatMessage("assistant", content.Trim(), thinking.Length > 0 ? thinking.Trim() : null, calls.Count > 0 ? [.. calls] : null);
     }
 }
