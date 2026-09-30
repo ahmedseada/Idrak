@@ -2,6 +2,14 @@
 
 ## 0.1.2 (2026-09-30)
 
+- `Dataset.Split` removes duplicate rows before splitting (the default), so no row is in both parts;
+  `removeDuplicates: false` keeps every row, identical copies included, and `duplicates:` sets the rules. Splits of data
+  with repeated rows now have fewer rows than before.
+- `Dataset.Deduplicate(options)` / `DeduplicateWithReport(options)`: exact duplicates on the features or on features and
+  targets; rows whose features repeat with other targets: keep the first, keep the most frequent targets, or drop them;
+  near duplicates from an embedding the caller gives (cosine threshold). The report has the kept row indices and the
+  count removed for each reason. One hash per row in parallel, no allocation per row, no copy when nothing is removed;
+  near duplicates compare blocks of rows as matrix products.
 - `Losses.CrossEntropy(logits, targets)` and `Losses.SparseCrossEntropy(logits, classIndices)`: two-argument overloads
   (no label smoothing), so `Loss = Losses.CrossEntropy` compiles as the README shows; the optional `labelSmoothing`
   parameter kept the method group from converting to `Func<Tensor, Tensor, Tensor>`. The smoothing overloads now take

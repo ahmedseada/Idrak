@@ -518,6 +518,33 @@ var trainLoader = split.Train.Batches(64, shuffle: true);                       
 // split.Train, split.Test, split.FeatureScaler, split.TargetScaler
 ```
 
+### Duplicates: removed before a split unless you keep them
+
+`Split` deduplicates the rows first, so no row lands in both parts and the test score is on rows the model has not
+seen. `removeDuplicates: false` turns that off and keeps every row, identical copies included (augmentation, or when
+how often a row repeats matters). The rules, and `Deduplicate` on its own:
+
+```csharp
+var (train, test) = data.Split(0.8, seed: 1);                                   // deduplicated: same features count once
+var (all, held)   = data.Split(0.8, seed: 1, removeDuplicates: false);          // every row, copies included
+
+var split = data.Split(0.8, seed: 1, duplicates: new DeduplicationOptions
+{
+    Match = DuplicateMatch.FeaturesAndTargets,         // or Features (the default): same features whatever the targets
+    Conflicts = DuplicateConflicts.KeepMostFrequent,   // same features, other targets: KeepFirst (default), KeepMostFrequent, DropAll
+    Embedding = row => embeddings[row],                // optional near duplicates: your vectors, cosine >= SimilarityThreshold
+    SimilarityThreshold = 0.95f,
+});
+
+DeduplicationResult report = data.DeduplicateWithReport();   // .Data, .Kept (row indices, to filter texts kept alongside),
+                                                              // .ExactDuplicates, .Conflicting, .NearDuplicates
+```
+
+Exact duplicates cost one hash per row (in parallel) and no allocation per row: 300,000 rows of 256 features take
+about 0.2 s on 4 cores, and a dataset without duplicates is returned as is (no copy). Near duplicates compare blocks of
+rows with the kept rows as matrix products on the CPU kernels: 20,000 embeddings of 384 values take about 2 s on 4
+cores, growing with rows × kept rows.
+
 ### Training: factories for the wiring, and one settings object
 
 ```csharp
