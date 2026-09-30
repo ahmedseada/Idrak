@@ -5,6 +5,7 @@
 - `Device.Name` of a GPU adds its compute capability and the CUDA version of its driver; the test runner prints the
   operating system and .NET version first, so a pasted result says what it ran on.
 - `idrak-tune`, `idrak-data`: output is UTF-8, so "…" and emoji show on Windows consoles; the help's second lines line up.
+- The `Idrak` package page shows its example twice: in the original API and in the simplified API.
 - The `Idrak.Datasets` and `Idrak.LanguageModels` package pages name their command-line tools (`idrak-data`,
   `idrak-tune`) and how to install them.
 
