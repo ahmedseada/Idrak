@@ -223,7 +223,9 @@ internal sealed unsafe partial class CudaBackend : Backend
         Check(cuDeviceGetAttribute(out _multiprocessors, AttributeMultiprocessorCount, device), nameof(cuDeviceGetAttribute));
         Check(cuDeviceGetAttribute(out _computeMajor, AttributeComputeCapabilityMajor, device), nameof(cuDeviceGetAttribute));
         Check(cuDeviceGetAttribute(out _computeMinor, AttributeComputeCapabilityMinor, device), nameof(cuDeviceGetAttribute));
-        Name = $"{Marshal.PtrToStringAnsi((IntPtr)name)} ({memory / (1024 * 1024)} MiB, {_multiprocessors} SMs)";
+        // The CUDA version the installed driver supports (13000 = 13.0), not the driver's own release number.
+        string cuda = cuDriverGetVersion(out int version) == 0 ? $", CUDA {version / 1000}.{version % 1000 / 10} driver" : "";
+        Name = $"{Marshal.PtrToStringAnsi((IntPtr)name)} ({memory / (1024 * 1024)} MiB, {_multiprocessors} SMs, compute {_computeMajor}.{_computeMinor}{cuda})";
         _memory = new MemoryAccountant(() => ComputeResources.GpuMemoryLimit, $"cuda:{ordinal}");
 
         IntPtr module = LoadModule(PtxKernels.Source);

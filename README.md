@@ -2,11 +2,20 @@
 
 # Idrak
 
-A self-contained neural network library for **.NET 10**, written in pure C#. There is **no TensorFlow.dll,
-no NuGet dependencies and no native libraries of its own**. It includes N-D tensors with automatic
-differentiation; dense, convolutional, recurrent and transformer layers; regression and classification
-losses; optimizers with learning-rate schedules; a training loop; data loading; resource limits; and
-telemetry hooks.
+A self-contained deep-learning library for **.NET 10**, written in C#, with its own GPU kernels. The core has
+**no NuGet dependencies and no native libraries**: no TensorFlow, no PyTorch, no CUDA Toolkit, no cuBLAS or cuDNN.
+
+- **Build and train networks**: N-D tensors with automatic differentiation; dense, convolutional, recurrent,
+  attention and transformer layers; losses, optimizers (including 8-bit AdamW) and schedules; a trainer, data
+  loading, predictors, model packages, telemetry and resource limits.
+- **Run and fine-tune language models**: Llama, Qwen, Mistral and Gemma from Hugging Face folders or GGUF files,
+  with their own tokenizers and chat templates; streaming chat with reasoning and tool calls; LoRA / QLoRA
+  fine-tuning; answer scoring and evaluation.
+- **Fast on NVIDIA GPUs**: bfloat16 and FP8 tensor cores, flash attention, int8 / int4 / bfloat16 weights, int8
+  KV caches, CUDA graphs; on any CUDA GPU from Maxwell to Blackwell, with CPU fallbacks everywhere.
+- **Use it in applications**: an inference engine with batching, ASP.NET Core endpoints (including an
+  Ollama-compatible API), retrieval and RAG, MCP tools, ONNX export and import, datasets from files and hubs, and
+  two command-line tools (`idrak-tune`, `idrak-data`).
 
 | Backend | How it works | Requirements |
 |---------|--------------|--------------|
@@ -50,7 +59,9 @@ src/Idrak/
   Tensor*.cs                        N-D tensors, operators, autograd, shape ops, number-type interop
   Device.cs, ComputeResources.cs    devices; thread and memory budgets
   Autograd.cs, TensorScope.cs       NoGrad(); deterministic disposal
-  Losses.cs                         MSE, MAE, CrossEntropy, BinaryCrossEntropy(WithLogits)
+  Losses.cs                         MSE, MAE, CrossEntropy, BinaryCrossEntropy(WithLogits), token log-probabilities
+  MixedPrecision.cs, ComputeGraph.cs  tensor-core precision (bfloat16, FP8); CUDA graph capture and replay
+  Sampling.cs                       the token sampler (temperature, top-k/p, min-p, penalties)
   Layers/                           Linear, Conv2d, MaxPool2d, GlobalAveragePool2d, Flatten,
                                     BatchNorm, LayerNorm, Embedding, LSTM, GRU,
                                     MultiHeadAttention, TransformerEncoderLayer, PositionalEncoding,
@@ -60,45 +71,61 @@ src/Idrak/
   Optimizers/                       Sgd, Adam, AdamW, GroupedOptimizer, schedulers (step, exponential, cosine + warm-up)
   Data/                             Dataset (CSV, class labels, feature shapes), scalers, DataLoader, DataExtensions
   Training/                         Trainer, TrainingRun, Metric (MAE, RMSE, Accuracy), RegressionReport
-  Generation/                       tokenizers, TextGenerator, chat, Conversation, tools (ToolRegistry), ModelHost
+  Generation/                       tokenizers, TextGenerator (streaming, batches), chat, Conversation, tools
+                                    (ToolRegistry), ModelHost, CodingAgent and CodingTools
   Inference/                        Predictor, ModelPackage (.ikm), InferenceEngine
   Retrieval/                        chunking, BM25, TextEncoder (bi-encoder), VectorIndex, RetrievalIndex (hybrid
                                     search with rank fusion), CrossEncoder (re-ranking), Rag pipeline, search tool
   Diagnostics/                      Telemetry hub, events, ConsoleLogger, MetricsRecorder,
                                     ChannelTelemetry, JsonLinesLogger
   Backends/Cpu, Backends/Cuda       device implementations (CPU SIMD kernels, PTX kernels)
+src/Idrak.LanguageModels/           optional package, no dependencies: language models and fine-tuning
+  PretrainedModel, Architectures    Hugging Face folders; the architecture registry (Llama, Mistral, Qwen2/3, Gemma)
+  SafeTensors, Gguf, GgufModel      safetensors and GGUF weights (F32/F16/BF16, Q4_0–Q8_0, K-quants, IQ4)
+  BpeTokenizer, Jinja, ChatTemplates  tokenizer.json; the model's own Jinja chat template; tool-call formats
+  FineTuning, TuningManifest        LoRA / QLoRA fine-tuning (packing, CUDA graphs, memory fallbacks), adapters
+  AnswerScorer, Evaluation          log-probabilities of given answers, answer metrics
+  ModelSource                       Hugging Face ids: found in a cache or downloaded once
+src/Idrak.Datasets/                 optional package, no dependencies: JSON Lines, JSON, CSV, text, code and Parquet
+                                    files (also compressed and archived); Hugging Face, GitHub, Kaggle, Zenodo and URL
+                                    sources with a download cache; rows into conversations; recipes
 src/Idrak.AspNetCore/               optional package: AddIdrak(), MapPredictor, MapGenerate, MapOllamaApi, MapIdrakStatus
 src/Idrak.Mcp/                      optional package: tools of Model Context Protocol servers, and serving tools over MCP
 src/Idrak.Onnx/                     optional package, no dependencies: export networks to .onnx (opset 17), import .onnx into layers
 src/Idrak.Onnx.Runtime/             optional package: run .onnx models with ONNX Runtime as Idrak modules
-src/Idrak.LanguageModels/           optional package, no dependencies: Hugging Face and GGUF language models (safetensors,
-                                    config.json, tokenizer.json, Jinja chat templates) as Idrak decoders; fine-tuning
-                                    (LoRA / QLoRA), evaluation and answer scoring
+src/Idrak.FineTuning.Cli/           idrak-tune: fine-tune any language model the library loads (LoRA / QLoRA), evaluate, chat, export
 src/Idrak.Datasets.Cli/             idrak-data: inspect, download and assemble training datasets
-src/Idrak.FineTuning.Cli/           idrak-tune: fine-tune any pretrained model (LoRA / QLoRA) on any dataset, evaluate, chat, export
 samples/
   Idrak.Samples.Xor                 the classic XOR problem
   Idrak.Samples.HousePrices         regression: predict house prices from a CSV file
+  Idrak.Samples.HouseApi            house-price Web API in a few lines (Idrak.AspNetCore + the HousePrices package)
   Idrak.Samples.Spirals             multi-class: 3 spirals, softmax + cross-entropy, BatchNorm
   Idrak.Samples.ShapeRecognition    CNN: classify drawn shapes (Conv2d, MaxPool2d, BatchNorm)
-  Idrak.Samples.Sentiment           sentiment with negation: bag-of-words vs LSTM, GRU, Transformer
   Idrak.Samples.Ocr                 OCR: CNN character recognizer + line segmentation, reads PGM images
+  Idrak.Samples.Sentiment           sentiment with negation: bag-of-words vs LSTM, GRU, Transformer
   Idrak.Samples.TextGeneration      small GPT: character-level causal transformer that generates text
   Idrak.Samples.GptApi              ASP.NET Core Web API + browser UI serving the GPT (Scalar docs, streaming, Ollama-style /api/chat)
-  Idrak.Samples.HouseApi            house-price Web API in a few lines (Idrak.AspNetCore + the HousePrices package)
-  Idrak.Samples.ReRanker            search re-ranking: BM25 first stage + transformer cross-encoder, listwise training
+  Idrak.Samples.GptTraining         trains a full-size character-level GPT (bfloat16 / FP8 tensor cores, checkpoints, resume)
   Idrak.Samples.Summarizer          summarization: extractive baselines vs a word-level transformer (WordTokenizer + TextGenerator)
+  Idrak.Samples.ReRanker            search re-ranking: BM25 first stage + transformer cross-encoder, listwise training
   Idrak.Samples.Rag                 retrieval-augmented generation: hybrid search, re-ranking, a chat model that cites passages
-  Idrak.Samples.OnnxImport          imports another framework's .onnx model, runs it on Idrak (CPU/CUDA), checks its outputs
   Idrak.Samples.Quantization        int8 weights and Float16/BFloat16 files: accuracy, size and decoding speed
+  Idrak.Samples.OnnxImport          imports another framework's .onnx model, runs it on Idrak (CPU/CUDA), checks its outputs
   Idrak.Samples.Chat                chat with a Hugging Face or GGUF language model: info, chat, profile, and a check against transformers
   Idrak.Samples.CodingAgent         a coding agent (read, search, edit, run commands) on a language model, and a task-suite runner
-  Idrak.Samples.GptTraining         trains a full-size character-level GPT (bfloat16 / FP8 tensor cores, checkpoints, resume)
-tools/pytorch/xor_to_onnx.py        trains XOR in PyTorch and exports it to ONNX with PyTorch's outputs, for OnnxImport
-tools/pytorch/export_models.py      exports a PyTorch CNN or ResNet (skip connections) to ONNX with PyTorch's outputs
   Shared/SampleOptions.cs           command-line options shared by the samples (train / predict modes)
   Shared/Gpt/                       GPT model, generation with metrics, training (console + Web API)
-tests/Idrak.Tests                   self-contained test runner (runs on every available device)
+tests/Idrak.Tests                   self-contained test runner: every test on the CPU and on every CUDA GPU present
+  data/                             small GGUF, safetensors and Parquet fixtures (made by the scripts in tools/)
+tools/
+  pytorch/xor_to_onnx.py            trains XOR in PyTorch and exports it to ONNX with PyTorch's outputs, for OnnxImport
+  pytorch/export_models.py          exports a PyTorch CNN or ResNet (skip connections) to ONNX with PyTorch's outputs
+  pytorch/pretrained_reference.py   records transformers' ids, templates, logits and greedy output, for `Chat check`
+  gguf/make_fixtures.py             the GGUF test fixtures (every quantization type, tiny Llama and Qwen3 models)
+  datasets/make_parquet_fixtures.py the Parquet test fixtures, with the rows pyarrow reads
+  publish.ps1                       publishes a release tag to nuget.org from a machine (when CI cannot)
+docs/                               performance notes (where optimization stopped) and items to review
+assets/                             the icon (icon.svg source, icon.png for the packages)
 ```
 
 ## Samples
@@ -878,42 +905,83 @@ supported under this library's no-dependency rule:
 The backend design (`Backends/Backend.cs`) leaves room for an optional add-on package, for example
 `Idrak.OpenVino`, that runs inference on an NPU while the core stays dependency-free.
 
+## GPU support
+
+The GPU kernels are PTX (NVIDIA's GPU assembly) generated in C# and compiled by the display driver when the
+library starts, so any NVIDIA GPU the driver supports runs them. Faster kernels load where the GPU has the hardware
+for them; every feature has a fallback that runs everywhere.
+
+| Compute capability | GPUs (examples) | What runs |
+|---|---|---|
+| 5.0 and newer | GTX 900 (Maxwell) and later | every core kernel (float32 products, convolution, attention, LSTM/GRU, int8 / int4 weights, KV caches, sampling, CUDA graphs) |
+| 8.0 and newer | RTX 30 (Ampere), RTX 40 (Ada), RTX 50 (Blackwell) | adds bfloat16 tensor-core products, flash attention, sequence packing, int8 tensor-core products |
+| 8.9 and newer | RTX 40 (Ada), H100 (Hopper), RTX 50 (Blackwell) | adds FP8 tensor-core products |
+
+Sizes (split-k, grids) come from the device's own counts, and memory adapts to the card: when a fine-tuning step
+does not fit, it retries with lighter settings (released or recomputed activations, bfloat16 activations,
+checkpointing); `--offload` keeps tensors in system memory when the GPU is full.
+
+The 178 kernels (134 core, 44 tensor-core) assemble without errors for sm_50, sm_61, sm_75, sm_86, sm_89, sm_90
+and sm_120 (Maxwell to Blackwell), and the FP8 kernels for sm_89, sm_90 and sm_120 (`ptxas` 12.9, 2026-09-30).
+Every kernel launch is also checked against the kernel's declared parameter count.
+
+Requirements: an NVIDIA display driver (Windows `nvcuda.dll`, Linux `libcuda.so.1`); nothing else. Without a
+driver, or with `IDRAK_DISABLE_CUDA=1`, everything runs on the CPU (SIMD: AVX2, AVX-512 or NEON).
+
 ## Tests
 
 ```bash
 dotnet run -c Release --project tests/Idrak.Tests
 ```
 
-There are 104 tests. They cover reference comparisons for every kernel (matrix products, softmax,
-convolution and pooling against direct implementations) and finite-difference gradient checks for
-every op and layer, including their weights. They also cover end-to-end learning (regression, spiral
-classification, a CNN, LSTM and transformer sequence models), optimizers and schedules, CSV parsing,
-data loading, telemetry, memory limits and thread budgets, the sampler's filters and penalties, and the
-generation layer (stop sequences, context sliding, cache/graph/recompute agreement, template rendering,
-streaming parser, keep-alive expiry). The simplified API is tested against the original one (identical
-layers, weights, data splits and training histories), together with predictors, packages, tools,
-conversations, the inference engine (batching, copies, queue limits, timeouts, keep-alive with a manual
-clock) and the ASP.NET Core endpoints over a real Kestrel server. Retrieval is checked against the formulas
-(BM25 scores, masked mean pooling, reciprocal rank fusion), MCP tools round-trip through an in-process
-server, every layer exported to ONNX gives the same output in ONNX Runtime and after importing it back, and
-int8 products (both kernels) and half-precision files are checked against float32. The suite runs on every available device; `IDRAK_FILTER=text` runs only the tests whose name contains it.
+The runner prints the system it runs on, then runs **every test on every device**: the CPU and each CUDA GPU
+present (a machine with one GPU runs 170 tests twice, 340 in all). Each GPU's line shows its memory, SM count,
+compute capability and the CUDA version of its driver.
 
-## Status
+| Setting | Meaning |
+|---|---|
+| `IDRAK_DEVICES=cpu` / `cuda` / `cpu,cuda:1` | only these devices |
+| `IDRAK_FILTER=text` | only the tests whose name contains the text |
+| `IDRAK_TIMEOUT=600` | seconds a test may run before it counts as hung (default 300) |
+| `IDRAK_TRACE=1` | full stack traces for failures |
+| `IDRAK_CUDA_DEBUG=1` | synchronize after every kernel, to name the one that faults |
 
-* **Verified on real hardware.** 95 of the 104 tests pass on both the CPU and an NVIDIA GeForce RTX 5050
-  Laptop GPU (Blackwell), 190 of 190 (the newest nine, graph import and quantization, pass on the CPU and still need a GPU run), including KV-cache and batched decoding, graph replay, the
-  sampler with top-p, min-p and penalties, the generation layer, the kernel-signature check, the
-  simplified API, fine-tuning and LoRA, predictors, packages, tools, the inference engine, retrieval,
-  and ONNX export and import (imported models run on the GPU). The ASP.NET Core and MCP tests do not
-  depend on the device and run once, on the CPU.
-  That covers every GPU kernel: matrix products, softmax,
-  normalization, embeddings, convolution, pooling, recurrent and attention layers, and end-to-end
-  training of classifiers, a CNN, an LSTM and a transformer.
-* Every kernel launch is checked against the kernel's declared parameter count, and parameter names are checked for duplicates. The 64 GPU kernels also assemble without errors for sm_50, sm_75, sm_89 and sm_120 (checked with
-  `ptxas` 12.9), covering Maxwell through Blackwell.
-* Everything computes in float32. Tensors hold up to 2³¹ elements, and embedding ids must be below
-  2²⁴ (the largest integer a float stores exactly).
-* Small models such as the samples are dominated by kernel-launch overhead on the GPU. Recurrent
-  models are hit hardest, since they launch kernels for every time step. The GPU pays off with wide
-  layers, large batches and convolutions: the CNN test trains faster on the RTX 5050 than on a
-  16-thread CPU.
+The 170 tests, by area:
+
+| Area | Tests | What they check |
+|---|---|---|
+| Tensors and training basics | 24 | matrix products and element-wise ops against references; gradients of every basic op (finite differences); dropout masks equal on CPU and GPU; save/load; CSV, scalers, data loader; trainer; telemetry; memory limits; thread counts; no leaks |
+| Layers and learning | 27 | softmax, cross-entropy, batched products, shape ops, BatchNorm, LayerNorm, embeddings, convolution, pooling, LSTM/GRU, attention: outputs against references and gradients; spirals, a CNN, an LSTM and a transformer learn; schedulers; number types |
+| Decoding | 7 | fused kernels equal their unfused forms; KV-cache and batched decoding equal the full pass; CUDA graph replay; the sampler (top-k/p, min-p, penalties); every kernel's parameter count |
+| Generation | 8 | streamed output parsed into thinking, content and tool calls; tokenizers; templates; stop sequences; cache/graph/recompute agree; prompt-cache reuse; emoji and other characters stay whole however tokens split them |
+| Simplified API, engine and tools | 18 | builder, predictors, packages and trainer equal the manual steps; LoRA; tools and conversations; the inference engine (batching, queues, timeouts, keep-alive) |
+| ASP.NET Core | 1 | predict, generate (JSON and server-sent events), Ollama API, status, over a real Kestrel server |
+| Retrieval and MCP | 6 | chunking; BM25 against the formula; encoders; hybrid index with rank fusion; re-ranking and RAG citations; tools served over MCP |
+| ONNX | 8 | MLP, CNN, LSTM/GRU, transformer and GPT exported and run in ONNX Runtime, and imported back (PyTorch-style graphs, ResNet blocks) |
+| Quantization | 11 | int8, int4 and bfloat16 weights (products, gradients, save/load, QLoRA); packed projections; half-precision files; int8 KV cache |
+| Decoder | 8 | RMSNorm, rotary embeddings and tiled attention (with gradients); every DecoderSpec variant against a plain reference; cached decoding through quantized weights; LoRA by layer name |
+| Language models | 7 | safetensors; Hugging Face checkpoints through the registry; BPE tokenizers (byte-level and SentencePiece); text with half a character; Jinja templates against jinja2; a Qwen3 template as transformers renders it; tool-call formats |
+| Fine-tuning and scoring | 19 | chunked cross-entropy and LoRA terms in tensor-core products; sequence packing; CUDA-graph steps; out-of-memory fallbacks; checkpointing; answer balancing; answer scoring; model download; PEFT adapters and merged export |
+| Mixed precision | 11 | bfloat16 and 8-bit (FP8, int8) tensor-core products; flash attention (forward and backward); fused LayerNorm and decoder blocks; 8-bit AdamW |
+| Coding agent | 4 | workspace-bound file tools; allowlisted commands; agent transcripts; a task run and verified |
+| Datasets | 7 | Parquet (as pyarrow reads it); JSON Lines, JSON, CSV, text, archives; lazy transforms; download cache; conversation layouts; recipes; hub sources against a fake server |
+| GGUF and evaluation | 3 | every GGUF quantization type dequantized as llama.cpp does; GGUF models equal their Hugging Face copies; answer metrics |
+| Naming | 1 | no file uses the library's former name |
+
+The ASP.NET Core, MCP, dataset and naming tests do not depend on the device, and run on each device like the others.
+
+## Tested on
+
+| Date | Library | Device | Compute | System | Result |
+|---|---|---|---|---|---|
+| 2026-09-30 | main (after 0.1.0) | CPU, 4 threads, AVX2 (8-wide SIMD) | – | Ubuntu 24.04 (x64), .NET 10.0.12 | 170 of 170 |
+| 2026-09-29 | 0.1.0 | NVIDIA GeForce RTX 5070 Ti, 16 GB, 70 SMs (Blackwell) | 12.0 | Windows (x64), .NET 10 | 340 of 340 (CPU and GPU) |
+| earlier | before 0.1.0 | NVIDIA GeForce RTX 5050 Laptop GPU, 8 GB (Blackwell) | 12.0 | Windows (x64), .NET 10 | 190 of 190 at the time |
+
+Fine-tuning speed on the RTX 5070 Ti (Qwen2.5-0.5B, LoRA, 4k-token steps): 17.4k tokens/s on chat data, 25.5k on
+short classification rows; chat with Qwen3-0.6B generates about 140 tokens/s. Not tested yet: GPUs before
+compute 12.0 (the kernels assemble for them, see GPU support), Linux with a GPU, and macOS (CPU only).
+
+Small models such as the samples are dominated by kernel-launch overhead on the GPU; recurrent models are hit
+hardest, since they launch kernels for every time step. The GPU pays off with wide layers, large batches,
+convolutions and language models. Tensors hold up to 2³¹ elements, and embedding ids must be below 2²⁴.
