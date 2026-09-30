@@ -18,6 +18,7 @@ internal static partial class Tests
         ("data: Split/Standardize/Batches equal the manual steps", DataExtensionsMatchManual),
         ("training: factory Trainer and TrainingRun give the same history as the manual trainer", TrainingRunMatchesTrainer),
         ("training: FitAsync progress and TrainAsync early exit", TrainingAsync),
+        ("losses: CrossEntropy and SparseCrossEntropy pass as a Loss (method group) and equal the smoothing overload at 0", LossMethodGroups),
         ("fine-tuning: freeze, trainable-only save/load, grouped optimizer", FreezingAndGroups),
         ("fine-tuning: LoRA starts neutral, trains only adapters, merges exactly", Lora),
         ("telemetry: Configure().Console/JsonLines/Record.Start() subscribes, disposes and flushes", TelemetryBuilderSession),
@@ -31,6 +32,29 @@ internal static partial class Tests
         ("engine: instances, queue limit, timeout, keep-alive with a manual clock, load on first use, telemetry", EngineLifecycle),
         ("engine: text generation and chat conversations through the engine", EngineGeneration),
     ];
+
+    private static void LossMethodGroups(Device device)
+    {
+        Func<Tensor, Tensor, Tensor> dense = Losses.CrossEntropy, sparse = Losses.SparseCrossEntropy;
+        using var scope = new TensorScope();
+        var logits = Tensor.From([0.2f, -1.1f, 0.7f, 1.5f, 0.3f, -0.4f], [2, 3], device);
+        var oneHot = Tensor.From([0f, 0f, 1f, 1f, 0f, 0f], [2, 3], device);
+        var labels = Tensor.From([2f, 0f], [2], device);
+        AssertClose([dense(logits, oneHot).Item()], [Losses.CrossEntropy(logits, oneHot, 0f).Item()], 0f, "CrossEntropy(a, b) == CrossEntropy(a, b, 0)");
+        AssertClose([sparse(logits, labels).Item()], [Losses.SparseCrossEntropy(logits, labels, 0f).Item()], 0f, "SparseCrossEntropy(a, b) == (a, b, 0)");
+        AssertClose([dense(logits, oneHot).Item()], [sparse(logits, labels).Item()], 1e-6f, "sparse == dense");
+        AssertClose([Losses.CrossEntropy(logits, oneHot, labelSmoothing: 0.1f).Item()], [Losses.CrossEntropy(logits, oneHot, 0.1f).Item()], 0f, "named smoothing still binds");
+
+        using var model = Network.Input(3).OnDevice(device).Seed(1).Linear(3).Build();
+        var run = new TrainingRun
+        {
+            Model = model, Loss = Losses.CrossEntropy, Optimizer = p => new Sgd(p, 0.1f),
+            Train = Dataset.FromFlat([1f, 0f, 0f, 0f, 1f, 0f], [1f, 0f, 0f, 0f, 1f, 0f], 2, ["a", "b", "c"], ["x", "y", "z"]).Batches(2, device: device),
+            Epochs = 2,
+        };
+        var history = run.Fit();
+        Check(history.Epochs.Count == 2 && history.Epochs[1].Loss < history.Epochs[0].Loss, "TrainingRun with Loss = Losses.CrossEntropy trains");
+    }
 
     private static Sequential ManualMlp(Device device, Random r) => new()
     {

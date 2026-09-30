@@ -79,7 +79,7 @@ public sealed class GELU : Module
 
 /// <summary>
 /// Softmax over the last dimension, turning scores into probabilities. Use it for inference output only:
-/// train with raw scores and <see cref="Losses.CrossEntropy"/>, which applies log-softmax itself.
+/// train with raw scores and <see cref="Losses.CrossEntropy(Tensor, Tensor)"/>, which applies log-softmax itself.
 /// </summary>
 public sealed class Softmax : Module
 {

@@ -14,6 +14,12 @@ public static class Losses
     public static Tensor MeanAbsoluteError(Tensor prediction, Tensor target) => (prediction - target).Abs().Mean();
 
     /// <summary>
+    /// <see cref="CrossEntropy(Tensor, Tensor, float)"/> without label smoothing. As a two-argument method it passes where
+    /// a loss is a <c>Func&lt;Tensor, Tensor, Tensor&gt;</c>: <c>Loss = Losses.CrossEntropy</c>.
+    /// </summary>
+    public static Tensor CrossEntropy(Tensor logits, Tensor targets) => CrossEntropy(logits, targets, 0f);
+
+    /// <summary>
     /// Multi-class cross-entropy from raw scores (logits, no softmax layer needed):
     /// mean over rows of -Σ target · log_softmax(logits). Targets are one-hot rows (or class probabilities)
     /// with the same shape as the logits; see <see cref="Data.Dataset.FromClassLabels"/>.
@@ -21,7 +27,7 @@ public static class Losses
     /// <param name="logits">[..., classes] unnormalized scores.</param>
     /// <param name="targets">[..., classes] one-hot or probability targets.</param>
     /// <param name="labelSmoothing">Mixes the targets with a uniform distribution (e.g. 0.1) to reduce over-confidence.</param>
-    public static Tensor CrossEntropy(Tensor logits, Tensor targets, float labelSmoothing = 0f)
+    public static Tensor CrossEntropy(Tensor logits, Tensor targets, float labelSmoothing)
     {
         int classes = logits.Shape[^1];
         int rows = classes == 0 ? 0 : logits.Size / classes;
@@ -30,11 +36,17 @@ public static class Losses
     }
 
     /// <summary>
+    /// <see cref="SparseCrossEntropy(Tensor, Tensor, float)"/> without label smoothing; passes as a
+    /// <c>Func&lt;Tensor, Tensor, Tensor&gt;</c> loss (<c>Loss = Losses.SparseCrossEntropy</c>).
+    /// </summary>
+    public static Tensor SparseCrossEntropy(Tensor logits, Tensor classIndices) => SparseCrossEntropy(logits, classIndices, 0f);
+
+    /// <summary>
     /// Cross-entropy with integer class targets: <paramref name="classIndices"/> has the logits' shape without the
     /// last dimension ([N] for [N, classes], [N, T] for per-token [N, T, vocabulary] outputs). Equivalent to
-    /// <see cref="CrossEntropy"/> with one-hot targets, without storing them.
+    /// <see cref="CrossEntropy(Tensor, Tensor)"/> with one-hot targets, without storing them.
     /// </summary>
-    public static Tensor SparseCrossEntropy(Tensor logits, Tensor classIndices, float labelSmoothing = 0f)
+    public static Tensor SparseCrossEntropy(Tensor logits, Tensor classIndices, float labelSmoothing)
     {
         // Not disposed here: the backward pass of the product inside CrossEntropy reads the targets.
         var targets = Tensor.OneHot(classIndices.Reshape(logits.Shape[..^1]), logits.Shape[^1]);
