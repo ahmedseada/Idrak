@@ -138,6 +138,9 @@ internal sealed unsafe partial class CudaBackend
         }
     }
 
+    /// <summary>Benchmarks only: the fewest rows a packed product takes (normally one more than the GEMV kernels' limit).</summary>
+    internal static int? PackedMinRowsOverride { get; set; }
+
     /// <summary>Benchmarks only: the row tile (64 or 128) of prompt-sized packed products instead of the heuristic's.</summary>
     internal static int? PromptTileRowsOverride { get; set; }
 
@@ -160,7 +163,7 @@ internal sealed unsafe partial class CudaBackend
         // From 9 rows (8 and fewer take the GEMV kernels): short prompts fill part of one row tile, which the kernels
         // bound-check, instead of expanding the whole weight to float32 first (--bench-gemv, 1024 -> 151936 int8 on an
         // RTX 5070 Ti: 9-63 rows 2.3 ms through the float32 copy, 64 rows 0.36 ms packed).
-        if (m <= PtxKernels.GemvRows || n < 64 || k < 8)
+        if (m < (PackedMinRowsOverride ?? PtxKernels.GemvRows + 1) || n < 64 || k < 8)
         {
             return false;
         }
