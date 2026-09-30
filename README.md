@@ -972,11 +972,11 @@ The ASP.NET Core, MCP, dataset and naming tests do not depend on the device, and
 
 ## Tested on
 
-| Date | Library | Device | Compute | System | Result |
-|---|---|---|---|---|---|
-| 2026-09-30 | main (after 0.1.0) | CPU, 4 threads, AVX2 (8-wide SIMD) | – | Ubuntu 24.04 (x64), .NET 10.0.12 | 170 of 170 |
-| 2026-09-29 | 0.1.0 | NVIDIA GeForce RTX 5070 Ti, 16 GB, 70 SMs (Blackwell) | 12.0 | Windows (x64), .NET 10 | 340 of 340 (CPU and GPU) |
-| earlier | before 0.1.0 | NVIDIA GeForce RTX 5050 Laptop GPU, 8 GB (Blackwell) | 12.0 | Windows (x64), .NET 10 | 190 of 190 at the time |
+| Date | Library | GPU | Compute | Driver | System | Result |
+|---|---|---|---|---|---|---|
+| 2026-09-30 | main (after 0.1.0) | NVIDIA GeForce RTX 5050 Laptop GPU, 8 GB, 20 SMs (Blackwell) | 12.0 | 610.88 (CUDA 13.3) | Windows 11 (build 26200, x64), 16-thread CPU with 8-wide SIMD, .NET 10.0.12 | 340 of 340 (CPU and GPU) |
+| 2026-09-30 | main (after 0.1.0) | none (CPU only) | – | – | Ubuntu 24.04 (x64), 4-thread CPU with 8-wide SIMD, .NET 10.0.12 | 170 of 170 |
+| 2026-09-29 | 0.1.0 | NVIDIA GeForce RTX 5070 Ti, 16 GB, 70 SMs (Blackwell) | 12.0 | not recorded | Windows (x64), .NET 10 | 340 of 340 (CPU and GPU) |
 
 Fine-tuning speed on the RTX 5070 Ti (Qwen2.5-0.5B, LoRA, 4k-token steps): 17.4k tokens/s on chat data, 25.5k on
 short classification rows; chat with Qwen3-0.6B generates about 140 tokens/s. Not tested yet: GPUs before
