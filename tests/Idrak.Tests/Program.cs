@@ -145,7 +145,7 @@ return failed == 0 ? 0 : 1;
 
 internal static partial class Tests
 {
-    public static (string Name, Action<Device> Run)[] All => [.. Basic, .. Advanced, .. Decoding, .. Generation, .. Simplified, .. Callbacks, .. AspNetCore, .. Retrieval, .. Onnx, .. Quantization, .. Decoder, .. Pretrained, .. ChatTemplates, .. FineTuning, .. MixedPrecisionGroup, .. CodingToolsGroup, .. DatasetsGroup, .. GgufGroup, .. NamingGroup, .. StreamingText, .. OffloadingGroup, .. TuningGroup, .. AbstractionGroup, .. OpPluginGroup, .. PackedPluginGroup, .. ModelPluginGroup, .. DatasetPluginGroup, .. MinimalBackendGroup, .. KeyValuePluginGroup];
+    public static (string Name, Action<Device> Run)[] All => [.. Basic, .. Advanced, .. Decoding, .. Generation, .. Simplified, .. Callbacks, .. AspNetCore, .. Retrieval, .. Onnx, .. Quantization, .. Decoder, .. Pretrained, .. ChatTemplates, .. FineTuning, .. MixedPrecisionGroup, .. CodingToolsGroup, .. DatasetsGroup, .. GgufGroup, .. NamingGroup, .. StreamingText, .. OffloadingGroup, .. TuningGroup, .. AbstractionGroup, .. OpPluginGroup, .. PackedPluginGroup, .. ModelPluginGroup, .. DatasetPluginGroup, .. MinimalBackendGroup, .. KeyValuePluginGroup, .. VulkanGroup];
 
     private static readonly (string Name, Action<Device> Run)[] Basic =
     [

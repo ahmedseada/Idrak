@@ -45,6 +45,12 @@
   prefixes beyond `hf:`, `github:`, `kaggle:`, `zenodo:` and URLs, with their own options) and Parquet compression codecs
   (`IParquetCodec`, `ParquetCodecs.Register`, by Parquet codec id, e.g. to add Zstandard). The built-ins are registered
   the same way and read as before; `DataFormat` and `DataFiles.FormatOf` still name them.
+- Vulkan devices (`vulkan:0`, `DeviceType.Vulkan`): Intel and AMD GPUs, and any Vulkan 1.1 device, through the
+  graphics driver's Vulkan loader (no SDK, nothing to install). Memory, copies (mapped memory on integrated GPUs,
+  a staging buffer elsewhere) and in-order SPIR-V dispatches; every operation runs through the host fallback until
+  its kernel lands, so every model already runs. Listed and picked by `Device.Default` after CUDA (discrete before
+  integrated); software drivers (lavapipe) and NVIDIA GPUs that CUDA drives are reached by name only.
+  `IDRAK_DISABLE_VULKAN=1` turns it off.
 
 - KV cache formats of one's own (FP8, 4-bit, …): derive from the public `KeyValueLayout` (`RowWidth`, `Write`,
   `Expand`) and attend through its default `Attend`, expanded to float32 and masked products, on any backend.
