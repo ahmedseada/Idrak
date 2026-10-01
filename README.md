@@ -2,6 +2,12 @@
 
 # Idrak
 
+> **Idrak** (Arabic: **إدراك**, pronounced *id-RAAK*) means **perception, comprehension, awareness**: the act of
+> taking in the world and coming to understand it. The name fits a library whose models learn to perceive patterns in
+> data and to understand language.
+>
+> <p dir="rtl" lang="ar"><b>إدراك</b>: الفهم والوعي، والقدرة على استيعاب الأشياء ومعرفة حقيقتها. اخترنا الاسم لأن المكتبة تُعلِّم النماذج أن تُدرِك الأنماط في البيانات وأن تفهم اللغة.</p>
+
 A self-contained deep-learning library for **.NET 10**, written in C#, with its own GPU kernels. The core has
 **no NuGet dependencies and no native libraries**: no TensorFlow, no PyTorch, no CUDA Toolkit, no cuBLAS or cuDNN.
 
