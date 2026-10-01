@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Collections;
 using System.Numerics;
 using System.Runtime.InteropServices;
@@ -275,19 +276,19 @@ public sealed class Dataset : IEnumerable<JsonObject>
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
         long count = 0;
-        using var writer = new StreamWriter(path, false, new UTF8Encoding(false));
+        using var file = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read, 1 << 16);
         var options = new JsonWriterOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
-        using var buffer = new MemoryStream();
+        // Each row goes to the buffer first and then to the file whole, as UTF-8 bytes; one writer serves every row.
+        var buffer = new ArrayBufferWriter<byte>();
+        using var json = new Utf8JsonWriter(buffer, options);
         foreach (var row in _rows())
         {
-            buffer.SetLength(0);
-            using (var json = new Utf8JsonWriter(buffer, options))
-            {
-                row.WriteTo(json);
-            }
-
-            writer.Write(Encoding.UTF8.GetString(buffer.GetBuffer(), 0, (int)buffer.Length));
-            writer.Write('\n');
+            buffer.ResetWrittenCount();
+            json.Reset(buffer);
+            row.WriteTo(json);
+            json.Flush();
+            file.Write(buffer.WrittenSpan);
+            file.Write("\n"u8);
             count++;
         }
 

@@ -631,9 +631,10 @@ public static class ParquetFile
                 int lengthBytes = 0;
                 var lengths = DeltaBinaryPacked(data, ref lengthBytes);
                 int pos = lengthBytes;
+                var kind = BytesKind(node);
                 foreach (long length in lengths)
                 {
-                    output.Add(data.Slice(pos, (int)length).ToArray());
+                    output.Add(Bytes(data.Slice(pos, (int)length), kind));
                     pos += (int)length;
                 }
 
@@ -788,10 +789,11 @@ public static class ParquetFile
 
                 break;
             case 6:
+                var kind = BytesKind(node);
                 for (int i = 0; i < count; i++)
                 {
                     int length = BinaryPrimitives.ReadInt32LittleEndian(data[offset..]);
-                    output.Add(data.Slice(offset + 4, length).ToArray());
+                    output.Add(Bytes(data.Slice(offset + 4, length), kind));
                     offset += 4 + length;
                 }
 
@@ -807,6 +809,30 @@ public static class ParquetFile
                 throw new NotSupportedException($"Parquet physical type {node.Type} is not supported.");
         }
     }
+
+    private enum ByteArray
+    {
+        Text,                                                       // UTF8 / STRING, ENUM, JSON: always text
+        TextIfValid,                                                // plain binary: text when it is valid UTF-8, else base64
+        Bytes,                                                      // decimals, UUIDs, float16s: left to ToNode
+    }
+
+    // How ToNode turns a BYTE_ARRAY column's values into JSON, so text is decoded straight from the page (no byte[] per value).
+    private static ByteArray BytesKind(SchemaNode node)
+    {
+        var logical = node.Logical;
+        bool Is(short id) => logical?.Fields.ContainsKey(id) == true;
+        return node.Converted is 0 or 4 or 19 || Is(1) || Is(4) || Is(12) ? ByteArray.Text
+             : node.Converted == 5 || Is(5) || Is(14) || Is(15) || node.Type != 6 ? ByteArray.Bytes
+             : ByteArray.TextIfValid;
+    }
+
+    private static object Bytes(ReadOnlySpan<byte> value, ByteArray kind) => kind switch
+    {
+        ByteArray.Text => Encoding.UTF8.GetString(value),
+        ByteArray.TextIfValid when System.Text.Unicode.Utf8.IsValid(value) => Encoding.UTF8.GetString(value),
+        _ => value.ToArray(),
+    };
 
     // ------------------------------------------------------------------ values as JSON
 

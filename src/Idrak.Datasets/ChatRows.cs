@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -41,8 +42,22 @@ public enum RowKind
 /// ({"from": "human" | "gpt", "value"}), Alpaca (instruction, input, output), and question/answer pairs (question →
 /// answer, prompt → completion / response, query → response, problem → solution, input → output / target).
 /// </summary>
-public static class ChatRows
+public static partial class ChatRows
 {
+    // Role names as datasets spell them (matched ignoring case), as user, assistant, system or tool.
+    private static readonly FrozenDictionary<string, string> Roles = new Dictionary<string, string>
+    {
+        ["human"] = "user", ["user"] = "user", ["prompter"] = "user",
+        ["gpt"] = "assistant", ["assistant"] = "assistant", ["model"] = "assistant", ["bot"] = "assistant", ["chatgpt"] = "assistant", ["bard"] = "assistant",
+        ["system"] = "system",
+        ["tool"] = "tool", ["function"] = "tool", ["observation"] = "tool", ["function_response"] = "tool", ["ipython"] = "tool",
+        ["function_call"] = "assistant",
+    }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
+
+    private static readonly string[] MessageFields = ["reasoning_content", "thinking", "reasoning", "tool_calls", "name", "tool_call_id"];
+
+    private static readonly string[] TextColumns = ["text", "content", "document", "body", "code"];
+
     private static readonly string[][] Pairs =
     [
         ["instruction", "output"], ["instruction", "response"], ["question", "answer"], ["question", "response"], ["prompt", "completion"],
@@ -187,22 +202,14 @@ public static class ChatRows
                 return null;
             }
 
-            string role = ((string?)m["role"] ?? (string?)m["from"] ?? (string?)m["speaker"] ?? "").ToLowerInvariant() switch
-            {
-                "human" or "user" or "prompter" => "user",
-                "gpt" or "assistant" or "model" or "bot" or "chatgpt" or "bard" => "assistant",
-                "system" => "system",
-                "tool" or "function" or "observation" or "function_response" or "ipython" => "tool",
-                "function_call" => "assistant",
-                var other => other,
-            };
+            string role = Role((string?)m["role"] ?? (string?)m["from"] ?? (string?)m["speaker"] ?? "");
             if (role.Length == 0)
             {
                 return null;
             }
 
             var copy = new JsonObject { ["role"] = role, ["content"] = Content(m["content"] ?? m["value"] ?? m["text"]) };
-            foreach (var key in new[] { "reasoning_content", "thinking", "reasoning", "tool_calls", "name", "tool_call_id" })
+            foreach (var key in MessageFields)
             {
                 if (m[key] is { } value)
                 {
@@ -214,6 +221,18 @@ public static class ChatRows
         }
 
         return messages;
+    }
+
+    // A known role's name, or the name in lower case. Ignoring case matches lowering it for ASCII names, the usual ones.
+    private static string Role(string name)
+    {
+        if (Ascii.IsValid(name) && Roles.TryGetValue(name, out var role))
+        {
+            return role;
+        }
+
+        string lower = name.ToLowerInvariant();
+        return Ascii.IsValid(lower) && Roles.TryGetValue(lower, out role) ? role : lower;
     }
 
     private static JsonArray Mapped(JsonObject row, ChatMapping mapping)
@@ -232,10 +251,16 @@ public static class ChatRows
     /// <summary><paramref name="template"/> with each {column} replaced by the row's value; lines left empty are removed.</summary>
     public static string Fill(string template, JsonObject row)
     {
-        string text = Regex.Replace(template, @"\{([A-Za-z0-9_.\-]+)\}", m => row.TryGetPropertyValue(m.Groups[1].Value, out var v) ? Str(v) : m.Value);
+        string text = Placeholder().Replace(template, m => row.TryGetPropertyValue(m.Groups[1].Value, out var v) ? Str(v) : m.Value);
         text = text.Replace("\\n", "\n", StringComparison.Ordinal);
-        return Regex.Replace(text, @"\n{3,}", "\n\n").Trim();
+        return BlankLines().Replace(text, "\n\n").Trim();
     }
+
+    [GeneratedRegex(@"\{([A-Za-z0-9_.\-]+)\}")]
+    private static partial Regex Placeholder();
+
+    [GeneratedRegex(@"\n{3,}")]
+    private static partial Regex BlankLines();
 
     private static JsonNode? Tools(JsonObject row) => row["tools"] switch
     {
@@ -258,7 +283,7 @@ public static class ChatRows
 
     private static string? Text(JsonObject row)
     {
-        foreach (var name in new[] { "text", "content", "document", "body", "code" })
+        foreach (var name in TextColumns)
         {
             if (row[name] is JsonValue v && v.TryGetValue<string>(out var s))
             {
