@@ -900,7 +900,7 @@ public sealed partial class Tensor
         k.ThrowIfDisposed();
         v.ThrowIfDisposed();
         if ((queryNorm is null) != (keyNorm is null) || (cos is null) != (sin is null) || (cache is null) != (position is null)
-            || cache is { Format: Layers.KeyValueFormat.Int8 } || !q.Backend.Capabilities.FusedKernels)
+            || cache is { Layout.FusedWrite: false } || !q.Backend.Capabilities.FusedKernels)
         {
             return null;
         }
@@ -910,7 +910,7 @@ public sealed partial class Tensor
         var yq = Empty([n * kvHeads, heads / kvHeads * t, dim], q.Device);
         Tensor? yk = null, yv = null;
         int capacity = t, stride = dim;
-        bool bfloat16 = cache is { Format: Layers.KeyValueFormat.BFloat16 };
+        bool bfloat16 = cache is { Layout.HalfWords: true };
         if (cache is null)
         {
             yk = Empty([n * kvHeads, t, dim], q.Device);

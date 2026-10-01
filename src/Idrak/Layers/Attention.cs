@@ -109,36 +109,8 @@ public sealed class MultiHeadAttention : Module, ICachedModule
             .Reshape(n * Heads, t, dh);
 
         var q = SplitHeads(0);
-        Tensor output;
-        if (cache.Format == KeyValueFormat.BFloat16)
-        {
-            throw new NotSupportedException("A bfloat16 KV cache is supported by decoder models (DecoderSpec); use Float32 or Int8 here.");
-        }
-
-        if (cache.Format == KeyValueFormat.Int8)
-        {
-            Tensor.WriteKeyValuesInt8(SplitHeads(1), cache.Keys, cache.KeyScales!, context.Position);
-            Tensor.WriteKeyValuesInt8(SplitHeads(2), cache.Values, cache.ValueScales!, context.Position);
-            if (dh <= q.Backend.Capabilities.DecodeAttentionHeadDim)
-            {
-                // Only the filled positions (as decoder models do), not every slot of the cache behind a mask.
-                output = Tensor.AttentionInt8(q, cache, context.Position, t, 1f / MathF.Sqrt(dh), tiled: t >= 8);
-            }
-            else
-            {
-                var weights8 = Tensor.AttentionScoresInt8(q, cache).ScaleMaskSoftmax(1f / MathF.Sqrt(dh), context.Mask);
-                output = Tensor.AttentionContextInt8(weights8, cache);
-            }
-        }
-        else
-        {
-            Tensor.WriteKeyValues(SplitHeads(1), cache.Keys, context.Position);
-            Tensor.WriteKeyValues(SplitHeads(2), cache.Values, context.Position);
-            var weights = q.MatMul(cache.Keys, transposeB: true)         // [N·H, t, capacity]
-                .ScaleMaskSoftmax(1f / MathF.Sqrt(dh), context.Mask);   // unwritten positions are masked out
-            output = weights.MatMul(cache.Values);                        // [N·H, t, dh]
-        }
-
+        cache.Layout.Write(SplitHeads(1), SplitHeads(2), cache, context.Position);
+        var output = cache.Layout.Attend(q, cache, context, t, 1f / MathF.Sqrt(dh), decoderKernels: false);
         output = output
             .Reshape(n, Heads, t, dh)
             .Permute(0, 2, 1, 3)

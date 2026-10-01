@@ -344,7 +344,7 @@ public sealed class CausalSelfAttention : Module, ICachedModule
         if (context.RowStarts is not null)
         {
             // Rows of different lengths: positions per token, and each row attends from its own start.
-            if (cache.Format != KeyValueFormat.Float32)
+            if (!cache.Layout.RowStarts)
             {
                 throw new NotSupportedException("Rows of different lengths need a float32 key/value cache.");
             }
@@ -359,54 +359,12 @@ public sealed class CausalSelfAttention : Module, ICachedModule
 
         var (q, k, v) = Project(input, positions, cache, context.Position);   // k and v null: already in the cache
         float scale = 1f / MathF.Sqrt(HeadDim);
-        Tensor context8;
-        if (cache.Format == KeyValueFormat.BFloat16)
+        if (k is not null)
         {
-            if (k is not null)
-            {
-                Tensor.WriteKeyValuesBFloat16(k, cache.Keys, context.Position, HeadDim);
-                Tensor.WriteKeyValuesBFloat16(v!, cache.Values, context.Position, HeadDim);
-            }
-
-            context8 = Tensor.AttentionBFloat16(q, cache, context.Position, t, scale, tiled: t >= 8);   // only the filled positions
-        }
-        else if (cache.Format == KeyValueFormat.Int8)
-        {
-            Tensor.WriteKeyValuesInt8(k!, cache.Keys, cache.KeyScales!, context.Position);
-            Tensor.WriteKeyValuesInt8(v!, cache.Values, cache.ValueScales!, context.Position);
-            if (HeadDim <= q.Backend.Capabilities.DecodeAttentionHeadDim)
-            {
-                context8 = Tensor.AttentionInt8(q, cache, context.Position, t, scale, tiled: t >= 8);   // only the filled positions
-            }
-            else
-            {
-                var weights = Tensor.AttentionScoresInt8(q, cache).ScaleMaskSoftmax(scale, context.Mask);
-                context8 = Tensor.AttentionContextInt8(weights, cache);
-            }
-        }
-        else
-        {
-            if (k is not null)
-            {
-                Tensor.WriteKeyValues(k, cache.Keys, context.Position);
-                Tensor.WriteKeyValues(v!, cache.Values, context.Position);
-            }
-
-            if (t >= 8 && HeadDim <= q.Backend.Capabilities.TiledAttentionHeadDim)
-            {
-                context8 = Tensor.AttentionTiled(q, cache.Keys, cache.Values, context.Position, t, scale);   // a prompt: tiled
-            }
-            else if (HeadDim <= q.Backend.Capabilities.DecodeAttentionHeadDim)
-            {
-                context8 = Tensor.AttentionDecode(q, cache, context.Position, t, scale);           // only the filled positions
-            }
-            else
-            {
-                var weights = q.MatMul(cache.Keys, transposeB: true).ScaleMaskSoftmax(scale, context.Mask);   // [n·kv, group·t, capacity]
-                context8 = weights.MatMul(cache.Values);
-            }
+            cache.Layout.Write(k, v!, cache, context.Position);
         }
 
+        var context8 = cache.Layout.Attend(q, cache, context, t, scale, decoderKernels: true);
         return MergeHeads(context8, n, t);
     }
 
@@ -419,7 +377,7 @@ public sealed class CausalSelfAttention : Module, ICachedModule
         var projected = Linear.ForwardMany(input, Query, Key, Value);
         if (!Autograd.IsEnabled && !packed && Tensor.NormRopeHeads(projected[0], projected[1], projected[2], Heads, KvHeads, d, QueryNorm, KeyNorm,
                 Rope is null ? null : _cos, Rope is null ? null : _sin, positions, Rope?.Interleaved ?? false,
-                cache is { Format: not KeyValueFormat.Int8 } ? cache : null, cache is { Format: not KeyValueFormat.Int8 } ? position : null) is { } heads)
+                cache is { Layout.FusedWrite: true } ? cache : null, cache is { Layout.FusedWrite: true } ? position : null) is { } heads)
         {
             return heads;                           // normalization, rotation and head layout (or cache writes) in one pass
         }

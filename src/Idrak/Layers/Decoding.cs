@@ -45,15 +45,11 @@ public sealed class KeyValueCache : IDisposable
         // Created outside any TensorScope: caches are usually created lazily inside a scoped prefill step.
         Format = format;
         HeadDim = headDim;
-        int width = format switch
-        {
-            KeyValueFormat.Int8 => (headDim + 3) / 4,
-            KeyValueFormat.BFloat16 => (headDim + 1) / 2,
-            _ => headDim,
-        };
+        Layout = KeyValueLayouts.For(format);
+        int width = Layout.RowWidth(headDim);
         Keys = Tensor.Empty([rows, capacity, width], device, zeroed: true, track: false);
         Values = Tensor.Empty([rows, capacity, width], device, zeroed: true, track: false);
-        if (format == KeyValueFormat.Int8)
+        if (Layout.HasScales)
         {
             KeyScales = Tensor.Empty([rows, capacity], device, zeroed: true, track: false);
             ValueScales = Tensor.Empty([rows, capacity], device, zeroed: true, track: false);
@@ -65,6 +61,9 @@ public sealed class KeyValueCache : IDisposable
 
     /// <summary>Values per head.</summary>
     public int HeadDim { get; }
+
+    /// <summary>How the format is written and attended over (see <see cref="IKeyValueLayout"/>).</summary>
+    internal IKeyValueLayout Layout { get; }
 
     /// <summary>Cached keys, [batch·heads, capacity, headDim] (packed bytes for int8, bfloat16 pairs for bfloat16).</summary>
     public Tensor Keys { get; }
