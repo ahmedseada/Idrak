@@ -89,6 +89,8 @@ internal static partial class Tests
         public override bool IsStarted(int ordinal) => false;
 
         public override bool Listed(int ordinal) => false;                 // only by name
+
+        public override string? Note(int ordinal) => "test backend (memory and copies only): by name only";
     }
 
     private static void MinimalBackendMatches(Device device)
