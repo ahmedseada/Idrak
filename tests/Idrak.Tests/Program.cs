@@ -8,6 +8,7 @@
 //   … -- --dump-spirv folder                                                     write the generated Vulkan kernels (.spv) and their contracts to folder
 //   … -- --bench-cpu                                                             time the CPU decoding kernels (bfloat16 products, cached attention, sampling)
 //   … -- --bench-gemm / --bench-gemv / --bench-fp8                               time large products / decoding-sized packed products
+//   … -- --bench-vulkan [sections]                                               time every Vulkan device (or those IDRAK_DEVICES names): dispatches, copies, products, attention, decoders
 //   … -- --bench-text                                                            time the text paths (tokenizer, chat template, parsing, chunking, BM25)
 //   … -- --bench-offload                                                         time training steps with weights or optimizer state in system memory
 //   IDRAK_FILTER=retrieval dotnet run --project tests/Idrak.Tests   only tests whose name contains the text
@@ -42,6 +43,11 @@ if (args is ["--bench-gemv"])
 if (args is ["--bench-cpu"])
 {
     return Tests.BenchCpu();
+}
+
+if (args is ["--bench-vulkan", .. var benchSections])
+{
+    return Tests.BenchVulkan(benchSections);
 }
 
 if (args is ["--bench-text"])
