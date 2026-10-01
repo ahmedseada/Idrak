@@ -39,6 +39,9 @@
     `ComputeResources.OffloadReturnHeadroom` (an eighth of the GPU's memory; cold data also leaves room for the largest spill seen), checked at
     each step boundary; `ComputeResources.ReturnOffloaded()` brings everything back that fits (e.g. after training).
     Pinned system memory is freed as tensors come home. `ComputeResources.ReturnOffloadedTensors` (on by default).
+  - The decoder's fused products (q/k/v together, gate/up together, the down projection with its activation, a
+    projection with its residual and normalization) stage all their layers' weights as one unit, forward and backward,
+    and each text generation request starts with a rebalance (cold data out, or tensors back).
   - Nothing moves while a CUDA graph exists (graphs hold raw addresses), and the fine-tuner records no graphs when
     offloading.
 - `HostOptimizer` runs any optimizer's update on the CPU with its state in system memory: each step downloads the

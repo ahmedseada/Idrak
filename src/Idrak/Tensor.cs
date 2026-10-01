@@ -594,10 +594,10 @@ public sealed partial class Tensor : IDisposable
         }
     }
 
-    // The layer whose forward recorded this node while weights were offloaded (see Offloading), or null.
-    private Layers.Module? _stage;
+    // The layer (or fused layers) whose forward recorded this node while weights were offloaded (see Offloading), or null.
+    private object? _stage;
 
-    internal Layers.Module? StageGroup => _stage;
+    internal object? StageGroup => _stage;
 
     /// <summary>Nodes reachable from this tensor that require gradients, outputs before their inputs.</summary>
     private List<Tensor> TopologicalOrder()

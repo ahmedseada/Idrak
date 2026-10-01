@@ -649,6 +649,7 @@ public sealed partial class Tensor
     /// </summary>
     internal static Tensor? MatMulPackedGated(Tensor gate, Tensor up, int activation, Layers.Linear layer)
     {
+        using var offload = Offloading.Enter(layer, gate);              // offloaded weights staged (else nothing)
         gate.ThrowIfDisposed();
         up.ThrowIfDisposed();
         int kind = layer.Int8 is not null ? 0 : layer.Int4 is not null ? 1 : layer.BFloat16 is not null ? 2 : -1;
@@ -687,6 +688,7 @@ public sealed partial class Tensor
     /// </summary>
     internal static (Tensor Sum, Tensor Normalized)? MatMulPackedAddRmsNorm(Tensor x, Layers.Linear layer, Tensor residual, Layers.RMSNorm norm)
     {
+        using var offload = Offloading.EnterMany([layer, norm], x);
         x.ThrowIfDisposed();
         residual.ThrowIfDisposed();
         int kind = layer.Int8 is not null ? 0 : layer.Int4 is not null ? 1 : layer.BFloat16 is not null ? 2 : -1;
@@ -732,6 +734,7 @@ public sealed partial class Tensor
     /// </summary>
     internal static Tensor? MatMulPackedGatedPair(Tensor input, Layers.Linear gate, Layers.Linear up, int activation)
     {
+        using var offload = Offloading.EnterMany([gate, up], input);
         input.ThrowIfDisposed();
         int kind = gate.Int8 is not null ? 0 : gate.Int4 is not null ? 1 : gate.BFloat16 is not null ? 2 : -1;
         int k = input._shape[^1], m = input.Size / Math.Max(1, k), n = gate.OutFeatures;
