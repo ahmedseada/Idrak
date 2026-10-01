@@ -12,12 +12,13 @@ audience first.
 | 2 | [CPU](2-cpu.md) | x64 (AVX2, AVX-512) and ARM64 (NEON); the fallback on every machine | supported; sampling and kernel speed | every AMD, Intel and Apple user runs here today; step 1 is a small fix (plain sampling 12 ms → ~6 ms on slower CPUs) |
 | 3 | [AMD](3-amd.md) | Radeon RX 6000/7000/9000, Ryzen APU graphics, Instinct | not supported (runs on the CPU) | the largest group of GPUs without support; builds the Vulkan backend the Intel plan reuses |
 | 4 | [Intel](4-intel.md) | Iris Xe and Arc integrated GPUs, Arc discrete GPUs, AI Boost NPUs | not supported (runs on the CPU) | GPUs come almost free once plan 3's backend exists; the NPU is inference-only, an add-on, and last |
+| 5 | [Apple](5-apple.md) | Apple silicon Macs (M1–M4 GPU, Neural Engine) | not supported on the GPU; macOS untested | a smaller audience for this library, and a third kernel language (Metal); a Mac test run fills CPU gaps early |
 
 ## The rule every plan keeps
 
 The core library has no native dependencies: the CUDA backend calls the NVIDIA **display driver** and generates its
 kernels (PTX) in C#. A new backend should do the same where it can: talk to what the vendor's **driver** installs, and
-generate its kernels in C#. Where that is impossible (NPUs), the work goes into an optional add-on package, and the core
+generate its kernels in C# (PTX for NVIDIA, SPIR-V for AMD and Intel, Metal source for Apple). Where that is impossible (NPUs), the work goes into an optional add-on package, and the core
 stays dependency-free.
 
 ## Shared work before any new backend
@@ -51,4 +52,6 @@ and the Intel plans need them.
 5. **Intel GPUs:** tuning the same backend for Iris Xe and Arc, then integrated-GPU memory.
 6. **NVIDIA and CPU, the rest:** the remaining speed work in plans 1 and 2, done between the larger steps above as
    time allows.
-7. **Intel NPU:** a one-week trial first, then the optional `Idrak.OpenVino` package if it pays off.
+7. **Apple:** a test and `--bench-cpu` run on a Mac as soon as one is available (fills the CPU plan's macOS and ARM64
+   gaps); the Metal backend after the Intel GPUs.
+8. **NPUs last:** Intel (`Idrak.OpenVino`) and Apple's Neural Engine (`Idrak.CoreML`), each a one-week trial first.
