@@ -951,8 +951,12 @@ public sealed partial class JinjaTemplate
         private static void WriteJsonString(StringBuilder sb, string s, bool ensureAscii)
         {
             sb.Append('"');
-            foreach (char c in s)
+            var rest = s.AsSpan();
+            int at;
+            while ((at = rest.IndexOfAny(ensureAscii ? JsonEscapedAscii : JsonEscaped)) >= 0)
             {
+                sb.Append(rest[..at]);                                         // the run that needs no escaping
+                char c = rest[at];
                 switch (c)
                 {
                     case '"': sb.Append("\\\""); break;
@@ -963,21 +967,36 @@ public sealed partial class JinjaTemplate
                     case '\b': sb.Append("\\b"); break;
                     case '\f': sb.Append("\\f"); break;
                     default:
-                        if (c < 0x20 || ensureAscii && c > 0x7e)
-                        {
-                            sb.Append("\\u").Append(((int)c).ToString("x4", CultureInfo.InvariantCulture));
-                        }
-                        else
-                        {
-                            sb.Append(c);
-                        }
-
+                    {
+                        Span<char> escape = stackalloc char[6];
+                        "\\u".CopyTo(escape);
+                        ((int)c).TryFormat(escape[2..], out _, "x4", CultureInfo.InvariantCulture);
+                        sb.Append(escape);
                         break;
+                    }
                 }
+
+                rest = rest[(at + 1)..];
             }
 
-            sb.Append('"');
+            sb.Append(rest).Append('"');
         }
+
+        // The characters WriteJsonString escapes: quotes, backslashes, control characters, and with ensure_ascii all above '~'.
+        private static readonly System.Buffers.SearchValues<char> JsonEscaped = System.Buffers.SearchValues.Create(JsonEscapedChars(0x20));
+        private static readonly System.Buffers.SearchValues<char> JsonEscapedAscii = System.Buffers.SearchValues.Create(JsonEscapedChars(char.MaxValue - 0x7e + 0x20));
+
+        private static string JsonEscapedChars(int count) =>
+            string.Create(count + 2, 0, static (chars, _) =>
+            {
+                chars[0] = '"';
+                chars[1] = '\\';
+                for (int i = 2; i < chars.Length; i++)
+                {
+                    int k = i - 2;
+                    chars[i] = (char)(k < 0x20 ? k : k - 0x20 + 0x7f);         // 0x00-0x1F, then 0x7F-0xFFFF
+                }
+            });
 
         // ------------------------------------------------------------------ tests
 

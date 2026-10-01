@@ -68,17 +68,40 @@ public sealed class ChatMLTemplate : ChatTemplate
     public override string Render(IReadOnlyList<ChatMessage> messages, IReadOnlyList<ToolDefinition> tools, bool? think)
     {
         var sb = new StringBuilder();
+        using var json = new JsonText(sb);
         string system = messages.FirstOrDefault(m => m.Role == "system")?.Content ?? "";
-        if (tools.Count > 0)
+        if (system.Length > 0 || tools.Count > 0)
         {
-            system += (system.Length > 0 ? "\n\n" : "") + "# Tools\n\nYou may call one or more functions. Function signatures:\n<tools>\n" +
-                      string.Join("\n", tools.Select(Describe)) + "\n</tools>\n\nFor each call, return " + ToolCalls.Open +
-                      "{\"name\": <function-name>, \"arguments\": <args-json-object>}" + ToolCalls.Close;
-        }
+            sb.Append(Start).Append("system\n").Append(system);
+            if (tools.Count > 0)
+            {
+                sb.Append(system.Length > 0 ? "\n\n" : "").Append("# Tools\n\nYou may call one or more functions. Function signatures:\n<tools>\n");
+                for (int i = 0; i < tools.Count; i++)
+                {
+                    if (i > 0)
+                    {
+                        sb.Append('\n');
+                    }
 
-        if (system.Length > 0)
-        {
-            sb.Append(Start).Append("system\n").Append(system).Append(End).Append('\n');
+                    var tool = tools[i];
+                    var w = json.Begin();
+                    w.WriteStartObject();
+                    w.WriteString("type", "function");
+                    w.WriteStartObject("function");
+                    w.WriteString("name", tool.Name);
+                    w.WriteString("description", tool.Description);
+                    w.WritePropertyName("parameters");
+                    JsonText.Write(w, tool.Parameters);
+                    w.WriteEndObject();
+                    w.WriteEndObject();
+                    json.End();
+                }
+
+                sb.Append("\n</tools>\n\nFor each call, return ").Append(ToolCalls.Open)
+                  .Append("{\"name\": <function-name>, \"arguments\": <args-json-object>}").Append(ToolCalls.Close);
+            }
+
+            sb.Append(End).Append('\n');
         }
 
         foreach (var m in messages.Where(m => m.Role != "system"))
@@ -92,9 +115,15 @@ public sealed class ChatMLTemplate : ChatTemplate
                     sb.Append(Start).Append("assistant\n").Append(m.Content);
                     foreach (var call in m.ToolCalls ?? [])
                     {
-                        sb.Append('\n').Append(ToolCalls.Open)
-                          .Append(new JsonObject { ["name"] = call.Name, ["arguments"] = call.Arguments.DeepClone() }.ToJsonString())
-                          .Append(ToolCalls.Close);
+                        sb.Append('\n').Append(ToolCalls.Open);
+                        var w = json.Begin();
+                        w.WriteStartObject();
+                        w.WriteString("name", call.Name);
+                        w.WritePropertyName("arguments");
+                        JsonText.Write(w, call.Arguments);
+                        w.WriteEndObject();
+                        json.End();
+                        sb.Append(ToolCalls.Close);
                     }
 
                     sb.Append(End).Append('\n');
@@ -114,17 +143,50 @@ public sealed class ChatMLTemplate : ChatTemplate
         return sb.ToString();
     }
 
-    private static string Describe(ToolDefinition tool) =>
-        new JsonObject
+    // Writes JSON (as JsonNode.ToJsonString would) straight into the prompt, reusing one buffer and writer.
+    private sealed class JsonText(StringBuilder sb) : IDisposable
+    {
+        private readonly System.Buffers.ArrayBufferWriter<byte> _buffer = new();
+        private Utf8JsonWriter? _writer;
+
+        public Utf8JsonWriter Begin()
         {
-            ["type"] = "function",
-            ["function"] = new JsonObject
+            _buffer.ResetWrittenCount();
+            if (_writer is null)
             {
-                ["name"] = tool.Name,
-                ["description"] = tool.Description,
-                ["parameters"] = tool.Parameters?.DeepClone(),
-            },
-        }.ToJsonString();
+                _writer = new Utf8JsonWriter(_buffer, new JsonWriterOptions { MaxDepth = 64, SkipValidation = true });   // as ToJsonString
+            }
+            else
+            {
+                _writer.Reset(_buffer);
+            }
+
+            return _writer;
+        }
+
+        public void End()
+        {
+            _writer!.Flush();
+            var bytes = _buffer.WrittenSpan;
+            char[] chars = System.Buffers.ArrayPool<char>.Shared.Rent(Encoding.UTF8.GetMaxCharCount(bytes.Length));
+            sb.Append(chars, 0, Encoding.UTF8.GetChars(bytes, chars));
+            System.Buffers.ArrayPool<char>.Shared.Return(chars);
+        }
+
+        public static void Write(Utf8JsonWriter writer, JsonNode? node)
+        {
+            if (node is null)
+            {
+                writer.WriteNullValue();
+            }
+            else
+            {
+                node.WriteTo(writer);
+            }
+        }
+
+        public void Dispose() => _writer?.Dispose();
+    }
 }
 
 /// <summary>What one piece of streamed assistant output added.</summary>
@@ -147,8 +209,10 @@ public sealed class ChatOutputParser(ChatTemplate template, bool separateThinkin
 {
     private enum Mode { Start, Content, Thinking, ToolCall }
 
-    private readonly StringBuilder _pending = new();
-    private readonly StringBuilder _toolText = new();
+    private readonly CharBuffer _pending = new();
+    private readonly CharBuffer _toolText = new();
+    private int _toolSearched;                                  // leading characters of _toolText known not to hold the closing text
+    private readonly StringBuilder _content = new(), _thinking = new();
     private Mode _mode = Mode.Start;
     private bool _afterThinking;
     private bool _answerStarted;                                // bare-JSON calls may only open the answer
@@ -166,29 +230,29 @@ public sealed class ChatOutputParser(ChatTemplate template, bool separateThinkin
 
     private ChatDelta Drain(bool final)
     {
-        var content = new StringBuilder();
-        var thinking = new StringBuilder();
+        var content = _content.Clear();
+        var thinking = _thinking.Clear();
         var calls = new List<ToolCall>();
         var (thinkOpen, thinkClose) = template.ThinkTags;
         string callOpen = _format.Open, callClose = _format.Close;
 
         while (_pending.Length > 0 || (final && _mode == Mode.ToolCall && _toolText.Length > 0))
         {
-            string p = _pending.ToString();
+            var p = _pending.Span;
             switch (_mode)
             {
                 case Mode.Start:
                 {
                     // Reasoning may only open the turn (after optional whitespace).
-                    string trimmed = p.TrimStart();
+                    var trimmed = p.TrimStart();
                     if (trimmed.StartsWith(thinkOpen, StringComparison.Ordinal))
                     {
-                        _pending.Remove(0, p.Length - trimmed.Length + thinkOpen.Length);
+                        _pending.Remove(p.Length - trimmed.Length + thinkOpen.Length);
                         _mode = Mode.Thinking;
                         continue;
                     }
 
-                    if (!final && (trimmed.Length == 0 || thinkOpen.StartsWith(trimmed, StringComparison.Ordinal)))
+                    if (!final && (trimmed.Length == 0 || thinkOpen.AsSpan().StartsWith(trimmed, StringComparison.Ordinal)))
                     {
                         return Result();                                          // still undecided
                     }
@@ -203,7 +267,7 @@ public sealed class ChatOutputParser(ChatTemplate template, bool separateThinkin
                     if (close >= 0)
                     {
                         thinking.Append(p[..close]);
-                        _pending.Remove(0, close + thinkClose.Length);
+                        _pending.Remove(close + thinkClose.Length);
                         _mode = Mode.Content;
                         _afterThinking = true;                               // drop the blank lines that follow reasoning
                         continue;
@@ -211,29 +275,33 @@ public sealed class ChatOutputParser(ChatTemplate template, bool separateThinkin
 
                     int safe = final ? p.Length : SafeLength(p, thinkClose);
                     thinking.Append(p[..safe]);
-                    _pending.Remove(0, safe);
+                    _pending.Remove(safe);
                     return Result();
                 }
 
                 case Mode.ToolCall:
                 {
-                    // Accumulate first, so a closing tag split across chunks is still found.
+                    // Accumulate first, so a closing tag split across chunks is still found; only the new text (and
+                    // the closing text's length before it) can hold the first match.
                     _toolText.Append(p);
                     _pending.Clear();
-                    string all = _toolText.ToString();
-                    int close = callClose.Length > 0 ? all.IndexOf(callClose, StringComparison.Ordinal) : -1;
+                    var all = _toolText.Span;
+                    int from = Math.Max(0, _toolSearched - callClose.Length + 1);
+                    int close = callClose.Length > 0 ? all[from..].IndexOf(callClose, StringComparison.Ordinal) : -1;
+                    close = close < 0 ? -1 : close + from;
                     if (close < 0 && !final)
                     {
+                        _toolSearched = all.Length;
                         return Result();                                   // no closing text: the call runs to the end
                     }
 
-                    string json = close >= 0 ? all[..close] : all;
+                    var json = close >= 0 ? all[..close] : all;
                     if (close >= 0)
                     {
-                        _pending.Append(all, close + callClose.Length, all.Length - close - callClose.Length);
+                        _pending.Append(all[(close + callClose.Length)..]);
                     }
 
-                    if (TryParseCalls(json) is { } parsed)
+                    if (TryParseCalls(json.ToString()) is { } parsed)
                     {
                         calls.AddRange(parsed);
                     }
@@ -243,6 +311,7 @@ public sealed class ChatOutputParser(ChatTemplate template, bool separateThinkin
                     }
 
                     _toolText.Clear();
+                    _toolSearched = 0;
                     _mode = Mode.Content;
                     continue;
                 }
@@ -251,20 +320,16 @@ public sealed class ChatOutputParser(ChatTemplate template, bool separateThinkin
                 {
                     if (_afterThinking)
                     {
-                        int skip = 0;
-                        while (skip < p.Length && p[skip] is '\n' or '\r')
+                        int skip = p.IndexOfAnyExcept('\n', '\r');
+                        if (skip < 0)
                         {
-                            skip++;
-                        }
-
-                        _pending.Remove(0, skip);
-                        if (skip == p.Length)
-                        {
+                            _pending.Clear();
                             return Result();                                   // only newlines so far: keep waiting
                         }
 
+                        _pending.Remove(skip);
                         _afterThinking = false;
-                        p = _pending.ToString();
+                        p = _pending.Span;
                     }
 
                     if (callOpen.Length == 0)
@@ -272,7 +337,7 @@ public sealed class ChatOutputParser(ChatTemplate template, bool separateThinkin
                         // The answer itself may be the call's JSON: decided by its first character.
                         if (!_answerStarted)
                         {
-                            string trimmed = p.TrimStart();
+                            var trimmed = p.TrimStart();
                             if (trimmed.Length == 0 && !final)
                             {
                                 return Result();
@@ -281,7 +346,7 @@ public sealed class ChatOutputParser(ChatTemplate template, bool separateThinkin
                             _answerStarted = true;
                             if (trimmed.Length > 0 && trimmed[0] is '{' or '[')
                             {
-                                _pending.Remove(0, p.Length - trimmed.Length);
+                                _pending.Remove(p.Length - trimmed.Length);
                                 _mode = Mode.ToolCall;
                                 continue;
                             }
@@ -296,14 +361,14 @@ public sealed class ChatOutputParser(ChatTemplate template, bool separateThinkin
                     if (open >= 0)
                     {
                         content.Append(p[..open]);
-                        _pending.Remove(0, open + callOpen.Length);
+                        _pending.Remove(open + callOpen.Length);
                         _mode = Mode.ToolCall;
                         continue;
                     }
 
                     int safe = final ? p.Length : SafeLength(p, callOpen);
                     content.Append(p[..safe]);
-                    _pending.Remove(0, safe);
+                    _pending.Remove(safe);
                     return Result();
                 }
             }
@@ -313,29 +378,59 @@ public sealed class ChatOutputParser(ChatTemplate template, bool separateThinkin
 
         ChatDelta Result()
         {
-            string c = content.ToString(), t = thinking.ToString();
-            if (!separateThinking && t.Length > 0)
+            if (!separateThinking && thinking.Length > 0)
             {
-                c = t + c;
-                t = "";
+                return new ChatDelta(thinking.Append(content).ToString(), "", calls);
             }
 
-            return new ChatDelta(c, t, calls);
+            return new ChatDelta(content.ToString(), thinking.ToString(), calls);
         }
     }
 
     /// <summary>Length of <paramref name="text"/> that cannot be the start of <paramref name="tag"/>.</summary>
-    private static int SafeLength(string text, string tag)
+    private static int SafeLength(ReadOnlySpan<char> text, string tag)
     {
         for (int keep = Math.Min(tag.Length - 1, text.Length); keep > 0; keep--)
         {
-            if (tag.StartsWith(text[^keep..], StringComparison.Ordinal))
+            if (tag.AsSpan().StartsWith(text[^keep..], StringComparison.Ordinal))
             {
                 return text.Length - keep;
             }
         }
 
         return text.Length;
+    }
+
+    // Text held back between chunks: a char array with a moving start, so taking from the front copies nothing.
+    private sealed class CharBuffer
+    {
+        private char[] _chars = new char[64];
+        private int _start;
+
+        public int Length { get; private set; }
+
+        public ReadOnlySpan<char> Span => _chars.AsSpan(_start, Length);
+
+        public void Append(ReadOnlySpan<char> text)
+        {
+            if (_start + Length + text.Length > _chars.Length)
+            {
+                var chars = Length + text.Length > _chars.Length ? new char[Math.Max(_chars.Length * 2, Length + text.Length)] : _chars;
+                _chars.AsSpan(_start, Length).CopyTo(chars);
+                (_chars, _start) = (chars, 0);
+            }
+
+            text.CopyTo(_chars.AsSpan(_start + Length));
+            Length += text.Length;
+        }
+
+        public void Remove(int count)
+        {
+            _start = count == Length ? 0 : _start + count;
+            Length -= count;
+        }
+
+        public void Clear() => (_start, Length) = (0, 0);
     }
 
     /// <summary>
