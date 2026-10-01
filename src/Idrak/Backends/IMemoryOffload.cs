@@ -47,7 +47,7 @@ internal interface IMemoryOffload
     /// <summary>
     /// Called between steps. With <paramref name="makeRoom"/>, when the last step put its own data in system memory
     /// because the device was full, moves as much cold data (optimizer state, then frozen weights) out instead. Otherwise
-    /// brings offloaded storages back while the device keeps <see cref="ComputeResources.OffloadReturnHeadroom"/> free,
+    /// brings offloaded storages back while the device keeps its headroom (<see cref="ComputeResources.OffloadReturnHeadroom"/>) free,
     /// hottest first (storages moved with keep = true stay). Returns how many moved.
     /// </summary>
     int Rebalance(bool makeRoom = true);

@@ -192,7 +192,7 @@ internal static partial class Tests
         var expected = Ordinary();
         long? limit = ComputeResources.GpuMemoryLimit;
         bool offloading = ComputeResources.OffloadToHostMemory;
-        long headroom = ComputeResources.OffloadReturnHeadroom;
+        var headroom = ComputeResources.OffloadReturnHeadroom;
         ComputeResources.ReleaseCachedMemory(device);
         try
         {

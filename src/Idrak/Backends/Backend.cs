@@ -208,9 +208,11 @@ internal abstract class Backend
 
     /// <summary>
     /// True when <see cref="PackedMatMulLarge"/> is faster than the few-rows kernels for this shape although the rows are
-    /// few enough for them (callers still fall back to those kernels when the packed product returns false).
+    /// few enough for them (callers still fall back to those kernels when the packed product returns false). Given the
+    /// real operands, so a device can measure both on itself; it may write <paramref name="y"/>, which the caller's product
+    /// then writes again.
     /// </summary>
-    public virtual bool PrefersPackedMatMul(int kind, int m, int n, int k) => false;
+    public virtual bool PrefersPackedMatMul(int kind, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k) => false;
 
     /// <summary>
     /// y = (act(gate) · up) · w for few rows with packed weights w (<paramref name="kind"/> as in

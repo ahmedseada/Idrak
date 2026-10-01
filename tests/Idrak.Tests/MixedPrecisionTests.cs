@@ -457,7 +457,7 @@ internal static partial class Tests
         }
 
         // 4-8 rows sent to the packed product (PrefersPackedMatMul, threshold lowered to these small weights) equal the GEMV.
-        long preferred = CudaBackend.PackedPreferredWeights;
+        var preferred = CudaBackend.PackedPreferredWeights;
         try
         {
             const int K = 320, N = 200;

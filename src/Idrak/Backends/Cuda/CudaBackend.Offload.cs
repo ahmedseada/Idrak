@@ -16,7 +16,7 @@ namespace Idrak.Backends.Cuda;
 //   block) until the stage token is disposed; the next layer's copies start on a separate copy stream while this one
 //   computes (Prefetch). Copy blocks come from the caching pool, and layers of one model share shapes, so after the
 //   first pass staging allocates nothing.
-// - Returning: when the GPU has room again (beyond ComputeResources.OffloadReturnHeadroom, not counting the cache, so a
+// - Returning: when the GPU has room again (beyond the return headroom (ComputeResources.OffloadReturnHeadroom), not counting the cache, so a
 //   step's own activations are never pushed out), offloaded storages come back, hottest first.
 internal sealed unsafe partial class CudaBackend : IMemoryOffload
 {
@@ -244,7 +244,7 @@ internal sealed unsafe partial class CudaBackend : IMemoryOffload
 
         foreach (var a in away)
         {
-            long keepFree = ComputeResources.OffloadReturnHeadroom + (a.OffloadPriority > OffloadPriority.Hot ? peak : 0);
+            long keepFree = ReturnHeadroom + (a.OffloadPriority > OffloadPriority.Hot ? peak : 0);
             if (MoveIn(a, keepFree, useCache: false, released))
             {
                 moved++;
@@ -566,7 +566,7 @@ internal sealed unsafe partial class CudaBackend : IMemoryOffload
         }
 
         capacity = length;
-        if (cuMemGetInfo(out nuint free, out _) != 0 || (long)free - bytes < ComputeResources.GpuMemoryReserve + keepFree)
+        if (cuMemGetInfo(out nuint free, out _) != 0 || (long)free - bytes < MemoryReserve + keepFree)
         {
             return 0;
         }
