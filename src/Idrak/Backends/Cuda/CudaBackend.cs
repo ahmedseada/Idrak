@@ -95,6 +95,16 @@ internal sealed unsafe partial class CudaBackend : Backend
     private readonly string _deviceName;
     private readonly int _driverVersion;                                         // the CUDA version the driver supports (13000 = 13.0)
 
+    // What the device reports, and the kernel shapes derived from it (CudaDeviceLimits.cs).
+    private readonly CudaDeviceLimits _limits;
+    private readonly KernelShapes _shapes;
+
+    /// <summary>What this GPU reports about itself (tests and diagnostics).</summary>
+    internal CudaDeviceLimits Limits => _limits;
+
+    /// <summary>The kernel shapes generated for this GPU (tests and diagnostics).</summary>
+    internal KernelShapes Shapes => _shapes;
+
     // The tensor-core module (compute capability 8.0 and newer), loaded on first use; null when unavailable.
     private Dictionary<string, IntPtr>? _tensorCore;
     private bool _tensorCoreTried;
@@ -191,6 +201,12 @@ internal sealed unsafe partial class CudaBackend : Backend
                 continue;                                           // FP8 tensor cores: compute capability 8.9 and newer
             }
 
+            if (PtxKernels.Fits(source, _limits) is { } tooLarge)
+            {
+                errors.Add($"{moduleName}: not loaded, {tooLarge}");          // judged by the device's reported limits
+                continue;
+            }
+
             try
             {
                 IntPtr module = LoadModule(source);
@@ -201,16 +217,9 @@ internal sealed unsafe partial class CudaBackend : Backend
                     {
                         Check(cuModuleGetFunction(out IntPtr function, module, p), $"cuModuleGetFunction({kernel})");
                         _signatures[function] = (kernel, PtxKernels.TensorCoreParameterCounts[kernel]);
-                        if (kernel.StartsWith("flash_tc_bwd", StringComparison.Ordinal))
+                        if (PtxKernels.DynamicSharedBytes(kernel) is > 0 and var sharedBytes)
                         {
-                            int dim = kernel.EndsWith("d64", StringComparison.Ordinal) ? 64 : 128;
-                            int sharedBytes = kernel.Contains("_kv_", StringComparison.Ordinal) ? PtxKernels.FlashTensorBackwardKvShared(dim) : PtxKernels.FlashTensorBackwardQShared(dim);
                             Check(cuFuncSetAttribute(function, FunctionAttributeMaxDynamicSharedSizeBytes, sharedBytes), $"cuFuncSetAttribute({kernel})");
-                        }
-
-                        if (kernel.StartsWith("gemm8_", StringComparison.Ordinal))
-                        {
-                            Check(cuFuncSetAttribute(function, FunctionAttributeMaxDynamicSharedSizeBytes, PtxKernels.EightBitShared), $"cuFuncSetAttribute({kernel})");
                         }
 
                         kernels[kernel] = function;
@@ -256,6 +265,10 @@ internal sealed unsafe partial class CudaBackend : Backend
         Check(cuDeviceGetAttribute(out _multiprocessors, AttributeMultiprocessorCount, device), nameof(cuDeviceGetAttribute));
         Check(cuDeviceGetAttribute(out _computeMajor, AttributeComputeCapabilityMajor, device), nameof(cuDeviceGetAttribute));
         Check(cuDeviceGetAttribute(out _computeMinor, AttributeComputeCapabilityMinor, device), nameof(cuDeviceGetAttribute));
+        // Kernel shapes from what the device reports (KernelShapes); the main module is generated for them.
+        _limits = CudaDeviceLimits.Read(device, (long)memory);
+        _shapes = KernelShapes.Derive(_limits, out string? unsupported)
+                  ?? throw new CudaException($"{Marshal.PtrToStringAnsi((IntPtr)name)} cannot run the Idrak kernels: {unsupported}.");
         // The CUDA version the installed driver supports (13000 = 13.0), not the driver's own release number.
         string cuda = cuDriverGetVersion(out int version) == 0 ? $", CUDA {version / 1000}.{version % 1000 / 10} driver" : "";
         _driverVersion = cuda.Length > 0 ? version : 0;
@@ -263,7 +276,7 @@ internal sealed unsafe partial class CudaBackend : Backend
         Name = $"{_deviceName} ({memory / (1024 * 1024)} MiB, {_multiprocessors} SMs, compute {_computeMajor}.{_computeMinor}{cuda})";
         _memory = new MemoryAccountant(() => ComputeResources.GpuMemoryLimit, $"cuda:{ordinal}");
 
-        IntPtr module = LoadModule(PtxKernels.Source);
+        IntPtr module = LoadModule(PtxKernels.SourceFor(_shapes));
         IntPtr Fn(string kernel)
         {
             byte[] bytes = Encoding.ASCII.GetBytes(kernel + "\0");
@@ -796,8 +809,8 @@ internal sealed unsafe partial class CudaBackend : Backend
         }
 
         // Enough blocks to fill the GPU; the grid-stride loop covers the rest.
-        uint blocks = (uint)Math.Min((n + PtxKernels.BlockSize - 1) / PtxKernels.BlockSize, Math.Max(1, _multiprocessors) * 8);
-        Launch(_sum, blocks, 1, PtxKernels.BlockSize, 1, P(x), P(result), U(n), F(scale));
+        uint blocks = (uint)Math.Min((n + _shapes.BlockSize - 1) / _shapes.BlockSize, Math.Max(1, _multiprocessors) * 8);
+        Launch(_sum, blocks, 1, (uint)_shapes.BlockSize, 1, P(x), P(result), U(n), F(scale));
     }
 
     public override void AxpyAt(Storage x, Storage y, int offset, float alpha) =>
@@ -841,7 +854,7 @@ internal sealed unsafe partial class CudaBackend : Backend
         }
 
         const int T = PtxKernels.Tile;
-        const int MaxGridZ = 65535;
+        int maxGridZ = _limits.MaxGridZ > 0 ? _limits.MaxGridZ : 65535;           // as reported (65535 on every CUDA GPU so far)
         ulong mk = (ulong)m * (ulong)k, kn = (ulong)k * (ulong)n, mn = (ulong)m * (ulong)n;
         // Token-by-token decoding: few rows through a large matrix read each weight once. (Smaller products keep the
         // tiled kernel, whose sums do not depend on the number of rows, so small models predict identically in any batch.)
@@ -875,7 +888,7 @@ internal sealed unsafe partial class CudaBackend : Backend
             return;
         }
 
-        if (tensorCore is not null && (transA || transB) && batch <= MaxGridZ && PretransposeForTensorCores)
+        if (tensorCore is not null && (transA || transB) && batch <= maxGridZ && PretransposeForTensorCores)
         {
             // The tensor-core kernel is fastest with both operands as stored ([m, k] · [k, n]): a transposed operand is
             // copied into that layout first (a memory-bound pass, far cheaper than the product it speeds up).
@@ -904,9 +917,9 @@ internal sealed unsafe partial class CudaBackend : Backend
             return;
         }
 
-        for (int first = 0; first < batch; first += MaxGridZ)
+        for (int first = 0; first < batch; first += maxGridZ)
         {
-            int count = Math.Min(MaxGridZ, batch - first);
+            int count = Math.Min(maxGridZ, batch - first);
             ulong offset = (ulong)first * sizeof(float);
             if (few)
             {
@@ -1613,7 +1626,7 @@ internal sealed unsafe partial class CudaBackend : Backend
     {
         if (n > 0)
         {
-            Launch(function, (uint)((n + PtxKernels.BlockSize - 1) / PtxKernels.BlockSize), 1, PtxKernels.BlockSize, 1, args);
+            Launch(function, (uint)((n + _shapes.BlockSize - 1) / _shapes.BlockSize), 1, (uint)_shapes.BlockSize, 1, args);
         }
     }
 

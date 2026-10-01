@@ -9,6 +9,12 @@
   of another GPU, driver, build or format version is ignored and rewritten). Decoding-attention splits are now measured
   per shape at a full cache instead of set by "~5 blocks per SM" (the formula stays the default until measured and with
   `IDRAK_AUTOTUNE=0`). Every CUDA constant and heuristic is classified in plans/README.md ("Status of each rule").
+- CUDA kernel shapes come from what the GPU reports: its limits are read once (threads per block and per SM, warp size,
+  shared memory per block and with opt-in, registers, L2, grid limits, ...), the block sizes the kernels take at any
+  value are derived from them and generated into the PTX per GPU, and the geometry a kernel is written for is checked
+  against them (a tensor-core module that needs more shared memory than a block may use is skipped with the reason, as a
+  GPU the main kernels cannot run on is). Every CUDA GPU so far derives the sizes the kernels always had, so the PTX is
+  unchanged byte for byte (plans/README.md, "Kernel shapes", lists each shape and its value on the tested cards).
 - Core code no longer branches on the device or a data format; each goes through an abstraction its implementations
   fill in (same results, same kernels, nothing added on the per-token path beyond one interface call per layer):
   - **Device capabilities** (`Backend.Capabilities`): few-row limit, decoding and tiled attention head sizes, matrix

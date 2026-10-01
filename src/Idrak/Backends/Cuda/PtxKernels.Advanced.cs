@@ -332,12 +332,12 @@ internal static partial class PtxKernels
             PASS1:
                 setp.ge.u32 %p1, %j, %m;
                 @%p1 bra PASS1_END;
-            """ + GroupElement("%j", "%r13") + """
+            """ + GroupElement("%j", "%r13") + $"""
                 mul.wide.u32 %rd1, %r13, 4;
                 add.u64 %rd1, %rd_x, %rd1;
                 ld.global.f32 %f2, [%rd1];
                 add.f32 %f1, %f1, %f2;
-                add.u32 %j, %j, 256;
+                add.u32 %j, %j, {BlockSize};
                 bra PASS1;
             PASS1_END:
             """ + BlockReduce("s1", "%f1", "R1_") + """
@@ -350,13 +350,13 @@ internal static partial class PtxKernels
             PASS2:
                 setp.ge.u32 %p1, %j, %m;
                 @%p1 bra PASS2_END;
-            """ + GroupElement("%j", "%r13") + """
+            """ + GroupElement("%j", "%r13") + $"""
                 mul.wide.u32 %rd1, %r13, 4;
                 add.u64 %rd1, %rd_x, %rd1;
                 ld.global.f32 %f2, [%rd1];
                 sub.f32 %f2, %f2, %f5;
                 fma.rn.f32 %f1, %f2, %f2, %f1;
-                add.u32 %j, %j, 256;
+                add.u32 %j, %j, {BlockSize};
                 bra PASS2;
             PASS2_END:
             """ + BlockReduce("s2", "%f1", "R2_") + """
@@ -392,7 +392,7 @@ internal static partial class PtxKernels
             LOOP:
                 setp.ge.u32 %p1, %j, %m;
                 @%p1 bra LOOP_END;
-            """ + GroupElement("%j", "%r13") + """
+            """ + GroupElement("%j", "%r13") + $"""
                 mul.wide.u32 %rd1, %r13, 4;
                 add.u64 %rd2, %rd_a, %rd1;
                 ld.global.f32 %f2, [%rd2];
@@ -402,7 +402,7 @@ internal static partial class PtxKernels
                 ld.global.f32 %f3, [%rd3];
                 fma.rn.f32 %f10, %f2, %f3, %f10;
             NEXT:
-                add.u32 %j, %j, 256;
+                add.u32 %j, %j, {BlockSize};
                 bra LOOP;
             LOOP_END:
             """ + BlockReduce("s1", "%f1", "RA_") + """

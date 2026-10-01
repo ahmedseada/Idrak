@@ -28,7 +28,7 @@ internal sealed unsafe partial class CudaBackend
         if (dgamma is not null || dbeta is not null)
         {
             const int Chunk = 64;
-            Launch(K("layernorm_bwd_params_f32"), (uint)((cols + 255) / 256), (uint)((rows + Chunk - 1) / Chunk), 1, 256, 1,
+            Launch(K("layernorm_bwd_params_f32"), (uint)((cols + _shapes.BlockSize - 1) / _shapes.BlockSize), (uint)((rows + Chunk - 1) / Chunk), 1, (uint)_shapes.BlockSize, 1,
                 P(x), P(dy), P(stats), dgamma is null ? 0UL : P(dgamma), dbeta is null ? 0UL : P(dbeta), U(rows), U(cols), U(Chunk));
         }
     }
@@ -54,7 +54,7 @@ internal sealed unsafe partial class CudaBackend
         float invT = 1f / MathF.Max(temperature, 1e-3f);
         if (topK <= 0 || topK > PtxKernels.CandidateSlots || vocabulary <= 4 * PtxKernels.CandidateSlice)
         {
-            LaunchRows(K("sample_rows_f32"), rows, PtxKernels.SamplerThreads, P(logits), P(ids), P(stats), P(step),
+            LaunchRows(K("sample_rows_f32"), rows, _shapes.SamplerThreads, P(logits), P(ids), P(stats), P(step),
                 U(vocabulary), U(rowStride), U(rowOffset), F(invT), U(topK), F(topP), F(minP), seed, U(rows), U(rows));
             return;
         }

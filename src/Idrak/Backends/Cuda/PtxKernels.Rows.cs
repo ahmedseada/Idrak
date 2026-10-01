@@ -18,7 +18,7 @@ internal static partial class PtxKernels
     public const int RowThreads = 256;
 
     /// <summary>Threads of the sampler's block (one row: a whole vocabulary per block, so more loads in flight).</summary>
-    public const int SamplerThreads = 1024;
+    private static int SamplerThreads => Shapes.SamplerThreads;
 
     /// <summary>Rows at most this many take the few-row matrix product kernels.</summary>
     public const int GemvRows = 8;
@@ -49,8 +49,8 @@ internal static partial class PtxKernels
         sb.AppendLine("    .reg .f32 %bf<4>;");
         sb.AppendLine("    .reg .b32 %br<6>;");
         sb.AppendLine("    .reg .pred %bp<4>;");
-        sb.AppendLine($"    .shared .align 4 .b32 {name}_rv[32];");
-        sb.AppendLine($"    .shared .align 4 .b32 {name}_ri[32];");
+        sb.AppendLine($"    .shared .align 4 .b32 {name}_rv[{Shapes.MaxWarpsPerBlock}];");
+        sb.AppendLine($"    .shared .align 4 .b32 {name}_ri[{Shapes.MaxWarpsPerBlock}];");
         if (sharedFloats > 0)
         {
             sb.AppendLine($"    .shared .align 4 .b32 {name}_part[{sharedFloats}];");
@@ -529,8 +529,8 @@ internal static partial class PtxKernels
             MAD_END:
             """);
 
-    // y[j] += Σ_r x[r·ld + j]: thread = column (x = blocks of 256 columns), grid y = chunks of rows, added atomically.
-    private static void SumColumnsStrided(StringBuilder sb) => sb.AppendLine("""
+    // y[j] += Σ_r x[r·ld + j]: thread = column (x = blocks of BlockSize columns), grid y = chunks of rows, added atomically.
+    private static void SumColumnsStrided(StringBuilder sb) => sb.AppendLine($$"""
         .visible .entry sum_cols_strided_f32(
             .param .u64 p_x, .param .u64 p_y, .param .u32 p_rows, .param .u32 p_cols, .param .u32 p_ld, .param .u32 p_chunk
         )
@@ -549,7 +549,7 @@ internal static partial class PtxKernels
             ld.param.u32 %r4, [p_chunk];
             mov.u32 %r5, %ctaid.x;
             mov.u32 %r6, %tid.x;
-            mad.lo.u32 %r7, %r5, 256, %r6;
+            mad.lo.u32 %r7, %r5, {{BlockSize}}, %r6;
             setp.ge.u32 %p1, %r7, %r2;
             @%p1 bra DONE;
             mov.u32 %r8, %ctaid.y;

@@ -849,7 +849,7 @@ internal sealed unsafe partial class CudaBackend
     public override void SumColumns(Storage x, long offset, int ld, Storage y, int rows, int cols)
     {
         const int Chunk = 64;
-        Launch(K("sum_cols_strided_f32"), (uint)((cols + 255) / 256), (uint)((rows + Chunk - 1) / Chunk), 1, 256, 1,
+        Launch(K("sum_cols_strided_f32"), (uint)((cols + _shapes.BlockSize - 1) / _shapes.BlockSize), (uint)((rows + Chunk - 1) / Chunk), 1, (uint)_shapes.BlockSize, 1,
             P(x) + (ulong)offset * 4, P(y), U(rows), U(cols), U(ld), U(Chunk));
     }
 
