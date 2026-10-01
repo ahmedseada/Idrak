@@ -135,7 +135,8 @@ internal static partial class PtxKernels
             mul.wide.u32 %rd1, %r5, 4;
             """;
 
-        // Softmax / log-softmax, one block per row: max, then Σ exp(x - max) (exp stored in y), then normalize.
+        // Softmax / log-softmax, one block per row: max, then Σ exp(x - max) (exp stored in y for softmax; not for
+        // log-softmax, which reads x again and may be writing over it), then normalize.
         // Each thread revisits only the columns it wrote, so the passes need no synchronization between them.
         RowBlock(sb, "softmax_f32", ["x", "y"], [("u32", "cols"), ("u32", "log")],
             BlockRowStart + $"""
@@ -146,15 +147,15 @@ internal static partial class PtxKernels
             """ + "\n" + StridedLoop("MAX", "%rd2", "%s_cols", "max.f32 %f1, %f1, %f2;") + "\n"
             + BlockReduce("RMAX", "%f1", "max", NegInf) + "\n" + $"""
             mov.f32 %f3, {Zero};
+            setp.ne.u32 %p3, %s_log, 0;
             """ + "\n" + StridedLoop("EXP", "%rd2", "%s_cols", $"""
             sub.f32 %f2, %f2, %f1;
             mul.f32 %f2, %f2, {Log2E};
             ex2.approx.ftz.f32 %f2, %f2;
             add.u64 %rd7, %rd5, %rd6;
-            st.global.f32 [%rd7], %f2;
+            @!%p3 st.global.f32 [%rd7], %f2;
             add.f32 %f3, %f3, %f2;
             """) + "\n" + BlockReduce("RSUM", "%f3", "add", Zero) + "\n" + $"""
-            setp.ne.u32 %p3, %s_log, 0;
             @%p3 bra LOGPATH;
             rcp.rn.f32 %f4, %f3;
             """ + "\n" + StridedLoop("NORM", "%rd3", "%s_cols", """

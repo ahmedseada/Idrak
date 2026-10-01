@@ -156,8 +156,9 @@ internal static partial class VulkanKernels
     {
         var k = new KernelBuilder(name, Block);
         var (x, y) = (k.Buffer(accumulate ? "dy" : "x"), k.Buffer(accumulate ? "dx" : "y"));
-        var (n, p, seed) = (k.PushInt("n"), k.PushFloat("p"), k.PushUInt("seed"));
-        var scale = 1f / (1f - p);
+        // The scale 1 / (1 - p) comes from the host: a shader's division may be approximate (AMD's is), and the kept
+        // values must equal the CPU's exactly.
+        var (n, p, scale, seed) = (k.PushInt("n"), k.PushFloat("p"), k.PushFloat("scale"), k.PushUInt("seed"));
         Grid(k, n, i =>
         {
             // MurmurHash3 finalizer of (index · golden ratio) ^ seed; the top 24 bits as a uniform number in [0, 1).
