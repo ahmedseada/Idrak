@@ -42,6 +42,9 @@ internal abstract class DeviceProvider
 
     /// <summary>How strongly <see cref="Device.Default"/> prefers the device (the highest wins; null: never by default).</summary>
     public virtual int? DefaultRank(int ordinal) => null;
+
+    /// <summary>Why the device is not listed or not chosen by default, for device listings; null when there is nothing to say.</summary>
+    public virtual string? Note(int ordinal) => null;
 }
 
 /// <summary>The device kinds beyond the CPU: CUDA first, then Vulkan.</summary>

@@ -699,10 +699,21 @@ internal sealed class VulkanProvider : DeviceProvider
         return type != VulkanDriver.DeviceTypeCpu && !(vendor == VendorNvidia && Cuda.CudaBackend.DeviceCount > 0);
     }
 
-    public override int? DefaultRank(int ordinal) => VulkanBackend.DeviceKind(ordinal).Type switch
+    // Not chosen by Device.Default until its kernels are tuned (a CPU can still beat an untuned integrated GPU);
+    // IDRAK_VULKAN_DEFAULT=1 opts in. Reached by name ("vulkan:1") either way.
+    public override int? DefaultRank(int ordinal) => Environment.GetEnvironmentVariable("IDRAK_VULKAN_DEFAULT") != "1" ? null
+        : VulkanBackend.DeviceKind(ordinal).Type switch
+        {
+            VulkanDriver.DeviceTypeDiscreteGpu => 50,
+            VulkanDriver.DeviceTypeIntegratedGpu => 40,
+            _ => null,
+        };
+
+    public override string? Note(int ordinal)
     {
-        VulkanDriver.DeviceTypeDiscreteGpu => 50,
-        VulkanDriver.DeviceTypeIntegratedGpu => 40,
-        _ => null,
-    };
+        var (type, vendor) = VulkanBackend.DeviceKind(ordinal);
+        return type == VulkanDriver.DeviceTypeCpu ? "software driver: by name only"
+            : vendor == VendorNvidia && Cuda.CudaBackend.DeviceCount > 0 ? "NVIDIA GPU, run by CUDA: by name only"
+            : DefaultRank(ordinal) is null ? "not the default device (IDRAK_VULKAN_DEFAULT=1 to prefer it)" : null;
+    }
 }

@@ -2,7 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 // Self-contained test runner (no test framework dependency). Runs on the CPU and every CUDA GPU;
-//   IDRAK_DEVICES=cpu,cuda:0,cuda:2 …   only these devices
+//   IDRAK_DEVICES=cpu,cuda:0,vulkan:1 …   only these devices (… -- --list-devices shows them all, as a table)
 //   dotnet run --project tests/Idrak.Tests                  run every test on every available device
 //   dotnet run --project tests/Idrak.Tests -- --dump-ptx f  write the generated CUDA kernels to f
 //   … -- --dump-spirv folder                                                     write the generated Vulkan kernels (.spv) and their contracts to folder
@@ -21,6 +21,13 @@ using Idrak.Diagnostics;
 using Idrak.Layers;
 using Idrak.Optimizers;
 using Idrak.Training;
+
+Idrak.Backends.DeviceProviders.Register(new Tests.MinimalProvider());   // only by name: IDRAK_DEVICES=cpu,minimal
+
+if (args is ["--list-devices"])
+{
+    return Tests.ListDevices();
+}
 
 if (args is ["--bench-gemm"])
 {
@@ -68,8 +75,6 @@ if (args is ["--dump-spirv", var spirvFolder])
 // What the run is on, so a pasted result says where it passed (each GPU's line adds its compute capability and driver).
 Console.WriteLine($"Idrak tests: {System.Runtime.InteropServices.RuntimeInformation.OSDescription} "
                   + $"({System.Runtime.InteropServices.RuntimeInformation.OSArchitecture}), {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}");
-
-Idrak.Backends.DeviceProviders.Register(new Tests.MinimalProvider());   // only by name: IDRAK_DEVICES=cpu,minimal
 
 // Every device: the CPU and each GPU found (IDRAK_DEVICES=cpu,cuda:1,vulkan:0 … to choose, including devices not
 // listed by default, such as a software Vulkan driver), since the library runs on any of them.
