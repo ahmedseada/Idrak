@@ -18,6 +18,13 @@
     and `Linear.FromPacked` are new (`Int8` / `Int4` / `BFloat16` stay). The backends' packed products take
     `PackedFormat` instead of an untyped number.
   - **Model families**: GGUF families are a table (Llama's interleaved query/key rows are a property of its entry).
+- Plugins for ONNX import and network steps: registries instead of closed switches, with the built-ins registered the
+  same way (same results). `OnnxImportOps.Register("MyOp", context => context.Add(b => ...))` imports an operator of
+  your own in a chain of layers (`OnnxImportContext` gives its attributes, constant inputs, the current shape and notes).
+  `NetworkOps.Register("scale", (builder, arguments) => ...)` adds a network step; `NetworkBuilder.Op(name, arguments)`
+  uses it, writes it to JSON even when it adds a lambda or a custom layer, and `Network.FromJson` (model packages too)
+  replays it. New `NetworkBuilder.Add((device, random) => layer, shape)` creates a custom layer anew on each build.
+  Unknown steps and operators are reported with the registered names and how to register one.
 
 ## 0.1.7 (2026-10-01)
 

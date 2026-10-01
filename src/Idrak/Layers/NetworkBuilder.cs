@@ -94,7 +94,8 @@ public enum Activation
 /// Builds a <see cref="Sequential"/> step by step, tracking the shape of one sample (without the batch dimension) so
 /// each layer's input size comes from the previous layer. Every method corresponds to one layer constructor; see
 /// <see cref="Network"/> for the entry points. Builders made only of layer steps can be written to JSON and replayed
-/// (<see cref="ToJson"/>, <see cref="Network.FromJson"/>); model packages use this to store the architecture.
+/// (<see cref="ToJson"/>, <see cref="Network.FromJson"/>); model packages use this to store the architecture. Steps of
+/// your own are registered in <see cref="NetworkOps"/> and added with <see cref="Op"/>.
 /// </summary>
 public sealed class NetworkBuilder
 {
@@ -130,7 +131,7 @@ public sealed class NetworkBuilder
     /// <summary>Number of layers added so far.</summary>
     public int Count => _steps.Count;
 
-    /// <summary>Whether every step can be written to JSON (false after <see cref="Lambda"/> or <see cref="Add"/>).</summary>
+    /// <summary>Whether every step can be written to JSON (false after <see cref="Lambda"/> or <c>Add</c> outside a registered step, <see cref="Op"/>).</summary>
     public bool IsDescribable => _describable;
 
     // ------------------------------------------------------------------ settings passed to every layer
@@ -385,6 +386,54 @@ public sealed class NetworkBuilder
         return Push(_ => module, [.. outputShape], null);
     }
 
+    /// <summary>
+    /// Appends a layer that <paramref name="create"/> makes anew on every <see cref="Build"/>, from the builder's device
+    /// and random (as the built-in steps make theirs). Its output shape is required. A builder with such a layer cannot
+    /// be written to JSON, unless a registered step added it (<see cref="Op"/>).
+    /// </summary>
+    public NetworkBuilder Add(Func<Device?, Random?, Module> create, int[] outputShape)
+    {
+        ArgumentNullException.ThrowIfNull(create);
+        _describable = false;
+        return Push(r => create(_device, r), [.. outputShape], null);
+    }
+
+    /// <summary>
+    /// Adds the step registered as <paramref name="name"/> in <see cref="NetworkOps"/>, with <paramref name="arguments"/>
+    /// (the keys of its JSON besides "op"). A step that adds its layers with <see cref="Lambda"/> or <see cref="Add(Func{Device?, Random?, Module}, int[])"/>
+    /// is still written to JSON, as <c>{"op": name, ...arguments}</c>, and <see cref="Network.FromJson"/> replays it through
+    /// the same registration.
+    /// </summary>
+    public NetworkBuilder Op(string name, JsonObject? arguments = null)
+    {
+        var op = NetworkOps.Get(name);
+        var step = new JsonObject { ["op"] = name };
+        foreach (var (key, value) in arguments ?? [])
+        {
+            if (key != "op")
+            {
+                step[key] = value?.DeepClone();
+            }
+        }
+
+        bool describable = _describable;
+        int count = _steps.Count;
+        op(this, new NetworkOpArguments(step));
+        if (_describable == describable && _steps.Skip(count).All(s => s.Step is not null))
+        {
+            return this;                                                    // made of described steps (the built-ins): they describe it
+        }
+
+        // Layers JSON cannot describe: the step's own JSON stands for all of them (written once, with the first).
+        for (int i = count; i < _steps.Count; i++)
+        {
+            _steps[i] = (_steps[i].Create, i == count ? step : null);
+        }
+
+        _describable = describable;
+        return this;
+    }
+
     /// <summary>Applies a reusable block of builder steps (a function that adds layers and returns the builder).</summary>
     public NetworkBuilder Apply(Func<NetworkBuilder, NetworkBuilder> block) => block(this);
 
@@ -437,7 +486,7 @@ public sealed class NetworkBuilder
             ["format"] = "idrak-network/1",
             ["input"] = _kind.ToString(),
             ["shape"] = new JsonArray([.. _input.Select(v => (JsonNode)v)]),
-            ["steps"] = new JsonArray([.. _steps.Select(s => (JsonNode)s.Step!.DeepClone())]),
+            ["steps"] = new JsonArray([.. _steps.Where(s => s.Step is not null).Select(s => (JsonNode)s.Step!.DeepClone())]),
         };
         if (_name is not null)
         {
@@ -480,38 +529,14 @@ public sealed class NetworkBuilder
 
         foreach (var node in description["steps"]!.AsArray())
         {
-            var s = node!.AsObject();
-            int I(string key) => (int)s[key]!;
-            float F(string key) => (float)s[key]!;
-            bool B(string key) => (bool)s[key]!;
-            int? N(string key) => (int?)s[key];
-            _ = (string)s["op"]! switch
+            var step = node!.AsObject();
+            string op = (string)step["op"]!;
+            if (NetworkOps.TryGet(op) is null)
             {
-                "linear" => b.Linear(I("out"), B("bias")),
-                "relu" => b.ReLU(),
-                "tanh" => b.Tanh(),
-                "sigmoid" => b.Sigmoid(),
-                "gelu" => b.GELU(),
-                "softmax" => b.Softmax(),
-                "dropout" => b.Dropout(F("p")),
-                "batchnorm" => b.BatchNorm(F("momentum"), F("epsilon")),
-                "layernorm" => b.LayerNorm(F("epsilon")),
-                "conv2d" => b.Conv2d(I("out"), I("kernel"), I("stride"), I("padding"), B("bias")),
-                "maxpool2d" => b.MaxPool2d(I("kernel"), N("stride"), I("padding")),
-                "globalavgpool2d" => b.GlobalAveragePool2d(),
-                "flatten" => b.Flatten(),
-                "embedding" => b.Embedding(I("vocabulary"), I("dim")),
-                "positional" => b.PositionalEncoding(N("maxLength")),
-                "transformer" => b.TransformerEncoderLayer(I("heads"), N("ffDim"), F("dropout"), B("causal")),
-                "attention" => b.MultiHeadAttention(I("heads"), B("causal"), F("dropout")),
-                "lstm" => b.LSTM(I("hidden"), B("returnSequences")),
-                "gru" => b.GRU(I("hidden"), B("returnSequences")),
-                "meanOverTime" => b.MeanOverTime(),
-                "lastStep" => b.LastStep(),
-                "firstStep" => b.FirstStep(),
-                "reshape" => b.Reshape([.. s["shape"]!.AsArray().Select(v => (int)v!)]),
-                var op => throw new InvalidDataException($"Unknown network step '{op}'."),
-            };
+                throw new InvalidDataException($"Unknown network step '{op}' (registered: {string.Join(", ", NetworkOps.Names)}); add it with NetworkOps.Register.");
+            }
+
+            b.Op(op, step);
         }
 
         return b;
