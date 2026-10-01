@@ -8,6 +8,15 @@ internal sealed class CudaStorage(CudaBackend backend, ulong pointer, int length
 {
     public ulong Pointer = pointer;                                     // 0 while evicted (Backend.Evict)
 
+    /// <summary>
+    /// While a copy of an offloaded storage is staged on the GPU (see CudaBackend.Offload.cs): the system-memory block it
+    /// lives in, with <see cref="Pointer"/> on the GPU copy; 0 otherwise.
+    /// </summary>
+    public ulong Home;
+
+    /// <summary>Floats in the block of <see cref="Home"/>.</summary>
+    public int HomeCapacity;
+
     /// <summary>Floats in the device block (at least <see cref="Storage.Length"/>: a cached block a little larger may be reused).</summary>
     public int Capacity = capacity;
 
@@ -379,11 +388,17 @@ internal sealed unsafe partial class CudaBackend : Backend
                 if (_hostBlocks.ContainsKey(pointer))
                 {
                     _memory.Offloaded(bytes);
+                    if (zeroed && length > 0)
+                    {
+                        Check(cuMemsetD32Async(pointer, 0, (nuint)length, _stream), nameof(cuMemsetD32Async));
+                    }
+
+                    var host = new CudaStorage(this, pointer, length, capacity);
+                    AddAwayLocked(host);
+                    return host;
                 }
-                else
-                {
-                    _memory.Reused(bytes);
-                }
+
+                _memory.Reused(bytes);
             }
             else if (TakeCached(length, out capacity) is var cached && cached != 0)
             {
@@ -516,7 +531,14 @@ internal sealed unsafe partial class CudaBackend : Backend
             Check(cuMemsetD32Async(pointer, 0, (nuint)length, _stream), nameof(cuMemsetD32Async));
         }
 
-        return new CudaStorage(this, pointer, length, length);
+        var storage = new CudaStorage(this, pointer, length, length);
+        lock (_pool)
+        {
+            AddAwayLocked(storage);
+            _spilled += BlockBytes(length);                                // made room for at the next Rebalance (cold first)
+        }
+
+        return storage;
     }
 
     // System-memory blocks by device address (to their host address), and the unused ones by size.
@@ -561,12 +583,24 @@ internal sealed unsafe partial class CudaBackend : Backend
 
     // Called when the last reference is released, possibly from the finalizer thread, so it only
     // touches the pool and never the driver.
-    private protected override void Detach(Storage storage) => ((CudaStorage)storage).Pointer = 0;
+    private protected override void Detach(Storage storage) => (((CudaStorage)storage).Pointer, ((CudaStorage)storage).Home) = (0, 0);
 
     private protected override void Attach(Storage storage, Storage fresh)
     {
         var (s, f) = ((CudaStorage)storage, (CudaStorage)fresh);
         (s.Pointer, s.Capacity) = (f.Pointer, f.Capacity);                // the fresh storage object is dropped, its block kept
+        lock (_pool)
+        {
+            if (_awayCount > 0 && _away.Contains(f))
+            {
+                RemoveAwayLocked(f);
+                AddAwayLocked(s);
+            }
+            else if (s.OffloadPriority > OffloadPriority.Hot)
+            {
+                _cold.Add(s);
+            }
+        }
     }
 
     public override void Return(Storage storage)
@@ -574,6 +608,11 @@ internal sealed unsafe partial class CudaBackend : Backend
         var s = (CudaStorage)storage;
         lock (_pool)
         {
+            if (_cold.Count > 0 || _awayCount > 0 || _prefetched.Count > 0)
+            {
+                ForgetLocked(s);                                           // offload bookkeeping (CudaBackend.Offload.cs)
+            }
+
             bool recording = _captureFree is not null && Environment.CurrentManagedThreadId == _captureThread;
             if (_hostBlocks.ContainsKey(s.Pointer) && recording)
             {
@@ -603,19 +642,7 @@ internal sealed unsafe partial class CudaBackend : Backend
             // While recording a graph, blocks the recording frees belong to the graph: returning them to the shared pool
             // would let unrelated tensors reuse memory the graph writes on every replay. (Other threads' blocks,
             // including the finalizer's, go back to the pool.)
-            var target = _captureFree is not null && Environment.CurrentManagedThreadId == _captureThread ? _captureFree : _pool;
-            if (!target.TryGetValue(s.Capacity, out var bucket))
-            {
-                target[s.Capacity] = bucket = new Stack<ulong>();
-            }
-
-            bucket.Push(s.Pointer);
-            if (ReferenceEquals(target, _pool))
-            {
-                _poolSizes.Add(s.Capacity);
-            }
-
-            _memory.Returned(BlockBytes(s.Capacity));
+            ReturnDeviceBlockLocked(s.Pointer, s.Capacity);
         }
     }
 

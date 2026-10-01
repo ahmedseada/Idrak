@@ -41,7 +41,8 @@ const string Usage = """
                default: turned on first when a step runs out of device memory), --bf16-activations (hold the activations
                as bfloat16 between the passes: half their memory; default: turned on second), --no-packing,
                --no-graphs, --fp8 (the frozen base's forward products in FP8, checked against bfloat16 first),
-               --adapter DIR (continue training an adapter), --profile (time a few steps instead of training)
+               --adapter DIR (continue training an adapter), --profile (time a few steps instead of training),
+               --cpu-optimizer (AdamW's update on the CPU, its state in system memory)
     Evaluate:  --adapter DIR, --samples 100 (0: all), --batch 8, --max-new 512, --metric auto|number|exact|contains|f1, --out F.jsonl,
                --choices a,b,c | auto (the answer is one of these: each is scored as the model's answer, the most likely one
                taken, nothing generated; auto: the distinct answers in the data; accuracy and recall per answer)
@@ -115,6 +116,7 @@ try
             case "--fp8": tuning = tuning with { Float8 = true }; break;
             case "--profile": profileTraining = true; break;
             case "--offload": ComputeResources.OffloadToHostMemory = true; break;
+            case "--cpu-optimizer": tuning = tuning with { HostOptimizer = true }; break;
             case "--gpu-memory": ComputeResources.GpuMemoryLimit = (long)(double.Parse(Next(), CultureInfo.InvariantCulture) * (1L << 30)); break;
             case "--matmul":
                 matmul = Next() switch

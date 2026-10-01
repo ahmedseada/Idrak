@@ -1006,7 +1006,10 @@ for them; every feature has a fallback that runs everywhere.
 
 Sizes (split-k, grids) come from the device's own counts, and memory adapts to the card: when a fine-tuning step
 does not fit, it retries with lighter settings (released or recomputed activations, bfloat16 activations,
-checkpointing); `--offload` keeps tensors in system memory when the GPU is full.
+checkpointing); `--offload` keeps tensors in system memory when the GPU is full: cold data first (optimizer state,
+then frozen weights), each layer's offloaded weights copied to the GPU while it computes (the next layer's in the
+background), and tensors brought back when memory frees up. `--cpu-optimizer` runs AdamW's update on the CPU with its
+state in system memory (only gradients and weights cross PCIe).
 
 The 178 kernels (134 core, 44 tensor-core) assemble without errors for sm_50, sm_61, sm_75, sm_86, sm_89, sm_90
 and sm_120 (Maxwell to Blackwell), and the FP8 kernels for sm_89, sm_90 and sm_120 (`ptxas` 12.9, 2026-09-30).

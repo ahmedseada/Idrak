@@ -138,6 +138,7 @@ internal sealed unsafe partial class CudaBackend
                 Check(result, nameof(cuGraphInstantiateWithFlags));
             }
 
+            GraphCreated();
             return (executable, graph, owned);
         }
         finally
@@ -215,5 +216,6 @@ internal sealed unsafe partial class CudaBackend
         MakeCurrent();
         cuGraphExecDestroy(executable);
         cuGraphDestroy(graph);
+        GraphDestroyed();
     }
 }

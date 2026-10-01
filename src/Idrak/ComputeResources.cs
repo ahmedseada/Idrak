@@ -76,6 +76,53 @@ public static class ComputeResources
     /// </summary>
     public static bool OffloadToHostMemory { get; set; } = Environment.GetEnvironmentVariable("IDRAK_OFFLOAD") is "1" or "true";
 
+    /// <summary>
+    /// With <see cref="OffloadToHostMemory"/>: when the GPU fills up, first move the storages that are used least to
+    /// system memory (optimizer state, then frozen weights such as a LoRA base model, largest first) to make room, and
+    /// only then place new tensors there. On by default; off restores the older behaviour (whatever is allocated after
+    /// the GPU is full goes to system memory).
+    /// </summary>
+    public static bool OffloadColdFirst { get; set; } = true;
+
+    /// <summary>
+    /// Before a layer computes (forward or backward), copy its offloaded weights to the GPU, the next layer's in the
+    /// background while this one runs, instead of reading them over PCIe as the kernels go. On by default.
+    /// </summary>
+    public static bool PrefetchOffloadedWeights { get; set; } = true;
+
+    /// <summary>
+    /// Bring offloaded tensors back to the GPU when memory frees up (checked at each optimizer step and by
+    /// <see cref="ReturnOffloaded"/>), hottest first, while the GPU keeps <see cref="OffloadReturnHeadroom"/> free.
+    /// On by default.
+    /// </summary>
+    public static bool ReturnOffloadedTensors { get; set; } = true;
+
+    /// <summary>
+    /// Device memory kept free when offloaded tensors come back (default 1 GiB), so a step that needs a little more
+    /// does not push them straight out again.
+    /// </summary>
+    public static long OffloadReturnHeadroom { get; set; } = 1L << 30;
+
+    /// <summary>
+    /// Brings offloaded tensors back to the GPU (or every GPU when <paramref name="device"/> is null) where they fit now,
+    /// e.g. after training, when the activations are gone: the GPU's cached blocks are released first, then tensors come
+    /// back hottest first while <see cref="OffloadReturnHeadroom"/> stays free. Returns how many moved.
+    /// </summary>
+    public static int ReturnOffloaded(Device? device = null)
+    {
+        int moved = 0;
+        foreach (var d in device is null ? Enumerable.Range(0, Device.CudaDeviceCount).Select(i => Device.Cuda(i)) : [device])
+        {
+            if (d.Backend.Offload is { OffloadedCount: > 0 } offload)
+            {
+                d.Backend.ReleaseCachedMemory();
+                moved += offload.Rebalance(makeRoom: false);
+            }
+        }
+
+        return moved;
+    }
+
     internal static ParallelOptions ParallelOptions => s_parallelOptions;
 
     /// <summary>Whether CPU work should be split across threads at all.</summary>

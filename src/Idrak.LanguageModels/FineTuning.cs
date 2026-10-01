@@ -554,6 +554,14 @@ public sealed record FineTuningOptions
     /// </summary>
     public bool? BFloat16Activations { get; init; }
 
+    /// <summary>
+    /// Run AdamW's update on the CPU, with its state (two moments per trained value) in system memory: only gradients and
+    /// weights cross PCIe each step (see <see cref="Optimizers.HostOptimizer"/>). For training many parameters (large
+    /// adapters, or unfrozen layers) on a GPU too small for the optimizer state; slower per step. CUDA graphs are not used
+    /// with it.
+    /// </summary>
+    public bool HostOptimizer { get; init; }
+
     /// <summary>Seed for the adapters' initial values and the batch order.</summary>
     public int Seed { get; init; }
 }
@@ -691,7 +699,7 @@ public static class FineTuner
 
         var parameters = network.TrainableParameters().ToList();
         using var float8 = PrepareFloat8(model, train, options, trace);
-        using var optimizer = new AdamW(parameters, options.LearningRate, weightDecay: options.WeightDecay);
+        using var optimizer = CreateOptimizer(parameters, options);
         var random = new Random(options.Seed);
         var epochBatches = Enumerable.Range(0, options.Epochs).Select(_ => MakeBatches(model, train, options, random)).ToList();
         int accumulation = Math.Max(1, options.GradientAccumulation);
@@ -743,10 +751,12 @@ public static class FineTuner
     // Runs optimizer steps: ordinary ones, or replays of a recorded CUDA graph once one is recorded (see
     // FineTuningOptions.CudaGraphs).
     // lossRows: the most trained tokens of any batch the runner will see (the recorded loss's capacity).
-    private sealed class StepRunner(PretrainedModel model, IReadOnlyList<TrainingSequence> train, AdamW optimizer, FineTuningOptions options,
+    private sealed class StepRunner(PretrainedModel model, IReadOnlyList<TrainingSequence> train, Optimizer optimizer, FineTuningOptions options,
         int lossRows, Action<string>? trace) : IDisposable
     {
+        // Not with offloading (tensors move between steps, a graph holds their addresses) or the CPU update.
         private readonly bool _graphsAllowed = options.CudaGraphs && options.GradientAccumulation <= 1 && model.Device.Type == DeviceType.Cuda
+            && !ComputeResources.OffloadToHostMemory && !options.HostOptimizer
             && model.Device.Backend.SupportsGraphs
             && !model.Network.Descendants().Any(m => m is Dropout { Probability: > 0f });   // a recorded pass would reuse its masks
         private readonly bool _automatic = options.Checkpointing is null && !ComputeResources.OffloadToHostMemory;
@@ -948,8 +958,13 @@ public static class FineTuner
     private static int MostTrained(IEnumerable<Batch> batches, IReadOnlyList<TrainingSequence> train) =>
         batches.Select(b => b.Sequences.Sum(i => train[i].TrainedTokens)).DefaultIfEmpty(0).Max();
 
+    // AdamW on the device, or on the CPU with its state in system memory (FineTuningOptions.HostOptimizer).
+    private static Optimizer CreateOptimizer(List<Tensor> parameters, FineTuningOptions options) => options.HostOptimizer
+        ? new HostOptimizer(parameters, ps => new AdamW(ps, options.LearningRate, weightDecay: options.WeightDecay))
+        : new AdamW(parameters, options.LearningRate, weightDecay: options.WeightDecay);
+
     // Clipping and the optimizer's update, after the gradients of a step.
-    private static void Update(PretrainedModel model, AdamW optimizer, FineTuningOptions options)
+    private static void Update(PretrainedModel model, Optimizer optimizer, FineTuningOptions options)
     {
         // Clipping and the update of every adapter matrix in a few device passes (which also zero the gradients for the next
         // step), with no read of the norm and no wait: the next step's first read of the device orders everything, so the
@@ -959,7 +974,7 @@ public static class FineTuner
 
     // One optimizer step over a group of batches (gradient accumulation): forward, backward, clipping, update. Returns
     // the mean loss per trained token and the tokens covered.
-    private static (float Loss, long Tokens) RunStep(PretrainedModel model, IReadOnlyList<TrainingSequence> train, IReadOnlyList<Batch> group, AdamW optimizer,
+    private static (float Loss, long Tokens) RunStep(PretrainedModel model, IReadOnlyList<TrainingSequence> train, IReadOnlyList<Batch> group, Optimizer optimizer,
         FineTuningOptions options, CancellationToken cancellationToken, Action<string>? trace, Func<int, string> label)
     {
         var network = model.Network;
@@ -1007,7 +1022,7 @@ public static class FineTuner
         }
 
         using var float8 = PrepareFloat8(model, train, options, trace);
-        using var optimizer = new AdamW(model.Network.TrainableParameters().ToList(), options.LearningRate, weightDecay: options.WeightDecay);
+        using var optimizer = CreateOptimizer(model.Network.TrainableParameters().ToList(), options);
         var batches = MakeBatches(model, train, options, new Random(options.Seed));
         int accumulation = Math.Max(1, options.GradientAccumulation);
         int next = 0;
@@ -1376,7 +1391,7 @@ public static class FineTuner
             [.. batch.Rows.Select(r => r.Select(i => train[i].Tokens.Length - 1).ToArray())];
 
         // Records the pass (nothing runs yet); null, with the reason traced, when the device cannot.
-        public static TrainingGraph? Record(PretrainedModel model, IReadOnlyList<TrainingSequence> train, AdamW optimizer, FineTuningOptions options, Batch batch,
+        public static TrainingGraph? Record(PretrainedModel model, IReadOnlyList<TrainingSequence> train, Optimizer optimizer, FineTuningOptions options, Batch batch,
             int lossRows, Action<string>? trace)
         {
             var graph = new TrainingGraph(model, batch, train, lossRows);

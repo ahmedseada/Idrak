@@ -24,6 +24,8 @@ public abstract class Optimizer : IDisposable
     /// <summary>Resets every parameter's gradient to zero (nothing to do right after a <see cref="ClipAndStep"/> that zeroed them).</summary>
     public void ZeroGrad()
     {
+        // Between steps: with offloading on, cold data makes room for the next step, or offloaded tensors come back.
+        Offloading.StepBoundary(Parameters[0].Device);
         if (GradientsZeroed)
         {
             GradientsZeroed = false;
@@ -157,8 +159,19 @@ public abstract class Optimizer : IDisposable
         }
     }
 
-    /// <summary>Allocates a zeroed state buffer shaped like <paramref name="parameter"/>, outside any <see cref="TensorScope"/>.</summary>
-    protected static Tensor CreateState(Tensor parameter) => Tensor.PersistentZeros(parameter.Shape, parameter.Device);
+    /// <summary>
+    /// Allocates a zeroed state buffer shaped like <paramref name="parameter"/>, outside any <see cref="TensorScope"/>.
+    /// It is marked as optimizer state: when offloading, the first data to move to system memory.
+    /// </summary>
+    protected static Tensor CreateState(Tensor parameter) => CreateState(parameter.Shape, parameter.Device);
+
+    /// <summary>Allocates a zeroed optimizer-state buffer of <paramref name="shape"/> (see <see cref="CreateState(Tensor)"/>).</summary>
+    protected static Tensor CreateState(ReadOnlySpan<int> shape, Device device)
+    {
+        var state = Tensor.PersistentZeros(shape, device);
+        Offloading.MarkCold(state.Storage, Backends.OffloadPriority.OptimizerState);
+        return state;
+    }
 
     /// <summary>Releases optimizer state (moment buffers).</summary>
     public virtual void Dispose() => GC.SuppressFinalize(this);

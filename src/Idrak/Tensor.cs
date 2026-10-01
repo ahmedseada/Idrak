@@ -67,6 +67,11 @@ public sealed partial class Tensor : IDisposable
                 throw new InvalidOperationException("RequiresGrad can only be changed on leaf tensors (ones not produced by an operation). Use Detach() first.");
             }
 
+            if (field != value && Storage is { } storage && storage.Backend.Offload is not null)
+            {
+                Offloading.TrainableChanged(this, value);                 // frozen weights move to system memory first
+            }
+
             field = value;
         }
     }
@@ -282,6 +287,13 @@ public sealed partial class Tensor : IDisposable
         {
             Backend.Fill(Grad.Storage, Grad.Size, 0f);
         }
+    }
+
+    /// <summary>Releases the gradient's memory (the next backward pass writes a fresh one without zero-filling it).</summary>
+    internal void ReleaseGrad()
+    {
+        Grad?.Dispose();
+        Grad = null;
     }
 
     /// <summary>Releases the tensor's memory (and its gradient's) back to the device pool.</summary>
@@ -532,12 +544,17 @@ public sealed partial class Tensor : IDisposable
 
     private void BackwardNodes(List<Storage> reads, List<Storage> held)
     {
-        foreach (var node in TopologicalOrder())
+        var order = TopologicalOrder();
+        using var staging = Offloading.ForBackward(Device, order);     // null unless weights are offloaded
+        for (int index = 0; index < order.Count; index++)
         {
+            var node = order[index];
             if (node._backward is null || node.Grad is null)
             {
                 continue;
             }
+
+            staging?.Before(index);
 
             long start = Telemetry.Start(TelemetryLevel.Operations);
 
@@ -573,8 +590,14 @@ public sealed partial class Tensor : IDisposable
             node.Grad = null;
             node._backward = null;
             node._parents = null;
+            node._stage = null;
         }
     }
+
+    // The layer whose forward recorded this node while weights were offloaded (see Offloading), or null.
+    private Layers.Module? _stage;
+
+    internal Layers.Module? StageGroup => _stage;
 
     /// <summary>Nodes reachable from this tensor that require gradients, outputs before their inputs.</summary>
     private List<Tensor> TopologicalOrder()
@@ -660,6 +683,7 @@ public sealed partial class Tensor : IDisposable
     {
         RequiresGrad = true; // must precede _backward: the setter only accepts leaves
         _operation = operation;
+        _stage = Offloading.Current;
         _parents = inputs;
         _backward = backward;
     }

@@ -63,6 +63,12 @@ internal abstract class Storage(Backend backend, int length)
         }
     }
 
+    /// <summary>How readily the storage moves to system memory when the device fills up (see <see cref="IMemoryOffload"/>).</summary>
+    public OffloadPriority OffloadPriority { get; set; }
+
+    /// <summary>Moved to system memory on request, to stay there (<see cref="IMemoryOffload.Rebalance"/> leaves it).</summary>
+    public bool KeepOnHost { get; set; }
+
     /// <summary>Whether the memory was given back by <see cref="Backend.Evict"/> (the values are recomputed on <see cref="Backend.Restore"/>).</summary>
     public bool Evicted { get; internal set; }
 
@@ -94,6 +100,9 @@ internal abstract class Storage(Backend backend, int length)
 internal abstract class Backend
 {
     public abstract Storage Allocate(int length, bool zeroed);
+
+    /// <summary>Keeping tensors in system memory when the device is full, or null when the device has no such support.</summary>
+    public virtual IMemoryOffload? Offload => null;
 
     public abstract void Return(Storage storage);
 

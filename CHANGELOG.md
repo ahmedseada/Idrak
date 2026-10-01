@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+- Offloading (`ComputeResources.OffloadToHostMemory`, `IDRAK_OFFLOAD=1`, `idrak-tune --offload`) is now an internal
+  interface, `IMemoryOffload`, that each GPU backend implements (CUDA today); the library uses whatever the current
+  device's backend provides, and a device without it (the CPU) skips every step. With offloading on:
+  - **Cold data first:** when a step finds the GPU full, its extra data still goes to system memory, but at the next
+    step boundary (`Optimizer.ZeroGrad`) as many bytes of cold data move out instead: optimizer state first, then frozen
+    weights (a LoRA base, `Freeze()`d layers, int8 / int4 / bfloat16 weights), largest first. The following steps keep
+    their activations on the GPU. `ComputeResources.OffloadColdFirst` (on by default).
+  - **Staging and prefetch:** before a layer computes, forward or backward, its offloaded weights are copied to the GPU
+    in one transfer (instead of being read over PCIe by every kernel), and the next layer's weights are copied on a
+    separate stream while this one computes; the copies go back to the cache afterwards, so after the first pass
+    staging allocates nothing. Embedding tables are not staged (a lookup reads only its rows).
+    `ComputeResources.PrefetchOffloadedWeights` (on by default).
+  - **Coming back:** offloaded tensors return to the GPU, hottest first, when it has room beyond
+    `ComputeResources.OffloadReturnHeadroom` (1 GiB; cold data also leaves room for the largest spill seen), checked at
+    each step boundary; `ComputeResources.ReturnOffloaded()` brings everything back that fits (e.g. after training).
+    Pinned system memory is freed as tensors come home. `ComputeResources.ReturnOffloadedTensors` (on by default).
+  - Nothing moves while a CUDA graph exists (graphs hold raw addresses), and the fine-tuner records no graphs when
+    offloading.
+- `HostOptimizer` runs any optimizer's update on the CPU with its state in system memory: each step downloads the
+  gradients, updates CPU copies of the parameters with the CPU kernels and uploads the new values (only gradients and
+  weights cross PCIe; Adam's state, twice the parameters, never touches the GPU). `FineTuningOptions.HostOptimizer` /
+  `idrak-tune --cpu-optimizer` uses it for AdamW. `--bench-offload` in the tests times a training step each way.
+
 ## 0.1.5 (2026-09-30)
 
 - Retrieval: each stage is an interface. `IEmbedder` (`TextEncoder` implements it), `IVectorStore` (new
