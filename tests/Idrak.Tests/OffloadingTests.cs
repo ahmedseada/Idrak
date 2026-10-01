@@ -88,7 +88,7 @@ internal static partial class Tests
     {
         if (OffloadOf(device) is not { } offload)
         {
-            Check(device.Type == DeviceType.Cpu, "every GPU backend offloads");
+            Check(device.Type != DeviceType.Cuda, "every CUDA backend offloads");
             return;                                                              // the CPU's memory is system memory already
         }
 

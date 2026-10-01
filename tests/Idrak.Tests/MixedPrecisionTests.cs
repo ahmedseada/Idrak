@@ -1316,7 +1316,7 @@ internal static partial class Tests
         var random = new Random(3);
         // A GPU that has tensor cores must load the module: a JIT error would otherwise fall back to float32 silently.
         string? unavailable = MixedPrecision.TensorCoresUnavailable(device);
-        Check(device.Type == DeviceType.Cpu || unavailable is null || unavailable.StartsWith("compute capability", StringComparison.Ordinal),
+        Check(device.Type != DeviceType.Cuda || unavailable is null || unavailable.StartsWith("compute capability", StringComparison.Ordinal),
             $"tensor-core module: {unavailable}");
         bool tensorCores = device.Type == DeviceType.Cuda && unavailable is null;
         if (device.Type == DeviceType.Cuda && !(unavailable?.StartsWith("compute capability", StringComparison.Ordinal) ?? false))

@@ -221,11 +221,7 @@ public static class IdrakEndpointExtensions
     public static RouteHandlerBuilder MapIdrakStatus(this IEndpointRouteBuilder app, string route) =>
         app.MapGet(route, (InferenceEngine engine) =>
         {
-            var devices = new List<Device> { Device.Cpu };
-            for (int i = 0; i < Device.CudaDeviceCount; i++)
-            {
-                devices.Add(Device.Cuda(i));
-            }
+            var devices = Device.Available;
 
             return Results.Ok(new
             {
