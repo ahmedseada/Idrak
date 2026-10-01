@@ -15,7 +15,7 @@
     <VersionSuffix Condition="'$(Version)' == ''">dev.$([System.DateTime]::UtcNow.ToString("yyMMddHHmm"))</VersionSuffix>
     <Authors>Ahmed Seada</Authors>
     <Copyright>Copyright (c) 2026 Ahmed Seada</Copyright>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/ahmedseada/Idrak</PackageProjectUrl>
     <RepositoryUrl>https://github.com/ahmedseada/Idrak</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
@@ -39,5 +39,7 @@
 
   <ItemGroup Condition="'$(IsPackable)' != 'false'">
     <None Include="$(MSBuildThisFileDirectory)assets/icon.png" Pack="true" PackagePath="/" Visible="false" />
+    <!-- Apache 2.0, section 4(d): the NOTICE file travels with every distribution. -->
+    <None Include="$(MSBuildThisFileDirectory)NOTICE" Pack="true" PackagePath="/" Visible="false" />
   </ItemGroup>
 </Project>
