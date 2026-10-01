@@ -63,8 +63,8 @@ tuned with `--bench-gemm` / `--bench-gemv` on one RTX 5070 Ti (compute 12.0, 70 
 **Open:**
 - Measured choices last for one process; caching them per GPU, compute capability and driver in the user's cache
   folder would save the few milliseconds of measuring at each start.
-- Re-run `--bench-gemv` on the RTX 3060 and the RTX 5070 Ti to confirm "auto" is within 5% of the best column there,
-  as it is on the RTX 5050.
+- Re-run `--bench-gemv` on the RTX 3060 to confirm "auto" is within 5% of the best column there, as it is on the
+  RTX 5050 and the RTX 5070 Ti (0.1.7: every decoding and prompt-sized row within about 5%).
 
 ## Shared work before any new backend
 
