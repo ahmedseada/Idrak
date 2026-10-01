@@ -6,6 +6,10 @@ This plan covers what the tests on more than one GPU showed, and the gaps that r
 
 ## 1. Few-row rule tied to the GPU (first: a measured regression in 0.1.5)
 
+**Done in 0.1.6** (point 2 below, for every card-dependent choice, not only this one): the first time a shape needs
+a choice, the device times the candidates back to back on the real inputs and keeps the fastest; on the RTX 5050,
+"auto" now matches or beats the best forced column. Still to do: an RTX 3060 and an Ada card run of `--bench-gemv`.
+
 **Problem.** 0.1.5 sends 4–8 rows through int8 weights of 32 M values or more (a vocabulary head) to the packed
 tensor-core product instead of the GEMV, when `MixedPrecision` uses tensor cores
 (`CudaBackend.PrefersPackedMatMul`, `src/Idrak/Backends/Cuda/CudaBackend.Quantized.cs`). The rule was measured on the
