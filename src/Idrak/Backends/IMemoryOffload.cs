@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Ahmed Seada
+// Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
+
 namespace Idrak.Backends;
 
 /// <summary>How readily a storage moves to system memory when the device fills up (higher moves first).</summary>

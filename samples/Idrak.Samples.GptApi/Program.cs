@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Ahmed Seada
+// Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
+
 // Idrak GPT Web API: serves the character-level transformer from the Transformer sample.
 //
 //   dotnet run -c Release --project samples/Idrak.Samples.GptApi

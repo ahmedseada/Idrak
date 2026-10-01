@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Ahmed Seada
+// Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
+
 // Text summarization: short reports (matches, weather, company results, fires) → one-sentence summaries.
 // Two extractive baselines pick a sentence from the report; the abstractive model, a word-level decoder-only
 // transformer, writes the summary token by token through the Generation layer (WordTokenizer + TextGenerator).

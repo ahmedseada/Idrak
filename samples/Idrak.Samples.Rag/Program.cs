@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Ahmed Seada
+// Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
+
 // Retrieval-augmented generation over a collection about invented towns: questions are answered by a small chat model
 // that reads the passages a search finds and cites them. Everything is trained here, from scratch:
 //   1. a bi-encoder (TextEncoder) for vector search, trained contrastively on (question, answer passage) pairs;

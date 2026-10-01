@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Ahmed Seada
+// Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
+
 // Search re-ranking: a fast word-matching first stage (BM25) finds 20 candidate passages for a question, then a
 // cross-encoder transformer reads the question and each candidate together and re-orders them by relevance.
 // The model is trained listwise: one answer and 7 hard negatives per question, softmax cross-entropy over the 8 scores.

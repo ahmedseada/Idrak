@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Ahmed Seada
+// Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
+
 // House-price Web API in a few lines: the inference engine from Idrak.AspNetCore serves the package saved by the
 // HousePrices sample (network, weights and both scalers in one .ikm file).
 //

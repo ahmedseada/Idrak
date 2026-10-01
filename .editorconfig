@@ -1,0 +1,5 @@
+root = true
+
+# New C# files get the license header (IDE0073 offers it in the IDE).
+[*.cs]
+file_header_template = Copyright (c) 2026 Ahmed Seada\nLicensed under the Apache License, Version 2.0. See LICENSE in the repository root.

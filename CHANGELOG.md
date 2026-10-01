@@ -5,6 +5,10 @@
 - License: Apache License 2.0 instead of MIT, from this version on (`LICENSE`, `NOTICE`, the packages' license
   expression `Apache-2.0`). Apache 2.0 is as permissive as MIT and adds an explicit patent grant. Versions 0.1.0
   through 0.1.6 stay under the MIT license.
+- Every C# file starts with a copyright and license header (the new `.editorconfig` adds it to new files).
+- Contributions are accepted under a Contributor License Agreement (`CLA.md`): contributors keep their copyright and
+  give the project the rights to ship their work, including under other license terms later. `CONTRIBUTING.md` and a
+  pull request template describe the checks and the CLA box.
 
 ## 0.1.6 (2026-10-01)
 

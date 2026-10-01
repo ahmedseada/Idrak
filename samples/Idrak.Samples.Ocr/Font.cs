@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Ahmed Seada
+// Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
+
 namespace Idrak.Samples.Ocr;
 
 /// <summary>A 5x7 bitmap font for 0-9 and A-Z, the classic dot-matrix character set.</summary>

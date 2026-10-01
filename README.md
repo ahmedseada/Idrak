@@ -50,7 +50,7 @@ idrak-data --help
 dotnet tool update -g Idrak.FineTuning.Cli    # later: update to the newest version (same for Idrak.Datasets.Cli)
 ```
 
-Licensed under the [Apache License 2.0](LICENSE) (see [NOTICE](NOTICE)) from 0.1.7 on; versions up to 0.1.6 were released under the MIT license. Releases are listed in the [changelog](CHANGELOG.md).
+Licensed under the [Apache License 2.0](LICENSE) (see [NOTICE](NOTICE)) from 0.1.7 on; versions up to 0.1.6 were released under the MIT license. Contributions: see [CONTRIBUTING.md](CONTRIBUTING.md) and the [CLA](CLA.md). Releases are listed in the [changelog](CHANGELOG.md).
 
 ## Layout
 

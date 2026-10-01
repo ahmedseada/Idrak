@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Ahmed Seada
+// Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
+
 namespace Idrak.Samples.Ocr;
 
 /// <summary>One character cut out of a page, normalized to the classifier's input size.</summary>

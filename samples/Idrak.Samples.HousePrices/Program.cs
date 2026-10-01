@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Ahmed Seada
+// Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
+
 // Predicts house prices from 9 features with a small neural network: load CSV -> split -> scale ->
 // train with validation and early stopping -> evaluate in dollars -> predict new houses -> save.
 //

@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Ahmed Seada
+// Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
+
 // Image classification with a convolutional network: 16x16 grayscale drawings of circles, squares,
 // triangles and crosses at random positions and sizes, with noise. Conv2d, BatchNorm, MaxPool2d, Dropout.
 //
