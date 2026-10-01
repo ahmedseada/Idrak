@@ -35,6 +35,7 @@ public abstract class Module : IDisposable
     /// </summary>
     public Tensor Forward(Tensor input)
     {
+        using var offload = Offloading.Enter(this, input);           // offloaded weights staged on the device (else nothing)
         if (!Telemetry.IsEnabled(TelemetryLevel.Layers))
         {
             return ForwardCore(input);

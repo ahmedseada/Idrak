@@ -188,6 +188,10 @@ internal static unsafe partial class CudaDriver
     [LibraryImport(Library)]
     public static partial int cuEventRecord(IntPtr e, IntPtr stream);
 
+    /// <summary>Makes later work on <paramref name="stream"/> wait for <paramref name="e"/> (no host wait).</summary>
+    [LibraryImport(Library)]
+    public static partial int cuStreamWaitEvent(IntPtr stream, IntPtr e, uint flags);
+
     [LibraryImport(Library)]
     public static partial int cuEventSynchronize(IntPtr e);
 
@@ -207,6 +211,12 @@ internal static unsafe partial class CudaDriver
 
     [LibraryImport(Library, EntryPoint = "cuMemcpyHtoDAsync_v2")]
     public static partial int cuMemcpyHtoDAsync(ulong destination, void* source, nuint bytes, IntPtr stream);
+
+    [LibraryImport(Library, EntryPoint = "cuMemcpyDtoHAsync_v2")]
+    public static partial int cuMemcpyDtoHAsync(void* destination, ulong source, nuint bytes, IntPtr stream);
+
+    /// <summary>A stream that does not wait for (or hold up) the legacy default stream.</summary>
+    public const uint StreamNonBlocking = 1;
 
     [LibraryImport(Library)]
     public static partial int cuMemsetD32Async(ulong destination, uint value, nuint count, IntPtr stream);

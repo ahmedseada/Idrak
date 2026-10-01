@@ -87,9 +87,9 @@ public sealed class AdamW8Bit : Optimizer
             }
 
             int blocks = (p.Size + BlockSize - 1) / BlockSize;
-            var m8 = _m[i] ??= Tensor.PersistentZeros([(p.Size + 3) / 4], p.Device);
-            var v8 = _v[i] ??= Tensor.PersistentZeros([(p.Size + 3) / 4], p.Device);
-            var scales = _scales[i] ??= Tensor.PersistentZeros([2 * blocks], p.Device);
+            var m8 = _m[i] ??= CreateState([(p.Size + 3) / 4], p.Device);
+            var v8 = _v[i] ??= CreateState([(p.Size + 3) / 4], p.Device);
+            var scales = _scales[i] ??= CreateState([2 * blocks], p.Device);
             _map ??= Tensor.Persistent([.. DynamicMap(signed: true), .. DynamicMap(signed: false)], [512], p.Device, requiresGrad: false);
             p.Backend.AdamStep8Bit(p.Storage, p.Grad.Storage, m8.Storage, v8.Storage, scales.Storage, _map.Storage, p.Size,
                 correctedLr, Beta1, Beta2, Epsilon, scale, decay);
