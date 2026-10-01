@@ -26,7 +26,7 @@ RDNA 3/4; whether RDNA 2 (no matrix units) is fast enough with plain FP32 produc
 
 ## Phases
 
-### 1. Vulkan device and memory (after the shared work in README.md)
+### 1. Vulkan device and memory (after the shared work in plans/README.md)
 - Bind `vulkan-1.dll` / `libvulkan.so.1` with `LibraryImport`, as `CudaDriver` binds `nvcuda`.
 - Instance, physical-device choice (discrete before integrated), one compute queue, a buffer pool like the CUDA one
   (exact-size reuse, release under a memory limit), host-visible staging for uploads and downloads.
