@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Diagnostics;
 using Idrak.Layers;
 
@@ -212,7 +213,8 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         limit = Math.Max(1, limit);
         var stops = options.Stop.Where(x => x.Length > 0).ToArray();
         int holdBack = stops.Length == 0 ? 0 : stops.Max(x => x.Length) - 1;
-        var starts = tokens.Select(t => promptLength - t.Count).ToArray();
+        var stopValues = stops.Length == 0 ? null : SearchValues.Create(stops, StringComparison.Ordinal);
+        var starts =tokens.Select(t => promptLength - t.Count).ToArray();
         var input = new float[rows * promptLength];
         for (int r = 0; r < rows; r++)
         {
@@ -235,6 +237,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         var generated = Enumerable.Range(0, rows).Select(_ => new List<int>()).ToList();
         var ends = new int?[rows];                                            // text length where a stop sequence begins
         var emitted = new int[rows];                                          // characters handed out so far
+        var searched = Enumerable.Repeat("", rows).ToArray();                // the last text searched for stop sequences
         Model.Eval();
         TimeSpan promptDuration;
         using (Autograd.NoGrad())
@@ -265,14 +268,24 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
             read = produced;
             for (int r = 0; r < rows; r++)
             {
-                string text = Tokenizer.Decode(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(generated[r]));
-                if (ends[r] is null && stops.Length > 0)
+                if (ends[r] is int stopped && emitted[r] >= stopped)
                 {
-                    int at = stops.Select(x => text.IndexOf(x, StringComparison.Ordinal)).Where(i => i >= 0).DefaultIfEmpty(-1).Min();
+                    continue;                                                  // stopped and handed out: nothing more to add
+                }
+
+                string text = Tokenizer.Decode(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(generated[r]));
+                if (ends[r] is null && stopValues is not null)
+                {
+                    // The previous text held no stop, so a first match must end past the part it shares with this one
+                    // (decoding is not always prefix-stable: bytes still to come can change the last characters).
+                    int from = Math.Max(0, text.AsSpan().CommonPrefixLength(searched[r]) - holdBack);
+                    int at = text.AsSpan(from).IndexOfAny(stopValues);
                     if (at >= 0)
                     {
-                        ends[r] = at;
+                        ends[r] = from + at;
                     }
+
+                    searched[r] = text;
                 }
 
                 int until = ends[r] ?? (final ? text.Length : Math.Max(0, text.Length - holdBack));
@@ -380,6 +393,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         int promptTokens = history.Count;
         var stops = options.Stop.Where(s => s.Length > 0).ToArray();
         int holdBack = stops.Length == 0 ? 0 : stops.Max(s => s.Length) - 1;
+        var stopValues = stops.Length == 0 ? null : SearchValues.Create(stops, StringComparison.Ordinal);
 
         using var sampler = new TokenSampler(Device, 1, Tokenizer.VocabularySize, limit, Math.Max(1, options.RepeatLastN))
         {
@@ -396,7 +410,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         sampler.SetHistory(history);
 
         var generated = new List<int>();
-        var text = new System.Text.StringBuilder();
+        var text = new ArrayBufferWriter<char>();
         int emitted = 0, read = 0, decoded = 0, decodedFrom = 0, taken = 0, lastProgress = 0, resets = 0;
         TimeSpan promptDuration = TimeSpan.Zero;
         string? doneReason = null;
@@ -438,7 +452,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
 
                 if (whole > taken)
                 {
-                    text.Append(all, taken, whole - taken);
+                    text.Write(all.AsSpan(taken, whole - taken));
                     taken = whole;
                     lastProgress = generated.Count;
                 }
@@ -451,27 +465,33 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                 }
             }
 
-            int end = text.Length;
-            foreach (var stop in stops)
+            var written = text.WrittenSpan;
+            int end = written.Length;
+            int searchFrom = Math.Max(0, emitted - holdBack);
+            if (stopValues is not null && searchFrom < end && written[searchFrom..].IndexOfAny(stopValues) >= 0)
             {
-                // Only the text not yet searched (plus a stop's length of overlap) can hold a new match.
-                int from = Math.Max(0, emitted - stop.Length + 1);
-                int at = from < end ? text.ToString(from, end - from).IndexOf(stop, StringComparison.Ordinal) : -1;
-                at = at < 0 ? -1 : at + from;
-                if (at >= 0 && at < end)
+                // Some stop occurs: find the end as stop by stop (each search stops at the end found so far).
+                foreach (var stop in stops)
                 {
-                    end = at;
-                    doneReason = "stop";
+                    // Only the text not yet searched (plus a stop's length of overlap) can hold a new match.
+                    int from = Math.Max(0, emitted - stop.Length + 1);
+                    int at = from < end ? written[from..end].IndexOf(stop, StringComparison.Ordinal) : -1;
+                    at = at < 0 ? -1 : at + from;
+                    if (at >= 0 && at < end)
+                    {
+                        end = at;
+                        doneReason = "stop";
+                    }
                 }
             }
 
             int safe = doneReason is not null || final ? end : Math.Max(emitted, end - holdBack);
-            if (doneReason is null && !final && safe > emitted && char.IsHighSurrogate(text[safe - 1]))
+            if (doneReason is null && !final && safe > emitted && char.IsHighSurrogate(written[safe - 1]))
             {
                 safe--;                                                        // keep a character's two halves together
             }
 
-            string piece = text.ToString(emitted, safe - emitted);
+            string piece = new(written[emitted..safe]);
             emitted = safe;
             return piece;
         }

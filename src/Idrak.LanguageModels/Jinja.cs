@@ -212,7 +212,7 @@ public sealed partial class JinjaTemplate
                         }
 
                         tokens.Add(new Token(TokenKind.Text, raw, line));
-                        line += source[i..after].Count(c => c == '\n');
+                        line += source.AsSpan(i, after - i).Count('\n');
                         i = after;
                         afterBlock = true;
                         continue;
@@ -228,7 +228,7 @@ public sealed partial class JinjaTemplate
                         tokens.Add(new Token(TokenKind.Statement, body.Trim(), line));
                     }
 
-                    line += source[i..(end + 2)].Count(c => c == '\n');
+                    line += source.AsSpan(i, end + 2 - i).Count('\n');
                     i = end + 2;
                     trimNextText = stripAfter;
                     afterBlock = kind != '{';

@@ -353,10 +353,24 @@ public sealed class JinjaChatTemplate : ChatTemplate
             JsonValueKind.True => true,
             JsonValueKind.False => false,
             JsonValueKind.String => v.GetValue<string>(),
-            JsonValueKind.Number => long.TryParse(v.ToJsonString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out long l)
-                ? (object)l : double.Parse(v.ToJsonString(), NumberStyles.Float, CultureInfo.InvariantCulture),
+            JsonValueKind.Number => Number(v),
             _ => null,
         },
         _ => node.ToJsonString(),
     };
+
+    // A long when the number's JSON text is an integer that fits, else a double; parsed JSON is read as its raw UTF-8 text.
+    private static object Number(JsonValue v)
+    {
+        if (v.TryGetValue(out JsonElement element))
+        {
+            var utf8 = System.Runtime.InteropServices.JsonMarshal.GetRawUtf8Value(element);
+            return long.TryParse(utf8, NumberStyles.Integer, CultureInfo.InvariantCulture, out long l)
+                ? (object)l : double.Parse(utf8, NumberStyles.Float, CultureInfo.InvariantCulture);
+        }
+
+        string text = v.ToJsonString();
+        return long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out long n)
+            ? (object)n : double.Parse(text, NumberStyles.Float, CultureInfo.InvariantCulture);
+    }
 }
