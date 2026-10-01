@@ -52,11 +52,12 @@ const string Usage = """
     Chat:      --system S, --max-new N, --temperature T (0: greedy)
     Model:     --cuda | --gpu | --cpu | --device cuda:N | vulkan:N (default: the best GPU found, else the CPU; any CUDA
                GPU works, the faster kernels load where the GPU has them), --int8 | --int4 | --bf16 (base weights), --context N,
-               --kv8 | --kv16, --no-think, --matmul fp32|bf16|fp8, --offload, --gpu-memory GiB
+               --kv8 | --kv16 | --kv FORMAT (float32, int8, bfloat16), --no-think, --matmul fp32|bf16|fp8, --offload, --gpu-memory GiB
     """;
 
 Console.OutputEncoding = System.Text.Encoding.UTF8;                       // "…" and emoji on Windows consoles
 var positional = new List<string>();
+KeyValueLayout? kvLayout = null;
 bool int8 = false, bf16 = false, int4 = false, kv8 = false, kv16 = false, noThink = false, profileTraining = false;
 bool shuffleRows = true, dedupRows = true, mixByWeight = false;
 int context = 4096, samples = 100, maxNew = 512, evaluationBatch = 8, seed = 0, minChars = 0, maxChars = 0;
@@ -94,6 +95,11 @@ try
             case "--int4": int4 = true; break;
             case "--kv8": kv8 = true; break;
             case "--kv16": kv16 = true; break;
+            case "--kv":
+                string kvName = Next();
+                kvLayout = KeyValueLayouts.Names.Contains(kvName, StringComparer.OrdinalIgnoreCase) ? KeyValueLayouts.Get(kvName)
+                    : throw new ArgumentException($"--kv {kvName}: unknown format ({string.Join(", ", KeyValueLayouts.Names)}).");
+                break;
             case "--no-think": noThink = true; break;
             case "--context": context = NextInt(); break;
             case "--out" or "-o": output = Next(); break;
@@ -172,7 +178,7 @@ if (command is not ("train" or "evaluate" or "chat" or "export" or "download" or
 // Tensor cores (bfloat16) for the larger products unless asked otherwise.
 MixedPrecision.Default = matmul ?? MatMulPrecision.BFloat16;
 Device.Default = device;
-var cacheFormat = kv8 ? KeyValueFormat.Int8 : kv16 ? KeyValueFormat.BFloat16 : KeyValueFormat.Float32;
+var cacheLayout = kvLayout ?? KeyValueLayouts.For(kv8 ? KeyValueFormat.Int8 : kv16 ? KeyValueFormat.BFloat16 : KeyValueFormat.Float32);
 var status = new ConsoleStatus();
 var downloads = status.CreateDownloader();
 var readable = new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
@@ -409,7 +415,7 @@ int Evaluate()
         var encoder = new ChatTranscriptEncoder(model.ChatTemplate ?? throw new InvalidOperationException("The model has no chat template."), model.Tokenizer!);
         var sequences = rows.SelectMany(r => encoder.EncodeRow((JsonObject)r.DeepClone(), Math.Min(tuning.MaxLength, model.MaxPositions - 1))).ToList();
         double loss = sequences.Count > 0 ? FineTuner.Evaluate(model, sequences, tuning.BatchTokens) : double.NaN;
-        var chat = model.CreateChat(cacheFormat, context);
+        var chat = model.CreateChat(cacheLayout, context);
         int done = 0;
         double sum = 0;
         var clock = Stopwatch.StartNew();
@@ -551,7 +557,7 @@ int EvaluateChoices(List<JsonObject> rows)
 int Chat()
 {
     using var model = Load(merge: true);
-    var chat = model.CreateChat(cacheFormat, context);
+    var chat = model.CreateChat(cacheLayout, context);
     var messages = new List<ChatMessage>();
     if (systemPrompt is not null)
     {

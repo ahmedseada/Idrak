@@ -19,7 +19,7 @@ lavapipe (Mesa's software Vulkan driver) here, and on CUDA plus `--bench-gemv` o
 ## Phases
 
 1. ✅ **Minimum backend and device providers.** The whole test list passes on a backend with only memory and copies.
-2. **Public KV cache formats** (`KeyValueLayout`): built-ins keep their paths; an outside format implements write and
+2. ✅ **Public KV cache formats** (`KeyValueLayout`): built-ins keep their paths; an outside format implements write and
    expand, and attends through the composed fallback.
 3. **Vulkan runtime**: `libvulkan.so.1` / `vulkan-1.dll` through `LibraryImport`, one compute queue, a buffer pool,
    uploads and downloads (mapped memory where the device memory is host-visible: integrated GPUs copy once), dispatches

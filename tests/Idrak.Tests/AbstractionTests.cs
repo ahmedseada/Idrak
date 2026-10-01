@@ -11,7 +11,7 @@ internal static partial class Tests
 {
     private static readonly (string Name, Action<Device> Run)[] AbstractionGroup =
     [
-        ("abstractions: every KeyValueFormat has a layout that sizes its cache, and decoding through each layout matches the float32 cache (decoder and multi-head attention layers)", KeyValueLayoutsMatch),
+        ("abstractions: every KeyValueFormat has a layout that sizes its cache, and decoding through each layout matches the float32 cache (decoder and multi-head attention layers, bfloat16 expanded for the latter)", KeyValueLayoutsMatch),
         ("abstractions: every PackedFormat behind PackedWeight multiplies, expands, lists its buffers and builds layers like its own class (int8, 4-bit, bfloat16), one row and many", PackedWeightsMatch),
         ("abstractions: a custom ITokenSampler (greedy, on the host, not recordable) plugged into TextGenerator gives the built-in sampler's top-1 text, with and without the KV cache", CustomSampler),
     ];
@@ -88,10 +88,10 @@ internal static partial class Tests
 
     private static void KeyValueLayoutsMatch(Device device)
     {
-        foreach (var format in Enum.GetValues<KeyValueFormat>())
+        foreach (var format in Enum.GetValues<KeyValueFormat>().Where(f => f != KeyValueFormat.Custom))
         {
             var layout = KeyValueLayouts.For(format);
-            Check(layout.Format == format, $"{format}: its own layout");
+            Check(layout.Format == format && KeyValueLayouts.Get(format.ToString()) == layout, $"{format}: its own layout, registered by name");
             using var cache = new KeyValueCache(2, 5, 6, device, format);
             Check(cache.Keys.Shape[2] == layout.RowWidth(6) && (cache.KeyScales is not null) == layout.HasScales, $"{format}: cache sized by its layout");
         }
@@ -139,19 +139,13 @@ internal static partial class Tests
         }
 
         var mhaReference = Decode(attentionModel, KeyValueFormat.Float32, ids, tokenizer.VocabularySize);
-        var mhaInt8 = Decode(attentionModel, KeyValueFormat.Int8, ids, tokenizer.VocabularySize);
-        for (int i = 0; i < ids.Length; i++)
+        foreach (var format in new[] { KeyValueFormat.Int8, KeyValueFormat.BFloat16 })
         {
-            AssertClose(mhaReference[i], mhaInt8[i], 0.05f, $"multi-head attention, int8 cache, step {i}");
-        }
-
-        try
-        {
-            Decode(attentionModel, KeyValueFormat.BFloat16, ids, tokenizer.VocabularySize);
-            Check(false, "multi-head attention refuses a bfloat16 cache");
-        }
-        catch (NotSupportedException)
-        {
+            var actual = Decode(attentionModel, format, ids, tokenizer.VocabularySize);
+            for (int i = 0; i < ids.Length; i++)
+            {
+                AssertClose(mhaReference[i], actual[i], 0.05f, $"multi-head attention, {format} cache, step {i}");
+            }
         }
     }
 

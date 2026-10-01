@@ -813,7 +813,9 @@ weights is the bottleneck), and dequantize once per call for larger batches. Gra
 layers before them and LoRA adapters on them still train. ONNX export writes the dequantized weights. Biases,
 normalization, embeddings and convolutions stay float32. The int8 KV cache stores each head's keys and values
 at every position as bytes plus one scale (17/64 of the memory at head size 64); attention reads the bytes
-directly, and recorded CUDA graphs work with it.
+directly, and recorded CUDA graphs work with it. Cache formats of one's own derive from `KeyValueLayout` (write the
+rows, expand them to float32) and attend through masked float32 products on any device; register them with
+`KeyValueLayouts.Register` and choose them with `TextGenerator.CacheLayout` or `new DecodingContext(..., layout)`.
 
 ### ONNX: the optional `Idrak.Onnx` and `Idrak.Onnx.Runtime` packages
 

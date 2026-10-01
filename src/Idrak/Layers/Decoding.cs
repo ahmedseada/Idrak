@@ -27,26 +27,58 @@ public enum KeyValueFormat
 
     /// <summary>
     /// bfloat16 values (float32's range, about 3 significant digits): half the memory of <see cref="Float32"/> and nearly
-    /// the same results; attention reads the halves directly. Decoder models (<see cref="DecoderSpec"/>) only.
+    /// the same results; decoder models (<see cref="DecoderSpec"/>) read the halves directly, the multi-head attention
+    /// layer expands them to float32.
     /// </summary>
     BFloat16,
+
+    /// <summary>
+    /// A format of one's own (a <see cref="KeyValueLayout"/> registered with <see cref="KeyValueLayouts.Register"/>): what
+    /// <see cref="KeyValueCache.Format"/> and <see cref="DecodingContext.Format"/> report for it. Not a format to choose;
+    /// pass the layout itself.
+    /// </summary>
+    Custom,
 }
 
 /// <summary>
 /// Keys and values of one attention layer for every position decoded so far, [batch·heads, capacity, headDim]. With
 /// <see cref="KeyValueFormat.Int8"/>, <see cref="Keys"/> and <see cref="Values"/> hold packed bytes
 /// ([batch·heads, capacity, ceil(headDim / 4)] elements of four bytes) and <see cref="KeyScales"/>/<see cref="ValueScales"/>
-/// one scale per row.
+/// one scale per row. A format of one's own (<see cref="KeyValueLayout"/>) chooses its row width and scales.
 /// </summary>
 public sealed class KeyValueCache : IDisposable
 {
     internal KeyValueCache(int rows, int capacity, int headDim, Device device, KeyValueFormat format)
+        : this(rows, capacity, headDim, device, KeyValueLayouts.For(format))
     {
+    }
+
+    /// <summary>
+    /// Creates an empty (zeroed) cache stored by <paramref name="layout"/>: usually made by <see cref="DecodingContext"/>
+    /// for each attention layer; directly, e.g. to test a format of one's own.
+    /// </summary>
+    /// <param name="rows">Rows of cached heads (batch · key/value heads).</param>
+    /// <param name="capacity">Maximum positions.</param>
+    /// <param name="headDim">Values per head.</param>
+    /// <param name="device">Where the cache lives.</param>
+    /// <param name="layout">How keys and values are stored and attended over.</param>
+    public KeyValueCache(int rows, int capacity, int headDim, Device device, KeyValueLayout layout)
+    {
+        ArgumentNullException.ThrowIfNull(layout);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(rows);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(capacity);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(headDim);
+
         // Created outside any TensorScope: caches are usually created lazily inside a scoped prefill step.
-        Format = format;
+        Layout = layout;
+        Format = layout.Format;
         HeadDim = headDim;
-        Layout = KeyValueLayouts.For(format);
-        int width = Layout.RowWidth(headDim);
+        int width = layout.RowWidth(headDim);
+        if (width <= 0)
+        {
+            throw new InvalidOperationException($"The key/value format '{layout.Name}' gave a row width of {width} for {headDim} values per head.");
+        }
+
         Keys = Tensor.Empty([rows, capacity, width], device, zeroed: true, track: false);
         Values = Tensor.Empty([rows, capacity, width], device, zeroed: true, track: false);
         if (Layout.HasScales)
@@ -56,25 +88,28 @@ public sealed class KeyValueCache : IDisposable
         }
     }
 
-    /// <summary>How keys and values are stored.</summary>
+    /// <summary>How keys and values are stored: a built-in format, or <see cref="KeyValueFormat.Custom"/> (see <see cref="Layout"/>).</summary>
     public KeyValueFormat Format { get; }
 
     /// <summary>Values per head.</summary>
     public int HeadDim { get; }
 
-    /// <summary>How the format is written and attended over (see <see cref="IKeyValueLayout"/>).</summary>
-    internal IKeyValueLayout Layout { get; }
+    /// <summary>How keys and values are written and attended over.</summary>
+    public KeyValueLayout Layout { get; }
 
-    /// <summary>Cached keys, [batch·heads, capacity, headDim] (packed bytes for int8, bfloat16 pairs for bfloat16).</summary>
+    /// <summary>
+    /// Cached keys, [batch·heads, capacity, headDim] (packed bytes for int8, bfloat16 pairs for bfloat16; a format of one's
+    /// own: [batch·heads, capacity, <see cref="KeyValueLayout.RowWidth"/>]).
+    /// </summary>
     public Tensor Keys { get; }
 
     /// <summary>Cached values, [batch·heads, capacity, headDim] (packed bytes for int8).</summary>
     public Tensor Values { get; }
 
-    /// <summary>For int8: the scale of each cached key row, [batch·heads, capacity].</summary>
+    /// <summary>For int8 (or a format with <see cref="KeyValueLayout.HasScales"/>): the scale of each cached key row, [batch·heads, capacity].</summary>
     public Tensor? KeyScales { get; }
 
-    /// <summary>For int8: the scale of each cached value row, [batch·heads, capacity].</summary>
+    /// <summary>For int8 (or a format with <see cref="KeyValueLayout.HasScales"/>): the scale of each cached value row, [batch·heads, capacity].</summary>
     public Tensor? ValueScales { get; }
 
     /// <summary>Device memory used, in bytes.</summary>
@@ -117,8 +152,19 @@ public sealed class DecodingContext : IDisposable
     /// <param name="capacity">Maximum positions (the model's context length).</param>
     /// <param name="format">How the attention layers' keys and values are cached (int8: about a quarter of the memory).</param>
     public DecodingContext(Device device, int batch, int capacity, KeyValueFormat format = KeyValueFormat.Float32)
+        : this(device, batch, capacity, KeyValueLayouts.For(format))
     {
-        Format = format;
+    }
+
+    /// <summary>Creates an empty context whose caches are stored by <paramref name="layout"/> (a built-in or one's own format).</summary>
+    /// <param name="device">Where caches and counters live (the model's device).</param>
+    /// <param name="batch">Sequences decoded together.</param>
+    /// <param name="capacity">Maximum positions (the model's context length).</param>
+    /// <param name="layout">How the attention layers' keys and values are cached (e.g. <see cref="KeyValueLayouts.Get"/>).</param>
+    public DecodingContext(Device device, int batch, int capacity, KeyValueLayout layout)
+    {
+        ArgumentNullException.ThrowIfNull(layout);
+        Layout = layout;
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(batch);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(capacity);
         Device = device;
@@ -127,8 +173,11 @@ public sealed class DecodingContext : IDisposable
         Position = Tensor.Persistent([0f], [1], device, requiresGrad: false);
     }
 
-    /// <summary>How keys and values are cached.</summary>
-    public KeyValueFormat Format { get; }
+    /// <summary>How keys and values are cached: a built-in format, or <see cref="KeyValueFormat.Custom"/> (see <see cref="Layout"/>).</summary>
+    public KeyValueFormat Format => Layout.Format;
+
+    /// <summary>How keys and values are cached and attended over.</summary>
+    public KeyValueLayout Layout { get; }
 
     /// <summary>Device memory used by the key/value caches created so far, in bytes.</summary>
     public long CacheBytes => _caches.Values.Sum(c => c.Bytes);
@@ -179,7 +228,7 @@ public sealed class DecodingContext : IDisposable
     /// <summary>
     /// Rows of different lengths decoded together: row b's sequence starts at position RowStarts[b] (its prompt padded
     /// on the left so every row's prompt ends at the same position). Its tokens are numbered from there and see no earlier
-    /// position. Null (the default): every row starts at 0. Needs a <see cref="KeyValueFormat.Float32"/> cache.
+    /// position. Null (the default): every row starts at 0. Needs a <see cref="KeyValueFormat.Float32"/> cache for decoder models.
     /// </summary>
     public IReadOnlyList<int>? RowStarts { get; private set; }
 
@@ -256,13 +305,19 @@ public sealed class DecodingContext : IDisposable
     /// <summary>
     /// Records one decoding step (which must call <see cref="BeginStep"/>/<see cref="EndStep"/>, e.g. via
     /// <see cref="Sequential.ForwardCached(Tensor, DecodingContext)"/>) as a <see cref="ComputeGraph"/>. Because positions, masks and cache
-    /// offsets are computed on the device from <see cref="Position"/>, the same graph is valid at every position.
+    /// offsets are computed on the device from <see cref="Position"/>, the same graph is valid at every position. Needs a
+    /// <see cref="KeyValueLayout.Recordable"/> cache format.
     /// </summary>
     public ComputeGraph CaptureStep(Action step)
     {
         if (RowStarts is not null)
         {
             throw new InvalidOperationException("Steps with row starts upload positions from the host and cannot be recorded.");
+        }
+
+        if (!Layout.Recordable)
+        {
+            throw new InvalidOperationException($"The key/value cache format '{Layout.Name}' is not recordable (KeyValueLayout.Recordable); run its steps as they are.");
         }
 
         int length = Length;
@@ -321,7 +376,7 @@ public sealed class DecodingContext : IDisposable
     {
         if (!_caches.TryGetValue(owner, out var cache))
         {
-            _caches[owner] = cache = new KeyValueCache(rows, Capacity, headDim, Device, Format);
+            _caches[owner] = cache = new KeyValueCache(rows, Capacity, headDim, Device, Layout);
         }
 
         return cache;

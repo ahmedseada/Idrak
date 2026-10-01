@@ -73,6 +73,15 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
     public KeyValueFormat CacheFormat { get; init; } = KeyValueFormat.Float32;
 
     /// <summary>
+    /// The KV cache's layout when set (a format of one's own, or a built-in one by name with <see cref="KeyValueLayouts.Get"/>);
+    /// it takes precedence over <see cref="CacheFormat"/>. Default null: the layout of <see cref="CacheFormat"/>.
+    /// </summary>
+    public KeyValueLayout? CacheLayout { get; init; }
+
+    // The layout caches are created with.
+    private KeyValueLayout Layout => CacheLayout ?? KeyValueLayouts.For(CacheFormat);
+
+    /// <summary>
     /// Creates the sampler each generation chooses tokens with (default <see cref="TokenSampler.Create"/>: temperature,
     /// top-k, top-p, min-p and penalties on the device). Set it to plug in another <see cref="ITokenSampler"/>; one that is
     /// not <see cref="ITokenSampler.Recordable"/> turns off the CUDA graph of the decoding step.
@@ -108,7 +117,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         {
             var (context, ids) = (_kept, _keptIds);
             (_kept, _keptIds) = (null, []);
-            if (context is not null && (context.Capacity != capacity || context.Format != CacheFormat || context.Device != Device))
+            if (context is not null && (context.Capacity != capacity || context.Layout != Layout || context.Device != Device))
             {
                 context.Dispose();
                 return (null, []);
@@ -236,8 +245,8 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
 
         using var sampler = CreateSampler(new SamplerRequest(Device, rows, Tokenizer.VocabularySize, limit + 1, 1, options));   // no penalties here
         // Rows of different lengths need a cache whose format can attend from per-row starts (float32 today).
-        var batchFormat = KeyValueLayouts.For(CacheFormat).RowStarts ? CacheFormat : KeyValueFormat.Float32;
-        using var decoding = new DecodingContext(Device, rows, promptLength + limit, batchFormat) { LastPositionOnly = true };
+        var batchLayout = Layout.RowStarts ? Layout : KeyValueLayouts.For(KeyValueFormat.Float32);
+        using var decoding = new DecodingContext(Device, rows, promptLength + limit, batchLayout) { LastPositionOnly = true };
         decoding.SetRowStarts(starts);
         var generated = Enumerable.Range(0, rows).Select(_ => new List<int>()).ToList();
         var ends = new int?[rows];                                            // text length where a stop sequence begins
@@ -496,7 +505,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         {
             // NoGrad is entered per compute call, never held across a yield (it is thread-local state of the caller).
             var (kept, keptIds) = options.UseCache && KeepCache ? TakeCache(context) : (null, []);
-            var decoding = kept ?? new DecodingContext(Device, 1, context, CacheFormat);
+            var decoding = kept ?? new DecodingContext(Device, 1, context, Layout);
             decoding.LastPositionOnly = true;                                   // the sampler reads the last position only
             bool keep = false, steppedOnce = false;
             ComputeGraph? graph = null;
@@ -606,7 +615,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                     {
                         // The first step runs as it is: the device measures its card-dependent choices for these
                         // shapes (which it cannot while recording), and the graph recorded from the second step keeps them.
-                        if (graph is null && options.UseGraph && steppedOnce && sampler.Recordable)
+                        if (graph is null && options.UseGraph && steppedOnce && sampler.Recordable && decoding.Layout.Recordable)
                         {
                             graph = decoding.CaptureStep(Step);
                         }

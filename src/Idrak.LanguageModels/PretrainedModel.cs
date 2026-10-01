@@ -47,7 +47,7 @@ public sealed record PretrainedOptions
 /// A pretrained decoder-only language model read from a folder in the Hugging Face layout (config.json, safetensors
 /// weights, tokenizer.json, tokenizer_config.json): the <see cref="Network"/> built from its <see cref="Spec"/>, its
 /// <see cref="Tokenizer"/> and <see cref="ChatTemplate"/>. The network is an ordinary Idrak model: generate with
-/// <see cref="CreateGenerator"/>, chat with <see cref="CreateChat"/>, fine-tune with LoRA, quantize, save as a package.
+/// <see cref="CreateGenerator(KeyValueFormat, int?)"/>, chat with <see cref="CreateChat(KeyValueFormat, int?)"/>, fine-tune with LoRA, quantize, save as a package.
 /// </summary>
 public sealed class PretrainedModel : IDisposable
 {
@@ -150,9 +150,22 @@ public sealed class PretrainedModel : IDisposable
             Math.Min(contextLength ?? MaxPositions, MaxPositions)) { CacheFormat = cacheFormat };
     }
 
+    /// <summary>A text generator for the model whose KV cache is stored by <paramref name="cacheLayout"/> (see <see cref="KeyValueLayouts"/>).</summary>
+    public TextGenerator CreateGenerator(KeyValueLayout cacheLayout, int? contextLength = null)
+    {
+        ArgumentNullException.ThrowIfNull(cacheLayout);
+        Network.Eval();
+        return new TextGenerator(Network, Tokenizer ?? throw new InvalidOperationException("The model has no tokenizer."),
+            Math.Min(contextLength ?? MaxPositions, MaxPositions)) { CacheLayout = cacheLayout };
+    }
+
     /// <summary>A chat model using the model's own chat template (and its tool-call format).</summary>
     public ChatGenerator CreateChat(KeyValueFormat cacheFormat = KeyValueFormat.Float32, int? contextLength = null) =>
         new(CreateGenerator(cacheFormat, contextLength), ChatTemplate ?? throw new InvalidOperationException("The model has no chat template."));
+
+    /// <summary>A chat model using the model's own chat template, its KV cache stored by <paramref name="cacheLayout"/>.</summary>
+    public ChatGenerator CreateChat(KeyValueLayout cacheLayout, int? contextLength = null) =>
+        new(CreateGenerator(cacheLayout, contextLength), ChatTemplate ?? throw new InvalidOperationException("The model has no chat template."));
 
     /// <summary>
     /// Adds LoRA adapters (rank <paramref name="rank"/>, scale alpha / rank) to the projections named in

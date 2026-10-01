@@ -46,6 +46,14 @@
   (`IParquetCodec`, `ParquetCodecs.Register`, by Parquet codec id, e.g. to add Zstandard). The built-ins are registered
   the same way and read as before; `DataFormat` and `DataFiles.FormatOf` still name them.
 
+- KV cache formats of one's own (FP8, 4-bit, …): derive from the public `KeyValueLayout` (`RowWidth`, `Write`,
+  `Expand`) and attend through its default `Attend`, expanded to float32 and masked products, on any backend.
+  `KeyValueLayouts.Register` / `Get` / `Names` choose them by name ("float32", "int8", "bfloat16" built in); new
+  `DecodingContext(..., KeyValueLayout)`, `KeyValueCache.Layout`, `TextGenerator.CacheLayout`,
+  `PretrainedModel.CreateGenerator` / `CreateChat` overloads, `idrak-tune --kv NAME`, and `KeyValueFormat.Custom`
+  (what caches of such formats report). The built-in formats keep their kernels; a bfloat16 cache now also works in
+  `MultiHeadAttention` (expanded to float32) instead of throwing.
+
 ## 0.1.7 (2026-10-01)
 
 - License: Apache License 2.0 instead of MIT, from this version on (`LICENSE`, `NOTICE`, the packages' license
