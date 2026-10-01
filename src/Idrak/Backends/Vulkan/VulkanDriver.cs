@@ -13,7 +13,7 @@ public sealed class VulkanException(string message) : Exception(message);
 /// <summary>
 /// Bindings to the Vulkan loader (vulkan-1.dll on Windows, libvulkan.so.1 on Linux), which ships with the graphics
 /// driver: the core 1.0 and 1.1 functions a compute backend needs, called through the loader's exports (no SDK, no
-/// validation layers, no extensions). Handles of dispatchable objects (instance, physical device, device, queue, command
+/// validation layers), and VK_KHR_push_descriptor where the device has it (through vkGetDeviceProcAddr). Handles of dispatchable objects (instance, physical device, device, queue, command
 /// buffer) are pointers; every other handle is a 64-bit number.
 /// </summary>
 internal static unsafe partial class VulkanDriver
@@ -333,6 +333,26 @@ internal static unsafe partial class VulkanDriver
 
     [LibraryImport(Library)]
     public static partial int vkQueueWaitIdle(IntPtr queue);
+
+    [LibraryImport(Library)]
+    public static partial int vkEnumerateDeviceExtensionProperties(IntPtr physicalDevice, byte* layerName, ref uint count, VkExtensionProperties* properties);
+
+    [LibraryImport(Library)]
+    public static partial IntPtr vkGetDeviceProcAddr(IntPtr device, byte* name);
+
+    /// <summary>VK_KHR_push_descriptor: descriptors written straight into the command buffer (no sets to allocate).</summary>
+    public const string PushDescriptorExtension = "VK_KHR_push_descriptor";
+
+    /// <summary>VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR.</summary>
+    public const uint DescriptorSetLayoutPushDescriptor = 0x1;
+}
+
+/// <summary>VkExtensionProperties: an extension's name and version.</summary>
+[StructLayout(LayoutKind.Sequential)]
+internal unsafe struct VkExtensionProperties
+{
+    public fixed byte ExtensionName[256];
+    public uint SpecVersion;
 }
 
 // The structures, laid out as in vulkan_core.h (natural C alignment; 64-bit handles; pointers as void*).
