@@ -28,7 +28,7 @@ internal sealed unsafe partial class CudaBackend
     {
         if (groups > 0)
         {
-            Launch(K("norm_stats_f32"), (uint)groups, 1, PtxKernels.BlockSize, 1,
+            Launch(K("norm_stats_f32"), (uint)groups, 1, (uint)_shapes.BlockSize, 1,
                 P(x), P(mean), P(variance), P(invStd), U(outer), U(groups), U(inner), F(eps));
         }
     }
@@ -56,7 +56,7 @@ internal sealed unsafe partial class CudaBackend
         if (groups > 0)
         {
             bool hasB = b is not null && sumAB is not null;
-            Launch(K("group_reduce_f32"), (uint)groups, 1, PtxKernels.BlockSize, 1,
+            Launch(K("group_reduce_f32"), (uint)groups, 1, (uint)_shapes.BlockSize, 1,
                 P(a), hasB ? P(b!) : P(a), P(sumA), hasB ? P(sumAB!) : P(sumA), U(outer), U(groups), U(inner), U(hasB ? 1 : 0));
         }
     }

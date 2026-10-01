@@ -78,11 +78,62 @@ left open with the reason).
 | Skinny products to tensor cores (side 8–63, `BatchedMatMul`) | – | by size (≥ 2²⁴ multiply-adds or k ≥ 2048) | (a) which products MixedPrecision moves to bfloat16: a precision rule that must not depend on timing |
 | Tensor cores / FP8 / INT8 available | – | compute capability ≥ 8.0 / 8.9 / 8.0 as reported; a module the driver rejects is skipped | (a) ISA |
 | Head-size limits (`DecodeMaxDim` 256, `FlashMaxDim` 128, flash tensor-core 64/128) | – | 8 values per lane × 32 lanes; tiles in registers and shared memory | (a) kernel design |
-| Block sizes (`BlockSize`, `RowThreads`, `GemmThreads` 256; `GemvThreads`, `SamplerThreads` 1024; `Int8GemvThreads` 512), tiles (`Tile` 16, `TensorTile` 128, `TensorK` 32, `FlashTile` 32, `FlashTensorRows` 64, 8-bit k 64 × 3 stages) | – | written into the kernels; within every CUDA GPU's limits (1024 threads, 48 KiB static shared memory; the 8-bit and flash backward kernels' dynamic shared memory ≤ 99 KiB, checked by the driver) | (a) kernel design |
+| Kernel shapes (block sizes, tiles, stages, rows in registers) | written into the kernels | ✅ a `KernelShapes` record derived from `CudaDeviceLimits` (cuDeviceGetAttribute); PTX generated per distinct shapes; geometry checked against the reported limits | (a)/(b), see "Kernel shapes" below |
+| Grid z limit (`BatchedMatMul`) | 65535 fixed | ✅ as reported (`MAX_GRID_DIM_Z`) | (a) |
 | Top-k sampling (`CandidateSlice` 2048, `CandidateSlots` 64; one block per row when the vocabulary ≤ 4 slices) | – | kernel design (slots per block, top-k ≤ 64 takes the candidate pass) | (a) |
 | Split counters (≥ 4096), JIT log (16 KiB), grid z (65535) | – | buffer sizes / the CUDA grid limit | (a) |
 | Pool best fit (a cached block ≤ 25% larger, from 1024 floats) | – | relative to the request | (b) host-side allocator policy |
 | Async upload size (`AsyncUploadBytes` 4 MiB, 16 MiB staging ring) | fixed | host-side pinned memory: no GPU attribute applies | ⚠️ confirm on PCIe 3 / 4 / 5; measure if a run shows a difference |
+
+### Kernel shapes
+
+Every CUDA device's limits are read once (`CudaDeviceLimits.Read`: compute capability, SMs, warp size, threads per block
+and per SM, shared memory per block / with opt-in / per SM, registers per block and per SM, L2, bus width, clocks, grid
+limits, memory) and a `KernelShapes` record is derived from them; the main PTX module is generated for that record
+(`PtxKernels.SourceFor`, one text per distinct record) and the C# launches read the same record. Two kinds of shape:
+
+- **Shapes the kernels take at any value**, relative to what the device reports. On every CUDA GPU so far (1024 threads
+  per block, 32-lane warps) they come out at the sizes the kernels always had, so the PTX on the RTX 5070 Ti (12.0,
+  70 SMs), RTX 5050 Laptop (12.0, 20 SMs) and RTX 3060 Laptop (8.6, 30 SMs) is byte for byte what it was (a test checks
+  the derivation for 5.0–12.x as documented, and on the GPU it runs on).
+- **Geometry a kernel is written for** (tiles, warps per tile, pipeline stages, rows kept in registers): fixed by the
+  kernel's code; the device's limits judge whether it can run. A tensor-core module whose static or opt-in shared memory
+  exceeds what a block may use is not loaded (`PtxKernels.Fits`, read from the PTX's `.shared` arrays plus the dynamic
+  shared memory each kernel asks for) and its operations take the other path; a GPU that cannot run the main module
+  (warps other than 32 lanes, blocks under 1024 threads, too little shared memory) gets a clear reason instead of a
+  failed launch. Where two geometries exist, the faster is measured per shape (64 / 128 tiles, 64 / 128-row tiles).
+
+| Shape | Kind | Formula / reason | 5070 Ti · 5050 · 3060 |
+|---|---|---|---|
+| `BlockSize` (1-D kernels, sum, group statistics, column sums) | relative | a quarter of the largest block (≥ 4 resident blocks per SM on every generation), power of two | 256 · 256 · 256 |
+| `SamplerThreads` | relative | the largest block | 1024 · 1024 · 1024 |
+| Per-warp scratch of the row kernels (`_rv`, `_ri`) | relative | warps in the largest block | 32 · 32 · 32 |
+| Grid z limit | reported | `MAX_GRID_DIM_Z` | 65535 · 65535 · 65535 |
+| Warp of 32 lanes | ISA | PTX shuffles and lane masks are written for 32 lanes; checked | – |
+| `GemvThreads` 1024 (gemv_nn: 32 columns × 32 slices), `softmax_ce_rows` 1024 | geometry | needs 1024 threads per block; checked | fits all three |
+| `RowThreads` 256 (8 warps: gemv_nt's column per warp, the decoding attention's partial sums, 8-bit Adam's 256-value blocks) | geometry / data format | the 8-bit Adam block is 256 values | fits |
+| `Int8GemvThreads` 512 (32 column words × 16 k slices, unrolled) | geometry | – | fits |
+| `GemmThreads` 256, 64 / 128 tiles (8 × 8 / 4 × 4 per thread) | geometry | tile measured per shape | fits |
+| `Tile` 16 (16 × 16 threads) | geometry | – | fits |
+| `TensorTile` 128, `TensorThreads` 256, `TensorK` 32, two register-staged stages (40 KiB static) | geometry | `mma.sync.m16n8k16` (ISA), 8 warps of 64 × 32 | fits (≤ 48 KiB) |
+| 8-bit products: k 64 × 3 cp.async stages (60 KiB dynamic) | geometry | needs opt-in shared memory; checked | fits (99 KiB) |
+| Flash tensor-core: 64 query rows, 32 backward rows; d128 backward 68 KiB dynamic | geometry | checked | fits (99 KiB) |
+| `FlashTile` 32, `FlashMaxDim` 128, `DecodeMaxDim` 256 (8 values per lane × 32 lanes) | geometry | head-size limits follow from registers per lane | – |
+| `GemvRows` 8 | geometry | rows kept in registers; more rows go to the prompt kernels | – |
+| `CandidateSlice` 2048, `CandidateSlots` 64 | geometry | top-k ≤ 64 takes the candidate pass | – |
+| `Int4Group` 32, `MaxPermuteRank` 6 | data format / API | the stored int4 format; the permute API | – |
+| Staging ring 16 MiB, async uploads ≤ 4 MiB, pool best fit 25% / 1024 floats | host side | no GPU attribute describes host memory or the PCIe link | ⚠️ measure if a PCIe 3 / 4 / 5 run shows a difference |
+
+Architecture-specific paths are chosen by the reported compute capability, never a card name: bfloat16 tensor cores
+(`mma.sync`, `ldmatrix`, `cp.async`) and INT8 products from 8.0, FP8 (e4m3) products from 8.9. Candidates for later,
+each to be measured against today's path on a GPU that has it (not added here: they cannot be validated without one):
+- 8-bit products with 4 cp.async stages where a block may opt in to ≥ 80 KiB (8.0, 9.0, 10.x), measured against 3.
+- bfloat16 products through cp.async multi-stage pipelines (8.0+) instead of register staging.
+- `wgmma` with TMA on 9.0 (`sm_90a`) for products and flash attention; `tcgen05` / tensor memory on 10.x (`sm_100a`);
+  block-scaled FP8 / FP6 / FP4 `mma` on 12.x.
+- A smaller tensor tile for GPUs with few SMs, measured per shape like the 64-row tile.
+- A per-kernel register check at load (`cuFuncGetAttribute` max threads per block) against each kernel's launch size.
+- An L2 persistence window sized from the reported L2 for the KV cache during decoding (8.0+).
 
 **Open:**
 - Re-run `--bench-gemv` on the RTX 3060 to confirm "auto" is within 5% of the best column there, as it is on the

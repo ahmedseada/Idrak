@@ -106,8 +106,8 @@ internal static partial class PtxKernels
             st.global.f32 [%rd9], %f9;
             """));
 
-        // dgamma / dbeta: thread = column (x = column block of 256), grid y = chunks of `chunk` rows.
-        sb.AppendLine("""
+        // dgamma / dbeta: thread = column (x = column block of BlockSize), grid y = chunks of `chunk` rows.
+        sb.AppendLine($$"""
             .visible .entry layernorm_bwd_params_f32(
                 .param .u64 p_x, .param .u64 p_dy, .param .u64 p_stats, .param .u64 p_dgamma, .param .u64 p_dbeta,
                 .param .u32 p_rows, .param .u32 p_cols, .param .u32 p_chunk
@@ -130,7 +130,7 @@ internal static partial class PtxKernels
                 ld.param.u32 %r3, [p_chunk];
                 mov.u32 %r4, %ctaid.x;
                 mov.u32 %r5, %tid.x;
-                mad.lo.u32 %r6, %r4, 256, %r5;
+                mad.lo.u32 %r6, %r4, {{BlockSize}}, %r5;
                 setp.ge.u32 %p1, %r6, %r2;
                 @%p1 bra DONE;
                 mov.u32 %r7, %ctaid.y;

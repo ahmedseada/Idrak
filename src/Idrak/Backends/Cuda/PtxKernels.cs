@@ -13,8 +13,14 @@ namespace Idrak.Backends.Cuda;
 /// </summary>
 internal static partial class PtxKernels
 {
-    /// <summary>Threads per block for 1-D kernels. The reduction in <c>sum_f32</c> is unrolled for exactly this size.</summary>
-    public const int BlockSize = 256;
+    // The shapes the PTX is being generated for (KernelShapes; set by SourceFor on the generating thread).
+    [ThreadStatic]
+    private static KernelShapes? t_shapes;
+
+    private static KernelShapes Shapes => t_shapes ?? KernelShapes.Default;
+
+    /// <summary>Threads per block for 1-D kernels (KernelShapes.BlockSize). The reduction in <c>sum_f32</c> is unrolled for exactly this size.</summary>
+    private static int BlockSize => Shapes.BlockSize;
 
     /// <summary>Tile edge of the shared-memory matrix multiply; blocks are Tile x Tile threads.</summary>
     public const int Tile = 16;
@@ -33,10 +39,26 @@ internal static partial class PtxKernels
     ];
 
     // Built on first use (not in a static initializer): the kernels read static fields declared in the other
-    // partial files, whose initialization order relative to this file is unspecified.
-    private static readonly Lazy<string> LazySource = new(Build);
+    // partial files, whose initialization order relative to this file is unspecified. One text per distinct shapes.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<KernelShapes, Lazy<string>> Sources = new();
 
-    public static string Source => LazySource.Value;
+    /// <summary>The main module for the shapes every CUDA GPU so far derives (KernelShapes.Default).</summary>
+    public static string Source => SourceFor(KernelShapes.Default);
+
+    /// <summary>The main module generated for <paramref name="shapes"/> (built once per distinct shapes).</summary>
+    public static string SourceFor(KernelShapes shapes) => Sources.GetOrAdd(shapes, s => new Lazy<string>(() =>
+    {
+        var previous = t_shapes;
+        t_shapes = s;
+        try
+        {
+            return Build();
+        }
+        finally
+        {
+            t_shapes = previous;
+        }
+    })).Value;
 
     private static readonly Lazy<IReadOnlyDictionary<string, int>> LazyParameterCounts = new(() =>
         System.Text.RegularExpressions.Regex.Matches(Source, @"\.entry\s+(\w+)\s*\(([^)]*)\)")

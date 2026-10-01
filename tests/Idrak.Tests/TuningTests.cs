@@ -14,6 +14,7 @@ internal static partial class Tests
         ("tuning: candidates are compared by their median time, so a lucky timing does not win and a close one keeps the formula's choice", TuneMedians),
         ("tuning: the cache file of measured choices round-trips and is ignored when the GPU, driver, library build or format differs", TuningCacheFile),
         ("tuning: measured choices are kept per GPU in the cache folder and read back instead of measured again", TuningPersisted),
+        ("kernel shapes: derived from the device's reported limits; today's cards (12.0 and 8.6) give today's PTX byte for byte, other limits valid PTX with the same kernels, or a reason they cannot run", KernelShapesFromLimits),
     ];
 
     private static void TunedChoicesMatch(Device device)
@@ -278,5 +279,78 @@ internal static partial class Tests
             {
             }
         }
+    }
+
+    // Pure (no GPU): shapes and the checks of what kernels need, from synthetic limit records.
+    private static void KernelShapesFromLimits(Device device)
+    {
+        if (device.Backend is CudaBackend cuda)
+        {
+            // What this GPU reports gives the shapes every CUDA GPU so far gives (1024 threads per block, 32-lane warps).
+            Check(cuda.Shapes == KernelShapes.Default, $"this GPU's limits give today's shapes: {cuda.Limits}");
+            Check(cuda.Limits.SharedPerBlockOptin >= cuda.Limits.SharedPerBlock && cuda.Limits.MaxGridZ > 0 && cuda.Limits.RegistersPerBlock > 0, $"limits read: {cuda.Limits}");
+            return;
+        }
+
+        if (device.Type != DeviceType.Cpu)
+        {
+            return;
+        }
+
+        // The cards the defaults were measured on, and the other compute capabilities as documented.
+        var cards = new (string Name, CudaDeviceLimits Limits)[]
+        {
+            ("RTX 5070 Ti (12.0, 70 SMs)", CudaDeviceLimits.Documented(12, 0, 70, 16L << 30, 48 << 20)),
+            ("RTX 5050 Laptop (12.0, 20 SMs)", CudaDeviceLimits.Documented(12, 0, 20, 8L << 30, 32 << 20)),
+            ("RTX 3060 Laptop (8.6, 30 SMs)", CudaDeviceLimits.Documented(8, 6, 30, 6L << 30, 3 << 20)),
+            ("8.0", CudaDeviceLimits.Documented(8, 0, 108)),
+            ("8.9", CudaDeviceLimits.Documented(8, 9, 76)),
+            ("9.0", CudaDeviceLimits.Documented(9, 0, 132)),
+            ("10.0", CudaDeviceLimits.Documented(10, 0, 148)),
+            ("7.5", CudaDeviceLimits.Documented(7, 5, 40)),
+        };
+        foreach (var (name, limits) in cards)
+        {
+            var shapes = KernelShapes.Derive(limits, out string? reason);
+            Check(shapes == KernelShapes.Default, $"{name}: today's shapes ({reason})");
+            Check(ReferenceEquals(PtxKernels.SourceFor(shapes!), PtxKernels.Source), $"{name}: today's PTX, byte for byte (one module text)");
+        }
+
+        var defaults = KernelShapes.Default;
+        Check(defaults is { BlockSize: 256, SamplerThreads: 1024, MaxWarpsPerBlock: 32 }, "the defaults are the sizes the kernels had");
+        var sharedBytes = PtxKernels.StaticSharedBytes(PtxKernels.Source);
+        Check(sharedBytes["sum_f32"] == 256 * 4 && sharedBytes["norm_stats_f32"] == 2 * 256 * 4 && sharedBytes["fill_f32"] == 0, "static shared memory read from the PTX");
+
+        // A device with larger blocks: the shape-generic kernels take them, the others keep their geometry.
+        var large = CudaDeviceLimits.Documented(12, 0, 70) with { MaxThreadsPerBlock = 2048 };
+        var wide = KernelShapes.Derive(large, out string? largeReason);
+        Check(wide is { BlockSize: 512, SamplerThreads: 2048, MaxWarpsPerBlock: 64 }, $"2048 threads per block: larger shapes ({largeReason})");
+        string source = PtxKernels.SourceFor(wide!);
+        Check(source != PtxKernels.Source && source.Contains("sdata[512]", StringComparison.Ordinal) && source.Contains("s1[512]", StringComparison.Ordinal)
+              && source.Contains("_rv[64]", StringComparison.Ordinal) && source.Contains("mad.lo.u32 %r7, %r5, 512, %r6;", StringComparison.Ordinal), "the PTX generated for them");
+        var signatures = System.Text.RegularExpressions.Regex.Matches(source, @"\.entry\s+(\w+)\s*\(([^)]*)\)")
+            .ToDictionary(m => m.Groups[1].Value, m => System.Text.RegularExpressions.Regex.Count(m.Groups[2].Value, @"\.param\b"));
+        Check(signatures.Count == PtxKernels.ParameterCounts.Count && signatures.All(e => PtxKernels.ParameterCounts.TryGetValue(e.Key, out int n) && n == e.Value),
+            "the same kernels with the same parameters");
+        Check(PtxKernels.Fits(source, large) is null, "and they fit");
+
+        // Devices the kernels cannot run on: a reason, no shapes.
+        Check(KernelShapes.Derive(large with { MaxThreadsPerBlock = 512 }, out string? small) is null && small!.Contains("1024", StringComparison.Ordinal), $"512 threads per block: {small}");
+        Check(KernelShapes.Derive(large with { WarpSize = 64 }, out string? warp) is null && warp!.Contains("32-lane", StringComparison.Ordinal), $"64-lane warps: {warp}");
+        Check(KernelShapes.Derive(large with { SharedPerBlock = 16 << 10, SharedPerBlockOptin = 16 << 10 }, out string? shared) is null && shared!.Contains("shared memory", StringComparison.Ordinal),
+            $"16 KiB of shared memory: {shared}");
+
+        // Tensor-core modules: judged by the shared memory a block may use (static, and with opting in).
+        var modules = PtxKernels.TensorCoreModules.ToDictionary(m => m.Name, m => m.Source);
+        var ampere = CudaDeviceLimits.Documented(8, 6, 30);
+        Check(modules.Values.All(m => PtxKernels.Fits(m, ampere) is null), "every tensor-core module fits 8.6 (99 KiB per block)");
+        var tight = ampere with { SharedPerBlockOptin = 48 << 10 };
+        Check(PtxKernels.Fits(modules["products"], tight) is null, "the products need no more than 48 KiB");
+        Check(PtxKernels.Fits(modules["attention d128"], tight) is { } flash && flash.Contains("flash_tc_bwd", StringComparison.Ordinal), "the flash backward (d128) needs more than 48 KiB");
+        Check(PtxKernels.Fits(modules["int8 products"], tight) is not null, "the 8-bit products need more than 48 KiB");
+        Check(PtxKernels.DynamicSharedBytes("flash_tc_bwd_kv_d64") == PtxKernels.FlashTensorBackwardKvShared(64)
+              && PtxKernels.DynamicSharedBytes("flash_tc_bwd_q_d128") == PtxKernels.FlashTensorBackwardQShared(128)
+              && PtxKernels.DynamicSharedBytes("gemm8_s8_f32") == PtxKernels.EightBitShared && PtxKernels.DynamicSharedBytes("gemm_tc_nn_f32") == 0,
+            "dynamic shared memory per kernel");
     }
 }
