@@ -13,6 +13,7 @@ internal static partial class Tests
     [
         ("datasets: Parquet files (nested lists, structs, maps; v1/v2 pages; dictionary, delta, byte-stream-split; Snappy/Gzip/Brotli/LZ4) read as pyarrow reads them", ParquetMatchesPyarrow),
         ("datasets: JSON Lines, JSON, CSV/TSV, text and code files, also in .gz, .zip and .tar.gz", DatasetFormats),
+        ("datasets: CSV and JSON Lines read in blocks as a character (line) at a time: quotes, line breaks and records across block edges, byte order marks, invalid UTF-8", DatasetReadersMatchReference),
         ("datasets: select, filter, shuffle, deduplicate, split and mix are lazy, streamed and reproducible", DatasetOperations),
         ("datasets: downloads are cached, resumed, retried, and explain missing access", DatasetDownloads),
         ("datasets: rows of common layouts (messages, ShareGPT, Alpaca, question/answer, TRL, templates) become conversations or text; specs and recipes", DatasetChatAndRecipes),

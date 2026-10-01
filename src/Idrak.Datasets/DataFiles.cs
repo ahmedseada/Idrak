@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Formats.Tar;
 using System.Globalization;
 using System.IO.Compression;
@@ -292,9 +293,147 @@ public static class DataFiles
         return Decompressed(memory, name);
     }
 
+    // Lines are split and parsed as UTF-8 bytes, not decoded to text and encoded back. Lines end at \n, \r or \r\n (as ReadLine).
     private static IEnumerable<JsonObject> JsonLines(Func<Stream> open, string path)
     {
-        using var reader = new StreamReader(open(), Encoding.UTF8, true, 1 << 16);
+        var stream = open();
+        try
+        {
+            var buffer = new byte[1 << 16];
+            int start = 0, length = 0, number = 0;
+            bool end = false;
+            while (length < 4 && !end)
+            {
+                int read = stream.Read(buffer, length, buffer.Length - length);
+                length += read;
+                end = read == 0;
+            }
+
+            var head = buffer.AsSpan(0, length);
+            if (head.StartsWith((ReadOnlySpan<byte>)[0xFE, 0xFF]) || head.StartsWith((ReadOnlySpan<byte>)[0xFF, 0xFE]) || head.StartsWith((ReadOnlySpan<byte>)[0, 0, 0xFE, 0xFF]))
+            {
+                // A UTF-16 or UTF-32 byte order mark: read as text, as StreamReader detects it.
+                stream = new PrefixedStream(buffer[..length], stream);
+                foreach (var row in JsonLinesText(stream, path))
+                {
+                    yield return row;
+                }
+
+                yield break;
+            }
+
+            if (head.StartsWith((ReadOnlySpan<byte>)[0xEF, 0xBB, 0xBF]))
+            {
+                start = 3;
+            }
+
+            while (true)
+            {
+                int found = buffer.AsSpan(start, length - start).IndexOfAny((byte)'\n', (byte)'\r');
+                if (found < 0 && !end)
+                {
+                    // The line goes on past the buffer: move it to the front (growing the buffer if it fills it) and read more.
+                    if (start == 0 && length == buffer.Length)
+                    {
+                        Array.Resize(ref buffer, buffer.Length * 2);
+                    }
+                    else if (start > 0)
+                    {
+                        buffer.AsSpan(start, length - start).CopyTo(buffer);
+                        length -= start;
+                        start = 0;
+                    }
+
+                    int read = stream.Read(buffer, length, buffer.Length - length);
+                    length += read;
+                    end = read == 0;
+                    continue;
+                }
+
+                int lineEnd = found < 0 ? length : start + found;
+                if (found < 0 && lineEnd == start)
+                {
+                    break;
+                }
+
+                // A \r at the end of the data read so far may be the start of \r\n: read on before deciding.
+                if (found >= 0 && buffer[lineEnd] == '\r' && lineEnd + 1 == length && !end)
+                {
+                    if (start > 0)
+                    {
+                        buffer.AsSpan(start, length - start).CopyTo(buffer);
+                        length -= start;
+                        start = 0;
+                    }
+                    else if (length == buffer.Length)
+                    {
+                        Array.Resize(ref buffer, buffer.Length * 2);
+                    }
+
+                    int read = stream.Read(buffer, length, buffer.Length - length);
+                    length += read;
+                    end = read == 0;
+                    continue;
+                }
+
+                number++;
+                var node = ParseLine(buffer, start, lineEnd - start, path, number, out bool blank);
+                start = found < 0 ? length : lineEnd + 1;
+                if (found >= 0 && buffer[lineEnd] == '\r' && start < length && buffer[start] == '\n')
+                {
+                    start++;
+                }
+
+                if (!blank)
+                {
+                    yield return node as JsonObject ?? new JsonObject { ["value"] = node };
+                }
+            }
+        }
+        finally
+        {
+            stream.Dispose();
+        }
+    }
+
+    private static readonly SearchValues<byte> AsciiSpaces = SearchValues.Create(" \t\v\f"u8);
+
+    // A line of JSON Lines; blank (all white space, as string.IsNullOrWhiteSpace) lines are skipped. Invalid UTF-8 is decoded
+    // to text first, its bad bytes replaced as StreamReader replaces them.
+    private static JsonNode? ParseLine(byte[] buffer, int start, int length, string path, int number, out bool blank)
+    {
+        var line = buffer.AsSpan(start, length);
+        int text = line.IndexOfAnyExcept(AsciiSpaces);
+        blank = text < 0;
+        if (blank)
+        {
+            return null;
+        }
+
+        string? decoded = null;
+        if (line[text] >= 0x80 || !System.Text.Unicode.Utf8.IsValid(line))
+        {
+            decoded = Encoding.UTF8.GetString(line);
+            if (string.IsNullOrWhiteSpace(decoded))
+            {
+                blank = true;
+                return null;
+            }
+        }
+
+        try
+        {
+            return decoded is null ? JsonNode.Parse(line) : JsonNode.Parse(decoded);
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidDataException($"{path}, line {number}: {ex.Message}", ex);
+        }
+    }
+
+    private static IEnumerable<JsonObject> JsonLinesText(Stream stream, string path)
+    {
+        using var reader = new StreamReader(stream, Encoding.UTF8, true, 1 << 16);
         int number = 0;
         while (reader.ReadLine() is { } line)
         {
@@ -315,6 +454,57 @@ public static class DataFiles
             }
 
             yield return node as JsonObject ?? new JsonObject { ["value"] = node };
+        }
+    }
+
+    // The bytes already read from a stream, then the rest of it.
+    private sealed class PrefixedStream(byte[] prefix, Stream rest) : Stream
+    {
+        private int _pos;
+
+        public override bool CanRead => true;
+
+        public override bool CanSeek => false;
+
+        public override bool CanWrite => false;
+
+        public override long Length => throw new NotSupportedException();
+
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override int Read(byte[] buffer, int offset, int count) => Read(buffer.AsSpan(offset, count));
+
+        public override int Read(Span<byte> buffer)
+        {
+            if (_pos < prefix.Length)
+            {
+                int n = Math.Min(buffer.Length, prefix.Length - _pos);
+                prefix.AsSpan(_pos, n).CopyTo(buffer);
+                _pos += n;
+                return n;
+            }
+
+            return rest.Read(buffer);
+        }
+
+        public override void Flush()
+        {
+        }
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                rest.Dispose();
+            }
+
+            base.Dispose(disposing);
         }
     }
 
@@ -444,67 +634,143 @@ public static class DataFiles
     }
 
     // RFC 4180 records: quoted fields may hold delimiters, quotes ("") and line breaks.
+    // The list is reused: each record is read before the next is asked for.
     private static IEnumerable<List<string>> Records(TextReader reader, char delimiter)
     {
+        var records = new CsvReader(reader, delimiter);
         var fields = new List<string>();
-        var field = new StringBuilder();
-        bool quoted = false, any = false;
-        int c;
-        while ((c = reader.Read()) >= 0)
+        while (records.Next(fields))
         {
-            char ch = (char)c;
-            any = true;
-            if (quoted)
+            yield return fields;
+            fields.Clear();
+        }
+    }
+
+    // Reads blocks of characters and jumps between delimiters, quotes and line breaks rather than reading a character at a time;
+    // an unquoted field within one block is made straight from it.
+    private sealed class CsvReader(TextReader reader, char delimiter)
+    {
+        private static readonly SearchValues<char> Commas = SearchValues.Create(",\r\n"), Tabs = SearchValues.Create("\t\r\n");
+
+        // A quote opens quoting only as a field's first character, so after it only these end an unquoted run.
+        private readonly SearchValues<char> _ends = delimiter switch
+        {
+            ',' => Commas,
+            '\t' => Tabs,
+            _ => SearchValues.Create([delimiter, '\r', '\n']),
+        };
+
+        private readonly char[] _buffer = new char[1 << 14];
+        private readonly StringBuilder _field = new();
+        private int _pos, _length;
+
+        // Adds the next record's fields; false at the end of the text.
+        public bool Next(List<string> fields)
+        {
+            if (_pos >= _length && !Fill())
             {
-                if (ch == '"')
-                {
-                    if (reader.Peek() == '"')
-                    {
-                        field.Append('"');
-                        reader.Read();
-                    }
-                    else
-                    {
-                        quoted = false;
-                    }
-                }
-                else
-                {
-                    field.Append(ch);
-                }
+                return false;
             }
-            else if (ch == '"' && field.Length == 0)
+
+            while (true)
             {
-                quoted = true;
-            }
-            else if (ch == delimiter)
-            {
-                fields.Add(field.ToString());
-                field.Clear();
-            }
-            else if (ch is '\n' or '\r')
-            {
-                if (ch == '\r' && reader.Peek() == '\n')
+                if (_pos >= _length && !Fill())
                 {
-                    reader.Read();
+                    fields.Add("");                                 // the text ends after a delimiter
+                    return true;
                 }
 
-                fields.Add(field.ToString());
-                field.Clear();
-                yield return fields;
-                fields = [];
-                any = false;
-            }
-            else
-            {
-                field.Append(ch);
+                if (_buffer[_pos] == '"')
+                {
+                    _pos++;
+                    ReadQuoted();
+                }
+
+                while (true)
+                {
+                    int start = _pos;
+                    int found = _buffer.AsSpan(start, _length - start).IndexOfAny(_ends);
+                    if (found < 0)
+                    {
+                        _field.Append(_buffer, start, _length - start);
+                        if (!Fill())
+                        {
+                            fields.Add(Take(0, 0));
+                            return true;
+                        }
+
+                        continue;
+                    }
+
+                    int end = start + found;
+                    char ch = _buffer[end];
+                    fields.Add(Take(start, end));
+                    _pos = end + 1;
+                    if (ch == delimiter)
+                    {
+                        break;
+                    }
+
+                    if (ch == '\r' && (_pos < _length || Fill()) && _buffer[_pos] == '\n')
+                    {
+                        _pos++;
+                    }
+
+                    return true;
+                }
             }
         }
 
-        if (any)
+        // A quoted field's text into _field, up to its closing quote (or the end of the text); "" is read as ".
+        private void ReadQuoted()
         {
-            fields.Add(field.ToString());
-            yield return fields;
+            while (true)
+            {
+                int start = _pos;
+                int found = _buffer.AsSpan(start, _length - start).IndexOf('"');
+                if (found < 0)
+                {
+                    _field.Append(_buffer, start, _length - start);
+                    if (!Fill())
+                    {
+                        return;
+                    }
+
+                    continue;
+                }
+
+                int quote = start + found;
+                _field.Append(_buffer, start, quote - start);
+                _pos = quote + 1;
+                if ((_pos < _length || Fill()) && _buffer[_pos] == '"')
+                {
+                    _field.Append('"');
+                    _pos++;
+                    continue;
+                }
+
+                return;
+            }
+        }
+
+        // The field: the text held in _field (from earlier blocks or quotes), then _buffer[start..end].
+        private string Take(int start, int end)
+        {
+            if (_field.Length == 0)
+            {
+                return new string(_buffer, start, end - start);
+            }
+
+            string text = _field.Append(_buffer, start, end - start).ToString();
+            _field.Clear();
+            return text;
+        }
+
+        private bool Fill()
+        {
+            _pos = 0;
+            _length = reader.Read(_buffer, 0, _buffer.Length);
+            return _length > 0;
         }
     }
 
@@ -516,7 +782,7 @@ public static class DataFiles
         }
 
         // Codes such as zip codes and ids keep their leading zeros as text.
-        string digits = cell.TrimStart('-', '+');
+        var digits = cell.AsSpan().TrimStart("-+");
         if (digits.Length > 1 && digits[0] == '0' && char.IsAsciiDigit(digits[1]))
         {
             return cell;
@@ -560,11 +826,11 @@ public static class DataFiles
                 while (true)
                 {
                     string? line = reader.ReadLine();
-                    if (line is null || line.Trim().Length == 0)
+                    if (line is null || line.AsSpan().IsWhiteSpace())
                     {
                         if (paragraph.Length > 0)
                         {
-                            yield return new JsonObject { ["text"] = paragraph.ToString().TrimEnd('\n') };
+                            yield return new JsonObject { ["text"] = paragraph.ToString(0, paragraph.Length - 1) };   // without the last line's \n
                             paragraph.Clear();
                         }
 

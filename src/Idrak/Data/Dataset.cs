@@ -170,26 +170,67 @@ public sealed class Dataset
     /// Empty lines are skipped; quoted fields are unquoted but may not contain the delimiter.
     /// </summary>
     /// <exception cref="FormatException">A value is not a number; the message names the line and column.</exception>
-    public static Dataset LoadCsv(string path, CsvOptions options) => ParseCsv(File.ReadAllLines(path), options, path);
+    public static Dataset LoadCsv(string path, CsvOptions options)
+    {
+        string text = File.ReadAllText(path);
+        return ParseCsv(text, Lines(text, alsoCarriageReturn: true), options, path);
+    }
 
     /// <summary>Parses CSV text already in memory (see <see cref="LoadCsv"/>).</summary>
-    public static Dataset ParseCsv(string text, CsvOptions options) =>
-        ParseCsv(text.Split(["\r\n", "\n"], StringSplitOptions.None), options, "text");
+    public static Dataset ParseCsv(string text, CsvOptions options) => ParseCsv(text, Lines(text, alsoCarriageReturn: false), options, "text");
 
-    private static Dataset ParseCsv(string[] lines, CsvOptions options, string source)
+    // Where each line starts and ends, rather than a string per line. Lines end at \r\n or \n, as string.Split(["\r\n", "\n"]) splits
+    // them, or also at a lone \r with no empty line after the last break, as File.ReadAllLines splits them.
+    private static List<Range> Lines(string text, bool alsoCarriageReturn)
+    {
+        var lines = new List<Range>();
+        int start = 0;
+        while (true)
+        {
+            var rest = text.AsSpan(start);
+            int found = alsoCarriageReturn ? rest.IndexOfAny('\r', '\n') : rest.IndexOf('\n');
+            if (found < 0)
+            {
+                if (!alsoCarriageReturn || start < text.Length)
+                {
+                    lines.Add(start..text.Length);
+                }
+
+                return lines;
+            }
+
+            int end = start + found;
+            if (!alsoCarriageReturn && end > start && text[end - 1] == '\r')
+            {
+                lines.Add(start..(end - 1));
+            }
+            else
+            {
+                lines.Add(start..end);
+            }
+
+            start = end + 1;
+            if (alsoCarriageReturn && text[end] == '\r' && start < text.Length && text[start] == '\n')
+            {
+                start++;
+            }
+        }
+    }
+
+    private static Dataset ParseCsv(string text, List<Range> lines, CsvOptions options, string source)
     {
         int first = 0;
-        while (first < lines.Length && string.IsNullOrWhiteSpace(lines[first]))
+        while (first < lines.Count && text.AsSpan()[lines[first]].IsWhiteSpace())
         {
             first++;
         }
 
-        if (first == lines.Length)
+        if (first == lines.Count)
         {
             throw new FormatException($"{source} is empty.");
         }
 
-        string[] header = SplitLine(lines[first], options.Delimiter);
+        string[] header = SplitLine(text[lines[first]], options.Delimiter);
         if (options.HasHeader)
         {
             first++;
@@ -213,15 +254,22 @@ public sealed class Dataset
         int[] targetColumns = [.. options.TargetColumns.Select(Resolve)];
         var ignored = options.IgnoreColumns.Select(Resolve).Concat(targetColumns).ToHashSet();
         int[] featureColumns = [.. Enumerable.Range(0, header.Length).Where(i => !ignored.Contains(i))];
+        // The columns parsed: features and targets (ignored ones are skipped).
+        var parsed = new bool[header.Length];
+        foreach (int i in featureColumns.Concat(targetColumns))
+        {
+            parsed[i] = true;
+        }
+
         if (targetColumns.Length == 0)
         {
             throw new ArgumentException("At least one target column is required.", nameof(options));
         }
 
-        var rows = new List<int>(lines.Length - first);
-        for (int i = first; i < lines.Length; i++)
+        var rows = new List<int>(lines.Count - first);
+        for (int i = first; i < lines.Count; i++)
         {
-            if (!string.IsNullOrWhiteSpace(lines[i]))
+            if (!text.AsSpan()[lines[i]].IsWhiteSpace())
             {
                 rows.Add(i);
             }
@@ -245,7 +293,7 @@ public sealed class Dataset
         void ParseRows() => Parallel.For(0, count, ComputeResources.ParallelOptions, () => new float[header.Length], (row, _, values) =>
         {
             int lineIndex = rows[row];
-            ReadOnlySpan<char> line = lines[lineIndex];
+            var line = text.AsSpan()[lines[lineIndex]];
             int column = 0;
             foreach (var range in line.Split(options.Delimiter))
             {
@@ -255,7 +303,7 @@ public sealed class Dataset
                 }
 
                 var field = line[range].Trim().Trim('"');
-                if (!ignored.Contains(column) || targetColumns.Contains(column))
+                if (parsed[column])
                 {
                     if (!float.TryParse(field, NumberStyles.Float, options.Culture, out values[column]))
                     {

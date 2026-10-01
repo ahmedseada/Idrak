@@ -237,6 +237,36 @@ internal static partial class Tests
         catch (FormatException ex) when (ex.Message.Contains("line 2"))
         {
         }
+
+        // Lines end at \r\n or \n, and in files also at a lone \r (as File.ReadAllLines); errors count lines so.
+        try
+        {
+            Dataset.ParseCsv("a,b\r\n1,2\n\r\n3,x\r\n", new CsvOptions { TargetColumns = ["b"] });
+            throw new Exception("bad number accepted");
+        }
+        catch (FormatException ex) when (ex.Message.Contains("line 4"))
+        {
+        }
+
+        string file = Path.Combine(Path.GetTempPath(), $"idrak-csv-{Guid.NewGuid():N}.csv");
+        try
+        {
+            File.WriteAllText(file, "﻿a,b\r1,2\r\n\r\n 3 ,\"4\"\r");
+            var loaded = Dataset.LoadCsv(file, new CsvOptions { TargetColumns = ["b"] });
+            Check(loaded.Count == 2 && loaded.FeatureNames.SequenceEqual(["a"]), $"csv file with lone \\r line breaks: {loaded}");
+            AssertClose([1f, 3f], [loaded.GetFeatures(0)[0], loaded.GetFeatures(1)[0]], 0, "csv file features");
+            AssertClose([2f, 4f], [loaded.GetTargets(0)[0], loaded.GetTargets(1)[0]], 0, "csv file targets");
+            File.WriteAllText(file, "a,b\r1,2\r\r3,x");
+            Dataset.LoadCsv(file, new CsvOptions { TargetColumns = ["b"] });
+            throw new Exception("bad number accepted");
+        }
+        catch (FormatException ex) when (ex.Message.Contains("line 4"))
+        {
+        }
+        finally
+        {
+            File.Delete(file);
+        }
     }
 
     private static void LoaderCoverage(Device device)
