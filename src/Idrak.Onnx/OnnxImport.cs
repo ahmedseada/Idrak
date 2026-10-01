@@ -77,7 +77,8 @@ public sealed class ImportedNetwork : IDisposable
 /// group); MaxPool; GlobalAveragePool (+ Flatten); Flatten; Gather on a weight table → Embedding; sinusoidal
 /// position tables → PositionalEncoding; LSTM and GRU (forward, PyTorch-style GRU); ReduceMean over time;
 /// first/last time step; Reshape; Dropout and Identity (skipped); and the attention and transformer-layer blocks
-/// Idrak exports. Anything else is reported with the node that could not be imported.
+/// Idrak exports. Anything else is reported with the node that could not be imported; operators of your own are
+/// registered in <see cref="OnnxImportOps"/>.
 /// </summary>
 public static class OnnxImport
 {
@@ -196,89 +197,110 @@ internal sealed class Importer(OnnxModel model, Device device, int[]? sampleShap
         }
 
         var node = users[0];
-        string Out() => node.Outputs[0];
-        OnnxTensor? Input(int i) => i < node.Inputs.Count && node.Inputs[i].Length > 0 ? Const(node.Inputs[i]) : null;
         Consume(node);
-        switch (node.Op)
-        {
-            case "Identity" or "Dropout":
-                return Out();
-            case "Relu":
-                return Push(b => b.ReLU(), null, Out());
-            case "Tanh":
-                return Push(b => b.Tanh(), null, Out());
-            case "Sigmoid":
-                return Push(b => b.Sigmoid(), null, Out());
-            case "Softmax":
-                long axis = node.Int("axis", model.Opset >= 13 ? -1 : 1);
-                if (axis != -1 && axis != _network.CurrentShape.Count)
-                {
-                    throw Unsupported(node, $"softmax over axis {axis} (only the last axis is supported)");
-                }
-
-                return Push(b => b.Softmax(), null, Out());
-            case "BatchNormalization":
-                return PushMatch(BatchNormLayer(node));
-            case "LayerNormalization":
-                if (node.Int("axis", -1) is not (-1) && node.Int("axis", -1) != _network.CurrentShape.Count)
-                {
-                    throw Unsupported(node, "layer normalization over more than the last axis");
-                }
-
-                return PushMatch(LayerNormLayer(node));
-            case "Conv":
-                return PushMatch(ConvLayer(node));
-            case "MaxPool":
-                return PushMatch(MaxPoolLayer(node));
-            case "GlobalAveragePool":
-                var next = Users(Out()) is [var flatten] && (flatten.Op == "Flatten" && flatten.Int("axis", 1) == 1
-                    || flatten.Op == "Reshape" && Const(flatten.Inputs[1]) is { } target && target.AsLongs() is [-1 or 0, _]
-                    || flatten.Op == "Squeeze")
-                    ? flatten
-                    : throw Unsupported(node, "global average pooling that is not followed by a flatten");
-                Consume(next);
-                return Push(b => b.GlobalAveragePool2d(), null, next.Outputs[0]);
-            case "Flatten":
-                return node.Int("axis", 1) == 1 ? Push(b => b.Flatten(), null, Out()) : throw Unsupported(node, "flatten from an axis other than 1");
-            case "Cast":
-                if (Users(Out()) is [{ Op: "Gather" } gather] && EmbeddingLayer(gather, Out()) is { } embedding)
-                {
-                    Consume(gather);
-                    return PushMatch(embedding);
-                }
-
-                throw Unsupported(node, "a cast that does not feed an embedding lookup");
-            case "Gather":
-                return Gather(node, x);
-            case "Add":
-                return PositionTable(node, x);
-            case "ReduceMean":
-                var axes = node.Ints("axes") ?? (node.Inputs.Count > 1 ? Const(node.Inputs[1])?.AsLongs() : null);
-                if (axes is [1] && node.Int("keepdims", 1) == 0)
-                {
-                    return Push(b => b.MeanOverTime(), null, Out());
-                }
-
-                throw Unsupported(node, "a mean over axes other than time");
-            case "Reshape":
-                var shape = Input(1)?.AsLongs() ?? throw Unsupported(node, "a computed shape");
-                if (shape.Length < 2 || shape[0] is not (-1 or 0) || shape[1..].Any(d => d <= 0))
-                {
-                    throw Unsupported(node, $"reshape to [{string.Join(", ", shape)}] (the batch must stay first, other sizes fixed)");
-                }
-
-                return Push(b => b.Reshape([.. shape[1..].Select(d => (int)d)]), null, Out());
-            default:
-                throw Unsupported(node, $"the {node.Op} operator");
-        }
+        var translate = OnnxImportOps.TryGet(node.Op) ?? throw UnknownOperator(node);
+        return translate(new OnnxImportContext(this, node, x));
     }
+
+    // The single-node operators, registered in OnnxImportOps (a translator returns the value the chain continues from).
+    internal static Dictionary<string, OnnxImportTranslator> BuiltInOps() => new()
+    {
+        ["Identity"] = c => c.Output,
+        ["Dropout"] = c => c.Output,
+        ["Relu"] = c => c.Add(b => b.ReLU()),
+        ["Tanh"] = c => c.Add(b => b.Tanh()),
+        ["Sigmoid"] = c => c.Add(b => b.Sigmoid()),
+        ["Softmax"] = c =>
+        {
+            long axis = c.Int("axis", c.Opset >= 13 ? -1 : 1);
+            if (axis != -1 && axis != c.CurrentShape.Count)
+            {
+                throw c.Unsupported($"softmax over axis {axis} (only the last axis is supported)");
+            }
+
+            return c.Add(b => b.Softmax());
+        },
+        ["BatchNormalization"] = c => c.Importer.PushMatch(c.Importer.BatchNormLayer(c.Node)),
+        ["LayerNormalization"] = c =>
+        {
+            if (c.Int("axis", -1) is not (-1) && c.Int("axis", -1) != c.CurrentShape.Count)
+            {
+                throw c.Unsupported("layer normalization over more than the last axis");
+            }
+
+            return c.Importer.PushMatch(c.Importer.LayerNormLayer(c.Node));
+        },
+        ["Conv"] = c => c.Importer.PushMatch(c.Importer.ConvLayer(c.Node)),
+        ["MaxPool"] = c => c.Importer.PushMatch(c.Importer.MaxPoolLayer(c.Node)),
+        ["GlobalAveragePool"] = c => c.Importer.GlobalAveragePool(c.Node),
+        ["Flatten"] = c => c.Int("axis", 1) == 1 ? c.Add(b => b.Flatten()) : throw c.Unsupported("flatten from an axis other than 1"),
+        ["Cast"] = c => c.Importer.Cast(c.Node),
+        ["Gather"] = c => c.Importer.Gather(c.Node, c.Input),
+        ["Add"] = c => c.Importer.PositionTable(c.Node, c.Input),
+        ["ReduceMean"] = c =>
+        {
+            var axes = c.Ints("axes") ?? (c.Inputs.Count > 1 ? c.Importer.Constant(c.Inputs[1])?.AsLongs() : null);
+            if (axes is [1] && c.Int("keepdims", 1) == 0)
+            {
+                return c.Add(b => b.MeanOverTime());
+            }
+
+            throw c.Unsupported("a mean over axes other than time");
+        },
+        ["Reshape"] = c =>
+        {
+            var shape = (c.Inputs.Count > 1 ? c.Importer.Constant(c.Inputs[1])?.AsLongs() : null) ?? throw c.Unsupported("a computed shape");
+            if (shape.Length < 2 || shape[0] is not (-1 or 0) || shape[1..].Any(d => d <= 0))
+            {
+                throw c.Unsupported($"reshape to [{string.Join(", ", shape)}] (the batch must stay first, other sizes fixed)");
+            }
+
+            return c.Add(b => b.Reshape([.. shape[1..].Select(d => (int)d)]));
+        },
+    };
+
+    private string GlobalAveragePool(OnnxNode node)
+    {
+        var next = Users(node.Outputs[0]) is [var flatten] && (flatten.Op == "Flatten" && flatten.Int("axis", 1) == 1
+            || flatten.Op == "Reshape" && Const(flatten.Inputs[1]) is { } target && target.AsLongs() is [-1 or 0, _]
+            || flatten.Op == "Squeeze")
+            ? flatten
+            : throw Unsupported(node, "global average pooling that is not followed by a flatten");
+        Consume(next);
+        return Push(b => b.GlobalAveragePool2d(), null, next.Outputs[0]);
+    }
+
+    private string Cast(OnnxNode node)
+    {
+        if (Users(node.Outputs[0]) is [{ Op: "Gather" } gather] && EmbeddingLayer(gather, node.Outputs[0]) is { } embedding)
+        {
+            Consume(gather);
+            return PushMatch(embedding);
+        }
+
+        throw Unsupported(node, "a cast that does not feed an embedding lookup");
+    }
+
+    internal long Opset => model.Opset;
+
+    internal IReadOnlyList<int> CurrentShape => _network.CurrentShape;
+
+    internal OnnxTensor? Constant(string name) => Const(name);
+
+    internal void Note(string note) => _notes.Add(note);
 
     private string PushMatch(LayerMatch match) => Push(match.Step, match.Load, match.Output);
 
-    private string Push(Func<NetworkBuilder, NetworkBuilder> step, Action<Module>? load, string output)
+    // Adds the step's layers; `load` fills the first of them (the others keep their initial weights).
+    internal string Push(Func<NetworkBuilder, NetworkBuilder> step, Action<Module>? load, string output)
     {
+        int count = _network.Count;
         step(_network);
-        _loaders.Add(load);
+        for (int i = count; i < _network.Count; i++)
+        {
+            _loaders.Add(i == count ? load : null);
+        }
+
         return output;
     }
 
@@ -298,8 +320,12 @@ internal sealed class Importer(OnnxModel model, Device device, int[]? sampleShap
         }
     }
 
-    private static NotSupportedException Unsupported(OnnxNode node, string what) =>
+    internal static NotSupportedException Unsupported(OnnxNode node, string what) =>
         new($"Cannot import {node}: {what} has no Idrak layer.");
+
+    private static NotSupportedException UnknownOperator(OnnxNode node) =>
+        new($"Cannot import {node}: the {node.Op} operator has no Idrak layer (registered: {string.Join(", ", OnnxImportOps.Names)}); "
+            + $"add a translator with OnnxImportOps.Register(\"{node.Op}\", ...).");
 
     // The other input of a binary node whose one input is `x`.
     private static string? Other(OnnxNode node, string x) =>
@@ -394,7 +420,9 @@ internal sealed class Importer(OnnxModel model, Device device, int[]? sampleShap
     {
         if (!Primitives.TryGetValue(node.Op, out var op) || node.Domain is not ("" or "ai.onnx"))
         {
-            throw Unsupported(node, $"the {node.Op} operator");
+            // Translators only build chains of layers; a graph is made of the fixed primitives above.
+            throw OnnxImportOps.TryGet(node.Op) is null ? UnknownOperator(node)
+                : Unsupported(node, $"the {node.Op} operator in a graph (its registered translator only imports chains of layers)");
         }
 
         if (node.Outputs.Skip(1).Any(o => o.Length > 0 && Users(o).Count > 0))
