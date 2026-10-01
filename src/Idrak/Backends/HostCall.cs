@@ -19,7 +19,11 @@ internal sealed class HostCall : IDisposable
     private readonly Backend _device;
     private readonly List<(Storage Device, Storage Host, float[] Before)> _mirrors = [];
 
-    public HostCall(Backend device) => _device = device;
+    public HostCall(Backend device)
+    {
+        _device = device;
+        Interlocked.Increment(ref device.HostCalls);
+    }
 
     /// <summary>The CPU mirror of <paramref name="storage"/>, holding its values.</summary>
     public Storage this[Storage storage]

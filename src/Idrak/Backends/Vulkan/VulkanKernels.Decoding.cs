@@ -156,15 +156,24 @@ internal static partial class VulkanKernels
             return k.Build();
         });
 
-        yield return ("attention_decode", () => Attention("attention_decode", CacheFormat.Float));
+        yield return ("attention_decode", () => Attention("attention_decode", CacheFormat.Float, Block));
 
         // attention_decode over a bfloat16 cache: keys and values [heads, capacity, ⌈dim / 2⌉ words].
-        yield return ("attention_bf16", () => Attention("attention_bf16", CacheFormat.BFloat16));
+        yield return ("attention_bf16", () => Attention("attention_bf16", CacheFormat.BFloat16, Block));
 
         // attention_decode over an int8 cache: keys and values [heads, capacity, ⌈dim / 4⌉ words] of signed bytes, one scale
         // per cached row (keyScales, valueScales [heads, capacity]).
-        yield return ("attention_int8", () => Attention("attention_int8", CacheFormat.Int8));
+        yield return ("attention_int8", () => Attention("attention_int8", CacheFormat.Int8, Block));
+
+        // The same with workgroups of 64 for head sizes up to 64 (fewer idle lanes and shorter reductions).
+        foreach (var (name, format) in new[] { ("attention_decode", CacheFormat.Float), ("attention_bf16", CacheFormat.BFloat16), ("attention_int8", CacheFormat.Int8) })
+        {
+            yield return (name + "_64", () => Attention(name + "_64", format, SmallAttentionLanes));
+        }
     }
+
+    /// <summary>Workgroup width (and largest head size) of the "…_64" attention kernels.</summary>
+    public const int SmallAttentionLanes = 64;
 
     private enum CacheFormat
     {
@@ -175,21 +184,21 @@ internal static partial class VulkanKernels
 
     // Attention over a key/value cache [heads, capacity, dim] for query rows q [heads, rowsPerHead, dim]: row i of head h
     // sees positions c = 0 … min(position[0] + i % rowsPerHead % steps, capacity - 1). One workgroup per query row
-    // (dim ≤ 256: invocation d keeps output dimension d). Pass 1: each invocation scores its positions for the row's
-    // maximum. Pass 2, 256 positions at a time: the invocations score them again into workgroup memory as
+    // (dim ≤ lanes, the workgroup width: invocation d keeps output dimension d). Pass 1: each invocation scores its positions for the row's
+    // maximum. Pass 2, a workgroup's width of positions at a time: the invocations score them again into workgroup memory as
     // exp(score - max), then each output dimension adds its weighted values. y = Σ e_c · v_c / Σ e_c.
     // TODO(tuning): split long contexts across workgroups; cooperative dot products (subgroups) instead of one per lane.
-    private static SpirvKernel Attention(string name, CacheFormat format)
+    private static SpirvKernel Attention(string name, CacheFormat format, int lanes)
     {
-        var k = new KernelBuilder(name, Block);
+        var k = new KernelBuilder(name, lanes);
         var (q, keys, values) = (k.Buffer("q"), k.Buffer("keys"), k.Buffer("values"));
         var (keyScales, valueScales) = format == CacheFormat.Int8 ? (k.Buffer("keyScales"), k.Buffer("valueScales")) : (null, null);
         var (position, y) = (k.Buffer("position"), k.Buffer("y"));
         var (heads, rowsPerHead, steps, capacity, dim) = (k.PushInt("heads"), k.PushInt("rowsPerHead"), k.PushInt("steps"), k.PushInt("capacity"), k.PushInt("dim"));
         var scale = k.PushFloat("scale");
-        var query = k.Shared("query", AttentionMaxDim);
-        var weights = k.Shared("weights", Block);
-        var scratch = k.Shared("scratch", Block);
+        var query = k.Shared("query", lanes);
+        var weights = k.Shared("weights", lanes);
+        var scratch = k.Shared("scratch", lanes);
         var lane = k.LocalX;
         var start = position[k.Int(0)].ToInt();
         var words = format switch
@@ -224,12 +233,12 @@ internal static partial class VulkanKernels
             }
 
             var best = k.Local(float.NegativeInfinity);
-            k.For(lane, count, Block, c => best.V = k.Max(best.V, Score(c)));
+            k.For(lane, count, lanes, c => best.V = k.Max(best.V, Score(c)));
             var max = k.ReduceMax(scratch, best.V);
 
             var acc = k.Local(0f);
             var total = k.Local(0f);
-            k.For(k.Int(0), count, Block, c0 =>
+            k.For(k.Int(0), count, lanes, c0 =>
             {
                 var c = c0 + lane;
                 var e = k.Local(0f);
@@ -244,7 +253,7 @@ internal static partial class VulkanKernels
                 k.Barrier();
                 k.If(lane < dim, () =>
                 {
-                    var chunk = k.Min(count - c0, k.Int(Block));
+                    var chunk = k.Min(count - c0, k.Int(lanes));
                     k.For(k.Int(0), chunk, 1, w => acc.V = k.Fma(weights[w], At(values, first + c0 + w, lane), acc.V));
                 });
                 k.Barrier();

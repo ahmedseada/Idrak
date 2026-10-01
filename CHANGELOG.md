@@ -65,6 +65,14 @@
   key/value caches, float32 tiled and packed int8 / int4 / bfloat16 products, decoding attention over float, bfloat16
   and int8 caches). Every kernel passes `spirv-val --target-env vulkan1.1` in the tests when it is installed;
   `--dump-spirv <folder>` writes them with their bindings and push constants.
+- Vulkan devices run 58 operations as these kernels instead of the host fallback: element-wise operations and their
+  gradients, optimizer steps, dropout, sums, softmax (masked, log, backward, cross-entropy), RMS and layer norms,
+  arg max, strided copies, permutations, axis sums, gathers and scatters, products (float32, small and tiled; int8,
+  int4 and bfloat16 weights), rotary positions, the key/value caches (float, bfloat16, int8) and decoding attention
+  over them. Short rows (up to 64 columns) take one invocation per row, head sizes up to 64 a 64-wide attention, and
+  small products a kernel without workgroup memory. Cases a kernel does not cover (storages over the device's binding
+  limit, head sizes over 256, permutations of more than six dimensions) still take the host fallback;
+  `IDRAK_VULKAN_KERNELS=0` sends everything there. Embedding indices out of range are clamped, as on CUDA.
 
 ## 0.1.7 (2026-10-01)
 
