@@ -61,6 +61,21 @@ internal sealed partial class CpuBackend
                 var xs = xv.AsSpan(r * cols, cols);
                 var ys = yv.AsSpan(r * cols, cols);
                 float max = CpuMath.Max(xs);
+                if (log && xs.Overlaps(ys))
+                {
+                    // In place: the exponentials go to scratch, so the log-probabilities still read the inputs.
+                    var scratch = System.Buffers.ArrayPool<float>.Shared.Rent(cols);
+                    xs.CopyTo(scratch);
+                    float inPlace = (float)Math.Log(CpuMath.ExpShifted(scratch.AsSpan(0, cols), max)) + max;
+                    System.Buffers.ArrayPool<float>.Shared.Return(scratch);
+                    for (int j = 0; j < cols; j++)
+                    {
+                        ys[j] = xs[j] - inPlace;
+                    }
+
+                    continue;
+                }
+
                 xs.CopyTo(ys);
                 double sum = CpuMath.ExpShifted(ys, max);
 

@@ -125,6 +125,7 @@ internal static partial class Tests
         ("schedulers, weight decay and gradient clipping", OptimizerFeatures),
         ("other number types in and out", NumberTypes),
         ("save and load include buffers (BatchNorm running stats)", SaveLoadBuffers),
+        ("softmax and log-softmax written over their input give the out-of-place result", SoftmaxInPlace),
     ];
 
     /// <summary>Checks d(loss)/d(parameter) for a sample of entries of every parameter, by central differences.</summary>
@@ -673,6 +674,22 @@ internal static partial class Tests
         finally
         {
             File.Delete(path);
+        }
+    }
+
+    private static void SoftmaxInPlace(Device device)
+    {
+        var r = new Random(13);
+        const int Rows = 5, Cols = 37;
+        var values = Enumerable.Range(0, Rows * Cols).Select(_ => r.NextSingle() * 8 - 4).ToArray();
+        foreach (bool log in new[] { false, true })
+        {
+            using var x = Tensor.From(values, [Rows, Cols], device);
+            using var y = Tensor.Zeros([Rows, Cols], device);
+            using var inPlace = Tensor.From(values, [Rows, Cols], device);
+            device.Backend.Softmax(x.Storage, y.Storage, Rows, Cols, log);
+            device.Backend.Softmax(inPlace.Storage, inPlace.Storage, Rows, Cols, log);
+            AssertClose(y.ToArray(), inPlace.ToArray(), 1e-6f, log ? "log-softmax in place" : "softmax in place");
         }
     }
 }
