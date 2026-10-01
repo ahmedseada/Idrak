@@ -14,6 +14,7 @@ audience first.
 | 4 | [Intel](4-intel.md) | Iris Xe and Arc integrated GPUs, Arc discrete GPUs, AI Boost NPUs | not supported (runs on the CPU) | GPUs come almost free once plan 3's backend exists; the NPU is inference-only, an add-on, and last |
 | 5 | [Apple](5-apple.md) | Apple silicon Macs (M1–M4 GPU, Neural Engine) | not supported on the GPU; macOS untested | a smaller audience for this library, and a third kernel language (Metal); a Mac test run fills CPU gaps early |
 | 6 | [Idrak.Network](6-network.md) | several GPUs or machines on one job; several machines serving one API | not started (one device per model, one machine per server) | a new package rather than new hardware; useful to NVIDIA users now, so it can run alongside plans 3–5 |
+| 7 | [Backends](7-backends.md) | a minimum backend (12 core operations, host fallbacks), devices by provider, public KV cache formats, the Vulkan backend (Intel GPUs first) | in progress on `architecture` | the shared work plans 3–5 wait on, then the first new backend |
 
 ## The rule every plan keeps
 
