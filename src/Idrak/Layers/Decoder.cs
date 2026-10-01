@@ -585,7 +585,7 @@ public sealed class FeedForward : Module
         {
             hidden = Activate(Up.Forward(input));
         }
-        else if (!Autograd.IsEnabled && Down.Int4 is null && Tensor.MatMulPackedGatedPair(input, Gate, Up, (int)Activation) is { } pair)
+        else if (!Autograd.IsEnabled && Down.PackedWeight is not { ActivationInDownProjection: true } && Tensor.MatMulPackedGatedPair(input, Gate, Up, (int)Activation) is { } pair)
         {
             hidden = pair;                                          // act(gate) · up written by the gate/up product
         }
@@ -636,10 +636,10 @@ public sealed class FeedForward : Module
     }
 
     /// <summary>
-    /// Whether <see cref="DownInput"/> and a fused down projection (int8 or bfloat16 weights, no bias or adapter) can
-    /// stand in for <see cref="Module.Forward"/> at inference (4-bit weights keep their activation-reading product).
+    /// Whether <see cref="DownInput"/> and a fused down projection (packed weights, no bias or adapter) can stand in for
+    /// <see cref="Module.Forward"/> at inference (formats whose down projection reads the activation keep that product).
     /// </summary>
-    internal bool DownFusable => (Down.Int8 is not null || Down.BFloat16 is not null) && Down.Bias is null && Down.Adapter is null;
+    internal bool DownFusable => Down.PackedWeight is { ActivationInDownProjection: false } && Down.Bias is null && Down.Adapter is null;
 
     // The down projection's input at inference: act(gate) · up, or act(up).
     internal Tensor DownInput(Tensor input)

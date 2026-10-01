@@ -38,13 +38,13 @@ public sealed partial class Tensor
         if (m <= Int8DirectRows)
         {
             // Few rows: the direct kernels, unless the device's packed product is faster for this shape.
-            if (!(Backend.PrefersPackedMatMul(0, flat.Storage, weight.Packed.Storage, weight.Scales.Storage, y.Storage, m, n, k)
-                  && Backend.PackedMatMulLarge(0, flat.Storage, weight.Packed.Storage, weight.Scales.Storage, y.Storage, m, n, k)))
+            if (!(Backend.PrefersPackedMatMul(Layers.PackedFormat.Int8, flat.Storage, weight.Packed.Storage, weight.Scales.Storage, y.Storage, m, n, k)
+                  && Backend.PackedMatMulLarge(Layers.PackedFormat.Int8, flat.Storage, weight.Packed.Storage, weight.Scales.Storage, y.Storage, m, n, k)))
             {
                 Backend.Int8MatMul(flat.Storage, weight.Packed.Storage, weight.Scales.Storage, y.Storage, m, n, k);
             }
         }
-        else if (!Backend.PackedMatMulLarge(0, flat.Storage, weight.Packed.Storage, weight.Scales.Storage, y.Storage, m, n, k))
+        else if (!Backend.PackedMatMulLarge(Layers.PackedFormat.Int8, flat.Storage, weight.Packed.Storage, weight.Scales.Storage, y.Storage, m, n, k))
         {
             using var w = Dequantized(weight);
             Backend.MatMul(flat.Storage, w.Storage, y.Storage, m, n, k, false, false, 0f);

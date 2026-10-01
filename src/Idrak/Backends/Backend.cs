@@ -223,11 +223,10 @@ internal abstract class Backend
         BatchedMatMul(a, b, c, 1, m, n, k, transA, transB, beta);
 
     /// <summary>
-    /// y = x · w for many rows (prompts) with packed weights w (<paramref name="kind"/> as in
-    /// <see cref="PackedMatMulMany"/>), expanding w as it is read instead of into a float copy. Returns false when the
+    /// y = x · w for many rows (prompts) with packed weights w (in <paramref name="format"/>), expanding w as it is read instead of into a float copy. Returns false when the
     /// device has no such kernel or the shape is too small for it (callers then expand w first).
     /// </summary>
-    public virtual bool PackedMatMulLarge(int kind, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k) => false;
+    public virtual bool PackedMatMulLarge(Layers.PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k) => false;
 
     /// <summary>
     /// True when <see cref="PackedMatMulLarge"/> is faster than the few-rows kernels for this shape although the rows are
@@ -235,31 +234,30 @@ internal abstract class Backend
     /// real operands, so a device can measure both on itself; it may write <paramref name="y"/>, which the caller's product
     /// then writes again.
     /// </summary>
-    public virtual bool PrefersPackedMatMul(int kind, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k) => false;
+    public virtual bool PrefersPackedMatMul(Layers.PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k) => false;
 
     /// <summary>
-    /// y = (act(gate) · up) · w for few rows with packed weights w (<paramref name="kind"/> as in
-    /// <see cref="PackedMatMulMany"/>; activation 0 = SiLU, 1 = GELU tanh): the gated feed-forward's down projection
+    /// y = (act(gate) · up) · w for few rows with packed weights w (in <paramref name="format"/>; activation 0 = SiLU, 1 = GELU tanh): the gated feed-forward's down projection
     /// without a separate activation pass. Returns false when the device has no fused version.
     /// </summary>
-    public virtual bool PackedMatMulGated(int kind, int activation, Storage gate, Storage up, Storage packed, Storage? scales, Storage y,
+    public virtual bool PackedMatMulGated(Layers.PackedFormat format, int activation, Storage gate, Storage up, Storage packed, Storage? scales, Storage y,
         int m, int n, int k) => false;
 
     /// <summary>
-    /// y = x · w for few rows with packed weights w (<paramref name="kind"/> as in <see cref="PackedMatMulMany"/>), then
+    /// y = x · w for few rows with packed weights w (in <paramref name="format"/>), then
     /// sum = residual + y and normalized = its RMS normalization · (gain + offset) per row (a residual addition and the
     /// next normalization) in the same pass. Returns false when the device has no fused version.
     /// </summary>
-    public virtual bool PackedMatMulAddRmsNorm(int kind, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k,
+    public virtual bool PackedMatMulAddRmsNorm(Layers.PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k,
         Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset) => false;
 
     /// <summary>
-    /// Several few-row products of packed weights sharing one input x [m, k]: y_j = x · w_j (+ bias_j), with w_j int8
-    /// (<paramref name="kind"/> 0, as in <see cref="Int8MatMul"/>), 4-bit (1, <see cref="Int4MatMul"/>) or bfloat16 (2,
-    /// <see cref="BFloat16MatMul"/>; no scales). Returns false when the device has no single-pass version (callers then
+    /// Several few-row products of packed weights sharing one input x [m, k]: y_j = x · w_j (+ bias_j), in <paramref name="format"/>
+    /// (int8 as in <see cref="Int8MatMul"/>, 4-bit as in <see cref="Int4MatMul"/>, bfloat16 as in
+    /// <see cref="BFloat16MatMul"/>, which has no scales). Returns false when the device has no single-pass version (callers then
     /// run the products one by one).
     /// </summary>
-    public virtual bool PackedMatMulMany(int kind, Storage x, int m, int k,
+    public virtual bool PackedMatMulMany(Layers.PackedFormat format, Storage x, int m, int k,
         ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products) => false;
 
     /// <summary>
@@ -267,7 +265,7 @@ internal abstract class Backend
     /// also writing hidden = act(gate) · up (activation 0 = SiLU, 1 = GELU tanh, 2 = ReLU) in the same pass. Returns
     /// false when the device has no fused version.
     /// </summary>
-    public virtual bool PackedMatMulGatedPair(int kind, int activation, Storage x, int m, int k,
+    public virtual bool PackedMatMulGatedPair(Layers.PackedFormat format, int activation, Storage x, int m, int k,
         ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products, Storage hidden) => false;
 
     /// <summary>
@@ -326,11 +324,11 @@ internal abstract class Backend
     public virtual bool Float8MatMul(Storage x, int m, int k, Storage values, Storage scales, int n, Storage y, float beta) => false;
 
     /// <summary>
-    /// Products of one input x [m, k] through 1-3 packed layers (<paramref name="kind"/> as in <see cref="PackedMatMulMany"/>),
+    /// Products of one input x [m, k] through 1-3 packed layers (in <paramref name="format"/>),
     /// each with a low-rank term: y_j = x · w_j + u_j · v_j for u_j [m, rank] and v_j [rank, n_j], rank ≤ 32, in one pass.
     /// Returns false when the device has no such pass.
     /// </summary>
-    public virtual bool PackedMatMulLowRank(int kind, Storage x, int m, int k,
+    public virtual bool PackedMatMulLowRank(Layers.PackedFormat format, Storage x, int m, int k,
         ReadOnlySpan<(Storage Packed, Storage? Scales, Storage Output, int Columns, Storage U, Storage V)> products, int rank) => false;
 
     /// <summary>
