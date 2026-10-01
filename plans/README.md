@@ -3,12 +3,15 @@
 Plans for running Idrak on more hardware. Nothing here is built yet; each plan says what to build, in which order, how
 to know a step is done, and what could stop it.
 
-| Plan | Hardware | Status |
-|---|---|---|
-| [CPU](cpu.md) | x64 (AVX2, AVX-512) and ARM64 (NEON); the fallback on every machine | supported; plan covers sampling and kernel speed |
-| [NVIDIA](nvidia.md) | GeForce, RTX, data-center GPUs (CUDA driver API, PTX) | supported; plan covers tuning and gaps |
-| [AMD](amd.md) | Radeon RX 6000/7000/9000, Ryzen APU graphics, Instinct | not supported (runs on the CPU) |
-| [Intel](intel.md) | Iris Xe and Arc integrated GPUs, Arc discrete GPUs, AI Boost NPUs | not supported (runs on the CPU) |
+Ordered by priority: fix what shipped first, then the fallback every machine uses, then new hardware, largest
+audience first.
+
+| Priority | Plan | Hardware | Status | Why this priority |
+|---|---|---|---|---|
+| 1 | [NVIDIA](1-nvidia.md) | GeForce, RTX, data-center GPUs (CUDA driver API, PTX) | supported; tuning and gaps | 0.1.5 shipped a few-row rule that is 1.2–1.4× slower on Ampere GPUs; a small, measured fix |
+| 2 | [CPU](2-cpu.md) | x64 (AVX2, AVX-512) and ARM64 (NEON); the fallback on every machine | supported; sampling and kernel speed | every AMD, Intel and Apple user runs here today; step 1 is a small fix (plain sampling 12 ms → ~6 ms on slower CPUs) |
+| 3 | [AMD](3-amd.md) | Radeon RX 6000/7000/9000, Ryzen APU graphics, Instinct | not supported (runs on the CPU) | the largest group of GPUs without support; builds the Vulkan backend the Intel plan reuses |
+| 4 | [Intel](4-intel.md) | Iris Xe and Arc integrated GPUs, Arc discrete GPUs, AI Boost NPUs | not supported (runs on the CPU) | GPUs come almost free once plan 3's backend exists; the NPU is inference-only, an add-on, and last |
 
 ## The rule every plan keeps
 
@@ -38,9 +41,14 @@ and the Intel plans need them.
 5. **Tests per device, and benchmarks per device.** Every backend is checked by the same test list it runs on the CPU
    and by `--bench-gemv` / `--bench-cpu`-style timings; each new device row goes into the README's "Tested on" table.
 
-## Order
+## Order of work
 
-1. NVIDIA plan, step 1 (a measured regression on a shipped release), and CPU plan, step 1 (plain sampling).
-2. The shared work above.
-3. The AMD and Intel GPU plans share one Vulkan backend: build it once, tune it per vendor.
-4. Intel NPU last, as an add-on package.
+1. **NVIDIA, step 1:** the few-row rule keyed on compute capability (a regression in a shipped release).
+2. **CPU, step 1:** entropy without a logarithm per token (a small fix, measured on four machines).
+3. **The shared work above:** device-neutral capabilities, more device types, a shared kernel description, a minimum
+   backend. Nothing user-visible, but plans 3 and 4 cannot start without it.
+4. **AMD, phases 1–5:** the Vulkan backend, built once.
+5. **Intel GPUs:** tuning the same backend for Iris Xe and Arc, then integrated-GPU memory.
+6. **NVIDIA and CPU, the rest:** the remaining speed work in plans 1 and 2, done between the larger steps above as
+   time allows.
+7. **Intel NPU:** a one-week trial first, then the optional `Idrak.OpenVino` package if it pays off.
