@@ -164,7 +164,8 @@ internal static partial class Tests
             bool software = type == 4;                                   // VK_PHYSICAL_DEVICE_TYPE_CPU
             bool cudaDrives = vendor == 0x10DE && Device.IsCudaAvailable;
             Check(provider!.Listed(i) == !(software || cudaDrives) && Device.Available.Contains(d) == provider.Listed(i), $"vulkan:{i} listing");
-            Check(provider.DefaultRank(i) == type switch { 2 => 50, 1 => 40, _ => (int?)null }, $"vulkan:{i} rank");
+            bool optedIn = Environment.GetEnvironmentVariable("IDRAK_VULKAN_DEFAULT") == "1";   // not the default device otherwise
+            Check(provider.DefaultRank(i) == (optedIn ? type switch { 2 => 50, 1 => 40, _ => (int?)null } : null), $"vulkan:{i} rank");
             Check(Device.Parse($"vulkan:{i}") == d && d.Type == DeviceType.Vulkan && d.IsGpu && d.ToString() == $"vulkan:{i}", $"vulkan:{i} by name");
             var backend = (VulkanBackend)d.Backend;
             Check(provider.IsStarted(i) && d.Name.Contains("Vulkan", StringComparison.Ordinal), $"vulkan:{i} started, named");
@@ -486,7 +487,7 @@ internal static partial class Tests
             }
         }
 
-        Case("int8 product", [R(3 * 64), Bits(64 * 18), R(70), new float[3 * 70]], (b, s) => b.Int8MatMul(s[0], s[1], s[2], s[3], 3, 70, 64));
+        Case("int8 product", [R(3 * 64), Bits(64 * 18), R(70), new float[3 * 70]], (b, s) => b.Int8MatMul(s[0], s[1], s[2], s[3], 3, 70, 64), 5e-4f);   // products of up to ±127 cancel: GPUs fuse multiply-adds
         Case("bfloat16 product, packing", [R(3 * 64), R(64 * 70), new float[64 * 35], new float[3 * 70]], (b, s) =>
         {
             b.PackBFloat16(s[1], s[2], 64 * 70);

@@ -388,8 +388,8 @@ internal sealed partial class VulkanBackend
             return;
         }
 
-        Span<byte> b = stackalloc byte[12];
-        Grid("dropout", n, [x, y], new Push(b).I(n).F(p).U(seed).Bytes);
+        Span<byte> b = stackalloc byte[16];
+        Grid("dropout", n, [x, y], new Push(b).I(n).F(p).F(1f / (1f - p)).U(seed).Bytes);
     }
 
     public override void DropoutBackward(Storage dy, Storage dx, int n, float p, uint seed)
@@ -400,8 +400,8 @@ internal sealed partial class VulkanBackend
             return;
         }
 
-        Span<byte> b = stackalloc byte[12];
-        Grid("dropout_backward", n, [dy, dx], new Push(b).I(n).F(p).U(seed).Bytes);
+        Span<byte> b = stackalloc byte[16];
+        Grid("dropout_backward", n, [dy, dx], new Push(b).I(n).F(p).F(1f / (1f - p)).U(seed).Bytes);
     }
 
     public override void ClipFactor(Storage sumSquares, Storage factor, float maxNorm)
