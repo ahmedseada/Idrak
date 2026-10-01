@@ -51,8 +51,11 @@ internal static partial class Tests
             Console.WriteLine(Line(r.Device, r.Kind, r.Name, r.Tested, r.Note));
         }
 
-        var runnable = rows.Where(r => !r.Device.EndsWith(":-", StringComparison.Ordinal) && !r.Name.StartsWith("cannot", StringComparison.Ordinal)).Select(r => r.Device).ToList();
-        string example = runnable.FirstOrDefault(d => d.StartsWith("vulkan", StringComparison.Ordinal) || d.StartsWith("cuda", StringComparison.Ordinal)) ?? "cpu";
+        // The example: a Vulkan GPU in plain runs (the newest backend), else any GPU, else the CPU.
+        var runnable = rows.Where(r => !r.Device.EndsWith(":-", StringComparison.Ordinal) && !r.Name.StartsWith("cannot", StringComparison.Ordinal)).ToList();
+        string example = runnable.FirstOrDefault(r => r.Device.StartsWith("vulkan", StringComparison.Ordinal) && r.Tested == "yes").Device
+                         ?? runnable.FirstOrDefault(r => r.Device.StartsWith("vulkan", StringComparison.Ordinal) || r.Device.StartsWith("cuda", StringComparison.Ordinal)).Device
+                         ?? "cpu";
         bool windows = OperatingSystem.IsWindows();
         Console.WriteLine();
         Console.WriteLine("A plain run tests every device marked \"yes\":");
