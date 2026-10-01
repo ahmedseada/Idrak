@@ -13,13 +13,14 @@ RTX 5070 Ti, and it holds on the RTX 5050 Laptop GPU too; on the RTX 3060 Laptop
 
 | Rows, head 1024 → 151,936 | RTX 5070 Ti (70 SMs, 12.0): GEMV / packed | RTX 5050 Laptop (20 SMs, 12.0): GEMV / packed / chosen | RTX 3060 Laptop (30 SMs, 8.6): GEMV / packed / chosen |
 |---|---|---|---|
-| 1 | **217** / 280 µs | **680** / 912 / 681 µs | 1,804 / 2,998 / 963 µs |
-| 3 | 296 / **265** µs | **874** / 935 / 875 µs | 2,190 / 2,987 / 1,471 µs |
-| 4 | 323 / **265** µs | 1,022 / **948** / 966 µs | **1,677** / 2,996 / 2,378 µs |
-| 6 | 408 / **266** µs | 1,329 / **931** / 971 µs | **1,881** / 3,493 / 2,444 µs |
-| 8 | 514 / **268** µs | 1,668 / **928** / 989 µs | **2,304** / 2,965 / 2,700 µs |
+| 1 | **217** / 280 µs | **680** / 910 / 681 µs | 1,804 / 2,998 / 963 µs |
+| 3 | 296 / **265** µs | **858** / 914 / 858 µs | 2,190 / 2,987 / 1,471 µs |
+| 4 | 323 / **265** µs | 1,017 / **934** / 961 µs | **1,677** / 2,996 / 2,378 µs |
+| 6 | 408 / **266** µs | 1,316 / **928** / 954 µs | **1,881** / 3,493 / 2,444 µs |
+| 8 | 514 / **268** µs | 1,656 / **919** / 957 µs | **2,304** / 2,965 / 2,700 µs |
 
-(`--bench-gemv`, "rows: GEMV / packed / chosen"; bold is the faster path. The 3060's "chosen" column also shows the
+(`--bench-gemv`, "rows: GEMV / packed / chosen"; bold is the faster path; the RTX 5050 column is from a run on an idle
+machine. The 3060's "chosen" column also shows the
 eager timings are noisy there: one run picked the GEMV at 1–3 rows and still timed below the GEMV column.)
 
 **What decides it: the GPU generation, not its size.** The RTX 5050 has fewer SMs than the RTX 3060 (20 against 30)
