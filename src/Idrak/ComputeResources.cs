@@ -115,7 +115,7 @@ public static class ComputeResources
     public static int ReturnOffloaded(Device? device = null)
     {
         int moved = 0;
-        foreach (var d in device is null ? Enumerable.Range(0, Device.CudaDeviceCount).Select(i => Device.Cuda(i)) : [device])
+        foreach (var d in device is null ? Device.InUse() : [device])
         {
             if (d.Backend.Offload is { OffloadedCount: > 0 } offload)
             {
@@ -144,13 +144,9 @@ public static class ComputeResources
             return;
         }
 
-        Device.Cpu.Backend.ReleaseCachedMemory();
-        for (int i = 0; i < Device.CudaDeviceCount; i++)
+        foreach (var started in Device.InUse())
         {
-            if (Backends.Cuda.CudaBackend.IsInitialized(i))
-            {
-                Device.Cuda(i).Backend.ReleaseCachedMemory();
-            }
+            started.Backend.ReleaseCachedMemory();
         }
     }
 }

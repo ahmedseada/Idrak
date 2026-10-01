@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+- Core code no longer branches on the device or a data format; each goes through an abstraction its implementations
+  fill in (same results, same kernels, nothing added on the per-token path beyond one interface call per layer):
+  - **Device capabilities** (`Backend.Capabilities`): few-row limit, decoding and tiled attention head sizes, matrix
+    units, fused kernels, profiling. Layers read them instead of `DeviceType.Cuda` checks and CUDA kernel constants;
+    `Device.Name`, `MixedPrecision.TensorCoresUnavailable` and `GpuProfiler` no longer cast to the CUDA backend. New
+    `Device.IsGpu`.
+  - **Token sampling** (`ITokenSampler`): `TokenSampler` is the built-in one; `TextGenerator.CreateSampler` plugs in
+    another (constrained or grammar-guided decoding, custom rules). A sampler that decides on the host reports
+    `Recordable = false` and the decoding step then runs without a CUDA graph.
+  - **KV cache formats**: one layout per `KeyValueFormat` writes and attends; the attention layers no longer branch on
+    the format. `DecodingContext[layer]` returns a layer's cache.
+  - **Weight formats** (`PackedWeight`, `PackedFormat`): `Int8Weight`, `Int4Weight` and `BFloat16Weight` share a base
+    class that multiplies, expands and moves each format and says which fused paths it takes; `Linear.PackedWeight`
+    and `Linear.FromPacked` are new (`Int8` / `Int4` / `BFloat16` stay). The backends' packed products take
+    `PackedFormat` instead of an untyped number.
+  - **Model families**: GGUF families are a table (Llama's interleaved query/key rows are a property of its entry).
+
 ## 0.1.7 (2026-10-01)
 
 - License: Apache License 2.0 instead of MIT, from this version on (`LICENSE`, `NOTICE`, the packages' license
