@@ -33,6 +33,13 @@
   register by name (`PackedWeight.Register`, `FormatNames`, `FromValues(string, …)`; "int8", "int4", "bfloat16" built in)
   and are chosen with `DecoderBuildOptions.PackedFormatName` / `PretrainedOptions.PackedFormatName`. `Save` stores their
   buffers exactly, `ToFloat32` expands them, `To` moves them. Nothing changes for the built-in formats.
+- Language models take plug-ins through public registries, with the built-ins registered the same way (same outputs,
+  tokenizer fast paths unchanged): **checkpoint formats** (`ICheckpointFormat`, `CheckpointFormats`; safetensors and
+  GGUF; `ITensorStore` is public), **GGUF tensor types** (`GgufType`, `GgufTypes`, `GgufType.Blockwise`) and **GGUF
+  architectures** (`GgufArchitecture`, `GgufArchitectures`), **model sources** (`IModelSource`, `ModelSources`:
+  folder, `ollama:`, .gguf, Hugging Face id; `ModelSource.Resolve` asks them) and **tokenizer components**
+  (`TokenizerComponents` with `ITokenizerNormalizer`, `IPreTokenizer`, `ITokenizerDecoder`, by tokenizer.json
+  "type"). A model's notes now list where its weights come from before the others.
 
 ## 0.1.7 (2026-10-01)
 

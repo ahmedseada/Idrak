@@ -97,16 +97,15 @@ public sealed class PretrainedModel : IDisposable
     public Device Device { get; }
 
     /// <summary>
-    /// Reads the model in <paramref name="folder"/>. Every weight is read from disk one tensor at a time and (with
+    /// Reads the model in <paramref name="folder"/> (a model folder, a .gguf file, or any path a format registered with
+    /// <see cref="CheckpointFormats"/> reads). Every weight is read from disk one tensor at a time and (with
     /// <see cref="PretrainedOptions.Int8"/>) quantized on the host, so the model is never held twice.
     /// </summary>
     public static PretrainedModel Load(string folder, PretrainedOptions? options = null)
     {
         options ??= new PretrainedOptions();
-        if (File.Exists(folder) && folder.EndsWith(".gguf", StringComparison.OrdinalIgnoreCase))
-        {
-            folder = GgufModel.Prepare(folder);                     // config, tokenizer and template from the file's metadata
-        }
+        var format = CheckpointFormats.For(folder);
+        folder = format.Prepare(folder);                            // a .gguf file: config, tokenizer and template from its metadata
 
         var config = JsonNode.Parse(File.ReadAllText(Path.Combine(folder, "config.json")))!.AsObject();
         string name = options.Architecture ?? (string?)config["architectures"]?[0]
@@ -115,7 +114,7 @@ public sealed class PretrainedModel : IDisposable
         var notes = new List<string>();
         var spec = architecture.Spec(config, notes);
         int maxPositions = Math.Min(options.MaxPositions ?? spec.MaxPositions, spec.MaxPositions);
-        using ITensorStore reader = GgufModel.IsPrepared(folder) ? GgufModel.OpenTensors(folder) : SafeTensorsReader.Open(folder);
+        using var reader = format.Open(folder);
         using var adapter = options.MergeAdapter is { } adapterFolder ? new AdapterMerge(adapterFolder) : null;
         var weights = new CheckpointWeights(reader, architecture) { Adapter = adapter };
         var network = spec.Build(weights, new DecoderBuildOptions { Device = options.Device, Int8 = options.Int8, BFloat16 = options.BFloat16, Int4 = options.Int4, PackedFormatName = options.PackedFormatName, MaxPositions = maxPositions });
@@ -134,11 +133,7 @@ public sealed class PretrainedModel : IDisposable
             }
         }
 
-        if (GgufModel.IsPrepared(folder))
-        {
-            notes.Insert(0, $"weights read from {GgufModel.SourceOf(folder)}");
-            notes.AddRange(GgufModel.NotesOf(folder));
-        }
+        notes.InsertRange(0, format.Notes(folder));                 // where the weights come from, first
 
         var tokenizer = File.Exists(Path.Combine(folder, "tokenizer.json")) ? BpeTokenizer.Load(folder) : null;
         tokenizer?.PadVocabulary(spec.Vocabulary);

@@ -9,27 +9,89 @@ using System.Text.Json.Nodes;
 namespace Idrak.LanguageModels;
 
 /// <summary>
+/// How llama.cpp stores one model family (general.architecture in the file): the Hugging Face architecture it corresponds
+/// to, and whether it interleaved the query and key rows of each head for its rotary layout. The file's settings are read
+/// from the usual keys under the family's name ({name}.embedding_length, {name}.block_count, …) and its tensors from
+/// llama.cpp's usual names (token_embd, blk.N.attn_q, …). Register new families with <see cref="GgufArchitectures.Register"/>.
+/// </summary>
+public sealed class GgufArchitecture
+{
+    /// <summary>The Hugging Face architecture (config.json's "architectures"), registered in <see cref="PretrainedArchitectures"/>.</summary>
+    public required string HuggingFace { get; init; }
+
+    /// <summary>Whether llama.cpp interleaved each head's query and key rows (Llama does; they are put back on load).</summary>
+    public bool InterleavedQueryKeys { get; init; }
+}
+
+/// <summary>
+/// The model families <see cref="GgufModel"/> reads, by GGUF architecture name: llama (Llama, Mistral), qwen2 and qwen3
+/// are registered; add others with <see cref="Register"/>.
+/// </summary>
+public static class GgufArchitectures
+{
+    private static readonly Dictionary<string, GgufArchitecture> Registry = new(StringComparer.Ordinal)
+    {
+        ["llama"] = new() { HuggingFace = "LlamaForCausalLM", InterleavedQueryKeys = true },
+        ["qwen2"] = new() { HuggingFace = "Qwen2ForCausalLM", InterleavedQueryKeys = false },
+        ["qwen3"] = new() { HuggingFace = "Qwen3ForCausalLM", InterleavedQueryKeys = false },
+    };
+
+    /// <summary>Registers (or replaces) how to read the GGUF architecture <paramref name="name"/>.</summary>
+    public static void Register(string name, GgufArchitecture architecture)
+    {
+        ArgumentNullException.ThrowIfNull(architecture);
+        lock (Registry)
+        {
+            Registry[name] = architecture;
+        }
+    }
+
+    /// <summary>Removes the architecture registered as <paramref name="name"/>; false when there is none.</summary>
+    public static bool Unregister(string name)
+    {
+        lock (Registry)
+        {
+            return Registry.Remove(name);
+        }
+    }
+
+    /// <summary>The registered architecture names.</summary>
+    public static IReadOnlyCollection<string> Names
+    {
+        get
+        {
+            lock (Registry)
+            {
+                return [.. Registry.Keys];
+            }
+        }
+    }
+
+    /// <summary>The architecture registered as <paramref name="name"/>.</summary>
+    public static GgufArchitecture Get(string name) => Find(name)
+        ?? throw new NotSupportedException($"No GGUF architecture '{name}' is registered ({string.Join(", ", Names)}); add it with GgufArchitectures.Register.");
+
+    internal static GgufArchitecture? Find(string name)
+    {
+        lock (Registry)
+        {
+            return Registry.GetValueOrDefault(name);
+        }
+    }
+}
+
+/// <summary>
 /// Models from GGUF files (llama.cpp's and Ollama's format). <see cref="Prepare"/> writes a small folder with what the
 /// file's metadata describes, in the Hugging Face layout (config.json, tokenizer.json, tokenizer_config.json with the chat
 /// template, generation_config.json), and <see cref="PretrainedModel.Load"/> reads the weights from the GGUF file itself,
 /// dequantized tensor by tensor, with llama.cpp's names and layouts turned back into the Hugging Face ones.
-/// Architectures: llama (Llama, Mistral), qwen2, qwen3. Tokenizers: byte-level BPE (tokenizer.ggml.model "gpt2").
+/// Architectures: llama (Llama, Mistral), qwen2, qwen3, and those registered with <see cref="GgufArchitectures.Register"/>.
+/// Tokenizers: byte-level BPE (tokenizer.ggml.model "gpt2").
 /// </summary>
 public static class GgufModel
 {
     private const string Marker = "gguf.json";
     private const int FormatVersion = 1;                            // bump when the prepared files change
-
-    // How llama.cpp stores each model family: the Hugging Face architecture it corresponds to, and whether it interleaved
-    // the query and key rows of each head for its rotary layout (Llama does; they are put back on load).
-    private sealed record GgufArchitecture(string HuggingFace, bool InterleavedQueryKeys);
-
-    private static readonly Dictionary<string, GgufArchitecture> Architectures = new(StringComparer.Ordinal)
-    {
-        ["llama"] = new("LlamaForCausalLM", InterleavedQueryKeys: true),
-        ["qwen2"] = new("Qwen2ForCausalLM", InterleavedQueryKeys: false),
-        ["qwen3"] = new("Qwen3ForCausalLM", InterleavedQueryKeys: false),
-    };
 
     // tokenizer.ggml.pre → the pre-tokenizer's split pattern (llama.cpp's llama-vocab.cpp).
     private const string Llama3Pattern = @"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+";
@@ -78,10 +140,8 @@ public static class GgufModel
         using var file = GgufFile.Open(path);
         var notes = new List<string>();
         string arch = file.Get("general.architecture", "");
-        if (!Architectures.TryGetValue(arch, out var architecture))
-        {
-            throw new NotSupportedException($"{path}: GGUF architecture '{arch}' is not supported yet (supported: {string.Join(", ", Architectures.Keys)}).");
-        }
+        var architecture = GgufArchitectures.Find(arch)
+            ?? throw new NotSupportedException($"{path}: GGUF architecture '{arch}' is not supported yet (supported: {string.Join(", ", GgufArchitectures.Names)}); add it with GgufArchitectures.Register.");
 
         string temp = folder + ".tmp";
         if (Directory.Exists(temp))
@@ -317,7 +377,7 @@ public static class GgufModel
         {
             _file = file;
             _arch = file.Get("general.architecture", "");
-            _interleavedQueryKeys = Architectures.TryGetValue(_arch, out var architecture) && architecture.InterleavedQueryKeys;
+            _interleavedQueryKeys = GgufArchitectures.Find(_arch) is { InterleavedQueryKeys: true };
             _heads = file.Get($"{_arch}.attention.head_count", 0);
             _kvHeads = file.Get($"{_arch}.attention.head_count_kv", _heads);
             foreach (var name in file.Tensors.Keys)
