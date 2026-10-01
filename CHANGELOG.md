@@ -94,6 +94,11 @@
   allocations (4,096 on AMD's and others' Windows drivers) no longer run out of them with many tensors (LSTM, GRU and
   transformer gradients failed on an AMD Radeon iGPU). Empty pages go back to the driver with the cached memory.
   `IDRAK_VULKAN_MAX_ALLOCATIONS=<n>` lowers the cap the runtime assumes, to reproduce such drivers anywhere.
+- Vulkan sampling with top-k over large vocabularies (the first stage keeping each slice's candidates) gave other tokens
+  than the CPU on an NVIDIA GPU for rows with ties or long runs of equal scores; the stage now finds each slice's
+  candidates with workgroup reductions (as the sampler's own top-k) instead of a sort and one invocation's walk, and one
+  workgroup per (row, slice) along one dispatch dimension. New test: the sampler run 1,000 times on a GPU gives the same
+  tokens and statistics bit for bit.
 
 ## 0.1.7 (2026-10-01)
 

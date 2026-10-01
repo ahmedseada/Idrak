@@ -22,6 +22,7 @@ internal static partial class Tests
         ("vulkan: uploads, zeroed allocations and reused blocks are ordered after queued dispatches", VulkanOrdering),
         ("vulkan: operations run as generated kernels (no host fallback) and match the CPU (element-wise, rows narrow and wide, products, decoding)", VulkanKernelsMatchCpu),
         ("vulkan: the sampler kernels draw the CPU's tokens with its statistics (greedy, temperature, top-k with and without slots, top-p, min-p, ties)", VulkanSamplerMatchesCpu),
+        ("vulkan: the sampler gives the same tokens and statistics run after run (1,000 runs on a GPU; ties, long runs of equal scores)", VulkanSamplerRepeatable),
         ("vulkan: barriers only between dependent dispatches (chains, independent dispatches, write after read), pushed descriptors and sets; dispatches allocate nothing", VulkanBarriers),
         ("vulkan: decoding steps take no host fallback (decoder with float32, int8, int4, bfloat16 weights; multi-head attention; float32, int8, bfloat16 caches; penalties, top-k, top-p, min-p)", VulkanDecodingWithoutFallbacks),
     ];
@@ -628,7 +629,7 @@ internal static partial class Tests
             {
                 b.PenalizeRows(s[0], s[1], s[2], s[3], 2, vocabulary, 3 * vocabulary, 2 * vocabulary, ring, 10, 1.3f, 0.2f, 0.05f);
                 b.HistoryPush(s[4], s[2], s[3], 2, ring);
-            }, 0f);
+            }, 1e-6f);                                                   // x / repeat: GPUs divide to 2.5 ULP (Vulkan), the CPU exactly
         }
     });
 }
