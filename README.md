@@ -1085,6 +1085,30 @@ Fine-tuning speed on the RTX 5070 Ti (Qwen2.5-0.5B, LoRA, 4k-token steps): 17.4k
 short classification rows; chat with Qwen3-0.6B generates about 140 tokens/s. Not tested yet: GPUs before
 compute 8.6 (the kernels assemble for them, see GPU support), Linux with a GPU, and macOS (CPU only).
 
+### Tested on architectures
+
+The `architecture` branch adds backends beyond CUDA: a Vulkan backend (SPIR-V kernels generated in C#, for Intel,
+AMD and any Vulkan GPU) and the minimum backend every new device starts from (see
+[plans/7-backends.md](plans/7-backends.md)). `-- --list-devices` shows the devices a machine has and how to test one.
+Results per run of the whole test list on one device:
+
+| Date | Commit | Vendor | GPU | Architecture | Kind | Backend | Driver | Memory path | Matrix units | Machine | Result |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 2026-10-01 | e43c0b1 | NVIDIA | GeForce RTX 5070 Ti, 16 GB | Blackwell (sm_120) | discrete | Vulkan 1.4 | 610.88 | staging copies (device-local) | not used yet | Windows 11, 24-thread CPU | 221 of 225: sampler parity (2) and barrier count fixed after the run; 1 tolerance |
+| 2026-10-01 | 63702fb | NVIDIA | GeForce RTX 5070 Ti, 16 GB | Blackwell (sm_120) | discrete | CUDA 13.3 | 610.88 | device memory | bfloat16, fp8, int8 tensor cores | Windows 11, 24-thread CPU | 428 of 428 (CPU and CUDA) |
+| 2026-10-01 | a79e361 | NVIDIA | GeForce RTX 5050 Laptop GPU, 8 GB | Blackwell (sm_120) | discrete | Vulkan 1.4 | 610.88 | staging copies | not used yet | Windows 11, i7-13620H (16 threads) | 221 of 222: int8 tolerance fixed after the run |
+| 2026-10-01 | a79e361 | NVIDIA | GeForce RTX 5050 Laptop GPU, 8 GB | Blackwell (sm_120) | discrete | CUDA 13.3 | 610.88 | device memory | tensor cores | Windows 11, i7-13620H (16 threads) | all but in-place log-softmax (a CUDA kernel bug, fixed in e43c0b1) |
+| 2026-10-01 | a79e361 | NVIDIA | GeForce RTX 3060 Laptop GPU, 6 GB | Ampere (sm_86) | discrete | Vulkan 1.4 | 581.29 | staging copies | not used yet | Windows 11, Ryzen 5000H (16 threads) | 221 of 222: int8 tolerance fixed after the run |
+| 2026-10-01 | a79e361 | Intel | UHD Graphics (i7-13620H) | Xe-LP (Gen12) | integrated | Vulkan 1.4 | 101.7088 | mapped (shared with the CPU) | none (no XMX) | Windows 11, 12 GB shared | 221 of 222: int8 tolerance fixed after the run |
+| 2026-10-01 | a79e361 | AMD | Radeon Graphics (Ryzen 5000H "Cezanne") | Vega (GCN 5) | integrated | Vulkan 1.3 | 23.19.21.13 | mapped (shared with the CPU) | none | Windows 11, 2 GB reserved | 218 of 222: dropout scale (e43c0b1) and the 4,096-allocation cap (feecb42) fixed after the run |
+| 2026-10-01 | feecb42 | Mesa | llvmpipe (lavapipe, LLVM 20) | software (CPU) | CPU driver | Vulkan 1.4 | Mesa 25.2.8 | mapped | – | Ubuntu 24.04, 4 threads | 226 of 226 (also through staging, and with a cap of 64 allocations) |
+| 2026-10-01 | feecb42 | – | minimal test backend (memory and copies only) | – | test | host fallback | – | host | – | Ubuntu 24.04, 4 threads | 226 of 226 |
+| 2026-10-01 | feecb42 | – | none (CPU only) | x64, AVX2 | CPU | CPU | – | – | – | Ubuntu 24.04, 4 threads | 226 of 226 |
+
+Vulkan speed is not tuned yet (on the RTX 5070 Ti: 1.3 µs per dispatch and 724 GB/s element-wise, but decoding
+products and attention 3-20× slower than CUDA's), so `Device.Default` picks a Vulkan GPU only with
+`IDRAK_VULKAN_DEFAULT=1`; tests run on every Vulkan GPU found.
+
 Benchmarks on the RTX 3060 Laptop GPU (`--bench-gemv`, Qwen3-0.6B shapes, int8 weights): decoding products of one row
 run at 75–125 GB/s (q/k/v 34 µs, gate/up 84 µs, the 151,936-column head 1.9 ms); decoding attention over 4,000 cached
 positions 360 µs; a 1 KB upload behind queued work holds the host 5 µs through the staging ring against 521 µs
