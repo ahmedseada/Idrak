@@ -5,6 +5,7 @@ to know a step is done, and what could stop it.
 
 | Plan | Hardware | Status |
 |---|---|---|
+| [CPU](cpu.md) | x64 (AVX2, AVX-512) and ARM64 (NEON); the fallback on every machine | supported; plan covers sampling and kernel speed |
 | [NVIDIA](nvidia.md) | GeForce, RTX, data-center GPUs (CUDA driver API, PTX) | supported; plan covers tuning and gaps |
 | [AMD](amd.md) | Radeon RX 6000/7000/9000, Ryzen APU graphics, Instinct | not supported (runs on the CPU) |
 | [Intel](intel.md) | Iris Xe and Arc integrated GPUs, Arc discrete GPUs, AI Boost NPUs | not supported (runs on the CPU) |
@@ -39,7 +40,7 @@ and the Intel plans need them.
 
 ## Order
 
-1. NVIDIA plan, step 1 (a measured regression on a shipped release).
+1. NVIDIA plan, step 1 (a measured regression on a shipped release), and CPU plan, step 1 (plain sampling).
 2. The shared work above.
 3. The AMD and Intel GPU plans share one Vulkan backend: build it once, tune it per vendor.
 4. Intel NPU last, as an add-on package.
