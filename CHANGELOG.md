@@ -112,6 +112,22 @@
   candidates with workgroup reductions (as the sampler's own top-k) instead of a sort and one invocation's walk, and one
   workgroup per (row, slice) along one dispatch dimension. New test: the sampler run 1,000 times on a GPU gives the same
   tokens and statistics bit for bit.
+- The Vulkan runtime decides only from what the device reports or what is measured on it (no vendor ids, no card
+  names, no fixed sizes): a Vulkan device another provider already drives is recognized by its UUID (Vulkan's
+  deviceUUID against CUDA's `cuDeviceGetUuid`, read without a CUDA context) and listed by name only, whatever its
+  vendor ("driven by CUDA as cuda:0"); CPU-type devices stay by name only. Storages are mapped where a device-local,
+  host-visible memory type lives on a heap at least half the largest device-local heap (shared memory, CPU drivers,
+  discrete GPUs whose whole memory the host maps), with reads through a host-cached staging buffer when that memory is
+  not host-cached; a small host-visible window still means staging copies (`IDRAK_VULKAN_STAGING=1` everywhere). The
+  staging buffer (1/512 of its heap) and pages (1/128 of the heap, raised until half the driver's allocation cap covers
+  it) scale with the reported heap and `maxMemoryAllocationSize` (`IDRAK_VULKAN_STAGING_BYTES`,
+  `IDRAK_VULKAN_PAGE_BYTES` override). Pushed descriptors or sets, commands per batch and batches in flight are measured
+  when a device starts (medians of a few rounds of empty dispatches) and kept per device and driver in
+  `~/.cache/idrak/vulkan/tuning.tsv` (`IDRAK_CACHE`; `IDRAK_VULKAN_TUNING_CACHE` names another file or `0` none;
+  `IDRAK_VULKAN_PUSH_DESCRIPTORS`, `IDRAK_VULKAN_BATCH_COMMANDS`, `IDRAK_VULKAN_IN_FLIGHT` override); descriptor pools
+  hold a batch's sets. The device's subgroup sizes and operations, workgroup, shared-memory and allocation limits are
+  read once (`VulkanDeviceFacts`, internal) and shown in the `--bench-vulkan` header. A test keeps vendor ids and card
+  names out of the Vulkan code.
 
 ## 0.1.7 (2026-10-01)
 

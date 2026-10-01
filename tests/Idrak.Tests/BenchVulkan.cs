@@ -46,7 +46,7 @@ internal static partial class Tests
     {
         bool Run(string section) => sections is null || sections.Contains(section);
         var backend = (VulkanBackend)device.Backend;
-        Console.WriteLine($"== {device}: {device.Name} ({(backend.UnifiedMemory ? "mapped memory" : "staging copies")})");
+        Console.WriteLine($"== {device}: {backend.Describe()}");
         var random = new Random(5);
         float[] Values(long n)
         {

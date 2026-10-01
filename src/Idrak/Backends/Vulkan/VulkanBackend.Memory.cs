@@ -12,9 +12,6 @@ namespace Idrak.Backends.Vulkan;
 // cached blocks are freed (ReleaseCachedMemory, after waiting for the device), and empty pages go back to the driver then.
 internal sealed unsafe partial class VulkanBackend
 {
-    // The largest page; smaller on small heaps (an eighth of the heap, at least 1 MiB).
-    private const long MaxPageBytes = 64L << 20;
-
     // The pages, by memory type (also the lock over them and their free lists), and the live allocations (pages,
     // storages of their own, the staging buffer).
     private readonly List<Page> _pages = [];
@@ -56,16 +53,33 @@ internal sealed unsafe partial class VulkanBackend
         return cap is int c && c > 0 ? Math.Min(limit, c) : limit;
     }
 
-    // The page size for a heap of `heapBytes`: a power of two, at most MaxPageBytes, at most an eighth of the heap.
-    private static long PageSize(ulong heapBytes)
+    // The page size for a heap of `heapBytes`, from what the device reports: the power of two at most 1/128 of the heap
+    // (64 MiB of an 8 GiB heap: a page's unused tail wastes under 1% of the heap), raised until half the driver's
+    // allocation cap (`allocationCount`, maxMemoryAllocationCount) in pages covers the whole heap (so pages never run out
+    // of allocations before the heap runs out of memory), at most the largest allocation (`maxAllocation`,
+    // maxMemoryAllocationSize). `setting` (tests, IDRAK_VULKAN_PAGE_BYTES) instead when given.
+    internal static long PageSize(ulong heapBytes, ulong maxAllocation, uint allocationCount, long? setting)
     {
-        long page = MaxPageBytes;
-        while (page > 1L << 20 && (ulong)page > heapBytes / 8)
+        if (setting is long s and > 0)
         {
-            page /= 2;
+            return s;
         }
 
-        return page;
+        ulong page = PowerOfTwoAtMost(heapBytes / 128);
+        if (allocationCount >= 2)
+        {
+            while (page < heapBytes && page * (allocationCount / 2) < heapBytes)
+            {
+                page *= 2;
+            }
+        }
+
+        if (maxAllocation > 0)
+        {
+            page = Math.Min(page, PowerOfTwoAtMost(maxAllocation));
+        }
+
+        return (long)Math.Max(page, sizeof(float));
     }
 
     // One shared allocation and its free ranges (sorted by offset, neighbors merged).

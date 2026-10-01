@@ -328,6 +328,37 @@ internal sealed unsafe partial class CudaBackend : Backend
 
     public static bool IsInitialized(int ordinal) => Instances[ordinal].IsValueCreated;
 
+    private static readonly Lazy<Guid?[]> Uuids = new(() =>
+    {
+        var uuids = new Guid?[DeviceCount];
+        byte* bytes = stackalloc byte[16];
+        for (int i = 0; i < uuids.Length; i++)
+        {
+            if (cuDeviceGet(out int device, i) == 0 && cuDeviceGetUuid(bytes, device) == 0)
+            {
+                uuids[i] = new Guid(new ReadOnlySpan<byte>(bytes, 16));
+            }
+        }
+
+        return uuids;
+    });
+
+    /// <summary>
+    /// Device <paramref name="ordinal"/>'s UUID (null when the driver does not report it), read without creating a context:
+    /// other APIs report the same UUID for the same GPU (Vulkan's deviceUUID), so a device two providers reach is found.
+    /// </summary>
+    public static Guid? DeviceUuid(int ordinal)
+    {
+        try
+        {
+            return (uint)ordinal < (uint)DeviceCount ? Uuids.Value[ordinal] : null;
+        }
+        catch (EntryPointNotFoundException)
+        {
+            return null;
+        }
+    }
+
     private static (int, string) ProbeDriver()
     {
         if (Environment.GetEnvironmentVariable("IDRAK_DISABLE_CUDA") is "1" or "true")

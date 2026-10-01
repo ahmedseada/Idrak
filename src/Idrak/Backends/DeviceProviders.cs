@@ -45,6 +45,12 @@ internal abstract class DeviceProvider
 
     /// <summary>Why the device is not listed or not chosen by default, for device listings; null when there is nothing to say.</summary>
     public virtual string? Note(int ordinal) => null;
+
+    /// <summary>
+    /// The UUID the driver reports for device <paramref name="ordinal"/> (the same for one GPU across APIs: CUDA's
+    /// cuDeviceGetUuid, Vulkan's deviceUUID), so a GPU two providers reach is recognized; null when unknown.
+    /// </summary>
+    public virtual Guid? DeviceUuid(int ordinal) => null;
 }
 
 /// <summary>The device kinds beyond the CPU: CUDA first, then Vulkan.</summary>
@@ -117,5 +123,7 @@ internal static class DeviceProviders
         public override bool IsStarted(int ordinal) => CudaBackend.IsInitialized(ordinal);
 
         public override int? DefaultRank(int ordinal) => ordinal == 0 ? 100 : 99;   // the first GPU, as before
+
+        public override Guid? DeviceUuid(int ordinal) => CudaBackend.DeviceUuid(ordinal);
     }
 }
