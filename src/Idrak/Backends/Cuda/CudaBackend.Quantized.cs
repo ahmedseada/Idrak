@@ -712,7 +712,7 @@ internal sealed unsafe partial class CudaBackend
     {
         if (FlashTensorCore(dim) is { } tc)
         {
-            Launch(tc[$"flash_tc_fwd_d{dim}"], (uint)((rowsPerHead + PtxKernels.FlashTensorRows - 1) / PtxKernels.FlashTensorRows), (uint)heads, 1, 128, 1,
+            Launch(tc[FlashNames(dim).Forward], (uint)((rowsPerHead + PtxKernels.FlashTensorRows - 1) / PtxKernels.FlashTensorRows), (uint)heads, 1, 128, 1,
                 [P(q), P(keys), P(values), P(position), P(y), logSumExp is null ? 0UL : P(logSumExp),
                 U(rowsPerHead), U(steps), U(capacity), F(scale * Log2E), .. ContiguousLayout(rowsPerHead, steps, capacity, dim)]);
             return;
@@ -757,7 +757,7 @@ internal sealed unsafe partial class CudaBackend
 
         var tc = _tensorCoreAny;
         int heads = batch * kvHeads, rowsPerHead = group * steps;
-        Launch(tc[$"flash_tc_fwd_d{dim}"], (uint)((rowsPerHead + PtxKernels.FlashTensorRows - 1) / PtxKernels.FlashTensorRows), (uint)heads, 1, 128, 1,
+        Launch(tc[FlashNames(dim).Forward], (uint)((rowsPerHead + PtxKernels.FlashTensorRows - 1) / PtxKernels.FlashTensorRows), (uint)heads, 1, 128, 1,
             [P(q) + (ulong)qOffset * 4, P(k) + (ulong)kOffset * 4, P(v) + (ulong)vOffset * 4, P(ZeroPosition), P(y), logSumExp is null ? 0UL : P(logSumExp),
             U(rowsPerHead), U(steps), U(steps), F(scale * Log2E), .. RowLayout(kvHeads, group, steps, dim, qRow, kRow, kvHeads * group * dim)]);
         return true;
@@ -781,12 +781,12 @@ internal sealed unsafe partial class CudaBackend
             Launch1D(tc["flash_tc_delta"], rows, P(y), P(dOutput), P(delta), U(rowsPerHead), U(steps), U(dim), U(rows),
                 U(kvHeads), layout[5], layout[6], layout[7], layout[8]);
             t_sharedBytes = (uint)PtxKernels.FlashTensorBackwardKvShared(dim);
-            Launch(tc[$"flash_tc_bwd_kv_d{dim}"], (uint)((steps + PtxKernels.FlashTensorRows - 1) / PtxKernels.FlashTensorRows), (uint)heads, 1, 128, 1,
+            Launch(tc[FlashNames(dim).BackwardKv], (uint)((steps + PtxKernels.FlashTensorRows - 1) / PtxKernels.FlashTensorRows), (uint)heads, 1, 128, 1,
                 [P(q) + (ulong)qOffset * 4, P(k) + (ulong)kOffset * 4, P(v) + (ulong)vOffset * 4, P(dOutput), P(logSumExp), P(delta),
                 P(dk) + (ulong)dkOffset * 4, P(dv) + (ulong)dvOffset * 4,
                 U(rowsPerHead), U(steps), U(steps), F(scale), F(scale * Log2E), U(group == 1 ? 1 : 0), .. layout]);
             t_sharedBytes = (uint)PtxKernels.FlashTensorBackwardQShared(dim);
-            Launch(tc[$"flash_tc_bwd_q_d{dim}"], (uint)((rowsPerHead + PtxKernels.FlashTensorRows - 1) / PtxKernels.FlashTensorRows), (uint)heads, 1, 128, 1,
+            Launch(tc[FlashNames(dim).BackwardQ], (uint)((rowsPerHead + PtxKernels.FlashTensorRows - 1) / PtxKernels.FlashTensorRows), (uint)heads, 1, 128, 1,
                 [P(q) + (ulong)qOffset * 4, P(k) + (ulong)kOffset * 4, P(v) + (ulong)vOffset * 4, P(dOutput), P(logSumExp), P(delta),
                 P(dq) + (ulong)dqOffset * 4, U(rowsPerHead), U(steps), U(steps), F(scale), F(scale * Log2E), .. layout]);
         }
@@ -810,8 +810,19 @@ internal sealed unsafe partial class CudaBackend
         MixedPrecision.UsesTensorCores && PtxKernels.FlashTensorDim(dim) && FlashKernelsLoaded(dim) ? _tensorCoreAny : null;
 
     private bool FlashKernelsLoaded(int dim) =>
-        TensorKernel($"flash_tc_fwd_d{dim}") is not null && TensorKernel($"flash_tc_bwd_q_d{dim}") is not null
-        && TensorKernel($"flash_tc_bwd_kv_d{dim}") is not null && TensorKernel("flash_tc_delta") is not null;
+        TensorKernel(FlashNames(dim).Forward) is not null && TensorKernel(FlashNames(dim).BackwardQ) is not null
+        && TensorKernel(FlashNames(dim).BackwardKv) is not null && TensorKernel("flash_tc_delta") is not null;
+
+    // The flash kernels' names per head size (PtxKernels.FlashTensorDim: 64 and 128), built once: no name is formatted per launch.
+    private static readonly (string Forward, string BackwardQ, string BackwardKv) Flash64 = ("flash_tc_fwd_d64", "flash_tc_bwd_q_d64", "flash_tc_bwd_kv_d64");
+    private static readonly (string Forward, string BackwardQ, string BackwardKv) Flash128 = ("flash_tc_fwd_d128", "flash_tc_bwd_q_d128", "flash_tc_bwd_kv_d128");
+
+    private static (string Forward, string BackwardQ, string BackwardKv) FlashNames(int dim) => dim switch
+    {
+        64 => Flash64,
+        128 => Flash128,
+        _ => ($"flash_tc_fwd_d{dim}", $"flash_tc_bwd_q_d{dim}", $"flash_tc_bwd_kv_d{dim}"),
+    };
 
     public override void AttentionTiledBackward(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput,
         Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale)
@@ -825,11 +836,11 @@ internal sealed unsafe partial class CudaBackend
             {
                 var layout = ContiguousLayout(rowsPerHead, steps, capacity, dim);
                 t_sharedBytes = (uint)PtxKernels.FlashTensorBackwardKvShared(dim);
-                Launch(tc[$"flash_tc_bwd_kv_d{dim}"], (uint)((capacity + PtxKernels.FlashTensorRows - 1) / PtxKernels.FlashTensorRows), (uint)heads, 1, 128, 1,
+                Launch(tc[FlashNames(dim).BackwardKv], (uint)((capacity + PtxKernels.FlashTensorRows - 1) / PtxKernels.FlashTensorRows), (uint)heads, 1, 128, 1,
                     [P(q), P(keys), P(values), P(dOutput), P(logSumExp), P(delta), P(dkeys), P(dvalues),
                     U(rowsPerHead), U(steps), U(capacity), F(scale), F(scale * Log2E), U(rowsPerHead == steps ? 1 : 0), .. layout]);
                 t_sharedBytes = (uint)PtxKernels.FlashTensorBackwardQShared(dim);
-                Launch(tc[$"flash_tc_bwd_q_d{dim}"], (uint)((rowsPerHead + PtxKernels.FlashTensorRows - 1) / PtxKernels.FlashTensorRows), (uint)heads, 1, 128, 1,
+                Launch(tc[FlashNames(dim).BackwardQ], (uint)((rowsPerHead + PtxKernels.FlashTensorRows - 1) / PtxKernels.FlashTensorRows), (uint)heads, 1, 128, 1,
                     [P(q), P(keys), P(values), P(dOutput), P(logSumExp), P(delta), P(dq),
                     U(rowsPerHead), U(steps), U(capacity), F(scale), F(scale * Log2E), .. layout]);
                 return;
@@ -856,7 +867,7 @@ internal sealed unsafe partial class CudaBackend
             return false;
         }
 
-        Launch(tc[$"flash_tc_fwd_d{dim}"], (uint)((rowsPerHead + PtxKernels.FlashTensorRows - 1) / PtxKernels.FlashTensorRows), (uint)heads, 1, 128, 1,
+        Launch(tc[FlashNames(dim).Forward], (uint)((rowsPerHead + PtxKernels.FlashTensorRows - 1) / PtxKernels.FlashTensorRows), (uint)heads, 1, 128, 1,
             [P(q), P(keys), P(values), P(position), P(y), 0UL, U(rowsPerHead), U(steps), U(capacity), F(scale * Log2E),
             .. ContiguousLayout(rowsPerHead, steps, capacity, dim, starts, starts, headsPerRow)]);
         return true;
@@ -870,7 +881,7 @@ internal sealed unsafe partial class CudaBackend
             return false;
         }
 
-        Launch(tc[$"flash_tc_fwd_d{dim}"], (uint)((rowsPerHead + PtxKernels.FlashTensorRows - 1) / PtxKernels.FlashTensorRows), (uint)heads, 1, 128, 1,
+        Launch(tc[FlashNames(dim).Forward], (uint)((rowsPerHead + PtxKernels.FlashTensorRows - 1) / PtxKernels.FlashTensorRows), (uint)heads, 1, 128, 1,
             [P(q), P(keys), P(values), P(ZeroPosition), P(y), logSumExp is null ? 0UL : P(logSumExp),
             U(rowsPerHead), U(steps), U(steps), F(scale * Log2E), .. ContiguousLayout(rowsPerHead, steps, steps, dim, starts, ends, headsPerRow)]);
         return true;
@@ -891,11 +902,11 @@ internal sealed unsafe partial class CudaBackend
             Launch1D(K("attn_bwd_d_f32"), rows, P(output), P(dOutput), P(delta), U(dim), U(rows));
             var layout = ContiguousLayout(rowsPerHead, steps, steps, dim, starts, ends, headsPerRow);
             t_sharedBytes = (uint)PtxKernels.FlashTensorBackwardKvShared(dim);
-            Launch(tc[$"flash_tc_bwd_kv_d{dim}"], (uint)((steps + PtxKernels.FlashTensorRows - 1) / PtxKernels.FlashTensorRows), (uint)heads, 1, 128, 1,
+            Launch(tc[FlashNames(dim).BackwardKv], (uint)((steps + PtxKernels.FlashTensorRows - 1) / PtxKernels.FlashTensorRows), (uint)heads, 1, 128, 1,
                 [P(q), P(keys), P(values), P(dOutput), P(logSumExp), P(delta), P(dkeys), P(dvalues),
                 U(rowsPerHead), U(steps), U(steps), F(scale), F(scale * Log2E), 0UL, .. layout]);
             t_sharedBytes = (uint)PtxKernels.FlashTensorBackwardQShared(dim);
-            Launch(tc[$"flash_tc_bwd_q_d{dim}"], (uint)((rowsPerHead + PtxKernels.FlashTensorRows - 1) / PtxKernels.FlashTensorRows), (uint)heads, 1, 128, 1,
+            Launch(tc[FlashNames(dim).BackwardQ], (uint)((rowsPerHead + PtxKernels.FlashTensorRows - 1) / PtxKernels.FlashTensorRows), (uint)heads, 1, 128, 1,
                 [P(q), P(keys), P(values), P(dOutput), P(logSumExp), P(delta), P(dq),
                 U(rowsPerHead), U(steps), U(steps), F(scale), F(scale * Log2E), .. layout]);
         }

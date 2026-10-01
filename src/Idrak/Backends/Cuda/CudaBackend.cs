@@ -1138,8 +1138,7 @@ internal sealed unsafe partial class CudaBackend : Backend
 
     internal bool EightBitReady(bool fp8)
     {
-        string format = fp8 ? "e4m3" : "s8";
-        return TensorKernel($"gemm8_{format}_f32") is not null && TensorKernel($"quant_rows_{format}") is not null;
+        return TensorKernel(fp8 ? "gemm8_e4m3_f32" : "gemm8_s8_f32") is not null && TensorKernel(fp8 ? "quant_rows_e4m3" : "quant_rows_s8") is not null;
     }
 
     // c = beta·c + f(op(a)·op(b)) on 8-bit tensor cores (addresses in bytes, strides in floats): op(a) is quantized per row
@@ -1298,10 +1297,9 @@ internal sealed unsafe partial class CudaBackend : Backend
     // `rows` columns become the output rows.
     private void QuantizeOperand(bool fp8, ulong x, int ld, bool byRows, Storage output, Storage scale, int rows, int k, int kp)
     {
-        string format = fp8 ? "e4m3" : "s8";
         if (byRows)
         {
-            Launch(TensorKernel($"quant_rows_{format}")!.Value, (uint)rows, 1, 1, 256, 1, x, P(output), P(scale), U(ld), U(kp), U(rows), U(k));
+            Launch(TensorKernel(fp8 ? "quant_rows_e4m3" : "quant_rows_s8")!.Value, (uint)rows, 1, 1, 256, 1, x, P(output), P(scale), U(ld), U(kp), U(rows), U(k));
             return;
         }
 
@@ -1330,7 +1328,7 @@ internal sealed unsafe partial class CudaBackend : Backend
         bool keepAmax = false;
         try
         {
-            Launch(TensorKernel($"absmax_cols_{format}")!.Value, (uint)((rows + 255) / 256), (uint)((k + Chunk - 1) / Chunk), 1, 256, 1,
+            Launch(TensorKernel(fp8 ? "absmax_cols_e4m3" : "absmax_cols_s8")!.Value, (uint)((rows + 255) / 256), (uint)((k + Chunk - 1) / Chunk), 1, 256, 1,
                 x, P(amax), U(ld), U(k), U(rows), U(Chunk));
             QuantizeColumnsWithMaxima(fp8, x, ld, output, scale, rows, k, kp, amax, null);
             if (delayed)
@@ -1377,8 +1375,7 @@ internal sealed unsafe partial class CudaBackend : Backend
     internal void QuantizeColumnsWithMaxima(bool fp8, ulong x, int ld, Storage output, Storage scale, int rows, int k, int kp, Storage maxima,
         Storage? record)
     {
-        string format = fp8 ? "e4m3" : "s8";
-        Launch(TensorKernel($"quant_cols_{format}")!.Value, (uint)((rows + 31) / 32), (uint)(kp / 32), 1, 32, 8,
+        Launch(TensorKernel(fp8 ? "quant_cols_e4m3" : "quant_cols_s8")!.Value, (uint)((rows + 31) / 32), (uint)(kp / 32), 1, 32, 8,
             x, P(output), P(maxima), P(scale), U(ld), U(kp), U(k), U(rows), record is null ? 0UL : P(record), 0UL);
     }
 
@@ -1390,8 +1387,7 @@ internal sealed unsafe partial class CudaBackend : Backend
         Storage record)
     {
         QuantizeColumnsWithMaxima(fp8, x, ld, output, scale, rows, k, kp, kept, record);
-        string format = fp8 ? "e4m3" : "s8";
-        Launch(TensorKernel($"quant_cols_{format}")!.Value, (uint)((rows + 31) / 32), (uint)Math.Min(kp / 32, 4), 1, 32, 8,
+        Launch(TensorKernel(fp8 ? "quant_cols_e4m3" : "quant_cols_s8")!.Value, (uint)((rows + 31) / 32), (uint)Math.Min(kp / 32, 4), 1, 32, 8,
             x, P(output), P(record), P(scale), U(ld), U(kp), U(k), U(rows), 0UL, P(kept));
     }
 

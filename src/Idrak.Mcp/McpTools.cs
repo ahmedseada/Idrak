@@ -1,3 +1,5 @@
+using System.Buffers;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -42,7 +44,7 @@ public static class McpTools
         var result = new JsonObject();
         foreach (var (name, value) in arguments ?? new Dictionary<string, JsonElement>())
         {
-            result[name] = JsonNode.Parse(value.GetRawText());
+            result[name] = JsonNode.Parse(JsonMarshal.GetRawUtf8Value(value));      // the element's own UTF-8, no string copy
         }
 
         return result;
@@ -50,11 +52,26 @@ public static class McpTools
 
     internal static Dictionary<string, JsonElement> ToElements(JsonObject arguments)
     {
+        // Each value written as ToJsonString() writes it (default writer options), but as UTF-8 into one reused buffer.
         var result = new Dictionary<string, JsonElement>();
+        var buffer = new ArrayBufferWriter<byte>();
+        using var writer = new Utf8JsonWriter(buffer);
         foreach (var (name, value) in arguments)
         {
-            using var document = JsonDocument.Parse(value?.ToJsonString() ?? "null");
-            result[name] = document.RootElement.Clone();
+            buffer.ResetWrittenCount();
+            writer.Reset();
+            if (value is null)
+            {
+                writer.WriteNullValue();
+            }
+            else
+            {
+                value.WriteTo(writer);
+            }
+
+            writer.Flush();
+            var reader = new Utf8JsonReader(buffer.WrittenSpan);
+            result[name] = JsonElement.ParseValue(ref reader);
         }
 
         return result;

@@ -124,11 +124,12 @@ public sealed partial class WordTokenizer : ITokenizer
     public static WordTokenizer FromTexts(IEnumerable<string> texts, IEnumerable<string> specials, int minCount = 1, bool lowercase = true)
     {
         var counts = new Dictionary<string, int>();
+        var lookup = counts.GetAlternateLookup<ReadOnlySpan<char>>();
         foreach (var text in texts)
         {
-            foreach (var word in Split(text, lowercase))
+            foreach (var word in SplitSpans(text, lowercase))
             {
-                counts[word] = counts.GetValueOrDefault(word) + 1;
+                System.Runtime.InteropServices.CollectionsMarshal.GetValueRefOrAddDefault(lookup, word, out _)++;     // a string only for a new word
             }
         }
 
@@ -156,8 +157,24 @@ public sealed partial class WordTokenizer : ITokenizer
     public static IEnumerable<string> Split(string text, bool lowercase = true) =>
         Pattern().Matches(lowercase ? text.ToLowerInvariant() : text).Select(m => m.Value);
 
+    /// <summary>
+    /// The units of <paramref name="text"/> as <see cref="Split"/> finds them, as slices of one pooled lower-cased copy
+    /// (no string per unit). Enumerate it once with <c>foreach</c>, which returns the copy to the pool.
+    /// </summary>
+    internal static Units SplitSpans(string text, bool lowercase = true) => new(text, lowercase);
+
     /// <inheritdoc />
-    public IReadOnlyList<int> Encode(string text) => [.. Split(text, Lowercase).Select(w => this[w])];
+    public IReadOnlyList<int> Encode(string text)
+    {
+        var ids = new List<int>();
+        var lookup = _index.GetAlternateLookup<ReadOnlySpan<char>>();
+        foreach (var word in SplitSpans(text, Lowercase))
+        {
+            ids.Add(lookup.TryGetValue(word, out int id) ? id : _index[UnknownToken]);
+        }
+
+        return ids;
+    }
 
     /// <inheritdoc />
     public string Decode(IEnumerable<int> ids)
@@ -205,6 +222,44 @@ public sealed partial class WordTokenizer : ITokenizer
 
     [System.Text.RegularExpressions.GeneratedRegex(@"<[\w|/]+>|\w+|[^\w\s]")]
     private static partial System.Text.RegularExpressions.Regex Pattern();
+
+    /// <summary>The enumerator of <see cref="SplitSpans"/>.</summary>
+    internal ref struct Units
+    {
+        private readonly char[]? _rented;
+        private readonly ReadOnlySpan<char> _text;
+        private System.Text.RegularExpressions.Regex.ValueMatchEnumerator _matches;
+
+        public Units(string text, bool lowercase)
+        {
+            if (lowercase)
+            {
+                // Lower-cased as string.ToLowerInvariant does (same mapping, same length).
+                _rented = System.Buffers.ArrayPool<char>.Shared.Rent(text.Length);
+                _text = _rented.AsSpan(0, text.AsSpan().ToLowerInvariant(_rented));
+            }
+            else
+            {
+                _text = text;
+            }
+
+            _matches = Pattern().EnumerateMatches(_text);
+        }
+
+        public readonly ReadOnlySpan<char> Current => _text.Slice(_matches.Current.Index, _matches.Current.Length);
+
+        public readonly Units GetEnumerator() => this;
+
+        public bool MoveNext() => _matches.MoveNext();
+
+        public readonly void Dispose()
+        {
+            if (_rented is not null)
+            {
+                System.Buffers.ArrayPool<char>.Shared.Return(_rented);
+            }
+        }
+    }
 }
 
 /// <summary>Reads either tokenizer from the JSON written by <see cref="CharTokenizer.Save(string)"/> or <see cref="WordTokenizer.Save(string)"/>.</summary>
