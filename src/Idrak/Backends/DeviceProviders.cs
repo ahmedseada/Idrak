@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using Idrak.Backends.Cuda;
+using Idrak.Backends.Vulkan;
 
 namespace Idrak.Backends;
 
@@ -43,10 +44,10 @@ internal abstract class DeviceProvider
     public virtual int? DefaultRank(int ordinal) => null;
 }
 
-/// <summary>The device kinds beyond the CPU, CUDA's first.</summary>
+/// <summary>The device kinds beyond the CPU: CUDA first, then Vulkan.</summary>
 internal static class DeviceProviders
 {
-    private static readonly List<DeviceProvider> Registry = [new CudaProvider()];
+    private static readonly List<DeviceProvider> Registry = [new CudaProvider(), new VulkanProvider()];
 
     /// <summary>The registered providers, in registration order.</summary>
     public static IReadOnlyList<DeviceProvider> All
