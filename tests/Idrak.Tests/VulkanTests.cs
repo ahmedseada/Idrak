@@ -25,6 +25,7 @@ internal static partial class Tests
         ("vulkan: the sampler gives the same tokens and statistics run after run (1,000 runs on a GPU; ties, long runs of equal scores)", VulkanSamplerRepeatable),
         ("vulkan: barriers only between dependent dispatches (chains, independent dispatches, write after read), pushed descriptors and sets; dispatches allocate nothing", VulkanBarriers),
         ("vulkan: decoding steps take no host fallback (decoder with float32, int8, int4, bfloat16 weights; multi-head attention; float32, int8, bfloat16 caches; penalties, top-k, top-p, min-p)", VulkanDecodingWithoutFallbacks),
+        ("vulkan: kernels shaped by the device (every workgroup width, products split over k, attention split over positions, tiled products, measured and stored choices) match the CPU and give the same bits run after run", VulkanSplitKernels),
     ];
 
     // y[i] = a[i] * alpha + b[i] for i < n; bindings a, b, y; push constants { uint n; float alpha; }; 64 lanes per group.

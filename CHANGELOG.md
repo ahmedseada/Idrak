@@ -128,6 +128,25 @@
   hold a batch's sets. The device's subgroup sizes and operations, workgroup, shared-memory and allocation limits are
   read once (`VulkanDeviceFacts`, internal) and shown in the `--bench-vulkan` header. A test keeps vendor ids and card
   names out of the Vulkan code.
+- Vulkan kernels are shaped by the device they run on, never by its vendor or name: the workgroup width comes from the
+  reported limits (8 subgroups, within the invocations, workgroup size and workgroup memory the device takes; kernels
+  are generated per width, from 64 to 1024), reductions use subgroup arithmetic where the device reports it for
+  compute shaders (two barriers instead of one per halving), and the choices no limit decides are measured on the device the first time a shape
+  needs them (the median of five rounds; the formula's choice kept unless 3% slower) and stored per device and driver
+  beside the runtime's choices (`~/.cache/idrak/vulkan/tuning.tsv`; `IDRAK_AUTOTUNE=0` uses the formulas,
+  `IDRAK_VULKAN_WIDTH` forces a width, `IDRAK_VULKAN_SUBGROUPS=0` plain reductions). Decoding products and
+  attention are split across workgroups: packed int8 / int4 / bfloat16 products with few rows read each weight word
+  once per workgroup of 32 or 64 words × slices of k, 1 to 8 rows of x at a time, and split k over workgroups (a second
+  pass adds the splits in order); decoding attention scores a workgroup's width of positions at once with an online
+  softmax, spreads small heads' values over parts of the workgroup, and splits the cached positions over workgroups
+  (a second pass merges them, flash-decoding style); float32 products have a register-blocked kernel (4 × 4 outputs
+  per invocation) beside the tiled and small ones. Measured choices: widths, words per row and splits of the packed
+  products, splits of attention, the float32 product kernel, row kernels' narrow or wide form and their reductions.
+  Same results as before within rounding (sums in a different order), bit-identical from run to run. On lavapipe
+  (a CPU driver: indicative only; width 64 from its subgroups of 8): int8 product 1 × 1024 → 3072 5.1 → 1.3 ms, int4
+  1 × 3072 → 1024 6.7 → 1.2 ms, int4 1 × 1024 → 151,936 213 → 39 ms, float32 1024³ 1.6 → 6.7 GFLOP/s, attention over
+  4,000 positions 28.8 / 24.9 / 29.6 → 27.8 / 18.5 / 16.7 ms (float32 / int8 / bfloat16 caches; 200 positions slower
+  there, 4.1 → 9.1 ms, from the splits sized for a full cache).
 
 ## 0.1.7 (2026-10-01)
 

@@ -18,8 +18,9 @@ namespace Idrak.Backends.Vulkan;
 /// <param name="BindingNames">Each binding's name, for messages and documentation.</param>
 /// <param name="PushNames">Each push constant's name with its type ("n:int", "alpha:float").</param>
 /// <param name="Writes">Bit i set when the kernel writes binding i (the others are only read, and decorated NonWritable).</param>
+/// <param name="SharedBytes">Workgroup memory the kernel declares (bytes), checked against the device's limit.</param>
 internal sealed record SpirvKernel(string Name, uint[] Words, int Bindings, int PushBytes, int LocalSizeX, int LocalSizeY, int LocalSizeZ,
-    string[] BindingNames, string[] PushNames, ulong Writes)
+    string[] BindingNames, string[] PushNames, ulong Writes, int SharedBytes = 0)
 {
     /// <summary>Invocations per workgroup.</summary>
     public int LocalSize => LocalSizeX * LocalSizeY * LocalSizeZ;
@@ -64,6 +65,16 @@ internal sealed class KernelBuilder
     private readonly uint _bufferPointer, _bufferElement;
     private readonly Dictionary<BuiltIn, uint> _builtIns = [];
     private readonly Dictionary<(BuiltIn, int), Val> _builtInValues = [];
+    private int _sharedBytes;
+    private readonly bool _subgroups = t_subgroups;
+
+    /// <summary>
+    /// Whether kernels built on this thread from now on reduce through subgroup arithmetic (GroupNonUniformArithmetic,
+    /// for devices that report it for compute shaders) instead of workgroup memory alone. Set around a build by the
+    /// kernel catalog.
+    /// </summary>
+    [ThreadStatic]
+    internal static bool t_subgroups;
 
     /// <summary>Starts a kernel with this workgroup size.</summary>
     public KernelBuilder(string name, int localSizeX, int localSizeY = 1, int localSizeZ = 1)
@@ -89,6 +100,9 @@ internal sealed class KernelBuilder
 
     /// <summary>Workgroup width.</summary>
     public int LocalSizeX => _localX;
+
+    /// <summary>Whether this kernel's reductions use subgroup arithmetic (see <see cref="t_subgroups"/>).</summary>
+    public bool Subgroups => _subgroups;
 
     // ------------------------------------------------------------------ declarations
 
@@ -136,6 +150,7 @@ internal sealed class KernelBuilder
         uint type = _m.TypeArray(TypeOf(ScalarKind.Float), (uint)length);
         uint variable = _m.GlobalVariable(_m.TypePointer(StorageClass.Workgroup, type), StorageClass.Workgroup);
         _m.Name(variable, name);
+        _sharedBytes += 4 * length;
         return new SharedArray(this, variable, length);
     }
 
@@ -190,6 +205,47 @@ internal sealed class KernelBuilder
 
     /// <summary>Invocations in the whole dispatch along x (the step of a grid-stride loop).</summary>
     public Val GridStrideX => GroupsX * _localX;
+
+    /// <summary>gl_SubgroupSize (subgroup kernels only).</summary>
+    public Val SubgroupSize => ScalarBuiltIn(BuiltIn.SubgroupSize);
+
+    /// <summary>gl_NumSubgroups (subgroup kernels only).</summary>
+    public Val NumSubgroups => ScalarBuiltIn(BuiltIn.NumSubgroups);
+
+    /// <summary>gl_SubgroupID (subgroup kernels only).</summary>
+    public Val SubgroupId => ScalarBuiltIn(BuiltIn.SubgroupId);
+
+    /// <summary>gl_SubgroupInvocationID (subgroup kernels only).</summary>
+    public Val SubgroupLocalId => ScalarBuiltIn(BuiltIn.SubgroupLocalInvocationId);
+
+    // A scalar uint built-in (the subgroup ones), loaded once at the start, as a signed int.
+    private Val ScalarBuiltIn(BuiltIn builtIn)
+    {
+        if (_builtInValues.TryGetValue((builtIn, 0), out var cached))
+        {
+            return cached;
+        }
+
+        _m.Capability(61);                                               // GroupNonUniform
+        uint uintType = TypeOf(ScalarKind.UInt);
+        uint variable = _m.GlobalVariable(_m.TypePointer(StorageClass.Input, uintType), StorageClass.Input);
+        _m.Decorate(variable, Decoration.BuiltIn, (uint)builtIn);
+        uint loaded = _m.PrologueValue(SpirvOp.Load, uintType, variable);
+        var value = new Val(this, _m.PrologueValue(SpirvOp.Bitcast, TypeOf(ScalarKind.Int), loaded), ScalarKind.Int);
+        _builtInValues[(builtIn, 0)] = value;
+        return value;
+    }
+
+    /// <summary>The sum (or maximum) of a float over the invocations of this subgroup, returned to all of them (subgroup
+    /// kernels only; every invocation of the subgroup must take part).</summary>
+    public Val SubgroupReduce(Val value, bool max)
+    {
+        Expect(value, ScalarKind.Float);
+        _m.Capability(61);                                               // GroupNonUniform
+        _m.Capability(63);                                               // GroupNonUniformArithmetic
+        uint scope = _m.ConstantUInt(3);                                 // Subgroup
+        return new Val(this, _m.Value(max ? SpirvOp.GroupNonUniformFMax : SpirvOp.GroupNonUniformFAdd, TypeOf(ScalarKind.Float), scope, 0, value.Id), ScalarKind.Float);
+    }
 
     private Val BuiltInValue(BuiltIn builtIn, int component)
     {
@@ -364,16 +420,38 @@ internal sealed class KernelBuilder
     /// The sum of <paramref name="value"/> over the workgroup's x invocations (a power of two), returned to all of them
     /// through <paramref name="scratch"/> (at least the workgroup width long). Uniform control flow only.
     /// </summary>
-    public Val ReduceSum(SharedArray scratch, Val value) => Reduce(scratch, value, (a, b) => a + b);
+    public Val ReduceSum(SharedArray scratch, Val value) => Reduce(scratch, value, (a, b) => a + b, max: false);
 
     /// <summary>The largest <paramref name="value"/> over the workgroup's x invocations (see <see cref="ReduceSum"/>).</summary>
-    public Val ReduceMax(SharedArray scratch, Val value) => Reduce(scratch, value, Max);
+    public Val ReduceMax(SharedArray scratch, Val value) => Reduce(scratch, value, Max, max: true);
 
-    private Val Reduce(SharedArray scratch, Val value, Func<Val, Val, Val> combine)
+    // Without subgroups: a tree through workgroup memory (log2 width rounds, a barrier each). With them: each subgroup
+    // reduces its values, its first invocation stores the result in scratch[subgroup], and after a barrier every
+    // subgroup reduces those (a subgroup's width of them at a time, in order: the same result in every invocation),
+    // whatever the subgroup size; a barrier then frees the scratch. Two barriers instead of log2 width + 2.
+    private Val Reduce(SharedArray scratch, Val value, Func<Val, Val, Val> combine, bool max)
     {
         if (_localY * _localZ != 1 || (_localX & (_localX - 1)) != 0 || scratch.Length < _localX)
         {
             throw new InvalidOperationException($"{_name}: reductions need a 1-D power-of-two workgroup and scratch as wide.");
+        }
+
+        if (_subgroups)
+        {
+            var mine = SubgroupReduce(value, max);
+            If(SubgroupLocalId.Eq(0), () => scratch[SubgroupId] = mine);
+            Barrier();
+            var identity = Float(max ? float.NegativeInfinity : 0f);
+            var acc = Local(identity);
+            For(Int(0), NumSubgroups, start =>
+            {
+                var at = start + SubgroupLocalId;
+                var part = Select(at < NumSubgroups, scratch[Min(at, Int(_localX - 1))], identity);
+                acc.V = combine(acc.V, SubgroupReduce(part, max));
+            }, SubgroupSize);
+            var result = acc.V;
+            Barrier();                                                   // everyone has read the scratch before it is reused
+            return result;
         }
 
         var lane = LocalX;
@@ -422,7 +500,7 @@ internal sealed class KernelBuilder
 
         var words = _m.Finish((uint)_localX, (uint)_localY, (uint)_localZ);
         return new SpirvKernel(_name, words, _bindingNames.Count, 4 * _push.Count, _localX, _localY, _localZ,
-            [.. _bindingNames], [.. _push.Select(p => $"{p.Name}:{p.Kind.ToString().ToLowerInvariant()}")], _writes);
+            [.. _bindingNames], [.. _push.Select(p => $"{p.Name}:{p.Kind.ToString().ToLowerInvariant()}")], _writes, _sharedBytes);
     }
 
     // ------------------------------------------------------------------ helpers for Val

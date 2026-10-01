@@ -11,19 +11,25 @@ internal static partial class Tests
 {
     private static readonly (string Name, Action<Device> Run)[] SpirvGroup =
     [
-        ("spirv: every Vulkan kernel builds, keeps the contract and passes spirv-val (when installed)", SpirvKernelsValidate),
+        ("spirv: every Vulkan kernel builds at every workgroup width, with and without subgroup reductions, keeps the contract and passes spirv-val (when installed)", SpirvKernelsValidate),
     ];
 
     private static void SpirvKernelsValidate(Device device)
     {
-        var kernels = VulkanKernels.Names.Select(VulkanKernels.Get).ToList();
-        Check(kernels.Count > 40, $"only {kernels.Count} kernels");
-        foreach (var kernel in kernels)
+        // Every width a device may be given: powers of two from MinWidth to MaxWidth.
+        var widths = Enumerable.Range(0, 16).Select(i => 1 << i).Where(w => w >= VulkanKernels.MinWidth && w <= VulkanKernels.MaxWidth).ToArray();
+        // … each with its reductions through workgroup memory and through subgroup arithmetic.
+        var kernels = VulkanKernels.Names.SelectMany(n => widths.SelectMany(w => new[] { false, true }
+            .Select(sub => (Width: w, Kernel: VulkanKernels.Get(n, w, sub), Subgroups: sub)))).ToList();
+        Check(kernels.Count > 40 * widths.Length, $"only {kernels.Count} kernels");
+        foreach (var (width, kernel, _) in kernels)
         {
+            Check(kernel.SharedBytes <= VulkanKernels.SharedBytesBound(width),
+                $"{kernel.Name} at width {width}: {kernel.SharedBytes} bytes of workgroup memory, over the bound {VulkanKernels.SharedBytesBound(width)}");
             Check(kernel.Words.Length > 5 && kernel.Words[0] == 0x07230203 && kernel.Words[1] == SpirvModule.Version, $"{kernel.Name}: bad header");
             Check(kernel.PushBytes is >= 0 and <= 128 && kernel.PushBytes % 4 == 0, $"{kernel.Name}: {kernel.PushBytes} push-constant bytes");
             Check(kernel.Bindings == kernel.BindingNames.Length && kernel.Bindings > 0, $"{kernel.Name}: {kernel.Bindings} bindings");
-            Check(kernel.LocalSize is > 0 and <= 256, $"{kernel.Name}: local size {kernel.LocalSize}");
+            Check(kernel.LocalSize > 0 && kernel.LocalSize <= width, $"{kernel.Name}: local size {kernel.LocalSize} at width {width}");
         }
 
         // Same words on a second build (deterministic generation).
@@ -40,9 +46,10 @@ internal static partial class Tests
         try
         {
             var failures = new List<string>();
-            Parallel.ForEach(kernels, kernel =>
+            Parallel.ForEach(kernels, entry =>
             {
-                string file = Path.Combine(folder, kernel.Name + ".spv");
+                var kernel = entry.Kernel;
+                string file = Path.Combine(folder, $"{kernel.Name}_w{entry.Width}{(entry.Subgroups ? "_subgroups" : "")}.spv");
                 WriteSpirv(file, kernel.Words);
                 var start = new ProcessStartInfo(validator, ["--target-env", "vulkan1.1", file]) { RedirectStandardError = true, RedirectStandardOutput = true };
                 using var process = Process.Start(start)!;
@@ -52,7 +59,7 @@ internal static partial class Tests
                 {
                     lock (failures)
                     {
-                        failures.Add($"{kernel.Name}: {output.Trim()}");
+                        failures.Add($"{kernel.Name} (width {entry.Width}{(entry.Subgroups ? ", subgroups" : "")}): {output.Trim()}");
                     }
                 }
             });

@@ -10,32 +10,49 @@ namespace Idrak.Backends.Vulkan;
 /// precompiled binaries), each matching its <see cref="Backend"/> operation and the CPU's math. A kernel is built on its
 /// first use. Dispatch shapes:
 /// <list type="bullet">
-/// <item>element-wise kernels (local size 256) loop over their n elements with a grid stride: any number of groups works;
-/// ⌈n / 256⌉ capped at 65535 is the natural choice;</item>
-/// <item>row kernels (one workgroup of 256 per row) loop over the rows with a stride of the group count: min(rows, 65535)
-/// groups;</item>
+/// <item>element-wise kernels (local size: the device's width, see <see cref="WidthFor"/>) loop over their n elements with
+/// a grid stride: any number of groups works; ⌈n / width⌉ capped at the device's group count is the natural choice;</item>
+/// <item>row kernels (one workgroup per row) loop over the rows with a stride of the group count: min(rows, the device's
+/// group count) groups;</item>
 /// <item>single-group kernels (<c>sum</c>, <c>sum_squares</c>, <c>axpy_at</c>, <c>clip_factor</c>) take exactly one group;</item>
-/// <item><c>batched_matmul</c> (16 × 16) takes ⌈n / 16⌉ × ⌈m / 16⌉ × min(batch, 65535) groups.</item>
+/// <item>the tiled products (<c>batched_matmul</c>, <c>batched_matmul_tile</c>) take one group per block of c along x and
+/// y and the batches along z;</item>
+/// <item>the packed products (<c>int8_gemv_R</c>, …) take column blocks × splits of k × row blocks, and the attention
+/// kernels query rows × splits of the positions (see their comments); their splits are added by a second pass.</item>
 /// </list>
 /// Integers that tensors hold as values (indices, positions) are read as floats and converted, as the CPU does; packed
 /// words (int8, int4, bfloat16) are read as bits.
 /// </summary>
 internal static partial class VulkanKernels
 {
-    /// <summary>Invocations per workgroup of the 1-D kernels (the reductions are unrolled for it).</summary>
-    public const int Block = 256;
+    /// <summary>
+    /// Invocations per workgroup of the kernel being built (its 1-D width; the reductions are unrolled for it): the
+    /// width the device was given (<see cref="WidthFor"/>), set while <see cref="Get(string, int, bool)"/> builds a
+    /// kernel, and <see cref="MaxWidth"/> otherwise.
+    /// </summary>
+    public static int Block => t_width != 0 ? t_width : MaxWidth;
 
-    /// <summary>Tile edge of the matrix product: workgroups of Tile × Tile, each computing one Tile × Tile block of c.</summary>
-    public const int Tile = 16;
+    /// <summary>
+    /// Widest workgroup the kernels are built for: the test list builds and validates every kernel at each power of two
+    /// up to it (devices reporting more get this width).
+    /// </summary>
+    public const int MaxWidth = 1024;
 
-    /// <summary>Largest head size <c>attention_decode</c> takes (one invocation per output dimension).</summary>
-    public const int AttentionMaxDim = Block;
+    /// <summary>Narrowest workgroup the kernels are built for (32 packed words × 2 slices of k).</summary>
+    public const int MinWidth = 64;
+
+    /// <summary>Largest head size the attention kernels take: the library's decoding limit (the CPU backend's
+    /// DecodeAttentionHeadDim), independent of the width.</summary>
+    public const int AttentionMaxDim = 256;
 
     // GELU, tanh approximation: 0.5 x (1 + tanh(k (x + 0.044715 x³))), k = sqrt(2/π) (the CPU's constants).
     private const float GeluK = 0.7978845608f;
     private const float GeluC = 0.044715f;
 
-    private static readonly ConcurrentDictionary<string, SpirvKernel> Built = new();
+    [ThreadStatic]
+    private static int t_width;
+
+    private static readonly ConcurrentDictionary<(string Name, int Width, bool Subgroups), SpirvKernel> Built = new();
 
     private static readonly Lazy<Dictionary<string, Func<SpirvKernel>>> LazyFactories = new(() =>
     {
@@ -52,10 +69,66 @@ internal static partial class VulkanKernels
     /// <summary>Every kernel's name.</summary>
     public static IEnumerable<string> Names => LazyFactories.Value.Keys;
 
-    /// <summary>The kernel with this name, built on first use.</summary>
-    public static SpirvKernel Get(string name) => Built.GetOrAdd(name, static n => LazyFactories.Value.TryGetValue(n, out var build)
-        ? build()
-        : throw new KeyNotFoundException($"No Vulkan kernel named '{n}'."));
+    /// <summary>The kernel with this name for workgroups of <see cref="MaxWidth"/>, built on first use.</summary>
+    public static SpirvKernel Get(string name) => Get(name, MaxWidth);
+
+    /// <summary>The kernel with this name for workgroups of <paramref name="width"/> (a power of two in
+    /// [<see cref="MinWidth"/>, <see cref="MaxWidth"/>]), its reductions through subgroup arithmetic when
+    /// <paramref name="subgroups"/> (for devices that report it), built on first use.</summary>
+    public static SpirvKernel Get(string name, int width, bool subgroups = false)
+    {
+        if (width is < MinWidth or > MaxWidth || (width & (width - 1)) != 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(width), width, $"A power of two from {MinWidth} to {MaxWidth}.");
+        }
+
+        return Built.GetOrAdd((name, width, subgroups), static key =>
+        {
+            if (!LazyFactories.Value.TryGetValue(key.Name, out var build))
+            {
+                throw new KeyNotFoundException($"No Vulkan kernel named '{key.Name}'.");
+            }
+
+            var (savedWidth, savedSubgroups) = (t_width, KernelBuilder.t_subgroups);
+            (t_width, KernelBuilder.t_subgroups) = (key.Width, key.Subgroups);
+            try
+            {
+                return build();
+            }
+            finally
+            {
+                (t_width, KernelBuilder.t_subgroups) = (savedWidth, savedSubgroups);
+            }
+        });
+    }
+
+    /// <summary>
+    /// Workgroup memory the widest kernel declares at a width, at most (bytes): the packed products' partial sums (8
+    /// floats per invocation), or the sampler's 2,048-score slice with three arrays of the width. The test list checks
+    /// every kernel against it.
+    /// </summary>
+    public static int SharedBytesBound(int width) => Math.Max(32 * width, 12 * width + 8448);
+
+    /// <summary>Subgroups per workgroup the width aims for: enough for a workgroup to keep loads in flight while some of
+    /// its subgroups wait, few enough that a barrier waits for few of them.</summary>
+    public const int SubgroupsPerWorkgroup = 8;
+
+    /// <summary>
+    /// The workgroup width for a device, from what it reports: <see cref="SubgroupsPerWorkgroup"/> subgroups (a power of
+    /// two, at least <see cref="MinWidth"/>), halved while it exceeds the device's invocations per workgroup, its
+    /// workgroup width or (with <see cref="SharedBytesBound"/>) its workgroup memory. The tuned operations also try half
+    /// and twice the width.
+    /// </summary>
+    public static int WidthFor(int maxInvocations, int maxSizeX, int sharedBytes, int subgroupSize)
+    {
+        int width = (int)Math.Clamp(System.Numerics.BitOperations.RoundUpToPowerOf2((uint)Math.Max(1, subgroupSize * SubgroupsPerWorkgroup)), MinWidth, MaxWidth);
+        while (width > MinWidth && (width > maxInvocations || width > maxSizeX || SharedBytesBound(width) > sharedBytes))
+        {
+            width /= 2;
+        }
+
+        return width;
+    }
 
     /// <summary>The kernel for y = op(x).</summary>
     public static SpirvKernel Unary(UnaryOp op) => Get("unary_" + Snake(op));

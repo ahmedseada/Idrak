@@ -26,6 +26,7 @@ internal sealed class SpirvModule
     private readonly Dictionary<string, uint> _types = [];
     private readonly Dictionary<(uint Type, uint Bits), uint> _constants = [];
     private readonly List<uint> _interface = [];
+    private readonly SortedSet<uint> _capabilities = [];
     private uint _next = 1;
     private bool _terminated;
 
@@ -51,6 +52,9 @@ internal sealed class SpirvModule
 
     /// <summary>A fresh result id.</summary>
     public uint Id() => _next++;
+
+    /// <summary>Declares a capability beyond Shader (61 GroupNonUniform, 63 GroupNonUniformArithmetic, …), once.</summary>
+    public void Capability(uint capability) => _capabilities.Add(capability);
 
     // ------------------------------------------------------------------ types
 
@@ -225,6 +229,11 @@ internal sealed class SpirvModule
         uint functionType = TypeFunction(voidType);
         var words = new List<uint>(_globals.Count + _body.Count + 128) { Magic, Version, 0, 0, 0 };
         Emit(words, SpirvOp.Capability, 1);                              // Shader
+        foreach (uint capability in _capabilities)
+        {
+            Emit(words, SpirvOp.Capability, capability);
+        }
+
         Emit(words, SpirvOp.ExtInstImport, [GlslSet, .. Text("GLSL.std.450")]);
         Emit(words, SpirvOp.MemoryModel, 0, 1);                          // Logical, GLSL450
         Emit(words, SpirvOp.EntryPoint, [5, Function, .. Text("main"), .. _interface]);   // GLCompute

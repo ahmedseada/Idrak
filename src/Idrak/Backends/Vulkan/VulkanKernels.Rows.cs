@@ -3,14 +3,11 @@
 
 namespace Idrak.Backends.Vulkan;
 
-// Row kernels: one workgroup of 256 per row (rows looped with a stride of the group count), each invocation taking the
+// Row kernels: one workgroup per row (rows looped with a stride of the group count), each invocation taking the
 // columns j ≡ its lane; per-row sums and maxima through workgroup reductions. An invocation always reads and writes the
 // same columns in every pass, so the output may be the input (in place).
 internal static partial class VulkanKernels
 {
-    /// <summary>Widest rows the narrow row kernels ("…_narrow", one invocation per row, no barriers) are meant for.</summary>
-    public const int NarrowRowColumns = 64;
-
     // Every row kernel twice: a workgroup per row, and an invocation per row ("_narrow") for short rows.
     private static IEnumerable<(string, Func<SpirvKernel>)> RowKernels() => RowKernels(narrow: false).Concat(RowKernels(narrow: true));
 
@@ -291,7 +288,7 @@ internal static partial class VulkanKernels
         return k.Build();
     }
 
-    // How a row kernel spreads a row: over a workgroup of 256 (lane-strided columns, workgroup reductions), or over one
+    // How a row kernel spreads a row: over a workgroup (lane-strided columns, workgroup reductions), or over one
     // invocation (narrow: every column in turn, no barriers; rows over the whole grid).
     private sealed class RowWork(KernelBuilder k, bool narrow)
     {
@@ -309,7 +306,7 @@ internal static partial class VulkanKernels
             }
         }
 
-        // This invocation's columns of the row: all of them (narrow), or j = lane, lane + 256, …
+        // This invocation's columns of the row: all of them (narrow), or j = lane, lane + width, …
         public void Columns(Val cols, Action<Val> body)
         {
             if (narrow)

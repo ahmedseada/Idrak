@@ -47,6 +47,7 @@ internal static partial class Tests
         bool Run(string section) => sections is null || sections.Contains(section);
         var backend = (VulkanBackend)device.Backend;
         Console.WriteLine($"== {device}: {backend.Describe()}");
+        Console.WriteLine($"   kernels: {backend.Limits}; choices measured on first use{(VulkanBackend.Autotune ? "" : " off (IDRAK_AUTOTUNE=0)")}, stored in {VulkanBackend.TuningCacheFile ?? "memory only"}");
         var random = new Random(5);
         float[] Values(long n)
         {

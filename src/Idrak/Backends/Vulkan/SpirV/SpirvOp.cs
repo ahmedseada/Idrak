@@ -95,6 +95,8 @@ internal enum SpirvOp : ushort
     Branch = 249,
     BranchConditional = 250,
     Return = 253,
+    GroupNonUniformFAdd = 350,
+    GroupNonUniformFMax = 358,
 }
 
 /// <summary>Storage classes (where a variable lives).</summary>
@@ -127,6 +129,10 @@ internal enum BuiltIn : uint
     WorkgroupId = 26,
     LocalInvocationId = 27,
     GlobalInvocationId = 28,
+    SubgroupSize = 36,
+    NumSubgroups = 38,
+    SubgroupId = 40,
+    SubgroupLocalInvocationId = 41,
 }
 
 /// <summary>Instructions of the GLSL.std.450 extended set.</summary>

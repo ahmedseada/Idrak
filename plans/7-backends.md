@@ -35,7 +35,16 @@ lavapipe (Mesa's software Vulkan driver) here, and on CUDA plus `--bench-gemv` o
    device only when it reads the sampled tokens. Next: fewer dispatches per layer (`NormRopeHeads`, packed
    many/gated/add-norm products, which need `Capabilities.FusedKernels`), subgroup reductions in the row kernels and
    the sampler (two barriers instead of eight per reduction).
-5. **Intel tuning** (plan 4): subgroup size per kernel, cooperative matrices (XMX) where the driver exposes them.
+5. **Device-shaped kernels** (no vendor or card names in any decision): ✅ the workgroup width from the reported
+   limits (`VulkanKernels.WidthFor`: invocations, workgroup size, workgroup memory, subgroup size; kernels generated per
+   width, 64 to 1024), subgroup reductions where compute shaders have subgroup arithmetic, and the rest measured on the
+   device at first use and stored per device and driver (`VulkanBackend.Tuning.cs`: widths, words per row and k splits
+   of the packed products, position splits of decoding attention, the float32 product kernel, row kernels' form).
+   ✅ Decoding products split k across a workgroup and across workgroups; decoding attention splits the positions
+   across workgroups (flash-decoding); a register-blocked float32 product. Next, by reported feature and measured
+   against the plain path: required subgroup sizes (VK_EXT_subgroup_size_control), cooperative matrices
+   (VK_KHR_cooperative_matrix) for prompt-sized products — both need the runtime to enable them at device and pipeline
+   creation.
 6. **Public backend API**: `Backend`, `Storage`, `DeviceProvider` and `HostCall` public, for backends in their own
    packages.
 
@@ -50,3 +59,6 @@ lavapipe (Mesa's software Vulkan driver) here, and on CUDA plus `--bench-gemv` o
   `NonWritable`); a dispatch waits (a compute-to-compute barrier) only for earlier commands that wrote a storage it
   uses, or read one it writes, and otherwise may run alongside them.
 - Storage holds up to `maxStorageBufferRange` bytes (2 GiB or more on desktop drivers); larger tensors fall back.
+- Kernels are built per device: `VulkanKernels.Get(name, width, subgroups)` with the device's width and its subgroup
+  arithmetic (or narrower widths and plain reductions, which tuned operations also try); every kernel declares at most
+  `SharedBytesBound(width)` bytes of workgroup memory (checked by the test list at every width).
