@@ -123,7 +123,7 @@ internal static partial class Tests
                 }
             }
 
-            var staging = VulkanBackend.CreateSeparate(ordinal, preferMapped: false, maxAllocations: maxAllocations);
+            var staging = VulkanBackend.CreateSeparate(ordinal, preferMapped: false, maxAllocations: maxAllocations, stagingBytes: 4 << 20);   // copies in several chunks
             try
             {
                 Check(!staging.UnifiedMemory, "the second backend copies through staging");
@@ -162,10 +162,11 @@ internal static partial class Tests
         for (int i = 0; i < VulkanBackend.DeviceCount; i++)
         {
             var d = Device.Get("vulkan", i);
-            var (type, vendor) = VulkanBackend.DeviceKind(i);
+            var (type, uuid) = VulkanBackend.DeviceKind(i);
             bool software = type == 4;                                   // VK_PHYSICAL_DEVICE_TYPE_CPU
-            bool cudaDrives = vendor == 0x10DE && Device.IsCudaAvailable;
-            Check(provider!.Listed(i) == !(software || cudaDrives) && Device.Available.Contains(d) == provider.Listed(i), $"vulkan:{i} listing");
+            bool drivenElsewhere = VulkanProvider.DrivenBy(uuid, DeviceProviders.All.TakeWhile(p => p != provider)) is not null;
+            Check(provider!.Listed(i) == !(software || drivenElsewhere) && Device.Available.Contains(d) == provider.Listed(i), $"vulkan:{i} listing");
+            Check(!software || provider.Note(i) == "software driver: by name only", $"vulkan:{i}: a CPU-type device is reached by name");
             bool optedIn = Environment.GetEnvironmentVariable("IDRAK_VULKAN_DEFAULT") == "1";   // not the default device otherwise
             Check(provider.DefaultRank(i) == (optedIn ? type switch { 2 => 50, 1 => 40, _ => (int?)null } : null), $"vulkan:{i} rank");
             Check(Device.Parse($"vulkan:{i}") == d && d.Type == DeviceType.Vulkan && d.IsGpu && d.ToString() == $"vulkan:{i}", $"vulkan:{i} by name");
@@ -173,7 +174,7 @@ internal static partial class Tests
             Check(provider.IsStarted(i) && d.Name.Contains("Vulkan", StringComparison.Ordinal), $"vulkan:{i} started, named");
             Check(!backend.Capabilities.MatrixUnits && !backend.Capabilities.FusedKernels && !backend.Capabilities.Profiling, "no matrix units, fused kernels or profiling yet");
             Check(backend.MaxStorageBytes >= 1 << 27, $"maxStorageBufferRange {backend.MaxStorageBytes} (at least 128 MiB)");
-            Console.WriteLine($"    vulkan:{i}: {d.Name}; type {type}, vendor 0x{vendor:X4}, {(backend.UnifiedMemory ? "mapped" : "staging")} copies, " +
+            Console.WriteLine($"    vulkan:{i}: {d.Name}; type {type}, uuid {uuid}, {(backend.UnifiedMemory ? "mapped" : "staging")} copies, " +
                 $"storages up to {backend.MaxStorageBytes >> 20} MiB{(provider.Listed(i) ? "" : ", not listed")}");
         }
     }
@@ -395,7 +396,8 @@ internal static partial class Tests
         }
 
         // A long chain spans several batches (submitted on their own), still in order.
-        const int N = 4096, Steps = 600;
+        const int N = 4096;
+        int Steps = 2 * backend.MaxBatchCommands + 88;                 // the batch size is measured on the device
         var x = backend.Allocate(N, zeroed: true);
         var one = backend.Allocate(N, zeroed: false);
         backend.Upload(Enumerable.Repeat(1f, N).ToArray(), one);

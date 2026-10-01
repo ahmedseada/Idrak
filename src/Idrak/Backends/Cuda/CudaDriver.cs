@@ -104,6 +104,10 @@ internal static unsafe partial class CudaDriver
     [LibraryImport(Library)]
     public static partial int cuDeviceGet(out int device, int ordinal);
 
+    /// <summary>The device's 16-byte UUID (the same one Vulkan reports as deviceUUID for that GPU); needs only cuInit.</summary>
+    [LibraryImport(Library)]
+    public static partial int cuDeviceGetUuid(byte* uuid, int device);
+
     [LibraryImport(Library)]
     public static partial int cuDeviceGetName(byte* name, int length, int device);
 

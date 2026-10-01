@@ -14,9 +14,12 @@ namespace Idrak.Backends.Vulkan;
 /// (<see cref="Dispatch"/>, VulkanBackend.Dispatch.cs). Operations without a kernel of their own run through the host
 /// fallback (<see cref="HostCall"/>).
 ///
-/// Memory: on an integrated GPU (or a CPU driver) storages live in memory both the device and the host see
-/// (device-local and host-visible), mapped once, so uploads and downloads are plain copies. Elsewhere storages live in
-/// device-local memory, and copies go through a host-visible staging buffer.
+/// Memory, chosen from the memory types and heaps the device reports: where a device-local, host-visible memory type
+/// lives on a heap about as large as the device's largest device-local heap (shared memory, a CPU driver, a discrete
+/// GPU whose whole memory the host can map), storages live there, mapped once, so uploads and downloads are plain copies
+/// (reads go through a host-cached staging buffer when that memory is not host-cached). Elsewhere (a small host-visible
+/// window of device memory, or none) storages live in device-local memory, and copies go through a host-visible staging
+/// buffer. IDRAK_VULKAN_STAGING=1 copies through staging everywhere.
 /// </summary>
 internal sealed unsafe partial class VulkanBackend : Backend
 {
@@ -30,7 +33,8 @@ internal sealed unsafe partial class VulkanBackend : Backend
     private readonly IntPtr _queue;
     private readonly MemoryAccountant _memory;
 
-    // Memory types: where storages live, and (without mapped storages) the staging buffer's.
+    // Memory types: where storages live, and (without mapped storages, or for reads of uncached mapped storages) the
+    // staging buffer's.
     private readonly uint _storageType;
     private readonly bool _storageCoherent;
     private readonly int _stagingType = -1;
@@ -40,10 +44,13 @@ internal sealed unsafe partial class VulkanBackend : Backend
     private readonly Dictionary<int, Stack<VulkanBlock>> _pool = [];
 
     // The staging buffer, created on first use; copies larger than it go in chunks.
-    private const long StagingBytes = 16L << 20;
     private VulkanBlock? _staging;
 
-    private VulkanBackend(PhysicalDevice physical, bool preferMapped, bool? pushDescriptors = null, int? maxAllocations = null)
+    // Whether dispatches push their descriptors (decided once the queue runs: VulkanBackend.Tuning.cs).
+    private bool _usePush;
+
+    private VulkanBackend(PhysicalDevice physical, bool preferMapped, bool? pushDescriptors = null, int? maxAllocations = null,
+        long? stagingBytes = null, long? pageBytes = null)
     {
         _physical = physical;
         var p = physical.Properties;
@@ -62,17 +69,17 @@ internal sealed unsafe partial class VulkanBackend : Backend
             QueuePriorities = &priority,
         };
 
-        // Push descriptors where the device has them: a dispatch then writes its storages into the command buffer instead
-        // of allocating and updating a descriptor set (recording a dispatch on the host: 9.3 → 0.7 µs). Not on CPU drivers,
-        // which run pushed descriptors slower than sets (lavapipe: about 15 µs more per dispatch). IDRAK_VULKAN_PUSH_DESCRIPTORS
-        // = 1 or 0 decides instead.
+        // Push descriptors are enabled wherever the device has them: a dispatch may then write its storages into the
+        // command buffer instead of allocating and updating a descriptor set (recording a dispatch on the host: 9.3 → 0.7
+        // µs, measured with lavapipe). Whether dispatches do is measured once the queue runs (VulkanBackend.Tuning.cs);
+        // IDRAK_VULKAN_PUSH_DESCRIPTORS = 1 or 0 decides instead.
         pushDescriptors ??= Environment.GetEnvironmentVariable("IDRAK_VULKAN_PUSH_DESCRIPTORS") switch
         {
             "1" or "true" => true,
             "0" or "false" => false,
-            _ => p.DeviceType != DeviceTypeCpu,
+            _ => null,
         };
-        bool push = pushDescriptors.Value && HasExtension(physical.Handle, PushDescriptorExtension);
+        bool push = HasExtension(physical.Handle, PushDescriptorExtension);
         fixed (byte* extensionName = "VK_KHR_push_descriptor\0"u8)
         {
             byte* extension = extensionName;
@@ -99,9 +106,7 @@ internal sealed unsafe partial class VulkanBackend : Backend
         // Every storage buffer has the same memory requirements' type bits, so one probe buffer tells them.
         uint typeBits = StorageTypeBits();
         var memory = physical.Memory;
-        bool shared = p.DeviceType is DeviceTypeIntegratedGpu or DeviceTypeCpu;
-        int mapped = preferMapped && shared ? BestType(memory, typeBits, MemoryDeviceLocal | MemoryHostVisible, static f =>
-            ((f & MemoryHostCached) != 0 ? 2 : 0) + ((f & MemoryHostCoherent) != 0 ? 1 : 0)) : -1;
+        int mapped = preferMapped ? MappableType(memory, typeBits) : -1;
         if (mapped >= 0)
         {
             _storageType = (uint)mapped;
@@ -109,26 +114,111 @@ internal sealed unsafe partial class VulkanBackend : Backend
         }
         else
         {
-            // Device memory the host does not see first (a discrete GPU's host-visible window is small and slow to read).
+            // Device memory the host does not see first (a small host-visible window is better left to staging).
             int local = BestType(memory, typeBits, MemoryDeviceLocal, static f => (f & MemoryHostVisible) == 0 ? 1 : 0);
             _storageType = (uint)(local >= 0 ? local : BestType(memory, typeBits, 0, static _ => 0));
-            _stagingType = BestType(memory, typeBits, MemoryHostVisible, static f =>
-                ((f & MemoryHostCached) != 0 ? 4 : 0) + ((f & MemoryHostCoherent) != 0 ? 2 : 0) + ((f & MemoryDeviceLocal) == 0 ? 1 : 0));
-            if (_stagingType < 0)
-            {
-                throw new VulkanException($"{Name} has no host-visible memory for copies.");
-            }
+        }
 
+        // Staging memory: host-visible; host-cached first (the host reads it fast), then coherent, then outside the device.
+        int staging = BestType(memory, typeBits, MemoryHostVisible, static f =>
+            ((f & MemoryHostCached) != 0 ? 4 : 0) + ((f & MemoryHostCoherent) != 0 ? 2 : 0) + ((f & MemoryDeviceLocal) == 0 ? 1 : 0));
+        if (mapped < 0)
+        {
+            _stagingType = staging >= 0 ? staging : throw new VulkanException($"{Name} has no host-visible memory for copies.");
+        }
+        else if ((memory.TypeFlags(mapped) & MemoryHostCached) == 0 && staging >= 0 && (memory.TypeFlags(staging) & MemoryHostCached) != 0)
+        {
+            _stagingType = staging;                                        // the host reads uncached memory slowly
+            ReadsThroughStaging = true;
+        }
+
+        ulong maxAllocation = physical.Facts.MaxMemoryAllocationSize;
+        if (_stagingType >= 0)
+        {
             _stagingCoherent = (memory.TypeFlags(_stagingType) & MemoryHostCoherent) != 0;
+            StagingBytes = StagingSize(memory.HeapSize(memory.TypeHeap(_stagingType)), maxAllocation, p.NonCoherentAtomSize,
+                stagingBytes ?? BytesSetting("IDRAK_VULKAN_STAGING_BYTES"));
         }
 
         _storageCoherent = (memory.TypeFlags((int)_storageType) & MemoryHostCoherent) != 0;
-        PageBytes = PageSize(memory.HeapSize(memory.TypeHeap((int)_storageType)));
+        PageBytes = PageSize(memory.HeapSize(memory.TypeHeap((int)_storageType)), maxAllocation, p.MaxMemoryAllocationCount,
+            pageBytes ?? BytesSetting("IDRAK_VULKAN_PAGE_BYTES"));
         StartQueue();
+        TuneRuntime(pushDescriptors);
     }
 
     /// <summary>Whether dispatches push their descriptors (VK_KHR_push_descriptor) instead of allocating descriptor sets.</summary>
-    public bool PushDescriptors => _pushDescriptorSet != null;
+    public bool PushDescriptors => _usePush;
+
+    /// <summary>Whether downloads of mapped storages go through a host-cached staging buffer (the mapped memory is not host-cached).</summary>
+    public bool ReadsThroughStaging { get; }
+
+    /// <summary>The staging buffer's size (copies larger than it go in chunks); 0 without one.</summary>
+    public long StagingBytes { get; }
+
+    // The staging buffer's size: the power of two at most 1/512 of the heap it lives on (16 MiB of an 8 GiB heap: chunks
+    // large enough that a copy's fixed cost is small next to moving the chunk, memory held for good small next to the
+    // heap), at most the largest allocation, at least nonCoherentAtomSize; `setting` (tests, IDRAK_VULKAN_STAGING_BYTES)
+    // instead when given.
+    internal static long StagingSize(ulong heapBytes, ulong maxAllocation, ulong atom, long? setting)
+    {
+        if (setting is long s and > 0)
+        {
+            return Math.Max(s / sizeof(float) * sizeof(float), sizeof(float));
+        }
+
+        ulong limit = heapBytes / 512;
+        if (maxAllocation > 0)
+        {
+            limit = Math.Min(limit, maxAllocation);
+        }
+
+        long size = (long)Math.Max(PowerOfTwoAtMost(limit), Math.Max(atom, sizeof(float)));
+        return size;
+    }
+
+    // The largest power of two at most `value` (1 for 0).
+    private static ulong PowerOfTwoAtMost(ulong value) => value == 0 ? 1 : 1UL << (63 - System.Numerics.BitOperations.LeadingZeroCount(value));
+
+    // The device-local, host-visible memory type storages are mapped from, or -1: one on a heap at least half the size
+    // of the largest device-local heap, so the host maps about all of the device's memory (shared memory, a CPU driver,
+    // a discrete GPU whose whole memory the host maps), not a small window of it. Host-cached first, then coherent.
+    internal static int MappableType(VkPhysicalDeviceMemoryProperties memory, uint typeBits)
+    {
+        ulong largest = 0;
+        for (int heap = 0; heap < (int)memory.MemoryHeapCount; heap++)
+        {
+            if ((memory.HeapFlags(heap) & HeapDeviceLocal) != 0)
+            {
+                largest = Math.Max(largest, memory.HeapSize(heap));
+            }
+        }
+
+        if (largest == 0)
+        {
+            return -1;
+        }
+
+        return BestType(memory, typeBits, MemoryDeviceLocal | MemoryHostVisible, static f =>
+            ((f & MemoryHostCached) != 0 ? 2 : 0) + ((f & MemoryHostCoherent) != 0 ? 1 : 0), minHeap: largest / 2);
+    }
+
+    /// <summary>The mapped memory type for the memory types (flags, heap) and heaps (size, flags) given (tests: a device's report made up).</summary>
+    internal static int MappableType(ReadOnlySpan<(uint Flags, int Heap)> types, ReadOnlySpan<(ulong Size, ulong Flags)> heaps)
+    {
+        var memory = new VkPhysicalDeviceMemoryProperties { MemoryTypeCount = (uint)types.Length, MemoryHeapCount = (uint)heaps.Length };
+        for (int i = 0; i < types.Length; i++)
+        {
+            (memory.MemoryTypes[2 * i], memory.MemoryTypes[2 * i + 1]) = (types[i].Flags, (uint)types[i].Heap);
+        }
+
+        for (int i = 0; i < heaps.Length; i++)
+        {
+            (memory.MemoryHeaps[2 * i], memory.MemoryHeaps[2 * i + 1]) = (heaps[i].Size, heaps[i].Flags);
+        }
+
+        return MappableType(memory, uint.MaxValue);
+    }
 
     // vkCmdPushDescriptorSetKHR, or null without the extension.
     private readonly delegate* unmanaged<IntPtr, uint, ulong, uint, uint, VkWriteDescriptorSet*, void> _pushDescriptorSet;
@@ -162,14 +252,11 @@ internal sealed unsafe partial class VulkanBackend : Backend
         return false;
     }
 
-    /// <summary>Whether storages live in memory the host maps directly (integrated GPUs): copies need no staging.</summary>
+    /// <summary>Whether storages live in memory the host maps directly: uploads need no staging.</summary>
     public bool UnifiedMemory { get; }
 
     /// <summary>The largest storage a kernel can bind (maxStorageBufferRange); larger ones take the host fallback.</summary>
     public long MaxStorageBytes { get; }
-
-    /// <summary>The PCI vendor id (0x8086 Intel, 0x1002 AMD, 0x10DE NVIDIA).</summary>
-    public uint VendorId => _physical.Properties.VendorId;
 
     public override string Name { get; }
 
@@ -194,16 +281,20 @@ internal sealed unsafe partial class VulkanBackend : Backend
 
     public static bool IsInitialized(int ordinal) => Instances.IsValueCreated && Instances.Value[ordinal].IsValueCreated;
 
-    /// <summary>Device <paramref name="ordinal"/>'s type (VK_PHYSICAL_DEVICE_TYPE_*) and PCI vendor id, without starting it.</summary>
-    public static (uint Type, uint Vendor) DeviceKind(int ordinal) =>
-        (Probe.Value.Devices[ordinal].Properties.DeviceType, Probe.Value.Devices[ordinal].Properties.VendorId);
+    /// <summary>Device <paramref name="ordinal"/>'s type (VK_PHYSICAL_DEVICE_TYPE_*) and UUID (deviceUUID), without starting it.</summary>
+    public static (uint Type, Guid Uuid) DeviceKind(int ordinal) =>
+        (Probe.Value.Devices[ordinal].Properties.DeviceType, Probe.Value.Devices[ordinal].Facts.DeviceUuid);
+
+    /// <summary>Device <paramref name="ordinal"/>'s reported facts, without starting it.</summary>
+    internal static VulkanDeviceFacts FactsOf(int ordinal) => Probe.Value.Devices[ordinal].Facts;
 
     /// <summary>
     /// A second backend on device <paramref name="ordinal"/> (for tests: staging copies even where memory is shared; pushed
-    /// descriptors or descriptor sets whatever the device's default).
+    /// descriptors or descriptor sets whatever the device's choice; a given staging buffer or page size).
     /// </summary>
-    internal static VulkanBackend CreateSeparate(int ordinal, bool preferMapped, bool? pushDescriptors = null, int? maxAllocations = null) =>
-        new(Probe.Value.Devices[ordinal], preferMapped, pushDescriptors, maxAllocations);
+    internal static VulkanBackend CreateSeparate(int ordinal, bool preferMapped, bool? pushDescriptors = null, int? maxAllocations = null,
+        long? stagingBytes = null, long? pageBytes = null) =>
+        new(Probe.Value.Devices[ordinal], preferMapped, pushDescriptors, maxAllocations, stagingBytes, pageBytes);
 
     private static Lazy<VulkanBackend>[] CreateInstances()
     {
@@ -213,8 +304,10 @@ internal sealed unsafe partial class VulkanBackend : Backend
 
     // A physical device with what the backend reads of it.
     private sealed class PhysicalDevice(IntPtr handle, VkPhysicalDeviceProperties properties, string deviceName, string driver,
-        VkPhysicalDeviceMemoryProperties memory, uint queueFamily)
+        VkPhysicalDeviceMemoryProperties memory, uint queueFamily, VulkanDeviceFacts facts)
     {
+        public VulkanDeviceFacts Facts { get; } = facts;
+
         public IntPtr Handle { get; } = handle;
 
         public VkPhysicalDeviceProperties Properties = properties;
@@ -303,7 +396,8 @@ internal sealed unsafe partial class VulkanBackend : Backend
 
                 VkPhysicalDeviceMemoryProperties memory;
                 vkGetPhysicalDeviceMemoryProperties(handle, &memory);
-                devices.Add(new PhysicalDevice(handle, properties, deviceName, DriverName(handle, properties, apiVersion), memory, family));
+                var (facts, driver) = QueryFacts(handle, properties, apiVersion);
+                devices.Add(new PhysicalDevice(handle, properties, deviceName, driver, memory, family, facts));
             }
 
             return devices.Count > 0 ? ([.. devices], "")
@@ -337,24 +431,6 @@ internal sealed unsafe partial class VulkanBackend : Backend
         return null;
     }
 
-    // The driver's name and version text (Vulkan 1.2 devices report it), else its version number.
-    private static string DriverName(IntPtr physical, VkPhysicalDeviceProperties properties, uint apiVersion)
-    {
-        if (properties.ApiVersion >= MakeVersion(1, 2) && apiVersion >= MakeVersion(1, 2))
-        {
-            var driver = new VkPhysicalDeviceDriverProperties { SType = StructurePhysicalDeviceDriverProperties };
-            var all = new VkPhysicalDeviceProperties2 { SType = StructurePhysicalDeviceProperties2, PNext = &driver };
-            vkGetPhysicalDeviceProperties2(physical, &all);
-            string name = Utf8(driver.DriverName, 256), info = Utf8(driver.DriverInfo, 256);
-            if (name.Length > 0)
-            {
-                return info.Length > 0 ? $"{name} {info}" : name;
-            }
-        }
-
-        return $"driver 0x{properties.DriverVersion:X}";
-    }
-
     private static string Utf8(byte* text, int capacity)
     {
         int length = 0;
@@ -366,15 +442,16 @@ internal sealed unsafe partial class VulkanBackend : Backend
         return Encoding.UTF8.GetString(text, length).Trim();
     }
 
-    // The memory type of `typeBits` with all of `required`, best by `score` then by heap size; -1 when none.
-    private static int BestType(VkPhysicalDeviceMemoryProperties memory, uint typeBits, uint required, Func<uint, int> score)
+    // The memory type of `typeBits` with all of `required` on a heap of at least `minHeap` bytes, best by `score` then by
+    // heap size; -1 when none.
+    private static int BestType(VkPhysicalDeviceMemoryProperties memory, uint typeBits, uint required, Func<uint, int> score, ulong minHeap = 0)
     {
         int best = -1;
         (int Score, ulong Heap) bestKey = (int.MinValue, 0);
         for (int i = 0; i < (int)memory.MemoryTypeCount; i++)
         {
             uint flags = memory.TypeFlags(i);
-            if ((typeBits & (1u << i)) == 0 || (flags & required) != required)
+            if ((typeBits & (1u << i)) == 0 || (flags & required) != required || memory.HeapSize(memory.TypeHeap(i)) < minHeap)
             {
                 continue;
             }
@@ -570,7 +647,7 @@ internal sealed unsafe partial class VulkanBackend : Backend
 
         lock (_gate)
         {
-            if (block.Mapped != null)
+            if (block.Mapped != null && !ReadsThroughStaging)
             {
                 WaitFor(block);
                 if (!_storageCoherent)
@@ -653,13 +730,12 @@ internal sealed unsafe partial class VulkanBackend : Backend
 }
 
 /// <summary>
-/// Vulkan devices: listed unless another backend drives them better (NVIDIA GPUs when CUDA is available) or they are
-/// software drivers (lavapipe, SwiftShader: reached by name, e.g. for tests); discrete GPUs preferred to integrated ones.
+/// Vulkan devices: listed unless another provider registered before this one reaches the same GPU (the same deviceUUID:
+/// CUDA, when its driver is there) or they are CPU-type devices (software drivers: reached by name, e.g. for tests);
+/// discrete GPUs preferred to integrated ones. Only what the device reports decides: its type and its UUID.
 /// </summary>
 internal sealed class VulkanProvider : DeviceProvider
 {
-    private const uint VendorNvidia = 0x10DE;
-
     public override string Kind => "vulkan";
 
     public override string Display => "Vulkan";
@@ -674,11 +750,10 @@ internal sealed class VulkanProvider : DeviceProvider
 
     public override bool IsStarted(int ordinal) => VulkanBackend.IsInitialized(ordinal);
 
-    public override bool Listed(int ordinal)
-    {
-        var (type, vendor) = VulkanBackend.DeviceKind(ordinal);
-        return type != VulkanDriver.DeviceTypeCpu && !(vendor == VendorNvidia && Cuda.CudaBackend.DeviceCount > 0);
-    }
+    public override Guid? DeviceUuid(int ordinal) => VulkanBackend.DeviceKind(ordinal).Uuid;
+
+    public override bool Listed(int ordinal) =>
+        VulkanBackend.DeviceKind(ordinal).Type != VulkanDriver.DeviceTypeCpu && DrivenElsewhere(ordinal) is null;
 
     // Not chosen by Device.Default until its kernels are tuned (a CPU can still beat an untuned integrated GPU);
     // IDRAK_VULKAN_DEFAULT=1 opts in. Reached by name ("vulkan:1") either way.
@@ -690,11 +765,47 @@ internal sealed class VulkanProvider : DeviceProvider
             _ => null,
         };
 
-    public override string? Note(int ordinal)
+    public override string? Note(int ordinal) =>
+        VulkanBackend.DeviceKind(ordinal).Type == VulkanDriver.DeviceTypeCpu ? "software driver: by name only"
+        : DrivenElsewhere(ordinal) is var (display, name) ? $"driven by {display} as {name}: by name only"
+        : DefaultRank(ordinal) is null ? "not the default device (IDRAK_VULKAN_DEFAULT=1 to prefer it)" : null;
+
+    // The provider (display name) and device ("cuda:0") registered before this provider that reach the same GPU, or null.
+    private (string Display, string Device)? DrivenElsewhere(int ordinal)
     {
-        var (type, vendor) = VulkanBackend.DeviceKind(ordinal);
-        return type == VulkanDriver.DeviceTypeCpu ? "software driver: by name only"
-            : vendor == VendorNvidia && Cuda.CudaBackend.DeviceCount > 0 ? "NVIDIA GPU, run by CUDA: by name only"
-            : DefaultRank(ordinal) is null ? "not the default device (IDRAK_VULKAN_DEFAULT=1 to prefer it)" : null;
+        var all = DeviceProviders.All;
+        int self = -1;
+        for (int i = 0; i < all.Count && self < 0; i++)
+        {
+            self = ReferenceEquals(all[i], this) ? i : -1;
+        }
+
+        return DrivenBy(DeviceUuid(ordinal), self >= 0 ? all.Take(self) : all.Where(p => !ReferenceEquals(p, this)));
+    }
+
+    /// <summary>
+    /// The first device of <paramref name="others"/> with UUID <paramref name="uuid"/> (its provider's display name and
+    /// its device name), or null: the same physical GPU, reached through another API.
+    /// </summary>
+    internal static (string Display, string Device)? DrivenBy(Guid? uuid, IEnumerable<DeviceProvider> others)
+    {
+        if (uuid is not Guid id || id == Guid.Empty)
+        {
+            return null;
+        }
+
+        foreach (var provider in others)
+        {
+            int count = provider.Count;
+            for (int i = 0; i < count; i++)
+            {
+                if (provider.DeviceUuid(i) == id)
+                {
+                    return (provider.Display, $"{provider.Kind}:{i}");
+                }
+            }
+        }
+
+        return null;
     }
 }

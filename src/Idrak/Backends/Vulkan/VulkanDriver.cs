@@ -35,7 +35,7 @@ internal static unsafe partial class VulkanDriver
     {
         if (OperatingSystem.IsMacOS() || OperatingSystem.IsIOS())
         {
-            reason = "Vulkan is not used on Apple platforms (Metal is the plan there)";
+            reason = "Vulkan is not used on macOS or iOS (Metal is the plan there)";
             return false;
         }
 
@@ -121,7 +121,9 @@ internal static unsafe partial class VulkanDriver
         StructurePipelineLayoutCreateInfo = 30, StructureDescriptorSetLayoutCreateInfo = 32, StructureDescriptorPoolCreateInfo = 33,
         StructureDescriptorSetAllocateInfo = 34, StructureWriteDescriptorSet = 35, StructureCommandPoolCreateInfo = 39,
         StructureCommandBufferAllocateInfo = 40, StructureCommandBufferBeginInfo = 42, StructureMemoryBarrier = 46,
-        StructurePhysicalDeviceProperties2 = 1000059001, StructurePhysicalDeviceDriverProperties = 1000196000;
+        StructurePhysicalDeviceProperties2 = 1000059001, StructurePhysicalDeviceDriverProperties = 1000196000,
+        StructurePhysicalDeviceIdProperties = 1000071004, StructurePhysicalDeviceSubgroupProperties = 1000094000,
+        StructurePhysicalDeviceMaintenance3Properties = 1000168000, StructurePhysicalDeviceSubgroupSizeControlProperties = 1000225000;
 
     public static uint MakeVersion(uint major, uint minor) => (major << 22) | (minor << 12);
 
@@ -134,6 +136,7 @@ internal static unsafe partial class VulkanDriver
 
     // Memory properties.
     public const uint MemoryDeviceLocal = 0x1, MemoryHostVisible = 0x2, MemoryHostCoherent = 0x4, MemoryHostCached = 0x8;
+    public const uint HeapDeviceLocal = 0x1;
 
     // Buffers.
     public const uint BufferTransferSource = 0x1, BufferTransferDestination = 0x2, BufferStorage = 0x20;
@@ -343,6 +346,9 @@ internal static unsafe partial class VulkanDriver
     /// <summary>VK_KHR_push_descriptor: descriptors written straight into the command buffer (no sets to allocate).</summary>
     public const string PushDescriptorExtension = "VK_KHR_push_descriptor";
 
+    /// <summary>VK_EXT_subgroup_size_control: the subgroup sizes a device runs (core in Vulkan 1.3).</summary>
+    public const string SubgroupSizeControlExtension = "VK_EXT_subgroup_size_control";
+
     /// <summary>VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR.</summary>
     public const uint DescriptorSetLayoutPushDescriptor = 0x1;
 }
@@ -401,6 +407,9 @@ internal unsafe struct VkPhysicalDeviceProperties
     [FieldOffset(296 + 224)] public uint MaxComputeWorkGroupCountY;
     [FieldOffset(296 + 228)] public uint MaxComputeWorkGroupCountZ;
     [FieldOffset(296 + 232)] public uint MaxComputeWorkGroupInvocations;
+    [FieldOffset(296 + 236)] public uint MaxComputeWorkGroupSizeX;
+    [FieldOffset(296 + 240)] public uint MaxComputeWorkGroupSizeY;
+    [FieldOffset(296 + 244)] public uint MaxComputeWorkGroupSizeZ;
     [FieldOffset(296 + 328)] public ulong MinStorageBufferOffsetAlignment;
     [FieldOffset(296 + 496)] public ulong NonCoherentAtomSize;
 }
@@ -424,6 +433,53 @@ internal unsafe struct VkPhysicalDeviceDriverProperties
     public uint ConformanceVersion;
 }
 
+/// <summary>VkPhysicalDeviceIDProperties (Vulkan 1.1): the UUID that names the same GPU across APIs (CUDA's cuDeviceGetUuid too).</summary>
+[StructLayout(LayoutKind.Sequential)]
+internal unsafe struct VkPhysicalDeviceIdProperties
+{
+    public uint SType;
+    public void* PNext;
+    public fixed byte DeviceUuid[16];
+    public fixed byte DriverUuid[16];
+    public fixed byte DeviceLuid[8];
+    public uint DeviceNodeMask;
+    public uint DeviceLuidValid;
+}
+
+/// <summary>VkPhysicalDeviceSubgroupProperties (Vulkan 1.1).</summary>
+[StructLayout(LayoutKind.Sequential)]
+internal unsafe struct VkPhysicalDeviceSubgroupProperties
+{
+    public uint SType;
+    public void* PNext;
+    public uint SubgroupSize;
+    public uint SupportedStages;
+    public uint SupportedOperations;
+    public uint QuadOperationsInAllStages;
+}
+
+/// <summary>VkPhysicalDeviceMaintenance3Properties (Vulkan 1.1).</summary>
+[StructLayout(LayoutKind.Sequential)]
+internal unsafe struct VkPhysicalDeviceMaintenance3Properties
+{
+    public uint SType;
+    public void* PNext;
+    public uint MaxPerSetDescriptors;
+    public ulong MaxMemoryAllocationSize;
+}
+
+/// <summary>VkPhysicalDeviceSubgroupSizeControlProperties (Vulkan 1.3, or VK_EXT_subgroup_size_control).</summary>
+[StructLayout(LayoutKind.Sequential)]
+internal unsafe struct VkPhysicalDeviceSubgroupSizeControlProperties
+{
+    public uint SType;
+    public void* PNext;
+    public uint MinSubgroupSize;
+    public uint MaxSubgroupSize;
+    public uint MaxComputeWorkgroupSubgroups;
+    public uint RequiredSubgroupSizeStages;
+}
+
 /// <summary>VkPhysicalDeviceMemoryProperties: 32 memory types (flags, heap) and 16 heaps (size, flags).</summary>
 [StructLayout(LayoutKind.Explicit, Size = 520)]
 internal unsafe struct VkPhysicalDeviceMemoryProperties
@@ -438,6 +494,8 @@ internal unsafe struct VkPhysicalDeviceMemoryProperties
     public int TypeHeap(int type) => (int)MemoryTypes[2 * type + 1];
 
     public ulong HeapSize(int heap) => MemoryHeaps[2 * heap];
+
+    public ulong HeapFlags(int heap) => MemoryHeaps[2 * heap + 1];
 }
 
 [StructLayout(LayoutKind.Sequential)]

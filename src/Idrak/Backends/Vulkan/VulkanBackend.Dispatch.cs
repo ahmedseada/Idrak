@@ -29,13 +29,19 @@ internal sealed unsafe partial class VulkanBackend
     private ulong _recording = 1;
     private ulong _completed;
 
-    // Batches submitted but not waited for, at most; commands per batch before it is submitted on its own.
-    private const int MaxInFlight = 3;
-    private const int MaxBatchCommands = 256;
+    // Commands per batch before it is submitted on its own, and batches submitted but not waited for, at most: measured
+    // when the backend starts (VulkanBackend.Tuning.cs; the measurement sets its own while it runs).
+    private int _maxBatchCommands = 1;
+    private int _maxInFlight = 1;
 
-    // Descriptor pool sizes (sets, storage-buffer descriptors); a batch adds pools as it needs them.
-    private const uint PoolSets = 256;
-    private const uint PoolDescriptors = 2048;
+    // A descriptor pool holds as many sets as a batch has commands, each as wide as a kernel may bind (the device's
+    // maxPerStageDescriptorStorageBuffers, at most VulkanKernel.MaxBindings), so one pool always serves a whole batch.
+    private DescriptorPool BatchPool()
+    {
+        uint sets = (uint)Math.Max(_maxBatchCommands, 1);
+        uint wide = Math.Max(Math.Min(_physical.Properties.MaxPerStageDescriptorStorageBuffers, (uint)VulkanKernel.MaxBindings), 1);
+        return NewPool(sets, (uint)Math.Min((ulong)sets * wide, uint.MaxValue));
+    }
 
     // The span of commands since the last barrier (see the top of the file).
     private ulong _span = 1;
@@ -47,8 +53,8 @@ internal sealed unsafe partial class VulkanBackend
     private readonly VulkanBlock[] _commandBlocks = new VulkanBlock[VulkanKernel.MaxBindings];
 
     private readonly Dictionary<VulkanKernel, Pipeline> _pipelines = [];
-    private readonly Dictionary<int, ulong> _setLayouts = [];
-    private readonly Dictionary<(int Bindings, int PushBytes), ulong> _pipelineLayouts = [];
+    private readonly Dictionary<(int Bindings, bool Pushed), ulong> _setLayouts = [];
+    private readonly Dictionary<(int Bindings, int PushBytes, bool Pushed), ulong> _pipelineLayouts = [];
 
     /// <summary>Kernels dispatched (for tests and diagnostics).</summary>
     internal long Dispatches;
@@ -73,11 +79,12 @@ internal sealed unsafe partial class VulkanBackend
         public int Count;
     }
 
-    private sealed class DescriptorPool(ulong handle, uint descriptors)
+    private sealed class DescriptorPool(ulong handle, uint sets, uint descriptors)
     {
         public readonly ulong Handle = handle;
+        public readonly uint SetCapacity = sets;
         public readonly uint Capacity = descriptors;
-        public uint Sets = PoolSets;
+        public uint Sets = sets;
         public uint Descriptors = descriptors;
     }
 
@@ -154,7 +161,7 @@ internal sealed unsafe partial class VulkanBackend
 
                 if (bindings > 0)
                 {
-                    if (_pushDescriptorSet != null)
+                    if (_usePush)
                     {
                         _pushDescriptorSet(commands, PipelineBindPointCompute, pipeline.Layout, 0, (uint)bindings, writes);
                     }
@@ -258,6 +265,33 @@ internal sealed unsafe partial class VulkanBackend
         return batch;
     }
 
+    // Makes, up front, the batches the queue cycles through (the one recorded, those in flight, the one retired as the
+    // next is submitted), each with a descriptor pool when dispatches allocate sets: recording dispatches then
+    // allocates nothing once the device runs.
+    private void PrepareBatches()
+    {
+        lock (_gate)
+        {
+            _free.EnsureCapacity(_maxInFlight + 2);
+            _inFlight.EnsureCapacity(_maxInFlight + 2);
+            for (int i = _free.Count + _inFlight.Count + 1; i < _maxInFlight + 2; i++)
+            {
+                _free.Push(NewBatch());
+            }
+
+            if (!_usePush)
+            {
+                foreach (var batch in _free.Append(_batch))
+                {
+                    if (batch.Pools.Count == 0)
+                    {
+                        batch.Pools.Add(BatchPool());
+                    }
+                }
+            }
+        }
+    }
+
     // The current batch's command buffer, begun if needed, for a command that uses `blocks` (bit i of `writes` set when
     // it writes blocks[i]): a barrier first when it depends on a command of the current span (the barrier then waits
     // for every earlier command, in this batch or an earlier one, and makes its writes visible); the blocks are marked.
@@ -314,7 +348,7 @@ internal sealed unsafe partial class VulkanBackend
     // After a command: a long batch goes to the device now, so it starts working while more is recorded.
     private void Recorded()
     {
-        if (++_batch.Count >= MaxBatchCommands)
+        if (++_batch.Count >= _maxBatchCommands)
         {
             Submit();
         }
@@ -365,7 +399,7 @@ internal sealed unsafe partial class VulkanBackend
         Submissions++;
         _recording++;
         _batch = _free.Count > 0 ? _free.Pop() : NewBatch();
-        if (_inFlight.Count > MaxInFlight)
+        if (_inFlight.Count > _maxInFlight)
         {
             Retire(_inFlight.Dequeue());
         }
@@ -412,7 +446,7 @@ internal sealed unsafe partial class VulkanBackend
         foreach (var pool in batch.Pools)
         {
             Check(vkResetDescriptorPool(_device, pool.Handle, 0), nameof(vkResetDescriptorPool));
-            (pool.Sets, pool.Descriptors) = (PoolSets, pool.Capacity);
+            (pool.Sets, pool.Descriptors) = (pool.SetCapacity, pool.Capacity);
         }
 
         Check(vkResetCommandBuffer(batch.Commands, 0), nameof(vkResetCommandBuffer));
@@ -429,7 +463,7 @@ internal sealed unsafe partial class VulkanBackend
         {
             if (batch.Pool == batch.Pools.Count)
             {
-                batch.Pools.Add(NewPool(Math.Max(PoolDescriptors, descriptors)));
+                batch.Pools.Add(BatchPool());
             }
 
             var pool = batch.Pools[batch.Pool];
@@ -454,24 +488,24 @@ internal sealed unsafe partial class VulkanBackend
         }
     }
 
-    private DescriptorPool NewPool(uint descriptors)
+    private DescriptorPool NewPool(uint sets, uint descriptors)
     {
         var size = new VkDescriptorPoolSize { Type = DescriptorStorageBuffer, DescriptorCount = descriptors };
         var info = new VkDescriptorPoolCreateInfo
         {
             SType = StructureDescriptorPoolCreateInfo,
-            MaxSets = PoolSets,
+            MaxSets = sets,
             PoolSizeCount = 1,
             PoolSizes = &size,
         };
         Check(vkCreateDescriptorPool(_device, &info, null, out ulong pool), nameof(vkCreateDescriptorPool));
-        return new DescriptorPool(pool, descriptors);
+        return new DescriptorPool(pool, sets, descriptors);
     }
 
-    // The descriptor set layout of `bindings` storage buffers (bindings 0 to bindings - 1), made once.
+    // The descriptor set layout of `bindings` storage buffers (bindings 0 to bindings - 1), made once per descriptor mode.
     private ulong SetLayout(int bindings)
     {
-        if (_setLayouts.TryGetValue(bindings, out ulong layout))
+        if (_setLayouts.TryGetValue((bindings, _usePush), out ulong layout))
         {
             return layout;
         }
@@ -493,14 +527,14 @@ internal sealed unsafe partial class VulkanBackend
             var info = new VkDescriptorSetLayoutCreateInfo
             {
                 SType = StructureDescriptorSetLayoutCreateInfo,
-                Flags = _pushDescriptorSet != null ? DescriptorSetLayoutPushDescriptor : 0,
+                Flags = _usePush ? DescriptorSetLayoutPushDescriptor : 0,
                 BindingCount = (uint)bindings,
                 Bindings = e,
             };
             Check(vkCreateDescriptorSetLayout(_device, &info, null, out layout), nameof(vkCreateDescriptorSetLayout));
         }
 
-        _setLayouts[bindings] = layout;
+        _setLayouts[(bindings, _usePush)] = layout;
         return layout;
     }
 
@@ -529,7 +563,7 @@ internal sealed unsafe partial class VulkanBackend
             throw new VulkanException($"Vulkan kernel '{kernel.Name}' takes {kernel.PushConstantBytes} bytes of push constants; {Name} allows {p.MaxPushConstantsSize}.");
         }
 
-        var key = (kernel.Bindings, kernel.PushConstantBytes);
+        var key = (kernel.Bindings, kernel.PushConstantBytes, _usePush);
         if (!_pipelineLayouts.TryGetValue(key, out ulong layout))
         {
             ulong setLayout = SetLayout(kernel.Bindings);
