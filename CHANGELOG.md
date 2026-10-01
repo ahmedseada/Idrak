@@ -73,6 +73,22 @@
   small products a kernel without workgroup memory. Cases a kernel does not cover (storages over the device's binding
   limit, head sizes over 256, permutations of more than six dimensions) still take the host fallback;
   `IDRAK_VULKAN_KERNELS=0` sends everything there. Embedding indices out of range are clamped, as on CUDA.
+- Vulkan dispatches cost less: descriptors are pushed into the command buffer (`VK_KHR_push_descriptor`, on Intel,
+  AMD and NVIDIA drivers; pooled descriptor sets without it and on CPU drivers, where pushing runs slower;
+  `IDRAK_VULKAN_PUSH_DESCRIPTORS=1`/`0` decides instead), a barrier comes only before a dispatch that reads or writes a
+  storage written since the last one or writes one read since (kernels declare what they write, and their read-only
+  storages are `NonWritable`), the bound pipeline is kept, and recording a dispatch allocates nothing. Recording a
+  dispatch on the host: 9.3 → 0.7 µs (lavapipe, pushed descriptors).
+- Vulkan decoding steps take no host fallback, so the host no longer waits for the device on every token: kernels for
+  the sampler (temperature, top-k, top-p, min-p, the counter-based random stream and the 13 statistics per token,
+  with the CPU's tokens for the same seed; one invocation per row for small vocabularies, a workgroup per row, and for
+  top-k over large vocabularies a first pass keeping each 2,048-token slice's candidates), repetition penalties, the
+  token history, and RMS-normalized queries and keys with rotary positions (one dispatch for both). Measured on a
+  small decoder: 3 host fallbacks per token before (7 with query/key norms, 19 for an 8-layer one), 0 now, for
+  float32, int8, int4 and bfloat16 weights over float32, int8 and bfloat16 caches, and multi-head attention models.
+- `--bench-vulkan [sections]` in the test runner times every Vulkan device (or those `IDRAK_DEVICES` names): dispatch
+  overhead, copies, element-wise bandwidth, float32 products, decoding-sized int8 / int4 / bfloat16 products, decoding
+  attention over 200 to 4,000 positions, sampling, and decoders' tokens per second with their kernels per token.
 
 ## 0.1.7 (2026-10-01)
 

@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Buffers;
+using System.Runtime.CompilerServices;
 using Idrak.Backends.Cpu;
 
 namespace Idrak.Backends;
@@ -19,10 +20,12 @@ internal sealed class HostCall : IDisposable
     private readonly Backend _device;
     private readonly List<(Storage Device, Storage Host, float[] Before)> _mirrors = [];
 
-    public HostCall(Backend device)
+    /// <summary>Starts a fallback of the operation <paramref name="operation"/> (the calling method's name by default).</summary>
+    public HostCall(Backend device, [CallerMemberName] string operation = "")
     {
         _device = device;
         Interlocked.Increment(ref device.HostCalls);
+        device.HostCallsByOperation?.AddOrUpdate(operation, 1, static (_, n) => n + 1);
     }
 
     /// <summary>The CPU mirror of <paramref name="storage"/>, holding its values.</summary>

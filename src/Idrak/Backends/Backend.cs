@@ -107,6 +107,9 @@ internal abstract class Backend
     /// <summary>Operations this device has run through the host fallback (<see cref="HostCall"/>), for tests and diagnostics.</summary>
     internal long HostCalls;
 
+    /// <summary>When set, counts the host fallbacks by operation name (for tests and diagnostics: which operations still lack a kernel).</summary>
+    internal System.Collections.Concurrent.ConcurrentDictionary<string, long>? HostCallsByOperation;
+
     public abstract Storage Allocate(int length, bool zeroed);
 
     /// <summary>What this device's kernels can do (see <see cref="BackendCapabilities"/>).</summary>
