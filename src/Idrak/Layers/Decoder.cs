@@ -637,7 +637,9 @@ public sealed class FeedForward : Module
 
     /// <summary>
     /// Whether <see cref="DownInput"/> and a fused down projection (packed weights, no bias or adapter) can stand in for
-    /// <see cref="Module.Forward"/> at inference (formats whose down projection reads the activation keep that product).
+    /// <see cref="Module.Forward"/> at inference (formats whose down projection reads the activation keep that product). A
+    /// format of one's own qualifies too: its down projection is its own product, and the residual addition and the next
+    /// normalization after it still run as one pass.
     /// </summary>
     internal bool DownFusable => Down.PackedWeight is { ActivationInDownProjection: false } && Down.Bias is null && Down.Adapter is null;
 

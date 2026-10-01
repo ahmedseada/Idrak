@@ -25,6 +25,14 @@
   uses it, writes it to JSON even when it adds a lambda or a custom layer, and `Network.FromJson` (model packages too)
   replays it. New `NetworkBuilder.Add((device, random) => layer, shape)` creates a custom layer anew on each build.
   Unknown steps and operators are reported with the registered names and how to register one.
+- Packed-weight formats of one's own (NF4, FP8, …): derive from `PackedWeight` (now with a protected constructor) and
+  implement `Name`, `Rows`, `Columns`, `Bytes`, `Dequantize`, `Buffers`, `MoveTo` and `Dispose`; `MatMul` is public and
+  virtual, by default expanding the weights for each product (not recorded into CUDA graphs; override it with a
+  device-only product to be). `PackedWeight.Format` is now `PackedFormat?`, null for such formats, which never reach the
+  built-in formats' kernels (fused projections, gate/up pairs, LoRA products): each layer runs its own product. Formats
+  register by name (`PackedWeight.Register`, `FormatNames`, `FromValues(string, …)`; "int8", "int4", "bfloat16" built in)
+  and are chosen with `DecoderBuildOptions.PackedFormatName` / `PretrainedOptions.PackedFormatName`. `Save` stores their
+  buffers exactly, `ToFloat32` expands them, `To` moves them. Nothing changes for the built-in formats.
 
 ## 0.1.7 (2026-10-01)
 

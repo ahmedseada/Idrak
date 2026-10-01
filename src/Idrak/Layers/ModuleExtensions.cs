@@ -255,11 +255,14 @@ public static class ModuleExtensions
         return count;
     }
 
-    /// <summary>Turns bfloat16 and 4-bit weights back into float32 weights (the rounding stays). Returns how many layers changed.</summary>
+    /// <summary>
+    /// Turns bfloat16, 4-bit and other packed weights (formats derived from <see cref="PackedWeight"/> outside Idrak) back
+    /// into float32 weights (the rounding stays; int8 weights have <see cref="DequantizeInt8"/>). Returns how many layers changed.
+    /// </summary>
     public static int ToFloat32(this Module model, bool trainable = true)
     {
         int count = 0;
-        foreach (var linear in model.Descendants().OfType<Linear>().Where(l => l.BFloat16 is not null || l.Int4 is not null).ToList())
+        foreach (var linear in model.Descendants().OfType<Linear>().Where(l => l.PackedWeight is { } packed && packed is not Int8Weight).ToList())
         {
             linear.ToFloat32(trainable);
             count++;

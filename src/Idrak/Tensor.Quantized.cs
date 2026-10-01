@@ -142,6 +142,62 @@ public sealed partial class Tensor
         return Traced("matmul_int4", result, start);
     }
 
+    /// <summary>
+    /// [..., k] × <paramref name="weight"/> ([k, n], a format without a product of its own) → [..., n]: the weights
+    /// expanded with <see cref="PackedWeight.Dequantize"/> for the product (and again for the gradient), freed after it.
+    /// Gradients flow to this tensor (the weights are fixed). Not recordable into a device graph: the expansion may read
+    /// the host, which a replay would not repeat.
+    /// </summary>
+    internal Tensor MatMulExpanded(PackedWeight weight)
+    {
+        ThrowIfDisposed();
+        int k = weight.Rows, n = weight.Columns;
+        if (Rank < 2 || _shape[^1] != k)
+        {
+            throw new ArgumentException($"MatMul with a {weight.Name} [{k}, {n}] weight needs [..., {k}], got {FormatShape(_shape)}.");
+        }
+
+        if (ComputeGraph.IsCapturing)
+        {
+            throw new NotSupportedException($"{weight.Name} weights have no product of their own (PackedWeight.MatMul), so the step is not recorded as a graph.");
+        }
+
+        long start = Telemetry.Start(TelemetryLevel.Operations);
+        var flat = Rank == 2 ? this : Reshape(-1, k);
+        int m = flat._shape[0];
+        var y = Empty([m, n], Device);
+        using (var w = Expanded(weight, Device))
+        {
+            Backend.MatMul(flat.Storage, w.Storage, y.Storage, m, n, k, false, false, 0f);
+        }
+
+        if (WillRecord(flat))
+        {
+            y.Record("matmul_packed", g =>
+            {
+                using var w = Expanded(weight, flat.Device);
+                flat.Backend.BatchedMatMul(g.Storage, w.Storage, flat.GradStorage(), 1, m, k, n, false, true, 1f);   // dx += dy · wᵀ
+            }, flat);
+        }
+
+        var result = Rank == 2 ? y : y.Reshape([.. _shape[..^1], n]);
+        return Traced("matmul_packed", result, start);
+    }
+
+    // The weights as float32 [rows, columns], checked: on `device`, the shape the format reports.
+    private static Tensor Expanded(PackedWeight weight, Device device)
+    {
+        var w = weight.Dequantize();
+        if (w.Device != device || w.Rank != 2 || w.Shape[0] != weight.Rows || w.Shape[1] != weight.Columns)
+        {
+            w.Dispose();
+            throw new InvalidOperationException(
+                $"{weight.Name}.Dequantize gave {FormatShape(w.Shape)} on {w.Device}; a [{weight.Rows}, {weight.Columns}] product on {device} needs that shape there.");
+        }
+
+        return w;
+    }
+
     private static Tensor Dequantized(Int8Weight weight)
     {
         var w = Empty([weight.Rows, weight.Columns], weight.Packed.Device, track: false);
