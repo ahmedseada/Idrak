@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Text paths allocate less and copy less, with the same results (checked against the old code on random inputs):
+  spans, `SearchValues`, UTF-8 and pooled buffers instead of per-word, per-chunk and per-character strings. Measured
+  with the new `--bench-text` (README as input, CPU): BM25 indexing 8.1-9.3 ms → 2.8 ms and 6.0 → 1.5 MiB allocated,
+  100 BM25 searches 0.8-1.2 ms → 0.31 ms, chunking 0.8 → 0.47 ms and 646 → 189 KiB, parsing a streamed reply 99-145 µs →
+  79 µs and 137 → 33 KiB. Also: stop sequences found with one scan of the new text; the chat output parser keeps no
+  growing copies (tool calls were O(n²)); ChatML and `tojson` write JSON directly; SentencePiece decoding through a
+  per-token table (10x less allocated) and byte fallback without falling back to string merges; CSV read in blocks
+  (44-68 ms instead of 71-114 ms for 100k rows), JSON Lines parsed as UTF-8 (37-50 ms instead of 70-111 ms),
+  `WriteJsonLines` with one writer, Parquet strings decoded from the page; SSE and NDJSON events written as UTF-8;
+  CUDA kernel names from tables.
 - No card-specific tuning: choices that depend on the GPU are measured on the GPU in use the first time a shape needs
   them (each candidate timed on the real inputs, the fastest kept for the process), instead of rules set from one
   card's benchmarks. Covered: the k splits of few-row packed products, prompt-sized packed products (one, several and
