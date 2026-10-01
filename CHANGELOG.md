@@ -59,6 +59,12 @@
   `PretrainedModel.CreateGenerator` / `CreateChat` overloads, `idrak-tune --kv NAME`, and `KeyValueFormat.Custom`
   (what caches of such formats report). The built-in formats keep their kernels; a bfloat16 cache now also works in
   `MultiHeadAttention` (expanded to float32) instead of throwing.
+- Vulkan groundwork (internal, not used by any device yet): a SPIR-V 1.3 generator in C# (`SpirvModule`, and
+  `KernelBuilder`, which writes kernels as C# code with structured ifs, loops, workgroup memory and barriers) and the
+  first 74 Vulkan kernels (element-wise and their gradients, reductions, softmax, norms, rotary positions, gathers, the
+  key/value caches, float32 tiled and packed int8 / int4 / bfloat16 products, decoding attention over float, bfloat16
+  and int8 caches). Every kernel passes `spirv-val --target-env vulkan1.1` in the tests when it is installed;
+  `--dump-spirv <folder>` writes them with their bindings and push constants.
 
 ## 0.1.7 (2026-10-01)
 

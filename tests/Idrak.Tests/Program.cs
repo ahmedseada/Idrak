@@ -5,6 +5,7 @@
 //   IDRAK_DEVICES=cpu,cuda:0,cuda:2 …   only these devices
 //   dotnet run --project tests/Idrak.Tests                  run every test on every available device
 //   dotnet run --project tests/Idrak.Tests -- --dump-ptx f  write the generated CUDA kernels to f
+//   … -- --dump-spirv folder                                                     write the generated Vulkan kernels (.spv) and their contracts to folder
 //   … -- --bench-cpu                                                             time the CPU decoding kernels (bfloat16 products, cached attention, sampling)
 //   … -- --bench-gemm / --bench-gemv / --bench-fp8                               time large products / decoding-sized packed products
 //   … -- --bench-text                                                            time the text paths (tokenizer, chat template, parsing, chunking, BM25)
@@ -57,6 +58,11 @@ if (args is ["--dump-ptx", var ptxPath])
     File.WriteAllText(Path.ChangeExtension(ptxPath, ".tensorcore.ptx"), PtxKernels.TensorCoreSource);
     Console.WriteLine($"Wrote {PtxKernels.Source.Length} characters of PTX to {ptxPath}");
     return 0;
+}
+
+if (args is ["--dump-spirv", var spirvFolder])
+{
+    return Tests.DumpSpirv(spirvFolder);
 }
 
 // What the run is on, so a pasted result says where it passed (each GPU's line adds its compute capability and driver).
@@ -145,7 +151,7 @@ return failed == 0 ? 0 : 1;
 
 internal static partial class Tests
 {
-    public static (string Name, Action<Device> Run)[] All => [.. Basic, .. Advanced, .. Decoding, .. Generation, .. Simplified, .. Callbacks, .. AspNetCore, .. Retrieval, .. Onnx, .. Quantization, .. Decoder, .. Pretrained, .. ChatTemplates, .. FineTuning, .. MixedPrecisionGroup, .. CodingToolsGroup, .. DatasetsGroup, .. GgufGroup, .. NamingGroup, .. StreamingText, .. OffloadingGroup, .. TuningGroup, .. AbstractionGroup, .. OpPluginGroup, .. PackedPluginGroup, .. ModelPluginGroup, .. DatasetPluginGroup, .. MinimalBackendGroup, .. KeyValuePluginGroup, .. VulkanGroup];
+    public static (string Name, Action<Device> Run)[] All => [.. Basic, .. Advanced, .. Decoding, .. Generation, .. Simplified, .. Callbacks, .. AspNetCore, .. Retrieval, .. Onnx, .. Quantization, .. Decoder, .. Pretrained, .. ChatTemplates, .. FineTuning, .. MixedPrecisionGroup, .. CodingToolsGroup, .. DatasetsGroup, .. GgufGroup, .. NamingGroup, .. StreamingText, .. OffloadingGroup, .. TuningGroup, .. AbstractionGroup, .. OpPluginGroup, .. PackedPluginGroup, .. ModelPluginGroup, .. DatasetPluginGroup, .. MinimalBackendGroup, .. KeyValuePluginGroup, .. VulkanGroup, .. SpirvGroup];
 
     private static readonly (string Name, Action<Device> Run)[] Basic =
     [
