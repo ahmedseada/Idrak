@@ -40,7 +40,20 @@ public sealed class BpeTokenizer : ITokenizer
     private readonly Regex? _addedPattern;
     private readonly List<Func<List<string>, bool, List<string>>> _preTokenizers = [];   // (pieces, text starts the input)
     private readonly List<Func<string, string>> _normalizers = [];
-    private readonly List<Func<List<string>, List<string>>> _decoders = [];
+    private readonly List<(string Type, Func<List<string>, List<string>> Run, Func<string, string>? Map)> _decoders = [];
+
+    // The normalizers when each prepends a string or replaces one character by another (SentencePiece's "▁" scheme): they
+    // run in place on a buffer; null when some normalizer is anything else.
+    private List<(string? Prepend, char From, char To)>? _normalizerSteps = [];
+
+    // The pre-tokenizer when it is the only one and rewrites text: Metaspace, or ByteLevel with add_prefix_space (its
+    // regex, null without use_regex); these run on spans.
+    private (string Replacement, string Scheme, bool Split)? _metaspace;
+    private (bool Prefix, Regex? Pattern)? _prefixByteLevel;
+
+    // Decoding without token lists (see DecodeTable), or null; built on the first decode.
+    private DecodeTable? _decodeTable;
+    private readonly int _fusedDecoders = -1;                                 // decoders the table covers, -1: none
 
     // Pre-tokenizers that only split (no stage rewrites the text) as stages over ranges of one string, or null when
     // some stage rewrites text (then the string pipeline above runs).
@@ -56,6 +69,10 @@ public sealed class BpeTokenizer : ITokenizer
 
     // Byte-level encoding: the id of each byte's character (-1 when it is not a token).
     private readonly int[] _byteIds = new int[256];
+
+    // Byte fallback: the id of each byte's <0xNN> token (-1 when it is missing).
+    private readonly int[] _fallbackIds = new int[256];
+
     private readonly bool _byteLevel;
     private readonly bool _byteFallback;
     private readonly bool _ignoreMerges;
@@ -123,7 +140,21 @@ public sealed class BpeTokenizer : ITokenizer
 
         AddNormalizer(json["normalizer"]);
         _byteLevel = AddPreTokenizer(json["pre_tokenizer"]);
+        if (_preTokenizers.Count != 1)
+        {
+            (_metaspace, _prefixByteLevel) = (null, null);
+        }
+
         AddDecoder(json["decoder"]);
+        _fusedDecoders = FusedDecoders();
+        if (_byteFallback)
+        {
+            for (int b = 0; b < 256; b++)
+            {
+                _fallbackIds[b] = _vocabulary.TryGetValue($"<0x{b:X2}>", out int id) ? id : -1;
+            }
+        }
+
         if (_byteLevel)
         {
             Span<char> one = stackalloc char[1];
@@ -180,7 +211,7 @@ public sealed class BpeTokenizer : ITokenizer
                     }
                     else
                     {
-                        model[field.Name] = JsonNode.Parse(field.Value.GetRawText());
+                        model[field.Name] = JsonNode.Parse(System.Runtime.InteropServices.JsonMarshal.GetRawUtf8Value(field.Value));
                     }
                 }
 
@@ -188,7 +219,7 @@ public sealed class BpeTokenizer : ITokenizer
             }
             else
             {
-                rest[property.Name] = JsonNode.Parse(property.Value.GetRawText());
+                rest[property.Name] = JsonNode.Parse(System.Runtime.InteropServices.JsonMarshal.GetRawUtf8Value(property.Value));
             }
         }
 
@@ -246,19 +277,41 @@ public sealed class BpeTokenizer : ITokenizer
     {
         text = WithoutLoneSurrogates(text);
         var ids = new List<int>(text.Length / 3 + 4);
-        int last = 0;
+        EncodeSegments(text, 0, text.Length, ids);
+        return ids;
+    }
+
+    /// <summary>
+    /// Appends the ids of <paramref name="text"/>[<paramref name="start"/>..<paramref name="start"/> + <paramref name="length"/>]
+    /// to <paramref name="ids"/>: the ids <see cref="Encode"/> gives for that substring, without copying it.
+    /// </summary>
+    internal void EncodeRange(string text, int start, int length, List<int> ids)
+    {
+        if (text.AsSpan(start, length).ContainsAnyInRange('\uD800', '\uDFFF'))
+        {
+            text = WithoutLoneSurrogates(text.Substring(start, length));         // the range may cut a pair in half
+            start = 0;
+        }
+
+        EncodeSegments(text, start, length, ids);
+    }
+
+    // Added tokens, and the text between them, of text[start..start + length].
+    private void EncodeSegments(string text, int start, int length, List<int> ids)
+    {
+        int last = start;
         if (_addedPattern is not null)
         {
-            foreach (var match in _addedPattern.EnumerateMatches(text))
+            foreach (var match in _addedPattern.EnumerateMatches(text.AsSpan(start, length)))
             {
-                EncodeText(text, last, match.Index - last, ids, last == 0);
-                ids.Add(_vocabularySpans[text.AsSpan(match.Index, match.Length)]);
-                last = match.Index + match.Length;
+                int at = start + match.Index;
+                EncodeText(text, last, at - last, ids, last == start);
+                ids.Add(_vocabularySpans[text.AsSpan(at, match.Length)]);
+                last = at + match.Length;
             }
         }
 
-        EncodeText(text, last, text.Length - last, ids, last == 0);
-        return ids;
+        EncodeText(text, last, start + length - last, ids, last == start);
     }
 
     // Half of a surrogate pair is not a character (it has no UTF-8 bytes, and Unicode normalization rejects it): it
@@ -335,6 +388,11 @@ public sealed class BpeTokenizer : ITokenizer
             return text;
         }
 
+        if (_fusedDecoders >= 0 && (_decodeTable ??= BuildDecodeTable()) is { Text: not null } table)
+        {
+            return DecodeFused(ids, table);
+        }
+
         var tokens = new List<string>(ids.Length);
         foreach (int id in ids)
         {
@@ -343,10 +401,163 @@ public sealed class BpeTokenizer : ITokenizer
 
         foreach (var decoder in _decoders)
         {
-            tokens = decoder(tokens);
+            tokens = decoder.Run(tokens);
         }
 
         return string.Concat(tokens);
+    }
+
+    // Every token's text after the decoders' Replace stages, and its byte when the ByteFallback stage reads it as one
+    // (-1 otherwise); Empty* for ids without a token. Text is null when some token looks like <0xNN> but is not hex.
+    private sealed record DecodeTable(string[]? Text, int[] Byte, string EmptyText, int EmptyByte);
+
+    // How many decoders (from the first) DecodeFused reproduces: Replace stages, then at most one ByteFallback, up to the
+    // first Fuse or Metaspace (from there the text is one piece, so the remaining stages run on it); -1 for other chains.
+    private int FusedDecoders()
+    {
+        bool byteFallback = false;
+        for (int i = 0; i < _decoders.Count; i++)
+        {
+            switch (_decoders[i].Type)
+            {
+                case "Replace" when !byteFallback:
+                    break;
+                case "ByteFallback" when !byteFallback:
+                    byteFallback = true;
+                    break;
+                case "Fuse" or "Metaspace":
+                    return i;
+                default:
+                    return -1;
+            }
+        }
+
+        return _decoders.Count;
+    }
+
+    private DecodeTable BuildDecodeTable()
+    {
+        bool byteFallback = false;
+        var maps = new List<Func<string, string>>();
+        foreach (var (type, _, map) in _decoders.Take(_fusedDecoders))
+        {
+            if (map is not null)
+            {
+                maps.Add(map);
+            }
+
+            byteFallback |= type == "ByteFallback";
+        }
+
+        bool hex = true;
+        (string, int) Entry(string token)
+        {
+            foreach (var map in maps)
+            {
+                token = map(token);
+            }
+
+            if (byteFallback && IsByteToken(token))
+            {
+                if (char.IsAsciiHexDigit(token[3]) && char.IsAsciiHexDigit(token[4]))
+                {
+                    return (token, byte.Parse(token.AsSpan(3, 2), System.Globalization.NumberStyles.AllowHexSpecifier));
+                }
+
+                hex = false;                                                     // left to the list stages (as they read it)
+            }
+
+            return (token, -1);
+        }
+
+        var tokens = _tokens;
+        var text = new string[tokens.Length];
+        var bytes = new int[tokens.Length];
+        for (int id = 0; id < tokens.Length; id++)
+        {
+            (text[id], bytes[id]) = Entry(tokens[id] ?? "");
+        }
+
+        var (emptyText, emptyByte) = Entry("");
+        return new DecodeTable(hex ? text : null, bytes, emptyText, emptyByte);
+    }
+
+    private static bool IsByteToken(string token) => token.Length == 6 && token.StartsWith("<0x", StringComparison.Ordinal) && token[5] == '>';
+
+    // The decoders through the table: token texts copied side by side, runs of byte tokens decoded as UTF-8 (one U+FFFD
+    // per byte when a run is not valid UTF-8, as the ByteFallback stage does), then the stages after the table's.
+    private string DecodeFused(ReadOnlySpan<int> ids, DecodeTable table)
+    {
+        var texts = table.Text!;
+        var tokenBytes = table.Byte;
+        int most = 0;
+        foreach (int id in ids)
+        {
+            bool known = (uint)id < (uint)texts.Length;
+            most += (known ? tokenBytes[id] : table.EmptyByte) >= 0 ? 1 : (known ? texts[id] : table.EmptyText).Length;
+        }
+
+        char[]? rentedChars = null;
+        byte[]? rentedBytes = null;
+        Span<char> chars = most <= 1024 ? stackalloc char[1024] : (rentedChars = System.Buffers.ArrayPool<char>.Shared.Rent(most));
+        Span<byte> run = ids.Length <= StackChars ? stackalloc byte[StackChars] : (rentedBytes = System.Buffers.ArrayPool<byte>.Shared.Rent(ids.Length));
+        int at = 0, pending = 0;
+        foreach (int id in ids)
+        {
+            bool known = (uint)id < (uint)texts.Length;
+            int b = known ? tokenBytes[id] : table.EmptyByte;
+            if (b >= 0)
+            {
+                run[pending++] = (byte)b;
+                continue;
+            }
+
+            at += DecodeRun(run[..pending], chars[at..]);
+            pending = 0;
+            string token = known ? texts[id] : table.EmptyText;
+            token.CopyTo(chars[at..]);
+            at += token.Length;
+        }
+
+        at += DecodeRun(run[..pending], chars[at..]);
+        string text = new(chars[..at]);
+        if (rentedChars is not null)
+        {
+            System.Buffers.ArrayPool<char>.Shared.Return(rentedChars);
+        }
+
+        if (rentedBytes is not null)
+        {
+            System.Buffers.ArrayPool<byte>.Shared.Return(rentedBytes);
+        }
+
+        List<string>? pieces = null;
+        for (int i = _fusedDecoders; i < _decoders.Count; i++)
+        {
+            if (pieces is not null || _decoders[i].Type != "Fuse")              // fusing one piece changes nothing
+            {
+                pieces = _decoders[i].Run(pieces ?? [text]);
+            }
+        }
+
+        return pieces is null ? text : string.Concat(pieces);
+    }
+
+    // A run of byte tokens as text: its UTF-8, or one U+FFFD per byte when it is not valid UTF-8.
+    private static int DecodeRun(ReadOnlySpan<byte> run, Span<char> destination)
+    {
+        if (run.IsEmpty)
+        {
+            return 0;
+        }
+
+        if (System.Text.Unicode.Utf8.IsValid(run))
+        {
+            return Encoding.UTF8.GetChars(run, destination);
+        }
+
+        destination[..run.Length].Fill('\uFFFD');
+        return run.Length;
     }
 
     // The bytes of every token (see _tokenBytes): characters of the byte map are bytes, others (and added tokens) UTF-8.
@@ -393,21 +604,75 @@ public sealed class BpeTokenizer : ITokenizer
             return;
         }
 
-        if (_normalizers.Count > 0 || _splits is null)
+        if (_normalizers.Count == 0)
         {
-            string segment = text.Substring(start, length);
-            foreach (var normalize in _normalizers)
+            EncodeNormalized(text.AsSpan(start, length), null, ids, atStart);
+            return;
+        }
+
+        if (_normalizerSteps is { } steps)
+        {
+            // Prepends and character replacements in place: the text goes at the end of the buffer, each prepend before it.
+            int total = length;
+            foreach (var step in steps)
             {
-                segment = normalize(segment);
+                total += step.Prepend?.Length ?? 0;
             }
 
-            if (_splits is not null)
+            char[]? rented = null;
+            Span<char> buffer = total <= StackChars ? stackalloc char[StackChars] : (rented = System.Buffers.ArrayPool<char>.Shared.Rent(total));
+            buffer = buffer[..total];
+            int at = total - length;
+            text.AsSpan(start, length).CopyTo(buffer[at..]);
+            foreach (var (prepend, from, to) in steps)
             {
-                EncodeRanges(segment, 0, segment.Length, ids);
-                return;
+                if (prepend is not null)
+                {
+                    at -= prepend.Length;
+                    prepend.CopyTo(buffer[at..]);
+                }
+                else
+                {
+                    buffer[at..].Replace(from, to);
+                }
             }
 
-            var pieces = new List<string> { segment };
+            EncodeNormalized(buffer, null, ids, atStart);
+            if (rented is not null)
+            {
+                System.Buffers.ArrayPool<char>.Shared.Return(rented);
+            }
+
+            return;
+        }
+
+        string segment = text.Substring(start, length);
+        foreach (var normalize in _normalizers)
+        {
+            segment = normalize(segment);
+        }
+
+        EncodeNormalized(segment, segment, ids, atStart);
+    }
+
+    // Pre-tokenizes and encodes normalized text (segmentString: the same text as a string, when there is one).
+    private void EncodeNormalized(ReadOnlySpan<char> segment, string? segmentString, List<int> ids, bool atStart)
+    {
+        if (_splits is not null)
+        {
+            EncodeRanges(segment, ids);
+        }
+        else if (_metaspace is { } metaspace)
+        {
+            EncodeMetaspace(segment, metaspace.Replacement, metaspace.Scheme == "always" || metaspace.Scheme == "first" && atStart, metaspace.Split, ids);
+        }
+        else if (_prefixByteLevel is { } byteLevel)
+        {
+            EncodePrefixedByteLevel(segment, byteLevel.Pattern, ids);
+        }
+        else
+        {
+            var pieces = new List<string> { segmentString ?? segment.ToString() };
             foreach (var preTokenize in _preTokenizers)
             {
                 pieces = preTokenize(pieces, atStart);
@@ -417,17 +682,102 @@ public sealed class BpeTokenizer : ITokenizer
             {
                 EncodePiece(piece, ids, mapBytes: false);
             }
-
-            return;
         }
-
-        EncodeRanges(text, start, length, ids);
     }
 
-    // Splits text[start..start + length] with the split stages (as ranges: nothing is copied) and encodes each piece.
-    private void EncodeRanges(string text, int start, int length, List<int> ids)
+    // The Metaspace pre-tokenizer on its own: spaces become the replacement, which is prepended (when the scheme says so
+    // and the text does not start with it); with split, a piece starts at every replacement but the first character.
+    private void EncodeMetaspace(ReadOnlySpan<char> segment, string replacement, bool prepend, bool split, List<int> ids)
     {
-        var current = new List<(int Start, int Length)> { (start, length) };
+        int spaces = segment.Count(' ');
+        int most = replacement.Length + segment.Length + spaces * (replacement.Length - 1);
+        char[]? rented = null;
+        Span<char> buffer = most <= StackChars ? stackalloc char[StackChars] : (rented = System.Buffers.ArrayPool<char>.Shared.Rent(most));
+        int at = replacement.Length;
+        for (var rest = segment; ;)
+        {
+            int space = rest.IndexOf(' ');
+            if (space < 0)
+            {
+                rest.CopyTo(buffer[at..]);
+                at += rest.Length;
+                break;
+            }
+
+            rest[..space].CopyTo(buffer[at..]);
+            at += space;
+            replacement.CopyTo(buffer[at..]);
+            at += replacement.Length;
+            rest = rest[(space + 1)..];
+        }
+
+        int start = replacement.Length;
+        if (prepend && !buffer[start..at].StartsWith(replacement, StringComparison.Ordinal))
+        {
+            start = 0;
+            replacement.CopyTo(buffer);
+        }
+
+        ReadOnlySpan<char> s = buffer[start..at];
+        if (!split)
+        {
+            EncodePiece(s, ids, mapBytes: false);
+        }
+        else
+        {
+            int from = 0;
+            while (from < s.Length)
+            {
+                int next = from + 1 >= s.Length ? -1 : s[(from + 1)..].IndexOf(replacement, StringComparison.Ordinal);
+                int to = next < 0 ? s.Length : from + 1 + next;
+                EncodePiece(s[from..to], ids, mapBytes: false);
+                from = to;
+            }
+        }
+
+        if (rented is not null)
+        {
+            System.Buffers.ArrayPool<char>.Shared.Return(rented);
+        }
+    }
+
+    // The ByteLevel pre-tokenizer on its own with add_prefix_space: a space before text that does not start with one,
+    // then its regex's matches (pattern; or the whole text without use_regex) encoded from their UTF-8 bytes.
+    private void EncodePrefixedByteLevel(ReadOnlySpan<char> segment, Regex? pattern, List<int> ids)
+    {
+        char[]? rented = null;
+        scoped ReadOnlySpan<char> piece = segment;
+        Span<char> buffer = segment.Length < StackChars ? stackalloc char[StackChars] : default;
+        if (!segment.StartsWith(' '))
+        {
+            buffer = buffer.IsEmpty ? (rented = System.Buffers.ArrayPool<char>.Shared.Rent(segment.Length + 1)) : buffer;
+            buffer[0] = ' ';
+            segment.CopyTo(buffer[1..]);
+            piece = buffer[..(segment.Length + 1)];
+        }
+
+        if (pattern is null)
+        {
+            EncodePiece(piece, ids, mapBytes: true);
+        }
+        else
+        {
+            foreach (var m in pattern.EnumerateMatches(piece))
+            {
+                EncodePiece(piece.Slice(m.Index, m.Length), ids, mapBytes: true);
+            }
+        }
+
+        if (rented is not null)
+        {
+            System.Buffers.ArrayPool<char>.Shared.Return(rented);
+        }
+    }
+
+    // Splits text with the split stages (as ranges: nothing is copied) and encodes each piece.
+    private void EncodeRanges(ReadOnlySpan<char> text, List<int> ids)
+    {
+        var current = new List<(int Start, int Length)> { (0, text.Length) };
         var next = new List<(int Start, int Length)>();
         foreach (var (pattern, behavior, invert) in _splits!)
         {
@@ -442,7 +792,7 @@ public sealed class BpeTokenizer : ITokenizer
 
         foreach (var (from, count) in current)
         {
-            EncodePiece(text.AsSpan(from, count), ids, mapBytes: _byteLevel);
+            EncodePiece(text.Slice(from, count), ids, mapBytes: _byteLevel);
         }
     }
 
@@ -551,19 +901,64 @@ public sealed class BpeTokenizer : ITokenizer
                 i += width;
             }
 
-            int[]? merged = known ? Merge(symbols[..n]) : null;
+            // Every merge joins two tokens into a token, so a character that is not one never merges: the runs of known
+            // characters between such characters merge on their own.
+            int[] merged = known ? Merge(symbols[..n]) : MergeAround(piece, symbols);
             if (rented is not null)
             {
                 System.Buffers.ArrayPool<int>.Shared.Return(rented);
             }
 
-            if (merged is not null)
-            {
-                return merged;
-            }
+            return merged;
         }
 
         return BpeStrings(piece.ToString());
+    }
+
+    // Merges the runs of known characters of piece (symbols: room for one id per character), each unknown character as
+    // the string merges give it (its byte fallback tokens, or the unknown token).
+    private int[] MergeAround(ReadOnlySpan<char> piece, Span<int> symbols)
+    {
+        var result = new List<int>(piece.Length);
+        int n = 0;
+        for (int i = 0; i < piece.Length;)
+        {
+            int width = i + 1 < piece.Length && char.IsSurrogatePair(piece[i], piece[i + 1]) ? 2 : 1;
+            if (_vocabularySpans.TryGetValue(piece.Slice(i, width), out symbols[n]))
+            {
+                n++;
+            }
+            else
+            {
+                result.AddRange(n > 0 ? Merge(symbols[..n]) : []);
+                n = 0;
+                AddUnknown(piece.Slice(i, width), result);
+            }
+
+            i += width;
+        }
+
+        result.AddRange(n > 0 ? Merge(symbols[..n]) : []);
+        return [.. result];
+    }
+
+    // A symbol that is not a token: its UTF-8 bytes' fallback tokens, or the unknown token.
+    private void AddUnknown(ReadOnlySpan<char> symbol, List<int> result)
+    {
+        if (_byteFallback)
+        {
+            int most = Encoding.UTF8.GetMaxByteCount(symbol.Length);
+            Span<byte> bytes = most <= StackChars ? stackalloc byte[StackChars] : new byte[most];
+            foreach (byte b in bytes[..Encoding.UTF8.GetBytes(symbol, bytes)])
+            {
+                result.Add(_fallbackIds[b] >= 0 ? _fallbackIds[b]
+                    : throw new InvalidDataException($"Byte fallback token <0x{b:X2}> is missing from the vocabulary."));
+            }
+        }
+        else
+        {
+            result.Add(_unknown ?? throw new InvalidDataException($"'{symbol}' is not in the vocabulary and the tokenizer has no unknown token."));
+        }
     }
 
     // The merges on token ids: short pieces merge in place (lowest-rank pair, leftmost among equals, repeatedly); long
@@ -709,17 +1104,9 @@ public sealed class BpeTokenizer : ITokenizer
             {
                 result.Add(id);
             }
-            else if (_byteFallback)
-            {
-                foreach (byte b in Encoding.UTF8.GetBytes(symbol))
-                {
-                    result.Add(_vocabulary.TryGetValue($"<0x{b:X2}>", out int byteId) ? byteId
-                        : throw new InvalidDataException($"Byte fallback token <0x{b:X2}> is missing from the vocabulary."));
-                }
-            }
             else
             {
-                result.Add(_unknown ?? throw new InvalidDataException($"'{symbol}' is not in the vocabulary and the tokenizer has no unknown token."));
+                AddUnknown(symbol, result);
             }
         }
 
@@ -728,7 +1115,7 @@ public sealed class BpeTokenizer : ITokenizer
 
     // One split stage on a range: the matches and the text between them, combined as the behavior says (all adjacent,
     // so every result is again a range of the same string).
-    private static void SplitRange(string text, (int Start, int Length) range, Regex pattern, string behavior, bool invert, List<(int Start, int Length)> output)
+    private static void SplitRange(ReadOnlySpan<char> text, (int Start, int Length) range, Regex pattern, string behavior, bool invert, List<(int Start, int Length)> output)
     {
         int last = range.Start, end = range.Start + range.Length;
         int pending = -1;                                                       // MergedWithNext: start of matched text waiting
@@ -783,7 +1170,7 @@ public sealed class BpeTokenizer : ITokenizer
             }
         }
 
-        foreach (var m in pattern.EnumerateMatches(text.AsSpan(range.Start, range.Length)))
+        foreach (var m in pattern.EnumerateMatches(text.Slice(range.Start, range.Length)))
         {
             if (m.Length == 0)
             {
@@ -818,6 +1205,20 @@ public sealed class BpeTokenizer : ITokenizer
                 return;
             case JsonObject n:
                 string type = (string)n["type"]!;
+                if (type == "Prepend")
+                {
+                    _normalizerSteps?.Add(((string?)n["prepend"] ?? "", '\0', '\0'));
+                }
+                else if (type == "Replace" && n["pattern"]?["String"] is { } literal && (string)literal! is { Length: 1 } from
+                         && (string)n["content"]! is { Length: 1 } to)
+                {
+                    _normalizerSteps?.Add((null, from[0], to[0]));
+                }
+                else
+                {
+                    _normalizerSteps = null;
+                }
+
                 _normalizers.Add(type switch
                 {
                     "NFC" => s => s.Normalize(NormalizationForm.FormC),
@@ -869,7 +1270,7 @@ public sealed class BpeTokenizer : ITokenizer
                 var pattern = p["pattern"]!["Regex"] is { } r ? new Regex((string)r!, Fast) : new Regex(Regex.Escape((string)p["pattern"]!["String"]!), Fast);
                 string behavior = (string?)p["behavior"] ?? "Isolated";
                 bool invert = (bool?)p["invert"] ?? false;
-                _preTokenizers.Add((pieces, atStart) => [.. pieces.SelectMany(piece => SplitPiece(piece, pattern, behavior, invert))]);
+                _preTokenizers.Add((pieces, atStart) => SplitPieces(pieces, pattern, behavior, invert));
                 _splits?.Add((pattern, behavior, invert));
                 return false;
             case "ByteLevel":
@@ -884,22 +1285,34 @@ public sealed class BpeTokenizer : ITokenizer
                     _splits?.Add((gpt2, "Isolated", false));
                 }
 
-                _preTokenizers.Add((pieces, atStart) => [.. pieces.SelectMany(piece =>
+                _prefixByteLevel = prefix ? (true, useRegex ? gpt2 : null) : null;
+                _preTokenizers.Add((pieces, atStart) =>
                 {
-                    if (prefix && !piece.StartsWith(' '))
+                    var result = new List<string>(pieces.Count);
+                    foreach (var text in pieces)
                     {
-                        piece = " " + piece;
+                        string piece = prefix && !text.StartsWith(' ') ? " " + text : text;
+                        if (!useRegex)
+                        {
+                            result.Add(ToByteChars(piece));
+                            continue;
+                        }
+
+                        foreach (var m in gpt2.EnumerateMatches(piece))
+                        {
+                            result.Add(ToByteChars(piece.AsSpan(m.Index, m.Length)));
+                        }
                     }
 
-                    var parts = useRegex ? gpt2.Matches(piece).Select(m => m.Value) : [piece];
-                    return parts.Select(part => new string([.. Encoding.UTF8.GetBytes(part).Select(b => ByteToChar[b])]));
-                })]);
+                    return result;
+                });
                 return true;
             case "Metaspace":
                 string replacement = (string?)p["replacement"] ?? "▁";
                 string scheme = (string?)p["prepend_scheme"] ?? (((bool?)p["add_prefix_space"] ?? true) ? "always" : "never");
                 bool split = (bool?)p["split"] ?? true;
                 _splits = null;
+                _metaspace = (replacement, scheme, split);
                 _preTokenizers.Add((pieces, atStart) =>
                 {
                     var result = new List<string>();
@@ -934,12 +1347,24 @@ public sealed class BpeTokenizer : ITokenizer
             case "Digits":
                 bool individual = (bool?)p["individual_digits"] ?? false;
                 var digits = new Regex(individual ? @"\p{Nd}" : @"\p{Nd}+", Fast);
-                _preTokenizers.Add((pieces, atStart) => [.. pieces.SelectMany(piece => SplitPiece(piece, digits, "Isolated", false))]);
+                _preTokenizers.Add((pieces, atStart) => SplitPieces(pieces, digits, "Isolated", false));
                 _splits?.Add((digits, "Isolated", false));
                 return false;
             case "Whitespace":
                 var words = new Regex(@"\w+|[^\w\s]+", Fast);
-                _preTokenizers.Add((pieces, atStart) => [.. pieces.SelectMany(piece => words.Matches(piece).Select(m => m.Value))]);
+                _preTokenizers.Add((pieces, atStart) =>
+                {
+                    var result = new List<string>(pieces.Count);
+                    foreach (var piece in pieces)
+                    {
+                        foreach (var m in words.EnumerateMatches(piece))
+                        {
+                            result.Add(piece.Substring(m.Index, m.Length));
+                        }
+                    }
+
+                    return result;
+                });
                 _splits?.Add((words, "Removed", true));                           // keeps the matches only
                 return false;
             default:
@@ -947,77 +1372,51 @@ public sealed class BpeTokenizer : ITokenizer
         }
     }
 
-    private static IEnumerable<string> SplitPiece(string piece, Regex pattern, string behavior, bool invert)
+    // A split stage on pieces of the string pipeline: SplitRange on each piece, then the ranges copied out.
+    private static List<string> SplitPieces(List<string> pieces, Regex pattern, string behavior, bool invert)
     {
-        var parts = new List<(string Text, bool Matched)>();
-        int last = 0;
-        foreach (Match m in pattern.Matches(piece))
+        var result = new List<string>(pieces.Count);
+        var ranges = new List<(int Start, int Length)>();
+        foreach (var piece in pieces)
         {
-            if (m.Length == 0)
+            if (behavior is not ("Isolated" or "Removed" or "MergedWithPrevious" or "MergedWithNext"))
             {
-                continue;
-            }
-
-            if (m.Index > last)
-            {
-                parts.Add((piece[last..m.Index], invert));
-            }
-
-            parts.Add((m.Value, !invert));
-            last = m.Index + m.Length;
-        }
-
-        if (last < piece.Length)
-        {
-            parts.Add((piece[last..], invert));
-        }
-
-        switch (behavior)
-        {
-            case "Isolated":
-                return parts.Select(p => p.Text);
-            case "Removed":
-                return parts.Where(p => !p.Matched).Select(p => p.Text);
-            case "MergedWithPrevious":
-                var previous = new List<string>();
-                foreach (var (text, matched) in parts)
-                {
-                    if (matched && previous.Count > 0)
-                    {
-                        previous[^1] += text;
-                    }
-                    else
-                    {
-                        previous.Add(text);
-                    }
-                }
-
-                return previous;
-            case "MergedWithNext":
-                var next = new List<string>();
-                string pending = "";
-                foreach (var (text, matched) in parts)
-                {
-                    if (matched)
-                    {
-                        pending += text;
-                    }
-                    else
-                    {
-                        next.Add(pending + text);
-                        pending = "";
-                    }
-                }
-
-                if (pending.Length > 0)
-                {
-                    next.Add(pending);
-                }
-
-                return next;
-            default:
                 throw new NotSupportedException($"Split behavior '{behavior}' is not supported.");
+            }
+
+            ranges.Clear();
+            SplitRange(piece, (0, piece.Length), pattern, behavior, invert, ranges);
+            foreach (var (start, length) in ranges)
+            {
+                result.Add(length == piece.Length ? piece : piece.Substring(start, length));
+            }
         }
+
+        return result;
+    }
+
+    // Text as the byte map's characters of its UTF-8 bytes.
+    private static string ToByteChars(ReadOnlySpan<char> text)
+    {
+        int count = Encoding.UTF8.GetByteCount(text);
+        byte[]? rented = null;
+        char[]? rentedChars = null;
+        Span<byte> bytes = count <= StackChars ? stackalloc byte[StackChars] : (rented = System.Buffers.ArrayPool<byte>.Shared.Rent(count));
+        Span<char> chars = count <= StackChars ? stackalloc char[StackChars] : (rentedChars = System.Buffers.ArrayPool<char>.Shared.Rent(count));
+        Encoding.UTF8.GetBytes(text, bytes);
+        for (int i = 0; i < count; i++)
+        {
+            chars[i] = ByteToChar[bytes[i]];
+        }
+
+        string mapped = new(chars[..count]);
+        if (rented is not null)
+        {
+            System.Buffers.ArrayPool<byte>.Shared.Return(rented);
+            System.Buffers.ArrayPool<char>.Shared.Return(rentedChars!);
+        }
+
+        return mapped;
     }
 
     private void AddDecoder(JsonNode? node)
@@ -1041,10 +1440,10 @@ public sealed class BpeTokenizer : ITokenizer
                 break;                                                           // handled in Decode
             case "Replace":
                 var replace = Replacer(d);
-                _decoders.Add(tokens => [.. tokens.Select(replace)]);
+                _decoders.Add((type, tokens => [.. tokens.Select(replace)], replace));
                 break;
             case "ByteFallback":
-                _decoders.Add(tokens =>
+                _decoders.Add((type, tokens =>
                 {
                     var result = new List<string>();
                     var bytes = new List<byte>();
@@ -1055,7 +1454,7 @@ public sealed class BpeTokenizer : ITokenizer
                             // As the tokenizers library: bytes that are not valid UTF-8 become one U+FFFD each.
                             try
                             {
-                                result.Add(StrictUtf8.GetString([.. bytes]));
+                                result.Add(StrictUtf8.GetString(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(bytes)));
                             }
                             catch (DecoderFallbackException)
                             {
@@ -1068,9 +1467,11 @@ public sealed class BpeTokenizer : ITokenizer
 
                     foreach (var token in tokens)
                     {
-                        if (token.Length == 6 && token.StartsWith("<0x", StringComparison.Ordinal) && token[5] == '>')
+                        if (IsByteToken(token))
                         {
-                            bytes.Add(Convert.ToByte(token[3..5], 16));
+                            bytes.Add(char.IsAsciiHexDigit(token[3]) && char.IsAsciiHexDigit(token[4])
+                                ? byte.Parse(token.AsSpan(3, 2), System.Globalization.NumberStyles.AllowHexSpecifier)
+                                : Convert.ToByte(token[3..5], 16));
                         }
                         else
                         {
@@ -1081,15 +1482,15 @@ public sealed class BpeTokenizer : ITokenizer
 
                     Flush();
                     return result;
-                });
+                }, null));
                 break;
             case "Fuse":
-                _decoders.Add(tokens => [string.Concat(tokens)]);
+                _decoders.Add((type, tokens => [string.Concat(tokens)], null));
                 break;
             case "Strip":
                 string content = (string)d["content"]!;
                 int start = (int?)d["start"] ?? 0, stop = (int?)d["stop"] ?? 0;
-                _decoders.Add(tokens =>
+                _decoders.Add((type, tokens =>
                 {
                     if (tokens.Count == 0)
                     {
@@ -1111,15 +1512,15 @@ public sealed class BpeTokenizer : ITokenizer
 
                     tokens[^1] = last;
                     return tokens;
-                });
+                }, null));
                 break;
             case "Metaspace":
                 string replacement = (string?)d["replacement"] ?? "▁";
-                _decoders.Add(tokens =>
+                _decoders.Add((type, tokens =>
                 {
                     var text = string.Concat(tokens).Replace(replacement, " ", StringComparison.Ordinal);
                     return [text.StartsWith(' ') ? text[1..] : text];
-                });
+                }, null));
                 break;
             default:
                 throw new NotSupportedException($"Tokenizer decoder '{type}' is not supported.");

@@ -283,8 +283,19 @@ public static class GgufModel
     private const string Llama3Chat = "{{- bos_token }}{%- for message in messages %}{{ '<|start_header_id|>' + message['role'] + '<|end_header_id|>\\n\\n' + message['content'] | trim + '<|eot_id|>' }}{%- endfor %}"
                                       + "{%- if add_generation_prompt %}{{ '<|start_header_id|>assistant<|end_header_id|>\\n\\n' }}{%- endif %}";
 
-    private static void WriteJson(string path, JsonNode json) =>
-        File.WriteAllText(path, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping }));
+    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+
+    // The UTF-8 ToJsonString(JsonOptions) gives, written straight to the file (no string of a multi-MB tokenizer.json).
+    private static void WriteJson(string path, JsonNode json)
+    {
+        using var stream = File.Create(path);
+        using var writer = new Utf8JsonWriter(stream, new JsonWriterOptions
+        {
+            Encoder = JsonOptions.Encoder, Indented = JsonOptions.WriteIndented, IndentCharacter = JsonOptions.IndentCharacter,
+            IndentSize = JsonOptions.IndentSize, NewLine = JsonOptions.NewLine, MaxDepth = JsonOptions.MaxDepth == 0 ? 64 : JsonOptions.MaxDepth,
+        });
+        json.WriteTo(writer, JsonOptions);
+    }
 
     // The GGUF file's tensors under Hugging Face names, in Hugging Face layouts.
     private sealed class GgufTensors : ITensorStore

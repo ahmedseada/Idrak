@@ -1,6 +1,5 @@
 using System.Buffers.Binary;
 using System.Runtime.InteropServices;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -394,14 +393,21 @@ public static class SafeTensorsWriter
             offset += count * size;
         }
 
-        var headerBytes = Encoding.UTF8.GetBytes(header.ToJsonString());
+        var headerJson = new System.Buffers.ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(headerJson))                   // the UTF-8 of header.ToJsonString()
+        {
+            header.WriteTo(writer);
+        }
+
+        var headerBytes = headerJson.WrittenSpan;
         int padding = (8 - headerBytes.Length % 8) % 8;                      // the data starts 8-byte aligned
         using var stream = File.Create(path);
         Span<byte> length = stackalloc byte[8];
         BinaryPrimitives.WriteInt64LittleEndian(length, headerBytes.Length + padding);
         stream.Write(length);
         stream.Write(headerBytes);
-        stream.Write(Encoding.ASCII.GetBytes(new string(' ', padding)));
+        length.Fill((byte)' ');
+        stream.Write(length[..padding]);
         const int ChunkValues = 1 << 22;
         byte[] bytes = System.Buffers.ArrayPool<byte>.Shared.Rent(ChunkValues * size);
         try

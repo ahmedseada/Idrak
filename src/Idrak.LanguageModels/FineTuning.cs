@@ -377,9 +377,17 @@ public sealed class ChatTranscriptEncoder
         {
             if (to > from)
             {
-                var ids = Tokenizer.Encode(text[from..to]);
-                tokens.AddRange(ids);
-                trained.AddRange(Enumerable.Repeat(train, ids.Count));
+                int count = tokens.Count;
+                if (Tokenizer is BpeTokenizer bpe)
+                {
+                    bpe.EncodeRange(text, from, to - from, tokens);                // no copy of the span's text
+                }
+                else
+                {
+                    tokens.AddRange(Tokenizer.Encode(text[from..to]));
+                }
+
+                trained.AddRange(Enumerable.Repeat(train, tokens.Count - count));
             }
         }
 
@@ -411,7 +419,15 @@ public sealed class ChatTranscriptEncoder
                 yield break;
             }
 
-            yield return new TrainingSequence([.. ids.Skip(start).Take(count)], [.. Enumerable.Repeat(true, count)]);
+            var tokens = new int[count];
+            var trained = new bool[count];
+            for (int i = 0; i < count; i++)
+            {
+                tokens[i] = ids[start + i];
+            }
+
+            Array.Fill(trained, true);
+            yield return new TrainingSequence(tokens, trained);
         }
     }
 
@@ -591,18 +607,22 @@ public sealed record FineTuningProfile(IReadOnlyList<GpuProfileEntry> Kernels, i
 
     private static string GroupOf(string kernel)
     {
-        string k = kernel.ToLowerInvariant();
+        // Ignoring case matches as lowercasing does for ASCII names (kernel names are); other names are lowercased.
+        bool ascii = System.Text.Ascii.IsValid(kernel);
+        string k = ascii ? kernel : kernel.ToLowerInvariant();
+        var comparison = ascii ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        bool Has(string part) => k.Contains(part, comparison);
         return k switch
         {
-            _ when k.Contains("gemm") || k.Contains("matmul") || k.Contains("gemv") => "matrix products",
-            _ when k.Contains("attention") || k.Contains("flash") || k.Contains("softmax_rows") && !k.Contains("cross") => "attention",
-            _ when k.Contains("cross_entropy") || k.Contains("crossentropy") => "loss (output layer softmax)",
-            _ when k.Contains("norm") => "normalization",
-            _ when k.Contains("rope") || k.Contains("rotary") => "rotary embedding",
-            _ when k.Contains("silu") || k.Contains("gelu") || k.Contains("gated") || k.Contains("act") => "activations",
-            _ when k.Contains("adam") || k.Contains("sumsq") || k.Contains("clip") => "optimizer and clipping",
-            _ when k.Contains("transpose") || k.Contains("copy") || k.Contains("convert") || k.Contains("bf16") || k.Contains("fill") || k.Contains("quant") => "copies, conversions, zeroing",
-            _ when k.Contains("add") || k.Contains("mul") || k.Contains("axpy") || k.Contains("scale") || k.Contains("sum") => "element-wise and reductions",
+            _ when Has("gemm") || Has("matmul") || Has("gemv") => "matrix products",
+            _ when Has("attention") || Has("flash") || Has("softmax_rows") && !Has("cross") => "attention",
+            _ when Has("cross_entropy") || Has("crossentropy") => "loss (output layer softmax)",
+            _ when Has("norm") => "normalization",
+            _ when Has("rope") || Has("rotary") => "rotary embedding",
+            _ when Has("silu") || Has("gelu") || Has("gated") || Has("act") => "activations",
+            _ when Has("adam") || Has("sumsq") || Has("clip") => "optimizer and clipping",
+            _ when Has("transpose") || Has("copy") || Has("convert") || Has("bf16") || Has("fill") || Has("quant") => "copies, conversions, zeroing",
+            _ when Has("add") || Has("mul") || Has("axpy") || Has("scale") || Has("sum") => "element-wise and reductions",
             _ => "other",
         };
     }
