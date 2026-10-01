@@ -23,11 +23,18 @@ lavapipe (Mesa's software Vulkan driver) here, and on CUDA plus `--bench-gemv` o
    expand, and attends through the composed fallback.
 3. **Vulkan runtime**: `libvulkan.so.1` / `vulkan-1.dll` through `LibraryImport`, one compute queue, a buffer pool,
    uploads and downloads (mapped memory where the device memory is host-visible: integrated GPUs copy once), dispatches
-   batched into command buffers with a barrier between them. With no kernels, every operation runs through the host
-   fallback, so the test list passes from the first day.
+   batched into command buffers. With no kernels, every operation runs through the host fallback, so the test list
+   passes from the first day. Per-dispatch cost: descriptors pushed into the command buffer (VK_KHR_push_descriptor;
+   pooled sets without it and on CPU drivers, where pushing runs slower), barriers only between commands that touch the
+   same storage with a write (read after write, write after write, write after read), the bound pipeline kept, and
+   nothing allocated per dispatch: recording a dispatch costs the host 0.7 µs (9.3 µs with sets).
 4. **SPIR-V generator and kernels**: a C# SPIR-V writer and a small kernel builder; kernels for the operations that
    matter most first (element-wise, reductions, softmax, norms, rotary positions, gathers, matrix products, packed
-   int8/int4/bfloat16 products for decoding, decoding attention), each replacing its host fallback.
+   int8/int4/bfloat16 products for decoding, decoding attention), each replacing its host fallback. ✅ Decoding steps
+   take no host fallback (the sampler, penalties, history, query/key norms with rotation), so the host waits for the
+   device only when it reads the sampled tokens. Next: fewer dispatches per layer (`NormRopeHeads`, packed
+   many/gated/add-norm products, which need `Capabilities.FusedKernels`), subgroup reductions in the row kernels and
+   the sampler (two barriers instead of eight per reduction).
 5. **Intel tuning** (plan 4): subgroup size per kernel, cooperative matrices (XMX) where the driver exposes them.
 6. **Public backend API**: `Backend`, `Storage`, `DeviceProvider` and `HostCall` public, for backends in their own
    packages.
@@ -38,6 +45,8 @@ lavapipe (Mesa's software Vulkan driver) here, and on CUDA plus `--bench-gemv` o
 - Descriptor set 0: binding *i* is the *i*-th storage passed to the dispatch, a storage buffer of 32-bit words
   (`float[]`, std430, stride 4; integer data read with `OpBitcast`).
 - Scalars in one push-constant block (at most 128 bytes), 4-byte members in the order the kernel declares them.
-- Dispatch: `VulkanBackend.Dispatch(kernel, groupsX, groupsY, groupsZ, storages, pushConstants)`; dispatches run in
-  order (a compute-to-compute barrier between them).
+- Dispatch: `VulkanBackend.Dispatch(kernel, groupsX, groupsY, groupsZ, storages, pushConstants)`. A kernel declares
+  the bindings it writes (`VulkanKernel.Writes`; `KernelBuilder` records its stores and decorates the other bindings
+  `NonWritable`); a dispatch waits (a compute-to-compute barrier) only for earlier commands that wrote a storage it
+  uses, or read one it writes, and otherwise may run alongside them.
 - Storage holds up to `maxStorageBufferRange` bytes (2 GiB or more on desktop drivers); larger tensors fall back.

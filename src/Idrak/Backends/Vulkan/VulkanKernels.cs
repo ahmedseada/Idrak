@@ -40,7 +40,8 @@ internal static partial class VulkanKernels
     private static readonly Lazy<Dictionary<string, Func<SpirvKernel>>> LazyFactories = new(() =>
     {
         var all = new Dictionary<string, Func<SpirvKernel>>();
-        foreach (var (name, build) in ElementwiseKernels().Concat(RowKernels()).Concat(ShapeKernels()).Concat(MatMulKernels()).Concat(DecodingKernels()))
+        foreach (var (name, build) in ElementwiseKernels().Concat(RowKernels()).Concat(ShapeKernels()).Concat(MatMulKernels()).Concat(DecodingKernels())
+            .Concat(SamplingKernels()))
         {
             all.Add(name, build);
         }

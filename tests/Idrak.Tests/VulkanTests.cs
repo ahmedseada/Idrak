@@ -20,6 +20,9 @@ internal static partial class Tests
         ("vulkan: a SPIR-V kernel dispatch (y = a·alpha + b with push constants), chained dispatches in order", VulkanDispatch),
         ("vulkan: uploads, zeroed allocations and reused blocks are ordered after queued dispatches", VulkanOrdering),
         ("vulkan: operations run as generated kernels (no host fallback) and match the CPU (element-wise, rows narrow and wide, products, decoding)", VulkanKernelsMatchCpu),
+        ("vulkan: the sampler kernels draw the CPU's tokens with its statistics (greedy, temperature, top-k with and without slots, top-p, min-p, ties)", VulkanSamplerMatchesCpu),
+        ("vulkan: barriers only between dependent dispatches (chains, independent dispatches, write after read), pushed descriptors and sets; dispatches allocate nothing", VulkanBarriers),
+        ("vulkan: decoding steps take no host fallback (decoder with float32, int8, int4, bfloat16 weights; multi-head attention; float32, int8, bfloat16 caches; penalties, top-k, top-p, min-p)", VulkanDecodingWithoutFallbacks),
     ];
 
     // y[i] = a[i] * alpha + b[i] for i < n; bindings a, b, y; push constants { uint n; float alpha; }; 64 lanes per group.
@@ -509,5 +512,30 @@ internal static partial class Tests
         }
 
         Case("dropout", [R(N), new float[N]], (b, s) => b.Dropout(s[0], s[1], N, 0.25f, 77u));
+
+        // Decoding steps: normalized and rotated queries and keys (narrow and wide rows, partial and interleaved rotation),
+        // repetition penalties over a wrapped history ring, and the history itself.
+        foreach (var (cols, half, interleaved) in new[] { (12, 4, false), (12, 6, true), (128, 64, false), (128, 32, true) })
+        {
+            int steps = 3, heads = 4, heads2 = 2, rows1 = steps * heads, rows2 = steps * heads2;
+            Case($"rms norm + rope, {cols} columns, half {half}, interleaved {interleaved}",
+                [R(rows1 * cols), R(cols), new float[rows1 * cols], R(rows2 * cols), R(cols), new float[rows2 * cols], R(20 * half), R(20 * half), Ints(steps, 20), new float[rows1 * cols]],
+                (b, s) =>
+                {
+                    b.RmsNormRopePair(s[0], s[1], s[2], rows1, 1e-6f, 1f, heads, s[3], s[4], s[5], rows2, 1e-5f, 0f, heads2, s[6], s[7], s[8], cols, steps, half, interleaved);
+                    b.RmsNormRope(s[0], s[1], s[6], s[7], s[8], s[9], rows1, cols, 1e-6f, 0.5f, heads, steps, half, interleaved);
+                }, 1e-4f);
+        }
+
+        int vocabulary = 300, ring = 16;
+        float[] history = [.. Ints(2 * ring, 12).Select((v, i) => i % 7 == 3 ? 500f : i % 11 == 5 ? -2f : v)];   // repeats, out-of-range ids
+        foreach (float length in new[] { 0f, 5f, 25f })
+        {
+            Case($"penalties and history, {length} tokens seen", [R(2 * 3 * vocabulary), new float[2 * vocabulary], history, [length], [7f, 299f]], (b, s) =>
+            {
+                b.PenalizeRows(s[0], s[1], s[2], s[3], 2, vocabulary, 3 * vocabulary, 2 * vocabulary, ring, 10, 1.3f, 0.2f, 0.05f);
+                b.HistoryPush(s[4], s[2], s[3], 2, ring);
+            }, 0f);
+        }
     });
 }
