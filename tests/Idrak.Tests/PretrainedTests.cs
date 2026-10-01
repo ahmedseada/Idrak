@@ -302,6 +302,9 @@ internal static partial class Tests
         int Sp(string token) => sentencePiece.IdOf(token)!.Value;
         Check(sp.SequenceEqual([Sp("▁hello"), Sp("▁"), Sp("<0xC3>"), Sp("<0xA9>")]), $"merges and byte fallback: [{string.Join(", ", sp)}]");
         Check(sentencePiece.Decode(sp) == "hello é", $"SentencePiece round trip: '{sentencePiece.Decode(sp)}'");
+        var around = sentencePiece.Encode("helloéhello");
+        Check(around.SequenceEqual([Sp("▁hello"), Sp("<0xC3>"), Sp("<0xA9>"), Sp("h"), Sp("el"), Sp("lo")]),
+            $"text either side of a byte fallback character merges on its own: [{string.Join(", ", around.Select(sentencePiece.TokenOf))}]");
         Check(sentencePiece.Decode([Sp("<0xC3>"), Sp("<0x41>"), Sp("▁h")]) == "\uFFFD\uFFFD h", "invalid UTF-8 byte runs decode to one U+FFFD per byte, as the tokenizers library does");
 
         // Metaspace with prepend_scheme "first": "▁" is prepended where the input starts, not after an added token.

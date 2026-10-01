@@ -665,10 +665,23 @@ public sealed class GgufFile : IDisposable
             throw new InvalidDataException($"{Path}: a string of {length} bytes in the metadata.");
         }
 
-        var bytes = new byte[length];
-        ReadAt(bytes, _position);
-        _position += length;
-        return Encoding.UTF8.GetString(bytes);
+        // Read into the stack or a pooled buffer: only the string is kept.
+        int count = (int)length;
+        byte[]? rented = null;
+        Span<byte> bytes = count <= 256 ? stackalloc byte[256] : (rented = System.Buffers.ArrayPool<byte>.Shared.Rent(count));
+        try
+        {
+            ReadAt(bytes[..count], _position);
+            _position += length;
+            return Encoding.UTF8.GetString(bytes[..count]);
+        }
+        finally
+        {
+            if (rented is not null)
+            {
+                System.Buffers.ArrayPool<byte>.Shared.Return(rented);
+            }
+        }
     }
 
     private void ReadAt(Span<byte> destination, long offset)
