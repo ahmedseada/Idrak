@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- License: Apache License 2.0 instead of MIT, from this version on (`LICENSE`, `NOTICE`, the packages' license
+  expression `Apache-2.0`). Apache 2.0 is as permissive as MIT and adds an explicit patent grant. Versions 0.1.0
+  through 0.1.6 stay under the MIT license.
+
 ## 0.1.6 (2026-10-01)
 
 - Text paths allocate less and copy less, with the same results (checked against the old code on random inputs):

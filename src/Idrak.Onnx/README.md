@@ -14,4 +14,4 @@ Part of [Idrak](https://www.nuget.org/packages/Idrak), a self-contained deep-lea
 
 Guides, samples and the full API overview: https://github.com/ahmedseada/Idrak
 
-License: MIT.
+License: Apache 2.0.

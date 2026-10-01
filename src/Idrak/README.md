@@ -89,4 +89,4 @@ has one with 2,500 rows).
 
 Guides, samples and the full API overview: https://github.com/ahmedseada/Idrak
 
-License: MIT.
+License: Apache 2.0.
