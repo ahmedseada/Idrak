@@ -118,6 +118,16 @@ internal static partial class Tests
 
         using var decoder = spec.Build(new RandomWeights(41), new DecoderBuildOptions { Device = device });
         int[] ids = [1, 5, 3, 7, 2, 9, 4];
+        using (var context = new DecodingContext(device, 1, 16, KeyValueFormat.Int8))
+        using (Autograd.NoGrad())
+        using (var scope = new TensorScope())
+        {
+            var attention = decoder.Descendants().OfType<CausalSelfAttention>().First();
+            Check(context[attention] is null, "no cache before the first step");
+            decoder.ForwardCached(Tensor.From([1f], [1, 1], device), context);
+            Check(context[attention] is { Format: KeyValueFormat.Int8 } layerCache && layerCache.Bytes > 0, "the layer's cache through the indexer");
+        }
+
         var reference = Decode(decoder, KeyValueFormat.Float32, ids, spec.Vocabulary);
         foreach (var format in new[] { KeyValueFormat.Int8, KeyValueFormat.BFloat16 })
         {
