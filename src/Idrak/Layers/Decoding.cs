@@ -133,6 +133,12 @@ public sealed class DecodingContext : IDisposable
     /// <summary>Device memory used by the key/value caches created so far, in bytes.</summary>
     public long CacheBytes => _caches.Values.Sum(c => c.Bytes);
 
+    /// <summary>
+    /// The key/value cache of <paramref name="layer"/> (an attention layer this context has decoded through), or null
+    /// before its first step: e.g. <c>context[block.Attention].Bytes</c> for one layer's share of <see cref="CacheBytes"/>.
+    /// </summary>
+    public KeyValueCache? this[Module layer] => _caches.GetValueOrDefault(layer);
+
     /// <summary>The device of the caches.</summary>
     public Device Device { get; }
 

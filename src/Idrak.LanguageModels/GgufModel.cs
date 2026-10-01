@@ -20,11 +20,15 @@ public static class GgufModel
     private const string Marker = "gguf.json";
     private const int FormatVersion = 1;                            // bump when the prepared files change
 
-    private static readonly Dictionary<string, string> Architectures = new(StringComparer.Ordinal)
+    // How llama.cpp stores each model family: the Hugging Face architecture it corresponds to, and whether it interleaved
+    // the query and key rows of each head for its rotary layout (Llama does; they are put back on load).
+    private sealed record GgufArchitecture(string HuggingFace, bool InterleavedQueryKeys);
+
+    private static readonly Dictionary<string, GgufArchitecture> Architectures = new(StringComparer.Ordinal)
     {
-        ["llama"] = "LlamaForCausalLM",
-        ["qwen2"] = "Qwen2ForCausalLM",
-        ["qwen3"] = "Qwen3ForCausalLM",
+        ["llama"] = new("LlamaForCausalLM", InterleavedQueryKeys: true),
+        ["qwen2"] = new("Qwen2ForCausalLM", InterleavedQueryKeys: false),
+        ["qwen3"] = new("Qwen3ForCausalLM", InterleavedQueryKeys: false),
     };
 
     // tokenizer.ggml.pre → the pre-tokenizer's split pattern (llama.cpp's llama-vocab.cpp).
@@ -74,7 +78,7 @@ public static class GgufModel
         using var file = GgufFile.Open(path);
         var notes = new List<string>();
         string arch = file.Get("general.architecture", "");
-        if (!Architectures.TryGetValue(arch, out var hfArchitecture))
+        if (!Architectures.TryGetValue(arch, out var architecture))
         {
             throw new NotSupportedException($"{path}: GGUF architecture '{arch}' is not supported yet (supported: {string.Join(", ", Architectures.Keys)}).");
         }
@@ -87,7 +91,7 @@ public static class GgufModel
 
         Directory.CreateDirectory(temp);
         var tokens = file.Get<string[]>("tokenizer.ggml.tokens", []);
-        WriteJson(Path.Combine(temp, "config.json"), Config(file, arch, hfArchitecture, tokens.Length, notes));
+        WriteJson(Path.Combine(temp, "config.json"), Config(file, arch, architecture.HuggingFace, tokens.Length, notes));
         WriteTokenizer(file, temp, tokens, notes);
         WriteJson(Path.Combine(temp, Marker), new JsonObject
         {
@@ -306,12 +310,14 @@ public static class GgufModel
         private readonly GgufFile _file;
         private readonly Dictionary<string, string> _names = new(StringComparer.Ordinal);    // Hugging Face name → GGUF name
         private readonly string _arch;
+        private readonly bool _interleavedQueryKeys;
         private readonly int _heads, _kvHeads;
 
         public GgufTensors(GgufFile file)
         {
             _file = file;
             _arch = file.Get("general.architecture", "");
+            _interleavedQueryKeys = Architectures.TryGetValue(_arch, out var architecture) && architecture.InterleavedQueryKeys;
             _heads = file.Get($"{_arch}.attention.head_count", 0);
             _kvHeads = file.Get($"{_arch}.attention.head_count_kv", _heads);
             foreach (var name in file.Tensors.Keys)
@@ -396,10 +402,10 @@ public static class GgufModel
             return values;
         }
 
-        // The heads whose q / k rows llama.cpp interleaved in the tensor gguf (Llama only), else null.
+        // The heads whose q / k rows llama.cpp interleaved in the tensor gguf (families that store them so), else null.
         private int? Permuted(string gguf) =>
-            _arch == "llama" && gguf.Contains(".attn_q.", StringComparison.Ordinal) ? _heads
-            : _arch == "llama" && gguf.Contains(".attn_k.", StringComparison.Ordinal) ? _kvHeads
+            _interleavedQueryKeys && gguf.Contains(".attn_q.", StringComparison.Ordinal) ? _heads
+            : _interleavedQueryKeys && gguf.Contains(".attn_k.", StringComparison.Ordinal) ? _kvHeads
             : null;
 
         public void Dispose() => _file.Dispose();
