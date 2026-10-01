@@ -368,9 +368,9 @@ int Profile(PretrainedModel model, List<TrainingSequence> train)
     var measured = FineTuner.Profile(model, train, tuning);
     Console.Write(GpuProfiler.Format(measured.Kernels, rows: 40));
     double gpu = measured.GpuMillisecondsPerStep, wall = measured.SecondsPerStep * 1000;
-    if (device.Type != DeviceType.Cuda)
+    if (measured.Kernels.Count == 0)
     {
-        Console.WriteLine($"per step: {measured.TokensPerStep:N0} tokens, {wall:F0} ms ({measured.TokensPerSecond:N0} tok/s); kernel times need a CUDA device (--cuda)");
+        Console.WriteLine($"per step: {measured.TokensPerStep:N0} tokens, {wall:F0} ms ({measured.TokensPerSecond:N0} tok/s); kernel times need a device that times them (--cuda)");
         return 0;
     }
 

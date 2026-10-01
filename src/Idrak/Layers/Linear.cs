@@ -150,8 +150,8 @@ public sealed class Linear : Module
     {
         using var offload = Offloading.EnterMany(layers, input);       // offloaded weights of all the layers staged together
         int k = input.Shape[^1], rows = input.Size / Math.Max(1, k);
-        bool fused = !Autograd.IsEnabled && layers.Length is > 1 and <= 3 && rows <= Backends.Cuda.PtxKernels.GemvRows
-            && input.Device.Type == DeviceType.Cuda
+        var capabilities = input.Backend.Capabilities;
+        bool fused = !Autograd.IsEnabled && layers.Length is > 1 and <= 3 && rows <= capabilities.FewRows && capabilities.FusedKernels
             && layers.All(l => !l.Packed && l.TiedTo is null && l.Adapter is null && l.InFeatures == k && (long)l.OutFeatures * k >= 1 << 16);
         if (fused)
         {
@@ -162,7 +162,7 @@ public sealed class Linear : Module
         // tensor-core launch over all the layers' columns).
         int kind = layers[0].Int8 is not null ? 0 : layers[0].Int4 is not null ? 1 : layers[0].BFloat16 is not null ? 2 : -1;
         bool packed = kind >= 0 && !Autograd.IsEnabled && layers.Length is > 1 and <= 3
-            && (rows <= Backends.Cuda.PtxKernels.GemvRows || layers.All(l => l.Bias is null))                  // prompts: one launch
+            && (rows <= capabilities.FewRows || layers.All(l => l.Bias is null))                  // prompts: one launch
             && layers.All(l => l.Adapter is null && l.InFeatures == k && (kind == 0 ? l.Int8 is not null : kind == 1 ? l.Int4 is not null : l.BFloat16 is not null));
         if (packed && Tensor.MatMulPackedMany(input, kind, layers) is { } outputs)
         {
@@ -177,7 +177,7 @@ public sealed class Linear : Module
 
         // Training over frozen packed layers (LoRA / QLoRA): the base products still run as one pass, recorded, and each
         // layer's adapter adds its low-rank term into its output.
-        bool training = kind >= 0 && Autograd.IsEnabled && layers.Length is > 1 and <= 3 && input.Device.Type == DeviceType.Cuda
+        bool training = kind >= 0 && Autograd.IsEnabled && layers.Length is > 1 and <= 3 && capabilities.FusedKernels
             && layers.All(l => l.Bias is null && l.InFeatures == k && (kind == 0 ? l.Int8 is not null : kind == 1 ? l.Int4 is not null : l.BFloat16 is not null));
         if (training && Tensor.MatMulPackedManyRecorded(input, kind, layers) is { } products)
         {
@@ -215,7 +215,7 @@ public sealed class Linear : Module
     private Tensor TiedProduct(Tensor input, Tensor table)
     {
         int rows = input.Size / Math.Max(1, InFeatures);
-        if (table.RequiresGrad || rows < 64 || table.Device.Type != DeviceType.Cuda || !MixedPrecision.UsesTensorCores)
+        if (table.RequiresGrad || rows < 64 || !table.Backend.Capabilities.MatrixUnits || !MixedPrecision.UsesTensorCores)
         {
             _tiedTransposed?.Dispose();
             _tiedTransposed = null;

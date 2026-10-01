@@ -67,9 +67,7 @@ public static class MixedPrecision
     /// Null when <paramref name="device"/> runs <see cref="MatMulPrecision.BFloat16"/> products on tensor cores; otherwise
     /// why not (they then run in float32). Loads the tensor-core kernels on first call.
     /// </summary>
-    public static string? TensorCoresUnavailable(Device device) => device.Type == DeviceType.Cpu
-        ? "the CPU computes matrix products in float32"
-        : ((Backends.Cuda.CudaBackend)device.Backend).TensorCoresUnavailable();
+    public static string? TensorCoresUnavailable(Device device) => device.Backend.TensorCoresUnavailable();
 
     /// <summary>True when matrix products run on tensor cores (any precision other than float32).</summary>
     internal static bool UsesTensorCores => Current != MatMulPrecision.Float32;

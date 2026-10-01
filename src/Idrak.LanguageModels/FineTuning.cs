@@ -778,7 +778,7 @@ public static class FineTuner
         int lossRows, Action<string>? trace) : IDisposable
     {
         // Not with offloading (tensors move between steps, a graph holds their addresses) or the CPU update.
-        private readonly bool _graphsAllowed = options.CudaGraphs && options.GradientAccumulation <= 1 && model.Device.Type == DeviceType.Cuda
+        private readonly bool _graphsAllowed = options.CudaGraphs && options.GradientAccumulation <= 1
             && !ComputeResources.OffloadToHostMemory && !options.HostOptimizer
             && model.Device.Backend.SupportsGraphs
             && !model.Network.Descendants().Any(m => m is Dropout { Probability: > 0f });   // a recorded pass would reuse its masks

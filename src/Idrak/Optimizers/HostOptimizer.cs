@@ -64,7 +64,7 @@ public sealed class HostOptimizer : Optimizer
         if (!_stagingTried)
         {
             _stagingTried = true;
-            _staging = Parameters[0].Device == Device.Cpu ? null : Parameters[0].Backend.CreateHostStaging(DownSlots + UpSlots, SlotFloats);
+            _staging = Parameters[0].Backend.CreateHostStaging(DownSlots + UpSlots, SlotFloats);   // null where the device has none (the CPU)
         }
 
         if (_staging is { } staging)
