@@ -73,6 +73,13 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
     public KeyValueFormat CacheFormat { get; init; } = KeyValueFormat.Float32;
 
     /// <summary>
+    /// Creates the sampler each generation chooses tokens with (default <see cref="TokenSampler.Create"/>: temperature,
+    /// top-k, top-p, min-p and penalties on the device). Set it to plug in another <see cref="ITokenSampler"/>; one that is
+    /// not <see cref="ITokenSampler.Recordable"/> turns off the CUDA graph of the decoding step.
+    /// </summary>
+    public Func<SamplerRequest, ITokenSampler> CreateSampler { get; set; } = TokenSampler.Create;
+
+    /// <summary>
     /// Keep the KV cache after each generation, so the next prompt that starts with the same tokens (the earlier turns of
     /// a conversation, a long system prompt or tool list) only processes what follows them. The cache stays allocated
     /// between calls; <see cref="ReleaseCache"/> frees it. Default true.
@@ -227,14 +234,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
             }
         }
 
-        using var sampler = new TokenSampler(Device, rows, Tokenizer.VocabularySize, limit + 1, 1)
-        {
-            Temperature = options.Temperature,
-            TopK = options.TopK,
-            TopP = options.TopP,
-            MinP = options.MinP,
-            Seed = (uint)(options.Seed ?? Random.Shared.Next()),
-        };
+        using var sampler = CreateSampler(new SamplerRequest(Device, rows, Tokenizer.VocabularySize, limit + 1, 1, options));   // no penalties here
         using var decoding = new DecodingContext(Device, rows, promptLength + limit, KeyValueFormat.Float32) { LastPositionOnly = true };
         decoding.SetRowStarts(starts);
         var generated = Enumerable.Range(0, rows).Select(_ => new List<int>()).ToList();
@@ -399,18 +399,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         int holdBack = stops.Length == 0 ? 0 : stops.Max(s => s.Length) - 1;
         var stopValues = stops.Length == 0 ? null : SearchValues.Create(stops, StringComparison.Ordinal);
 
-        using var sampler = new TokenSampler(Device, 1, Tokenizer.VocabularySize, limit, Math.Max(1, options.RepeatLastN))
-        {
-            Temperature = options.Temperature,
-            TopK = options.TopK,
-            TopP = options.TopP,
-            MinP = options.MinP,
-            RepeatPenalty = options.RepeatPenalty,
-            RepeatLastN = options.RepeatLastN,
-            PresencePenalty = options.PresencePenalty,
-            FrequencyPenalty = options.FrequencyPenalty,
-            Seed = (uint)(options.Seed ?? Random.Shared.Next()),
-        };
+        using var sampler = CreateSampler(new SamplerRequest(Device, 1, Tokenizer.VocabularySize, limit, Math.Max(1, options.RepeatLastN), options));
         sampler.SetHistory(history);
 
         var generated = new List<int>();
@@ -615,7 +604,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                     {
                         // The first step runs as it is: the device measures its card-dependent choices for these
                         // shapes (which it cannot while recording), and the graph recorded from the second step keeps them.
-                        if (graph is null && options.UseGraph && steppedOnce)
+                        if (graph is null && options.UseGraph && steppedOnce && sampler.Recordable)
                         {
                             graph = decoding.CaptureStep(Step);
                         }
