@@ -62,11 +62,12 @@ public static class ComputeResources
     public static long? GpuMemoryLimit { get; set; }
 
     /// <summary>
-    /// GPU memory left free for the display and other programs (default 512 MiB): a new GPU allocation that would leave
-    /// less free is treated as not fitting, so the driver never has to page GPU memory out to system memory on its own
-    /// (on Windows that makes long kernels, which the watchdog resets as a hung GPU).
+    /// GPU memory left free for the display and other programs: a new GPU allocation that would leave less free is treated
+    /// as not fitting, so the driver never has to page GPU memory out to system memory on its own (on Windows that makes
+    /// long kernels, which the watchdog resets as a hung GPU). Null (the default): a sixteenth of each GPU's memory, at
+    /// least 256 MiB (512 MiB on an 8 GB card, 1 GiB on a 16 GB one).
     /// </summary>
-    public static long GpuMemoryReserve { get; set; } = 512L << 20;
+    public static long? GpuMemoryReserve { get; set; }
 
     /// <summary>
     /// When a GPU is full (or at <see cref="GpuMemoryLimit"/>), place new tensors in pinned system memory that the GPU
@@ -98,15 +99,15 @@ public static class ComputeResources
     public static bool ReturnOffloadedTensors { get; set; } = true;
 
     /// <summary>
-    /// Device memory kept free when offloaded tensors come back (default 1 GiB), so a step that needs a little more
-    /// does not push them straight out again.
+    /// Device memory kept free when offloaded tensors come back, so a step that needs a little more does not push them
+    /// straight out again. Null (the default): an eighth of each GPU's memory, at least 256 MiB.
     /// </summary>
-    public static long OffloadReturnHeadroom { get; set; } = 1L << 30;
+    public static long? OffloadReturnHeadroom { get; set; }
 
     /// <summary>
     /// Brings offloaded tensors back to the GPU (or every GPU when <paramref name="device"/> is null) where they fit now,
     /// e.g. after training, when the activations are gone: the GPU's cached blocks are released first, then tensors come
-    /// back hottest first while <see cref="OffloadReturnHeadroom"/> stays free. Returns how many moved.
+    /// back hottest first while the headroom (<see cref="OffloadReturnHeadroom"/>) stays free. Returns how many moved.
     /// </summary>
     public static int ReturnOffloaded(Device? device = null)
     {

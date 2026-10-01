@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- No card-specific tuning: choices that depend on the GPU are measured on the GPU in use the first time a shape needs
+  them (each candidate timed on the real inputs, the fastest kept for the process), instead of rules set from one
+  card's benchmarks. Covered: the k splits of few-row packed products, prompt-sized packed products (one, several and
+  low-rank) and long-k tensor-core products; whether 2-8 int8 rows take the GEMV or the packed tensor-core product (the
+  old rule was 1.2-1.4× slower on compute 8.6 cards); whether the gated activation is fused into the down projection
+  (now for int8 and bfloat16 too, where it wins); and the 64 / 128 tile of the float and packed products without tensor
+  cores. Before measuring, and while a graph is recorded, the formulas from the device's own counts apply; a measured
+  choice replaces them only when at least 3% faster. `IDRAK_AUTOTUNE=0` keeps the formulas. Tuning keys are numbers
+  and kernel names come from prebuilt tables, so the per-token path builds no strings.
+- `ComputeResources.GpuMemoryReserve` and `OffloadReturnHeadroom` are now `long?`: null (the default) scales with each
+  GPU (a sixteenth and an eighth of its memory, at least 256 MiB) instead of fixed 512 MiB and 1 GiB.
 - Offloading (`ComputeResources.OffloadToHostMemory`, `IDRAK_OFFLOAD=1`, `idrak-tune --offload`) is now an internal
   interface, `IMemoryOffload`, that each GPU backend implements (CUDA today); the library uses whatever the current
   device's backend provides, and a device without it (the CPU) skips every step. With offloading on:
@@ -15,7 +26,7 @@
     staging allocates nothing. Embedding tables are not staged (a lookup reads only its rows).
     `ComputeResources.PrefetchOffloadedWeights` (on by default).
   - **Coming back:** offloaded tensors return to the GPU, hottest first, when it has room beyond
-    `ComputeResources.OffloadReturnHeadroom` (1 GiB; cold data also leaves room for the largest spill seen), checked at
+    `ComputeResources.OffloadReturnHeadroom` (an eighth of the GPU's memory; cold data also leaves room for the largest spill seen), checked at
     each step boundary; `ComputeResources.ReturnOffloaded()` brings everything back that fits (e.g. after training).
     Pinned system memory is freed as tensors come home. `ComputeResources.ReturnOffloadedTensors` (on by default).
   - Nothing moves while a CUDA graph exists (graphs hold raw addresses), and the fine-tuner records no graphs when

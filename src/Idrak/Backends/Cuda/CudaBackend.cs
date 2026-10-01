@@ -81,6 +81,13 @@ internal sealed unsafe partial class CudaBackend : Backend
     private const int BestFitMinimum = 1024;
     private readonly MemoryAccountant _memory;
     private readonly int _multiprocessors;
+    private readonly long _totalMemory;
+
+    /// <summary>Memory kept free on this GPU (ComputeResources.GpuMemoryReserve, else a sixteenth of it, at least 256 MiB).</summary>
+    internal long MemoryReserve => ComputeResources.GpuMemoryReserve ?? Math.Max(256L << 20, _totalMemory / 16);
+
+    /// <summary>Memory kept free when offloaded tensors come back (ComputeResources.OffloadReturnHeadroom, else an eighth, at least 256 MiB).</summary>
+    internal long ReturnHeadroom => ComputeResources.OffloadReturnHeadroom ?? Math.Max(256L << 20, _totalMemory / 8);
     private readonly int _computeMajor, _computeMinor;
 
     // The tensor-core module (compute capability 8.0 and newer), loaded on first use; null when unavailable.
@@ -229,6 +236,7 @@ internal sealed unsafe partial class CudaBackend : Backend
         byte* name = stackalloc byte[256];
         Check(cuDeviceGetName(name, 256, device), nameof(cuDeviceGetName));
         Check(cuDeviceTotalMem(out nuint memory, device), nameof(cuDeviceTotalMem));
+        _totalMemory = (long)memory;
         Check(cuDeviceGetAttribute(out _multiprocessors, AttributeMultiprocessorCount, device), nameof(cuDeviceGetAttribute));
         Check(cuDeviceGetAttribute(out _computeMajor, AttributeComputeCapabilityMajor, device), nameof(cuDeviceGetAttribute));
         Check(cuDeviceGetAttribute(out _computeMinor, AttributeComputeCapabilityMinor, device), nameof(cuDeviceGetAttribute));
@@ -463,12 +471,12 @@ internal sealed unsafe partial class CudaBackend : Backend
     }
 
     // New GPU memory, or 0 when the GPU is full and offloading is on (the caller then uses system memory). A block
-    // "fits" when the GPU keeps ComputeResources.GpuMemoryReserve free afterwards, so the driver never pages GPU
+    // "fits" when the GPU keeps MemoryReserve free afterwards, so the driver never pages GPU
     // memory out on its own.
     private ulong AllocateDevice(int length)
     {
         nuint bytes = (nuint)BlockBytes(length);
-        bool Fits() => cuMemGetInfo(out nuint free, out _) != 0 || (long)free - (long)bytes >= ComputeResources.GpuMemoryReserve;
+        bool Fits() => cuMemGetInfo(out nuint free, out _) != 0 || (long)free - (long)bytes >= MemoryReserve;
         int result = ErrorOutOfMemory;
         ulong pointer = 0;
         for (int attempt = 0; attempt < 2 && result == ErrorOutOfMemory; attempt++)
@@ -493,7 +501,7 @@ internal sealed unsafe partial class CudaBackend : Backend
 
             cuMemGetInfo(out nuint free, out nuint total);
             throw new ResourceLimitExceededException(
-                $"{Name} is out of memory: {bytes:N0} more bytes needed, {free:N0} of {total:N0} free with {ComputeResources.GpuMemoryReserve:N0} kept in reserve " +
+                $"{Name} is out of memory: {bytes:N0} more bytes needed, {free:N0} of {total:N0} free with {MemoryReserve:N0} kept in reserve " +
                 $"({_memory.Usage}). Use smaller batches or shorter sequences, or set ComputeResources.OffloadToHostMemory (IDRAK_OFFLOAD=1) " +
                 "to keep what does not fit in system memory (slower).");
         }
@@ -822,7 +830,7 @@ internal sealed unsafe partial class CudaBackend : Backend
         bool few = m <= PtxKernels.GemvRows && !transA && (long)n * k >= 1 << 16;
 
         // Larger products: register-blocked tiles, 128 × 128 when that still gives every multiprocessor a block, else
-        // 64 × 64. (Small ones keep the 16 × 16 kernel; all add k terms in the same order, so results are identical.)
+        // 64 × 64 (then measured per shape, see below). (Small ones keep the 16 × 16 kernel; all add k terms in the same order, so results are identical.)
         int gemmTile = 0;
         if (!few && m >= 64 && n >= 64 && k >= 8)
         {
@@ -900,19 +908,43 @@ internal sealed unsafe partial class CudaBackend : Backend
             if (tensorCore is not null)
             {
                 string kernel = transA ? (transB ? "gemm_tc_tt_f32" : "gemm_tc_tn_f32") : (transB ? "gemm_tc_nt_f32" : "gemm_tc_nn_f32");
-                int splits = count == 1 ? TensorSplits(m, n, k, beta, P(c), n) : 1;
-                Launch(tensorCore[kernel], (uint)((n + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile), (uint)((m + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile),
-                    (uint)(splits > 1 ? splits : count), PtxKernels.TensorThreads, 1, P(a) + offset * mk, P(b) + offset * kn, P(c) + offset * mn,
-                    U(m), U(n), U(k), F(beta), splits > 1 ? 0UL : mk, splits > 1 ? 0UL : kn, splits > 1 ? 0UL : mn, 0UL, U(transA ? m : k), U(transB ? k : n), U(n), 0UL);
+                var function = tensorCore[kernel];
+                ulong aAt = P(a) + offset * mk, bAt = P(b) + offset * kn;
+                void Run(int splits, ulong target) =>
+                    Launch(function, (uint)((n + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile), (uint)((m + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile),
+                        (uint)(splits > 1 ? splits : count), PtxKernels.TensorThreads, 1, aAt, bAt, target,
+                        U(m), U(n), U(k), F(beta), splits > 1 ? 0UL : mk, splits > 1 ? 0UL : kn, splits > 1 ? 0UL : mn, 0UL, U(transA ? m : k), U(transB ? k : n), U(n), 0UL);
+                ulong cAt = P(c) + offset * mn;
+                Run(count == 1 ? TensorSplits(m, n, k, beta, cAt, n, (transA ? 2 : 0) + (transB ? 1 : 0), Run) : 1, cAt);
                 Interlocked.Increment(ref TensorCoreLaunches);
                 continue;
             }
 
             if (gemmTile > 0)
             {
-                Launch(K(gemmTile == 128 ? "gemm128_f32" : "gemm64_f32"), (uint)((n + gemmTile - 1) / gemmTile), (uint)((m + gemmTile - 1) / gemmTile),
-                    (uint)count, PtxKernels.GemmThreads, 1, P(a) + offset * mk, P(b) + offset * kn, P(c) + offset * mn,
-                    U(m), U(n), U(k), U(transA ? 1 : 0), U(transB ? 1 : 0), F(beta), mk, kn, mn);
+                // The tile from the SM count, then measured once per shape (both tiles add k terms in the same order).
+                ulong aAt = P(a) + offset * mk, bAt = P(b) + offset * kn, cAt = P(c) + offset * mn;
+                int blocks = count;
+                void RunTile(int tile, ulong target) =>
+                    Launch(K(tile == 128 ? "gemm128_f32" : "gemm64_f32"), (uint)((n + tile - 1) / tile), (uint)((m + tile - 1) / tile),
+                        (uint)blocks, PtxKernels.GemmThreads, 1, aAt, bAt, target,
+                        U(m), U(n), U(k), U(transA ? 1 : 0), U(transB ? 1 : 0), F(beta), mk, kn, mn);
+                var key = new TuneKey(TuneOp.FloatTile, (transA ? 2 : 0) + (transB ? 1 : 0), m, n, k, count, beta == 0f ? 0 : 1);
+                int tile = gemmTile;
+                if (beta == 0f)
+                {
+                    tile = Tune(key, [64, 128], gemmTile, t => RunTile(t, cAt));
+                }
+                else if (!TunedKnown(key))
+                {
+                    WithScratch((long)count * m * n, scratch => tile = Tune(key, [64, 128], gemmTile, t => RunTile(t, scratch)));
+                }
+                else
+                {
+                    tile = Tune(key, [], gemmTile, _ => { });
+                }
+
+                RunTile(tile, cAt);
                 continue;
             }
 
@@ -968,10 +1000,11 @@ internal sealed unsafe partial class CudaBackend : Backend
             _profileFlops = 2.0 * m * n * (k + rank);
         }
 
-        int splits = TensorSplits(m, n, k, beta, P(c), n);
-        Launch(function, (uint)((n + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile), (uint)((m + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile),
-            (uint)splits, PtxKernels.TensorThreads, 1, P(a), P(b), P(c), U(m), U(n), U(k), F(beta), 0UL, 0UL, 0UL, 0UL,
-            U(k), U(transB ? k : n), U(n), 0UL, P(u), P(v), U(rank));
+        void Run(int splits, ulong target) =>
+            Launch(function, (uint)((n + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile), (uint)((m + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile),
+                (uint)splits, PtxKernels.TensorThreads, 1, P(a), P(b), target, U(m), U(n), U(k), F(beta), 0UL, 0UL, 0UL, 0UL,
+                U(k), U(transB ? k : n), U(n), 0UL, P(u), P(v), U(rank));
+        Run(TensorSplits(m, n, k, beta, P(c), n, transB ? 5 : 4, Run, rank), P(c));
         Interlocked.Increment(ref TensorCoreLaunches);
         return true;
     }
@@ -991,10 +1024,11 @@ internal sealed unsafe partial class CudaBackend : Backend
             _profileFlops = 2.0 * m * n * (k + (u is null ? 0 : rank));
         }
 
-        int splits = TensorSplits(m, n, k, beta, P(c), n);
-        Launch(function, (uint)((n + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile), (uint)((m + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile),
-            (uint)splits, PtxKernels.TensorThreads, 1, P(a), P(packed), P(c), U(m), U(n), U(k), F(beta), 0UL, 0UL, 0UL, 0UL,
-            U(k), U((k + 1) / 2), U(n), 0UL, u is null ? 0UL : P(u), v is null ? 0UL : P(v), U(u is null ? 0 : rank));
+        void Run(int splits, ulong target) =>
+            Launch(function, (uint)((n + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile), (uint)((m + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile),
+                (uint)splits, PtxKernels.TensorThreads, 1, P(a), P(packed), target, U(m), U(n), U(k), F(beta), 0UL, 0UL, 0UL, 0UL,
+                U(k), U((k + 1) / 2), U(n), 0UL, u is null ? 0UL : P(u), v is null ? 0UL : P(v), U(u is null ? 0 : rank));
+        Run(TensorSplits(m, n, k, beta, P(c), n, 6, Run, u is null ? 0 : rank), P(c));
         Interlocked.Increment(ref TensorCoreLaunches);
         return true;
     }
@@ -1027,10 +1061,13 @@ internal sealed unsafe partial class CudaBackend : Backend
             _profileFlops = 2.0 * m * n * k;
         }
 
-        int splits = epilogue == GemmEpilogue.None ? TensorSplits(m, n, k, beta, P(c) + (ulong)cOffset * 4, ldc) : 1;
-        Launch(function, (uint)((n + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile), (uint)((m + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile),
-            (uint)splits, PtxKernels.TensorThreads, 1, P(a) + (ulong)aOffset * 4, P(b) + (ulong)bOffset * 4, P(c) + (ulong)cOffset * 4, U(m), U(n), U(k), F(beta),
-            0UL, 0UL, 0UL, bias is null ? 0UL : P(bias), U(lda), U(ldb), U(ldc), aux is null ? 0UL : P(aux) + (ulong)auxOffset * 4);
+        ulong aAt = P(a) + (ulong)aOffset * 4, bAt = P(b) + (ulong)bOffset * 4, cAt = P(c) + (ulong)cOffset * 4;
+        ulong biasAt = bias is null ? 0UL : P(bias), auxAt = aux is null ? 0UL : P(aux) + (ulong)auxOffset * 4;
+        void Run(int splits, ulong target) =>
+            Launch(function, (uint)((n + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile), (uint)((m + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile),
+                (uint)splits, PtxKernels.TensorThreads, 1, aAt, bAt, target, U(m), U(n), U(k), F(beta),
+                0UL, 0UL, 0UL, biasAt, U(lda), U(ldb), U(ldc), auxAt);
+        Run(epilogue == GemmEpilogue.None ? TensorSplits(m, n, k, beta, cAt, ldc, 8 + (transA ? 2 : 0) + (transB ? 1 : 0) + (bias is null ? 0 : 4), Run, lda, ldb) : 1, cAt);
         Interlocked.Increment(ref TensorCoreLaunches);
         return true;
     }
@@ -1038,11 +1075,14 @@ internal sealed unsafe partial class CudaBackend : Backend
     /// <summary>Benchmarks only: the k splits of plain tensor-core products instead of the heuristic's (1: none).</summary>
     internal static int? TensorSplitsOverride { get; set; }
 
-    // k splits of a plain tensor-core product with fewer than 4 output tiles per SM and a long k (weight gradients):
-    // about 16 blocks per SM, at most 8 splits, chunks of 1024 k or more (measured with --bench-gemm on an RTX 5070 Ti:
-    // 768×768×12288 tn 28.6 → 59.5 TFLOPS, 3072×768×12288 49.3 → 72.5, 1024×3072×8192 65.1 → 74.2). The blocks add their
-    // partial sums into c atomically, so beta must be 1, or 0 with c zeroed here (only when its rows are contiguous).
-    private int TensorSplits(int m, int n, int k, float beta, ulong c, int ldc)
+    // k splits of a plain tensor-core product with fewer than 4 output tiles per SM and a long k (weight gradients). Before
+    // measuring: about 16 blocks per SM, at most 8 splits of 1024 k or more, or for a few output tiles (a LoRA adapter's
+    // gradients) up to 64 of 256 or more. Then measured once per shape on this card (see CudaBackend.Tuning.cs): `run`
+    // launches the product with a split count into an output address; `variant` names the kernel (numbers, so the key
+    // allocates nothing). The blocks add their partial sums into c
+    // atomically, so beta must be 1 (measured into scratch memory), or 0 with c zeroed here (only when its rows are
+    // contiguous; measured into c, which the final launch writes again). `extra`, `extra2`: what else tells shapes apart.
+    private int TensorSplits(int m, int n, int k, float beta, ulong c, int ldc, int variant, Action<int, ulong> run, int extra = 0, int extra2 = 0)
     {
         if (beta != 1f && (beta != 0f || ldc != n))
         {
@@ -1052,10 +1092,37 @@ internal sealed unsafe partial class CudaBackend : Backend
         int sms = Math.Max(1, _multiprocessors);
         int tiles = ((m + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile) * ((n + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile);
         int wanted = TensorSplitsOverride ?? (tiles >= 4 * sms ? 1 : (16 * sms + tiles - 1) / tiles);
-        // A few output tiles over a long k (a LoRA adapter's gradients, [rank, width] or [width, rank] over every token):
-        // up to 64 chunks of 256 or more, so the blocks cover the multiprocessors; otherwise at most 8 of 1024 or more.
         int limit = tiles <= 8 ? Math.Min(64, k / 256) : Math.Min(8, k / 1024);
         int splits = Math.Clamp(wanted, 1, Math.Max(1, limit));
+        if (TensorSplitsOverride is null && tiles < 4 * sms)
+        {
+            int formula = splits;
+            int[] candidates = PowersOfTwo(Math.Min(64, k / 128));
+            void Run(int count, ulong target)
+            {
+                if (count > 1 && beta == 0f)
+                {
+                    Check(cuMemsetD32Async(target, 0, (nuint)((long)m * n), _stream), nameof(cuMemsetD32Async));
+                }
+
+                run(count, target);
+            }
+
+            var key = new TuneKey(TuneOp.TensorSplits, variant * 2 + (beta == 0f ? 0 : 1), m, n, k, ldc, extra, extra2);
+            if (beta == 0f)
+            {
+                splits = Tune(key, candidates, formula, count => Run(count, c));
+            }
+            else if (!TunedKnown(key))
+            {
+                WithScratch((long)(m - 1) * ldc + n, scratch => splits = Tune(key, candidates, formula, count => Run(count, scratch)));
+            }
+            else
+            {
+                splits = Tune(key, [], formula, _ => { });
+            }
+        }
+
         if (splits > 1 && beta == 0f)
         {
             Check(cuMemsetD32Async(c, 0, (nuint)((long)m * n), _stream), nameof(cuMemsetD32Async));

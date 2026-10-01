@@ -14,7 +14,7 @@ internal sealed unsafe partial class CudaBackend
             return;
         }
 
-        PackedFewRows("int8_gemv_f32", x, q, scales, y, m, n, k, words);
+        PackedFewRows(0 * 4 + GemvPlain, x, q, scales, y, m, n, k, words);
     }
 
     public override void BFloat16MatMul(Storage x, Storage packed, Storage y, int m, int n, int k)
@@ -41,7 +41,7 @@ internal sealed unsafe partial class CudaBackend
             return;
         }
 
-        PackedFewRows("bf16_gemv_f32", x, packed, packed, y, m, n, k, words);
+        PackedFewRows(2 * 4 + GemvPlain, x, packed, packed, y, m, n, k, words);
     }
 
     public override void Int4MatMul(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
@@ -68,7 +68,7 @@ internal sealed unsafe partial class CudaBackend
             return;
         }
 
-        PackedFewRows("int4_gemv_f32", x, q, scales, y, m, n, k, words, align: 64);
+        PackedFewRows(1 * 4 + GemvPlain, x, q, scales, y, m, n, k, words, align: 64);
     }
 
     public override void Int4Dequantize(Storage q, Storage scales, Storage w, int k, int n)
@@ -92,60 +92,135 @@ internal sealed unsafe partial class CudaBackend
     /// <summary>Benchmarks only: the number of k splits of the few-row packed products instead of the heuristic's.</summary>
     internal static int? GemvSplits { get; set; }
 
-    // k splits of a few-row packed product with `blocks` column blocks: about two blocks per SM, rounded to a power of
-    // two so the chunks stay multiples of the 64-row unrolled step (measured on an RTX 5070 Ti with --bench-gemv: the
-    // best or within 3% of it for the Qwen3-0.6B decoding shapes; four blocks per SM was up to 40% slower).
+    // Kernel names by format (0 int8, 1 int4, 2 bfloat16) and variant, built once: the per-token path never formats a name.
+    private const int GemvPlain = 0, GemvSilu = 1, GemvGelu = 2, GemvAddNorm = 3;
+    private static readonly string[] GemvKernels =
+    [
+        "int8_gemv_f32", "int8_gemv_silu_f32", "int8_gemv_gelu_f32", "int8_gemv_addnorm_f32",
+        "int4_gemv_f32", "int4_gemv_silu_f32", "int4_gemv_gelu_f32", "int4_gemv_addnorm_f32",
+        "bf16_gemv_f32", "bf16_gemv_silu_f32", "bf16_gemv_gelu_f32", "bf16_gemv_addnorm_f32",
+    ];
+
+    private static readonly string[] GemvMultiKernels =
+        ["int8_gemv_multi_f32", "int8_gemv_multi_act_f32", "int4_gemv_multi_f32", "int4_gemv_multi_act_f32", "bf16_gemv_multi_f32", "bf16_gemv_multi_act_f32"];
+
+    // [format * 2 + (64-row tile ? 1 : 0)]
+    private static readonly string[] PackedTensorKernels =
+        ["gemm_tc_nn_int8w_f32", "gemm_tc_nn_int8w_m64_f32", "gemm_tc_nn_int4w_f32", "gemm_tc_nn_int4w_m64_f32", "gemm_tc_nn_bf16w_f32", "gemm_tc_nn_bf16w_m64_f32"];
+
+    private static readonly string[] PackedMultiKernels =
+    [
+        "gemm_tc_nn_int8w_multi_f32", "gemm_tc_nn_int8w_multi_m64_f32", "gemm_tc_nn_int4w_multi_f32", "gemm_tc_nn_int4w_multi_m64_f32",
+        "gemm_tc_nn_bf16w_multi_f32", "gemm_tc_nn_bf16w_multi_m64_f32",
+    ];
+
+    // [(bfloat16 ? 1 : 0) * 2 + (multi ? 1 : 0)]
+    private static readonly string[] PackedLowRankKernels =
+        ["gemm_tc_nn_int4w_lr_f32", "gemm_tc_nn_int4w_multi_lr_f32", "gemm_tc_nn_bf16w_lr_f32", "gemm_tc_nn_bf16w_multi_lr_f32"];
+
+    // [format * 2 + (128 tile ? 1 : 0)]
+    private static readonly string[] PackedGemmKernels =
+        ["gemm64_int8_f32", "gemm128_int8_f32", "gemm64_int4_f32", "gemm128_int4_f32", "gemm64_bf16_f32", "gemm128_bf16_f32"];
+
+    // k splits of a few-row packed product with `blocks` column blocks, before measuring (see CudaBackend.Tuning.cs):
+    // about two blocks per SM, rounded to a power of two so the chunks stay multiples of the 64-row unrolled step.
     private int GemvSplitCount(int blocks, int k)
     {
         int wanted = (2 * Math.Max(1, _multiprocessors) + blocks - 1) / blocks;
         int splits = 1 << (int)Math.Round(Math.Log2(Math.Max(1, wanted)));
-        return Math.Clamp(splits, 1, Math.Max(1, Math.Min(64, k / 64)));
+        return Math.Clamp(splits, 1, GemvMaxSplits(k));
     }
+
+    private static int GemvMaxSplits(int k) => Math.Max(1, Math.Min(64, k / 64));
 
     // Few rows (decoding) through packed weights: read each weight word once, with enough blocks to keep every
     // multiprocessor busy; narrow matrices split k, and the last block of each column range adds the splits in order.
     // `align`: split boundaries fall on multiples of it (int4 splits start on a 64-row block).
     // `up`: the gated kernels' second input; `tail`: further arguments (the addnorm kernels').
-    private void PackedFewRows(string kernel, Storage x, Storage q, Storage scales, Storage y, int m, int n, int k, int words, int align = 1,
+    // `variant`: format * 4 + GemvPlain / GemvSilu / GemvGelu / GemvAddNorm (an index into GemvKernels).
+    private void PackedFewRows(int variant, Storage x, Storage q, Storage scales, Storage y, int m, int n, int k, int words, int align = 1,
         Storage? up = null, ulong[]? tail = null)
     {
+        string kernel = GemvKernels[variant];
         int columnBlocks = (words + 31) / 32;
-        int splits = GemvSplits is int forced ? Math.Clamp(forced, 1, Math.Max(1, k / 16)) : GemvSplitCount(columnBlocks, k);
-        int chunk = ((k + splits - 1) / splits + align - 1) / align * align;
-        splits = (k + chunk - 1) / chunk;
         var counters = SplitCounters(columnBlocks + 1);
-        void Run(Storage partials, int count)
+        void Run(string name, ulong output, ulong[] extra, int wanted)
         {
-            ulong[] args = [P(x), P(q), P(scales), P(y), P(partials), U(m), U(n), U(k), U(words), U(chunk), U(count), P(counters),
-                .. up is null ? [] : new[] { P(up) }, .. tail ?? []];
-            Launch(K(kernel), (uint)columnBlocks, (uint)count, 1, PtxKernels.Int8GemvThreads, 1, args);
+            int chunk = ((k + wanted - 1) / wanted + align - 1) / align * align;
+            int count = (k + chunk - 1) / chunk;
+            var part = count > 1 ? Allocate(count * m * n, zeroed: false) : null;
+            try
+            {
+                ulong[] args = [P(x), P(q), P(scales), output, part is null ? output : P(part), U(m), U(n), U(k), U(words), U(chunk), U(count),
+                    P(counters), .. up is null ? [] : new[] { P(up) }, .. extra];
+                Launch(K(name), (uint)columnBlocks, (uint)count, 1, PtxKernels.Int8GemvThreads, 1, args);
+            }
+            finally
+            {
+                part?.Release();
+            }
         }
 
-        if (splits == 1)
+        int splits;
+        if (GemvSplits is int forced)
         {
-            Run(y, 1);
-            return;
+            splits = Math.Clamp(forced, 1, Math.Max(1, k / 16));
+        }
+        else
+        {
+            // Measured once per shape. The fused add-and-normalize kernels (`tail`) update their residual outputs, so they
+            // take the choice measured for the plain kernel of the same shape, timed into scratch memory.
+            int formula = GemvSplitCount(columnBlocks, k);
+            int[] candidates = PowersOfTwo(GemvMaxSplits(k));
+            int plainVariant = tail is null ? variant : variant - variant % 4 + GemvPlain;
+            string plain = GemvKernels[plainVariant];
+            var key = new TuneKey(TuneOp.GemvSplits, plainVariant, m, n, k);
+            splits = formula;
+            if (tail is null)
+            {
+                splits = Tune(key, candidates, formula, c => Run(kernel, P(y), [], c));
+            }
+            else
+            {
+                WithScratch((long)m * n, scratch => splits = Tune(key, candidates, formula, c => Run(plain, scratch, [], c)));
+            }
         }
 
-        var part = Allocate(splits * m * n, zeroed: false);
-        try
-        {
-            Run(part, splits);
-        }
-        finally
-        {
-            part.Release();
-        }
+        Run(kernel, P(y), tail ?? [], splits);
     }
 
-    /// <summary>Weights (k·n) from which <see cref="PrefersPackedMatMul"/> sends 4-8 int8 rows to the packed product (tests lower it).</summary>
-    internal static long PackedPreferredWeights { get; set; } = 1L << 25;
+    /// <summary>
+    /// Tests and benchmarks: with a value, 4-8 int8 rows go to the packed product from this many weights (k·n) on, without
+    /// measuring; null (the default): measured per shape on this card.
+    /// </summary>
+    internal static long? PackedPreferredWeights { get; set; }
 
-    // 4-8 rows through large int8 weights: the GEMV's time grows with the rows while the tensor-core product's stays flat
-    // (--bench-gemv on an RTX 5070 Ti, 1024 -> 151936: 4 rows 328 against 276 us, 8 rows 521 against 268; 1-3 rows and
-    // layers of 1-3 M weights stay on the GEMV, where it is as fast or faster).
-    public override bool PrefersPackedMatMul(int kind, int m, int n, int k) =>
-        kind == 0 && m >= 4 && (long)k * n >= PackedPreferredWeights && MixedPrecision.UsesTensorCores;
+    // Few int8 rows through the GEMV (its time grows with the rows) or the packed tensor-core product (flat in the rows,
+    // but a mostly empty row tile): where they cross depends on the card (on compute 12.0 cards the product won from 4 rows
+    // through large layers, on 8.6 it lost), so both run once per shape and the faster is kept. Until then, and when
+    // nothing can be measured, the GEMV.
+    public override bool PrefersPackedMatMul(int kind, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k)
+    {
+        if (kind != 0 || m < 2 || n < 64 || k < 32 || !MixedPrecision.UsesTensorCores)
+        {
+            return false;
+        }
+
+        if (PackedPreferredWeights is long threshold)
+        {
+            return m >= 4 && (long)k * n >= threshold;
+        }
+
+        void Run(int choice)
+        {
+            if (choice == 0 || !PackedMatMulLarge(0, x, packed, scales, y, m, n, k))
+            {
+                Int8MatMul(x, packed, scales ?? packed, y, m, n, k);
+            }
+        }
+
+        return Tune(new TuneKey(TuneOp.Int8FewRows, 0, m, n, k), [0, 1], 0, Run) == 1;
+    }
 
     /// <summary>Benchmarks only: the row tile (64 or 128) of prompt-sized packed products instead of the heuristic's.</summary>
     internal static int? PromptTileRowsOverride { get; set; }
@@ -155,21 +230,29 @@ internal sealed unsafe partial class CudaBackend
     private static int PromptTileRows(int m) =>
         PromptTileRowsOverride ?? (m < 1024 && m % PtxKernels.TensorTile is > 0 and <= 64 ? 64 : PtxKernels.TensorTile);
 
-    // k splits of a prompt-sized packed product: up to four blocks per SM, chunks of 256 k or more; none when the tiles
-    // already fill one wave (85-100% of the SMs: splitting then only adds the zeroing and atomic additions; --bench-gemv,
-    // 180 rows, q+k+v in one launch = 64 tiles on 70 SMs: 35.3 us unsplit against 41.5 with 4 splits).
+    // k splits of a prompt-sized packed product before measuring (see PromptSplitsTuned): up to four blocks per SM, chunks
+    // of 256 k or more; none when the tiles already fill about one wave of the SMs (splitting then only adds the zeroing
+    // and atomic additions).
     private int PromptSplits(int tiles, int k)
     {
         int sms = Math.Max(1, _multiprocessors);
         return tiles * 100 >= sms * 85 && tiles <= sms ? 1 : Math.Clamp(Math.Min(k / 256, 4 * sms / tiles), 1, 8);
     }
 
+    // The k splits of a prompt-sized packed product, measured once per shape on this card: `run(splits)` zeroes the outputs
+    // when it splits and launches, writing outputs the final run writes again. With four or more waves of tiles there is
+    // nothing to gain from splitting, so nothing is measured.
+    private int PromptSplitsTuned(TuneKey key, int tiles, int k, Action<int> run)
+    {
+        int formula = PromptSplits(tiles, k);
+        return tiles >= 4 * Math.Max(1, _multiprocessors) ? formula : Tune(key, PowersOfTwo(Math.Min(16, k / 128)), formula, run);
+    }
+
     public override bool PackedMatMulLarge(int kind, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k)
     {
         // Any row count the caller sends (above the GEMV kernels' limit, or fewer rows when PrefersPackedMatMul): short
         // prompts fill part of one row tile, which the kernels bound-check, instead of expanding the whole weight to float32
-        // first (--bench-gemv, 1024 -> 151936 int8 on an RTX 5070 Ti: 9-63 rows 2.3 ms through the float32 copy, 64 rows
-        // 0.36 ms packed).
+        // first (that writes and reads four bytes per weight on every card, a pass the packed product never makes).
         if (m < 1 || n < 64 || k < 8)
         {
             return false;
@@ -177,7 +260,8 @@ internal sealed unsafe partial class CudaBackend
 
         // Tensor cores (MixedPrecision): the weights unpacked into the bfloat16 tiles as they are loaded.
         int tileRows = PromptTileRows(m);
-        string packedKernel = $"gemm_tc_nn_{(kind switch { 0 => "int8w", 1 => "int4w", _ => "bf16w" })}{(tileRows == 64 ? "_m64" : "")}_f32";
+        int packedVariant = kind * 2 + (tileRows == 64 ? 1 : 0);
+        string packedKernel = PackedTensorKernels[packedVariant];
         if (MixedPrecision.UsesTensorCores && k >= 32 && TensorKernel(packedKernel) is { } tensor)
         {
             int perWord = kind switch { 0 => 4, 1 => 8, _ => 2 };
@@ -190,24 +274,30 @@ internal sealed unsafe partial class CudaBackend
             // Split k when the output tiles leave SMs idle (prompt-sized m): up to two blocks per SM, chunks of 256 k or
             // more, partial sums added into the zeroed output.
             int rowTiles = (m + tileRows - 1) / tileRows, columnTiles = (n + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile;
-            int splits = PackedSplits is int forced ? Math.Clamp(forced, 1, Math.Max(1, k / 32))
-                : PromptSplits(rowTiles * columnTiles, k);
-            if (splits > 1)
+            void Run(int splits)
             {
-                Check(cuMemsetD32Async(P(y), 0, (nuint)((long)m * n), _stream), nameof(cuMemsetD32Async));
+                if (splits > 1)
+                {
+                    Check(cuMemsetD32Async(P(y), 0, (nuint)((long)m * n), _stream), nameof(cuMemsetD32Async));
+                }
+
+                Launch(tensor, (uint)columnTiles, (uint)rowTiles,
+                    (uint)splits, PtxKernels.TensorThreads, 1, P(x), P(packed), P(y), U(m), U(n), U(k), F(0f), 0UL, 0UL, 0UL, 0UL,
+                    U(k), U((n + perWord - 1) / perWord), U(n), scales is null ? 0UL : P(scales));
             }
 
-            Launch(tensor, (uint)columnTiles, (uint)rowTiles,
-                (uint)splits, PtxKernels.TensorThreads, 1, P(x), P(packed), P(y), U(m), U(n), U(k), F(0f), 0UL, 0UL, 0UL, 0UL,
-                U(k), U((n + perWord - 1) / perWord), U(n), scales is null ? 0UL : P(scales));
+            Run(PackedSplits is int forced ? Math.Clamp(forced, 1, Math.Max(1, k / 32))
+                : PromptSplitsTuned(new TuneKey(TuneOp.PackedSplits, packedVariant, m, n, k), rowTiles * columnTiles, k, Run));
             return true;
         }
 
+        // Without tensor cores: 128 × 128 tiles when that still gives every SM a block, else 64 × 64, measured per shape.
         string format = kind switch { 0 => "int8", 1 => "int4", _ => "bf16" };
         long tiles128 = (long)((m + 127) / 128) * ((n + 127) / 128);
-        int tile = tiles128 >= Math.Max(1, _multiprocessors) ? 128 : 64;
-        Launch(K($"gemm{tile}_{format}_f32"), (uint)((n + tile - 1) / tile), (uint)((m + tile - 1) / tile), 1, PtxKernels.GemmThreads, 1,
-            P(x), P(packed), P(y), U(m), U(n), U(k), U(0), U(0), F(0f), 0UL, 0UL, 0UL, P(scales ?? packed));
+        void RunTiles(int tile) =>
+            Launch(K(PackedGemmKernels[kind * 2 + (tile == 128 ? 1 : 0)]), (uint)((n + tile - 1) / tile), (uint)((m + tile - 1) / tile), 1, PtxKernels.GemmThreads, 1,
+                P(x), P(packed), P(y), U(m), U(n), U(k), U(0), U(0), F(0f), 0UL, 0UL, 0UL, P(scales ?? packed));
+        RunTiles(Tune(new TuneKey(TuneOp.PackedTile, kind, m, n, k), [64, 128], tiles128 >= Math.Max(1, _multiprocessors) ? 128 : 64, RunTiles));
         return true;
     }
 
@@ -236,15 +326,14 @@ internal sealed unsafe partial class CudaBackend
 
         int tileRows = PromptTileRows(m);
         string format = kind switch { 0 => "int8w", 1 => "int4w", _ => "bf16w" };
-        if (TensorKernel($"gemm_tc_nn_{format}_multi{(tileRows == 64 ? "_m64" : "")}_f32") is not { } tensor)
+        int multiVariant = kind * 2 + (tileRows == 64 ? 1 : 0);
+        if (TensorKernel(PackedMultiKernels[multiVariant]) is not { } tensor)
         {
             return false;
         }
 
         int perWord = kind switch { 0 => 4, 1 => 8, _ => 2 };
         int rowTiles = (m + tileRows - 1) / tileRows;
-        int splits = PackedSplits is int forced ? Math.Clamp(forced, 1, Math.Max(1, k / 32))
-            : PromptSplits(rowTiles * columnTiles, k);
         if (_profile is not null)
         {
             _profileLabel = $"gemm_tc_nn_{format}_multi{(tileRows == 64 ? "_m64" : "")} {m}x{string.Join('+', products.ToArray().Select(p => p.Columns))}x{k}";
@@ -255,23 +344,30 @@ internal sealed unsafe partial class CudaBackend
             }
         }
 
-        if (splits > 1)
+        static ulong Scales(Storage? scales) => scales is null ? 0UL : P(scales);
+        var list = products.ToArray();                                     // prompt-sized: one small copy per call
+        void Run(int splits)
         {
-            foreach (var product in products)
+            if (splits > 1)
             {
-                Check(cuMemsetD32Async(P(product.Output), 0, (nuint)((long)m * product.Columns), _stream), nameof(cuMemsetD32Async));
+                foreach (var product in list)
+                {
+                    Check(cuMemsetD32Async(P(product.Output), 0, (nuint)((long)m * product.Columns), _stream), nameof(cuMemsetD32Async));
+                }
             }
+
+            var p1 = list[1];
+            var p2 = list.Length == 3 ? list[2] : list[1];
+            int n2 = list.Length == 3 ? list[2].Columns : 0;
+            Launch(tensor, (uint)columnTiles, (uint)rowTiles, (uint)splits, PtxKernels.TensorThreads, 1,
+                P(x), P(list[0].Packed), P(list[0].Output), U(m), U(list[0].Columns), U(k), F(0f), 0UL, 0UL, 0UL, 0UL,
+                U(k), U(list[0].Columns / perWord), U(list[0].Columns), Scales(list[0].Scales),
+                P(p1.Packed), P(p1.Output), Scales(p1.Scales), U(p1.Columns),
+                P(p2.Packed), P(p2.Output), Scales(p2.Scales), U(n2));
         }
 
-        static ulong Scales(Storage? scales) => scales is null ? 0UL : P(scales);
-        var p1 = products[1];
-        var p2 = products.Length == 3 ? products[2] : products[1];
-        int n2 = products.Length == 3 ? products[2].Columns : 0;
-        Launch(tensor, (uint)columnTiles, (uint)rowTiles, (uint)splits, PtxKernels.TensorThreads, 1,
-            P(x), P(products[0].Packed), P(products[0].Output), U(m), U(products[0].Columns), U(k), F(0f), 0UL, 0UL, 0UL, 0UL,
-            U(k), U(products[0].Columns / perWord), U(products[0].Columns), Scales(products[0].Scales),
-            P(p1.Packed), P(p1.Output), Scales(p1.Scales), U(p1.Columns),
-            P(p2.Packed), P(p2.Output), Scales(p2.Scales), U(n2));
+        var key = new TuneKey(TuneOp.PackedMultiSplits, multiVariant, m, k, list[0].Columns, list[1].Columns, list.Length == 3 ? list[2].Columns : 0);
+        Run(PackedSplits is int forced ? Math.Clamp(forced, 1, Math.Max(1, k / 32)) : PromptSplitsTuned(key, rowTiles * columnTiles, k, Run));
         return true;
     }
 
@@ -297,14 +393,14 @@ internal sealed unsafe partial class CudaBackend
         }
 
         string format = kind == 1 ? "int4w" : "bf16w";
-        if (TensorKernel($"gemm_tc_nn_{format}{(multi ? "_multi" : "")}_lr_f32") is not { } tensor)
+        int lowRankVariant = (kind == 1 ? 0 : 2) + (multi ? 1 : 0);
+        if (TensorKernel(PackedLowRankKernels[lowRankVariant]) is not { } tensor)
         {
             return false;
         }
 
         int perWord = kind == 1 ? 8 : 2;
         int rowTiles = (m + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile;
-        int splits = PackedSplits is int forced ? Math.Clamp(forced, 1, Math.Max(1, k / 32)) : PromptSplits(rowTiles * columnTiles, k);
         if (_profile is not null)
         {
             _profileLabel = $"gemm_tc_nn_{format}{(multi ? "_multi" : "")}_lr {m}x{string.Join('+', products.ToArray().Select(p => p.Columns))}x{k}+{rank}";
@@ -315,49 +411,80 @@ internal sealed unsafe partial class CudaBackend
             }
         }
 
-        if (splits > 1)
-        {
-            foreach (var product in products)
-            {
-                Check(cuMemsetD32Async(P(product.Output), 0, (nuint)((long)m * product.Columns), _stream), nameof(cuMemsetD32Async));
-            }
-        }
-
         static ulong Scales(Storage? scales) => scales is null ? 0UL : P(scales);
-        var p0 = products[0];
-        if (!multi)
+        var list = products.ToArray();                                     // prompt-sized: one small copy per call
+        void Run(int splits)
         {
+            if (splits > 1)
+            {
+                foreach (var product in list)
+                {
+                    Check(cuMemsetD32Async(P(product.Output), 0, (nuint)((long)m * product.Columns), _stream), nameof(cuMemsetD32Async));
+                }
+            }
+
+            var p0 = list[0];
+            if (!multi)
+            {
+                Launch(tensor, (uint)columnTiles, (uint)rowTiles, (uint)splits, PtxKernels.TensorThreads, 1,
+                    P(x), P(p0.Packed), P(p0.Output), U(m), U(p0.Columns), U(k), F(0f), 0UL, 0UL, 0UL, 0UL,
+                    U(k), U((p0.Columns + perWord - 1) / perWord), U(p0.Columns), Scales(p0.Scales), P(p0.U), P(p0.V), U(rank));
+                return;
+            }
+
+            var p1 = list[1];
+            var p2 = list.Length == 3 ? list[2] : list[1];
+            int n2 = list.Length == 3 ? list[2].Columns : 0;
             Launch(tensor, (uint)columnTiles, (uint)rowTiles, (uint)splits, PtxKernels.TensorThreads, 1,
                 P(x), P(p0.Packed), P(p0.Output), U(m), U(p0.Columns), U(k), F(0f), 0UL, 0UL, 0UL, 0UL,
-                U(k), U((p0.Columns + perWord - 1) / perWord), U(p0.Columns), Scales(p0.Scales), P(p0.U), P(p0.V), U(rank));
-            return true;
+                U(k), U(p0.Columns / perWord), U(p0.Columns), Scales(p0.Scales),
+                P(p1.Packed), P(p1.Output), Scales(p1.Scales), U(p1.Columns),
+                P(p2.Packed), P(p2.Output), Scales(p2.Scales), U(n2),
+                P(p0.U), P(p0.V), U(rank), P(p1.U), P(p1.V), P(p2.U), P(p2.V));
         }
 
-        var p1 = products[1];
-        var p2 = products.Length == 3 ? products[2] : products[1];
-        int n2 = products.Length == 3 ? products[2].Columns : 0;
-        Launch(tensor, (uint)columnTiles, (uint)rowTiles, (uint)splits, PtxKernels.TensorThreads, 1,
-            P(x), P(p0.Packed), P(p0.Output), U(m), U(p0.Columns), U(k), F(0f), 0UL, 0UL, 0UL, 0UL,
-            U(k), U(p0.Columns / perWord), U(p0.Columns), Scales(p0.Scales),
-            P(p1.Packed), P(p1.Output), Scales(p1.Scales), U(p1.Columns),
-            P(p2.Packed), P(p2.Output), Scales(p2.Scales), U(n2),
-            P(p0.U), P(p0.V), U(rank), P(p1.U), P(p1.V), P(p2.U), P(p2.V));
+        var key = new TuneKey(TuneOp.PackedLowRankSplits, lowRankVariant, m, k, list[0].Columns,
+            list.Length > 1 ? list[1].Columns : 0, list.Length > 2 ? list[2].Columns : 0, rank);
+        Run(PackedSplits is int forced ? Math.Clamp(forced, 1, Math.Max(1, k / 32)) : PromptSplitsTuned(key, rowTiles * columnTiles, k, Run));
         return true;
     }
 
     public override bool PackedMatMulGated(int kind, int activation, Storage gate, Storage up, Storage packed, Storage? scales, Storage y,
         int m, int n, int k)
     {
-        // Measured on an RTX 5070 Ti: the activation per input value pays off only with eight columns per word (int4);
-        // int8 and bfloat16 decode faster with the separate activation pass.
-        if (kind != 1 || m > PtxKernels.GemvRows || k == 0 || activation is not (0 or 1))
+        if (kind is < 0 or > 2 || m > PtxKernels.GemvRows || k == 0 || activation is not (0 or 1))
         {
             return false;
         }
 
+        // The activation computed per input value inside the product (fused), or by its own pass first (separate): which
+        // is faster depends on the card and the format (eight int4 columns per word repay the extra work sooner than four
+        // int8 or two bfloat16 ones), so it is measured per shape; both write all of y.
         int cpw = kind switch { 0 => 4, 1 => 8, _ => 2 };
-        string kernel = (kind switch { 0 => "int8_gemv", 1 => "int4_gemv", _ => "bf16_gemv" }) + (activation == 0 ? "_silu_f32" : "_gelu_f32");
-        PackedFewRows(kernel, gate, packed, scales ?? packed, y, m, n, k, (n + cpw - 1) / cpw, kind == 1 ? 64 : 1, up);
+        int words = (n + cpw - 1) / cpw, align = kind == 1 ? 64 : 1;
+        int fused = kind * 4 + (activation == 0 ? GemvSilu : GemvGelu);
+        void Run(int separate)
+        {
+            if (separate == 0)
+            {
+                PackedFewRows(fused, gate, packed, scales ?? packed, y, m, n, k, words, align, up);
+                return;
+            }
+
+            var hidden = Allocate(m * k, zeroed: false);
+            try
+            {
+                GatedActivation(gate, up, hidden, m * k, activation);
+                PackedFewRows(kind * 4 + GemvPlain, hidden, packed, scales ?? packed, y, m, n, k, words, align);
+            }
+            finally
+            {
+                hidden.Release();
+            }
+        }
+
+        // Before measuring: fused for int4, separate for the others.
+        Run(Tune(new TuneKey(TuneOp.GatedActivation, fused, m, n, k), [0, 1], kind == 1 ? 0 : 1, Run));
         return true;
     }
 
@@ -370,8 +497,7 @@ internal sealed unsafe partial class CudaBackend
         }
 
         int cpw = kind switch { 0 => 4, 1 => 8, _ => 2 };
-        string kernel = kind switch { 0 => "int8_gemv_addnorm_f32", 1 => "int4_gemv_addnorm_f32", _ => "bf16_gemv_addnorm_f32" };
-        PackedFewRows(kernel, x, packed, scales ?? packed, y, m, n, k, (n + cpw - 1) / cpw, kind == 1 ? 64 : 1,
+        PackedFewRows(kind * 4 + GemvAddNorm, x, packed, scales ?? packed, y, m, n, k, (n + cpw - 1) / cpw, kind == 1 ? 64 : 1,
             tail: [P(residual), P(sum), P(gain), P(normalized), F(eps), F(offset)]);
         return true;
     }
@@ -400,7 +526,8 @@ internal sealed unsafe partial class CudaBackend
         }
 
         int cpw = kind switch { 0 => 4, 1 => 8, _ => 2 };
-        string kernel = (kind switch { 0 => "int8_gemv_multi", 1 => "int4_gemv_multi", _ => "bf16_gemv_multi" }) + (hidden is null ? "_f32" : "_act_f32");
+        int multiGemv = kind * 2 + (hidden is null ? 0 : 1);
+        string kernel = GemvMultiKernels[multiGemv];
         int nmax = 0, totalBlocks = 0;
         foreach (var product in products)
         {
@@ -409,43 +536,67 @@ internal sealed unsafe partial class CudaBackend
         }
 
         int columnBlocks = ((nmax + cpw - 1) / cpw + 31) / 32;
-        int splits = GemvSplits is int forced ? Math.Clamp(forced, 1, Math.Max(1, k / 16)) : GemvSplitCount(totalBlocks, k);
         int align = kind == 1 ? 64 : 1;
-        int chunk = ((k + splits - 1) / splits + align - 1) / align * align;
-        splits = (k + chunk - 1) / chunk;
         var counters = SplitCounters(columnBlocks * (products.Length + (hidden is null ? 0 : 1)));
-        var part = splits > 1 ? Allocate(products.Length * splits * m * nmax, zeroed: false) : null;
-        try
+        void Run(ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products, int wanted)
         {
-            Span<ulong> args = stackalloc ulong[9 + 3 * 5 + 2];
-            args[0] = P(x);
-            args[1] = part is null ? P(products[0].Output) : P(part);
-            args[2] = U(m);
-            args[3] = U(k);
-            args[4] = U(chunk);
-            args[5] = U(splits);
-            args[6] = P(counters);
-            args[7] = U(columnBlocks);
-            args[8] = U(nmax);
-            for (int j = 0; j < 3; j++)
+            int chunk = ((k + wanted - 1) / wanted + align - 1) / align * align;
+            int splits = (k + chunk - 1) / chunk;
+            var part = splits > 1 ? Allocate(products.Length * splits * m * nmax, zeroed: false) : null;
+            try
             {
-                var product = j < products.Length ? products[j] : products[0];
-                args[9 + 5 * j] = P(product.Packed);
-                args[10 + 5 * j] = P(product.Scales ?? product.Packed);
-                args[11 + 5 * j] = P(product.Output);
-                args[12 + 5 * j] = product.Bias is null ? 0UL : P(product.Bias);
-                args[13 + 5 * j] = U(j < products.Length ? product.Columns : 0);
+                Span<ulong> args = stackalloc ulong[9 + 3 * 5 + 2];
+                args[0] = P(x);
+                args[1] = part is null ? P(products[0].Output) : P(part);
+                args[2] = U(m);
+                args[3] = U(k);
+                args[4] = U(chunk);
+                args[5] = U(splits);
+                args[6] = P(counters);
+                args[7] = U(columnBlocks);
+                args[8] = U(nmax);
+                for (int j = 0; j < 3; j++)
+                {
+                    var product = j < products.Length ? products[j] : products[0];
+                    args[9 + 5 * j] = P(product.Packed);
+                    args[10 + 5 * j] = P(product.Scales ?? product.Packed);
+                    args[11 + 5 * j] = P(product.Output);
+                    args[12 + 5 * j] = product.Bias is null ? 0UL : P(product.Bias);
+                    args[13 + 5 * j] = U(j < products.Length ? product.Columns : 0);
+                }
+
+                args[24] = U(activation);
+                args[25] = hidden is null ? 0UL : P(hidden);
+                Launch(K(kernel), (uint)columnBlocks, (uint)splits, (uint)products.Length, PtxKernels.Int8GemvThreads, 1, hidden is null ? args[..24] : args);
+            }
+            finally
+            {
+                part?.Release();
+            }
+        }
+
+        int wanted;
+        if (GemvSplits is int forced)
+        {
+            wanted = Math.Clamp(forced, 1, Math.Max(1, k / 16));
+        }
+        else
+        {
+            // Measured once per shape (every output, and the activation's, is written again by the run that follows).
+            int biases = 0;
+            for (int j = 0; j < products.Length; j++)
+            {
+                biases |= products[j].Bias is null ? 0 : 1 << j;
             }
 
-            args[24] = U(activation);
-            args[25] = hidden is null ? 0UL : P(hidden);
-            Launch(K(kernel), (uint)columnBlocks, (uint)splits, (uint)products.Length, PtxKernels.Int8GemvThreads, 1, hidden is null ? args[..24] : args);
-        }
-        finally
-        {
-            part?.Release();
+            var name = new TuneKey(TuneOp.GemvMultiSplits, multiGemv, m, k, products[0].Columns, products.Length > 1 ? products[1].Columns : 0,
+                products.Length > 2 ? products[2].Columns : 0, biases);
+            int formula = GemvSplitCount(totalBlocks, k);
+            var copy = TunedKnown(name) ? null : products.ToArray();
+            wanted = copy is null ? Tune(name, [], formula, _ => { }) : Tune(name, PowersOfTwo(GemvMaxSplits(k)), formula, c => Run(copy, c));
         }
 
+        Run(products, wanted);
         return true;
     }
 
