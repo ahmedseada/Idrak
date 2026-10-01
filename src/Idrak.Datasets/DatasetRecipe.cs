@@ -14,9 +14,10 @@ namespace Idrak.Datasets;
 /// data files instead; release=latest|tag with asset=*.csv reads release assets)</item>
 /// <item><c>kaggle:owner/dataset</c> (files), <c>zenodo:123456</c> (files)</item>
 /// <item><c>https://host/data.jsonl.gz</c>, or a local file or folder (files)</item>
+/// <item>any source added with <see cref="DatasetSources.Register"/></item>
 /// </list>
 /// Options for any source: take, skip, weight, text (lines | paragraphs | document), documents (every file one row),
-/// columns (a,b,…), format, json_property, and the chat
+/// columns (a,b,…), format (a <see cref="DataFileFormats"/> name), json_property, and the chat
 /// mapping system, user, assistant (templates over columns such as <c>user={question}</c>).
 /// </summary>
 public sealed class DatasetSpec
@@ -105,9 +106,10 @@ public sealed class DatasetSpec
 
     private Dataset OpenSource(Downloader? downloader)
     {
-        foreach (var key in Options.Keys.Where(k => !Known.Contains(k)))
+        var opener = DatasetSources.Find(Source);
+        foreach (var key in Options.Keys.Where(k => !Known.Contains(k) && opener?.Options.Contains(k, StringComparer.OrdinalIgnoreCase) != true))
         {
-            throw new ArgumentException($"{Source}: unknown option '{key}'. Known: {string.Join(", ", Known.Order())}.");
+            throw new ArgumentException($"{Source}: unknown option '{key}'. Known: {string.Join(", ", Known.Concat(opener?.Options ?? []).Order())}.");
         }
 
         var read = new ReadOptions
@@ -119,61 +121,17 @@ public sealed class DatasetSpec
                 "document" or "documents" => TextRows.Document,
                 var other => throw new ArgumentException($"{Source}: text={other}: use lines, paragraphs or document."),
             },
-            Format = String("format") is { } format ? Enum.Parse<DataFormat>(format, ignoreCase: true) : null,
+
+            // A built-in format by its DataFormat name, or any registered one by its name.
+            Format = String("format") is { } format && Enum.TryParse<DataFormat>(format, ignoreCase: true, out var builtIn) ? builtIn : null,
+            FileFormat = String("format") is { } named && !Enum.TryParse<DataFormat>(named, ignoreCase: true, out _) ? DataFileFormats.Get(named) : null,
             JsonProperty = String("json_property"),
             Documents = Flag("documents"),
         };
-        string source = Source;
-        Dataset data;
-        if (source.StartsWith("hf:", StringComparison.OrdinalIgnoreCase))
-        {
-            data = HuggingFace.Dataset(source[3..], String("config"), String("split") ?? "train", String("files"), String("revision") ?? "main",
-                maxFiles: Int("max_files"), options: read, downloader: downloader);
-        }
-        else if (source.StartsWith("github:", StringComparison.OrdinalIgnoreCase))
-        {
-            string repo = source[7..];
-            string? reference = String("ref");
-            int at = repo.IndexOf('@', StringComparison.Ordinal);
-            if (at > 0)
-            {
-                reference = repo[(at + 1)..];
-                repo = repo[..at];
-            }
 
-            bool dataFiles = String("files") is { } files && DataFiles.FormatOf(files, includeCode: false) is not null && !Flag("documents");
-            data = String("release") is { } release
-                ? GitHub.Release(repo, String("asset") ?? "*", release == "latest" ? null : release, options: read, downloader: downloader)
-                : dataFiles
-                    ? GitHub.Files(repo, String("files")!, reference, options: read, downloader: downloader)
-                    : GitHub.Repository(repo, reference, String("files"), downloader: downloader);
-        }
-        else if (source.StartsWith("kaggle:", StringComparison.OrdinalIgnoreCase))
-        {
-            data = Kaggle.Dataset(source[7..], String("files"), options: read, downloader: downloader);
-        }
-        else if (source.StartsWith("zenodo:", StringComparison.OrdinalIgnoreCase))
-        {
-            data = Zenodo.Record(source[7..], String("files"), options: read, downloader: downloader);
-        }
-        else if (source.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || source.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-        {
-            data = Dataset.FromUrl(source, read, downloader);
-        }
-        else if (Directory.Exists(source))
-        {
-            data = Dataset.FromFolder(source, String("files"), read);
-        }
-        else if (File.Exists(source))
-        {
-            data = Dataset.FromFile(source, read with { Pattern = String("files") });
-        }
-        else
-        {
-            throw new FileNotFoundException($"'{source}' is not a file, a folder or a known source (hf:, github:, kaggle:, zenodo:, http(s)://).");
-        }
-
-        return data;
+        // The registered sources, in order (see DatasetSources): hf:, github:, kaggle:, zenodo:, http(s)://, folders, files.
+        return opener?.Open(this, read, downloader)
+            ?? throw new FileNotFoundException($"'{Source}' is not a file, a folder or a known source (hf:, github:, kaggle:, zenodo:, http(s)://).");
     }
 
     /// <summary>The chat mapping given by the user / assistant / system options, or null to detect the layout.</summary>
@@ -184,15 +142,15 @@ public sealed class DatasetSpec
     /// <inheritdoc />
     public override string ToString() => Options.Count == 0 ? Source : $"{Source}?{string.Join('&', Options.Select(p => $"{p.Key}={p.Value}"))}";
 
-    private string? String(string name) => Options.TryGetValue(name, out var v) ? v : null;
+    internal string? String(string name) => Options.TryGetValue(name, out var v) ? v : null;
 
-    private bool Flag(string name) => String(name) is { } v && v is "true" or "1" or "yes";
+    internal bool Flag(string name) => String(name) is { } v && v is "true" or "1" or "yes";
 
-    private long? Long(string name) => String(name) is { } v ? long.Parse(v, CultureInfo.InvariantCulture) : null;
+    internal long? Long(string name) => String(name) is { } v ? long.Parse(v, CultureInfo.InvariantCulture) : null;
 
-    private int? Int(string name) => String(name) is { } v ? int.Parse(v, CultureInfo.InvariantCulture) : null;
+    internal int? Int(string name) => String(name) is { } v ? int.Parse(v, CultureInfo.InvariantCulture) : null;
 
-    private double? Double(string name) => String(name) is { } v ? double.Parse(v, CultureInfo.InvariantCulture) : null;
+    internal double? Double(string name) => String(name) is { } v ? double.Parse(v, CultureInfo.InvariantCulture) : null;
 }
 
 /// <summary>

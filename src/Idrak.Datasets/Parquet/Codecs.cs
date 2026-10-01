@@ -6,45 +6,30 @@ using System.IO.Compression;
 
 namespace Idrak.Datasets.Parquet;
 
-/// <summary>Decompression of Parquet pages: uncompressed, Snappy, Gzip, Brotli and LZ4 (raw).</summary>
+/// <summary>The built-in decompressors of Parquet pages (Snappy, Gzip, Brotli and LZ4 raw), registered in <see cref="ParquetCodecs"/>.</summary>
 internal static class Codecs
 {
-    public static byte[] Decompress(int codec, ReadOnlySpan<byte> input, int uncompressedSize)
+    public static byte[] Gzip(ReadOnlySpan<byte> input, int uncompressedSize)
     {
-        switch (codec)
+        using var gzip = new GZipStream(new MemoryStream(input.ToArray()), CompressionMode.Decompress);
+        var output = new byte[uncompressedSize];
+        gzip.ReadExactly(output);
+        return output;
+    }
+
+    public static byte[] Brotli(ReadOnlySpan<byte> input, int uncompressedSize)
+    {
+        var brotli = new byte[uncompressedSize];
+        if (!BrotliDecoder.TryDecompress(input, brotli, out int written) || written != uncompressedSize)
         {
-            case 0:
-                return input.ToArray();
-            case 1:
-                return Snappy(input, uncompressedSize);
-            case 2:
-                using (var gzip = new GZipStream(new MemoryStream(input.ToArray()), CompressionMode.Decompress))
-                {
-                    var output = new byte[uncompressedSize];
-                    gzip.ReadExactly(output);
-                    return output;
-                }
-
-            case 4:
-                var brotli = new byte[uncompressedSize];
-                if (!BrotliDecoder.TryDecompress(input, brotli, out int written) || written != uncompressedSize)
-                {
-                    throw new InvalidDataException("A Brotli-compressed Parquet page did not decompress.");
-                }
-
-                return brotli;
-            case 7:
-                return Lz4Block(input, uncompressedSize);
-            case 6:
-                throw new NotSupportedException("This Parquet file is compressed with Zstandard, which is not supported yet; "
-                    + "Snappy, Gzip, Brotli and LZ4 are (Hugging Face's own Parquet files use Snappy).");
-            default:
-                throw new NotSupportedException($"Parquet compression codec {codec} is not supported.");
+            throw new InvalidDataException("A Brotli-compressed Parquet page did not decompress.");
         }
+
+        return brotli;
     }
 
     // Snappy's raw block format: a varint length, then literals and back-references.
-    private static byte[] Snappy(ReadOnlySpan<byte> input, int expected)
+    public static byte[] Snappy(ReadOnlySpan<byte> input, int expected)
     {
         int pos = 0;
         uint length = 0;
@@ -125,7 +110,7 @@ internal static class Codecs
     }
 
     // LZ4's block format (sequences of literals and matches).
-    private static byte[] Lz4Block(ReadOnlySpan<byte> input, int expected)
+    public static byte[] Lz4Block(ReadOnlySpan<byte> input, int expected)
     {
         var output = new byte[expected];
         int pos = 0, outPos = 0;
