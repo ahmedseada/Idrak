@@ -1070,6 +1070,7 @@ The ASP.NET Core, MCP, dataset and naming tests do not depend on the device, and
 
 | Date | Library | GPU | Compute | Driver | System | Result |
 |---|---|---|---|---|---|---|
+| 2026-10-01 | 0.1.7 | NVIDIA GeForce RTX 5070 Ti, 16 GB, 70 SMs (Blackwell) | 12.0 | CUDA 13.3 | Windows (x64), 24-thread CPU, .NET 10.0.12 | 382 of 382 (CPU and GPU) |
 | 2026-10-01 | 0.1.6 | NVIDIA GeForce RTX 5050 Laptop GPU, 8 GB, 20 SMs (Blackwell) | 12.0 | CUDA 13.3 | Windows 11 (build 26200, x64), 16-thread CPU with 8-wide SIMD, .NET 10.0.12 | 382 of 382 (CPU and GPU) |
 | 2026-10-01 | 0.1.5 | NVIDIA GeForce RTX 3060 Laptop GPU, 6 GB, 30 SMs (Ampere) | 8.6 | CUDA 13.0 | Windows 11 (build 26200, x64), 20-thread CPU with 8-wide SIMD, .NET 10.0.12 | 364 of 364 (CPU and GPU; FP8 products skipped, no FP8 tensor cores) |
 | 2026-10-01 | 0.1.5 | NVIDIA GeForce RTX 5050 Laptop GPU, 8 GB, 20 SMs (Blackwell) | 12.0 | CUDA 13.3 | Windows 11 (build 26200, x64), 16-thread CPU with 8-wide SIMD, .NET 10.0.12 | 364 of 364 (CPU and GPU) |
@@ -1091,7 +1092,12 @@ over 4,000 cached positions 6.7 ms (float32), 5.2 ms (int8), 10.1 ms (bfloat16);
 (q/k/v 18–22 µs, gate/up 35 µs, the head 0.64 ms), decoding attention over 4,000 positions 94 µs, a 1 KB upload behind
 queued work 5.1 µs (299 µs synchronously); its 16-thread CPU: the bfloat16 product 4.3 ms (1 row), attention over 4,000
 positions 2.6 ms (float32), 1.6 ms (int8), 2.8 ms (bfloat16), sampling with top-k 20 0.7 ms. On the 8-thread CPU-only Windows machine: the bfloat16 product 14.2 ms (1 row) and 32.2 ms (8 rows); attention
-over 4,000 cached positions 9.5 ms (float32), 3.7 ms (int8), 15.0 ms (bfloat16); sampling with top-k 20 0.9 ms.
+over 4,000 cached positions 9.5 ms (float32), 3.7 ms (int8), 15.0 ms (bfloat16); sampling with top-k 20 0.9 ms. On the RTX 5070 Ti (0.1.7): decoding products of one row at 500–716 GB/s
+(q/k/v 7.2 µs, gate/up 12.5 µs, the head 0.22 ms), decoding attention over 4,000 positions 38 µs, a 1 KB upload behind
+queued work 8.9 µs (83 µs synchronously); with the choices measured on the card, "auto" is within a few percent of the
+best fixed split in every row. A training step of 8 layers of 2048 × 2048 (`--bench-offload`): 5.9 ms on the GPU,
+20.7 ms with the weights in system memory (staged, next layer prefetched; 87 ms read over PCIe), 41.7 ms with AdamW on
+the CPU. Its 24-thread CPU (`--bench-text`): BM25 indexing of the README 1.8 ms, tokenizer encoding 45 MB/s.
 
 Small models such as the samples are dominated by kernel-launch overhead on the GPU; recurrent models are hit
 hardest, since they launch kernels for every time step. The GPU pays off with wide layers, large batches,
