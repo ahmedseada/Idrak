@@ -81,7 +81,7 @@
 - `--bench-gemv` also times short prompts (1–96 rows) through int8 weights and host-to-device uploads, for the next
   CUDA changes.
 
-## 0.1.3 (2026-09-30)
+## 0.1.3 (never published: these changes shipped in 0.1.4)
 
 - `Idrak.Datasets`: `ITextNormalizer`, the consumer's text rules (the library has none of its own), and
   `Dataset.Normalize(normalizer, columns)` (in place) / `Normalize(normalizer, column, into: key)` (a key column, the
