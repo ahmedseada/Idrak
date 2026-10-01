@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Ahmed Seada
+// Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
+
 namespace Idrak.Optimizers;
 
 /// <summary>Stochastic gradient descent with optional momentum and L2 weight decay: g += λp; v = μv + g; p -= lr·v.</summary>

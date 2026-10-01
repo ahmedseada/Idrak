@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Ahmed Seada
+// Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
+
 namespace Idrak;
 
 /// <summary>Parallel loops over host arrays for model loading and weight conversion (large arrays, on all cores).</summary>

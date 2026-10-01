@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Ahmed Seada
+// Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
+
 // Character-level GPT trainer: the Idrak counterpart of train_char_gpt.py (same options, data files, schedule and
 // model), on Idrak's own CUDA kernels.
 //

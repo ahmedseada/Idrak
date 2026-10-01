@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Ahmed Seada
+// Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
+
 // Imports an ONNX model made by another framework into Idrak layers and runs it on Idrak's own
 // backend (CPU or CUDA). With a "<file>.expected.json" next to the model (inputs and the other framework's outputs,
 // as written by tools/pytorch/xor_to_onnx.py), it checks that Idrak computes the same values, then saves the

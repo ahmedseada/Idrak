@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Ahmed Seada
+// Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
+
 using Idrak;
 
 // The library's name: nothing in the repository still uses the one it had before (sources, projects, docs, tools).

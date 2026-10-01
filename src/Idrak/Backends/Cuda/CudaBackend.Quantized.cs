@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Ahmed Seada
+// Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
+
 using static Idrak.Backends.Cuda.CudaDriver;
 
 namespace Idrak.Backends.Cuda;

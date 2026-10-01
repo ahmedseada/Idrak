@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Ahmed Seada
+// Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
+
 // Quantization: what smaller weights cost in accuracy and gain in size and speed.
 //   1. A word-level summarizer (the Summarizer sample's model and data, trained here) is compared as float32, int8
 //      (QuantizeInt8: one byte per weight, one scale per output column), and loaded from Float16 / BFloat16 files:

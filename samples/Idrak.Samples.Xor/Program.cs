@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Ahmed Seada
+// Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
+
 // Learns XOR, the classic problem a single linear layer cannot solve.
 //
 //   dotnet run -c Release --project samples/Idrak.Samples.Xor               GPU if available, else CPU

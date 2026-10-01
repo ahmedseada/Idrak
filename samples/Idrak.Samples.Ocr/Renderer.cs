@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Ahmed Seada
+// Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
+
 namespace Idrak.Samples.Ocr;
 
 /// <summary>Draws characters and text lines as grayscale images (ink = 1, paper = 0).</summary>

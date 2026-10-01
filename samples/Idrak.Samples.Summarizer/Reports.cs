@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Ahmed Seada
+// Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
+
 namespace Idrak.Samples.Summarizer;
 
 /// <summary>A short report and its one-sentence reference summary.</summary>

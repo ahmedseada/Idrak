@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Ahmed Seada
+// Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
+
 // Self-contained test runner (no test framework dependency). Runs on the CPU and every CUDA GPU;
 //   IDRAK_DEVICES=cpu,cuda:0,cuda:2 …   only these devices
 //   dotnet run --project tests/Idrak.Tests                  run every test on every available device

@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Ahmed Seada
+// Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
+
 // Sequence classification: sentiment of short sentences where "not" flips the next word
 // ("not good" is negative, "not bad" positive). A bag-of-words model cannot see word order;
 // LSTM, GRU and a Transformer can. Embedding, LSTM, GRU, PositionalEncoding, TransformerEncoderLayer.

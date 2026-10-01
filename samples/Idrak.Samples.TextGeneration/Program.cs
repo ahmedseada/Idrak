@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Ahmed Seada
+// Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
+
 // A small GPT: a decoder-only, character-level transformer with causal self-attention that learns to
 // continue text. It trains on sentences from a small grammar (or your own text via --corpus), saves the
 // model, then generates new text one character at a time.

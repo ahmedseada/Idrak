@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Ahmed Seada
+// Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
+
 namespace Idrak.Layers;
 
 /// <summary>Logistic sigmoid activation; squashes values into (0, 1).</summary>
