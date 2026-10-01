@@ -235,7 +235,9 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         }
 
         using var sampler = CreateSampler(new SamplerRequest(Device, rows, Tokenizer.VocabularySize, limit + 1, 1, options));   // no penalties here
-        using var decoding = new DecodingContext(Device, rows, promptLength + limit, KeyValueFormat.Float32) { LastPositionOnly = true };
+        // Rows of different lengths need a cache whose format can attend from per-row starts (float32 today).
+        var batchFormat = KeyValueLayouts.For(CacheFormat).RowStarts ? CacheFormat : KeyValueFormat.Float32;
+        using var decoding = new DecodingContext(Device, rows, promptLength + limit, batchFormat) { LastPositionOnly = true };
         decoding.SetRowStarts(starts);
         var generated = Enumerable.Range(0, rows).Select(_ => new List<int>()).ToList();
         var ends = new int?[rows];                                            // text length where a stop sequence begins

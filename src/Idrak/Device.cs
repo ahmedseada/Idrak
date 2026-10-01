@@ -81,6 +81,19 @@ public sealed class Device
     /// </summary>
     public bool IsGpu => Type != DeviceType.Cpu;
 
+    /// <summary>The CPU and every GPU whose backend has been started (by a tensor or model placed on it).</summary>
+    internal static IEnumerable<Device> InUse()
+    {
+        yield return Cpu;
+        for (int i = 0; i < CudaBackend.DeviceCount; i++)
+        {
+            if (CudaBackend.IsInitialized(i))
+            {
+                yield return Cuda(i);
+            }
+        }
+    }
+
     internal Backend Backend => field ??= Type == DeviceType.Cpu ? CpuBackend.Instance : CudaBackend.Get(Ordinal);
 
     /// <summary>Waits until all queued work on this device has finished.</summary>
