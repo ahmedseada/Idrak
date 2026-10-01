@@ -113,6 +113,8 @@ internal sealed unsafe partial class VulkanBackend : Backend
 
     public override BackendCapabilities Capabilities { get; } = CpuBackend.Instance.Capabilities with
     {
+        DecodeAttentionHeadDim = Math.Min(CpuBackend.Instance.Capabilities.DecodeAttentionHeadDim, VulkanKernels.AttentionMaxDim),
+        TiledAttentionHeadDim = Math.Min(CpuBackend.Instance.Capabilities.TiledAttentionHeadDim, VulkanKernels.AttentionMaxDim),
         MatrixUnits = false,
         MatrixUnitAttentionHeadDim = static _ => false,
         FusedKernels = false,

@@ -19,6 +19,7 @@ internal static partial class Tests
         ("vulkan: memory is pooled, counted and limited by ComputeResources.GpuMemoryLimit", VulkanMemory),
         ("vulkan: a SPIR-V kernel dispatch (y = a·alpha + b with push constants), chained dispatches in order", VulkanDispatch),
         ("vulkan: uploads, zeroed allocations and reused blocks are ordered after queued dispatches", VulkanOrdering),
+        ("vulkan: operations run as generated kernels (no host fallback) and match the CPU (element-wise, rows narrow and wide, products, decoding)", VulkanKernelsMatchCpu),
     ];
 
     // y[i] = a[i] * alpha + b[i] for i < n; bindings a, b, y; push constants { uint n; float alpha; }; 64 lanes per group.
@@ -368,7 +369,11 @@ internal static partial class Tests
 
             // The host fallback (download, CPU kernel, upload) between dispatches.
             QueueAxpb(backend, b, b, y, N, 1f);                            // y = 2b
-            backend.Copy(y, a, N);                                         // a = y, through the host
+            using (var host = new HostCall(backend))
+            {
+                Idrak.Backends.Cpu.CpuBackend.Instance.Copy(host[y], host[a], N);  // a = y, through the host
+            }
+
             QueueAxpb(backend, a, b, y, N, 1f);                            // y = 3b
             backend.Download(y, result);
             AssertClose([.. bv.Select(v => 3f * v)], result, 1e-6f, $"{label}: dispatch, host fallback, dispatch");
@@ -392,5 +397,117 @@ internal static partial class Tests
             b.Release();
             y.Release();
         }
+    });
+
+    // Each case runs one operation on the CPU and on the Vulkan backend from the same inputs; every storage of the case is
+    // compared after it. On the Vulkan backend it must dispatch kernels and never take the host fallback.
+    private static void VulkanKernelsMatchCpu(Device device) => ForEachVulkan(device, (backend, label) =>
+    {
+        if (Environment.GetEnvironmentVariable("IDRAK_VULKAN_KERNELS") is "0" or "false")
+        {
+            Console.WriteLine("    (IDRAK_VULKAN_KERNELS=0: kernels off, skipped)");
+            return;
+        }
+
+        var cpu = Idrak.Backends.Cpu.CpuBackend.Instance;
+        var random = new Random(9);
+        float[] R(int n, float lo = -2f, float hi = 2f) => [.. Enumerable.Range(0, n).Select(_ => lo + (hi - lo) * random.NextSingle())];
+        float[] Bits(int n) => [.. Enumerable.Range(0, n).Select(_ => BitConverter.Int32BitsToSingle((random.Next() ^ (random.Next() << 16)) & ~(1 << 30)))];   // random bytes, never NaN
+        float[] Ints(int n, int max) => [.. Enumerable.Range(0, n).Select(_ => (float)random.Next(max))];
+
+        void Case(string what, float[][] inputs, Action<Backend, Storage[]> op, float tolerance = 2e-5f)
+        {
+            var host = inputs.Select(d => { var st = cpu.Allocate(d.Length, false); cpu.Upload(d, st); return st; }).ToArray();
+            var gpu = inputs.Select(d => { var st = backend.Allocate(d.Length, false); backend.Upload(d, st); return st; }).ToArray();
+            try
+            {
+                long dispatches = backend.Dispatches, fallbacks = backend.HostCalls;
+                op(cpu, host);
+                op(backend, gpu);
+                Check(backend.Dispatches > dispatches, $"{label}: {what} dispatched no kernel");
+                Check(backend.HostCalls == fallbacks, $"{label}: {what} took the host fallback");
+                for (int i = 0; i < inputs.Length; i++)
+                {
+                    var (expected, actual) = (new float[inputs[i].Length], new float[inputs[i].Length]);
+                    cpu.Download(host[i], expected);
+                    backend.Download(gpu[i], actual);
+                    AssertClose(expected, actual, tolerance, $"{label}: {what}, storage {i}");
+                }
+            }
+            finally
+            {
+                foreach (var st in host.Concat(gpu))
+                {
+                    st.Release();
+                }
+            }
+        }
+
+        const int N = 70_001;
+        Case("unary gelu", [R(N), new float[N]], (b, s) => b.Unary(UnaryOp.Gelu, s[0], s[1], N));
+        Case("unary backward tanh", [R(N), R(N, -1, 1), R(N), R(N)], (b, s) => b.UnaryBackward(UnaryOp.Tanh, s[0], s[1], s[2], s[3], N));
+        Case("binary mul, axpy", [R(N), R(N), new float[N]], (b, s) =>
+        {
+            b.Binary(BinaryOp.Mul, s[0], s[1], s[2], N);
+            b.Axpy(s[0], s[2], N, 0.5f);
+        });
+        Case("add row vector, sum rows", [R(37 * 301), R(301), new float[37 * 301], R(301)], (b, s) =>
+        {
+            b.AddRowVector(s[0], s[1], s[2], 37, 301);
+            b.SumRows(s[2], s[3], 37, 301);
+        });
+        Case("sum", [R(N), new float[1]], (b, s) => b.Sum(s[0], s[1], N, 0.5f), 1e-4f);
+        foreach (int cols in new[] { 33, 700 })                              // narrow (one invocation per row) and wide rows
+        {
+            int rows = 40;
+            Case($"softmax and log-softmax, {cols} columns", [R(rows * cols, -5, 5), new float[rows * cols], new float[rows * cols]], (b, s) =>
+            {
+                b.Softmax(s[0], s[1], rows, cols, log: false);
+                b.Softmax(s[0], s[2], rows, cols, log: true);
+            });
+            Case($"masked softmax, {cols} columns", [R(rows * cols), R(4 * cols), new float[rows * cols]], (b, s) => b.ScaleMaskSoftmax(s[0], s[1], s[2], rows, cols, 4, 0.3f));
+            Case($"rms norm with gain, layer norm, {cols} columns", [R(rows * cols), R(cols), R(cols), new float[rows * cols], new float[rows * cols]], (b, s) =>
+            {
+                b.RmsNormAffine(s[0], s[1], s[3], rows, cols, 1e-6f, 1f);
+                b.LayerNormFused(s[0], s[1], s[2], s[4], rows, cols, 1e-5f);
+            });
+            Case($"arg max, {cols} columns", [R(rows * cols), new float[rows]], (b, s) => b.ArgMax(s[0], s[1], rows, cols), 0f);
+        }
+
+        foreach (var (batch, m, n, k) in new[] { (3, 5, 7, 9), (1, 70, 65, 80) })   // the small and the tiled product
+        {
+            foreach (bool transB in new[] { false, true })
+            {
+                Case($"batched matmul {batch}×{m}×{n}×{k}, transB {transB}", [R(batch * m * k), R(batch * k * n), R(batch * m * n)],
+                    (b, s) => b.BatchedMatMul(s[0], s[1], s[2], batch, m, n, k, false, transB, 0.5f));
+            }
+        }
+
+        Case("int8 product", [R(3 * 64), Bits(64 * 18), R(70), new float[3 * 70]], (b, s) => b.Int8MatMul(s[0], s[1], s[2], s[3], 3, 70, 64));
+        Case("bfloat16 product, packing", [R(3 * 64), R(64 * 70), new float[64 * 35], new float[3 * 70]], (b, s) =>
+        {
+            b.PackBFloat16(s[1], s[2], 64 * 70);
+            b.BFloat16MatMul(s[0], s[2], s[3], 3, 70, 64);
+        });
+        Case("rope, gather, permute, copy 2d", [R(24 * 12), R(24 * 12), R(20 * 5), R(20 * 5), Ints(3, 20), R(50 * 12), Ints(9, 50), new float[9 * 12], new float[9 * 12], R(60)],
+            (b, s) =>
+            {
+                b.Rope(s[0], s[1], s[2], s[3], s[4], 24, 4, 3, 12, 5, false, 1f);
+                b.Gather(s[5], s[6], s[7], 9, 12, 50);
+                b.Permute(s[7], s[8], [12, 9], [1, 12], accumulate: false);
+                b.Copy2D(s[8], 2, 12, s[9], 1, 10, 5, 7, accumulate: true);
+            });
+        foreach (int dim in new[] { 48, 128 })                              // the 64-wide and the 256-wide attention
+        {
+            int heads = 2, rowsPerHead = 3, capacity = 40;
+            Case($"key/value write and decoding attention, head size {dim}", [R(heads * rowsPerHead * dim), R(heads * 2 * dim), R(heads * capacity * dim), R(heads * capacity * dim), new float[] { 20f }, new float[heads * rowsPerHead * dim]],
+                (b, s) =>
+                {
+                    b.KeyValueWrite(s[1], s[2], s[4], heads, 2, capacity, dim);
+                    b.AttentionDecode(s[0], s[2], s[3], s[4], s[5], heads, rowsPerHead, 3, capacity, dim, 0.125f);
+                });
+        }
+
+        Case("dropout", [R(N), new float[N]], (b, s) => b.Dropout(s[0], s[1], N, 0.25f, 77u));
     });
 }

@@ -11,6 +11,31 @@ internal static partial class VulkanKernels
     {
         yield return ("batched_matmul", BatchedMatMul);
 
+        // batched_matmul for small products (attention heads, few rows): one invocation per output, no workgroup memory or
+        // barriers; any number of groups (grid stride over batch · m · n).
+        yield return ("batched_matmul_small", () =>
+        {
+            var k = new KernelBuilder("batched_matmul_small", Block);
+            var (a, b, c) = (k.Buffer("a"), k.Buffer("b"), k.Buffer("c"));
+            var (batch, m, n, depth) = (k.PushInt("batch"), k.PushInt("m"), k.PushInt("n"), k.PushInt("k"));
+            var (transA, transB, beta) = (k.PushInt("transA"), k.PushInt("transB"), k.PushFloat("beta"));
+            var (ta, tb) = (transA.Ne(0), transB.Ne(0));
+            Grid(k, batch * m * n, o =>
+            {
+                var (bi, rest) = (o / (m * n), o % (m * n));
+                var (row, col) = (rest / n, rest % n);
+                var aBase = bi * m * depth;
+                var bBase = bi * depth * n;
+                // op(a)[row, kk] = a[aBase + aStart + kk · aStep]; op(b)[kk, col] = b[bBase + bStart + kk · bStep].
+                var (aStart, aStep) = (k.Select(ta, row, row * depth), k.Select(ta, m, k.Int(1)));
+                var (bStart, bStep) = (k.Select(tb, col * depth, col), k.Select(tb, k.Int(1), n));
+                var acc = k.Local(0f);
+                k.For(k.Int(0), depth, 1, kk => acc.V = k.Fma(a[aBase + aStart + kk * aStep], b[bBase + bStart + kk * bStep], acc.V));
+                k.If(beta.Eq(0), () => c[o] = acc.V, () => c[o] = acc.V + beta * c[o]);
+            });
+            return k.Build();
+        });
+
         // y[m, n] = x[m, k] · (q[k, n] · scales[n]): q signed bytes, four per word along each row of ⌈n / 4⌉ words.
         // One invocation per output (column fastest, so neighbors read neighboring bytes). TODO(tuning): split k across a
         // workgroup and keep x in workgroup memory for the few-row (decoding) shapes.

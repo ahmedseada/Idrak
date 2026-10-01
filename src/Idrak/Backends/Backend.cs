@@ -104,6 +104,9 @@ internal abstract class Storage(Backend backend, int length)
 /// </summary>
 internal abstract class Backend
 {
+    /// <summary>Operations this device has run through the host fallback (<see cref="HostCall"/>), for tests and diagnostics.</summary>
+    internal long HostCalls;
+
     public abstract Storage Allocate(int length, bool zeroed);
 
     /// <summary>What this device's kernels can do (see <see cref="BackendCapabilities"/>).</summary>
