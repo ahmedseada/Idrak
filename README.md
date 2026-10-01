@@ -1077,10 +1077,10 @@ run at 75–125 GB/s (q/k/v 34 µs, gate/up 84 µs, the 151,936-column head 1.9 
 positions 360 µs; a 1 KB upload behind queued work holds the host 5 µs through the staging ring against 521 µs
 synchronously. On its 20-thread CPU (`--bench-cpu`): a bfloat16 product of one row, 1536 × 32,000, 7.8 ms; attention
 over 4,000 cached positions 6.7 ms (float32), 5.2 ms (int8), 10.1 ms (bfloat16); sampling 151,936 tokens with top-k 20
-1.6 ms. On the RTX 5050 Laptop GPU: decoding products of one row at 180–245 GB/s (q/k/v 20 µs,
-gate/up 35 µs, the head 0.75 ms), decoding attention over 4,000 positions 95 µs, a 1 KB upload behind queued work
-5.8 µs (269 µs synchronously); its 16-thread CPU: the bfloat16 product 5.0 ms (1 row), attention over 4,000 positions
-3.3 ms (float32), 6.5 ms (int8), 5.7 ms (bfloat16), sampling with top-k 20 0.9 ms. On the 8-thread CPU-only Windows machine: the bfloat16 product 14.2 ms (1 row) and 32.2 ms (8 rows); attention
+1.6 ms. On the RTX 5050 Laptop GPU (idle machine): decoding products of one row at 180–245 GB/s
+(q/k/v 18–22 µs, gate/up 35 µs, the head 0.64 ms), decoding attention over 4,000 positions 94 µs, a 1 KB upload behind
+queued work 5.1 µs (299 µs synchronously); its 16-thread CPU: the bfloat16 product 4.3 ms (1 row), attention over 4,000
+positions 2.6 ms (float32), 1.6 ms (int8), 2.8 ms (bfloat16), sampling with top-k 20 0.7 ms. On the 8-thread CPU-only Windows machine: the bfloat16 product 14.2 ms (1 row) and 32.2 ms (8 rows); attention
 over 4,000 cached positions 9.5 ms (float32), 3.7 ms (int8), 15.0 ms (bfloat16); sampling with top-k 20 0.9 ms.
 
 Small models such as the samples are dominated by kernel-launch overhead on the GPU; recurrent models are hit
