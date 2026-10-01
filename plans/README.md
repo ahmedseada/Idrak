@@ -1,6 +1,6 @@
 # Hardware plans
 
-Plans for running Idrak on more hardware. Nothing here is built yet; each plan says what to build, in which order, how
+Plans for running Idrak on more hardware, and on more than one device at a time. Nothing here is built yet; each plan says what to build, in which order, how
 to know a step is done, and what could stop it.
 
 Ordered by priority: fix what shipped first, then the fallback every machine uses, then new hardware, largest
@@ -13,6 +13,7 @@ audience first.
 | 3 | [AMD](3-amd.md) | Radeon RX 6000/7000/9000, Ryzen APU graphics, Instinct | not supported (runs on the CPU) | the largest group of GPUs without support; builds the Vulkan backend the Intel plan reuses |
 | 4 | [Intel](4-intel.md) | Iris Xe and Arc integrated GPUs, Arc discrete GPUs, AI Boost NPUs | not supported (runs on the CPU) | GPUs come almost free once plan 3's backend exists; the NPU is inference-only, an add-on, and last |
 | 5 | [Apple](5-apple.md) | Apple silicon Macs (M1–M4 GPU, Neural Engine) | not supported on the GPU; macOS untested | a smaller audience for this library, and a third kernel language (Metal); a Mac test run fills CPU gaps early |
+| 6 | [Idrak.Network](6-network.md) | several GPUs or machines on one job; several machines serving one API | not started (one device per model, one machine per server) | a new package rather than new hardware; useful to NVIDIA users now, so it can run alongside plans 3–5 |
 
 ## The rule every plan keeps
 
@@ -54,4 +55,6 @@ and the Intel plans need them.
    time allows.
 7. **Apple:** a test and `--bench-cpu` run on a Mac as soon as one is available (fills the CPU plan's macOS and ARM64
    gaps); the Metal backend after the Intel GPUs.
-8. **NPUs last:** Intel (`Idrak.OpenVino`) and Apple's Neural Engine (`Idrak.CoreML`), each a one-week trial first.
+8. **Idrak.Network:** once steps 1–2 are done, alongside steps 3–5: multi-GPU data parallel first, then machines,
+   models split across GPUs, and cluster serving.
+9. **NPUs last:** Intel (`Idrak.OpenVino`) and Apple's Neural Engine (`Idrak.CoreML`), each a one-week trial first.
