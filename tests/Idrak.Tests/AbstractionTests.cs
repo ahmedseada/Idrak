@@ -12,6 +12,7 @@ internal static partial class Tests
     private static readonly (string Name, Action<Device> Run)[] AbstractionGroup =
     [
         ("abstractions: every KeyValueFormat has a layout that sizes its cache, and decoding through each layout matches the float32 cache (decoder and multi-head attention layers)", KeyValueLayoutsMatch),
+        ("abstractions: every PackedFormat behind PackedWeight multiplies, expands, lists its buffers and builds layers like its own class (int8, 4-bit, bfloat16), one row and many", PackedWeightsMatch),
         ("abstractions: a custom ITokenSampler (greedy, on the host, not recordable) plugged into TextGenerator gives the built-in sampler's top-1 text, with and without the KV cache", CustomSampler),
     ];
 
@@ -141,6 +142,30 @@ internal static partial class Tests
         }
         catch (NotSupportedException)
         {
+        }
+    }
+
+    private static void PackedWeightsMatch(Device device)
+    {
+        var r = new Random(51);
+        const int Rows = 64, Columns = 96;
+        var values = Enumerable.Range(0, Rows * Columns).Select(_ => (float)(r.NextDouble() * 2 - 1) * 0.1f).ToArray();
+        var inputs = Enumerable.Range(0, 70 * Rows).Select(_ => (float)(r.NextDouble() * 2 - 1)).ToArray();
+        foreach (var format in Enum.GetValues<PackedFormat>())
+        {
+            using var linear = Linear.FromPacked(PackedWeight.FromValues(format, values, Rows, Columns, device));
+            var weight = linear.PackedWeight!;
+            Check(weight.Format == format && weight.Rows == Rows && weight.Columns == Columns, $"{format}: format and shape");
+            Check((format == PackedFormat.Int8) == (linear.Int8 is not null) && (format == PackedFormat.Int4) == (linear.Int4 is not null)
+                  && (format == PackedFormat.BFloat16) == (linear.BFloat16 is not null), $"{format}: the typed view matches");
+            Check(linear.Buffers().Count() == (format == PackedFormat.BFloat16 ? 1 : 2), $"{format}: packed words (and scales) as buffers");
+            using var expanded = weight.Dequantize();
+            foreach (int rows in new[] { 1, 70 })
+            {
+                using var scope = new TensorScope();
+                var x = Tensor.From(inputs.AsSpan(0, rows * Rows), [rows, Rows], device);
+                AssertClose(x.MatMul(expanded).ToArray(), linear.Forward(x).ToArray(), 2e-2f, $"{format}, {rows} rows: the packed product equals the expanded one");
+            }
         }
     }
 }

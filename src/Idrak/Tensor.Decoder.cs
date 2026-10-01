@@ -259,13 +259,16 @@ public sealed partial class Tensor
             return null;
         }
 
-        // One kind for all: 3 = float32 (one layer), 2 = bfloat16, 1 = 4-bit.
-        int kind = layers[0].BFloat16 is not null ? 2 : layers[0].Int4 is not null ? 1 : layers[0].Int8 is null && layers[0].TiedTo is null ? 3 : -1;
+        // One weight form for all: float32 (one frozen, untied layer), or one packed format the low-rank products read.
+        var packedFormat = layers[0].PackedWeight?.Format;
+        bool dense = packedFormat is null;
         foreach (var layer in layers)
         {
-            int own = layer.BFloat16 is not null ? 2 : layer.Int4 is not null ? 1 : layer.Int8 is null && layer.TiedTo is null ? 3 : -1;
-            if (own != kind || kind < 0 || layer.InFeatures != k || layer.Adapter is not { } adapter || adapter.Rank != first.Rank
-                || adapter.A.Device != input.Device || kind == 3 && (layers.Count > 1 || layer.Weight.RequiresGrad) || withBias && layer.Bias is { RequiresGrad: true })
+            bool fits = dense
+                ? layer.PackedWeight is null && layer.TiedTo is null && layers.Count == 1 && !layer.Weight.RequiresGrad
+                : layer.PackedWeight is { LowRankProducts: true } own && own.Format == packedFormat;
+            if (!fits || layer.InFeatures != k || layer.Adapter is not { } adapter || adapter.Rank != first.Rank
+                || adapter.A.Device != input.Device || withBias && layer.Bias is { RequiresGrad: true })
             {
                 return null;
             }
@@ -299,15 +302,15 @@ public sealed partial class Tensor
             }
         }
 
-        if (!done && kind == 3)
+        if (!done && dense)
         {
             done = backend.MatMulLowRank(flat.Storage, layers[0].Weight.Storage, outputs[0].Storage, m, layers[0].OutFeatures, k, false, 0f,
                 us[0].Storage, layers[0].Adapter!.B.Storage, rank);
         }
         else if (!done)
         {
-            done = backend.PackedMatMulLowRank(kind == 2 ? 2 : 1, flat.Storage, m, k,
-                [.. layers.Select((l, j) => (kind == 2 ? l.BFloat16!.Packed.Storage : l.Int4!.Packed.Storage, kind == 2 ? null : l.Int4!.Scales.Storage,
+            done = backend.PackedMatMulLowRank(packedFormat!.Value, flat.Storage, m, k,
+                [.. layers.Select((l, j) => (l.PackedWeight!.PackedValues.Storage, l.PackedWeight.ScaleValues?.Storage,
                     outputs[j].Storage, l.OutFeatures, us[j].Storage, l.Adapter!.B.Storage))], rank);
         }
 
@@ -357,26 +360,18 @@ public sealed partial class Tensor
 
                     float beta = 1f;
                     var dx = flat.RequiresGrad ? flat.GradientTarget(out beta) : null;         // the first gradient written, not added
-                    if (dx is not null && kind == 2
-                        && backend.BFloat16TransposedMatMul(g.Storage, layer.BFloat16!.Packed.Storage, dx, m, k, n, beta, dt.Storage, a.Storage, rank))
+                    if (dx is not null && layer.PackedWeight is { } stored && stored.TransposedProduct(g, dx, m, k, n, beta, dt.Storage, a.Storage, rank))
                     {
-                        // dx (+)= g·Wᵀ + dt·Aᵀ with W read as the bfloat16 words it is stored in.
+                        // dx (+)= g·Wᵀ + dt·Aᵀ with W read as the words it is stored in (bfloat16).
                     }
                     else if (dx is not null)
                     {
                         // dx += g·Wᵀ + dt·Aᵀ (W [k, n] as float32; packed weights expanded first).
                         Tensor? expanded = null;
-                        if (kind != 3)
+                        if (layer.PackedWeight is { } weight)
                         {
                             expanded = Empty([k, n], flat.Device, track: false);
-                            if (kind == 2)
-                            {
-                                backend.BFloat16Dequantize(layer.BFloat16!.Packed.Storage, expanded.Storage, k, n);
-                            }
-                            else
-                            {
-                                backend.Int4Dequantize(layer.Int4!.Packed.Storage, layer.Int4.Scales.Storage, expanded.Storage, k, n);
-                            }
+                            weight.DequantizeInto(expanded.Storage);
                         }
 
                         using (expanded)
@@ -408,12 +403,12 @@ public sealed partial class Tensor
     /// training: each output's gradient flows to the input (dx += g · Wᵀ with the weight expanded to float32). Null when
     /// the device has no such pass.
     /// </summary>
-    internal static Tensor[]? MatMulPackedManyRecorded(Tensor input, int kind, IReadOnlyList<Layers.Linear> layers)
+    internal static Tensor[]? MatMulPackedManyRecorded(Tensor input, Layers.PackedFormat format, IReadOnlyList<Layers.Linear> layers)
     {
         Tensor[]? outputs;
         using (Autograd.NoGrad())
         {
-            outputs = MatMulPackedMany(input, kind, layers);
+            outputs = MatMulPackedMany(input, format, layers);
         }
 
         if (outputs is null || !WillRecord(input))
@@ -428,12 +423,13 @@ public sealed partial class Tensor
             int n = layer.OutFeatures;
             outputs[j].Record("matmul_packed", g =>
             {
-                if (layer.BFloat16 is { } h && input.Backend.BFloat16TransposedMatMul(g.Storage, h.Packed.Storage, input.GradStorage(), m, k, n, 1f, null, null, 0))
+                var weight = layer.PackedWeight!;
+                if (weight.TransposedProduct(g, input.GradStorage(), m, k, n, 1f, null, null, 0))
                 {
                     return;                                                                        // dx += g · Wᵀ, W as stored
                 }
 
-                using var w = layer.Int8?.Dequantize() ?? layer.Int4?.Dequantize() ?? layer.BFloat16!.Dequantize();
+                using var w = weight.Dequantize();
                 input.Backend.BatchedMatMul(g.Storage, w.Storage, input.GradStorage(), 1, m, k, n, false, true, 1f);   // dx += g · wᵀ
             }, input);
         }
@@ -655,19 +651,13 @@ public sealed partial class Tensor
         using var offload = Offloading.Enter(layer, gate);              // offloaded weights staged (else nothing)
         gate.ThrowIfDisposed();
         up.ThrowIfDisposed();
-        int kind = layer.Int8 is not null ? 0 : layer.Int4 is not null ? 1 : layer.BFloat16 is not null ? 2 : -1;
         int k = gate._shape[^1], m = gate.Size / Math.Max(1, k);
-        if (kind < 0 || k != layer.InFeatures || up.Size != gate.Size || m > gate.Backend.Capabilities.FewRows)
+        if (layer.PackedWeight is not { } weight || k != layer.InFeatures || up.Size != gate.Size || m > gate.Backend.Capabilities.FewRows)
         {
             return null;
         }
 
-        var (packed, scales) = kind switch
-        {
-            0 => (layer.Int8!.Packed, layer.Int8.Scales),
-            1 => (layer.Int4!.Packed, layer.Int4.Scales),
-            _ => (layer.BFloat16!.Packed, (Tensor?)null),
-        };
+        var (packed, scales) = (weight.PackedValues, weight.ScaleValues);
         if (packed.Device != gate.Device)
         {
             return null;
@@ -675,7 +665,7 @@ public sealed partial class Tensor
 
         long start = Telemetry.Start(TelemetryLevel.Operations);
         var y = Empty([.. gate._shape[..^1], layer.OutFeatures], gate.Device);
-        if (!gate.Backend.PackedMatMulGated(kind, activation, gate.Storage, up.Storage, packed.Storage, scales?.Storage, y.Storage, m, layer.OutFeatures, k))
+        if (!gate.Backend.PackedMatMulGated(weight.Format, activation, gate.Storage, up.Storage, packed.Storage, scales?.Storage, y.Storage, m, layer.OutFeatures, k))
         {
             y.Dispose();
             return null;
@@ -694,20 +684,14 @@ public sealed partial class Tensor
         using var offload = Offloading.EnterMany([layer, norm], x);
         x.ThrowIfDisposed();
         residual.ThrowIfDisposed();
-        int kind = layer.Int8 is not null ? 0 : layer.Int4 is not null ? 1 : layer.BFloat16 is not null ? 2 : -1;
         int k = x._shape[^1], m = x.Size / Math.Max(1, k), n = layer.OutFeatures;
-        if (kind < 0 || layer.Bias is not null || layer.Adapter is not null || k != layer.InFeatures || m > x.Backend.Capabilities.FewRows
+        if (layer.PackedWeight is not { } weight || layer.Bias is not null || layer.Adapter is not null || k != layer.InFeatures || m > x.Backend.Capabilities.FewRows
             || residual.Size != m * n || residual._shape[^1] != n || norm.Features != n || !x.Backend.Capabilities.FusedKernels)
         {
             return null;
         }
 
-        var (packed, scales) = kind switch
-        {
-            0 => (layer.Int8!.Packed, layer.Int8.Scales),
-            1 => (layer.Int4!.Packed, layer.Int4.Scales),
-            _ => (layer.BFloat16!.Packed, (Tensor?)null),
-        };
+        var (packed, scales) = (weight.PackedValues, weight.ScaleValues);
         if (packed.Device != x.Device || residual.Device != x.Device || norm.Gain.Device != x.Device)
         {
             return null;
@@ -717,7 +701,7 @@ public sealed partial class Tensor
         var y = Empty(residual._shape, x.Device, track: false);
         var sum = Empty(residual._shape, x.Device);
         var normalized = Empty(residual._shape, x.Device);
-        bool done = x.Backend.PackedMatMulAddRmsNorm(kind, x.Storage, packed.Storage, scales?.Storage, y.Storage, m, n, k, residual.Storage, sum.Storage,
+        bool done = x.Backend.PackedMatMulAddRmsNorm(weight.Format, x.Storage, packed.Storage, scales?.Storage, y.Storage, m, n, k, residual.Storage, sum.Storage,
             norm.Gain.Storage, normalized.Storage, norm.Epsilon, norm.Offset);
         y.Dispose();                                                 // stream-ordered: freed after the kernel read it
         if (!done)
@@ -739,24 +723,17 @@ public sealed partial class Tensor
     {
         using var offload = Offloading.EnterMany([gate, up], input);
         input.ThrowIfDisposed();
-        int kind = gate.Int8 is not null ? 0 : gate.Int4 is not null ? 1 : gate.BFloat16 is not null ? 2 : -1;
         int k = input._shape[^1], m = input.Size / Math.Max(1, k), n = gate.OutFeatures;
-        if (kind < 0 || m > input.Backend.Capabilities.FewRows || !input.Backend.Capabilities.FusedKernels || up.OutFeatures != n
+        if (gate.PackedWeight is not { } gateWeight || up.PackedWeight is not { } upWeight || upWeight.Format != gateWeight.Format
+            || m > input.Backend.Capabilities.FewRows || !input.Backend.Capabilities.FusedKernels || up.OutFeatures != n
             || gate.InFeatures != k || up.InFeatures != k || gate.Bias is not null || up.Bias is not null || gate.Adapter is not null
-            || up.Adapter is not null || (kind == 0 ? up.Int8 is null : kind == 1 ? up.Int4 is null : up.BFloat16 is null))
+            || up.Adapter is not null)
         {
             return null;
         }
 
-        (Tensor Packed, Tensor? Scales) Weights(Layers.Linear layer) => kind switch
-        {
-            0 => (layer.Int8!.Packed, layer.Int8.Scales),
-            1 => (layer.Int4!.Packed, layer.Int4.Scales),
-            _ => (layer.BFloat16!.Packed, null),
-        };
-
-        var (gatePacked, gateScales) = Weights(gate);
-        var (upPacked, upScales) = Weights(up);
+        var (gatePacked, gateScales) = (gateWeight.PackedValues, gateWeight.ScaleValues);
+        var (upPacked, upScales) = (upWeight.PackedValues, upWeight.ScaleValues);
         if (gatePacked.Device != input.Device || upPacked.Device != input.Device)
         {
             return null;
@@ -766,7 +743,7 @@ public sealed partial class Tensor
         var gateOut = Empty([m * n], input.Device, track: false);
         var upOut = Empty([m * n], input.Device, track: false);
         var hidden = Empty([.. input._shape[..^1], n], input.Device);
-        bool done = input.Backend.PackedMatMulGatedPair(kind, activation, input.Storage, m, k,
+        bool done = input.Backend.PackedMatMulGatedPair(gateWeight.Format, activation, input.Storage, m, k,
             [(gatePacked.Storage, gateScales?.Storage, null, gateOut.Storage, n), (upPacked.Storage, upScales?.Storage, null, upOut.Storage, n)],
             hidden.Storage);
         gateOut.Dispose();                                           // stream-ordered: freed after the kernel read them
@@ -784,7 +761,7 @@ public sealed partial class Tensor
     /// The layers' packed products of one input in one device pass (few rows, not recorded), or null when the device has
     /// no single-pass version.
     /// </summary>
-    internal static Tensor[]? MatMulPackedMany(Tensor input, int kind, IReadOnlyList<Layers.Linear> layers)
+    internal static Tensor[]? MatMulPackedMany(Tensor input, Layers.PackedFormat format, IReadOnlyList<Layers.Linear> layers)
     {
         input.ThrowIfDisposed();
         long start = Telemetry.Start(TelemetryLevel.Operations);
@@ -794,12 +771,8 @@ public sealed partial class Tensor
         for (int j = 0; j < layers.Count; j++)
         {
             var layer = layers[j];
-            var (packed, scales) = kind switch
-            {
-                0 => (layer.Int8!.Packed, layer.Int8.Scales),
-                1 => (layer.Int4!.Packed, layer.Int4.Scales),
-                _ => (layer.BFloat16!.Packed, (Tensor?)null),
-            };
+            var weight = layer.PackedWeight!;                                  // the caller checked: one format for all
+            var (packed, scales) = (weight.PackedValues, weight.ScaleValues);
             if (packed.Device != input.Device)
             {
                 return null;
@@ -809,7 +782,7 @@ public sealed partial class Tensor
             products[j] = (packed.Storage, scales?.Storage, layer.Bias?.Storage, outputs[j].Storage, layer.OutFeatures);
         }
 
-        if (!input.Backend.PackedMatMulMany(kind, input.Storage, m, k, products))
+        if (!input.Backend.PackedMatMulMany(format, input.Storage, m, k, products))
         {
             foreach (var output in outputs)
             {

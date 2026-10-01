@@ -214,6 +214,9 @@ public sealed record DecoderSpec
 
             float[] Initial(int count, float uniformBound) => options.InitStd is { } std ? Normal(count, std) : Uniform(count, uniformBound);
 
+            // The format the projections are packed in (frozen weights), or null for trainable float32 ones.
+            PackedFormat? packed = options.Int8 ? PackedFormat.Int8 : options.Int4 ? PackedFormat.Int4 : options.BFloat16 ? PackedFormat.BFloat16 : null;
+
             Linear Projection(string name, int inputs, int outputs, bool bias, float[]? transposedFrom = null)
             {
                 int[] shape = [inputs, outputs];
@@ -222,9 +225,8 @@ public sealed record DecoderSpec
                         ? Initial(inputs * outputs, MathF.Sqrt(6f / (inputs + outputs)))
                         : throw new InvalidDataException($"The weights have no '{name}.weight' [{inputs}, {outputs}]."));
                 var b = bias ? Tensor($"{name}.bias", [outputs], () => new float[outputs]) : null;
-                return options.Int8 ? Linear.FromInt8(Int8Weight.Quantize(Values(), inputs, outputs, device), b)
-                    : options.Int4 ? Linear.FromInt4(Int4Weight.Quantize(Values(), inputs, outputs, device), b)
-                    : options.BFloat16 ? Linear.FromBFloat16(BFloat16Weight.FromValues(Values(), inputs, outputs, device), b)
+                return packed is { } format
+                    ? Linear.FromPacked(PackedWeight.FromValues(format, Values(), inputs, outputs, device), b)
                     : Linear.FromWeights(Idrak.Tensor.Persistent(Values(), shape, device, requiresGrad: true), b);
             }
 
@@ -240,7 +242,7 @@ public sealed record DecoderSpec
                 ? (options.InitStd is { } embedStd ? Normal(Vocabulary * Dim, embedStd) : [.. Enumerable.Range(0, Vocabulary * Dim).Select(_ => (float)(random.NextDouble() * 2 - 1) * 0.02f)])
                 : weights.Read("embed.weight", [Vocabulary, Dim]) ?? throw new InvalidDataException($"The weights have no 'embed.weight' [{Vocabulary}, {Dim}].");
             // Frozen-weight builds keep the table as bfloat16 (half the memory; lossless for bfloat16 checkpoints).
-            bool frozen = options.Int8 || options.Int4 || options.BFloat16;
+            bool frozen = packed is not null;
             var embedding = frozen
                 ? Embedding.FromBFloat16(BFloat16Weight.FromValues(embeddingValues, Vocabulary, Dim, device))
                 : Embedding.FromWeights(Idrak.Tensor.Persistent(embeddingValues, [Vocabulary, Dim], device, requiresGrad: true));

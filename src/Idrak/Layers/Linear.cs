@@ -30,14 +30,12 @@ public sealed class Linear : Module
         Bias = bias ? CreateParameter(new float[outFeatures], [outFeatures], device) : null;
     }
 
-    private Linear(int inFeatures, int outFeatures, Tensor? weight, Int8Weight? int8, Tensor? bias, BFloat16Weight? half = null, Int4Weight? int4 = null)
+    private Linear(int inFeatures, int outFeatures, Tensor? weight, PackedWeight? packed, Tensor? bias)
     {
-        Int4 = int4;
         InFeatures = inFeatures;
         OutFeatures = outFeatures;
         _weight = weight;
-        Int8 = int8;
-        BFloat16 = half;
+        _packed = packed;
         Bias = bias;
     }
 
@@ -55,11 +53,14 @@ public sealed class Linear : Module
         return new Linear(weight.Shape[0], weight.Shape[1], weight, null, bias);
     }
 
+    /// <summary>A layer around existing packed weights (int8, 4-bit or bfloat16); the layer takes ownership.</summary>
+    public static Linear FromPacked(PackedWeight weight, Tensor? bias = null) => new(weight.Rows, weight.Columns, null, weight, bias);
+
     /// <summary>A layer around existing int8 weights (see <see cref="ModuleExtensions.QuantizeInt8"/>); the layer takes ownership.</summary>
     public static Linear FromInt8(Int8Weight weight, Tensor? bias = null) => new(weight.Rows, weight.Columns, null, weight, bias);
 
     /// <summary>A layer around existing bfloat16 weights (see <see cref="ModuleExtensions.ToBFloat16"/>); the layer takes ownership.</summary>
-    public static Linear FromBFloat16(BFloat16Weight weight, Tensor? bias = null) => new(weight.Rows, weight.Columns, null, null, bias, weight);
+    public static Linear FromBFloat16(BFloat16Weight weight, Tensor? bias = null) => new(weight.Rows, weight.Columns, null, weight, bias);
 
     /// <summary>
     /// An output layer tied to <paramref name="embedding"/>: y = x · Eᵀ (+ b) with the embedding's [vocabulary, dim] table,
@@ -75,7 +76,7 @@ public sealed class Linear : Module
     private Embedding? _tiedTo;
 
     /// <summary>A layer around existing 4-bit weights (see <see cref="ModuleExtensions.QuantizeInt4"/>); the layer takes ownership.</summary>
-    public static Linear FromInt4(Int4Weight weight, Tensor? bias = null) => new(weight.Rows, weight.Columns, null, null, bias, null, weight);
+    public static Linear FromInt4(Int4Weight weight, Tensor? bias = null) => new(weight.Rows, weight.Columns, null, weight, bias);
 
     /// <summary>Number of input features.</summary>
     public int InFeatures { get; }
@@ -86,22 +87,24 @@ public sealed class Linear : Module
     /// <summary>The [inFeatures, outFeatures] weight matrix.</summary>
     public Tensor Weight => _weight ?? throw new InvalidOperationException(_tiedTo is not null
         ? $"{this} reads the embedding table of {_tiedTo} (transposed); use TiedTo.Weight."
-        : Int8 is not null
-        ? $"{this} holds int8 weights (see Int8); call DequantizeInt8() on the model to get float weights back."
-        : Int4 is not null ? $"{this} holds 4-bit weights (see Int4); call ToFloat32() on the model to get float weights back."
-        : $"{this} holds bfloat16 weights (see BFloat16); call ToFloat32() on the model to get float weights back.");
+        : $"{this} holds {_packed!.Description} weights (see {_packed.Format}); call {_packed.FloatMethod} on the model to get float weights back.");
+
+    /// <summary>The packed weights (int8, int4 or bfloat16) when the layer holds them, else null (float weights).</summary>
+    public PackedWeight? PackedWeight => _packed;
+
+    private PackedWeight? _packed;
 
     /// <summary>The 4-bit weights when the layer holds them (see <see cref="ModuleExtensions.QuantizeInt4"/>), else null.</summary>
-    public Int4Weight? Int4 { get; private set; }
+    public Int4Weight? Int4 => _packed as Int4Weight;
 
     // Whether the weights are packed (int8, int4 or bfloat16) rather than a float tensor.
-    internal bool Packed => Int8 is not null || Int4 is not null || BFloat16 is not null;
+    internal bool Packed => _packed is not null;
 
     /// <summary>The bfloat16 weights when the layer holds them (see <see cref="ModuleExtensions.ToBFloat16"/>), else null.</summary>
-    public BFloat16Weight? BFloat16 { get; private set; }
+    public BFloat16Weight? BFloat16 => _packed as BFloat16Weight;
 
     /// <summary>The int8 weights when the layer was quantized with <see cref="ModuleExtensions.QuantizeInt8"/>, else null.</summary>
-    public Int8Weight? Int8 { get; private set; }
+    public Int8Weight? Int8 => _packed as Int8Weight;
 
     private Tensor? _weight;
 
@@ -160,11 +163,11 @@ public sealed class Linear : Module
 
         // Packed weights of one kind (int8, int4, bfloat16): one pass where the device has one (few rows; for prompts, one
         // tensor-core launch over all the layers' columns).
-        int kind = layers[0].Int8 is not null ? 0 : layers[0].Int4 is not null ? 1 : layers[0].BFloat16 is not null ? 2 : -1;
-        bool packed = kind >= 0 && !Autograd.IsEnabled && layers.Length is > 1 and <= 3
+        var format = layers[0].PackedWeight?.Format;
+        bool packed = format is not null && !Autograd.IsEnabled && layers.Length is > 1 and <= 3
             && (rows <= capabilities.FewRows || layers.All(l => l.Bias is null))                  // prompts: one launch
-            && layers.All(l => l.Adapter is null && l.InFeatures == k && (kind == 0 ? l.Int8 is not null : kind == 1 ? l.Int4 is not null : l.BFloat16 is not null));
-        if (packed && Tensor.MatMulPackedMany(input, kind, layers) is { } outputs)
+            && layers.All(l => l.Adapter is null && l.InFeatures == k && l.PackedWeight?.Format == format);
+        if (packed && Tensor.MatMulPackedMany(input, format!.Value, layers) is { } outputs)
         {
             return outputs;
         }
@@ -177,9 +180,9 @@ public sealed class Linear : Module
 
         // Training over frozen packed layers (LoRA / QLoRA): the base products still run as one pass, recorded, and each
         // layer's adapter adds its low-rank term into its output.
-        bool training = kind >= 0 && Autograd.IsEnabled && layers.Length is > 1 and <= 3 && capabilities.FusedKernels
-            && layers.All(l => l.Bias is null && l.InFeatures == k && (kind == 0 ? l.Int8 is not null : kind == 1 ? l.Int4 is not null : l.BFloat16 is not null));
-        if (training && Tensor.MatMulPackedManyRecorded(input, kind, layers) is { } products)
+        bool training = format is not null && Autograd.IsEnabled && layers.Length is > 1 and <= 3 && capabilities.FusedKernels
+            && layers.All(l => l.Bias is null && l.InFeatures == k && l.PackedWeight?.Format == format);
+        if (training && Tensor.MatMulPackedManyRecorded(input, format!.Value, layers) is { } products)
         {
             return [.. products.Select((product, j) => layers[j].Adapter is { } a ? Tensor.AddLowRank(product, input, a.A, a.B, a.Scale) : product)];
         }
@@ -203,8 +206,7 @@ public sealed class Linear : Module
             return fused;
         }
 
-        var product = Int8 is { } q ? input.MatMulInt8(q) : Int4 is { } q4 ? input.MatMulInt4(q4) : BFloat16 is { } h ? input.MatMulBFloat16(h)
-            : _tiedTo is { } e ? TiedProduct(input, e.Weight) : input.MatMul(Weight);
+        var product = _packed is { } packed ? packed.MatMul(input) : _tiedTo is { } e ? TiedProduct(input, e.Weight) : input.MatMul(Weight);
         return Adapter is { } a ? Tensor.AddLowRank(product, input, a.A, a.B, a.Scale) : product;
     }
 
@@ -243,12 +245,12 @@ public sealed class Linear : Module
             return true;
         }
 
-        if (_tiedTo is not null || Int8 is not null || _weight is { RequiresGrad: true })
+        if (_tiedTo is not null || _packed is { Float8Copy: false } || _weight is { RequiresGrad: true })
         {
             return false;
         }
 
-        using var dense = _weight is null ? Int4?.Dequantize() ?? BFloat16!.Dequantize() : null;
+        using var dense = _weight is null ? _packed!.Dequantize() : null;
         Float8 = Float8Weight.Create(dense ?? _weight!);
         return Float8 is not null;
     }
@@ -284,7 +286,7 @@ public sealed class Linear : Module
 
     /// <summary>Folds the adapter into the weight (<c>W += A·B·scale</c>) and removes it; the outputs stay the same.</summary>
     /// <inheritdoc />
-    public override IEnumerable<Tensor> Buffers() => Int8 is { } q ? [q.Packed, q.Scales] : Int4 is { } q4 ? [q4.Packed, q4.Scales] : BFloat16 is { } h ? [h.Packed] : [];
+    public override IEnumerable<Tensor> Buffers() => _packed?.Buffers() ?? [];
 
     // The float weight values (dequantized when the layer holds int8 weights).
     internal float[] WeightValues()
@@ -330,7 +332,7 @@ public sealed class Linear : Module
         Untie();
         DequantizeInt8(trainable: false);
         ToFloat32(trainable: false);
-        BFloat16 = BFloat16Weight.Convert(Weight);
+        _packed = BFloat16Weight.Convert(Weight);
         _weight!.Dispose();
         _weight = null;
     }
@@ -338,20 +340,18 @@ public sealed class Linear : Module
     // Back to float weights from bfloat16 or 4-bit ones.
     internal void ToFloat32(bool trainable)
     {
-        if (BFloat16 is null && Int4 is null)
+        if (_packed is null or Int8Weight)
         {
-            return;
+            return;                                                        // float already, or int8 (DequantizeInt8)
         }
 
-        using (var w = BFloat16?.Dequantize() ?? Int4!.Dequantize())
+        using (var w = _packed.Dequantize())
         {
             _weight = Tensor.Persistent(w.ToArray(), [InFeatures, OutFeatures], w.Device, trainable);
         }
 
-        BFloat16?.Dispose();
-        Int4?.Dispose();
-        BFloat16 = null;
-        Int4 = null;
+        _packed.Dispose();
+        _packed = null;
     }
 
     // Loading packed weights (Module.Load): room for them, allocated without quantizing the current weights that the
@@ -360,7 +360,7 @@ public sealed class Linear : Module
     {
         if (Int8 is null)
         {
-            Int8 = Int8Weight.Empty(InFeatures, OutFeatures, ReleaseWeights());
+            _packed = Int8Weight.Empty(InFeatures, OutFeatures, ReleaseWeights());
         }
     }
 
@@ -368,7 +368,7 @@ public sealed class Linear : Module
     {
         if (Int4 is null)
         {
-            Int4 = Int4Weight.Empty(InFeatures, OutFeatures, ReleaseWeights());
+            _packed = Int4Weight.Empty(InFeatures, OutFeatures, ReleaseWeights());
         }
     }
 
@@ -376,7 +376,7 @@ public sealed class Linear : Module
     {
         if (BFloat16 is null)
         {
-            BFloat16 = BFloat16Weight.Empty(InFeatures, OutFeatures, ReleaseWeights());
+            _packed = BFloat16Weight.Empty(InFeatures, OutFeatures, ReleaseWeights());
         }
     }
 
@@ -389,10 +389,8 @@ public sealed class Linear : Module
         _tiedTransposed = null;
         _weight?.Dispose();
         _weight = null;
-        Int8?.Dispose();
-        Int4?.Dispose();
-        BFloat16?.Dispose();
-        (Int8, Int4, BFloat16) = (null, null, null);
+        _packed?.Dispose();
+        _packed = null;
         return device;
     }
 
@@ -406,7 +404,7 @@ public sealed class Linear : Module
         Untie();
         DequantizeInt8(trainable: false);
         ToFloat32(trainable: false);
-        Int4 = Int4Weight.Quantize(Weight);
+        _packed = Int4Weight.Quantize(Weight);
         _weight!.Dispose();
         _weight = null;
     }
@@ -420,7 +418,7 @@ public sealed class Linear : Module
 
         Untie();
         ToFloat32(trainable: false);
-        Int8 = Int8Weight.Quantize(Weight);
+        _packed = Int8Weight.Quantize(Weight);
         _weight!.Dispose();
         _weight = null;
     }
@@ -438,7 +436,7 @@ public sealed class Linear : Module
         }
 
         q.Dispose();
-        Int8 = null;
+        _packed = null;
     }
 
     internal void MergeAdapter()
@@ -450,7 +448,7 @@ public sealed class Linear : Module
 
         if (Packed)
         {
-            throw new InvalidOperationException($"{this}: merging a LoRA adapter into {(Int8 is not null ? "int8" : Int4 is not null ? "4-bit" : "bfloat16")} weights would lose precision; call {(Int8 is null ? "ToFloat32()" : "DequantizeInt8()")} first, or keep the adapter.");
+            throw new InvalidOperationException($"{this}: merging a LoRA adapter into {_packed!.Description} weights would lose precision; call {_packed.FloatMethod} first, or keep the adapter.");
         }
 
         Untie();
@@ -470,9 +468,7 @@ public sealed class Linear : Module
     protected internal override void MoveTo(Device device)
     {
         _weight = _weight is null ? null : MoveTensor(_weight, device);
-        Int8?.MoveTo(device, MoveTensor);
-        BFloat16?.MoveTo(device, MoveTensor);
-        Int4?.MoveTo(device, MoveTensor);
+        _packed?.MoveTo(device, MoveTensor);
         Bias = Bias is null ? null : MoveTensor(Bias, device);
         if (Adapter is { } a)
         {
@@ -482,7 +478,7 @@ public sealed class Linear : Module
 
     /// <inheritdoc />
     public override string ToString() =>
-        $"Linear({InFeatures} -> {OutFeatures}{(Bias is null ? ", no bias" : "")}{(Int8 is null ? "" : ", int8")}{(BFloat16 is null ? "" : ", bf16")}{(Int4 is null ? "" : ", int4")}{(_tiedTo is null ? "" : ", tied")}{(Adapter is { } a ? $", LoRA rank {a.Rank}" : "")})";
+        $"Linear({InFeatures} -> {OutFeatures}{(Bias is null ? ", no bias" : "")}{(_packed is null ? "" : $", {_packed.ShortName}")}{(_tiedTo is null ? "" : ", tied")}{(Adapter is { } a ? $", LoRA rank {a.Rank}" : "")})";
 }
 
 /// <summary>

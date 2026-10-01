@@ -548,7 +548,7 @@ internal static partial class Tests
                     using (Autograd.NoGrad())
                     using (var scope = new TensorScope())
                     {
-                        var together = Tensor.MatMulPackedMany(input, format switch { "int8" => 0, "int4" => 1, _ => 2 }, layers);
+                        var together = Tensor.MatMulPackedMany(input, layers[0].PackedWeight!.Format, layers);
                         Check(together is not null, $"{format} {string.Join('+', widths)}: one launch");
                         for (int j = 0; j < layers.Length; j++)
                         {
