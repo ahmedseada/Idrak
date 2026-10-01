@@ -67,11 +67,23 @@ app.MapOllamaApi("/api", "chat");                         // the gateway routes 
 
 ## Part 1: distributed compute
 
-**The first goal: training over a local network.** Several machines on one LAN (each with its own GPU, or CPU)
-train one model together: each takes its share of every batch, and their gradients are averaged over TCP, sent as
-bfloat16 to halve the traffic. Everything else in this plan builds on it.
+**The first goal: training over a local network, for every kind of training.** Several machines on one LAN (each
+with its own GPU, or CPU) train one model together: each takes its share of every batch, and their gradients are
+averaged over TCP, sent as bfloat16 to halve the traffic. It works for anything Idrak trains (a network built with
+`Network` or `Sequential`, a GPT trained from scratch, a fine-tuned language model), not only LoRA. Everything else in
+this plan builds on it.
 
 ### Phase 1. Several machines over TCP (local-network training, first)
+
+**Where it plugs in: the gradient exchange sits between the backward pass and the optimizer step**, which every
+kind of training in Idrak has. So one mechanism covers all of them:
+
+| Kind of training | How it joins the group |
+|---|---|
+| `Trainer` / `TrainingRun` (any model: tabular, images, sequences, classifiers) | `trainer.DataParallel(group)` / `run.DataParallel(group)`; callbacks, metrics, early stopping and checkpoints keep working |
+| A GPT or other model trained from scratch (the GptTraining sample's loop) | the same, or `group.AllReduceGradients(model)` before `optimizer.Step()` in a hand-written loop |
+| Hand-written loops | `group.AllReduceGradients(model)` (or a `DistributedOptimizer` wrapping any optimizer) |
+| Language-model fine-tuning: full weights, LoRA, QLoRA (`FineTuner`, `idrak-tune train`) | `FineTuningOptions.Group`; only the trained values travel (adapters for LoRA, every weight otherwise) |
 
 **How a run looks**
 
@@ -86,8 +98,14 @@ using var group = await ProcessGroup.StartAsync(new NetworkOptions
 {
     Coordinator = "192.168.1.10:29500", Rank = rank, WorldSize = 2, Key = sharedKey,
 });
-var run = new TrainingRun { Model = model, ... }.DataParallel(group);   // or FineTuner with Group = group
-run.Fit();                                                               // rank 0 writes the checkpoints
+
+// any model with the Trainer or TrainingRun
+var history = new TrainingRun { Model = model, Loss = Losses.CrossEntropy, ... }.DataParallel(group).Fit();
+
+// or a hand-written loop (a GPT trained from scratch)
+loss.Backward();
+group.AllReduceGradients(model);        // averaged across machines, bfloat16 on the wire
+optimizer.Step();
 ```
 
 (`--node` / `--nodes`, not `--rank`: `idrak-tune` already uses `--rank` for the LoRA rank.)
@@ -101,7 +119,12 @@ run.Fit();                                                               // rank
 | All-reduce | ring reduce-scatter then all-gather (each machine sends and receives 2·(N−1)/N of the gradients, whatever N is) |
 | bfloat16 on the wire | gradients converted to bfloat16 on the GPU before they are read back, sent as bfloat16, added up in float32 on arrival; the averaged result goes back to the GPU as float32 |
 | Overlap | gradients grouped in buckets (about 25 MB); a bucket's all-reduce starts as soon as the backward pass has written it, while later layers are still computing; uploads and downloads go through the staging ring |
-| Data | every rank reads a different slice of each batch (the same seed everywhere), so the global batch is the per-machine batch × N |
+| Data | every rank reads a different slice of each batch (the same seed everywhere), so the global batch is the per-machine batch × N; `DataLoader`, the datasets library and the fine-tuning batches each get a per-rank slice |
+| Same model on every machine | rank 0 broadcasts the starting weights (or every rank loads the same checkpoint and the group checks a hash), so random initialization cannot differ |
+| Optimizers | any optimizer (SGD, Adam, AdamW, 8-bit AdamW, grouped): each machine runs the same step on the same averaged gradients, so the weights stay identical without being sent again |
+| Gradient clipping | the norm is taken after averaging, so every machine clips by the same amount |
+| Layers with running state | BatchNorm running statistics averaged across machines at the end of each epoch (or synchronized per batch as an option); dropout masks differ per machine on purpose |
+| Metrics and early stopping | losses and metrics summed across machines before they are reported, so every machine sees the same validation result and stops at the same epoch |
 | Checkpoints and logs | rank 0 writes checkpoints and the loss log; every rank can resume from them |
 | Failures | a send or receive that waits longer than a timeout ends the step on every rank with a clear message naming the rank; the run resumes from the last checkpoint |
 | Mixed machines | allowed (different GPUs, or a CPU rank); every step waits for the slowest machine, and the log shows each rank's step time so the slow one is visible |
@@ -112,18 +135,26 @@ Each step moves about the gradient size per machine (2·(N−1)/N of it). In bfl
 
 | What is trained | Trained values (about) | bfloat16 per step | 1 Gb/s Ethernet (~0.11 GB/s) | 10 Gb/s (~1.1 GB/s) |
 |---|---|---|---|---|
+| A classifier or regressor (`Network`, a few million weights) | ~2 M | ~4 MB | ~0.04 s | ~0.004 s |
 | LoRA rank 16, a 0.5B model | ~9 M | ~18 MB | ~0.16 s | ~0.02 s |
+| A GPT trained from scratch, 100 M weights | ~100 M | ~200 MB | ~1.8 s | ~0.18 s |
 | LoRA rank 16, a 7B model | ~40 M | ~80 MB | ~0.7 s | ~0.07 s |
 | Every weight of a 0.5B model | ~500 M | ~1 GB | ~9 s | ~0.9 s |
 
-So LoRA fine-tuning is the first target: on gigabit Ethernet its gradient traffic is a fraction of a typical step,
-and overlap hides most of it. Training every weight needs 10 Gb/s or faster, or many steps of gradient accumulation
-between exchanges (also supported: `GradientAccumulation` already exists in fine-tuning). Float32 on the wire stays
-available as an option for comparison.
+Every kind of training runs over any network; the network decides how much of each step is spent waiting:
 
-**Done when**
-- two PCs on a LAN fine-tune with LoRA and get the same losses as one PC with twice the batch, within bfloat16
-  rounding of the gradients (both runs logged and compared with the existing `compare` tool);
+- **Small and medium models, and LoRA:** gradient traffic is a fraction of a typical step on gigabit Ethernet, and
+  overlap hides most of it.
+- **Large models trained in full** (a 100 M-weight GPT from scratch, full fine-tuning): exchange gradients every few
+  steps instead of every step (gradient accumulation, added to the `Trainer` where it is missing; `FineTuningOptions`
+  already has it), or use 10 Gb/s or faster. The plan reports, per run, how much of each step was spent waiting on the
+  network, so the choice is visible.
+- Float32 on the wire stays available as an option for comparison.
+
+**Done when**, for each kind of training (a `TrainingRun` model such as the HousePrices or Spirals sample, the
+GptTraining sample trained from scratch, and a LoRA and a full fine-tune with `idrak-tune`):
+- two PCs on a LAN get the same losses as one PC with twice the batch, within bfloat16 rounding of the gradients
+  (both runs logged and compared with the existing `compare` tool), and the weights stay identical on both PCs;
 - the step time with two machines is measured on 1 Gb/s (and 2.5 or 10 Gb/s if available) and recorded in the README;
 - the tests run the same thing as two and three local processes over loopback, so CI covers it without a LAN.
 

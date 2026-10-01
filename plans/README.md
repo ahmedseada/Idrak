@@ -55,6 +55,6 @@ and the Intel plans need them.
    time allows.
 7. **Apple:** a test and `--bench-cpu` run on a Mac as soon as one is available (fills the CPU plan's macOS and ARM64
    gaps); the Metal backend after the Intel GPUs.
-8. **Idrak.Network:** once steps 1–2 are done, alongside steps 3–5: training over a local network first (machines
-   over TCP, bfloat16 gradients), then several GPUs in one machine, models split across GPUs, and cluster serving.
+8. **Idrak.Network:** once steps 1–2 are done, alongside steps 3–5: training over a local network first, for every kind
+   of training (machines over TCP, bfloat16 gradients), then several GPUs in one machine, models split across GPUs, and cluster serving.
 9. **NPUs last:** Intel (`Idrak.OpenVino`) and Apple's Neural Engine (`Idrak.CoreML`), each a one-week trial first.
