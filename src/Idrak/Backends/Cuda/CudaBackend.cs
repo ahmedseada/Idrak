@@ -92,6 +92,8 @@ internal sealed unsafe partial class CudaBackend : Backend
     /// <summary>Memory kept free when offloaded tensors come back (ComputeResources.OffloadReturnHeadroom, else an eighth, at least 256 MiB).</summary>
     internal long ReturnHeadroom => ComputeResources.OffloadReturnHeadroom ?? Math.Max(256L << 20, _totalMemory / 8);
     private readonly int _computeMajor, _computeMinor;
+    private readonly string _deviceName;
+    private readonly int _driverVersion;                                         // the CUDA version the driver supports (13000 = 13.0)
 
     // The tensor-core module (compute capability 8.0 and newer), loaded on first use; null when unavailable.
     private Dictionary<string, IntPtr>? _tensorCore;
@@ -256,7 +258,9 @@ internal sealed unsafe partial class CudaBackend : Backend
         Check(cuDeviceGetAttribute(out _computeMinor, AttributeComputeCapabilityMinor, device), nameof(cuDeviceGetAttribute));
         // The CUDA version the installed driver supports (13000 = 13.0), not the driver's own release number.
         string cuda = cuDriverGetVersion(out int version) == 0 ? $", CUDA {version / 1000}.{version % 1000 / 10} driver" : "";
-        Name = $"{Marshal.PtrToStringAnsi((IntPtr)name)} ({memory / (1024 * 1024)} MiB, {_multiprocessors} SMs, compute {_computeMajor}.{_computeMinor}{cuda})";
+        _driverVersion = cuda.Length > 0 ? version : 0;
+        _deviceName = Marshal.PtrToStringAnsi((IntPtr)name) ?? "";
+        Name = $"{_deviceName} ({memory / (1024 * 1024)} MiB, {_multiprocessors} SMs, compute {_computeMajor}.{_computeMinor}{cuda})";
         _memory = new MemoryAccountant(() => ComputeResources.GpuMemoryLimit, $"cuda:{ordinal}");
 
         IntPtr module = LoadModule(PtxKernels.Source);

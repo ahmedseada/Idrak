@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- CUDA autotuning is steadier and remembered: candidates are timed over seven rounds in alternating order and compared by
+  their median (one lucky timing picked 8 k splits at 7.7 µs over 16 at 6.6 µs on "o + add + norm"), and measured
+  choices are kept per GPU, driver and library build in `IDRAK_CACHE` (default `~/.cache/idrak`) under `tuning/cuda/`,
+  so later starts read them instead of measuring (`IDRAK_TUNING_CACHE=0` turns that off, `=<folder>` moves it; a file
+  of another GPU, driver, build or format version is ignored and rewritten). Decoding-attention splits are now measured
+  per shape at a full cache instead of set by "~5 blocks per SM" (the formula stays the default until measured and with
+  `IDRAK_AUTOTUNE=0`). Every CUDA constant and heuristic is classified in plans/README.md ("Status of each rule").
 - Core code no longer branches on the device or a data format; each goes through an abstraction its implementations
   fill in (same results, same kernels, nothing added on the per-token path beyond one interface call per layer):
   - **Device capabilities** (`Backend.Capabilities`): few-row limit, decoding and tiled attention head sizes, matrix

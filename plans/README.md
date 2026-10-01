@@ -35,10 +35,16 @@ tuned with `--bench-gemm` / `--bench-gemv` on one RTX 5070 Ti (compute 12.0, 70 
 - **Relative, not absolute, sizes.** Limits scale with the device: blocks per SM, a fraction of total memory, a
   fraction of L2. Fixed byte counts are a smell.
 - **When no rule wins everywhere, measure on the user's card.** Since 0.1.6 (`CudaBackend.Tuning.cs`): the first time
-  a shape needs a choice, every candidate runs on the real inputs, back to back and in turns over five rounds, and the
-  fastest is kept for the process. The device-count formula is the default while measuring is impossible (a graph is
-  being recorded, the profiler runs, `IDRAK_AUTOTUNE=0`) and wins unless a candidate is 3% faster. Every tuned value
-  keeps a benchmark override (`GemvSplits`, `TensorSplitsOverride`, ...) for tests.
+  a shape needs a choice, every candidate runs on the real inputs, back to back and in turns (forwards, then backwards)
+  over seven rounds, and the candidate with the fastest **median** is kept (`TuneTiming`; until 0.1.7 the best of five,
+  which one lucky timing could decide). The device-count formula is the default while measuring is impossible (a graph
+  is being recorded, the profiler runs, `IDRAK_AUTOTUNE=0`) and wins unless a candidate's median is 3% faster. Measured
+  choices are **kept per GPU** (name, compute capability, SM count, memory), driver (CUDA version and release) and library
+  build (version and a hash of the kernels) in `IDRAK_CACHE` (default `~/.cache/idrak`) under `tuning/cuda/`, one text
+  file per GPU with a format version; a file of another identity is ignored and rewritten, and a kept value is used only
+  while it is still one of the shape's candidates (`TuningCache`; `IDRAK_TUNING_CACHE=0` turns it off,
+  `IDRAK_TUNING_CACHE=<folder>` moves it). Every tuned value keeps a benchmark override (`GemvSplits`,
+  `TensorSplitsOverride`, `DecodeSplits`, ...) for tests.
 - **Checked on several cards across generations.** The README's "Tested on" table records the runs. A choice may not
   be more than 5% slower than the best fixed one on any tested card.
 - **Other backends follow the same rule.** AMD, Intel and Apple (plans 3–5) read their own device limits through
@@ -47,25 +53,41 @@ tuned with `--bench-gemm` / `--bench-gemv` on one RTX 5070 Ti (compute 12.0, 70 
 
 ### Status of each rule
 
-| Rule (file) | Before 0.1.6 | Since 0.1.6 | Left to do |
+Every constant, threshold and heuristic in `src/Idrak/Backends/Cuda` that decides a kernel, split, tile, row cut-over,
+block size or buffer size, classified: **(a)** a hardware/ISA limit or fixed by the kernel's own design (fine, reason
+given), **(b)** measured on the device or relative to what it reports (fine), **(c)** violates the rule (fixed here, or
+left open with the reason).
+
+| Rule (file) | Before 0.1.6 | Now | Class / left to do |
 |---|---|---|---|
-| Few-row int8 rows → GEMV or tensor cores (`PrefersPackedMatMul`) | 4–8 rows to tensor cores on every tensor-core GPU (tuned on 5070 Ti) | ✅ measured per shape | an RTX 3060 and an Ada (8.9) run |
-| Few-row k splits (`GemvSplitCount`) | ~2 blocks per SM, power of two | ✅ measured per shape (powers of two) | – |
-| Tensor-core k splits (`TensorSplits`) | ~16 blocks per SM, ≤ 8 splits | ✅ measured per shape (1, 2, 3, 4, 6, 8, 12, ...) | – |
-| Prompt k splits (`PromptSplits`) | none at 85–100% of a wave | ✅ measured per shape | – |
-| Fused activation (`PackedMatMulGated`) | int4 only | ✅ measured per shape, every format | – |
-| 64 / 128 tiles without tensor cores | by SM count | ✅ measured per shape | a run on a GPU without tensor cores |
-| GPU memory reserve (`GpuMemoryReserve`) | 512 MiB fixed | ✅ 1/16 of the GPU's memory, at least 256 MiB | – |
-| Offload headroom (`OffloadReturnHeadroom`) | 1 GiB fixed | ✅ 1/8 of the GPU's memory, at least 256 MiB | – |
-| Decoding-attention splits (`DecodeSplit`) | ~5 blocks per SM | ⚠️ still the formula: its time depends on how full the cache is, so a first-call measurement would mislead | measure at a full cache (e.g. an `--autotune` pass) |
-| Prompt row tile 64 / 128 (`PromptTileRows`) | by tile fill | fine (geometry, not hardware) | – |
-| Async upload size (`AsyncUploadBytes`, 16 MB staging ring) | fixed | fine as a host-side size | confirm on PCIe 3 / 4 / 5 |
+| Few-row int8 rows → GEMV or tensor cores (`PrefersPackedMatMul`) | 4–8 rows to tensor cores on every tensor-core GPU (tuned on 5070 Ti) | ✅ measured per shape (median), kept per GPU | (b); an RTX 3060 and an Ada (8.9) run |
+| Few-row k splits (`GemvSplitCount`, `GemvMultiSplits`) | ~2 blocks per SM, power of two | ✅ measured per shape (powers of two up to k/64, at most 64: the kernels' 64-row unrolled step) | (b) |
+| Tensor-core k splits (`TensorSplits`) | ~16 blocks per SM, ≤ 8 splits | ✅ measured per shape (1, 2, 3, 4, 6, 8, 12, ... up to k/128) | (b) |
+| Prompt k splits (`PromptSplits`, multi and low-rank products) | none at 85–100% of a wave | ✅ measured per shape below 4 waves of tiles (relative to the SM count) | (b) |
+| Fused activation (`PackedMatMulGated`) | int4 only | ✅ measured per shape, every format | (b) |
+| 64 / 128 tiles without tensor cores (float and packed) | by SM count | ✅ measured per shape | (b); a run on a GPU without tensor cores |
+| Decoding-attention splits (`DecodeSplit`) | ~5 blocks per SM | ✅ measured per shape (kernel, rows, capacity, head size) **at a full cache** (a scratch position at the last row; the formula is the default until then) | (b) was (c) until 0.1.7 |
+| Measured choices per process | measured at every start | ✅ kept per GPU + driver + library build (`TuningCache`) | (b) |
+| Timing noise | best of 5 rounds | ✅ median of 7 rounds, alternating order, 3% margin over the formula | (b) |
+| GPU memory reserve (`GpuMemoryReserve`) | 512 MiB fixed | ✅ 1/16 of the GPU's memory, at least 256 MiB (the driver's own context, not a card property) | (b) |
+| Offload headroom (`OffloadReturnHeadroom`) | 1 GiB fixed | ✅ 1/8 of the GPU's memory, at least 256 MiB | (b) |
+| Reduction grid (`Sum`) | – | at most 8 blocks per SM (grid-stride loop) | (b) relative to the SM count |
+| Prompt row tile 64 / 128 (`PromptTileRows`) | by tile fill | the last 128-row tile at most half full → 64 | (a) geometry of the prompt, not of the card |
+| Row cut-over few rows → prompt products (`GemvRows` = 8) | – | the GEMV kernels keep 8 rows in registers | (a) kernel design; 4–8 rows measured against tensor cores (above) |
+| Float GEMV for ≤ 8 rows when n·k ≥ 65536 (`BatchedMatMul`) | – | smaller products keep the 16 × 16 kernel so a small model's results do not depend on the batch | (a) a numerical-consistency rule, the same on every card |
+| Skinny products to tensor cores (side 8–63, `BatchedMatMul`) | – | by size (≥ 2²⁴ multiply-adds or k ≥ 2048) | (a) which products MixedPrecision moves to bfloat16: a precision rule that must not depend on timing |
+| Tensor cores / FP8 / INT8 available | – | compute capability ≥ 8.0 / 8.9 / 8.0 as reported; a module the driver rejects is skipped | (a) ISA |
+| Head-size limits (`DecodeMaxDim` 256, `FlashMaxDim` 128, flash tensor-core 64/128) | – | 8 values per lane × 32 lanes; tiles in registers and shared memory | (a) kernel design |
+| Block sizes (`BlockSize`, `RowThreads`, `GemmThreads` 256; `GemvThreads`, `SamplerThreads` 1024; `Int8GemvThreads` 512), tiles (`Tile` 16, `TensorTile` 128, `TensorK` 32, `FlashTile` 32, `FlashTensorRows` 64, 8-bit k 64 × 3 stages) | – | written into the kernels; within every CUDA GPU's limits (1024 threads, 48 KiB static shared memory; the 8-bit and flash backward kernels' dynamic shared memory ≤ 99 KiB, checked by the driver) | (a) kernel design |
+| Top-k sampling (`CandidateSlice` 2048, `CandidateSlots` 64; one block per row when the vocabulary ≤ 4 slices) | – | kernel design (slots per block, top-k ≤ 64 takes the candidate pass) | (a) |
+| Split counters (≥ 4096), JIT log (16 KiB), grid z (65535) | – | buffer sizes / the CUDA grid limit | (a) |
+| Pool best fit (a cached block ≤ 25% larger, from 1024 floats) | – | relative to the request | (b) host-side allocator policy |
+| Async upload size (`AsyncUploadBytes` 4 MiB, 16 MiB staging ring) | fixed | host-side pinned memory: no GPU attribute applies | ⚠️ confirm on PCIe 3 / 4 / 5; measure if a run shows a difference |
 
 **Open:**
-- Measured choices last for one process; caching them per GPU, compute capability and driver in the user's cache
-  folder would save the few milliseconds of measuring at each start.
 - Re-run `--bench-gemv` on the RTX 3060 to confirm "auto" is within 5% of the best column there, as it is on the
-  RTX 5050 and the RTX 5070 Ti (0.1.7: every decoding and prompt-sized row within about 5%).
+  RTX 5050 and the RTX 5070 Ti (0.1.7: every decoding and prompt-sized row within about 5%), now including the
+  attention rows (auto measured at a full cache).
 
 ## Shared work before any new backend
 
