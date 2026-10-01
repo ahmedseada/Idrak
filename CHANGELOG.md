@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.7 (2026-10-01)
 
 - License: Apache License 2.0 instead of MIT, from this version on (`LICENSE`, `NOTICE`, the packages' license
   expression `Apache-2.0`). Apache 2.0 is as permissive as MIT and adds an explicit patent grant. Versions 0.1.0
