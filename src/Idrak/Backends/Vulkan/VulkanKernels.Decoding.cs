@@ -156,24 +156,48 @@ internal static partial class VulkanKernels
             return k.Build();
         });
 
-        yield return ("attention_decode", () => Attention("attention_decode", CacheFormat.Float, Block));
+        yield return ("attention_decode", () => Attention("attention_decode", CacheFormat.Float));
 
         // attention_decode over a bfloat16 cache: keys and values [heads, capacity, ⌈dim / 2⌉ words].
-        yield return ("attention_bf16", () => Attention("attention_bf16", CacheFormat.BFloat16, Block));
+        yield return ("attention_bf16", () => Attention("attention_bf16", CacheFormat.BFloat16));
 
         // attention_decode over an int8 cache: keys and values [heads, capacity, ⌈dim / 4⌉ words] of signed bytes, one scale
         // per cached row (keyScales, valueScales [heads, capacity]).
-        yield return ("attention_int8", () => Attention("attention_int8", CacheFormat.Int8, Block));
+        yield return ("attention_int8", () => Attention("attention_int8", CacheFormat.Int8));
 
-        // The same with workgroups of 64 for head sizes up to 64 (fewer idle lanes and shorter reductions).
-        foreach (var (name, format) in new[] { ("attention_decode", CacheFormat.Float), ("attention_bf16", CacheFormat.BFloat16), ("attention_int8", CacheFormat.Int8) })
+        // Merges the splits of a split attention dispatch: part [rows, splits, dim + 2] holds each split's weighted values
+        // Σ e_c · v_c (e_c = exp(score_c - its max)), then its max and Σ e_c. y[row, d] = Σ_s a_s · acc_s[d] / Σ_s a_s · sum_s
+        // with a_s = exp(max_s - max over s): splits in order; an empty split (max -∞, sums 0) adds nothing. One invocation
+        // per output.
+        yield return ("attention_combine", () =>
         {
-            yield return (name + "_64", () => Attention(name + "_64", format, SmallAttentionLanes));
-        }
+            var k = new KernelBuilder("attention_combine", Block);
+            var (part, y) = (k.Buffer("part"), k.Buffer("y"));
+            var (rows, splits, dim) = (k.PushInt("rows"), k.PushInt("splits"), k.PushInt("dim"));
+            Grid(k, rows * dim, i =>
+            {
+                var (row, d) = (i / dim, i % dim);
+                var stride = dim + 2;
+                var first = row * splits * stride;
+                var max = k.Local(part[first + dim]);
+                k.For(k.Int(1), splits, 1, s => max.V = k.Max(max.V, part[first + s * stride + dim]));
+                var (num, den) = (k.Local(0f), k.Local(0f));
+                k.For(k.Int(0), splits, 1, s =>
+                {
+                    var at = first + s * stride;
+                    var weight = k.Exp(part[at + dim] - max.V);
+                    num.V = k.Fma(weight, part[at + d], num.V);
+                    den.V = k.Fma(weight, part[at + dim + 1], den.V);
+                });
+                y[i] = num.V / den.V;
+            });
+            return k.Build();
+        });
     }
 
-    /// <summary>Workgroup width (and largest head size) of the "…_64" attention kernels.</summary>
-    public const int SmallAttentionLanes = 64;
+    /// <summary>Fewest positions a split of a split attention dispatch takes, per workgroup width (an eighth of a tile;
+    /// shorter contexts use fewer splits).</summary>
+    public static int AttentionMinChunk(int width) => width / 8;
 
     private enum CacheFormat
     {
@@ -183,84 +207,211 @@ internal static partial class VulkanKernels
     }
 
     // Attention over a key/value cache [heads, capacity, dim] for query rows q [heads, rowsPerHead, dim]: row i of head h
-    // sees positions c = 0 … min(position[0] + i % rowsPerHead % steps, capacity - 1). One workgroup per query row
-    // (dim ≤ lanes, the workgroup width: invocation d keeps output dimension d). Pass 1: each invocation scores its positions for the row's
-    // maximum. Pass 2, a workgroup's width of positions at a time: the invocations score them again into workgroup memory as
-    // exp(score - max), then each output dimension adds its weighted values. y = Σ e_c · v_c / Σ e_c.
-    // TODO(tuning): split long contexts across workgroups; cooperative dot products (subgroups) instead of one per lane.
-    private static SpirvKernel Attention(string name, CacheFormat format, int lanes)
+    // sees positions c = 0 … count - 1, count = min(position[0] + i % rowsPerHead % steps, capacity - 1) + 1.
+    // Grid: x = query rows (a group takes rows x, x + groups, …), y = splits: split s takes positions
+    // [s · chunk, min(count, (s + 1) · chunk)), chunk = max(⌈count / splits⌉, width / 8), computed here from the current
+    // length (so the dispatch shape depends only on the shapes). A workgroup of `width` (W) goes through its positions W
+    // at a time (a tile) with an online softmax:
+    //   1. invocation t scores position c0 + t (q · k_c · scale, -∞ past the split) into scratch → the tile's max by a
+    //      reduction; max' = max(max, tile max), every running sum is rescaled by exp(max - max');
+    //   2. invocation t stores e_t = exp(score_t - max') (int8: times the value row's scale) in weights[t] and adds e_t
+    //      to its running total;
+    //   3. invocation (p, d) = (t >> dimShift, t & (2^dimShift - 1)) adds Σ weights[w] · v[c0 + w, d + j·W] over the
+    //      tile's positions w ≡ p (mod W >> dimShift), for j < max(1, 256 / W) (dimShift = log2 of the head size rounded up to a
+    //      power of two, at most log2 W: small heads spread the positions over parts of the workgroup, heads wider than
+    //      W give each invocation several dimensions).
+    // At the end the totals are summed, the parts p of each dimension added in order, and the row is written: y = acc /
+    // total with one split, else (acc, max, total) to part[row, split] for attention_combine. A split with no positions
+    // writes (0, -∞, 0).
+    //
+    // Workgroup memory — every phase is separated by a barrier:
+    //   query[0 … max(255, W - 1)] written at the start of a row (after the previous row's final barrier), read while scoring;
+    //   scratch[W]: the reductions (each ends with a barrier after the result is read), then the parts' sums per j
+    //   (written after a barrier ending the previous reads, read after the next);
+    //   weights[W]: weights[t] written by invocation t after the tile max's reduction (whose barriers follow the barrier
+    //   that ends the previous tile's reads of weights), read after the next barrier.
+    private static SpirvKernel Attention(string name, CacheFormat format)
     {
+        int lanes = Block, dimsPerLane = Math.Max(1, AttentionMaxDim / lanes);
         var k = new KernelBuilder(name, lanes);
         var (q, keys, values) = (k.Buffer("q"), k.Buffer("keys"), k.Buffer("values"));
         var (keyScales, valueScales) = format == CacheFormat.Int8 ? (k.Buffer("keyScales"), k.Buffer("valueScales")) : (null, null);
         var (position, y) = (k.Buffer("position"), k.Buffer("y"));
         var (heads, rowsPerHead, steps, capacity, dim) = (k.PushInt("heads"), k.PushInt("rowsPerHead"), k.PushInt("steps"), k.PushInt("capacity"), k.PushInt("dim"));
-        var scale = k.PushFloat("scale");
-        var query = k.Shared("query", lanes);
+        var (scale, dimShift) = (k.PushFloat("scale"), k.PushInt("dimShift"));
+        var query = k.Shared("query", dimsPerLane * lanes);
         var weights = k.Shared("weights", lanes);
         var scratch = k.Shared("scratch", lanes);
         var lane = k.LocalX;
         var start = position[k.Int(0)].ToInt();
+        var splits = k.GroupsY;
         var words = format switch
         {
             CacheFormat.BFloat16 => (dim + 1) / 2,
             CacheFormat.Int8 => (dim + 3) / 4,
             _ => dim,
         };
+        var part = lane.ShiftRight(dimShift);                                // this invocation's share of the positions
+        var parts = k.Int(lanes).ShiftRight(dimShift);
+        var d = lane & (k.Int(1).ShiftLeft(dimShift) - 1);
 
-        // Dimension d of cached row `slot` (= head · capacity + position) of a cache.
-        Val At(Buf cache, Val slot, Val d) => format switch
+        // Dimension dd of cached row `slot` (= head · capacity + position) of a cache.
+        Val At(Buf cache, Val slot, Val dd) => format switch
         {
-            CacheFormat.BFloat16 => BFloat16At(k, cache, slot * words + (d >> 1), d),
-            CacheFormat.Int8 => Int8At(k, cache, slot * words, d),
-            _ => cache[slot * dim + d],
+            CacheFormat.BFloat16 => BFloat16At(k, cache, slot * words + (dd >> 1), dd),
+            CacheFormat.Int8 => Int8At(k, cache, slot * words, dd),
+            _ => cache[slot * dim + dd],
         };
+
+        // q · k_slot · scale, a word of the key row at a time (four words per step, loaded before they are used). Past
+        // dim, query[] holds zeros: the int8 row's padding bytes add +0; bfloat16's odd last half is never read.
+        Val Score(Val slot)
+        {
+            var dot = k.Local(0f);
+            var rowStart = slot * words;
+            void Word(Val w, Val bits)
+            {
+                switch (format)
+                {
+                    case CacheFormat.Int8:
+                        for (int b = 0; b < 4; b++)
+                        {
+                            dot.V = dot.V + query[4 * w + b] * ((bits << (24 - 8 * b)) >> 24).ToFloat();
+                        }
+
+                        break;
+                    case CacheFormat.BFloat16:
+                        dot.V = dot.V + query[2 * w] * (bits.AsUInt() << 16).AsFloat();
+                        dot.V = dot.V + query[2 * w + 1] * (bits.AsUInt() & k.UInt(0xFFFF0000u)).AsFloat();
+                        break;
+                    default:
+                        dot.V = dot.V + query[w] * bits.AsFloat();
+                        break;
+                }
+            }
+
+            // Words holding only dimensions below dim (bfloat16: the odd last dimension is added on its own).
+            var whole = format == CacheFormat.BFloat16 ? dim >> 1 : words;
+            Unrolled(k, whole, 4, w => keys.Int(rowStart + w), Word);
+            if (format == CacheFormat.BFloat16)
+            {
+                k.If((dim & 1).Eq(1), () => dot.V = dot.V + query[dim - 1] * (keys.UInt(rowStart + whole) << 16).AsFloat());
+            }
+
+            return keyScales is null ? dot.V * scale : dot.V * keyScales[slot] * scale;
+        }
+
+        var acc = new Var[dimsPerLane];
+        for (int j = 0; j < dimsPerLane; j++)
+        {
+            acc[j] = k.Local(ScalarKind.Float);
+        }
 
         EachRow(k, heads * rowsPerHead, row =>
         {
             var h = row / rowsPerHead;
             var count = k.Min(start + row % rowsPerHead % steps, capacity - 1) + 1;
             var first = h * capacity;
-            k.If(lane < dim, () => query[lane] = q[row * dim + lane]);
-            k.Barrier();
-
-            Val Score(Val c)
+            var chunk = k.Max((count + splits - 1) / splits, k.Int(AttentionMinChunk(lanes)));
+            var begin = k.GroupY * chunk;
+            var end = k.Min(count, begin + chunk);
+            for (int j = 0; j < dimsPerLane; j++)
             {
-                var dot = k.Local(0f);
-                var slot = first + c;
-                k.For(k.Int(0), dim, 1, d => dot.V = dot.V + query[d] * At(keys, slot, d));
-                return keyScales is null ? dot.V * scale : dot.V * keyScales[slot] * scale;
+                var at = lane + j * lanes;
+                query[at] = k.Float(0f);
+                k.If(at < dim, () => query[at] = q[row * dim + at]);
+                acc[j].V = k.Float(0f);
             }
 
-            var best = k.Local(float.NegativeInfinity);
-            k.For(lane, count, lanes, c => best.V = k.Max(best.V, Score(c)));
-            var max = k.ReduceMax(scratch, best.V);
-
-            var acc = k.Local(0f);
+            k.Barrier();
+            var max = k.Local(float.NegativeInfinity);                      // uniform: every invocation computes the same
             var total = k.Local(0f);
-            k.For(k.Int(0), count, lanes, c0 =>
+            k.For(begin, end, lanes, c0 =>
             {
                 var c = c0 + lane;
+                var score = k.Local(float.NegativeInfinity);
+                k.If(c < end, () => score.V = Score(first + c));
+                var tileMax = k.ReduceMax(scratch, score.V);
+                var newMax = k.Max(max.V, tileMax);
+                var rescale = k.Exp(max.V - newMax);                          // 0 for the first tile (max = -∞)
                 var e = k.Local(0f);
-                var weighted = k.Local(0f);                              // e times the value row's scale (int8)
-                k.If(c < count, () =>
-                {
-                    e.V = k.Exp(Score(c) - max);
-                    weighted.V = valueScales is null ? e.V : e.V * valueScales[first + c];
-                });
-                weights[lane] = weighted.V;
-                total.V = total.V + e.V;
+                k.If(c < end, () => e.V = k.Exp(score.V - newMax));
+                weights[lane] = valueScales is null ? e.V : e.V * valueScales[first + k.Min(c, end - 1)];
+                total.V = k.Fma(total.V, rescale, e.V);
+                max.V = newMax;
                 k.Barrier();
-                k.If(lane < dim, () =>
+                var tile = k.Min(end - c0, k.Int(lanes));
+                var rowAt = first + c0 + part;
+                var mine = (tile - part + parts - 1) / parts;                // this part's positions of the tile
+                for (int j = 0; j < dimsPerLane; j++)
                 {
-                    var chunk = k.Min(count - c0, k.Int(lanes));
-                    k.For(k.Int(0), chunk, 1, w => acc.V = k.Fma(weights[w], At(values, first + c0 + w, lane), acc.V));
-                });
-                k.Barrier();
+                    var (sum, dj) = (k.Local(acc[j].V * rescale), d + j * lanes);
+                    k.If(dj < dim, () => Unrolled(k, mine, 4, i => At(values, rowAt + i * parts, dj),
+                        (i, v) => sum.V = k.Fma(weights[part + i * parts], v, sum.V)));
+                    acc[j].V = sum.V;
+                }
+
+                k.Barrier();                                                  // weights read before the next tile writes them
             });
-            var sum = k.ReduceSum(scratch, total.V);
-            k.If(lane < dim, () => y[row * dim + lane] = acc.V / sum);
+
+            var all = k.ReduceSum(scratch, total.V);
+            for (int j = 0; j < dimsPerLane; j++)
+            {
+                if (j > 0)
+                {
+                    k.Barrier();                                              // the previous dimensions' sums are read
+                }
+
+                scratch[lane] = acc[j].V;
+                k.Barrier();
+                var dj = lane + j * lanes;
+                k.If((lane < k.Int(1).ShiftLeft(dimShift)) & (dj < dim), () =>
+                {
+                    var value = k.Local(scratch[lane]);
+                    k.For(k.Int(1), parts, 1, p => value.V = value.V + scratch[p.ShiftLeft(dimShift) + lane]);
+                    k.If(splits.Eq(1), () => y[row * dim + dj] = value.V / all, () =>
+                    {
+                        var at = (row * splits + k.GroupY) * (dim + 2);
+                        y[at + dj] = value.V;
+                        k.If(dj.Eq(0), () =>
+                        {
+                            y[at + dim] = max.V;
+                            y[at + dim + 1] = all;
+                        });
+                    });
+                });
+            }
+
+            k.Barrier();                                                      // scratch and query are free for the next row
         });
         return k.Build();
+    }
+
+    // for (i = 0; i < count; i++) use(i, load(i)), `unroll` at a time with their loads first, then the rest one by one.
+    private static void Unrolled(KernelBuilder k, Val count, int unroll, Func<Val, Val> load, Action<Val, Val> use)
+    {
+        var i = k.Local(k.Int(0));
+        k.While(() => i.V + (unroll - 1) < count, () =>
+        {
+            var at = i.V;
+            var loaded = new Val[unroll];
+            for (int u = 0; u < unroll; u++)
+            {
+                loaded[u] = load(at + u);
+            }
+
+            for (int u = 0; u < unroll; u++)
+            {
+                use(at + u, loaded[u]);
+            }
+
+            i.V = at + unroll;
+        });
+        k.While(() => i.V < count, () =>
+        {
+            var at = i.V;
+            use(at, load(at));
+            i.V = at + 1;
+        });
     }
 }
