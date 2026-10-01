@@ -1105,9 +1105,12 @@ Results per run of the whole test list on one device:
 | 2026-10-01 | feecb42 | – | minimal test backend (memory and copies only) | – | test | host fallback | – | host | – | Ubuntu 24.04, 4 threads | 226 of 226 |
 | 2026-10-01 | feecb42 | – | none (CPU only) | x64, AVX2 | CPU | CPU | – | – | – | Ubuntu 24.04, 4 threads | 226 of 226 |
 
-Vulkan speed is not tuned yet (on the RTX 5070 Ti: 1.3 µs per dispatch and 724 GB/s element-wise, but decoding
-products and attention 3-20× slower than CUDA's), so `Device.Default` picks a Vulkan GPU only with
-`IDRAK_VULKAN_DEFAULT=1`; tests run on every Vulkan GPU found.
+The Vulkan kernels are not tuned yet: dispatches and element-wise kernels already run near the hardware's limits,
+but decoding products and attention are several times slower than CUDA's on the same GPU. Tuning follows the
+card-agnostic rule of [plans/README.md](plans/README.md): choices come from what the device reports (compute units,
+subgroup size, workgroup and shared-memory limits, memory heaps) or are measured on the user's device, never from a
+card's name. Until then `Device.Default` picks a Vulkan GPU only with `IDRAK_VULKAN_DEFAULT=1`; tests run on every
+Vulkan GPU found.
 
 Benchmarks on the RTX 3060 Laptop GPU (`--bench-gemv`, Qwen3-0.6B shapes, int8 weights): decoding products of one row
 run at 75–125 GB/s (q/k/v 34 µs, gate/up 84 µs, the 151,936-column head 1.9 ms); decoding attention over 4,000 cached
