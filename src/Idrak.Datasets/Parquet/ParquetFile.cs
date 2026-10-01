@@ -395,6 +395,8 @@ public static class ParquetFile
     private static ColumnData ReadColumn(Stream stream, ThriftStruct meta, Leaf leaf)
     {
         int codec = meta.Int(4) ?? 0;
+        IParquetCodec? decoder = null;                              // looked up once, at the chunk's first compressed page
+        byte[] Decompress(ReadOnlySpan<byte> input, int size) => (decoder ??= ParquetCodecs.Get(codec)).Decompress(input, size);
         long total = meta.Long(5) ?? 0;
         long dataOffset = meta.Long(9) ?? throw new InvalidDataException("Parquet column without a data page offset.");
         long start = meta.Long(11) is { } dict && dict > 0 && dict < dataOffset ? dict : dataOffset;
@@ -423,7 +425,7 @@ public static class ParquetFile
                 case 2:                                             // dictionary page
                 {
                     var h = header.Struct(7)!;
-                    var raw = Codecs.Decompress(codec, page, uncompressed);
+                    var raw = Decompress(page, uncompressed);
                     var list = new List<object?>();
                     int offset = 0;
                     Plain(raw, ref offset, leaf.Node, h.Int(1) ?? 0, list);
@@ -444,7 +446,7 @@ public static class ParquetFile
                 {
                     var h = header.Struct(5)!;
                     int count = h.Int(1) ?? 0;
-                    var raw = Codecs.Decompress(codec, page, uncompressed);
+                    var raw = Decompress(page, uncompressed);
                     int offset = 0;
                     int present = ReadLevels(raw, ref offset, count, leaf, reps, defs, lengthPrefixed: true, repLength: 0, defLength: 0);
                     DecodeValues(raw.AsSpan(offset), h.Int(2) ?? 0, leaf.Node, present, dictionary, values);
@@ -462,7 +464,7 @@ public static class ParquetFile
                     int offset = 0;
                     int present = ReadLevels(levelBytes, ref offset, count, leaf, reps, defs, lengthPrefixed: false, repLength, defLength);
                     var body = page[(repLength + defLength)..];
-                    var raw = isCompressed && codec != 0 ? Codecs.Decompress(codec, body, uncompressed - repLength - defLength) : body.ToArray();
+                    var raw = isCompressed && codec != 0 ? Decompress(body, uncompressed - repLength - defLength) : body.ToArray();
                     DecodeValues(raw, h.Int(4) ?? 0, leaf.Node, present, dictionary, values);
                     levels += count;
                     break;

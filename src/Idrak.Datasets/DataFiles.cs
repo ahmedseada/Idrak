@@ -59,6 +59,12 @@ public sealed record ReadOptions
     /// <summary>The format, instead of choosing it by extension.</summary>
     public DataFormat? Format { get; init; }
 
+    /// <summary>
+    /// The format as an <see cref="IDataFileFormat"/> (for example one added with <see cref="DataFileFormats.Register"/>),
+    /// instead of choosing it by extension; takes precedence over <see cref="Format"/>.
+    /// </summary>
+    public IDataFileFormat? FileFormat { get; init; }
+
     /// <summary>Text files: a row per line (default), paragraph or file.</summary>
     public TextRows Text { get; init; } = TextRows.Lines;
 
@@ -93,7 +99,7 @@ public sealed record ReadOptions
 /// <summary>Reads data files into rows.</summary>
 public static class DataFiles
 {
-    private static readonly Dictionary<string, string> CodeLanguages = new(StringComparer.OrdinalIgnoreCase)
+    internal static readonly Dictionary<string, string> CodeLanguages = new(StringComparer.OrdinalIgnoreCase)
     {
         [".cs"] = "csharp", [".csx"] = "csharp", [".razor"] = "razor", [".cshtml"] = "razor", [".xaml"] = "xml", [".csproj"] = "xml", [".props"] = "xml",
         [".ts"] = "typescript", [".tsx"] = "typescript", [".mts"] = "typescript", [".cts"] = "typescript",
@@ -108,23 +114,12 @@ public static class DataFiles
     private static readonly HashSet<string> SkippedFolders = new(["bin", "obj", "node_modules", ".git", ".vs", ".idea", "dist", ".angular", "__pycache__", ".venv"],
         StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>The format of <paramref name="path"/> by its extension (.gz stripped), or null for an unknown one.</summary>
-    public static DataFormat? FormatOf(string path, bool includeCode = true)
-    {
-        string name = path.EndsWith(".gz", StringComparison.OrdinalIgnoreCase) ? path[..^3] : path;
-        string extension = Path.GetExtension(name).ToLowerInvariant();
-        return extension switch
-        {
-            ".jsonl" or ".ndjson" => DataFormat.JsonLines,
-            ".json" => DataFormat.Json,
-            ".csv" => DataFormat.Csv,
-            ".tsv" => DataFormat.Tsv,
-            ".parquet" => DataFormat.Parquet,
-            ".txt" or ".text" or ".md" or ".markdown" or ".rst" => DataFormat.Text,
-            _ when includeCode && CodeLanguages.ContainsKey(extension) => DataFormat.Code,
-            _ => null,
-        };
-    }
+    /// <summary>
+    /// The format of <paramref name="path"/> by its extension (.gz stripped), or null for an unknown one. Formats added with
+    /// <see cref="DataFileFormats.Register"/> have no <see cref="DataFormat"/> (null here): see <see cref="DataFileFormats.Find"/>.
+    /// </summary>
+    public static DataFormat? FormatOf(string path, bool includeCode = true) =>
+        DataFileFormats.Find(path, includeCode) is { } format && Enum.TryParse<DataFormat>(format.Name, ignoreCase: true, out var builtIn) ? builtIn : null;
 
     /// <summary>Whether <paramref name="path"/> is an archive whose entries are read (.zip, .tar, .tar.gz, .tgz).</summary>
     public static bool IsArchive(string path) =>
@@ -135,35 +130,34 @@ public static class DataFiles
     public static IEnumerable<JsonObject> Read(string path, ReadOptions options)
     {
         string shown = options.Root is { } root ? Path.GetRelativePath(root, path).Replace('\\', '/') : Path.GetFileName(path);
-        if (IsArchive(path) && options.Format is null)
+        if (IsArchive(path) && options.Format is null && options.FileFormat is null)
         {
             return ReadArchive(path, options);
         }
 
-        var format = options.Format ?? DocumentFormat(FormatOf(path, includeCode: true), options)
+        var format = Chosen(options) ?? DocumentFormat(DataFileFormats.Find(path, includeCode: true), options)
                      ?? throw new NotSupportedException($"'{path}': unknown data format (set ReadOptions.Format).");
         return ReadStream(() => Open(path), shown, format, options);
     }
 
     /// <summary>The rows of a stream holding a file of <paramref name="format"/> (<paramref name="path"/> is shown in rows and errors).</summary>
-    public static IEnumerable<JsonObject> ReadStream(Func<Stream> open, string path, DataFormat format, ReadOptions options)
+    public static IEnumerable<JsonObject> ReadStream(Func<Stream> open, string path, DataFormat format, ReadOptions options) =>
+        ReadStream(open, path, DataFileFormats.Get(format.ToString()), options);
+
+    /// <summary>The rows of a stream holding a file of <paramref name="format"/> (<paramref name="path"/> is shown in rows and errors).</summary>
+    public static IEnumerable<JsonObject> ReadStream(Func<Stream> open, string path, IDataFileFormat format, ReadOptions options)
     {
-        var rows = format switch
-        {
-            DataFormat.JsonLines => JsonLines(open, path),
-            DataFormat.Json => Json(open, path, options),
-            DataFormat.Csv => Delimited(open, ',', options),
-            DataFormat.Tsv => Delimited(open, '\t', options),
-            DataFormat.Parquet => ParquetRows(open),
-            DataFormat.Text => Text(open, path, options),
-            DataFormat.Code => Code(open, path, options),
-            _ => throw new NotSupportedException(format.ToString()),
-        };
+        var rows = format.Read(open, path, options);
         return options.IncludeFile ? rows.Select(r => { r["_file"] = path; return r; }) : rows;
     }
 
-    private static DataFormat? DocumentFormat(DataFormat? format, ReadOptions options) =>
-        options.Documents && format is not null and not DataFormat.Parquet ? DataFormat.Code : format;
+    // The format the options set, if any (a format object first, then a built-in by its enum value).
+    private static IDataFileFormat? Chosen(ReadOptions options) =>
+        options.FileFormat ?? (options.Format is { } format ? DataFileFormats.Get(format.ToString()) : null);
+
+    // Documents: every format but Parquet is read as source code (one row per file).
+    private static IDataFileFormat? DocumentFormat(IDataFileFormat? format, ReadOptions options) =>
+        options.Documents && format is not null && !DataFileFormats.Is(format, DataFormat.Parquet) ? DataFileFormats.Get(nameof(DataFormat.Code)) : format;
 
     internal static IEnumerable<string> InFolder(string root, string? pattern, ReadOptions options)
     {
@@ -186,7 +180,8 @@ public static class DataFiles
             foreach (var file in Directory.EnumerateFiles(folder))
             {
                 string relative = Path.GetRelativePath(root, file).Replace('\\', '/');
-                bool known = options.Format is not null || IsArchive(file) || FormatOf(file, options.IncludeCode || options.Documents) is not null;
+                bool known = options.Format is not null || options.FileFormat is not null || IsArchive(file)
+                             || DataFileFormats.Find(file, options.IncludeCode || options.Documents) is not null;
                 if (known && (match is null || match.IsMatch(relative) || match.IsMatch(Path.GetFileName(file))))
                 {
                     files.Add(file);
@@ -240,8 +235,8 @@ public static class DataFiles
                 return false;
             }
 
-            var format = DocumentFormat(FormatOf(name, options.IncludeCode || options.Documents), options);
-            return format is not null && !(options.Documents && format == DataFormat.Parquet);
+            var format = DocumentFormat(DataFileFormats.Find(name, options.IncludeCode || options.Documents), options);
+            return format is not null && !(options.Documents && DataFileFormats.Is(format, DataFormat.Parquet));
         }
 
         if (path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
@@ -249,7 +244,7 @@ public static class DataFiles
             using var zip = ZipFile.OpenRead(path);
             foreach (var entry in zip.Entries.Where(e => e.Length > 0 && Wanted(e.FullName)).OrderBy(e => e.FullName, StringComparer.Ordinal))
             {
-                foreach (var row in ReadStream(() => Buffered(entry.Open(), entry.Length, entry.FullName), entry.FullName, DocumentFormat(FormatOf(entry.FullName), options)!.Value, options))
+                foreach (var row in ReadStream(() => Buffered(entry.Open(), entry.Length, entry.FullName), entry.FullName, DocumentFormat(DataFileFormats.Find(entry.FullName), options)!, options))
                 {
                     yield return row;
                 }
@@ -273,7 +268,7 @@ public static class DataFiles
             var bytes = new MemoryStream();
             entry.DataStream.CopyTo(bytes);
             var data = bytes.ToArray();
-            foreach (var row in ReadStream(() => Decompressed(new MemoryStream(data), name), name, DocumentFormat(FormatOf(name), options)!.Value, options))
+            foreach (var row in ReadStream(() => Decompressed(new MemoryStream(data), name), name, DocumentFormat(DataFileFormats.Find(name), options)!, options))
             {
                 yield return row;
             }
@@ -297,7 +292,7 @@ public static class DataFiles
     }
 
     // Lines are split and parsed as UTF-8 bytes, not decoded to text and encoded back. Lines end at \n, \r or \r\n (as ReadLine).
-    private static IEnumerable<JsonObject> JsonLines(Func<Stream> open, string path)
+    internal static IEnumerable<JsonObject> JsonLines(Func<Stream> open, string path)
     {
         var stream = open();
         try
@@ -511,7 +506,7 @@ public static class DataFiles
         }
     }
 
-    private static IEnumerable<JsonObject> Json(Func<Stream> open, string path, ReadOptions options)
+    internal static IEnumerable<JsonObject> Json(Func<Stream> open, string path, ReadOptions options)
     {
         JsonNode? document;
         using (var stream = open())
@@ -608,7 +603,7 @@ public static class DataFiles
         }
     }
 
-    private static IEnumerable<JsonObject> Delimited(Func<Stream> open, char delimiter, ReadOptions options)
+    internal static IEnumerable<JsonObject> Delimited(Func<Stream> open, char delimiter, ReadOptions options)
     {
         using var reader = new StreamReader(open(), Encoding.UTF8, true, 1 << 16);
         string[]? header = null;
@@ -809,7 +804,7 @@ public static class DataFiles
         };
     }
 
-    private static IEnumerable<JsonObject> Text(Func<Stream> open, string path, ReadOptions options)
+    internal static IEnumerable<JsonObject> Text(Func<Stream> open, string path, ReadOptions options)
     {
         using var reader = new StreamReader(open(), Encoding.UTF8, true, 1 << 16);
         switch (options.Text)
@@ -855,7 +850,7 @@ public static class DataFiles
         }
     }
 
-    private static IEnumerable<JsonObject> Code(Func<Stream> open, string path, ReadOptions options)
+    internal static IEnumerable<JsonObject> Code(Func<Stream> open, string path, ReadOptions options)
     {
         using var stream = open();
         var bytes = new MemoryStream();
@@ -885,7 +880,7 @@ public static class DataFiles
         };
     }
 
-    private static IEnumerable<JsonObject> ParquetRows(Func<Stream> open)
+    internal static IEnumerable<JsonObject> ParquetRows(Func<Stream> open)
     {
         using var stream = open();
         if (stream.CanSeek)

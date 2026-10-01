@@ -40,6 +40,11 @@
   folder, `ollama:`, .gguf, Hugging Face id; `ModelSource.Resolve` asks them) and **tokenizer components**
   (`TokenizerComponents` with `ITokenizerNormalizer`, `IPreTokenizer`, `ITokenizerDecoder`, by tokenizer.json
   "type"). A model's notes now list where its weights come from before the others.
+- Datasets are pluggable: file formats (`IDataFileFormat`, `DataFileFormats.Register`, chosen by extension, by
+  `ReadOptions.FileFormat` or by `format=` in recipes), recipe sources (`IDatasetSource`, `DatasetSources.Register`, for
+  prefixes beyond `hf:`, `github:`, `kaggle:`, `zenodo:` and URLs, with their own options) and Parquet compression codecs
+  (`IParquetCodec`, `ParquetCodecs.Register`, by Parquet codec id, e.g. to add Zstandard). The built-ins are registered
+  the same way and read as before; `DataFormat` and `DataFiles.FormatOf` still name them.
 
 ## 0.1.7 (2026-10-01)
 
