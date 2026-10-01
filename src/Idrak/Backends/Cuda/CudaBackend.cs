@@ -1097,7 +1097,7 @@ internal sealed unsafe partial class CudaBackend : Backend
         if (TensorSplitsOverride is null && tiles < 4 * sms)
         {
             int formula = splits;
-            int[] candidates = PowersOfTwo(Math.Min(64, k / 128));
+            int[] candidates = SplitCounts(Math.Min(64, k / 128));
             void Run(int count, ulong target)
             {
                 if (count > 1 && beta == 0f)

@@ -114,24 +114,24 @@ internal sealed unsafe partial class CudaBackend
             run(candidate);
         }
 
+        // Candidates take turns, five rounds, best time each: a GPU still raising its clocks (laptops) then slows every
+        // candidate alike instead of whichever happened to run first.
         var times = new float[candidates.Length];
+        times.AsSpan().Fill(float.MaxValue);
         t_timing = true;
         try
         {
-            for (int c = 0; c < candidates.Length; c++)
+            for (int round = 0; round < 5; round++)
             {
-                float best = float.MaxValue;
-                for (int repeat = 0; repeat < 3; repeat++)
+                for (int c = 0; c < candidates.Length; c++)
                 {
                     Check(cuEventRecord(_tuneEvents.Start, _stream), nameof(cuEventRecord));
                     run(candidates[c]);
                     Check(cuEventRecord(_tuneEvents.End, _stream), nameof(cuEventRecord));
                     Check(cuEventSynchronize(_tuneEvents.End), nameof(cuEventSynchronize));
                     Check(cuEventElapsedTime(out float ms, _tuneEvents.Start, _tuneEvents.End), nameof(cuEventElapsedTime));
-                    best = Math.Min(best, ms);
+                    times[c] = Math.Min(times[c], ms);
                 }
-
-                times[c] = best;
             }
         }
         finally
@@ -161,6 +161,23 @@ internal sealed unsafe partial class CudaBackend
         }
 
         return chosen;
+    }
+
+    // Split counts to try where any count works (chunks of k need no particular alignment): 1, 2, 3, 4, 6, 8, 12, ...
+    // up to `max` (the measured best on prompt-sized products was often 3 or 6).
+    private static int[] SplitCounts(int max)
+    {
+        var values = new List<int>();
+        for (int s = 1; s <= Math.Max(1, max); s *= 2)
+        {
+            values.Add(s);
+            if (s >= 2 && s + s / 2 <= max)
+            {
+                values.Add(s + s / 2);
+            }
+        }
+
+        return [.. values];
     }
 
     // Split counts to try: 1, 2, 4, ... up to `max`.

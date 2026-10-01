@@ -245,7 +245,7 @@ internal sealed unsafe partial class CudaBackend
     private int PromptSplitsTuned(TuneKey key, int tiles, int k, Action<int> run)
     {
         int formula = PromptSplits(tiles, k);
-        return tiles >= 4 * Math.Max(1, _multiprocessors) ? formula : Tune(key, PowersOfTwo(Math.Min(16, k / 128)), formula, run);
+        return tiles >= 4 * Math.Max(1, _multiprocessors) ? formula : Tune(key, SplitCounts(Math.Min(16, k / 128)), formula, run);
     }
 
     public override bool PackedMatMulLarge(int kind, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k)
