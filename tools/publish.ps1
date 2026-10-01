@@ -4,7 +4,8 @@
 #
 # Needs a nuget.org API key (API Keys > Create: scope Push, glob Idrak*, short expiry); it is asked for, not stored.
 # The script checks out the tag v<Version>, packs every project under src/ with that version, shows what it will push,
-# pushes after a confirmation, and returns to the branch it started on.
+# pushes after a confirmation, creates the GitHub release (tools/github-release.ps1, when the GitHub CLI is installed),
+# and returns to the branch it started on.
 param([Parameter(Mandatory)][string]$Version)
 
 $ErrorActionPreference = 'Stop'
@@ -47,6 +48,14 @@ try {
 
     Write-Host "`nPublished $($packages.Count) packages. They appear on nuget.org after validation (usually 10-30 minutes)."
     Write-Host 'Delete the API key on nuget.org now.'
+
+    # The GitHub release too (the Release workflow makes it when Actions runs; from here it does not depend on that).
+    if (Get-Command gh -ErrorAction SilentlyContinue) {
+        & (Join-Path $PSScriptRoot 'github-release.ps1') -Version $Version -Packages $artifacts
+    }
+    else {
+        Write-Host "No GitHub CLI: create the GitHub release later with pwsh tools/github-release.ps1 -Version $Version"
+    }
 }
 finally {
     git checkout --quiet $branch
