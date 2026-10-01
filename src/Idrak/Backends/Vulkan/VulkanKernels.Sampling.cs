@@ -8,7 +8,7 @@ namespace Idrak.Backends.Vulkan;
 // same seed draws the same tokens (up to rounding in sums of weights, which only matters at an exact tie of the draw).
 internal static partial class VulkanKernels
 {
-    /// <summary>Scores of one row a <c>topk_slots</c> workgroup takes (its slice, sorted in workgroup memory).</summary>
+    /// <summary>Scores of one row a <c>topk_slots</c> workgroup takes (its slice, held in workgroup memory).</summary>
     public const int SliceLength = 2048;
 
     /// <summary>Largest top-k the two-stage sampler takes (slots each slice keeps).</summary>
@@ -45,86 +45,62 @@ internal static partial class VulkanKernels
         // The sampler for top-k over the slots topk_slots filled (see Sampler).
         yield return ("sample_rows_slots", () => Sampler("sample_rows_slots", slots: true, narrow: false));
 
-        // Stage one of top-k sampling over a large vocabulary: workgroup (b, r) sorts scores [b·SliceLength, …) of row r
-        // (scaled by invT; NaN as -inf, which no cut-off keeps) in workgroup memory, largest first (a bitonic sort), and
-        // keeps its topK largest distinct scores with how many times each occurs in slots[(r·blocks + b)·topK + t] and
-        // counts[…] (-inf and 0 past its distinct scores). The row's k-th largest distinct score is among the slots, and
-        // every score at or above it is counted there.
+        // Stage one of top-k sampling over a large vocabulary: one workgroup per (row, slice) pair g = r·blocks + b (pairs
+        // looped with a stride of the group count) takes scores [b·SliceLength, …) of row r, scaled by invT (NaN as -inf,
+        // which no cut-off keeps), into workgroup memory, and keeps its topK largest distinct scores, largest first, with how
+        // many times each occurs: slots[g·topK + t] and counts[…] (-inf and 0 past its distinct scores). Pass t takes the
+        // largest score below pass t - 1's, and counts it (workgroup reductions, as the sampler's own top-k). The row's k-th
+        // largest distinct score is among the slots, and every score at or above it is counted there.
         yield return ("topk_slots", () =>
         {
             var k = new KernelBuilder("topk_slots", Block);
             var (logits, slots, counts) = (k.Buffer("logits"), k.Buffer("slots"), k.Buffer("counts"));
-            var (vocabulary, rowStride, rowOffset, invT, topK, blocks) =
-                (k.PushInt("vocabulary"), k.PushInt("rowStride"), k.PushInt("rowOffset"), k.PushFloat("invT"), k.PushInt("topK"), k.PushInt("blocks"));
+            var (vocabulary, rowStride, rowOffset, invT, topK, blocks, rows) = (k.PushInt("vocabulary"), k.PushInt("rowStride"),
+                k.PushInt("rowOffset"), k.PushFloat("invT"), k.PushInt("topK"), k.PushInt("blocks"), k.PushInt("rows"));
             var slice = k.Shared("slice", SliceLength);
-            var (b, r) = (k.GroupX, k.GroupY);
-            var first = b * SliceLength;
-            var length = k.Min(vocabulary - first, k.Int(SliceLength));
-            var source = r * rowStride + rowOffset + first;
-            k.For(k.LocalX, k.Int(SliceLength), Block, i =>
+            var scratch = k.Shared("scratch", Block);
+            var lane = k.LocalX;
+            k.For(k.GroupX, rows * blocks, g =>
             {
-                var v = k.Local(float.NegativeInfinity);
-                k.If(i < length, () =>
+                var (r, b) = (g / blocks, g % blocks);
+                var first = b * SliceLength;
+                var length = k.Min(vocabulary - first, k.Int(SliceLength));
+                var source = r * rowStride + rowOffset + first;
+                k.For(lane, k.Int(SliceLength), Block, i =>
                 {
-                    var s = logits[source + i] * invT;
-                    v.V = k.Select(s.IsNan(), k.Float(float.NegativeInfinity), s);
-                });
-                slice[i] = v.V;
-            });
-            k.Barrier();
-            for (int size = 2; size <= SliceLength; size *= 2)
-            {
-                for (int stride = size / 2; stride > 0; stride /= 2)
-                {
-                    var (merge, half) = (size, stride);
-                    k.For(k.LocalX, k.Int(SliceLength / 2), Block, t =>
+                    var v = k.Local(float.NegativeInfinity);
+                    k.If(i < length, () =>
                     {
-                        var i = 2 * half * (t / half) + t % half;
-                        var (a, c) = (slice[i], slice[i + half]);
-                        var descending = (i & merge).Eq(0);
-                        k.If(k.Select(descending, a < c, a > c), () =>
-                        {
-                            slice[i] = c;
-                            slice[i + half] = a;
-                        });
+                        var s = logits[source + i] * invT;
+                        v.V = k.Select(s.IsNan(), k.Float(float.NegativeInfinity), s);
                     });
-                    k.Barrier();
-                }
-            }
-
-            // One invocation walks the sorted slice: each new value opens a slot, an equal one adds to its count.
-            k.If(k.LocalX.Eq(0), () =>
-            {
-                var o = (r * blocks + b) * topK;
-                var distinct = k.Local(0);
-                var count = k.Local(0f);
-                var last = k.Local(float.NegativeInfinity);
-                var i = k.Local(0);
-                k.While(() => i.V < k.Int(SliceLength), () =>
+                    slice[i] = v.V;
+                });
+                k.Barrier();
+                var threshold = k.Local(float.PositiveInfinity);
+                var o = g * topK;
+                k.For(k.Int(0), topK, 1, t =>
                 {
-                    var v = slice[i.V];
-                    var stop = v.Eq(k.Float(float.NegativeInfinity)) | ((distinct.V >= topK) & v.Ne(last.V));
-                    k.If(stop, () => i.V = k.Int(SliceLength), () =>
+                    var below = k.Local(float.NegativeInfinity);
+                    k.For(lane, k.Int(SliceLength), Block, i =>
                     {
-                        k.If(v.Ne(last.V), () =>
-                        {
-                            k.If(distinct.V > 0, () => counts[o + distinct.V - 1] = count.V);
-                            slots[o + distinct.V] = v;
-                            distinct.V = distinct.V + 1;
-                            count.V = k.Float(0f);
-                            last.V = v;
-                        });
-                        count.V = count.V + 1f;
-                        i.V = i.V + 1;
+                        var v = slice[i];
+                        below.V = k.Select((v < threshold.V) & (v > below.V), v, below.V);
                     });
+                    var next = k.ReduceMax(scratch, below.V);
+                    var found = next > float.NegativeInfinity;
+                    var same = k.Local(0f);
+                    k.For(lane, k.Int(SliceLength), Block, i => same.V = same.V + k.Select(found & slice[i].Eq(next), k.Float(1f), k.Float(0f)));
+                    var count = k.ReduceSum(scratch, same.V);
+                    k.If(lane.Eq(0), () =>
+                    {
+                        slots[o + t] = next;
+                        counts[o + t] = count;
+                    });
+                    threshold.V = next;
                 });
-                k.If(distinct.V > 0, () => counts[o + distinct.V - 1] = count.V);
-                k.For(distinct.V, topK, 1, t =>
-                {
-                    slots[o + t] = k.Float(float.NegativeInfinity);
-                    counts[o + t] = k.Float(0f);
-                });
-            });
+                k.Barrier();                                             // the slice is read before the next pair overwrites it
+            }, k.GroupsX);
             return k.Build();
         });
 

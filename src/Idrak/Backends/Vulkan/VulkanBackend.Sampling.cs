@@ -62,9 +62,7 @@ internal sealed partial class VulkanBackend
         float invT = 1f / MathF.Max(temperature, 1e-3f);
         float logMinP = minP > 0f ? MathF.Log(minP) : 0f;
         int blocks = (vocabulary + VulkanKernels.SliceLength - 1) / VulkanKernels.SliceLength;
-        ref readonly var limits = ref _physical.Properties;
-        bool useSlots = topK > 0 && topK < vocabulary && topK <= VulkanKernels.MaxTopKSlots && vocabulary > SlotVocabulary
-            && rows <= limits.MaxComputeWorkGroupCountY && blocks <= limits.MaxComputeWorkGroupCountX;
+        bool useSlots = topK > 0 && topK < vocabulary && topK <= VulkanKernels.MaxTopKSlots && vocabulary > SlotVocabulary;
         int slotCount = useSlots ? blocks * topK : 0;
         Span<byte> b = stackalloc byte[44];
         var push = new Push(b).I(vocabulary).I(rowStride).I(rowOffset).I(rows).F(invT).I(topK).F(topP).F(minP).F(logMinP).U(seed).I(slotCount).Bytes;
@@ -79,9 +77,9 @@ internal sealed partial class VulkanBackend
         var counts = Allocate(rows * slotCount, zeroed: false);
         try
         {
-            Span<byte> s = stackalloc byte[24];
-            Run("topk_slots", (uint)blocks, (uint)rows, 1, [logits, slots, counts],
-                new Push(s).I(vocabulary).I(rowStride).I(rowOffset).F(invT).I(topK).I(blocks).Bytes);
+            Span<byte> s = stackalloc byte[28];
+            Run("topk_slots", RowGroups((long)rows * blocks), 1, 1, [logits, slots, counts],
+                new Push(s).I(vocabulary).I(rowStride).I(rowOffset).F(invT).I(topK).I(blocks).I(rows).Bytes);   // a workgroup per (row, slice)
             Run("sample_rows_slots", RowGroups(rows), 1, 1, [logits, ids, stats, step, slots, counts], push);
         }
         finally

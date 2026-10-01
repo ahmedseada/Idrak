@@ -55,7 +55,10 @@ internal static partial class Tests
                     Check(backend.HostCalls == fallbacks, $"{what}: took the host fallback");
                     for (int i = 0; i < stats.Length; i += 13)
                     {
-                        Check(stats[i] == cpuStats[i], $"{what}, step {i / 13 / Rows}, row {i / 13 % Rows}: token {stats[i]}, the CPU's {cpuStats[i]}");
+                        // On a mismatch, both statistics rows and the row's largest scores, to tell a cut-off from a draw.
+                        string Detail() => $" (statistics [{string.Join(", ", stats.Skip(i).Take(13))}], the CPU's [{string.Join(", ", cpuStats.Skip(i).Take(13))}]; "
+                            + $"largest scores {string.Join(", ", logits.Skip((i / 13 % Rows * Positions + Positions - 1) * vocabulary).Take(vocabulary).OrderDescending().Take(4))})";
+                        Check(stats[i] == cpuStats[i], $"{what}, step {i / 13 / Rows}, row {i / 13 % Rows}: token {stats[i]}, the CPU's {cpuStats[i]}" + (stats[i] == cpuStats[i] ? "" : Detail()));
                         for (int a = 0; a < 5; a++)
                         {
                             Check(stats[i + 3 + 2 * a] == cpuStats[i + 3 + 2 * a], $"{what}, step {i / 13 / Rows}, row {i / 13 % Rows}: alternative {a} is {stats[i + 3 + 2 * a]}, the CPU's {cpuStats[i + 3 + 2 * a]}");
@@ -98,6 +101,70 @@ internal static partial class Tests
             }
         }
     });
+
+    // The sampler on a parallel device: the same input sampled again and again gives the same tokens and statistics, bit
+    // for bit (a race between invocations or between the two top-k stages shows up as a run that differs). 1,000 runs on
+    // a GPU, 20 on a CPU driver (which runs a workgroup's invocations in turn, so it cannot show such races anyway). Run on
+    // the Vulkan device itself, as the device copies.
+    private static void VulkanSamplerRepeatable(Device device)
+    {
+        if (device.Type != DeviceType.Vulkan || Environment.GetEnvironmentVariable("IDRAK_VULKAN_KERNELS") is "0" or "false")
+        {
+            return;
+        }
+
+        var backend = (VulkanBackend)device.Backend;
+        string label = device.ToString();
+        int runs = VulkanBackend.DeviceKind(device.Ordinal).Type == 4 ? 20 : 1000;
+        const int Rows = 4;
+        var random = new Random(23);
+        foreach (int vocabulary in new[] { 200, 3000, 30_000 })                 // one invocation per row, a workgroup, two stages
+        {
+            // Tied scores in quarter steps, plus rows of long runs of equal scores (every slice of row 0 holds one value).
+            var logits = new float[Rows * vocabulary];
+            for (int i = 0; i < logits.Length; i++)
+            {
+                logits[i] = MathF.Round((random.NextSingle() * 2 - 1) * 24) / 4;
+            }
+
+            Array.Fill(logits, 0.5f, 0, vocabulary);
+            Array.Fill(logits, 7f, vocabulary + vocabulary / 3, Math.Min(300, vocabulary / 3));
+            var x = backend.Allocate(logits.Length, zeroed: false);
+            var ids = backend.Allocate(Rows, zeroed: true);
+            var stats = backend.Allocate(Rows * 13, zeroed: true);
+            var step = backend.Allocate(1, zeroed: true);
+            try
+            {
+                backend.Upload(logits, x);
+                foreach (var (topK, topP, minP) in new[] { (1, 1f, 0f), (40, 0.9f, 0f), (64, 1f, 0.02f), (0, 0.95f, 0f) })
+                {
+                    float[]? first = null;
+                    var values = new float[Rows * 13];
+                    for (int run = 0; run < runs; run++)
+                    {
+                        backend.SampleRows(x, ids, stats, step, Rows, vocabulary, vocabulary, 0, 0.9f, topK, topP, minP, 77u);
+                        backend.Download(stats, values);
+                        if (first is null)
+                        {
+                            first = (float[])values.Clone();
+                            Check(Enumerable.Range(0, Rows).All(r => values[r * 13] >= 0 && values[r * 13] < vocabulary), $"{label}: {vocabulary} tokens, top-k {topK}: tokens in range");
+                            continue;
+                        }
+
+                        int at = Enumerable.Range(0, values.Length).FirstOrDefault(i => BitConverter.SingleToInt32Bits(values[i]) != BitConverter.SingleToInt32Bits(first[i]), -1);
+                        Check(at < 0, $"{label}: {vocabulary} tokens, top-k {topK}, top-p {topP}, min-p {minP}: run {run} differs from the first at statistic {at} ({(at < 0 ? 0 : values[at])} against {(at < 0 ? 0 : first[at])})");
+                    }
+                }
+            }
+            finally
+            {
+                x.Release();
+                ids.Release();
+                stats.Release();
+                step.Release();
+            }
+        }
+    }
 
     // Barriers only between dependent commands: a chain of dependent dispatches gets one before each link and gives the
     // chained result; dispatches on separate storages get none; writing a storage read earlier in the span (write after
@@ -150,7 +217,9 @@ internal static partial class Tests
                     Queue(storages[i], storages[i + 1], storages[i + 1], 2f);
                 }
 
-                Check(backend.Barriers - barriers == 7, $"{where}: a chain of 8 dependent dispatches has {backend.Barriers - barriers} barriers, expected 7");
+                // Through staging, the upload of s[0] was a copy in the current span, so the first link waits for it too.
+                int expected = backend.UnifiedMemory ? 7 : 8;
+                Check(backend.Barriers - barriers == expected, $"{where}: a chain of 8 dependent dispatches has {backend.Barriers - barriers} barriers, expected {expected}");
                 var values = new float[N];
                 backend.Download(storages[8], values);
                 Check(values.All(v => v == 256f), $"{where}: the chain's result {values[0]}, expected 256");
