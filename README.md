@@ -1062,6 +1062,7 @@ The ASP.NET Core, MCP, dataset and naming tests do not depend on the device, and
 | Date | Library | GPU | Compute | Driver | System | Result |
 |---|---|---|---|---|---|---|
 | 2026-10-01 | 0.1.5 | NVIDIA GeForce RTX 3060 Laptop GPU, 6 GB, 30 SMs (Ampere) | 8.6 | CUDA 13.0 | Windows 11 (build 26200, x64), 20-thread CPU with 8-wide SIMD, .NET 10.0.12 | 364 of 364 (CPU and GPU; FP8 products skipped, no FP8 tensor cores) |
+| 2026-10-01 | 0.1.5 | none (CPU only) | – | – | Windows 11 (build 22631, x64), 8-thread CPU with 8-wide SIMD, .NET 10.0.8 | 182 of 182 |
 | 2026-09-30 | main (after 0.1.0) | NVIDIA GeForce RTX 5050 Laptop GPU, 8 GB, 20 SMs (Blackwell) | 12.0 | 610.88 (CUDA 13.3) | Windows 11 (build 26200, x64), 16-thread CPU with 8-wide SIMD, .NET 10.0.12 | 340 of 340 (CPU and GPU) |
 | 2026-09-30 | main (after 0.1.0) | none (CPU only) | – | – | Ubuntu 24.04 (x64), 4-thread CPU with 8-wide SIMD, .NET 10.0.12 | 170 of 170 |
 | 2026-09-29 | 0.1.0 | NVIDIA GeForce RTX 5070 Ti, 16 GB, 70 SMs (Blackwell) | 12.0 | not recorded | Windows (x64), .NET 10 | 340 of 340 (CPU and GPU) |
@@ -1075,7 +1076,8 @@ run at 75–125 GB/s (q/k/v 34 µs, gate/up 84 µs, the 151,936-column head 1.9 
 positions 360 µs; a 1 KB upload behind queued work holds the host 5 µs through the staging ring against 521 µs
 synchronously. On its 20-thread CPU (`--bench-cpu`): a bfloat16 product of one row, 1536 × 32,000, 7.8 ms; attention
 over 4,000 cached positions 6.7 ms (float32), 5.2 ms (int8), 10.1 ms (bfloat16); sampling 151,936 tokens with top-k 20
-1.6 ms.
+1.6 ms. On the 8-thread CPU-only Windows machine: the bfloat16 product 14.2 ms (1 row) and 32.2 ms (8 rows); attention
+over 4,000 cached positions 9.5 ms (float32), 3.7 ms (int8), 15.0 ms (bfloat16); sampling with top-k 20 0.9 ms.
 
 Small models such as the samples are dominated by kernel-launch overhead on the GPU; recurrent models are hit
 hardest, since they launch kernels for every time step. The GPU pays off with wide layers, large batches,
