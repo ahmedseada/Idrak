@@ -784,6 +784,11 @@ internal static partial class Tests
                 CudaBackend.GemvSplits = split;
                 try
                 {
+                    using (new TensorScope())
+                    {
+                        run();                                       // outside the graph: "auto" measures its choice first
+                    }
+
                     using var graph = ComputeGraph.Capture(device, () =>
                     {
                         for (int i = 0; i < 100; i++)
@@ -819,6 +824,11 @@ internal static partial class Tests
             force(setting);
             try
             {
+                using (new TensorScope())
+                {
+                    run();                                           // outside the graph: "auto" measures its choice first
+                }
+
                 using var graph = ComputeGraph.Capture(device, () =>
                 {
                     for (int i = 0; i < 100; i++)

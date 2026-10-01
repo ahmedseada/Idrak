@@ -72,7 +72,7 @@ internal static partial class Tests
                     AssertClose(expected[i], actual[i], 2e-4f, $"{name} (clip {clip}) parameter {i}");
                 }
 
-                Check(host.Inner.Parameters.All(p => p.Device == Device.Cpu), $"{name}: the inner optimizer runs on the CPU");
+                Check(host.CpuOptimizers.All(o => o.Parameters.All(p => p.Device == Device.Cpu)), $"{name}: the inner optimizers run on the CPU");
             }
         }
     }

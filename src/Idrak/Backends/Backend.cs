@@ -104,6 +104,9 @@ internal abstract class Backend
     /// <summary>Keeping tensors in system memory when the device is full, or null when the device has no such support.</summary>
     public virtual IMemoryOffload? Offload => null;
 
+    /// <summary>Pinned buffers for background copies to and from system memory, or null when the device has none (see <see cref="IHostStaging"/>).</summary>
+    public virtual IHostStaging? CreateHostStaging(int slots, int slotFloats) => null;
+
     public abstract void Return(Storage storage);
 
     /// <summary>
