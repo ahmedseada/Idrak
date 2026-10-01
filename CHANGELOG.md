@@ -34,7 +34,14 @@
 - `HostOptimizer` runs any optimizer's update on the CPU with its state in system memory: each step downloads the
   gradients, updates CPU copies of the parameters with the CPU kernels and uploads the new values (only gradients and
   weights cross PCIe; Adam's state, twice the parameters, never touches the GPU). `FineTuningOptions.HostOptimizer` /
-  `idrak-tune --cpu-optimizer` uses it for AdamW. `--bench-offload` in the tests times a training step each way.
+  `idrak-tune --cpu-optimizer` uses it for AdamW. On a GPU the copies go through 96 MiB of pinned buffers in the
+  background (a parameter downloads while the previous one is updated and uploaded), the global norm is clipped on the
+  GPU, and each parameter has its own CPU optimizer so it updates as soon as it arrives. `--bench-offload` in the tests
+  times a training step each way.
+- The CPU's fused AdamW (the path `ClipAndStep` takes) and its sum of squares run as SIMD on all cores instead of one
+  scalar loop; each element is computed with the same operations in the same order as before.
+- Text generation runs the first decoding step as it is and records the CUDA graph from the second, so the device
+  measures its choices for the decoding shapes before the graph keeps them.
 
 ## 0.1.5 (2026-09-30)
 

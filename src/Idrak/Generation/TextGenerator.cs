@@ -482,7 +482,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
             var (kept, keptIds) = options.UseCache && KeepCache ? TakeCache(context) : (null, []);
             var decoding = kept ?? new DecodingContext(Device, 1, context, CacheFormat);
             decoding.LastPositionOnly = true;                                   // the sampler reads the last position only
-            bool keep = false;
+            bool keep = false, steppedOnce = false;
             ComputeGraph? graph = null;
             try
             {
@@ -588,10 +588,14 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                     }
                     else
                     {
-                        if (graph is null && options.UseGraph)
+                        // The first step runs as it is: the device measures its card-dependent choices for these
+                        // shapes (which it cannot while recording), and the graph recorded from the second step keeps them.
+                        if (graph is null && options.UseGraph && steppedOnce)
                         {
                             graph = decoding.CaptureStep(Step);
                         }
+
+                        steppedOnce = true;
 
                         if (graph is not null)
                         {

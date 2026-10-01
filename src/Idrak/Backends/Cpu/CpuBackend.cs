@@ -228,36 +228,108 @@ internal sealed partial class CpuBackend : Backend
             double sum = 0;
             foreach (var t in tensors)
             {
-                foreach (float g in D(t.G).AsSpan(0, t.N))
-                {
-                    sum += (double)g * g;
-                }
+                sum += SumSquaresParallel(D(t.G), t.N);
             }
 
             factor = sum > 0 ? MathF.Min(1f, maxNorm / MathF.Sqrt((float)sum)) : 1f;
         }
 
-        float c1 = 1f - beta1, c2 = 1f - beta2;
+        // SIMD on all cores; each element is computed with the same operations in the same order as the scalar update.
         foreach (var t in tensors)
         {
-            float[] p = D(t.P), g = D(t.G), m = D(t.M), v = D(t.V);
-            for (int i = 0; i < t.N; i++)
-            {
-                float grad = g[i] * factor;
-                // As ClipGradientNorm, the decoupled decay (Affine) and AdamKernel compute them, in the same order.
-                float mom = MathF.FusedMultiplyAdd(beta1, m[i], c1 * grad);
-                float vel = MathF.FusedMultiplyAdd(beta2, v[i], c2 * grad * grad);
-                m[i] = mom;
-                v[i] = vel;
-                p[i] = p[i] * decay - lr * mom / (MathF.Sqrt(vel) + eps);
-                if (zeroGradients)
-                {
-                    g[i] = 0f;
-                }
-            }
+            Run(new FusedAdamKernel(D(t.P), D(t.G), D(t.M), D(t.V), factor, lr, decay, beta1, beta2, eps, zeroGradients), t.N);
         }
 
         return true;
+    }
+
+    // p = p·decay − lr·m / (√v + ε) with m and v updated from the gradient times the clipping factor (zeroed after when asked).
+    private readonly struct FusedAdamKernel(float[] p, float[] g, float[] m, float[] v, float factor, float lr, float decay, float beta1,
+        float beta2, float eps, bool zero) : IRangeKernel
+    {
+        public void Execute(int start, int end)
+        {
+            var ps = p.AsSpan(start, end - start);
+            var gs = g.AsSpan(start, end - start);
+            var ms = m.AsSpan(start, end - start);
+            var vs = v.AsSpan(start, end - start);
+            var pv = MemoryMarshal.Cast<float, Vector<float>>(ps);
+            var gv = MemoryMarshal.Cast<float, Vector<float>>(gs);
+            var mv = MemoryMarshal.Cast<float, Vector<float>>(ms);
+            var vv = MemoryMarshal.Cast<float, Vector<float>>(vs);
+            float c1 = 1f - beta1, c2 = 1f - beta2;
+            Vector<float> vf = new(factor), b1 = new(beta1), b2 = new(beta2), vc1 = new(c1), vc2 = new(c2), ve = new(eps), vlr = new(lr), vd = new(decay);
+            for (int i = 0; i < pv.Length; i++)
+            {
+                var grad = gv[i] * vf;
+                var mom = Vector.FusedMultiplyAdd(b1, mv[i], vc1 * grad);
+                var vel = Vector.FusedMultiplyAdd(b2, vv[i], vc2 * grad * grad);
+                mv[i] = mom;
+                vv[i] = vel;
+                pv[i] = pv[i] * vd - vlr * mom / (Vector.SquareRoot(vel) + ve);
+            }
+
+            for (int i = pv.Length * Vector<float>.Count; i < ps.Length; i++)
+            {
+                float grad = gs[i] * factor;
+                float mom = MathF.FusedMultiplyAdd(beta1, ms[i], c1 * grad);
+                float vel = MathF.FusedMultiplyAdd(beta2, vs[i], c2 * grad * grad);
+                ms[i] = mom;
+                vs[i] = vel;
+                ps[i] = ps[i] * decay - lr * mom / (MathF.Sqrt(vel) + eps);
+            }
+
+            if (zero)
+            {
+                gs.Clear();
+            }
+        }
+    }
+
+    // Σx² of the first n values in double precision: SIMD per chunk, chunks on all cores for large inputs.
+    private static double SumSquaresParallel(float[] x, int n)
+    {
+        if (n < ParallelThreshold || !ComputeResources.AllowParallel)
+        {
+            return SumSquaresSpan(x.AsSpan(0, n));
+        }
+
+        int chunks = ChunkCount(n);
+        int size = ChunkSize(n, chunks);
+        var partials = new double[chunks];
+        Parallel.For(0, chunks, ComputeResources.ParallelOptions, c =>
+        {
+            int start = c * size;
+            partials[c] = SumSquaresSpan(x.AsSpan(start, Math.Max(0, Math.Min(size, n - start))));
+        });
+
+        double total = 0;
+        foreach (double partial in partials)
+        {
+            total += partial;                                              // in chunk order: the same total on every run
+        }
+
+        return total;
+    }
+
+    private static double SumSquaresSpan(ReadOnlySpan<float> x)
+    {
+        var lanes = MemoryMarshal.Cast<float, Vector<float>>(x);
+        Vector<double> low = Vector<double>.Zero, high = Vector<double>.Zero;
+        foreach (var lane in lanes)
+        {
+            Vector.Widen(lane, out var a, out var b);
+            low += a * a;
+            high += b * b;
+        }
+
+        double sum = Vector.Sum(low) + Vector.Sum(high);
+        for (int i = lanes.Length * Vector<float>.Count; i < x.Length; i++)
+        {
+            sum += (double)x[i] * x[i];
+        }
+
+        return sum;
     }
 
     public override void PackBFloat16(Storage x, Storage packed, int n)
@@ -285,14 +357,7 @@ internal sealed partial class CpuBackend : Backend
 
     public override void SumSquares(Storage x, Storage total, int n)
     {
-        var values = D(x).AsSpan(0, n);
-        double sum = 0;
-        foreach (float value in values)
-        {
-            sum += (double)value * value;
-        }
-
-        D(total)[0] += (float)sum;
+        D(total)[0] += (float)SumSquaresParallel(D(x), n);
     }
 
     public override void AdamStep8Bit(Storage p, Storage g, Storage m, Storage v, Storage absMax, Storage map, int n, float lr, float beta1, float beta2, float eps,
