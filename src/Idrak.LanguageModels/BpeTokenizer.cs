@@ -14,7 +14,7 @@ namespace Idrak.LanguageModels;
 /// …) and SentencePiece-style BPE with the "▁" word marker and byte fallback (Llama 2, Mistral, Gemma, …). Special
 /// (added) tokens are matched exactly before anything else. <see cref="Encode"/> adds no special tokens itself (chat
 /// templates write them), like <c>add_special_tokens=False</c>. Pieces of the file it does not know are reported, not
-/// guessed.
+/// guessed; other normalizer, pre-tokenizer and decoder types plug in through <see cref="TokenizerComponents"/>.
 /// </summary>
 public sealed class BpeTokenizer : ITokenizer
 {
@@ -1199,6 +1199,10 @@ public sealed class BpeTokenizer : ITokenizer
         {
             case null:
                 return;
+            case JsonObject n when TokenizerComponents.Normalizer((string?)n["type"]) is { } create:
+                _normalizerSteps = null;                                          // a registered type: the string pipeline runs
+                _normalizers.Add(create(n).Normalize);
+                return;
             case JsonObject n when (string?)n["type"] == "Sequence":
                 foreach (var inner in n["normalizers"]!.AsArray())
                 {
@@ -1231,7 +1235,7 @@ public sealed class BpeTokenizer : ITokenizer
                     "Prepend" => s => (string)n["prepend"]! + s,
                     "Replace" => Replacer(n),
                     "Lowercase" => s => s.ToLowerInvariant(),
-                    _ => throw new NotSupportedException($"Tokenizer normalizer '{type}' is not supported."),
+                    _ => throw new NotSupportedException($"Tokenizer normalizer '{type}' is not supported; add it with TokenizerComponents.RegisterNormalizer."),
                 });
                 return;
         }
@@ -1259,6 +1263,14 @@ public sealed class BpeTokenizer : ITokenizer
         }
 
         string type = (string)p["type"]!;
+        if (TokenizerComponents.PreTokenizer(type) is { } create)
+        {
+            var custom = create(p);
+            _splits = null;                                                       // a registered type: the string pipeline runs
+            _preTokenizers.Add((pieces, atStart) => custom.PreTokenize(pieces, atStart) is var result && result is List<string> list ? list : [.. result]);
+            return false;
+        }
+
         switch (type)
         {
             case "Sequence":
@@ -1371,7 +1383,7 @@ public sealed class BpeTokenizer : ITokenizer
                 _splits?.Add((words, "Removed", true));                           // keeps the matches only
                 return false;
             default:
-                throw new NotSupportedException($"Tokenizer pre-tokenizer '{type}' is not supported.");
+                throw new NotSupportedException($"Tokenizer pre-tokenizer '{type}' is not supported; add it with TokenizerComponents.RegisterPreTokenizer.");
         }
     }
 
@@ -1430,6 +1442,14 @@ public sealed class BpeTokenizer : ITokenizer
         }
 
         string type = (string)d["type"]!;
+        if (TokenizerComponents.Decoder(type) is { } create)
+        {
+            // A registered type: named so that no built-in stage (or the fused decoding) takes it for one of its own.
+            var custom = create(d);
+            _decoders.Add(("Registered:" + type, tokens => custom.Decode(tokens) is var result && result is List<string> list ? list : [.. result], null));
+            return;
+        }
+
         switch (type)
         {
             case "Sequence":
@@ -1526,7 +1546,7 @@ public sealed class BpeTokenizer : ITokenizer
                 }, null));
                 break;
             default:
-                throw new NotSupportedException($"Tokenizer decoder '{type}' is not supported.");
+                throw new NotSupportedException($"Tokenizer decoder '{type}' is not supported; add it with TokenizerComponents.RegisterDecoder.");
         }
     }
 

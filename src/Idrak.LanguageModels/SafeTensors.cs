@@ -28,15 +28,22 @@ public sealed record SafeTensorInfo(string Name, SafeTensorType Type, int[] Shap
     public long Count => Shape.Aggregate(1L, (a, b) => a * b);
 }
 
-/// <summary>Tensors by name (Hugging Face names), read as float32: a safetensors checkpoint or a GGUF file.</summary>
-internal interface ITensorStore : IDisposable
+/// <summary>
+/// Tensors by name (Hugging Face names), read as float32: a safetensors checkpoint, a GGUF file, or what an
+/// <see cref="ICheckpointFormat"/> opens.
+/// </summary>
+public interface ITensorStore : IDisposable
 {
+    /// <summary>The names of the stored tensors.</summary>
     IEnumerable<string> Names { get; }
 
+    /// <summary>Whether a tensor named <paramref name="name"/> exists.</summary>
     bool Contains(string name);
 
+    /// <summary>The shape of the tensor <paramref name="name"/>, outermost first ([rows, columns]).</summary>
     int[] ShapeOf(string name);
 
+    /// <summary>The tensor <paramref name="name"/> as float32 values (row-major, as stored).</summary>
     float[] Read(string name);
 
     /// <summary>

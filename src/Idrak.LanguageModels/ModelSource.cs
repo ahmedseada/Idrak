@@ -6,6 +6,113 @@ using Idrak.Datasets;
 
 namespace Idrak.LanguageModels;
 
+/// <summary>Settings <see cref="ModelSource.Resolve"/> passes to an <see cref="IModelSource"/>.</summary>
+public sealed record ModelSourceOptions
+{
+    /// <summary>The revision (branch, tag or commit) of a hub model.</summary>
+    public string Revision { get; init; } = "main";
+
+    /// <summary>The access token for gated and private models (null: HF_TOKEN or the saved login).</summary>
+    public string? Token { get; init; }
+
+    /// <summary>Where downloads go and are logged (null: <see cref="Downloader.Shared"/>).</summary>
+    public Downloader? Downloader { get; init; }
+
+    /// <summary>Whether a model that is not cached may be downloaded (false: only the caches are searched).</summary>
+    public bool Download { get; init; } = true;
+}
+
+/// <summary>
+/// A kind of name <see cref="ModelSource.Resolve"/> understands ("ollama:qwen3:8b", "owner/name", a folder …): it says
+/// which names are its own and turns one into a local folder (or a path a checkpoint format reads, such as a .gguf file's
+/// prepared folder). Register new ones with <see cref="ModelSources.Register"/>.
+/// </summary>
+public interface IModelSource
+{
+    /// <summary>The source's name ("folder", "ollama", "gguf", "huggingface", …): registering another under it replaces this one.</summary>
+    string Name { get; }
+
+    /// <summary>Whether <paramref name="model"/> is a name this source resolves.</summary>
+    bool CanResolve(string model);
+
+    /// <summary>The local folder of <paramref name="model"/> (fetched or prepared as needed).</summary>
+    string Resolve(string model, ModelSourceOptions options);
+}
+
+/// <summary>
+/// The sources <see cref="ModelSource.Resolve"/> asks, in order: an existing folder, "ollama:name", a .gguf file, then
+/// a Hugging Face id ("owner/name"). A name goes to the first source that can resolve it, the most recently registered
+/// first, so a new source (for example a "myhub:" prefix) is asked before the built-in ones.
+/// </summary>
+public static class ModelSources
+{
+    private static readonly List<IModelSource> Registry = [.. ModelSource.BuiltIn];
+
+    /// <summary>
+    /// Registers <paramref name="source"/>: it replaces the source of the same name (in its place), or is asked before
+    /// every source registered so far.
+    /// </summary>
+    public static void Register(IModelSource source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        lock (Registry)
+        {
+            int at = Registry.FindIndex(s => s.Name == source.Name);
+            if (at >= 0)
+            {
+                Registry[at] = source;
+            }
+            else
+            {
+                Registry.Insert(0, source);
+            }
+        }
+    }
+
+    /// <summary>Removes the source registered as <paramref name="name"/>; false when there is none.</summary>
+    public static bool Unregister(string name)
+    {
+        lock (Registry)
+        {
+            return Registry.RemoveAll(s => s.Name == name) > 0;
+        }
+    }
+
+    /// <summary>The registered source names, in the order they are asked.</summary>
+    public static IReadOnlyCollection<string> Names
+    {
+        get
+        {
+            lock (Registry)
+            {
+                return [.. Registry.Select(s => s.Name)];
+            }
+        }
+    }
+
+    /// <summary>The source registered as <paramref name="name"/>.</summary>
+    public static IModelSource Get(string name)
+    {
+        lock (Registry)
+        {
+            return Registry.Find(s => s.Name == name)
+                ?? throw new NotSupportedException($"No model source '{name}' is registered ({string.Join(", ", Registry.Select(s => s.Name))}); add it with ModelSources.Register.");
+        }
+    }
+
+    /// <summary>The source that resolves <paramref name="model"/>, or null when none does.</summary>
+    public static IModelSource? For(string model)
+    {
+        IModelSource[] sources;
+        lock (Registry)
+        {
+            sources = [.. Registry];
+        }
+
+        return sources.FirstOrDefault(s => s.CanResolve(model));                // asked outside the lock: sources look at the disk
+    }
+}
+
 /// <summary>
 /// Where a model comes from: a local folder, a GGUF file, an Ollama model ("ollama:qwen3:8b", read from Ollama's own
 /// store), or a Hugging Face model id such as "Qwen/Qwen3-0.6B". An id is looked up in
@@ -62,44 +169,52 @@ public static class ModelSource
 
     /// <summary>
     /// The local folder of <paramref name="model"/>: the folder itself, or a Hugging Face id found in a cache or
-    /// downloaded (see the class summary). With <paramref name="download"/> false, only the caches are searched.
+    /// downloaded (see the class summary), or what a source registered with <see cref="ModelSources"/> makes of it.
+    /// With <paramref name="download"/> false, only the caches are searched.
     /// </summary>
-    public static string Resolve(string model, string revision = "main", string? token = null, Downloader? downloader = null, bool download = true)
-    {
-        if (Directory.Exists(model))
-        {
-            return model;
-        }
+    public static string Resolve(string model, string revision = "main", string? token = null, Downloader? downloader = null, bool download = true) =>
+        ModelSources.For(model)?.Resolve(model, new ModelSourceOptions { Revision = revision, Token = token, Downloader = downloader, Download = download })
+        ?? throw new DirectoryNotFoundException($"'{model}' is neither a folder nor a Hugging Face model id (owner/name).");
 
-        if (model.StartsWith("ollama:", StringComparison.OrdinalIgnoreCase))
+    // The built-in sources, in the order they are asked (see ModelSources).
+    internal static IModelSource[] BuiltIn =>
+    [
+        new DelegateModelSource("folder", Directory.Exists, (model, _) => model),
+        new DelegateModelSource("ollama", model => model.StartsWith("ollama:", StringComparison.OrdinalIgnoreCase), (model, options) =>
         {
             string blob = OllamaModel(model[7..]);
-            (downloader ?? Downloader.Shared).Log?.Invoke($"{model}: Ollama's model file {blob}");
+            (options.Downloader ?? Downloader.Shared).Log?.Invoke($"{model}: Ollama's model file {blob}");
             return GgufModel.Prepare(blob);
-        }
+        }),
+        new DelegateModelSource("gguf", model => File.Exists(model) && model.EndsWith(".gguf", StringComparison.OrdinalIgnoreCase), (model, _) => GgufModel.Prepare(model)),
+        new DelegateModelSource("huggingface", IsModelId, HuggingFaceModel),
+    ];
 
-        if (File.Exists(model) && model.EndsWith(".gguf", StringComparison.OrdinalIgnoreCase))
-        {
-            return GgufModel.Prepare(model);
-        }
-
-        if (!IsModelId(model))
-        {
-            throw new DirectoryNotFoundException($"'{model}' is neither a folder nor a Hugging Face model id (owner/name).");
-        }
-
-        if (revision == "main" && HuggingFaceCache(model) is { } cached)
+    // A Hugging Face id: the Hugging Face cache, then Idrak's downloads (or a download).
+    private static string HuggingFaceModel(string model, ModelSourceOptions options)
+    {
+        var downloader = options.Downloader;
+        if (options.Revision == "main" && HuggingFaceCache(model) is { } cached)
         {
             (downloader ?? Downloader.Shared).Log?.Invoke($"{model}: found in the Hugging Face cache ({cached})");
             return cached;
         }
 
-        if (!download)
+        if (!options.Download)
         {
             return NewestDownloaded(model, downloader) ?? throw new DirectoryNotFoundException($"{model} is not in a local cache.");
         }
 
-        return DownloadAsync(model, revision, token, downloader).GetAwaiter().GetResult();
+        return DownloadAsync(model, options.Revision, options.Token, downloader).GetAwaiter().GetResult();
+    }
+
+    private sealed class DelegateModelSource(string name, Func<string, bool> canResolve, Func<string, ModelSourceOptions, string> resolve) : IModelSource
+    {
+        public string Name => name;
+
+        public bool CanResolve(string model) => canResolve(model);
+
+        public string Resolve(string model, ModelSourceOptions options) => resolve(model, options);
     }
 
     /// <summary>Downloads the files the library reads of a Hugging Face model (once) and returns their folder.</summary>
