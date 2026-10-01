@@ -7,11 +7,13 @@ namespace Idrak.Backends.Cuda;
 
 // Choices that depend on the card (how many ways to split k, which of two kernels, which tile) are measured on the card
 // in use, not set from one card's benchmarks: the first time a shape needs one, every candidate runs on the real inputs
-// and is timed with events, and the fastest is kept for the rest of the process. Candidates write either the caller's
-// output (which the chosen kernel then writes again) or scratch memory (outputs that are added to). The formula from the
-// device's own counts (SMs, tiles) is the default: it is used while measuring is impossible (a graph is being recorded,
-// the profiler runs, no device memory for scratch, IDRAK_AUTOTUNE=0), and a candidate replaces it only when it is
-// clearly faster, so timing noise does not move the choice.
+// and is timed with events, and the fastest is kept. Candidates write either the caller's output (which the chosen
+// kernel then writes again) or scratch memory (outputs that are added to). The formula from the device's own counts
+// (SMs, tiles) is the default: it is used while measuring is impossible (a graph is being recorded, the profiler runs,
+// no device memory for scratch) and with IDRAK_AUTOTUNE=0, and a candidate replaces it only when its median time is
+// clearly faster (TuneTiming), so timing noise does not move the choice. Measured choices are kept per GPU, driver and
+// library build in the user's cache folder (TuningCache; IDRAK_TUNING_CACHE=0 turns that off), so the next start reads
+// them instead of measuring again.
 /// <summary>Which choice a measurement is for.</summary>
 internal enum TuneOp : byte
 {
@@ -25,6 +27,7 @@ internal enum TuneOp : byte
     GatedActivation,
     TensorSplits,
     FloatTile,
+    DecodeSplits,
 }
 
 /// <summary>
@@ -38,10 +41,15 @@ internal sealed unsafe partial class CudaBackend
     /// <summary>Measure card-dependent choices on the device (default); off (IDRAK_AUTOTUNE=0): the formulas only.</summary>
     internal static bool Autotune = Environment.GetEnvironmentVariable("IDRAK_AUTOTUNE") is not ("0" or "false");
 
-    /// <summary>A candidate replaces the formula's choice only when it is at least this much faster (3%).</summary>
-    private const float TuneMargin = 0.97f;
+    /// <summary>Keep measured choices in the user's cache folder and read them at the next start (IDRAK_TUNING_CACHE=0: off).</summary>
+    internal static bool PersistTuning = TuningCache.Folder() is not null;
 
     private readonly Dictionary<TuneKey, int> _tuned = [];
+
+    // Choices read from the cache file (null until first needed); each is used only when it is still one of the
+    // candidates the shape offers, so a file from a build with other candidates cannot pick an invalid one.
+    private Dictionary<TuneKey, int>? _persisted;
+    private (string Path, TuningIdentity Identity)? _tuningFile;
     private (IntPtr Start, IntPtr End) _tuneEvents;
 
     // While candidates are timed, choices they need themselves use what is already known (or the formula), so one
@@ -61,12 +69,77 @@ internal sealed unsafe partial class CudaBackend
         }
     }
 
-    /// <summary>Forgets the measured choices (tests).</summary>
+    /// <summary>Forgets the measured choices and those read from the cache file; the file is read again when next needed (tests).</summary>
     internal void ForgetTuning()
     {
         lock (_tuned)
         {
             _tuned.Clear();
+            _persisted = null;
+            _tuningFile = null;
+        }
+    }
+
+    /// <summary>Choices timed on the device in this process (not read from the cache file; tests and diagnostics).</summary>
+    internal int MeasuredCount { get; private set; }
+
+    /// <summary>What the cache file of this GPU belongs to (tests and diagnostics).</summary>
+    internal TuningIdentity TuningIdentity => new(
+        $"{_deviceName}; compute {_computeMajor}.{_computeMinor}; {_multiprocessors} SMs; {_totalMemory >> 20} MiB",
+        $"CUDA {_driverVersion}; {TuningCache.DriverRelease()}",
+        TuningCache.LibraryBuild(PtxKernels.Source));
+
+    /// <summary>The cache file of this GPU, or null when the cache is off (tests and diagnostics).</summary>
+    internal string? TuningFile
+    {
+        get
+        {
+            lock (_tuned)
+            {
+                return TuningFileLocked()?.Path;
+            }
+        }
+    }
+
+    // The cache file and its identity, or null when the cache is off. Called under the _tuned lock.
+    private (string Path, TuningIdentity Identity)? TuningFileLocked()
+    {
+        if (!PersistTuning || TuningCache.Folder() is not { } folder)
+        {
+            return null;
+        }
+
+        if (_tuningFile is not { } file)
+        {
+            var identity = TuningIdentity;
+            file = (Path.Combine(folder, TuningCache.FileName(identity.Device)), identity);
+            _tuningFile = file;
+        }
+
+        return file;
+    }
+
+    // A choice read from the cache file for `key`, when it is one of `candidates`. Called under the _tuned lock.
+    private bool TryPersistedLocked(TuneKey key, ReadOnlySpan<int> candidates, out int value)
+    {
+        _persisted ??= TuningFileLocked() is { } file ? TuningCache.Load(file.Path, file.Identity) : [];
+        return _persisted.TryGetValue(key, out value) && candidates.Contains(value);
+    }
+
+    // Writes the measured choices to the cache file (keeping those other processes wrote there).
+    private void SaveTuning()
+    {
+        (string Path, TuningIdentity Identity)? file;
+        Dictionary<TuneKey, int> snapshot;
+        lock (_tuned)
+        {
+            file = TuningFileLocked();
+            snapshot = new Dictionary<TuneKey, int>(_tuned);
+        }
+
+        if (file is { } f)
+        {
+            TuningCache.Save(f.Path, f.Identity, snapshot);
         }
     }
 
@@ -79,16 +152,27 @@ internal sealed unsafe partial class CudaBackend
         }
     }
 
-    // The fastest of `candidates` for `key`, measured once; `fallback` (the formula's choice) while it cannot be measured.
-    // `run(candidate)` runs the operation with that choice; it must leave nothing the caller relies on changed (it writes
-    // the output the caller writes again, or scratch memory).
+    // The fastest of `candidates` for `key`, measured once (or read from the cache file); `fallback` (the formula's
+    // choice) while it cannot be measured. `run(candidate)` runs the operation with that choice; it must leave nothing the
+    // caller relies on changed (it writes the output the caller writes again, or scratch memory).
     private int Tune(TuneKey key, ReadOnlySpan<int> candidates, int fallback, Action<int> run)
     {
+        if (!Autotune)
+        {
+            return fallback;                                               // IDRAK_AUTOTUNE=0: the formulas only
+        }
+
         lock (_tuned)
         {
             if (_tuned.TryGetValue(key, out int known))
             {
                 return known;
+            }
+
+            if (candidates.Length > 1 && TryPersistedLocked(key, candidates, out int kept))
+            {
+                _tuned[key] = kept;
+                return kept;
             }
         }
 
@@ -97,7 +181,7 @@ internal sealed unsafe partial class CudaBackend
             return candidates.Length == 1 ? candidates[0] : fallback;
         }
 
-        if (!Autotune || t_timing || _profile is not null || _captureFree is not null || Volatile.Read(ref _captureThread) != 0)
+        if (!CanMeasure)
         {
             return fallback;
         }
@@ -118,56 +202,41 @@ internal sealed unsafe partial class CudaBackend
         }
 
         // Each candidate is timed as it runs in practice, several launches back to back (as many as take about 0.2 ms,
-        // at most 16): a launch timed alone misses how splits overlap with the work around them. Candidates take turns,
-        // five rounds, best time each, so a GPU still raising its clocks (laptops) slows every candidate alike.
-        var times = new float[candidates.Length];
-        times.AsSpan().Fill(float.MaxValue);
-        var repeats = new int[candidates.Length];
+        // at most 16): a launch timed alone misses how splits overlap with the work around them. Candidates take turns
+        // over TuneTiming.Rounds rounds and the medians are compared (TuneTiming.Choose), so neither a GPU still raising
+        // its clocks (laptops) nor one lucky or unlucky timing decides.
+        var list = candidates.ToArray();
+        var repeats = new int[list.Length];
+        int chosen;
         t_timing = true;
         try
         {
-            for (int c = 0; c < candidates.Length; c++)
+            for (int c = 0; c < list.Length; c++)
             {
-                float once = TimeRuns(candidates[c], 1, run);
+                float once = TimeRuns(list[c], 1, run);
                 repeats[c] = Math.Clamp((int)MathF.Ceiling(0.2f / Math.Max(once, 1e-3f)), 1, 16);
             }
 
-            for (int round = 0; round < 5; round++)
-            {
-                for (int c = 0; c < candidates.Length; c++)
-                {
-                    times[c] = Math.Min(times[c], TimeRuns(candidates[c], repeats[c], run) / repeats[c]);
-                }
-            }
+            chosen = list[TuneTiming.Choose(list, fallback, c => TimeRuns(list[c], repeats[c], run) / repeats[c])];
         }
         finally
         {
             t_timing = false;
         }
 
-        int fastest = 0;
-        for (int c = 1; c < times.Length; c++)
-        {
-            if (times[c] < times[fastest])
-            {
-                fastest = c;
-            }
-        }
-
-        int chosen = candidates[fastest];
-        int formula = candidates.IndexOf(fallback);
-        if (formula >= 0 && times[fastest] >= times[formula] * TuneMargin)
-        {
-            chosen = fallback;                                             // within the noise of the formula's choice
-        }
-
         lock (_tuned)
         {
             _tuned[key] = chosen;
+            MeasuredCount++;
         }
 
+        SaveTuning();
         return chosen;
     }
+
+    // Whether candidates can be timed now: not inside another measurement, not while the profiler runs or a graph is
+    // being recorded.
+    private bool CanMeasure => Autotune && !t_timing && _profile is null && _captureFree is null && Volatile.Read(ref _captureThread) == 0;
 
     // Milliseconds of `count` back-to-back runs of one candidate, measured with events on the work stream.
     private float TimeRuns(int candidate, int count, Action<int> run)

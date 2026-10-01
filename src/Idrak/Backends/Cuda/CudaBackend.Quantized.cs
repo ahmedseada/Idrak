@@ -665,35 +665,79 @@ internal sealed unsafe partial class CudaBackend
         }
 
         int rows = heads * rowsPerHead;
-        DecodeSplit(rows, capacity, dim, y, (splits, part, counters) => Launch(K("attention_decode_f32"), (uint)rows, (uint)splits, 1, PtxKernels.RowThreads, 1,
-            P(q), P(keys), P(values), P(position), P(y), P(part), P(counters), U(rowsPerHead), U(steps), U(capacity), U(dim), F(scale), U(rows)));
+        DecodeSplit(0, rows, capacity, dim, position, y, (splits, part, counters, at) => Launch(K("attention_decode_f32"), (uint)rows, (uint)splits, 1, PtxKernels.RowThreads, 1,
+            P(q), P(keys), P(values), at, P(y), P(part), P(counters), U(rowsPerHead), U(steps), U(capacity), U(dim), F(scale), U(rows)));
     }
 
     // Decoding attention has one block per query row (few rows: the heads of one token), so the cached positions are
-    // split over about five blocks per SM (--bench-gemv, 16 rows → 22 splits: 4000 positions 75.9 → ~35 µs, 1000
-    // positions 22 → ~15 µs); each writes (max, sum, weighted values) for its chunk and the last block of a row to finish
-    // merges them (counted in the split counters). The split count depends only on the shapes,
-    // so recorded graphs stay valid as the cache fills (chunks are computed on the device from the current length).
-    private void DecodeSplit(int rows, int capacity, int dim, Storage y, Action<int, Storage, Storage> launch)
+    // split over several blocks per row; each writes (max, sum, weighted values) for its chunk and the last block of a
+    // row to finish merges them (counted in the split counters). The split count depends only on the shapes, so
+    // recorded graphs stay valid as the cache fills (chunks are computed on the device from the current length).
+    // How many splits is measured once per shape (kernel `variant`, rows, capacity, head size) on this card, with the
+    // cache read as if full (a scratch position at its last row): the time of a decoding step grows with the filled
+    // length, so a full cache is where the choice matters and the one length every shape reaches; timing the first
+    // call's (often short) length instead would favour too few splits. Candidates: 1, 2, 3, 4, 6, 8, ... up to one split
+    // per 64 cached positions (at most 64). The formula, about five blocks per SM (--bench-gemv: 16 rows → 22 splits,
+    // 4000 positions 75.9 → ~35 µs, 1000 positions 22 → ~15 µs), is the default until then and when nothing can be
+    // measured. `launch(splits, part, counters, position)` launches the kernel with that position address.
+    private void DecodeSplit(int variant, int rows, int capacity, int dim, Storage position, Storage y, Action<int, Storage, Storage, ulong> launch)
     {
-        int splits = DecodeSplits is int forced ? Math.Clamp(forced, 1, 64)
-            : Math.Clamp((5 * Math.Max(1, _multiprocessors) + rows - 1) / rows, 1, Math.Clamp(capacity / 64, 1, 32));
         var counters = SplitCounters(rows);
-        if (splits == 1)
+        void Run(int splits, ulong at)
         {
-            launch(1, y, counters);
-            return;
+            if (splits == 1)
+            {
+                launch(1, y, counters, at);
+                return;
+            }
+
+            var part = Allocate(rows * splits * (dim + 2), zeroed: false);
+            try
+            {
+                launch(splits, part, counters, at);
+            }
+            finally
+            {
+                part.Release();
+            }
         }
 
-        var part = Allocate(rows * splits * (dim + 2), zeroed: false);
-        try
+        int limit = Math.Clamp(capacity / 64, 1, 64);
+        int splits;
+        if (DecodeSplits is int forced)
         {
-            launch(splits, part, counters);
+            splits = Math.Clamp(forced, 1, 64);
         }
-        finally
+        else
         {
-            part.Release();
+            int formula = Math.Clamp((5 * Math.Max(1, _multiprocessors) + rows - 1) / rows, 1, Math.Min(32, limit));
+            int[] candidates = SplitCounts(limit);
+            if (!candidates.Contains(formula))
+            {
+                candidates = [.. candidates.Append(formula).Order()];
+            }
+
+            Storage? full = null;
+            try
+            {
+                splits = Tune(new TuneKey(TuneOp.DecodeSplits, variant, rows, capacity, dim), candidates, formula, c =>
+                {
+                    if (full is null)
+                    {
+                        full = Allocate(1, zeroed: false);
+                        Fill(full, 1, capacity - 1);                       // every row then reads the whole cache
+                    }
+
+                    Run(c, P(full));                                    // writes y, which the launch below writes again
+                });
+            }
+            finally
+            {
+                full?.Release();
+            }
         }
+
+        Run(splits, P(position));
     }
 
     public override void RmsNormAffine(Storage x, Storage gain, Storage y, int rows, int cols, float eps, float offset) =>
@@ -940,8 +984,8 @@ internal sealed unsafe partial class CudaBackend
         }
 
         int rows = heads * rowsPerHead;
-        DecodeSplit(rows, capacity, dim, y, (splits, part, counters) => Launch(K("attention_decode_int8"), (uint)rows, (uint)splits, 1, PtxKernels.RowThreads, 1,
-            P(q), P(keys), P(values), P(keyScales), P(valueScales), P(position), P(y), P(part), P(counters),
+        DecodeSplit(1, rows, capacity, dim, position, y, (splits, part, counters, at) => Launch(K("attention_decode_int8"), (uint)rows, (uint)splits, 1, PtxKernels.RowThreads, 1,
+            P(q), P(keys), P(values), P(keyScales), P(valueScales), at, P(y), P(part), P(counters),
             U(rowsPerHead), U(steps), U(capacity), U(dim), F(scale), U(words), U(rows)));
     }
 
@@ -965,8 +1009,8 @@ internal sealed unsafe partial class CudaBackend
         }
 
         int rows = heads * rowsPerHead;
-        DecodeSplit(rows, capacity, dim, y, (splits, part, counters) => Launch(K("attention_decode_bf16"), (uint)rows, (uint)splits, 1, PtxKernels.RowThreads, 1,
-            P(q), P(keys), P(values), P(position), P(y), P(part), P(counters), U(rowsPerHead), U(steps), U(capacity), U(dim), F(scale), U(words), U(rows)));
+        DecodeSplit(2, rows, capacity, dim, position, y, (splits, part, counters, at) => Launch(K("attention_decode_bf16"), (uint)rows, (uint)splits, 1, PtxKernels.RowThreads, 1,
+            P(q), P(keys), P(values), at, P(y), P(part), P(counters), U(rowsPerHead), U(steps), U(capacity), U(dim), F(scale), U(words), U(rows)));
     }
 
     public override void KeyValueWriteBFloat16(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
