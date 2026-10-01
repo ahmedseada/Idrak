@@ -22,6 +22,12 @@ public sealed record PretrainedOptions
     /// <summary>Store the projections as 4-bit weights (one scale per 32 rows and column; about 5 bits per weight).</summary>
     public bool Int4 { get; init; }
 
+    /// <summary>
+    /// Store the projections in the packed format registered under this name (<see cref="PackedWeight.FormatNames"/>; a
+    /// format of your own is added with <see cref="PackedWeight.Register"/>). Takes precedence over Int8, Int4 and BFloat16.
+    /// </summary>
+    public string? PackedFormatName { get; init; }
+
     /// <summary>Longest sequence to support (sizes the rotary tables); the model's maximum when null.</summary>
     public int? MaxPositions { get; init; }
 
@@ -112,7 +118,7 @@ public sealed class PretrainedModel : IDisposable
         using ITensorStore reader = GgufModel.IsPrepared(folder) ? GgufModel.OpenTensors(folder) : SafeTensorsReader.Open(folder);
         using var adapter = options.MergeAdapter is { } adapterFolder ? new AdapterMerge(adapterFolder) : null;
         var weights = new CheckpointWeights(reader, architecture) { Adapter = adapter };
-        var network = spec.Build(weights, new DecoderBuildOptions { Device = options.Device, Int8 = options.Int8, BFloat16 = options.BFloat16, Int4 = options.Int4, MaxPositions = maxPositions });
+        var network = spec.Build(weights, new DecoderBuildOptions { Device = options.Device, Int8 = options.Int8, BFloat16 = options.BFloat16, Int4 = options.Int4, PackedFormatName = options.PackedFormatName, MaxPositions = maxPositions });
         var unused = reader.Names.Where(k => !weights.Used.Contains(k) && !k.EndsWith("rotary_emb.inv_freq", StringComparison.Ordinal)).ToList();
         if (unused.Count > 0)
         {

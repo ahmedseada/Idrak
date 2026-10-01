@@ -138,7 +138,7 @@ public sealed class Embedding : Module
     protected internal override void MoveTo(Device device)
     {
         _weight = _weight is null ? null : MoveTensor(_weight, device);
-        BFloat16?.MoveTo(device, MoveTensor);
+        BFloat16?.MoveWeights(device, MoveTensor);
     }
 
     /// <inheritdoc />

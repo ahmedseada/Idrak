@@ -51,6 +51,13 @@ public sealed record DecoderBuildOptions
     public bool Int4 { get; init; }
 
     /// <summary>
+    /// Store the projections in the packed format registered under this name (see <see cref="PackedWeight.FormatNames"/>:
+    /// "int8", "int4", "bfloat16", or a format of your own added with <see cref="PackedWeight.Register"/>), packed on the
+    /// host as they are read. Takes precedence over <see cref="Int8"/>, <see cref="Int4"/> and <see cref="BFloat16"/>.
+    /// </summary>
+    public string? PackedFormatName { get; init; }
+
+    /// <summary>
     /// Standard deviation of a normal initialization of every weight matrix and embedding table (biases zero, norm gains
     /// one), as GPT-2 and nanoGPT use (0.02). Null keeps the default (uniform Xavier weights, ±0.02 embeddings).
     /// Ignored when building from weights.
@@ -214,8 +221,11 @@ public sealed record DecoderSpec
 
             float[] Initial(int count, float uniformBound) => options.InitStd is { } std ? Normal(count, std) : Uniform(count, uniformBound);
 
-            // The format the projections are packed in (frozen weights), or null for trainable float32 ones.
+            // The format the projections are packed in (frozen weights), or null for trainable float32 ones; a format named
+            // in the options is looked up before anything is read.
             PackedFormat? packed = options.Int8 ? PackedFormat.Int8 : options.Int4 ? PackedFormat.Int4 : options.BFloat16 ? PackedFormat.BFloat16 : null;
+            string? packedName = options.PackedFormatName;
+            var factory = packedName is null ? null : PackedWeight.Factory(packedName);
 
             Linear Projection(string name, int inputs, int outputs, bool bias, float[]? transposedFrom = null)
             {
@@ -225,8 +235,8 @@ public sealed record DecoderSpec
                         ? Initial(inputs * outputs, MathF.Sqrt(6f / (inputs + outputs)))
                         : throw new InvalidDataException($"The weights have no '{name}.weight' [{inputs}, {outputs}]."));
                 var b = bias ? Tensor($"{name}.bias", [outputs], () => new float[outputs]) : null;
-                return packed is { } format
-                    ? Linear.FromPacked(PackedWeight.FromValues(format, Values(), inputs, outputs, device), b)
+                return factory is not null ? Linear.FromPacked(PackedWeight.Pack(factory, packedName!, Values(), inputs, outputs, device), b)
+                    : packed is { } format ? Linear.FromPacked(PackedWeight.FromValues(format, Values(), inputs, outputs, device), b)
                     : Linear.FromWeights(Idrak.Tensor.Persistent(Values(), shape, device, requiresGrad: true), b);
             }
 
@@ -242,7 +252,7 @@ public sealed record DecoderSpec
                 ? (options.InitStd is { } embedStd ? Normal(Vocabulary * Dim, embedStd) : [.. Enumerable.Range(0, Vocabulary * Dim).Select(_ => (float)(random.NextDouble() * 2 - 1) * 0.02f)])
                 : weights.Read("embed.weight", [Vocabulary, Dim]) ?? throw new InvalidDataException($"The weights have no 'embed.weight' [{Vocabulary}, {Dim}].");
             // Frozen-weight builds keep the table as bfloat16 (half the memory; lossless for bfloat16 checkpoints).
-            bool frozen = packed is not null;
+            bool frozen = packed is not null || factory is not null;
             var embedding = frozen
                 ? Embedding.FromBFloat16(BFloat16Weight.FromValues(embeddingValues, Vocabulary, Dim, device))
                 : Embedding.FromWeights(Idrak.Tensor.Persistent(embeddingValues, [Vocabulary, Dim], device, requiresGrad: true));

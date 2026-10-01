@@ -213,7 +213,8 @@ public abstract class Module : IDisposable
 
     /// <summary>
     /// Writes all parameter values to a binary file in <paramref name="format"/>: Float16 and BFloat16 halve the file
-    /// (values are rounded; they are float32 again after loading). Int8 weights are always stored as they are.
+    /// (values are rounded; they are float32 again after loading). Packed weights (int8, 4-bit, bfloat16 and formats of
+    /// one's own) are always stored as they are.
     /// </summary>
     public void Save(string path, WeightFormat format)
     {
@@ -236,6 +237,7 @@ public abstract class Module : IDisposable
         var exact = int8.SelectMany(p => new[] { p.l.Int8!.Packed, p.l.Int8.Scales }).Concat(half.Select(p => p.l.BFloat16!.Packed))
             .Concat(int4.SelectMany(p => new[] { p.l.Int4!.Packed, p.l.Int4.Scales }))
             .Concat(tables.Select(p => p.e.BFloat16!.Packed))
+            .Concat(linears.Where(l => l.PackedWeight is { Format: null }).SelectMany(l => l.PackedWeight!.Buffers()))   // formats of one's own
             .ToHashSet(ReferenceEqualityComparer.Instance);
         using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
         var parameters = Parameters().Concat(Buffers()).ToList();

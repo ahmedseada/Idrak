@@ -259,14 +259,15 @@ public sealed partial class Tensor
             return null;
         }
 
-        // One weight form for all: float32 (one frozen, untied layer), or one packed format the low-rank products read.
+        // One weight form for all: float32 (one frozen, untied layer), or one built-in packed format the low-rank products
+        // read (formats of one's own have no Format: their layers run their own products).
         var packedFormat = layers[0].PackedWeight?.Format;
-        bool dense = packedFormat is null;
+        bool dense = layers[0].PackedWeight is null;
         foreach (var layer in layers)
         {
             bool fits = dense
                 ? layer.PackedWeight is null && layer.TiedTo is null && layers.Count == 1 && !layer.Weight.RequiresGrad
-                : layer.PackedWeight is { LowRankProducts: true } own && own.Format == packedFormat;
+                : layer.PackedWeight is { LowRankProducts: true, Format: { } own } && own == packedFormat;
             if (!fits || layer.InFeatures != k || layer.Adapter is not { } adapter || adapter.Rank != first.Rank
                 || adapter.A.Device != input.Device || withBias && layer.Bias is { RequiresGrad: true })
             {
@@ -652,9 +653,9 @@ public sealed partial class Tensor
         gate.ThrowIfDisposed();
         up.ThrowIfDisposed();
         int k = gate._shape[^1], m = gate.Size / Math.Max(1, k);
-        if (layer.PackedWeight is not { } weight || k != layer.InFeatures || up.Size != gate.Size || m > gate.Backend.Capabilities.FewRows)
+        if (layer.PackedWeight is not { Format: { } format } weight || k != layer.InFeatures || up.Size != gate.Size || m > gate.Backend.Capabilities.FewRows)
         {
-            return null;
+            return null;                                                // not packed, or a format the kernels do not read
         }
 
         var (packed, scales) = (weight.PackedValues, weight.ScaleValues);
@@ -665,7 +666,7 @@ public sealed partial class Tensor
 
         long start = Telemetry.Start(TelemetryLevel.Operations);
         var y = Empty([.. gate._shape[..^1], layer.OutFeatures], gate.Device);
-        if (!gate.Backend.PackedMatMulGated(weight.Format, activation, gate.Storage, up.Storage, packed.Storage, scales?.Storage, y.Storage, m, layer.OutFeatures, k))
+        if (!gate.Backend.PackedMatMulGated(format, activation, gate.Storage, up.Storage, packed.Storage, scales?.Storage, y.Storage, m, layer.OutFeatures, k))
         {
             y.Dispose();
             return null;
@@ -685,7 +686,7 @@ public sealed partial class Tensor
         x.ThrowIfDisposed();
         residual.ThrowIfDisposed();
         int k = x._shape[^1], m = x.Size / Math.Max(1, k), n = layer.OutFeatures;
-        if (layer.PackedWeight is not { } weight || layer.Bias is not null || layer.Adapter is not null || k != layer.InFeatures || m > x.Backend.Capabilities.FewRows
+        if (layer.PackedWeight is not { Format: { } format } weight || layer.Bias is not null || layer.Adapter is not null || k != layer.InFeatures || m > x.Backend.Capabilities.FewRows
             || residual.Size != m * n || residual._shape[^1] != n || norm.Features != n || !x.Backend.Capabilities.FusedKernels)
         {
             return null;
@@ -701,7 +702,7 @@ public sealed partial class Tensor
         var y = Empty(residual._shape, x.Device, track: false);
         var sum = Empty(residual._shape, x.Device);
         var normalized = Empty(residual._shape, x.Device);
-        bool done = x.Backend.PackedMatMulAddRmsNorm(weight.Format, x.Storage, packed.Storage, scales?.Storage, y.Storage, m, n, k, residual.Storage, sum.Storage,
+        bool done = x.Backend.PackedMatMulAddRmsNorm(format, x.Storage, packed.Storage, scales?.Storage, y.Storage, m, n, k, residual.Storage, sum.Storage,
             norm.Gain.Storage, normalized.Storage, norm.Epsilon, norm.Offset);
         y.Dispose();                                                 // stream-ordered: freed after the kernel read it
         if (!done)
@@ -724,7 +725,7 @@ public sealed partial class Tensor
         using var offload = Offloading.EnterMany([gate, up], input);
         input.ThrowIfDisposed();
         int k = input._shape[^1], m = input.Size / Math.Max(1, k), n = gate.OutFeatures;
-        if (gate.PackedWeight is not { } gateWeight || up.PackedWeight is not { } upWeight || upWeight.Format != gateWeight.Format
+        if (gate.PackedWeight is not { Format: { } format } gateWeight || up.PackedWeight is not { } upWeight || upWeight.Format != format
             || m > input.Backend.Capabilities.FewRows || !input.Backend.Capabilities.FusedKernels || up.OutFeatures != n
             || gate.InFeatures != k || up.InFeatures != k || gate.Bias is not null || up.Bias is not null || gate.Adapter is not null
             || up.Adapter is not null)
@@ -743,7 +744,7 @@ public sealed partial class Tensor
         var gateOut = Empty([m * n], input.Device, track: false);
         var upOut = Empty([m * n], input.Device, track: false);
         var hidden = Empty([.. input._shape[..^1], n], input.Device);
-        bool done = input.Backend.PackedMatMulGatedPair(gateWeight.Format, activation, input.Storage, m, k,
+        bool done = input.Backend.PackedMatMulGatedPair(format, activation, input.Storage, m, k,
             [(gatePacked.Storage, gateScales?.Storage, null, gateOut.Storage, n), (upPacked.Storage, upScales?.Storage, null, upOut.Storage, n)],
             hidden.Storage);
         gateOut.Dispose();                                           // stream-ordered: freed after the kernel read them
@@ -772,6 +773,11 @@ public sealed partial class Tensor
         {
             var layer = layers[j];
             var weight = layer.PackedWeight!;                                  // the caller checked: one format for all
+            if (weight.Format != format)
+            {
+                return null;                                                   // never reached: a format the kernels do not read
+            }
+
             var (packed, scales) = (weight.PackedValues, weight.ScaleValues);
             if (packed.Device != input.Device)
             {

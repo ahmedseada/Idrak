@@ -53,7 +53,10 @@ public sealed class Linear : Module
         return new Linear(weight.Shape[0], weight.Shape[1], weight, null, bias);
     }
 
-    /// <summary>A layer around existing packed weights (int8, 4-bit or bfloat16); the layer takes ownership.</summary>
+    /// <summary>
+    /// A layer around existing packed weights (int8, 4-bit, bfloat16, or a format of your own derived from
+    /// <see cref="Layers.PackedWeight"/>); the layer takes ownership.
+    /// </summary>
     public static Linear FromPacked(PackedWeight weight, Tensor? bias = null) => new(weight.Rows, weight.Columns, null, weight, bias);
 
     /// <summary>A layer around existing int8 weights (see <see cref="ModuleExtensions.QuantizeInt8"/>); the layer takes ownership.</summary>
@@ -87,9 +90,9 @@ public sealed class Linear : Module
     /// <summary>The [inFeatures, outFeatures] weight matrix.</summary>
     public Tensor Weight => _weight ?? throw new InvalidOperationException(_tiedTo is not null
         ? $"{this} reads the embedding table of {_tiedTo} (transposed); use TiedTo.Weight."
-        : $"{this} holds {_packed!.Description} weights (see {_packed.Format}); call {_packed.FloatMethod} on the model to get float weights back.");
+        : $"{this} holds {_packed!.Description} weights (see {_packed.GetType().Name}); call {_packed.FloatMethod} on the model to get float weights back.");
 
-    /// <summary>The packed weights (int8, int4 or bfloat16) when the layer holds them, else null (float weights).</summary>
+    /// <summary>The packed weights (int8, int4, bfloat16 or a format of your own) when the layer holds them, else null (float weights).</summary>
     public PackedWeight? PackedWeight => _packed;
 
     private PackedWeight? _packed;
@@ -161,8 +164,9 @@ public sealed class Linear : Module
             return Tensor.MatMulMany(input, [.. layers.Select(l => l.Weight)], [.. layers.Select(l => l.Bias)]);
         }
 
-        // Packed weights of one kind (int8, int4, bfloat16): one pass where the device has one (few rows; for prompts, one
-        // tensor-core launch over all the layers' columns).
+        // Packed weights of one built-in kind (int8, int4, bfloat16): one pass where the device has one (few rows; for
+        // prompts, one tensor-core launch over all the layers' columns). Formats of one's own have no Format and no such
+        // pass: each layer runs its own product.
         var format = layers[0].PackedWeight?.Format;
         bool packed = format is not null && !Autograd.IsEnabled && layers.Length is > 1 and <= 3
             && (rows <= capabilities.FewRows || layers.All(l => l.Bias is null))                  // prompts: one launch
@@ -288,7 +292,7 @@ public sealed class Linear : Module
     /// <inheritdoc />
     public override IEnumerable<Tensor> Buffers() => _packed?.Buffers() ?? [];
 
-    // The float weight values (dequantized when the layer holds int8 weights).
+    // The float weight values (expanded when the layer holds packed weights).
     internal float[] WeightValues()
     {
         if (_tiedTo is not null)
@@ -301,11 +305,11 @@ public sealed class Linear : Module
             return Weight.ToArray();
         }
 
-        using var w = Int8?.Dequantize() ?? Int4?.Dequantize() ?? BFloat16!.Dequantize();
+        using var w = _packed!.Dequantize();
         return w.ToArray();
     }
 
-    internal Device Device => _tiedTo?.Device ?? (_weight ?? Int8?.Packed ?? Int4?.Packed ?? BFloat16!.Packed).Device;
+    internal Device Device => _tiedTo?.Device ?? _weight?.Device ?? _packed!.Device;
 
     // The tied table transposed to [in, out] on the host.
     private float[] TiedValues() => HostParallel.Transpose(_tiedTo!.WeightValues(), OutFeatures, InFeatures);
@@ -337,7 +341,7 @@ public sealed class Linear : Module
         _weight = null;
     }
 
-    // Back to float weights from bfloat16 or 4-bit ones.
+    // Back to float weights from bfloat16, 4-bit or other packed ones (formats of one's own).
     internal void ToFloat32(bool trainable)
     {
         if (_packed is null or Int8Weight)
@@ -468,7 +472,7 @@ public sealed class Linear : Module
     protected internal override void MoveTo(Device device)
     {
         _weight = _weight is null ? null : MoveTensor(_weight, device);
-        _packed?.MoveTo(device, MoveTensor);
+        _packed?.MoveWeights(device, MoveTensor);
         Bias = Bias is null ? null : MoveTensor(Bias, device);
         if (Adapter is { } a)
         {
