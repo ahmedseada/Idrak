@@ -18,7 +18,7 @@ internal static partial class Tests
             root = parent.FullName;
         }
 
-        string text = File.ReadAllText(Path.Combine(root, "README.md"));
+        string text = File.ReadAllText(Path.Combine(root, "README.md")).ReplaceLineEndings("\n");   // the same input on every OS
         Console.WriteLine($"text paths on the README ({text.Length:N0} characters), .NET {Environment.Version}, {Environment.ProcessorCount} threads");
 
         // Measures `run` (warmed up first): the best of five rounds, each long enough to time.

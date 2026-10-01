@@ -198,7 +198,8 @@ internal static partial class Tests
                     model.QuantizeInt8();
                 }
 
-                model.AddLora(rank: 2, alpha: 4, targets: _ => true, freezeBase: true, random: new Random(34));
+                model.AddLora(rank: 2, alpha: 4, targets: l => l.Name is "q" or "k" or "v" or "o" or "gate" or "up" or "down", freezeBase: true,
+                    random: new Random(34));
                 foreach (var adapter in model.Descendants().OfType<Linear>().Select(l => l.Adapter).OfType<LoraAdapter>())
                 {
                     adapter.B.Load([.. Enumerable.Range(0, adapter.B.Size).Select(i => MathF.Sin(i))]);
