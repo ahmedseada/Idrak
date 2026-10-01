@@ -22,43 +22,49 @@ kernels (PTX) in C#. A new backend should do the same where it can: talk to what
 generate its kernels in C# (PTX for NVIDIA, SPIR-V for AMD and Intel, Metal source for Apple). Where that is impossible (NPUs), the work goes into an optional add-on package, and the core
 stays dependency-free.
 
-## Note: no card-specific tuning (draft)
+## Rule: no card-specific tuning (mostly done in 0.1.6)
 
-The library must run well on **every** card, not on the one it was measured on. Several rules today were tuned with
-`--bench-gemm` / `--bench-gemv` on one RTX 5070 Ti (compute 12.0, 70 SMs) and only spot-checked elsewhere; the few-row
-rule shipped in 0.1.5 is already 1.2–1.4× slower on an RTX 3060 (compute 8.6). The rule from now on:
+The library must run well on **every** card, not on the one it was measured on. Before 0.1.6, several rules were
+tuned with `--bench-gemm` / `--bench-gemv` on one RTX 5070 Ti (compute 12.0, 70 SMs); the few-row rule in 0.1.5 was
+1.2–1.4× slower on an RTX 3060 (compute 8.6). The rule:
 
 - **No card names in decisions.** A heuristic reads only what the device reports: compute capability, SM count, shared
   memory per block and per SM, L2 size, memory size, bus width and clocks (`cuDeviceGetAttribute`), and the matrix
   formats it supports. A card name may appear in a comment as *where it was measured*, never as the reason.
 - **Relative, not absolute, sizes.** Limits scale with the device: blocks per SM, a fraction of total memory, a
   fraction of L2. Fixed byte counts are a smell.
-- **Measured on at least three cards across generations** before a rule ships (today: RTX 3060 Laptop 8.6, RTX 5050
-  Laptop 12.0, RTX 5070 Ti 12.0; wanted: an Ada 8.9 card, a small card with few SMs, a data-center card). The README's
-  "Tested on" table records the runs. A rule may not be more than 5% slower than the best fixed choice on any tested card.
-- **When no rule wins everywhere, measure on the user's card.** A short autotune at first use (or `idrak-tune
-  --autotune`) times the few candidates, caches the choice per GPU, compute capability and driver version in the user's
-  cache folder, and falls back to the heuristic when it cannot run. Every tuned value keeps a benchmark override
-  (`GemvSplits`, `TensorSplitsOverride`, ...) for tests.
+- **When no rule wins everywhere, measure on the user's card.** Since 0.1.6 (`CudaBackend.Tuning.cs`): the first time
+  a shape needs a choice, every candidate runs on the real inputs, back to back and in turns over five rounds, and the
+  fastest is kept for the process. The device-count formula is the default while measuring is impossible (a graph is
+  being recorded, the profiler runs, `IDRAK_AUTOTUNE=0`) and wins unless a candidate is 3% faster. Every tuned value
+  keeps a benchmark override (`GemvSplits`, `TensorSplitsOverride`, ...) for tests.
+- **Checked on several cards across generations.** The README's "Tested on" table records the runs. A choice may not
+  be more than 5% slower than the best fixed one on any tested card.
 - **Other backends follow the same rule.** AMD, Intel and Apple (plans 3–5) read their own device limits through
-  `Backend.Capabilities` (shared work step 1), so no plan copies NVIDIA numbers.
+  `Backend.Capabilities` (shared work step 1) and use the same measure-on-first-use approach, so no plan copies NVIDIA
+  numbers.
 
-### Rules to review against it
+### Status of each rule
 
-| Rule (file) | Tuned on | Today | Card-agnostic form |
+| Rule (file) | Before 0.1.6 | Since 0.1.6 | Left to do |
 |---|---|---|---|
-| Few-row int8 rows → tensor cores (`PrefersPackedMatMul`, `CudaBackend.Quantized.cs`) | 5070 Ti | 4–8 rows, weights ≥ 2^25, any tensor-core GPU | key on compute ≥ 8.9 (wins on 12.0 cards, loses on 8.6), then confirm on 8.9; or autotune the row cut-off |
-| Few-row k splits (`GemvSplitCount`) | 5070 Ti | ~2 blocks per SM, power of two | already per SM; confirm on cards with few and many SMs |
-| Tensor-core k splits (`TensorSplits`, `CudaBackend.cs`) | 5070 Ti | ~16 blocks per SM, ≤ 8 splits, chunks ≥ 1024 | per SM already; check the chunk sizes against L2 size |
-| Prompt k splits (`PromptSplits`) | 5070 Ti (70 SMs) | none when tiles fill 85–100% of the SMs | per SM already; confirm the 85% wave threshold elsewhere |
-| Fused activation only for int4 (`PackedMatMulGated`) | 5070 Ti | int4 fused, int8 / bfloat16 separate | measure on 8.6 and 8.9; autotune if it flips |
-| Prompt row tile 64 / 128 (`PromptTileRows`) | 5070 Ti | by tile fill only | fine (geometry, not hardware); confirm |
-| GPU memory reserve (`ComputeResources.GpuMemoryReserve`) | – | 512 MB fixed | a fraction of total memory with a floor (an 8 GB card and a 32 GB card differ) |
-| Offload headroom (`ComputeResources.OffloadReturnHeadroom`, offloading branch) | – | 1 GiB fixed | a fraction of total memory with a floor |
-| Async upload size (`AsyncUploadBytes`, staging ring 16 MB) | – | fixed | fine as a host-side size; confirm on PCIe 3 / 4 / 5 |
+| Few-row int8 rows → GEMV or tensor cores (`PrefersPackedMatMul`) | 4–8 rows to tensor cores on every tensor-core GPU (tuned on 5070 Ti) | ✅ measured per shape | an RTX 3060 and an Ada (8.9) run |
+| Few-row k splits (`GemvSplitCount`) | ~2 blocks per SM, power of two | ✅ measured per shape (powers of two) | – |
+| Tensor-core k splits (`TensorSplits`) | ~16 blocks per SM, ≤ 8 splits | ✅ measured per shape (1, 2, 3, 4, 6, 8, 12, ...) | – |
+| Prompt k splits (`PromptSplits`) | none at 85–100% of a wave | ✅ measured per shape | – |
+| Fused activation (`PackedMatMulGated`) | int4 only | ✅ measured per shape, every format | – |
+| 64 / 128 tiles without tensor cores | by SM count | ✅ measured per shape | a run on a GPU without tensor cores |
+| GPU memory reserve (`GpuMemoryReserve`) | 512 MiB fixed | ✅ 1/16 of the GPU's memory, at least 256 MiB | – |
+| Offload headroom (`OffloadReturnHeadroom`) | 1 GiB fixed | ✅ 1/8 of the GPU's memory, at least 256 MiB | – |
+| Decoding-attention splits (`DecodeSplit`) | ~5 blocks per SM | ⚠️ still the formula: its time depends on how full the cache is, so a first-call measurement would mislead | measure at a full cache (e.g. an `--autotune` pass) |
+| Prompt row tile 64 / 128 (`PromptTileRows`) | by tile fill | fine (geometry, not hardware) | – |
+| Async upload size (`AsyncUploadBytes`, 16 MB staging ring) | fixed | fine as a host-side size | confirm on PCIe 3 / 4 / 5 |
 
-**Done when** no decision in `Backends/` depends on a card name or an unexplained fixed size, each rule above is
-re-measured on three or more cards (or autotuned), and the tables in `1-nvidia.md` record the numbers.
+**Open:**
+- Measured choices last for one process; caching them per GPU, compute capability and driver in the user's cache
+  folder would save the few milliseconds of measuring at each start.
+- Re-run `--bench-gemv` on the RTX 3060 and the RTX 5070 Ti to confirm "auto" is within 5% of the best column there,
+  as it is on the RTX 5050.
 
 ## Shared work before any new backend
 
