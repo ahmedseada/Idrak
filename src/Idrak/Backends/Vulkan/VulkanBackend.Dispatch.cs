@@ -5,11 +5,15 @@ using static Idrak.Backends.Vulkan.VulkanDriver;
 
 namespace Idrak.Backends.Vulkan;
 
-// The queue: commands (dispatches, copies, fills) are recorded into the current batch's command buffer, with a barrier
-// before each so they run in order; a batch is submitted when the host needs its results, before it waits, or when it
-// grows long. Each batch has a fence, its command buffer and its descriptor pools, recycled when the fence signals.
-// Batches are numbered: a block remembers the last batch that used it, and the host reads or writes a block only after
-// that batch has finished.
+// The queue: commands (dispatches, copies, fills) are recorded into the current batch's command buffer; a batch is
+// submitted when the host needs its results, before it waits, or when it grows long. Each batch has a fence, its command
+// buffer and (without push descriptors) its descriptor pools, recycled when the fence signals. Batches are numbered: a
+// block remembers the last batch that used it, and the host reads or writes a block only after that batch has finished.
+//
+// Barriers only where commands depend on each other: the commands recorded since the last barrier form a span (numbered,
+// across batches); a block remembers the span in which a command last wrote it and last read it. A command gets a barrier
+// first when it reads or writes a block written in the current span (read after write, write after write) or writes a
+// block read in it (write after read); otherwise it may run alongside the commands before it.
 internal sealed unsafe partial class VulkanBackend
 {
     // Guards the queue, the batches and the pipelines (the pool has its own lock: Return runs on any thread).
@@ -33,6 +37,15 @@ internal sealed unsafe partial class VulkanBackend
     private const uint PoolSets = 256;
     private const uint PoolDescriptors = 2048;
 
+    // The span of commands since the last barrier (see the top of the file).
+    private ulong _span = 1;
+
+    // The pipeline bound in the command buffer being recorded (0: none yet).
+    private ulong _boundPipeline;
+
+    // The blocks of the command being recorded (reused: dispatches allocate nothing).
+    private readonly VulkanBlock[] _commandBlocks = new VulkanBlock[VulkanKernel.MaxBindings];
+
     private readonly Dictionary<VulkanKernel, Pipeline> _pipelines = [];
     private readonly Dictionary<int, ulong> _setLayouts = [];
     private readonly Dictionary<(int Bindings, int PushBytes), ulong> _pipelineLayouts = [];
@@ -42,6 +55,12 @@ internal sealed unsafe partial class VulkanBackend
 
     /// <summary>Batches submitted to the queue (for tests and diagnostics).</summary>
     internal long Submissions;
+
+    /// <summary>Barriers recorded between commands (for tests and diagnostics).</summary>
+    internal long Barriers;
+
+    /// <summary>When set, counts the dispatches by kernel name (for tests and diagnostics).</summary>
+    internal System.Collections.Concurrent.ConcurrentDictionary<string, long>? DispatchesByKernel;
 
     private sealed class Batch
     {
@@ -62,13 +81,14 @@ internal sealed unsafe partial class VulkanBackend
         public uint Descriptors = descriptors;
     }
 
-    private sealed record Pipeline(ulong Handle, ulong Layout);
+    private sealed record Pipeline(ulong Handle, ulong Layout, VulkanBackend Owner);
 
     /// <summary>
     /// Queues <paramref name="kernel"/> over groupsX × groupsY × groupsZ workgroups: binding i of descriptor set 0 is
     /// <paramref name="storages"/>[i]; <paramref name="pushConstants"/> fills its push-constant block (exactly
-    /// <see cref="VulkanKernel.PushConstantBytes"/> bytes). Dispatches run in the order queued, each after the previous
-    /// one's writes; reading a storage (<see cref="Backend.Download"/>) waits for the dispatches that use it.
+    /// <see cref="VulkanKernel.PushConstantBytes"/> bytes). Dispatches run in the order queued wherever they share a
+    /// storage one of them writes (<see cref="VulkanKernel.Writes"/>), and may overlap where they do not; reading a storage
+    /// (<see cref="Backend.Download"/>) waits for the dispatches that use it.
     /// </summary>
     public void Dispatch(VulkanKernel kernel, uint groupsX, uint groupsY, uint groupsZ, ReadOnlySpan<Storage> storages, ReadOnlySpan<byte> pushConstants)
     {
@@ -83,7 +103,7 @@ internal sealed unsafe partial class VulkanBackend
             throw new ArgumentException($"Vulkan kernel '{kernel.Name}' takes {kernel.PushConstantBytes} bytes of push constants; {pushConstants.Length} given.", nameof(pushConstants));
         }
 
-        var p = _physical.Properties;
+        ref readonly var p = ref _physical.Properties;
         if (groupsX > p.MaxComputeWorkGroupCountX || groupsY > p.MaxComputeWorkGroupCountY || groupsZ > p.MaxComputeWorkGroupCountZ)
         {
             throw new ArgumentOutOfRangeException(nameof(groupsX),
@@ -95,37 +115,29 @@ internal sealed unsafe partial class VulkanBackend
             return;
         }
 
+        int bindings = kernel.Bindings;
+        var buffers = stackalloc VkDescriptorBufferInfo[Math.Max(bindings, 1)];
+        var writes = stackalloc VkWriteDescriptorSet[Math.Max(bindings, 1)];
         lock (_gate)
         {
             var pipeline = PipelineOf(kernel);
-            int bindings = kernel.Bindings;
-            var blocks = new VulkanBlock[bindings];
-            var buffers = stackalloc VkDescriptorBufferInfo[Math.Max(bindings, 1)];
-            for (int i = 0; i < bindings; i++)
+            var blocks = _commandBlocks.AsSpan(0, bindings);
+            try
             {
-                blocks[i] = BlockOf(storages[i]);
-                long bytes = BlockBytes(storages[i].Length);
-                if (bytes > MaxStorageBytes)
-                {
-                    throw new ArgumentException(
-                        $"Vulkan kernel '{kernel.Name}': storage {i} holds {bytes:N0} bytes, more than {Name} binds ({MaxStorageBytes:N0}); use the host fallback for it.", nameof(storages));
-                }
-
-                buffers[i] = new VkDescriptorBufferInfo { Buffer = blocks[i].Buffer, Offset = 0, Range = (ulong)bytes };
-            }
-
-            var commands = Record();
-            vkCmdBindPipeline(commands, PipelineBindPointCompute, pipeline.Handle);
-            if (bindings > 0)
-            {
-                ulong set = AllocateSet(SetLayout(bindings), (uint)bindings);
-                var writes = stackalloc VkWriteDescriptorSet[bindings];
                 for (int i = 0; i < bindings; i++)
                 {
+                    blocks[i] = BlockOf(storages[i]);
+                    long bytes = BlockBytes(storages[i].Length);
+                    if (bytes > MaxStorageBytes)
+                    {
+                        throw new ArgumentException(
+                            $"Vulkan kernel '{kernel.Name}': storage {i} holds {bytes:N0} bytes, more than {Name} binds ({MaxStorageBytes:N0}); use the host fallback for it.", nameof(storages));
+                    }
+
+                    buffers[i] = new VkDescriptorBufferInfo { Buffer = blocks[i].Buffer, Offset = 0, Range = (ulong)bytes };
                     writes[i] = new VkWriteDescriptorSet
                     {
                         SType = StructureWriteDescriptorSet,
-                        DestinationSet = set,
                         DestinationBinding = (uint)i,
                         DescriptorCount = 1,
                         DescriptorType = DescriptorStorageBuffer,
@@ -133,25 +145,49 @@ internal sealed unsafe partial class VulkanBackend
                     };
                 }
 
-                vkUpdateDescriptorSets(_device, (uint)bindings, writes, 0, null);
-                vkCmdBindDescriptorSets(commands, PipelineBindPointCompute, pipeline.Layout, 0, 1, &set, 0, null);
-            }
-
-            if (pushConstants.Length > 0)
-            {
-                fixed (byte* values = pushConstants)
+                var commands = Record(blocks, kernel.Writes);
+                if (_boundPipeline != pipeline.Handle)
                 {
-                    vkCmdPushConstants(commands, pipeline.Layout, ShaderStageCompute, 0, (uint)pushConstants.Length, values);
+                    vkCmdBindPipeline(commands, PipelineBindPointCompute, pipeline.Handle);
+                    _boundPipeline = pipeline.Handle;
                 }
-            }
 
-            vkCmdDispatch(commands, groupsX, groupsY, groupsZ);
-            foreach (var block in blocks)
+                if (bindings > 0)
+                {
+                    if (_pushDescriptorSet != null)
+                    {
+                        _pushDescriptorSet(commands, PipelineBindPointCompute, pipeline.Layout, 0, (uint)bindings, writes);
+                    }
+                    else
+                    {
+                        ulong set = AllocateSet(SetLayout(bindings), (uint)bindings);
+                        for (int i = 0; i < bindings; i++)
+                        {
+                            writes[i].DestinationSet = set;
+                        }
+
+                        vkUpdateDescriptorSets(_device, (uint)bindings, writes, 0, null);
+                        vkCmdBindDescriptorSets(commands, PipelineBindPointCompute, pipeline.Layout, 0, 1, &set, 0, null);
+                    }
+                }
+
+                if (pushConstants.Length > 0)
+                {
+                    fixed (byte* values = pushConstants)
+                    {
+                        vkCmdPushConstants(commands, pipeline.Layout, ShaderStageCompute, 0, (uint)pushConstants.Length, values);
+                    }
+                }
+
+                vkCmdDispatch(commands, groupsX, groupsY, groupsZ);
+            }
+            finally
             {
-                block.LastUse = _recording;
+                blocks.Clear();                                                // no blocks kept alive past the call
             }
 
             Dispatches++;
+            DispatchesByKernel?.AddOrUpdate(kernel.Name, 1, static (_, n) => n + 1);
             Recorded();
         }
     }
@@ -222,9 +258,10 @@ internal sealed unsafe partial class VulkanBackend
         return batch;
     }
 
-    // The current batch's command buffer, begun if needed, with a barrier: the next command runs after every earlier
-    // one (in this batch or an earlier one) and sees its writes.
-    private IntPtr Record()
+    // The current batch's command buffer, begun if needed, for a command that uses `blocks` (bit i of `writes` set when
+    // it writes blocks[i]): a barrier first when it depends on a command of the current span (the barrier then waits
+    // for every earlier command, in this batch or an earlier one, and makes its writes visible); the blocks are marked.
+    private IntPtr Record(ReadOnlySpan<VulkanBlock> blocks, ulong writes)
     {
         var batch = _batch;
         if (!batch.Recording)
@@ -233,15 +270,44 @@ internal sealed unsafe partial class VulkanBackend
             Check(vkBeginCommandBuffer(batch.Commands, &begin), nameof(vkBeginCommandBuffer));
             batch.Recording = true;
             batch.Number = _recording;
+            _boundPipeline = 0;
         }
 
-        var barrier = new VkMemoryBarrier
+        bool hazard = false;
+        for (int i = 0; i < blocks.Length; i++)
         {
-            SType = StructureMemoryBarrier,
-            SourceAccessMask = AccessShaderWrite | AccessTransferWrite,
-            DestinationAccessMask = AccessShaderRead | AccessShaderWrite | AccessTransferRead | AccessTransferWrite,
-        };
-        vkCmdPipelineBarrier(batch.Commands, StageComputeShader | StageTransfer, StageComputeShader | StageTransfer, 0, 1, &barrier, 0, null, 0, null);
+            var block = blocks[i];
+            hazard |= block.WrittenIn == _span || ((writes >> i & 1) != 0 && block.ReadIn == _span);
+        }
+
+        if (hazard)
+        {
+            var barrier = new VkMemoryBarrier
+            {
+                SType = StructureMemoryBarrier,
+                SourceAccessMask = AccessShaderWrite | AccessTransferWrite,
+                DestinationAccessMask = AccessShaderRead | AccessShaderWrite | AccessTransferRead | AccessTransferWrite,
+            };
+            vkCmdPipelineBarrier(batch.Commands, StageComputeShader | StageTransfer, StageComputeShader | StageTransfer, 0, 1, &barrier, 0, null, 0, null);
+            _span++;
+            Barriers++;
+        }
+
+        for (int i = 0; i < blocks.Length; i++)
+        {
+            var block = blocks[i];
+            if ((writes >> i & 1) != 0)
+            {
+                block.WrittenIn = _span;
+            }
+            else
+            {
+                block.ReadIn = _span;
+            }
+
+            block.LastUse = _recording;
+        }
+
         return batch.Commands;
     }
 
@@ -257,19 +323,20 @@ internal sealed unsafe partial class VulkanBackend
     // Copies bytes between blocks in queue order.
     private void RecordCopy(VulkanBlock source, long sourceOffset, VulkanBlock destination, long destinationOffset, long bytes)
     {
-        var commands = Record();
+        _commandBlocks[0] = source;
+        _commandBlocks[1] = destination;
+        var commands = Record(_commandBlocks.AsSpan(0, 2), writes: 0b10);
+        _commandBlocks.AsSpan(0, 2).Clear();
         var region = new VkBufferCopy { SourceOffset = (ulong)sourceOffset, DestinationOffset = (ulong)destinationOffset, Size = (ulong)bytes };
         vkCmdCopyBuffer(commands, source.Buffer, destination.Buffer, 1, &region);
-        source.LastUse = destination.LastUse = _recording;
         Recorded();
     }
 
     // Zeros a block in queue order.
     private void RecordFill(VulkanBlock block)
     {
-        var commands = Record();
+        var commands = Record(new ReadOnlySpan<VulkanBlock>(in block), writes: 1);
         vkCmdFillBuffer(commands, block.Buffer, 0, WholeSize, 0);
-        block.LastUse = _recording;
         Recorded();
     }
 
@@ -423,7 +490,13 @@ internal sealed unsafe partial class VulkanBackend
 
         fixed (VkDescriptorSetLayoutBinding* e = entries)
         {
-            var info = new VkDescriptorSetLayoutCreateInfo { SType = StructureDescriptorSetLayoutCreateInfo, BindingCount = (uint)bindings, Bindings = e };
+            var info = new VkDescriptorSetLayoutCreateInfo
+            {
+                SType = StructureDescriptorSetLayoutCreateInfo,
+                Flags = _pushDescriptorSet != null ? DescriptorSetLayoutPushDescriptor : 0,
+                BindingCount = (uint)bindings,
+                Bindings = e,
+            };
             Check(vkCreateDescriptorSetLayout(_device, &info, null, out layout), nameof(vkCreateDescriptorSetLayout));
         }
 
@@ -434,12 +507,18 @@ internal sealed unsafe partial class VulkanBackend
     // The pipeline of `kernel` on this device, built on its first dispatch.
     private Pipeline PipelineOf(VulkanKernel kernel)
     {
+        if (kernel.LastPipeline is Pipeline last && ReferenceEquals(last.Owner, this))
+        {
+            return last;
+        }
+
         if (_pipelines.TryGetValue(kernel, out var pipeline))
         {
+            kernel.LastPipeline = pipeline;
             return pipeline;
         }
 
-        var p = _physical.Properties;
+        ref readonly var p = ref _physical.Properties;
         if (kernel.Bindings > p.MaxPerStageDescriptorStorageBuffers)
         {
             throw new VulkanException($"Vulkan kernel '{kernel.Name}' binds {kernel.Bindings} storages; {Name} allows {p.MaxPerStageDescriptorStorageBuffers}.");
@@ -501,8 +580,9 @@ internal sealed unsafe partial class VulkanBackend
                 throw new VulkanException($"{Name} could not build Vulkan kernel '{kernel.Name}' (vkCreateComputePipelines: {VulkanDriver.Describe(result)}).");
             }
 
-            pipeline = new Pipeline(handle, layout);
+            pipeline = new Pipeline(handle, layout, this);
             _pipelines[kernel] = pipeline;
+            kernel.LastPipeline = pipeline;
             return pipeline;
         }
         finally

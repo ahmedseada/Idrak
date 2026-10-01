@@ -44,7 +44,7 @@ internal sealed unsafe partial class VulkanBackend : Backend
     private const long StagingBytes = 16L << 20;
     private VulkanBlock? _staging;
 
-    private VulkanBackend(PhysicalDevice physical, bool preferMapped)
+    private VulkanBackend(PhysicalDevice physical, bool preferMapped, bool? pushDescriptors = null)
     {
         _physical = physical;
         var p = physical.Properties;
@@ -61,14 +61,40 @@ internal sealed unsafe partial class VulkanBackend : Backend
             QueueCount = 1,
             QueuePriorities = &priority,
         };
-        var deviceInfo = new VkDeviceCreateInfo
+
+        // Push descriptors where the device has them: a dispatch then writes its storages into the command buffer instead
+        // of allocating and updating a descriptor set (recording a dispatch on the host: 9.3 → 0.7 µs). Not on CPU drivers,
+        // which run pushed descriptors slower than sets (lavapipe: about 15 µs more per dispatch). IDRAK_VULKAN_PUSH_DESCRIPTORS
+        // = 1 or 0 decides instead.
+        pushDescriptors ??= Environment.GetEnvironmentVariable("IDRAK_VULKAN_PUSH_DESCRIPTORS") switch
         {
-            SType = StructureDeviceCreateInfo,
-            QueueCreateInfoCount = 1,
-            QueueCreateInfos = &queueInfo,
+            "1" or "true" => true,
+            "0" or "false" => false,
+            _ => p.DeviceType != DeviceTypeCpu,
         };
-        Check(vkCreateDevice(physical.Handle, &deviceInfo, null, out _device), nameof(vkCreateDevice));
+        bool push = pushDescriptors.Value && HasExtension(physical.Handle, PushDescriptorExtension);
+        fixed (byte* extensionName = "VK_KHR_push_descriptor\0"u8)
+        {
+            byte* extension = extensionName;
+            var deviceInfo = new VkDeviceCreateInfo
+            {
+                SType = StructureDeviceCreateInfo,
+                QueueCreateInfoCount = 1,
+                QueueCreateInfos = &queueInfo,
+                EnabledExtensionCount = push ? 1u : 0u,
+                EnabledExtensionNames = &extension,
+            };
+            Check(vkCreateDevice(physical.Handle, &deviceInfo, null, out _device), nameof(vkCreateDevice));
+        }
+
         vkGetDeviceQueue(_device, physical.QueueFamily, 0, out _queue);
+        if (push)
+        {
+            fixed (byte* name = "vkCmdPushDescriptorSetKHR\0"u8)
+            {
+                _pushDescriptorSet = (delegate* unmanaged<IntPtr, uint, ulong, uint, uint, VkWriteDescriptorSet*, void>)vkGetDeviceProcAddr(_device, name);
+            }
+        }
 
         // Every storage buffer has the same memory requirements' type bits, so one probe buffer tells them.
         uint typeBits = StorageTypeBits();
@@ -98,6 +124,41 @@ internal sealed unsafe partial class VulkanBackend : Backend
 
         _storageCoherent = (memory.TypeFlags((int)_storageType) & MemoryHostCoherent) != 0;
         StartQueue();
+    }
+
+    /// <summary>Whether dispatches push their descriptors (VK_KHR_push_descriptor) instead of allocating descriptor sets.</summary>
+    public bool PushDescriptors => _pushDescriptorSet != null;
+
+    // vkCmdPushDescriptorSetKHR, or null without the extension.
+    private readonly delegate* unmanaged<IntPtr, uint, ulong, uint, uint, VkWriteDescriptorSet*, void> _pushDescriptorSet;
+
+    // Whether the device offers the extension `name`.
+    private static bool HasExtension(IntPtr physical, string name)
+    {
+        uint count = 0;
+        if (vkEnumerateDeviceExtensionProperties(physical, null, ref count, null) != Success || count == 0)
+        {
+            return false;
+        }
+
+        var properties = new VkExtensionProperties[count];
+        fixed (VkExtensionProperties* p = properties)
+        {
+            if (vkEnumerateDeviceExtensionProperties(physical, null, ref count, p) is not (Success or Incomplete))
+            {
+                return false;
+            }
+
+            for (int i = 0; i < (int)count; i++)
+            {
+                if (Utf8(p[i].ExtensionName, 256) == name)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     /// <summary>Whether storages live in memory the host maps directly (integrated GPUs): copies need no staging.</summary>
@@ -136,8 +197,12 @@ internal sealed unsafe partial class VulkanBackend : Backend
     public static (uint Type, uint Vendor) DeviceKind(int ordinal) =>
         (Probe.Value.Devices[ordinal].Properties.DeviceType, Probe.Value.Devices[ordinal].Properties.VendorId);
 
-    /// <summary>A second backend on device <paramref name="ordinal"/> (for tests: staging copies even where memory is shared).</summary>
-    internal static VulkanBackend CreateSeparate(int ordinal, bool preferMapped) => new(Probe.Value.Devices[ordinal], preferMapped);
+    /// <summary>
+    /// A second backend on device <paramref name="ordinal"/> (for tests: staging copies even where memory is shared; pushed
+    /// descriptors or descriptor sets whatever the device's default).
+    /// </summary>
+    internal static VulkanBackend CreateSeparate(int ordinal, bool preferMapped, bool? pushDescriptors = null) =>
+        new(Probe.Value.Devices[ordinal], preferMapped, pushDescriptors);
 
     private static Lazy<VulkanBackend>[] CreateInstances()
     {
@@ -358,6 +423,12 @@ internal sealed unsafe partial class VulkanBackend : Backend
 
         /// <summary>The batch that last used the block (VulkanBackend.Dispatch.cs): host access waits for it.</summary>
         public ulong LastUse;
+
+        /// <summary>The span between barriers (VulkanBackend.Dispatch.cs) in which a command last wrote the block.</summary>
+        public ulong WrittenIn;
+
+        /// <summary>The span between barriers in which a command last read the block.</summary>
+        public ulong ReadIn;
     }
 
     private sealed class VulkanStorage(VulkanBackend backend, VulkanBlock block, int length) : Storage(backend, length)

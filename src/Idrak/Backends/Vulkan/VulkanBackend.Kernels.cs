@@ -21,7 +21,7 @@ internal sealed partial class VulkanBackend
     private static VulkanKernel Kernel(string name) => Kernels.GetOrAdd(name, static n =>
     {
         var k = VulkanKernels.Get(n);
-        return new VulkanKernel(k.Words, k.Bindings, k.PushBytes, k.Name);
+        return new VulkanKernel(k.Words, k.Bindings, k.PushBytes, k.Name, k.Writes);
     });
 
     // IDRAK_VULKAN_KERNELS=0 runs every operation through the host fallback (to compare or to isolate a kernel).
@@ -84,6 +84,12 @@ internal sealed partial class VulkanBackend
         public Push B(bool value) => I(value ? 1 : 0);
     }
 
+    // Kernel names by operation, and the narrow and 64-wide variants by base name: looked up without building strings.
+    private static readonly string[] UnaryNames = [.. Enum.GetValues<UnaryOp>().Select(op => "unary_" + op.ToString().ToLowerInvariant())];
+    private static readonly string[] UnaryBackwardNames = [.. Enum.GetValues<UnaryOp>().Select(op => "unary_backward_" + op.ToString().ToLowerInvariant())];
+    private static readonly string[] BinaryNames = [.. Enum.GetValues<BinaryOp>().Select(op => "binary_" + op.ToString().ToLowerInvariant())];
+    private static readonly ConcurrentDictionary<string, VulkanKernel> NarrowKernels = new(), SmallKernels = new();
+
     // Dispatches a generated kernel by name.
     private void Run(string kernel, uint groupsX, uint groupsY, uint groupsZ, ReadOnlySpan<Storage> storages, ReadOnlySpan<byte> push) =>
         Dispatch(Kernel(kernel), groupsX, groupsY, groupsZ, storages, push);
@@ -108,7 +114,7 @@ internal sealed partial class VulkanBackend
 
         if (cols <= VulkanKernels.NarrowRowColumns)
         {
-            Run(kernel + "_narrow", GridGroups(rows), 1, 1, storages, push);
+            Dispatch(NarrowKernels.GetOrAdd(kernel, static n => Kernel(n + "_narrow")), GridGroups(rows), 1, 1, storages, push);
         }
         else
         {
@@ -121,7 +127,8 @@ internal sealed partial class VulkanBackend
     {
         if (rows > 0)
         {
-            Run(dim <= VulkanKernels.SmallAttentionLanes ? kernel + "_64" : kernel, RowGroups(rows), 1, 1, storages, push);
+            var chosen = dim <= VulkanKernels.SmallAttentionLanes ? SmallKernels.GetOrAdd(kernel, static n => Kernel(n + "_64")) : Kernel(kernel);
+            Dispatch(chosen, RowGroups(rows), 1, 1, storages, push);
         }
     }
 
@@ -160,7 +167,7 @@ internal sealed partial class VulkanBackend
         }
 
         Span<byte> b = stackalloc byte[4];
-        Grid(VulkanKernels.Unary(op).Name, n, [x, y], new Push(b).I(n).Bytes);
+        Grid(UnaryNames[(int)op], n, [x, y], new Push(b).I(n).Bytes);
     }
 
     public override void UnaryBackward(UnaryOp op, Storage x, Storage y, Storage dy, Storage dx, int n)
@@ -172,7 +179,7 @@ internal sealed partial class VulkanBackend
         }
 
         Span<byte> b = stackalloc byte[4];
-        Grid(VulkanKernels.UnaryBackward(op).Name, n, [x, y, dy, dx], new Push(b).I(n).Bytes);
+        Grid(UnaryBackwardNames[(int)op], n, [x, y, dy, dx], new Push(b).I(n).Bytes);
     }
 
     public override void Binary(BinaryOp op, Storage a, Storage b, Storage c, int n)
@@ -184,7 +191,7 @@ internal sealed partial class VulkanBackend
         }
 
         Span<byte> p = stackalloc byte[4];
-        Grid(VulkanKernels.Binary(op).Name, n, [a, b, c], new Push(p).I(n).Bytes);
+        Grid(BinaryNames[(int)op], n, [a, b, c], new Push(p).I(n).Bytes);
     }
 
     public override void Affine(Storage x, Storage y, int n, float alpha, float beta)

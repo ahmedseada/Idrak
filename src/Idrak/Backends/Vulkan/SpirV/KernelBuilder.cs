@@ -17,8 +17,9 @@ namespace Idrak.Backends.Vulkan;
 /// <param name="LocalSizeZ">Workgroup depth.</param>
 /// <param name="BindingNames">Each binding's name, for messages and documentation.</param>
 /// <param name="PushNames">Each push constant's name with its type ("n:int", "alpha:float").</param>
+/// <param name="Writes">Bit i set when the kernel writes binding i (the others are only read, and decorated NonWritable).</param>
 internal sealed record SpirvKernel(string Name, uint[] Words, int Bindings, int PushBytes, int LocalSizeX, int LocalSizeY, int LocalSizeZ,
-    string[] BindingNames, string[] PushNames)
+    string[] BindingNames, string[] PushNames, ulong Writes)
 {
     /// <summary>Invocations per workgroup.</summary>
     public int LocalSize => LocalSizeX * LocalSizeY * LocalSizeZ;
@@ -56,6 +57,8 @@ internal sealed class KernelBuilder
     private readonly string _name;
     private readonly int _localX, _localY, _localZ;
     private readonly List<string> _bindingNames = [];
+    private readonly List<uint> _bindingVariables = [];
+    private ulong _writes;
     private readonly List<(string Name, ScalarKind Kind)> _push = [];
     private readonly uint _pushStruct, _pushVariable;
     private readonly uint _bufferPointer, _bufferElement;
@@ -98,8 +101,12 @@ internal sealed class KernelBuilder
         _m.Decorate(variable, Decoration.Aliased);                       // a dispatch may pass one storage twice (in place)
         _m.Name(variable, name);
         _bindingNames.Add(name);
-        return new Buf(this, variable);
+        _bindingVariables.Add(variable);
+        return new Buf(this, variable, _bindingNames.Count - 1);
     }
+
+    // Records that the kernel stores into binding `binding` (the runtime orders dispatches by what they write).
+    internal void Written(int binding) => _writes |= 1UL << binding;
 
     /// <summary>The next push constant, a signed 32-bit integer.</summary>
     public Val PushInt(string name) => Push(name, ScalarKind.Int);
@@ -228,6 +235,9 @@ internal sealed class KernelBuilder
     /// <summary>Natural logarithm.</summary>
     public Val Log(Val x) => Ext(Glsl.Log, x);
 
+    /// <summary>Base-2 logarithm.</summary>
+    public Val Log2(Val x) => Ext(Glsl.Log2, x);
+
     /// <summary>tanh as the driver computes it (GLSL.std.450; may lose accuracy or overflow for large |x| on some drivers).</summary>
     public Val Tanh(Val x) => Ext(Glsl.Tanh, x);
 
@@ -344,6 +354,13 @@ internal sealed class KernelBuilder
         _m.Code(SpirvOp.ControlBarrier, _m.ConstantUInt(2), _m.ConstantUInt(2), _m.ConstantUInt(0x108));   // Workgroup, AcquireRelease | WorkgroupMemory
 
     /// <summary>
+    /// <see cref="Barrier"/> that also orders storage-buffer memory: the workgroup's buffer writes before it are visible to
+    /// its invocations after it (a buffer written by some invocations, then read or written by others). Uniform control flow only.
+    /// </summary>
+    public void BufferBarrier() =>
+        _m.Code(SpirvOp.ControlBarrier, _m.ConstantUInt(2), _m.ConstantUInt(2), _m.ConstantUInt(0x148));   // + UniformMemory
+
+    /// <summary>
     /// The sum of <paramref name="value"/> over the workgroup's x invocations (a power of two), returned to all of them
     /// through <paramref name="scratch"/> (at least the workgroup width long). Uniform control flow only.
     /// </summary>
@@ -394,9 +411,18 @@ internal sealed class KernelBuilder
             _m.GlobalVariableAs(_pushVariable, _m.TypePointer(StorageClass.PushConstant, _pushStruct), StorageClass.PushConstant);
         }
 
+        // Bindings the kernel only reads are NonWritable (drivers may read them through faster caches).
+        for (int i = 0; i < _bindingVariables.Count; i++)
+        {
+            if ((_writes & (1UL << i)) == 0)
+            {
+                _m.Decorate(_bindingVariables[i], Decoration.NonWritable);
+            }
+        }
+
         var words = _m.Finish((uint)_localX, (uint)_localY, (uint)_localZ);
         return new SpirvKernel(_name, words, _bindingNames.Count, 4 * _push.Count, _localX, _localY, _localZ,
-            [.. _bindingNames], [.. _push.Select(p => $"{p.Name}:{p.Kind.ToString().ToLowerInvariant()}")]);
+            [.. _bindingNames], [.. _push.Select(p => $"{p.Name}:{p.Kind.ToString().ToLowerInvariant()}")], _writes);
     }
 
     // ------------------------------------------------------------------ helpers for Val
@@ -686,13 +712,17 @@ internal sealed class Var(KernelBuilder builder, uint pointer, ScalarKind kind)
 
 /// <summary>A storage buffer of 32-bit words: <c>b[i]</c> reads or writes word i as a float; <see cref="Int"/> and
 /// <see cref="UInt"/> read its bits as integers.</summary>
-internal sealed class Buf(KernelBuilder builder, uint variable)
+internal sealed class Buf(KernelBuilder builder, uint variable, int binding)
 {
     /// <summary>Word <paramref name="index"/> as a float.</summary>
     public Val this[Val index]
     {
         get => new(builder, builder.Module.Value(SpirvOp.Load, builder.TypeOf(ScalarKind.Float), builder.BufferElement(variable, index)), ScalarKind.Float);
-        set => builder.Module.Code(SpirvOp.Store, builder.BufferElement(variable, index), value.AsFloat().Id);
+        set
+        {
+            builder.Written(binding);
+            builder.Module.Code(SpirvOp.Store, builder.BufferElement(variable, index), value.AsFloat().Id);
+        }
     }
 
     /// <summary>Word <paramref name="index"/>'s bits as a signed integer.</summary>
