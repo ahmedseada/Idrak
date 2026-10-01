@@ -145,6 +145,7 @@ public sealed class Linear : Module
     /// </summary>
     internal static Tensor[] ForwardMany(Tensor input, params Linear[] layers)
     {
+        using var offload = Offloading.EnterMany(layers, input);       // offloaded weights of all the layers staged together
         int k = input.Shape[^1], rows = input.Size / Math.Max(1, k);
         bool fused = !Autograd.IsEnabled && layers.Length is > 1 and <= 3 && rows <= Backends.Cuda.PtxKernels.GemvRows
             && input.Device.Type == DeviceType.Cuda

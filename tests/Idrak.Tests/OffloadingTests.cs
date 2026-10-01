@@ -2,6 +2,7 @@ using Idrak;
 using Idrak.Backends;
 using Idrak.Backends.Cuda;
 using Idrak.Layers;
+using Idrak.LanguageModels;
 using Idrak.Optimizers;
 
 // Offloading to system memory (IMemoryOffload): the CPU optimizer step, moving tensors, staging layers' weights, cold
@@ -13,6 +14,7 @@ internal static partial class Tests
         ("offloading: HostOptimizer (AdamW, Adam, SGD with momentum, run on the CPU) gives the weights of the same optimizer on the device, with and without clipping", HostOptimizerMatches),
         ("offloading: a tensor moved to system memory and back keeps its values; nothing moves while a recorded graph exists", OffloadMoves),
         ("offloading: layers whose weights live in system memory give the same outputs and gradients, their weights staged on the GPU (forward and backward, the next layer prefetched) and back home after", OffloadStaging),
+        ("offloading: a decoder whose base weights (float32 and int8) live in system memory gives the same outputs and LoRA gradients through its fused products (q/k/v, gate/up, down), staged as groups", OffloadDecoder),
         ("offloading: training with a full GPU moves optimizer state out first (then frozen weights), gives the weights of an ordinary run, and brings tensors back when memory frees up", OffloadColdFirst),
     ];
 
@@ -173,6 +175,84 @@ internal static partial class Tests
         // Forward and backward stage every layer on each pass; the second pass prefetches the next layer.
         Check(cuda.StagedStorages - staged >= 2 * 2 * 6, $"staged {cuda.StagedStorages - staged}");
         Check(cuda.PrefetchedStorages - prefetched > 0, $"prefetched {cuda.PrefetchedStorages - prefetched}");
+    }
+
+    private static void OffloadDecoder(Device device)
+    {
+        if (OffloadOf(device) is not { } offload || device.Backend is not CudaBackend cuda)
+        {
+            return;
+        }
+
+        var spec = SmallSpec;
+        var r = new Random(31);
+        var inputValues = Enumerable.Range(0, 2 * 7 * spec.Dim).Select(_ => (float)(r.NextDouble() * 2 - 1)).ToArray();
+        var weightValues = Enumerable.Range(0, 2 * 7 * spec.Dim).Select(_ => (float)(r.NextDouble() * 2 - 1)).ToArray();
+        foreach (bool int8 in new[] { false, true })
+        {
+            (float[] Inference, float[] Adapters, long Staged) Run(bool offloaded)
+            {
+                using var model = spec.Build(new RandomWeights(33), new DecoderBuildOptions { Device = device });
+                if (int8)
+                {
+                    model.QuantizeInt8();
+                }
+
+                model.AddLora(rank: 2, alpha: 4, targets: _ => true, freezeBase: true, random: new Random(34));
+                foreach (var adapter in model.Descendants().OfType<Linear>().Select(l => l.Adapter).OfType<LoraAdapter>())
+                {
+                    adapter.B.Load([.. Enumerable.Range(0, adapter.B.Size).Select(i => MathF.Sin(i))]);
+                }
+
+                if (offloaded)
+                {
+                    foreach (var l in model.Descendants().OfType<Linear>())
+                    {
+                        foreach (var t in l.Parameters().Where(p => !p.RequiresGrad).Concat(l.Buffers()))
+                        {
+                            Check(offload.MoveToHost(t.Storage, keep: true), "base weight moved");
+                        }
+                    }
+                }
+
+                long staged = cuda.StagedStorages;
+                float[] inference;
+                using (Autograd.NoGrad())
+                using (var scope = new TensorScope())
+                {
+                    model.Eval();
+                    var hidden = Tensor.From(inputValues.AsSpan(0, 7 * spec.Dim), [1, 7, spec.Dim], device);
+                    foreach (var block in model.OfType<DecoderBlock>())
+                    {
+                        hidden = block.Forward(hidden);
+                    }
+
+                    inference = hidden.ToArray();
+                }
+
+                model.Train();
+                using (var scope = new TensorScope())
+                {
+                    var hidden = Tensor.From(inputValues, [2, 7, spec.Dim], device);
+                    foreach (var block in model.OfType<DecoderBlock>())
+                    {
+                        hidden = block.Forward(hidden);
+                    }
+
+                    (hidden * Tensor.From(weightValues, [2, 7, spec.Dim], device)).Sum().Backward();
+                }
+
+                var adapters = model.TrainableParameters().SelectMany(p => p.Grad!.ToArray()).ToArray();
+                return (inference, adapters, cuda.StagedStorages - staged);
+            }
+
+            var expected = Run(offloaded: false);
+            var actual = Run(offloaded: true);
+            string name = int8 ? "int8 base" : "float32 base";
+            AssertClose(expected.Inference, actual.Inference, 1e-4f, $"{name}: inference outputs");
+            AssertClose(expected.Adapters, actual.Adapters, 1e-3f, $"{name}: adapter gradients");
+            Check(actual.Staged > 0, $"{name}: weights staged ({actual.Staged})");
+        }
     }
 
     private static void OffloadColdFirst(Device device)

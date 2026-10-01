@@ -14,20 +14,51 @@ internal static class Offloading
 {
     // The layer whose forward runs on this thread (tagged on the autograd nodes it records, for the backward pass), and
     // the layer staged before it (to learn which layer follows which).
+    // A layer (Module) or layers computed in one fused pass (LayerGroup).
     [ThreadStatic]
-    private static Module? t_current;
+    private static object? t_current;
 
     [ThreadStatic]
-    private static Module? t_previous;
+    private static object? t_previous;
 
     // The layer that ran after each layer last time: its weights are copied while this one computes.
-    private static readonly ConditionalWeakTable<Module, Module> NextLayer = new();
+    private static readonly ConditionalWeakTable<object, object> NextLayer = new();
+
+    // Layers one fused pass computes together (q/k/v, gate/up): staged as one unit; one object per set, kept with its
+    // first layer, so the order learned and the backward tags see the same unit every pass.
+    private sealed class LayerGroup(Module[] layers)
+    {
+        public readonly Module[] Layers = layers;
+    }
+
+    private static readonly ConditionalWeakTable<Module, LayerGroup> Groups = new();
+
+    private static LayerGroup GroupOf(IReadOnlyList<Module> layers)
+    {
+        if (Groups.TryGetValue(layers[0], out var group) && group.Layers.Length == layers.Count)
+        {
+            bool same = true;
+            for (int i = 1; i < layers.Count && same; i++)
+            {
+                same = ReferenceEquals(group.Layers[i], layers[i]);
+            }
+
+            if (same)
+            {
+                return group;
+            }
+        }
+
+        group = new LayerGroup([.. layers]);
+        Groups.AddOrUpdate(layers[0], group);
+        return group;
+    }
 
     /// <summary>Off: layers read offloaded weights over PCIe as they compute instead of staging them (for --bench-offload).</summary>
     internal static bool StageWeights = true;
 
-    /// <summary>The layer whose forward runs on this thread while weights are offloaded (null otherwise).</summary>
-    public static Module? Current => t_current;
+    /// <summary>The layer (or fused layers) whose forward runs on this thread while weights are offloaded (null otherwise).</summary>
+    public static object? Current => t_current;
 
     private static bool Active(IMemoryOffload offload) => ComputeResources.OffloadToHostMemory || offload.OffloadedCount > 0;
 
@@ -42,27 +73,51 @@ internal static class Offloading
             return default;
         }
 
-        var storages = ReadOnlyStorages(module, mark: true);
+        return Enter(module, ReadOnlyStorages(module, mark: true), offload);
+    }
+
+    /// <summary>
+    /// <see cref="Enter(Module, Tensor)"/> for layers one fused pass computes together (q/k/v, gate/up, a projection with its
+    /// residual and normalization): their offloaded weights are staged as one unit, forward and backward.
+    /// </summary>
+    public static LayerScope EnterMany(IReadOnlyList<Module> layers, Tensor input)
+    {
+        if (input.Device.Backend.Offload is not { } offload || !Active(offload) || !StageWeights || layers.Count == 0)
+        {
+            return default;
+        }
+
+        if (layers.Count == 1)
+        {
+            return Enter(layers[0], input);
+        }
+
+        var group = GroupOf(layers);
+        return Enter(group, ReadOnlyStorages(group, mark: true), offload);
+    }
+
+    private static LayerScope Enter(object layer, List<Storage> storages, IMemoryOffload offload)
+    {
         if (storages.Count == 0)
         {
             return default;                                                // no weights (activations, dropout): not a step in the order
         }
 
         var previous = t_current;
-        t_current = module;
-        if (t_previous is { } before && !ReferenceEquals(before, module))
+        t_current = layer;
+        if (t_previous is { } before && !ReferenceEquals(before, layer))
         {
-            NextLayer.AddOrUpdate(before, module);
+            NextLayer.AddOrUpdate(before, layer);
         }
 
-        t_previous = module;
+        t_previous = layer;
         if (offload.OffloadedCount == 0)
         {
             return new LayerScope(null, previous, entered: true);
         }
 
         var token = offload.Stage(storages);
-        if (NextLayer.TryGetValue(module, out var next))
+        if (NextLayer.TryGetValue(layer, out var next))
         {
             offload.Prefetch(ReadOnlyStorages(next, mark: false));
         }
@@ -71,7 +126,7 @@ internal static class Offloading
     }
 
     /// <summary>Ends a layer's forward: unstages its weights and restores the enclosing layer.</summary>
-    public readonly struct LayerScope(IDisposable? token, Module? previous, bool entered) : IDisposable
+    public readonly struct LayerScope(IDisposable? token, object? previous, bool entered) : IDisposable
     {
         public void Dispose()
         {
@@ -86,9 +141,20 @@ internal static class Offloading
     // The tensors a layer only reads while it computes: its parameters (changed by optimizer steps, between passes) and a
     // linear layer's int8 / int4 / bfloat16 weights. Embedding tables are left out: a lookup reads only the rows it needs,
     // which system memory serves without copying the whole table. With `mark`, frozen ones are marked cold.
-    private static List<Storage> ReadOnlyStorages(Module module, bool mark)
+    private static List<Storage> ReadOnlyStorages(object layer, bool mark)
     {
         var storages = new List<Storage>();
+        if (layer is LayerGroup group)
+        {
+            foreach (var member in group.Layers)
+            {
+                storages.AddRange(ReadOnlyStorages(member, mark));
+            }
+
+            return storages;
+        }
+
+        var module = (Module)layer;
         if (module is Embedding)
         {
             return storages;
@@ -167,7 +233,7 @@ internal static class Offloading
             return null;
         }
 
-        var groups = new List<(int Index, Module Layer)>();
+        var groups = new List<(int Index, object Layer)>();
         for (int i = 0; i < order.Count; i++)
         {
             if (order[i].StageGroup is { } layer && (groups.Count == 0 || !ReferenceEquals(groups[^1].Layer, layer)))
@@ -179,7 +245,7 @@ internal static class Offloading
         return groups.Count == 0 ? null : new BackwardStaging(offload, groups);
     }
 
-    internal sealed class BackwardStaging(IMemoryOffload offload, List<(int Index, Module Layer)> groups) : IDisposable
+    internal sealed class BackwardStaging(IMemoryOffload offload, List<(int Index, object Layer)> groups) : IDisposable
     {
         private int _group = -1;
         private IDisposable? _token;
