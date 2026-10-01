@@ -369,9 +369,42 @@ public static partial class WebTools
 
             string html = await http.GetStringAsync(url, token).ConfigureAwait(false);
             string text = WebUtility.HtmlDecode(Tags().Replace(Blocks().Replace(html, " "), " "));
-            text = Spaces().Replace(text, " ").Trim();
-            return text.Length <= maxCharacters ? text : text[..maxCharacters];
+            return CollapseSpaces(text, maxCharacters);
         });
+    }
+
+    // Regex.Replace(text, @"\s+", " ").Trim() cut to max characters, in one pass that stops at the cut: \s is
+    // char.IsWhiteSpace (as for Trim), so each run of white space becomes one space and none is kept at either end.
+    internal static string CollapseSpaces(string text, int max)
+    {
+        char[] buffer = System.Buffers.ArrayPool<char>.Shared.Rent(Math.Min(text.Length, max));
+        int length = 0;
+        bool space = false;
+        foreach (char c in text)
+        {
+            if (char.IsWhiteSpace(c))
+            {
+                space = length > 0;
+                continue;
+            }
+
+            if (space && length < max)
+            {
+                buffer[length++] = ' ';
+            }
+
+            if (length == max)
+            {
+                break;
+            }
+
+            buffer[length++] = c;
+            space = false;
+        }
+
+        string result = new(buffer, 0, length);
+        System.Buffers.ArrayPool<char>.Shared.Return(buffer);
+        return result;
     }
 
     [GeneratedRegex(@"<(script|style)[^>]*>.*?</\1>", RegexOptions.Singleline | RegexOptions.IgnoreCase)]
@@ -379,9 +412,6 @@ public static partial class WebTools
 
     [GeneratedRegex("<[^>]+>")]
     private static partial Regex Tags();
-
-    [GeneratedRegex(@"\s+")]
-    private static partial Regex Spaces();
 }
 
 /// <summary>JSON-schema helpers for tools.</summary>

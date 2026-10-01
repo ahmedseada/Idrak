@@ -15,6 +15,7 @@ internal static partial class Tests
     private static readonly (string Name, Action<Device> Run)[] Retrieval =
     [
         ("retrieval: chunking by words and sentences with overlap", Chunking),
+        ("retrieval: chunks, BM25 scores and word tokens equal the string-splitting reference (casing, Unicode white space, punctuation)", d => { if (d == Device.Cpu) TextPathsMatchReference(); }),
         ("retrieval: BM25 scores match the formula; vector index search and save/load", KeywordAndVectorSearch),
         ("retrieval: text encoder pools real tokens and normalizes; contrastive training retrieves the pairs", TextEncoderPoolingAndTraining),
         ("retrieval: index with keywords, vectors, reciprocal rank fusion; save/load; builder rules", HybridIndex),
@@ -41,6 +42,84 @@ internal static partial class Tests
         Check(sentences.Select(c => c.Id).SequenceEqual(Enumerable.Range(0, 6)), "ids across documents");
         Check(Chunker.Split([new Document("e", "   ")], ChunkUnit.Words, 3, 0).Count == 0, "empty document");
         Throws<ArgumentOutOfRangeException>(() => Chunker.Split(Towns, ChunkUnit.Words, 3, 3), "overlap must be smaller than size");
+    }
+
+    // Chunker, Bm25Index and WordTokenizer work on spans of the text; the references below split it into strings
+    // (string.Split, Regex.Split, Regex.Matches over a lower-cased copy). Results must be identical, scores bit for bit.
+    private static void TextPathsMatchReference()
+    {
+        string[] pieces = ["Armor", "the", "THE", "İstanbul", "ΣΟΦΙΑ", "Straße", "naïve", "4000", "x1", "<sum>", "<a|b/>", "😀", "e\u0301",
+            ".", ",", "!", "?", "'", "\"", "(", ")", "-", "…", " ", "  ", "\t", "\n", "\r\n", "\r", "\n\n", "\u00a0", "\u2028", "\u3000", "\u0085", ". ", "! ", "?\n"];
+        var random = new Random(7);
+        string Text(int n) => string.Concat(Enumerable.Range(0, n).Select(_ => pieces[random.Next(pieces.Length)]));
+        var texts = Enumerable.Range(0, 60).Select(i => Text(random.Next(0, 80))).Append("").Append("   ").Append("plain words only").ToList();
+
+        var documents = texts.Select((t, i) => new Document($"d{i}", t)).ToList();
+        foreach (var (unit, size, overlap) in new[] { (ChunkUnit.Words, 5, 2), (ChunkUnit.Words, 1, 0), (ChunkUnit.Sentences, 3, 1), (ChunkUnit.Sentences, 1, 0) })
+        {
+            var expected = new List<Chunk>();
+            foreach (var document in documents)
+            {
+                string[] parts = unit == ChunkUnit.Words
+                    ? document.Text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+                    : [.. System.Text.RegularExpressions.Regex.Split(document.Text, @"(?<=[.!?])\s+|\r?\n+").Select(s => s.Trim()).Where(s => s.Length > 0)];
+                int position = 0;
+                for (int start = 0; start < parts.Length; start += size - overlap)
+                {
+                    int count = Math.Min(size, parts.Length - start);
+                    expected.Add(new Chunk(expected.Count, document.Id, position++, string.Join(' ', parts, start, count)));
+                    if (start + count >= parts.Length)
+                    {
+                        break;
+                    }
+                }
+            }
+
+            var chunks = Chunker.Split(documents, unit, size, overlap);
+            Check(chunks.SequenceEqual(expected), $"chunks by {unit} ({size}, {overlap}): {chunks.Count} vs {expected.Count}");
+        }
+
+        static IEnumerable<string> Words(string text, bool lowercase = true) =>
+            System.Text.RegularExpressions.Regex.Matches(lowercase ? text.ToLowerInvariant() : text, @"<[\w|/]+>|\w+|[^\w\s]").Select(m => m.Value);
+
+        var tokenized = texts.Select(t => Words(t).ToArray()).ToList();
+        double average = Math.Max(tokenized.Average(d => d.Length), 1);
+        var index = new Bm25Index(texts);
+        Check(index.Count == texts.Count, "indexed count");
+        foreach (var query in texts.Take(20).Append("the THE the armor 4000").Append("nothing indexed here zzz"))
+        {
+            var scores = new double[texts.Count];
+            foreach (var term in Words(query).Distinct().Where(w => tokenized.Any(d => d.Contains(w))))
+            {
+                int n = tokenized.Count(d => d.Contains(term));
+                double idf = Math.Log(1 + (texts.Count - n + 0.5) / (n + 0.5));
+                for (int d = 0; d < texts.Count; d++)
+                {
+                    int tf = tokenized[d].Count(w => w == term);
+                    if (tf > 0)
+                    {
+                        scores[d] += idf * tf * (index.K1 + 1) / (tf + index.K1 * (1 - index.B + index.B * tokenized[d].Length / average));
+                    }
+                }
+            }
+
+            var expected = scores.Select((s, d) => new SearchHit(d, s)).Where(h => h.Score > 0).OrderByDescending(h => h.Score).ThenBy(h => h.Id).Take(7);
+            var hits = index.Search(query, 7);
+            Check(hits.SequenceEqual(expected), $"BM25 hits for '{query}'");
+        }
+
+        foreach (bool lowercase in new[] { true, false })
+        {
+            var tokenizer = WordTokenizer.FromTexts(texts.Take(30), ["<pad>"], minCount: 2, lowercase: lowercase);
+            var counts = texts.Take(30).SelectMany(t => Words(t, lowercase)).GroupBy(w => w).Where(g => g.Count() >= 2 && g.Key != "<pad>")
+                .OrderByDescending(g => g.Count()).ThenBy(g => g.Key, StringComparer.Ordinal).Select(g => g.Key);
+            Check(tokenizer.Vocabulary.SequenceEqual(["<pad>", .. counts, .. counts.Contains("<unk>") ? Array.Empty<string>() : ["<unk>"]]), $"vocabulary (lowercase {lowercase})");
+            foreach (var text in texts)
+            {
+                Check(tokenizer.Encode(text).SequenceEqual(Words(text, lowercase).Select(w => tokenizer[w])), $"word tokens (lowercase {lowercase})");
+                Check(WordTokenizer.Split(text, lowercase).SequenceEqual(Words(text, lowercase)), "split");
+            }
+        }
     }
 
     private static void KeywordAndVectorSearch(Device device)

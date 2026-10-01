@@ -9,11 +9,105 @@ internal static partial class Tests
     private static readonly (string Name, Action<Device> Run)[] CodingToolsGroup =
     [
         ("coding tools: list, read, search, edit and write stay inside the workspace and explain mistakes", CodingToolsFiles),
+        ("coding tools: read_file and search number and cut lines as the string-splitting reference (CRLF, lone CR, final newline, long lines); web text collapses white space as the regex did", d => { if (d == Device.Cpu) CodingToolsLinesMatchReference(); }),
         ("coding tools: run_command starts allowlisted programs without a shell and trims long output", CodingToolsCommands),
         ("coding agent: transcripts written as OpenAI chat JSON read back for fine-tuning", AgentTranscriptJson),
         ("coding agent: a task is copied, run, verified by its commands and recorded", AgentRunsTask),
         ("coding agent: a call repeated right after itself is not run again, and the model is told to use its result", AgentSkipsRepeatedCalls),
     ];
+
+    // CodingTools cuts lines as places in the text and matches spans; the reference splits the text into strings.
+    private static void CodingToolsLinesMatchReference()
+    {
+        static List<string> Lines(string text)
+        {
+            var lines = text.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n').ToList();
+            if (lines.Count > 0 && lines[^1].Length == 0)
+            {
+                lines.RemoveAt(lines.Count - 1);
+            }
+
+            return lines;
+        }
+
+        string root = Path.Combine(Path.GetTempPath(), "idrak-lines-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            string[] texts =
+            [
+                "", "\n", "\r\n", "\r", "one", "one\n", "one\r\n", "one\r", "a\r\r\nb\n\r\nc\r", "\n\nx\n\n", "  match me  \r\nno\r\n\tmatch\tagain\t\n",
+                string.Concat(Enumerable.Range(1, 1234).Select(i => i % 7 == 0 ? $"line {i} match {new string('x', i % 300)}\r\n" : $"line {i}\n")),
+            ];
+            var tools = new CodingTools(root, new CodingToolOptions { MaxReadLines = 50, MaxSearchResults = 2000 });
+            for (int f = 0; f < texts.Length; f++)
+            {
+                string name = $"f{f}.txt";
+                File.WriteAllText(Path.Combine(root, name), texts[f]);
+                var lines = Lines(texts[f]);
+                foreach (var (start, end) in new (int?, int?)[] { (null, null), (1, 3), (2, null), (40, 1300), (1200, null) })
+                {
+                    string expected;
+                    int first = Math.Max(1, start ?? 1);
+                    if (lines.Count == 0)
+                    {
+                        expected = "(empty file)";
+                    }
+                    else if (first > lines.Count)
+                    {
+                        expected = $"Error: the file has {lines.Count} lines.";
+                    }
+                    else
+                    {
+                        int last = Math.Min(lines.Count, Math.Min(end ?? int.MaxValue, first + 50 - 1));
+                        int width = last.ToString(System.Globalization.CultureInfo.InvariantCulture).Length;
+                        var sb = new System.Text.StringBuilder();
+                        for (int i = first; i <= last; i++)
+                        {
+                            sb.Append(i.ToString(System.Globalization.CultureInfo.InvariantCulture).PadLeft(width)).Append("| ").Append(lines[i - 1]).Append('\n');
+                        }
+
+                        if (last < lines.Count && (end is null || last < end))
+                        {
+                            sb.Append($"… lines {last + 1}-{lines.Count} not shown (read_file with start_line {last + 1})\n");
+                        }
+
+                        expected = sb.ToString().TrimEnd('\n');
+                    }
+
+                    Check(tools.ReadFile(name, start, end) == expected, $"read_file {name} {start}-{end}");
+                }
+
+                foreach (string pattern in new[] { "match", "^line", "\\r", "^$", "e$" })
+                {
+                    var regex = new System.Text.RegularExpressions.Regex(pattern, System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+                    var found = lines.Select((l, i) => (Line: l.Trim(), Number: i + 1)).Where((p, i) => regex.IsMatch(lines[i]))
+                        .Select(p => $"{name}:{p.Number}: {(p.Line.Length > 200 ? p.Line[..200] + " …" : p.Line)}").ToList();
+                    Check(tools.Search(pattern, name) == (found.Count == 0 ? "(no matches)" : string.Join('\n', found)), $"search {pattern} in {name}");
+                }
+            }
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+
+        string[] pieces = ["a", "bc", " ", "\t", "\r\n", "\u00a0", "\u2028", "\u3000", "\u0085", "\u200b", "\ufeff", "é"];
+        var random = new Random(3);
+        for (int n = 0; n < 2000; n++)
+        {
+            string text = string.Concat(Enumerable.Range(0, random.Next(0, 30)).Select(_ => pieces[random.Next(pieces.Length)]));
+            int max = random.Next(1, 40);
+            string collapsed = System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ").Trim();
+            Check(WebTools.CollapseSpaces(text, max) == (collapsed.Length <= max ? collapsed : collapsed[..max]), $"collapse '{text}' to {max}");
+        }
+
+        for (int c = 0; c <= char.MaxValue; c++)
+        {
+            string text = $"a{(char)c}b";
+            Check(WebTools.CollapseSpaces(text, 10) == System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " "), $"white space U+{c:X4}");
+        }
+    }
 
     // Small models ask for the same call again instead of answering from its result (Qwen2.5-Coder-1.5B ran
     // dotnet --version three times): the repeat is answered with a note, not run; the same call later still runs.

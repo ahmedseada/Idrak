@@ -1,6 +1,6 @@
+using System.Buffers;
 using System.Diagnostics;
 using System.Reflection;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Builder;
@@ -128,14 +128,28 @@ public static class IdrakEndpointExtensions
             return Results.Stream(async body =>
             {
                 await using var _ = stream;
+                var (buffer, writer) = EventWriter();
+                using var __ = writer;
                 do
                 {
+                    // Each event is built as UTF-8 in one reused buffer: "event: …\ndata: " + the JSON + "\n\n".
                     var chunk = stream.Current;
-                    string data = chunk.Done
-                        ? JsonSerializer.Serialize(new { done_reason = chunk.DoneReason, stats = Stats(chunk.Stats!) }, Json)
-                        : JsonSerializer.Serialize(new { text = chunk.Text }, Json);
-                    await body.WriteAsync(Encoding.UTF8.GetBytes($"event: {(chunk.Done ? "done" : "chunk")}\ndata: {data}\n\n"), token);
+                    buffer.Write(chunk.Done ? "event: done\ndata: "u8 : "event: chunk\ndata: "u8);
+                    writer.Reset(buffer);
+                    if (chunk.Done)
+                    {
+                        JsonSerializer.Serialize(writer, new { done_reason = chunk.DoneReason, stats = Stats(chunk.Stats!) }, Json);
+                    }
+                    else
+                    {
+                        JsonSerializer.Serialize(writer, new { text = chunk.Text }, Json);
+                    }
+
+                    writer.Flush();
+                    buffer.Write("\n\n"u8);
+                    await body.WriteAsync(buffer.WrittenMemory, token);
                     await body.FlushAsync(token);
+                    buffer.ResetWrittenCount();
                 }
                 while (await stream.MoveNextAsync());
             }, "text/event-stream");
@@ -295,11 +309,18 @@ public static class IdrakEndpointExtensions
         return Results.Stream(async body =>
         {
             await using var _ = lines;
+            var (buffer, writer) = EventWriter();
+            using var __ = writer;
             do
             {
-                await JsonSerializer.SerializeAsync(body, lines.Current, Json, token);
-                await body.WriteAsync("\n"u8.ToArray(), token);
+                // The JSON line and its newline as UTF-8 in one reused buffer, written at once.
+                writer.Reset(buffer);
+                JsonSerializer.Serialize(writer, lines.Current, Json);
+                writer.Flush();
+                buffer.Write("\n"u8);
+                await body.WriteAsync(buffer.WrittenMemory, token);
                 await body.FlushAsync(token);
+                buffer.ResetWrittenCount();
             }
             while (await lines.MoveNextAsync());
         }, "application/x-ndjson");
@@ -385,6 +406,14 @@ public static class IdrakEndpointExtensions
     }
 
     private static async Task<IResult> Respond(Func<Task<IResult>> action) => (await Guard(async () => (IResult?)await action()))!;
+
+    // A buffer reused for each streamed event or line, and a JSON writer over it with the settings the serializer would
+    // use for a string or a stream (same encoder and indentation, so the same bytes).
+    private static (ArrayBufferWriter<byte> Buffer, Utf8JsonWriter Writer) EventWriter()
+    {
+        var buffer = new ArrayBufferWriter<byte>();
+        return (buffer, new Utf8JsonWriter(buffer, new JsonWriterOptions { Encoder = Json.Encoder, Indented = Json.WriteIndented }));
+    }
 
     private static IResult Error(int status, string message) => Results.Json(new { error = message }, Json, statusCode: status);
 

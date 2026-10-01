@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using Idrak.Generation;
 
@@ -41,17 +42,50 @@ public static partial class Chunker
         }
 
         var chunks = new List<Chunk>();
+        var pieces = new List<(int Start, int Length)>();     // the units of a document, as places in its text
         foreach (var document in documents)
         {
-            string[] pieces = unit == ChunkUnit.Words
-                ? document.Text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
-                : [.. SentenceEnd().Split(document.Text).Select(s => s.Trim()).Where(s => s.Length > 0)];
-            int position = 0;
-            for (int start = 0; start < pieces.Length; start += size - overlap)
+            string text = document.Text;
+            pieces.Clear();
+            if (unit == ChunkUnit.Words)
             {
-                int count = Math.Min(size, pieces.Length - start);
-                chunks.Add(new Chunk(chunks.Count, document.Id, position++, string.Join(' ', pieces, start, count)));
-                if (start + count >= pieces.Length)
+                // Runs of non-space characters, as string.Split(null, RemoveEmptyEntries) finds them.
+                for (int i = 0; i < text.Length; i++)
+                {
+                    if (!char.IsWhiteSpace(text[i]))
+                    {
+                        int start = i;
+                        while (i < text.Length && !char.IsWhiteSpace(text[i]))
+                        {
+                            i++;
+                        }
+
+                        pieces.Add((start, i - start));
+                    }
+                }
+            }
+            else
+            {
+                // The pieces between sentence ends, trimmed (string.Trim: the same white space), empty ones dropped.
+                foreach (var range in SentenceEnd().EnumerateSplits(text))
+                {
+                    var (offset, length) = range.GetOffsetAndLength(text.Length);
+                    var piece = text.AsSpan(offset, length);
+                    int lead = piece.Length - piece.TrimStart().Length;
+                    int kept = piece.Trim().Length;
+                    if (kept > 0)
+                    {
+                        pieces.Add((offset + lead, kept));
+                    }
+                }
+            }
+
+            int position = 0;
+            for (int start = 0; start < pieces.Count; start += size - overlap)
+            {
+                int count = Math.Min(size, pieces.Count - start);
+                chunks.Add(new Chunk(chunks.Count, document.Id, position++, Join(text, pieces, start, count)));
+                if (start + count >= pieces.Count)
                 {
                     break;
                 }
@@ -59,6 +93,32 @@ public static partial class Chunker
         }
 
         return chunks;
+    }
+
+    // pieces[start .. start + count) of text joined by single spaces (string.Join(' ', …) without a string per piece).
+    private static string Join(string text, List<(int Start, int Length)> pieces, int start, int count)
+    {
+        int length = count - 1;
+        for (int i = start; i < start + count; i++)
+        {
+            length += pieces[i].Length;
+        }
+
+        return string.Create(length, (text, pieces, start, count), static (span, s) =>
+        {
+            for (int i = s.start; i < s.start + s.count; i++)
+            {
+                if (i > s.start)
+                {
+                    span[0] = ' ';
+                    span = span[1..];
+                }
+
+                var (at, n) = s.pieces[i];
+                s.text.AsSpan(at, n).CopyTo(span);
+                span = span[n..];
+            }
+        });
     }
 
     [GeneratedRegex(@"(?<=[.!?])\s+|\r?\n+")]
@@ -130,35 +190,53 @@ public sealed class Bm25Index
     {
         K1 = k1;
         B = b;
-        var documents = texts.Select(t => WordTokenizer.Split(t).ToArray()).ToList();
-        _lengths = [.. documents.Select(d => d.Length)];
-        _averageLength = documents.Count == 0 ? 1 : Math.Max(documents.Average(d => d.Length), 1);
-        var postings = new Dictionary<string, (List<int> Documents, List<int> Counts)>();
-        var counts = new Dictionary<string, int>();
-        for (int d = 0; d < documents.Count; d++)
+        // Words get ids in order of first use (a string only for a new word); each text is counted by id, its words
+        // taken in order of first use as a word-keyed count dictionary would list them.
+        var ids = new Dictionary<string, int>();
+        var lookup = ids.GetAlternateLookup<ReadOnlySpan<char>>();
+        var postings = new List<(List<int> Documents, List<int> Counts)>();
+        var counts = new List<int>();          // per word id, in the current text
+        var used = new List<int>();            // the current text's word ids, in order of first use
+        var lengths = new List<int>();
+        foreach (var text in texts)
         {
-            counts.Clear();
-            foreach (var word in documents[d])
+            int length = 0;
+            foreach (var word in WordTokenizer.SplitSpans(text))
             {
-                counts[word] = counts.GetValueOrDefault(word) + 1;
-            }
-
-            foreach (var (word, count) in counts)
-            {
-                if (!postings.TryGetValue(word, out var list))
+                length++;
+                ref int id = ref CollectionsMarshal.GetValueRefOrAddDefault(lookup, word, out bool exists);
+                if (!exists)
                 {
-                    postings[word] = list = ([], []);
+                    id = postings.Count;
+                    postings.Add(([], []));
+                    counts.Add(0);
                 }
 
-                list.Documents.Add(d);
-                list.Counts.Add(count);
+                if (counts[id]++ == 0)
+                {
+                    used.Add(id);
+                }
             }
+
+            int d = lengths.Count;
+            foreach (int id in used)
+            {
+                postings[id].Documents.Add(d);
+                postings[id].Counts.Add(counts[id]);
+                counts[id] = 0;
+            }
+
+            used.Clear();
+            lengths.Add(length);
         }
 
-        foreach (var (word, list) in postings)
+        _lengths = [.. lengths];
+        _averageLength = lengths.Count == 0 ? 1 : Math.Max(lengths.Average(), 1);
+        foreach (var (word, id) in ids)
         {
+            var list = postings[id];
             int n = list.Documents.Count;
-            _idf[word] = Math.Log(1 + (documents.Count - n + 0.5) / (n + 0.5));
+            _idf[word] = Math.Log(1 + (lengths.Count - n + 0.5) / (n + 0.5));
             _postings[word] = ([.. list.Documents], [.. list.Counts]);
         }
     }
@@ -175,13 +253,23 @@ public sealed class Bm25Index
     /// <summary>The <paramref name="top"/> best texts for <paramref name="query"/>, best first (ties by id); texts sharing no word are left out.</summary>
     public IReadOnlyList<SearchHit> Search(string query, int top)
     {
-        var terms = WordTokenizer.Split(query).Where(_idf.ContainsKey).Distinct().ToArray();
+        // The indexed words of the query, each once, in query order (the index's own strings: none is allocated).
+        var terms = new List<(string Word, double Idf)>();
+        var seen = new HashSet<string>();
+        var idfs = _idf.GetAlternateLookup<ReadOnlySpan<char>>();
+        foreach (var word in WordTokenizer.SplitSpans(query))
+        {
+            if (idfs.TryGetValue(word, out string? term, out double idf) && seen.Add(term))
+            {
+                terms.Add((term, idf));
+            }
+        }
+
         var scores = new double[_lengths.Length];
 
         // Only the texts holding a query word are scored (term by term in query order, as a full scan would add them).
-        foreach (var term in terms)
+        foreach (var (term, idf) in terms)
         {
-            double idf = _idf[term];
             var (documents, counts) = _postings[term];
             for (int i = 0; i < documents.Length; i++)
             {

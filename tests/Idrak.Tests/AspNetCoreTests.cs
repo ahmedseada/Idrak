@@ -66,11 +66,20 @@ internal static partial class Tests
             var sse = http.PostAsJsonAsync("/generate", new { prompt = "abc", stream = true, options = new { seed = 3, num_predict = 8 } }).Result;
             string events = sse.Content.ReadAsStringAsync().Result;
             Check(sse.Content.Headers.ContentType!.MediaType == "text/event-stream" && events.Contains("event: chunk") && events.EndsWith("\n\n") && events.Contains("event: done"), "SSE");
+            foreach (var e in events.Split("\n\n", StringSplitOptions.RemoveEmptyEntries).Where(e => e.StartsWith("event: chunk\n", StringComparison.Ordinal)))
+            {
+                string text = (string)JsonNode.Parse(e["event: chunk\ndata: ".Length..])!["text"]!;
+                Check(e == "event: chunk\ndata: " + System.Text.Json.JsonSerializer.Serialize(new { text }, new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web)),
+                    $"SSE chunk bytes: {e}");
+            }
+
             Check(http.PostAsJsonAsync("/generate", new { prompt = "" }).Result.StatusCode == HttpStatusCode.BadRequest, "empty prompt is 400");
 
             string body = """{"model":"any","messages":[{"role":"user","content":"hi"}],"keep_alive":"30m","options":{"seed":1,"num_predict":10}}""";
             var chat = http.PostAsync("/api/chat", new StringContent(body)).Result;          // text/plain: accepted like Ollama
-            var lines = chat.Content.ReadAsStringAsync().Result.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => JsonNode.Parse(l)!).ToList();
+            string ndjson = chat.Content.ReadAsStringAsync().Result;
+            Check(ndjson.EndsWith('\n') && !ndjson.Contains("\n\n", StringComparison.Ordinal), "one newline after each NDJSON line");
+            var lines = ndjson.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => JsonNode.Parse(l)!).ToList();
             Check(chat.Content.Headers.ContentType!.MediaType == "application/x-ndjson" && (bool)lines[^1]["done"]! && (string?)lines[^1]["model"] == "any", "NDJSON chat");
             var ps = JsonNode.Parse(http.GetStringAsync("/api/ps").Result)!["models"]![0]!;
             var expires = DateTimeOffset.Parse((string)ps["expires_at"]!);

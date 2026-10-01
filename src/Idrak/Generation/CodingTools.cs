@@ -164,7 +164,8 @@ public sealed class CodingTools
             return Directory.Exists(full) ? $"Error: '{path}' is a folder; use list_files." : $"Error: file '{path}' does not exist.";
         }
 
-        var lines = SplitLines(File.ReadAllText(full));
+        string text = File.ReadAllText(full);
+        var lines = SplitLines(text);
         if (lines.Count == 0)
         {
             return "(empty file)";
@@ -179,9 +180,12 @@ public sealed class CodingTools
         int last = Math.Min(lines.Count, Math.Min(endLine ?? int.MaxValue, first + _options.MaxReadLines - 1));
         int width = last.ToString(System.Globalization.CultureInfo.InvariantCulture).Length;
         var sb = new StringBuilder();
+        Span<char> number = stackalloc char[11];        // the line number, right-aligned to width (as PadLeft)
         for (int i = first; i <= last; i++)
         {
-            sb.Append(i.ToString(System.Globalization.CultureInfo.InvariantCulture).PadLeft(width)).Append("| ").Append(lines[i - 1]).Append('\n');
+            var (start, length) = lines[i - 1];
+            i.TryFormat(number, out int digits, provider: System.Globalization.CultureInfo.InvariantCulture);
+            sb.Append(' ', width - digits).Append(number[..digits]).Append("| ").Append(text.AsSpan(start, length)).Append('\n');
         }
 
         if (last < lines.Count && (endLine is null || last < endLine))
@@ -226,12 +230,14 @@ public sealed class CodingTools
                 continue;
             }
 
-            var lines = SplitLines(File.ReadAllText(file));
+            string text = File.ReadAllText(file);
+            var lines = SplitLines(text);
             for (int i = 0; i < lines.Count; i++)
             {
+                var (start, length) = lines[i];
                 try
                 {
-                    if (!regex.IsMatch(lines[i]))
+                    if (!regex.IsMatch(text.AsSpan(start, length)))
                     {
                         continue;
                     }
@@ -244,8 +250,8 @@ public sealed class CodingTools
                 total++;
                 if (results.Count < _options.MaxSearchResults)
                 {
-                    string line = lines[i].Trim();
-                    results.Add($"{Relative(file)}:{i + 1}: {(line.Length > 200 ? line[..200] + " …" : line)}");
+                    var line = text.AsSpan(start, length).Trim();
+                    results.Add(line.Length > 200 ? $"{Relative(file)}:{i + 1}: {line[..200]} …" : $"{Relative(file)}:{i + 1}: {line}");
                 }
             }
         }
@@ -295,11 +301,11 @@ public sealed class CodingTools
         }
 
         int at = text.IndexOf(find, StringComparison.Ordinal);
-        string updated = replaceAll ? text.Replace(find, replacement, StringComparison.Ordinal) : text[..at] + replacement + text[(at + find.Length)..];
+        string updated = replaceAll ? text.Replace(find, replacement, StringComparison.Ordinal) : string.Concat(text.AsSpan(0, at), replacement, text.AsSpan(at + find.Length));
         File.WriteAllText(full, updated);
 
         // The changed lines with a little context, so the model sees the result without reading the file again.
-        int firstLine = text[..at].Count(c => c == '\n') + 1;
+        int firstLine = text.AsSpan(0, at).Count('\n') + 1;
         int changedLines = SplitLines(replacement).Count;
         string view = ReadFile(path, Math.Max(1, firstLine - 2), firstLine + Math.Max(changedLines, 1) + 1);
         return $"Edited {Relative(full)} ({(replaceAll ? $"{count} replacements" : "1 replacement")}):\n{view}";
@@ -541,15 +547,27 @@ public sealed class CodingTools
 
     private static int? Number(JsonObject args, string name) => args[name] is JsonValue v && v.TryGetValue<double>(out var d) ? (int)d : null;
 
-    private static List<string> SplitLines(string text)
+    // The lines of text as places in it (no string per line): cut at '\n', a '\r' right before it left out (so "\r\n" ends
+    // a line as '\n' does; a lone '\r' stays in the line).
+    private static List<(int Start, int Length)> SplitLines(string text)
     {
-        var lines = text.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n').ToList();
-        if (lines.Count > 0 && lines[^1].Length == 0)
+        var lines = new List<(int Start, int Length)>();
+        for (int start = 0; ;)
         {
-            lines.RemoveAt(lines.Count - 1);                        // the newline that ends the last line
-        }
+            int end = text.IndexOf('\n', start);
+            if (end < 0)
+            {
+                if (start < text.Length)
+                {
+                    lines.Add((start, text.Length - start));        // no newline after the last line (none after a final one)
+                }
 
-        return lines;
+                return lines;
+            }
+
+            lines.Add((start, end > start && text[end - 1] == '\r' ? end - 1 - start : end - start));
+            start = end + 1;
+        }
     }
 
     private static int Count(string text, string find)
