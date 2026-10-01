@@ -36,18 +36,18 @@ internal sealed unsafe partial class VulkanBackend : Backend
     private readonly int _stagingType = -1;
     private readonly bool _stagingCoherent;
 
-    // Cached blocks by length (floats), and the number of live allocations (drivers cap it: maxMemoryAllocationCount).
+    // Cached blocks by length (floats); their memory stays carved from its page until ReleaseCachedMemory.
     private readonly Dictionary<int, Stack<VulkanBlock>> _pool = [];
-    private int _allocations;
 
     // The staging buffer, created on first use; copies larger than it go in chunks.
     private const long StagingBytes = 16L << 20;
     private VulkanBlock? _staging;
 
-    private VulkanBackend(PhysicalDevice physical, bool preferMapped, bool? pushDescriptors = null)
+    private VulkanBackend(PhysicalDevice physical, bool preferMapped, bool? pushDescriptors = null, int? maxAllocations = null)
     {
         _physical = physical;
         var p = physical.Properties;
+        MaxAllocations = MemoryAllocationCap(p.MaxMemoryAllocationCount, maxAllocations);
         Name = $"{physical.DeviceName} (Vulkan {VersionOf(p.ApiVersion).Major}.{VersionOf(p.ApiVersion).Minor}, {physical.Driver})";
         _memory = new MemoryAccountant(() => ComputeResources.GpuMemoryLimit, Name);
         MaxStorageBytes = p.MaxStorageBufferRange;
@@ -123,6 +123,7 @@ internal sealed unsafe partial class VulkanBackend : Backend
         }
 
         _storageCoherent = (memory.TypeFlags((int)_storageType) & MemoryHostCoherent) != 0;
+        PageBytes = PageSize(memory.HeapSize(memory.TypeHeap((int)_storageType)));
         StartQueue();
     }
 
@@ -201,8 +202,8 @@ internal sealed unsafe partial class VulkanBackend : Backend
     /// A second backend on device <paramref name="ordinal"/> (for tests: staging copies even where memory is shared; pushed
     /// descriptors or descriptor sets whatever the device's default).
     /// </summary>
-    internal static VulkanBackend CreateSeparate(int ordinal, bool preferMapped, bool? pushDescriptors = null) =>
-        new(Probe.Value.Devices[ordinal], preferMapped, pushDescriptors);
+    internal static VulkanBackend CreateSeparate(int ordinal, bool preferMapped, bool? pushDescriptors = null, int? maxAllocations = null) =>
+        new(Probe.Value.Devices[ordinal], preferMapped, pushDescriptors, maxAllocations);
 
     private static Lazy<VulkanBackend>[] CreateInstances()
     {
@@ -412,25 +413,6 @@ internal sealed unsafe partial class VulkanBackend : Backend
 
     private static long BlockBytes(int length) => (long)Math.Max(length, 1) * sizeof(float);
 
-    // Storages: a buffer with its own memory, mapped for good when the host sees it.
-
-    internal sealed class VulkanBlock(ulong buffer, ulong memory, byte* mapped, int capacity)
-    {
-        public readonly ulong Buffer = buffer;
-        public readonly ulong Memory = memory;
-        public readonly byte* Mapped = mapped;
-        public readonly int Capacity = capacity;
-
-        /// <summary>The batch that last used the block (VulkanBackend.Dispatch.cs): host access waits for it.</summary>
-        public ulong LastUse;
-
-        /// <summary>The span between barriers (VulkanBackend.Dispatch.cs) in which a command last wrote the block.</summary>
-        public ulong WrittenIn;
-
-        /// <summary>The span between barriers in which a command last read the block.</summary>
-        public ulong ReadIn;
-    }
-
     private sealed class VulkanStorage(VulkanBackend backend, VulkanBlock block, int length) : Storage(backend, length)
     {
         public VulkanBlock? Block = block;
@@ -481,73 +463,6 @@ internal sealed unsafe partial class VulkanBackend : Backend
         return new VulkanStorage(this, block, length);
     }
 
-    // New memory for `length` floats; after an out-of-memory error, frees cached blocks and unreachable tensors and
-    // tries once more.
-    private VulkanBlock CreateBlock(int length, uint memoryType, bool map)
-    {
-        long bytes = BlockBytes(length);
-        for (int attempt = 0; ; attempt++)
-        {
-            if (attempt == 1)
-            {
-                GC.Collect();
-                GC.WaitForPendingFinalizers();
-                ReleaseCachedMemory();
-            }
-
-            if (Volatile.Read(ref _allocations) >= _physical.Properties.MaxMemoryAllocationCount)
-            {
-                if (attempt == 0)
-                {
-                    continue;
-                }
-
-                throw new ResourceLimitExceededException(
-                    $"{Name} allows {_physical.Properties.MaxMemoryAllocationCount:N0} memory allocations, and they are all in use.");
-            }
-
-            ulong buffer = CreateBuffer(bytes);
-            VkMemoryRequirements requirements;
-            vkGetBufferMemoryRequirements(_device, buffer, &requirements);
-            var info = new VkMemoryAllocateInfo
-            {
-                SType = StructureMemoryAllocateInfo,
-                AllocationSize = requirements.Size,
-                MemoryTypeIndex = memoryType,
-            };
-            int result = vkAllocateMemory(_device, &info, null, out ulong memory);
-            if (result is ErrorOutOfDeviceMemory or ErrorOutOfHostMemory)
-            {
-                vkDestroyBuffer(_device, buffer, null);
-                if (attempt == 0)
-                {
-                    continue;
-                }
-
-                throw new ResourceLimitExceededException(
-                    $"{Name} is out of memory: {bytes:N0} more bytes needed ({_memory.Usage}). Use smaller batches or shorter sequences.");
-            }
-
-            Check(result, nameof(vkAllocateMemory));
-            Check(vkBindBufferMemory(_device, buffer, memory, 0), nameof(vkBindBufferMemory));
-            void* mapped = null;
-            if (map)
-            {
-                Check(vkMapMemory(_device, memory, 0, WholeSize, 0, &mapped), nameof(vkMapMemory));
-            }
-
-            Interlocked.Increment(ref _allocations);
-            return new VulkanBlock(buffer, memory, (byte*)mapped, length);
-        }
-    }
-
-    private void DestroyBlock(VulkanBlock block)
-    {
-        vkDestroyBuffer(_device, block.Buffer, null);
-        vkFreeMemory(_device, block.Memory, null);                           // unmaps it too
-        Interlocked.Decrement(ref _allocations);
-    }
-
     // Called when the last reference is released, possibly from the finalizer thread, so it only touches the pool
     // (queued work may still use the block: it is reused in queue order, and freed only after a wait).
     public override void Return(Storage storage)
@@ -596,6 +511,8 @@ internal sealed unsafe partial class VulkanBackend : Backend
 
                 _pool.Clear();
             }
+
+            FreeEmptyPages();
         }
     }
 
@@ -618,7 +535,7 @@ internal sealed unsafe partial class VulkanBackend : Backend
                 source.CopyTo(new Span<float>(block.Mapped, source.Length));
                 if (!_storageCoherent)
                 {
-                    FlushOrInvalidate(block.Memory, flush: true);
+                    FlushOrInvalidate(block, flush: true);
                 }
 
                 return;
@@ -631,7 +548,7 @@ internal sealed unsafe partial class VulkanBackend : Backend
                 source.Slice((int)done, count).CopyTo(new Span<float>(staging.Mapped, count));
                 if (!_stagingCoherent)
                 {
-                    FlushOrInvalidate(staging.Memory, flush: true);
+                    FlushOrInvalidate(staging, flush: true);
                 }
 
                 RecordCopy(staging, 0, block, done * sizeof(float), count * sizeof(float));
@@ -658,7 +575,7 @@ internal sealed unsafe partial class VulkanBackend : Backend
                 WaitFor(block);
                 if (!_storageCoherent)
                 {
-                    FlushOrInvalidate(block.Memory, flush: false);
+                    FlushOrInvalidate(block, flush: false);
                 }
 
                 new ReadOnlySpan<float>(block.Mapped + (long)offset * sizeof(float), destination.Length).CopyTo(destination);
@@ -673,7 +590,7 @@ internal sealed unsafe partial class VulkanBackend : Backend
                 SubmitAndWait();
                 if (!_stagingCoherent)
                 {
-                    FlushOrInvalidate(staging.Memory, flush: false);
+                    FlushOrInvalidate(staging, flush: false);
                 }
 
                 new ReadOnlySpan<float>(staging.Mapped, count).CopyTo(destination.Slice((int)done, count));
@@ -683,16 +600,7 @@ internal sealed unsafe partial class VulkanBackend : Backend
     }
 
     private VulkanBlock Staging() =>
-        _staging ??= CreateBlock((int)(StagingBytes / sizeof(float)), (uint)_stagingType, map: true);
-
-    // Makes host writes visible to the device (flush) or device writes visible to the host (invalidate) on memory that
-    // is not host-coherent; the whole allocation, so no alignment to nonCoherentAtomSize is needed.
-    private void FlushOrInvalidate(ulong memory, bool flush)
-    {
-        var range = new VkMappedMemoryRange { SType = StructureMappedMemoryRange, Memory = memory, Offset = 0, Size = WholeSize };
-        Check(flush ? vkFlushMappedMemoryRanges(_device, 1, &range) : vkInvalidateMappedMemoryRanges(_device, 1, &range),
-            flush ? nameof(vkFlushMappedMemoryRanges) : nameof(vkInvalidateMappedMemoryRanges));
-    }
+        _staging ??= CreateBlock((int)(StagingBytes / sizeof(float)), (uint)_stagingType, map: true, dedicated: true);
 
     // Zeros a block: in place when it is mapped and idle, else with a fill in queue order.
     private void Zero(VulkanBlock block)
@@ -705,7 +613,7 @@ internal sealed unsafe partial class VulkanBackend : Backend
 
                 if (!_storageCoherent)
                 {
-                    FlushOrInvalidate(block.Memory, flush: true);
+                    FlushOrInvalidate(block, flush: true);
                 }
 
                 return;
@@ -735,6 +643,8 @@ internal sealed unsafe partial class VulkanBackend : Backend
                 DestroyBlock(_staging);
                 _staging = null;
             }
+
+            FreeEmptyPages();
 
             StopQueue();
             vkDestroyDevice(_device, null);

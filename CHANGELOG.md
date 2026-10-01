@@ -89,6 +89,11 @@
 - `--bench-vulkan [sections]` in the test runner times every Vulkan device (or those `IDRAK_DEVICES` names): dispatch
   overhead, copies, element-wise bandwidth, float32 products, decoding-sized int8 / int4 / bfloat16 products, decoding
   attention over 200 to 4,000 positions, sampling, and decoders' tokens per second with their kernels per token.
+- Vulkan storages share device memory: each keeps its own buffer, carved from 64 MiB pages (one memory allocation each,
+  mapped once on integrated GPUs); storages over a quarter page keep an allocation of their own. Drivers that cap memory
+  allocations (4,096 on AMD's and others' Windows drivers) no longer run out of them with many tensors (LSTM, GRU and
+  transformer gradients failed on an AMD Radeon iGPU). Empty pages go back to the driver with the cached memory.
+  `IDRAK_VULKAN_MAX_ALLOCATIONS=<n>` lowers the cap the runtime assumes, to reproduce such drivers anywhere.
 
 ## 0.1.7 (2026-10-01)
 

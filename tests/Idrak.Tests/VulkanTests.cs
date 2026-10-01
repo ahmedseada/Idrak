@@ -17,6 +17,7 @@ internal static partial class Tests
         ("vulkan: devices are found (or the reason why not), listed unless a software driver or a GPU CUDA drives", VulkanDevices),
         ("vulkan: uploads and downloads round-trip (1, odd and multi-megabyte sizes, ranges), mapped and through staging", VulkanRoundTrip),
         ("vulkan: memory is pooled, counted and limited by ComputeResources.GpuMemoryLimit", VulkanMemory),
+        ("vulkan: thousands of small storages share pages under a low allocation cap (IDRAK_VULKAN_MAX_ALLOCATIONS), intact, freed and reused", VulkanSubAllocation),
         ("vulkan: a SPIR-V kernel dispatch (y = a·alpha + b with push constants), chained dispatches in order", VulkanDispatch),
         ("vulkan: uploads, zeroed allocations and reused blocks are ordered after queued dispatches", VulkanOrdering),
         ("vulkan: operations run as generated kernels (no host fallback) and match the CPU (element-wise, rows narrow and wide, products, decoding)", VulkanKernelsMatchCpu),
@@ -88,7 +89,7 @@ internal static partial class Tests
     // to `check` as the device copies and then through staging, on a second backend of the same device.
     private static void ForEachVulkan(Device device, Action<VulkanBackend, string> check) => ForEachVulkan(device, separateOnly: false, check);
 
-    private static void ForEachVulkan(Device device, bool separateOnly, Action<VulkanBackend, string> check)
+    private static void ForEachVulkan(Device device, bool separateOnly, Action<VulkanBackend, string> check, int? maxAllocations = null)
     {
         List<int> ordinals = device.Type switch
         {
@@ -108,7 +109,7 @@ internal static partial class Tests
 
         foreach (int ordinal in ordinals)
         {
-            var backend = separateOnly ? VulkanBackend.CreateSeparate(ordinal, preferMapped: true) : (VulkanBackend)Device.Get("vulkan", ordinal).Backend;
+            var backend = separateOnly ? VulkanBackend.CreateSeparate(ordinal, preferMapped: true, maxAllocations: maxAllocations) : (VulkanBackend)Device.Get("vulkan", ordinal).Backend;
             try
             {
                 check(backend, $"vulkan:{ordinal} ({(backend.UnifiedMemory ? "mapped" : "staging")})");
@@ -121,7 +122,7 @@ internal static partial class Tests
                 }
             }
 
-            var staging = VulkanBackend.CreateSeparate(ordinal, preferMapped: false);
+            var staging = VulkanBackend.CreateSeparate(ordinal, preferMapped: false, maxAllocations: maxAllocations);
             try
             {
                 Check(!staging.UnifiedMemory, "the second backend copies through staging");
@@ -267,6 +268,97 @@ internal static partial class Tests
         evicted.Release();
         Check(restored.AsSpan().SequenceEqual(Values(64, 1)), $"{label}: restored values");
     });
+
+    // Drivers cap memory allocations (4096 on AMD's Windows driver); under a cap of 8, thousands of live storages share pages.
+    private static void VulkanSubAllocation(Device device) => ForEachVulkan(device, separateOnly: true, (backend, label) =>
+    {
+        const int Cap = 8, Count = 3000;
+        Check(backend.MaxAllocations == Cap && backend.SubAllocationMax == backend.PageBytes / 4, $"{label}: capped at {Cap} allocations");
+        int Length(int i) => i * 37 % 2000 + 1;
+        float[] Expected(int i) => [.. Enumerable.Range(0, Length(i)).Select(j => i + j * 1e-4f)];
+        var storages = new List<Storage>();
+        void AllocateAll()
+        {
+            for (int i = 0; i < Count; i++)
+            {
+                var storage = backend.Allocate(Length(i), zeroed: i % 3 == 0);
+                backend.Upload(Expected(i), storage);
+                storages.Add(storage);
+            }
+        }
+
+        void CheckAll(string what)
+        {
+            for (int i = 0; i < Count; i++)
+            {
+                var values = new float[Length(i)];
+                backend.Download(storages[i], values);
+                Check(values.AsSpan().SequenceEqual(Expected(i)), $"{label}: storage {i} intact ({what})");
+            }
+        }
+
+        try
+        {
+            AllocateAll();
+            Check(backend.Allocations <= Cap && backend.PageCount >= 1, $"{label}: {Count} storages in {backend.PageCount} pages, {backend.Allocations} allocations");
+
+            // Kernels bind carved storages like any other (y[0] = 2 · storage 0 [0] + storage 2000 [0]).
+            QueueAxpb(backend, storages[0], storages[2000], storages[1000], 1, 2f);
+            var one = new float[1];
+            backend.Download(storages[1000], one);
+            Check(one[0] == 2000f, $"{label}: a dispatch over carved storages ({one[0]})");
+            backend.Upload(Expected(1000), storages[1000]);
+
+            // A large storage gets an allocation of its own.
+            int before = backend.Allocations;
+            var big = backend.Allocate((int)(backend.SubAllocationMax / 4) + 1, zeroed: true);
+            Check(backend.Allocations == before + 1, $"{label}: a storage over a quarter page has its own allocation");
+            CheckAll("beside a large storage");
+            big.Release();
+
+            // Past the cap: the existing error, after freeing what is cached.
+            var bigs = new List<Storage>();
+            try
+            {
+                for (int i = 0; i <= Cap; i++)
+                {
+                    bigs.Add(backend.Allocate((int)(backend.SubAllocationMax / 4) + 1, zeroed: false));
+                }
+
+                throw new Exception($"{label}: allocations past the cap succeeded");
+            }
+            catch (ResourceLimitExceededException ex)
+            {
+                Check(ex.Message.Contains("memory allocations", StringComparison.Ordinal), $"{label}: {ex.Message}");
+            }
+            finally
+            {
+                bigs.ForEach(b => b.Release());
+            }
+
+            CheckAll("after the cap was reached");
+
+            // Freed, pages given back, then everything again (reusing pooled blocks and fresh pages).
+            storages.ForEach(s => s.Release());
+            storages.Clear();
+            backend.ReleaseCachedMemory();
+            Check(backend.PageCount == 0 && backend.GetMemoryUsage().InUse == 0, $"{label}: empty pages freed ({backend.PageCount} left, {backend.GetMemoryUsage()})");
+            AllocateAll();
+            for (int i = 0; i < Count; i += 2)
+            {
+                storages[i].Release();                                       // every other one freed and reused
+                storages[i] = backend.Allocate(Length(i), zeroed: false);
+                backend.Upload(Expected(i), storages[i]);
+            }
+
+            CheckAll("freed and reused");
+            Check(backend.Allocations <= Cap, $"{label}: still within the cap ({backend.Allocations})");
+        }
+        finally
+        {
+            storages.ForEach(s => s.Release());
+        }
+    }, maxAllocations: 8);
 
     private static void VulkanDispatch(Device device) => ForEachVulkan(device, (backend, label) =>
     {
