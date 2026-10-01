@@ -83,7 +83,7 @@ public sealed class AnswerScorer
 
     /// <summary>The precision scoring uses (see <see cref="Precision"/>).</summary>
     public MatMulPrecision EffectivePrecision => Precision
-        ?? (_model.Device.Type == DeviceType.Cuda && MixedPrecision.Current == MatMulPrecision.Float32 && MixedPrecision.TensorCoresUnavailable(_model.Device) is null
+        ?? (MixedPrecision.Current == MatMulPrecision.Float32 && MixedPrecision.TensorCoresUnavailable(_model.Device) is null
             ? MatMulPrecision.BFloat16
             : MixedPrecision.Current);
 

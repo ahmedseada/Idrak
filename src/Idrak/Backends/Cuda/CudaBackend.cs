@@ -126,9 +126,9 @@ internal sealed unsafe partial class CudaBackend : Backend
     [ThreadStatic]
     private static double _profileFlops;
 
-    public void StartProfile() => _profile = [];
+    public override void StartProfile() => _profile = [];
 
-    public Dictionary<string, (long Calls, long Ticks, double Flops)> StopProfile()
+    public override Dictionary<string, (long Calls, long Ticks, double Flops)> StopProfile()
     {
         var profile = _profile ?? [];
         _profile = null;
@@ -138,7 +138,18 @@ internal sealed unsafe partial class CudaBackend : Backend
     /// <summary>Number of tensor-core GEMM launches (for tests and diagnostics).</summary>
     internal long TensorCoreLaunches;
 
-    public string? TensorCoresUnavailable()
+    public override BackendCapabilities Capabilities { get; } = new()
+    {
+        FewRows = PtxKernels.GemvRows,
+        DecodeAttentionHeadDim = PtxKernels.DecodeMaxDim,
+        TiledAttentionHeadDim = PtxKernels.FlashMaxDim,
+        MatrixUnits = true,
+        MatrixUnitAttentionHeadDim = PtxKernels.FlashTensorDim,
+        FusedKernels = true,
+        Profiling = true,
+    };
+
+    public override string? TensorCoresUnavailable()
     {
         lock (_signatures)
         {
@@ -294,7 +305,7 @@ internal sealed unsafe partial class CudaBackend : Backend
 
     public static string UnavailableReason => Probe.Value.Reason;
 
-    public string Name { get; }
+    public override string Name { get; }
 
     public static CudaBackend Get(int ordinal) => Instances[ordinal].Value;
 

@@ -31,6 +31,23 @@ internal sealed partial class CpuBackend : Backend
     {
     }
 
+    // The CPU kernels take any row count and head size; the limits match the CUDA backend's so that both devices choose
+    // the same attention and product paths (tests compare their results).
+    public override BackendCapabilities Capabilities { get; } = new()
+    {
+        FewRows = Cuda.PtxKernels.GemvRows,
+        DecodeAttentionHeadDim = Cuda.PtxKernels.DecodeMaxDim,
+        TiledAttentionHeadDim = Cuda.PtxKernels.FlashMaxDim,
+        MatrixUnits = false,
+        MatrixUnitAttentionHeadDim = static _ => false,
+        FusedKernels = false,
+        Profiling = false,
+    };
+
+    public override string Name => $"CPU ({Environment.ProcessorCount} threads, {System.Numerics.Vector<float>.Count}-wide SIMD)";
+
+    public override string? TensorCoresUnavailable() => "the CPU computes matrix products in float32";
+
     public override Storage Allocate(int length, bool zeroed)
     {
         long bytes = (long)length * sizeof(float);

@@ -253,7 +253,7 @@ public sealed partial class Tensor
     {
         input.ThrowIfDisposed();
         int k = input._shape[^1], m = input.Size / Math.Max(1, k);
-        if (input.Device.Type != DeviceType.Cuda || layers.Count is < 1 or > 3 || m < 64 || k < 32 || !MixedPrecision.UsesTensorCores
+        if (!input.Backend.Capabilities.MatrixUnits || layers.Count is < 1 or > 3 || m < 64 || k < 32 || !MixedPrecision.UsesTensorCores
             || layers[0].Adapter is not { } first || first.Rank > 32)
         {
             return null;
@@ -657,7 +657,7 @@ public sealed partial class Tensor
         up.ThrowIfDisposed();
         int kind = layer.Int8 is not null ? 0 : layer.Int4 is not null ? 1 : layer.BFloat16 is not null ? 2 : -1;
         int k = gate._shape[^1], m = gate.Size / Math.Max(1, k);
-        if (kind < 0 || k != layer.InFeatures || up.Size != gate.Size || m > Backends.Cuda.PtxKernels.GemvRows)
+        if (kind < 0 || k != layer.InFeatures || up.Size != gate.Size || m > gate.Backend.Capabilities.FewRows)
         {
             return null;
         }
@@ -696,8 +696,8 @@ public sealed partial class Tensor
         residual.ThrowIfDisposed();
         int kind = layer.Int8 is not null ? 0 : layer.Int4 is not null ? 1 : layer.BFloat16 is not null ? 2 : -1;
         int k = x._shape[^1], m = x.Size / Math.Max(1, k), n = layer.OutFeatures;
-        if (kind < 0 || layer.Bias is not null || layer.Adapter is not null || k != layer.InFeatures || m > Backends.Cuda.PtxKernels.GemvRows
-            || residual.Size != m * n || residual._shape[^1] != n || norm.Features != n || x.Device.Type != DeviceType.Cuda)
+        if (kind < 0 || layer.Bias is not null || layer.Adapter is not null || k != layer.InFeatures || m > x.Backend.Capabilities.FewRows
+            || residual.Size != m * n || residual._shape[^1] != n || norm.Features != n || !x.Backend.Capabilities.FusedKernels)
         {
             return null;
         }
@@ -741,7 +741,7 @@ public sealed partial class Tensor
         input.ThrowIfDisposed();
         int kind = gate.Int8 is not null ? 0 : gate.Int4 is not null ? 1 : gate.BFloat16 is not null ? 2 : -1;
         int k = input._shape[^1], m = input.Size / Math.Max(1, k), n = gate.OutFeatures;
-        if (kind < 0 || m > Backends.Cuda.PtxKernels.GemvRows || input.Device.Type != DeviceType.Cuda || up.OutFeatures != n
+        if (kind < 0 || m > input.Backend.Capabilities.FewRows || !input.Backend.Capabilities.FusedKernels || up.OutFeatures != n
             || gate.InFeatures != k || up.InFeatures != k || gate.Bias is not null || up.Bias is not null || gate.Adapter is not null
             || up.Adapter is not null || (kind == 0 ? up.Int8 is null : kind == 1 ? up.Int4 is null : up.BFloat16 is null))
         {
@@ -900,7 +900,7 @@ public sealed partial class Tensor
         k.ThrowIfDisposed();
         v.ThrowIfDisposed();
         if ((queryNorm is null) != (keyNorm is null) || (cos is null) != (sin is null) || (cache is null) != (position is null)
-            || cache is { Format: Layers.KeyValueFormat.Int8 } || q.Device.Type != DeviceType.Cuda)
+            || cache is { Format: Layers.KeyValueFormat.Int8 } || !q.Backend.Capabilities.FusedKernels)
         {
             return null;
         }

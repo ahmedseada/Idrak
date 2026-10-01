@@ -89,7 +89,7 @@ public sealed record TuningManifest
     public PretrainedModel LoadModel(string folder, Device? device = null, PretrainedOptions? options = null)
     {
         device ??= options?.Device ?? Device.Cpu;
-        var model = PretrainedModel.Load(ModelSource.Resolve(BaseModel), (options ?? new PretrainedOptions { BFloat16 = device.Type == DeviceType.Cuda }) with
+        var model = PretrainedModel.Load(ModelSource.Resolve(BaseModel), (options ?? new PretrainedOptions { BFloat16 = device.IsGpu }) with
         {
             Device = device, MergeAdapter = folder,
         });

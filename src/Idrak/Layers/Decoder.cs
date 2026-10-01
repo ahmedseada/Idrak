@@ -283,8 +283,8 @@ public sealed class CausalSelfAttention : Module, ICachedModule
 
         float scale = 1f / MathF.Sqrt(HeadDim);
         var packing = PackedSequences.Current is { } current && current.Matches(n, t) ? current : null;
-        if (packing is null && Rope is null && QueryNorm is null && KeyNorm is null && FusedTraining.Enabled && Backends.Cuda.PtxKernels.FlashTensorDim(HeadDim)
-            && input.Device.Type == DeviceType.Cuda && MixedPrecision.UsesTensorCores
+        if (packing is null && Rope is null && QueryNorm is null && KeyNorm is null && FusedTraining.Enabled && input.Backend.Capabilities.MatrixUnitAttentionHeadDim(HeadDim)
+            && input.Backend.Capabilities.MatrixUnits && MixedPrecision.UsesTensorCores
             && Linear.PlainFloat(Query) && Linear.PlainFloat(Key) && Linear.PlainFloat(Value)
             && Tensor.ProjectPacked(input, [Query, Key, Value]) is { } packed)
         {
@@ -310,7 +310,7 @@ public sealed class CausalSelfAttention : Module, ICachedModule
             return Merge(segmented, n, t);
         }
 
-        if (HeadDim <= Backends.Cuda.PtxKernels.FlashMaxDim)
+        if (HeadDim <= input.Backend.Capabilities.TiledAttentionHeadDim)
         {
             // Tiled attention, forward and backward: no [t, t] weights stored (positions[0] = 0 is the causal offset).
             var attended = Tensor.CausalAttention(q, k, v, positions, t, scale);
@@ -374,7 +374,7 @@ public sealed class CausalSelfAttention : Module, ICachedModule
         {
             Tensor.WriteKeyValuesInt8(k!, cache.Keys, cache.KeyScales!, context.Position);
             Tensor.WriteKeyValuesInt8(v!, cache.Values, cache.ValueScales!, context.Position);
-            if (HeadDim <= Backends.Cuda.PtxKernels.DecodeMaxDim)
+            if (HeadDim <= q.Backend.Capabilities.DecodeAttentionHeadDim)
             {
                 context8 = Tensor.AttentionInt8(q, cache, context.Position, t, scale, tiled: t >= 8);   // only the filled positions
             }
@@ -392,11 +392,11 @@ public sealed class CausalSelfAttention : Module, ICachedModule
                 Tensor.WriteKeyValues(v!, cache.Values, context.Position);
             }
 
-            if (t >= 8 && HeadDim <= Backends.Cuda.PtxKernels.FlashMaxDim)
+            if (t >= 8 && HeadDim <= q.Backend.Capabilities.TiledAttentionHeadDim)
             {
                 context8 = Tensor.AttentionTiled(q, cache.Keys, cache.Values, context.Position, t, scale);   // a prompt: tiled
             }
-            else if (HeadDim <= Backends.Cuda.PtxKernels.DecodeMaxDim)
+            else if (HeadDim <= q.Backend.Capabilities.DecodeAttentionHeadDim)
             {
                 context8 = Tensor.AttentionDecode(q, cache, context.Position, t, scale);           // only the filled positions
             }
@@ -617,7 +617,7 @@ public sealed class FeedForward : Module
     {
         Tensor hidden;
         if (Gate is null && Activation == FeedForwardActivation.Gelu && FusedTraining.Enabled && Linear.PlainFloat(Up) && Linear.PlainFloat(Down)
-            && input.Device.Type == DeviceType.Cuda && MixedPrecision.UsesTensorCores
+            && input.Backend.Capabilities.MatrixUnits && MixedPrecision.UsesTensorCores
             && Tensor.FeedForwardGelu(input, Up, Down) is { } geluBlock)
         {
             return geluBlock;                                       // GELU inside the products (tensor cores)

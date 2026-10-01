@@ -104,6 +104,23 @@ internal abstract class Backend
 {
     public abstract Storage Allocate(int length, bool zeroed);
 
+    /// <summary>What this device's kernels can do (see <see cref="BackendCapabilities"/>).</summary>
+    public abstract BackendCapabilities Capabilities { get; }
+
+    /// <summary>A human-readable name of the device, such as the GPU model.</summary>
+    public abstract string Name { get; }
+
+    /// <summary>Null when this device runs bfloat16 products on matrix units (tensor cores); otherwise why not.</summary>
+    public virtual string? TensorCoresUnavailable() => "the device computes matrix products in float32";
+
+    /// <summary>Starts timing every kernel (where <see cref="BackendCapabilities.Profiling"/>).</summary>
+    public virtual void StartProfile()
+    {
+    }
+
+    /// <summary>Stops timing; the kernels by name with their calls, time (stopwatch ticks) and floating-point operations.</summary>
+    public virtual Dictionary<string, (long Calls, long Ticks, double Flops)> StopProfile() => [];
+
     /// <summary>Keeping tensors in system memory when the device is full, or null when the device has no such support.</summary>
     public virtual IMemoryOffload? Offload => null;
 

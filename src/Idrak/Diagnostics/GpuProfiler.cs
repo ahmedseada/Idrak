@@ -1,7 +1,6 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using Idrak.Backends.Cuda;
 
 namespace Idrak.Diagnostics;
 
@@ -18,26 +17,26 @@ public sealed record GpuProfileEntry(string Name, long Calls, double Millisecond
 /// </summary>
 public static class GpuProfiler
 {
-    /// <summary>Starts timing the kernels of <paramref name="device"/> (a CUDA device; ignored for the CPU).</summary>
+    /// <summary>Starts timing the kernels of <paramref name="device"/> (ignored on a device without kernel timing, such as the CPU).</summary>
     public static void Start(Device device)
     {
-        if (device.Type == DeviceType.Cuda)
+        if (device.Backend.Capabilities.Profiling)
         {
             device.Synchronize();
-            ((CudaBackend)device.Backend).StartProfile();
+            device.Backend.StartProfile();
         }
     }
 
     /// <summary>Stops timing and returns the kernels, most time first.</summary>
     public static IReadOnlyList<GpuProfileEntry> Stop(Device device)
     {
-        if (device.Type != DeviceType.Cuda)
+        if (!device.Backend.Capabilities.Profiling)
         {
             return [];
         }
 
         device.Synchronize();
-        return [.. ((CudaBackend)device.Backend).StopProfile()
+        return [.. device.Backend.StopProfile()
             .Select(e =>
             {
                 double ms = e.Value.Ticks * 1000.0 / System.Diagnostics.Stopwatch.Frequency;

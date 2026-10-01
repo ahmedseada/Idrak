@@ -73,9 +73,13 @@ public sealed class Device
     public int Ordinal { get; }
 
     /// <summary>A human-readable name, such as the GPU model.</summary>
-    public string Name => Type == DeviceType.Cpu
-        ? $"CPU ({Environment.ProcessorCount} threads, {System.Numerics.Vector<float>.Count}-wide SIMD)"
-        : ((CudaBackend)Backend).Name;
+    public string Name => Backend.Name;
+
+    /// <summary>
+    /// True for a GPU (a device with its own memory and kernels), false for the CPU. For questions such as "does a model
+    /// on this device use GPU memory"; which kernels a device has is the backend's to answer.
+    /// </summary>
+    public bool IsGpu => Type != DeviceType.Cpu;
 
     internal Backend Backend => field ??= Type == DeviceType.Cpu ? CpuBackend.Instance : CudaBackend.Get(Ordinal);
 

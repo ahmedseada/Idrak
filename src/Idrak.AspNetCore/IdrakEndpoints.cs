@@ -210,7 +210,7 @@ public static class IdrakEndpointExtensions
             long size = d.Parameters * sizeof(float);
             return Results.Ok(new
             {
-                models = new[] { new OllamaRunningModel(served, served, size, status.ExpiresAt, d.Device.Type == DeviceType.Cuda ? size : 0, d.ContextLength ?? 0) },
+                models = new[] { new OllamaRunningModel(served, served, size, status.ExpiresAt, d.Device.IsGpu ? size : 0, d.ContextLength ?? 0) },
             });
         }).WithName($"OllamaPs-{name}");
         group.MapGet("/version", () => Results.Ok(new { version = settings.VersionText })).WithName($"OllamaVersion-{name}");
