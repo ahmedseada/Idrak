@@ -4,6 +4,7 @@
 //   dotnet run --project tests/Idrak.Tests -- --dump-ptx f  write the generated CUDA kernels to f
 //   … -- --bench-cpu                                                             time the CPU decoding kernels (bfloat16 products, cached attention, sampling)
 //   … -- --bench-gemm / --bench-gemv / --bench-fp8                               time large products / decoding-sized packed products
+//   … -- --bench-text                                                            time the text paths (tokenizer, chat template, parsing, chunking, BM25)
 //   … -- --bench-offload                                                         time training steps with weights or optimizer state in system memory
 //   IDRAK_FILTER=retrieval dotnet run --project tests/Idrak.Tests   only tests whose name contains the text
 //   IDRAK_TIMEOUT=60 …    a test still running after this many seconds (default 300) is reported as HANG and the run stops
@@ -30,6 +31,11 @@ if (args is ["--bench-gemv"])
 if (args is ["--bench-cpu"])
 {
     return Tests.BenchCpu();
+}
+
+if (args is ["--bench-text"])
+{
+    return Tests.BenchText();
 }
 
 if (args is ["--bench-offload"])
