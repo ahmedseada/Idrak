@@ -22,6 +22,44 @@ kernels (PTX) in C#. A new backend should do the same where it can: talk to what
 generate its kernels in C# (PTX for NVIDIA, SPIR-V for AMD and Intel, Metal source for Apple). Where that is impossible (NPUs), the work goes into an optional add-on package, and the core
 stays dependency-free.
 
+## Note: no card-specific tuning (draft)
+
+The library must run well on **every** card, not on the one it was measured on. Several rules today were tuned with
+`--bench-gemm` / `--bench-gemv` on one RTX 5070 Ti (compute 12.0, 70 SMs) and only spot-checked elsewhere; the few-row
+rule shipped in 0.1.5 is already 1.2–1.4× slower on an RTX 3060 (compute 8.6). The rule from now on:
+
+- **No card names in decisions.** A heuristic reads only what the device reports: compute capability, SM count, shared
+  memory per block and per SM, L2 size, memory size, bus width and clocks (`cuDeviceGetAttribute`), and the matrix
+  formats it supports. A card name may appear in a comment as *where it was measured*, never as the reason.
+- **Relative, not absolute, sizes.** Limits scale with the device: blocks per SM, a fraction of total memory, a
+  fraction of L2. Fixed byte counts are a smell.
+- **Measured on at least three cards across generations** before a rule ships (today: RTX 3060 Laptop 8.6, RTX 5050
+  Laptop 12.0, RTX 5070 Ti 12.0; wanted: an Ada 8.9 card, a small card with few SMs, a data-center card). The README's
+  "Tested on" table records the runs. A rule may not be more than 5% slower than the best fixed choice on any tested card.
+- **When no rule wins everywhere, measure on the user's card.** A short autotune at first use (or `idrak-tune
+  --autotune`) times the few candidates, caches the choice per GPU, compute capability and driver version in the user's
+  cache folder, and falls back to the heuristic when it cannot run. Every tuned value keeps a benchmark override
+  (`GemvSplits`, `TensorSplitsOverride`, ...) for tests.
+- **Other backends follow the same rule.** AMD, Intel and Apple (plans 3–5) read their own device limits through
+  `Backend.Capabilities` (shared work step 1), so no plan copies NVIDIA numbers.
+
+### Rules to review against it
+
+| Rule (file) | Tuned on | Today | Card-agnostic form |
+|---|---|---|---|
+| Few-row int8 rows → tensor cores (`PrefersPackedMatMul`, `CudaBackend.Quantized.cs`) | 5070 Ti | 4–8 rows, weights ≥ 2^25, any tensor-core GPU | key on compute ≥ 8.9 (wins on 12.0 cards, loses on 8.6), then confirm on 8.9; or autotune the row cut-off |
+| Few-row k splits (`GemvSplitCount`) | 5070 Ti | ~2 blocks per SM, power of two | already per SM; confirm on cards with few and many SMs |
+| Tensor-core k splits (`TensorSplits`, `CudaBackend.cs`) | 5070 Ti | ~16 blocks per SM, ≤ 8 splits, chunks ≥ 1024 | per SM already; check the chunk sizes against L2 size |
+| Prompt k splits (`PromptSplits`) | 5070 Ti (70 SMs) | none when tiles fill 85–100% of the SMs | per SM already; confirm the 85% wave threshold elsewhere |
+| Fused activation only for int4 (`PackedMatMulGated`) | 5070 Ti | int4 fused, int8 / bfloat16 separate | measure on 8.6 and 8.9; autotune if it flips |
+| Prompt row tile 64 / 128 (`PromptTileRows`) | 5070 Ti | by tile fill only | fine (geometry, not hardware); confirm |
+| GPU memory reserve (`ComputeResources.GpuMemoryReserve`) | – | 512 MB fixed | a fraction of total memory with a floor (an 8 GB card and a 32 GB card differ) |
+| Offload headroom (`ComputeResources.OffloadReturnHeadroom`, offloading branch) | – | 1 GiB fixed | a fraction of total memory with a floor |
+| Async upload size (`AsyncUploadBytes`, staging ring 16 MB) | – | fixed | fine as a host-side size; confirm on PCIe 3 / 4 / 5 |
+
+**Done when** no decision in `Backends/` depends on a card name or an unexplained fixed size, each rule above is
+re-measured on three or more cards (or autotuned), and the tables in `1-nvidia.md` record the numbers.
+
 ## Shared work before any new backend
 
 The backend design is device-neutral in one place (`src/Idrak/Backends/Backend.cs`) and NVIDIA-specific in others. These steps come first, because both the AMD
@@ -55,6 +93,6 @@ and the Intel plans need them.
    time allows.
 7. **Apple:** a test and `--bench-cpu` run on a Mac as soon as one is available (fills the CPU plan's macOS and ARM64
    gaps); the Metal backend after the Intel GPUs.
-8. **Idrak.Network:** once steps 1–2 are done, alongside steps 3–5: multi-GPU data parallel first, then machines,
-   models split across GPUs, and cluster serving.
+8. **Idrak.Network:** once steps 1–2 are done, alongside steps 3–5: training over a local network first, for every kind
+   of training (machines over TCP, bfloat16 gradients), then several GPUs in one machine, models split across GPUs, and cluster serving.
 9. **NPUs last:** Intel (`Idrak.OpenVino`) and Apple's Neural Engine (`Idrak.CoreML`), each a one-week trial first.
