@@ -114,23 +114,26 @@ internal sealed unsafe partial class CudaBackend
             run(candidate);
         }
 
-        // Candidates take turns, five rounds, best time each: a GPU still raising its clocks (laptops) then slows every
-        // candidate alike instead of whichever happened to run first.
+        // Each candidate is timed as it runs in practice, several launches back to back (as many as take about 0.2 ms,
+        // at most 16): a launch timed alone misses how splits overlap with the work around them. Candidates take turns,
+        // five rounds, best time each, so a GPU still raising its clocks (laptops) slows every candidate alike.
         var times = new float[candidates.Length];
         times.AsSpan().Fill(float.MaxValue);
+        var repeats = new int[candidates.Length];
         t_timing = true;
         try
         {
+            for (int c = 0; c < candidates.Length; c++)
+            {
+                float once = TimeRuns(candidates[c], 1, run);
+                repeats[c] = Math.Clamp((int)MathF.Ceiling(0.2f / Math.Max(once, 1e-3f)), 1, 16);
+            }
+
             for (int round = 0; round < 5; round++)
             {
                 for (int c = 0; c < candidates.Length; c++)
                 {
-                    Check(cuEventRecord(_tuneEvents.Start, _stream), nameof(cuEventRecord));
-                    run(candidates[c]);
-                    Check(cuEventRecord(_tuneEvents.End, _stream), nameof(cuEventRecord));
-                    Check(cuEventSynchronize(_tuneEvents.End), nameof(cuEventSynchronize));
-                    Check(cuEventElapsedTime(out float ms, _tuneEvents.Start, _tuneEvents.End), nameof(cuEventElapsedTime));
-                    times[c] = Math.Min(times[c], ms);
+                    times[c] = Math.Min(times[c], TimeRuns(candidates[c], repeats[c], run) / repeats[c]);
                 }
             }
         }
@@ -161,6 +164,21 @@ internal sealed unsafe partial class CudaBackend
         }
 
         return chosen;
+    }
+
+    // Milliseconds of `count` back-to-back runs of one candidate, measured with events on the work stream.
+    private float TimeRuns(int candidate, int count, Action<int> run)
+    {
+        Check(cuEventRecord(_tuneEvents.Start, _stream), nameof(cuEventRecord));
+        for (int i = 0; i < count; i++)
+        {
+            run(candidate);
+        }
+
+        Check(cuEventRecord(_tuneEvents.End, _stream), nameof(cuEventRecord));
+        Check(cuEventSynchronize(_tuneEvents.End), nameof(cuEventSynchronize));
+        Check(cuEventElapsedTime(out float ms, _tuneEvents.Start, _tuneEvents.End), nameof(cuEventElapsedTime));
+        return ms;
     }
 
     // Split counts to try where any count works (chunks of k need no particular alignment): 1, 2, 3, 4, 6, 8, 12, ...
