@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.6 (2026-10-01)
 
 - Text paths allocate less and copy less, with the same results (checked against the old code on random inputs):
   spans, `SearchValues`, UTF-8 and pooled buffers instead of per-word, per-chunk and per-character strings. Measured
