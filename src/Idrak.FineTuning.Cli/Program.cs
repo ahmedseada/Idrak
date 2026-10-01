@@ -50,8 +50,8 @@ const string Usage = """
                --choices a,b,c | auto (the answer is one of these: each is scored as the model's answer, the most likely one
                taken, nothing generated; auto: the distinct answers in the data; accuracy and recall per answer)
     Chat:      --system S, --max-new N, --temperature T (0: greedy)
-    Model:     --cuda | --cpu | --device cuda:N (default: the first GPU when there is one; any CUDA GPU works, the faster
-               kernels load where the GPU has them), --int8 | --int4 | --bf16 (base weights), --context N,
+    Model:     --cuda | --gpu | --cpu | --device cuda:N | vulkan:N (default: the best GPU found, else the CPU; any CUDA
+               GPU works, the faster kernels load where the GPU has them), --int8 | --int4 | --bf16 (base weights), --context N,
                --kv8 | --kv16, --no-think, --matmul fp32|bf16|fp8, --offload, --gpu-memory GiB
     """;
 
@@ -69,7 +69,7 @@ var metric = AnswerMetric.Auto;
 var rowKind = RowKind.Auto;
 MatMulPrecision? matmul = null;
 var tuning = new FineTuningOptions();
-Device device = Device.IsCudaAvailable ? Device.Cuda() : Device.Cpu;
+Device device = Device.Default;                                       // the best GPU found, else the CPU
 try
 {
     for (int i = 0; i < args.Length; i++)
@@ -79,14 +79,13 @@ try
         float NextFloat() => float.Parse(Next(), CultureInfo.InvariantCulture);
         switch (args[i])
         {
-            case "--cuda" or "--gpu": device = Device.Cuda(); break;
+            case "--cuda": device = Device.Cuda(); break;
+            case "--gpu": device = Gpu(); break;
             case "--device":
                 device = Next() switch
                 {
-                    "cpu" => Device.Cpu,
-                    "cuda" or "gpu" => Device.Cuda(),
-                    ['c', 'u', 'd', 'a', ':', .. var ordinal] => Device.Cuda(int.Parse(ordinal, CultureInfo.InvariantCulture)),
-                    var other => throw new ArgumentException($"--device {other}: use cpu, cuda or cuda:N."),
+                    "gpu" => Gpu(),
+                    var name => Parse(name),
                 };
                 break;
             case "--cpu": device = Device.Cpu; break;
@@ -727,6 +726,20 @@ List<TrainingSequence> ReadSequences(ChatTranscriptEncoder encoder, Dataset rows
                       + $"{sequences.Sum(q => (long)q.Tokens.Length):N0} tokens, {sequences.Sum(q => (long)q.TrainedTokens):N0} trained; "
                       + $"{skipped:N0} rows without trainable tokens skipped ({watch.Elapsed.TotalSeconds:F1} s)");
     return sequences;
+}
+
+static Device Gpu() => Device.Default.IsGpu ? Device.Default : throw new ArgumentException("--gpu: no GPU was found.");
+
+static Device Parse(string name)
+{
+    try
+    {
+        return Device.Parse(name);
+    }
+    catch (Exception e) when (e is InvalidOperationException or FormatException)
+    {
+        throw new ArgumentException($"--device {name}: {e.Message} Use cpu, gpu, cuda:N or vulkan:N.", e);
+    }
 }
 
 static string Elapsed(TimeSpan time) =>

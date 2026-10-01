@@ -63,25 +63,18 @@ if (args is ["--dump-ptx", var ptxPath])
 Console.WriteLine($"Idrak tests: {System.Runtime.InteropServices.RuntimeInformation.OSDescription} "
                   + $"({System.Runtime.InteropServices.RuntimeInformation.OSArchitecture}), {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}");
 
-// Every device: the CPU and each CUDA GPU (IDRAK_DEVICES=cpu,cuda:1 … to choose), since the library runs on any of them.
-var devices = new List<Device> { Device.Cpu };
-if (Device.IsCudaAvailable)
-{
-    for (int i = 0; i < Device.CudaDeviceCount; i++)
-    {
-        devices.Add(Device.Cuda(i));
-    }
+Idrak.Backends.DeviceProviders.Register(new Tests.MinimalProvider());   // only by name: IDRAK_DEVICES=cpu,minimal
 
-    if (Environment.GetEnvironmentVariable("IDRAK_DEVICES") is { Length: > 0 } chosen)
-    {
-        var names = chosen.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        devices = [.. devices.Where(d => names.Contains(d.ToString(), StringComparer.OrdinalIgnoreCase)
-                                         || d.Type == DeviceType.Cuda && d.Ordinal == 0 && names.Contains("cuda", StringComparer.OrdinalIgnoreCase))];
-    }
-}
-else
+// Every device: the CPU and each GPU found (IDRAK_DEVICES=cpu,cuda:1,vulkan:0 … to choose, including devices not
+// listed by default, such as a software Vulkan driver), since the library runs on any of them.
+var devices = Device.Available.ToList();
+if (Environment.GetEnvironmentVariable("IDRAK_DEVICES") is { Length: > 0 } chosen)
 {
-    Console.WriteLine($"CUDA not available ({CudaBackend.UnavailableReason}); testing the CPU only.");
+    devices = [.. chosen.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(Device.Parse).Distinct()];
+}
+else if (!Device.IsCudaAvailable)
+{
+    Console.WriteLine($"CUDA not available ({CudaBackend.UnavailableReason}); testing {string.Join(", ", devices)}.");
 }
 
 int failed = 0, passed = 0;
@@ -152,7 +145,7 @@ return failed == 0 ? 0 : 1;
 
 internal static partial class Tests
 {
-    public static (string Name, Action<Device> Run)[] All => [.. Basic, .. Advanced, .. Decoding, .. Generation, .. Simplified, .. Callbacks, .. AspNetCore, .. Retrieval, .. Onnx, .. Quantization, .. Decoder, .. Pretrained, .. ChatTemplates, .. FineTuning, .. MixedPrecisionGroup, .. CodingToolsGroup, .. DatasetsGroup, .. GgufGroup, .. NamingGroup, .. StreamingText, .. OffloadingGroup, .. TuningGroup, .. AbstractionGroup, .. OpPluginGroup, .. PackedPluginGroup, .. ModelPluginGroup, .. DatasetPluginGroup];
+    public static (string Name, Action<Device> Run)[] All => [.. Basic, .. Advanced, .. Decoding, .. Generation, .. Simplified, .. Callbacks, .. AspNetCore, .. Retrieval, .. Onnx, .. Quantization, .. Decoder, .. Pretrained, .. ChatTemplates, .. FineTuning, .. MixedPrecisionGroup, .. CodingToolsGroup, .. DatasetsGroup, .. GgufGroup, .. NamingGroup, .. StreamingText, .. OffloadingGroup, .. TuningGroup, .. AbstractionGroup, .. OpPluginGroup, .. PackedPluginGroup, .. ModelPluginGroup, .. DatasetPluginGroup, .. MinimalBackendGroup];
 
     private static readonly (string Name, Action<Device> Run)[] Basic =
     [
@@ -389,7 +382,7 @@ internal static partial class Tests
 
     private static void MemoryLimit(Device device)
     {
-        bool gpu = device.Type == DeviceType.Cuda;
+        bool gpu = device.IsGpu;
         long? old = gpu ? ComputeResources.GpuMemoryLimit : ComputeResources.CpuMemoryLimit;
         long inUse = ComputeResources.GetMemoryUsage(device).InUse;
         try
