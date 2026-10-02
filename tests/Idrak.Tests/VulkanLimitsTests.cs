@@ -481,10 +481,12 @@ internal static partial class Tests
             try
             {
                 width = first.Width;
-                bool several = wider > Math.Max(VulkanKernels.MinWidth, first.Limits.SubgroupSize);
-                Console.WriteLine($"    vulkan:{ordinal}: width {width} ({first.WidthChoice}, candidates up to {wider})");
+                var l = first.Limits;
+                int widest = Math.Max(wider, VulkanKernels.WidthFor(l.MaxInvocations, l.MaxSizeX, l.SharedBytes, l.SubgroupSize));  // the override only widens
+                bool several = widest > Math.Max(VulkanKernels.MinWidth, first.Limits.SubgroupSize);
+                Console.WriteLine($"    vulkan:{ordinal}: width {width} ({first.WidthChoice}, candidates up to {widest})");
                 Check(!several || first.WidthChoice == "measured", $"measured when there are several widths ({first.WidthChoice})");
-                Check(width >= VulkanKernels.MinWidth && width <= wider && (width & (width - 1)) == 0, $"a candidate width ({width})");
+                Check(width >= VulkanKernels.MinWidth && width <= widest && (width & (width - 1)) == 0, $"a candidate width ({width})");
                 AssertClose(expected, Product(first), 1e-4f, "the product at the measured width");
             }
             finally
