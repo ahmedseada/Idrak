@@ -7,6 +7,9 @@
   ranked by the geometric mean of each part's time against its fastest width), kept only when clearly faster (10%), and stored per device, driver and
   power state; IDRAK_VULKAN_WIDTH still overrides it and IDRAK_VULKAN_WIDTH_PROBE=0 turns it off. On an Adreno 730 the
   formula's width (1024) ran large products 30 times slower than 256, and a long dispatch reset the device.
+- Vulkan width probe: times the operations as models call them (a kernel that does not fit a width is no longer
+  timed as taking no time), adds an int8 product of 64 rows, and rebuilds kernels looked up by name when the width
+  changes (they kept the width they were first built at, so dispatches sized for another width ran them).
 - `--bench-vulkan`: each decoder is timed again and without recorded graphs, so a slow first use or replay shows.
 - Vulkan: prompts (tiled attention with or without the log-sum-exp; int8, int4 and bfloat16 products for many rows,
   each measured against the few-rows kernels and expanding the weights), training (layer-norm and batch-norm
