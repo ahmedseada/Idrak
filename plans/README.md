@@ -16,6 +16,48 @@ audience first.
 | 6 | [Idrak.Network](6-network.md) | several GPUs or machines on one job; several machines serving one API | not started (one device per model, one machine per server) | a new package rather than new hardware; useful to NVIDIA users now, so it can run alongside plans 3–5 |
 | 7 | [Backends](7-backends.md) | a minimum backend (12 core operations, host fallbacks), devices by provider, public KV cache formats, the Vulkan backend (Intel GPUs first) | in progress on `architecture` | the shared work plans 3–5 wait on, then the first new backend |
 
+## Not supported yet
+
+What the `architecture` branch cannot do today, with an example of each. "High" marks what comes next.
+
+### Devices and backends
+
+| Priority | Not supported | Example |
+|---|---|---|
+| High | **AMD ROCm / HIP** | AMD GPUs run only through Vulkan (`vulkan:N`); there is no `rocm:0`, so Instinct accelerators and ROCm's matrix libraries are out of reach (an `Idrak.Rocm` backend, plan 3 option B) |
+| High | **NPUs** (Intel AI Boost, Apple Neural Engine) | no device kind for them; a model cannot run there (add-on packages `Idrak.OpenVino`, `Idrak.CoreML`: plans 4 and 5) |
+| | A backend added from outside the library | `DeviceProviders.Register(new MyProvider())` does not compile in an application: `Backend` and `DeviceProviders` are internal (plan 7, phase 6) |
+| | Apple GPUs (Metal) | on a Mac `Device.Default` is the CPU; there is no `Device.Get("metal")` (plan 5) |
+| | One model across several devices | `model.To(Device.Cuda(0))` places the whole model on one device; it cannot be split across `cuda:0` and `vulkan:1` (plan 6) |
+
+### Vulkan (works, with limits)
+
+| Limit | Example |
+|---|---|
+| Not the default device | on a machine whose only GPU is integrated, `Device.Default` is the CPU unless `IDRAK_VULKAN_DEFAULT=1` |
+| No recorded steps (CUDA graphs have no Vulkan counterpart yet) | `new GenerationOptions { UseGraph = true }` on `vulkan:0` runs each step's dispatches anew |
+| No matrix units yet (XMX, AMD WMMA, tensor cores through `VK_KHR_cooperative_matrix`) | on an Arc GPU a matrix product does not use XMX |
+| Training operations on the host fallback (convolutions, group norms, 8-bit AdamW, training attention's backward) | training a CNN on `vulkan:1` works but each convolution round-trips to the CPU |
+| Tensors larger than the device's storage range | on a GPU reporting a 1 GiB `maxStorageBufferRange`, a 151,936 × 4096 float weight runs on the host fallback |
+| No fused decoder kernels (packed q/k/v, gate/up, add-and-normalize in one dispatch) | about 195 dispatches per decoded token on an 8-layer int8 model, fewer on CUDA |
+
+### Plug-ins (work, with limits)
+
+| Limit | Example |
+|---|---|
+| Custom ONNX operators apply to chain models only | `OnnxImportOps.Register("MyOp", ...)` is not used for a model with skip connections (imported as a graph) |
+| Outside packed-weight formats take the general path | `PackedWeight.Register("nf4", ...)` works on every device, without fused kernels and without CUDA graphs unless its `MatMul` stays on the device |
+| Outside KV cache formats attend through the composed fallback | `KeyValueLayouts.Register("fp8", ...)` works, slower than the built-in int8 cache |
+
+### Not tested yet (expected to work)
+
+| Platform | Status |
+|---|---|
+| Linux with a GPU (CUDA or Vulkan) | only Mesa's software Vulkan driver has run |
+| macOS (CPU) | never run |
+| NVIDIA before compute 8.6 | PTX is generated for them; never run |
+| Intel Arc (XMX), AMD RDNA | no such GPU tested |
+
 ## The rule every plan keeps
 
 The core library has no native dependencies: the CUDA backend calls the NVIDIA **display driver** and generates its
@@ -182,4 +224,6 @@ and the Intel plans need them.
    gaps); the Metal backend after the Intel GPUs.
 8. **Idrak.Network:** once steps 1–2 are done, alongside steps 3–5: training over a local network first, for every kind
    of training (machines over TCP, bfloat16 gradients), then several GPUs in one machine, models split across GPUs, and cluster serving.
-9. **NPUs last:** Intel (`Idrak.OpenVino`) and Apple's Neural Engine (`Idrak.CoreML`), each a one-week trial first.
+9. **High priority (see "Not supported yet"): AMD ROCm / HIP and NPUs.** An `Idrak.Rocm` backend for AMD's own
+   compute stack, and the NPU add-ons, Intel (`Idrak.OpenVino`) and Apple's Neural Engine (`Idrak.CoreML`), each a
+   one-week trial first.
