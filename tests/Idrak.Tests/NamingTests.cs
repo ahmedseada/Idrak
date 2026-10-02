@@ -28,7 +28,11 @@ internal static partial class Tests
                 continue;
             }
 
-            string text = relative + "\n" + File.ReadAllText(path);
+            // Shared with writers: a file another process is still writing (test output redirected into the
+            // repository, e.g. `> tests.txt`) is read as far as it has got.
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var reader = new StreamReader(stream);
+            string text = relative + "\n" + reader.ReadToEnd();
             found.AddRange(former.Where(n => text.Contains(n, StringComparison.OrdinalIgnoreCase)).Select(n => $"{relative}: {n}"));
         }
 
