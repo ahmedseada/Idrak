@@ -341,18 +341,21 @@ public sealed record DatasetRecipe
         }
     }
 
-    // What a row asks: every message but the assistant's (or the text), lower-cased, whitespace collapsed.
+    // What a row asks: every message but the assistant's (a preference row's prompt), or the text, lower-cased, whitespace
+    // collapsed.
     private static string Prompt(JsonObject row)
     {
-        string text = row["messages"] is JsonArray messages
+        string text = (row["messages"] ?? row["prompt"]) is JsonArray messages
             ? string.Join("\u0001", messages.Where(m => (string?)m?["role"] != "assistant").Select(m => $"{m?["role"]}:{m?["content"]}"))
             : ((string?)row["text"]) ?? row.ToJsonString();
         return string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)).ToLowerInvariant();
     }
 
-    private static long Length(JsonObject row) => row["messages"] is JsonArray messages
-        ? messages.Sum(m => (long)(((string?)m?["content"])?.Length ?? 0))
+    private static long Length(JsonObject row) => row["messages"] is JsonArray messages ? Length(messages)
+        : row["prompt"] is JsonArray prompt ? Length(prompt) + Length(row["chosen"] as JsonArray) + Length(row["rejected"] as JsonArray)
         : ((string?)row["text"])?.Length ?? 0;
+
+    private static long Length(JsonArray? messages) => messages?.Sum(m => (long)(((string?)m?["content"])?.Length ?? 0)) ?? 0;
 }
 
 /// <summary>What one pass over a <see cref="DatasetRecipe"/>'s rows read and dropped (see <see cref="DatasetRecipe.Build(Downloader?, RecipeCounts?)"/>).</summary>

@@ -4,6 +4,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Idrak.Datasets;
 using Idrak.Diagnostics;
 using Idrak.Generation;
 using Idrak.Layers;
@@ -370,10 +371,12 @@ public sealed class ChatTranscriptEncoder
         }
     }
 
-    // Every token of the rendered transcript, the assistant's turns marked as trained.
-    private (List<int> Tokens, List<bool> Trained) Tokens(ChatTranscript transcript)
+    // Every token of the rendered transcript, the assistant's turns marked as trained (only the last `answerTurns` of them
+    // when given).
+    private (List<int> Tokens, List<bool> Trained) Tokens(ChatTranscript transcript, int answerTurns = int.MaxValue)
     {
         var (text, spans) = Render(transcript);
+        int firstTrained = Math.Max(0, spans.Count - answerTurns);
         var tokens = new List<int>();
         var trained = new List<bool>();
         void Add(int from, int to, bool train)
@@ -395,10 +398,11 @@ public sealed class ChatTranscriptEncoder
         }
 
         int position = 0;
-        foreach (var (start, end) in spans)
+        for (int s = 0; s < spans.Count; s++)
         {
+            var (start, end) = spans[s];
             Add(position, start, false);
-            Add(start, end, true);
+            Add(start, end, s >= firstTrained);
             position = end;
         }
 
@@ -444,6 +448,63 @@ public sealed class ChatTranscriptEncoder
         ArgumentNullException.ThrowIfNull(rows);
         return rows.AsParallel().AsOrdered().WithCancellation(cancellationToken)
             .Select(row => (row, (IReadOnlyList<TrainingSequence>)[.. EncodeRow(row, maxLength)]));
+    }
+
+    /// <summary>
+    /// A preference row as a <see cref="PreferencePair"/>: the chosen and the rejected answer after the same prompt, read by
+    /// <see cref="ChatRows.Preference"/> (TRL's layouts: <c>{"prompt", "chosen", "rejected"}</c> with message lists or
+    /// strings, or chosen and rejected as whole conversations that share their prompt; "tools" and "enable_thinking" as in
+    /// <see cref="ChatTranscript.FromJson"/>). Each sequence trains only its answer's assistant turns, not assistant turns
+    /// inside the prompt. A pair that is too long is shortened in its last user message (see <see cref="ShortenToFit"/>),
+    /// else cut at the end. Null when the row is not a preference pair or an answer has no trainable token left.
+    /// </summary>
+    public PreferencePair? EncodePreference(JsonObject row, int maxLength)
+    {
+        ArgumentNullException.ThrowIfNull(row);
+        if (ChatRows.Preference(row) is not { } pair)
+        {
+            return null;
+        }
+
+        TrainingSequence? Answer(string name)
+        {
+            var messages = new JsonArray();
+            foreach (var message in pair["prompt"]!.AsArray().Concat(pair[name]!.AsArray()))
+            {
+                messages.Add(message!.DeepClone());
+            }
+
+            var json = new JsonObject { ["messages"] = messages, ["tools"] = pair["tools"]?.DeepClone() };
+            if ((row["enable_thinking"] ?? row["think"]) is JsonValue think)
+            {
+                json["enable_thinking"] = think.DeepClone();
+            }
+
+            var transcript = ChatTranscript.FromJson(json);
+            int turns = transcript.Messages.Count(m => m.Role == "assistant") - pair["prompt"]!.AsArray().Count(m => (string?)m?["role"] == "assistant");
+            if (ShortenToFit && Fit(transcript, maxLength) is { } fitted)
+            {
+                transcript = fitted;
+            }
+
+            var (tokens, trained) = Tokens(transcript, turns);
+            int keep = Math.Min(tokens.Count, maxLength + 1);
+            var sequence = new TrainingSequence([.. tokens.Take(keep)], [.. trained.Take(keep)]);
+            return sequence.TrainedTokens > 0 ? sequence : null;
+        }
+
+        return Answer("chosen") is { } chosen && Answer("rejected") is { } rejected ? new PreferencePair(chosen, rejected) : null;
+    }
+
+    /// <summary>
+    /// <see cref="EncodePreference"/> for many rows on all cores, each row with its pair (null when it gives none), in the
+    /// rows' order. The rows are read on the calling thread.
+    /// </summary>
+    public IEnumerable<(JsonObject Row, PreferencePair? Pair)> EncodePreferences(IEnumerable<JsonObject> rows, int maxLength,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(rows);
+        return rows.AsParallel().AsOrdered().WithCancellation(cancellationToken).Select(row => (row, EncodePreference(row, maxLength)));
     }
 
     /// <summary>
@@ -583,6 +644,33 @@ public sealed record FineTuningOptions
 
     /// <summary>Seed for the adapters' initial values and the batch order.</summary>
     public int Seed { get; init; }
+
+    /// <summary>
+    /// Creates the optimizer from the trainable parameters (the adapters), e.g. <c>ps =&gt; new Sgd(ps, 0.05f, momentum: 0.9f)</c>
+    /// or <see cref="FineTuningOptimizers.Create"/>. Null (the default): AdamW with <see cref="LearningRate"/> and
+    /// <see cref="WeightDecay"/>. The rate the optimizer starts with is the peak the schedule works from. With
+    /// <see cref="HostOptimizer"/> it receives the CPU copies of the parameters (one each). Recorded steps
+    /// (<see cref="CudaGraphs"/>) record only the forward and backward pass, so they work with any optimizer that keeps the
+    /// gradient buffers between steps (every built-in one except <see cref="Optimizers.HostOptimizer"/>); with one that
+    /// does not, training runs ordinary steps.
+    /// </summary>
+    public Func<IReadOnlyList<Tensor>, Optimizer>? Optimizer { get; init; }
+
+    /// <summary>
+    /// Creates the learning-rate schedule from the optimizer and the number of optimizer steps planned; it is stepped once
+    /// per optimizer step (built-in: <see cref="FineTuningSchedules"/>). Null (the default): a linear warm-up over
+    /// <see cref="WarmupFraction"/> of the steps, then cosine decay to <see cref="MinLearningRate"/>.
+    /// </summary>
+    public Func<Optimizer, int, LearningRateScheduler>? Scheduler { get; init; }
+
+    /// <summary>
+    /// The loss of a batch from its trained tokens' log-probabilities (built-in: <see cref="FineTuningLosses"/>; DPO, ORPO
+    /// and SimPO need <see cref="PreferencePair"/> data). Null (the default): the mean token cross-entropy per trained token,
+    /// computed in one fused pass that steps can record as a graph; with a loss of one's own, steps run as ordinary ones
+    /// and the output head runs twice over the trained rows (once for the log-probabilities, once for their gradients).
+    /// Evaluation losses are this loss over the whole evaluation set.
+    /// </summary>
+    public FineTuningLoss? Loss { get; init; }
 }
 
 /// <summary>What <see cref="FineTuner.Profile"/> measured.</summary>
@@ -635,7 +723,7 @@ public sealed record FineTuningProfile(IReadOnlyList<GpuProfileEntry> Kernels, i
 /// <param name="Step">Optimizer steps done.</param>
 /// <param name="TotalSteps">Optimizer steps planned.</param>
 /// <param name="Epoch">The current epoch (from 1).</param>
-/// <param name="Loss">Mean loss per trained token over the last step.</param>
+/// <param name="Loss">The last step's loss: the mean loss per trained token, or <see cref="FineTuningOptions.Loss"/> when set.</param>
 /// <param name="LearningRate">The learning rate of the last step.</param>
 /// <param name="TokensPerSecond">Tokens (including prompts) processed per second over the last step.</param>
 /// <param name="EvaluationLoss">The latest evaluation loss, when one was computed at this step.</param>
@@ -644,8 +732,10 @@ public sealed record FineTuningProgress(int Step, int TotalSteps, int Epoch, flo
 /// <summary>
 /// Fine-tunes a pretrained model with LoRA adapters: the base weights stay as loaded (int4, int8 or bfloat16 for QLoRA,
 /// or float32) and frozen; only the adapters train, on the assistant tokens of chat transcripts (see
-/// <see cref="ChatTranscriptEncoder"/>). AdamW with a linear warm-up and cosine decay, gradient accumulation and
-/// clipping, and a token loss that never stores the full logits (<see cref="Losses.TokenCrossEntropy"/>).
+/// <see cref="ChatTranscriptEncoder"/>), or on preference pairs. By default AdamW with a linear warm-up and cosine decay,
+/// gradient accumulation and clipping, and a token loss that never stores the full logits
+/// (<see cref="Losses.TokenCrossEntropy"/>); the optimizer, the schedule and the loss can be replaced
+/// (<see cref="FineTuningOptions.Optimizer"/>, <see cref="FineTuningOptions.Scheduler"/>, <see cref="FineTuningOptions.Loss"/>).
 /// </summary>
 public static class FineTuner
 {
@@ -708,12 +798,60 @@ public static class FineTuner
         Action<string>? trace = null)
     {
         ArgumentNullException.ThrowIfNull(model);
+        ArgumentNullException.ThrowIfNull(train);
         ArgumentNullException.ThrowIfNull(options);
         if (train.Count == 0)
         {
             throw new ArgumentException("There is nothing to train on.", nameof(train));
         }
 
+        var custom = options.Loss is { } loss ? new CustomLoss(loss, pairs: false) : null;
+        return TrainCore(model, train, evaluation, pairs: false, custom, options, outputFolder, progress, cancellationToken, trace);
+    }
+
+    /// <summary>
+    /// Adds adapters to <paramref name="model"/> (unless it already has some) and trains them on preference pairs with a
+    /// preference loss (<see cref="FineTuningOptions.Loss"/>: <see cref="FineTuningLosses.Dpo"/> when not set, or
+    /// <see cref="FineTuningLosses.Orpo"/>, <see cref="FineTuningLosses.SimPo"/> or a loss of one's own that reads
+    /// <see cref="FineTuningLossInput.Pairs"/>). Each batch holds whole pairs, padded to the longest answer (no packing),
+    /// so the steps run as ordinary ones. DPO's reference is the model with its adapters disabled (see
+    /// <see cref="FineTuningLossInput.ReferenceLogProbabilities"/>). Evaluates on <paramref name="evaluation"/> (the loss
+    /// over all its pairs) and writes the adapters as <see cref="Train(PretrainedModel, IReadOnlyList{TrainingSequence}, IReadOnlyList{TrainingSequence}?, FineTuningOptions, string?, IProgress{FineTuningProgress}?, CancellationToken, Action{string}?)"/>
+    /// does. Returns the evaluation losses.
+    /// </summary>
+    /// <param name="model">The model (adapters are added unless it has some).</param>
+    /// <param name="train">Training pairs (see <see cref="ChatTranscriptEncoder.EncodePreference"/>).</param>
+    /// <param name="evaluation">Pairs to evaluate on, or null.</param>
+    /// <param name="options">Settings.</param>
+    /// <param name="outputFolder">Where to write the adapters (and checkpoints), or null.</param>
+    /// <param name="progress">Receives one report per optimizer step.</param>
+    /// <param name="cancellationToken">Stops between batches.</param>
+    /// <param name="trace">Receives a line per batch (its shape and time) and per evaluation, as they finish.</param>
+    public static IReadOnlyList<float> Train(PretrainedModel model, IReadOnlyList<PreferencePair> train, IReadOnlyList<PreferencePair>? evaluation,
+        FineTuningOptions options, string? outputFolder = null, IProgress<FineTuningProgress>? progress = null, CancellationToken cancellationToken = default,
+        Action<string>? trace = null)
+    {
+        ArgumentNullException.ThrowIfNull(model);
+        ArgumentNullException.ThrowIfNull(train);
+        ArgumentNullException.ThrowIfNull(options);
+        if (train.Count == 0)
+        {
+            throw new ArgumentException("There is nothing to train on.", nameof(train));
+        }
+
+        var custom = new CustomLoss(options.Loss ?? FineTuningLosses.Dpo(), pairs: true);
+        return TrainCore(model, Flatten(train), evaluation is null ? null : Flatten(evaluation), pairs: true, custom, options, outputFolder, progress,
+            cancellationToken, trace);
+    }
+
+    // Pair k as sequences 2k (chosen) and 2k + 1 (rejected).
+    private static List<TrainingSequence> Flatten(IReadOnlyList<PreferencePair> pairs) =>
+        [.. pairs.SelectMany(p => new[] { p.Chosen ?? throw new ArgumentException("A pair has no chosen answer."), p.Rejected ?? throw new ArgumentException("A pair has no rejected answer.") })];
+
+    private static IReadOnlyList<float> TrainCore(PretrainedModel model, IReadOnlyList<TrainingSequence> train, IReadOnlyList<TrainingSequence>? evaluation,
+        bool pairs, CustomLoss? custom, FineTuningOptions options, string? outputFolder, IProgress<FineTuningProgress>? progress, CancellationToken cancellationToken,
+        Action<string>? trace)
+    {
         var network = model.Network;
         if (!network.Descendants().OfType<Linear>().Any(l => l.Adapter is not null))
         {
@@ -724,14 +862,15 @@ public static class FineTuner
         using var float8 = PrepareFloat8(model, train, options, trace);
         using var optimizer = CreateOptimizer(parameters, options);
         var random = new Random(options.Seed);
-        var epochBatches = Enumerable.Range(0, options.Epochs).Select(_ => MakeBatches(model, train, options, random)).ToList();
+        var epochBatches = Enumerable.Range(0, options.Epochs)
+            .Select(_ => pairs ? PairBatches(train, options.BatchTokens, random) : MakeBatches(model, train, options, random)).ToList();
         int accumulation = Math.Max(1, options.GradientAccumulation);
         int totalSteps = epochBatches.Sum(b => (b.Count + accumulation - 1) / accumulation);
-        var schedule = new CosineAnnealing(optimizer, Math.Max(1, totalSteps), options.MinLearningRate,
-            (int)Math.Round(options.WarmupFraction * totalSteps));
+        var schedule = (options.Scheduler ?? FineTuningSchedules.Cosine(options.WarmupFraction, options.MinLearningRate))(optimizer, Math.Max(1, totalSteps))
+            ?? throw new InvalidOperationException("FineTuningOptions.Scheduler returned no schedule.");
         var evaluations = new List<float>();
         int step = 0;
-        using var runner = new StepRunner(model, train, optimizer, options, MostTrained(epochBatches.SelectMany(b => b), train), trace);
+        using var runner = new StepRunner(model, train, optimizer, options, MostTrained(epochBatches.SelectMany(b => b), train), custom, trace);
         for (int epoch = 0; epoch < options.Epochs; epoch++)
         {
             var batches = epochBatches[epoch];
@@ -749,7 +888,8 @@ public static class FineTuner
                 bool lastOfEpoch = first + accumulation >= batches.Count;
                 if (evaluation is { Count: > 0 } && (options.EvaluateEvery > 0 ? step % options.EvaluateEvery == 0 : lastOfEpoch))
                 {
-                    evaluationLoss = Evaluate(model, evaluation, options.BatchTokens, options.LossChunkRows, trace);
+                    evaluationLoss = custom is null ? Evaluate(model, evaluation, options.BatchTokens, options.LossChunkRows, trace)
+                        : EvaluateCustom(model, evaluation, pairs, custom, options, trace);
                     evaluations.Add(evaluationLoss.Value);
                 }
 
@@ -774,14 +914,24 @@ public static class FineTuner
     // Runs optimizer steps: ordinary ones, or replays of a recorded graph once one is recorded (see
     // FineTuningOptions.CudaGraphs).
     // lossRows: the most trained tokens of any batch the runner will see (the recorded loss's capacity).
+    // custom: a loss of one's own (FineTuningOptions.Loss), or null for the token cross-entropy.
     private sealed class StepRunner(PretrainedModel model, IReadOnlyList<TrainingSequence> train, Optimizer optimizer, FineTuningOptions options,
-        int lossRows, Action<string>? trace) : IDisposable
+        int lossRows, CustomLoss? custom, Action<string>? trace) : IDisposable
     {
-        // Not with offloading (tensors move between steps, a graph holds their addresses) or the CPU update.
+        // Not with offloading (tensors move between steps, a graph holds their addresses) or the CPU update. The recorded
+        // pass is the token cross-entropy's; a loss of one's own runs ordinary steps.
         private readonly bool _graphsAllowed = options.CudaGraphs && options.GradientAccumulation <= 1
             && !ComputeResources.OffloadToHostMemory && !options.HostOptimizer
             && model.Device.Backend.SupportsGraphs
+            && custom is null && Recordable(optimizer)
             && !model.Network.Descendants().Any(m => m is Dropout { Probability: > 0f });   // a recorded pass would reuse its masks
+
+        // An optimizer of one's own (FineTuningOptions.Optimizer): the recorded backward pass writes into the gradient
+        // buffers the parameters had when it was recorded, so they must stay the parameters' between steps. Checked before
+        // recording (each trained parameter still has its gradient after an update) and before every replay (the same
+        // buffers); the built-in AdamW keeps them by construction.
+        private readonly bool _checkGradients = options.Optimizer is not null;
+        private Tensor?[] _gradients = [];
         private readonly bool _automatic = options.Checkpointing is null && !ComputeResources.OffloadToHostMemory;
         private FineTuningOptions _options = options with { Checkpointing = options.Checkpointing ?? ComputeResources.OffloadToHostMemory };
         private TrainingGraph? _graph;
@@ -916,8 +1066,24 @@ public static class FineTuner
             {
                 if (_graph is null && _ordinary >= 2)
                 {
+                    if (_checkGradients && optimizer.Parameters.Any(p => p.RequiresGrad && p.Grad is null))
+                    {
+                        trace?.Invoke("graph not used (the optimizer does not keep the gradient buffers between steps); ordinary steps continue");
+                        _graphs = false;
+                        _ordinary++;
+                        return RunStep(model, train, group, optimizer, options, custom, cancellationToken, trace, label);
+                    }
+
                     _graph = TrainingGraph.Record(model, train, optimizer, options, batch, (Math.Max(1, lossRows) + 63) / 64 * 64, trace);
                     _graphs = _graph is not null;
+                    _gradients = [.. optimizer.Parameters.Select(p => p.Grad)];
+                }
+
+                if (_graph is not null && _checkGradients && optimizer.Parameters.Where((p, i) => !ReferenceEquals(p.Grad, _gradients[i])).Any())
+                {
+                    trace?.Invoke("graph dropped (the optimizer replaced the gradient buffers the recorded step writes); ordinary steps continue");
+                    _graph.Dispose();
+                    (_graph, _graphs) = (null, false);
                 }
 
                 if (_graph is not null && _graph.Fits(batch, train))
@@ -933,10 +1099,14 @@ public static class FineTuner
             }
 
             _ordinary++;
-            return RunStep(model, train, group, optimizer, options, cancellationToken, trace, label);
+            return RunStep(model, train, group, optimizer, options, custom, cancellationToken, trace, label);
         }
 
         public void Dispose() => _graph?.Dispose();
+
+        // Whether the optimizer updates the parameters where they are: not the CPU update, which releases the gradients.
+        private static bool Recordable(Optimizer optimizer) =>
+            optimizer is not HostOptimizer && (optimizer is not GroupedOptimizer grouped || grouped.Groups.All(Recordable));
     }
 
     // FP8 copies of the frozen weights of the layers with adapters (options.Float8), kept only when a sample's loss with
@@ -981,10 +1151,15 @@ public static class FineTuner
     private static int MostTrained(IEnumerable<Batch> batches, IReadOnlyList<TrainingSequence> train) =>
         batches.Select(b => b.Sequences.Sum(i => train[i].TrainedTokens)).DefaultIfEmpty(0).Max();
 
-    // AdamW on the device, or on the CPU with its state in system memory (FineTuningOptions.HostOptimizer).
-    private static Optimizer CreateOptimizer(List<Tensor> parameters, FineTuningOptions options) => options.HostOptimizer
-        ? new HostOptimizer(parameters, ps => new AdamW(ps, options.LearningRate, weightDecay: options.WeightDecay))
-        : new AdamW(parameters, options.LearningRate, weightDecay: options.WeightDecay);
+    // AdamW (or FineTuningOptions.Optimizer) on the device, or on the CPU with its state in system memory
+    // (FineTuningOptions.HostOptimizer).
+    private static Optimizer CreateOptimizer(List<Tensor> parameters, FineTuningOptions options)
+    {
+        Func<IReadOnlyList<Tensor>, Optimizer> create = options.Optimizer is { } custom
+            ? ps => custom(ps) ?? throw new InvalidOperationException("FineTuningOptions.Optimizer returned no optimizer.")
+            : ps => new AdamW(ps, options.LearningRate, weightDecay: options.WeightDecay);
+        return options.HostOptimizer ? new HostOptimizer(parameters, create) : create(parameters);
+    }
 
     // Clipping and the optimizer's update, after the gradients of a step.
     private static void Update(PretrainedModel model, Optimizer optimizer, FineTuningOptions options)
@@ -998,10 +1173,11 @@ public static class FineTuner
     // One optimizer step over a group of batches (gradient accumulation): forward, backward, clipping, update. Returns
     // the mean loss per trained token and the tokens covered.
     private static (float Loss, long Tokens) RunStep(PretrainedModel model, IReadOnlyList<TrainingSequence> train, IReadOnlyList<Batch> group, Optimizer optimizer,
-        FineTuningOptions options, CancellationToken cancellationToken, Action<string>? trace, Func<int, string> label)
+        FineTuningOptions options, CustomLoss? custom, CancellationToken cancellationToken, Action<string>? trace, Func<int, string> label)
     {
         var network = model.Network;
         float normalizer = Math.Max(1, group.Sum(b => b.Sequences.Sum(i => train[i].TrainedTokens)));
+        int sequences = group.Sum(b => b.Sequences.Count());
         float loss = 0f;
         long tokens = 0;
         network.Train();
@@ -1017,12 +1193,13 @@ public static class FineTuner
             using var packed = packing?.Use();                                // forward and backward (checkpointed blocks run again)
             using var recompute = options.RecomputeFeedForward == true ? ActivationMemory.Recompute() : (ActivationMemory.Scope?)null;
             using var compress = options.BFloat16Activations == true ? ActivationMemory.CompressToBFloat16() : (ActivationMemory.Scope?)null;
-            var (lossTensor, count) = BatchLoss(model, train, batch, normalizer, options.LossChunkRows, options.Checkpointing == true);
+            var (lossTensor, count) = BatchLoss(model, train, batch, normalizer, options.LossChunkRows, options.Checkpointing == true, custom, sequences);
             lossTensor.Backward();                                           // queued behind the forward pass, no wait between
             float batchLoss = lossTensor.Item();                             // waits for the batch's forward and backward
             loss += batchLoss;
             tokens += count;
-            trace?.Invoke($"  forward and backward {batchWatch.Elapsed.TotalSeconds:F2} s, loss {batchLoss * normalizer / Math.Max(1, batch.Sequences.Sum(i => train[i].TrainedTokens)):F4}");
+            float shown = custom is null ? batchLoss * normalizer / Math.Max(1, batch.Sequences.Sum(i => train[i].TrainedTokens)) : batchLoss;
+            trace?.Invoke($"  forward and backward {batchWatch.Elapsed.TotalSeconds:F2} s, loss {shown:F4}");
         }
 
         Update(model, optimizer, options);
@@ -1049,7 +1226,8 @@ public static class FineTuner
         var batches = MakeBatches(model, train, options, new Random(options.Seed));
         int accumulation = Math.Max(1, options.GradientAccumulation);
         int next = 0;
-        using var runner = new StepRunner(model, train, optimizer, options, MostTrained(batches, train), trace);
+        using var runner = new StepRunner(model, train, optimizer, options, MostTrained(batches, train),
+            options.Loss is { } loss ? new CustomLoss(loss, pairs: false) : null, trace);
         (float Loss, long Tokens, double Seconds) Step(string phase)
         {
             var group = Enumerable.Range(0, accumulation).Select(i => batches[(next + i) % batches.Count]).ToList();
@@ -1116,6 +1294,156 @@ public static class FineTuner
         }
 
         return (float)(total / Math.Max(1, trained));
+    }
+
+    // The loss of one's own (FineTuningOptions.Loss) over all of `sequences` (batches of whole pairs when `pairs`), without
+    // gradients: the step totals are the whole set's, so the batches' losses add up to the set's loss.
+    private static float EvaluateCustom(PretrainedModel model, IReadOnlyList<TrainingSequence> sequences, bool pairs, CustomLoss custom, FineTuningOptions options,
+        Action<string>? trace)
+    {
+        model.Network.Eval();
+        var batches = pairs ? PairBatches(sequences, options.BatchTokens, random: null)
+            : [.. Batches(sequences, options.BatchTokens, random: null).Select(b => Batch.Padded(b, sequences))];
+        int tokens = batches.Sum(b => b.Sequences.Sum(i => sequences[i].TrainedTokens));
+        int count = batches.Sum(b => b.Sequences.Count());
+        double total = 0;
+        using (Autograd.NoGrad())
+        {
+            for (int b = 0; b < batches.Count; b++)
+            {
+                var watch = Stopwatch.StartNew();
+                using var scope = new TensorScope();
+                var (loss, _) = BatchLoss(model, sequences, batches[b], tokens, options.LossChunkRows, custom: custom, stepSequences: count);
+                total += loss.Item();
+                trace?.Invoke($"evaluation batch {b + 1}/{batches.Count}: {batches[b].Describe(sequences)}, {watch.Elapsed.TotalSeconds:F2} s");
+            }
+        }
+
+        return (float)total;
+    }
+
+    // Preference pairs (sequences 2k and 2k + 1) in padded batches of whole pairs, pairs of similar length together, at most
+    // batchTokens padded positions each (one pair when a pair alone exceeds it); the batch order is shuffled when `random`
+    // is given.
+    private static List<Batch> PairBatches(IReadOnlyList<TrainingSequence> sequences, int batchTokens, Random? random)
+    {
+        int Length(int pair) => Math.Max(sequences[2 * pair].Tokens.Length, sequences[2 * pair + 1].Tokens.Length) - 1;
+        var tie = TieOrder(sequences.Count / 2, random);
+        var order = Enumerable.Range(0, sequences.Count / 2).Where(p => sequences[2 * p].Tokens.Length > 1 && sequences[2 * p + 1].Tokens.Length > 1)
+            .OrderBy(Length).ThenBy(p => tie[p]).ToList();
+        var batches = new List<Batch>();
+        var current = new List<int>();
+        int longest = 0;
+        foreach (int pair in order)
+        {
+            if (current.Count > 0 && (current.Count + 2) * Math.Max(longest, Length(pair)) > batchTokens)
+            {
+                batches.Add(Batch.Padded([.. current], sequences));
+                current.Clear();
+                longest = 0;
+            }
+
+            current.Add(2 * pair);
+            current.Add(2 * pair + 1);
+            longest = Math.Max(longest, Length(pair));
+        }
+
+        if (current.Count > 0)
+        {
+            batches.Add(Batch.Padded([.. current], sequences));
+        }
+
+        if (random is not null)
+        {
+            for (int i = batches.Count - 1; i > 0; i--)
+            {
+                int j = random.Next(i + 1);
+                (batches[i], batches[j]) = (batches[j], batches[i]);
+            }
+        }
+
+        return batches;
+    }
+
+    // A loss of one's own (FineTuningOptions.Loss) for each batch: the log-probabilities of the trained tokens are computed
+    // without gradients, the loss and its gradient with respect to them on the CPU, and that gradient becomes the weights
+    // of a token cross-entropy over the same rows (d loss / d θ = Σ_t g_t · d log p_t / d θ, and the cross-entropy is
+    // −log p_t), whose backward pass is the network's. The output head runs twice over the trained rows; the full logits
+    // are never stored. Reference log-probabilities (adapters disabled) are kept per sequence for the whole run.
+    private sealed class CustomLoss(FineTuningLoss loss, bool pairs)
+    {
+        private readonly Dictionary<TrainingSequence, float[]> _reference = [];
+
+        public Tensor BatchLoss(PretrainedModel model, Tensor tokens, Tensor hidden, Linear head, IReadOnlyList<TrainingSequence> sequences, BatchData data,
+            int stepTokens, int stepSequences, int chunkRows)
+        {
+            int[] targets = [.. data.Targets.Select(t => (int)t)];
+            var values = Losses.TokenLogProbabilities(hidden, h => head.Forward(h), data.Trained, targets, chunkRows);
+            bool training = Autograd.IsEnabled;
+            var probabilities = Tensor.From(values, [values.Length], Device.Cpu, requiresGrad: training);
+            var input = new FineTuningLossInput(probabilities, [.. sequences.Select(s => s.TrainedTokens)], sequences,
+                () => Reference(model, tokens, sequences, data, targets, chunkRows), pairs, stepTokens, stepSequences);
+            var value = loss(input) ?? throw new InvalidOperationException("FineTuningOptions.Loss returned no tensor.");
+            if (value.Size != 1)
+            {
+                throw new InvalidOperationException($"FineTuningOptions.Loss must return one value, not {Tensor.FormatShape(value.Shape)}.");
+            }
+
+            float result = value.Item();
+            if (!training || !value.RequiresGrad)
+            {
+                return Tensor.From([result], [1], hidden.Device);
+            }
+
+            value.Backward();
+            var gradient = probabilities.Grad?.ToArray() ?? new float[values.Length];
+            var weights = new float[values.Length];
+            double surrogate = 0;
+            for (int t = 0; t < values.Length; t++)
+            {
+                weights[t] = -gradient[t];
+                surrogate += (double)gradient[t] * values[t];
+            }
+
+            // The cross-entropy weighted by −g has the loss's gradient and the value Σ g_t log p_t; shifted to the loss's value.
+            var weighted = Losses.TokenCrossEntropyRows(hidden, h => head.Forward(h), data.Trained, data.Targets, weights, 1f, chunkRows);
+            return weighted + (float)(result - surrogate);
+        }
+
+        // The trained tokens' log-probabilities under the base model (adapters disabled, no gradients, dropout off), one
+        // forward pass of the batch the first time its sequences are seen.
+        private float[] Reference(PretrainedModel model, Tensor tokens, IReadOnlyList<TrainingSequence> sequences, BatchData data, int[] targets, int chunkRows)
+        {
+            if (sequences.All(_reference.ContainsKey))
+            {
+                return [.. sequences.SelectMany(s => _reference[s])];
+            }
+
+            var network = model.Network;
+            bool wasTraining = network.IsTraining;
+            float[] values;
+            using (Autograd.NoGrad())
+            using (network.DisableAdapters())
+            {
+                network.Eval();
+                try
+                {
+                    values = NetworkLoss(model, tokens, (hidden, head) => Losses.TokenLogProbabilities(hidden, h => head.Forward(h), data.Trained, targets, chunkRows),
+                        checkpointing: false);
+                }
+                finally
+                {
+                    network.Train(wasTraining);
+                }
+            }
+
+            for (int s = 0, at = 0; s < sequences.Count; at += sequences[s].TrainedTokens, s++)
+            {
+                _reference[sequences[s]] = values[at..(at + sequences[s].TrainedTokens)];
+            }
+
+            return values;
+        }
     }
 
     // A batch: rows of sequences (one per row when padded, several when packed), each row Length positions.
@@ -1316,19 +1644,23 @@ public static class FineTuner
 
     // The summed weighted loss of one batch divided by normalizer (untrained positions weigh 0), and the number of tokens
     // it covers. Packed batches run under their PackedSequences (the caller's), padded ones as they are.
+    // With a loss of one's own (custom), normalizer is the step's trained tokens and stepSequences its sequences.
     private static (Tensor Loss, long Tokens) BatchLoss(PretrainedModel model, IReadOnlyList<TrainingSequence> sequences, Batch batch, float normalizer,
-        int chunkRows, bool checkpointing = false)
+        int chunkRows, bool checkpointing = false, CustomLoss? custom = null, int stepSequences = 0)
     {
         var data = Prepare(sequences, batch);
         var tokens = Tensor.From(data.Inputs, [batch.Rows.Length, batch.Length], model.Device);
-        var loss = NetworkLoss(model, tokens, (hidden, head) => Losses.TokenCrossEntropyRows(hidden, h => head.Forward(h), data.Trained, data.Targets,
-            data.Weights, normalizer, chunkRows), checkpointing);
+        var loss = custom is null
+            ? NetworkLoss(model, tokens, (hidden, head) => Losses.TokenCrossEntropyRows(hidden, h => head.Forward(h), data.Trained, data.Targets,
+                data.Weights, normalizer, chunkRows), checkpointing)
+            : NetworkLoss(model, tokens, (hidden, head) => custom.BatchLoss(model, tokens, hidden, head, [.. batch.Sequences.Select(i => sequences[i])], data,
+                (int)normalizer, stepSequences, chunkRows), checkpointing);
         return (loss, data.Tokens);
     }
 
     // The network up to its final normalization on tokens [rows, length], then `loss` of the hidden states [rows · length,
     // dim] with the output head (which the loss runs itself, on the rows it needs).
-    private static Tensor NetworkLoss(PretrainedModel model, Tensor tokens, Func<Tensor, Linear, Tensor> loss, bool checkpointing)
+    private static T NetworkLoss<T>(PretrainedModel model, Tensor tokens, Func<Tensor, Linear, T> loss, bool checkpointing)
     {
         var modules = model.Network.ToList();
         if (modules[^1] is not Linear head)
