@@ -90,9 +90,11 @@ points"):
 | KV cache formats | `KeyValueLayouts` | `Idrak` |
 | Packed weight formats | `PackedWeight` | `Idrak` |
 | Network builder steps | `NetworkOps` | `Idrak` |
+| Graph operations and graph layer types | `GraphOps`, `LayerTypes` | `Idrak` |
 | Telemetry listeners | `Telemetry.Subscribe` | `Idrak` |
 | Tool-call formats | `ToolCallFormats` | `Idrak` |
 | ONNX import operators | `OnnxImportOps` | `Idrak.Onnx` |
+| ONNX export of modules, lambdas and graph operations | `OnnxExportOps` | `Idrak.Onnx` |
 | Checkpoint formats | `CheckpointFormats` | `Idrak.LanguageModels` |
 | Model families | `PretrainedArchitectures` | `Idrak.LanguageModels` |
 | GGUF architectures, quantization types, pre-tokenizers | `GgufArchitectures`, `GgufTypes`, `GgufPreTokenizers` | `Idrak.LanguageModels` |
@@ -921,8 +923,14 @@ PositionalEncoding, attention, transformer layers, LSTM, GRU and the builder's s
 chain of those layers into a `Sequential` (with its `Network` builder), and anything else into a `GraphModule`:
 layers where the importer recognizes them (Conv, BatchNorm, MatMul/Gemm → Linear, attention, LSTM/GRU, …) and graph
 operations for the rest (skip-connection Add, Concat, Mul, Reshape, Transpose, Squeeze/Unsqueeze, Slice, Gather,
-ReduceMean, and shape arithmetic such as PyTorch's flatten, computed for any batch size). So ResNet-style models
-with skip connections and branches import too. Exact GELU becomes the tanh approximation and is listed in
+ReduceMean, Clip, Pow, Sqrt, Neg, LeakyRelu, Elu, HardSigmoid, HardSwish, Max, Min, and shape arithmetic such as
+PyTorch's flatten, computed for any batch size). So ResNet-style models with skip connections and branches import
+too, and export again: `OnnxExport.For(graph)` writes a `GraphModule` node by node, so import, export and import
+round-trip. Operators of your own are registered once and used by both kinds of import: `OnnxImportOps.Register`
+with builder steps (a layer node in a graph) or `context.AddGraphOp` (a `GraphOps` operation node). Translators for
+export are registered for every export in `OnnxExportOps` (modules by type, lambdas by name, graph operations by
+name); those given to one exporter take precedence. Erf (except inside GELU), ConvTranspose and other operators
+without an Idrak tensor operation are not imported, and graphs have one input and one output. Exact GELU becomes the tanh approximation and is listed in
 `Notes`; an operator with no Idrak equivalent is reported by name. Imported models are ordinary Idrak
 models: they run on Idrak's own CPU and CUDA backends, can be fine-tuned, and save as `.ikm` (graphs included).
 
@@ -997,7 +1005,10 @@ the registered names and how to register.
 | Packed weight formats (int8, int4, bfloat16 built in) | `PackedWeight.Register(name, PackedWeightFactory)` | `Idrak` |
 | Network builder steps (JSON round trip) | `NetworkOps.Register(name, NetworkOp)` | `Idrak` |
 | Tool-call formats (json, pythonic, qwen3-coder, mistral, harmony, deepseek built in) | `ToolCallFormats.Register(name, detect, create)`; or override `ChatTemplate.CreateToolCallParser` | `Idrak` |
-| ONNX import operators | `OnnxImportOps.Register(opType, OnnxImportTranslator)` | `Idrak.Onnx` |
+| ONNX import operators (chains and graphs) | `OnnxImportOps.Register(opType, OnnxImportTranslator)` | `Idrak.Onnx` |
+| ONNX export of modules, lambdas and graph operations | `OnnxExportOps.Register<T>(OnnxTranslator<T>)`, `RegisterLambda(name, ...)`, `RegisterGraphOp(op, OnnxGraphOpTranslator)` | `Idrak.Onnx` |
+| Graph operations (`GraphModule` nodes; relu, clip, pow, ... built in) | `GraphOps.Register(name, GraphOp)` | `Idrak` |
+| Graph layer types (`GraphModule` JSON and model packages) | `LayerTypes.Register<T>(type, describe, create)` | `Idrak` |
 | Checkpoint formats (safetensors built in) | `CheckpointFormats.Register(ICheckpointFormat)` | `Idrak.LanguageModels` |
 | Model families (Hugging Face `architectures`) | `PretrainedArchitectures.Register(name, PretrainedArchitecture)` | `Idrak.LanguageModels` |
 | GGUF architectures, quantization types and pre-tokenizers | `GgufArchitectures.Register(name, ...)`, `GgufTypes.Register(id, GgufType)`, `GgufPreTokenizers.Register(name, pattern)` | `Idrak.LanguageModels` |
@@ -1170,7 +1181,7 @@ The 170 tests, by area:
 | Simplified API, engine and tools | 18 | builder, predictors, packages and trainer equal the manual steps; LoRA; tools and conversations; the inference engine (batching, queues, timeouts, keep-alive) |
 | ASP.NET Core | 1 | predict, generate (JSON and server-sent events), Ollama API, status, over a real Kestrel server |
 | Retrieval and MCP | 6 | chunking; BM25 against the formula; encoders; hybrid index with rank fusion; re-ranking and RAG citations; tools served over MCP |
-| ONNX | 8 | MLP, CNN, LSTM/GRU, transformer and GPT exported and run in ONNX Runtime, and imported back (PyTorch-style graphs, ResNet blocks) |
+| ONNX | 13 | MLP, CNN, LSTM/GRU, transformer and GPT exported and run in ONNX Runtime, and imported back (PyTorch-style graphs, ResNet blocks); the export registry; imported graphs exported again; custom graph operators and layer types |
 | Quantization | 11 | int8, int4 and bfloat16 weights (products, gradients, save/load, QLoRA); packed projections; half-precision files; int8 KV cache |
 | Decoder | 8 | RMSNorm, rotary embeddings and tiled attention (with gradients); every DecoderSpec variant against a plain reference; cached decoding through quantized weights; LoRA by layer name |
 | Language models | 7 | safetensors; Hugging Face checkpoints through the registry; BPE tokenizers (byte-level and SentencePiece); text with half a character; Jinja templates against jinja2; a Qwen3 template as transformers renders it; tool-call formats |

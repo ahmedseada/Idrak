@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Text.Json.Nodes;
 using Idrak.Layers;
 
 namespace Idrak.Onnx;
@@ -8,8 +9,57 @@ namespace Idrak.Onnx;
 /// <summary>
 /// Translates one module into ONNX nodes: <paramref name="input"/> is the module's input value, <paramref name="outputShape"/>
 /// the shape it produces (measured by running the module, -1 for the batch dimension). Returns the output value.
+/// Register it for every export with <see cref="OnnxExportOps.Register{T}"/>, or for one with <see cref="OnnxExporter.Module{T}"/>.
 /// </summary>
 public delegate OnnxValue OnnxTranslator<in T>(OnnxGraph graph, T module, OnnxValue input, IReadOnlyList<int> outputShape) where T : Module;
+
+/// <summary>
+/// Translates one operation node of a <see cref="GraphModule"/> into ONNX nodes and returns the output value. Register it
+/// with <see cref="OnnxExportOps.RegisterGraphOp"/> (or <see cref="OnnxExporter.GraphOp"/>) under the operation's name.
+/// </summary>
+public delegate OnnxValue OnnxGraphOpTranslator(OnnxGraphOpContext context);
+
+/// <summary>The graph node being exported, its input values and its measured output shape, for an <see cref="OnnxGraphOpTranslator"/>.</summary>
+public sealed class OnnxGraphOpContext
+{
+    private readonly Func<int, long[]?> _integers;
+
+    internal OnnxGraphOpContext(OnnxGraph graph, GraphNode node, IReadOnlyList<OnnxValue?> inputs, IReadOnlyList<int>? outputShape, Func<int, long[]?> integers)
+    {
+        Graph = graph;
+        Node = node;
+        Inputs = inputs;
+        OutputShape = outputShape;
+        _integers = integers;
+    }
+
+    /// <summary>The ONNX graph to add nodes to.</summary>
+    public OnnxGraph Graph { get; }
+
+    /// <summary>The graph node: its operation, inputs, output and attributes.</summary>
+    public GraphNode Node { get; }
+
+    /// <summary>The node's inputs as ONNX values (null for an omitted optional input).</summary>
+    public IReadOnlyList<OnnxValue?> Inputs { get; }
+
+    /// <summary>The shape of the node's output (-1 for the batch dimension), or null when it is an integer value (a shape, axes or indices).</summary>
+    public IReadOnlyList<int>? OutputShape { get; }
+
+    /// <summary>The integer values of input <paramref name="index"/> (a constant, or a shape computed for the export's sample), or null for a tensor.</summary>
+    public long[]? Integers(int index) => _integers(index);
+
+    /// <summary>The integer attribute <paramref name="name"/>, or null when the node does not set it.</summary>
+    public long? Int(string name) => Node.Attributes?[name] is JsonValue v ? (long)v : null;
+
+    /// <summary>The number attribute <paramref name="name"/>, or null when the node does not set it.</summary>
+    public float? Float(string name) => Node.Attributes?[name] is JsonValue v ? (float)v : null;
+
+    /// <summary>The integer list attribute <paramref name="name"/>, or null.</summary>
+    public long[]? Ints(string name) => Node.Attributes?[name] is JsonArray a ? [.. a.Select(v => (long)v!)] : null;
+
+    /// <summary>Adds the ONNX node <paramref name="op"/> on <see cref="Inputs"/> with <see cref="OutputShape"/>.</summary>
+    public OnnxValue Operator(string op, params OnnxAttribute[] attributes) => Graph.Node(op, Inputs, OutputShape, attributes);
+}
 
 /// <summary>Exports Idrak networks to ONNX. Start with <see cref="For"/>, or use <see cref="ExportOnnx"/>.</summary>
 public static class OnnxExport
@@ -41,23 +91,182 @@ public static class OnnxExport
 }
 
 /// <summary>
-/// Configures an ONNX export. Supported layers: Linear (LoRA adapters are merged), activations, Softmax, Dropout
-/// (removed), BatchNorm, LayerNorm, Conv2d, MaxPool2d, GlobalAveragePool2d, Flatten, Embedding, PositionalEncoding,
-/// MultiHeadAttention, TransformerEncoderLayer, LSTM, GRU, Sequential, and the builder's MeanOverTime, FirstStep,
-/// LastStep and Reshape lambdas. Other lambdas and custom modules need a translator (<see cref="Lambda"/>,
-/// <see cref="Module{T}"/>). Inputs are float32 (token ids too, as in Idrak); the batch dimension is dynamic.
+/// How modules, lambdas and graph operations are written to ONNX, for every export. The built-in layers are registered
+/// here (Linear, Conv2d, BatchNorm, LSTM, Sequential, GraphModule, ...), as are the builder's lambdas (MeanOverTime,
+/// FirstStep, LastStep, Reshape) and every <see cref="GraphModule"/> operation; add or replace one with
+/// <see cref="Register{T}"/>, <see cref="RegisterLambda"/> or <see cref="RegisterGraphOp"/>. A module uses the translator
+/// registered for its own type or its nearest registered base type. Translators given to one exporter
+/// (<see cref="OnnxExporter.Module{T}"/>, <see cref="OnnxExporter.Lambda"/>, <see cref="OnnxExporter.GraphOp"/>) take
+/// precedence over these.
+/// </summary>
+public static class OnnxExportOps
+{
+    private static readonly Dictionary<Type, (Delegate Original, OnnxTranslator<Module> Translate)> Modules = [];
+    private static readonly Dictionary<string, OnnxTranslator<Module>> Lambdas = new(StringComparer.Ordinal);
+    private static readonly Dictionary<string, OnnxGraphOpTranslator> GraphOps = new(StringComparer.Ordinal);
+
+    static OnnxExportOps() => OnnxBuiltIns.Register();
+
+    /// <summary>Registers (or replaces) how modules of type <typeparamref name="T"/> (and types derived from it without their own translator) are exported.</summary>
+    public static void Register<T>(OnnxTranslator<T> translate) where T : Module
+    {
+        ArgumentNullException.ThrowIfNull(translate);
+        lock (Modules)
+        {
+            Modules[typeof(T)] = (translate, (g, m, x, s) => translate(g, (T)m, x, s));
+        }
+    }
+
+    /// <summary>Removes the translator of modules of type <typeparamref name="T"/>; returns whether one was registered.</summary>
+    public static bool Unregister<T>() where T : Module
+    {
+        lock (Modules)
+        {
+            return Modules.Remove(typeof(T));
+        }
+    }
+
+    /// <summary>The module types with a registered translator.</summary>
+    public static IReadOnlyCollection<Type> Types
+    {
+        get
+        {
+            lock (Modules)
+            {
+                return [.. Modules.Keys];
+            }
+        }
+    }
+
+    /// <summary>The translator registered for modules of exactly the type <typeparamref name="T"/>.</summary>
+    public static OnnxTranslator<T> Get<T>() where T : Module
+    {
+        lock (Modules)
+        {
+            return Modules.TryGetValue(typeof(T), out var entry) ? (OnnxTranslator<T>)entry.Original
+                : throw new NotSupportedException($"No ONNX export translator for {typeof(T).Name} is registered ({TypeNames()}); add it with OnnxExportOps.Register<{typeof(T).Name}>.");
+        }
+    }
+
+    /// <summary>Registers (or replaces) how the lambdas named <paramref name="name"/> (their <c>ToString()</c>) are exported.</summary>
+    public static void RegisterLambda(string name, OnnxTranslator<Module> translate)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(name);
+        ArgumentNullException.ThrowIfNull(translate);
+        lock (Lambdas)
+        {
+            Lambdas[name] = translate;
+        }
+    }
+
+    /// <summary>Removes the lambda translator <paramref name="name"/>; returns whether it was registered.</summary>
+    public static bool UnregisterLambda(string name)
+    {
+        lock (Lambdas)
+        {
+            return Lambdas.Remove(name);
+        }
+    }
+
+    /// <summary>The lambda names with a registered translator.</summary>
+    public static IReadOnlyCollection<string> LambdaNames
+    {
+        get
+        {
+            lock (Lambdas)
+            {
+                return [.. Lambdas.Keys];
+            }
+        }
+    }
+
+    /// <summary>Registers (or replaces) how <see cref="GraphModule"/> nodes running the operation <paramref name="op"/> are exported.</summary>
+    public static void RegisterGraphOp(string op, OnnxGraphOpTranslator translate)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(op);
+        ArgumentNullException.ThrowIfNull(translate);
+        lock (GraphOps)
+        {
+            GraphOps[op] = translate;
+        }
+    }
+
+    /// <summary>Removes the graph operation translator <paramref name="op"/>; returns whether it was registered.</summary>
+    public static bool UnregisterGraphOp(string op)
+    {
+        lock (GraphOps)
+        {
+            return GraphOps.Remove(op);
+        }
+    }
+
+    /// <summary>The graph operations with a registered translator.</summary>
+    public static IReadOnlyCollection<string> GraphOpNames
+    {
+        get
+        {
+            lock (GraphOps)
+            {
+                return [.. GraphOps.Keys];
+            }
+        }
+    }
+
+    /// <summary>The translator registered for the graph operation <paramref name="op"/>.</summary>
+    public static OnnxGraphOpTranslator GetGraphOp(string op) => TryGetGraphOp(op)
+        ?? throw new NotSupportedException($"No ONNX export translator for the graph operation '{op}' is registered ({string.Join(", ", GraphOpNames)}); add it with OnnxExportOps.RegisterGraphOp.");
+
+    internal static string TypeNames() => string.Join(", ", Types.Select(t => t.Name).Order());
+
+    // The translator of the module's type or its nearest registered base type.
+    internal static OnnxTranslator<Module>? TryGet(Type type)
+    {
+        lock (Modules)
+        {
+            for (Type? t = type; t is not null && t != typeof(object); t = t.BaseType)
+            {
+                if (Modules.TryGetValue(t, out var entry))
+                {
+                    return entry.Translate;
+                }
+            }
+
+            return null;
+        }
+    }
+
+    internal static OnnxTranslator<Module>? TryGetLambda(string name)
+    {
+        lock (Lambdas)
+        {
+            return Lambdas.TryGetValue(name, out var translate) ? translate : null;
+        }
+    }
+
+    internal static OnnxGraphOpTranslator? TryGetGraphOp(string op)
+    {
+        lock (GraphOps)
+        {
+            return GraphOps.TryGetValue(op, out var translate) ? translate : null;
+        }
+    }
+}
+
+/// <summary>
+/// Configures an ONNX export. The layers registered in <see cref="OnnxExportOps"/> are supported: Linear (LoRA adapters
+/// are merged), activations, Softmax, Dropout (removed), BatchNorm, LayerNorm, Conv2d, MaxPool2d, GlobalAveragePool2d,
+/// Flatten, Embedding, PositionalEncoding, MultiHeadAttention, TransformerEncoderLayer, LSTM, GRU, Sequential,
+/// GraphModule (skip connections, branches and shape arithmetic, so an imported graph can be exported again), and the
+/// builder's MeanOverTime, FirstStep, LastStep and Reshape lambdas. Other lambdas and custom modules need a translator,
+/// registered for every export (<see cref="OnnxExportOps"/>) or given to this one (<see cref="Lambda"/>,
+/// <see cref="Module{T}"/>, <see cref="GraphOp"/>), which takes precedence. Inputs are float32 (token ids too, as in
+/// Idrak); the batch dimension is dynamic. The graph has one input and one output, as an Idrak module does.
 /// </summary>
 public sealed class OnnxExporter
 {
     private readonly Module _model;
-    private readonly Dictionary<string, OnnxTranslator<Module>> _lambdas = new()
-    {
-        ["MeanOverTime"] = OnnxExport.MeanOverTime,
-        ["FirstStep"] = OnnxExport.FirstStep,
-        ["LastStep"] = OnnxExport.LastStep,
-        ["Reshape"] = OnnxExport.Reshape,
-    };
-
+    private readonly Dictionary<string, OnnxTranslator<Module>> _lambdas = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, OnnxGraphOpTranslator> _graphOps = new(StringComparer.Ordinal);
     private readonly List<(Type Type, OnnxTranslator<Module> Translate)> _modules = [];
     private readonly Dictionary<string, string> _metadata = [];
     private int[]? _sampleShape;
@@ -86,17 +295,24 @@ public sealed class OnnxExporter
         return this;
     }
 
-    /// <summary>A translator for the lambdas named <paramref name="name"/> (their <c>ToString()</c>).</summary>
+    /// <summary>A translator for the lambdas named <paramref name="name"/> (their <c>ToString()</c>) in this export; it takes precedence over <see cref="OnnxExportOps"/>.</summary>
     public OnnxExporter Lambda(string name, OnnxTranslator<Module> translate)
     {
         _lambdas[name] = translate;
         return this;
     }
 
-    /// <summary>A translator for modules of type <typeparamref name="T"/> (a custom layer); it takes precedence over the built-ins.</summary>
+    /// <summary>A translator for modules of type <typeparamref name="T"/> (a custom layer) in this export; it takes precedence over <see cref="OnnxExportOps"/>.</summary>
     public OnnxExporter Module<T>(OnnxTranslator<T> translate) where T : Module
     {
         _modules.Add((typeof(T), (g, m, x, s) => translate(g, (T)m, x, s)));
+        return this;
+    }
+
+    /// <summary>A translator for <see cref="GraphModule"/> nodes running the operation <paramref name="op"/> in this export; it takes precedence over <see cref="OnnxExportOps"/>.</summary>
+    public OnnxExporter GraphOp(string op, OnnxGraphOpTranslator translate)
+    {
+        _graphOps[op] = translate;
         return this;
     }
 
@@ -117,20 +333,18 @@ public sealed class OnnxExporter
     public byte[] ToBytes()
     {
         var sampleShape = _sampleShape ?? throw new InvalidOperationException("Call Input(sampleShape) with the shape of one input sample.");
-        var graph = new OnnxGraph();
+        var graph = new OnnxGraph { Exporter = this };
         bool wasTraining = _model.IsTraining;
         _model.Eval();
         try
         {
             using var noGrad = Autograd.NoGrad();
             using var scope = new TensorScope();
-            var device = _model.Parameters().FirstOrDefault()?.Device ?? Device.Default;
             int[] inputShape = [-1, .. sampleShape];
             var input = new OnnxValue(graph.Unique(_inputName), inputShape);
-            var (value, sample) = Emit(graph, _model, input, Tensor.Zeros([1, .. sampleShape], device));
-            int[] outputShape = [-1, .. sample.Shape[1..].ToArray()];
-            var output = graph.Output(value, _outputName, outputShape);
-            return graph.ToModel(input, inputShape, output, outputShape, _model.DisplayName, "Idrak",
+            var value = Emit(graph, _model, input);
+            var output = graph.Output(value, _outputName, value.Shape!);
+            return graph.ToModel(input, inputShape, output, value.Shape!, _model.DisplayName, "Idrak",
                 typeof(Module).Assembly.GetName().Version?.ToString() ?? "", _metadata);
         }
         finally
@@ -139,22 +353,19 @@ public sealed class OnnxExporter
         }
     }
 
-    private (OnnxValue Value, Tensor Sample) Emit(OnnxGraph graph, Module module, OnnxValue x, Tensor sample)
+    // Translates `module` applied to `x` (whose shape is known); the output shape is measured by running the module on
+    // a zero sample of that shape.
+    internal OnnxValue Emit(OnnxGraph graph, Module module, OnnxValue x)
     {
-        if (module is Sequential sequential && !_modules.Any(m => m.Type.IsInstanceOfType(module)))
-        {
-            foreach (var child in sequential)
-            {
-                (x, sample) = Emit(graph, child, x, sample);
-            }
-
-            return (x, sample);
-        }
-
-        var output = module.Forward(sample);
+        var device = module.Parameters().FirstOrDefault()?.Device ?? _model.Parameters().FirstOrDefault()?.Device ?? Device.Default;
+        var inputShape = x.Shape ?? throw new InvalidOperationException($"The shape of the input of {module.DisplayName} is unknown.");
+        var sample = Tensor.Zeros([1, .. inputShape.Skip(1)], device);
+        var output = module.Forward(sample);                                   // both freed by the export's tensor scope
         int[] shape = [-1, .. output.Shape[1..].ToArray()];
-        return (Translate(graph, module, x with { Shape = x.Shape ?? [-1, .. sample.Shape[1..].ToArray()] }, shape), output);
+        return Translate(graph, module, x, shape) with { Shape = shape };
     }
+
+    internal OnnxGraphOpTranslator? FindGraphOp(string op) => _graphOps.TryGetValue(op, out var translate) ? translate : OnnxExportOps.TryGetGraphOp(op);
 
     private OnnxValue Translate(OnnxGraph g, Module module, OnnxValue x, int[] shape)
     {
@@ -166,173 +377,14 @@ public sealed class OnnxExporter
             }
         }
 
-        return module switch
+        if (module is Layers.Lambda lambda && _lambdas.TryGetValue(lambda.ToString(), out var forLambda))
         {
-            Layers.Linear linear => Linear(g, linear, x, shape),
-            ReLU => g.Node("Relu", [x], shape),
-            Tanh => g.Node("Tanh", [x], shape),
-            Sigmoid => g.Node("Sigmoid", [x], shape),
-            GELU => Gelu(g, x, shape),
-            Softmax => g.Node("Softmax", [x], shape, OnnxAttribute.Of("axis", -1L)),
-            Dropout => x,
-            BatchNorm bn => g.Node("BatchNormalization",
-                [x, Weights(g, "gamma", bn.Gamma), Weights(g, "beta", bn.Beta), Weights(g, "mean", bn.RunningMean), Weights(g, "var", bn.RunningVariance)],
-                shape, OnnxAttribute.Of("epsilon", bn.Epsilon)),
-            LayerNorm ln => LayerNorm(g, ln, x, shape),
-            Conv2d conv => g.Node("Conv",
-                [x, g.Constant("conv_w", conv.Weight.ToArray(), conv.OutChannels, conv.InChannels, conv.KernelSize, conv.KernelSize),
-                    conv.Bias is null ? null : Weights(g, "conv_b", conv.Bias)],
-                shape, OnnxAttribute.Of("kernel_shape", [conv.KernelSize, conv.KernelSize]), OnnxAttribute.Of("strides", [conv.Stride, conv.Stride]),
-                OnnxAttribute.Of("pads", [conv.Padding, conv.Padding, conv.Padding, conv.Padding])),
-            MaxPool2d pool => g.Node("MaxPool", [x], shape,
-                OnnxAttribute.Of("kernel_shape", [pool.KernelSize, pool.KernelSize]), OnnxAttribute.Of("strides", [pool.Stride, pool.Stride]),
-                OnnxAttribute.Of("pads", [pool.Padding, pool.Padding, pool.Padding, pool.Padding])),
-            GlobalAveragePool2d => g.Node("Flatten", [g.Node("GlobalAveragePool", [x])], shape, OnnxAttribute.Of("axis", 1L)),
-            Layers.Flatten => g.Node("Flatten", [x], shape, OnnxAttribute.Of("axis", 1L)),
-            Embedding e => g.Node("Gather", [g.Constant("embedding", e.WeightValues(), e.Vocabulary, e.Dim), g.Node("Cast", [x], null, OnnxAttribute.Of("to", 7L))], shape,
-                OnnxAttribute.Of("axis", 0L)),
-            PositionalEncoding pe => g.Node("Add", [x, g.Constant("positions", PositionTable(x.Shape![^2], pe.Dim), x.Shape[^2], pe.Dim)], shape),
-            MultiHeadAttention mha => Attention(g, mha, x, shape),
-            TransformerEncoderLayer layer => EncoderLayer(g, layer, x, shape),
-            LSTM lstm => Recurrent(g, "LSTM", lstm, [0, 3, 1, 2], x, shape),       // ONNX gate order i, o, f, c; ours i, f, c, o
-            GRU gru => Recurrent(g, "GRU", gru, [1, 0, 2], x, shape),              // ONNX z, r, h; ours r, z, h
-            Layers.Lambda lambda => _lambdas.TryGetValue(lambda.ToString(), out var translate)
-                ? translate(g, lambda, x, shape)
-                : throw new NotSupportedException($"The lambda '{lambda}' cannot be exported: register a translator with Lambda(\"{lambda}\", ...)."),
-            _ => throw new NotSupportedException($"{module.GetType().Name} ({module.DisplayName}) cannot be exported: register a translator with Module<{module.GetType().Name}>(...)."),
-        };
-    }
-
-    private static OnnxValue Weights(OnnxGraph g, string hint, Tensor tensor) => g.Constant(hint, tensor.ToArray(), tensor.Shape.ToArray());
-
-    private static OnnxValue Linear(OnnxGraph g, Layers.Linear linear, OnnxValue x, IReadOnlyList<int>? shape)
-    {
-        var weight = linear.WeightValues();                                      // int8 weights are exported dequantized
-        if (linear.Adapter is { } a)
-        {
-            using var update = a.A.MatMul(a.B) * a.Scale;                        // the LoRA update folded in, as MergeLora does
-            var delta = update.ToArray();
-            for (int i = 0; i < weight.Length; i++)
-            {
-                weight[i] += delta[i];
-            }
+            return forLambda(g, lambda, x, shape);
         }
 
-        var product = g.Node("MatMul", [x, g.Constant("weight", weight, linear.InFeatures, linear.OutFeatures)]);
-        return linear.Bias is null ? product with { Shape = shape } : g.Node("Add", [product, Weights(g, "bias", linear.Bias)], shape);
-    }
-
-    // GELU, tanh approximation (as Idrak computes it): 0.5 x (1 + tanh(√(2/π) (x + 0.044715 x³))).
-    private static OnnxValue Gelu(OnnxGraph g, OnnxValue x, IReadOnlyList<int>? shape)
-    {
-        var cube = g.Node("Mul", [g.Node("Mul", [x, x]), x]);
-        var inner = g.Node("Mul", [g.Node("Add", [x, g.Node("Mul", [cube, g.Scalar("gelu_c", 0.044715f)])]), g.Scalar("gelu_k", 0.7978845608f)]);
-        var gate = g.Node("Add", [g.Node("Tanh", [inner]), g.Scalar("one", 1f)]);
-        return g.Node("Mul", [g.Node("Mul", [x, gate]), g.Scalar("half", 0.5f)], shape);
-    }
-
-    private static OnnxValue LayerNorm(OnnxGraph g, LayerNorm ln, OnnxValue x, IReadOnlyList<int>? shape) =>
-        g.Node("LayerNormalization", [x, Weights(g, "ln_gamma", ln.Gamma), Weights(g, "ln_beta", ln.Beta)], shape,
-            OnnxAttribute.Of("axis", -1L), OnnxAttribute.Of("epsilon", ln.Epsilon));
-
-    private static float[] PositionTable(int length, int dim)
-    {
-        var values = new float[length * dim];
-        for (int pos = 0; pos < length; pos++)
-        {
-            for (int i = 0; i < dim; i++)
-            {
-                double angle = pos / Math.Pow(10000, 2 * (i / 2) / (double)dim);
-                values[pos * dim + i] = (float)(i % 2 == 0 ? Math.Sin(angle) : Math.Cos(angle));
-            }
-        }
-
-        return values;
-    }
-
-    private static OnnxValue Attention(OnnxGraph g, MultiHeadAttention mha, OnnxValue x, IReadOnlyList<int>? shape)
-    {
-        var children = mha.Children().ToList();
-        var (qkvProjection, outputProjection) = ((Layers.Linear)children[0], (Layers.Linear)children[1]);
-        int t = x.Shape![1], d = mha.Dim, h = mha.Heads, dh = d / h;
-        var qkv = Linear(g, qkvProjection, x, null);                                            // [N, T, 3D]
-        var split = g.Node("Transpose", [g.Node("Reshape", [qkv, g.Ints("shape", -1, t, 3, h, dh)])], null,
-            OnnxAttribute.Of("perm", [2L, 0, 3, 1, 4]));                                        // [3, N, H, T, dh]
-        OnnxValue Part(long i) => g.Node("Gather", [split, g.Constant("part", [i])], null, OnnxAttribute.Of("axis", 0L));
-        var (q, k, v) = (Part(0), Part(1), Part(2));
-        var scores = g.Node("Mul", [g.Node("MatMul", [q, g.Node("Transpose", [k], null, OnnxAttribute.Of("perm", [0L, 1, 3, 2]))]),
-            g.Scalar("scale", 1f / MathF.Sqrt(dh))]);
-        if (mha.Causal)
-        {
-            var mask = new float[t * t];
-            for (int i = 0; i < t; i++)
-            {
-                for (int j = i + 1; j < t; j++)
-                {
-                    mask[i * t + j] = -1e9f;
-                }
-            }
-
-            scores = g.Node("Add", [scores, g.Constant("causal_mask", mask, t, t)]);
-        }
-
-        var weights = g.Node("Softmax", [scores], null, OnnxAttribute.Of("axis", -1L));
-        var context = g.Node("Reshape", [g.Node("Transpose", [g.Node("MatMul", [weights, v])], null, OnnxAttribute.Of("perm", [0L, 2, 1, 3])),
-            g.Ints("shape", -1, t, d)]);                                                        // [N, T, D]
-        return Linear(g, outputProjection, context, shape);
-    }
-
-    private static OnnxValue EncoderLayer(OnnxGraph g, TransformerEncoderLayer layer, OnnxValue x, IReadOnlyList<int>? shape)
-    {
-        var c = layer.Children().ToList();
-        var (norm1, attention, norm2, ff1, ff2) = ((LayerNorm)c[0], (MultiHeadAttention)c[1], (LayerNorm)c[2], (Layers.Linear)c[3], (Layers.Linear)c[4]);
-        var attended = g.Node("Add", [x, Attention(g, attention, LayerNorm(g, norm1, x, x.Shape), x.Shape)], x.Shape);
-        var hidden = Linear(g, ff2, Gelu(g, Linear(g, ff1, LayerNorm(g, norm2, attended, x.Shape), null), null), null);
-        return g.Node("Add", [attended, hidden], shape);
-    }
-
-    // ONNX LSTM/GRU with the time-major layout: X [T, N, I] → Y [T, 1, N, H], Y_h [1, N, H]. Weights are regrouped from
-    // Idrak's [I, G·H] (gate blocks in our order) to ONNX's [1, G·H, I] (gate blocks in ONNX's order); the whole
-    // bias goes into the input bias (the recurrent bias is zero), which for GRU needs linear_before_reset = 1.
-    private static OnnxValue Recurrent(OnnxGraph g, string op, RecurrentModule rnn, int[] order, OnnxValue x, IReadOnlyList<int>? shape)
-    {
-        int h = rnn.HiddenSize, gates = order.Length;
-        float[] Regroup(Tensor weight, int rows)
-        {
-            var source = weight.ToArray();                                                      // [rows, G·H]
-            var result = new float[gates * h * rows];                                           // [G·H, rows]
-            for (int gate = 0; gate < gates; gate++)
-            {
-                for (int j = 0; j < h; j++)
-                {
-                    for (int r = 0; r < rows; r++)
-                    {
-                        result[(gate * h + j) * rows + r] = source[r * gates * h + order[gate] * h + j];
-                    }
-                }
-            }
-
-            return result;
-        }
-
-        var bias = rnn.Bias.ToArray();
-        var b = new float[2 * gates * h];
-        for (int gate = 0; gate < gates; gate++)
-        {
-            Array.Copy(bias, order[gate] * h, b, gate * h, h);
-        }
-
-        var timeMajor = g.Node("Transpose", [x], null, OnnxAttribute.Of("perm", [1L, 0, 2]));
-        List<OnnxAttribute> attributes = [OnnxAttribute.Of("hidden_size", (long)h)];
-        if (op == "GRU")
-        {
-            attributes.Add(OnnxAttribute.Of("linear_before_reset", 1L));
-        }
-
-        var outputs = g.Nodes(op, [timeMajor, g.Constant("rnn_w", Regroup(rnn.InputWeight, rnn.InputSize), 1, gates * h, rnn.InputSize),
-            g.Constant("rnn_r", Regroup(rnn.HiddenWeight, h), 1, gates * h, h), g.Constant("rnn_b", b, 1, 2 * gates * h)], 2, [.. attributes]);
-        return rnn.ReturnSequences
-            ? g.Node("Transpose", [g.Node("Squeeze", [outputs[0], g.Ints("axes", 1)])], shape, OnnxAttribute.Of("perm", [1L, 0, 2]))
-            : g.Node("Squeeze", [outputs[1], g.Ints("axes", 0)], shape);
+        var registered = OnnxExportOps.TryGet(module.GetType()) ?? throw new NotSupportedException(
+            $"{module.GetType().Name} ({module.DisplayName}) cannot be exported (registered: {OnnxExportOps.TypeNames()}): "
+            + $"register a translator with OnnxExportOps.Register<{module.GetType().Name}>(...) or the exporter's Module<{module.GetType().Name}>(...).");
+        return registered(g, module, x, shape);
     }
 }
