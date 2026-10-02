@@ -1090,20 +1090,21 @@ compute 8.6 (the kernels assemble for them, see GPU support), Linux with a GPU, 
 The `architecture` branch adds backends beyond CUDA: a Vulkan backend (SPIR-V kernels generated in C#, for Intel,
 AMD and any Vulkan GPU) and the minimum backend every new device starts from (see
 [plans/7-backends.md](plans/7-backends.md)). `-- --list-devices` shows the devices a machine has and how to test one.
-Results per run of the whole test list on one device:
+Results of the whole test list, grouped by architecture (one row per device and backend):
 
-| Date | Commit | Vendor | GPU | Architecture | Kind | Backend | Driver | Memory path | Matrix units | Machine | Result |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| 2026-10-02 | 234e05f | NVIDIA | GeForce RTX 5070 Ti, 16 GB | Blackwell (sm_120) | discrete | Vulkan 1.4 | 610.88 | mapped (resizable BAR), reads through staging | not used yet | Windows 11, 24-thread CPU | every Vulkan test passes (run from the CPU pass); decoder 1,454 tokens/s (int8, 8 layers), 0 host fallbacks |
-| 2026-10-02 | 234e05f | NVIDIA | GeForce RTX 5070 Ti, 16 GB | Blackwell (sm_120) | discrete | CUDA 13.3 | 610.88 | device memory | bfloat16, fp8, int8 tensor cores | Windows 11, 24-thread CPU | 486 of 486 (CPU and CUDA); `--bench-gemv` "auto" at the best column on every decoding row |
-| 2026-10-02 | 234e05f | NVIDIA | GeForce RTX 5050 Laptop GPU, 8 GB | Blackwell (sm_120) | discrete | Vulkan 1.4 | 610.88 | mapped (resizable BAR), reads through staging | not used yet | Windows 11, i7-13620H (16 threads) | every Vulkan test passes |
-| 2026-10-02 | 234e05f | NVIDIA | GeForce RTX 5050 Laptop GPU, 8 GB | Blackwell (sm_120) | discrete | CUDA 13.3 | 610.88 | device memory | tensor cores | Windows 11, i7-13620H (16 threads) | 729 of 729 (CPU, CUDA and the Intel GPU); "auto" at the best column on the decoding rows |
-| 2026-10-02 | 234e05f | NVIDIA | GeForce RTX 3060 Laptop GPU, 6 GB | Ampere (sm_86) | discrete | Vulkan 1.4 | 581.29 | mapped (resizable BAR), reads through staging | not used yet | Windows 11, Ryzen 5000H (16 threads) | every Vulkan test passes; CUDA 729 of 729 (CPU, CUDA 8.6 and the AMD GPU) |
-| 2026-10-02 | 234e05f | Intel | UHD Graphics (i7-13620H) | Xe-LP (Gen12) | integrated | Vulkan 1.4 | 101.7088 | mapped (shared with the CPU) | none (no XMX) | Windows 11, 12 GB shared | all pass; decoder 190 tokens/s (int8, 8 layers), element-wise 30 GB/s |
-| 2026-10-02 | 234e05f | AMD | Radeon Graphics (Ryzen 5000H "Cezanne") | Vega (GCN 5) | integrated | Vulkan 1.3 | 23.19.21.13 | measured per device since ce7bc4d (cached system memory read slower than the carve-out) | none | Windows 11, 2 GB reserved | all pass; decoder 343 tokens/s with the carve-out, 222 mapped |
-| 2026-10-02 | 234e05f | Mesa | llvmpipe (lavapipe, LLVM 20) | software (CPU) | CPU driver | Vulkan 1.4 | Mesa 25.2.8 | mapped | – | Ubuntu 24.04, 4 threads | all pass (also through staging, and with a cap of 64 allocations) |
-| 2026-10-02 | 234e05f | – | minimal test backend (memory and copies only) | – | test | host fallback | – | host | – | Ubuntu 24.04, 4 threads | all pass (729 across CPU, minimal and lavapipe) |
-| 2026-10-02 | 234e05f | – | none (CPU only) | x64, AVX2 | CPU | CPU | – | – | – | Ubuntu 24.04, 4 threads | all pass |
+| Architecture | Date | Device | Memory path | Matrix units | Result |
+|---|---|---|---|---|---|
+| **Blackwell (sm_120)** | 2026-10-02 | **NVIDIA GeForce RTX 5070 Ti**, 16 GB<br>discrete · CUDA 13.3 · driver 610.88 | device memory | bfloat16, fp8, int8 tensor cores | 486 of 486 (CPU and CUDA); `--bench-gemv` "auto" at the best column on every decoding row |
+|  | 2026-10-02 | **NVIDIA GeForce RTX 5070 Ti**, 16 GB<br>discrete · Vulkan 1.4 · driver 610.88 | mapped (resizable BAR), reads through staging | not used yet | every Vulkan test; decoder 1,454 tokens/s (int8, 8 layers), 0 host fallbacks |
+|  | 2026-10-02 | **NVIDIA GeForce RTX 5050 Laptop GPU**, 8 GB<br>discrete · CUDA 13.3 · driver 610.88 | device memory | tensor cores | 729 of 729 (CPU, CUDA and the Intel GPU); "auto" at the best column on the decoding rows |
+|  | 2026-10-02 | **NVIDIA GeForce RTX 5050 Laptop GPU**, 8 GB<br>discrete · Vulkan 1.4 · driver 610.88 | mapped (resizable BAR), reads through staging | not used yet | every Vulkan test |
+| **Ampere (sm_86)** | 2026-10-02 | **NVIDIA GeForce RTX 3060 Laptop GPU**, 6 GB<br>discrete · CUDA 13.0 · driver 581.29 | device memory | bfloat16, int8 tensor cores (no fp8) | 729 of 729 (CPU, CUDA and the AMD GPU) |
+|  | 2026-10-02 | **NVIDIA GeForce RTX 3060 Laptop GPU**, 6 GB<br>discrete · Vulkan 1.4 · driver 581.29 | mapped (resizable BAR), reads through staging | not used yet | every Vulkan test |
+| **Xe-LP (Gen12)** | 2026-10-02 | **Intel UHD Graphics** (i7-13620H), 12 GB shared<br>integrated · Vulkan 1.4 · driver 101.7088 | mapped (shared with the CPU) | none (no XMX) | all pass; decoder 190 tokens/s (int8, 8 layers), element-wise 30 GB/s |
+| **Vega (GCN 5)** | 2026-10-02 | **AMD Radeon Graphics** (Ryzen 5000H "Cezanne"), 2 GB reserved<br>integrated · Vulkan 1.3 · driver 23.19.21.13 | measured per device (cached system memory reads slower than the carve-out) | none | all pass; decoder 343 tokens/s with the carve-out, 222 mapped |
+| **Software (CPU)** | 2026-10-02 | **Mesa llvmpipe** (lavapipe, LLVM 20)<br>CPU driver · Vulkan 1.4 · Mesa 25.2.8 | mapped | – | all pass (also through staging, and with a cap of 64 allocations) |
+| **x64, AVX2** | 2026-10-02 | **CPU only**, 4 threads<br>CPU backend | – | – | all pass |
+|  | 2026-10-02 | **Minimal test backend** (memory and copies only)<br>host fallback | host | – | all pass (729 across CPU, minimal and lavapipe) |
 
 The Vulkan kernels are not tuned yet: dispatches and element-wise kernels already run near the hardware's limits,
 but decoding products and attention are several times slower than CUDA's on the same GPU. Tuning follows the
