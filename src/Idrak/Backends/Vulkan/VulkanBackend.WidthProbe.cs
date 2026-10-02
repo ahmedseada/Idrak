@@ -9,9 +9,10 @@ namespace Idrak.Backends.Vulkan;
 // limits allow, not what runs fastest: on an Adreno GPU (subgroups of 64-128, so width 1024) the float32 product ran
 // 1024³ in 798 ms at width 1024 against 25 ms at 256, and the tuning, which keeps the formula's choice when measuring
 // every candidate would take too long, kept it; a later, larger dispatch then ran long enough for the driver to reset the
-// device (VK_ERROR_DEVICE_LOST). So at start the product's kernels run a small shape at each width from a subgroup's
-// worth (at least MinWidth) up to the formula's, and the fastest width is kept (the formula's unless another is at least
-// WidthMargin faster), stored per device and driver like the runtime policy.
+// device (VK_ERROR_DEVICE_LOST). So at start a small product and one-row decoding work run at each width from a
+// subgroup's worth (at least MinWidth) up to the formula's, and the fastest width is kept (the formula's unless another is
+// at least WidthMargin faster), stored per device and driver like the runtime policy. Timing the product alone chose 512
+// on that Adreno, where chat ran 13 tokens/s against 15.8 at 256.
 internal sealed partial class VulkanBackend
 {
     /// <summary>A width must be at least this much faster (10%) than the formula's to replace it.</summary>
@@ -54,7 +55,7 @@ internal sealed partial class VulkanBackend
             return;
         }
 
-        string key = $"width/{formula}";
+        string key = $"width2/{formula}";
         var cached = CachedChoices();
         if (cached.TryGetValue(key, out string? text) && int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out int stored)
             && candidates.Contains(stored))
@@ -76,66 +77,118 @@ internal sealed partial class VulkanBackend
         {
             _limits = Limits with { Width = width };
             _candidateWidths = null;
+            lock (_tuned)
+            {
+                _tuned.Clear();                                            // stored choices are per width: read again
+                _tuningLoaded = false;
+            }
         }
     }
 
-    // Seconds of the float32 product's three kernels (one invocation per output, tiled, register-blocked) on a 256³ shape
-    // at each width, the median of three runs each; the width with the least total.
+    // Times each candidate width on work of both kinds a model runs: a 256³ float32 product (each of its kernel variants
+    // that fits) and decoding-shaped work of one row (int8 products 1024 -> 3072 and 3072 -> 1024, an RMS norm of 1024,
+    // a softmax of 32768), eight back to back as in a decoding step. Each part is compared with its fastest width and the
+    // geometric mean of those ratios ranks the widths, so neither kind outweighs the other by its length. The formula's
+    // width is kept unless another is clearly faster (WidthMargin).
     private int MeasureWidth(List<int> candidates, int formula)
     {
-        const int Size = 256;
-        var a = Allocate(Size * Size, zeroed: true);
-        var b = Allocate(Size * Size, zeroed: true);
-        var c = Allocate(Size * Size, zeroed: true);
+        const int Size = 256, Dim = 1024, Wide = 3072, Classes = 32768;
+        int[] lengths = [Size * Size, Size * Size, Size * Size, Wide, Wide * Dim / 4, Wide, Dim, Dim, Classes];
+        var s = new Storage[lengths.Length];
+        int original = Limits.Width;
         bool timing = t_timing;
         t_timing = true;
         try
         {
+            for (int i = 0; i < s.Length; i++)
+            {
+                s[i] = Allocate(lengths[i], zeroed: true);
+            }
+
+            var (a, b, c, x, q, scales, y, gain, logits) = (s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7], s[8]);
             Span<byte> bytes = stackalloc byte[28];
             var push = new Push(bytes).I(1).I(Size).I(Size).I(Size).B(false).B(false).F(0f).Bytes.ToArray();
-            var totals = new double[candidates.Count];
-            for (int i = 0; i < candidates.Count; i++)
+            var parts = new List<Action>();
+            foreach (int variant in new[] { MatSmall, MatTiled, MatBlocked })
             {
-                int width = candidates[i];
-                foreach (int variant in new[] { MatSmall, MatTiled, MatBlocked })
+                parts.Add(() =>
                 {
-                    int edge = VulkanKernels.MatSide(width) * (variant == MatBlocked ? VulkanKernels.MatPer : 1);
-                    if (variant != MatSmall && !MatFits(edge, Size, Size))
+                    int choice = WithWidth(Limits.Width, variant);
+                    int edge = VulkanKernels.MatSide(Limits.Width) * (variant == MatBlocked ? VulkanKernels.MatPer : 1);
+                    if (variant == MatSmall || MatFits(edge, Size, Size))
                     {
-                        continue;
+                        RunMatMul(choice, a, b, c, 1, Size, Size, push);
                     }
+                });
+            }
 
-                    int choice = WithWidth(width, variant);
-                    RunMatMul(choice, a, b, c, 1, Size, Size, push);   // builds the pipeline
-                    var runs = new double[3];
-                    for (int r = 0; r < runs.Length; r++)
-                    {
-                        runs[r] = TimeRuns(choice, 1, ch => RunMatMul(ch, a, b, c, 1, Size, Size, push));
-                    }
-
-                    Array.Sort(runs);
-                    totals[i] += runs[1];
+            void Eight(Action step)
+            {
+                for (int r = 0; r < 8; r++)
+                {
+                    step();
                 }
             }
 
-            int best = 0;
-            for (int i = 1; i < totals.Length; i++)
+            parts.Add(() => Eight(() => Int8MatMul(gain, q, scales, x, 1, Wide, Dim)));
+            parts.Add(() => Eight(() => Int8MatMul(x, q, scales, gain, 1, Dim, Wide)));
+            parts.Add(() => Eight(() => RmsNormAffine(gain, y, gain, 1, Dim, 1e-6f, 0f)));
+            parts.Add(() => Eight(() => Softmax(logits, logits, 1, Classes, false)));
+
+            var times = new double[candidates.Count, parts.Count];
+            for (int i = 0; i < candidates.Count; i++)
             {
-                if (totals[i] < totals[best])
+                SetWidth(candidates[i]);
+                for (int p = 0; p < parts.Count; p++)
                 {
-                    best = i;
+                    var part = parts[p];
+                    part();                                                // builds the pipelines
+                    var runs = new double[3];
+                    for (int r = 0; r < runs.Length; r++)
+                    {
+                        runs[r] = TimeRuns(0, 1, _ => part());
+                    }
+
+                    Array.Sort(runs);
+                    times[i, p] = Math.Max(runs[1], 1e-6);
+                }
+            }
+
+            var scores = new double[candidates.Count];
+            for (int p = 0; p < parts.Count; p++)
+            {
+                double best = double.MaxValue;
+                for (int i = 0; i < candidates.Count; i++)
+                {
+                    best = Math.Min(best, times[i, p]);
+                }
+
+                for (int i = 0; i < candidates.Count; i++)
+                {
+                    scores[i] += Math.Log(times[i, p] / best) / parts.Count;
+                }
+            }
+
+            int chosen = 0;
+            for (int i = 1; i < scores.Length; i++)
+            {
+                if (scores[i] < scores[chosen])
+                {
+                    chosen = i;
                 }
             }
 
             int formulaAt = candidates.IndexOf(formula);
-            return formulaAt >= 0 && totals[best] >= totals[formulaAt] * WidthMargin ? formula : candidates[best];
+            return formulaAt >= 0 && Math.Exp(scores[chosen]) >= Math.Exp(scores[formulaAt]) * WidthMargin ? formula : candidates[chosen];
         }
         finally
         {
             t_timing = timing;
-            a.Release();
-            b.Release();
-            c.Release();
+            SetWidth(original);
+            foreach (var storage in s)
+            {
+                storage?.Release();
+            }
         }
     }
 }
