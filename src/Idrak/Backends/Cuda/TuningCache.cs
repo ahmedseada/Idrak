@@ -19,11 +19,21 @@ internal static class TuneTiming
     /// <summary>A candidate replaces the formula's choice only when its median is at least this much faster (3%).</summary>
     internal const float Margin = 0.97f;
 
+    /// <summary>GPU time (ms) every candidate runs, in turns, before timing, at the least (Warm)…</summary>
+    internal const float WarmMinMs = 25f;
+
+    /// <summary>… and at the most, when its speed has not settled before.</summary>
+    internal const float WarmMaxMs = 250f;
+
     /// <summary>
     /// The index of the candidate to keep: candidates take turns for <paramref name="rounds"/> rounds (forwards, then
-    /// backwards, so a GPU still raising its clocks favours none), each candidate's median time is compared, and the
-    /// formula's choice (<paramref name="fallback"/>, when it is a candidate) stays unless the fastest median beats its
-    /// median by the margin. <paramref name="time"/>(index) returns one timing of that candidate (ms per run).
+    /// backwards), each timing is divided by the reference's timing of the same round (the formula's choice,
+    /// <paramref name="fallback"/>, when it is a candidate, else the first), and the medians of these ratios are compared.
+    /// The formula's choice stays unless the fastest beats it by the margin. Ratios within a round cancel a clock that
+    /// changes between rounds: a GPU still raising its clocks (laptops: several times faster within a few
+    /// milliseconds) made medians of the times themselves depend on which candidates happened to run before the step,
+    /// so two measurements of one shape could choose differently. <paramref name="time"/>(index) returns one timing of
+    /// that candidate (ms per run).
     /// </summary>
     internal static int Choose(ReadOnlySpan<int> candidates, int fallback, Func<int, float> time, int rounds = Rounds, float margin = Margin)
     {
@@ -38,10 +48,18 @@ internal static class TuneTiming
             }
         }
 
+        int formula = candidates.IndexOf(fallback);
+        int reference = Math.Max(formula, 0);
+        var ratios = new float[rounds];
         var medians = new float[count];
         for (int c = 0; c < count; c++)
         {
-            medians[c] = Median(samples.AsSpan(c * rounds, rounds));
+            for (int round = 0; round < rounds; round++)
+            {
+                ratios[round] = samples[c * rounds + round] / Math.Max(samples[reference * rounds + round], 1e-9f);
+            }
+
+            medians[c] = c == reference ? 1f : Median(ratios);
         }
 
         int fastest = 0;
@@ -53,8 +71,45 @@ internal static class TuneTiming
             }
         }
 
-        int formula = candidates.IndexOf(fallback);
         return formula >= 0 && medians[fastest] >= medians[formula] * margin ? formula : fastest;
+    }
+
+    /// <summary>
+    /// Runs <paramref name="pass"/> (every candidate once; returns its GPU time in ms) until the GPU's speed has settled:
+    /// at least <paramref name="minMs"/> of GPU time, then until two consecutive windows of about
+    /// <paramref name="windowMs"/> each take the same time per pass within <paramref name="tolerance"/>, or
+    /// <paramref name="maxMs"/> in all. Returns the GPU time spent. A GPU that was idle runs at a fraction of its clocks
+    /// for the first milliseconds of work; timings taken then compare candidates at another speed than decoding runs at.
+    /// </summary>
+    internal static float Warm(Func<float> pass, float minMs = WarmMinMs, float maxMs = WarmMaxMs, float windowMs = 5f, float tolerance = 0.03f)
+    {
+        float total = 0f, window = 0f, previous = float.NaN;
+        int passes = 0;
+        for (int i = 0; i < 100_000; i++)
+        {
+            float t = Math.Max(0f, pass());
+            total += t;
+            window += t;
+            passes++;
+            if (total >= maxMs)
+            {
+                break;
+            }
+
+            if (window >= windowMs)
+            {
+                float perPass = window / passes;
+                if (total >= minMs && !float.IsNaN(previous) && MathF.Abs(perPass - previous) <= tolerance * previous)
+                {
+                    break;
+                }
+
+                previous = perPass;
+                (window, passes) = (0f, 0);
+            }
+        }
+
+        return total;
     }
 
     /// <summary>The median of <paramref name="values"/> (sorted in place; the mean of the middle two for an even count).</summary>
@@ -78,7 +133,7 @@ internal sealed record TuningIdentity(string Device, string Driver, string Libra
 /// <c>tuning/cuda/</c>), so they are not measured again at every start. <c>IDRAK_TUNING_CACHE=0</c> turns it off;
 /// <c>IDRAK_TUNING_CACHE=&lt;folder&gt;</c> uses that folder. One text file per GPU:
 /// <code>
-/// idrak-tuning 1
+/// idrak-tuning 2
 /// device: NVIDIA ... ; compute 12.0; 70 SMs; 16303 MiB
 /// driver: CUDA 13000; 580.82.07
 /// library: 0.1.7+...; kernels 1a2b...
@@ -88,8 +143,11 @@ internal sealed record TuningIdentity(string Device, string Driver, string Libra
 /// </summary>
 internal static class TuningCache
 {
-    /// <summary>The file format; a file of another version is ignored and rewritten.</summary>
-    internal const int FormatVersion = 1;
+    /// <summary>
+    /// The file format; a file of another version is ignored and rewritten. 2: choices measured with the warm-up, the
+    /// ratios per round and the fused kernels timed whole (those of version 1 could be the plain kernel's, or noise).
+    /// </summary>
+    internal const int FormatVersion = 2;
 
     private const string Magic = "idrak-tuning";
 

@@ -12,6 +12,7 @@ internal static partial class Tests
     [
         ("tuning: card-dependent choices (few-row kernel and splits, prompt splits, tensor-core splits, tiles, decoding-attention splits) are measured on the device and give the results of the formulas' choices", TunedChoicesMatch),
         ("tuning: candidates are compared by their median time, so a lucky timing does not win and a close one keeps the formula's choice", TuneMedians),
+        ("tuning: few-row products are measured over 1, 2, 3, 4, 6, 8, 12, ... splits with the kernel that then runs (fused add-and-normalize kept apart from the plain kernel), after a warm-up, relative to the formula's choice per round", GemvSelection),
         ("tuning: the cache file of measured choices round-trips and is ignored when the GPU, driver, library build or format differs", TuningCacheFile),
         ("tuning: measured choices are kept per GPU in the cache folder and read back instead of measured again", TuningPersisted),
         ("kernel shapes: derived from the device's reported limits; today's cards (12.0 and 8.6) give today's PTX byte for byte, other limits valid PTX with the same kernels, or a reason they cannot run", KernelShapesFromLimits),
@@ -135,6 +136,121 @@ internal static partial class Tests
         Check(noFormula == 1, "the fastest median wins when the formula's choice is not a candidate");
 
         Check(TuneTiming.Median([3f, 1f, 2f]) == 2f && TuneTiming.Median([4f, 1f, 3f, 2f]) == 2.5f, "median of odd and even counts");
+    }
+
+    // Pure (no GPU): the few-row split choice as CudaBackend.PackedFewRows makes it (candidates, key, formula, TuneTiming)
+    // with fake timers shaped like --bench-gemv's results on an RTX 5070 Ti and an RTX 3060 Laptop.
+    private static void GemvSelection(Device device)
+    {
+        if (device.Type != DeviceType.Cpu)
+        {
+            return;
+        }
+
+        // Candidates: the bench's columns (any count runs: the kernels take a 64-row step, then single rows).
+        Check(CudaBackend.GemvSplitCandidates(2048, 1).SequenceEqual([1, 2, 3, 4, 6, 8, 12, 16, 24, 32]), "k 2048: 1 … 32 with 3, 6, 12, 24");
+        Check(CudaBackend.GemvSplitCandidates(3072, 1).SequenceEqual([1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48]), "k 3072: up to 48");
+        Check(CudaBackend.GemvSplitCandidates(1024, 1).SequenceEqual([1, 2, 3, 4, 6, 8, 12, 16]), "k 1024: up to 16");
+        var int4 = CudaBackend.GemvSplitCandidates(3072, 64);
+        Check(int4.Select(w => (3072 + ((3072 + w - 1) / w + 63) / 64 * 64 - 1) / (((3072 + w - 1) / w + 63) / 64 * 64)).Distinct().Count() == int4.Length,
+            $"int4 (64-row groups): no two candidates run the same chunks ({string.Join(",", int4)})");
+        foreach (int k in new[] { 64, 1024, 2048, 3072, 4096 })
+        {
+            foreach (int sms in new[] { 20, 30, 70, 132 })
+            {
+                foreach (int blocks in new[] { 1, 8, 24, 48, 1187 })
+                {
+                    int formula = CudaBackend.GemvSplitCount(sms, blocks, k);
+                    Check(CudaBackend.GemvSplitCandidates(k, 1).Contains(formula) && CudaBackend.GemvSplitCandidates(k, 64).Contains(formula),
+                        $"the formula's choice ({formula}; k {k}, {sms} SMs, {blocks} blocks) is a candidate");
+                }
+            }
+        }
+
+        // Keys: per kernel variant and shape, so the add-and-normalize kernel no longer takes the plain kernel's choice.
+        var keys = new HashSet<TuneKey>();
+        for (int variant = 0; variant < 12; variant++)
+        {
+            keys.Add(CudaBackend.GemvSplitsKey(variant, 1, 1024, 2048));
+        }
+
+        keys.Add(CudaBackend.GemvSplitsKey(0, 1, 1024, 3072));
+        keys.Add(CudaBackend.GemvSplitsKey(0, 2, 1024, 2048));
+        Check(keys.Count == 14, "every kernel variant and shape has its own key");
+        var identity = new TuningIdentity("GPU", "driver", "library");
+        var plainKey = CudaBackend.GemvSplitsKey(CudaBackend.GemvPlain, 1, 1024, 2048);
+        var addNormKey = CudaBackend.GemvSplitsKey(CudaBackend.GemvAddNorm, 1, 1024, 2048);
+        var file = TuningCache.Parse(TuningCache.Serialize(identity, new Dictionary<TuneKey, int> { [plainKey] = 8, [addNormKey] = 16 }), identity)!;
+        Check(file[plainKey] == 8 && file[addNormKey] == 16, "and the cache file keeps them apart");
+
+        // Measured per key with each kernel's own timer, as PackedFewRows does (the fake curves: µs per call).
+        Dictionary<TuneKey, int> Measure(int sms, int k, params (TuneKey Key, Dictionary<int, float> Curve)[] kernels)
+        {
+            var kept = new Dictionary<TuneKey, int>();
+            foreach (var (key, curve) in kernels)
+            {
+                int[] candidates = CudaBackend.GemvSplitCandidates(k, 1);
+                int formula = CudaBackend.GemvSplitCount(sms, 8, k);           // 1024 int8 columns: 8 column blocks
+                kept.TryAdd(key, candidates[TuneTiming.Choose(candidates, formula, c => curve[candidates[c]])]);
+            }
+
+            return kept;
+        }
+
+        // RTX 5070 Ti (70 SMs), o + add + norm 2048 → 1024: the fused kernel is fastest at 16 splits (7.5 µs against 8.8 at
+        // 8); the plain kernel of the shape at 8. Before, the fused kernel took the plain kernel's 8.
+        var plain5070 = new Dictionary<int, float> { [1] = 28f, [2] = 15f, [3] = 11f, [4] = 9.5f, [6] = 8f, [8] = 7.0f, [12] = 7.3f, [16] = 7.6f, [24] = 8.2f, [32] = 8.8f };
+        var addNorm5070 = new Dictionary<int, float> { [1] = 30f, [2] = 16f, [3] = 12f, [4] = 10.5f, [6] = 9.3f, [8] = 8.8f, [12] = 8.0f, [16] = 7.5f, [24] = 7.9f, [32] = 8.3f };
+        Check(CudaBackend.GemvSplitCount(70, 8, 2048) == 16, "5070 Ti: the formula gives 16");
+        var chosen = Measure(70, 2048, (plainKey, plain5070), (addNormKey, addNorm5070));
+        Check(chosen[plainKey] == 8 && chosen[addNormKey] == 16, $"5070 Ti: plain {chosen[plainKey]}, add + norm {chosen[addNormKey]} (8 and 16)");
+        var collided = Measure(70, 2048, (plainKey, plain5070), (plainKey, addNorm5070));
+        Check(collided[plainKey] == 8, "with the old shared key the fused kernel would run the plain kernel's 8 (8.8 µs, not 7.5)");
+
+        // RTX 3060 Laptop (30 SMs): 6 splits 15 µs, the formula's 8 about 20; 6 was not a candidate before.
+        var addNorm3060 = new Dictionary<int, float> { [1] = 40f, [2] = 26f, [3] = 19f, [4] = 17f, [6] = 15f, [8] = 20f, [12] = 19f, [16] = 21f, [24] = 25f, [32] = 29f };
+        Check(CudaBackend.GemvSplitCount(30, 8, 2048) == 8, "3060: the formula gives 8");
+        Check(Measure(30, 2048, (addNormKey, addNorm3060))[addNormKey] == 6, "3060: 6 splits chosen");
+
+        // A clock that rises 3x part way through the measurement (an idle laptop GPU): with ratios per round the choice
+        // is 6 wherever the step falls; medians of the times themselves chose differently by where it fell.
+        int[] list = CudaBackend.GemvSplitCandidates(2048, 1);
+        int total = list.Length * TuneTiming.Rounds;
+        int rawWrong = 0;
+        for (int step = 0; step <= total; step++)
+        {
+            int calls = 0;
+            var times = new List<(int C, float T)>();
+            float Timer(int c)
+            {
+                float t = addNorm3060[list[c]] * (calls++ < step ? 3f : 1f);
+                times.Add((c, t));
+                return t;
+            }
+
+            int pick = list[TuneTiming.Choose(list, 8, Timer)];
+            Check(pick == 6, $"clock step after {step} of {total} timings: 6 chosen (chose {pick})");
+            var raw = Enumerable.Range(0, list.Length).Select(c => TuneTiming.Median([.. times.Where(x => x.C == c).Select(x => x.T)])).ToArray();
+            int fastest = Array.IndexOf(raw, raw.Min()), formula = Array.IndexOf(list, 8);
+            rawWrong += list[raw[fastest] >= raw[formula] * TuneTiming.Margin ? formula : fastest] != 6 ? 1 : 0;
+        }
+
+        Check(rawWrong > 0, $"medians of the raw times are thrown off by some step positions ({rawWrong} of {total + 1})");
+
+        // The warm-up: stops soon on a settled GPU, waits out a clock ramp, and is bounded.
+        float steady = TuneTiming.Warm(() => 1f);
+        Check(steady >= TuneTiming.WarmMinMs && steady <= TuneTiming.WarmMinMs + 10f, $"settled GPU: about the minimum ({steady} ms)");
+        float spent = 0f;
+        float ramped = TuneTiming.Warm(() =>
+        {
+            float t = 1f + 3f * Math.Max(0f, 1f - spent / 60f);                 // 4x slower at first, settled after 60 ms
+            spent += t;
+            return t;
+        });
+        Check(ramped >= 60f && ramped <= 100f, $"a ramp of 60 ms is waited out ({ramped} ms)");
+        int n = 0;
+        float noisy = TuneTiming.Warm(() => n++ / 5 % 2 == 0 ? 1f : 2f);
+        Check(noisy >= TuneTiming.WarmMaxMs && noisy < TuneTiming.WarmMaxMs + 3f, $"never settling: stops at the bound ({noisy} ms)");
     }
 
     // Pure (no GPU apart from the backend-free helpers): the file format, identity checks, saving and loading.

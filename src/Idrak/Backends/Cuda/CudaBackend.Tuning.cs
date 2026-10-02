@@ -11,7 +11,9 @@ namespace Idrak.Backends.Cuda;
 // kernel then writes again) or scratch memory (outputs that are added to). The formula from the device's own counts
 // (SMs, tiles) is the default: it is used while measuring is impossible (a graph is being recorded, the profiler runs,
 // no device memory for scratch) and with IDRAK_AUTOTUNE=0, and a candidate replaces it only when its median time is
-// clearly faster (TuneTiming), so timing noise does not move the choice. Measured choices are kept per GPU, driver and
+// clearly faster (TuneTiming: after a warm-up until the GPU's clocks settle, timed in rounds relative to the formula's
+// choice), so timing noise does not move the choice. Each choice is measured with the kernel that then runs (a fused
+// kernel's choice is its own, keyed by its variant, never the plain kernel's of the same shape). Measured choices are kept per GPU, driver and
 // library build in the user's cache folder (TuningCache; IDRAK_TUNING_CACHE=0 turns that off), so the next start reads
 // them instead of measuring again.
 /// <summary>Which choice a measurement is for.</summary>
@@ -202,15 +204,31 @@ internal sealed unsafe partial class CudaBackend
         }
 
         // Each candidate is timed as it runs in practice, several launches back to back (as many as take about 0.2 ms,
-        // at most 16): a launch timed alone misses how splits overlap with the work around them. Candidates take turns
-        // over TuneTiming.Rounds rounds and the medians are compared (TuneTiming.Choose), so neither a GPU still raising
-        // its clocks (laptops) nor one lucky or unlucky timing decides.
+        // at most 16): a launch timed alone misses how splits overlap with the work around them. First the candidates
+        // run in turns until the GPU's speed has settled (TuneTiming.Warm: an idle GPU, laptops above all, runs the first
+        // milliseconds at a fraction of its clocks); then they take turns over TuneTiming.Rounds rounds and the medians
+        // of their times relative to the formula's choice in the same round are compared (TuneTiming.Choose), so neither
+        // a clock that still changes nor one lucky or unlucky timing decides.
         var list = candidates.ToArray();
         var repeats = new int[list.Length];
         int chosen;
         t_timing = true;
         try
         {
+            TuneTiming.Warm(() =>
+            {
+                Check(cuEventRecord(_tuneEvents.Start, _stream), nameof(cuEventRecord));
+                foreach (int candidate in list)
+                {
+                    run(candidate);
+                }
+
+                Check(cuEventRecord(_tuneEvents.End, _stream), nameof(cuEventRecord));
+                Check(cuEventSynchronize(_tuneEvents.End), nameof(cuEventSynchronize));
+                Check(cuEventElapsedTime(out float ms, _tuneEvents.Start, _tuneEvents.End), nameof(cuEventElapsedTime));
+                return ms;
+            });
+
             for (int c = 0; c < list.Length; c++)
             {
                 float once = TimeRuns(list[c], 1, run);
@@ -255,7 +273,7 @@ internal sealed unsafe partial class CudaBackend
 
     // Split counts to try where any count works (chunks of k need no particular alignment): 1, 2, 3, 4, 6, 8, 12, ...
     // up to `max` (the measured best on prompt-sized products was often 3 or 6).
-    private static int[] SplitCounts(int max)
+    internal static int[] SplitCounts(int max)
     {
         var values = new List<int>();
         for (int s = 1; s <= Math.Max(1, max); s *= 2)
@@ -265,18 +283,6 @@ internal sealed unsafe partial class CudaBackend
             {
                 values.Add(s + s / 2);
             }
-        }
-
-        return [.. values];
-    }
-
-    // Split counts to try: 1, 2, 4, ... up to `max`.
-    private static int[] PowersOfTwo(int max)
-    {
-        var values = new List<int>();
-        for (int s = 1; s <= Math.Max(1, max); s *= 2)
-        {
-            values.Add(s);
         }
 
         return [.. values];
