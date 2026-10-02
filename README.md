@@ -1107,8 +1107,9 @@ The ASP.NET Core, MCP, dataset and naming tests do not depend on the device, and
 
 Fine-tuning speed on the RTX 5070 Ti (Qwen2.5-0.5B, LoRA, 4k-token steps): 17.4k tokens/s on chat data, 25.5k on
 short classification rows; chat with Qwen3-0.6B generates about 140 tokens/s. Not tested yet: GPUs before
-compute 8.6 (the kernels assemble for them, see GPU support), native Linux GPU drivers (CUDA has run on Linux under
-WSL2), and macOS (CPU only).
+compute 8.6 (the kernels assemble for them, see GPU support), native Linux GPU drivers (Linux GPUs: WSL2 only, where
+CUDA goes through the Windows driver and Vulkan only through lavapipe; NVIDIA's Linux driver and Mesa's RADV, ANV and
+NVK have not run), and macOS (CPU only).
 
 ### Tested on architectures
 
@@ -1119,11 +1120,12 @@ The `architecture` branch adds backends beyond CUDA: a Vulkan backend (SPIR-V ke
 AMD and any Vulkan GPU) and the minimum backend every new device starts from (see
 [plans/7-backends.md](plans/7-backends.md)). `-- --list-devices` shows the devices a machine has and how to test one.
 The devices tested, one row each (decoding speed: the `--bench-vulkan` decoder of dim 1024, 8 layers, int8 weights,
-with fused kernels and graph replay; chat: Qwen3-0.6B with int8 weights):
+with fused kernels and graph replay; chat: Qwen3-0.6B with int8 weights). Linux GPUs were tested under WSL2 only;
+native Linux GPU drivers have not run yet:
 
 | Device | Vendor and architecture | Kind | Machine | Backends | Tests | Decoding |
 |--------|-------------------------|------|---------|----------|-------|----------|
-| GeForce RTX 5070 Ti, 16 GB | NVIDIA Blackwell (sm_120) | discrete | Windows desktop; also WSL2 | CUDA, Vulkan | 488 of 488 (CUDA); 273 of 273 (Vulkan) | 1,889 tokens/s |
+| GeForce RTX 5070 Ti, 16 GB | NVIDIA Blackwell (sm_120) | discrete | Windows desktop; Linux: WSL2 only (CUDA) | CUDA, Vulkan | 488 of 488 (CUDA); 273 of 273 (Vulkan) | 1,889 tokens/s |
 | GeForce RTX 5050 Laptop GPU, 8 GB | NVIDIA Blackwell (sm_120) | discrete | Windows laptop | CUDA, Vulkan | 735 of 735 (CUDA run); 273 of 273 (Vulkan) | 1,296–1,350 tokens/s |
 | GeForce RTX 3060 Laptop GPU, 6 GB | NVIDIA Ampere (sm_86) | discrete | Windows laptop | CUDA, Vulkan | 735 of 735 (CUDA run); 273 of 273 (Vulkan) | 1,182 tokens/s |
 | Radeon Graphics (Ryzen 5000H "Cezanne") | AMD Vega (GCN 5) | integrated | Windows laptop (with the RTX 3060) | Vulkan | 273 of 273 | 371 tokens/s |

@@ -53,7 +53,7 @@ What the `architecture` branch cannot do today, with an example of each. "High" 
 
 | Platform | Status |
 |---|---|
-| Linux with a GPU (CUDA or Vulkan) | partly: CUDA under WSL2 (RTX 5070 Ti, all pass) and Mesa's software Vulkan driver; native Linux GPU drivers (NVIDIA, RADV, ANV) never run |
+| Linux with a GPU (CUDA or Vulkan) | partly: CUDA under WSL2 (RTX 5070 Ti, all pass) and Mesa's software Vulkan driver; native Linux GPU drivers (NVIDIA, RADV, ANV, NVK) never run: WSL2 only for now (a live USB or a cloud GPU instance would cover them; guide in installation/linux.md) |
 | macOS (CPU) | never run |
 | NVIDIA before compute 8.6 | PTX is generated for them; never run |
 | Intel Arc (XMX), AMD RDNA | no such GPU tested |
