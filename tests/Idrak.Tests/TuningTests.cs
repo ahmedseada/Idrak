@@ -16,6 +16,7 @@ internal static partial class Tests
         ("tuning: few-row products are measured over 1, 2, 3, 4, 6, 8, 12, ... splits with the kernel that then runs (fused add-and-normalize kept apart from the plain kernel), after a warm-up, in pairs with the formula's choice", GemvSelection),
         ("tuning: the cache file of measured choices round-trips and is ignored when the GPU, driver, library build or format differs", TuningCacheFile),
         ("tuning: measured choices are kept per GPU in the cache folder and read back instead of measured again", TuningPersisted),
+        ("tuning: decoding attention reads at least a measured number of positions per block (short caches on fewer blocks): every least chunk, split count and cache format gives the one-block result; lengths 64 ... capacity and chunk candidates", DecodeMinChunks),
         ("tuning: every backend keeps one set of measured choices per power source (mains or battery, as the system reports it)", PowerSourceKeys),
         ("kernel shapes: derived from the device's reported limits; today's cards (12.0 and 8.6) give today's PTX byte for byte, other limits valid PTX with the same kernels, or a reason they cannot run", KernelShapesFromLimits),
     ];
@@ -616,6 +617,84 @@ internal static partial class Tests
         finally
         {
             Environment.SetEnvironmentVariable("IDRAK_POWER_SOURCE", before);
+        }
+    }
+
+    // The least positions per block of decoding attention (CudaBackend.DecodeSplit): any least chunk with any split count
+    // gives the result of one block reading every position (the blocks past the filled length add empty parts), for the
+    // float32, int8 and bfloat16 caches and filled lengths from one position to most of the capacity.
+    private static void DecodeMinChunks(Device device)
+    {
+        if (device.Type == DeviceType.Cpu)
+        {
+            Check(CudaBackend.DecodeTuneLengths(4096).SequenceEqual([64, 128, 256, 512, 1024, 2048, 4096]), "lengths: 64 ... 4096");
+            Check(CudaBackend.DecodeTuneLengths(1000).SequenceEqual([64, 128, 256, 512, 1000]), "a capacity that is no power of two comes last");
+            Check(CudaBackend.DecodeTuneLengths(32).SequenceEqual([32]), "a small capacity: itself");
+            Check(CudaBackend.DecodeMinChunks(4096, 24).SequenceEqual([1, 8, 16, 32, 64, 128]), "4096 positions, 24 splits: 1, then 8 ... 128 (a full cache keeps all 24 blocks busy)");
+            Check(CudaBackend.DecodeMinChunks(1024, 16).SequenceEqual([1, 8, 16, 32]), "1024 positions, 16 splits: up to 32");
+            Check(CudaBackend.DecodeMinChunks(64, 8).SequenceEqual([1]), "64 positions, 8 splits: plain chunks only");
+            return;
+        }
+
+        if (device.Backend is not CudaBackend)
+        {
+            return;
+        }
+
+        const int rows = 8, capacity = 1024, dim = 64;
+        var r = new Random(5);
+        float[] Words(int n, KeyValueFormat format) => [.. Enumerable.Range(0, n).Select(_ => format switch
+        {
+            KeyValueFormat.Float32 => r.NextSingle() * 2 - 1,
+            KeyValueFormat.BFloat16 => BitConverter.Int32BitsToSingle((int)((BitConverter.SingleToUInt32Bits(r.NextSingle() - 0.5f) >> 16)
+                | (BitConverter.SingleToUInt32Bits(r.NextSingle() - 0.5f) & 0xFFFF0000u))),
+            _ => BitConverter.Int32BitsToSingle(r.Next() & 0x7F7F7F7F),
+        })];
+        int? splits = CudaBackend.DecodeSplits, chunk = CudaBackend.DecodeMinChunk;
+        try
+        {
+            foreach (var format in new[] { KeyValueFormat.Float32, KeyValueFormat.Int8, KeyValueFormat.BFloat16 })
+            {
+                using var cache = new KeyValueCache(rows, capacity, dim, device, format);
+                device.Backend.Upload(Words(cache.Keys.Size, format), cache.Keys.Storage);
+                device.Backend.Upload(Words(cache.Values.Size, format), cache.Values.Storage);
+                if (format == KeyValueFormat.Int8)
+                {
+                    device.Backend.Upload([.. Enumerable.Repeat(0.01f, cache.KeyScales!.Size)], cache.KeyScales.Storage);
+                    device.Backend.Upload([.. Enumerable.Repeat(0.01f, cache.ValueScales!.Size)], cache.ValueScales.Storage);
+                }
+
+                using var q = Tensor.From([.. Enumerable.Range(0, rows * 2 * dim).Select(_ => r.NextSingle() - 0.5f)], [rows, 2, dim], device);
+                float[] Attend(int length)
+                {
+                    using var position = Tensor.From([length - 1f], [1], device);
+                    using var y = format switch
+                    {
+                        KeyValueFormat.Float32 => Tensor.AttentionDecode(q, cache, position, 1, 0.125f),
+                        KeyValueFormat.Int8 => Tensor.AttentionInt8(q, cache, position, 1, 0.125f, tiled: false),
+                        _ => Tensor.AttentionBFloat16(q, cache, position, 1, 0.125f, tiled: false),
+                    };
+                    return y.ToArray();
+                }
+
+                foreach (int length in new[] { 1, 5, 70, 700 })
+                {
+                    (CudaBackend.DecodeSplits, CudaBackend.DecodeMinChunk) = (1, 1);
+                    var one = Attend(length);
+                    foreach (int s in new[] { 4, 16 })
+                    {
+                        foreach (int least in new[] { 1, 8, 64, 512 })
+                        {
+                            (CudaBackend.DecodeSplits, CudaBackend.DecodeMinChunk) = (s, least);
+                            AssertClose(one, Attend(length), 1e-4f * Math.Max(1f, one.Max(Math.Abs)), $"{format}, {length} positions, {s} splits, at least {least} per block");
+                        }
+                    }
+                }
+            }
+        }
+        finally
+        {
+            (CudaBackend.DecodeSplits, CudaBackend.DecodeMinChunk) = (splits, chunk);
         }
     }
 }

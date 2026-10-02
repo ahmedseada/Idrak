@@ -705,8 +705,8 @@ internal sealed unsafe partial class CudaBackend
         }
 
         int rows = heads * rowsPerHead;
-        DecodeSplit(0, rows, capacity, dim, position, y, (splits, part, counters, at) => Launch(K("attention_decode_f32"), (uint)rows, (uint)splits, 1, PtxKernels.RowThreads, 1,
-            P(q), P(keys), P(values), at, P(y), P(part), P(counters), U(rowsPerHead), U(steps), U(capacity), U(dim), F(scale), U(rows)));
+        DecodeSplit(0, rows, capacity, dim, position, y, (splits, minChunk, part, counters, at) => Launch(K("attention_decode_f32"), (uint)rows, (uint)splits, 1, PtxKernels.RowThreads, 1,
+            P(q), P(keys), P(values), at, P(y), P(part), P(counters), U(rowsPerHead), U(steps), U(capacity), U(dim), F(scale), U(minChunk), U(rows)));
     }
 
     // Decoding attention has one block per query row (few rows: the heads of one token), so the cached positions are
@@ -719,22 +719,28 @@ internal sealed unsafe partial class CudaBackend
     // call's (often short) length instead would favour too few splits. Candidates: 1, 2, 3, 4, 6, 8, ... up to one split
     // per 64 cached positions (at most 64). The formula, about five blocks per SM (--bench-gemv: 16 rows → 22 splits,
     // 4000 positions 75.9 → ~35 µs, 1000 positions 22 → ~15 µs), is the default until then and when nothing can be
-    // measured. `launch(splits, part, counters, position)` launches the kernel with that position address.
-    private void DecodeSplit(int variant, int rows, int capacity, int dim, Storage position, Storage y, Action<int, Storage, Storage, ulong> launch)
+    // measured.
+    // A short filled length split as many ways reads a few positions per block and merges many parts: on an RTX 5070 Ti
+    // 200 positions took 9.0 µs with the 24 splits measured at 4096, 7.6 with 16. So each block also takes at least
+    // `minChunk` positions (the blocks past the filled length then add an empty part), measured per shape after the
+    // splits over filled lengths 64, 128, ... up to the capacity, compared by the geometric mean of their times (each
+    // doubling of the context counts alike); 1, the plain chunks, is the reference and stays unless another is
+    // faster. `launch(splits, minChunk, part, counters, position)` launches the kernel with that position address.
+    private void DecodeSplit(int variant, int rows, int capacity, int dim, Storage position, Storage y, Action<int, int, Storage, Storage, ulong> launch)
     {
         var counters = SplitCounters(rows);
-        void Run(int splits, ulong at)
+        void Run(int splits, int minChunk, ulong at)
         {
             if (splits == 1)
             {
-                launch(1, y, counters, at);
+                launch(1, 1, y, counters, at);
                 return;
             }
 
             var part = Allocate(rows * splits * (dim + 2), zeroed: false);
             try
             {
-                launch(splits, part, counters, at);
+                launch(splits, minChunk, part, counters, at);
             }
             finally
             {
@@ -743,10 +749,11 @@ internal sealed unsafe partial class CudaBackend
         }
 
         int limit = Math.Clamp(capacity / 64, 1, 64);
-        int splits;
+        int splits, minChunk = 1;
         if (DecodeSplits is int forced)
         {
             splits = Math.Clamp(forced, 1, 64);
+            minChunk = DecodeMinChunk ?? 1;
         }
         else
         {
@@ -757,27 +764,70 @@ internal sealed unsafe partial class CudaBackend
                 candidates = [.. candidates.Append(formula).Order()];
             }
 
-            Storage? full = null;
+            int[] lengths = DecodeTuneLengths(capacity);
+            Storage? positions = null;
+            ulong At(int i)
+            {
+                if (positions is null)
+                {
+                    positions = Allocate(lengths.Length, zeroed: false);
+                    Upload([.. lengths.Select(n => n - 1f)], positions);     // every row then reads that many positions
+                }
+
+                return P(positions) + (ulong)(4 * i);
+            }
+
             try
             {
-                splits = Tune(new TuneKey(TuneOp.DecodeSplits, variant, rows, capacity, dim), candidates, formula, c =>
+                int full = lengths.Length - 1;
+                splits = Tune(new TuneKey(TuneOp.DecodeSplits, variant, rows, capacity, dim), candidates, formula,
+                    c => Run(c, 1, At(full)));                          // writes y, which the launch below writes again
+                int[] chunks = splits > 1 ? DecodeMinChunks(capacity, splits) : [];
+                minChunk = DecodeMinChunk ?? Tune(new TuneKey(TuneOp.DecodeMinChunk, variant, rows, capacity, dim, splits), chunks, 1, c =>
                 {
-                    if (full is null)
+                    for (int i = 0; i < lengths.Length; i++)
                     {
-                        full = Allocate(1, zeroed: false);
-                        Fill(full, 1, capacity - 1);                       // every row then reads the whole cache
+                        Run(splits, c, At(i));
                     }
-
-                    Run(c, P(full));                                    // writes y, which the launch below writes again
-                });
+                }, part: (c, i) => Run(splits, c, At(i)), parts: lengths.Length);
             }
             finally
             {
-                full?.Release();
+                positions?.Release();
             }
         }
 
-        Run(splits, P(position));
+        Run(splits, minChunk, P(position));
+    }
+
+    /// <summary>Tests and benchmarks: the least positions per block of decoding attention, instead of the measured one.</summary>
+    internal static int? DecodeMinChunk { get; set; }
+
+    // Filled lengths the least chunk of decoding attention is timed at: 64, 128, ... below the capacity, then the capacity.
+    internal static int[] DecodeTuneLengths(int capacity)
+    {
+        var lengths = new List<int>();
+        for (int n = 64; n < capacity; n *= 2)
+        {
+            lengths.Add(n);
+        }
+
+        lengths.Add(Math.Max(1, capacity));
+        return [.. lengths];
+    }
+
+    // Candidates for the least positions per block: 1 (plain chunks), then 8 (one per warp of a block) and its doublings
+    // while a full cache still gives every split more than that (above, the full cache would run on fewer blocks than
+    // measured best).
+    internal static int[] DecodeMinChunks(int capacity, int splits)
+    {
+        var chunks = new List<int> { 1 };
+        for (int c = 8; c * splits < capacity; c *= 2)
+        {
+            chunks.Add(c);
+        }
+
+        return [.. chunks];
     }
 
     public override void RmsNormAffine(Storage x, Storage gain, Storage y, int rows, int cols, float eps, float offset) =>
@@ -1024,9 +1074,9 @@ internal sealed unsafe partial class CudaBackend
         }
 
         int rows = heads * rowsPerHead;
-        DecodeSplit(1, rows, capacity, dim, position, y, (splits, part, counters, at) => Launch(K("attention_decode_int8"), (uint)rows, (uint)splits, 1, PtxKernels.RowThreads, 1,
+        DecodeSplit(1, rows, capacity, dim, position, y, (splits, minChunk, part, counters, at) => Launch(K("attention_decode_int8"), (uint)rows, (uint)splits, 1, PtxKernels.RowThreads, 1,
             P(q), P(keys), P(values), P(keyScales), P(valueScales), at, P(y), P(part), P(counters),
-            U(rowsPerHead), U(steps), U(capacity), U(dim), F(scale), U(words), U(rows)));
+            U(rowsPerHead), U(steps), U(capacity), U(dim), F(scale), U(words), U(minChunk), U(rows)));
     }
 
     public override void SoftmaxCrossEntropyRows(Storage logits, Storage targets, Storage weights, Storage losses, int rows, int vocabulary, float scale) =>
@@ -1049,8 +1099,8 @@ internal sealed unsafe partial class CudaBackend
         }
 
         int rows = heads * rowsPerHead;
-        DecodeSplit(2, rows, capacity, dim, position, y, (splits, part, counters, at) => Launch(K("attention_decode_bf16"), (uint)rows, (uint)splits, 1, PtxKernels.RowThreads, 1,
-            P(q), P(keys), P(values), at, P(y), P(part), P(counters), U(rowsPerHead), U(steps), U(capacity), U(dim), F(scale), U(words), U(rows)));
+        DecodeSplit(2, rows, capacity, dim, position, y, (splits, minChunk, part, counters, at) => Launch(K("attention_decode_bf16"), (uint)rows, (uint)splits, 1, PtxKernels.RowThreads, 1,
+            P(q), P(keys), P(values), at, P(y), P(part), P(counters), U(rowsPerHead), U(steps), U(capacity), U(dim), F(scale), U(words), U(minChunk), U(rows)));
     }
 
     public override void KeyValueWriteBFloat16(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)

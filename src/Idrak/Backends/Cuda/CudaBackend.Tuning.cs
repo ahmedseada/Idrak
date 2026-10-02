@@ -32,6 +32,7 @@ internal enum TuneOp : byte
     TensorSplits,
     FloatTile,
     DecodeSplits,
+    DecodeMinChunk,
 }
 
 /// <summary>
@@ -173,7 +174,10 @@ internal sealed unsafe partial class CudaBackend
     // choice) while it cannot be measured. `run(candidate)` runs the operation with that choice; it must leave nothing the
     // caller relies on changed (it writes the output the caller writes again, or scratch memory). `cold`: each timed run
     // starts with an L2 cache holding none of its operands (decoding-sized products; see L2FlushFloats).
-    private int Tune(TuneKey key, ReadOnlySpan<int> candidates, int fallback, Action<int> run, bool cold = false)
+    // `part` and `parts`: the operation is timed as `parts` separate runs (`part(candidate, i)`, which `run` runs all of),
+    // and a candidate's time is the geometric mean of its parts' times, so each part counts alike however long it takes
+    // (decoding attention at filled lengths 64 ... capacity).
+    private int Tune(TuneKey key, ReadOnlySpan<int> candidates, int fallback, Action<int> run, bool cold = false, Action<int, int>? part = null, int parts = 0)
     {
         if (!Autotune)
         {
@@ -232,12 +236,12 @@ internal sealed unsafe partial class CudaBackend
             }
         }
 
-        return Measure(key, candidates.ToArray(), fallback, run, 0, 0);
+        return Measure(key, candidates.ToArray(), fallback, run, 0, 0, part, parts);
     }
 
     // Times `list` (after the warm-up) and keeps the choice. `flush`: the address of `flushFloats` floats (and one more for
     // the sum) read before each timed run, or 0 for warm timings.
-    private int Measure(TuneKey key, int[] list, int fallback, Action<int> run, ulong flush, int flushFloats)
+    private int Measure(TuneKey key, int[] list, int fallback, Action<int> run, ulong flush, int flushFloats, Action<int, int>? part = null, int parts = 0)
     {
         // Each candidate is timed as it runs in practice, several launches back to back (as many as take about 0.2 ms,
         // at most 16): a launch timed alone misses how splits overlap with the work around them. First the candidates
@@ -267,13 +271,41 @@ internal sealed unsafe partial class CudaBackend
                 return ms;
             });
 
-            for (int c = 0; c < list.Length; c++)
+            if (part is not null && parts > 0)
             {
-                repeats[c] = TimingRepeats(TimeRuns(list[c], 1, run, flush, flushFloats), flush != 0);
-            }
+                var runs = Enumerable.Range(0, parts).Select(i => (Action<int>)(c => part(c, i))).ToArray();
+                var partRepeats = new int[list.Length, parts];
+                for (int c = 0; c < list.Length; c++)
+                {
+                    for (int i = 0; i < parts; i++)
+                    {
+                        partRepeats[c, i] = TimingRepeats(TimeRuns(list[c], 1, runs[i], flush, flushFloats), flush != 0);
+                    }
+                }
 
-            chosen = list[TuneTiming.Choose(list, fallback, c => TimeRuns(list[c], repeats[c], run, flush, flushFloats) / repeats[c], medians: medians,
-                confirmation: confirmation)];
+                float Geometric(int c)
+                {
+                    double logs = 0;
+                    for (int i = 0; i < parts; i++)
+                    {
+                        logs += Math.Log(Math.Max(TimeRuns(list[c], partRepeats[c, i], runs[i], flush, flushFloats) / partRepeats[c, i], 1e-9f));
+                    }
+
+                    return (float)Math.Exp(logs / parts);
+                }
+
+                chosen = list[TuneTiming.Choose(list, fallback, Geometric, medians: medians, confirmation: confirmation)];
+            }
+            else
+            {
+                for (int c = 0; c < list.Length; c++)
+                {
+                    repeats[c] = TimingRepeats(TimeRuns(list[c], 1, run, flush, flushFloats), flush != 0);
+                }
+
+                chosen = list[TuneTiming.Choose(list, fallback, c => TimeRuns(list[c], repeats[c], run, flush, flushFloats) / repeats[c], medians: medians,
+                    confirmation: confirmation)];
+            }
         }
         finally
         {
@@ -288,7 +320,7 @@ internal sealed unsafe partial class CudaBackend
 
         if (medians is not null)
         {
-            Console.Error.WriteLine($"idrak tune {key.Op} {key.Variant} {key.A} {key.B} {key.C} {key.D} {key.E} {key.F} ({(flush != 0 ? "cold L2" : "warm")}): " +
+            Console.Error.WriteLine($"idrak tune {key.Op} {key.Variant} {key.A} {key.B} {key.C} {key.D} {key.E} {key.F} ({(flush != 0 ? "cold L2" : "warm")}{(parts > 0 ? $", geometric mean of {parts} parts" : "")}): " +
                 string.Join(", ", list.Select((c, i) => $"{c}={medians[i]:F3}")) + $" (time / formula {fallback}'s)" +
                 (float.IsNaN(confirmation![0]) ? "" : $", timed again {confirmation[0]:F3}") + $" -> {chosen}");
         }

@@ -1786,6 +1786,9 @@ internal static partial class PtxKernels
     // per row; warp w takes positions w, w + 8, … with the lanes splitting the head dimension (lane + 32·i), keeping a
     // running maximum, softmax sum and weighted value sum (online softmax). The warps' partial results are then
     // combined in shared memory: part[w] = (max, sum, acc[256]).
+    // Block y of n takes ⌈length / n⌉ positions, at least `minchunk` (measured per shape: with a short filled length the
+    // blocks beyond it find nothing to read and only add an empty part, so a short cache runs on fewer blocks than the
+    // split count recorded for a full one).
     // int8: keys and values are an int8 cache (rows of `words` packed words, 4 bytes each, byte d % 4 of word d / 4 for
     // dimension d) with one scale per cached row in kscales/vscales; a lane reads its dimension's byte and scales it.
     // bf16: keys and values are bfloat16 pairs (dimension d is half d % 2 of word d / 2, rows of `words` words); a lane
@@ -1847,6 +1850,7 @@ internal static partial class PtxKernels
             add.u32 %r24, %r10, %r23;
             sub.u32 %r24, %r24, 1;
             div.u32 %r24, %r24, %r23;
+            max.u32 %r24, %r24, %s_minchunk;
             mul.lo.u32 %r25, %r22, %r24;
             add.u32 %r26, %r25, %r24;
             min.u32 %r10, %r26, %r10;
@@ -2117,19 +2121,19 @@ internal static partial class PtxKernels
         if (bf16)
         {
             RowBlock(sb, "attention_decode_bf16", ["q", "keys", "values", "pos", "y", "part", "counters"],
-                [("u32", "rph"), ("u32", "steps"), ("u32", "cap"), ("u32", "dim"), ("f32", "scale"), ("u32", "words")], b.ToString(),
+                [("u32", "rph"), ("u32", "steps"), ("u32", "cap"), ("u32", "dim"), ("f32", "scale"), ("u32", "words"), ("u32", "minchunk")], b.ToString(),
                 sharedFloats: RowThreads / 32 * (2 + DecodeMaxDim));
         }
         else if (int8)
         {
             RowBlock(sb, "attention_decode_int8", ["q", "keys", "values", "kscales", "vscales", "pos", "y", "part", "counters"],
-                [("u32", "rph"), ("u32", "steps"), ("u32", "cap"), ("u32", "dim"), ("f32", "scale"), ("u32", "words")], b.ToString(),
+                [("u32", "rph"), ("u32", "steps"), ("u32", "cap"), ("u32", "dim"), ("f32", "scale"), ("u32", "words"), ("u32", "minchunk")], b.ToString(),
                 sharedFloats: RowThreads / 32 * (2 + DecodeMaxDim));
         }
         else
         {
             RowBlock(sb, "attention_decode_f32", ["q", "keys", "values", "pos", "y", "part", "counters"],
-                [("u32", "rph"), ("u32", "steps"), ("u32", "cap"), ("u32", "dim"), ("f32", "scale")], b.ToString(),
+                [("u32", "rph"), ("u32", "steps"), ("u32", "cap"), ("u32", "dim"), ("f32", "scale"), ("u32", "minchunk")], b.ToString(),
                 sharedFloats: RowThreads / 32 * (2 + DecodeMaxDim));
         }
     }
