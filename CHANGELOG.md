@@ -7,6 +7,17 @@
   GetSystemPowerStatus, Linux /sys/class/power_supply); a machine without a battery counts as mains;
   `IDRAK_POWER_SOURCE=ac|battery` overrides it.
 
+- Vulkan measures where storages live instead of assuming it. Mapping system memory on integrated GPUs (an entry
+  below) made a Radeon Vega iGPU upload twice as fast but compute much slower (element-wise 39 → 27 GB/s, int8 decoder
+  343 → 222 tokens/s): it reads cached (snooped) system memory slower than its device-local carve-out. The candidates
+  the device reports (staging into device-local memory; device-local memory the host maps when about all of it is
+  mappable; on shared-memory devices, host-cached or write-combined system memory on the largest host-visible heap,
+  one per memory type) are each timed at start: an element-wise kernel over 4 MiB storages, uploads and downloads,
+  medians of five rounds after a warm-up. The fastest device reads win, unless another candidate reads within 3% and
+  uploads faster. The choice and the numbers are cached with the other runtime choices (per device, driver and power
+  source); pages and the heap shown follow the chosen type. `IDRAK_VULKAN_STORAGE=staging|mapped-device|mapped-cached|mapped-uncached`
+  overrides it, `IDRAK_VULKAN_STAGING=1` still forces staging, and the `--bench-vulkan` header shows the choice and
+  every candidate's numbers. Discrete GPUs have staging, plus mapped device memory with resizable BAR.
 - Vulkan devices keep their number across runs: `vulkan:N` follows what each device reports (discrete GPUs, then
   integrated, virtual, CPU and other; each kind by deviceUUID bytes, then driverUUID; a device without a UUID after
   those, by PCI address and name), not the loader's order, which changed between two processes on a laptop with an

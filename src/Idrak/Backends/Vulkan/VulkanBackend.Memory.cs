@@ -18,7 +18,7 @@ internal sealed unsafe partial class VulkanBackend
     private int _allocations;
 
     /// <summary>The size of the shared allocations storages are carved from.</summary>
-    public long PageBytes { get; }
+    public long PageBytes { get; private set; }
 
     /// <summary>The largest storage carved from a page (a quarter page); larger storages get an allocation of their own.</summary>
     public long SubAllocationMax => PageBytes / 4;
