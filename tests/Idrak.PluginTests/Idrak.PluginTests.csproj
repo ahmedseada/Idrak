@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Plug-ins written the way an outside package writes them: this assembly is not among the InternalsVisibleTo
+       friends of Idrak or Idrak.Onnx, so it compiles against their public API alone. The tests run from the
+       self-contained runner in tests/Idrak.Tests (the "outside plug-in" group). -->
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Idrak\Idrak.csproj" />
+    <ProjectReference Include="..\..\src\Idrak.Onnx\Idrak.Onnx.csproj" />
+  </ItemGroup>
+
+</Project>

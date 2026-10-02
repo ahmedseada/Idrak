@@ -172,14 +172,31 @@ public sealed partial class Tensor : IDisposable
         return From(values, shape, device, requiresGrad);
     }
 
-    /// <summary>Creates a tensor that no <see cref="TensorScope"/> captures, for long-lived state such as parameters.</summary>
-    /// <summary>Zeros allocated on the device (no host copy), outside any <see cref="TensorScope"/>.</summary>
-    internal static Tensor PersistentZeros(ReadOnlySpan<int> shape, Device device) => Empty(shape, device, zeroed: true, track: false);
-
-    internal static Tensor Persistent(ReadOnlySpan<float> values, ReadOnlySpan<int> shape, Device device, bool requiresGrad)
+    /// <summary>
+    /// Creates a tensor that no <see cref="TensorScope"/> captures, for long-lived state such as parameters, buffers of a
+    /// cache or a packed weight format, or optimizer state: it lives until it is disposed, even when created inside a scope.
+    /// </summary>
+    public static Tensor Persistent(ReadOnlySpan<float> values, ReadOnlySpan<int> shape, Device? device = null, bool requiresGrad = false)
     {
-        var t = Empty(shape, device, track: false);
+        var t = Empty(shape, device ?? Device.Default, track: false);
+        if (values.Length != t.Size)
+        {
+            t.Dispose();
+            throw new ArgumentException($"{values.Length} values cannot fill a tensor of shape {FormatShape(shape)} ({t.Size} elements).", nameof(values));
+        }
+
         t.Backend.Upload(values, t.Storage);
+        t.RequiresGrad = requiresGrad;
+        return t;
+    }
+
+    /// <summary>
+    /// Creates a tensor of zeros that no <see cref="TensorScope"/> captures (see <see cref="Persistent"/>), allocated on the
+    /// device without a copy from the host.
+    /// </summary>
+    public static Tensor PersistentZeros(ReadOnlySpan<int> shape, Device? device = null, bool requiresGrad = false)
+    {
+        var t = Empty(shape, device ?? Device.Default, zeroed: true, track: false);
         t.RequiresGrad = requiresGrad;
         return t;
     }
@@ -581,6 +598,7 @@ public sealed partial class Tensor : IDisposable
                 }
             }
 
+            node.CheckVersions();
             node._backward(node.Grad);
 
             if (start != 0)
@@ -689,6 +707,34 @@ public sealed partial class Tensor : IDisposable
         _stage = Offloading.Current;
         _parents = inputs;
         _backward = backward;
+        _versions = VersionSum(this, inputs);
+    }
+
+    // The in-place writes into the storages a node's backward step may read, summed (each count only grows, so any write
+    // after the operation was recorded changes the sum).
+    private long _versions;
+
+    private static long VersionSum(Tensor node, Tensor[] inputs)
+    {
+        long sum = node.Storage.Version;
+        foreach (var input in inputs)
+        {
+            sum += input.Storage.Version;
+        }
+
+        return sum;
+    }
+
+    // Refuses to back-propagate through values changed in place after their operation was recorded (the gradient would
+    // be computed from the new values).
+    private void CheckVersions()
+    {
+        if (_parents is { } parents && VersionSum(this, parents) != _versions)
+        {
+            throw new InvalidOperationException(
+                $"A tensor that the backward step of '{_operation}' reads was changed in place (CopyFrom, Fill, Scale or AddScaled) after "
+                + "the operation was recorded, so its gradient cannot be computed. Write into tensors only after Backward(), or into a copy (Clone()).");
+        }
     }
 
     /// <summary>Publishes an operation event when <paramref name="start"/> is non-zero (operations telemetry on).</summary>

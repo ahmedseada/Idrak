@@ -306,6 +306,12 @@ internal sealed class KernelBuilder
     /// <summary>tanh as the driver computes it (GLSL.std.450; may lose accuracy or overflow for large |x| on some drivers).</summary>
     public Val Tanh(Val x) => Ext(Glsl.Tanh, x);
 
+    /// <summary>Sine (radians; accurate near zero only, so reduce the argument first).</summary>
+    public Val Sin(Val x) => Ext(Glsl.Sin, x);
+
+    /// <summary>Cosine (radians; accurate near zero only, so reduce the argument first).</summary>
+    public Val Cos(Val x) => Ext(Glsl.Cos, x);
+
     /// <summary>Square root.</summary>
     public Val Sqrt(Val x) => Ext(Glsl.Sqrt, x);
 
