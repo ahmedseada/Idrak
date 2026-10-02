@@ -3,6 +3,7 @@
 
 using Idrak;
 using Idrak.Backends;
+using Idrak.Backends.Vulkan;
 
 // --list-devices: every device the library can run on (the CPU, each CUDA and Vulkan GPU, test backends), whether a
 // plain test run includes it, and how to run the tests on one of them.
@@ -57,6 +58,14 @@ internal static partial class Tests
                          ?? runnable.FirstOrDefault(r => r.Device.StartsWith("vulkan", StringComparison.Ordinal) || r.Device.StartsWith("cuda", StringComparison.Ordinal)).Device
                          ?? "cpu";
         bool windows = OperatingSystem.IsWindows();
+        if (VulkanBackend.DeviceCount > 1)
+        {
+            // The loader's order changes between processes (laptops with two GPUs); the numbering does not.
+            Console.WriteLine();
+            Console.WriteLine("Vulkan devices are numbered by what they report: discrete GPUs, then integrated, virtual, CPU and other,");
+            Console.WriteLine("each kind by deviceUUID, so vulkan:N names the same GPU in every run (not the loader's order).");
+        }
+
         Console.WriteLine();
         Console.WriteLine("A plain run tests every device marked \"yes\":");
         Console.WriteLine("  dotnet run -c Release --project tests/Idrak.Tests");

@@ -123,7 +123,8 @@ internal static unsafe partial class VulkanDriver
         StructureCommandBufferAllocateInfo = 40, StructureCommandBufferBeginInfo = 42, StructureMemoryBarrier = 46,
         StructurePhysicalDeviceProperties2 = 1000059001, StructurePhysicalDeviceDriverProperties = 1000196000,
         StructurePhysicalDeviceIdProperties = 1000071004, StructurePhysicalDeviceSubgroupProperties = 1000094000,
-        StructurePhysicalDeviceMaintenance3Properties = 1000168000, StructurePhysicalDeviceSubgroupSizeControlProperties = 1000225000;
+        StructurePhysicalDeviceMaintenance3Properties = 1000168000, StructurePhysicalDeviceSubgroupSizeControlProperties = 1000225000,
+        StructurePhysicalDevicePciBusInfoProperties = 1000212000;
 
     public static uint MakeVersion(uint major, uint minor) => (major << 22) | (minor << 12);
 
@@ -349,6 +350,9 @@ internal static unsafe partial class VulkanDriver
     /// <summary>VK_EXT_subgroup_size_control: the subgroup sizes a device runs (core in Vulkan 1.3).</summary>
     public const string SubgroupSizeControlExtension = "VK_EXT_subgroup_size_control";
 
+    /// <summary>VK_EXT_pci_bus_info: the device's PCI address (orders devices that report no UUID).</summary>
+    public const string PciBusInfoExtension = "VK_EXT_pci_bus_info";
+
     /// <summary>VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR.</summary>
     public const uint DescriptorSetLayoutPushDescriptor = 0x1;
 }
@@ -431,6 +435,18 @@ internal unsafe struct VkPhysicalDeviceDriverProperties
     public fixed byte DriverName[256];
     public fixed byte DriverInfo[256];
     public uint ConformanceVersion;
+}
+
+/// <summary>VkPhysicalDevicePCIBusInfoPropertiesEXT (VK_EXT_pci_bus_info).</summary>
+[StructLayout(LayoutKind.Sequential)]
+internal unsafe struct VkPhysicalDevicePciBusInfoProperties
+{
+    public uint SType;
+    public void* PNext;
+    public uint PciDomain;
+    public uint PciBus;
+    public uint PciDevice;
+    public uint PciFunction;
 }
 
 /// <summary>VkPhysicalDeviceIDProperties (Vulkan 1.1): the UUID that names the same GPU across APIs (CUDA's cuDeviceGetUuid too).</summary>
