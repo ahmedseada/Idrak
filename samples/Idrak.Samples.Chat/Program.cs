@@ -11,7 +11,7 @@ using Idrak.Layers;
 using Idrak.LanguageModels;
 
 // Chat with a language model in the Hugging Face layout (Llama, Qwen, Mistral, Gemma …), run by Idrak's own engine
-// (CPU or CUDA):
+// (CPU, CUDA or any Vulkan GPU):
 //
 //   info  <folder>                  what the loader made of the model (architecture, parameters, notes)
 //   chat  <folder>                  chat with the model in its own chat template (reasoning and tool calls shown)
@@ -27,7 +27,7 @@ using Idrak.LanguageModels;
 //   downloading models: the idrak-tune tool (src/Idrak.FineTuning.Cli).
 //
 // Options: --offload (when the GPU is full, keep tensors in system memory: slower, but larger models and batches fit),
-//          --gpu-memory GiB (cap the GPU memory used), --adapter <dir> (load a PEFT adapter), --cuda / --cpu, --int8 (int8 weights), --int4 (4-bit weights), --bf16 (bfloat16 weights), --kv8 (int8 KV cache), --kv16 (bfloat16 KV cache), --context N (default 4096),
+//          --gpu-memory GiB (cap the GPU memory used), --adapter <dir> (load a PEFT adapter), --cuda / --cpu / --vulkan / --device NAME (cpu, cuda:N, vulkan:N), --int8 (int8 weights), --int4 (4-bit weights), --bf16 (bfloat16 weights), --kv8 (int8 KV cache), --kv16 (bfloat16 KV cache), --context N (default 4096),
 //          --folder F (check: read the model from F instead of the folder named in the reference), --no-think,
 //          --matmul fp32|bf16|fp8 (precision of the larger matrix products: bf16 tensor cores by default, fp32 for check).
 var positional = new List<string>();
@@ -35,13 +35,15 @@ bool int8 = false, bf16 = false, int4 = false, kv8 = false, kv16 = false, noThin
 int context = 4096;
 string? folderOverride = null, adapterFolder = null;
 MatMulPrecision? matmul = null;
-Device device = Device.IsCudaAvailable ? Device.Cuda() : Device.Cpu;
+Device device = Device.Default;                                       // CUDA, else a Vulkan GPU with IDRAK_VULKAN_DEFAULT=1, else the CPU
 for (int i = 0; i < args.Length; i++)
 {
     switch (args[i])
     {
         case "--cuda" or "--gpu": device = Device.Cuda(); break;
         case "--cpu": device = Device.Cpu; break;
+        case "--vulkan": device = Device.Parse("vulkan:0"); break;
+        case "--device": device = Device.Parse(args[++i]); break;     // any name --list-devices shows: cpu, cuda:N, vulkan:N
         case "--int8": int8 = true; break;
         case "--bf16": bf16 = true; break;
         case "--int4": int4 = true; break;
@@ -72,7 +74,7 @@ for (int i = 0; i < args.Length; i++)
 if (positional.Count < 2 || positional[0] is not ("info" or "chat" or "check" or "profile"))
 {
     Console.WriteLine("usage: info <folder> | chat <folder> | profile <folder> | check <reference.json>");
-    Console.WriteLine("       [--cuda|--cpu] [--int8|--int4|--bf16] [--kv8|--kv16] [--context N] [--adapter DIR] [--folder F] [--no-think] [--matmul fp32|bf16|fp8]");
+    Console.WriteLine("       [--cuda|--cpu|--vulkan|--device NAME] [--int8|--int4|--bf16] [--kv8|--kv16] [--context N] [--adapter DIR] [--folder F] [--no-think] [--matmul fp32|bf16|fp8]");
     Console.WriteLine("fine-tuning, evaluating, exporting and downloading models: idrak-tune (src/Idrak.FineTuning.Cli)");
     return 1;
 }
