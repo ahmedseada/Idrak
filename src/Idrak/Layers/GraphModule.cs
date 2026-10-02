@@ -8,7 +8,7 @@ namespace Idrak.Layers;
 /// <summary>
 /// One step of a <see cref="GraphModule"/>: an operation on named values that produces a named value.
 /// </summary>
-/// <param name="Op">"layer" (runs <paramref name="Layer"/> on the first input) or a primitive operation (see <see cref="GraphModule"/>).</param>
+/// <param name="Op">"layer" (runs <paramref name="Layer"/> on the first input) or an operation (see <see cref="GraphModule"/> and <see cref="GraphOps"/>).</param>
 /// <param name="Inputs">Names of the input values: the graph input, earlier outputs or constants.</param>
 /// <param name="Output">Name of the value produced.</param>
 /// <param name="Attributes">Settings of the operation (for example "axis" or "perm"), or null.</param>
@@ -17,13 +17,15 @@ public sealed record GraphNode(string Op, IReadOnlyList<string> Inputs, string O
 
 /// <summary>
 /// A network whose layers form a graph rather than a chain: values can be used several times (skip connections,
-/// branches) and combined. Nodes run in order; each is a standard layer (<see cref="Linear"/>, <see cref="Conv2d"/>,
-/// <see cref="BatchNorm"/>, …) or a primitive operation: add, sub, mul, div, matmul, relu, tanh, sigmoid, exp, log,
-/// abs, softmax, concat, flatten, reshape, transpose, squeeze, unsqueeze, gather, slice, shape, cast, identity,
-/// reduce_mean and global_average_pool (following the ONNX operators of the same names). Integer values such as
-/// shapes are computed on the host, so shape arithmetic works for any batch size. Constants are buffers: they move
-/// with the model and are saved with its weights. <see cref="ToJson"/> and <see cref="FromJson"/> describe the graph so
-/// packages can rebuild it. The ONNX importer creates these for models with skip connections.
+/// branches) and combined. Nodes run in order; each is a layer (any type registered in <see cref="LayerTypes"/>:
+/// <see cref="Linear"/>, <see cref="Conv2d"/>, <see cref="BatchNorm"/>, … or your own) or an operation: the structural
+/// ones (identity, cast, add, sub, mul, div, concat, shape, gather, slice, unsqueeze, squeeze, reshape) and those
+/// registered in <see cref="GraphOps"/> (matmul, relu, tanh, sigmoid, exp, log, abs, neg, sqrt, pow, clip, leaky_relu,
+/// elu, hard_sigmoid, hard_swish, max, min, softmax, flatten, transpose, reduce_mean, global_average_pool, or your own),
+/// following the ONNX operators of the same names. Integer values such as shapes are computed on the host, so shape
+/// arithmetic works for any batch size. Constants are buffers: they move with the model and are saved with its weights.
+/// <see cref="ToJson"/> and <see cref="FromJson"/> describe the graph so packages can rebuild it. The ONNX importer
+/// creates these for models with skip connections, and the ONNX exporter writes them back.
 /// </summary>
 public sealed class GraphModule : Module
 {
@@ -60,6 +62,11 @@ public sealed class GraphModule : Module
             if (node.Op == "layer" && node.Layer is null)
             {
                 throw new ArgumentException($"Node '{node.Output}' is a layer node without a layer.");
+            }
+
+            if (!GraphOps.IsKnown(node.Op))
+            {
+                throw new ArgumentException($"Node '{node.Output}' uses the unknown operation '{node.Op}' (known: {string.Join(", ", GraphOps.Names)}); add it with GraphOps.Register.");
             }
 
             known.Add(node.Output);
@@ -111,48 +118,69 @@ public sealed class GraphModule : Module
     public override string ToString() => $"GraphModule({_nodes.Count} nodes, {Children().Count()} layers)";
 
     /// <inheritdoc />
-    protected override Tensor ForwardCore(Tensor input)
+    protected override Tensor ForwardCore(Tensor input) =>
+        Trace(input)[Output] as Tensor ?? throw new InvalidOperationException($"The output '{Output}' is an integer value, not a tensor.");
+
+    // Every value the graph computes for `input`, by name: tensors, and integers computed on the host (HostValue).
+    internal Dictionary<string, object> Trace(Tensor input)
     {
         var values = new Dictionary<string, object> { [Input] = input };
         foreach (var node in _nodes)
         {
-            object Arg(int i)
-            {
-                string name = node.Inputs[i];
-                return values.TryGetValue(name, out var v) ? v
-                    : _constants.TryGetValue(name, out var c) ? c
-                    : _integers.TryGetValue(name, out var h) ? h
-                    : throw new InvalidOperationException($"Value '{name}' is not available.");
-            }
-
-            try
-            {
-                values[node.Output] = Run(node, Arg, node.Inputs.Count);
-            }
-            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or NotSupportedException)
-            {
-                throw new InvalidOperationException($"Graph node '{node.Output}' ({node.Op}) failed: {ex.Message}", ex);
-            }
+            values[node.Output] = RunNode(node, name => values.TryGetValue(name, out var v) ? v
+                : _constants.TryGetValue(name, out var c) ? c
+                : _integers.TryGetValue(name, out var h) ? h
+                : null);
         }
 
-        return values[Output] as Tensor ?? throw new InvalidOperationException($"The output '{Output}' is an integer value, not a tensor.");
+        return values;
     }
+
+    // The float constants in order, and the integer constants.
+    internal IReadOnlyList<(string Name, Tensor Value)> Constants => [.. _constantNames.Select(n => (n, _constants[n]))];
+
+    internal IReadOnlyList<(string Name, long[] Values, int[] Dims)> IntegerConstants => [.. _integers.Select(p => (p.Key, p.Value.Values, p.Value.Dims))];
+
+    // Runs one node, reading its inputs through `lookup` (null for a value that is not available).
+    internal static object RunNode(GraphNode node, Func<string, object?> lookup)
+    {
+        object Arg(int i)
+        {
+            string name = node.Inputs[i];
+            return lookup(name) ?? throw new InvalidOperationException($"Value '{name}' is not available.");
+        }
+
+        try
+        {
+            return Run(node, Arg, node.Inputs.Count);
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or NotSupportedException)
+        {
+            throw new InvalidOperationException($"Graph node '{node.Output}' ({node.Op}) failed: {ex.Message}", ex);
+        }
+    }
+
+    // An integer value computed on the host, as the graph holds it.
+    internal static object IntegerValue(long[] values, int[] dims) => new HostValue(values, dims);
+
+    // A value's integers: a host value's own, or a tensor's values truncated.
+    internal static long[] AsIntegers(object value) => value switch
+    {
+        HostValue h => h.Values,
+        Tensor t => t.ToArray().Select(v => (long)v).ToArray(),
+        _ => throw new InvalidOperationException("expected integers"),
+    };
 
     // ------------------------------------------------------------------ operations
 
     /// <summary>An integer value computed on the host (a shape, axes, indices): its values and dimensions.</summary>
-    private sealed record HostValue(long[] Values, int[] Dims);
+    internal sealed record HostValue(long[] Values, int[] Dims);
 
     private static object Run(GraphNode node, Func<int, object> arg, int count)
     {
         var a = node.Attributes;
         Tensor T(int i) => arg(i) as Tensor ?? throw new InvalidOperationException($"input {i} must be a tensor");
-        long[] Ints(int i) => arg(i) switch
-        {
-            HostValue h => h.Values,
-            Tensor t => t.ToArray().Select(v => (long)v).ToArray(),
-            _ => throw new InvalidOperationException("expected integers"),
-        };
+        long[] Ints(int i) => AsIntegers(arg(i));
         long[]? Axes(int inputIndex) => a?["axes"] is JsonArray axes ? [.. axes.Select(v => (long)v!)] : count > inputIndex && node.Inputs[inputIndex].Length > 0 ? Ints(inputIndex) : null;
         long Int(string name, long fallback) => a?[name] is JsonValue v ? (long)v : fallback;
 
@@ -164,40 +192,8 @@ public sealed class GraphModule : Module
                 return arg(0);
             case "add" or "sub" or "mul" or "div":
                 return Binary(node.Op, arg(0), arg(1));
-            case "matmul":
-                return T(0).MatMul(T(1));
-            case "relu":
-                return T(0).Relu();
-            case "tanh":
-                return T(0).Tanh();
-            case "sigmoid":
-                return T(0).Sigmoid();
-            case "exp":
-                return T(0).Exp();
-            case "log":
-                return T(0).Log();
-            case "abs":
-                return T(0).Abs();
-            case "softmax":
-                var s = T(0);
-                long axis = Int("axis", -1);
-                return axis == -1 || axis == s.Rank - 1 ? s.Softmax() : throw new NotSupportedException("softmax over an axis other than the last");
-            case "flatten":
-                var f = T(0);
-                int at = Normalize((int)Int("axis", 1), f.Rank);
-                int outer = 1;
-                for (int i = 0; i < at; i++)
-                {
-                    outer *= f.Shape[i];
-                }
-
-                return f.Reshape(outer, f.Size / Math.Max(outer, 1));
             case "reshape":
                 return Reshape(T(0), Ints(1), Int("allowzero", 0) == 1);
-            case "transpose":
-                var x = T(0);
-                int[] perm = a?["perm"] is JsonArray p ? [.. p.Select(v => (int)v!)] : [.. Enumerable.Range(0, x.Rank).Reverse()];
-                return x.Permute(perm);
             case "concat":
                 int concatAxis = (int)Int("axis", 0);
                 var parts = Enumerable.Range(0, count).Select(arg).ToList();
@@ -220,27 +216,15 @@ public sealed class GraphModule : Module
                 return Unsqueeze(arg(0), Axes(1) ?? throw new InvalidOperationException("unsqueeze needs axes"));
             case "squeeze":
                 return Squeeze(arg(0), Axes(1));
-            case "reduce_mean":
-                var r = T(0);
-                var axes = (Axes(1) ?? [.. Enumerable.Range(0, r.Rank).Select(i => (long)i)]).Select(v => Normalize((int)v, r.Rank)).OrderDescending();
-                bool keep = Int("keepdims", 1) == 1;
-                foreach (int reduce in axes)
-                {
-                    r = r.Mean(reduce, keep);
-                }
-
-                return r;
-            case "global_average_pool":
-                var g = T(0);
-                return g.Reshape(g.Shape[0], g.Shape[1], -1).Mean(2).Reshape(g.Shape[0], g.Shape[1], 1, 1);
             default:
-                throw new NotSupportedException($"unknown operation '{node.Op}'");
+                var op = GraphOps.TryGet(node.Op) ?? throw new NotSupportedException($"unknown operation '{node.Op}'; register it with GraphOps.Register");
+                return op(new GraphOpContext(node, arg));
         }
     }
 
-    private static int Normalize(int axis, int rank) => axis < 0 ? axis + rank : axis;
+    internal static int Normalize(int axis, int rank) => axis < 0 ? axis + rank : axis;
 
-    private static object Binary(string op, object left, object right)
+    internal static object Binary(string op, object left, object right)
     {
         if (left is HostValue hl && right is HostValue hr)
         {
@@ -422,7 +406,7 @@ public sealed class GraphModule : Module
 
             if (n.Layer is not null)
             {
-                node["layer"] = LayerDescriptions.Describe(n.Layer);
+                node["layer"] = LayerTypes.Describe(n.Layer);
             }
 
             return (JsonNode)node;
@@ -450,75 +434,10 @@ public sealed class GraphModule : Module
             [.. n["inputs"]!.AsArray().Select(i => (string)i!)],
             (string)n["output"]!,
             n["attributes"]?.DeepClone().AsObject(),
-            n["layer"] is JsonObject layer ? LayerDescriptions.Create(layer, device) : null));
+            n["layer"] is JsonObject layer ? LayerTypes.Create(layer, device) : null));
         return new GraphModule((string)description["input"]!, (string)description["output"]!, nodes, constants, integers);
     }
 
     /// <summary>Whether <paramref name="description"/> is a graph description (rather than a network builder's).</summary>
     public static bool IsDescription(JsonObject description) => (string?)description["format"] == Format;
-}
-
-/// <summary>Settings of the standard layers as JSON, and the layers rebuilt from them (weights are loaded separately).</summary>
-internal static class LayerDescriptions
-{
-    public static JsonObject Describe(Module module) => module switch
-    {
-        Linear l => new() { ["type"] = "linear", ["in"] = l.InFeatures, ["out"] = l.OutFeatures, ["bias"] = l.Bias is not null },
-        Conv2d c => new()
-        {
-            ["type"] = "conv2d", ["in"] = c.InChannels, ["out"] = c.OutChannels, ["kernel"] = c.KernelSize, ["stride"] = c.Stride,
-            ["padding"] = c.Padding, ["bias"] = c.Bias is not null,
-        },
-        BatchNorm b => new() { ["type"] = "batchnorm", ["channels"] = b.Channels, ["momentum"] = b.Momentum, ["epsilon"] = b.Epsilon },
-        LayerNorm n => new() { ["type"] = "layernorm", ["features"] = n.Features, ["epsilon"] = n.Epsilon },
-        Embedding e => new() { ["type"] = "embedding", ["vocabulary"] = e.Vocabulary, ["dim"] = e.Dim },
-        PositionalEncoding p => new() { ["type"] = "positional", ["maxLength"] = p.MaxLength, ["dim"] = p.Dim },
-        MultiHeadAttention a => new() { ["type"] = "attention", ["dim"] = a.Dim, ["heads"] = a.Heads, ["causal"] = a.Causal },
-        TransformerEncoderLayer t when t.Children().ToList() is [_, MultiHeadAttention a, _, Linear ff, ..] => new()
-        {
-            ["type"] = "transformer", ["dim"] = t.Dim, ["heads"] = a.Heads, ["ffDim"] = ff.OutFeatures, ["causal"] = a.Causal,
-        },
-        LSTM r => new() { ["type"] = "lstm", ["in"] = r.InputSize, ["hidden"] = r.HiddenSize, ["sequences"] = r.ReturnSequences },
-        GRU r => new() { ["type"] = "gru", ["in"] = r.InputSize, ["hidden"] = r.HiddenSize, ["sequences"] = r.ReturnSequences },
-        MaxPool2d m => new() { ["type"] = "maxpool2d", ["kernel"] = m.KernelSize, ["stride"] = m.Stride, ["padding"] = m.Padding },
-        GlobalAveragePool2d => new() { ["type"] = "globalavgpool2d" },
-        Flatten => new() { ["type"] = "flatten" },
-        ReLU => new() { ["type"] = "relu" },
-        Tanh => new() { ["type"] = "tanh" },
-        Sigmoid => new() { ["type"] = "sigmoid" },
-        GELU => new() { ["type"] = "gelu" },
-        Softmax => new() { ["type"] = "softmax" },
-        Dropout d => new() { ["type"] = "dropout", ["p"] = d.Probability },
-        _ => throw new NotSupportedException($"{module.GetType().Name} cannot be described; graphs can hold only the standard layers."),
-    };
-
-    public static Module Create(JsonObject d, Device device)
-    {
-        int I(string key) => (int)d[key]!;
-        float F(string key) => (float)d[key]!;
-        bool B(string key) => (bool)d[key]!;
-        return (string)d["type"]! switch
-        {
-            "linear" => new Linear(I("in"), I("out"), B("bias"), device),
-            "conv2d" => new Conv2d(I("in"), I("out"), I("kernel"), I("stride"), I("padding"), B("bias"), device),
-            "batchnorm" => new BatchNorm(I("channels"), F("momentum"), F("epsilon"), device),
-            "layernorm" => new LayerNorm(I("features"), F("epsilon"), device),
-            "embedding" => new Embedding(I("vocabulary"), I("dim"), device),
-            "positional" => new PositionalEncoding(I("maxLength"), I("dim"), device),
-            "attention" => new MultiHeadAttention(I("dim"), I("heads"), B("causal"), 0f, device),
-            "transformer" => new TransformerEncoderLayer(I("dim"), I("heads"), I("ffDim"), 0f, B("causal"), device),
-            "lstm" => new LSTM(I("in"), I("hidden"), B("sequences"), device),
-            "gru" => new GRU(I("in"), I("hidden"), B("sequences"), device),
-            "maxpool2d" => new MaxPool2d(I("kernel"), I("stride"), I("padding")),
-            "globalavgpool2d" => new GlobalAveragePool2d(),
-            "flatten" => new Flatten(),
-            "relu" => new ReLU(),
-            "tanh" => new Tanh(),
-            "sigmoid" => new Sigmoid(),
-            "gelu" => new GELU(),
-            "softmax" => new Softmax(),
-            "dropout" => new Dropout(F("p")),
-            var type => throw new InvalidDataException($"Unknown layer type '{type}'."),
-        };
-    }
 }
