@@ -141,7 +141,7 @@ internal sealed partial class VulkanBackend
     // few-rows kernels. False when nothing fits the device (the caller falls back).
     private bool PackedRows(VulkanKernels.PackedFormat format, Storage x, Storage weights, Storage? scales, Storage y, int m, int n, int k)
     {
-        if (m > Capabilities.FewRows && n > 0 && k > 0)
+        if (m > Capabilities.FewRows && n > 0 && k > 0 && FitPacked(x, weights, scales, y))   // larger weights: the windowed few-rows path
         {
             int choice = PromptChoice(format, x, weights, scales, y, m, n, k);
             if (choice != 0 && RunPrompt(choice, format, x, weights, scales, y, m, n, k))

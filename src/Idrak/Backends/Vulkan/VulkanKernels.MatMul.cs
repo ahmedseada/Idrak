@@ -345,12 +345,15 @@ internal static partial class VulkanKernels
     //   bfloat16: two per word (⌈n / 2⌉ words, the even column in the low half).
     // Grid: x = ⌈words / L⌉ column blocks, y = splits of k, z = ⌈m / rows⌉ row blocks. A workgroup of W (the width) is
     // L lanes (consecutive words of a row of k: 32 lanes read 128 contiguous bytes) × S = W / L slices of its split's
-    // rows [y · chunk, min(k, (y + 1) · chunk)) (chunk a multiple of 32, from the host): slice s takes rows ≡ s (mod S),
-    // so the workgroup reads S consecutive rows of L words at a time, and each word an invocation reads feeds rows ×
-    // (columns per word) multiply-adds kept in registers. Then the slices' sums are added in slice order through
-    // workgroup memory (`batch` sums per lane per round, two barriers a round) and stored: to y[r, j] with one split
-    // (int8 scaled), else to part[y, r, j] for gemv_reduce. Lanes past the last word read the last word again and store
-    // nothing; rows of the block past m read row m - 1 and store nothing.
+    // rows [s · chunk, min(k, (s + 1) · chunk)), s = first + y (chunk a multiple of 32, from the host): slice t takes
+    // rows ≡ t (mod S), so the workgroup reads S consecutive rows of L words at a time, and each word an invocation reads
+    // feeds rows × (columns per word) multiply-adds kept in registers. Then the slices' sums are added in slice order
+    // through workgroup memory (`batch` sums per lane per round, two barriers a round) and stored: to y[r, j] when the
+    // product has one split in all (`splits`; int8 scaled), else to part[s, r, j] for gemv_reduce. Lanes past the last
+    // word read the last word again and store nothing; rows of the block past m read row m - 1 and store nothing.
+    //
+    // The weights' binding (and int4's scales') starts at row first · chunk of k: a dispatch over one window of weights
+    // larger than a binding (VulkanBackend.LargeStorage.cs) takes the splits of that window; otherwise first is 0.
     //
     // Workgroup memory: partial[b · W + slice · L + lane] is written by invocation (slice, lane) only, after a barrier
     // that ends the previous round's reads; it is read after the next barrier.
@@ -365,12 +368,15 @@ internal static partial class VulkanKernels
         var scales = format == PackedFormat.BFloat16 ? null : k.Buffer("scales");
         var y = k.Buffer("y");
         var (m, n, depth, chunk) = (k.PushInt("m"), k.PushInt("n"), k.PushInt("k"), k.PushInt("chunk"));
+        var (firstSplit, splits) = (k.PushInt("first"), k.PushInt("splits"));
         var partial = k.Shared("partial", threads * batch);
         var tid = k.LocalX;
         var (lane, slice) = (tid & (lanes - 1), tid >> laneShift);
         var words = (n + (perWord - 1)) / perWord;
         var wordAt = k.Min(k.GroupX * lanes + lane, words - 1);
-        var kBegin = k.GroupY * chunk;
+        var split = firstSplit + k.GroupY;
+        var baseRow = firstSplit * chunk;                                   // the row of k the weights' binding starts at
+        var kBegin = split * chunk;
         var kEnd = k.Min(depth, kBegin + chunk);
         var rowBase = k.GroupZ * rows;
         var xRows = new Val[rows];
@@ -409,7 +415,7 @@ internal static partial class VulkanKernels
             }
         }
 
-        Val Word(Val kk) => q.Int(kk * words + wordAt);
+        Val Word(Val kk) => q.Int((kk - baseRow) * words + wordAt);
 
         if (format == PackedFormat.Int4)
         {
@@ -420,7 +426,7 @@ internal static partial class VulkanKernels
                 var groupScales = new Val[perWord];
                 for (int c = 0; c < perWord; c++)
                 {
-                    groupScales[c] = scales![g * (words * 8) + wordAt * 8 + c];
+                    groupScales[c] = scales![(g - baseRow / 32) * (words * 8) + wordAt * 8 + c];
                 }
 
                 var first = g * 32 + slice;
@@ -471,7 +477,7 @@ internal static partial class VulkanKernels
 
         // The slices' sums, `batch` per lane per round: output o < L · batch (invocations o, o + W, …) adds sum b = o / L
         // of lane o % L over the S slices in order and stores it.
-        var single = k.GroupsY.Eq(1);
+        var single = splits.Eq(1);
         for (int round = 0; round < sums / batch; round++)
         {
             if (round > 0)
@@ -504,7 +510,7 @@ internal static partial class VulkanKernels
                     k.If((row < m) & (j < n), () =>
                     {
                         var value = format == PackedFormat.Int8 ? k.Select(single, total * scales![j], total) : total;
-                        y[(k.GroupY * m + row) * n + j] = value;
+                        y[(split * m + row) * n + j] = value;
                     });
                 });
             }

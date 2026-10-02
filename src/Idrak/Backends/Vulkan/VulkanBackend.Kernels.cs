@@ -8,9 +8,10 @@ using System.Numerics;
 namespace Idrak.Backends.Vulkan;
 
 // The operations that run as generated SPIR-V kernels (VulkanKernels), each passing its storages and push constants in
-// the order its kernel declares them. A case a kernel does not cover (a storage larger than the device binds, a head
-// size beyond the attention kernels, more workgroups than the device takes, a permutation of more than six dimensions)
-// goes to the host fallback, as every operation without a kernel does.
+// the order its kernel declares them. A case a kernel does not cover (a storage larger than the device binds, except
+// where an operation binds it in windows: VulkanBackend.LargeStorage.cs; a head size beyond the attention kernels, more
+// workgroups than the device takes, a permutation of more than six dimensions) goes to the host fallback, as every
+// operation without a kernel does.
 internal sealed partial class VulkanBackend
 {
     // One VulkanKernel per generated kernel and workgroup width for the process (two devices of one width share them;
@@ -124,14 +125,14 @@ internal sealed partial class VulkanBackend
 
     // Dispatches a generated kernel by name.
     private void Run(string kernel, uint groupsX, uint groupsY, uint groupsZ, ReadOnlySpan<Storage> storages, ReadOnlySpan<byte> push) =>
-        Dispatch(Kernel(kernel), groupsX, groupsY, groupsZ, storages, push);
+        DispatchKernel(Kernel(kernel), groupsX, groupsY, groupsZ, storages, push);
 
     // Dispatches a generated kernel built for workgroups of `width`, with subgroup reductions or not.
     private void RunAt(string kernel, int width, uint groupsX, uint groupsY, uint groupsZ, ReadOnlySpan<Storage> storages, ReadOnlySpan<byte> push,
         bool? subgroups = null)
     {
         bool sub = subgroups ?? Limits.SubgroupArithmetic;
-        Dispatch(width == Width && sub == Limits.SubgroupArithmetic ? Kernel(kernel) : KernelAt(kernel, width, sub), groupsX, groupsY, groupsZ, storages, push);
+        DispatchKernel(width == Width && sub == Limits.SubgroupArithmetic ? Kernel(kernel) : KernelAt(kernel, width, sub), groupsX, groupsY, groupsZ, storages, push);
     }
 
     // Dispatches an element-wise kernel over n elements.
@@ -855,7 +856,7 @@ internal sealed partial class VulkanBackend
 
     public override void Int8MatMul(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
     {
-        if (!Fit(x, q, scales, y) || !PackedProduct(VulkanKernels.PackedFormat.Int8, x, q, scales, y, m, n, k))
+        if (!Fit(x, scales, y) || !PackedProduct(VulkanKernels.PackedFormat.Int8, x, q, scales, y, m, n, k))
         {
             base.Int8MatMul(x, q, scales, y, m, n, k);
         }
@@ -863,7 +864,7 @@ internal sealed partial class VulkanBackend
 
     public override void Int4MatMul(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
     {
-        if (!Fit(x, q, scales, y) || !PackedRows(VulkanKernels.PackedFormat.Int4, x, q, scales, y, m, n, k))
+        if (!Fit(x, y) || !PackedRows(VulkanKernels.PackedFormat.Int4, x, q, scales, y, m, n, k))
         {
             base.Int4MatMul(x, q, scales, y, m, n, k);
         }
@@ -871,7 +872,7 @@ internal sealed partial class VulkanBackend
 
     public override void BFloat16MatMul(Storage x, Storage packed, Storage y, int m, int n, int k)
     {
-        if (!Fit(x, packed, y) || !PackedRows(VulkanKernels.PackedFormat.BFloat16, x, packed, null, y, m, n, k))
+        if (!Fit(x, y) || !PackedRows(VulkanKernels.PackedFormat.BFloat16, x, packed, null, y, m, n, k))
         {
             base.BFloat16MatMul(x, packed, y, m, n, k);
         }
@@ -898,9 +899,9 @@ internal sealed partial class VulkanBackend
         int block = GemvBlock(m);
         int rows = VulkanKernels.GemvRowBlocks[block];
         long rowBlocks = ((long)m + rows - 1) / rows;
-        if (rowBlocks > Limits.MaxGroupsZ)
+        if (rowBlocks > Limits.MaxGroupsZ || PackedWindowRows(format, weights, scales, m, n, k) < 0)
         {
-            return false;
+            return false;                                                      // (or weights larger than a binding that cannot be windowed)
         }
 
         int chosen = GemvChoice(format, block, x, weights, scales, y, m, n, k);
@@ -1007,11 +1008,21 @@ internal sealed partial class VulkanBackend
         int width = WidthOf(choice), variant = choice & 7, rows = VulkanKernels.GemvRowBlocks[block], words = VulkanKernels.GemvWordCounts[variant];
         int perWord = VulkanKernels.ColumnsPerWord(format);
         uint columnBlocks = (uint)(((long)(n + perWord - 1) / perWord + words - 1) / words), rowBlocks = (uint)((m + rows - 1) / rows);
+        string kernel = GemvKernelNames[((int)format * VulkanKernels.GemvRowBlocks.Length + block) * VulkanKernels.GemvWordCounts.Length + variant];
+        if (PackedWindowRows(format, weights, scales, m, n, k) is var window and > 0)
+        {
+            // Weights larger than a binding: one dispatch per window of rows, the choice's chunks fitted to the windows.
+            const int Align = VulkanKernels.GemvChunkAlign;
+            int wanted = Math.Max(1, (choice & Rest) >> 3);
+            int windowChunk = Math.Max(Align, ((k + wanted - 1) / wanted + Align - 1) / Align * Align);
+            RunPackedWindows(format, kernel, width, columnBlocks, rows, windowChunk, (int)window, x, weights, scales, y, m, n, k);
+            return;
+        }
+
         var (splits, chunk) = GemvPlan(choice, k, (long)m * n);
 
-        string kernel = GemvKernelNames[((int)format * VulkanKernels.GemvRowBlocks.Length + block) * VulkanKernels.GemvWordCounts.Length + variant];
-        Span<byte> b = stackalloc byte[16];
-        var push = new Push(b).I(m).I(n).I(k).I(chunk).Bytes;
+        Span<byte> b = stackalloc byte[24];
+        var push = new Push(b).I(m).I(n).I(k).I(chunk).I(0).I(splits).Bytes;
         var output = splits == 1 ? y : Allocate(splits * m * n, zeroed: false);
         try
         {
@@ -1051,7 +1062,11 @@ internal sealed partial class VulkanBackend
     {
         if (!Fit(q, scales, w))
         {
-            base.Int8Dequantize(q, scales, w, k, n);
+            if (!DequantizeWindows(VulkanKernels.PackedFormat.Int8, q, scales, w, k, n))
+            {
+                base.Int8Dequantize(q, scales, w, k, n);
+            }
+
             return;
         }
 
@@ -1063,7 +1078,11 @@ internal sealed partial class VulkanBackend
     {
         if (!Fit(q, scales, w))
         {
-            base.Int4Dequantize(q, scales, w, k, n);
+            if (!DequantizeWindows(VulkanKernels.PackedFormat.Int4, q, scales, w, k, n))
+            {
+                base.Int4Dequantize(q, scales, w, k, n);
+            }
+
             return;
         }
 
@@ -1075,7 +1094,11 @@ internal sealed partial class VulkanBackend
     {
         if (!Fit(packed, w))
         {
-            base.BFloat16Dequantize(packed, w, k, n);
+            if (!DequantizeWindows(VulkanKernels.PackedFormat.BFloat16, packed, null, w, k, n))
+            {
+                base.BFloat16Dequantize(packed, w, k, n);
+            }
+
             return;
         }
 
@@ -1115,24 +1138,32 @@ internal sealed partial class VulkanBackend
     {
         if (!Fit(table, indices, y))
         {
-            base.Gather(table, indices, y, count, dim, vocabulary);
+            if (!GatherWindows("gather", table, indices, y, count, dim, vocabulary, dim))
+            {
+                base.Gather(table, indices, y, count, dim, vocabulary);
+            }
+
             return;
         }
 
-        Span<byte> b = stackalloc byte[12];
-        Grid("gather", (long)count * dim, [table, indices, y], new Push(b).I(count).I(dim).I(vocabulary).Bytes);
+        Span<byte> b = stackalloc byte[20];
+        Grid("gather", (long)count * dim, [table, indices, y], new Push(b).I(count).I(dim).I(vocabulary).I(0).I(vocabulary).Bytes);
     }
 
     public override void GatherBFloat16(Storage packed, Storage indices, Storage y, int count, int dim, int vocabulary)
     {
         if (!Fit(packed, indices, y))
         {
-            base.GatherBFloat16(packed, indices, y, count, dim, vocabulary);
+            if (!GatherWindows("gather_bf16", packed, indices, y, count, dim, vocabulary, (dim + 1) / 2))
+            {
+                base.GatherBFloat16(packed, indices, y, count, dim, vocabulary);
+            }
+
             return;
         }
 
-        Span<byte> b = stackalloc byte[12];
-        Grid("gather_bf16", (long)count * dim, [packed, indices, y], new Push(b).I(count).I(dim).I(vocabulary).Bytes);
+        Span<byte> b = stackalloc byte[20];
+        Grid("gather_bf16", (long)count * dim, [packed, indices, y], new Push(b).I(count).I(dim).I(vocabulary).I(0).I(vocabulary).Bytes);
     }
 
     public override void KeyValueWrite(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)

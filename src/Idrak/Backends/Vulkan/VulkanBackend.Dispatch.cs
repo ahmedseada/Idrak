@@ -95,9 +95,12 @@ internal sealed unsafe partial class VulkanBackend
     /// <paramref name="storages"/>[i]; <paramref name="pushConstants"/> fills its push-constant block (exactly
     /// <see cref="VulkanKernel.PushConstantBytes"/> bytes). Dispatches run in the order queued wherever they share a
     /// storage one of them writes (<see cref="VulkanKernel.Writes"/>), and may overlap where they do not; reading a storage
-    /// (<see cref="Backend.Download"/>) waits for the dispatches that use it.
+    /// (<see cref="Backend.Download"/>) waits for the dispatches that use it. With <paramref name="windows"/>, binding i
+    /// is the window of storage i starting at byte windows[i] (a multiple of minStorageBufferOffsetAlignment) and at most
+    /// <see cref="MaxStorageBytes"/> long (VulkanBackend.LargeStorage.cs); without, every storage is bound whole.
     /// </summary>
-    public void Dispatch(VulkanKernel kernel, uint groupsX, uint groupsY, uint groupsZ, ReadOnlySpan<Storage> storages, ReadOnlySpan<byte> pushConstants)
+    public void Dispatch(VulkanKernel kernel, uint groupsX, uint groupsY, uint groupsZ, ReadOnlySpan<Storage> storages, ReadOnlySpan<byte> pushConstants,
+        ReadOnlySpan<long> windows = default)
     {
         ArgumentNullException.ThrowIfNull(kernel);
         if (storages.Length != kernel.Bindings)
@@ -134,14 +137,20 @@ internal sealed unsafe partial class VulkanBackend
                 for (int i = 0; i < bindings; i++)
                 {
                     blocks[i] = BlockOf(storages[i]);
-                    long bytes = BlockBytes(storages[i].Length);
-                    if (bytes > MaxStorageBytes)
+                    long bytes = BlockBytes(storages[i].Length), offset = 0;
+                    if (i < windows.Length)
+                    {
+                        offset = windows[i];
+                        bytes = WindowBytes(bytes, offset);
+                    }
+
+                    if (bytes > MaxStorageBytes || bytes <= 0)
                     {
                         throw new ArgumentException(
                             $"Vulkan kernel '{kernel.Name}': storage {i} holds {bytes:N0} bytes, more than {Name} binds ({MaxStorageBytes:N0}); use the host fallback for it.", nameof(storages));
                     }
 
-                    buffers[i] = new VkDescriptorBufferInfo { Buffer = blocks[i].Buffer, Offset = 0, Range = (ulong)bytes };
+                    buffers[i] = new VkDescriptorBufferInfo { Buffer = blocks[i].Buffer, Offset = (ulong)offset, Range = (ulong)bytes };
                     writes[i] = new VkWriteDescriptorSet
                     {
                         SType = StructureWriteDescriptorSet,
@@ -594,12 +603,20 @@ internal sealed unsafe partial class VulkanBackend
         try
         {
             byte* entry = stackalloc byte[] { (byte)'m', (byte)'a', (byte)'i', (byte)'n', 0 };
+            var required = new VkPipelineShaderStageRequiredSubgroupSizeCreateInfo
+            {
+                SType = StructurePipelineShaderStageRequiredSubgroupSizeCreateInfo,
+                RequiredSubgroupSize = (uint)kernel.RequiredSubgroupSize,
+            };
+            bool sized = kernel.RequiredSubgroupSize > 0 && _sizeControl.Enabled;  // VulkanBackend.SubgroupSize.cs
             var info = new VkComputePipelineCreateInfo
             {
                 SType = StructureComputePipelineCreateInfo,
                 Stage = new VkPipelineShaderStageCreateInfo
                 {
                     SType = StructurePipelineShaderStageCreateInfo,
+                    PNext = sized ? &required : null,
+                    Flags = sized && _sizeControl.FullSubgroups ? PipelineStageRequireFullSubgroups : 0,
                     Stage = ShaderStageCompute,
                     Module = module,
                     Name = entry,
