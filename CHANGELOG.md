@@ -6,7 +6,8 @@
   fewer blocks than the split count measured for a full one (on an RTX 5070 Ti, 200 positions took 9.0 µs with the 24
   splits a full 4096-position cache wants, 7.6 µs with 16). The split count stays fixed per shape (recorded graphs stay
   valid); the least chunk is measured after it over filled lengths 64, 128, ... up to the capacity, by the geometric
-  mean of their times, against plain chunks.
+  mean of their times, against plain chunks. On the RTX 5070 Ti the best least chunk was 2-4% faster and did not pass
+  the margin twice, so plain chunks stay there; the choice is per card.
 - CUDA tuning times a candidate that beats the formula's choice a second time, in new pairs, and keeps it only when
   it wins again. Short prompt products timed warm (about 13 µs on an RTX 5070 Ti) gave medians 10% apart from one
   process to the next: two runs kept 2 and 3 splits for the same shape, and an earlier one kept 1 split (22 µs
