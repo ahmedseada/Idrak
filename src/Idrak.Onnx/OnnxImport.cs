@@ -203,7 +203,8 @@ internal sealed class Importer(OnnxModel model, Device device, int[]? sampleShap
     }
 
     // The single-node operators, registered in OnnxImportOps (a translator returns the value the chain continues from).
-    internal static Dictionary<string, OnnxImportTranslator> BuiltInOps() => new()
+    // A graph uses its own primitives for these (they build chains), unless a translator of your own replaces one.
+    internal static readonly IReadOnlyDictionary<string, OnnxImportTranslator> BuiltInOps = new Dictionary<string, OnnxImportTranslator>
     {
         ["Identity"] = c => c.Output,
         ["Dropout"] = c => c.Output,
@@ -333,15 +334,30 @@ internal sealed class Importer(OnnxModel model, Device device, int[]? sampleShap
 
     // ------------------------------------------------------------------ graphs
 
+    // ONNX operators and the GraphModule operations they become.
     private static readonly Dictionary<string, string> Primitives = new()
     {
         ["Add"] = "add", ["Sub"] = "sub", ["Mul"] = "mul", ["Div"] = "div", ["MatMul"] = "matmul",
         ["Relu"] = "relu", ["Tanh"] = "tanh", ["Sigmoid"] = "sigmoid", ["Exp"] = "exp", ["Log"] = "log", ["Abs"] = "abs",
+        ["Neg"] = "neg", ["Sqrt"] = "sqrt", ["Pow"] = "pow", ["Clip"] = "clip", ["LeakyRelu"] = "leaky_relu", ["Elu"] = "elu",
+        ["HardSigmoid"] = "hard_sigmoid", ["HardSwish"] = "hard_swish", ["Max"] = "max", ["Min"] = "min",
         ["Softmax"] = "softmax", ["Flatten"] = "flatten", ["Reshape"] = "reshape", ["Transpose"] = "transpose", ["Concat"] = "concat",
         ["Shape"] = "shape", ["Gather"] = "gather", ["Slice"] = "slice", ["Unsqueeze"] = "unsqueeze", ["Squeeze"] = "squeeze",
         ["Identity"] = "identity", ["Cast"] = "cast", ["Dropout"] = "identity", ["ReduceMean"] = "reduce_mean",
         ["GlobalAveragePool"] = "global_average_pool",
     };
+
+    private readonly List<GraphNode> _graphNodes = [];
+    private readonly List<(string Name, Tensor Value)> _graphConstants = [];
+    private readonly List<(string Name, long[] Values, int[] Dims)> _graphIntegers = [];
+    private readonly HashSet<string> _registered = [];
+    private readonly List<Module> _graphLayers = [];
+
+    // Values of one zero sample computed so far, for the shapes translators ask for (filled only when asked).
+    private Dictionary<string, object>? _trace;
+    private TensorScope? _traceScope;
+    private int _traced;
+    private int[]? _graphSample;
 
     public ImportedNetwork RunGraph()
     {
@@ -350,11 +366,7 @@ internal sealed class Importer(OnnxModel model, Device device, int[]? sampleShap
             throw new NotSupportedException($"The importer needs one input and one output; the model has {model.Inputs.Count} and {model.Outputs.Count}.");
         }
 
-        var nodes = new List<GraphNode>();
-        var constants = new List<(string, Tensor)>();
-        var integers = new List<(string, long[], int[])>();
-        var registered = new HashSet<string>();
-        var layers = new List<Module>();
+        _graphSample = sampleShape ?? (model.Inputs[0].Shape is { Length: > 1 } s && s[1..].All(d => d > 0) ? s[1..] : null);
         try
         {
             foreach (var node in model.Nodes)
@@ -369,32 +381,51 @@ internal sealed class Importer(OnnxModel model, Device device, int[]? sampleShap
                 {
                     Consume(match.Nodes);
                     var layer = match.Create();
-                    layers.Add(layer);
+                    _graphLayers.Add(layer);
                     using (Autograd.NoGrad())
                     {
                         match.Load?.Invoke(layer);
                     }
 
-                    nodes.Add(new GraphNode("layer", [x], match.Output, Layer: layer));
+                    _graphNodes.Add(new GraphNode("layer", [x], match.Output, Layer: layer));
                     continue;
                 }
 
                 Consume(node);
-                nodes.Add(Primitive(node, constants, integers, registered));
+                var translate = OnnxImportOps.TryGet(node.Op);
+                bool primitive = Primitives.ContainsKey(node.Op) && node.Domain is "" or "ai.onnx";
+                bool replaced = translate is not null && !(BuiltInOps.TryGetValue(node.Op, out var builtIn) && builtIn == translate);
+                if (replaced && x is not null)
+                {
+                    Translate(node, x, translate!);
+                }
+                else if (primitive)
+                {
+                    _graphNodes.Add(Primitive(node));
+                }
+                else
+                {
+                    // The built-in translators build chains of layers; in a graph their operators are the primitives above.
+                    throw translate is null ? UnknownOperator(node)
+                        : Unsupported(node, $"the {node.Op} operator in a graph (its built-in translator only imports chains of layers)");
+                }
             }
 
-            var graph = new GraphModule(model.Inputs[0].Name, model.Outputs[0].Name, nodes, constants, integers)
+            var graph = new GraphModule(model.Inputs[0].Name, model.Outputs[0].Name, _graphNodes, _graphConstants, _graphIntegers)
             {
                 Name = string.IsNullOrEmpty(model.GraphName) ? "onnx" : model.GraphName,
             };
-            int[]? shape = sampleShape ?? (model.Inputs[0].Shape is { Length: > 1 } s && s[1..].All(d => d > 0) ? s[1..] : null);
-            return new ImportedNetwork(null, graph, model.Metadata, _notes, shape);
+            return new ImportedNetwork(null, graph, model.Metadata, _notes, _graphSample);
         }
         catch
         {
-            layers.ForEach(l => l.Dispose());
-            constants.ForEach(c => c.Item2.Dispose());
+            _graphLayers.ForEach(l => l.Dispose());
+            _graphConstants.ForEach(c => c.Value.Dispose());
             throw;
+        }
+        finally
+        {
+            _traceScope?.Dispose();
         }
     }
 
@@ -416,20 +447,138 @@ internal sealed class Importer(OnnxModel model, Device device, int[]? sampleShap
         return match is not null && match.Nodes.Contains(node) ? match : null;
     }
 
-    private GraphNode Primitive(OnnxNode node, List<(string, Tensor)> constants, List<(string, long[], int[])> integers, HashSet<string> registered)
+    // A node imported through a translator of your own: its builder steps become layer nodes, its graph operations
+    // (OnnxImportContext.AddGraphOp) operation nodes; a node that adds nothing passes its input through.
+    private void Translate(OnnxNode node, string x, OnnxImportTranslator translate)
     {
-        if (!Primitives.TryGetValue(node.Op, out var op) || node.Domain is not ("" or "ai.onnx"))
+        CheckExtraOutputs(node);
+        var context = new OnnxImportContext(this, node, x, graph: true);
+        translate(context);
+        if (!_graphNodes.Any(n => n.Output == node.Outputs[0]))
         {
-            // Translators only build chains of layers; a graph is made of the fixed primitives above.
-            throw OnnxImportOps.TryGet(node.Op) is null ? UnknownOperator(node)
-                : Unsupported(node, $"the {node.Op} operator in a graph (its registered translator only imports chains of layers)");
+            _graphNodes.Add(new GraphNode("identity", [context.Current], node.Outputs[0]));
+        }
+    }
+
+    // Graph mode of OnnxImportContext.Add: the steps, built on the shape of `input`, become one layer node.
+    internal string PushGraph(OnnxNode node, string input, Func<NetworkBuilder, NetworkBuilder> step, Action<Module>? load, string output)
+    {
+        var shape = SampleShape(node, input);
+        var builder = shape.Length switch
+        {
+            1 => Layers.Network.Input(shape[0]),
+            2 => Layers.Network.Sequence(shape[0], shape[1]),
+            3 => Layers.Network.Image(shape[0], shape[1], shape[2]),
+            _ => throw Unsupported(node, $"builder steps on a value shaped [{string.Join(", ", shape)}] (one to three dimensions per sample)"),
+        };
+        step(builder.OnDevice(device).Seed(0));
+        if (builder.Count == 0)
+        {
+            _graphNodes.Add(new GraphNode("identity", [input], output));
+            return output;
         }
 
+        var built = builder.Build();
+        var first = built[0];
+        Module layer = built.Count == 1 && LayerTypes.CanDescribe(first) ? first : built;    // a block keeps the builder's description
+        _graphLayers.Add(layer);
+        using (Autograd.NoGrad())
+        {
+            load?.Invoke(first);
+        }
+
+        _graphNodes.Add(new GraphNode("layer", [input], output, Layer: layer));
+        return output;
+    }
+
+    // Graph mode of OnnxImportContext.AddGraphOp.
+    internal string AddGraphOp(OnnxNode node, string op, IReadOnlyList<string> inputs, JsonObject? attributes, string output)
+    {
+        if (!GraphOps.IsKnown(op))
+        {
+            throw Unsupported(node, $"the graph operation '{op}', which is not registered (registered: {string.Join(", ", GraphOps.Names)}; add it with GraphOps.Register)");
+        }
+
+        RegisterConstants(inputs);
+        _graphNodes.Add(new GraphNode(op, [.. inputs], output, attributes));
+        return output;
+    }
+
+    // The shape of one sample at `value`, computed by running the graph so far on a zero input.
+    internal int[] SampleShape(OnnxNode node, string value)
+    {
+        if (_graphSample is not { } sample)
+        {
+            throw Unsupported(node, "a translator that needs the shape of its input while the model's input has dynamic dimensions (pass sampleShape)");
+        }
+
+        if (_trace is null)
+        {
+            _traceScope = new TensorScope();
+            _trace = new() { [model.Inputs[0].Name] = Tensor.Zeros([1, .. sample], device) };
+        }
+
+        using (Autograd.NoGrad())
+        {
+            for (; _traced < _graphNodes.Count; _traced++)
+            {
+                var graphNode = _graphNodes[_traced];
+                bool training = graphNode.Layer?.IsTraining ?? false;
+                graphNode.Layer?.Eval();                                   // batch normalization must not update its statistics
+                try
+                {
+                    _trace[graphNode.Output] = GraphModule.RunNode(graphNode, Lookup);
+                }
+                finally
+                {
+                    graphNode.Layer?.Train(training);
+                }
+            }
+        }
+
+        return Lookup(value) is Tensor t ? t.Shape[1..].ToArray()
+            : throw Unsupported(node, $"builder steps on '{value}', which is an integer value or not computed yet");
+    }
+
+    private object? Lookup(string name) =>
+        _trace!.TryGetValue(name, out var v) ? v
+        : _graphConstants.FirstOrDefault(c => c.Name == name).Value is { } t ? t
+        : _graphIntegers.FirstOrDefault(c => c.Name == name) is { Values: not null } i ? GraphModule.IntegerValue(i.Values, i.Dims)
+        : null;
+
+    private void CheckExtraOutputs(OnnxNode node)
+    {
         if (node.Outputs.Skip(1).Any(o => o.Length > 0 && Users(o).Count > 0))
         {
             throw Unsupported(node, "a node whose extra outputs are used");
         }
+    }
 
+    // The node's constant inputs become the graph's constants (floats as buffers, integers on the host).
+    private void RegisterConstants(IEnumerable<string> inputs)
+    {
+        foreach (var input in inputs.Where(i => i.Length > 0 && !_registered.Contains(i)))
+        {
+            if (Const(input) is not { } constant)
+            {
+                continue;
+            }
+
+            _registered.Add(input);
+            if (constant.Floats is { } floats)
+            {
+                _graphConstants.Add((input, Tensor.Persistent(floats, constant.Dims, device, requiresGrad: false)));
+            }
+            else
+            {
+                _graphIntegers.Add((input, constant.Longs!, constant.Dims));
+            }
+        }
+    }
+
+    // The node's attributes as JSON (integers, numbers, strings and their lists).
+    internal static JsonObject? Attributes(OnnxNode node)
+    {
         var attributes = new JsonObject();
         foreach (var (name, value) in node.Attributes)
         {
@@ -437,12 +586,32 @@ internal sealed class Importer(OnnxModel model, Device device, int[]? sampleShap
             {
                 attributes[name] = i;
             }
+            else if (value.Float is { } f)
+            {
+                attributes[name] = f;
+            }
+            else if (value.String is { } text)
+            {
+                attributes[name] = text;
+            }
             else if (value.Ints is { } ints)
             {
                 attributes[name] = new JsonArray([.. ints.Select(v => (JsonNode)v)]);
             }
+            else if (value.Floats is { } floats)
+            {
+                attributes[name] = new JsonArray([.. floats.Select(v => (JsonNode)v)]);
+            }
         }
 
+        return attributes.Count > 0 ? attributes : null;
+    }
+
+    private GraphNode Primitive(OnnxNode node)
+    {
+        var op = Primitives[node.Op];
+        CheckExtraOutputs(node);
+        var attributes = Attributes(node) ?? [];
         List<string> inputs = node.Op == "Dropout" ? [node.Inputs[0]] : [.. node.Inputs];
         if (node.Op == "Softmax" && !node.Attributes.ContainsKey("axis") && model.Opset < 13)
         {
@@ -455,32 +624,19 @@ internal sealed class Importer(OnnxModel model, Device device, int[]? sampleShap
             string Add(string what, long[] values)
             {
                 string name = $"{node.Outputs[0]}_{what}";
-                integers.Add((name, values, [values.Length]));
-                registered.Add(name);
+                _graphIntegers.Add((name, values, [values.Length]));
+                _registered.Add(name);
                 return name;
             }
 
             inputs = [node.Inputs[0], Add("starts", starts), Add("ends", node.Ints("ends")!), .. node.Ints("axes") is { } axes ? [Add("axes", axes)] : new List<string>()];
-        }
-
-        foreach (var input in inputs.Where(i => i.Length > 0 && !registered.Contains(i)))
-        {
-            if (Const(input) is not { } constant)
+            foreach (var key in new[] { "starts", "ends", "axes" })
             {
-                continue;
-            }
-
-            registered.Add(input);
-            if (constant.Floats is { } floats)
-            {
-                constants.Add((input, Tensor.Persistent(floats, constant.Dims, device, requiresGrad: false)));
-            }
-            else
-            {
-                integers.Add((input, constant.Longs!, constant.Dims));
+                attributes.Remove(key);
             }
         }
 
+        RegisterConstants(inputs);
         return new GraphNode(op, inputs, node.Outputs[0], attributes.Count > 0 ? attributes : null);
     }
 

@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- ONNX export registry: `OnnxExportOps.Register<T>` / `Unregister<T>` (modules by type, the nearest registered base
+  type applies), `RegisterLambda` and `RegisterGraphOp`, with the built-in layers registered the same way; translators
+  given to one exporter still take precedence. `OnnxGraph.Module(module, input)` translates a child module inside a
+  translator. A package can now ship a layer with its ONNX translator.
+- ONNX export of `GraphModule` (skip connections, branches, shape arithmetic): an imported graph exports again, and
+  import, export and import give the same outputs (tested against ONNX Runtime on the ResNet blocks).
+- ONNX graph import uses registered `OnnxImportOps` translators: builder steps become layer nodes holding the built
+  layers, and `OnnxImportContext.AddGraphOp` adds an operation node. A translator that needs `CurrentShape` in a
+  graph gets it by running the graph so far on a zero sample.
+- `GraphOps.Register(name, GraphOp)`: graph nodes run registered operations; the element-wise and tensor ones are
+  registered the same way, the structural ones that compute host integers stay in `GraphModule`. New built-ins
+  (imported from ONNX and exported back): clip, pow, sqrt, neg, leaky_relu, elu, hard_sigmoid, hard_swish, max, min,
+  composed from existing tensor operations. Erf and ConvTranspose wait for tensor operations.
+- `LayerTypes.Register<T>(type, describe, create)`: the layer types of `GraphModule` JSON are a registry (the closed
+  list before), so a custom layer inside a graph survives JSON and model packages; blocks built by the network
+  builder are described by their builder JSON, so registered builder steps survive too. A graph with an unknown
+  operation is rejected when it is built, with the registered names.
+
 - Direct decoding steps (not recorded as a graph) keep the residual addition fused with the next block's RMS norm for
   that norm: `Sequential` freed it with the layer's intermediate results, so the norm ran again, one kernel more per
   layer and token on every device (74 dispatches per token instead of 82 for the medium decoder of `--bench-vulkan`).

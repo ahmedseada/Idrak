@@ -67,7 +67,7 @@ public sealed class OnnxAttribute
 
 /// <summary>
 /// Builds an ONNX graph: constants (initializers) and operator nodes. The exporter uses it for the built-in layers;
-/// custom translators (<see cref="OnnxExporter.Lambda"/>, <see cref="OnnxExporter.Module{T}"/>) use it for theirs.
+/// custom translators (<see cref="OnnxExportOps"/>, <see cref="OnnxExporter.Lambda"/>, <see cref="OnnxExporter.Module{T}"/>) use it for theirs.
 /// Operators follow ONNX opset <see cref="Opset"/>.
 /// </summary>
 public sealed class OnnxGraph
@@ -82,6 +82,21 @@ public sealed class OnnxGraph
 
     internal OnnxGraph()
     {
+    }
+
+    // The export this graph belongs to (for Module and the graph operations' translators).
+    internal OnnxExporter? Exporter { get; init; }
+
+    /// <summary>
+    /// Adds the nodes of <paramref name="module"/> applied to <paramref name="input"/> (whose shape must be known) and
+    /// returns its output, translated as the export translates every module (its own translators first, then
+    /// <see cref="OnnxExportOps"/>). For translators of modules made of other modules (a custom residual block).
+    /// </summary>
+    public OnnxValue Module(Layers.Module module, OnnxValue input)
+    {
+        ArgumentNullException.ThrowIfNull(module);
+        ArgumentNullException.ThrowIfNull(input);
+        return (Exporter ?? throw new InvalidOperationException("This graph does not belong to an export.")).Emit(this, module, input);
     }
 
     /// <summary>A float constant with the given dimensions (an empty <paramref name="dims"/> for a scalar).</summary>

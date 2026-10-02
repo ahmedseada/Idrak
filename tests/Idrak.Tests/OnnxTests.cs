@@ -20,6 +20,11 @@ internal static partial class Tests
         ("onnx import: MLP, CNN, LSTM/GRU, transformer, GPT round-trip into Idrak layers on the device", OnnxImportRoundTrip),
         ("onnx import: PyTorch-style Gemm and erf GELU; .ikm package; unsupported ops are named", OnnxImportForeign),
         ("onnx import: ResNet blocks, concat branches and shape-arithmetic flatten become a GraphModule (weights, gradients, .ikm)", OnnxImportGraph),
+        ("onnx export registry: built-ins registered; a custom module exports through OnnxExportOps; the exporter's translator takes precedence; errors name the registered", OnnxExportRegistry),
+        ("onnx graphs: an imported ResNet graph exports again (ONNX Runtime and a second import match), also rebuilt from JSON", OnnxGraphRoundTrip),
+        ("onnx graphs: a custom operator (GraphOps + OnnxImportOps) and a custom builder step import into a graph, match the reference, survive JSON and export again", OnnxGraphOpPlugin),
+        ("onnx graphs: Clip, Pow, Sqrt, Neg, LeakyRelu, Elu, HardSigmoid, HardSwish, Max, Min import and export, matching ONNX Runtime", OnnxGraphCommonOps),
+        ("graph layer types: a custom layer type round-trips through GraphModule JSON and a model package", GraphLayerTypes),
     ];
 
     // A residual block as PyTorch writes it: relu(bn2(conv2(relu(bn1(conv1(x))))) + shortcut(x)), where the shortcut is

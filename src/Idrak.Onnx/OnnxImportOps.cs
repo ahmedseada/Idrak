@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Text.Json.Nodes;
 using Idrak.Layers;
 
 namespace Idrak.Onnx;
@@ -15,15 +16,19 @@ public delegate string OnnxImportTranslator(OnnxImportContext context);
 
 /// <summary>
 /// The node being imported and what a translator may do with it: read its attributes and constant inputs, add builder
-/// steps (with the weights to load into the layers they create), add notes, and report what cannot be imported.
+/// steps (with the weights to load into the layers they create), add graph operations, add notes, and report what
+/// cannot be imported. The same translator serves a chain of layers and a graph (<see cref="IsGraph"/>): in a graph,
+/// the steps it adds become a layer node and <see cref="AddGraphOp"/> adds an operation node.
 /// </summary>
 public sealed class OnnxImportContext
 {
-    internal OnnxImportContext(Importer importer, OnnxNode node, string input)
+    internal OnnxImportContext(Importer importer, OnnxNode node, string input, bool graph = false)
     {
         Importer = importer;
         Node = node;
         Input = input;
+        IsGraph = graph;
+        Current = input;
     }
 
     internal Importer Importer { get; }
@@ -36,8 +41,14 @@ public sealed class OnnxImportContext
     /// <summary>The node's operator domain ("" for the standard operators).</summary>
     public string Domain => Node.Domain;
 
-    /// <summary>The value the chain reached: the node's input that comes from the previous layer.</summary>
+    /// <summary>The value the chain reached: the node's input that comes from the previous layer (in a graph, its first computed input).</summary>
     public string Input { get; }
+
+    /// <summary>Whether the node is imported into a graph (a <see cref="GraphModule"/>) rather than a chain of layers.</summary>
+    public bool IsGraph { get; }
+
+    // The value the next step continues from: the input, then the output of each step added.
+    internal string Current { get; private set; }
 
     /// <summary>The node's inputs (value names; "" for an omitted optional input).</summary>
     public IReadOnlyList<string> Inputs => Node.Inputs;
@@ -48,8 +59,11 @@ public sealed class OnnxImportContext
     /// <summary>The model's ONNX opset (attribute defaults change with it, for example Softmax's axis before opset 13).</summary>
     public long Opset => Importer.Opset;
 
-    /// <summary>The shape of one sample at <see cref="Input"/> (without the batch dimension).</summary>
-    public IReadOnlyList<int> CurrentShape => Importer.CurrentShape;
+    /// <summary>
+    /// The shape of one sample where the next step continues (at first <see cref="Input"/>), without the batch dimension.
+    /// In a graph it is measured by running the graph so far, which needs the model's sample shape.
+    /// </summary>
+    public IReadOnlyList<int> CurrentShape => IsGraph ? Importer.SampleShape(Node, Current) : Importer.CurrentShape;
 
     /// <summary>The integer attribute <paramref name="name"/>, or <paramref name="fallback"/> when the node does not set it.</summary>
     public long Int(string name, long fallback) => Node.Int(name, fallback);
@@ -74,8 +88,31 @@ public sealed class OnnxImportContext
     /// returns <paramref name="output"/> (the node's <see cref="Output"/> when null). <paramref name="load"/>, when given,
     /// fills the first layer they create with the file's weights.
     /// </summary>
-    public string Add(Func<NetworkBuilder, NetworkBuilder> step, Action<Module>? load = null, string? output = null) =>
-        Importer.Push(step, load, output ?? Output);
+    public string Add(Func<NetworkBuilder, NetworkBuilder> step, Action<Module>? load = null, string? output = null)
+    {
+        ArgumentNullException.ThrowIfNull(step);
+        Current = IsGraph ? Importer.PushGraph(Node, Current, step, load, output ?? Output) : Importer.Push(step, load, output ?? Output);
+        return Current;
+    }
+
+    /// <summary>
+    /// Adds a graph node running the operation <paramref name="op"/> (registered in <see cref="GraphOps"/>) on
+    /// <paramref name="inputs"/> (the node's <see cref="Inputs"/> when null; constants among them become the graph's
+    /// constants) with <paramref name="attributes"/> (the node's own when null), and returns <paramref name="output"/>
+    /// (the node's <see cref="Output"/> when null). A chain of layers cannot hold it, so the model is then imported as
+    /// a graph.
+    /// </summary>
+    public string AddGraphOp(string op, JsonObject? attributes = null, IReadOnlyList<string>? inputs = null, string? output = null)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(op);
+        if (!IsGraph)
+        {
+            throw Unsupported($"the graph operation '{op}' in a chain of layers");
+        }
+
+        Current = Importer.AddGraphOp(Node, op, inputs ?? Node.Inputs, attributes ?? Importer.Attributes(Node), output ?? Output);
+        return Current;
+    }
 
     /// <summary>Records an approximation made during import (it ends up in <see cref="ImportedNetwork.Notes"/>).</summary>
     public void Note(string note) => Importer.Note(note);
@@ -88,12 +125,14 @@ public sealed class OnnxImportContext
 /// The ONNX operators <see cref="OnnxImport"/> turns into Idrak layers one node at a time, by operator type. The
 /// built-in ones are registered here (Relu, Conv, BatchNormalization, Reshape, ...); add or replace one with
 /// <see cref="Register"/>. Patterns of several nodes (Linear, GELU, attention, transformer layers, LSTM and GRU) are
-/// matched before a node is looked up, and a model that is not a chain of layers is imported as a graph of fixed
-/// primitives, where translators do not apply.
+/// matched before a node is looked up. A model that is not a chain of layers is imported as a graph: there the built-in
+/// operators become graph operations (<see cref="GraphOps"/>), and a translator you registered (a new operator or one
+/// replacing a built-in) runs as well, its builder steps becoming layer nodes and its
+/// <see cref="OnnxImportContext.AddGraphOp"/> calls operation nodes.
 /// </summary>
 public static class OnnxImportOps
 {
-    private static readonly Dictionary<string, OnnxImportTranslator> Registry = new(Importer.BuiltInOps(), StringComparer.Ordinal);
+    private static readonly Dictionary<string, OnnxImportTranslator> Registry = new(Importer.BuiltInOps, StringComparer.Ordinal);
 
     /// <summary>Registers (or replaces) how to import nodes of the operator type <paramref name="opType"/>.</summary>
     public static void Register(string opType, OnnxImportTranslator translate)
