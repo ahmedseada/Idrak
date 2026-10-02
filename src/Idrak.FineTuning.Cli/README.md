@@ -27,7 +27,7 @@ dotnet run -c Release --project src/Idrak.FineTuning.Cli -- export <adapter dir>
 - **Long conversations.** A conversation longer than `--max-length` keeps its whole answer: the user message before it
   is shortened (its start kept) rather than the answer cut.
 - **Progress.** A bar with the steps done, still to do and in total, the epoch and loss, elapsed time and ETA; notable
-  events (CUDA graph recording, FP8 checks, evaluation losses) print above it. Ctrl+C stops after the current step and
+  events (graph recording, FP8 checks, evaluation losses) print above it. Ctrl+C stops after the current step and
   saves the adapter so far.
 - **Output.** The adapter in the PEFT format, and `idrak-tuning.json`: the base model as named on the command line,
   the system prompt and the maximum length. Any program can then load the folder (`TuningManifest.Read(folder)
