@@ -167,3 +167,39 @@ transform.
 - (Resolved: `Tensor.Persistent` is public now.) Whether an outside package can keep long-lived tensors with the public
   `Tensor.From` outside a `TensorScope`.
 - The exact line where `PretrainedModel.Load` calls `spec.Build` (around PretrainedModel.cs:110-125).
+
+## Noted for later
+
+### Provider-neutral names instead of "Ollama"
+
+The serving API and its types are named after one product: `MapOllamaApi`, `OllamaApiOptions`, `OllamaChatRequest`,
+`OllamaChatResponse`, `OllamaMessage`, `OllamaToolCall`, `OllamaModel` and others in `src/Idrak.AspNetCore/Ollama.cs`
+and `IdrakEndpoints.cs`, and "Ollama-compatible" in the READMEs, samples and tests. The library should name no
+provider: the endpoints are a local chat API that common clients understand, and further wire formats (an OpenAI-style
+`/v1` API, item 17) should sit next to it under the same neutral scheme.
+
+- Rename the public types and methods to neutral names (for example `MapChatApi`, `ChatApiOptions`, `ChatApiRequest`,
+  `ChatApiMessage`), with the wire format named as a format option rather than in every type name.
+- Keep the old names for one release as `[Obsolete]` forwarders, so applications move without breaking.
+- The routes stay the same (`/api/chat`, `/api/tags`, ...): clients depend on them, not on the C# names.
+- Check the other mentions before renaming them: `GgufModel.cs`, `Gguf.cs` and `ModelSource.cs` mention Ollama's model
+  store as a source of GGUF files, which is a different concern (a model source), and documentation and samples
+  (README, Idrak.AspNetCore and FineTuning.Cli READMEs, the Chat, TextGeneration and GptApi samples, tests).
+- Done when: no public type, method or option in the library is named after a provider; the old names compile with an
+  obsolete warning; README and samples describe the API without a product name.
+
+### Teacher pattern (knowledge distillation)
+
+A larger "teacher" model guides a smaller "student" model, to be added later:
+
+- Distillation loss: the student trains on the teacher's output distribution (soft targets with a temperature,
+  Kullback-Leibler divergence), alone or mixed with the usual cross-entropy on the labels; per token for language
+  models, per sample for classifiers. It plugs into the fine-tuning loss hook (item 9) and the `Trainer`.
+- Teacher-generated data: the teacher writes answers (or reasoning) for prompts, and the student fine-tunes on them;
+  a recipe in `Idrak.Datasets` and the fine-tuning CLI.
+- Memory: teacher logits computed on the fly (both models loaded, the teacher in inference mode, int8 or int4 weights)
+  or precomputed and stored (top-k logits per token, to keep files small).
+- Requirements to check: teacher and student share a tokenizer (or a vocabulary mapping is needed); the teacher can
+  run on another device than the student.
+- Done when: a student fine-tuned with distillation scores closer to its teacher than the same student fine-tuned on
+  labels alone, in a test with tiny models, and the CLI offers it.
