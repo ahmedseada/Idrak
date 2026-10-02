@@ -10,6 +10,8 @@
 - Vulkan width probe: times the operations as models call them (a kernel that does not fit a width is no longer
   timed as taking no time), adds an int8 product of 64 rows, and rebuilds kernels looked up by name when the width
   changes (they kept the width they were first built at, so dispatches sized for another width ran them).
+- Vulkan: the embedding gradient's scatter rereads its table on every load (Volatile, Coherent): with repeated ids
+  one driver kept the first load and lost the second add.
 - `--bench-vulkan`: each decoder is timed again and without recorded graphs, so a slow first use or replay shows.
 - Vulkan: prompts (tiled attention with or without the log-sum-exp; int8, int4 and bfloat16 products for many rows,
   each measured against the few-rows kernels and expanding the weights), training (layer-norm and batch-norm
