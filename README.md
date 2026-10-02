@@ -1118,7 +1118,22 @@ Android phone through Termux and Mesa Turnip: [installation/](installation/READM
 The `architecture` branch adds backends beyond CUDA: a Vulkan backend (SPIR-V kernels generated in C#, for Intel,
 AMD and any Vulkan GPU) and the minimum backend every new device starts from (see
 [plans/7-backends.md](plans/7-backends.md)). `-- --list-devices` shows the devices a machine has and how to test one.
-Results of the whole test list, grouped by vendor, architecture and driver (one row per device and backend):
+The devices tested, one row each (decoding speed: the `--bench-vulkan` decoder of dim 1024, 8 layers, int8 weights,
+with fused kernels and graph replay; chat: Qwen3-0.6B with int8 weights):
+
+| Device | Vendor and architecture | Kind | Machine | Backends | Tests | Decoding |
+|--------|-------------------------|------|---------|----------|-------|----------|
+| GeForce RTX 5070 Ti, 16 GB | NVIDIA Blackwell (sm_120) | discrete | Windows desktop; also WSL2 | CUDA, Vulkan | 488 of 488 (CUDA); 273 of 273 (Vulkan) | 1,889 tokens/s |
+| GeForce RTX 5050 Laptop GPU, 8 GB | NVIDIA Blackwell (sm_120) | discrete | Windows laptop | CUDA, Vulkan | 735 of 735 (CUDA run); 273 of 273 (Vulkan) | 1,296–1,350 tokens/s |
+| GeForce RTX 3060 Laptop GPU, 6 GB | NVIDIA Ampere (sm_86) | discrete | Windows laptop | CUDA, Vulkan | 735 of 735 (CUDA run); 273 of 273 (Vulkan) | 1,182 tokens/s |
+| Radeon Graphics (Ryzen 5000H "Cezanne") | AMD Vega (GCN 5) | integrated | Windows laptop (with the RTX 3060) | Vulkan | 273 of 273 | 371 tokens/s |
+| UHD Graphics (i7-13620H) | Intel Xe-LP (Gen12) | integrated | Windows laptop (with the RTX 5050) | Vulkan | 273 of 273 | 229–256 tokens/s |
+| Adreno 730 (Snapdragon 8+ Gen 1) | Qualcomm Adreno 7xx | integrated | Android phone, Termux + Ubuntu, Mesa Turnip | Vulkan | 247 of 247 | chat 14.4–17.4 tokens/s |
+| Snapdragon 8+ Gen 1 CPU | ARM64 NEON (DotProd, RDM) | CPU | Android phone, Termux + Ubuntu | CPU | 245 of 245 | chat 5–6.4 tokens/s |
+| llvmpipe (lavapipe, LLVM 20) | Mesa software Vulkan | CPU driver | Linux container, WSL2 | Vulkan | 273 of 273 | 30–34 tokens/s |
+| x64 CPU (AVX2) | x64 | CPU | Linux container | CPU | 273 of 273 | – |
+
+Each run in detail, results of the whole test list, grouped by vendor, architecture and driver (one row per device and backend):
 
 <table>
   <thead>
@@ -1130,7 +1145,6 @@ Results of the whole test list, grouped by vendor, architecture and driver (one 
     <tr><td>2026-10-02</td><td><b>GeForce RTX 5070 Ti</b>, 16 GB<br>Vulkan 1.4</td><td>discrete</td><td>mapped (resizable BAR), reads through staging</td><td>not used yet</td><td>273 of 273 on the GPU (measured width 256); decoder 1,889 tokens/s with the merged fused kernels and graph replay (int8, 8 layers; 1,474 without graphs, 1,454 before the merge), 0 host fallbacks; element-wise 770 GB/s, float32 product 9.9 TFLOP/s (4096³), bfloat16 head product 768 GB/s; storages measured: device memory through staging (901 GB/s against 362 mapped)</td></tr>
     <tr><td>2026-10-02</td><td><b>GeForce RTX 5050 Laptop GPU</b>, 8 GB<br>CUDA 13.3</td><td>discrete</td><td>device memory</td><td>tensor cores</td><td>735 of 735 (CPU, CUDA and the Intel GPU); decoding attention 9.8 µs at 200 positions, below every fixed split</td></tr>
     <tr><td>2026-10-02</td><td><b>GeForce RTX 5050 Laptop GPU</b>, 8 GB<br>Vulkan 1.4</td><td>discrete</td><td>device memory through staging (measured: 595 GB/s against 304 mapped)</td><td>not used yet</td><td>273 of 273 on the GPU in three runs (measured width 256; one earlier run had one fine-tuning loss off, not seen again in the fine-tuning tests run 5 more times or under synchronization validation); decoder 1,296–1,350 tokens/s with fused kernels and graph replay (int8, 8 layers; 1,083–1,118 without graphs), element-wise 261 GB/s, float32 product 2.6 TFLOP/s</td></tr>
-    <tr><td>2026-10-02</td><td><b>GeForce RTX 5050 Laptop GPU</b>, 8 GB<br>Vulkan 1.4</td><td>discrete</td><td>mapped (resizable BAR), reads through staging</td><td>not used yet</td><td>every Vulkan test</td></tr>
     <tr><td>2026-10-02</td><td><b>GeForce RTX 5070 Ti</b>, 16 GB<br>CUDA 13.3, Linux (WSL2, Ubuntu 26.04)</td><td>discrete</td><td>device memory (host copies at 3.3 GB/s through WSL)</td><td>bfloat16, fp8, int8 tensor cores</td><td>488 of 488 (CPU, CUDA and lavapipe); "auto" within noise of the best column; WSL2 offers Vulkan only through lavapipe</td></tr>
     <tr><th colspan="6" align="left">NVIDIA · Ampere (sm_86) · driver 581.29</th></tr>
     <tr><td>2026-10-02</td><td><b>GeForce RTX 3060 Laptop GPU</b>, 6 GB<br>CUDA 13.0</td><td>discrete</td><td>device memory</td><td>bfloat16, int8 tensor cores (no fp8)</td><td>735 of 735 (CPU, CUDA and the AMD GPU); prompt products and decoding attention "auto" at the best column (12.0 / 53.0 / 195 µs at 200 / 1,000 / 4,000 positions)</td></tr>
@@ -1157,9 +1171,8 @@ decoding step (q/k/v, gate/up with the activation, projection with residual and 
 cache writes: 131-138 dispatches per token down to 82 on the bench decoder), records and replays decoding steps like
 CUDA graphs (host time per step from about 300 µs to 5 µs on lavapipe), and binds storages larger than a device's
 binding range in windows (the 151,936-column int8 head on a 128 MiB device: 129 ms on the host down to 43-65 ms on the
-device). These were tested on lavapipe; the GPU rows above predate them. The kernels are not tuned yet:
-dispatches and element-wise kernels already run near the hardware's limits, but decoding products and attention are
-several times slower than CUDA's on the same GPU. Tuning follows the
+device). Every GPU above has run them (273 of 273 on each). Dispatches and element-wise kernels run near the
+hardware's limits; decoding products and attention are still slower than CUDA's on the same GPU. Tuning follows the
 card-agnostic rule of [plans/README.md](plans/README.md): choices come from what the device reports (compute units,
 subgroup size, workgroup and shared-memory limits, memory heaps) or are measured on the user's device, never from a
 card's name. Until then `Device.Default` picks a Vulkan GPU only with `IDRAK_VULKAN_DEFAULT=1`; tests run on every
