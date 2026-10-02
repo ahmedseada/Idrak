@@ -351,6 +351,11 @@ internal sealed unsafe partial class VulkanBackend
             block.LastUse = _recording;
         }
 
+        if (_capture is { } capture && ReferenceEquals(batch, capture.Batch))
+        {
+            CaptureBlocks(capture, blocks);                                    // a graph is recorded (VulkanBackend.Graphs.cs)
+        }
+
         return batch.Commands;
     }
 
@@ -388,6 +393,12 @@ internal sealed unsafe partial class VulkanBackend
     private void Submit()
     {
         var batch = _batch;
+        if (_capture is { } capture && ReferenceEquals(batch, capture.Batch))
+        {
+            ContinueCapture(capture);                                          // a recorded graph is not submitted
+            return;
+        }
+
         if (!batch.Recording)
         {
             return;

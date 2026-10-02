@@ -165,6 +165,11 @@ internal static unsafe partial class VulkanDriver
     public const uint CommandBufferLevelPrimary = 0;
     public const uint CommandBufferOneTimeSubmit = 0x1;
 
+    // Secondary command buffers (recorded graphs, VulkanBackend.Graphs.cs): resubmitted while possibly still pending.
+    public const uint CommandBufferLevelSecondary = 1;
+    public const uint CommandBufferSimultaneousUse = 0x4;
+    public const uint StructureCommandBufferInheritanceInfo = 41;
+
     // Pipeline stages and memory access.
     public const uint StageTopOfPipe = 0x1, StageComputeShader = 0x800, StageTransfer = 0x1000, StageHost = 0x4000;
     public const uint AccessShaderRead = 0x20, AccessShaderWrite = 0x40, AccessTransferRead = 0x800, AccessTransferWrite = 0x1000,
@@ -299,6 +304,12 @@ internal static unsafe partial class VulkanDriver
 
     [LibraryImport(Library)]
     public static partial int vkResetCommandBuffer(IntPtr commandBuffer, uint flags);
+
+    [LibraryImport(Library)]
+    public static partial void vkFreeCommandBuffers(IntPtr device, ulong pool, uint count, IntPtr* buffers);
+
+    [LibraryImport(Library)]
+    public static partial void vkCmdExecuteCommands(IntPtr commandBuffer, uint count, IntPtr* buffers);
 
     [LibraryImport(Library)]
     public static partial int vkBeginCommandBuffer(IntPtr commandBuffer, VkCommandBufferBeginInfo* info);
@@ -761,6 +772,19 @@ internal unsafe struct VkCommandBufferBeginInfo
     public void* PNext;
     public uint Flags;
     public void* InheritanceInfo;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal unsafe struct VkCommandBufferInheritanceInfo
+{
+    public uint SType;
+    public void* PNext;
+    public ulong RenderPass;
+    public uint Subpass;
+    public ulong Framebuffer;
+    public uint OcclusionQueryEnable;
+    public uint QueryFlags;
+    public uint PipelineStatistics;
 }
 
 [StructLayout(LayoutKind.Sequential)]

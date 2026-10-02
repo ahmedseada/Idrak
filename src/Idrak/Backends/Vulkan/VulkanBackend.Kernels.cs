@@ -160,7 +160,7 @@ internal sealed partial class VulkanBackend
         if (!TryTuned(key, out int choice) || (choice & Plain) != 0 && !Limits.SubgroupArithmetic)
         {
             choice = fallback;
-            if (Autotune && !t_timing)
+            if (CanTune)
             {
                 // Candidates: an invocation per row, a workgroup per row (with subgroup reductions where reported, and
                 // through workgroup memory alone).
@@ -791,7 +791,7 @@ internal sealed partial class VulkanBackend
             if (!TryTuned(key, out chosen) || !MatValid(chosen, m, n))
             {
                 chosen = fallback;
-                if (Autotune && !t_timing)
+                if (CanTune)
                 {
                     var pushed = push.ToArray();
                     chosen = TuneWithScratch(key, MatCandidates(m, n), fallback, [a, b, c], 1UL << 2,
@@ -953,7 +953,7 @@ internal sealed partial class VulkanBackend
             if (!TryTuned(key, out chosen) || !GemvValid(chosen, perWord, n))
             {
                 chosen = fallback;
-                if (Autotune && !t_timing)
+                if (CanTune)
                 {
                     Storage[] storages = scales is null ? [x, weights, y] : [x, weights, scales, y];
                     chosen = TuneWithScratch(key, GemvCandidates(perWord, n, maxSplits), fallback, storages, 1UL << (storages.Length - 1),
@@ -1283,7 +1283,7 @@ internal sealed partial class VulkanBackend
                 || (choice & Rest) > AttentionMaxSplits(WidthOf(choice), rows, capacity, dim) || (choice & Plain) != 0 && !Limits.SubgroupArithmetic)
             {
                 choice = fallback;
-                if (Autotune && !t_timing)
+                if (CanTune)
                 {
                     // At each candidate width, 1, 2, 4, … splits; timed over a full cache: the position read from a
                     // scratch storage holding capacity - 1.
