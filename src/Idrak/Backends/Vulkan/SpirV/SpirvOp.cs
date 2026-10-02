@@ -28,6 +28,7 @@ internal enum SpirvOp : ushort
     ConstantTrue = 41,
     ConstantFalse = 42,
     Constant = 43,
+    ConstantComposite = 44,
     Function = 54,
     FunctionEnd = 56,
     Variable = 59,
@@ -41,6 +42,7 @@ internal enum SpirvOp : ushort
     ConvertFToS = 110,
     ConvertSToF = 111,
     ConvertUToF = 112,
+    FConvert = 115,
     Bitcast = 124,
     SNegate = 126,
     FNegate = 127,
@@ -97,6 +99,10 @@ internal enum SpirvOp : ushort
     Return = 253,
     GroupNonUniformFAdd = 350,
     GroupNonUniformFMax = 358,
+    TypeCooperativeMatrixKHR = 4456,
+    CooperativeMatrixLoadKHR = 4457,
+    CooperativeMatrixStoreKHR = 4458,
+    CooperativeMatrixMulAddKHR = 4459,
 }
 
 /// <summary>Storage classes (where a variable lives).</summary>

@@ -52,7 +52,7 @@ internal enum ScalarKind
 /// needed after an If or a loop goes through a <see cref="Var"/>. Control flow is structured (each If and loop has
 /// its merge block), as Vulkan requires.
 /// </summary>
-internal sealed class KernelBuilder
+internal sealed partial class KernelBuilder
 {
     private readonly SpirvModule _m = new();
     private readonly string _name;
@@ -835,4 +835,7 @@ internal sealed class SharedArray(KernelBuilder builder, uint variable, int leng
             builder.Module.Code(SpirvOp.Store, builder.SharedElement(variable, index), value.Id);
         }
     }
+
+    /// <summary>A pointer to element <paramref name="index"/> (where a cooperative matrix is stored).</summary>
+    internal uint Pointer(Val index) => builder.SharedElement(variable, index);
 }

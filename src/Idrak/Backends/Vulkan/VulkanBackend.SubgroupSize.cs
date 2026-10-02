@@ -116,10 +116,10 @@ internal sealed unsafe partial class VulkanBackend
     }
 
     // Dispatches a generated kernel: its sized variant where subgroup size control is on and it uses subgroup
-    // operations (the size measured on its first run here), else the kernel itself.
+    // operations (the size measured on its first run here) unless it keeps the default size, else the kernel itself.
     private void DispatchKernel(VulkanKernel kernel, uint groupsX, uint groupsY, uint groupsZ, ReadOnlySpan<Storage> storages, ReadOnlySpan<byte> push)
     {
-        if (_sizeControl.Enabled && kernel.UsesSubgroups)
+        if (_sizeControl.Enabled && kernel.UsesSubgroups && !kernel.DefaultSubgroupSize)
         {
             kernel = Sized(kernel, groupsX, groupsY, groupsZ, storages, push);
         }
