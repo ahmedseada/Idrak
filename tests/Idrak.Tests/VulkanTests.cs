@@ -173,7 +173,7 @@ internal static partial class Tests
             Check(Device.Parse($"vulkan:{i}") == d && d.Type == DeviceType.Vulkan && d.IsGpu && d.ToString() == $"vulkan:{i}", $"vulkan:{i} by name");
             var backend = (VulkanBackend)d.Backend;
             Check(provider.IsStarted(i) && d.Name.Contains("Vulkan", StringComparison.Ordinal), $"vulkan:{i} started, named");
-            Check(!backend.Capabilities.MatrixUnits && !backend.Capabilities.FusedKernels && !backend.Capabilities.Profiling, "no matrix units, fused kernels or profiling yet");
+            Check(!backend.Capabilities.MatrixUnits && backend.Capabilities.FusedKernels && !backend.Capabilities.Profiling, "fused kernels; no matrix units or profiling yet");
             Check(backend.MaxStorageBytes >= 1 << 27, $"maxStorageBufferRange {backend.MaxStorageBytes} (at least 128 MiB)");
             Console.WriteLine($"    vulkan:{i}: {d.Name}; type {type}, uuid {uuid}, {(backend.UnifiedMemory ? "mapped" : "staging")} copies, " +
                 $"storages up to {backend.MaxStorageBytes >> 20} MiB{(provider.Listed(i) ? "" : ", not listed")}");

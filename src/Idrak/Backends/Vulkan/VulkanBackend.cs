@@ -222,7 +222,7 @@ internal sealed unsafe partial class VulkanBackend : Backend
         TiledAttentionHeadDim = Math.Min(CpuBackend.Instance.Capabilities.TiledAttentionHeadDim, VulkanKernels.AttentionMaxDim),
         MatrixUnits = false,
         MatrixUnitAttentionHeadDim = static _ => false,
-        FusedKernels = false,
+        FusedKernels = true,                                             // VulkanBackend.Fused.cs
         Profiling = false,
     };
 

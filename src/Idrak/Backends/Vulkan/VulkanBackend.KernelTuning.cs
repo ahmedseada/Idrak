@@ -38,6 +38,9 @@ internal enum VulkanTuneOp : byte
 
     /// <summary>A two-pass reduction (column sums, group statistics): the splits of each column or group.</summary>
     Splits,
+
+    /// <summary>A fused packed product (several sharing an input, the gate/up pair, the gated down projection): as <see cref="Gemv"/>.</summary>
+    FusedGemv,
 }
 
 /// <summary>What a measured choice is for: the operation, its variant (kernel, format) and its shape.</summary>
