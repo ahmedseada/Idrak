@@ -238,7 +238,18 @@ internal static partial class Tests
 
             var expected = Run(CpuBackend.Instance);
             var actual = Run(backend);
-            AssertClose(expected.P, actual.P, 1e-5f, $"8-bit Adam, {n} elements: parameters");
+            // A moment within an ulp of the midpoint of two codes may round to the other code (checked below), and its
+            // parameter then moves by a slightly different step in the later steps: such elements (as few as the codes
+            // that may differ) are allowed a tenth of the learning rate, every other one 1e-5.
+            int moved = 0;
+            for (int i = 0; i < n; i++)
+            {
+                float d = Math.Abs(expected.P[i] - actual.P[i]);
+                Check(d <= 1e-3f, $"8-bit Adam, {n} elements: parameters: element {i} is {actual.P[i]}, expected {expected.P[i]}");
+                moved += d > 1e-5f ? 1 : 0;
+            }
+
+            Check(moved <= Math.Max(1, n / 1000), $"8-bit Adam, {n} elements: {moved} parameters differ from the CPU's by more than 1e-5");
             AssertClose(expected.Scales, actual.Scales, 1e-5f, $"8-bit Adam, {n} elements: block scales");
             int differ = 0;
             for (int i = 0; i < n; i++)

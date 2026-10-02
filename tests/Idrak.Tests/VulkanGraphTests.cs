@@ -410,7 +410,9 @@ internal static partial class Tests
 
         double r = Median(recorded), p = Median(replayed);
         Console.WriteLine($"    host time per step: recorded {r:F0} µs ({perStep:F0} dispatches), replayed {p:F1} µs");
-        Check(p < r / 4, $"replaying a step took {p:F1} µs of host time, recording it {r:F0} µs");
+        // A replay costs one submission whatever the step's length, recording costs per command: on this small step (a
+        // few dozen dispatches) a driver's submission may take a third of the recording, so half is the bound.
+        Check(p < r / 2, $"replaying a step took {p:F1} µs of host time, recording it {r:F0} µs");
 
         static double Median(List<double> values)
         {
