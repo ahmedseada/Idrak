@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- CUDA tuning times each candidate in pairs with the formula's choice (back to back, the order alternating by round)
+  and compares the medians of the pair ratios. Before, every candidate ran once per round against one timing of the
+  reference, four of seven rounds with the reference first: a clock still drifting during the measurement moved each
+  median by the candidate's distance from the reference in the round, which favoured the most splits when the clock
+  rose, so a candidate a few percent slower could be kept (the 151936-column head on an RTX 5050 Laptop ran 7-9%
+  slower than 1 split; 2.5% on an RTX 3060 Laptop). Decoding-sized products (GEMV splits, fused add-and-normalize,
+  q/k/v and gate/up in one launch, the few-row kernel against the packed product, the gated activation) are timed
+  with a cold L2 cache: each timed run follows a read of twice the L2 size the device reports, as decoding meets the
+  weights. `IDRAK_TUNE_LOG=1` prints each measurement (median ratios and the choice). The cache format is now 3, so
+  earlier choices are measured again. `--bench-gemv` rotates copies of each weight adding up to twice the L2 size, so
+  its columns are timed under the same conditions.
+
 - Measured choices are kept per power source on every backend (CUDA, Vulkan, CPU): a laptop on battery clocks down,
   so what wins there can lose on mains power. The source is what the operating system reports (Windows
   GetSystemPowerStatus, Linux /sys/class/power_supply); a machine without a battery counts as mains;

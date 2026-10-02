@@ -12,7 +12,8 @@ internal static partial class Tests
     [
         ("tuning: card-dependent choices (few-row kernel and splits, prompt splits, tensor-core splits, tiles, decoding-attention splits) are measured on the device and give the results of the formulas' choices", TunedChoicesMatch),
         ("tuning: candidates are compared by their median time, so a lucky timing does not win and a close one keeps the formula's choice", TuneMedians),
-        ("tuning: few-row products are measured over 1, 2, 3, 4, 6, 8, 12, ... splits with the kernel that then runs (fused add-and-normalize kept apart from the plain kernel), after a warm-up, relative to the formula's choice per round", GemvSelection),
+        ("tuning: candidates are timed in pairs with the formula's choice, so a drifting clock does not move the choice (the 151936-column head kept 2-4% slower splits under a rising clock); decoding-sized products are timed with a cold L2 cache", TuneDrift),
+        ("tuning: few-row products are measured over 1, 2, 3, 4, 6, 8, 12, ... splits with the kernel that then runs (fused add-and-normalize kept apart from the plain kernel), after a warm-up, in pairs with the formula's choice", GemvSelection),
         ("tuning: the cache file of measured choices round-trips and is ignored when the GPU, driver, library build or format differs", TuningCacheFile),
         ("tuning: measured choices are kept per GPU in the cache folder and read back instead of measured again", TuningPersisted),
         ("tuning: every backend keeps one set of measured choices per power source (mains or battery, as the system reports it)", PowerSourceKeys),
@@ -103,30 +104,25 @@ internal static partial class Tests
             return;                                                              // device-independent: once is enough
         }
 
-        // What --bench-gemv showed on "o + add + norm": 16 splits 6.6 µs, 8 splits 7.7 µs, but one timing of 8 came out
-        // low and two of 16 high. The best time of each picked 8; the median picks 16.
+        // What --bench-gemv showed on "o + add + norm": 16 splits 6.6 µs, 8 splits 7.7 µs, but three timings of 16 came out
+        // high and one of 4 low. The best time of each picked 4; the median of the ratios picks 16.
         int[] candidates = [1, 2, 4, 8, 16];
-        float[][] timings =
-        [
-            [20f, 20.1f, 19.9f, 20f, 20.2f, 20f, 19.8f],
-            [12f, 12.1f, 11.9f, 12f, 12.2f, 12f, 11.8f],
-            [9f, 9.1f, 8.9f, 9f, 9.2f, 9f, 8.8f],
-            [7.7f, 7.8f, 5.0f, 7.7f, 7.6f, 7.7f, 7.8f],
-            [6.6f, 6.7f, 6.5f, 11f, 6.6f, 12f, 6.6f],
-        ];
-        var round = new int[candidates.Length];
+        float[] steady = [20f, 12f, 9f, 7.7f, 6.6f];
+        var outliers = new Dictionary<(int C, int Nth), float> { [(4, 1)] = 11f, [(4, 3)] = 12f, [(4, 5)] = 11.5f, [(2, 2)] = 5f };
+        var timed = new int[candidates.Length];
         var order = new List<int>();
         float Time(int c)
         {
             order.Add(c);
-            return timings[c][round[c]++];
+            return outliers.TryGetValue((c, timed[c]++), out float t) ? t : steady[c];
         }
 
         int chosen = TuneTiming.Choose(candidates, 8, Time);
         Check(candidates[chosen] == 16, $"the median picks 16 splits (picked {candidates[chosen]})");
-        Check(round.All(n => n == TuneTiming.Rounds), "every candidate timed once per round");
-        Check(order.Take(candidates.Length).SequenceEqual([0, 1, 2, 3, 4]) && order.Skip(candidates.Length).Take(candidates.Length).SequenceEqual([4, 3, 2, 1, 0]),
-            "candidates take turns forwards, then backwards");
+        Check(timed.Select((n, c) => c == 3 ? n == TuneTiming.Rounds * 4 : n == TuneTiming.Rounds).All(x => x),
+            $"every candidate timed once per round, the formula's choice once with each ({string.Join(",", timed)})");
+        Check(order.Take(8).SequenceEqual([3, 0, 3, 1, 3, 2, 3, 4]) && order.Skip(8).Take(8).SequenceEqual([4, 3, 2, 3, 1, 3, 0, 3]),
+            "in pairs with the formula's choice: first, forwards, then second, backwards");
 
         // Within the margin of the formula's choice: the formula's choice stays.
         int close = TuneTiming.Choose([8, 16], 8, c => c == 0 ? 7.7f : 7.6f);
@@ -137,6 +133,75 @@ internal static partial class Tests
         Check(noFormula == 1, "the fastest median wins when the formula's choice is not a candidate");
 
         Check(TuneTiming.Median([3f, 1f, 2f]) == 2f && TuneTiming.Median([4f, 1f, 3f, 2f]) == 2.5f, "median of odd and even counts");
+        var medians = new float[candidates.Length];
+        TuneTiming.Choose(candidates, 8, c => steady[c], medians: medians);
+        Check(MathF.Abs(medians[4] - 6.6f / 7.7f) < 1e-5f && medians[3] == 1f, "the medians reported for the log: time over the formula's choice's");
+    }
+
+    // Pure (no GPU): a clock that drifts through the whole measurement (a laptop GPU still raising its clocks, or one
+    // lowering them under a power limit) does not move the choice. Shaped like the 151936-column head on an RTX 5050
+    // Laptop (20 SMs, the formula's 1 split): --bench-gemv found 1 split fastest (657 µs; 2 splits 765), yet the
+    // measured choice ran 7-9% slower.
+    private static void TuneDrift(Device device)
+    {
+        if (device.Type != DeviceType.Cpu)
+        {
+            return;
+        }
+
+        int[] list = CudaBackend.GemvSplitCandidates(1024, 1);
+        Check(list.SequenceEqual([1, 2, 3, 4, 6, 8, 12, 16]), "head (k 1024): 1 … 16");
+        int formula = CudaBackend.GemvSplitCount(20, (151936 / 4 + 31) / 32, 1024);
+        Check(formula == 1, "head on 20 SMs: the formula gives 1 split");
+        var head = new Dictionary<int, float> { [1] = 657f, [2] = 765f, [3] = 700f, [4] = 690f, [6] = 684f, [8] = 680f, [12] = 676f, [16] = 672f };
+
+        // The comparison before (each candidate once per round against the reference's timing of that round, forwards
+        // then backwards, seven rounds), kept here to show what the pairs fix.
+        static int Before(int[] candidates, int fallback, Func<int, float> time)
+        {
+            const int rounds = 7;
+            var samples = new float[candidates.Length, rounds];
+            for (int round = 0; round < rounds; round++)
+            {
+                for (int i = 0; i < candidates.Length; i++)
+                {
+                    int c = round % 2 == 0 ? i : candidates.Length - 1 - i;
+                    samples[c, round] = time(c);
+                }
+            }
+
+            int reference = Math.Max(Array.IndexOf(candidates, fallback), 0);
+            var medians = Enumerable.Range(0, candidates.Length).Select(c => c == reference ? 1f
+                : TuneTiming.Median([.. Enumerable.Range(0, rounds).Select(r => samples[c, r] / samples[reference, r])])).ToArray();
+            int fastest = Array.IndexOf(medians, medians.Min());
+            return medians[fastest] >= medians[reference] * TuneTiming.Margin ? reference : fastest;
+        }
+
+        foreach (float drift in new[] { 0.99f, 0.995f, 1.005f, 1.01f })                // per timing: rising or falling clocks
+        {
+            float clock = 1f;
+            float Timer(int c) => head[list[c]] * (clock *= drift);
+            int pick = list[TuneTiming.Choose(list, formula, Timer)];
+            Check(pick == 1, $"clock x{drift} per timing: 1 split kept (chose {pick})");
+            clock = 1f;
+            int before = list[Before(list, formula, Timer)];
+            if (drift == 0.99f)
+            {
+                Check(before != 1, $"the comparison before kept {before} splits under a rising clock, 1-4% slower than 1");
+            }
+        }
+
+        // And a candidate clearly faster still wins under the drift.
+        var faster = new Dictionary<int, float>(head) { [3] = 600f };
+        float rising = 1f;
+        Check(list[TuneTiming.Choose(list, formula, c => faster[list[c]] * (rising *= 0.99f))] == 3, "a candidate 9% faster wins under a rising clock");
+
+        // Cold timings (decoding-sized products): the L2 read before each run is twice the size the device reports, and
+        // the runs per timing are fewer, since each then costs that read as well.
+        Check(CudaBackend.L2FlushFloats(3 << 20) == 2L * (3 << 20) / 4 && CudaBackend.L2FlushFloats(48 << 20) == 2L * (48 << 20) / 4, "flush: twice the L2 size");
+        Check(CudaBackend.L2FlushFloats(0) == 0, "no L2 size reported: warm timings");
+        Check(CudaBackend.TimingRepeats(0.66f, cold: true) == 1 && CudaBackend.TimingRepeats(0.66f, cold: false) == 1, "a 0.66 ms head: one run per timing");
+        Check(CudaBackend.TimingRepeats(0.007f, cold: false) == 16 && CudaBackend.TimingRepeats(0.007f, cold: true) == 4, "7 µs: 16 back to back, 4 cold");
     }
 
     // Pure (no GPU): the few-row split choice as CudaBackend.PackedFewRows makes it (candidates, key, formula, TuneTiming)
@@ -213,10 +278,11 @@ internal static partial class Tests
         Check(CudaBackend.GemvSplitCount(30, 8, 2048) == 8, "3060: the formula gives 8");
         Check(Measure(30, 2048, (addNormKey, addNorm3060))[addNormKey] == 6, "3060: 6 splits chosen");
 
-        // A clock that rises 3x part way through the measurement (an idle laptop GPU): with ratios per round the choice
+        // A clock that rises 3x part way through the measurement (an idle laptop GPU): with ratios of pairs the choice
         // is 6 wherever the step falls; medians of the times themselves chose differently by where it fell.
         int[] list = CudaBackend.GemvSplitCandidates(2048, 1);
-        int total = list.Length * TuneTiming.Rounds;
+        int total = 0;
+        TuneTiming.Choose(list, 8, _ => { total++; return 1f; });
         int rawWrong = 0;
         for (int step = 0; step <= total; step++)
         {

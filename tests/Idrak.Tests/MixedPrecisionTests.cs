@@ -774,7 +774,10 @@ internal static partial class Tests
     // TFLOPS of the training products (a 1.25B GPT's shapes) in every layout, with beta 0 and 1, the transposed
     // operands handled by the transposing kernels directly or copied first, and a fresh output buffer each call.
     // Decoding-sized packed products (one row, Qwen3-0.6B shapes, int8 weights) for each forced number of k splits:
-    // 100 calls recorded in a graph and replayed, so host launch costs are excluded; GB/s counts the weight bytes.
+    // 100 calls recorded in a graph and replayed, so host launch costs are excluded; GB/s counts the weight bytes. The
+    // calls take turns over copies of the weights adding up to twice the reported L2 size, so every call reads its weights
+    // from memory, as decoding does (every layer's weights pass through the cache between two uses of one layer) and as
+    // the measured choice ("auto") is timed; one copy of a weight that small would be read from L2 after the first call.
     internal static int BenchGemv()
     {
         if (!Device.IsCudaAvailable)
@@ -793,17 +796,45 @@ internal static partial class Tests
         using Linear q = Layer(1024, 2048), k = Layer(1024, 1024), v = Layer(1024, 1024), o = Layer(2048, 1024);
         using Linear gate = Layer(1024, 3072), up = Layer(1024, 3072), down = Layer(3072, 1024), head = Layer(1024, 151936);
         var norm = new RMSNorm(1024, device: device);
-        var shapes = new (string Name, long Bytes, Action Run)[]
+        long l2 = device.Backend is CudaBackend cudaBackend ? cudaBackend.Limits.L2Bytes : 0;
+        Console.WriteLine($"L2 {l2 >> 20} MiB: each product's calls take turns over copies of its weights adding up to {2 * l2 >> 20} MiB or more");
+        var copies = new List<Linear>();
+        var copyValues = new Dictionary<(int, int), float[]>();
+        Linear[] Copies(Linear layer, long bytes)
         {
-            ("q/k/v 1024 -> 2048+1024+1024", 1024L * 4096, () => Tensor.MatMulPackedMany(x1024, 0, [q, k, v])),
-            ("gate/up + act 1024 -> 2x3072", 1024L * 6144, () => Tensor.MatMulPackedGatedPair(x1024, gate, up, 0)),
-            ("o + add + norm 2048 -> 1024", 2048L * 1024, () => Tensor.MatMulPackedAddRmsNorm(x2048, o, x1024, norm)),
-            ("down + add + norm 3072 -> 1024", 3072L * 1024, () => Tensor.MatMulPackedAddRmsNorm(x3072, down, x1024, norm)),
-            ("head 1024 -> 151936", 1024L * 151936, () => x1024.MatMulInt8(head.Int8!)),
+            int rows = layer.Int8!.Rows, columns = layer.Int8.Columns;
+            int count = (int)Math.Clamp((2 * l2 + bytes - 1) / Math.Max(1, bytes), 1, 64);
+            var all = new Linear[count];
+            all[0] = layer;
+            for (int c = 1; c < count; c++)
+            {
+                if (!copyValues.TryGetValue((rows, columns), out var data))
+                {
+                    copyValues[(rows, columns)] = data = [.. Enumerable.Range(0, rows * columns).Select(_ => random.NextSingle() - 0.5f)];
+                }
+
+                all[c] = Linear.FromInt8(Int8Weight.Quantize(data, rows, columns, device));
+                copies.Add(all[c]);
+            }
+
+            return all;
+        }
+
+        long qkvBytes = 1024L * 4096, gateUpBytes = 1024L * 6144;
+        var (qs, ks, vs) = (Copies(q, qkvBytes), Copies(k, qkvBytes), Copies(v, qkvBytes));
+        var (gates, ups) = (Copies(gate, gateUpBytes), Copies(up, gateUpBytes));
+        var (os, downs, heads) = (Copies(o, 2048L * 1024), Copies(down, 3072L * 1024), Copies(head, 1024L * 151936));
+        var shapes = new (string Name, long Bytes, Action<int> Run, int Copies)[]
+        {
+            ("q/k/v 1024 -> 2048+1024+1024", qkvBytes, i => Tensor.MatMulPackedMany(x1024, 0, [qs[i], ks[i], vs[i]]), qs.Length),
+            ("gate/up + act 1024 -> 2x3072", gateUpBytes, i => Tensor.MatMulPackedGatedPair(x1024, gates[i], ups[i], 0), gates.Length),
+            ("o + add + norm 2048 -> 1024", 2048L * 1024, i => Tensor.MatMulPackedAddRmsNorm(x2048, os[i], x1024, norm), os.Length),
+            ("down + add + norm 3072 -> 1024", 3072L * 1024, i => Tensor.MatMulPackedAddRmsNorm(x3072, downs[i], x1024, norm), downs.Length),
+            ("head 1024 -> 151936", 1024L * 151936, i => x1024.MatMulInt8(heads[i].Int8!), heads.Length),
         };
         int?[] splits = [null, 1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64];
         Console.WriteLine($"{"product",-32} " + string.Join(" ", splits.Select(s => $"{(s is null ? "auto" : s.ToString()),15}")));
-        foreach (var (name, bytes, run) in shapes)
+        foreach (var (name, bytes, run, count) in shapes)
         {
             var line = new System.Text.StringBuilder($"{name,-32} ");
             foreach (var split in splits)
@@ -813,7 +844,7 @@ internal static partial class Tests
                 {
                     using (new TensorScope())
                     {
-                        run();                                       // outside the graph: "auto" measures its choice first
+                        run(0);                                      // outside the graph: "auto" measures its choice first
                     }
 
                     using var graph = ComputeGraph.Capture(device, () =>
@@ -821,7 +852,7 @@ internal static partial class Tests
                         for (int i = 0; i < 100; i++)
                         {
                             using var calls = new TensorScope();
-                            run();
+                            run(i % count);
                         }
                     });
                     graph.Replay();
@@ -843,6 +874,11 @@ internal static partial class Tests
             }
 
             Console.WriteLine(line);
+        }
+
+        foreach (var copy in copies)
+        {
+            copy.Dispose();
         }
 
         // Timed like the products above: `run` 100 times per graph; the forced setting is applied by `force`.
