@@ -421,8 +421,8 @@ internal sealed partial class VulkanBackend
         try
         {
             string kernel = GemvKernelNames[((int)f * VulkanKernels.GemvRowBlocks.Length + block) * VulkanKernels.GemvWordCounts.Length + variant];
-            Span<byte> b = stackalloc byte[16];
-            var push = new Push(b).I(m).I(n).I(k).I(chunk).Bytes;
+            Span<byte> b = stackalloc byte[24];
+            var push = new Push(b).I(m).I(n).I(k).I(chunk).I(0).I(splits).Bytes;   // the whole weights bound: splits from 0
             if (scales is null)
             {
                 RunAt(kernel, width, columnBlocks, (uint)splits, rowBlocks, [x, packed, output], push);
