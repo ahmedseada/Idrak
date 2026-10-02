@@ -59,39 +59,6 @@ internal sealed partial class VulkanBackend
         Grid("max_pool_backward", (long)g.N * g.C * g.H * g.W, [dy, argmax, dx], PushGeometry(b, g));
     }
 
-    public override void GroupScaleShift(Storage x, Storage? scale, Storage? shift, Storage y, int n, int groups, int inner, bool accumulate)
-    {
-        if (!Fit(x, scale ?? x, shift ?? x, y))
-        {
-            base.GroupScaleShift(x, scale, shift, y, n, groups, inner, accumulate);
-            return;
-        }
-
-        int flags = (scale is null ? 0 : 1) | (shift is null ? 0 : 2) | (accumulate ? 4 : 0);
-        Span<byte> b = stackalloc byte[16];
-        Grid("group_scale_shift", n, [x, scale ?? x, shift ?? x, y], new Push(b).I(n).I(groups).I(inner).I(flags).Bytes);
-    }
-
-    public override void GroupReduce(Storage a, Storage? b, Storage sumA, Storage? sumAB, int outer, int groups, int inner)
-    {
-        // Without b there is no sumAB: the kernel then reads a and writes sumA in their places, never touching them there.
-        bool withB = b is not null && sumAB is not null;
-        if ((long)outer * groups * inner > int.MaxValue || !Fit(a, b ?? a, sumA, sumAB ?? sumA))
-        {
-            base.GroupReduce(a, b, sumA, sumAB, outer, groups, inner);
-            return;
-        }
-
-        if (groups <= 0)
-        {
-            return;
-        }
-
-        Span<byte> p = stackalloc byte[16];
-        Run("group_reduce", RowGroups(groups), 1, 1, [a, withB ? b! : a, sumA, withB ? sumAB! : sumA],
-            new Push(p).I(outer).I(groups).I(inner).B(withB).Bytes);
-    }
-
     // The twelve geometry push constants of the window kernels: N, C, H, W, KH, KW, SH, SW, PH, PW, OH, OW.
     private static ReadOnlySpan<byte> PushGeometry(Span<byte> bytes, in ConvGeometry g) =>
         new Push(bytes).I(g.N).I(g.C).I(g.H).I(g.W).I(g.KH).I(g.KW).I(g.SH).I(g.SW).I(g.PH).I(g.PW).I(g.OH).I(g.OW).Bytes;
