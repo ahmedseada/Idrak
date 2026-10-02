@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Measured choices are kept per power source on every backend (CUDA, Vulkan, CPU): a laptop on battery clocks down,
+  so what wins there can lose on mains power. The source is what the operating system reports (Windows
+  GetSystemPowerStatus, Linux /sys/class/power_supply); a machine without a battery counts as mains;
+  `IDRAK_POWER_SOURCE=ac|battery` overrides it.
+
 - Vulkan devices keep their number across runs: `vulkan:N` follows what each device reports (discrete GPUs, then
   integrated, virtual, CPU and other; each kind by deviceUUID bytes, then driverUUID; a device without a UUID after
   those, by PCI address and name), not the loader's order, which changed between two processes on a laptop with an

@@ -71,7 +71,7 @@ internal sealed unsafe partial class VulkanBackend
 
     // The cache key prefix of this device and driver: by what the device reports, never its ordinal (vulkan:N), so a
     // choice stays with its GPU whatever order the devices come in.
-    private string TuningKey() => $"{DeviceKey(_physical.Facts, _physical.DeviceName)}/{_physical.Facts.DriverUuid:N}/{_physical.Facts.DriverVersion:X}";
+    private string TuningKey() => $"{DeviceKey(_physical.Facts, _physical.DeviceName)}/{_physical.Facts.DriverUuid:N}/{_physical.Facts.DriverVersion:X}/{PowerSource.Current}";
 
     /// <summary>
     /// What names a device in the tuning cache: its deviceUUID, or (a device reporting none: all zeros) its PCI address
