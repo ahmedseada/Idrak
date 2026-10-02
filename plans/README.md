@@ -57,6 +57,7 @@ What the `architecture` branch cannot do today, with an example of each. "High" 
 | macOS (CPU) | never run |
 | NVIDIA before compute 8.6 | PTX is generated for them; never run |
 | Intel Arc (XMX), AMD RDNA | no such GPU tested |
+| Android GPUs (Adreno and others, through Vulkan) | the CPU (ARM64, NEON) has run in Termux + proot Ubuntu; Android's own Vulkan driver is not reached from proot, and on Android itself the loader name list is empty |
 
 ## The rule every plan keeps
 

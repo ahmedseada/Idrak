@@ -135,7 +135,9 @@ internal static partial class Tests
             {
                 if (!sameThreads && i == totalIndex)
                 {
-                    AssertClose(expected[i], actual[i], 1e-6f, $"{what}: the sum (summed in chunks per thread count, as before)");
+                    // Other chunks add the 300,001 terms in another order: rounding differs by up to about √n float32
+                    // steps (on a 6-core ARM64 phone 2.7e-6 of the total; on x64 machines it stayed below 1e-6).
+                    AssertClose(expected[i], actual[i], MathF.Sqrt(elements.Length) * MathF.Pow(2, -23), $"{what}: the sum (summed in chunks per thread count, as before)");
                     continue;
                 }
 

@@ -1113,6 +1113,8 @@ Results of the whole test list, grouped by vendor, architecture and driver (one 
     <tr><td>2026-10-02</td><td><b>Radeon Graphics</b> (Ryzen 5000H "Cezanne"), 2 GB reserved<br>Vulkan 1.3</td><td>integrated</td><td>measured per device (cached system memory reads slower than the carve-out)</td><td>none</td><td>all pass; decoder 336 tokens/s (storage memory measured: the carve-out through staging), 222 mapped</td></tr>
     <tr><th colspan="6" align="left">Mesa · software (CPU) · Mesa 25.2.8</th></tr>
     <tr><td>2026-10-02</td><td><b>llvmpipe</b> (lavapipe, LLVM 20)<br>Vulkan 1.4</td><td>CPU driver</td><td>mapped</td><td>–</td><td>all pass (also through staging, and with a cap of 64 allocations)</td></tr>
+    <tr><th colspan="6" align="left">CPU · ARM64, NEON (DotProd, RDM) · Android phone, Termux + proot Ubuntu 26.04, .NET 10</th></tr>
+    <tr><td>2026-10-02</td><td><b>CPU only</b>, 6 cores<br>CPU backend</td><td>CPU</td><td>–</td><td>–</td><td>244 of 245 (the other: a float32 sum tolerance too tight for NEON's 4-wide partial sums, since widened); .NET needs <code>DOTNET_GCHeapHardLimit</code> under Android's smaller address space</td></tr>
     <tr><th colspan="6" align="left">CPU · x64, AVX2</th></tr>
     <tr><td>2026-10-02</td><td><b>CPU only</b>, 4 threads<br>CPU backend</td><td>CPU</td><td>–</td><td>–</td><td>all pass</td></tr>
     <tr><td>2026-10-02</td><td><b>Minimal test backend</b> (memory and copies only)<br>host fallback</td><td>test</td><td>host</td><td>–</td><td>all pass (729 across CPU, minimal and lavapipe)</td></tr>
