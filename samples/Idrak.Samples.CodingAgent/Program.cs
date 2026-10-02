@@ -27,7 +27,7 @@ using Idrak.LanguageModels;
 //   (<folder> may also be a Hugging Face model id, for example Qwen/Qwen3-0.6B, a .gguf file or ollama:name.)
 //   data/agent-demo-*.jsonl: tool-calling transcripts in this layout, to fine-tune a model for the agent with idrak-tune.
 //
-// Options: --cuda / --cpu, --int8 | --int4 | --bf16 (base weights), --kv8 | --kv16 (KV cache), --context N (default
+// Options: --cuda / --cpu / --vulkan / --device NAME (cpu, cuda:N, vulkan:N), --int8 | --int4 | --bf16 (base weights), --kv8 | --kv16 (KV cache), --context N (default
 //          4096), --adapter <dir> (load a PEFT adapter), --no-think, --offload, --gpu-memory GiB, --matmul fp32|bf16|fp8.
 var positional = new List<string>();
 bool int8 = false, bf16 = false, int4 = false, kv8 = false, kv16 = false, noThink = false;
@@ -37,13 +37,15 @@ string? workspace = null, workRoot = null, filter = null;
 int attempts = 1, maxRounds = 40;
 float? temperature = null;
 MatMulPrecision? matmul = null;
-Device device = Device.IsCudaAvailable ? Device.Cuda() : Device.Cpu;
+Device device = Device.Default;                                       // CUDA, else a Vulkan GPU with IDRAK_VULKAN_DEFAULT=1, else the CPU
 for (int i = 0; i < args.Length; i++)
 {
     switch (args[i])
     {
         case "--cuda" or "--gpu": device = Device.Cuda(); break;
         case "--cpu": device = Device.Cpu; break;
+        case "--vulkan": device = Device.Parse("vulkan:0"); break;
+        case "--device": device = Device.Parse(args[++i]); break;     // any name --list-devices shows: cpu, cuda:N, vulkan:N
         case "--int8": int8 = true; break;
         case "--bf16": bf16 = true; break;
         case "--int4": int4 = true; break;
@@ -81,7 +83,7 @@ if (positional.Count < 2 || positional[0] is not ("agent" or "agent-run" or "age
     || positional[0] is "agent" && (positional.Count < 3 || workspace is null) || positional[0] is "agent-run" && (positional.Count < 3 || output is null))
 {
     Console.WriteLine("usage: agent <folder> <task…> --workspace <dir> | agent-run <folder> <suite> --out <runs.jsonl> [--attempts N] | agent-check <suite>");
-    Console.WriteLine("       [--cuda|--cpu] [--int8|--int4|--bf16] [--kv8|--kv16] [--context N] [--adapter DIR] [--no-think] [--matmul fp32|bf16|fp8]");
+    Console.WriteLine("       [--cuda|--cpu|--vulkan|--device NAME] [--int8|--int4|--bf16] [--kv8|--kv16] [--context N] [--adapter DIR] [--no-think] [--matmul fp32|bf16|fp8]");
     return 1;
 }
 
