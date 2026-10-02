@@ -1099,7 +1099,7 @@ Results of the whole test list, grouped by vendor, architecture and driver (one 
   </thead>
   <tbody>
     <tr><th colspan="6" align="left">NVIDIA · Blackwell (sm_120) · driver 610.88</th></tr>
-    <tr><td>2026-10-02</td><td><b>GeForce RTX 5070 Ti</b>, 16 GB<br>CUDA 13.3</td><td>discrete</td><td>device memory</td><td>bfloat16, fp8, int8 tensor cores</td><td>486 of 486 (CPU and CUDA); <code>--bench-gemv</code> "auto" at the best column on every decoding row</td></tr>
+    <tr><td>2026-10-02</td><td><b>GeForce RTX 5070 Ti</b>, 16 GB<br>CUDA 13.3</td><td>discrete</td><td>device memory</td><td>bfloat16, fp8, int8 tensor cores</td><td>488 of 488 (CPU and CUDA); <code>--bench-gemv</code> "auto" at the best column on every decoding row (q/k/v, gate/up, o and down with add-norm, head)</td></tr>
     <tr><td>2026-10-02</td><td><b>GeForce RTX 5070 Ti</b>, 16 GB<br>Vulkan 1.4</td><td>discrete</td><td>mapped (resizable BAR), reads through staging</td><td>not used yet</td><td>every Vulkan test; decoder 1,454 tokens/s (int8, 8 layers), 0 host fallbacks</td></tr>
     <tr><td>2026-10-02</td><td><b>GeForce RTX 5050 Laptop GPU</b>, 8 GB<br>CUDA 13.3</td><td>discrete</td><td>device memory</td><td>tensor cores</td><td>729 of 729 (CPU, CUDA and the Intel GPU); "auto" at the best column on the decoding rows</td></tr>
     <tr><td>2026-10-02</td><td><b>GeForce RTX 5050 Laptop GPU</b>, 8 GB<br>Vulkan 1.4</td><td>discrete</td><td>mapped (resizable BAR), reads through staging</td><td>not used yet</td><td>every Vulkan test</td></tr>
