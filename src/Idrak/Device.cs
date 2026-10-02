@@ -22,6 +22,9 @@ public enum DeviceType
 
     /// <summary>A device whose backend was registered by name (see <see cref="Device.Get"/>).</summary>
     Other,
+
+    /// <summary>A GPU driven through the HIP runtime (ROCm on Linux, the HIP SDK on Windows), with kernels compiled by hipRTC.</summary>
+    Hip,
 }
 
 /// <summary>

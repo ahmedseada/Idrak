@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- HIP backend, first slice (untested on real hardware): AMD GPUs through ROCm (Linux) or the HIP SDK (Windows) as
+  `hip:0`, `hip:1`, … (`DeviceType.Hip`). The runtime (libamdhip64 / amdhip64_N.dll) and hipRTC are loaded at run time
+  through function pointers, so a machine without them sees no HIP device, a reason in `--list-devices` and no
+  exception. Memory, uploads, downloads, copies, fills and strided copies run on the device; element-wise arithmetic,
+  seven unary operations, RMS norms and the int8 product run as HIP C++ kernels compiled by hipRTC for the device's own
+  target, with a block size from its reported limits, and kept in `~/.cache/idrak/hip/kernels` per target, driver and
+  library build; everything else takes the host fallback. Listed in plain test runs; the default device only with
+  `IDRAK_HIP_DEFAULT=1`. Plan in plans/8-hip.md, setup in installation/hip.md.
+
 - installation/: how Idrak was installed, built, tested and chatted with on Windows, Linux and WSL2, and an
   Android phone (Termux, Ubuntu in proot, a Turnip driver built for KGSL, the .NET heap limit).
 - Vulkan: the kernels' width is measured when the device opens (a 256³ float32 product and one-row decoding work,
