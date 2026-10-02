@@ -16,6 +16,8 @@ audience first.
 | 6 | [Idrak.Network](6-network.md) | several GPUs or machines on one job; several machines serving one API | not started (one device per model, one machine per server) | a new package rather than new hardware; useful to NVIDIA users now, so it can run alongside plans 3–5 |
 | 7 | [Backends](7-backends.md) | a minimum backend (12 core operations, host fallbacks), devices by provider, public KV cache formats, the Vulkan backend (Intel GPUs first) | in progress on `architecture` | the shared work plans 3–5 wait on, then the first new backend |
 
+Plug-in points that are still closed, and the dataset loader abstraction: [plug-in.md](plug-in.md).
+
 ## Not supported yet
 
 What the `architecture` branch cannot do today, with an example of each. "High" marks what comes next.
