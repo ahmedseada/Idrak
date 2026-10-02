@@ -140,58 +140,6 @@ internal static partial class VulkanKernels
             });
             return k.Build();
         });
-
-        // y (+)= x · scale[g] + shift[g], g = (i / inner) % groups; flags bit 0: a scale (else 1), bit 1: a shift (else
-        // 0), bit 2: accumulate. Bind any storage for a missing scale or shift. y may be x.
-        yield return ("group_scale_shift", () =>
-        {
-            var k = new KernelBuilder("group_scale_shift", Block);
-            var (x, scale, shift, y) = (k.Buffer("x"), k.Buffer("scale"), k.Buffer("shift"), k.Buffer("y"));
-            var (n, groups, inner, flags) = (k.PushInt("n"), k.PushInt("groups"), k.PushInt("inner"), k.PushInt("flags"));
-            var (hasScale, hasShift, accumulate) = ((flags & 1).Ne(0), (flags & 2).Ne(0), (flags & 4).Ne(0));
-            Grid(k, n, i =>
-            {
-                var group = i / inner % groups;
-                var s = k.Local(1f);
-                var h = k.Local(0f);
-                k.If(hasScale, () => s.V = scale[group]);
-                k.If(hasShift, () => h.V = shift[group]);
-                var v = k.Fma(x[i], s.V, h.V);
-                k.If(accumulate, () => y[i] = y[i] + v, () => y[i] = v);
-            });
-            return k.Build();
-        });
-
-        // sumA[g] += Σ a, sumAB[g] += Σ a·b over the elements of group g of an [outer, groups, inner] view: a workgroup per
-        // group (groups looped with a stride of the group count). hasB = 0: no b and no sumAB (bind any storages there).
-        yield return ("group_reduce", () =>
-        {
-            var k = new KernelBuilder("group_reduce", Block);
-            var (a, b, sumA, sumAB) = (k.Buffer("a"), k.Buffer("b"), k.Buffer("sumA"), k.Buffer("sumAB"));
-            var (outer, groups, inner, hasB) = (k.PushInt("outer"), k.PushInt("groups"), k.PushInt("inner"), k.PushInt("hasB"));
-            var scratch = k.Shared("scratch", Block);
-            var withB = hasB.Ne(0);
-            EachRow(k, groups, group =>
-            {
-                var s1 = k.Local(0f);
-                var s2 = k.Local(0f);
-                k.For(k.LocalX, outer * inner, Block, j =>
-                {
-                    var at = ((j / inner) * groups + group) * inner + j % inner;
-                    var v = a[at];
-                    s1.V = s1.V + v;
-                    k.If(withB, () => s2.V = k.Fma(v, b[at], s2.V));
-                });
-                var total1 = k.ReduceSum(scratch, s1.V);
-                var total2 = k.ReduceSum(scratch, s2.V);
-                k.If(k.LocalX.Eq(0), () =>
-                {
-                    sumA[group] = sumA[group] + total1;
-                    k.If(withB, () => sumAB[group] = sumAB[group] + total2);
-                });
-            });
-            return k.Build();
-        });
     }
 
     // The window geometry push constants, in the order every window kernel declares them.

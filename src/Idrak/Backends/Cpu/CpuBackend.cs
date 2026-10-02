@@ -193,6 +193,17 @@ internal sealed partial class CpuBackend : Backend
         }
     }
 
+    // y[j] += Σ_r x[offset + r·ld + j]. The base method's fallback calls this one, so the CPU must implement it.
+    public override void SumColumns(Storage x, long offset, int ld, Storage y, int rows, int cols)
+    {
+        float[] xv = D(x);
+        var acc = D(y).AsSpan(0, cols);
+        for (int r = 0; r < rows; r++)
+        {
+            AddKernel.Apply(acc, xv.AsSpan((int)(offset + (long)r * ld), cols), acc);
+        }
+    }
+
     public override void Sum(Storage x, Storage result, int n, float scale)
     {
         float[] xv = D(x);

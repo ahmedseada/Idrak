@@ -17,6 +17,7 @@ internal static partial class Tests
     private static readonly (string Name, Action<Device> Run)[] VulkanTrainingGroup =
     [
         ("vulkan training: layer norm gradient, batch-norm statistics and gradients, group reductions, column sums and products with a bias run as kernels and match the CPU", VulkanTrainingNormsMatchCpu),
+        ("cpu: column sums of a strided block (the base fallback's own target) add into y as the copy-then-sum reference does", CpuSumColumns),
         ("vulkan training: fused AdamW (with and without clipping) and 8-bit Adam (the CPU's codes) run as kernels and match the CPU", VulkanTrainingOptimizersMatchCpu),
         ("vulkan training: the tiled causal attention gradient (head sizes up to 256, grouped queries, capacity past the steps) runs as kernels and matches the CPU", VulkanTrainingAttentionMatchesCpu),
         ("vulkan training: the reductions and the attention gradient give the same bits run after run", VulkanTrainingRepeatable),
@@ -438,5 +439,40 @@ internal static partial class Tests
                 AssertClose(expected.Weights[i], actual.Weights[i], 5e-3f, $"{name}: parameter {i} after training");
             }
         }
+    }
+
+    // CpuBackend once lacked SumColumns, so the base method's host fallback called the CPU's own (inherited) fallback
+    // until the stack overflowed.
+    private static void CpuSumColumns(Device device)
+    {
+        if (device.Type != DeviceType.Cpu)
+        {
+            return;
+        }
+
+        var cpu = CpuBackend.Instance;
+        var r = new Random(9);
+        const int rows = 7, cols = 13, ld = 20, offset = 3;
+        float[] data = [.. Enumerable.Range(0, offset + rows * ld).Select(_ => r.NextSingle() - 0.5f)];
+        float[] start = [.. Enumerable.Range(0, cols).Select(_ => r.NextSingle())];
+        var x = cpu.Allocate(data.Length, false);
+        var y = cpu.Allocate(cols, false);
+        cpu.Upload(data, x);
+        cpu.Upload(start, y);
+        cpu.SumColumns(x, offset, ld, y, rows, cols);
+        var actual = new float[cols];
+        cpu.Download(y, actual);
+        var expected = (float[])start.Clone();
+        for (int j = 0; j < cols; j++)
+        {
+            for (int i = 0; i < rows; i++)
+            {
+                expected[j] += data[offset + i * ld + j];
+            }
+        }
+
+        AssertClose(expected, actual, 1e-6f, "column sums added into y");
+        x.Release();
+        y.Release();
     }
 }
