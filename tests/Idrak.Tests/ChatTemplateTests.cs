@@ -15,6 +15,8 @@ internal static partial class Tests
         ("chat templates: Jinja expressions, filters, tests, loops, macros and whitespace control match jinja2", JinjaMatchesPython),
         ("chat templates: a Qwen3 template read from a model folder renders tools, tool calls and reasoning as transformers does", ModelChatTemplate),
         ("chat templates: each family's tool-call format is read off its template (tags, bare JSON, lists) and parsed from streamed output", ToolCallFormats),
+        ("chat templates: tool-call formats (pythonic, Qwen3-Coder XML, Mistral, harmony, DeepSeek) detected from published templates, parsed streamed and round-tripped", ToolCallFormatsDetectAndParse),
+        ("chat templates: tool-call formats can be registered, detected from a probe call, named, unregistered, or made by a template", ToolCallFormatsRegistry),
     ];
 
     // Llama 3.1's tool-call layout (its published template, cut to the parts that render messages and calls): the

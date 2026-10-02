@@ -91,6 +91,7 @@ points"):
 | Packed weight formats | `PackedWeight` | `Idrak` |
 | Network builder steps | `NetworkOps` | `Idrak` |
 | Telemetry listeners | `Telemetry.Subscribe` | `Idrak` |
+| Tool-call formats | `ToolCallFormats` | `Idrak` |
 | ONNX import operators | `OnnxImportOps` | `Idrak.Onnx` |
 | Checkpoint formats | `CheckpointFormats` | `Idrak.LanguageModels` |
 | Model families | `PretrainedArchitectures` | `Idrak.LanguageModels` |
@@ -531,7 +532,8 @@ local LLM servers:
 | `TextGenerator` | streams a continuation: prompt truncated to `NumCtx`, sliding context window, stop sequences (never partially emitted), done reason `stop` / `length`, prompt and generation timings |
 | `ChatMessage`, `ToolDefinition`, `ToolCall` | conversations with `system`, `user`, `assistant` and `tool` roles, and function tools |
 | `ChatTemplate`, `ChatMLTemplate` | renders a conversation and its tools as the prompt (Qwen-style ChatML: `<think>`, `<tool_call>`, `<tool_response>`); `think: false` closes an empty reasoning block |
-| `ChatOutputParser` | splits streamed output into reasoning, answer and tool calls (JSON), holding back partial tags |
+| `ChatOutputParser` | splits streamed output into reasoning, answer and tool calls, holding back partial tags; the calls are read by the template's tool-call parser |
+| `IToolCallParser`, `ToolCallFormats` | tool calls in the model's own format: JSON (tags, bare, lists), pythonic `[f(a=1)]`, Qwen3-Coder XML, Mistral `[TOOL_CALLS]`, GPT-OSS harmony channels, DeepSeek special tokens; detected from the model's template, or registered by name |
 | `ChatGenerator` | chat = template + generator + parser; streams `ChatChunk`s and ends with the full assistant message and statistics |
 | `ModelHost<T>`, `KeepAlive` | keeps models loaded and unloads each one when its keep-alive (`"30m"`, `"1h30m"`, `300`, `0`, `-1`) expires |
 
@@ -994,6 +996,7 @@ the registered names and how to register.
 | KV cache formats (float32, int8, bfloat16 built in) | `KeyValueLayouts.Register(name, KeyValueLayout)` | `Idrak` |
 | Packed weight formats (int8, int4, bfloat16 built in) | `PackedWeight.Register(name, PackedWeightFactory)` | `Idrak` |
 | Network builder steps (JSON round trip) | `NetworkOps.Register(name, NetworkOp)` | `Idrak` |
+| Tool-call formats (json, pythonic, qwen3-coder, mistral, harmony, deepseek built in) | `ToolCallFormats.Register(name, detect, create)`; or override `ChatTemplate.CreateToolCallParser` | `Idrak` |
 | ONNX import operators | `OnnxImportOps.Register(opType, OnnxImportTranslator)` | `Idrak.Onnx` |
 | Checkpoint formats (safetensors built in) | `CheckpointFormats.Register(ICheckpointFormat)` | `Idrak.LanguageModels` |
 | Model families (Hugging Face `architectures`) | `PretrainedArchitectures.Register(name, PretrainedArchitecture)` | `Idrak.LanguageModels` |
@@ -1003,7 +1006,16 @@ the registered names and how to register.
 | Dataset file formats, sources, Parquet codecs | `DataFileFormats.Register`, `DatasetSources.Register`, `ParquetCodecs.Register` | `Idrak.Datasets` |
 
 Chat templates are read from each model's own Jinja template (`tokenizer_config.json` or GGUF metadata), and the
-tool-call format is read off that template, so a new model family needs no code for either. Each registry has a test
+tool-call format is read off that template, so a new model family needs no code for either: `JinjaChatTemplate`
+renders a probe call and asks each registered format's detector (the most recently registered first, `json` last).
+A format the built-ins do not cover is a detector and a parser that is fed the answer as it streams:
+
+```csharp
+ToolCallFormats.Register("my-format",
+    detect: probe => probe.Call?.Contains("<<" + ToolCallProbe.FunctionName) ?? false,   // the template's rendered probe call
+    create: context => new MyToolCallParser(context));                                  // IToolCallParser: Feed(text), Finish()
+var template = new JinjaChatTemplate(source, stops) { CallFormatName = "my-format" };   // or leave it to detection
+``` Each registry has a test
 that plugs in an implementation of its own next to the built-ins.
 
 ## Telemetry: logging and tracking
