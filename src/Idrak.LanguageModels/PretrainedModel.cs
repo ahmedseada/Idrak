@@ -131,6 +131,8 @@ public sealed class PretrainedModel : IDisposable
             {
                 throw new InvalidDataException($"The adapter in {options.MergeAdapter} matches none of the model's weights.");
             }
+
+            adapter.CheckAllUsed();
         }
 
         notes.InsertRange(0, format.Notes(folder));                 // where the weights come from, first
@@ -245,45 +247,54 @@ public sealed class PretrainedModel : IDisposable
 
     /// <summary>
     /// Reads LoRA adapters in the PEFT layout (from <see cref="SaveAdapter"/>, or trained with peft on the same base
-    /// model) and attaches them to the matching projections. Returns how many layers received one.
+    /// model) and attaches them to the matching projections. Returns how many layers received one. The configuration is
+    /// checked first: another peft_type, or an option Idrak does not apply (per-module ranks, trained biases, modules to
+    /// save), is refused with an error, as is a file holding tensors for layers the model does not adapt; use_rslora sets
+    /// the scale to alpha / √r.
     /// </summary>
     public int LoadAdapter(string folder)
     {
-        var config = JsonNode.Parse(File.ReadAllText(Path.Combine(folder, "adapter_config.json")))!.AsObject();
-        int rank = (int?)config["r"] ?? throw new InvalidDataException("adapter_config.json has no r.");
-        float alpha = (float?)config["lora_alpha"] ?? rank;
-        using var reader = SafeTensorsReader.Open(Path.Combine(folder, "adapter_model.safetensors"));
-        int loaded = 0;
-        foreach (var (path, module) in NamedModules().ToList())
+        var config = PeftAdapterConfig.Read(folder);
+        if (config.UseDora)
         {
-            if (module is not Linear linear || Architecture.TensorName($"{path}.weight") is not { } weight)
-            {
-                continue;
-            }
+            throw new NotSupportedException($"{folder}: DoRA adapters (use_dora) are not supported yet.");
+        }
 
-            string prefix = "base_model.model." + weight[..^".weight".Length];
-            string a = $"{prefix}.lora_A.weight", b = $"{prefix}.lora_B.weight";
-            if (!reader.Contains(a))
+        using var reader = SafeTensorsReader.Open(Path.Combine(folder, "adapter_model.safetensors"));
+        var found = new List<(Linear Layer, string A, string B)>();
+        var used = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var (path, module) in NamedModules())
+        {
+            if (module is Linear linear && Architecture.TensorName($"{path}.weight") is { } weight
+                && config.Names(reader, weight[..^".weight".Length]) is var (a, b, _))
             {
-                (a, b) = ($"{prefix}.lora_A.default.weight", $"{prefix}.lora_B.default.weight");
-                if (!reader.Contains(a))
-                {
-                    continue;
-                }
+                found.Add((linear, a, b));
+                used.Add(a);
+                used.Add(b);
+            }
+        }
+
+        PeftAdapterConfig.CheckAllUsed(reader, used, folder);                   // before any layer changes
+        foreach (var (linear, a, b) in found)
+        {
+            int rank = reader.Tensors[a].Shape[0];
+            if (linear.Adapter is { } existing && existing.Rank != rank)
+            {
+                throw new InvalidDataException($"{linear} has a rank-{existing.Rank} adapter; the one in {folder} has rank {rank}.");
             }
 
             if (linear.Adapter is null)
             {
-                linear.AddLora(rank, alpha, l => ReferenceEquals(l, linear), freezeBase: false);
+                linear.AddLora(rank, config.Alpha, l => ReferenceEquals(l, linear), freezeBase: false);
             }
 
+            linear.Adapter = linear.Adapter! with { Scale = config.Scale };
             var adapter = linear.Adapter!;
             adapter.A.Load(HostParallel.Transpose(reader.Read(a), adapter.Rank, linear.InFeatures));
             adapter.B.Load(HostParallel.Transpose(reader.Read(b), linear.OutFeatures, adapter.Rank));
-            loaded++;
         }
 
-        return loaded;
+        return found.Count;
     }
 
     /// <summary>

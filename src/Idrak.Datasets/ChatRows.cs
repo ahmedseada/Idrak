@@ -36,6 +36,12 @@ public enum RowKind
 
     /// <summary>Only plain text ({"text": ...}); conversations are flattened to their text.</summary>
     Text,
+
+    /// <summary>
+    /// Only preference pairs, as TRL's conversational preference rows ({"prompt": [...], "chosen": [...], "rejected": [...]},
+    /// see <see cref="ChatRows.Preference"/>); other rows are dropped.
+    /// </summary>
+    Preference,
 }
 
 /// <summary>
@@ -75,6 +81,11 @@ public static partial class ChatRows
     /// <summary>One row as a conversation or text, or null when it is neither.</summary>
     public static JsonObject? Normalize(JsonObject row, RowKind kind = RowKind.Auto, ChatMapping? mapping = null, string? system = null)
     {
+        if (kind == RowKind.Preference)
+        {
+            return Preference(row, system);
+        }
+
         var messages = mapping is not null ? Mapped(row, mapping) : Conversation(row);
         if (messages is not null && messages.Count > 0)
         {
@@ -105,9 +116,98 @@ public static partial class ChatRows
         return null;
     }
 
+    /// <summary>
+    /// A preference row as <c>{"prompt": [messages], "chosen": [messages], "rejected": [messages]}</c> (with "tools" when the
+    /// row has them), or null when the row is not a preference pair. Read: TRL's explicit-prompt layouts (a prompt as a
+    /// message list or a string, the answers as message lists or strings) and its implicit-prompt layout (chosen and
+    /// rejected as whole conversations: the messages they share are the prompt, the rest are the answers, as when a dataset
+    /// repeats the prompt in both). Message lists are read as <see cref="Normalize(JsonObject, RowKind, ChatMapping?, string?)"/>
+    /// reads them (role names, ShareGPT turns, lists stored as JSON strings); a "system" column, or
+    /// <paramref name="system"/>, starts a prompt that has no system message.
+    /// </summary>
+    public static JsonObject? Preference(JsonObject row, string? system = null)
+    {
+        ArgumentNullException.ThrowIfNull(row);
+        if (Turns(row["chosen"], "assistant") is not { Count: > 0 } chosen || Turns(row["rejected"], "assistant") is not { Count: > 0 } rejected)
+        {
+            return null;
+        }
+
+        var prompt = Turns(row["prompt"], "user");
+        // A prefix the two share is the prompt (implicit prompts, or a dataset that repeats the prompt in both answers).
+        int shared = 0;
+        while (shared < chosen.Count - 1 && shared < rejected.Count - 1 && JsonNode.DeepEquals(chosen[shared], rejected[shared]))
+        {
+            shared++;
+        }
+
+        if (shared > 0)
+        {
+            prompt = [];
+            for (int i = 0; i < shared; i++)
+            {
+                prompt.Add(chosen[0]!.DeepClone());
+                chosen.RemoveAt(0);
+                rejected.RemoveAt(0);
+            }
+        }
+
+        if (prompt is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        system ??= Has(row, "system") ? Str(row["system"]) : null;
+        if (system is not null && (string?)prompt[0]?["role"] != "system")
+        {
+            prompt.Insert(0, (JsonNode)Message("system", system));
+        }
+
+        var result = new JsonObject { ["prompt"] = prompt, ["chosen"] = chosen, ["rejected"] = rejected };
+        if (Tools(row) is { } tools)
+        {
+            result["tools"] = tools;
+        }
+
+        return result;
+    }
+
+    // Messages from a message list (or one stored as a JSON string), or a plain string as one message of `role`.
+    private static JsonArray? Turns(JsonNode? node, string role)
+    {
+        switch (node)
+        {
+            case JsonArray list when list.Count > 0 && list.All(m => m is JsonObject):
+                return Messages(list);
+            case JsonValue v when v.TryGetValue<string>(out var text):
+                if (text.TrimStart().StartsWith('['))
+                {
+                    try
+                    {
+                        if (JsonNode.Parse(text) is JsonArray parsed && parsed.Count > 0 && parsed.All(m => m is JsonObject))
+                        {
+                            return Messages(parsed);
+                        }
+                    }
+                    catch (JsonException)
+                    {
+                    }
+                }
+
+                return text.Length > 0 ? [(JsonNode)Message(role, text)] : null;
+            default:
+                return null;
+        }
+    }
+
     /// <summary>The layout detected in a row, for reports: "messages", "sharegpt", "alpaca", "question/answer" …, "text", or null.</summary>
     public static string? Describe(JsonObject row)
     {
+        if (row.ContainsKey("chosen") && row.ContainsKey("rejected"))
+        {
+            return "preference (chosen/rejected)";
+        }
+
         foreach (var name in new[] { "messages", "conversations", "conversation", "chosen" })
         {
             if (row[name] is JsonArray a && a.Count > 0 && a[0] is JsonObject first)

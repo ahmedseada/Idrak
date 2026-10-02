@@ -290,6 +290,36 @@ public static class ModuleExtensions
         return merged;
     }
 
+    /// <summary>
+    /// Detaches every adapter inside <paramref name="model"/> until the result is disposed, so the model computes as its
+    /// base model (the reference model of preference losses, or a comparison with the base) without a second copy of it;
+    /// disposing puts the same adapters back, their values and training state unchanged.
+    /// </summary>
+    public static IDisposable DisableAdapters(this Module model)
+    {
+        ArgumentNullException.ThrowIfNull(model);
+        var detached = model.Descendants().OfType<Linear>().Where(l => l.Adapter is not null).Select(l => (l, l.Adapter)).ToList();
+        foreach (var (linear, _) in detached)
+        {
+            linear.Adapter = null;
+        }
+
+        return new AdapterRestore(detached);
+    }
+
+    private sealed class AdapterRestore(List<(Linear Layer, LoraAdapter? Adapter)> detached) : IDisposable
+    {
+        public void Dispose()
+        {
+            foreach (var (layer, adapter) in detached)
+            {
+                layer.Adapter = adapter;
+            }
+
+            detached.Clear();
+        }
+    }
+
     private static T SetTrainable<T>(T module, IEnumerable<Tensor> parameters, bool trainable) where T : Module
     {
         foreach (var p in parameters)
