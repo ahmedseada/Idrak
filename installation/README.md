@@ -9,6 +9,7 @@ architectures").
 | [Windows](windows.md) | Windows 10/11 desktops and laptops (NVIDIA, Intel and AMD GPUs) | CPU, CUDA, Vulkan |
 | [Linux and WSL2](linux.md) | Ubuntu on x64, Ubuntu under WSL2 | CPU, CUDA, Vulkan (lavapipe under WSL2) |
 | [Android phone](android-termux.md) | Snapdragon phone, Termux + Ubuntu (proot), Mesa Turnip | CPU (ARM64 NEON), Vulkan (Adreno) |
+| [HIP](hip.md) (untested on real hardware) | Linux with ROCm, Windows with the HIP SDK, an AMD GPU | HIP |
 
 Every guide ends with the same three checks:
 
@@ -30,6 +31,7 @@ Every guide ends with the same three checks:
 | `IDRAK_DEVICES` | Devices the test runner uses, comma-separated (`cpu`, `cuda:0`, `vulkan:0`, ...). |
 | `IDRAK_FILTER` | Run only tests whose names contain this text. |
 | `IDRAK_VULKAN_DEFAULT=1` | Prefer a Vulkan device as `Device.Default` when no CUDA device is present. |
+| `IDRAK_HIP_DEFAULT=1` | Prefer a HIP device as `Device.Default` (after CUDA, before Vulkan); see [hip.md](hip.md) for the other HIP settings. |
 | `IDRAK_VULKAN_WIDTH` | Force the Vulkan kernels' workgroup width instead of the measured one (diagnostics only). |
 | `IDRAK_AUTOTUNE=0` | Use the formulas only, no on-device measuring (diagnostics only). |
 | `VK_ICD_FILENAMES` | Which Vulkan driver the loader uses (needed on the phone for Turnip). |

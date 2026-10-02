@@ -2,12 +2,13 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using Idrak.Backends.Cuda;
+using Idrak.Backends.Hip;
 using Idrak.Backends.Vulkan;
 
 namespace Idrak.Backends;
 
 /// <summary>
-/// One kind of device beyond the CPU (CUDA, Vulkan, …): how many there are, and the backend that drives each. Devices
+/// One kind of device beyond the CPU (CUDA, Vulkan, HIP, …): how many there are, and the backend that drives each. Devices
 /// come from the registered providers (<see cref="DeviceProviders"/>), so a new kind of hardware is a provider and a
 /// <see cref="Backend"/>, with no change to <see cref="Device"/> or the layers.
 /// </summary>
@@ -53,10 +54,10 @@ internal abstract class DeviceProvider
     public virtual Guid? DeviceUuid(int ordinal) => null;
 }
 
-/// <summary>The device kinds beyond the CPU: CUDA first, then Vulkan.</summary>
+/// <summary>The device kinds beyond the CPU: CUDA first, then Vulkan, then HIP.</summary>
 internal static class DeviceProviders
 {
-    private static readonly List<DeviceProvider> Registry = [new CudaProvider(), new VulkanProvider()];
+    private static readonly List<DeviceProvider> Registry = [new CudaProvider(), new VulkanProvider(), new HipProvider()];
 
     /// <summary>The registered providers, in registration order.</summary>
     public static IReadOnlyList<DeviceProvider> All

@@ -46,7 +46,8 @@ lavapipe (Mesa's software Vulkan driver) here, and on CUDA plus `--bench-gemv` o
    (VK_KHR_cooperative_matrix) for prompt-sized products — both need the runtime to enable them at device and pipeline
    creation.
 6. **Public backend API**: `Backend`, `Storage`, `DeviceProvider` and `HostCall` public, for backends in their own
-   packages.
+   packages. Parked until a different backend family exists: the HIP backend (the third family, [plan 8](8-hip.md))
+   lists what it found awkward in the internal contract.
 
 ## The Vulkan contract (runtime ↔ generated kernels)
 
