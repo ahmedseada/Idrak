@@ -35,7 +35,7 @@ them.
 | 5 | ONNX export has no global registry and misses layer kinds | per-exporter `Module<T>`/`Lambda` only (OnnxExport.cs:90-101); built-ins in a closed switch (OnnxExport.cs:169-202); no `GraphModule` (an imported graph cannot be exported again), no decoder layers; one input only (OnnxExport.cs:70) | a package shipping a layer with its ONNX translator; round trips of imported graphs | `OnnxExportOps.Register<T>(OnnxTranslator<T>)` and `Unregister`, built-ins registered the same way; the per-exporter call keeps precedence | small to medium | high |
 | 6 | ONNX import of graph models ignores registered operators | fixed `Primitives` map (OnnxImport.cs:336-344) and closed `MatchLayer` (402-413), documented at OnnxImportOps.cs:90-92; closed `GraphModule` operation switch (GraphModule.cs:159-233) and layer list (`LayerDescriptions`, GraphModule.cs:464-522); one input and output (OnnxImport.cs:125, 350) | a ResNet or U-Net with Erf, Pow, Clip or ConvTranspose; a custom layer inside a graph | `GraphOps.Register(op, ...)`; `LayerDescriptions` becomes a layer type registry (describe, create), shared with item 7 | medium | high |
 | 7 | Model packages (.ikm) cannot store custom architectures, scalers or tokenizers | `BuildModel` handles DecoderSpec, GraphModule or builder JSON only (Inference/ModelPackage.cs:293-325); scalers in a closed switch (ModelPackage.cs:111-116) with the `PackageEntryKind` enum (:50); tokenizers limited to character and word (:118-126; Generation/Tokenizer.cs:282-298) | shipping a custom module, a robust scaler or a BPE model in one file | an architecture registry keyed by the description's format; `IScaler` gains a save method and a format name with a scaler registry; the same for tokenizers | medium | medium |
-| 8 | Tool-call parsing handles only JSON between tags | sealed `ToolCallFormat(Open, Close, List, ArgumentsKey)` (Generation/Chat.cs:33); sealed, JSON-only `ChatOutputParser` (Chat.cs:211, 492); the detector probes that shape only (ChatTemplates.cs:67-120) | Llama 3 pythonic calls, Qwen3-Coder XML, Mistral `[TOOL_CALLS]`, GPT-OSS channels, DeepSeek special tokens | an `IToolCallParser` (feed text, finish, calls) created by the chat template; `ToolCallFormat` stays the default | medium | high |
+| 8 | Done (plugin/tool-calls): `IToolCallParser` and `ToolCallFormats` with json, pythonic, qwen3-coder, mistral, harmony and deepseek built in. Was: tool-call parsing handles only JSON between tags | sealed `ToolCallFormat(Open, Close, List, ArgumentsKey)` (Generation/Chat.cs:33); sealed, JSON-only `ChatOutputParser` (Chat.cs:211, 492); the detector probes that shape only (ChatTemplates.cs:67-120) | Llama 3 pythonic calls, Qwen3-Coder XML, Mistral `[TOOL_CALLS]`, GPT-OSS channels, DeepSeek special tokens | an `IToolCallParser` (feed text, finish, calls) created by the chat template; `ToolCallFormat` stays the default | medium | high |
 | 9 | Fine-tuning fixes the optimizer, schedule, loss and adapter type | AdamW (LanguageModels/FineTuning.cs:984-987), cosine schedule (:729-730), token cross-entropy (:1324, :1443); LoRA only, through a sealed `LoraAdapter` record with an internal setter (Layers/Linear.cs:121, 497) | other optimizers, a warm-up/stable/decay schedule, DPO, ORPO or KTO losses, DoRA | `FineTuningOptions.Optimizer`, `Scheduler` and loss delegates; adapters need an `IAdapter` on `Linear` | medium (adapters: large) | high |
 | 10 | PEFT adapters: only plain LoRA, and the configuration is not checked | `LoadAdapter` and `AdapterMerge` read only `r`, `lora_alpha`, `use_rslora` (PretrainedModel.cs:250-283; Architectures.cs:240-246); `peft_type` and `use_dora` are never checked, so a DoRA adapter would likely load as plain LoRA (inferred from the code, not run) | loading DoRA, IA3 or VeRA adapters | first reject an unknown `peft_type` and `use_dora`; then an adapter type registry | small (checks), large (variants) | medium |
 | 11 | Only BPE tokenizer models | other tokenizer.json models throw (BpeTokenizer.cs:87-90); GGUF accepts only the "gpt2" tokenizer model (GgufModel.cs:339-342); `BpeTokenizer` is always created (PretrainedModel.cs:138); `TokenizerComponents` has no model or post-processor entry (TokenizerComponents.cs:57-63) | WordPiece (BERT, BGE), Unigram/SentencePiece (T5, Gemma, Llama-2-style GGUF) | `TokenizerModels.Register(type, Func<JsonObject, ITokenizerModel>)` | medium to large | medium |
@@ -54,6 +54,17 @@ them.
 | 24 | Fixed initializers; closed activation and precision enums | Xavier-uniform in `Linear` (Layers/Linear.cs:28-29) with no hook; builder `Activation` enum (NetworkBuilder.cs:78-87, 195-201); sealed activation layers (Activations.cs); `MatMulPrecision` is float32, bfloat16 or FP8 (MixedPrecision.cs:7-55) | Kaiming initialization; SiLU or LeakyReLU in `Dense`; FP16 on GPUs without bfloat16 | initializer delegates (needs item 1); activations by `NetworkOps` name; new precisions need the public backend (12c) | small / medium | low |
 | 25 | Tool results are text only | `Tool.Invoke` returns `Task<string>` (Generation/Tools.cs:36); MCP results are flattened to text (Mcp/McpTools.cs:93-101) | image or structured tool output for multimodal models | `ToolResult` content blocks | medium | low |
 | 26 | The command-line tools cannot load plug-ins | no assembly loading or `--plugin` option in src or samples | using any registry from `idrak-tune` or `idrak-data` | `--plugin path.dll`, calling a module initializer or an `IIdrakPlugin.Register()` | small | medium |
+
+### Item 8: what remains
+
+- Formats not built in (no verified template at hand, or a different shape): Hermes-style tags with other JSON
+  shapes (GLM 4.5 `<arg_key>`/`<arg_value>`, Kimi K2 `<|tool_call_begin|>functions.name:0`, MiniMax `<invoke>`,
+  Command R, Granite, FunctionGemma). Each can be registered with `ToolCallFormats.Register`.
+- The pythonic community template writes string values with Python's `str()` (unquoted), so calls with string
+  arguments do not round-trip through that template exactly; numbers, booleans and lists do.
+- Calls are emitted when complete (no partial-argument streaming), as before.
+- Llama 3.1's built-in tools (`<|python_tag|>name.call(...)`) are parsed, but the template renders them back only
+  when `builtin_tools` is passed as a template variable.
 
 ## Gaps inside the existing registries
 
@@ -128,7 +139,7 @@ transform.
 2. Quick, high-value registries: RoPE scaling (item 3), ONNX export (item 5), `--plugin` for the command-line tools
    (item 26), registry hygiene (unregister, collisions, one name-matching rule).
 3. Dataset loaders (item 14 and the section above).
-4. Tool-call parsers (item 8) and fine-tuning options (item 9).
+4. Tool-call parsers (item 8, done) and fine-tuning options (item 9).
 5. Custom differentiable operations and more element-wise operations (item 2).
 6. Model families beyond `DecoderSpec` (item 4), then tokenizer models (item 11) and GGUF families (item 12).
 7. The rest by priority; anything that needs the public backend waits for item 12c.
