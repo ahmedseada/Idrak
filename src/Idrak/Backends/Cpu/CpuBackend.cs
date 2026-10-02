@@ -135,6 +135,7 @@ internal sealed partial class CpuBackend : Backend
             case UnaryOp.Exp: Run(new ExpKernel(D(x), D(y)), n); break;
             case UnaryOp.Log: Run(new LogKernel(D(x), D(y)), n); break;
             case UnaryOp.Gelu: Run(new GeluKernel(D(x), D(y)), n); break;
+            case UnaryOp.Sqrt or UnaryOp.Sin or UnaryOp.Cos or UnaryOp.Silu or UnaryOp.Sign: Run(new MathKernel(op, D(x), D(y)), n); break;
             default: throw new ArgumentOutOfRangeException(nameof(op));
         }
     }
@@ -151,6 +152,7 @@ internal sealed partial class CpuBackend : Backend
             case UnaryOp.Exp: Run(new MulAddKernel(D(dy), D(y), D(dx)), n); break;
             case UnaryOp.Log: Run(new LogBackwardKernel(D(x), D(dy), D(dx)), n); break;
             case UnaryOp.Gelu: Run(new GeluBackwardKernel(D(x), D(dy), D(dx)), n); break;
+            case UnaryOp.Sqrt or UnaryOp.Sin or UnaryOp.Cos or UnaryOp.Silu or UnaryOp.Sign: Run(new MathBackwardKernel(op, D(x), D(y), D(dy), D(dx)), n); break;
             default: throw new ArgumentOutOfRangeException(nameof(op));
         }
     }
@@ -162,6 +164,7 @@ internal sealed partial class CpuBackend : Backend
             case BinaryOp.Add: Run(new AddKernel(D(a), D(b), D(c)), n); break;
             case BinaryOp.Sub: Run(new SubKernel(D(a), D(b), D(c)), n); break;
             case BinaryOp.Mul: Run(new MulKernel(D(a), D(b), D(c)), n); break;
+            case BinaryOp.Maximum or BinaryOp.Minimum: Run(new ExtremumKernel(op == BinaryOp.Minimum, D(a), D(b), D(c)), n); break;
             default: throw new ArgumentOutOfRangeException(nameof(op));
         }
     }

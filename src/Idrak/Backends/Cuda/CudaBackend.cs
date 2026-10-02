@@ -764,8 +764,14 @@ internal sealed unsafe partial class CudaBackend : Backend
             UnaryOp.Exp => _kernels["exp_f32"],
             UnaryOp.Log => _kernels["log_f32"],
             UnaryOp.Gelu => _kernels["gelu_f32"],
-            _ => throw new ArgumentOutOfRangeException(nameof(op)),
+            _ => IntPtr.Zero,
         };
+        if (fn == IntPtr.Zero)
+        {
+            base.Unary(op, x, y, n);                                         // no kernel yet: the host fallback
+            return;
+        }
+
         Launch1D(fn, n, P(x), P(y), U(n));
     }
 
@@ -781,8 +787,14 @@ internal sealed unsafe partial class CudaBackend : Backend
             UnaryOp.Exp => _kernels["exp_bwd_f32"],
             UnaryOp.Log => _kernels["log_bwd_f32"],
             UnaryOp.Gelu => _kernels["gelu_bwd_f32"],
-            _ => throw new ArgumentOutOfRangeException(nameof(op)),
+            _ => IntPtr.Zero,
         };
+        if (fn == IntPtr.Zero)
+        {
+            base.UnaryBackward(op, x, y, dy, dx, n);
+            return;
+        }
+
         Launch1D(fn, n, P(x), P(y), P(dy), P(dx), U(n));
     }
 
@@ -793,8 +805,14 @@ internal sealed unsafe partial class CudaBackend : Backend
             BinaryOp.Add => _add,
             BinaryOp.Sub => _sub,
             BinaryOp.Mul => _mul,
-            _ => throw new ArgumentOutOfRangeException(nameof(op)),
+            _ => IntPtr.Zero,
         };
+        if (fn == IntPtr.Zero)
+        {
+            base.Binary(op, a, b, c, n);
+            return;
+        }
+
         Launch1D(fn, n, P(a), P(b), P(c), U(n));
     }
 

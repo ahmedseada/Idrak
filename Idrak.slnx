@@ -30,6 +30,7 @@
     <Project Path="src/Idrak/Idrak.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Idrak.PluginTests/Idrak.PluginTests.csproj" />
     <Project Path="tests/Idrak.Tests/Idrak.Tests.csproj" />
   </Folder>
 </Solution>

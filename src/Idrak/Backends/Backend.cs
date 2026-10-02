@@ -15,6 +15,11 @@ internal enum UnaryOp
     Exp,
     Log,
     Gelu,
+    Sqrt,
+    Sin,
+    Cos,
+    Silu,
+    Sign,
 }
 
 internal enum BinaryOp
@@ -22,6 +27,8 @@ internal enum BinaryOp
     Add,
     Sub,
     Mul,
+    Maximum,
+    Minimum,
 }
 
 /// <summary>Shape parameters of a 2-D convolution or pooling window over NCHW data.</summary>
@@ -67,6 +74,12 @@ internal abstract class Storage(Backend backend, int length)
             Packed = null;
         }
     }
+
+    /// <summary>
+    /// Counts the public in-place writes into the storage (<see cref="Tensor.CopyFrom(ReadOnlySpan{float})"/> and the
+    /// others): a backward step whose operation read the storage before such a write refuses to run on the changed values.
+    /// </summary>
+    public int Version;
 
     /// <summary>How readily the storage moves to system memory when the device fills up (see <see cref="IMemoryOffload"/>).</summary>
     public OffloadPriority OffloadPriority { get; set; }
@@ -217,6 +230,58 @@ internal abstract class Backend
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.Binary(op, h[a], h[b], h[c], n);
+    }
+
+    /// <summary>
+    /// dx += dy where a wins (<see cref="BinaryOp.Maximum"/>: a ≥ b; <see cref="BinaryOp.Minimum"/>: a ≤ b), db += dy
+    /// elsewhere: the backward step of c = max(a, b) or min(a, b). A null gradient is skipped.
+    /// </summary>
+    public virtual void ExtremumBackward(BinaryOp op, Storage a, Storage b, Storage dy, Storage? da, Storage? db, int n)
+    {
+        using var h = new HostCall(this);
+        CpuBackend.Instance.ExtremumBackward(op, h[a], h[b], h[dy], h.Maybe(da), h.Maybe(db), n);
+    }
+
+    /// <summary>y = x^exponent, element-wise.</summary>
+    public virtual void Pow(Storage x, Storage y, int n, float exponent)
+    {
+        using var h = new HostCall(this);
+        CpuBackend.Instance.Pow(h[x], h[y], n, exponent);
+    }
+
+    /// <summary>dx += dy · exponent · x^(exponent - 1).</summary>
+    public virtual void PowBackward(Storage x, Storage dy, Storage dx, int n, float exponent)
+    {
+        using var h = new HostCall(this);
+        CpuBackend.Instance.PowBackward(h[x], h[dy], h[dx], n, exponent);
+    }
+
+    /// <summary>y = x limited to [min, max] (either may be infinite).</summary>
+    public virtual void Clamp(Storage x, Storage y, int n, float min, float max)
+    {
+        using var h = new HostCall(this);
+        CpuBackend.Instance.Clamp(h[x], h[y], n, min, max);
+    }
+
+    /// <summary>dx += dy where min ≤ x ≤ max.</summary>
+    public virtual void ClampBackward(Storage x, Storage dy, Storage dx, int n, float min, float max)
+    {
+        using var h = new HostCall(this);
+        CpuBackend.Instance.ClampBackward(h[x], h[dy], h[dx], n, min, max);
+    }
+
+    /// <summary>y = condition ≠ 0 ? a : b, element-wise.</summary>
+    public virtual void Where(Storage condition, Storage a, Storage b, Storage y, int n)
+    {
+        using var h = new HostCall(this);
+        CpuBackend.Instance.Where(h[condition], h[a], h[b], h[y], n);
+    }
+
+    /// <summary>da += dy where condition ≠ 0, db += dy elsewhere (a null gradient is skipped).</summary>
+    public virtual void WhereBackward(Storage condition, Storage dy, Storage? da, Storage? db, int n)
+    {
+        using var h = new HostCall(this);
+        CpuBackend.Instance.WhereBackward(h[condition], h[dy], h.Maybe(da), h.Maybe(db), n);
     }
 
     /// <summary>y = alpha * x + beta.</summary>
