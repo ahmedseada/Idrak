@@ -67,6 +67,66 @@ internal sealed class VulkanKernel
     /// <summary>The pipeline built for it on the backend that dispatched it last (looked up without a dictionary).</summary>
     internal object? LastPipeline;
 
+    /// <summary>The sized variant chosen for it by the backend that chose last (VulkanBackend.SubgroupSize.cs).</summary>
+    internal object? LastSized;
+
+    /// <summary>The subgroup size its pipeline requires (VK_EXT_subgroup_size_control), or 0 for the device's default.</summary>
+    internal int RequiredSubgroupSize { get; init; }
+
+    /// <summary>Whether the module uses subgroup operations (declares the GroupNonUniform capability).</summary>
+    internal bool UsesSubgroups => (_usesSubgroups ??= DeclaresCapability(Spirv, 61)) == true;
+
+    private bool? _usesSubgroups;
+
+    /// <summary>The module's workgroup width (its LocalSize execution mode's x; 0 when it declares none).</summary>
+    internal int LocalSizeX => _localSizeX ??= ReadLocalSizeX(Spirv);
+
+    private int? _localSizeX;
+
+    // Whether the module declares `capability` (OpCapability, which comes before every other instruction but the header).
+    private static bool DeclaresCapability(uint[] words, uint capability)
+    {
+        for (int i = 5; i < words.Length;)
+        {
+            uint op = words[i] & 0xFFFF, count = words[i] >> 16;
+            if (op != 17 || count == 0)
+            {
+                return false;                                                  // past the capabilities
+            }
+
+            if (count >= 2 && i + 1 < words.Length && words[i + 1] == capability)
+            {
+                return true;
+            }
+
+            i += (int)count;
+        }
+
+        return false;
+    }
+
+    // The x of the first OpExecutionMode LocalSize (opcode 16, mode 17), or 0.
+    private static int ReadLocalSizeX(uint[] words)
+    {
+        for (int i = 5; i < words.Length;)
+        {
+            uint op = words[i] & 0xFFFF, count = words[i] >> 16;
+            if (count == 0)
+            {
+                return 0;
+            }
+
+            if (op == 16 && count >= 4 && i + 3 < words.Length && words[i + 2] == 17)
+            {
+                return (int)words[i + 3];
+            }
+
+            i += (int)count;
+        }
+
+        return 0;
+    }
+
     /// <inheritdoc />
     public override string ToString() => Name;
 }

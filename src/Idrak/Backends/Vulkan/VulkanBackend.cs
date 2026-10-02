@@ -63,7 +63,7 @@ internal sealed unsafe partial class VulkanBackend : Backend
         MaxAllocations = MemoryAllocationCap(p.MaxMemoryAllocationCount, maxAllocations);
         Name = $"{physical.DeviceName} (Vulkan {VersionOf(p.ApiVersion).Major}.{VersionOf(p.ApiVersion).Minor}, {physical.Driver})";
         _memory = new MemoryAccountant(() => ComputeResources.GpuMemoryLimit, Name);
-        MaxStorageBytes = p.MaxStorageBufferRange;
+        MaxStorageBytes = StorageRange(p.MaxStorageBufferRange, StorageRangeOverride);
 
         // One compute queue.
         float priority = 1f;
@@ -86,16 +86,37 @@ internal sealed unsafe partial class VulkanBackend : Backend
             _ => null,
         };
         bool push = HasExtension(physical.Handle, PushDescriptorExtension);
-        fixed (byte* extensionName = "VK_KHR_push_descriptor\0"u8)
+
+        // Subgroup size control only where the device reports it (VulkanBackend.SubgroupSize.cs).
+        _sizeControl = ProbeSubgroupSizeControl(physical);
+        var sizeFeatures = new VkPhysicalDeviceSubgroupSizeControlFeatures
         {
-            byte* extension = extensionName;
+            SType = StructurePhysicalDeviceSubgroupSizeControlFeatures,
+            SubgroupSizeControl = 1,
+            ComputeFullSubgroups = _sizeControl.FullSubgroups ? 1u : 0u,
+        };
+        fixed (byte* extensionName = "VK_KHR_push_descriptor\0"u8, sizeName = "VK_EXT_subgroup_size_control\0"u8)
+        {
+            byte** extensions = stackalloc byte*[2];
+            uint count = 0;
+            if (push)
+            {
+                extensions[count++] = extensionName;
+            }
+
+            if (_sizeControl.Extension)
+            {
+                extensions[count++] = sizeName;
+            }
+
             var deviceInfo = new VkDeviceCreateInfo
             {
                 SType = StructureDeviceCreateInfo,
+                PNext = _sizeControl.Enabled ? &sizeFeatures : null,
                 QueueCreateInfoCount = 1,
                 QueueCreateInfos = &queueInfo,
-                EnabledExtensionCount = push ? 1u : 0u,
-                EnabledExtensionNames = &extension,
+                EnabledExtensionCount = count,
+                EnabledExtensionNames = extensions,
             };
             Check(vkCreateDevice(physical.Handle, &deviceInfo, null, out _device), nameof(vkCreateDevice));
         }
@@ -211,8 +232,9 @@ internal sealed unsafe partial class VulkanBackend : Backend
     /// <summary>Whether storages live in memory the host maps directly: uploads need no staging.</summary>
     public bool UnifiedMemory { get; private set; }
 
-    /// <summary>The largest storage a kernel can bind (maxStorageBufferRange); larger ones take the host fallback.</summary>
-    public long MaxStorageBytes { get; }
+    /// <summary>The largest storage a kernel can bind (maxStorageBufferRange); larger ones are bound in windows where an
+    /// operation can (VulkanBackend.LargeStorage.cs), else take the host fallback.</summary>
+    public long MaxStorageBytes { get; private set; }
 
     public override string Name { get; }
 

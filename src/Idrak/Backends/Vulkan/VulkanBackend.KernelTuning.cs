@@ -41,6 +41,9 @@ internal enum VulkanTuneOp : byte
 
     /// <summary>A fused packed product (several sharing an input, the gate/up pair, the gated down projection): as <see cref="Gemv"/>.</summary>
     FusedGemv,
+
+    /// <summary>A kernel with subgroup operations: the subgroup size its pipeline requires (0: the device's default).</summary>
+    SubgroupSize,
 }
 
 /// <summary>What a measured choice is for: the operation, its variant (kernel, format) and its shape.</summary>

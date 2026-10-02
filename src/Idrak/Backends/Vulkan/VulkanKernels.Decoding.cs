@@ -35,17 +35,20 @@ internal static partial class VulkanKernels
             return k.Build();
         });
 
-        // y[i, :] = table[indices[i], :]; indices outside [0, vocabulary) are clamped into it (the CPU throws).
+        // y[i, :] = table[indices[i], :]; indices outside [0, vocabulary) are clamped into it (the CPU throws). The table's
+        // binding holds rows [first, first + rows) (the whole table, or one window of a table larger than a binding:
+        // VulkanBackend.LargeStorage.cs); outputs whose row is elsewhere are left to the other windows' dispatches.
         yield return ("gather", () =>
         {
             var k = new KernelBuilder("gather", Block);
             var (table, indices, y) = (k.Buffer("table"), k.Buffer("indices"), k.Buffer("y"));
             var (count, dim, vocabulary) = (k.PushInt("count"), k.PushInt("dim"), k.PushInt("vocabulary"));
+            var (first, rows) = (k.PushInt("first"), k.PushInt("rows"));
             Grid(k, count * dim, i =>
             {
                 var (row, d) = (i / dim, i % dim);
-                var index = k.Clamp(indices[row].ToInt(), k.Int(0), vocabulary - 1);
-                y[i] = table[index * dim + d];
+                var index = k.Clamp(indices[row].ToInt(), k.Int(0), vocabulary - 1) - first;
+                k.If((index >= 0) & (index < rows), () => y[i] = table[index * dim + d]);
             });
             return k.Build();
         });
@@ -56,11 +59,12 @@ internal static partial class VulkanKernels
             var k = new KernelBuilder("gather_bf16", Block);
             var (packed, indices, y) = (k.Buffer("packed"), k.Buffer("indices"), k.Buffer("y"));
             var (count, dim, vocabulary) = (k.PushInt("count"), k.PushInt("dim"), k.PushInt("vocabulary"));
+            var (first, rows) = (k.PushInt("first"), k.PushInt("rows"));
             Grid(k, count * dim, i =>
             {
                 var (row, d) = (i / dim, i % dim);
-                var index = k.Clamp(indices[row].ToInt(), k.Int(0), vocabulary - 1);
-                y[i] = BFloat16At(k, packed, index * ((dim + 1) / 2) + (d >> 1), d);
+                var index = k.Clamp(indices[row].ToInt(), k.Int(0), vocabulary - 1) - first;
+                k.If((index >= 0) & (index < rows), () => y[i] = BFloat16At(k, packed, index * ((dim + 1) / 2) + (d >> 1), d));
             });
             return k.Build();
         });
