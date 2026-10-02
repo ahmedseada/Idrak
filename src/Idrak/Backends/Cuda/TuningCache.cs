@@ -13,8 +13,11 @@ namespace Idrak.Backends.Cuda;
 /// </summary>
 internal static class TuneTiming
 {
-    /// <summary>Timings per candidate; the median is kept, so up to three outliers (either way) cannot move the choice.</summary>
-    internal const int Rounds = 7;
+    /// <summary>
+    /// Rounds of paired timings per candidate; the median of the pair ratios is kept, so up to three outliers (either
+    /// way) cannot move the choice. Even, so each candidate runs as often before its reference as after it.
+    /// </summary>
+    internal const int Rounds = 8;
 
     /// <summary>A candidate replaces the formula's choice only when its median is at least this much faster (3%).</summary>
     internal const float Margin = 0.97f;
@@ -26,40 +29,56 @@ internal static class TuneTiming
     internal const float WarmMaxMs = 250f;
 
     /// <summary>
-    /// The index of the candidate to keep: candidates take turns for <paramref name="rounds"/> rounds (forwards, then
-    /// backwards), each timing is divided by the reference's timing of the same round (the formula's choice,
-    /// <paramref name="fallback"/>, when it is a candidate, else the first), and the medians of these ratios are compared.
-    /// The formula's choice stays unless the fastest beats it by the margin. Ratios within a round cancel a clock that
-    /// changes between rounds: a GPU still raising its clocks (laptops: several times faster within a few
-    /// milliseconds) made medians of the times themselves depend on which candidates happened to run before the step,
-    /// so two measurements of one shape could choose differently. <paramref name="time"/>(index) returns one timing of
-    /// that candidate (ms per run).
+    /// The index of the candidate to keep. Each candidate is timed in pairs with the reference (the formula's choice,
+    /// <paramref name="fallback"/>, when it is a candidate, else the first), the two timings back to back, over
+    /// <paramref name="rounds"/> rounds; the reference runs first in even rounds and second in odd ones, and the
+    /// candidates take their turns forwards, then backwards. Each pair gives the ratio of the candidate's timing to the
+    /// reference's, and the medians of these ratios are compared. The formula's choice stays unless the fastest beats it
+    /// by the margin. Pairs cancel a clock that changes during the measurement: a GPU still raising its clocks (laptops:
+    /// several times faster within a few milliseconds) or lowering them under a power limit. Before, every candidate ran
+    /// once per round against the reference's single timing of that round, four rounds of seven with the reference
+    /// first: a steady drift then moved each candidate's median by its distance from the reference in the round (with
+    /// the reference first, the most splits), up to the whole drift of a round, and a candidate a few percent slower than
+    /// the formula's choice could be kept. <paramref name="time"/>(index) returns one timing of that candidate (ms per run);
+    /// <paramref name="medians"/>, when given, receives each candidate's median ratio (diagnostics).
     /// </summary>
-    internal static int Choose(ReadOnlySpan<int> candidates, int fallback, Func<int, float> time, int rounds = Rounds, float margin = Margin)
+    internal static int Choose(ReadOnlySpan<int> candidates, int fallback, Func<int, float> time, int rounds = Rounds, float margin = Margin,
+        float[]? medians = null)
     {
         int count = candidates.Length;
-        var samples = new float[count * rounds];
+        int formula = candidates.IndexOf(fallback);
+        int reference = Math.Max(formula, 0);
+        var ratios = new float[count * rounds];
         for (int round = 0; round < rounds; round++)
         {
             for (int i = 0; i < count; i++)
             {
                 int c = round % 2 == 0 ? i : count - 1 - i;
-                samples[c * rounds + round] = time(c);
+                if (c == reference)
+                {
+                    continue;
+                }
+
+                float t, r;
+                if (round % 2 == 0)
+                {
+                    r = time(reference);
+                    t = time(c);
+                }
+                else
+                {
+                    t = time(c);
+                    r = time(reference);
+                }
+
+                ratios[c * rounds + round] = t / Math.Max(r, 1e-9f);
             }
         }
 
-        int formula = candidates.IndexOf(fallback);
-        int reference = Math.Max(formula, 0);
-        var ratios = new float[rounds];
-        var medians = new float[count];
+        medians ??= new float[count];
         for (int c = 0; c < count; c++)
         {
-            for (int round = 0; round < rounds; round++)
-            {
-                ratios[round] = samples[c * rounds + round] / Math.Max(samples[reference * rounds + round], 1e-9f);
-            }
-
-            medians[c] = c == reference ? 1f : Median(ratios);
+            medians[c] = c == reference ? 1f : Median(ratios.AsSpan(c * rounds, rounds));
         }
 
         int fastest = 0;
@@ -146,8 +165,10 @@ internal static class TuningCache
     /// <summary>
     /// The file format; a file of another version is ignored and rewritten. 2: choices measured with the warm-up, the
     /// ratios per round and the fused kernels timed whole (those of version 1 could be the plain kernel's, or noise).
+    /// 3: candidates timed in pairs with the formula's choice (a drifting clock moved version 2's choices toward the
+    /// candidates timed furthest from it), and decoding-sized products timed with a cold L2 cache, as decoding reads them.
     /// </summary>
-    internal const int FormatVersion = 2;
+    internal const int FormatVersion = 3;
 
     private const string Magic = "idrak-tuning";
 

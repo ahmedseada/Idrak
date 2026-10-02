@@ -216,13 +216,13 @@ internal sealed unsafe partial class CudaBackend
             splits = formula;
             if (tail is null)
             {
-                splits = Tune(key, candidates, formula, c => Run(kernel, P(y), [], c));
+                splits = Tune(key, candidates, formula, c => Run(kernel, P(y), [], c), cold: true);
             }
             else if (!TunedKnown(key))
             {
                 long size = (long)m * n * sizeof(float);
                 WithScratch(3L * m * n, scratch => splits = Tune(key, candidates, formula,
-                    c => Run(kernel, scratch, [tail[0], scratch + (ulong)size, tail[2], scratch + 2 * (ulong)size, .. tail[4..]], c)));
+                    c => Run(kernel, scratch, [tail[0], scratch + (ulong)size, tail[2], scratch + 2 * (ulong)size, .. tail[4..]], c), cold: true));
             }
             else
             {
@@ -263,7 +263,7 @@ internal sealed unsafe partial class CudaBackend
             }
         }
 
-        return Tune(new TuneKey(TuneOp.Int8FewRows, 0, m, n, k), [0, 1], 0, Run) == 1;
+        return Tune(new TuneKey(TuneOp.Int8FewRows, 0, m, n, k), [0, 1], 0, Run, cold: true) == 1;
     }
 
     /// <summary>Benchmarks only: the row tile (64 or 128) of prompt-sized packed products instead of the heuristic's.</summary>
@@ -528,7 +528,7 @@ internal sealed unsafe partial class CudaBackend
         }
 
         // Before measuring: fused for int4, separate for the others.
-        Run(Tune(new TuneKey(TuneOp.GatedActivation, fused, m, n, k), [0, 1], format == PackedFormat.Int4 ? 0 : 1, Run));
+        Run(Tune(new TuneKey(TuneOp.GatedActivation, fused, m, n, k), [0, 1], format == PackedFormat.Int4 ? 0 : 1, Run, cold: true));
         return true;
     }
 
@@ -637,7 +637,7 @@ internal sealed unsafe partial class CudaBackend
                 products.Length > 2 ? products[2].Columns : 0, biases);
             int formula = GemvSplitCount(totalBlocks, k);
             var copy = TunedKnown(name) ? null : products.ToArray();
-            wanted = copy is null ? Tune(name, [], formula, _ => { }) : Tune(name, GemvSplitCandidates(k, align), formula, c => Run(copy, c));
+            wanted = copy is null ? Tune(name, [], formula, _ => { }) : Tune(name, GemvSplitCandidates(k, align), formula, c => Run(copy, c), cold: true);
         }
 
         Run(products, wanted);
