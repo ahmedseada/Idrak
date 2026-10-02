@@ -1073,9 +1073,9 @@ The ASP.NET Core, MCP, dataset and naming tests do not depend on the device, and
 | Date | Library | GPU | Compute | Driver | System | Result |
 |---|---|---|---|---|---|---|
 | 2026-10-01 | 0.1.7 | NVIDIA GeForce RTX 5070 Ti, 16 GB, 70 SMs (Blackwell) | 12.0 | CUDA 13.3 | Windows (x64), 24-thread CPU, .NET 10.0.12 | 382 of 382 (CPU and GPU) |
-| 2026-10-01 | 0.1.6 | NVIDIA GeForce RTX 5050 Laptop GPU, 8 GB, 20 SMs (Blackwell) | 12.0 | CUDA 13.3 | Windows 11 (build 26200, x64), 16-thread CPU with 8-wide SIMD, .NET 10.0.12 | 382 of 382 (CPU and GPU) |
+| 2026-10-02 | 234e05f | NVIDIA | GeForce RTX 5050 Laptop GPU, 8 GB | Blackwell (sm_120) | discrete | CUDA 13.3 | 610.88 | device memory | tensor cores | Windows 11, i7-13620H (16 threads) | 729 of 729 (CPU, CUDA and the Intel GPU); "auto" at the best column on the decoding rows |
+| 2026-10-02 | 234e05f | NVIDIA | GeForce RTX 5050 Laptop GPU, 8 GB | Blackwell (sm_120) | discrete | CUDA 13.3 | 610.88 | device memory | tensor cores | Windows 11, i7-13620H (16 threads) | 729 of 729 (CPU, CUDA and the Intel GPU); "auto" at the best column on the decoding rows |
 | 2026-10-01 | 0.1.5 | NVIDIA GeForce RTX 3060 Laptop GPU, 6 GB, 30 SMs (Ampere) | 8.6 | CUDA 13.0 | Windows 11 (build 26200, x64), 20-thread CPU with 8-wide SIMD, .NET 10.0.12 | 364 of 364 (CPU and GPU; FP8 products skipped, no FP8 tensor cores) |
-| 2026-10-01 | 0.1.5 | NVIDIA GeForce RTX 5050 Laptop GPU, 8 GB, 20 SMs (Blackwell) | 12.0 | CUDA 13.3 | Windows 11 (build 26200, x64), 16-thread CPU with 8-wide SIMD, .NET 10.0.12 | 364 of 364 (CPU and GPU) |
 | 2026-10-01 | 0.1.5 | none (CPU only) | – | – | Windows 11 (build 22631, x64), 8-thread CPU with 8-wide SIMD, .NET 10.0.8 | 182 of 182 |
 | 2026-09-30 | main (after 0.1.0) | NVIDIA GeForce RTX 5050 Laptop GPU, 8 GB, 20 SMs (Blackwell) | 12.0 | 610.88 (CUDA 13.3) | Windows 11 (build 26200, x64), 16-thread CPU with 8-wide SIMD, .NET 10.0.12 | 340 of 340 (CPU and GPU) |
 | 2026-09-30 | main (after 0.1.0) | none (CPU only) | – | – | Ubuntu 24.04 (x64), 4-thread CPU with 8-wide SIMD, .NET 10.0.12 | 170 of 170 |
@@ -1096,14 +1096,13 @@ Results per run of the whole test list on one device:
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | 2026-10-02 | 234e05f | NVIDIA | GeForce RTX 5070 Ti, 16 GB | Blackwell (sm_120) | discrete | Vulkan 1.4 | 610.88 | mapped (resizable BAR), reads through staging | not used yet | Windows 11, 24-thread CPU | every Vulkan test passes (run from the CPU pass); decoder 1,454 tokens/s (int8, 8 layers), 0 host fallbacks |
 | 2026-10-02 | 234e05f | NVIDIA | GeForce RTX 5070 Ti, 16 GB | Blackwell (sm_120) | discrete | CUDA 13.3 | 610.88 | device memory | bfloat16, fp8, int8 tensor cores | Windows 11, 24-thread CPU | 486 of 486 (CPU and CUDA); `--bench-gemv` "auto" at the best column on every decoding row |
-| 2026-10-01 | a79e361 | NVIDIA | GeForce RTX 5050 Laptop GPU, 8 GB | Blackwell (sm_120) | discrete | Vulkan 1.4 | 610.88 | staging copies | not used yet | Windows 11, i7-13620H (16 threads) | 221 of 222: int8 tolerance fixed after the run |
-| 2026-10-01 | a79e361 | NVIDIA | GeForce RTX 5050 Laptop GPU, 8 GB | Blackwell (sm_120) | discrete | CUDA 13.3 | 610.88 | device memory | tensor cores | Windows 11, i7-13620H (16 threads) | all but in-place log-softmax (a CUDA kernel bug, fixed in e43c0b1) |
-| 2026-10-01 | a79e361 | NVIDIA | GeForce RTX 3060 Laptop GPU, 6 GB | Ampere (sm_86) | discrete | Vulkan 1.4 | 581.29 | staging copies | not used yet | Windows 11, Ryzen 5000H (16 threads) | 221 of 222: int8 tolerance fixed after the run |
-| 2026-10-01 | a79e361 | Intel | UHD Graphics (i7-13620H) | Xe-LP (Gen12) | integrated | Vulkan 1.4 | 101.7088 | mapped (shared with the CPU) | none (no XMX) | Windows 11, 12 GB shared | 221 of 222: int8 tolerance fixed after the run |
-| 2026-10-01 | a79e361 | AMD | Radeon Graphics (Ryzen 5000H "Cezanne") | Vega (GCN 5) | integrated | Vulkan 1.3 | 23.19.21.13 | mapped (shared with the CPU) | none | Windows 11, 2 GB reserved | 218 of 222: dropout scale (e43c0b1) and the 4,096-allocation cap (feecb42) fixed after the run |
-| 2026-10-01 | feecb42 | Mesa | llvmpipe (lavapipe, LLVM 20) | software (CPU) | CPU driver | Vulkan 1.4 | Mesa 25.2.8 | mapped | – | Ubuntu 24.04, 4 threads | 226 of 226 (also through staging, and with a cap of 64 allocations) |
-| 2026-10-01 | feecb42 | – | minimal test backend (memory and copies only) | – | test | host fallback | – | host | – | Ubuntu 24.04, 4 threads | 226 of 226 |
-| 2026-10-01 | feecb42 | – | none (CPU only) | x64, AVX2 | CPU | CPU | – | – | – | Ubuntu 24.04, 4 threads | 226 of 226 |
+| 2026-10-02 | 234e05f | NVIDIA | GeForce RTX 5050 Laptop GPU, 8 GB | Blackwell (sm_120) | discrete | Vulkan 1.4 | 610.88 | mapped (resizable BAR), reads through staging | not used yet | Windows 11, i7-13620H (16 threads) | every Vulkan test passes |
+| 2026-10-02 | 234e05f | NVIDIA | GeForce RTX 3060 Laptop GPU, 6 GB | Ampere (sm_86) | discrete | Vulkan 1.4 | 581.29 | mapped (resizable BAR), reads through staging | not used yet | Windows 11, Ryzen 5000H (16 threads) | every Vulkan test passes; CUDA 729 of 729 (CPU, CUDA 8.6 and the AMD GPU) |
+| 2026-10-02 | 234e05f | Intel | UHD Graphics (i7-13620H) | Xe-LP (Gen12) | integrated | Vulkan 1.4 | 101.7088 | mapped (shared with the CPU) | none (no XMX) | Windows 11, 12 GB shared | all pass; decoder 190 tokens/s (int8, 8 layers), element-wise 30 GB/s |
+| 2026-10-02 | 234e05f | AMD | Radeon Graphics (Ryzen 5000H "Cezanne") | Vega (GCN 5) | integrated | Vulkan 1.3 | 23.19.21.13 | measured per device since ce7bc4d (cached system memory read slower than the carve-out) | none | Windows 11, 2 GB reserved | all pass; decoder 343 tokens/s with the carve-out, 222 mapped |
+| 2026-10-02 | 234e05f | Mesa | llvmpipe (lavapipe, LLVM 20) | software (CPU) | CPU driver | Vulkan 1.4 | Mesa 25.2.8 | mapped | – | Ubuntu 24.04, 4 threads | all pass (also through staging, and with a cap of 64 allocations) |
+| 2026-10-02 | 234e05f | – | minimal test backend (memory and copies only) | – | test | host fallback | – | host | – | Ubuntu 24.04, 4 threads | all pass (729 across CPU, minimal and lavapipe) |
+| 2026-10-02 | 234e05f | – | none (CPU only) | x64, AVX2 | CPU | CPU | – | – | – | Ubuntu 24.04, 4 threads | all pass |
 
 The Vulkan kernels are not tuned yet: dispatches and element-wise kernels already run near the hardware's limits,
 but decoding products and attention are several times slower than CUDA's on the same GPU. Tuning follows the
