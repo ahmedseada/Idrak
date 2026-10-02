@@ -1,6 +1,8 @@
 # Linux and WSL2
 
 Used on Ubuntu 26.04 under WSL2 on the RTX 5070 Ti desktop, and in the development container (x64, lavapipe).
+Native Linux GPU drivers (NVIDIA's Linux driver, Mesa's RADV, ANV and NVK) have not been tested yet: under WSL2 the
+GPU is driven by the Windows driver, so the steps below for native Linux are untested.
 
 ## 1. GPU drivers
 
