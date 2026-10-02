@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Vulkan: prompts (tiled attention with or without the log-sum-exp; int8, int4 and bfloat16 products for many rows,
+  each measured against the few-rows kernels and expanding the weights), training (layer-norm and batch-norm
+  gradients and statistics, group reductions, column sums, products with a bias, fused AdamW with clipping, 8-bit Adam
+  with the CPU's codes, the tiled attention gradient), convolution and pooling (im2col, col2im and max-pool gradients as
+  gathers, bit for bit the CPU's) as generated kernels; fused decoding kernels (several products sharing an input,
+  gate/up with the activation, the gated down projection, projection + residual + RMS norm, head norms with rotation
+  and cache writes); graph capture and replay of decoding and training steps; storages larger than the device's
+  binding range bound in windows (packed products, gathers, dequantization); required subgroup sizes measured where
+  the device offers several; libvulkan.so on Android. Every choice comes from reported limits or is measured and stored
+  per device. `CpuBackend` now implements `SumColumns` (its fallback called itself).
 - GGUF pre-tokenizers are a registry (`GgufPreTokenizers.Register(name, pattern)`): the llama3, qwen2, tekken and gpt2
   families are registered with llama.cpp's patterns, unchanged; an unregistered name still uses Llama 3's rule and the
   note now says how to register it. `PackedWeight.FromValues(PackedFormat, ...)` makes the built-in weights from the same

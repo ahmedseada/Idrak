@@ -1135,6 +1135,8 @@ Results of the whole test list, grouped by vendor, architecture and driver (one 
     <tr><td>2026-10-02</td><td><b>UHD Graphics</b> (i7-13620H), 12 GB shared<br>Vulkan 1.4</td><td>integrated</td><td>mapped (shared with the CPU)</td><td>none (no XMX)</td><td>all pass; decoder 233 tokens/s (int8, 8 layers), element-wise 31 GB/s</td></tr>
     <tr><th colspan="6" align="left">AMD · Vega (GCN 5) · driver 23.19.21.13</th></tr>
     <tr><td>2026-10-02</td><td><b>Radeon Graphics</b> (Ryzen 5000H "Cezanne"), 2 GB reserved<br>Vulkan 1.3</td><td>integrated</td><td>measured per device (cached system memory reads slower than the carve-out)</td><td>none</td><td>all pass; decoder 336 tokens/s (storage memory measured: the carve-out through staging), 222 mapped</td></tr>
+    <tr><th colspan="6" align="left">Qualcomm · Adreno 7xx (Snapdragon 8+ Gen 1) · Mesa Turnip 26.3.0-devel (KGSL), Android phone, Termux + proot Ubuntu 26.04</th></tr>
+    <tr><td>2026-10-02</td><td><b>Adreno 730</b> (Turnip names it 725), 11 GB shared<br>Vulkan 1.4</td><td>integrated</td><td>mapped (unified memory, measured), storages up to 128 MiB per binding</td><td>none used</td><td>247 of 247 on the GPU (subgroups 64–128, kernels width 1024); <code>--bench-vulkan</code>: upload 12.9 GB/s, element-wise 24–40 GB/s, then the float32 product at width 1024 with subgroup sums lost the device (width 256: 85 GFLOP/s), under investigation. Qualcomm's own driver (Vulkan 1.1) is not reachable from proot; Turnip was built with <code>-Dfreedreno-kmds=kgsl</code></td></tr>
     <tr><th colspan="6" align="left">Mesa · software (CPU) · Mesa 25.2.8</th></tr>
     <tr><td>2026-10-02</td><td><b>llvmpipe</b> (lavapipe, LLVM 20)<br>Vulkan 1.4</td><td>CPU driver</td><td>mapped</td><td>–</td><td>all pass (also through staging, and with a cap of 64 allocations)</td></tr>
     <tr><th colspan="6" align="left">CPU · ARM64, NEON (DotProd, RDM) · Android phone, Termux + proot Ubuntu 26.04, .NET 10</th></tr>
@@ -1145,8 +1147,15 @@ Results of the whole test list, grouped by vendor, architecture and driver (one 
   </tbody>
 </table>
 
-The Vulkan kernels are not tuned yet: dispatches and element-wise kernels already run near the hardware's limits,
-but decoding products and attention are several times slower than CUDA's on the same GPU. Tuning follows the
+The Vulkan backend now runs prompts (tiled attention, packed products for many rows), training (layer and batch
+norm gradients, fused AdamW, 8-bit Adam, the attention gradient), convolutions and pooling as kernels, fuses the
+decoding step (q/k/v, gate/up with the activation, projection with residual and norm, head norms with rotation and
+cache writes: 131-138 dispatches per token down to 82 on the bench decoder), records and replays decoding steps like
+CUDA graphs (host time per step from about 300 µs to 5 µs on lavapipe), and binds storages larger than a device's
+binding range in windows (the 151,936-column int8 head on a 128 MiB device: 129 ms on the host down to 43-65 ms on the
+device). These were tested on lavapipe; the GPU rows above predate them. The kernels are not tuned yet:
+dispatches and element-wise kernels already run near the hardware's limits, but decoding products and attention are
+several times slower than CUDA's on the same GPU. Tuning follows the
 card-agnostic rule of [plans/README.md](plans/README.md): choices come from what the device reports (compute units,
 subgroup size, workgroup and shared-memory limits, memory heaps) or are measured on the user's device, never from a
 card's name. Until then `Device.Default` picks a Vulkan GPU only with `IDRAK_VULKAN_DEFAULT=1`; tests run on every
