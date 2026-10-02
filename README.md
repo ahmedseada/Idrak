@@ -1090,28 +1090,28 @@ compute 8.6 (the kernels assemble for them, see GPU support), Linux with a GPU, 
 The `architecture` branch adds backends beyond CUDA: a Vulkan backend (SPIR-V kernels generated in C#, for Intel,
 AMD and any Vulkan GPU) and the minimum backend every new device starts from (see
 [plans/7-backends.md](plans/7-backends.md)). `-- --list-devices` shows the devices a machine has and how to test one.
-Results of the whole test list, grouped by architecture (one row per device and backend):
+Results of the whole test list, grouped by vendor, architecture and driver (one row per device and backend):
 
 <table>
   <thead>
     <tr><th>Date</th><th>Device</th><th>Memory path</th><th>Matrix units</th><th>Result</th></tr>
   </thead>
   <tbody>
-    <tr><th colspan="5" align="left">Blackwell (sm_120)</th></tr>
-    <tr><td>2026-10-02</td><td><b>NVIDIA GeForce RTX 5070 Ti</b>, 16 GB<br>discrete · CUDA 13.3 · driver 610.88</td><td>device memory</td><td>bfloat16, fp8, int8 tensor cores</td><td>486 of 486 (CPU and CUDA); <code>--bench-gemv</code> "auto" at the best column on every decoding row</td></tr>
-    <tr><td>2026-10-02</td><td><b>NVIDIA GeForce RTX 5070 Ti</b>, 16 GB<br>discrete · Vulkan 1.4 · driver 610.88</td><td>mapped (resizable BAR), reads through staging</td><td>not used yet</td><td>every Vulkan test; decoder 1,454 tokens/s (int8, 8 layers), 0 host fallbacks</td></tr>
-    <tr><td>2026-10-02</td><td><b>NVIDIA GeForce RTX 5050 Laptop GPU</b>, 8 GB<br>discrete · CUDA 13.3 · driver 610.88</td><td>device memory</td><td>tensor cores</td><td>729 of 729 (CPU, CUDA and the Intel GPU); "auto" at the best column on the decoding rows</td></tr>
-    <tr><td>2026-10-02</td><td><b>NVIDIA GeForce RTX 5050 Laptop GPU</b>, 8 GB<br>discrete · Vulkan 1.4 · driver 610.88</td><td>mapped (resizable BAR), reads through staging</td><td>not used yet</td><td>every Vulkan test</td></tr>
-    <tr><th colspan="5" align="left">Ampere (sm_86)</th></tr>
-    <tr><td>2026-10-02</td><td><b>NVIDIA GeForce RTX 3060 Laptop GPU</b>, 6 GB<br>discrete · CUDA 13.0 · driver 581.29</td><td>device memory</td><td>bfloat16, int8 tensor cores (no fp8)</td><td>729 of 729 (CPU, CUDA and the AMD GPU)</td></tr>
-    <tr><td>2026-10-02</td><td><b>NVIDIA GeForce RTX 3060 Laptop GPU</b>, 6 GB<br>discrete · Vulkan 1.4 · driver 581.29</td><td>mapped (resizable BAR), reads through staging</td><td>not used yet</td><td>every Vulkan test</td></tr>
-    <tr><th colspan="5" align="left">Xe-LP (Gen12)</th></tr>
-    <tr><td>2026-10-02</td><td><b>Intel UHD Graphics</b> (i7-13620H), 12 GB shared<br>integrated · Vulkan 1.4 · driver 101.7088</td><td>mapped (shared with the CPU)</td><td>none (no XMX)</td><td>all pass; decoder 190 tokens/s (int8, 8 layers), element-wise 30 GB/s</td></tr>
-    <tr><th colspan="5" align="left">Vega (GCN 5)</th></tr>
-    <tr><td>2026-10-02</td><td><b>AMD Radeon Graphics</b> (Ryzen 5000H "Cezanne"), 2 GB reserved<br>integrated · Vulkan 1.3 · driver 23.19.21.13</td><td>measured per device (cached system memory reads slower than the carve-out)</td><td>none</td><td>all pass; decoder 343 tokens/s with the carve-out, 222 mapped</td></tr>
-    <tr><th colspan="5" align="left">Software (CPU)</th></tr>
-    <tr><td>2026-10-02</td><td><b>Mesa llvmpipe</b> (lavapipe, LLVM 20)<br>CPU driver · Vulkan 1.4 · Mesa 25.2.8</td><td>mapped</td><td>–</td><td>all pass (also through staging, and with a cap of 64 allocations)</td></tr>
-    <tr><th colspan="5" align="left">x64, AVX2</th></tr>
+    <tr><th colspan="5" align="left">NVIDIA · Blackwell (sm_120) · driver 610.88</th></tr>
+    <tr><td>2026-10-02</td><td><b>GeForce RTX 5070 Ti</b>, 16 GB<br>discrete · CUDA 13.3</td><td>device memory</td><td>bfloat16, fp8, int8 tensor cores</td><td>486 of 486 (CPU and CUDA); <code>--bench-gemv</code> "auto" at the best column on every decoding row</td></tr>
+    <tr><td>2026-10-02</td><td><b>GeForce RTX 5070 Ti</b>, 16 GB<br>discrete · Vulkan 1.4</td><td>mapped (resizable BAR), reads through staging</td><td>not used yet</td><td>every Vulkan test; decoder 1,454 tokens/s (int8, 8 layers), 0 host fallbacks</td></tr>
+    <tr><td>2026-10-02</td><td><b>GeForce RTX 5050 Laptop GPU</b>, 8 GB<br>discrete · CUDA 13.3</td><td>device memory</td><td>tensor cores</td><td>729 of 729 (CPU, CUDA and the Intel GPU); "auto" at the best column on the decoding rows</td></tr>
+    <tr><td>2026-10-02</td><td><b>GeForce RTX 5050 Laptop GPU</b>, 8 GB<br>discrete · Vulkan 1.4</td><td>mapped (resizable BAR), reads through staging</td><td>not used yet</td><td>every Vulkan test</td></tr>
+    <tr><th colspan="5" align="left">NVIDIA · Ampere (sm_86) · driver 581.29</th></tr>
+    <tr><td>2026-10-02</td><td><b>GeForce RTX 3060 Laptop GPU</b>, 6 GB<br>discrete · CUDA 13.0</td><td>device memory</td><td>bfloat16, int8 tensor cores (no fp8)</td><td>729 of 729 (CPU, CUDA and the AMD GPU)</td></tr>
+    <tr><td>2026-10-02</td><td><b>GeForce RTX 3060 Laptop GPU</b>, 6 GB<br>discrete · Vulkan 1.4</td><td>mapped (resizable BAR), reads through staging</td><td>not used yet</td><td>every Vulkan test</td></tr>
+    <tr><th colspan="5" align="left">Intel · Xe-LP (Gen12) · driver 101.7088</th></tr>
+    <tr><td>2026-10-02</td><td><b>UHD Graphics</b> (i7-13620H), 12 GB shared<br>integrated · Vulkan 1.4</td><td>mapped (shared with the CPU)</td><td>none (no XMX)</td><td>all pass; decoder 190 tokens/s (int8, 8 layers), element-wise 30 GB/s</td></tr>
+    <tr><th colspan="5" align="left">AMD · Vega (GCN 5) · driver 23.19.21.13</th></tr>
+    <tr><td>2026-10-02</td><td><b>Radeon Graphics</b> (Ryzen 5000H "Cezanne"), 2 GB reserved<br>integrated · Vulkan 1.3</td><td>measured per device (cached system memory reads slower than the carve-out)</td><td>none</td><td>all pass; decoder 343 tokens/s with the carve-out, 222 mapped</td></tr>
+    <tr><th colspan="5" align="left">Mesa · software (CPU) · Mesa 25.2.8</th></tr>
+    <tr><td>2026-10-02</td><td><b>llvmpipe</b> (lavapipe, LLVM 20)<br>CPU driver · Vulkan 1.4</td><td>mapped</td><td>–</td><td>all pass (also through staging, and with a cap of 64 allocations)</td></tr>
+    <tr><th colspan="5" align="left">CPU · x64, AVX2</th></tr>
     <tr><td>2026-10-02</td><td><b>CPU only</b>, 4 threads<br>CPU backend</td><td>–</td><td>–</td><td>all pass</td></tr>
     <tr><td>2026-10-02</td><td><b>Minimal test backend</b> (memory and copies only)<br>host fallback</td><td>host</td><td>–</td><td>all pass (729 across CPU, minimal and lavapipe)</td></tr>
   </tbody>
