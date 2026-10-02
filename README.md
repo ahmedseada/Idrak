@@ -903,6 +903,30 @@ gpt.AddLora(rank: 8, alpha: 16, targets: layer => true, freezeBase: true);   // 
 gpt.MergeLora();                                                // fold them into the weights
 ```
 
+## Extending Idrak: plug-in points
+
+Formats, operators, model families and data sources plug in through registries and interfaces, without changing the
+library. The built-ins are registered the same way, so a registered name can also replace one. Unknown names fail with
+the registered names and how to register.
+
+| What | Register with | Package |
+|---|---|---|
+| Token sampling (temperature, top-k, penalties, ...) | `ITokenSampler`; set `TextGenerator.CreateSampler` | `Idrak` |
+| KV cache formats (float32, int8, bfloat16 built in) | `KeyValueLayouts.Register(name, KeyValueLayout)` | `Idrak` |
+| Packed weight formats (int8, int4, bfloat16 built in) | `PackedWeight.Register(name, PackedWeightFactory)` | `Idrak` |
+| Network builder steps (JSON round trip) | `NetworkOps.Register(name, NetworkOp)` | `Idrak` |
+| ONNX import operators | `OnnxImportOps.Register(opType, OnnxImportTranslator)` | `Idrak.Onnx` |
+| Checkpoint formats (safetensors built in) | `CheckpointFormats.Register(ICheckpointFormat)` | `Idrak.LanguageModels` |
+| Model families (Hugging Face `architectures`) | `PretrainedArchitectures.Register(name, PretrainedArchitecture)` | `Idrak.LanguageModels` |
+| GGUF architectures and quantization types | `GgufArchitectures.Register(name, ...)`, `GgufTypes.Register(id, GgufType)` | `Idrak.LanguageModels` |
+| Model sources (`name:` prefixes, asked before the built-ins) | `ModelSources.Register(IModelSource)` | `Idrak.LanguageModels` |
+| Tokenizer normalizers, pre-tokenizers, decoders | `TokenizerComponents.RegisterNormalizer` / `RegisterPreTokenizer` / `RegisterDecoder` | `Idrak.LanguageModels` |
+| Dataset file formats, sources, Parquet codecs | `DataFileFormats.Register`, `DatasetSources.Register`, `ParquetCodecs.Register` | `Idrak.Datasets` |
+
+Chat templates are read from each model's own Jinja template (`tokenizer_config.json` or GGUF metadata), and the
+tool-call format is read off that template, so a new model family needs no code for either. Each registry has a test
+that plugs in an implementation of its own next to the built-ins.
+
 ## Telemetry: logging and tracking
 
 Every step of training and inference is published to a hub, and you choose what to listen to.
