@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Vulkan: the kernels' width is measured when the device opens (a 256³ float32 product at each power-of-two width
+  from the subgroup size up to the formula's), kept only when clearly faster (10%), and stored per device, driver and
+  power state; IDRAK_VULKAN_WIDTH still overrides it and IDRAK_VULKAN_WIDTH_PROBE=0 turns it off. On an Adreno 730 the
+  formula's width (1024) ran large products 30 times slower than 256, and a long dispatch reset the device.
 - Vulkan: prompts (tiled attention with or without the log-sum-exp; int8, int4 and bfloat16 products for many rows,
   each measured against the few-rows kernels and expanding the weights), training (layer-norm and batch-norm
   gradients and statistics, group reductions, column sums, products with a bias, fused AdamW with clipping, 8-bit Adam

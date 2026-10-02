@@ -159,6 +159,7 @@ internal sealed unsafe partial class VulkanBackend : Backend
         StartQueue();
         TuneRuntime(pushDescriptors);
         TuneStorage(decided);
+        ChooseWidth();                                                     // on the storage memory kept (VulkanBackend.WidthProbe.cs)
     }
 
     /// <summary>Whether dispatches push their descriptors (VK_KHR_push_descriptor) instead of allocating descriptor sets.</summary>
