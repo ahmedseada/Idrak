@@ -14,7 +14,7 @@ internal static partial class Tests
         ("fine-tuning: chunked token cross-entropy (all rows or trained rows only) and the frozen-transpose product and the fused LoRA term match dense results and gradients", TokenLoss),
         ("fine-tuning: LoRA terms inside the tensor-core products (float32, bfloat16 and 4-bit bases, one layer or merged) and rank-16 products match the separate computation, with gradients", LoraInsideProducts),
         ("fine-tuning: packed sequences (several per row, rotary or learned positions) give each sequence the logits and gradients it gets alone; packing fills rows first-fit", PackedSequencesMatch),
-        ("fine-tuning: a training step recorded as a CUDA graph and replayed gives the losses and adapters of ordinary steps", GraphTraining),
+        ("fine-tuning: a training step recorded as a graph and replayed gives the losses and adapters of ordinary steps", GraphTraining),
         ("generation: prompts of different lengths decoded together (left-padded, per-row starts) give each row its own logits and greedy replies", RaggedBatchDecoding),
         ("memory: a full GPU raises a clear error, or with offloading places tensors in system memory the kernels still use", HostOffload),
         ("fine-tuning: activation checkpointing gives the same loss and gradients (adapters and input)", CheckpointingGradients),
@@ -1373,7 +1373,7 @@ internal static partial class Tests
 
             var ordinary = Run(false);
             var replayed = Run(true);
-            Check(replayed.Trace.Contains("recorded one training step as a CUDA graph") && replayed.Trace.Contains("replayed"),
+            Check(replayed.Trace.Contains("recorded one training step as a graph") && replayed.Trace.Contains("replayed"),
                 $"the graph was recorded and replayed:\n{replayed.Trace}");
             Check(ordinary.Losses.Count >= 5 && ordinary.Losses.Count == replayed.Losses.Count, $"steps: {ordinary.Losses.Count} and {replayed.Losses.Count}");
             CloseByNorm([.. ordinary.Losses], [.. replayed.Losses], 2e-3f, "losses per step");
