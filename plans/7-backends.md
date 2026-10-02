@@ -45,8 +45,16 @@ lavapipe (Mesa's software Vulkan driver) here, and on CUDA plus `--bench-gemv` o
    against the plain path: required subgroup sizes (VK_EXT_subgroup_size_control), cooperative matrices
    (VK_KHR_cooperative_matrix) for prompt-sized products — both need the runtime to enable them at device and pipeline
    creation.
-6. **Public backend API**: `Backend`, `Storage`, `DeviceProvider` and `HostCall` public, for backends in their own
-   packages.
+6. **Public backend API**: `Backend`, `Storage`, `DeviceProvider` and `HostCall` public, for backends written outside
+   this repository. Decided: not before a third backend family (ROCm/HIP) has proven the shape of `Backend` in the
+   repository, since the ~128 operations still change (new parameters) and a public API would freeze them.
+
+**Packaging (decided): the backends stay in the core package.** Idrak ships no native GPU libraries (CUDA through the
+installed driver, PTX and SPIR-V generated in C#, Vulkan through the system loader), so CUDA and Vulkan add about
+0.8 MB of the 1.9 MB `Idrak.dll`; one package that runs on every GPU is worth more than that. A backend moves to its own
+package (`Idrak.Cuda`, `Idrak.Vulkan`, later `Idrak.Rocm`, `Idrak.Metal`: named by the programming interface, not the
+vendor, since Vulkan drives Intel, AMD and NVIDIA alike) when it brings real weight, such as native libraries; a
+first-party package reaches the internals through `InternalsVisibleTo`, so splitting does not need the public API.
 
 ## The Vulkan contract (runtime ↔ generated kernels)
 
