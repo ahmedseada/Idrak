@@ -31,6 +31,64 @@ A self-contained deep-learning library for **.NET 10**, written in C#, with its 
 `Device.Default` picks the first GPU when a driver is present and falls back to the CPU otherwise.
 Set `IDRAK_DISABLE_CUDA=1` to force the CPU.
 
+## What Idrak gives you
+
+### Packages
+
+| Package | What it gives you |
+|---------|-------------------|
+| `Idrak` (core) | Tensors and autograd, layers, training, generation, chat and tools, retrieval, the inference engine, telemetry, every backend |
+| `Idrak.LanguageModels` | Hugging Face and GGUF models, tokenizers, the models' own Jinja chat templates, LoRA / QLoRA fine-tuning, evaluation |
+| `Idrak.Datasets` | JSON Lines, JSON, CSV, text, code and Parquet files (also compressed or archived); Hugging Face, GitHub, Kaggle, Zenodo and URL sources |
+| `Idrak.AspNetCore` | `AddIdrak()`, `MapPredictor`, `MapGenerate` (JSON and streaming), an Ollama-compatible API |
+| `Idrak.Mcp` | Tools of Model Context Protocol servers, and serving tools over MCP |
+| `Idrak.Onnx` | Export to `.onnx` (opset 17) and import `.onnx` into layers |
+| `Idrak.Onnx.Runtime` | Run `.onnx` models with ONNX Runtime as Idrak modules |
+| `idrak-tune` (CLI) | Fine-tune, evaluate, chat with and export any language model the library loads |
+| `idrak-data` (CLI) | Inspect, download and assemble training datasets |
+
+### Building and training models
+
+| Area | What is there |
+|------|---------------|
+| Layers | Linear, Conv2d, pooling, BatchNorm, LayerNorm, Embedding, LSTM, GRU, multi-head attention, transformer layers, dropout, activations; graph modules (skip connections, branches) |
+| Building | A fluent network builder with a JSON round trip; ready-made architectures |
+| Training | `Trainer`, losses (MSE, MAE, cross-entropy, binary cross-entropy), metrics, early stopping, duplicate removal before splits |
+| Optimizers | SGD, Adam, AdamW (fused on the GPU), 8-bit Adam, a learning rate per group; step, exponential and cosine (with warm-up) schedules; gradient clipping |
+| Precision | float32; bfloat16 and FP8 tensor cores; int8, int4 and bfloat16 weights; half-precision files |
+| Memory | Offloading to system memory, activation memory limits, deterministic freeing |
+| Speed | Recorded graphs (CUDA and Vulkan), fused kernels, choices measured on the device and stored |
+
+### Language models and generation
+
+| Area | What is there |
+|------|---------------|
+| Model families | Llama, Mistral, Qwen2/3, Gemma (a registry for more) |
+| Weight formats | safetensors; GGUF (F32/F16/BF16, Q4_0 to Q8_0, K-quants, IQ4) |
+| Generation | Streaming, batches, sampling (temperature, top-k/p, min-p, penalties), float32, int8 or bfloat16 KV caches |
+| Chat | Each model's own Jinja template, reasoning, tool calls, conversations, a coding agent |
+| Fine-tuning | LoRA / QLoRA, packing, assistant-only loss, PEFT adapters, merged export |
+| Evaluation | Answer scoring by log-probabilities, answer metrics |
+
+### Retrieval, serving and deployment
+
+| Area | What is there |
+|------|---------------|
+| Retrieval and RAG | Chunking, BM25, bi-encoder vectors, hybrid search with rank fusion, cross-encoder re-ranking, a pipeline that cites passages |
+| Serving | The inference engine (loading, batching), model packages (`.ikm`), Web API endpoints, an Ollama-style chat API, MCP |
+| Interop | ONNX import and export; reference checks against PyTorch and transformers |
+| Telemetry | Hooks that cost nothing when unused: console, CSV metrics, JSON Lines; training, batch, gradient and layer events |
+| Extending | Registries for samplers, KV cache formats, packed weights, builder steps, ONNX import operators, checkpoint formats, model families, GGUF types and pre-tokenizers, model sources, tokenizer components, dataset formats and sources, and devices (see "Extending Idrak: plug-in points") |
+
+### Hardware
+
+| Backend | Devices | Status |
+|---------|---------|--------|
+| CPU | x64 (AVX2, AVX-512), ARM64 (NEON) | Every test passes, including on an Android phone |
+| CUDA | NVIDIA GPUs, through the driver API | Every test passes on Ampere and Blackwell GPUs |
+| Vulkan (`architecture` branch) | NVIDIA, AMD, Intel, Qualcomm Adreno, Mesa's software driver | Every test passes on each GPU tested (see "Tested on architectures") |
+| ROCm / HIP, Metal, NPUs | | Not supported yet |
+
 ## Install
 
 **Libraries**: add them to a project (`dotnet add package`, run in the project's folder):
