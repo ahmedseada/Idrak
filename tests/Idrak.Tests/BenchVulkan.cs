@@ -277,6 +277,14 @@ internal static partial class Tests
             Console.WriteLine(Row($"{name}", $"{stats.TokensPerSecond:F1} tokens/s ({(backend.Dispatches - dispatches) * perToken:F0} dispatches, "
                 + $"{(backend.HostCalls - fallbacks) * perToken:F1} host fallbacks per token)"));
 
+            // The same generation again (choices measured by the first one are known now), and without recorded graphs
+            // (every step recorded by the host), so a slow replay or a slow first use shows apart from the kernels.
+            var again = generator.Generate("hello", run).Stats;
+            long direct = backend.Dispatches;
+            var plain = generator.Generate("hello", run with { UseGraph = false }).Stats;
+            Console.WriteLine(Row("    again; without graphs", $"{again.TokensPerSecond:F1} tokens/s; {plain.TokensPerSecond:F1} tokens/s "
+                + $"({(backend.Dispatches - direct) / (double)Math.Max(1, plain.GeneratedTokens):F0} dispatches per token)"));
+
             // One more run counting by kernel and by fallback (prompt included, so the counts are per generation).
             var kernels = new System.Collections.Concurrent.ConcurrentDictionary<string, long>();
             var operations = new System.Collections.Concurrent.ConcurrentDictionary<string, long>();

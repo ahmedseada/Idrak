@@ -15,7 +15,7 @@ internal static partial class Tests
 {
     private static readonly (string Name, Action<Device> Run)[] VulkanLimitsGroup =
     [
-        ("vulkan limits: the kernels' width is measured at start (the float32 product at each width up to the formula's), stored per device and driver, and read back; products at the measured width match the CPU", VulkanWidthMeasured),
+        ("vulkan limits: the kernels' width is measured at start (a float32 product and one-row decoding work at each width up to the formula's), stored per device and driver, and read back; products at the measured width match the CPU", VulkanWidthMeasured),
         ("vulkan limits: the loader's file names per operating system (libvulkan.so on Android; Linux and Windows unchanged)", VulkanLoaderNames),
         ("vulkan limits: windows of a large storage are whole rows within the binding range, starting at aligned offsets", VulkanWindowRows),
         ("vulkan limits: with a 1 MiB binding range, large weights' products (int8, int4, bfloat16), gathers, dequantizations, uploads and downloads run on the device and match the CPU", VulkanLargeStorages),
