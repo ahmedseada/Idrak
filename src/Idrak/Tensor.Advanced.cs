@@ -579,7 +579,7 @@ public sealed partial class Tensor
             var x = this;
             y.Record("maxpool", g =>
             {
-                x.Backend.MaxPoolBackward(g.Storage, argmax.Storage, x.GradStorage(), y.Size);
+                x.Backend.MaxPoolBackward(g.Storage, argmax.Storage, x.GradStorage(), g0);
                 argmax.Dispose();   // backward runs once; recycle the indices immediately
             }, x);
         }

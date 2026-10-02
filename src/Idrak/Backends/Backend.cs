@@ -586,6 +586,13 @@ internal abstract class Backend
     }
 
     /// <summary>
+    /// dx[argmax[i]] += dy[i] for the windows of <paramref name="g"/> (count = N * C * OH * OW): the same as the overload
+    /// taking a count; a device that adds the gradients by gathering over the windows needs the geometry.
+    /// </summary>
+    public virtual void MaxPoolBackward(Storage dy, Storage argmax, Storage dx, in ConvGeometry g) =>
+        MaxPoolBackward(dy, argmax, dx, g.N * g.C * g.OH * g.OW);
+
+    /// <summary>
     /// y (+)= x permuted: output element at coordinates (c0..c[r-1]) of <paramref name="outShape"/> comes from
     /// input offset Σ c_k * inStrides[k] (the input strides already reordered by the permutation). Rank ≤ 6.
     /// </summary>
