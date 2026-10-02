@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- CUDA tuning times a candidate that beats the formula's choice a second time, in new pairs, and keeps it only when
+  it wins again. Short prompt products timed warm (about 13 µs on an RTX 5070 Ti) gave medians 10% apart from one
+  process to the next: two runs kept 2 and 3 splits for the same shape, and an earlier one kept 1 split (22 µs
+  against 12.7 µs for 6) in the tuning cache. With timings off by up to 20%, a slower candidate was kept in 57 of 400
+  simulated measurements before and 6 now. The cache format is 4, so choices saved before are measured again.
 - CUDA tuning times each candidate in pairs with the formula's choice (back to back, the order alternating by round)
   and compares the medians of the pair ratios. Before, every candidate ran once per round against one timing of the
   reference, four of seven rounds with the reference first: a clock still drifting during the measurement moved each

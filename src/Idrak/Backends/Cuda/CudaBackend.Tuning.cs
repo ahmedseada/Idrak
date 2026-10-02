@@ -248,6 +248,7 @@ internal sealed unsafe partial class CudaBackend
         // the read that empties the L2 cache.
         var repeats = new int[list.Length];
         var medians = LogTuning ? new float[list.Length] : null;
+        var confirmation = LogTuning ? new float[1] : null;
         int chosen;
         t_timing = true;
         try
@@ -271,7 +272,8 @@ internal sealed unsafe partial class CudaBackend
                 repeats[c] = TimingRepeats(TimeRuns(list[c], 1, run, flush, flushFloats), flush != 0);
             }
 
-            chosen = list[TuneTiming.Choose(list, fallback, c => TimeRuns(list[c], repeats[c], run, flush, flushFloats) / repeats[c], medians: medians)];
+            chosen = list[TuneTiming.Choose(list, fallback, c => TimeRuns(list[c], repeats[c], run, flush, flushFloats) / repeats[c], medians: medians,
+                confirmation: confirmation)];
         }
         finally
         {
@@ -287,7 +289,8 @@ internal sealed unsafe partial class CudaBackend
         if (medians is not null)
         {
             Console.Error.WriteLine($"idrak tune {key.Op} {key.Variant} {key.A} {key.B} {key.C} {key.D} {key.E} {key.F} ({(flush != 0 ? "cold L2" : "warm")}): " +
-                string.Join(", ", list.Select((c, i) => $"{c}={medians[i]:F3}")) + $" (time / formula {fallback}'s) -> {chosen}");
+                string.Join(", ", list.Select((c, i) => $"{c}={medians[i]:F3}")) + $" (time / formula {fallback}'s)" +
+                (float.IsNaN(confirmation![0]) ? "" : $", timed again {confirmation[0]:F3}") + $" -> {chosen}");
         }
 
         SaveTuning();

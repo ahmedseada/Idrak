@@ -11,7 +11,7 @@ internal static partial class Tests
     private static readonly (string Name, Action<Device> Run)[] TuningGroup =
     [
         ("tuning: card-dependent choices (few-row kernel and splits, prompt splits, tensor-core splits, tiles, decoding-attention splits) are measured on the device and give the results of the formulas' choices", TunedChoicesMatch),
-        ("tuning: candidates are compared by their median time, so a lucky timing does not win and a close one keeps the formula's choice", TuneMedians),
+        ("tuning: candidates are compared by their median time, so a lucky timing does not win and a close one keeps the formula's choice; a winner is timed again and kept only if it wins twice (noisy short prompt products)", TuneMedians),
         ("tuning: candidates are timed in pairs with the formula's choice, so a drifting clock does not move the choice (the 151936-column head kept 2-4% slower splits under a rising clock); decoding-sized products are timed with a cold L2 cache", TuneDrift),
         ("tuning: few-row products are measured over 1, 2, 3, 4, 6, 8, 12, ... splits with the kernel that then runs (fused add-and-normalize kept apart from the plain kernel), after a warm-up, in pairs with the formula's choice", GemvSelection),
         ("tuning: the cache file of measured choices round-trips and is ignored when the GPU, driver, library build or format differs", TuningCacheFile),
@@ -119,8 +119,8 @@ internal static partial class Tests
 
         int chosen = TuneTiming.Choose(candidates, 8, Time);
         Check(candidates[chosen] == 16, $"the median picks 16 splits (picked {candidates[chosen]})");
-        Check(timed.Select((n, c) => c == 3 ? n == TuneTiming.Rounds * 4 : n == TuneTiming.Rounds).All(x => x),
-            $"every candidate timed once per round, the formula's choice once with each ({string.Join(",", timed)})");
+        Check(timed.Select((n, c) => c switch { 3 => n == TuneTiming.Rounds * 5, 4 => n == TuneTiming.Rounds * 2, _ => n == TuneTiming.Rounds }).All(x => x),
+            $"every candidate timed once per round, the formula's choice once with each, the winner again in as many new pairs ({string.Join(",", timed)})");
         Check(order.Take(8).SequenceEqual([3, 0, 3, 1, 3, 2, 3, 4]) && order.Skip(8).Take(8).SequenceEqual([4, 3, 2, 3, 1, 3, 0, 3]),
             "in pairs with the formula's choice: first, forwards, then second, backwards");
 
@@ -136,6 +136,35 @@ internal static partial class Tests
         var medians = new float[candidates.Length];
         TuneTiming.Choose(candidates, 8, c => steady[c], medians: medians);
         Check(MathF.Abs(medians[4] - 6.6f / 7.7f) < 1e-5f && medians[3] == 1f, "the medians reported for the log: time over the formula's choice's");
+        var confirmation = new float[1];
+        TuneTiming.Choose(candidates, 8, c => steady[c], confirmation: confirmation);
+        Check(MathF.Abs(confirmation[0] - 6.6f / 7.7f) < 1e-5f, "the winner's median when timed again, for the log");
+        TuneTiming.Choose([8, 16], 8, c => c == 0 ? 7.7f : 7.6f, confirmation: confirmation);
+        Check(float.IsNaN(confirmation[0]), "nothing timed again when the formula's choice stays");
+
+        // Noisy timings, shaped like the prompt splits --bench-gemv logged on an RTX 5070 Ti (180 rows, 1024 -> 1024, 64-row
+        // tiles, warm, about 13 µs): the formula's 4 splits, 6 splits 6% faster, the others as fast or slower, and each
+        // timing off by up to 20% either way. Two processes kept 2 and 3 splits; an earlier one 1 (22 µs against 12.7).
+        int[] prompt = [1, 2, 3, 4, 6, 8];
+        float[] truth = [1.6f, 1.02f, 1.0f, 1f, 0.94f, 1.06f];
+        int slowerOnce = 0, slowerConfirmed = 0, gainOnce = 0, gainConfirmed = 0;
+        const int trials = 400;
+        for (int seed = 0; seed < trials; seed++)
+        {
+            foreach (bool confirm in new[] { false, true })
+            {
+                var noise = new Random(seed);
+                int pick = TuneTiming.Choose(prompt, 4, c => truth[c] * (0.8f + 0.4f * noise.NextSingle()), confirm: confirm);
+                bool slower = truth[pick] > 1f, gain = truth[pick] < 1f;
+                (slowerOnce, slowerConfirmed) = confirm ? (slowerOnce, slowerConfirmed + (slower ? 1 : 0)) : (slowerOnce + (slower ? 1 : 0), slowerConfirmed);
+                (gainOnce, gainConfirmed) = confirm ? (gainOnce, gainConfirmed + (gain ? 1 : 0)) : (gainOnce + (gain ? 1 : 0), gainConfirmed);
+            }
+        }
+
+        Console.WriteLine($"    noisy prompt splits ({trials} measurements): slower than the formula's choice {slowerOnce} once, {slowerConfirmed} confirmed; the 6% gain {gainOnce} once, {gainConfirmed} confirmed");
+        Check(slowerConfirmed * 4 <= slowerOnce && slowerConfirmed <= trials / 20,
+            $"timed again, a candidate slower than the formula's choice is rarely kept ({slowerConfirmed} of {trials}, {slowerOnce} without)");
+        Check(gainConfirmed * 2 >= gainOnce, $"and most real gains still are ({gainConfirmed}, {gainOnce} without)");
     }
 
     // Pure (no GPU): a clock that drifts through the whole measurement (a laptop GPU still raising its clocks, or one
@@ -290,8 +319,12 @@ internal static partial class Tests
             var times = new List<(int C, float T)>();
             float Timer(int c)
             {
-                float t = addNorm3060[list[c]] * (calls++ < step ? 3f : 1f);
-                times.Add((c, t));
+                float t = addNorm3060[list[c]] * (calls < step ? 3f : 1f);
+                if (calls++ < total)
+                {
+                    times.Add((c, t));                                          // the first pass (not the winner's timings again)
+                }
+
                 return t;
             }
 

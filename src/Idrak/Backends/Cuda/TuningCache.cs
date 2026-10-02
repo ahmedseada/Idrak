@@ -41,9 +41,15 @@ internal static class TuneTiming
     /// the reference first, the most splits), up to the whole drift of a round, and a candidate a few percent slower than
     /// the formula's choice could be kept. <paramref name="time"/>(index) returns one timing of that candidate (ms per run);
     /// <paramref name="medians"/>, when given, receives each candidate's median ratio (diagnostics).
+    /// A candidate that beats the formula's choice is timed against it again, in <paramref name="rounds"/> new pairs, and
+    /// kept only when it wins by the margin a second time (<paramref name="confirm"/>; its median there goes to
+    /// <paramref name="confirmation"/>[0], NaN when nothing needed confirming). Short products timed warm (prompt splits
+    /// on an RTX 5070 Ti, about 13 µs) gave medians 10% apart from one process to the next, so the fastest of eight
+    /// candidates was often a lucky one: one run kept 1 split, 22 µs against 12.7 for 6, in the tuning cache for good.
+    /// The confirmation draws new timings, so a lucky first median rarely repeats, while a real gain does.
     /// </summary>
     internal static int Choose(ReadOnlySpan<int> candidates, int fallback, Func<int, float> time, int rounds = Rounds, float margin = Margin,
-        float[]? medians = null)
+        float[]? medians = null, bool confirm = true, float[]? confirmation = null)
     {
         int count = candidates.Length;
         int formula = candidates.IndexOf(fallback);
@@ -90,7 +96,51 @@ internal static class TuneTiming
             }
         }
 
-        return formula >= 0 && medians[fastest] >= medians[formula] * margin ? formula : fastest;
+        if (confirmation is { Length: > 0 })
+        {
+            confirmation[0] = float.NaN;
+        }
+
+        if (formula < 0)
+        {
+            return fastest;
+        }
+
+        if (medians[fastest] >= medians[formula] * margin)
+        {
+            return formula;
+        }
+
+        if (!confirm)
+        {
+            return fastest;
+        }
+
+        var again = new float[rounds];
+        for (int round = 0; round < rounds; round++)
+        {
+            float t, r;
+            if (round % 2 == 0)
+            {
+                r = time(reference);
+                t = time(fastest);
+            }
+            else
+            {
+                t = time(fastest);
+                r = time(reference);
+            }
+
+            again[round] = t / Math.Max(r, 1e-9f);
+        }
+
+        float second = Median(again);
+        if (confirmation is { Length: > 0 })
+        {
+            confirmation[0] = second;
+        }
+
+        return second < margin ? fastest : formula;
     }
 
     /// <summary>
@@ -168,7 +218,7 @@ internal static class TuningCache
     /// 3: candidates timed in pairs with the formula's choice (a drifting clock moved version 2's choices toward the
     /// candidates timed furthest from it), and decoding-sized products timed with a cold L2 cache, as decoding reads them.
     /// </summary>
-    internal const int FormatVersion = 3;
+    internal const int FormatVersion = 4;
 
     private const string Magic = "idrak-tuning";
 
