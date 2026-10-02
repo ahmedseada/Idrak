@@ -62,6 +62,26 @@ internal static partial class Tests
 
         static string Row(string name, string value) => $"  {name,-52} {value}";
 
+        // The kernels one run of `run` dispatched (its measured choice already settled): "cooperative matrices
+        // (coop_f32_…)" when a cooperative-matrix kernel ran, else the float32 kernels' names.
+        string MatrixPath(Action run)
+        {
+            var kernels = new System.Collections.Concurrent.ConcurrentDictionary<string, long>();
+            backend.DispatchesByKernel = kernels;
+            try
+            {
+                run();
+                device.Synchronize();
+            }
+            finally
+            {
+                backend.DispatchesByKernel = null;
+            }
+
+            string names = string.Join(", ", kernels.Keys.Order(StringComparer.Ordinal));
+            return kernels.Keys.Any(k => k.StartsWith("coop_", StringComparison.Ordinal)) ? $"cooperative matrices ({names})" : $"no matrix units ({names})";
+        }
+
         // Average time of `run` in µs over `repeats` calls (after one warm-up), the device drained before and after.
         double Micros(Action run, int repeats)
         {
@@ -166,7 +186,7 @@ internal static partial class Tests
             double us = Micros(() => backend.BatchedMatMul(a, b, c, 1, size, size, size, false, false, 0f), size == 1024 ? 5 : 2);
             double gflops = 2.0 * size * size * size / (us * 1e3);
             gflops1024 ??= gflops;
-            Console.WriteLine(Row($"matrix product {size}³ (float32)", $"{gflops:F1} GFLOP/s ({us / 1000:F1} ms)"));
+            Console.WriteLine(Row($"matrix product {size}³ (float32)", $"{gflops:F1} GFLOP/s ({us / 1000:F1} ms), {MatrixPath(() => backend.BatchedMatMul(a, b, c, 1, size, size, size, false, false, 0f))}"));
             a.Release();
             b.Release();
             c.Release();

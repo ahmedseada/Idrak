@@ -24,13 +24,13 @@ internal enum VulkanTuneOp : byte
     /// <summary>Decoding attention: splits of the cached positions.</summary>
     Attention,
 
-    /// <summary>A float32 product: the small, tiled or register-blocked kernel.</summary>
+    /// <summary>A float32 product: the small, tiled or register-blocked kernel, or the cooperative-matrix one.</summary>
     MatMul,
 
     /// <summary>A row kernel: one invocation per row (1) or a workgroup per row (0).</summary>
     Rows,
 
-    /// <summary>A prompt-sized packed product: the tiled packed kernel (at a width), the few-rows kernels or expanding the weights.</summary>
+    /// <summary>A prompt-sized packed product: the tiled packed kernel (at a width), the few-rows kernels, expanding the weights or the cooperative-matrix kernel.</summary>
     PackedPrompt,
 
     /// <summary>Attention over many query rows: the tiled kernel (at a width) or the decoding kernel.</summary>
@@ -274,8 +274,11 @@ internal sealed unsafe partial class VulkanBackend
     // ------------------------------------------------------------------ the stored choices
 
     // The prefix of this device's kernel choices in the cache file: apart from the runtime's (which start with the
-    // device key), per device and driver, kernel width, reductions and version of the kernels' variants.
-    private string KernelTuningPrefix() => $"kernels/{TuningKey()}/w{Width}/{(Limits.SubgroupArithmetic ? "subgroups" : "plain")}/v{TuningVersion}/";
+    // device key), per device and driver, kernel width, reductions, the cooperative-matrix shape where the products use
+    // one (their candidates join the measurement, so choices stored without them are measured again) and version of the
+    // kernels' variants.
+    private string KernelTuningPrefix() =>
+        $"kernels/{TuningKey()}/w{Width}/{(Limits.SubgroupArithmetic ? "subgroups" : "plain")}/{(MatrixShape is { } shape ? $"coop{shape}/" : "")}v{TuningVersion}/";
 
     // Reads the stored kernel choices ("prefix op variant a b c d e f", tab, value, tab, device name). Unreadable files
     // are ignored. Called with _tuned locked.

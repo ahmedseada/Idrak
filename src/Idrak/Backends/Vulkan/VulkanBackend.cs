@@ -95,9 +95,16 @@ internal sealed unsafe partial class VulkanBackend : Backend
             SubgroupSizeControl = 1,
             ComputeFullSubgroups = _sizeControl.FullSubgroups ? 1u : 0u,
         };
-        fixed (byte* extensionName = "VK_KHR_push_descriptor\0"u8, sizeName = "VK_EXT_subgroup_size_control\0"u8)
+
+        // Cooperative matrices only where the device reports them (VulkanBackend.Matrix.cs).
+        _matrix = ProbeMatrixUnits(physical);
+        VkPhysicalDeviceCooperativeMatrixFeatures matrixFeatures;
+        VkPhysicalDeviceShaderFloat16Int8Features float16Features;
+        void* features = MatrixFeatures(&matrixFeatures, &float16Features, _sizeControl.Enabled ? &sizeFeatures : null);
+        fixed (byte* extensionName = "VK_KHR_push_descriptor\0"u8, sizeName = "VK_EXT_subgroup_size_control\0"u8,
+            matrixName = CooperativeMatrixName, float16Name = ShaderFloat16Int8Name)
         {
-            byte** extensions = stackalloc byte*[2];
+            byte** extensions = stackalloc byte*[4];
             uint count = 0;
             if (push)
             {
@@ -109,10 +116,20 @@ internal sealed unsafe partial class VulkanBackend : Backend
                 extensions[count++] = sizeName;
             }
 
+            if (_matrix is { Emulated: 0 })
+            {
+                extensions[count++] = matrixName;
+            }
+
+            if (_matrix is { Float16Extension: true })
+            {
+                extensions[count++] = float16Name;
+            }
+
             var deviceInfo = new VkDeviceCreateInfo
             {
                 SType = StructureDeviceCreateInfo,
-                PNext = _sizeControl.Enabled ? &sizeFeatures : null,
+                PNext = features,
                 QueueCreateInfoCount = 1,
                 QueueCreateInfos = &queueInfo,
                 EnabledExtensionCount = count,

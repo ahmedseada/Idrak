@@ -73,6 +73,10 @@ internal sealed class VulkanKernel
     /// <summary>The subgroup size its pipeline requires (VK_EXT_subgroup_size_control), or 0 for the device's default.</summary>
     internal int RequiredSubgroupSize { get; init; }
 
+    /// <summary>Whether its pipeline keeps the device's default subgroup size (no size is measured for it): a kernel whose
+    /// result and speed do not depend on choosing one (the cooperative-matrix products).</summary>
+    internal bool DefaultSubgroupSize { get; init; }
+
     /// <summary>Whether the module uses subgroup operations (declares the GroupNonUniform capability).</summary>
     internal bool UsesSubgroups => (_usesSubgroups ??= DeclaresCapability(Spirv, 61)) == true;
 
