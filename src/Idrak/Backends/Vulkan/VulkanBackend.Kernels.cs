@@ -751,7 +751,7 @@ internal sealed partial class VulkanBackend
     /// <summary>Tests and benchmarks only: the position splits of decoding attention instead of the measured or formula's.</summary>
     internal static int? AttentionSplits { get; set; }
 
-    /// <summary>Tests and benchmarks only: the float32 product kernel (0 small, 1 tiled, 2 register-blocked) when it fits.</summary>
+    /// <summary>Tests and benchmarks only: the float32 product kernel (0 small, 1 tiled, 2 register-blocked, 3 cooperative matrices) when it fits.</summary>
     internal static int? MatMulKernel { get; set; }
 
     // Fewest rows of k per split of a packed product (a format fact, not a device one): the partial sums written and
@@ -759,7 +759,7 @@ internal sealed partial class VulkanBackend
     // bfloat16's.
     private const int GemvMinChunk = 128;
 
-    private const int MatSmall = 0, MatTiled = 1, MatBlocked = 2;
+    private const int MatSmall = 0, MatTiled = 1, MatBlocked = 2, MatCoop = 3;
 
     public override void BatchedMatMul(Storage a, Storage b, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
     {
@@ -804,10 +804,11 @@ internal sealed partial class VulkanBackend
     }
 
     // At each candidate width: the small kernel (an invocation per output, any shape), the tiled one and the
-    // register-blocked one where their workgroup counts fit.
+    // register-blocked one where their workgroup counts fit; and the cooperative-matrix kernel (its own width) where the
+    // device has cooperative matrices.
     private int[] MatCandidates(int m, int n)
     {
-        var candidates = new List<int>(3 * CandidateWidths.Length);
+        var candidates = new List<int>(3 * CandidateWidths.Length + 1);
         foreach (int width in CandidateWidths)
         {
             foreach (int variant in new[] { MatSmall, MatTiled, MatBlocked })
@@ -817,6 +818,11 @@ internal sealed partial class VulkanBackend
                     candidates.Add(WithWidth(width, variant));
                 }
             }
+        }
+
+        if (MatValid(WithWidth(Width, MatCoop), m, n))
+        {
+            candidates.Add(WithWidth(Width, MatCoop));
         }
 
         return [.. candidates];
@@ -831,6 +837,7 @@ internal sealed partial class VulkanBackend
             MatSmall => true,
             MatTiled => MatFits(VulkanKernels.MatSide(width), m, n),
             MatBlocked => MatFits(VulkanKernels.MatPer * VulkanKernels.MatSide(width), m, n),
+            MatCoop => width == Width && MatFits(VulkanKernels.CoopBlock, m, n) && CoopKernel(null) is not null,
             _ => false,
         };
     }
@@ -849,8 +856,15 @@ internal sealed partial class VulkanBackend
             return;
         }
 
-        int edge = VulkanKernels.MatSide(width) * (variant == MatBlocked ? VulkanKernels.MatPer : 1);
         uint gz = (uint)Math.Min(batch, Limits.MaxGroupsZ);
+        if (variant == MatCoop)
+        {
+            const int Block = VulkanKernels.CoopBlock;
+            DispatchKernel(CoopKernel(null)!, (uint)((n + Block - 1) / Block), (uint)((m + Block - 1) / Block), gz, [a, b, c], push);
+            return;
+        }
+
+        int edge = VulkanKernels.MatSide(width) * (variant == MatBlocked ? VulkanKernels.MatPer : 1);
         RunAt(variant == MatBlocked ? "batched_matmul" : "batched_matmul_tile", width, (uint)((n + edge - 1) / edge), (uint)((m + edge - 1) / edge), gz, [a, b, c], push);
     }
 

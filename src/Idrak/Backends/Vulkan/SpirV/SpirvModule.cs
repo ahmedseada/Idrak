@@ -9,6 +9,7 @@ namespace Idrak.Backends.Vulkan;
 /// Writes one SPIR-V 1.3 compute module (Vulkan 1.1): capability Shader, the Logical / GLSL450 memory model, the
 /// GLSL.std.450 instructions, one entry point "main" with its local size, and a single function. Types and constants
 /// are created once and shared; every other instruction goes into its section in the order the specification requires.
+/// A module may declare extensions (SPV_KHR_cooperative_matrix) for the devices that report them.
 /// </summary>
 internal sealed class SpirvModule
 {
@@ -27,6 +28,7 @@ internal sealed class SpirvModule
     private readonly Dictionary<(uint Type, uint Bits), uint> _constants = [];
     private readonly List<uint> _interface = [];
     private readonly SortedSet<uint> _capabilities = [];
+    private readonly SortedSet<string> _extensions = new(StringComparer.Ordinal);
     private uint _next = 1;
     private bool _terminated;
 
@@ -56,6 +58,9 @@ internal sealed class SpirvModule
     /// <summary>Declares a capability beyond Shader (61 GroupNonUniform, 63 GroupNonUniformArithmetic, …), once.</summary>
     public void Capability(uint capability) => _capabilities.Add(capability);
 
+    /// <summary>Declares a SPIR-V extension ("SPV_KHR_cooperative_matrix"), once.</summary>
+    public void Extension(string name) => _extensions.Add(name);
+
     // ------------------------------------------------------------------ types
 
     public uint TypeVoid() => Type("void", () => Emit(_globals, SpirvOp.TypeVoid, Id()));
@@ -66,6 +71,20 @@ internal sealed class SpirvModule
     public uint TypeInt(bool signed) => Type(signed ? "int" : "uint", () => Emit(_globals, SpirvOp.TypeInt, Id(), 32, signed ? 1u : 0u));
 
     public uint TypeFloat() => Type("float", () => Emit(_globals, SpirvOp.TypeFloat, Id(), 32));
+
+    /// <summary>The 16-bit float type (capability Float16, declared by the caller).</summary>
+    public uint TypeHalf() => Type("half", () => Emit(_globals, SpirvOp.TypeFloat, Id(), 16));
+
+    /// <summary>
+    /// A cooperative matrix type (SPV_KHR_cooperative_matrix) of <paramref name="component"/>, subgroup scope,
+    /// <paramref name="rows"/> × <paramref name="columns"/>, for use <paramref name="use"/> (0 the left operand A, 1 the
+    /// right operand B, 2 the accumulator).
+    /// </summary>
+    public uint TypeCooperativeMatrix(uint component, uint rows, uint columns, uint use)
+    {
+        uint scope = ConstantUInt(3), r = ConstantUInt(rows), c = ConstantUInt(columns), u = ConstantUInt(use);   // scope 3: Subgroup
+        return Type($"coop:{component}:{rows}:{columns}:{use}", () => Emit(_globals, SpirvOp.TypeCooperativeMatrixKHR, Id(), component, scope, r, c, u));
+    }
 
     public uint TypeVector(uint component, uint count) =>
         Type($"vec{count}:{component}", () => Emit(_globals, SpirvOp.TypeVector, Id(), component, count));
@@ -126,6 +145,10 @@ internal sealed class SpirvModule
     public uint ConstantUInt(uint value) => Constant(TypeInt(false), value);
 
     public uint ConstantFloat(float value) => Constant(TypeFloat(), BitConverter.SingleToUInt32Bits(value));
+
+    /// <summary>A composite constant with every component <paramref name="constituent"/> (a cooperative matrix takes one).</summary>
+    public uint ConstantComposite(uint type, uint constituent) =>
+        Type($"composite:{type}:{constituent}", () => Emit(_globals, SpirvOp.ConstantComposite, type, Id(), constituent));
 
     public uint ConstantBool(bool value) => Type(value ? "true" : "false",
         () => Emit(_globals, value ? SpirvOp.ConstantTrue : SpirvOp.ConstantFalse, TypeBool(), Id()));
@@ -234,6 +257,11 @@ internal sealed class SpirvModule
             Emit(words, SpirvOp.Capability, capability);
         }
 
+        foreach (string extension in _extensions)
+        {
+            Emit(words, SpirvOp.Extension, Text(extension));
+        }
+
         Emit(words, SpirvOp.ExtInstImport, [GlslSet, .. Text("GLSL.std.450")]);
         Emit(words, SpirvOp.MemoryModel, 0, 1);                          // Logical, GLSL450
         Emit(words, SpirvOp.EntryPoint, [5, Function, .. Text("main"), .. _interface]);   // GLCompute
@@ -258,7 +286,7 @@ internal sealed class SpirvModule
         return operands.Length switch
         {
             0 => 0,
-            _ when op is SpirvOp.Constant or SpirvOp.ConstantTrue or SpirvOp.ConstantFalse or SpirvOp.Variable => operands[1],
+            _ when op is SpirvOp.Constant or SpirvOp.ConstantComposite or SpirvOp.ConstantTrue or SpirvOp.ConstantFalse or SpirvOp.Variable => operands[1],
             _ => operands[0],
         };
     }

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Vulkan: matrix units through cooperative matrices (`VK_KHR_cooperative_matrix`). Where a device reports the
+  extension, shaderFloat16 and a float16 × float16 → float32 shape with subgroup scope, the float32 product and the
+  int8, int4 and bfloat16 prompt products gain a cooperative-matrix kernel as one more measured candidate (the shape
+  with the most work per operation among those reported; staging depth from the device's workgroup memory; a kernel
+  the driver rejects is dropped). Precision stays float32's: operands are split into float16 high and low parts after
+  an exact power-of-two scaling per row and column (high·high + high·low + low·high; bfloat16 and int8 weights are
+  exact in one half), checked element by element against the CPU. Tuning choices are stored per cooperative-matrix
+  shape; devices without the extension, and `IDRAK_VULKAN_MATRIX=0`, run exactly what they ran before. Without a GPU
+  that reports it, the kernels are validated by spirv-val and checked against the CPU through an emulation of the
+  matrix operations (lavapipe); `--bench-vulkan` shows the path a 1024³ product took.
 - installation/: how Idrak was installed, built, tested and chatted with on Windows, Linux and WSL2, and an
   Android phone (Termux, Ubuntu in proot, a Turnip driver built for KGSL, the .NET heap limit).
 - Vulkan: the kernels' width is measured when the device opens (a 256³ float32 product and one-row decoding work,
