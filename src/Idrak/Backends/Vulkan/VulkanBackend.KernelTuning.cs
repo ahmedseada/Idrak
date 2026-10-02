@@ -35,6 +35,9 @@ internal enum VulkanTuneOp : byte
 
     /// <summary>Attention over many query rows: the tiled kernel (at a width) or the decoding kernel.</summary>
     TiledAttention,
+
+    /// <summary>A two-pass reduction (column sums, group statistics): the splits of each column or group.</summary>
+    Splits,
 }
 
 /// <summary>What a measured choice is for: the operation, its variant (kernel, format) and its shape.</summary>
