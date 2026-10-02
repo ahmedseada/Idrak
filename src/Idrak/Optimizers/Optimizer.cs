@@ -163,6 +163,26 @@ public abstract class Optimizer : IDisposable
     }
 
     /// <summary>
+    /// Decoupled weight decay (AdamW, Lion), in place: p -= <see cref="LearningRate"/> · decay · p for every parameter
+    /// with a gradient. Call it at the start of <see cref="Step"/>, before the update.
+    /// </summary>
+    protected void ApplyDecoupledWeightDecay(float decay)
+    {
+        if (decay == 0f)
+        {
+            return;
+        }
+
+        foreach (var p in Parameters)
+        {
+            if (p.Grad is not null)
+            {
+                p.Backend.Affine(p.Storage, p.Storage, p.Size, 1f - LearningRate * decay, 0f);
+            }
+        }
+    }
+
+    /// <summary>
     /// Allocates a zeroed state buffer shaped like <paramref name="parameter"/>, outside any <see cref="TensorScope"/>.
     /// It is marked as optimizer state: when offloading, the first data to move to system memory.
     /// </summary>

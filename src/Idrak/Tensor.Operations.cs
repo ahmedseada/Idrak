@@ -154,7 +154,7 @@ public sealed partial class Tensor
 
     // ---------------------------------------------------------------- implementations
 
-    private static readonly string[] UnaryNames = ["sigmoid", "tanh", "relu", "square", "abs", "exp", "log", "gelu"];
+    private static readonly string[] UnaryNames = ["sigmoid", "tanh", "relu", "square", "abs", "exp", "log", "gelu", "sqrt", "sin", "cos", "silu", "sign"];
 
     private Tensor Unary(UnaryOp op)
     {
@@ -276,7 +276,7 @@ public sealed partial class Tensor
         return Traced(BinaryNames[(int)op], c, start);
     }
 
-    private static readonly string[] BinaryNames = ["add", "sub", "mul"];
+    private static readonly string[] BinaryNames = ["add", "sub", "mul", "maximum", "minimum"];
 
     private static void CheckSameDevice(Tensor a, Tensor b)
     {

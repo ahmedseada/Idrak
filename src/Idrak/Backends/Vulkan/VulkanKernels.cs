@@ -58,7 +58,7 @@ internal static partial class VulkanKernels
     {
         var all = new Dictionary<string, Func<SpirvKernel>>();
         foreach (var (name, build) in ElementwiseKernels().Concat(RowKernels()).Concat(ShapeKernels()).Concat(MatMulKernels()).Concat(DecodingKernels())
-            .Concat(SamplingKernels()).Concat(ConvKernels()).Concat(PromptKernels()).Concat(TrainingKernels()).Concat(FusedKernels()))
+            .Concat(SamplingKernels()).Concat(ConvKernels()).Concat(PromptKernels()).Concat(TrainingKernels()).Concat(FusedKernels()).Concat(PointwiseKernels()))
         {
             all.Add(name, build);
         }
@@ -152,6 +152,16 @@ internal static partial class VulkanKernels
 
     private static Val Sigmoid(KernelBuilder k, Val x) => 1f / (1f + k.Exp(-x));
 
+    // d silu(x) / dx = s · (1 + x · (1 - s)), s = sigmoid(x).
+    private static Val SiluSlope(KernelBuilder k, Val x)
+    {
+        var s = Sigmoid(k, x);
+        return s * k.Fma(x, 1f - s, k.Float(1f));
+    }
+
+    // x moved into [-π, π] by whole turns before sin or cos: the drivers' sin and cos are only accurate near zero.
+    private static Val Reduced(KernelBuilder k, Val x) => k.Fma(k.RoundEven(x * (float)(0.5 / Math.PI)), k.Float(-2f * MathF.PI), x);
+
     private static Val Gelu(KernelBuilder k, Val x) => 0.5f * x * (1f + Tanh(k, GeluK * k.Fma(GeluC * x * x, x, x)));
 
     // d gelu(x) / dx.
@@ -203,6 +213,11 @@ internal static partial class VulkanKernels
                         UnaryOp.Abs => k.Abs(v),
                         UnaryOp.Exp => k.Exp(v),
                         UnaryOp.Log => k.Log(v),
+                        UnaryOp.Sqrt => k.Sqrt(v),
+                        UnaryOp.Sin => k.Sin(Reduced(k, v)),
+                        UnaryOp.Cos => k.Cos(Reduced(k, v)),
+                        UnaryOp.Silu => v * Sigmoid(k, v),
+                        UnaryOp.Sign => k.Select(v > 0f, k.Float(1f), k.Select(v < 0f, k.Float(-1f), v)),
                         _ => Gelu(k, v),
                     };
                 });
@@ -231,6 +246,11 @@ internal static partial class VulkanKernels
                         UnaryOp.Abs => dx[i] + k.Select(x[i] > 0f, g, k.Select(x[i] < 0f, -g, k.Float(0f))),
                         UnaryOp.Exp => k.Fma(g, y[i], dx[i]),
                         UnaryOp.Log => dx[i] + g / x[i],
+                        UnaryOp.Sqrt => dx[i] + 0.5f * g / y[i],
+                        UnaryOp.Sin => k.Fma(g, k.Cos(Reduced(k, x[i])), dx[i]),
+                        UnaryOp.Cos => dx[i] - g * k.Sin(Reduced(k, x[i])),
+                        UnaryOp.Silu => k.Fma(g, SiluSlope(k, x[i]), dx[i]),
+                        UnaryOp.Sign => dx[i],
                         _ => k.Fma(g, GeluSlope(k, x[i]), dx[i]),
                     };
                     dx[i] = d;
@@ -251,6 +271,8 @@ internal static partial class VulkanKernels
                 {
                     BinaryOp.Add => a[i] + b[i],
                     BinaryOp.Sub => a[i] - b[i],
+                    BinaryOp.Maximum => k.Max(a[i], b[i]),
+                    BinaryOp.Minimum => k.Min(a[i], b[i]),
                     _ => a[i] * b[i],
                 });
                 return k.Build();
