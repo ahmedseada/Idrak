@@ -87,7 +87,7 @@ internal sealed unsafe partial class CudaBackend
 
     /// <summary>What the cache file of this GPU belongs to (tests and diagnostics).</summary>
     internal TuningIdentity TuningIdentity => new(
-        $"{_deviceName}; compute {_computeMajor}.{_computeMinor}; {_multiprocessors} SMs; {_totalMemory >> 20} MiB",
+        $"{_deviceName}; compute {_computeMajor}.{_computeMinor}; {_multiprocessors} SMs; {_totalMemory >> 20} MiB; power {PowerSource.Current}",
         $"CUDA {_driverVersion}; {TuningCache.DriverRelease()}",
         TuningCache.LibraryBuild(PtxKernels.SourceFor(_shapes)));
 

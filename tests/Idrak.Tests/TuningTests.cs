@@ -15,6 +15,7 @@ internal static partial class Tests
         ("tuning: few-row products are measured over 1, 2, 3, 4, 6, 8, 12, ... splits with the kernel that then runs (fused add-and-normalize kept apart from the plain kernel), after a warm-up, relative to the formula's choice per round", GemvSelection),
         ("tuning: the cache file of measured choices round-trips and is ignored when the GPU, driver, library build or format differs", TuningCacheFile),
         ("tuning: measured choices are kept per GPU in the cache folder and read back instead of measured again", TuningPersisted),
+        ("tuning: every backend keeps one set of measured choices per power source (mains or battery, as the system reports it)", PowerSourceKeys),
         ("kernel shapes: derived from the device's reported limits; today's cards (12.0 and 8.6) give today's PTX byte for byte, other limits valid PTX with the same kernels, or a reason they cannot run", KernelShapesFromLimits),
     ];
 
@@ -468,5 +469,54 @@ internal static partial class Tests
               && PtxKernels.DynamicSharedBytes("flash_tc_bwd_q_d128") == PtxKernels.FlashTensorBackwardQShared(128)
               && PtxKernels.DynamicSharedBytes("gemm8_s8_f32") == PtxKernels.EightBitShared && PtxKernels.DynamicSharedBytes("gemm_tc_nn_f32") == 0,
             "dynamic shared memory per kernel");
+    }
+
+    private static void PowerSourceKeys(Device device)
+    {
+        if (device.Type != DeviceType.Cpu)
+        {
+            return;                                                              // nothing device-specific: once
+        }
+
+        // The Linux report: a discharging battery and no supply online is battery power; anything else is mains.
+        string root = Path.Combine(Path.GetTempPath(), "idrak-power-" + Guid.NewGuid().ToString("N"));
+        void Supply(string name, string type, string file, string value)
+        {
+            Directory.CreateDirectory(Path.Combine(root, name));
+            File.WriteAllText(Path.Combine(root, name, "type"), type + "\n");
+            File.WriteAllText(Path.Combine(root, name, file), value + "\n");
+        }
+
+        try
+        {
+            Check(Idrak.Backends.PowerSource.Linux(Path.Combine(root, "missing")) == "ac", "no report: mains");
+            Supply("BAT0", "Battery", "status", "Discharging");
+            Check(Idrak.Backends.PowerSource.Linux(root) == "battery", "a discharging battery, no supply online: battery");
+            Supply("AC", "Mains", "online", "1");
+            Check(Idrak.Backends.PowerSource.Linux(root) == "ac", "mains online: mains");
+            File.WriteAllText(Path.Combine(root, "AC", "online"), "0\n");
+            Supply("ucsi", "USB_C", "online", "1");
+            Check(Idrak.Backends.PowerSource.Linux(root) == "ac", "USB-C supply online: mains");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+
+        // The cache keys differ by power source.
+        string? before = Environment.GetEnvironmentVariable("IDRAK_POWER_SOURCE");
+        try
+        {
+            Environment.SetEnvironmentVariable("IDRAK_POWER_SOURCE", "ac");
+            string ac = Idrak.Backends.Cpu.CpuTuning.CacheKey(4);
+            Environment.SetEnvironmentVariable("IDRAK_POWER_SOURCE", "battery");
+            string battery = Idrak.Backends.Cpu.CpuTuning.CacheKey(4);
+            Check(ac != battery && ac.EndsWith("power ac", StringComparison.Ordinal) && battery.EndsWith("power battery", StringComparison.Ordinal),
+                $"CPU cache keys per power source ({ac} / {battery})");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("IDRAK_POWER_SOURCE", before);
+        }
     }
 }
