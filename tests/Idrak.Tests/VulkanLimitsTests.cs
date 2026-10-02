@@ -15,6 +15,7 @@ internal static partial class Tests
 {
     private static readonly (string Name, Action<Device> Run)[] VulkanLimitsGroup =
     [
+        ("vulkan limits: the kernels' width is measured at start (the float32 product at each width up to the formula's), stored per device and driver, and read back; products at the measured width match the CPU", VulkanWidthMeasured),
         ("vulkan limits: the loader's file names per operating system (libvulkan.so on Android; Linux and Windows unchanged)", VulkanLoaderNames),
         ("vulkan limits: windows of a large storage are whole rows within the binding range, starting at aligned offsets", VulkanWindowRows),
         ("vulkan limits: with a 1 MiB binding range, large weights' products (int8, int4, bfloat16), gathers, dequantizations, uploads and downloads run on the device and match the CPU", VulkanLargeStorages),
@@ -423,6 +424,90 @@ internal static partial class Tests
                 VulkanBackend.TuningCacheFile = savedCache;
                 File.Delete(cache);
             }
+        }
+    }
+
+    private static void VulkanWidthMeasured(Device device)
+    {
+        if (device.Backend is not VulkanBackend vulkan)
+        {
+            return;
+        }
+
+        int ordinal = device.Ordinal;
+        int wider = Math.Min(256, Math.Min(vulkan.Limits.MaxInvocations, vulkan.Limits.MaxSizeX));
+        string cache = Path.Combine(Path.GetTempPath(), $"idrak-width-{Environment.ProcessId}.tsv");
+        string? savedCache = VulkanBackend.TuningCacheFile;
+        var savedFormula = VulkanBackend.ProbeFormulaOverride;
+        VulkanBackend.TuningCacheFile = cache;
+        VulkanBackend.ProbeFormulaOverride = wider;
+        try
+        {
+            File.Delete(cache);
+            var r = new Random(4);
+            float[] a = [.. Enumerable.Range(0, 37 * 41).Select(_ => r.NextSingle() - 0.5f)];
+            float[] b = [.. Enumerable.Range(0, 41 * 29).Select(_ => r.NextSingle() - 0.5f)];
+            var expected = new float[37 * 29];
+            for (int i = 0; i < 37; i++)
+            {
+                for (int j = 0; j < 29; j++)
+                {
+                    double sum = 0;
+                    for (int t = 0; t < 41; t++)
+                    {
+                        sum += a[i * 41 + t] * b[t * 29 + j];
+                    }
+
+                    expected[i * 29 + j] = (float)sum;
+                }
+            }
+
+            float[] Product(VulkanBackend backend)
+            {
+                var (sa, sb, sc) = (backend.Allocate(a.Length, false), backend.Allocate(b.Length, false), backend.Allocate(expected.Length, false));
+                backend.Upload(a, sa);
+                backend.Upload(b, sb);
+                backend.BatchedMatMul(sa, sb, sc, 1, 37, 29, 41, false, false, 0f);
+                var result = new float[expected.Length];
+                backend.Download(sc, result);
+                sa.Release();
+                sb.Release();
+                sc.Release();
+                return result;
+            }
+
+            var first = VulkanBackend.CreateSeparate(ordinal, preferMapped: true);
+            int width;
+            try
+            {
+                width = first.Width;
+                bool several = wider > Math.Max(VulkanKernels.MinWidth, first.Limits.SubgroupSize);
+                Console.WriteLine($"    vulkan:{ordinal}: width {width} ({first.WidthChoice}, candidates up to {wider})");
+                Check(!several || first.WidthChoice == "measured", $"measured when there are several widths ({first.WidthChoice})");
+                Check(width >= VulkanKernels.MinWidth && width <= wider && (width & (width - 1)) == 0, $"a candidate width ({width})");
+                AssertClose(expected, Product(first), 1e-4f, "the product at the measured width");
+            }
+            finally
+            {
+                first.Shutdown();
+            }
+
+            var second = VulkanBackend.CreateSeparate(ordinal, preferMapped: true);
+            try
+            {
+                Check(second.Width == width, $"the stored width is read back ({second.Width}, {width})");
+                Check(second.WidthChoice is "cached" or "formula", $"read from the cache ({second.WidthChoice})");
+            }
+            finally
+            {
+                second.Shutdown();
+            }
+        }
+        finally
+        {
+            VulkanBackend.TuningCacheFile = savedCache;
+            VulkanBackend.ProbeFormulaOverride = savedFormula;
+            File.Delete(cache);
         }
     }
 }
