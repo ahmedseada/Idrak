@@ -10,10 +10,15 @@ namespace Idrak.Backends.Cpu;
 // Kernels for classification, normalization, embeddings, convolution, pooling and N-D shape operations.
 internal sealed partial class CpuBackend
 {
-    /// <summary>Runs body(start, end) over [0, count), splitting across cores when work (≈ total flops) is large.</summary>
-    private static void For(int count, long work, Action<int, int> body)
+    /// <summary>
+    /// Runs body(start, end) over [0, count), splitting across cores when work (≈ element operations) passes the measured
+    /// cut-over. A body whose chunks are summed together (<paramref name="chunksSummed"/>) splits by the numerical
+    /// contract instead (<see cref="CpuTuning.ReductionElements"/>), so a timing never changes its result.
+    /// </summary>
+    private static void For(int count, long work, Action<int, int> body, bool chunksSummed = false)
     {
-        if (count <= 1 || work < ParallelThreshold || !ComputeResources.AllowParallel)
+        bool split = chunksSummed ? work >= CpuTuning.ReductionElements && ComputeResources.AllowParallel : CpuTuning.SplitElements(work);
+        if (count <= 1 || !split)
         {
             body(0, count);
             return;
@@ -222,7 +227,7 @@ internal sealed partial class CpuBackend
                     s2[i / inner] += acc2[i];
                 }
             }
-        });
+        }, chunksSummed: true);
     }
 
     private static (double Sum, double SumProduct) Moments(ReadOnlySpan<float> a, ReadOnlySpan<float> b)

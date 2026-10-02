@@ -15,6 +15,23 @@
   against them (a tensor-core module that needs more shared memory than a block may use is skipped with the reason, as a
   GPU the main kernels cannot run on is). Every CUDA GPU so far derives the sizes the kernels always had, so the PTX is
   unchanged byte for byte (plans/README.md, "Kernel shapes", lists each shape and its value on the tested cards).
+- CPU: no choice is tuned to one machine any more (same results, bit for bit). Tiling, blocking and threading come from
+  what the machine reports (`CpuTuning`, `CpuInfo`: threads, vector width and registers, instruction sets, L1/L2/L3 and
+  line sizes from /sys on Linux, `GetLogicalProcessorInformationEx` on Windows, sysctl on macOS, with fallbacks) or are
+  measured: the element-wise and product parallel cut-overs are timed at first use (medians of 7 rounds, parallel at least
+  10% faster, the median of three passes after an untimed warm-up pass, element-wise over a rotating window larger than
+  the L2, the product on one row against a square B, about two seconds once per machine) and kept per machine, runtime
+  and thread count in `IDRAK_CACHE`/cpu/tuning.tsv (default ~/.cache/idrak/cpu; `IDRAK_TUNING_CACHE=0` keeps nothing;
+  overrides `IDRAK_CPU_TUNING_FILE`, `IDRAK_CPU_PARALLEL_ELEMENTS` / `IDRAK_CPU_PARALLEL_FLOPS`; `IDRAK_AUTOTUNE=0`: the
+  cache-size formulas). The product's A tile is a quarter of the L2, at most L1 / 2 KiB row blocks, and the tile count
+  a multiple of the threads where splitting the columns up to twice as finely allows it (1024³ ~9% faster on 4 threads);
+  column blocks are eight vectors; transpose tiles fit half the L1; the tiled kernel is chosen by reported instruction
+  sets (AVX-512, AVX2+FMA, and a new NEON 8×8 kernel for ARM64). Few-row bfloat16 products keep up to 8 rows' sums in
+  registers (4 with 16 vector registers; 512-bit panels where AVX-512 is accelerated): 4 and 8 rows about 2× faster.
+  `Backend.Capabilities` of the CPU no longer borrow CUDA's constants: the few-row split (8) and the attention head
+  sizes (256 decoding, 128 tiled) are the CPU's own numerical contract, unchanged, like the other values that decide a
+  summation order (reduction chunks, transposed-B rows, the column-split rule with beta ≠ 0): the CPU is the reference.
+  `HostParallel` honours `ComputeResources.MaxCpuThreads`.
 - Core code no longer branches on the device or a data format; each goes through an abstraction its implementations
   fill in (same results, same kernels, nothing added on the per-token path beyond one interface call per layer):
   - **Device capabilities** (`Backend.Capabilities`): few-row limit, decoding and tiled attention head sizes, matrix

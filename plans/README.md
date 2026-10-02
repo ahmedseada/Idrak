@@ -49,7 +49,8 @@ tuned with `--bench-gemm` / `--bench-gemv` on one RTX 5070 Ti (compute 12.0, 70 
   be more than 5% slower than the best fixed one on any tested card.
 - **Other backends follow the same rule.** AMD, Intel and Apple (plans 3–5) read their own device limits through
   `Backend.Capabilities` (shared work step 1) and use the same measure-on-first-use approach, so no plan copies NVIDIA
-  numbers.
+  numbers. The CPU does too: its choices come from the cores, vector width, registers and caches the machine reports, or
+  are measured on it (`CpuTuning`; the audit is in [plan 2](2-cpu.md#4-machine-agnostic-audit)).
 
 ### Status of each rule
 
@@ -84,6 +85,12 @@ left open with the reason).
 | Split counters (≥ 4096), JIT log (16 KiB), grid z (65535) | – | buffer sizes / the CUDA grid limit | (a) |
 | Pool best fit (a cached block ≤ 25% larger, from 1024 floats) | – | relative to the request | (b) host-side allocator policy |
 | Async upload size (`AsyncUploadBytes` 4 MiB, 16 MiB staging ring) | fixed | host-side pinned memory: no GPU attribute applies | ⚠️ confirm on PCIe 3 / 4 / 5; measure if a run shows a difference |
+| CPU: parallel cut-overs, element-wise and products (`CpuTuning.ParallelElements` / `ParallelFlops`) | 65,536 / 131,072 fixed | ✅ measured at first use (median of 7 rounds, parallel at least 10% faster; element-wise over windows larger than the L2, the product on one row against a square B), the median of three passes after an untimed one, kept per machine, runtime and thread count in ~/.cache/idrak/cpu/tuning.tsv (`IDRAK_CACHE`; `IDRAK_TUNING_CACHE=0` off); fallback L2 / 16 and L2 / 8 | an ARM64 and an AVX-512 run |
+| CPU: tiled product kernel (`CpuTuning.Kernel`) | AVX-512 8×32 or AVX2 6×16 by vector width; none on ARM64 | ✅ by reported instruction sets: AVX-512 8×32, AVX2+FMA 6×16, NEON 8×8 (new) | NEON speed on a real ARM64 machine |
+| CPU: product tiles (`TileBytes`, `TileGrid`, `MaxRowBlocks`) | A tile 256 KB, at most 16 row blocks, ~2 tiles per thread | ✅ A tile = L2 / 4, at most L1 / 2 KiB row blocks, ≥ 2 tiles per thread in whole rounds (a multiple of the threads) | – |
+| CPU: column blocks, transpose tile, k chunk, register rows | 64 columns, 32 × 32, –, – | ✅ 8 vectors; L1-sized tiles; half a cache line; rows that fit the vector registers | the k chunk is a formula; a first-use measurement if machines disagree |
+| CPU: summation-order switches (`ReductionElements`, `TransposedInPlace`, `FewRows`, column-split rule with beta ≠ 0) | 65,536, 16, 8 (CUDA's `GemvRows`), 4 / 128 / 131,072 | fine: a numerical contract (the CPU is the reference), the same on every machine, not tuning | – |
+| CPU: attention head-size limits, few-row split (`Capabilities`) | CUDA's `DecodeMaxDim` 256 / `FlashMaxDim` 128 / `GemvRows` 8 | ✅ the CPU's own constants (`CpuTuning.DecodeAttentionHeads`, `TiledAttentionHeads`, `FewRows`), same values: they choose the attention / product algorithm, so a numerical contract | lifting the head limits (the CPU kernels take any size) changes results for larger heads: opt-in only |
 
 ### Kernel shapes
 
