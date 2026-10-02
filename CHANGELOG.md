@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- CUDA decoding attention measures its split count over filled lengths 64, 128, ... up to the capacity (geometric mean
+  of their times) instead of at a full cache alone. At a full cache 8 and 64 splits were within 2% on an RTX 3060
+  Laptop; 64 was kept and ran 200 positions in 36.8 µs against 12.0 with 8. Cache format 5 re-measures saved choices.
+  --bench-gemv warms the GPU until its speed settles before each timing.
 - CUDA decoding attention reads at least a measured number of cached positions per block, so a short cache runs on
   fewer blocks than the split count measured for a full one (on an RTX 5070 Ti, 200 positions took 9.0 µs with the 24
   splits a full 4096-position cache wants, 7.6 µs with 16). The split count stays fixed per shape (recorded graphs stay

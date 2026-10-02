@@ -713,19 +713,17 @@ internal sealed unsafe partial class CudaBackend
     // split over several blocks per row; each writes (max, sum, weighted values) for its chunk and the last block of a
     // row to finish merges them (counted in the split counters). The split count depends only on the shapes, so
     // recorded graphs stay valid as the cache fills (chunks are computed on the device from the current length).
-    // How many splits is measured once per shape (kernel `variant`, rows, capacity, head size) on this card, with the
-    // cache read as if full (a scratch position at its last row): the time of a decoding step grows with the filled
-    // length, so a full cache is where the choice matters and the one length every shape reaches; timing the first
-    // call's (often short) length instead would favour too few splits. Candidates: 1, 2, 3, 4, 6, 8, ... up to one split
+    // How many splits is measured once per shape (kernel `variant`, rows, capacity, head size) on this card, over
+    // filled lengths 64, 128, ... up to the capacity (scratch positions), by the geometric mean of their times, so each
+    // doubling of the context counts alike. (Measured at a full cache alone, an RTX 3060 Laptop chose 64 splits, 2%
+    // faster there than 8, and ran 200 positions in 36.8 µs against 12.0 with 8.) Candidates: 1, 2, 3, 4, 6, 8, ... up to one split
     // per 64 cached positions (at most 64). The formula, about five blocks per SM (--bench-gemv: 16 rows → 22 splits,
     // 4000 positions 75.9 → ~35 µs, 1000 positions 22 → ~15 µs), is the default until then and when nothing can be
     // measured.
     // A short filled length split as many ways reads a few positions per block and merges many parts: on an RTX 5070 Ti
     // 200 positions took 9.0 µs with the 24 splits measured at 4096, 7.6 with 16. So each block also takes at least
     // `minChunk` positions (the blocks past the filled length then add an empty part), measured per shape after the
-    // splits over filled lengths 64, 128, ... up to the capacity, compared by the geometric mean of their times (each
-    // doubling of the context counts alike); 1, the plain chunks, is the reference and stays unless another is
-    // faster. `launch(splits, minChunk, part, counters, position)` launches the kernel with that position address.
+    // splits over the same lengths; 1, the plain chunks, is the reference and stays unless another is faster. `launch(splits, minChunk, part, counters, position)` launches the kernel with that position address.
     private void DecodeSplit(int variant, int rows, int capacity, int dim, Storage position, Storage y, Action<int, int, Storage, Storage, ulong> launch)
     {
         var counters = SplitCounters(rows);
@@ -779,9 +777,13 @@ internal sealed unsafe partial class CudaBackend
 
             try
             {
-                int full = lengths.Length - 1;
-                splits = Tune(new TuneKey(TuneOp.DecodeSplits, variant, rows, capacity, dim), candidates, formula,
-                    c => Run(c, 1, At(full)));                          // writes y, which the launch below writes again
+                splits = Tune(new TuneKey(TuneOp.DecodeSplits, variant, rows, capacity, dim), candidates, formula, c =>
+                {
+                    for (int i = 0; i < lengths.Length; i++)
+                    {
+                        Run(c, 1, At(i));                               // writes y, which the launch below writes again
+                    }
+                }, part: (c, i) => Run(c, 1, At(i)), parts: lengths.Length);
                 int[] chunks = splits > 1 ? DecodeMinChunks(capacity, splits) : [];
                 minChunk = DecodeMinChunk ?? Tune(new TuneKey(TuneOp.DecodeMinChunk, variant, rows, capacity, dim, splits), chunks, 1, c =>
                 {

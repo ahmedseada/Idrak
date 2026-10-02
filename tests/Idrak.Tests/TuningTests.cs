@@ -57,7 +57,7 @@ internal static partial class Tests
             using var plain = fa.MatMul(fb);
             results.Add(plain.ToArray());
 
-            // Decoding attention over 700 of 1024 cached positions (splits measured at a full cache).
+            // Decoding attention over 700 of 1024 cached positions (splits measured over filled lengths 64 ... 1024).
             using var cache = new KeyValueCache(8, 1024, 64, device, KeyValueFormat.Float32);
             device.Backend.Upload(keys, cache.Keys.Storage);
             device.Backend.Upload(values, cache.Values.Storage);

@@ -218,7 +218,7 @@ internal static class TuningCache
     /// 3: candidates timed in pairs with the formula's choice (a drifting clock moved version 2's choices toward the
     /// candidates timed furthest from it), and decoding-sized products timed with a cold L2 cache, as decoding reads them.
     /// </summary>
-    internal const int FormatVersion = 4;
+    internal const int FormatVersion = 5;
 
     private const string Magic = "idrak-tuning";
 
