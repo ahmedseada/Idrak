@@ -514,10 +514,10 @@ public sealed record FineTuningOptions
     public bool Packing { get; init; } = true;
 
     /// <summary>
-    /// On CUDA with packed batches and no gradient accumulation: records one training step's forward and backward pass
-    /// as a CUDA graph (after two ordinary steps) and replays it for every later batch of the same shape, with the
-    /// batch's tokens copied into the recorded buffers. The thousands of operations of a step then cost one launch of
-    /// host work instead of one each. Falls back to ordinary steps when recording fails.
+    /// On a device that records graphs (CUDA, Vulkan), with packed batches and no gradient accumulation: records one
+    /// training step's forward and backward pass as a graph (after two ordinary steps) and replays it for every later
+    /// batch of the same shape, with the batch's tokens copied into the recorded buffers. The thousands of operations of a
+    /// step then cost one launch of host work instead of one each. Falls back to ordinary steps when recording fails.
     /// </summary>
     public bool CudaGraphs { get; init; } = true;
 
@@ -576,8 +576,8 @@ public sealed record FineTuningOptions
     /// <summary>
     /// Run AdamW's update on the CPU, with its state (two moments per trained value) in system memory: only gradients and
     /// weights cross PCIe each step (see <see cref="Optimizers.HostOptimizer"/>). For training many parameters (large
-    /// adapters, or unfrozen layers) on a GPU too small for the optimizer state; slower per step. CUDA graphs are not used
-    /// with it.
+    /// adapters, or unfrozen layers) on a GPU too small for the optimizer state; slower per step. Recorded graphs are not
+    /// used with it.
     /// </summary>
     public bool HostOptimizer { get; init; }
 
@@ -771,7 +771,7 @@ public static class FineTuner
         return evaluations;
     }
 
-    // Runs optimizer steps: ordinary ones, or replays of a recorded CUDA graph once one is recorded (see
+    // Runs optimizer steps: ordinary ones, or replays of a recorded graph once one is recorded (see
     // FineTuningOptions.CudaGraphs).
     // lossRows: the most trained tokens of any batch the runner will see (the recorded loss's capacity).
     private sealed class StepRunner(PretrainedModel model, IReadOnlyList<TrainingSequence> train, Optimizer optimizer, FineTuningOptions options,
@@ -1383,7 +1383,7 @@ public static class FineTuner
         return result;
     }
 
-    // One training step's forward and backward pass over a packed batch, recorded as a CUDA graph: its inputs (tokens,
+    // One training step's forward and backward pass over a packed batch, recorded as a graph: its inputs (tokens,
     // the packing's layout, the trained positions with targets and weights) live in fixed buffers that each step
     // overwrites before replaying the graph. The loss weights carry 1 / trained tokens, so the recorded pass needs no
     // per-batch constant. Parameters' gradients are the ones the graph zeroes and fills.
@@ -1428,7 +1428,7 @@ public static class FineTuner
             catch (Exception ex) when (ex is not OutOfMemoryException)
             {
                 graph.Dispose();
-                trace?.Invoke($"CUDA graph not used ({ex.Message}); ordinary steps continue");
+                trace?.Invoke($"graph not used ({ex.Message}); ordinary steps continue");
                 return null;
             }
 
@@ -1447,14 +1447,14 @@ public static class FineTuner
                 }
 
                 (graph._executable, graph._graph, graph._owned) = backend.EndCapture();
-                trace?.Invoke($"recorded one training step as a CUDA graph ({batch.Rows.Length} × {batch.Length} positions, up to {lossRows} trained); later steps replay it");
+                trace?.Invoke($"recorded one training step as a graph ({batch.Rows.Length} × {batch.Length} positions, up to {lossRows} trained); later steps replay it");
                 return graph;
             }
             catch (Exception ex) when (ex is not OutOfMemoryException)
             {
                 graph._owned = backend.AbortCapture();
                 graph.Dispose();
-                trace?.Invoke($"CUDA graph not used ({ex.Message}); ordinary steps continue");
+                trace?.Invoke($"graph not used ({ex.Message}); ordinary steps continue");
                 return null;
             }
         }

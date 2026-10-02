@@ -16,7 +16,7 @@ internal static partial class Tests
     [
         ("vulkan fused: packed products sharing an input, gate/up with the activation, the gated down projection and projection + residual + RMS norm (int8, int4, bfloat16; odd widths, biases, splits of k) match the unfused steps and the CPU", VulkanFusedProducts),
         ("vulkan fused: attention heads normalized, rotated and laid out or written into float32 and bfloat16 caches in one pass match the unfused steps and the CPU", VulkanFusedHeads),
-        ("vulkan fused: decoders (float32, int8, int4, bfloat16 weights; float32, bfloat16, int8 caches) give the unfused logits; a dim-1024, 8-layer int8 decoder runs fewer dispatches per token", VulkanFusedDecoder),
+        ("vulkan fused: decoders (float32, int8, int4, bfloat16 weights; float32, bfloat16, int8 caches) give the unfused logits; a dim-1024, 8-layer int8 decoder runs fewer dispatches per token, the same kernels in direct and recorded steps", VulkanFusedDecoder),
     ];
 
     // The Vulkan backend of `device` when the fused kernels can be tested on it.
@@ -456,7 +456,55 @@ internal static partial class Tests
                 "medium int8 decoder: the fused kernels ran (" + string.Join(", ", kernels.Keys.Order()) + ")");
             Check(perTokenAfter < perTokenBefore, $"medium int8 decoder: {perTokenAfter:F1} dispatches per token fused, {perTokenBefore:F1} unfused");
             Console.WriteLine($"    medium int8 decoder (dim 1024, 8 layers): {perTokenBefore:F1} dispatches per token unfused, {perTokenAfter:F1} fused");
+
+            // A direct step launches the kernels a recorded step does: the residual addition fused with the next block's
+            // norm is kept for that norm rather than freed with its layer and computed again.
+            var (direct, recorded) = StepKernels(backend, device, model);
+            string Listed(IDictionary<string, long> counts) => string.Join(", ", counts.OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => $"{p.Key} {p.Value}"));
+            Check(direct.Count == recorded.Count && direct.All(p => recorded.TryGetValue(p.Key, out long n) && n == p.Value),
+                $"medium int8 decoder: a direct step runs {Listed(direct)}; a recorded step {Listed(recorded)}");
+            Check(direct.GetValueOrDefault("rms_norm_affine") + direct.GetValueOrDefault("rms_norm_affine_narrow") == 1,
+                $"medium int8 decoder: a direct step normalizes on its own only the embedding, the rest with the addition before ({Listed(direct)})");
+            Console.WriteLine($"    medium int8 decoder: {direct.Values.Sum()} dispatches in a direct step, {recorded.Values.Sum()} recorded");
         }
+    }
+
+    // The kernels of one direct decoding step and of the same step recorded as a graph, by name.
+    private static (ConcurrentDictionary<string, long> Direct, ConcurrentDictionary<string, long> Recorded) StepKernels(
+        VulkanBackend backend, Device device, Sequential model)
+    {
+        model.Eval();
+        using var noGrad = Autograd.NoGrad();
+        using var context = new DecodingContext(device, 1, 32, KeyValueFormat.Float32);
+        using var token = Tensor.From([5f], [1, 1], device);
+        using (new TensorScope())
+        {
+            model.ForwardCached(Tensor.From([1f, 2f, 3f], [1, 3], device), context).ToArray();
+        }
+
+        var direct = new ConcurrentDictionary<string, long>();
+        var recorded = new ConcurrentDictionary<string, long>();
+        for (int s = 0; s < 3; s++)
+        {
+            using var scope = new TensorScope();
+            device.Synchronize();
+            backend.DispatchesByKernel = s == 2 ? direct : null;            // after two steps, so measured choices are settled
+            model.ForwardCached(token, context);
+            device.Synchronize();
+            backend.DispatchesByKernel = null;
+        }
+
+        backend.DispatchesByKernel = recorded;
+        try
+        {
+            using var graph = context.CaptureStep(() => model.ForwardCached(token, context));
+        }
+        finally
+        {
+            backend.DispatchesByKernel = null;
+        }
+
+        return (direct, recorded);
     }
 
     // Decodes a prompt and then `steps` fixed tokens (after two warm-up tokens, so measured choices are settled) with the

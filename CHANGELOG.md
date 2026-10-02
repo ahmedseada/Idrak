@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Direct decoding steps (not recorded as a graph) keep the residual addition fused with the next block's RMS norm for
+  that norm: `Sequential` freed it with the layer's intermediate results, so the norm ran again, one kernel more per
+  layer and token on every device (74 dispatches per token instead of 82 for the medium decoder of `--bench-vulkan`).
+- Fine-tuning's trace and the CLI's README say "graph" rather than "CUDA graph": the training step is recorded on
+  Vulkan too.
 - installation/: how Idrak was installed, built, tested and chatted with on Windows, Linux and WSL2, and an
   Android phone (Termux, Ubuntu in proot, a Turnip driver built for KGSL, the .NET heap limit).
 - Vulkan: the kernels' width is measured when the device opens (a 256³ float32 product and one-row decoding work,
