@@ -126,7 +126,7 @@ internal sealed unsafe partial class VulkanBackend
         return choices;
     }
 
-    // Keeps `choices` for this device and driver (best effort: a read-only or busy cache only means measuring again).
+    // Keeps `choices` for this device and driver, replacing those of the same names (best effort: a read-only or busy cache only means measuring again).
     private void CacheChoices(IReadOnlyDictionary<string, string> choices)
     {
         string? file = TuningCacheFile;
@@ -139,7 +139,9 @@ internal sealed unsafe partial class VulkanBackend
         {
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(file))!);
             string prefix = TuningKey() + "/";
-            var lines = File.Exists(file) ? File.ReadAllLines(file).Where(l => !l.StartsWith(prefix, StringComparison.Ordinal)).ToList() : [];
+            // Other choices of this device and driver stay (the runtime policy and the storage memory are kept apart).
+            var replaced = choices.Keys.Select(k => $"{prefix}{k}\t").ToArray();
+            var lines = File.Exists(file) ? File.ReadAllLines(file).Where(l => !replaced.Any(r => l.StartsWith(r, StringComparison.Ordinal))).ToList() : [];
             lines.AddRange(choices.Select(c => $"{prefix}{c.Key}\t{c.Value}\t{_physical.DeviceName} ({_physical.Driver})"));
             string temporary = $"{file}.{Environment.ProcessId}.{Environment.CurrentManagedThreadId}.tmp";
             File.WriteAllLines(temporary, lines);

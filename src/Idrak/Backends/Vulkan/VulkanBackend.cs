@@ -14,14 +14,13 @@ namespace Idrak.Backends.Vulkan;
 /// (<see cref="Dispatch"/>, VulkanBackend.Dispatch.cs). Operations without a kernel of their own run through the host
 /// fallback (<see cref="HostCall"/>).
 ///
-/// Memory, chosen from the device's reported type and the memory types and heaps it reports (<see cref="MappableType(VkPhysicalDeviceMemoryProperties, uint, uint)"/>):
-/// on an integrated GPU or a CPU driver (one memory, the system's) storages live in host-visible memory on the largest
-/// host-visible heap; on other devices, where a device-local, host-visible memory type lives on a heap about as large as
-/// the device's largest device-local heap (a discrete GPU whose whole memory the host can map), storages live there.
-/// Either way they are mapped once, so uploads and downloads are plain copies (reads go through a host-cached staging
-/// buffer when that memory is not host-cached). Elsewhere (a small host-visible window of device memory, or none)
-/// storages live in device-local memory, and copies go through a host-visible staging buffer. IDRAK_VULKAN_STAGING=1
-/// copies through staging everywhere.
+/// Memory: storages live in one of the memories the device reports a storage could use (<see cref="StorageCandidates(VkPhysicalDeviceMemoryProperties, uint, uint)"/>):
+/// device-local memory reached through a host-visible staging buffer, device-local memory the host maps (when about all
+/// of it is mappable), or, on devices sharing the system's memory, host-visible system memory, host-cached or
+/// write-combined, mapped. Which one is measured on the device when the backend starts and cached per device, driver and
+/// power source (VulkanBackend.StorageMemory.cs); mapped storages are mapped once, so uploads and downloads are plain
+/// copies (reads go through a host-cached staging buffer when that memory is not host-cached). IDRAK_VULKAN_STAGING=1
+/// copies through staging everywhere; IDRAK_VULKAN_STORAGE names a memory.
 ///
 /// Devices are numbered (vulkan:0, vulkan:1, …) by what they report, not the loader's order (<see cref="DeviceOrder"/>).
 /// </summary>
@@ -39,10 +38,13 @@ internal sealed unsafe partial class VulkanBackend : Backend
 
     // Memory types: where storages live, and (without mapped storages, or for reads of uncached mapped storages) the
     // staging buffer's.
-    private readonly uint _storageType;
-    private readonly bool _storageCoherent;
-    private readonly int _stagingType = -1;
+    private uint _storageType;
+    private bool _storageCoherent;
+    private readonly int _stagingType;
     private readonly bool _stagingCoherent;
+
+    // IDRAK_VULKAN_PAGE_BYTES or a test's page size (null: from the storage heap).
+    private readonly long? _pageSetting;
 
     // Cached blocks by length (floats); their memory stays carved from its page until ReleaseCachedMemory.
     private readonly Dictionary<int, Stack<VulkanBlock>> _pool = [];
@@ -110,58 +112,44 @@ internal sealed unsafe partial class VulkanBackend : Backend
         // Every storage buffer has the same memory requirements' type bits, so one probe buffer tells them.
         uint typeBits = StorageTypeBits();
         var memory = physical.Memory;
-        int mapped = preferMapped ? MappableType(memory, typeBits, physical.Facts.DeviceType) : -1;
-        if (mapped >= 0)
-        {
-            _storageType = (uint)mapped;
-            UnifiedMemory = true;
-        }
-        else
-        {
-            // Device memory the host does not see first (a small host-visible window is better left to staging).
-            int local = BestType(memory, typeBits, MemoryDeviceLocal, static f => (f & MemoryHostVisible) == 0 ? 1 : 0);
-            _storageType = (uint)(local >= 0 ? local : BestType(memory, typeBits, 0, static _ => 0));
-        }
 
-        // Staging memory: host-visible; host-cached first (the host reads it fast), then coherent, then outside the device.
-        int staging = BestType(memory, typeBits, MemoryHostVisible, static f =>
+        // Staging memory (copies to device memory, reads of mapped memory the host does not cache): host-visible;
+        // host-cached first (the host reads it fast), then coherent, then outside the device. Created on first use.
+        _stagingType = BestType(memory, typeBits, MemoryHostVisible, static f =>
             ((f & MemoryHostCached) != 0 ? 4 : 0) + ((f & MemoryHostCoherent) != 0 ? 2 : 0) + ((f & MemoryDeviceLocal) == 0 ? 1 : 0));
-        if (mapped < 0)
+        if (_stagingType < 0)
         {
-            _stagingType = staging >= 0 ? staging : throw new VulkanException($"{Name} has no host-visible memory for copies.");
-        }
-        else if ((memory.TypeFlags(mapped) & MemoryHostCached) == 0 && staging >= 0 && (memory.TypeFlags(staging) & MemoryHostCached) != 0)
-        {
-            _stagingType = staging;                                        // the host reads uncached memory slowly
-            ReadsThroughStaging = true;
+            throw new VulkanException($"{Name} has no host-visible memory for copies.");
         }
 
         ulong maxAllocation = physical.Facts.MaxMemoryAllocationSize;
-        if (_stagingType >= 0)
-        {
-            _stagingCoherent = (memory.TypeFlags(_stagingType) & MemoryHostCoherent) != 0;
-            StagingBytes = StagingSize(memory.HeapSize(memory.TypeHeap(_stagingType)), maxAllocation, p.NonCoherentAtomSize,
-                stagingBytes ?? BytesSetting("IDRAK_VULKAN_STAGING_BYTES"));
-        }
+        _stagingCoherent = (memory.TypeFlags(_stagingType) & MemoryHostCoherent) != 0;
+        StagingBytes = StagingSize(memory.HeapSize(memory.TypeHeap(_stagingType)), maxAllocation, p.NonCoherentAtomSize,
+            stagingBytes ?? BytesSetting("IDRAK_VULKAN_STAGING_BYTES"));
 
-        _storageCoherent = (memory.TypeFlags((int)_storageType) & MemoryHostCoherent) != 0;
-        StorageHeapBytes = (long)memory.HeapSize(memory.TypeHeap((int)_storageType));
-        PageBytes = PageSize((ulong)StorageHeapBytes, maxAllocation, p.MaxMemoryAllocationCount,
-            pageBytes ?? BytesSetting("IDRAK_VULKAN_PAGE_BYTES"));
+        // Storage memory: one of the candidates the device reports, measured once the queue runs unless an override,
+        // the cache or a single candidate decides it (VulkanBackend.StorageMemory.cs).
+        _pageSetting = pageBytes ?? BytesSetting("IDRAK_VULKAN_PAGE_BYTES");
+        _storageCandidates = [.. StorageCandidates(memory, typeBits, physical.Facts.DeviceType)];
+        var (decided, how, timings) = DecideStorage(_storageCandidates, preferMapped ? null : StorageMemory.Staging,
+            Environment.GetEnvironmentVariable("IDRAK_VULKAN_STORAGE"), CachedChoices());
+        UseStorage(_storageCandidates.First(c => c.Kind == (decided ?? _storageCandidates[0].Kind)));
+        (StorageChoice, StorageTimings) = (how, timings);
         StartQueue();
         TuneRuntime(pushDescriptors);
+        TuneStorage(decided);
     }
 
     /// <summary>Whether dispatches push their descriptors (VK_KHR_push_descriptor) instead of allocating descriptor sets.</summary>
     public bool PushDescriptors => _usePush;
 
     /// <summary>Whether downloads of mapped storages go through a host-cached staging buffer (the mapped memory is not host-cached).</summary>
-    public bool ReadsThroughStaging { get; }
+    public bool ReadsThroughStaging { get; private set; }
 
     /// <summary>The size of the memory heap storages live on (pages are sized from it).</summary>
-    public long StorageHeapBytes { get; }
+    public long StorageHeapBytes { get; private set; }
 
-    /// <summary>The staging buffer's size (copies larger than it go in chunks); 0 without one.</summary>
+    /// <summary>The staging buffer's size (copies larger than it go in chunks; the buffer is created on first use).</summary>
     public long StagingBytes { get; }
 
     // The staging buffer's size: the power of two at most 1/512 of the heap it lives on (16 MiB of an 8 GiB heap: chunks
@@ -187,69 +175,6 @@ internal sealed unsafe partial class VulkanBackend : Backend
 
     // The largest power of two at most `value` (1 for 0).
     private static ulong PowerOfTwoAtMost(ulong value) => value == 0 ? 1 : 1UL << (63 - System.Numerics.BitOperations.LeadingZeroCount(value));
-
-    // The memory type storages are mapped from, or -1 (storages in device memory, copies through staging), by the
-    // device's reported type and memory:
-    // - An integrated GPU or a CPU driver has one memory, the system's: host-visible memory the device uses is as fast as
-    //   its "device-local" memory, which is often only a small carve-out heap of it (APUs), so storages are mapped from a
-    //   host-visible type on the largest host-visible heap (or one at least half its size): device-local and host-cached
-    //   first, then host-cached, then coherent. Copying through staging there only costs time and memory.
-    // - Any other device (discrete, virtual, other): a device-local, host-visible type on a heap at least half the size
-    //   of the largest device-local heap, so the host maps about all of the device's memory (resizable BAR), not a small
-    //   window of it. Host-cached first, then coherent.
-    internal static int MappableType(VkPhysicalDeviceMemoryProperties memory, uint typeBits, uint deviceType)
-    {
-        if (deviceType is DeviceTypeIntegratedGpu or DeviceTypeCpu)
-        {
-            ulong visible = 0;
-            for (int i = 0; i < (int)memory.MemoryTypeCount; i++)
-            {
-                if ((typeBits & (1u << i)) != 0 && (memory.TypeFlags(i) & MemoryHostVisible) != 0)
-                {
-                    visible = Math.Max(visible, memory.HeapSize(memory.TypeHeap(i)));
-                }
-            }
-
-            return visible == 0 ? -1 : BestType(memory, typeBits, MemoryHostVisible, static f =>
-                ((f & MemoryHostCached) != 0 ? 4 : (f & MemoryHostCoherent) != 0 ? 2 : 0) + ((f & MemoryDeviceLocal) != 0 ? 1 : 0),
-                minHeap: visible / 2);
-        }
-
-        ulong largest = 0;
-        for (int heap = 0; heap < (int)memory.MemoryHeapCount; heap++)
-        {
-            if ((memory.HeapFlags(heap) & HeapDeviceLocal) != 0)
-            {
-                largest = Math.Max(largest, memory.HeapSize(heap));
-            }
-        }
-
-        if (largest == 0)
-        {
-            return -1;
-        }
-
-        return BestType(memory, typeBits, MemoryDeviceLocal | MemoryHostVisible, static f =>
-            ((f & MemoryHostCached) != 0 ? 2 : 0) + ((f & MemoryHostCoherent) != 0 ? 1 : 0), minHeap: largest / 2);
-    }
-
-    /// <summary>The mapped memory type for the memory types (flags, heap) and heaps (size, flags) given (tests: a device's report made up).</summary>
-    internal static int MappableType(ReadOnlySpan<(uint Flags, int Heap)> types, ReadOnlySpan<(ulong Size, ulong Flags)> heaps,
-        uint deviceType = DeviceTypeDiscreteGpu)
-    {
-        var memory = new VkPhysicalDeviceMemoryProperties { MemoryTypeCount = (uint)types.Length, MemoryHeapCount = (uint)heaps.Length };
-        for (int i = 0; i < types.Length; i++)
-        {
-            (memory.MemoryTypes[2 * i], memory.MemoryTypes[2 * i + 1]) = (types[i].Flags, (uint)types[i].Heap);
-        }
-
-        for (int i = 0; i < heaps.Length; i++)
-        {
-            (memory.MemoryHeaps[2 * i], memory.MemoryHeaps[2 * i + 1]) = (heaps[i].Size, heaps[i].Flags);
-        }
-
-        return MappableType(memory, uint.MaxValue, deviceType);
-    }
 
     // vkCmdPushDescriptorSetKHR, or null without the extension.
     private readonly delegate* unmanaged<IntPtr, uint, ulong, uint, uint, VkWriteDescriptorSet*, void> _pushDescriptorSet;
@@ -284,7 +209,7 @@ internal sealed unsafe partial class VulkanBackend : Backend
     }
 
     /// <summary>Whether storages live in memory the host maps directly: uploads need no staging.</summary>
-    public bool UnifiedMemory { get; }
+    public bool UnifiedMemory { get; private set; }
 
     /// <summary>The largest storage a kernel can bind (maxStorageBufferRange); larger ones take the host fallback.</summary>
     public long MaxStorageBytes { get; }
@@ -559,16 +484,17 @@ internal sealed unsafe partial class VulkanBackend : Backend
         return Encoding.UTF8.GetString(text, length).Trim();
     }
 
-    // The memory type of `typeBits` with all of `required` on a heap of at least `minHeap` bytes, best by `score` then by
+    // The memory type of `typeBits` with all of `required` and none of `forbidden` on a heap of at least `minHeap` bytes, best by `score` then by
     // heap size; -1 when none.
-    private static int BestType(VkPhysicalDeviceMemoryProperties memory, uint typeBits, uint required, Func<uint, int> score, ulong minHeap = 0)
+    private static int BestType(VkPhysicalDeviceMemoryProperties memory, uint typeBits, uint required, Func<uint, int> score, ulong minHeap = 0,
+        uint forbidden = 0)
     {
         int best = -1;
         (int Score, ulong Heap) bestKey = (int.MinValue, 0);
         for (int i = 0; i < (int)memory.MemoryTypeCount; i++)
         {
             uint flags = memory.TypeFlags(i);
-            if ((typeBits & (1u << i)) == 0 || (flags & required) != required || memory.HeapSize(memory.TypeHeap(i)) < minHeap)
+            if ((typeBits & (1u << i)) == 0 || (flags & required) != required || (flags & forbidden) != 0 || memory.HeapSize(memory.TypeHeap(i)) < minHeap)
             {
                 continue;
             }

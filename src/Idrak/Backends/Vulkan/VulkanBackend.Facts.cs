@@ -103,8 +103,7 @@ internal sealed unsafe partial class VulkanBackend
 
     /// <summary>The device facts and the device's own one-line summary (for benchmark headers).</summary>
     internal string Describe() =>
-        $"{Name}: {(UnifiedMemory ? ReadsThroughStaging ? "mapped memory, reads through staging" : "mapped memory" : "staging copies")} " +
-        $"(storages on a {StorageHeapBytes >> 20:N0} MiB heap), " +
+        $"{Name}: storages {DescribeStorage()} on a {StorageHeapBytes >> 20:N0} MiB heap{(ReadsThroughStaging ? ", reads through staging" : "")}, " +
         $"{(PushDescriptors ? "pushed descriptors" : "descriptor sets")} ({PushDescriptorsChoice}), pages of {PageBytes >> 20} MiB; {Facts.Describe()}";
 
     // The device's facts and its driver's name, from one vkGetPhysicalDeviceProperties2 chain (every structure in it

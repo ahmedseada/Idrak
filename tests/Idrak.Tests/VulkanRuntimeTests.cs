@@ -16,7 +16,7 @@ internal static partial class Tests
         ("vulkan runtime: a GPU another provider reaches (same UUID) is found by UUID (first match; none for an empty or unknown UUID)", VulkanSameGpuByUuid),
         ("vulkan runtime: devices are numbered by what they report (type, then UUID), whatever order the loader lists them in", VulkanDeviceOrder),
         ("vulkan runtime: mapped memory, staging and page sizes come from the reported heaps and limits", VulkanSizesFromReport),
-        ("vulkan runtime: shared-memory devices (integrated, CPU) map storages from the largest host-visible heap; discrete ones only with the whole memory mappable", VulkanMappedByDeviceType),
+        ("vulkan runtime: storage memory candidates come from the reported heaps (host memory only on shared-memory devices); the cost model favors device reads", VulkanMappedByDeviceType),
         ("vulkan runtime: descriptor mode, batch size and batches in flight are measured at start, cached per device and driver, overridable", VulkanRuntimeMeasured),
         ("vulkan runtime: no vendor ids or card names in the code of src/Idrak/Backends/Vulkan (comments may say where something was measured)", VulkanNoVendorNames),
     ];
@@ -134,47 +134,96 @@ internal static partial class Tests
         const uint Local = 0x1, Visible = 0x2, Coherent = 0x4, Cached = 0x8;
         const uint Integrated = 1, Discrete = 2, Cpu = 4;
         const ulong LocalHeap = 0x1, GiB = 1UL << 30, MiB = 1UL << 20;
+        const StorageMemory Staging = StorageMemory.Staging, MappedDevice = StorageMemory.MappedDevice,
+            MappedCached = StorageMemory.MappedCached, MappedUncached = StorageMemory.MappedUncached;
 
-        // The page size storages get: from the heap of the type chosen, or (staging) of device-local type 0; 4096
-        // allocations of at most 4 GiB.
+        // The candidates as "kind:type, …", and the page size storages get in a type (4096 allocations of at most 4 GiB).
+        static string Candidates((uint, int)[] types, (ulong, ulong)[] heaps, uint deviceType) =>
+            string.Join(", ", VulkanBackend.StorageCandidates(types, heaps, deviceType).Select(c => $"{VulkanBackend.StorageName(c.Kind)}:{c.Type}"));
         static long Pages(int type, (uint Flags, int Heap)[] types, (ulong Size, ulong Flags)[] heaps) =>
-            VulkanBackend.PageSize(heaps[types[Math.Max(type, 0)].Heap].Size, 4 * GiB, 4096, null);
+            VulkanBackend.PageSize(heaps[types[type].Heap].Size, 4 * GiB, 4096, null);
 
         // (a) An APU: a 2 GiB device-local carve-out, a 256 MiB device-local window the host sees, and system memory the
-        // GPU reaches (host-visible, cached or not). Integrated: mapped from system memory (cached first), pages from it.
+        // GPU reaches (host-visible, cached or not). Staging into the carve-out, or the system heap mapped, cached or
+        // write-combined; the window is too small to hold storages. Pages from the chosen type's heap.
         (uint, int)[] apu = [(Local, 0), (Visible | Coherent, 1), (Local | Visible | Coherent, 2), (Visible | Coherent | Cached, 1)];
         (ulong, ulong)[] apuHeaps = [(2 * GiB, LocalHeap), (14 * GiB, 0), (256 * MiB, LocalHeap)];
-        int chosen = VulkanBackend.MappableType(apu, apuHeaps, Integrated);
-        Check(chosen == 3, $"APU: mapped from the host-visible, cached system heap (type {chosen})");
-        Check(Pages(chosen, apu, apuHeaps) == 64L << 20 && Pages(-1, apu, apuHeaps) == 16L << 20,
-            $"APU: pages of {Pages(chosen, apu, apuHeaps) >> 20} MiB from the 14 GiB heap (16 MiB from the carve-out)");
-        Check(VulkanBackend.MappableType(apu, apuHeaps, Discrete) == -1, "the same report from a discrete GPU: a small window, staging");
+        string found = Candidates(apu, apuHeaps, Integrated);
+        Check(found == "staging:0, mapped-cached:3, mapped-uncached:1", $"APU: {found}");
+        Check(Pages(0, apu, apuHeaps) == 16L << 20 && Pages(3, apu, apuHeaps) == 64L << 20 && Pages(1, apu, apuHeaps) == 64L << 20,
+            "APU: pages of 16 MiB in the carve-out, 64 MiB in the 14 GiB system heap");
+        Check(Candidates(apu, apuHeaps, Discrete) == "staging:0", "the same report from a discrete GPU: staging only (host memory is across the bus)");
 
-        // The same APU with a device-local, cached type on the small window only: still the system heap (the largest).
+        // The same APU with a device-local, cached type on the small window only: the window is still too small.
         (uint, int)[] apuWindowCached = [(Local, 0), (Visible | Coherent, 1), (Local | Visible | Coherent | Cached, 2)];
-        Check(VulkanBackend.MappableType(apuWindowCached, apuHeaps, Integrated) == 1, "APU: a small cached window loses to the system heap");
+        found = Candidates(apuWindowCached, apuHeaps, Integrated);
+        Check(found == "staging:0, mapped-uncached:1", $"APU, cached window: {found}");
 
-        // (b) An integrated GPU with one large device-local, host-visible heap: mapped, cached type first.
+        // (b) An integrated GPU with one large device-local, host-visible heap: staging, mapped (cached type; the same
+        // type as mapped-cached, so once), and write-combined.
         (uint, int)[] igpu = [(Local, 0), (Local | Visible | Coherent, 0), (Local | Visible | Coherent | Cached, 0)];
         (ulong, ulong)[] igpuHeaps = [(16 * GiB, LocalHeap)];
-        chosen = VulkanBackend.MappableType(igpu, igpuHeaps, Integrated);
-        Check(chosen == 2 && Pages(chosen, igpu, igpuHeaps) == 128L << 20, $"integrated, one heap: mapped (type {chosen}), pages of 128 MiB");
-        Check(VulkanBackend.MappableType(igpu, igpuHeaps, Cpu) == 2, "a CPU driver: the same");
+        found = Candidates(igpu, igpuHeaps, Integrated);
+        Check(found == "staging:0, mapped-device:2, mapped-uncached:1" && Pages(2, igpu, igpuHeaps) == 128L << 20, $"integrated, one heap: {found}, pages of 128 MiB");
+        found = Candidates([(Local | Visible | Coherent | Cached, 0)], igpuHeaps, Cpu);
+        Check(found == "staging:0, mapped-device:0", $"a CPU driver with one memory type: {found}");
 
-        // (c) A discrete GPU with a 256 MiB BAR window: staging, pages from device memory.
+        // (c) A discrete GPU with a 256 MiB BAR window: staging only, pages from device memory.
         (uint, int)[] window = [(Local, 0), (Visible | Coherent, 1), (Visible | Coherent | Cached, 1), (Local | Visible | Coherent, 2)];
         (ulong, ulong)[] windowHeaps = [(8 * GiB, LocalHeap), (32 * GiB, 0), (256 * MiB, LocalHeap)];
-        chosen = VulkanBackend.MappableType(window, windowHeaps, Discrete);
-        Check(chosen == -1 && Pages(chosen, window, windowHeaps) == 64L << 20, "discrete, 256 MiB window: staging, pages of 64 MiB of the 8 GiB");
+        found = Candidates(window, windowHeaps, Discrete);
+        Check(found == "staging:0" && Pages(0, window, windowHeaps) == 64L << 20, $"discrete, 256 MiB window: {found}, pages of 64 MiB of the 8 GiB");
 
-        // (d) The same GPU with resizable BAR (its whole memory host-visible): mapped from device memory.
+        // (d) The same GPU with resizable BAR (its whole memory host-visible): staging or mapped device memory.
         (uint, int)[] bar = [(Local, 0), (Visible | Coherent, 1), (Visible | Coherent | Cached, 1), (Local | Visible | Coherent, 0)];
         (ulong, ulong)[] barHeaps = [(8 * GiB, LocalHeap), (32 * GiB, 0)];
-        chosen = VulkanBackend.MappableType(bar, barHeaps, Discrete);
-        Check(chosen == 3 && Pages(chosen, bar, barHeaps) == 64L << 20, $"discrete, resizable BAR: mapped from device memory (type {chosen})");
+        found = Candidates(bar, barHeaps, Discrete);
+        Check(found == "staging:0, mapped-device:3" && Pages(3, bar, barHeaps) == 64L << 20, $"discrete, resizable BAR: {found}");
 
         // Nothing host-visible at all: staging whatever the type.
-        Check(VulkanBackend.MappableType([(Local, 0)], [(4 * GiB, LocalHeap)], Integrated) == -1, "integrated without host-visible memory: staging");
+        Check(Candidates([(Local, 0)], [(4 * GiB, LocalHeap)], Integrated) == "staging:0", "integrated without host-visible memory: staging");
+
+        // The cost model, with timings made up (GB/s: device, upload, download). The APU above as measured: the
+        // carve-out reads fastest, cached system memory uploads fastest but reads 30% slower: staging.
+        static VulkanBackend.StorageTiming T(StorageMemory kind, double device, double upload) => new(kind, device, upload, upload);
+        VulkanBackend.StorageTiming[] measured = [T(Staging, 39, 6.3), T(MappedCached, 27, 12.2)];
+        Check(VulkanBackend.ChooseStorage(measured) == 0, "APU: the fastest device reads win over faster uploads");
+        measured = [T(Staging, 39, 6.3), T(MappedCached, 27, 12.2), T(MappedUncached, 38.2, 9)];
+        Check(VulkanBackend.ChooseStorage(measured) == 2, "within 3% of the fastest device reads and uploading faster: write-combined");
+        measured = [T(Staging, 39, 6.3), T(MappedCached, 27, 12.2), T(MappedUncached, 37, 9)];
+        Check(VulkanBackend.ChooseStorage(measured) == 0, "5% slower device reads: not chosen for faster uploads");
+        measured = [T(Staging, 10, 2), T(MappedDevice, 10, 8)];
+        Check(VulkanBackend.ChooseStorage(measured) == 1, "the same memory (a CPU driver): the faster upload");
+        measured = [T(Staging, 500, 12), T(MappedDevice, 498, 10)];
+        Check(VulkanBackend.ChooseStorage(measured) == 0, "resizable BAR uploading slower: staging");
+        measured = [T(Staging, 10, 5), T(MappedDevice, 10, 5)];
+        Check(VulkanBackend.ChooseStorage(measured) == 0, "a tie: the earlier candidate");
+        Check(VulkanBackend.ChooseStorage([]) == -1 && VulkanBackend.ChooseStorage([T(Staging, 0, 1)]) == -1, "nothing measured: none");
+
+        // The timings as the cache keeps them, read back.
+        measured = [T(Staging, 39.25, 6.3), T(MappedUncached, 38.2, 9.125)];
+        string text = VulkanBackend.FormatTimings(measured);
+        Check(VulkanBackend.ParseTimings(text).SequenceEqual(measured) && VulkanBackend.ParseTimings("junk,staging=1/2").Count == 0
+              && VulkanBackend.ParseTimings(null).Count == 0, $"timings round trip ({text})");
+
+        // Deciding before measuring: a forced memory, then IDRAK_VULKAN_STORAGE, then the cache, each only when the device
+        // has that candidate; a single candidate needs no measurement.
+        var apuCandidates = VulkanBackend.StorageCandidates(apu, apuHeaps, Integrated);
+        var none = new Dictionary<string, string>();
+        var cache = new Dictionary<string, string> { ["storage-memory"] = "mapped-uncached", ["storage-memory/timings"] = text };
+        Check(VulkanBackend.DecideStorage(apuCandidates, Staging, "mapped-cached", cache) is (Staging, "override", _), "IDRAK_VULKAN_STAGING first");
+        Check(VulkanBackend.DecideStorage(apuCandidates, null, "Mapped-Cached", cache) is (MappedCached, "override", _), "IDRAK_VULKAN_STORAGE next");
+        Check(VulkanBackend.DecideStorage(apuCandidates, null, "mapped-device", cache) is (MappedUncached, "cached", var t) && t.SequenceEqual(measured),
+            "a memory the device lacks: ignored; the cached choice and its timings");
+        Check(VulkanBackend.DecideStorage(apuCandidates, null, null, none) is (null, "measured", _), "nothing decided: measured");
+        Check(VulkanBackend.DecideStorage(apuCandidates, null, null, new Dictionary<string, string> { ["storage-memory"] = "mapped-device" }) is (null, "measured", _),
+            "a cached choice that is no longer a candidate: measured again");
+        var windowCandidates = VulkanBackend.StorageCandidates(window, windowHeaps, Discrete);
+        Check(VulkanBackend.DecideStorage(windowCandidates, null, "mapped-cached", none) is (Staging, "only candidate", _), "one candidate: no measurement");
+        foreach (var kind in Enum.GetValues<StorageMemory>())
+        {
+            Check(VulkanBackend.ParseStorage(VulkanBackend.StorageName(kind)) == kind, $"{kind}: named {VulkanBackend.StorageName(kind)}");
+        }
     }
 
     private static void VulkanSizesFromReport(Device device)
@@ -187,20 +236,15 @@ internal static partial class Tests
         const uint Local = 0x1, Visible = 0x2, Coherent = 0x4, Cached = 0x8;
         const ulong LocalHeap = 0x1, GiB = 1UL << 30, MiB = 1UL << 20;
 
-        // One heap the host and device share (integrated GPU, CPU driver): mapped, host-cached type first.
-        Check(VulkanBackend.MappableType([(Local | Visible | Coherent, 0), (Local | Visible | Coherent | Cached, 0)], [(16 * GiB, LocalHeap)]) == 1,
-            "shared memory: mapped (cached type)");
-
-        // A discrete GPU with a small host-visible window of its memory: staging.
-        Check(VulkanBackend.MappableType([(Local, 0), (Visible | Coherent, 1), (Local | Visible | Coherent, 2)],
-                [(8 * GiB, LocalHeap), (32 * GiB, 0), (256 * MiB, LocalHeap)]) == -1, "a 256 MiB window of an 8 GiB device: staging");
-
-        // The same GPU when the host maps all of its memory: mapped.
-        Check(VulkanBackend.MappableType([(Local, 0), (Visible | Coherent, 1), (Local | Visible | Coherent, 0)],
-                [(8 * GiB, LocalHeap), (32 * GiB, 0)]) == 2, "the whole device memory host-visible: mapped");
-
-        // No device-local heap at all: staging.
-        Check(VulkanBackend.MappableType([(Visible | Coherent, 0)], [(4 * GiB, 0)]) == -1, "no device-local heap: staging");
+        // Mapped device memory: on a heap about as large as the device's memory, host-cached type first.
+        static StorageMemory[] Kinds((uint, int)[] types, (ulong, ulong)[] heaps) => [.. VulkanBackend.StorageCandidates(types, heaps, 2).Select(c => c.Kind)];
+        Check(VulkanBackend.StorageCandidates([(Local | Visible | Coherent, 0), (Local | Visible | Coherent | Cached, 0)], [(16 * GiB, LocalHeap)], 2)
+                  .Single(c => c.Kind == StorageMemory.MappedDevice).Type == 1, "shared heap: mapped (cached type)");
+        Check(Kinds([(Local, 0), (Visible | Coherent, 1), (Local | Visible | Coherent, 2)], [(8 * GiB, LocalHeap), (32 * GiB, 0), (256 * MiB, LocalHeap)])
+                is [StorageMemory.Staging], "a 256 MiB window of an 8 GiB device: staging");
+        Check(Kinds([(Local, 0), (Visible | Coherent, 1), (Local | Visible | Coherent, 0)], [(8 * GiB, LocalHeap), (32 * GiB, 0)])
+                is [StorageMemory.Staging, StorageMemory.MappedDevice], "the whole device memory host-visible: mapped too");
+        Check(Kinds([(Visible | Coherent, 0)], [(4 * GiB, 0)]) is [StorageMemory.Staging], "no device-local heap: staging");
 
         // Staging buffer: 1/512 of its heap as a power of two, within the largest allocation, at least the atom size.
         Check(VulkanBackend.StagingSize(8 * GiB, 4 * GiB, 64, null) == 16L << 20, "staging: 16 MiB of an 8 GiB heap");
@@ -250,6 +294,14 @@ internal static partial class Tests
                 var measured = first.Measured;
                 bool push = first.PushDescriptors;
                 int batch = first.MaxBatchCommands, inFlight = first.MaxInFlight;
+                var (storage, storageChoice, storageTimings) = (first.StorageKind, first.StorageChoice, first.StorageTimings.ToArray());
+                int candidates = first.StorageCandidateList.Count;
+                Check(storageChoice == (candidates > 1 ? "measured" : "only candidate") && first.StorageCandidateList.Any(c => c.Kind == storage)
+                      && (candidates == 1 || (storageTimings.Length == candidates && storageTimings.All(t => t.Device > 0 && t.Upload > 0 && t.Download > 0)
+                                              && storageTimings[VulkanBackend.ChooseStorage(storageTimings)].Kind == storage)),
+                    $"vulkan:{i}: storage memory {first.DescribeStorage()}");
+                Check(first.UnifiedMemory == (storage != StorageMemory.Staging) && (candidates == 1 || (first.Allocations == 0 && first.PageCount == 0)),
+                    $"vulkan:{i}: nothing left behind by the measurement");
                 first.Shutdown();
                 Check(first.PushDescriptorsChoice == "measured" && measured.Sets > 0 && measured.Record > 0 && batch >= 1 && inFlight >= 2,
                     $"vulkan:{i}: measured ({measured}; batches of {batch}, {inFlight} in flight)");
@@ -257,9 +309,19 @@ internal static partial class Tests
                     $"vulkan:{i}: kept in {file}");
 
                 var second = VulkanBackend.CreateSeparate(i, preferMapped: true);
+                Check(second.StorageKind == storage && second.StorageChoice == (storageChoice == "measured" ? "cached" : storageChoice)
+                      && second.StorageTimings.SequenceEqual(storageTimings), $"vulkan:{i}: storage memory read back from the cache ({second.DescribeStorage()})");
                 Check(second.PushDescriptorsChoice == "cached" && second.PushDescriptors == push && second.MaxBatchCommands == batch && second.MaxInFlight == inFlight
                       && second.Measured == default, $"vulkan:{i}: read back from the cache, not measured again");
                 second.Shutdown();
+
+                var staging = VulkanBackend.CreateSeparate(i, preferMapped: false);
+                Check(staging.StorageKind == StorageMemory.Staging && staging.StorageChoice == "override" && !staging.UnifiedMemory,
+                    $"vulkan:{i}: staging on request (IDRAK_VULKAN_STAGING)");
+                staging.Shutdown();
+                Check(File.ReadAllLines(file).Any(l => l.Contains("/storage-memory\t", StringComparison.Ordinal)) == (candidates > 1)
+                      && File.ReadAllLines(file).Any(l => l.Contains("/push-descriptors\t", StringComparison.Ordinal)),
+                    $"vulkan:{i}: the storage memory and the runtime policy kept side by side");
 
                 var sets = VulkanBackend.CreateSeparate(i, preferMapped: true, pushDescriptors: false);
                 Check(!sets.PushDescriptors && sets.PushDescriptorsChoice == "override", $"vulkan:{i}: descriptor sets on request");
