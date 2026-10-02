@@ -895,8 +895,7 @@ internal sealed partial class VulkanBackend
             return true;
         }
 
-        int perWord = VulkanKernels.ColumnsPerWord(format);
-        int block = m switch { 1 => 0, 2 => 1, <= 4 => 2, _ => 3 };
+        int block = GemvBlock(m);
         int rows = VulkanKernels.GemvRowBlocks[block];
         long rowBlocks = ((long)m + rows - 1) / rows;
         if (rowBlocks > Limits.MaxGroupsZ)
@@ -904,6 +903,24 @@ internal sealed partial class VulkanBackend
             return false;
         }
 
+        int chosen = GemvChoice(format, block, x, weights, scales, y, m, n, k);
+        if (chosen < 0)
+        {
+            return false;
+        }
+
+        RunPacked(format, block, chosen, x, weights, scales, y, m, n, k);
+        return true;
+    }
+
+    // The row block variant (index into GemvRowBlocks) for m rows: the smallest that holds them, else 8.
+    private static int GemvBlock(int m) => m switch { 1 => 0, 2 => 1, <= 4 => 2, _ => 3 };
+
+    // The choice (width, splits and word variant) of a packed product of this shape: measured, stored, forced by the
+    // test settings or the formula's (see PackedProduct). -1 when no variant fits the device's workgroup counts.
+    private int GemvChoice(VulkanKernels.PackedFormat format, int block, Storage x, Storage weights, Storage? scales, Storage y, int m, int n, int k)
+    {
+        int perWord = VulkanKernels.ColumnsPerWord(format);
         // Splits allowed: chunks of at least GemvMinChunk rows, partial sums no more bytes than the weights.
         double weightBytes = (double)k * n * (format switch { VulkanKernels.PackedFormat.Int8 => 1, VulkanKernels.PackedFormat.Int4 => 0.5, _ => 2 });
         int maxSplits = (int)Math.Clamp(Math.Min((k + GemvMinChunk - 1) / GemvMinChunk, weightBytes / (4.0 * m * n)), 1, Limits.MaxGroupsY);
@@ -915,7 +932,7 @@ internal sealed partial class VulkanBackend
             var all = GemvCandidates(perWord, n, maxSplits);
             if (all.Length == 0)
             {
-                return false;
+                return -1;
             }
 
             fallback = all[^1];
@@ -944,8 +961,7 @@ internal sealed partial class VulkanBackend
             }
         }
 
-        RunPacked(format, block, chosen, x, weights, scales, y, m, n, k);
-        return true;
+        return chosen;
     }
 
     // At each candidate width, each valid word variant with 1, 2, 4, … splits up to maxSplits.
@@ -991,15 +1007,7 @@ internal sealed partial class VulkanBackend
         int width = WidthOf(choice), variant = choice & 7, rows = VulkanKernels.GemvRowBlocks[block], words = VulkanKernels.GemvWordCounts[variant];
         int perWord = VulkanKernels.ColumnsPerWord(format);
         uint columnBlocks = (uint)(((long)(n + perWord - 1) / perWord + words - 1) / words), rowBlocks = (uint)((m + rows - 1) / rows);
-        const int Align = VulkanKernels.GemvChunkAlign;
-        int splits = Math.Max(1, (choice & Rest) >> 3);
-        int chunk = Math.Max(Align, ((k + splits - 1) / splits + Align - 1) / Align * Align);
-        splits = Math.Max(1, (k + chunk - 1) / chunk);
-        if (splits > Limits.MaxGroupsY || (long)splits * m * n > int.MaxValue || BlockBytes((int)Math.Min(int.MaxValue, (long)splits * m * n)) > MaxStorageBytes)
-        {
-            splits = 1;
-            chunk = Math.Max(Align, (k + Align - 1) / Align * Align);
-        }
+        var (splits, chunk) = GemvPlan(choice, k, (long)m * n);
 
         string kernel = GemvKernelNames[((int)format * VulkanKernels.GemvRowBlocks.Length + block) * VulkanKernels.GemvWordCounts.Length + variant];
         Span<byte> b = stackalloc byte[16];
