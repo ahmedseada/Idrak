@@ -98,6 +98,8 @@ points"):
 | Model sources | `ModelSources` | `Idrak.LanguageModels` |
 | Tokenizer normalizers, pre-tokenizers, decoders | `TokenizerComponents` | `Idrak.LanguageModels` |
 | Dataset file formats, sources, Parquet codecs | `DataFileFormats`, `DatasetSources`, `ParquetCodecs` | `Idrak.Datasets` |
+| Optimizers | derive from `Optimizer` | `Idrak` |
+| Differentiable operations | `Autograd.Function(name, forward, backward)` | `Idrak` |
 | Devices (backends) | the device registry, internal until the public backend API (plans/7-backends.md, item 12c) | `Idrak` |
 
 ### Hardware
@@ -468,9 +470,25 @@ which recurrent networks usually need.
 
 N-D tensors support batched `MatMul` (with transpose flags), `Permute`, `Transpose`, `Narrow`,
 `Tensor.Concat`, `Tensor.Stack`, `Flatten`, `Sum(dim)`, `Mean(dim)`, `Softmax`, `LogSoftmax`,
-`ArgMax`, `Exp`, `Log` and `Gelu`. Adding a tensor whose shape matches the trailing dimensions
-broadcasts it, as with a bias [F] over [N, F] or a mask [T, T] over [B, T, T]. All of these are
-differentiated automatically.
+`ArgMax`, `Exp`, `Log`, `Gelu`, `Silu`, `Sqrt`, `Sin`, `Cos`, `Abs`, `Sign`, `Pow(exponent)`,
+`Clamp(min, max)`, `Maximum`/`Minimum` (with a tensor or a number) and `Tensor.Where(condition, a, b)`.
+Adding a tensor whose shape matches the trailing dimensions broadcasts it, as with a bias [F] over
+[N, F] or a mask [T, T] over [B, T, T]. All of these are differentiated automatically.
+
+An operation of your own, with its own backward step written with these operations (no device code):
+
+```csharp
+var softplus = Autograd.Function("softplus",
+    forward: x => (x[0].Exp() + 1f).Log(),
+    backward: (x, y, g) => [g * x[0].Sigmoid()]);   // one gradient per input (null for none)
+var loss = softplus.Apply(logits).Mean();             // recorded as one operation; gradients flow through it
+```
+
+Writing into an existing tensor, for optimizers, initializers and formats of your own: `CopyFrom(values)`,
+`CopyFrom(tensor)`, `Fill(value)`, `Scale(factor)` and `AddScaled(other, scale)`. They are not recorded by autograd:
+they are refused on the result of a recorded operation, and a backward step that read the values before the write
+refuses to run. `Tensor.Persistent(values, shape)` and `Tensor.PersistentZeros(shape)` create tensors that no
+`TensorScope` disposes (parameters, caches, state).
 
 ### Other number types
 
@@ -578,6 +596,28 @@ dotnet run -c Release --project samples/Idrak.Samples.TextGeneration -- --chat t
 available, together with the `StepDecay`, `ExponentialDecay`, `CosineAnnealing(warmupEpochs)` and
 `LambdaSchedule` schedulers. `optimizer.ClipGradientNorm(max)` and `optimizer.GradientNorm()` work
 in hand-written loops too.
+
+An optimizer of your own derives from `Optimizer` and updates `Parameters` in place from their `Grad`, keeping its
+state in `CreateState(parameter)` buffers (`ApplyDecoupledWeightDecay` and `ApplyCoupledWeightDecay` help):
+
+```csharp
+public sealed class Lion(IEnumerable<Tensor> parameters, float lr) : Optimizer(parameters, lr)
+{
+    private readonly Dictionary<Tensor, Tensor> _m = [];
+
+    public override void Step()
+    {
+        foreach (var p in Parameters.Where(p => p.Grad is not null))
+        {
+            var m = _m.TryGetValue(p, out var s) ? s : _m[p] = CreateState(p);
+            using var scope = new TensorScope();
+            p.AddScaled((m * 0.9f + p.Grad! * 0.1f).Sign(), -LearningRate);
+            m.Scale(0.99f);
+            m.AddScaled(p.Grad!, 0.01f);
+        }
+    }
+}
+```
 
 ## Two ways to write it: the original API and the simplified API
 
@@ -990,6 +1030,8 @@ the registered names and how to register.
 | What | Register with | Package |
 |---|---|---|
 | Token sampling (temperature, top-k, penalties, ...) | `ITokenSampler`; set `TextGenerator.CreateSampler` | `Idrak` |
+| Optimizers | derive from `Optimizer` (in-place writes: `AddScaled`, `Scale`, `CopyFrom`; state from `CreateState`) | `Idrak` |
+| Differentiable operations (own forward and backward) | `Autograd.Function(name, forward, backward)` | `Idrak` |
 | KV cache formats (float32, int8, bfloat16 built in) | `KeyValueLayouts.Register(name, KeyValueLayout)` | `Idrak` |
 | Packed weight formats (int8, int4, bfloat16 built in) | `PackedWeight.Register(name, PackedWeightFactory)` | `Idrak` |
 | Network builder steps (JSON round trip) | `NetworkOps.Register(name, NetworkOp)` | `Idrak` |
@@ -1003,7 +1045,10 @@ the registered names and how to register.
 
 Chat templates are read from each model's own Jinja template (`tokenizer_config.json` or GGUF metadata), and the
 tool-call format is read off that template, so a new model family needs no code for either. Each registry has a test
-that plugs in an implementation of its own next to the built-ins.
+that plugs in an implementation of its own next to the built-ins. `tests/Idrak.PluginTests`, an assembly without
+internal access to Idrak, writes plug-ins with the public API alone (a Lion optimizer, a custom operation registered as
+a network step and an ONNX import operator, a packed weight format, a KV cache format); the test runner runs them as
+the "outside plug-in" group (`IDRAK_FILTER="outside plug-in" dotnet run -c Release --project tests/Idrak.Tests`).
 
 ## Telemetry: logging and tracking
 

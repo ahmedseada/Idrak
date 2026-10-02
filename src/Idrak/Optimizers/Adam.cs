@@ -46,13 +46,7 @@ public class Adam(IEnumerable<Tensor> parameters, float learningRate = 0.001f, f
         {
             if (DecoupledWeightDecay)
             {
-                foreach (var p in Parameters)
-                {
-                    if (p.Grad is not null)
-                    {
-                        p.Backend.Affine(p.Storage, p.Storage, p.Size, 1f - LearningRate * WeightDecay, 0f);
-                    }
-                }
+                ApplyDecoupledWeightDecay(WeightDecay);
             }
             else
             {

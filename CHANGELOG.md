@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Public ways to write into an existing tensor: `Tensor.CopyFrom` (values or a tensor), `Fill`, `Scale` and
+  `AddScaled`, not recorded by autograd; refused on the result of a recorded operation, and a backward step whose
+  operation read the values before such a write throws instead of computing from the new values (a write count per
+  storage). `Tensor.Persistent` and `Tensor.PersistentZeros` are public (tensors no `TensorScope` disposes), and
+  `Optimizer.ApplyDecoupledWeightDecay` is a protected helper next to `ApplyCoupledWeightDecay`, so an optimizer such
+  as Lion can be written outside the library.
+- `Autograd.Function(name, forward, backward)`: an operation with its own backward step written with public tensor
+  operations, recorded as one operation (`DifferentiableFunction.Apply`).
+- Element-wise operations with gradients: `Sqrt`, `Sin`, `Cos`, `Silu`, `Sign`, `Pow(exponent)`, `Clamp(min, max)`,
+  `Maximum`/`Minimum` (with a tensor or a number) and `Tensor.Where(condition, a, b)`; CPU and Vulkan kernels (sin and
+  cos reduce their argument first), the host fallback on CUDA for now.
+- tests/Idrak.PluginTests: plug-ins written from an assembly without internal access (Lion, a custom operation as a
+  network step and an ONNX import operator, a packed weight format, a KV cache format), run by the test runner as the
+  "outside plug-in" group.
+
 - Direct decoding steps (not recorded as a graph) keep the residual addition fused with the next block's RMS norm for
   that norm: `Sequential` freed it with the layer's intermediate results, so the norm ran again, one kernel more per
   layer and token on every device (74 dispatches per token instead of 82 for the medium decoder of `--bench-vulkan`).
