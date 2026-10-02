@@ -1083,7 +1083,8 @@ The ASP.NET Core, MCP, dataset and naming tests do not depend on the device, and
 
 Fine-tuning speed on the RTX 5070 Ti (Qwen2.5-0.5B, LoRA, 4k-token steps): 17.4k tokens/s on chat data, 25.5k on
 short classification rows; chat with Qwen3-0.6B generates about 140 tokens/s. Not tested yet: GPUs before
-compute 8.6 (the kernels assemble for them, see GPU support), Linux with a GPU, and macOS (CPU only).
+compute 8.6 (the kernels assemble for them, see GPU support), native Linux GPU drivers (CUDA has run on Linux under
+WSL2), and macOS (CPU only).
 
 ### Tested on architectures
 
@@ -1102,6 +1103,7 @@ Results of the whole test list, grouped by vendor, architecture and driver (one 
     <tr><td>2026-10-02</td><td><b>GeForce RTX 5070 Ti</b>, 16 GB<br>Vulkan 1.4</td><td>discrete</td><td>mapped (resizable BAR), reads through staging</td><td>not used yet</td><td>every Vulkan test; decoder 1,454 tokens/s (int8, 8 layers), 0 host fallbacks</td></tr>
     <tr><td>2026-10-02</td><td><b>GeForce RTX 5050 Laptop GPU</b>, 8 GB<br>CUDA 13.3</td><td>discrete</td><td>device memory</td><td>tensor cores</td><td>729 of 729 (CPU, CUDA and the Intel GPU); "auto" at the best column on the decoding rows</td></tr>
     <tr><td>2026-10-02</td><td><b>GeForce RTX 5050 Laptop GPU</b>, 8 GB<br>Vulkan 1.4</td><td>discrete</td><td>mapped (resizable BAR), reads through staging</td><td>not used yet</td><td>every Vulkan test</td></tr>
+    <tr><td>2026-10-02</td><td><b>GeForce RTX 5070 Ti</b>, 16 GB<br>CUDA 13.3, Linux (WSL2, Ubuntu 26.04)</td><td>discrete</td><td>device memory (host copies at 3.3 GB/s through WSL)</td><td>bfloat16, fp8, int8 tensor cores</td><td>488 of 488 (CPU, CUDA and lavapipe); "auto" within noise of the best column; WSL2 offers Vulkan only through lavapipe</td></tr>
     <tr><th colspan="6" align="left">NVIDIA · Ampere (sm_86) · driver 581.29</th></tr>
     <tr><td>2026-10-02</td><td><b>GeForce RTX 3060 Laptop GPU</b>, 6 GB<br>CUDA 13.0</td><td>discrete</td><td>device memory</td><td>bfloat16, int8 tensor cores (no fp8)</td><td>729 of 729 (CPU, CUDA and the AMD GPU)</td></tr>
     <tr><td>2026-10-02</td><td><b>GeForce RTX 3060 Laptop GPU</b>, 6 GB<br>Vulkan 1.4</td><td>discrete</td><td>mapped (resizable BAR), reads through staging</td><td>not used yet</td><td>every Vulkan test</td></tr>
