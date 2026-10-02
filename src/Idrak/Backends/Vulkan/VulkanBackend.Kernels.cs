@@ -863,7 +863,7 @@ internal sealed partial class VulkanBackend
 
     public override void Int4MatMul(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
     {
-        if (!Fit(x, q, scales, y) || !PackedProduct(VulkanKernels.PackedFormat.Int4, x, q, scales, y, m, n, k))
+        if (!Fit(x, q, scales, y) || !PackedRows(VulkanKernels.PackedFormat.Int4, x, q, scales, y, m, n, k))
         {
             base.Int4MatMul(x, q, scales, y, m, n, k);
         }
@@ -871,7 +871,7 @@ internal sealed partial class VulkanBackend
 
     public override void BFloat16MatMul(Storage x, Storage packed, Storage y, int m, int n, int k)
     {
-        if (!Fit(x, packed, y) || !PackedProduct(VulkanKernels.PackedFormat.BFloat16, x, packed, null, y, m, n, k))
+        if (!Fit(x, packed, y) || !PackedRows(VulkanKernels.PackedFormat.BFloat16, x, packed, null, y, m, n, k))
         {
             base.BFloat16MatMul(x, packed, y, m, n, k);
         }
