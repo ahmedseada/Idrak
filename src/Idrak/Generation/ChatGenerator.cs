@@ -73,7 +73,7 @@ public sealed class ChatGenerator(TextGenerator generator, ChatTemplate? templat
         {
             var request = requests[i];
             var (text, reason, stats) = outputs[i];
-            var parser = new ChatOutputParser(Template, separateThinking: request.Think != false, toolNames: request.Tools?.Select(t => t.Name).ToHashSet());
+            var parser = new ChatOutputParser(Template, request.Tools, separateThinking: request.Think != false);
             var first = parser.Feed(text);
             var last = parser.Finish();
             var calls = first.ToolCalls.Concat(last.ToolCalls).ToList();
@@ -101,7 +101,7 @@ public sealed class ChatGenerator(TextGenerator generator, ChatTemplate? templat
 
         var options = requests[0].Options ?? new GenerationOptions();
         options = options with { Stop = [.. options.Stop, .. Template.StopSequences] };
-        var parsers = requests.Select(r => new ChatOutputParser(Template, separateThinking: r.Think != false, toolNames: r.Tools?.Select(t => t.Name).ToHashSet())).ToArray();
+        var parsers = requests.Select(r => new ChatOutputParser(Template, r.Tools, separateThinking: r.Think != false)).ToArray();
         var content = requests.Select(_ => new System.Text.StringBuilder()).ToArray();
         var thinking = requests.Select(_ => new System.Text.StringBuilder()).ToArray();
         var calls = requests.Select(_ => new List<ToolCall>()).ToArray();
@@ -137,7 +137,7 @@ public sealed class ChatGenerator(TextGenerator generator, ChatTemplate? templat
     {
         var options = request.Options ?? new GenerationOptions();
         options = options with { Stop = [.. options.Stop, .. Template.StopSequences] };
-        var parser = new ChatOutputParser(Template, separateThinking: request.Think != false, toolNames: request.Tools?.Select(t => t.Name).ToHashSet());
+        var parser = new ChatOutputParser(Template, request.Tools, separateThinking: request.Think != false);
         var content = new System.Text.StringBuilder();
         var thinking = new System.Text.StringBuilder();
         var calls = new List<ToolCall>();
