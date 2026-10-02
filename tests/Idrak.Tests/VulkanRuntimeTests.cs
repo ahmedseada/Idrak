@@ -14,7 +14,9 @@ internal static partial class Tests
     private static readonly (string Name, Action<Device> Run)[] VulkanRuntimeGroup =
     [
         ("vulkan runtime: a GPU another provider reaches (same UUID) is found by UUID (first match; none for an empty or unknown UUID)", VulkanSameGpuByUuid),
+        ("vulkan runtime: devices are numbered by what they report (type, then UUID), whatever order the loader lists them in", VulkanDeviceOrder),
         ("vulkan runtime: mapped memory, staging and page sizes come from the reported heaps and limits", VulkanSizesFromReport),
+        ("vulkan runtime: shared-memory devices (integrated, CPU) map storages from the largest host-visible heap; discrete ones only with the whole memory mappable", VulkanMappedByDeviceType),
         ("vulkan runtime: descriptor mode, batch size and batches in flight are measured at start, cached per device and driver, overridable", VulkanRuntimeMeasured),
         ("vulkan runtime: no vendor ids or card names in the code of src/Idrak/Backends/Vulkan (comments may say where something was measured)", VulkanNoVendorNames),
     ];
@@ -64,6 +66,115 @@ internal static partial class Tests
             Check(driver is null || (!vulkan.Listed(i) && vulkan.Note(i) == $"driven by CUDA as {driver.Value.Device}: by name only"),
                 $"vulkan:{i}: driven by CUDA, so by name only");
         }
+    }
+
+    private static void VulkanDeviceOrder(Device device)
+    {
+        if (device.Type != DeviceType.Cpu)
+        {
+            return;
+        }
+
+        const uint Other = 0, Integrated = 1, Discrete = 2, Virtual = 3, Cpu = 4;
+        static Guid Id(byte first) => new([first, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+        Guid driverA = Id(0xA0), driverB = Id(0xB0);
+        VulkanBackend.DeviceOrderKey[] expected =
+        [
+            new(Discrete, Id(0x10), driverA, null, "gpu b"),             // discrete first, by UUID bytes
+            new(Discrete, Id(0x90), driverA, null, "gpu a"),
+            new(Integrated, Id(0x05), driverA, null, "igpu"),            // then integrated; one GPU through two drivers: by driver UUID
+            new(Integrated, Id(0x05), driverB, null, "igpu"),
+            new(Integrated, Guid.Empty, driverA, (0, 3, 0, 0), "z"),     // no UUID: after those with one, by PCI address
+            new(Integrated, Guid.Empty, driverA, (0, 4, 0, 0), "a"),
+            new(Integrated, Guid.Empty, driverA, null, "b"),             // then by name
+            new(Virtual, Id(0x01), driverA, null, "virtual"),
+            new(Cpu, Id(0x00), driverA, null, "software"),
+            new(Other, Id(0x00), driverA, null, "other"),
+        ];
+
+        // Whatever order the loader lists them in (it changes between processes on a laptop with two GPUs), the same
+        // numbering.
+        var rng = new Random(7);
+        for (int trial = 0; trial < 200; trial++)
+        {
+            var listed = expected.OrderBy(_ => rng.Next()).ToArray();
+            int[] order = VulkanBackend.DeviceOrder(listed);
+            Check(order.Select(i => listed[i]).SequenceEqual(expected), $"order {trial}: {string.Join(", ", order.Select(i => listed[i].Name))}");
+        }
+
+        Check(VulkanBackend.DeviceOrder([]).Length == 0, "no devices");
+
+        // The UUID's bytes as reported, not Guid's field order: a smaller first byte comes first, whatever the 4th.
+        Guid low = new([0x01, 0, 0, 0xFF, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]), high = new([0x02, 0, 0, 0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        Check(VulkanBackend.DeviceOrder([new(Discrete, high, driverA, null, "x"), new(Discrete, low, driverA, null, "x")]) is [1, 0], "UUID bytes in order");
+
+        // The devices found here are numbered in that order.
+        var keys = Enumerable.Range(0, VulkanBackend.DeviceCount).Select(VulkanBackend.OrderKey).ToArray();
+        Check(VulkanBackend.DeviceOrder(keys).SequenceEqual(Enumerable.Range(0, keys.Length)), "vulkan:N follow the reported order");
+        for (int i = 0; i < keys.Length; i++)
+        {
+            Console.WriteLine($"    vulkan:{i}: {keys[i].Name}, type {keys[i].Type}, uuid {keys[i].DeviceUuid:N}");
+        }
+
+        // The tuning cache names a device by its UUID (never its ordinal); without one, by PCI address and name.
+        Check(VulkanBackend.DeviceKey(new VulkanDeviceFacts { DeviceUuid = Id(0x42) }, "x") == Id(0x42).ToString("N"), "tuning cache: keyed by UUID");
+        string a = VulkanBackend.DeviceKey(new VulkanDeviceFacts(), "Soft GPU/1"), b = VulkanBackend.DeviceKey(new VulkanDeviceFacts(), "Soft GPU/2");
+        Check(a != b && !a.Contains('/') && !a.Contains('\t'), $"tuning cache without a UUID: by name ({a}, {b})");
+        Check(VulkanBackend.DeviceKey(new VulkanDeviceFacts { PciAddress = (0, 1, 0, 0) }, "same") != VulkanBackend.DeviceKey(new VulkanDeviceFacts { PciAddress = (0, 2, 0, 0) }, "same"),
+            "tuning cache without a UUID: by PCI address too");
+    }
+
+    private static void VulkanMappedByDeviceType(Device device)
+    {
+        if (device.Type != DeviceType.Cpu)
+        {
+            return;
+        }
+
+        const uint Local = 0x1, Visible = 0x2, Coherent = 0x4, Cached = 0x8;
+        const uint Integrated = 1, Discrete = 2, Cpu = 4;
+        const ulong LocalHeap = 0x1, GiB = 1UL << 30, MiB = 1UL << 20;
+
+        // The page size storages get: from the heap of the type chosen, or (staging) of device-local type 0; 4096
+        // allocations of at most 4 GiB.
+        static long Pages(int type, (uint Flags, int Heap)[] types, (ulong Size, ulong Flags)[] heaps) =>
+            VulkanBackend.PageSize(heaps[types[Math.Max(type, 0)].Heap].Size, 4 * GiB, 4096, null);
+
+        // (a) An APU: a 2 GiB device-local carve-out, a 256 MiB device-local window the host sees, and system memory the
+        // GPU reaches (host-visible, cached or not). Integrated: mapped from system memory (cached first), pages from it.
+        (uint, int)[] apu = [(Local, 0), (Visible | Coherent, 1), (Local | Visible | Coherent, 2), (Visible | Coherent | Cached, 1)];
+        (ulong, ulong)[] apuHeaps = [(2 * GiB, LocalHeap), (14 * GiB, 0), (256 * MiB, LocalHeap)];
+        int chosen = VulkanBackend.MappableType(apu, apuHeaps, Integrated);
+        Check(chosen == 3, $"APU: mapped from the host-visible, cached system heap (type {chosen})");
+        Check(Pages(chosen, apu, apuHeaps) == 64L << 20 && Pages(-1, apu, apuHeaps) == 16L << 20,
+            $"APU: pages of {Pages(chosen, apu, apuHeaps) >> 20} MiB from the 14 GiB heap (16 MiB from the carve-out)");
+        Check(VulkanBackend.MappableType(apu, apuHeaps, Discrete) == -1, "the same report from a discrete GPU: a small window, staging");
+
+        // The same APU with a device-local, cached type on the small window only: still the system heap (the largest).
+        (uint, int)[] apuWindowCached = [(Local, 0), (Visible | Coherent, 1), (Local | Visible | Coherent | Cached, 2)];
+        Check(VulkanBackend.MappableType(apuWindowCached, apuHeaps, Integrated) == 1, "APU: a small cached window loses to the system heap");
+
+        // (b) An integrated GPU with one large device-local, host-visible heap: mapped, cached type first.
+        (uint, int)[] igpu = [(Local, 0), (Local | Visible | Coherent, 0), (Local | Visible | Coherent | Cached, 0)];
+        (ulong, ulong)[] igpuHeaps = [(16 * GiB, LocalHeap)];
+        chosen = VulkanBackend.MappableType(igpu, igpuHeaps, Integrated);
+        Check(chosen == 2 && Pages(chosen, igpu, igpuHeaps) == 128L << 20, $"integrated, one heap: mapped (type {chosen}), pages of 128 MiB");
+        Check(VulkanBackend.MappableType(igpu, igpuHeaps, Cpu) == 2, "a CPU driver: the same");
+
+        // (c) A discrete GPU with a 256 MiB BAR window: staging, pages from device memory.
+        (uint, int)[] window = [(Local, 0), (Visible | Coherent, 1), (Visible | Coherent | Cached, 1), (Local | Visible | Coherent, 2)];
+        (ulong, ulong)[] windowHeaps = [(8 * GiB, LocalHeap), (32 * GiB, 0), (256 * MiB, LocalHeap)];
+        chosen = VulkanBackend.MappableType(window, windowHeaps, Discrete);
+        Check(chosen == -1 && Pages(chosen, window, windowHeaps) == 64L << 20, "discrete, 256 MiB window: staging, pages of 64 MiB of the 8 GiB");
+
+        // (d) The same GPU with resizable BAR (its whole memory host-visible): mapped from device memory.
+        (uint, int)[] bar = [(Local, 0), (Visible | Coherent, 1), (Visible | Coherent | Cached, 1), (Local | Visible | Coherent, 0)];
+        (ulong, ulong)[] barHeaps = [(8 * GiB, LocalHeap), (32 * GiB, 0)];
+        chosen = VulkanBackend.MappableType(bar, barHeaps, Discrete);
+        Check(chosen == 3 && Pages(chosen, bar, barHeaps) == 64L << 20, $"discrete, resizable BAR: mapped from device memory (type {chosen})");
+
+        // Nothing host-visible at all: staging whatever the type.
+        Check(VulkanBackend.MappableType([(Local, 0)], [(4 * GiB, LocalHeap)], Integrated) == -1, "integrated without host-visible memory: staging");
     }
 
     private static void VulkanSizesFromReport(Device device)

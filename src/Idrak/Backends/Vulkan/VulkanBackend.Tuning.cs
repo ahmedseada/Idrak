@@ -69,8 +69,30 @@ internal sealed unsafe partial class VulkanBackend
         return Path.Combine(root, "vulkan", "tuning.tsv");
     }
 
-    // The cache key prefix of this device and driver.
-    private string TuningKey() => $"{_physical.Facts.DeviceUuid:N}/{_physical.Facts.DriverUuid:N}/{_physical.Facts.DriverVersion:X}";
+    // The cache key prefix of this device and driver: by what the device reports, never its ordinal (vulkan:N), so a
+    // choice stays with its GPU whatever order the devices come in.
+    private string TuningKey() => $"{DeviceKey(_physical.Facts, _physical.DeviceName)}/{_physical.Facts.DriverUuid:N}/{_physical.Facts.DriverVersion:X}";
+
+    /// <summary>
+    /// What names a device in the tuning cache: its deviceUUID, or (a device reporting none: all zeros) its PCI address
+    /// when reported and its name, so two such devices never share cached choices.
+    /// </summary>
+    internal static string DeviceKey(VulkanDeviceFacts facts, string name)
+    {
+        if (facts.DeviceUuid != Guid.Empty)
+        {
+            return facts.DeviceUuid.ToString("N");
+        }
+
+        string pci = facts.PciAddress is { } a ? $"{a.Domain:x}.{a.Bus:x}.{a.Device:x}.{a.Function:x}-" : "";
+        var text = new System.Text.StringBuilder("nouuid-").Append(pci);
+        foreach (char c in name)
+        {
+            text.Append(char.IsLetterOrDigit(c) || c is '-' or '.' ? c : '_');
+        }
+
+        return text.ToString();
+    }
 
     // The cached choices of this device and driver (empty when there are none).
     private Dictionary<string, string> CachedChoices()

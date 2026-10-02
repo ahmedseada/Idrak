@@ -14,12 +14,16 @@ namespace Idrak.Backends.Vulkan;
 /// (<see cref="Dispatch"/>, VulkanBackend.Dispatch.cs). Operations without a kernel of their own run through the host
 /// fallback (<see cref="HostCall"/>).
 ///
-/// Memory, chosen from the memory types and heaps the device reports: where a device-local, host-visible memory type
-/// lives on a heap about as large as the device's largest device-local heap (shared memory, a CPU driver, a discrete
-/// GPU whose whole memory the host can map), storages live there, mapped once, so uploads and downloads are plain copies
-/// (reads go through a host-cached staging buffer when that memory is not host-cached). Elsewhere (a small host-visible
-/// window of device memory, or none) storages live in device-local memory, and copies go through a host-visible staging
-/// buffer. IDRAK_VULKAN_STAGING=1 copies through staging everywhere.
+/// Memory, chosen from the device's reported type and the memory types and heaps it reports (<see cref="MappableType(VkPhysicalDeviceMemoryProperties, uint, uint)"/>):
+/// on an integrated GPU or a CPU driver (one memory, the system's) storages live in host-visible memory on the largest
+/// host-visible heap; on other devices, where a device-local, host-visible memory type lives on a heap about as large as
+/// the device's largest device-local heap (a discrete GPU whose whole memory the host can map), storages live there.
+/// Either way they are mapped once, so uploads and downloads are plain copies (reads go through a host-cached staging
+/// buffer when that memory is not host-cached). Elsewhere (a small host-visible window of device memory, or none)
+/// storages live in device-local memory, and copies go through a host-visible staging buffer. IDRAK_VULKAN_STAGING=1
+/// copies through staging everywhere.
+///
+/// Devices are numbered (vulkan:0, vulkan:1, …) by what they report, not the loader's order (<see cref="DeviceOrder"/>).
 /// </summary>
 internal sealed unsafe partial class VulkanBackend : Backend
 {
@@ -106,7 +110,7 @@ internal sealed unsafe partial class VulkanBackend : Backend
         // Every storage buffer has the same memory requirements' type bits, so one probe buffer tells them.
         uint typeBits = StorageTypeBits();
         var memory = physical.Memory;
-        int mapped = preferMapped ? MappableType(memory, typeBits) : -1;
+        int mapped = preferMapped ? MappableType(memory, typeBits, physical.Facts.DeviceType) : -1;
         if (mapped >= 0)
         {
             _storageType = (uint)mapped;
@@ -141,7 +145,8 @@ internal sealed unsafe partial class VulkanBackend : Backend
         }
 
         _storageCoherent = (memory.TypeFlags((int)_storageType) & MemoryHostCoherent) != 0;
-        PageBytes = PageSize(memory.HeapSize(memory.TypeHeap((int)_storageType)), maxAllocation, p.MaxMemoryAllocationCount,
+        StorageHeapBytes = (long)memory.HeapSize(memory.TypeHeap((int)_storageType));
+        PageBytes = PageSize((ulong)StorageHeapBytes, maxAllocation, p.MaxMemoryAllocationCount,
             pageBytes ?? BytesSetting("IDRAK_VULKAN_PAGE_BYTES"));
         StartQueue();
         TuneRuntime(pushDescriptors);
@@ -152,6 +157,9 @@ internal sealed unsafe partial class VulkanBackend : Backend
 
     /// <summary>Whether downloads of mapped storages go through a host-cached staging buffer (the mapped memory is not host-cached).</summary>
     public bool ReadsThroughStaging { get; }
+
+    /// <summary>The size of the memory heap storages live on (pages are sized from it).</summary>
+    public long StorageHeapBytes { get; }
 
     /// <summary>The staging buffer's size (copies larger than it go in chunks); 0 without one.</summary>
     public long StagingBytes { get; }
@@ -180,11 +188,33 @@ internal sealed unsafe partial class VulkanBackend : Backend
     // The largest power of two at most `value` (1 for 0).
     private static ulong PowerOfTwoAtMost(ulong value) => value == 0 ? 1 : 1UL << (63 - System.Numerics.BitOperations.LeadingZeroCount(value));
 
-    // The device-local, host-visible memory type storages are mapped from, or -1: one on a heap at least half the size
-    // of the largest device-local heap, so the host maps about all of the device's memory (shared memory, a CPU driver,
-    // a discrete GPU whose whole memory the host maps), not a small window of it. Host-cached first, then coherent.
-    internal static int MappableType(VkPhysicalDeviceMemoryProperties memory, uint typeBits)
+    // The memory type storages are mapped from, or -1 (storages in device memory, copies through staging), by the
+    // device's reported type and memory:
+    // - An integrated GPU or a CPU driver has one memory, the system's: host-visible memory the device uses is as fast as
+    //   its "device-local" memory, which is often only a small carve-out heap of it (APUs), so storages are mapped from a
+    //   host-visible type on the largest host-visible heap (or one at least half its size): device-local and host-cached
+    //   first, then host-cached, then coherent. Copying through staging there only costs time and memory.
+    // - Any other device (discrete, virtual, other): a device-local, host-visible type on a heap at least half the size
+    //   of the largest device-local heap, so the host maps about all of the device's memory (resizable BAR), not a small
+    //   window of it. Host-cached first, then coherent.
+    internal static int MappableType(VkPhysicalDeviceMemoryProperties memory, uint typeBits, uint deviceType)
     {
+        if (deviceType is DeviceTypeIntegratedGpu or DeviceTypeCpu)
+        {
+            ulong visible = 0;
+            for (int i = 0; i < (int)memory.MemoryTypeCount; i++)
+            {
+                if ((typeBits & (1u << i)) != 0 && (memory.TypeFlags(i) & MemoryHostVisible) != 0)
+                {
+                    visible = Math.Max(visible, memory.HeapSize(memory.TypeHeap(i)));
+                }
+            }
+
+            return visible == 0 ? -1 : BestType(memory, typeBits, MemoryHostVisible, static f =>
+                ((f & MemoryHostCached) != 0 ? 4 : (f & MemoryHostCoherent) != 0 ? 2 : 0) + ((f & MemoryDeviceLocal) != 0 ? 1 : 0),
+                minHeap: visible / 2);
+        }
+
         ulong largest = 0;
         for (int heap = 0; heap < (int)memory.MemoryHeapCount; heap++)
         {
@@ -204,7 +234,8 @@ internal sealed unsafe partial class VulkanBackend : Backend
     }
 
     /// <summary>The mapped memory type for the memory types (flags, heap) and heaps (size, flags) given (tests: a device's report made up).</summary>
-    internal static int MappableType(ReadOnlySpan<(uint Flags, int Heap)> types, ReadOnlySpan<(ulong Size, ulong Flags)> heaps)
+    internal static int MappableType(ReadOnlySpan<(uint Flags, int Heap)> types, ReadOnlySpan<(ulong Size, ulong Flags)> heaps,
+        uint deviceType = DeviceTypeDiscreteGpu)
     {
         var memory = new VkPhysicalDeviceMemoryProperties { MemoryTypeCount = (uint)types.Length, MemoryHeapCount = (uint)heaps.Length };
         for (int i = 0; i < types.Length; i++)
@@ -217,7 +248,7 @@ internal sealed unsafe partial class VulkanBackend : Backend
             (memory.MemoryHeaps[2 * i], memory.MemoryHeaps[2 * i + 1]) = (heaps[i].Size, heaps[i].Flags);
         }
 
-        return MappableType(memory, uint.MaxValue);
+        return MappableType(memory, uint.MaxValue, deviceType);
     }
 
     // vkCmdPushDescriptorSetKHR, or null without the extension.
@@ -284,6 +315,13 @@ internal sealed unsafe partial class VulkanBackend : Backend
     /// <summary>Device <paramref name="ordinal"/>'s type (VK_PHYSICAL_DEVICE_TYPE_*) and UUID (deviceUUID), without starting it.</summary>
     public static (uint Type, Guid Uuid) DeviceKind(int ordinal) =>
         (Probe.Value.Devices[ordinal].Properties.DeviceType, Probe.Value.Devices[ordinal].Facts.DeviceUuid);
+
+    /// <summary>What orders device <paramref name="ordinal"/> among the others (<see cref="DeviceOrder"/>).</summary>
+    internal static DeviceOrderKey OrderKey(int ordinal)
+    {
+        var d = Probe.Value.Devices[ordinal];
+        return new DeviceOrderKey(d.Facts.DeviceType, d.Facts.DeviceUuid, d.Facts.DriverUuid, d.Facts.PciAddress, d.DeviceName);
+    }
 
     /// <summary>Device <paramref name="ordinal"/>'s reported facts, without starting it.</summary>
     internal static VulkanDeviceFacts FactsOf(int ordinal) => Probe.Value.Devices[ordinal].Facts;
@@ -400,12 +438,91 @@ internal sealed unsafe partial class VulkanBackend : Backend
                 devices.Add(new PhysicalDevice(handle, properties, deviceName, driver, memory, family, facts));
             }
 
-            return devices.Count > 0 ? ([.. devices], "")
+            int[] order = DeviceOrder([.. devices.Select(d => new DeviceOrderKey(d.Facts.DeviceType, d.Facts.DeviceUuid, d.Facts.DriverUuid,
+                d.Facts.PciAddress, d.DeviceName))]);
+            return devices.Count > 0 ? ([.. order.Select(i => devices[i])], "")
                 : ([], skipped.Count > 0 ? $"no usable Vulkan device ({string.Join("; ", skipped)})" : "the Vulkan driver reports no devices");
         }
         catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException or VulkanException)
         {
             return ([], ex.Message);
+        }
+    }
+
+    /// <summary>What orders a device among the others (<see cref="DeviceOrder"/>): all of it reported by the device.</summary>
+    internal readonly record struct DeviceOrderKey(uint Type, Guid DeviceUuid, Guid DriverUuid,
+        (uint Domain, uint Bus, uint Device, uint Function)? PciAddress, string Name);
+
+    /// <summary>
+    /// The order of the devices (indices into <paramref name="devices"/>, as the loader enumerated them) that vulkan:0,
+    /// vulkan:1, … name. The loader's order is not stable across processes (on a laptop with two GPUs it changes with
+    /// power state), so ordinals come from what each device reports instead: its type (discrete, integrated, virtual,
+    /// CPU, other), then its deviceUUID's bytes, then its driverUUID's (one GPU through two drivers); a device without a
+    /// UUID (all zeros) comes after those with one, by PCI address (when reported), then name. The loader's order only
+    /// breaks what is left (identical reports). Never the vendor or the card.
+    /// </summary>
+    internal static int[] DeviceOrder(IReadOnlyList<DeviceOrderKey> devices)
+    {
+        int[] order = [.. Enumerable.Range(0, devices.Count)];
+        Array.Sort(order, (a, b) => Compare(devices[a], devices[b]) is var c and not 0 ? c : a.CompareTo(b));
+        return order;
+
+        static int Compare(DeviceOrderKey a, DeviceOrderKey b)
+        {
+            int c = TypeRank(a.Type).CompareTo(TypeRank(b.Type));
+            if (c != 0)
+            {
+                return c;
+            }
+
+            bool hasA = a.DeviceUuid != Guid.Empty, hasB = b.DeviceUuid != Guid.Empty;
+            if (hasA != hasB)
+            {
+                return hasA ? -1 : 1;
+            }
+
+            if (hasA && (c = CompareBytes(a.DeviceUuid, b.DeviceUuid)) != 0)
+            {
+                return c;
+            }
+
+            if (!hasA)
+            {
+                if (a.PciAddress.HasValue != b.PciAddress.HasValue)
+                {
+                    return a.PciAddress.HasValue ? -1 : 1;
+                }
+
+                if (a.PciAddress is { } pa && b.PciAddress is { } pb && (c = pa.CompareTo(pb)) != 0)
+                {
+                    return c;
+                }
+
+                if ((c = string.CompareOrdinal(a.Name, b.Name)) != 0)
+                {
+                    return c;
+                }
+            }
+
+            return CompareBytes(a.DriverUuid, b.DriverUuid) is var d and not 0 ? d : string.CompareOrdinal(a.Name, b.Name);
+        }
+
+        static int TypeRank(uint type) => type switch
+        {
+            DeviceTypeDiscreteGpu => 0,
+            DeviceTypeIntegratedGpu => 1,
+            DeviceTypeVirtualGpu => 2,
+            DeviceTypeCpu => 3,
+            _ => 4,
+        };
+
+        // The UUIDs' bytes as the device reported them (Guid's own order compares its fields, not its bytes).
+        static int CompareBytes(Guid a, Guid b)
+        {
+            Span<byte> x = stackalloc byte[16], y = stackalloc byte[16];
+            a.TryWriteBytes(x);
+            b.TryWriteBytes(y);
+            return x.SequenceCompareTo(y);
         }
     }
 

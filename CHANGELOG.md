@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Vulkan devices keep their number across runs: `vulkan:N` follows what each device reports (discrete GPUs, then
+  integrated, virtual, CPU and other; each kind by deviceUUID bytes, then driverUUID; a device without a UUID after
+  those, by PCI address and name), not the loader's order, which changed between two processes on a laptop with an
+  RTX 3060 and a Radeon iGPU (so `IDRAK_DEVICES=vulkan:1` named either GPU). A device without a UUID gets a tuning-cache
+  key of its own (PCI address and name) instead of sharing the all-zero one.
+- Vulkan on integrated GPUs and CPU drivers (reported device type) maps storages from host-visible memory on the largest
+  host-visible heap (device-local and host-cached first, then host-cached, then coherent): it is the same system memory
+  as their "device-local" one, which on APUs is a small carve-out, so they no longer copy through staging (the Radeon
+  iGPU did). Pages are sized from that heap. Discrete GPUs keep the rule (mapped only with resizable BAR);
+  `IDRAK_VULKAN_STAGING=1` still copies through staging everywhere. The benchmark header shows the storage heap's size.
+
 - CUDA autotuning is steadier and remembered: candidates are timed over seven rounds in alternating order and compared by
   their median (one lucky timing picked 8 k splits at 7.7 µs over 16 at 6.6 µs on "o + add + norm"), and measured
   choices are kept per GPU, driver and library build in `IDRAK_CACHE` (default `~/.cache/idrak`) under `tuning/cuda/`,

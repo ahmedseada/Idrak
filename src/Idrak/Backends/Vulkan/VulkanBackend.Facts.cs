@@ -23,6 +23,9 @@ internal sealed record VulkanDeviceFacts
     /// <summary>deviceUUID: the same GPU reports the same UUID through every API (CUDA's cuDeviceGetUuid too).</summary>
     public Guid DeviceUuid { get; init; }
 
+    /// <summary>The device's PCI address (domain, bus, device, function) when it reports one (VK_EXT_pci_bus_info), else null.</summary>
+    public (uint Domain, uint Bus, uint Device, uint Function)? PciAddress { get; init; }
+
     /// <summary>driverUUID: changes with the driver build (measured choices are cached per device and driver).</summary>
     public Guid DriverUuid { get; init; }
 
@@ -100,7 +103,8 @@ internal sealed unsafe partial class VulkanBackend
 
     /// <summary>The device facts and the device's own one-line summary (for benchmark headers).</summary>
     internal string Describe() =>
-        $"{Name}: {(UnifiedMemory ? ReadsThroughStaging ? "mapped memory, reads through staging" : "mapped memory" : "staging copies")}, " +
+        $"{Name}: {(UnifiedMemory ? ReadsThroughStaging ? "mapped memory, reads through staging" : "mapped memory" : "staging copies")} " +
+        $"(storages on a {StorageHeapBytes >> 20:N0} MiB heap), " +
         $"{(PushDescriptors ? "pushed descriptors" : "descriptor sets")} ({PushDescriptorsChoice}), pages of {PageBytes >> 20} MiB; {Facts.Describe()}";
 
     // The device's facts and its driver's name, from one vkGetPhysicalDeviceProperties2 chain (every structure in it
@@ -128,6 +132,14 @@ internal sealed unsafe partial class VulkanBackend
             chain = &sizes;
         }
 
+        var pci = new VkPhysicalDevicePciBusInfoProperties { SType = StructurePhysicalDevicePciBusInfoProperties };
+        bool hasPci = HasExtension(physical, PciBusInfoExtension);
+        if (hasPci)
+        {
+            pci.PNext = chain;
+            chain = &pci;
+        }
+
         var all = new VkPhysicalDeviceProperties2 { SType = StructurePhysicalDeviceProperties2, PNext = chain };
         vkGetPhysicalDeviceProperties2(physical, &all);
 
@@ -138,6 +150,7 @@ internal sealed unsafe partial class VulkanBackend
         {
             DeviceType = properties.DeviceType,
             DeviceUuid = new Guid(new ReadOnlySpan<byte>(id.DeviceUuid, 16)),
+            PciAddress = hasPci ? (pci.PciDomain, pci.PciBus, pci.PciDevice, pci.PciFunction) : null,
             DriverUuid = new Guid(new ReadOnlySpan<byte>(id.DriverUuid, 16)),
             DriverVersion = properties.DriverVersion,
             SubgroupSize = subgroup.SubgroupSize,
