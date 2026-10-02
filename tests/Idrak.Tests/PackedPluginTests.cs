@@ -12,6 +12,7 @@ internal static partial class Tests
     private static readonly (string Name, Action<Device> Run)[] PackedPluginGroup =
     [
         ("packed plugins: the built-in formats are registered; an unknown name lists them; a format of one's own registers, packs by name and has no built-in Format", PackedPluginRegistry),
+        ("packed plugins: the PackedFormat overload makes the built-in weights from the same table the registry starts from, even with a built-in name replaced; weight file formats encode and decode through their codecs (float32 exact, float16 and bfloat16 rounding, NaN, unknown format bytes)", PackedBuiltInsAndWeightCodecs),
         ("packed plugins: a Linear layer holding a format of one's own (expanded default product, and its own product) matches the float product at 1 and 70 rows, with the input's gradient; ToFloat32, Save/Load and moving between devices", PackedPluginLinear),
         ("packed plugins: a decoder built with a format of one's own decodes token by token (and through a recorded step) like the built-in bfloat16 decoder, and trains a LoRA adapter", PackedPluginDecoder),
     ];
@@ -322,6 +323,82 @@ internal static partial class Tests
             var adapters = model.Descendants().OfType<Linear>().Where(l => l.Adapter is not null).ToList();
             Check(adapters.Count == added && adapters.All(l => l.PackedWeight is RoundedWeight && l.Adapter!.B.Grad is { } g && g.ToArray().Any(v => v != 0f)),
                 "the adapters' gradients through the format's product");
+        }
+    }
+
+    private static void PackedBuiltInsAndWeightCodecs(Device device)
+    {
+        var r = new Random(3);
+        float[] values = [.. Enumerable.Range(0, 64 * 48).Select(_ => r.NextSingle() * 2 - 1)];
+        foreach (var (format, name) in new[] { (PackedFormat.Int8, "int8"), (PackedFormat.Int4, "int4"), (PackedFormat.BFloat16, "bfloat16") })
+        {
+            using var byEnum = PackedWeight.FromValues(format, values, 64, 48, device);
+            using var byName = PackedWeight.FromValues(name, values, 64, 48, device);
+            Check(byEnum.Format == format && byName.Format == format, $"{name}: the built-in format both ways");
+            using var a = byEnum.Dequantize();
+            using var b = byName.Dequantize();
+            AssertClose(a.ToArray(), b.ToArray(), 0f, $"{name}: the same weights by enum and by name");
+        }
+
+        try
+        {
+            using var invalid = PackedWeight.FromValues((PackedFormat)99, values, 64, 48, device);
+            Check(false, "an undefined PackedFormat should fail");
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+        }
+
+        // A registered "int8" replaces the name, not the enum's built-in.
+        PackedWeight.Register("int8", BFloat16Weight.FromValues);
+        try
+        {
+            using var byName = PackedWeight.FromValues("int8", values, 64, 48, device);
+            using var byEnum = PackedWeight.FromValues(PackedFormat.Int8, values, 64, 48, device);
+            Check(byName.Format == PackedFormat.BFloat16 && byEnum.Format == PackedFormat.Int8, "a replaced name; the enum still makes int8");
+        }
+        finally
+        {
+            PackedWeight.Register("int8", Int8Weight.Quantize);
+        }
+
+        if (device.Type != DeviceType.Cpu)
+        {
+            return;                                                              // the codecs are host code: once is enough
+        }
+
+        float[] samples = [0f, -0f, 1f, -1.5f, 3.14159265f, 65504f, 1e-8f, 1e30f, float.NaN, float.PositiveInfinity, float.NegativeInfinity, 0.1f];
+        foreach (var format in new[] { WeightFormat.Float32, WeightFormat.Float16, WeightFormat.BFloat16 })
+        {
+            var codec = WeightCodec.For(format);
+            var bytes = new byte[samples.Length * codec.BytesPerValue];
+            codec.Encode(samples, bytes);
+            var back = new float[samples.Length];
+            codec.Decode(bytes, back);
+            for (int i = 0; i < samples.Length; i++)
+            {
+                float expected = format switch
+                {
+                    WeightFormat.Float32 => samples[i],
+                    WeightFormat.Float16 => (float)(Half)samples[i],
+                    _ => float.IsNaN(samples[i]) ? float.NaN
+                        : BitConverter.UInt32BitsToSingle((BitConverter.SingleToUInt32Bits(samples[i]) + 0x7FFFu + ((BitConverter.SingleToUInt32Bits(samples[i]) >> 16) & 1u)) & 0xFFFF0000u),
+                };
+                Check(float.IsNaN(expected) ? float.IsNaN(back[i]) : BitConverter.SingleToInt32Bits(expected) == BitConverter.SingleToInt32Bits(back[i]),
+                    $"{format}: {samples[i]} → {back[i]}, expected {expected}");
+            }
+        }
+
+        Check(WeightCodec.For(WeightFormat.Float32).BytesPerValue == 4 && WeightCodec.For(WeightFormat.Float16).BytesPerValue == 2
+            && WeightCodec.For(WeightFormat.BFloat16).BytesPerValue == 2, "bytes per value");
+        try
+        {
+            WeightCodec.For((WeightFormat)7);
+            Check(false, "an unknown format byte should fail");
+        }
+        catch (InvalidDataException ex)
+        {
+            Check(ex.Message.Contains("Unknown weight format 7", StringComparison.Ordinal), ex.Message);
         }
     }
 }

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- GGUF pre-tokenizers are a registry (`GgufPreTokenizers.Register(name, pattern)`): the llama3, qwen2, tekken and gpt2
+  families are registered with llama.cpp's patterns, unchanged; an unregistered name still uses Llama 3's rule and the
+  note now says how to register it. `PackedWeight.FromValues(PackedFormat, ...)` makes the built-in weights from the same
+  table the name registry starts from (no switch). Weight files encode and decode through one codec per `WeightFormat`,
+  a call per tensor instead of a branch per value; the files are unchanged.
 - CUDA decoding attention measures its split count over filled lengths 64, 128, ... up to the capacity (geometric mean
   of their times) instead of at a full cache alone. At a full cache 8 and 64 splits were within 2% on an RTX 3060
   Laptop; 64 was kept and ran 200 positions in 36.8 µs against 12.0 with 8. Cache format 5 re-measures saved choices.
