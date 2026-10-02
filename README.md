@@ -78,7 +78,27 @@ Set `IDRAK_DISABLE_CUDA=1` to force the CPU.
 | Serving | The inference engine (loading, batching), model packages (`.ikm`), Web API endpoints, an Ollama-style chat API, MCP |
 | Interop | ONNX import and export; reference checks against PyTorch and transformers |
 | Telemetry | Hooks that cost nothing when unused: console, CSV metrics, JSON Lines; training, batch, gradient and layer events |
-| Extending | Registries for samplers, KV cache formats, packed weights, builder steps, ONNX import operators, checkpoint formats, model families, GGUF types and pre-tokenizers, model sources, tokenizer components, dataset formats and sources, and devices (see "Extending Idrak: plug-in points") |
+
+### Plug-in points
+
+Each registry takes an implementation from any package, next to the built-ins (details in "Extending Idrak: plug-in
+points"):
+
+| What plugs in | Registry or hook | Package |
+|---------------|------------------|---------|
+| Token sampling | `ITokenSampler` through `TextGenerator.CreateSampler` | `Idrak` |
+| KV cache formats | `KeyValueLayouts` | `Idrak` |
+| Packed weight formats | `PackedWeight` | `Idrak` |
+| Network builder steps | `NetworkOps` | `Idrak` |
+| Telemetry listeners | `Telemetry.Subscribe` | `Idrak` |
+| ONNX import operators | `OnnxImportOps` | `Idrak.Onnx` |
+| Checkpoint formats | `CheckpointFormats` | `Idrak.LanguageModels` |
+| Model families | `PretrainedArchitectures` | `Idrak.LanguageModels` |
+| GGUF architectures, quantization types, pre-tokenizers | `GgufArchitectures`, `GgufTypes`, `GgufPreTokenizers` | `Idrak.LanguageModels` |
+| Model sources | `ModelSources` | `Idrak.LanguageModels` |
+| Tokenizer normalizers, pre-tokenizers, decoders | `TokenizerComponents` | `Idrak.LanguageModels` |
+| Dataset file formats, sources, Parquet codecs | `DataFileFormats`, `DatasetSources`, `ParquetCodecs` | `Idrak.Datasets` |
+| Devices (backends) | the device registry, internal until the public backend API (plans/7-backends.md, item 12c) | `Idrak` |
 
 ### Hardware
 
