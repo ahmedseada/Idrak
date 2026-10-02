@@ -900,16 +900,16 @@ internal static partial class Tests
                         run();
                     }
                 });
-                // Replayed for at least 30 ms first: a laptop GPU idle before the first row still runs at a fraction of
-                // its clocks (the RTX 3060 Laptop's first "auto", 3 splits, timed 32.9 µs against 26.2 for the same
-                // 3 splits a column later).
-                var warm = System.Diagnostics.Stopwatch.StartNew();
-                do
+                // Replayed until the GPU's speed has settled (as the tuning warms up, TuneTiming.Warm): a laptop GPU idle
+                // before the first row still runs at a fraction of its clocks (the RTX 3060 Laptop's first "auto",
+                // 3 splits, timed 32.9 µs against 26.2 for the same 3 splits a column later, also after a fixed 30 ms).
+                TuneTiming.Warm(() =>
                 {
+                    var once = System.Diagnostics.Stopwatch.StartNew();
                     graph.Replay();
                     device.Synchronize();
-                }
-                while (warm.Elapsed.TotalMilliseconds < 30);
+                    return (float)once.Elapsed.TotalMilliseconds;
+                });
 
                 var watch = System.Diagnostics.Stopwatch.StartNew();
                 for (int r = 0; r < 10; r++)
