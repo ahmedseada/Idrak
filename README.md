@@ -1094,8 +1094,8 @@ Results per run of the whole test list on one device:
 
 | Date | Commit | Vendor | GPU | Architecture | Kind | Backend | Driver | Memory path | Matrix units | Machine | Result |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| 2026-10-01 | e43c0b1 | NVIDIA | GeForce RTX 5070 Ti, 16 GB | Blackwell (sm_120) | discrete | Vulkan 1.4 | 610.88 | staging copies (device-local) | not used yet | Windows 11, 24-thread CPU | 221 of 225: sampler parity (2) and barrier count fixed after the run; 1 tolerance |
-| 2026-10-01 | 63702fb | NVIDIA | GeForce RTX 5070 Ti, 16 GB | Blackwell (sm_120) | discrete | CUDA 13.3 | 610.88 | device memory | bfloat16, fp8, int8 tensor cores | Windows 11, 24-thread CPU | 428 of 428 (CPU and CUDA) |
+| 2026-10-02 | 153c263 | NVIDIA | GeForce RTX 5070 Ti, 16 GB | Blackwell (sm_120) | discrete | Vulkan 1.4 | 610.88 | mapped (resizable BAR), reads through staging | not used yet | Windows 11, 24-thread CPU | every Vulkan test passes (run from the CPU pass); decoder 1,289 tokens/s (int8, 8 layers), 0 host fallbacks |
+| 2026-10-02 | 153c263 | NVIDIA | GeForce RTX 5070 Ti, 16 GB | Blackwell (sm_120) | discrete | CUDA 13.3 | 610.88 | device memory | bfloat16, fp8, int8 tensor cores | Windows 11, 24-thread CPU | 478 of 478 (CPU and CUDA) |
 | 2026-10-01 | a79e361 | NVIDIA | GeForce RTX 5050 Laptop GPU, 8 GB | Blackwell (sm_120) | discrete | Vulkan 1.4 | 610.88 | staging copies | not used yet | Windows 11, i7-13620H (16 threads) | 221 of 222: int8 tolerance fixed after the run |
 | 2026-10-01 | a79e361 | NVIDIA | GeForce RTX 5050 Laptop GPU, 8 GB | Blackwell (sm_120) | discrete | CUDA 13.3 | 610.88 | device memory | tensor cores | Windows 11, i7-13620H (16 threads) | all but in-place log-softmax (a CUDA kernel bug, fixed in e43c0b1) |
 | 2026-10-01 | a79e361 | NVIDIA | GeForce RTX 3060 Laptop GPU, 6 GB | Ampere (sm_86) | discrete | Vulkan 1.4 | 581.29 | staging copies | not used yet | Windows 11, Ryzen 5000H (16 threads) | 221 of 222: int8 tolerance fixed after the run |
