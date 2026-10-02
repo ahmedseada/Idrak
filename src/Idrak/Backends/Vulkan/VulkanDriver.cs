@@ -11,7 +11,7 @@ namespace Idrak.Backends.Vulkan;
 public sealed class VulkanException(string message) : Exception(message);
 
 /// <summary>
-/// Bindings to the Vulkan loader (vulkan-1.dll on Windows, libvulkan.so.1 on Linux), which ships with the graphics
+/// Bindings to the Vulkan loader (vulkan-1.dll on Windows, libvulkan.so.1 on Linux, libvulkan.so on Android), which ships with the graphics
 /// driver: the core 1.0 and 1.1 functions a compute backend needs, called through the loader's exports (no SDK, no
 /// validation layers), and VK_KHR_push_descriptor where the device has it (through vkGetDeviceProcAddr). Handles of dispatchable objects (instance, physical device, device, queue, command
 /// buffer) are pointers; every other handle is a 64-bit number.
@@ -72,10 +72,21 @@ internal static unsafe partial class VulkanDriver
         return TryLoad(out _) ? s_handle : IntPtr.Zero;
     }
 
-    private static string[] CandidateNames() =>
-        OperatingSystem.IsWindows() ? ["vulkan-1.dll"] :
-        OperatingSystem.IsLinux() || OperatingSystem.IsFreeBSD() ? ["libvulkan.so.1", "libvulkan.so"] :
-        [];
+    private static string[] CandidateNames() => CandidateNames(
+        OperatingSystem.IsWindows() ? "windows" :
+        OperatingSystem.IsAndroid() ? "android" :
+        OperatingSystem.IsLinux() ? "linux" :
+        OperatingSystem.IsFreeBSD() ? "freebsd" : "");
+
+    /// <summary>The loader's file names tried in order on operating system <paramref name="os"/> ("windows", "android",
+    /// "linux" or "freebsd"; none elsewhere). Android ships the loader as libvulkan.so, without a version suffix.</summary>
+    internal static string[] CandidateNames(string os) => os switch
+    {
+        "windows" => ["vulkan-1.dll"],
+        "android" => ["libvulkan.so"],
+        "linux" or "freebsd" => ["libvulkan.so.1", "libvulkan.so"],
+        _ => [],
+    };
 
     public static void Check(int result, string call)
     {
