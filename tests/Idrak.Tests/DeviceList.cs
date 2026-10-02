@@ -73,9 +73,13 @@ internal static partial class Tests
         Console.WriteLine(windows
             ? $"  $env:IDRAK_DEVICES=\"{example}\"; dotnet run -c Release --project tests/Idrak.Tests; Remove-Item Env:IDRAK_DEVICES"
             : $"  IDRAK_DEVICES={example} dotnet run -c Release --project tests/Idrak.Tests");
-        Console.WriteLine(windows
-            ? $"  $env:IDRAK_DEVICES=\"cpu,{example}\"; dotnet run -c Release --project tests/Idrak.Tests; Remove-Item Env:IDRAK_DEVICES"
-            : $"  IDRAK_DEVICES=cpu,{example} dotnet run -c Release --project tests/Idrak.Tests");
+        if (example != "cpu")                                                    // two devices only when there is a second one
+        {
+            Console.WriteLine(windows
+                ? $"  $env:IDRAK_DEVICES=\"cpu,{example}\"; dotnet run -c Release --project tests/Idrak.Tests; Remove-Item Env:IDRAK_DEVICES"
+                : $"  IDRAK_DEVICES=cpu,{example} dotnet run -c Release --project tests/Idrak.Tests");
+        }
+
         Console.WriteLine("Only some tests: add IDRAK_FILTER=<text in the test names> the same way.");
         return 0;
     }
