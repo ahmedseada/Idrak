@@ -29,6 +29,12 @@ internal enum VulkanTuneOp : byte
 
     /// <summary>A row kernel: one invocation per row (1) or a workgroup per row (0).</summary>
     Rows,
+
+    /// <summary>A prompt-sized packed product: the tiled packed kernel (at a width), the few-rows kernels or expanding the weights.</summary>
+    PackedPrompt,
+
+    /// <summary>Attention over many query rows: the tiled kernel (at a width) or the decoding kernel.</summary>
+    TiledAttention,
 }
 
 /// <summary>What a measured choice is for: the operation, its variant (kernel, format) and its shape.</summary>
