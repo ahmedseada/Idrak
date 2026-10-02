@@ -97,7 +97,7 @@ internal sealed unsafe partial class CudaBackend
     internal static int? GemvSplits { get; set; }
 
     // Kernel names by format (0 int8, 1 int4, 2 bfloat16) and variant, built once: the per-token path never formats a name.
-    private const int GemvPlain = 0, GemvSilu = 1, GemvGelu = 2, GemvAddNorm = 3;
+    internal const int GemvPlain = 0, GemvSilu = 1, GemvGelu = 2, GemvAddNorm = 3;
     private static readonly string[] GemvKernels =
     [
         "int8_gemv_f32", "int8_gemv_silu_f32", "int8_gemv_gelu_f32", "int8_gemv_addnorm_f32",
@@ -128,14 +128,47 @@ internal sealed unsafe partial class CudaBackend
 
     // k splits of a few-row packed product with `blocks` column blocks, before measuring (see CudaBackend.Tuning.cs):
     // about two blocks per SM, rounded to a power of two so the chunks stay multiples of the 64-row unrolled step.
-    private int GemvSplitCount(int blocks, int k)
+    private int GemvSplitCount(int blocks, int k) => GemvSplitCount(_multiprocessors, blocks, k);
+
+    internal static int GemvSplitCount(int multiprocessors, int blocks, int k)
     {
-        int wanted = (2 * Math.Max(1, _multiprocessors) + blocks - 1) / blocks;
+        int wanted = (2 * Math.Max(1, multiprocessors) + blocks - 1) / blocks;
         int splits = 1 << (int)Math.Round(Math.Log2(Math.Max(1, wanted)));
         return Math.Clamp(splits, 1, GemvMaxSplits(k));
     }
 
     private static int GemvMaxSplits(int k) => Math.Max(1, Math.Min(64, k / 64));
+
+    // What a few-row product's split count is kept under: the kernel (format * 4 + GemvPlain / GemvSilu / GemvGelu /
+    // GemvAddNorm) and the shape, so the fused kernels never take the plain kernel's choice.
+    internal static TuneKey GemvSplitsKey(int variant, int m, int n, int k) => new(TuneOp.GemvSplits, variant, m, n, k);
+
+    // Split counts the few-row products are measured with: 1, 2, 3, 4, 6, 8, 12, ... up to GemvMaxSplits (the kernels
+    // take any chunk of k: a step of 64 rows, then single rows; --bench-gemv found 6 best on an RTX 3060 Laptop for the
+    // products into 1024 columns, which the powers of two alone missed by 25%), without counts that give the same
+    // chunks once rounded to `align` (int4: a 64-row group); of two such counts the power of two stays, so the
+    // formula's choice (GemvSplitCount) is always one of them.
+    internal static int[] GemvSplitCandidates(int k, int align)
+    {
+        var values = new List<int>();
+        var byCount = new Dictionary<int, int>();                      // splits that run → index in values
+        foreach (int wanted in SplitCounts(GemvMaxSplits(k)))
+        {
+            int chunk = ((k + wanted - 1) / wanted + align - 1) / align * align;
+            int count = (k + chunk - 1) / chunk;
+            if (!byCount.TryGetValue(count, out int at))
+            {
+                byCount[count] = values.Count;
+                values.Add(wanted);
+            }
+            else if (int.IsPow2(wanted))
+            {
+                values[at] = wanted;
+            }
+        }
+
+        return [.. values];
+    }
 
     // Few rows (decoding) through packed weights: read each weight word once, with enough blocks to keep every
     // multiprocessor busy; narrow matrices split k, and the last block of each column range adds the splits in order.
@@ -172,21 +205,28 @@ internal sealed unsafe partial class CudaBackend
         }
         else
         {
-            // Measured once per shape. The fused add-and-normalize kernels (`tail`) update their residual outputs, so they
-            // take the choice measured for the plain kernel of the same shape, timed into scratch memory.
+            // Measured once per shape and kernel, timing the kernel that then runs. The fused add-and-normalize kernels
+            // (`tail`: residual, sum, gain, normalized, eps, offset) are timed whole, the residual addition and the
+            // normalization by the last block included, with their three outputs (y, sum, normalized) in scratch memory,
+            // since the sum may be the residual itself. (Before, they took the plain kernel's choice for the shape, timed
+            // without that last step: --bench-gemv showed 8 splits chosen where 16 was 15% faster on an RTX 5070 Ti.)
             int formula = GemvSplitCount(columnBlocks, k);
-            int[] candidates = PowersOfTwo(GemvMaxSplits(k));
-            int plainVariant = tail is null ? variant : variant - variant % 4 + GemvPlain;
-            string plain = GemvKernels[plainVariant];
-            var key = new TuneKey(TuneOp.GemvSplits, plainVariant, m, n, k);
+            int[] candidates = GemvSplitCandidates(k, align);
+            var key = GemvSplitsKey(variant, m, n, k);
             splits = formula;
             if (tail is null)
             {
                 splits = Tune(key, candidates, formula, c => Run(kernel, P(y), [], c));
             }
+            else if (!TunedKnown(key))
+            {
+                long size = (long)m * n * sizeof(float);
+                WithScratch(3L * m * n, scratch => splits = Tune(key, candidates, formula,
+                    c => Run(kernel, scratch, [tail[0], scratch + (ulong)size, tail[2], scratch + 2 * (ulong)size, .. tail[4..]], c)));
+            }
             else
             {
-                WithScratch((long)m * n, scratch => splits = Tune(key, candidates, formula, c => Run(plain, scratch, [], c)));
+                splits = Tune(key, [], formula, _ => { });
             }
         }
 
@@ -597,7 +637,7 @@ internal sealed unsafe partial class CudaBackend
                 products.Length > 2 ? products[2].Columns : 0, biases);
             int formula = GemvSplitCount(totalBlocks, k);
             var copy = TunedKnown(name) ? null : products.ToArray();
-            wanted = copy is null ? Tune(name, [], formula, _ => { }) : Tune(name, PowersOfTwo(GemvMaxSplits(k)), formula, c => Run(copy, c));
+            wanted = copy is null ? Tune(name, [], formula, _ => { }) : Tune(name, GemvSplitCandidates(k, align), formula, c => Run(copy, c));
         }
 
         Run(products, wanted);

@@ -584,7 +584,7 @@ internal static partial class Tests
                 QkvBias = true, OutputBias = true, FeedForwardBias = true, TieEmbeddings = true, LearnedPositions = true,
             };
             float[] ids = [.. Enumerable.Range(0, 2 * 70).Select(i => (float)(i * 7 % 50))];
-            (float[] Loss, float[][] Grads) Run(bool fused)
+            (float[] Loss, float[][] Grads, Dictionary<int, int> KeyBiases) Run(bool fused)
             {
                 Idrak.Layers.FusedTraining.Enabled = fused;
                 try
@@ -601,7 +601,15 @@ internal static partial class Tests
 
                     var loss = (h * Tensor.From([.. Enumerable.Range(0, h.Size).Select(i => MathF.Sin(i))], h.Shape, device)).Sum();
                     loss.Backward();
-                    return ([loss.Item()], [.. model.Parameters().Select(p => p.Grad!.ToArray())]);
+                    var parameters = model.Parameters().ToList();
+                    var keyBiases = new Dictionary<int, int>();                 // key bias index → key weight index
+                    foreach (var block in model.OfType<DecoderBlock>())
+                    {
+                        var key = block.Attention.Key;
+                        keyBiases[parameters.FindIndex(p => ReferenceEquals(p, key.Bias))] = parameters.FindIndex(p => ReferenceEquals(p, key.Weight));
+                    }
+
+                    return ([loss.Item()], [.. parameters.Select(p => p.Grad!.ToArray())], keyBiases);
                 }
                 finally
                 {
@@ -612,9 +620,25 @@ internal static partial class Tests
             var composed = Run(false);
             var fusedRun = Run(true);
             AssertClose(composed.Loss, fusedRun.Loss, 2e-3f, $"heads {heads}/{kvHeads}: loss");
+            static double Norm(float[] g) => Math.Sqrt(g.Sum(v => (double)v * v));
             for (int i = 0; i < composed.Grads.Length; i++)
             {
-                double norm = Math.Sqrt(composed.Grads[i].Sum(v => (double)v * v)), diff = Math.Sqrt(composed.Grads[i].Zip(fusedRun.Grads[i]).Sum(p => (double)(p.First - p.Second) * (p.First - p.Second)));
+                double norm = Norm(composed.Grads[i]), diff = Math.Sqrt(composed.Grads[i].Zip(fusedRun.Grads[i]).Sum(p => (double)(p.First - p.Second) * (p.First - p.Second)));
+                if (composed.KeyBiases.TryGetValue(i, out int weight))
+                {
+                    // The key bias adds q·b to every score of a query row, which softmax ignores: its gradient is exactly zero
+                    // (Σ_j dS_ij = 0), so what both runs hold is rounding left over from the cancellation (float32 on the CPU:
+                    // ~3e-6 against ~160 for the key weight; bfloat16 on GPUs: ~0.04, 2e-4 of it, and the two runs' leftovers
+                    // differ by 25% of themselves on an RTX 3060 where another kernel or split count sums them). A relative
+                    // comparison of two roundings is meaningless; both must stay small against the key weight's gradient,
+                    // which a wrong softmax backward (Σ_j dS_ij ≠ 0) would not (about a tenth of it).
+                    double scale = Norm(composed.Grads[weight]);
+                    double fusedNorm = Norm(fusedRun.Grads[i]);
+                    Check(norm <= 1e-2 * scale + 1e-6 && fusedNorm <= 1e-2 * scale + 1e-6 && diff <= 1e-2 * scale + 1e-6,
+                        $"heads {heads}/{kvHeads}: key bias gradient {i} (zero up to rounding): {norm:G3} composed, {fusedNorm:G3} fused, differing by {diff:G3}, against {scale:G3} for the key weight");
+                    continue;
+                }
+
                 Check(diff <= 2e-2 * norm + 1e-6, $"heads {heads}/{kvHeads}: gradient {i} differs by {diff:G3} (norm {norm:G3})");
             }
         }
