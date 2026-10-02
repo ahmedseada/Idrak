@@ -1112,6 +1112,9 @@ WSL2), and macOS (CPU only).
 
 ### Tested on architectures
 
+Step-by-step setup for each machine below (drivers, .NET SDK, environment, tests and the chat sample), including an
+Android phone through Termux and Mesa Turnip: [installation/](installation/README.md).
+
 The `architecture` branch adds backends beyond CUDA: a Vulkan backend (SPIR-V kernels generated in C#, for Intel,
 AMD and any Vulkan GPU) and the minimum backend every new device starts from (see
 [plans/7-backends.md](plans/7-backends.md)). `-- --list-devices` shows the devices a machine has and how to test one.

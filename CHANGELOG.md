@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- installation/: how Idrak was installed, built, tested and chatted with on Windows, Linux and WSL2, and an
+  Android phone (Termux, Ubuntu in proot, a Turnip driver built for KGSL, the .NET heap limit).
 - Vulkan: the kernels' width is measured when the device opens (a 256³ float32 product and one-row decoding work,
   int8 products, an RMS norm and a softmax, at each power-of-two width from the subgroup size up to the formula's,
   ranked by the geometric mean of each part's time against its fastest width), kept only when clearly faster (10%), and stored per device, driver and
