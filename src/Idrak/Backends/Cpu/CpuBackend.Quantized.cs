@@ -10,7 +10,8 @@ namespace Idrak.Backends.Cpu;
 // Int8 weight-only quantization: signed bytes packed four per float element along each weight row.
 internal sealed partial class CpuBackend
 {
-    private const int Int8MinBlock = 64;   // fewest columns per parallel work item (a multiple of every SIMD width)
+    // Fewest columns per parallel work item: eight vectors (CpuTuning.MinColumns), a multiple of the int8 kernel's byte vectors.
+    private static int Int8MinBlock => CpuTuning.ColumnBlock;
 
     public override void Int8MatMul(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
     {
@@ -52,7 +53,7 @@ internal sealed partial class CpuBackend
 
     public override void Int4MatMul(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
     {
-        if (m > 8)
+        if (m > CpuTuning.FewRows)                                       // the CPU's few-row limit (BackendCapabilities.FewRows)
         {
             var w = Allocate(k * n, zeroed: false);
             try
@@ -149,7 +150,7 @@ internal sealed partial class CpuBackend
 
     public override void BFloat16MatMul(Storage x, Storage packed, Storage y, int m, int n, int k)
     {
-        if (m > 8)
+        if (m > CpuTuning.FewRows)                                       // the CPU's few-row limit (BackendCapabilities.FewRows)
         {
             var w = Allocate(k * n, zeroed: false);
             try
@@ -172,6 +173,12 @@ internal sealed partial class CpuBackend
         int threads = Math.Max(1, ComputeResources.ParallelOptions.MaxDegreeOfParallelism);
         int blockSize = Math.Max(Int8MinBlock, (n / (2 * threads) + Int8MinBlock - 1) / Int8MinBlock * Int8MinBlock);
         int blocks = (n + blockSize - 1) / blockSize;
+        if (Vector.IsHardwareAccelerated && !CpuTuning.StreamingFewRows)
+        {
+            BFloat16FewRowsTiled(D(packed), xv, yv, m, n, k, stride, blockSize, blocks);
+            return;
+        }
+
         For(blocks, (long)m * n * k, (first, last) =>
         {
             var halves = MemoryMarshal.Cast<float, ushort>(D(packed).AsSpan());

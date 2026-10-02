@@ -9,20 +9,20 @@ internal static class HostParallel
     /// <summary>Runs <paramref name="body"/>(first, last) over [0, <paramref name="count"/>) in chunks of at least <paramref name="grain"/>.</summary>
     public static void For(int count, int grain, Action<int, int> body)
     {
-        int chunks = Math.Max(1, Math.Min(Environment.ProcessorCount * 4, count / Math.Max(1, grain)));
+        int chunks = Math.Max(1, Math.Min(ComputeResources.MaxCpuThreads * 4, count / Math.Max(1, grain)));
         if (chunks == 1)
         {
             body(0, count);
             return;
         }
 
-        Parallel.For(0, chunks, c => body((int)((long)count * c / chunks), (int)((long)count * (c + 1) / chunks)));
+        Parallel.For(0, chunks, ComputeResources.ParallelOptions, c => body((int)((long)count * c / chunks), (int)((long)count * (c + 1) / chunks)));
     }
 
-    /// <summary>The transpose of a row-major [rows, columns] matrix, in cache-sized tiles on all cores.</summary>
+    /// <summary>The transpose of a row-major [rows, columns] matrix, in L1-sized tiles (Backends.Cpu.CpuTuning.TransposeTile) on all cores.</summary>
     public static float[] Transpose(float[] values, int rows, int columns)
     {
-        const int Tile = 64;
+        int Tile = Backends.Cpu.CpuTuning.TransposeSide;
         var result = new float[values.Length];
         int tileRows = (rows + Tile - 1) / Tile;
         For(tileRows, 1, (first, last) =>

@@ -340,7 +340,7 @@ public sealed class Int8Weight : PackedWeight
         // Column maxima per chunk of rows (all cores), then combined.
         var scales = new float[columns];
         var gate = new Lock();
-        HostParallel.For(rows, Math.Max(1, (1 << 16) / Math.Max(1, columns)), (first, last) =>
+        HostParallel.For(rows, Math.Max(1, Backends.Cpu.CpuTuning.ParallelElements / Math.Max(1, columns)), (first, last) =>
         {
             var local = new float[columns];
             for (int r = first; r < last; r++)
@@ -365,7 +365,7 @@ public sealed class Int8Weight : PackedWeight
         }
 
         var bytes = new sbyte[rows * stride];
-        HostParallel.For(rows, Math.Max(1, (1 << 16) / Math.Max(1, columns)), (first, last) =>
+        HostParallel.For(rows, Math.Max(1, Backends.Cpu.CpuTuning.ParallelElements / Math.Max(1, columns)), (first, last) =>
         {
             for (int r = first; r < last; r++)
             {
@@ -511,7 +511,7 @@ public sealed class Int4Weight : PackedWeight
         int words = (columns + 7) / 8, groups = (rows + GroupSize - 1) / GroupSize;
         var packed = new uint[rows * words];
         var scales = new float[groups * words * 8];
-        HostParallel.For(groups, Math.Max(1, (1 << 12) / Math.Max(1, columns)), (first, last) =>
+        HostParallel.For(groups, Math.Max(1, 2 * Backends.Cpu.CpuTuning.ParallelElements / GroupSize / Math.Max(1, columns)), (first, last) =>
         {
             Span<float> w = stackalloc float[GroupSize];
             Span<sbyte> q = stackalloc sbyte[GroupSize];
@@ -701,7 +701,7 @@ public sealed class BFloat16Weight : PackedWeight
     {
         int stride = (columns + 1) / 2 * 2;
         var halves = new ushort[rows * stride];
-        HostParallel.For(rows, Math.Max(1, (1 << 16) / Math.Max(1, columns)), (first, last) =>
+        HostParallel.For(rows, Math.Max(1, Backends.Cpu.CpuTuning.ParallelElements / Math.Max(1, columns)), (first, last) =>
         {
             for (int r = first; r < last; r++)
             {

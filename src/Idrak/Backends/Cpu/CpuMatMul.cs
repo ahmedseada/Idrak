@@ -11,29 +11,43 @@ using System.Runtime.Intrinsics.X86;
 namespace Idrak.Backends.Cpu;
 
 /// <summary>
-/// Single-precision GEMM: C = op(A) * op(B) + beta * C, all row-major.
-/// Rows of C are processed in blocks of <see cref="Mr"/>; each block keeps a
-/// <see cref="Mr"/> x (2 * SIMD width) tile of C in registers across the whole k loop,
-/// so every B load feeds <see cref="Mr"/> fused multiply-adds.
+/// Single-precision GEMM: C = op(A) * op(B) + beta * C, all row-major. With hardware FMA the product runs in tiles of a
+/// register-blocked kernel chosen by the instruction sets the CPU reports (<see cref="CpuTuning.Kernel"/>: AVX-512, AVX2,
+/// NEON); otherwise rows of C are processed in blocks of <see cref="Mr"/>, each keeping a <see cref="Mr"/> x (2 * SIMD
+/// width) tile of C in registers across the whole k loop. Tile sizes, column blocks and the parallel cut-over come from
+/// <see cref="CpuTuning"/> (the machine's caches, vector width and threads, or measured). Every path computes each element
+/// as one FMA chain over k from zero, then + beta · C, so the choice of path and tiling never changes a result; the two
+/// exceptions (the few-row transposed-B path sums in vector lanes; the column-split path adds beta · C without FMA) are
+/// selected by the CPU's numerical contract (<see cref="CpuTuning.TransposedInPlace"/>, <see cref="CpuTuning.ColumnSplitRows"/>),
+/// the same on every machine.
 /// </summary>
 internal static class CpuMatMul
 {
+    // Rows of the portable kernel's register block: 4 rows × 2 vectors of C (8 registers) plus 2 B vectors and a
+    // broadcast fit the 16 vector registers every SIMD instruction set has (SSE, AVX2; NEON has 32). A fact of the
+    // instruction sets, not of one processor; the wider blocks of 32-register sets are the tiled kernels.
     private const int Mr = 4;
-
-    /// <summary>m * n * k above which row blocks run in parallel.</summary>
-    private const long ParallelWork = 1L << 17;
 
     public static void Multiply(float[] a, float[] b, float[] c, int m, int n, int k, bool transA, bool transB, float beta) =>
         Multiply(a, 0, b, 0, c, 0, m, n, k, transA, transB, beta);
 
     /// <summary>Multiplies the matrices starting at the given element offsets of each array.</summary>
-    public static void Multiply(float[] a, int aOffset, float[] b, int bOffset, float[] c, int cOffset, int m, int n, int k, bool transA, bool transB, float beta)
+    public static void Multiply(float[] a, int aOffset, float[] b, int bOffset, float[] c, int cOffset, int m, int n, int k, bool transA, bool transB, float beta) =>
+        Multiply(a, aOffset, b, bOffset, c, cOffset, m, n, k, transA, transB, beta, CpuTuning.ProductCutover((long)m * n * k), ComputeResources.ParallelOptions);
+
+    /// <summary>
+    /// The product with an explicit parallel cut-over in m·n·k (<paramref name="parallelWork"/>) and thread options: what
+    /// <see cref="CpuTuning"/> times to measure the cut-over.
+    /// </summary>
+    internal static void Multiply(float[] a, int aOffset, float[] b, int bOffset, float[] c, int cOffset, int m, int n, int k, bool transA, bool transB, float beta,
+        long parallelWork, ParallelOptions options)
     {
-        if (transB && m <= NtRows)
+        bool parallel = options.MaxDegreeOfParallelism > 1 && (long)m * n * k >= parallelWork;
+        if (transB && m <= CpuTuning.TransposedInPlace)
         {
             // Few rows against B stored [n, k] (decoding through a tied head, backward products of one token): every
             // output is a dot product of an A row with a contiguous B row, so B is read once in place, not transposed.
-            FewRowsTransposedB(a, aOffset, b, bOffset, c, cOffset, m, n, k, transA, beta);
+            FewRowsTransposedB(a, aOffset, b, bOffset, c, cOffset, m, n, k, transA, beta, parallel, options);
             return;
         }
 
@@ -42,7 +56,7 @@ internal static class CpuMatMul
         {
             // B is stored [n, k]; transpose it once into [k, n] so the kernel always streams contiguous B rows.
             rented = ArrayPool<float>.Shared.Rent(k * n);
-            Transpose(b, bOffset, rented, n, k);
+            Transpose(b, bOffset, rented, n, k, CpuTuning.TransposeSide);
             b = rented;
             bOffset = 0;
         }
@@ -52,11 +66,16 @@ internal static class CpuMatMul
         nint colStride = transA ? m : 1;
         int blocks = (m + Mr - 1) / Mr;
 
-        if (m <= SmallRows && n >= 2 * SmallColumns && (long)m * n * k >= ParallelWork && ComputeResources.AllowParallel)
+        int columnBlock = CpuTuning.ColumnBlock;
+        bool columnSplit = beta == 0f
+            ? m <= Mr && n >= 2 * columnBlock && parallel                    // same results either way: tuned
+            : m <= CpuTuning.ColumnSplitRows && n >= CpuTuning.ColumnSplitColumns && (long)m * n * k >= CpuTuning.ColumnSplitWork
+              && options.MaxDegreeOfParallelism > 1;                         // beta · C rounds differently there: the contract
+        if (columnSplit)
         {
-            // Few rows (token-by-token decoding): row blocks would leave most threads idle, so split the columns instead
-            // and stream B row by row (contiguous reads; each weight is read once).
-            FewRows(a, aOffset, b, bOffset, c, cOffset, m, n, k, rowStride, colStride, beta);
+            // Few rows (token-by-token decoding): a single row block would leave most threads idle, so split the columns
+            // instead and stream B row by row (contiguous reads; each weight is read once).
+            FewRows(a, aOffset, b, bOffset, c, cOffset, m, n, k, rowStride, colStride, beta, columnBlock, options);
             if (rented is not null)
             {
                 ArrayPool<float>.Shared.Return(rented);
@@ -65,11 +84,13 @@ internal static class CpuMatMul
             return;
         }
 
-        if (Fma.IsSupported && (Vector512.IsHardwareAccelerated || Vector256.IsHardwareAccelerated) && m >= 6)
+        var kernel = CpuTuning.Kernel;
+        if (kernel != TiledKernel.None && m >= CpuTuning.KernelShape(kernel).Rows)
         {
-            Tiled(a, aOffset, b, bOffset, c, cOffset, m, n, k, rowStride, colStride, beta);
+            // At least one register block of the tiled kernel (fewer rows would leave the kernel unused).
+            Tiled(a, aOffset, b, bOffset, c, cOffset, m, n, k, rowStride, colStride, beta, kernel, parallel, options);
         }
-        else if ((long)m * n * k < ParallelWork || blocks == 1 || !ComputeResources.AllowParallel)
+        else if (!parallel || blocks == 1)
         {
             for (int block = 0; block < blocks; block++)
             {
@@ -80,7 +101,7 @@ internal static class CpuMatMul
         {
             float[] bb = b;
             int bo = bOffset;
-            Parallel.For(0, blocks, ComputeResources.ParallelOptions, block => RunBlock(a, aOffset, bb, bo, c, cOffset, block, m, n, k, rowStride, colStride, beta));
+            Parallel.For(0, blocks, options, block => RunBlock(a, aOffset, bb, bo, c, cOffset, block, m, n, k, rowStride, colStride, beta));
         }
 
         if (rented is not null)
@@ -89,13 +110,8 @@ internal static class CpuMatMul
         }
     }
 
-    private const int SmallRows = 4;
-    private const int SmallColumns = 64;
-
-    /// <summary>Rows of op(A) up to which a product with a transposed B reads B in place instead of transposing it.</summary>
-    private const int NtRows = 16;
-
-    private static void FewRowsTransposedB(float[] a, int aOffset, float[] b, int bOffset, float[] c, int cOffset, int m, int n, int k, bool transA, float beta)
+    private static void FewRowsTransposedB(float[] a, int aOffset, float[] b, int bOffset, float[] c, int cOffset, int m, int n, int k, bool transA, float beta,
+        bool parallel, ParallelOptions options)
     {
         // The A rows contiguous ([m, k]); a transposed A ([k, m]) is gathered once (m·k values, small here).
         float[]? rows = null;
@@ -116,11 +132,11 @@ internal static class CpuMatMul
             ao = 0;
         }
 
-        const int Chunk = 64;
+        int Chunk = CpuTuning.ColumnBlock;                                 // columns per work item (each a dot product over k)
         int chunks = (n + Chunk - 1) / Chunk;
-        if ((long)m * n * k >= ParallelWork && chunks > 1 && ComputeResources.AllowParallel)
+        if (parallel && chunks > 1)
         {
-            Parallel.For(0, chunks, ComputeResources.ParallelOptions, index => DotColumns(ar, ao, b, bOffset, c, cOffset, m, n, k, beta, index * Chunk, Math.Min(n, (index + 1) * Chunk)));
+            Parallel.For(0, chunks, options, index => DotColumns(ar, ao, b, bOffset, c, cOffset, m, n, k, beta, index * Chunk, Math.Min(n, (index + 1) * Chunk)));
         }
         else
         {
@@ -171,13 +187,14 @@ internal static class CpuMatMul
         }
     }
 
-    private static void FewRows(float[] a, int aOffset, float[] b, int bOffset, float[] c, int cOffset, int m, int n, int k, nint rowStride, nint colStride, float beta)
+    private static void FewRows(float[] a, int aOffset, float[] b, int bOffset, float[] c, int cOffset, int m, int n, int k, nint rowStride, nint colStride, float beta,
+        int columnBlock, ParallelOptions options)
     {
         int w = Vector<float>.Count;
-        int threads = Math.Max(1, ComputeResources.ParallelOptions.MaxDegreeOfParallelism is > 0 and var max ? max : Environment.ProcessorCount);
-        int chunk = Math.Max(SmallColumns, (n / (2 * threads) + w - 1) / w * w);   // about two chunks per thread, whole vectors
+        int threads = Math.Max(1, options.MaxDegreeOfParallelism is > 0 and var max ? max : Environment.ProcessorCount);
+        int chunk = Math.Max(columnBlock, (n / (2 * threads) + w - 1) / w * w);   // about two chunks per thread, whole vectors
         int chunks = (n + chunk - 1) / chunk;
-        Parallel.For(0, chunks, ComputeResources.ParallelOptions, index =>
+        Parallel.For(0, chunks, options, index =>
         {
             int j0 = index * chunk, width = Math.Min(chunk, n - j0);
             float[] acc = ArrayPool<float>.Shared.Rent(m * width);
@@ -226,19 +243,17 @@ internal static class CpuMatMul
         });
     }
 
-    // x86 with AVX-512 or AVX2: C in tiles of mc rows × nc columns (spread over the threads). A tile packs its A rows
-    // once ([k][mr] per row block) and each nr-column panel of B ([k][nr], contiguous: no cache-set conflicts from
-    // power-of-two row strides), which every row block then reuses from L2. Every element is still one FMA chain over k
-    // from zero, then + beta · C, as in the other paths.
-    private static void Tiled(float[] a, int aOffset, float[] b, int bOffset, float[] c, int cOffset, int m, int n, int k, nint rowStride, nint colStride, float beta)
+    // Hardware FMA (AVX-512, AVX2 or NEON): C in tiles of mc rows × nc columns (spread over the threads). A tile packs its
+    // A rows once ([k][mr] per row block) and each nr-column panel of B ([k][nr], contiguous: no cache-set conflicts from
+    // power-of-two row strides), which every row block then reuses from L2. The grid (CpuTuning.TileGrid) from the L2 size
+    // and the thread count. Every element is still one FMA chain over k from zero, then + beta · C, as in the other paths.
+    private static void Tiled(float[] a, int aOffset, float[] b, int bOffset, float[] c, int cOffset, int m, int n, int k, nint rowStride, nint colStride, float beta,
+        TiledKernel kernel, bool parallel, ParallelOptions options)
     {
-        bool wide = Vector512.IsHardwareAccelerated;
-        int mr = wide ? 8 : 6, nr = wide ? 32 : 16;
-        int mc = Math.Clamp((256 * 1024 / Math.Max(1, k * sizeof(float))) / mr, 1, 16) * mr;   // A tile about 256 KB
+        var (mr, nr) = CpuTuning.KernelShape(kernel);
+        int threads = Math.Max(1, options.MaxDegreeOfParallelism is > 0 and var max ? max : Environment.ProcessorCount);
+        var (mc, nc) = CpuTuning.TileGrid(CpuTuning.Machine, m, n, k, mr, nr, parallel ? threads : 1);
         int mTiles = (m + mc - 1) / mc;
-        int threads = Math.Max(1, ComputeResources.ParallelOptions.MaxDegreeOfParallelism is > 0 and var max ? max : Environment.ProcessorCount);
-        int nSplit = Math.Max(1, (2 * threads + mTiles - 1) / mTiles);
-        int nc = Math.Max(2 * nr, ((n + nSplit - 1) / nSplit + nr - 1) / nr * nr);
         int nTiles = (n + nc - 1) / nc;
         void RunTile(int tile)
         {
@@ -279,13 +294,11 @@ internal static class CpuMatMul
                 {
                     ref float cBlock = ref Unsafe.Add(ref rc, (nint)(i0 + block * mr) * n + j);
                     ref float aBlock = ref Unsafe.Add(ref pa, (nint)block * k * mr);
-                    if (wide)
+                    switch (kernel)
                     {
-                        Kernel8x32(ref aBlock, ref pb, ref cBlock, n, k, beta);
-                    }
-                    else
-                    {
-                        Kernel6x16(ref aBlock, ref pb, ref cBlock, n, k, beta);
+                        case TiledKernel.Avx512: Kernel8x32(ref aBlock, ref pb, ref cBlock, n, k, beta); break;
+                        case TiledKernel.Avx2: Kernel6x16(ref aBlock, ref pb, ref cBlock, n, k, beta); break;
+                        default: Kernel8x8(ref aBlock, ref pb, ref cBlock, n, k, beta); break;
                     }
                 }
 
@@ -308,7 +321,7 @@ internal static class CpuMatMul
         }
 
         int tiles = mTiles * nTiles;
-        if (tiles == 1 || (long)m * n * k < ParallelWork || !ComputeResources.AllowParallel)
+        if (tiles == 1 || !parallel)
         {
             for (int tile = 0; tile < tiles; tile++)
             {
@@ -317,7 +330,7 @@ internal static class CpuMatMul
         }
         else
         {
-            Parallel.For(0, tiles, ComputeResources.ParallelOptions, RunTile);
+            Parallel.For(0, tiles, options, RunTile);
         }
     }
 
@@ -437,6 +450,81 @@ internal static class CpuMatMul
         Store(ref Unsafe.Add(ref row, 8), c51, beta);
     }
 
+    // 8 rows × 8 columns of C in 16 of the 32 NEON registers across the whole k loop (each element: one FMA chain over k);
+    // A packed as [k][8], B as [k][8].
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static void Kernel8x8(ref float a, ref float b, ref float c, int n, int k, float beta)
+    {
+        Vector128<float> c00 = default, c01 = default; Vector128<float> c10 = default, c11 = default; Vector128<float> c20 = default, c21 = default; Vector128<float> c30 = default, c31 = default; Vector128<float> c40 = default, c41 = default; Vector128<float> c50 = default, c51 = default; Vector128<float> c60 = default, c61 = default; Vector128<float> c70 = default, c71 = default;
+        for (int p = 0; p < k; p++)
+        {
+            var b0 = Vector128.LoadUnsafe(ref b);
+            var b1 = Vector128.LoadUnsafe(ref b, 4);
+            var x = Vector128.Create(Unsafe.Add(ref a, 0));
+            c00 = Vector128.FusedMultiplyAdd(x, b0, c00);
+            c01 = Vector128.FusedMultiplyAdd(x, b1, c01);
+            x = Vector128.Create(Unsafe.Add(ref a, 1));
+            c10 = Vector128.FusedMultiplyAdd(x, b0, c10);
+            c11 = Vector128.FusedMultiplyAdd(x, b1, c11);
+            x = Vector128.Create(Unsafe.Add(ref a, 2));
+            c20 = Vector128.FusedMultiplyAdd(x, b0, c20);
+            c21 = Vector128.FusedMultiplyAdd(x, b1, c21);
+            x = Vector128.Create(Unsafe.Add(ref a, 3));
+            c30 = Vector128.FusedMultiplyAdd(x, b0, c30);
+            c31 = Vector128.FusedMultiplyAdd(x, b1, c31);
+            x = Vector128.Create(Unsafe.Add(ref a, 4));
+            c40 = Vector128.FusedMultiplyAdd(x, b0, c40);
+            c41 = Vector128.FusedMultiplyAdd(x, b1, c41);
+            x = Vector128.Create(Unsafe.Add(ref a, 5));
+            c50 = Vector128.FusedMultiplyAdd(x, b0, c50);
+            c51 = Vector128.FusedMultiplyAdd(x, b1, c51);
+            x = Vector128.Create(Unsafe.Add(ref a, 6));
+            c60 = Vector128.FusedMultiplyAdd(x, b0, c60);
+            c61 = Vector128.FusedMultiplyAdd(x, b1, c61);
+            x = Vector128.Create(Unsafe.Add(ref a, 7));
+            c70 = Vector128.FusedMultiplyAdd(x, b0, c70);
+            c71 = Vector128.FusedMultiplyAdd(x, b1, c71);
+            a = ref Unsafe.Add(ref a, 8);
+            b = ref Unsafe.Add(ref b, 8);
+        }
+
+        ref float row = ref c;
+        Store(ref row, c00, beta);
+        Store(ref Unsafe.Add(ref row, 4), c01, beta);
+        row = ref Unsafe.Add(ref row, n);
+        Store(ref row, c10, beta);
+        Store(ref Unsafe.Add(ref row, 4), c11, beta);
+        row = ref Unsafe.Add(ref row, n);
+        Store(ref row, c20, beta);
+        Store(ref Unsafe.Add(ref row, 4), c21, beta);
+        row = ref Unsafe.Add(ref row, n);
+        Store(ref row, c30, beta);
+        Store(ref Unsafe.Add(ref row, 4), c31, beta);
+        row = ref Unsafe.Add(ref row, n);
+        Store(ref row, c40, beta);
+        Store(ref Unsafe.Add(ref row, 4), c41, beta);
+        row = ref Unsafe.Add(ref row, n);
+        Store(ref row, c50, beta);
+        Store(ref Unsafe.Add(ref row, 4), c51, beta);
+        row = ref Unsafe.Add(ref row, n);
+        Store(ref row, c60, beta);
+        Store(ref Unsafe.Add(ref row, 4), c61, beta);
+        row = ref Unsafe.Add(ref row, n);
+        Store(ref row, c70, beta);
+        Store(ref Unsafe.Add(ref row, 4), c71, beta);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void Store(ref float dst, Vector128<float> value, float beta)
+    {
+        if (beta != 0f)
+        {
+            value = Vector128.FusedMultiplyAdd(Vector128.Create(beta), Vector128.LoadUnsafe(ref dst), value);
+        }
+
+        value.StoreUnsafe(ref dst);
+    }
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void Store(ref float dst, Vector512<float> value, float beta)
     {
@@ -459,9 +547,10 @@ internal static class CpuMatMul
         value.StoreUnsafe(ref dst);
     }
 
-    private static void Transpose(float[] src, int srcOffset, float[] dst, int rows, int cols)
+    // Square tiles of `tile` (CpuTuning.TransposeTile: source and destination tiles within half the L1).
+    private static void Transpose(float[] src, int srcOffset, float[] dst, int rows, int cols, int tile)
     {
-        const int Tile = 32;
+        int Tile = tile;
         for (int r0 = 0; r0 < rows; r0 += Tile)
         {
             int r1 = Math.Min(r0 + Tile, rows);

@@ -79,6 +79,32 @@ internal static partial class Tests
             }
         }
 
+        Console.WriteLine(Idrak.Backends.Cpu.CpuTuning.Describe());
+        using (Autograd.NoGrad())
+        {
+            foreach (var (m, n, k, transB) in new[]
+            {
+                (1, 4096, 1024, false), (4, 4096, 1024, false), (5, 4096, 1024, false), (6, 4096, 1024, false), (8, 4096, 1024, false),
+                (16, 4096, 1024, false), (24, 24, 24, false), (32, 64, 64, false), (48, 48, 48, false), (64, 64, 64, false),
+                (128, 128, 128, false), (512, 2048, 128, false), (512, 512, 512, false), (1024, 1024, 1024, false),
+                (1, 32000, 1024, true), (16, 4096, 1024, true), (64, 4096, 1024, true),
+            })
+            {
+                using var a = Tensor.From(Values(m * k), [m, k], device);
+                using var b = transB ? Tensor.From(Values(k * n), [n, k], device) : Tensor.From(Values(k * n), [k, n], device);
+                int repeats = (int)Math.Clamp(2e9 / ((double)m * n * k), 5, 20000);
+                Console.WriteLine($"{$"float product {m} x {n} x {k}{(transB ? ", B transposed" : "")}",-44} {Time(() => a.MatMul(b, transposeB: transB), repeats),12}");
+            }
+
+            foreach (int n in new[] { 1 << 12, 1 << 14, 1 << 15, 1 << 16, 1 << 17, 1 << 18, 1 << 20, 1 << 22 })
+            {
+                using var a = Tensor.From(Values(n), [n], device);
+                using var b = Tensor.From(Values(n), [n], device);
+                int repeats = Math.Clamp((1 << 26) / n, 10, 20000);
+                Console.WriteLine($"{$"add + sum of {n} values",-44} {Time(() => (a + b).Sum(), repeats),12}");
+            }
+        }
+
         return 0;
     }
 }

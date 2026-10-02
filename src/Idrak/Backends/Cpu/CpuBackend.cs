@@ -21,8 +21,8 @@ internal sealed partial class CpuBackend : Backend
 {
     public static readonly CpuBackend Instance = new();
 
-    /// <summary>Element count above which element-wise kernels split work across cores.</summary>
-    internal const int ParallelThreshold = 1 << 16;
+    /// <summary>Element-wise work (≈ element operations) from which kernels split across cores: measured, see <see cref="CpuTuning.ParallelElements"/>.</summary>
+    internal static int ParallelThreshold => CpuTuning.ParallelElements;
 
     private readonly Dictionary<int, Stack<float[]>> _pool = [];
     private readonly MemoryAccountant _memory = new(() => ComputeResources.CpuMemoryLimit, "the CPU");
@@ -31,13 +31,15 @@ internal sealed partial class CpuBackend : Backend
     {
     }
 
-    // The CPU kernels take any row count and head size; the limits match the CUDA backend's so that both devices choose
-    // the same attention and product paths (tests compare their results).
+    // The CPU's own limits, all from its numerical contract (CpuTuning): its packed products stream the weights for up to
+    // CpuTuning.FewRows rows before expanding them once for the register-tiled product (the split decides the int4
+    // rounding), and its attention kernels (which take any head size) run up to the head sizes from which the layers have
+    // always used the [t, t] weights instead (the split decides the summation order, so the reference keeps it).
     public override BackendCapabilities Capabilities { get; } = new()
     {
-        FewRows = Cuda.PtxKernels.GemvRows,
-        DecodeAttentionHeadDim = Cuda.PtxKernels.DecodeMaxDim,
-        TiledAttentionHeadDim = Cuda.PtxKernels.FlashMaxDim,
+        FewRows = CpuTuning.FewRows,
+        DecodeAttentionHeadDim = CpuTuning.DecodeAttentionHeads,
+        TiledAttentionHeadDim = CpuTuning.TiledAttentionHeads,
         MatrixUnits = false,
         MatrixUnitAttentionHeadDim = static _ => false,
         FusedKernels = false,
@@ -195,20 +197,35 @@ internal sealed partial class CpuBackend : Backend
     {
         float[] xv = D(x);
         double total;
-        if (n < ParallelThreshold || !ComputeResources.AllowParallel)
+        if (n < CpuTuning.ReductionElements || !ComputeResources.AllowParallel)
         {
             total = SumSpan(xv.AsSpan(0, n));
         }
         else
         {
-            int chunks = ChunkCount(n);
+            // Chunks from the numerical contract (never a timing), so the sum's order is the same on every run as before;
+            // they run on the threads once the measured cut-over says so.
+            int chunks = ReductionChunkCount(n);
             int size = ChunkSize(n, chunks);
             var partials = new double[chunks];
-            Parallel.For(0, chunks, ComputeResources.ParallelOptions, c =>
+            void Chunk(int c)
             {
                 int start = c * size;
-                partials[c] = SumSpan(xv.AsSpan(start, Math.Min(size, n - start)));
-            });
+                partials[c] = SumSpan(xv.AsSpan(start, Math.Max(0, Math.Min(size, n - start))));
+            }
+
+            if (CpuTuning.SplitElements(n))
+            {
+                Parallel.For(0, chunks, ComputeResources.ParallelOptions, Chunk);
+            }
+            else
+            {
+                for (int c = 0; c < chunks; c++)
+                {
+                    Chunk(c);
+                }
+            }
+
             total = partials.Sum();
         }
 
@@ -309,19 +326,32 @@ internal sealed partial class CpuBackend : Backend
     // Σx² of the first n values in double precision: SIMD per chunk, chunks on all cores for large inputs.
     private static double SumSquaresParallel(float[] x, int n)
     {
-        if (n < ParallelThreshold || !ComputeResources.AllowParallel)
+        if (n < CpuTuning.ReductionElements || !ComputeResources.AllowParallel)
         {
             return SumSquaresSpan(x.AsSpan(0, n));
         }
 
-        int chunks = ChunkCount(n);
+        // Chunks from the numerical contract, threads from the measured cut-over (as in Sum).
+        int chunks = ReductionChunkCount(n);
         int size = ChunkSize(n, chunks);
         var partials = new double[chunks];
-        Parallel.For(0, chunks, ComputeResources.ParallelOptions, c =>
+        void Chunk(int c)
         {
             int start = c * size;
             partials[c] = SumSquaresSpan(x.AsSpan(start, Math.Max(0, Math.Min(size, n - start))));
-        });
+        }
+
+        if (CpuTuning.SplitElements(n))
+        {
+            Parallel.For(0, chunks, ComputeResources.ParallelOptions, Chunk);
+        }
+        else
+        {
+            for (int c = 0; c < chunks; c++)
+            {
+                Chunk(c);
+            }
+        }
 
         double total = 0;
         foreach (double partial in partials)
@@ -449,7 +479,11 @@ internal sealed partial class CpuBackend : Backend
         return total;
     }
 
-    private static int ChunkCount(int n) => Math.Max(1, Math.Min(ComputeResources.MaxCpuThreads * 2, n / (ParallelThreshold / 4)));
+    // About two chunks per thread, each at least a quarter of the cut-over (a chunk smaller than that costs more to start
+    // than to run). Reductions take the contract's value (their chunks set the summation order), the rest the measured one.
+    private static int ChunkCount(int n, int cutover) => Math.Max(1, Math.Min(ComputeResources.MaxCpuThreads * 2, n / Math.Max(1, cutover / 4)));
+
+    private static int ReductionChunkCount(int n) => ChunkCount(n, CpuTuning.ReductionElements);
 
     private static int ChunkSize(int n, int chunks)
     {
@@ -462,13 +496,13 @@ internal sealed partial class CpuBackend : Backend
     internal static void Run<TKernel>(TKernel kernel, int n)
         where TKernel : struct, IRangeKernel
     {
-        if (n < ParallelThreshold || !ComputeResources.AllowParallel)
+        if (!CpuTuning.SplitElements(n))
         {
             kernel.Execute(0, n);
             return;
         }
 
-        int chunks = ChunkCount(n);
+        int chunks = ChunkCount(n, ParallelThreshold);
         int size = ChunkSize(n, chunks);
         Parallel.For(0, chunks, ComputeResources.ParallelOptions, c =>
         {
@@ -823,7 +857,7 @@ internal sealed partial class CpuBackend : Backend
         }
     }
 
-    private readonly struct AxpyKernel(float[] x, float[] y, float alpha) : IRangeKernel
+    internal readonly struct AxpyKernel(float[] x, float[] y, float alpha) : IRangeKernel
     {
         public void Execute(int start, int end)
         {
