@@ -1118,7 +1118,10 @@ Android phone through Termux and Mesa Turnip: [installation/](installation/READM
 
 The `architecture` branch adds backends beyond CUDA: a Vulkan backend (SPIR-V kernels generated in C#, for Intel,
 AMD and any Vulkan GPU) and the minimum backend every new device starts from (see
-[plans/7-backends.md](plans/7-backends.md)). `-- --list-devices` shows the devices a machine has and how to test one.
+[plans/7-backends.md](plans/7-backends.md)). A HIP backend for AMD GPUs through ROCm (Linux) or the HIP SDK (Windows)
+has been added as a first slice (`hip:N`: memory, copies and a few hipRTC kernels on the device, the rest through
+host fallbacks); it is **untested on real hardware** and not in the table below (see
+[plans/8-hip.md](plans/8-hip.md) and [installation/hip.md](installation/hip.md)). `-- --list-devices` shows the devices a machine has and how to test one.
 The devices tested, one row each (decoding speed: the `--bench-vulkan` decoder of dim 1024, 8 layers, int8 weights,
 with fused kernels and graph replay; chat: Qwen3-0.6B with int8 weights). Linux GPUs were tested under WSL2 only;
 native Linux GPU drivers have not run yet:
