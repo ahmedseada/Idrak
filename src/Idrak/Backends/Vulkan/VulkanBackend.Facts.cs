@@ -104,7 +104,7 @@ internal sealed unsafe partial class VulkanBackend
     /// <summary>The device facts and the device's own one-line summary (for benchmark headers).</summary>
     internal string Describe() =>
         $"{Name}: storages {DescribeStorage()} on a {StorageHeapBytes >> 20:N0} MiB heap{(ReadsThroughStaging ? ", reads through staging" : "")}, " +
-        $"{(PushDescriptors ? "pushed descriptors" : "descriptor sets")} ({PushDescriptorsChoice}), pages of {PageBytes >> 20} MiB; {Facts.Describe()}";
+        $"{(PushDescriptors ? "pushed descriptors" : "descriptor sets")} ({PushDescriptorsChoice}), pages of {PageBytes >> 20} MiB; {Facts.Describe()}; {DescribeMatrixUnits()}";
 
     // The device's facts and its driver's name, from one vkGetPhysicalDeviceProperties2 chain (every structure in it
     // valid for the device's and the instance's Vulkan versions and its extensions).

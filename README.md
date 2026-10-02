@@ -1258,6 +1258,12 @@ subgroup size, workgroup and shared-memory limits, memory heaps) or are measured
 card's name. Until then `Device.Default` picks a Vulkan GPU only with `IDRAK_VULKAN_DEFAULT=1`; tests run on every
 Vulkan GPU found.
 
+Matrix units on Vulkan: where a device reports `VK_KHR_cooperative_matrix` with a float16 × float16 → float32 shape,
+the float32 product and the int8, int4 and bfloat16 prompt products gain a cooperative-matrix kernel, used only where
+it is measured faster on that device. Its operands are split into two float16 halves with per-row and per-column
+power-of-two scaling, so results stay within float32 error of the CPU (no `MixedPrecision` needed); `IDRAK_VULKAN_MATRIX=0`
+turns it off. The "not used yet" rows above predate it and have not been run on real matrix units yet.
+
 Benchmarks on the RTX 3060 Laptop GPU (`--bench-gemv`, Qwen3-0.6B shapes, int8 weights): decoding products of one row
 run at 75–125 GB/s (q/k/v 34 µs, gate/up 84 µs, the 151,936-column head 1.9 ms); decoding attention over 4,000 cached
 positions 360 µs; a 1 KB upload behind queued work holds the host 5 µs through the staging ring against 521 µs

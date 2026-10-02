@@ -38,7 +38,7 @@ What the `architecture` branch cannot do today, with an example of each. "High" 
 |---|---|
 | Not the default device | on a machine whose only GPU is integrated, `Device.Default` is the CPU unless `IDRAK_VULKAN_DEFAULT=1` |
 | No recorded steps (CUDA graphs have no Vulkan counterpart yet) | `new GenerationOptions { UseGraph = true }` on `vulkan:0` runs each step's dispatches anew |
-| No matrix units yet (XMX, AMD WMMA, tensor cores through `VK_KHR_cooperative_matrix`) | on an Arc GPU a matrix product does not use XMX |
+| Matrix units only through `VK_KHR_cooperative_matrix` float16 shapes (float32 and prompt products, measured per shape), not yet run on real matrix units; no bfloat16 or int8 matrix types, no attention on them | a device without the extension (or with only integer shapes) runs the float32 kernels |
 | Training operations on the host fallback (convolutions, group norms, 8-bit AdamW, training attention's backward) | training a CNN on `vulkan:1` works but each convolution round-trips to the CPU |
 | Tensors larger than the device's storage range | on a GPU reporting a 1 GiB `maxStorageBufferRange`, a 151,936 × 4096 float weight runs on the host fallback |
 | No fused decoder kernels (packed q/k/v, gate/up, add-and-normalize in one dispatch) | about 195 dispatches per decoded token on an 8-layer int8 model, fewer on CUDA |

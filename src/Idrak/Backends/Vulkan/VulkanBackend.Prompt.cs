@@ -7,18 +7,19 @@ namespace Idrak.Backends.Vulkan;
 // log-sum-exp for training) and the products through packed weights for many rows (int8_gemm, int4_gemm, bf16_gemm).
 // Which kernel serves a shape is measured on the device, as the other choices (VulkanBackend.KernelTuning.cs): the tiled
 // kernels at each candidate width against what ran before them (the decoding attention; the few-rows packed kernels,
-// or expanding the weights to float32 for the float product), so a device where the older path is faster keeps it.
+// or expanding the weights to float32 for the float product), and the cooperative-matrix kernel where the device has
+// cooperative matrices (VulkanBackend.Matrix.cs), so a device where the older path is faster keeps it.
 internal sealed partial class VulkanBackend
 {
     /// <summary>Tests and benchmarks only: the attention for many rows, tiled (true) or the decoding kernel (false), instead of the measured choice.</summary>
     internal static bool? TiledAttentionKernel { get; set; }
 
-    /// <summary>Tests and benchmarks only: the prompt-sized packed product (0 the few-rows kernels, 1 expanding the weights, 2 the tiled kernel) instead of the measured choice.</summary>
+    /// <summary>Tests and benchmarks only: the prompt-sized packed product (0 the few-rows kernels, 1 expanding the weights, 2 the tiled kernel, 3 cooperative matrices) instead of the measured choice.</summary>
     internal static int? PackedPromptKernel { get; set; }
 
     // The choices' own part (WithWidth adds the width).
     private const int TiledDecode = 1, TiledKernel = 2;
-    private const int PromptFewRows = 1, PromptExpand = 2, PromptTiled = 3;
+    private const int PromptFewRows = 1, PromptExpand = 2, PromptTiled = 3, PromptCoop = 4;
 
     // ------------------------------------------------------------------ attention over many rows
 
@@ -173,7 +174,7 @@ internal sealed partial class VulkanBackend
             : Array.IndexOf(candidates, WithWidth(Width, PromptTiled)) >= 0 ? WithWidth(Width, PromptTiled) : candidates[0];
         if (PackedPromptKernel is int forced)
         {
-            int wanted = WithWidth(Width, forced switch { 0 => PromptFewRows, 1 => PromptExpand, _ => PromptTiled });
+            int wanted = WithWidth(Width, forced switch { 0 => PromptFewRows, 1 => PromptExpand, 2 => PromptTiled, _ => PromptCoop });
             return Array.IndexOf(candidates, wanted) >= 0 ? wanted : fallback;
         }
 
@@ -194,7 +195,7 @@ internal sealed partial class VulkanBackend
         {
             foreach (int c in candidates)
             {
-                if ((c & Rest) != PromptTiled)
+                if ((c & Rest) is not (PromptTiled or PromptCoop))
                 {
                     RunPrompt(c, format, x, weights, scales, scratch[0], m, n, k);
                 }
@@ -207,7 +208,7 @@ internal sealed partial class VulkanBackend
 
     // Candidates of a prompt-sized packed product that can run here: the tiled kernel at each candidate width whose
     // blocks the device's workgroup counts take, the few-rows kernels when their row blocks fit, expanding the weights
-    // when a float copy fits one storage.
+    // when a float copy fits one storage, the cooperative-matrix kernel where the device has one and its blocks fit.
     private int[] PromptCandidates(VulkanKernels.PackedFormat format, int m, int n, int k)
     {
         var candidates = new List<int>();
@@ -228,6 +229,12 @@ internal sealed partial class VulkanBackend
         if ((long)k * n <= int.MaxValue && BlockBytes(k * n) <= MaxStorageBytes)
         {
             candidates.Add(WithWidth(Width, PromptExpand));
+        }
+
+        const int Block = VulkanKernels.CoopBlock;
+        if ((n + Block - 1) / Block <= Limits.MaxGroupsX && (m + Block - 1) / Block <= Limits.MaxGroupsY && CoopKernel(format) is not null)
+        {
+            candidates.Add(WithWidth(Width, PromptCoop));
         }
 
         return [.. candidates];
@@ -262,6 +269,22 @@ internal sealed partial class VulkanBackend
                 finally
                 {
                     w.Release();                                               // reused in queue order
+                }
+
+                return true;
+            case PromptCoop:
+                const int Block = VulkanKernels.CoopBlock;
+                Span<byte> pushed = stackalloc byte[12];
+                var coopPush = new Push(pushed).I(m).I(n).I(k).Bytes;
+                var coop = CoopKernel(format)!;
+                uint blocksX = (uint)((n + Block - 1) / Block), blocksY = (uint)((m + Block - 1) / Block);
+                if (scales is null)
+                {
+                    DispatchKernel(coop, blocksX, blocksY, 1, [x, weights, y], coopPush);
+                }
+                else
+                {
+                    DispatchKernel(coop, blocksX, blocksY, 1, [x, weights, scales, y], coopPush);
                 }
 
                 return true;
