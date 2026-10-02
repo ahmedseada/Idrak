@@ -18,6 +18,7 @@ internal static partial class Tests
         ("plugins: the built-in checkpoint formats, GGUF types and architectures, model sources and tokenizer components are in their registries", BuiltInModelPlugins),
         ("plugins: a registered checkpoint format (weights in a JSON file) loads a model whose loss matches the safetensors copy", CustomCheckpointFormat),
         ("plugins: a registered GGUF type dequantizes (whole tensors and blocks), and a registered GGUF architecture name loads like llama", CustomGgufTypeAndArchitecture),
+        ("plugins: GGUF pre-tokenizers by name: the built-ins (llama3, qwen2, tekken, gpt2 families) are registered; an unregistered name uses Llama 3's rule with a note; a registered name gives its pattern and the original tokens", CustomGgufPreTokenizer),
         ("plugins: a registered model source ('test:' names → a local folder) is asked before the built-ins, without the network", CustomModelSource),
         ("plugins: registered normalizer, pre-tokenizer and decoder types used from tokenizer JSON; a registered built-in name replaces it until removed", CustomTokenizerComponents),
     ];
@@ -446,6 +447,94 @@ internal static partial class Tests
         {
             Check(TokenizerComponents.UnregisterNormalizer("TestNoDashes") && TokenizerComponents.UnregisterPreTokenizer("TestCharacters")
                   && TokenizerComponents.UnregisterDecoder("TestBrackets") && !TokenizerComponents.NormalizerTypes.Contains("TestNoDashes"), "components unregistered");
+        }
+    }
+
+    // A GGUF file's tokenizer.ggml.pre set to another name (the rest copied).
+    private static void SetGgufPreTokenizer(string source, string target, string pre)
+    {
+        using var file = GgufFile.Open(source);
+        var metadata = file.Metadata.Where(p => p.Key != "general.alignment")
+            .Select(p => KeyValuePair.Create(p.Key, p.Key == "tokenizer.ggml.pre" ? pre : p.Value));
+        var tensors = new List<(string, int, long[], byte[])>();
+        using var stream = File.OpenRead(source);
+        foreach (var info in file.Tensors.Values)
+        {
+            var (values, bytes) = GgufFile.BlockSize(info.Type);
+            var data = new byte[info.Count / values * bytes];
+            stream.Position = info.Offset;
+            stream.ReadExactly(data);
+            tensors.Add((info.Name, info.Type, info.Dimensions, data));
+        }
+
+        WriteGguf(target, metadata, tensors);
+    }
+
+    private static void CustomGgufPreTokenizer(Device device)
+    {
+        _ = device;
+        foreach (string name in new[] { "llama3", "llama-bpe", "qwen2", "tekken", "gpt2", "default" })
+        {
+            Check(GgufPreTokenizers.TryGet(name, out _), $"built-in pre-tokenizer {name}");
+        }
+
+        bool known = GgufPreTokenizers.TryGet("gpt2", out string? gpt2);
+        Check(known && gpt2 is null, "gpt2: GPT-2's own rule (no split pattern)");
+        GgufPreTokenizers.TryGet("qwen2", out string? qwen2);
+        GgufPreTokenizers.TryGet("llama3", out string? llama3);
+        Check(qwen2 is not null && llama3 is not null && qwen2 != llama3, "qwen2 and llama3 split differently");
+        try
+        {
+            GgufPreTokenizers.Register("broken", "(unclosed");
+            Check(false, "a malformed pattern should fail when registered");
+        }
+        catch (ArgumentException)
+        {
+        }
+
+        string folder = TempFolder();
+        try
+        {
+            static string? SplitPattern(string prepared) =>
+                (string?)((JsonNode.Parse(File.ReadAllText(Path.Combine(prepared, "tokenizer.json")))?["pre_tokenizer"]?["pretokenizers"] as JsonArray)?
+                    .FirstOrDefault(n => (string?)n?["type"] == "Split")?["pattern"]?["Regex"]);
+
+            string source = TestData("gguf/tiny-qwen3-q8.gguf");
+            string original = GgufModel.Prepare(source, Path.Combine(folder, "original"));
+            Check(SplitPattern(original) == qwen2, "the qwen2 file splits with qwen2's pattern");
+            static IReadOnlyList<string> NotesOf(string prepared)
+            {
+                using var model = PretrainedModel.Load(prepared, new PretrainedOptions { Device = Device.Cpu });
+                return model.Notes;
+            }
+
+            Check(!NotesOf(original).Any(n => n.Contains("pre-tokenizer", StringComparison.Ordinal)), "no note for a registered name");
+
+            string renamed = Path.Combine(folder, "testsplit.gguf");
+            SetGgufPreTokenizer(source, renamed, "testsplit");
+            string unknown = GgufModel.Prepare(renamed, Path.Combine(folder, "unknown"));
+            Check(SplitPattern(unknown) == llama3, "an unregistered name splits with Llama 3's pattern");
+            Check(NotesOf(unknown).Any(n => n.Contains("'testsplit' is not registered", StringComparison.Ordinal) && n.Contains("GgufPreTokenizers.Register", StringComparison.Ordinal)),
+                $"and the model notes it ({string.Join(" | ", NotesOf(unknown))})");
+
+            GgufPreTokenizers.Register("testsplit", qwen2);
+            try
+            {
+                string registered = GgufModel.Prepare(renamed, Path.Combine(folder, "registered"));
+                Check(SplitPattern(registered) == qwen2, "a registered name splits with its pattern");
+                using var a = PretrainedModel.Load(original, new PretrainedOptions { Device = Device.Cpu });
+                using var b = PretrainedModel.Load(registered, new PretrainedOptions { Device = Device.Cpu });
+                const string text = "Hello world, 12345 tokens! Qwen's rules: digits one by one.";
+                Check(a.Tokenizer!.Encode(text).SequenceEqual(b.Tokenizer!.Encode(text)), "the registered name gives the original tokens");
+            }
+            finally
+            {
+                Check(GgufPreTokenizers.Unregister("testsplit"), "pre-tokenizer unregistered");
+            }
+        }
+        finally
+        {
+            Directory.Delete(folder, true);
         }
     }
 }

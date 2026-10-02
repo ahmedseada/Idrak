@@ -391,7 +391,7 @@ public abstract class Module : IDisposable
             }
 
             var type = magic is FileMagic3 or FileMagic4 or FileMagic5 ? (WeightFormat)reader.ReadByte() : WeightFormat.Float32;
-            var bytes = new byte[p.Size * (type == WeightFormat.Float32 ? 4 : 2)];
+            var bytes = new byte[p.Size * WeightCodec.For(type).BytesPerValue];
             reader.BaseStream.ReadExactly(bytes);
             if (type == WeightFormat.Float32 && BitConverter.IsLittleEndian)
             {
@@ -404,45 +404,19 @@ public abstract class Module : IDisposable
         }
     }
 
-    // Little-endian bytes of the values in `format` (bfloat16 rounds to nearest even; NaN stays NaN).
+    // Little-endian bytes of the values in `format` (see WeightCodec).
     private static byte[] Encode(float[] values, WeightFormat format)
     {
-        var bytes = new byte[values.Length * (format == WeightFormat.Float32 ? 4 : 2)];
-        for (int i = 0; i < values.Length; i++)
-        {
-            switch (format)
-            {
-                case WeightFormat.Float32:
-                    BinaryPrimitives.WriteSingleLittleEndian(bytes.AsSpan(i * 4), values[i]);
-                    break;
-                case WeightFormat.Float16:
-                    BinaryPrimitives.WriteHalfLittleEndian(bytes.AsSpan(i * 2), (Half)values[i]);
-                    break;
-                default:
-                    uint bits = BitConverter.SingleToUInt32Bits(values[i]);
-                    ushort b16 = float.IsNaN(values[i]) ? (ushort)0x7FC0 : (ushort)((bits + 0x7FFFu + ((bits >> 16) & 1u)) >> 16);
-                    BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(i * 2), b16);
-                    break;
-            }
-        }
-
+        var codec = WeightCodec.For(format);
+        var bytes = new byte[values.Length * codec.BytesPerValue];
+        codec.Encode(values, bytes);
         return bytes;
     }
 
     private static float[] Decode(byte[] bytes, int count, WeightFormat format)
     {
         var values = new float[count];
-        for (int i = 0; i < count; i++)
-        {
-            values[i] = format switch
-            {
-                WeightFormat.Float32 => BinaryPrimitives.ReadSingleLittleEndian(bytes.AsSpan(i * 4)),
-                WeightFormat.Float16 => (float)BinaryPrimitives.ReadHalfLittleEndian(bytes.AsSpan(i * 2)),
-                WeightFormat.BFloat16 => BitConverter.UInt32BitsToSingle((uint)BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(i * 2)) << 16),
-                _ => throw new InvalidDataException($"Unknown weight format {(int)format}."),
-            };
-        }
-
+        WeightCodec.For(format).Decode(bytes, values);
         return values;
     }
 

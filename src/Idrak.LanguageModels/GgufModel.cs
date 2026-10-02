@@ -81,6 +81,91 @@ public static class GgufArchitectures
 }
 
 /// <summary>
+/// How <see cref="GgufModel"/> splits text before byte-level BPE, by the file's <c>tokenizer.ggml.pre</c> name: a
+/// regular expression (the Hugging Face "Split" pre-tokenizer, isolated matches), or null for GPT-2's own rule. The
+/// patterns of llama.cpp's llama-vocab.cpp for the llama3, qwen2, tekken and gpt2 families are registered; add others
+/// with <see cref="Register"/>. A name nobody registered uses Llama 3's rule, and the prepared model notes it.
+/// </summary>
+public static class GgufPreTokenizers
+{
+    internal const string Llama3Pattern = @"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+";
+    private const string Qwen2Pattern = @"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+";
+    private const string TekkenPattern = @"[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]+[\p{Ll}\p{Lm}\p{Lo}\p{M}]*|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n/]*|\s*[\r\n]+|\s+(?!\S)|\s+";
+
+    private static readonly Dictionary<string, string?> Registry = Build();
+
+    private static Dictionary<string, string?> Build()
+    {
+        var registry = new Dictionary<string, string?>(StringComparer.Ordinal);
+        foreach (string name in new[] { "llama3", "llama-bpe", "llama-v3", "smaug-bpe", "falcon3", "pixtral" })
+        {
+            registry[name] = Llama3Pattern;
+        }
+
+        foreach (string name in new[] { "qwen2", "qwen35", "deepseek-r1-qwen", "megrez", "hunyuan" })
+        {
+            registry[name] = Qwen2Pattern;
+        }
+
+        registry["tekken"] = TekkenPattern;
+        foreach (string name in new[] { "gpt2", "gpt-2", "default" })
+        {
+            registry[name] = null;                                  // GPT-2's own pattern (ByteLevel with its regex)
+        }
+
+        return registry;
+    }
+
+    /// <summary>
+    /// Registers (or replaces) the split pattern of the pre-tokenizer named <paramref name="name"/> in GGUF files; null
+    /// for GPT-2's own rule.
+    /// </summary>
+    public static void Register(string name, string? pattern)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(name);
+        if (pattern is not null)
+        {
+            _ = new System.Text.RegularExpressions.Regex(pattern);  // a malformed pattern fails here, not at the first encode
+        }
+
+        lock (Registry)
+        {
+            Registry[name] = pattern;
+        }
+    }
+
+    /// <summary>Removes the pre-tokenizer registered as <paramref name="name"/>; false when there is none.</summary>
+    public static bool Unregister(string name)
+    {
+        lock (Registry)
+        {
+            return Registry.Remove(name);
+        }
+    }
+
+    /// <summary>The registered pre-tokenizer names.</summary>
+    public static IReadOnlyCollection<string> Names
+    {
+        get
+        {
+            lock (Registry)
+            {
+                return [.. Registry.Keys];
+            }
+        }
+    }
+
+    /// <summary>The pattern registered as <paramref name="name"/> (null: GPT-2's rule); false when none is registered.</summary>
+    public static bool TryGet(string name, out string? pattern)
+    {
+        lock (Registry)
+        {
+            return Registry.TryGetValue(name, out pattern);
+        }
+    }
+}
+
+/// <summary>
 /// Models from GGUF files (llama.cpp's and Ollama's format). <see cref="Prepare"/> writes a small folder with what the
 /// file's metadata describes, in the Hugging Face layout (config.json, tokenizer.json, tokenizer_config.json with the chat
 /// template, generation_config.json), and <see cref="PretrainedModel.Load"/> reads the weights from the GGUF file itself,
@@ -92,20 +177,6 @@ public static class GgufModel
 {
     private const string Marker = "gguf.json";
     private const int FormatVersion = 1;                            // bump when the prepared files change
-
-    // tokenizer.ggml.pre → the pre-tokenizer's split pattern (llama.cpp's llama-vocab.cpp).
-    private const string Llama3Pattern = @"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+";
-    private const string Qwen2Pattern = @"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+";
-    private const string TekkenPattern = @"[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]+[\p{Ll}\p{Lm}\p{Lo}\p{M}]*|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n/]*|\s*[\r\n]+|\s+(?!\S)|\s+";
-
-    private static string? PreTokenizerPattern(string pre) => pre switch
-    {
-        "llama3" or "llama-bpe" or "llama-v3" or "smaug-bpe" or "falcon3" or "pixtral" => Llama3Pattern,
-        "qwen2" or "qwen35" or "deepseek-r1-qwen" or "megrez" or "hunyuan" => Qwen2Pattern,
-        "tekken" => TekkenPattern,
-        "gpt2" or "gpt-2" or "default" => null,                    // GPT-2's own pattern (ByteLevel with its regex)
-        _ => Llama3Pattern,
-    };
 
     /// <summary>Whether <paramref name="folder"/> was made by <see cref="Prepare"/>.</summary>
     public static bool IsPrepared(string folder) => File.Exists(Path.Combine(folder, Marker));
@@ -290,10 +361,11 @@ public static class GgufModel
         }
 
         string pre = file.Get("tokenizer.ggml.pre", "default");
-        string? pattern = PreTokenizerPattern(pre);
-        if (pattern == Llama3Pattern && pre is not ("llama3" or "llama-bpe" or "llama-v3" or "smaug-bpe" or "falcon3" or "pixtral"))
+        if (!GgufPreTokenizers.TryGet(pre, out string? pattern))
         {
-            notes.Add($"pre-tokenizer '{pre}' is not known; Llama 3's splitting rule is used (tokens may differ slightly from the original).");
+            pattern = GgufPreTokenizers.Llama3Pattern;
+            notes.Add($"pre-tokenizer '{pre}' is not registered; Llama 3's splitting rule is used (tokens may differ slightly from the original; " +
+                "register the family's pattern with GgufPreTokenizers.Register).");
         }
 
         var pretokenizers = new JsonArray();

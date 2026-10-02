@@ -152,12 +152,19 @@ public abstract class PackedWeight : IDisposable
     internal virtual bool ActivationInDownProjection => false;
 
     /// <summary>Packs [rows, columns] float values in <paramref name="format"/> on <paramref name="device"/>.</summary>
-    public static PackedWeight FromValues(PackedFormat format, ReadOnlySpan<float> values, int rows, int columns, Device device) => format switch
-    {
-        PackedFormat.Int8 => Int8Weight.Quantize(values, rows, columns, device),
-        PackedFormat.Int4 => Int4Weight.Quantize(values, rows, columns, device),
-        _ => BFloat16Weight.FromValues(values, rows, columns, device),
-    };
+    public static PackedWeight FromValues(PackedFormat format, ReadOnlySpan<float> values, int rows, int columns, Device device) =>
+        (BuiltIn.TryGetValue(format, out var builtIn) ? builtIn.Factory
+            : throw new ArgumentOutOfRangeException(nameof(format), format, "Not a built-in packed format."))(values, rows, columns, device);
+
+    // The built-in formats, by enum and name: the enum overload above always makes these (a registered name may replace
+    // its entry in the registry below, not here), and the registry starts from them.
+    private static readonly IReadOnlyDictionary<PackedFormat, (string Name, PackedWeightFactory Factory)> BuiltIn =
+        new Dictionary<PackedFormat, (string, PackedWeightFactory)>
+        {
+            [PackedFormat.Int8] = ("int8", Int8Weight.Quantize),
+            [PackedFormat.Int4] = ("int4", Int4Weight.Quantize),
+            [PackedFormat.BFloat16] = ("bfloat16", BFloat16Weight.FromValues),
+        };
 
     /// <summary>
     /// Packs [rows, columns] float values in the format registered as <paramref name="format"/> (see
@@ -184,12 +191,8 @@ public abstract class PackedWeight : IDisposable
         return weight;
     }
 
-    private static readonly Dictionary<string, PackedWeightFactory> Registry = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ["int8"] = Int8Weight.Quantize,
-        ["int4"] = Int4Weight.Quantize,
-        ["bfloat16"] = BFloat16Weight.FromValues,
-    };
+    private static readonly Dictionary<string, PackedWeightFactory> Registry =
+        BuiltIn.Values.ToDictionary(f => f.Name, f => f.Factory, StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Registers (or replaces) how to pack weights in the format <paramref name="format"/> (names ignore case), so options
