@@ -579,9 +579,15 @@ internal sealed unsafe partial class VulkanBackend : Backend
         VulkanBlock? block = null;
         lock (_pool)
         {
-            if (_pool.TryGetValue(length, out var bucket) && bucket.Count > 0)
+            // While this thread records a graph, blocks the recording freed come first (VulkanBackend.Graphs.cs).
+            block = _capture is not null ? TakeCaptured(length) : null;
+            if (block is null && _pool.TryGetValue(length, out var bucket) && bucket.Count > 0)
             {
                 block = bucket.Pop();
+            }
+
+            if (block is not null)
+            {
                 _memory.Reused(bytes);
             }
         }
@@ -617,7 +623,10 @@ internal sealed unsafe partial class VulkanBackend : Backend
 
         lock (_pool)
         {
-            if (!_pool.TryGetValue(block.Capacity, out var bucket))
+            // Freed while this thread records a graph: the graph owns it (VulkanBackend.Graphs.cs), so other work does
+            // not reuse memory the graph uses on every replay.
+            var bucket = _capture is not null ? CaptureFreeFor(block.Capacity) : null;
+            if (bucket is null && !_pool.TryGetValue(block.Capacity, out bucket))
             {
                 _pool[block.Capacity] = bucket = new Stack<VulkanBlock>();
             }
@@ -683,20 +692,32 @@ internal sealed unsafe partial class VulkanBackend : Backend
                 return;
             }
 
-            var staging = Staging();
-            for (long done = 0; done < source.Length;)
+            if (_capture is { } capture)
             {
-                int count = (int)Math.Min(source.Length - done, StagingBytes / sizeof(float));
-                source.Slice((int)done, count).CopyTo(new Span<float>(staging.Mapped, count));
-                if (!_stagingCoherent)
-                {
-                    FlushOrInvalidate(staging, flush: true);
-                }
-
-                RecordCopy(staging, 0, block, done * sizeof(float), count * sizeof(float));
-                SubmitAndWait();                                               // the staging buffer is reused next
-                done += count;
+                var values = source.ToArray();                                 // at once, outside the graph being recorded
+                OutsideCapture(capture, () => UploadThroughStaging(values, block));
+                return;
             }
+
+            UploadThroughStaging(source, block);
+        }
+    }
+
+    private void UploadThroughStaging(ReadOnlySpan<float> source, VulkanBlock block)
+    {
+        var staging = Staging();
+        for (long done = 0; done < source.Length;)
+        {
+            int count = (int)Math.Min(source.Length - done, StagingBytes / sizeof(float));
+            source.Slice((int)done, count).CopyTo(new Span<float>(staging.Mapped, count));
+            if (!_stagingCoherent)
+            {
+                FlushOrInvalidate(staging, flush: true);
+            }
+
+            RecordCopy(staging, 0, block, done * sizeof(float), count * sizeof(float));
+            SubmitAndWait();                                                   // the staging buffer is reused next
+            done += count;
         }
     }
 
@@ -712,6 +733,11 @@ internal sealed unsafe partial class VulkanBackend : Backend
 
         lock (_gate)
         {
+            if (_capture is not null)
+            {
+                throw new InvalidOperationException($"Reading device memory while a graph is recorded on {Name}: nothing recorded has run yet.");
+            }
+
             if (block.Mapped != null && !ReadsThroughStaging)
             {
                 WaitFor(block);
@@ -749,7 +775,8 @@ internal sealed unsafe partial class VulkanBackend : Backend
     {
         lock (_gate)
         {
-            if (block.Mapped != null && block.LastUse <= _completed)
+            // While a graph is recorded the fill is recorded too, so every replay zeros the block again.
+            if (block.Mapped != null && block.LastUse <= _completed && _capture is null)
             {
                 new Span<float>(block.Mapped, Math.Max(block.Capacity, 1)).Clear();
 

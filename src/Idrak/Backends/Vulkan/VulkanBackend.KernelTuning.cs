@@ -73,6 +73,10 @@ internal sealed unsafe partial class VulkanBackend
 
     private long _measurements;
 
+    // Whether candidates can be timed now: measuring is on, not inside another measurement, and no graph is being recorded
+    // (nothing recorded runs; the step before the recording measures its shapes).
+    private bool CanTune => Autotune && !t_timing && _capture is null;
+
     /// <summary>Choices measured by this backend (tests: stored choices are not measured again).</summary>
     internal long Measurements => Interlocked.Read(ref _measurements);
 
@@ -123,7 +127,7 @@ internal sealed unsafe partial class VulkanBackend
             return candidates.Length == 1 ? candidates[0] : fallback;
         }
 
-        if (!Autotune || t_timing)
+        if (!CanTune)
         {
             return fallback;
         }
