@@ -107,12 +107,21 @@ internal sealed class KernelBuilder
     // ------------------------------------------------------------------ declarations
 
     /// <summary>The next storage buffer (binding = how many were declared before it).</summary>
-    public Buf Buffer(string name)
+    /// <param name="name">The binding's name.</param>
+    /// <param name="reread">Every load reads memory again (Volatile, Coherent): for a binding one invocation stores into
+    /// and loads back from at addresses only known at run time, so no compiler keeps an earlier value of it.</param>
+    public Buf Buffer(string name, bool reread = false)
     {
         uint variable = _m.GlobalVariable(_bufferPointer, StorageClass.StorageBuffer);
         _m.Decorate(variable, Decoration.DescriptorSet, 0);
         _m.Decorate(variable, Decoration.Binding, (uint)_bindingNames.Count);
         _m.Decorate(variable, Decoration.Aliased);                       // a dispatch may pass one storage twice (in place)
+        if (reread)
+        {
+            _m.Decorate(variable, Decoration.Volatile);
+            _m.Decorate(variable, Decoration.Coherent);
+        }
+
         _m.Name(variable, name);
         _bindingNames.Add(name);
         _bindingVariables.Add(variable);

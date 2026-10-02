@@ -121,7 +121,9 @@ internal static partial class VulkanKernels
         yield return ("scatter_add", () =>
         {
             var k = new KernelBuilder("scatter_add", Block);
-            var (dy, indices, dtable) = (k.Buffer("dy"), k.Buffer("indices"), k.Buffer("dtable"));
+            // Repeated ids add into one row in turn, each add loading what the previous one stored: dtable is reread
+            // (one driver kept the first load, so the second add to a repeated id was lost).
+            var (dy, indices, dtable) = (k.Buffer("dy"), k.Buffer("indices"), k.Buffer("dtable", reread: true));
             var (count, dim, vocabulary) = (k.PushInt("count"), k.PushInt("dim"), k.PushInt("vocabulary"));
             Grid(k, dim, d => k.For(k.Int(0), count, 1, i =>
             {

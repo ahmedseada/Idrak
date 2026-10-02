@@ -116,6 +116,8 @@ internal enum Decoration : uint
     ArrayStride = 6,
     BuiltIn = 11,
     Aliased = 20,
+    Volatile = 21,
+    Coherent = 23,
     NonWritable = 24,
     Binding = 33,
     DescriptorSet = 34,
