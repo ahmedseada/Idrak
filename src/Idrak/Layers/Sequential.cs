@@ -79,18 +79,38 @@ public sealed class Sequential : Module, IEnumerable<Module>, ICachedModule
         // runs in a scope of its own that frees them, and the previous layer's output goes as soon as it is used. A pass
         // then holds one layer's worth of memory, not the whole network's until the caller's scope ends. (Not while a
         // graph is being recorded: its work keeps using those buffers.)
+        // A normalization of a layer's output computed ahead with it (see RMSNorm.HandOff) is kept for the next layer
+        // too, and freed once that layer has run (or passed on when the layer is the norm itself and returns it); freed
+        // with the layer's scope, the norm would compute it again.
         bool ownsX = false;
+        Tensor? handed = null;
         for (int i = 0; i < layers; i++)
         {
             Tensor next;
+            Tensor? nextHanded;
             bool created;
             using (var scope = new TensorScope())
             {
                 next = layer(i, x);
                 created = scope.Owns(next);
                 scope.Keep(next);
+                nextHanded = RMSNorm.HandedOff(next);
+                nextHanded = nextHanded is not null && !ReferenceEquals(nextHanded, next) && scope.Owns(nextHanded) ? scope.Keep(nextHanded) : null;
             }
 
+            if (handed is not null)
+            {
+                if (ReferenceEquals(handed, next))
+                {
+                    created = true;                                     // the norm returned it: owned as the output now
+                }
+                else
+                {
+                    handed.Dispose();
+                }
+            }
+
+            handed = nextHanded;
             if (!ReferenceEquals(next, x))
             {
                 if (ownsX)
@@ -103,6 +123,7 @@ public sealed class Sequential : Module, IEnumerable<Module>, ICachedModule
             }
         }
 
+        handed?.Dispose();
         return x;
     }
 

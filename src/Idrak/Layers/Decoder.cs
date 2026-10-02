@@ -44,6 +44,10 @@ public sealed class RMSNorm : Module
 
     internal static void HandOff(RMSNorm norm, Tensor input, Tensor output) => t_handoff = (norm, input, output);
 
+    // The normalization handed off for `input`, still to be read by its norm, or null.
+    internal static Tensor? HandedOff(Tensor input) =>
+        t_handoff is { } handoff && ReferenceEquals(handoff.Input, input) ? handoff.Output : null;
+
     /// <inheritdoc />
     protected override Tensor ForwardCore(Tensor input)
     {
