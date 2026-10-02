@@ -15,6 +15,7 @@ audience first.
 | 5 | [Apple](5-apple.md) | Apple silicon Macs (M1–M4 GPU, Neural Engine) | not supported on the GPU; macOS untested | a smaller audience for this library, and a third kernel language (Metal); a Mac test run fills CPU gaps early |
 | 6 | [Idrak.Network](6-network.md) | several GPUs or machines on one job; several machines serving one API | not started (one device per model, one machine per server) | a new package rather than new hardware; useful to NVIDIA users now, so it can run alongside plans 3–5 |
 | 7 | [Backends](7-backends.md) | a minimum backend (12 core operations, host fallbacks), devices by provider, public KV cache formats, the Vulkan backend (Intel GPUs first) | in progress on `architecture` | the shared work plans 3–5 wait on, then the first new backend |
+| 8 | [HIP](8-hip.md) | AMD GPUs through ROCm (Linux) and the HIP SDK (Windows): HIP runtime, hipRTC kernels | first slice on `backend/hip`, untested on real hardware | the third backend family (after CUDA and Vulkan): memory and copies on the device, a first kernel set, host fallbacks for the rest; input for the public backend API |
 
 Plug-in points that are still closed, and the dataset loader abstraction: [plug-in.md](plug-in.md).
 
@@ -26,7 +27,7 @@ What the `architecture` branch cannot do today, with an example of each. "High" 
 
 | Priority | Not supported | Example |
 |---|---|---|
-| High | **AMD ROCm / HIP** | AMD GPUs run only through Vulkan (`vulkan:N`); there is no `rocm:0`, so Instinct accelerators and ROCm's matrix libraries are out of reach (an `Idrak.Rocm` backend, plan 3 option B) |
+| High | **AMD ROCm / HIP** (first slice, untested) | `hip:0` exists on the `backend/hip` branch (plan 8) but has never run on an AMD GPU; only memory, copies and a first kernel set run on the device, the rest through host fallbacks; no matrix cores (rocWMMA / MFMA), no hipGraph |
 | High | **NPUs** (Intel AI Boost, Apple Neural Engine) | no device kind for them; a model cannot run there (add-on packages `Idrak.OpenVino`, `Idrak.CoreML`: plans 4 and 5) |
 | | A backend added from outside the library | `DeviceProviders.Register(new MyProvider())` does not compile in an application: `Backend` and `DeviceProviders` are internal (plan 7, phase 6) |
 | | Apple GPUs (Metal) | on a Mac `Device.Default` is the CPU; there is no `Device.Get("metal")` (plan 5) |
@@ -227,6 +228,6 @@ and the Intel plans need them.
    gaps); the Metal backend after the Intel GPUs.
 8. **Idrak.Network:** once steps 1–2 are done, alongside steps 3–5: training over a local network first, for every kind
    of training (machines over TCP, bfloat16 gradients), then several GPUs in one machine, models split across GPUs, and cluster serving.
-9. **High priority (see "Not supported yet"): AMD ROCm / HIP and NPUs.** An `Idrak.Rocm` backend for AMD's own
-   compute stack, and the NPU add-ons, Intel (`Idrak.OpenVino`) and Apple's Neural Engine (`Idrak.CoreML`), each a
+9. **High priority (see "Not supported yet"): AMD ROCm / HIP and NPUs.** A HIP backend for AMD's own compute stack
+   (first slice: [plan 8](8-hip.md)), and the NPU add-ons, Intel (`Idrak.OpenVino`) and Apple's Neural Engine (`Idrak.CoreML`), each a
    one-week trial first.
