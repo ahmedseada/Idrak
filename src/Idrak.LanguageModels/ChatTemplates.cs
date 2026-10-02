@@ -53,12 +53,22 @@ public sealed class JinjaChatTemplate : ChatTemplate
     public (string Open, string Close) ReasoningTags { get; init; } = ("<think>", "</think>");
 
     /// <summary>
-    /// How the model writes tool calls; when not set, read off the template itself by rendering a probe call (see
-    /// <see cref="DetectToolCallFormat"/>), so any family's format is parsed as its template writes it.
+    /// The shape of the model's JSON tool calls (for the "json" format); when not set, read off the template itself by
+    /// rendering a probe call (see <see cref="DetectToolCallFormat"/>), so any family's JSON format is parsed as its
+    /// template writes it. Setting it selects the "json" format unless <see cref="CallFormatName"/> says otherwise.
     /// </summary>
     public ToolCallFormat? CallFormat { get; init; }
 
+    /// <summary>
+    /// The registered tool-call format the model writes calls in (see <see cref="ToolCallFormats"/>); when not set,
+    /// detected from the template (<see cref="ToolCallFormats.Detect"/> of <see cref="ProbeToolCalls"/>).
+    /// </summary>
+    public string? CallFormatName { get; init; }
+
     private ToolCallFormat? _detectedCalls;
+    private string? _detectedFormatName;
+    private (string Text, int Shared, int SharedTail)? _probe;
+    private bool _probed;
 
     /// <inheritdoc />
     public override (string Open, string Close) ThinkTags => ReasoningTags;
@@ -66,42 +76,36 @@ public sealed class JinjaChatTemplate : ChatTemplate
     /// <inheritdoc />
     public override ToolCallFormat ToolCalls => CallFormat ?? (_detectedCalls ??= DetectToolCallFormat());
 
+    /// <inheritdoc />
+    public override string ToolCallFormatName =>
+        CallFormatName ?? (CallFormat is not null ? ToolCallFormats.Json : _detectedFormatName ??= ToolCallFormats.Detect(ProbeToolCalls()));
+
     /// <summary>
-    /// The template's tool-call format: a conversation whose answer is one probe call is rendered next to one whose
+    /// What tool-call format detectors see of this template: its source, and the assistant turn rendered with one probe
+    /// call, cut to where it differs from the same turn with a plain answer (null when the template renders no calls).
+    /// </summary>
+    public ToolCallProbe ProbeToolCalls() =>
+        new(Source, RenderProbe() is var (text, shared, sharedTail) ? text[shared..(text.Length - sharedTail)] : null);
+
+    /// <summary>
+    /// The template's JSON tool-call format: a conversation whose answer is one probe call is rendered next to one whose
     /// answer is plain text; the text they share before and after the answer is the turn's layout, and around the call's
     /// JSON remain its opening and closing text (Qwen/Hermes &lt;tool_call&gt;…&lt;/tool_call&gt;, Mistral [TOOL_CALLS] [ … ],
     /// Llama 3 nothing: the answer is the JSON, with "parameters"). <see cref="ToolCallFormat.Tagged"/> when the template
-    /// does not render tool calls.
+    /// does not render tool calls as JSON.
     /// </summary>
     public ToolCallFormat DetectToolCallFormat()
     {
-        const string Name = "ns_probe_function", Argument = "ns_probe_argument", Answer = "ns-probe-answer";
+        const string Name = ToolCallProbe.FunctionName, Argument = ToolCallProbe.ArgumentName;
+        if (RenderProbe() is not var (call, shared, sharedTail))
+        {
+            return ToolCallFormat.Tagged;
+        }
+
         try
         {
-            var tool = new ToolDefinition(Name, "Probe.", new JsonObject
-            {
-                ["type"] = "object",
-                ["properties"] = new JsonObject { [Argument] = new JsonObject { ["type"] = "string" } },
-            });
-            var user = new ChatMessage("user", "ns-probe-question");
-            string plain = Render([user, new ChatMessage("assistant", Answer)], [tool], null, addGenerationPrompt: false);
-            string call = Render([user, new ChatMessage("assistant", "", ToolCalls: [new ToolCall(Name, new JsonObject { [Argument] = "ns-probe-value" })])],
-                [tool], null, addGenerationPrompt: false);
-            int answerAt = plain.IndexOf(Answer, StringComparison.Ordinal);
-            int shared = 0;
-            while (shared < answerAt && shared < call.Length && plain[shared] == call[shared])
-            {
-                shared++;
-            }
-
-            int tail = plain.Length - answerAt - Answer.Length, sharedTail = 0;
-            while (sharedTail < tail && sharedTail < call.Length - shared && plain[^(sharedTail + 1)] == call[^(sharedTail + 1)])
-            {
-                sharedTail++;
-            }
-
             int nameAt = call.IndexOf(Name, shared, StringComparison.Ordinal);
-            if (answerAt < 0 || nameAt < 0)
+            if (nameAt < 0)
             {
                 return ToolCallFormat.Tagged;
             }
@@ -131,11 +135,58 @@ public sealed class JinjaChatTemplate : ChatTemplate
                 return new ToolCallFormat(call[shared..start].Trim(), call[end..(call.Length - sharedTail)].Trim(), list, key);
             }
         }
-        catch (Exception ex) when (ex is JsonException or InvalidOperationException or ArgumentException or FormatException or KeyNotFoundException)
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException or ArgumentException)
         {
         }
 
         return ToolCallFormat.Tagged;
+    }
+
+    // The conversation whose answer is the probe call, rendered, with the length it shares with the plain answer's
+    // rendering before and after the answer; null when the template renders no call (or fails to render).
+    private (string Text, int Shared, int SharedTail)? RenderProbe()
+    {
+        if (_probed)
+        {
+            return _probe;
+        }
+
+        const string Name = ToolCallProbe.FunctionName, Argument = ToolCallProbe.ArgumentName, Answer = "ns-probe-answer";
+        try
+        {
+            var tool = new ToolDefinition(Name, "Probe.", new JsonObject
+            {
+                ["type"] = "object",
+                ["properties"] = new JsonObject { [Argument] = new JsonObject { ["type"] = "string" } },
+            });
+            var user = new ChatMessage("user", "ns-probe-question");
+            string plain = Render([user, new ChatMessage("assistant", Answer)], [tool], null, addGenerationPrompt: false);
+            string call = Render([user, new ChatMessage("assistant", "", ToolCalls: [new ToolCall(Name, new JsonObject { [Argument] = ToolCallProbe.ArgumentValue })])],
+                [tool], null, addGenerationPrompt: false);
+            int answerAt = plain.IndexOf(Answer, StringComparison.Ordinal);
+            int shared = 0;
+            while (shared < answerAt && shared < call.Length && plain[shared] == call[shared])
+            {
+                shared++;
+            }
+
+            int tail = plain.Length - answerAt - Answer.Length, sharedTail = 0;
+            while (sharedTail < tail && sharedTail < call.Length - shared && plain[^(sharedTail + 1)] == call[^(sharedTail + 1)])
+            {
+                sharedTail++;
+            }
+
+            if (answerAt >= 0 && call.IndexOf(Name, shared, StringComparison.Ordinal) >= 0)
+            {
+                _probe = (call, shared, sharedTail);
+            }
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException or ArgumentException or FormatException or KeyNotFoundException)
+        {
+        }
+
+        _probed = true;
+        return _probe;
     }
 
     // The index just past the JSON value that starts at `start` (an object or array), or -1 when it does not close.
@@ -309,6 +360,7 @@ public sealed class JinjaChatTemplate : ChatTemplate
         if (message.Thinking is not null)
         {
             value["reasoning_content"] = message.Thinking;
+            value["thinking"] = message.Thinking;                   // the name GPT-OSS's template reads
         }
 
         if (message.ToolCalls is { Count: > 0 } calls)

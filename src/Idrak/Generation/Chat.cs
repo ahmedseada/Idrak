@@ -28,7 +28,8 @@ public sealed record ToolCall(string Name, JsonObject Arguments);
 /// How a model family writes tool calls in its answers: <paramref name="Open"/> before the call's JSON (empty: the answer
 /// itself is the JSON, as Llama 3 writes it), <paramref name="Close"/> after it (empty: the call runs to the end of the
 /// turn), whether the JSON is a list of calls (Mistral's [TOOL_CALLS] [{…}, …]), and the key of the arguments
-/// ("arguments", or "parameters" for Llama 3). Each call is {"name": …, key: {…}}.
+/// ("arguments", or "parameters" for Llama 3). Each call is {"name": …, key: {…}}. This is the shape of the "json"
+/// tool-call format; formats that are not JSON are registered in <see cref="ToolCallFormats"/>.
 /// </summary>
 public sealed record ToolCallFormat(string Open, string Close, bool List = false, string ArgumentsKey = "arguments")
 {
@@ -42,8 +43,20 @@ public abstract class ChatTemplate
     /// <summary>Opening and closing tags of the reasoning block.</summary>
     public virtual (string Open, string Close) ThinkTags => ("<think>", "</think>");
 
-    /// <summary>How the model writes tool calls (by default &lt;tool_call&gt;{"name": …, "arguments": {…}}&lt;/tool_call&gt;).</summary>
+    /// <summary>
+    /// The shape of JSON tool calls, used by the "json" format (by default
+    /// &lt;tool_call&gt;{"name": …, "arguments": {…}}&lt;/tool_call&gt;).
+    /// </summary>
     public virtual ToolCallFormat ToolCalls => ToolCallFormat.Tagged;
+
+    /// <summary>The name of the registered tool-call format (see <see cref="ToolCallFormats"/>) the model writes calls in; "json" by default.</summary>
+    public virtual string ToolCallFormatName => ToolCallFormats.Json;
+
+    /// <summary>
+    /// A parser for the tool calls of one reply: by default one of the format named by <see cref="ToolCallFormatName"/>.
+    /// Override it to parse calls without registering a format.
+    /// </summary>
+    public virtual IToolCallParser CreateToolCallParser(ToolCallContext context) => ToolCallFormats.Create(ToolCallFormatName, context);
 
     /// <summary>Text that ends an assistant turn; used as a stop sequence.</summary>
     public abstract IReadOnlyList<string> StopSequences { get; }
@@ -203,23 +216,55 @@ public sealed record ChatDelta(string Content, string Thinking, IReadOnlyList<To
 }
 
 /// <summary>
-/// Splits streamed assistant text into reasoning (inside the think tags), answer text and tool calls, in the template's
-/// <see cref="ToolCallFormat"/>. Feed text as it arrives; partial tags are held back until they can be decided. When the
-/// format has no opening text (the answer is the call's JSON), an answer that starts with '{' or '[' is held to the end
-/// of the turn and becomes calls if it parses as calls to one of <paramref name="toolNames"/> (any name when null).
+/// Splits streamed assistant text into reasoning (inside the think tags), answer text and tool calls. The reasoning is
+/// taken out here; the answer goes through the template's tool-call parser (<see cref="ChatTemplate.CreateToolCallParser"/>,
+/// one of the <see cref="ToolCallFormats"/>), which finds the calls in the model's format. Feed text as it arrives;
+/// partial tags are held back until they can be decided. In the default JSON format without opening text (the answer
+/// is the call's JSON), an answer that starts with '{' or '[' is held to the end of the turn and becomes calls if it
+/// parses as calls to one of the request's tools (any name when none are known).
 /// </summary>
-public sealed class ChatOutputParser(ChatTemplate template, bool separateThinking = true, IReadOnlyCollection<string>? toolNames = null)
+public sealed class ChatOutputParser
 {
-    private enum Mode { Start, Content, Thinking, ToolCall }
+    private enum Mode { Start, Content, Thinking }
 
+    private readonly ChatTemplate _template;
+    private readonly bool _separateThinking;
+    private readonly IReadOnlyCollection<string>? _toolNames;
+    private readonly IToolCallParser _calls;
     private readonly CharBuffer _pending = new();
-    private readonly CharBuffer _toolText = new();
-    private int _toolSearched;                                  // leading characters of _toolText known not to hold the closing text
     private readonly StringBuilder _content = new(), _thinking = new();
     private Mode _mode = Mode.Start;
     private bool _afterThinking;
-    private bool _answerStarted;                                // bare-JSON calls may only open the answer
-    private readonly ToolCallFormat _format = template.ToolCalls;
+
+    /// <summary>A parser for one reply rendered with <paramref name="template"/>.</summary>
+    /// <param name="template">The template the prompt was rendered with.</param>
+    /// <param name="separateThinking">false: reasoning is returned as answer text.</param>
+    /// <param name="toolNames">The names calls may have (any name when null).</param>
+    public ChatOutputParser(ChatTemplate template, bool separateThinking = true, IReadOnlyCollection<string>? toolNames = null)
+        : this(template, null, toolNames, separateThinking)
+    {
+    }
+
+    /// <summary>
+    /// A parser for one reply to a request with <paramref name="tools"/> (calls must name one of them when given; formats
+    /// whose arguments are text, such as "qwen3-coder", type them by the tools' schemas).
+    /// </summary>
+    /// <param name="template">The template the prompt was rendered with.</param>
+    /// <param name="tools">The request's tools; null when it has none (calls may then name anything).</param>
+    /// <param name="separateThinking">false: reasoning is returned as answer text.</param>
+    public ChatOutputParser(ChatTemplate template, IReadOnlyList<ToolDefinition>? tools, bool separateThinking = true)
+        : this(template, tools, tools?.Select(t => t.Name).ToHashSet(), separateThinking)
+    {
+    }
+
+    private ChatOutputParser(ChatTemplate template, IReadOnlyList<ToolDefinition>? tools, IReadOnlyCollection<string>? toolNames, bool separateThinking)
+    {
+        ArgumentNullException.ThrowIfNull(template);
+        _template = template;
+        _separateThinking = separateThinking;
+        _toolNames = toolNames;
+        _calls = template.CreateToolCallParser(new ToolCallContext(template, tools ?? [], toolNames));
+    }
 
     /// <summary>Processes new text.</summary>
     public ChatDelta Feed(string text)
@@ -235,205 +280,96 @@ public sealed class ChatOutputParser(ChatTemplate template, bool separateThinkin
     {
         var content = _content.Clear();
         var thinking = _thinking.Clear();
-        var calls = new List<ToolCall>();
-        var (thinkOpen, thinkClose) = template.ThinkTags;
-        string callOpen = _format.Open, callClose = _format.Close;
+        List<ToolCall>? calls = null;
+        var (thinkOpen, thinkClose) = _template.ThinkTags;
 
-        while (_pending.Length > 0 || (final && _mode == Mode.ToolCall && _toolText.Length > 0))
+        while (_pending.Length > 0)
         {
             var p = _pending.Span;
-            switch (_mode)
+            if (_mode == Mode.Start)
             {
-                case Mode.Start:
+                // Reasoning may only open the turn (after optional whitespace).
+                var trimmed = p.TrimStart();
+                if (trimmed.StartsWith(thinkOpen, StringComparison.Ordinal))
                 {
-                    // Reasoning may only open the turn (after optional whitespace).
-                    var trimmed = p.TrimStart();
-                    if (trimmed.StartsWith(thinkOpen, StringComparison.Ordinal))
-                    {
-                        _pending.Remove(p.Length - trimmed.Length + thinkOpen.Length);
-                        _mode = Mode.Thinking;
-                        continue;
-                    }
-
-                    if (!final && (trimmed.Length == 0 || thinkOpen.AsSpan().StartsWith(trimmed, StringComparison.Ordinal)))
-                    {
-                        return Result();                                          // still undecided
-                    }
-
-                    _mode = Mode.Content;
+                    _pending.Remove(p.Length - trimmed.Length + thinkOpen.Length);
+                    _mode = Mode.Thinking;
                     continue;
                 }
 
-                case Mode.Thinking:
+                if (!final && (trimmed.Length == 0 || thinkOpen.AsSpan().StartsWith(trimmed, StringComparison.Ordinal)))
                 {
-                    int close = p.IndexOf(thinkClose, StringComparison.Ordinal);
-                    if (close >= 0)
-                    {
-                        thinking.Append(p[..close]);
-                        _pending.Remove(close + thinkClose.Length);
-                        _mode = Mode.Content;
-                        _afterThinking = true;                               // drop the blank lines that follow reasoning
-                        continue;
-                    }
-
-                    int safe = final ? p.Length : SafeLength(p, thinkClose);
-                    thinking.Append(p[..safe]);
-                    _pending.Remove(safe);
-                    return Result();
+                    return Result();                                          // still undecided
                 }
 
-                case Mode.ToolCall:
-                {
-                    // Accumulate first, so a closing tag split across chunks is still found; only the new text (and
-                    // the closing text's length before it) can hold the first match.
-                    _toolText.Append(p);
-                    _pending.Clear();
-                    var all = _toolText.Span;
-                    int from = Math.Max(0, _toolSearched - callClose.Length + 1);
-                    int close = callClose.Length > 0 ? all[from..].IndexOf(callClose, StringComparison.Ordinal) : -1;
-                    close = close < 0 ? -1 : close + from;
-                    if (close < 0 && !final)
-                    {
-                        _toolSearched = all.Length;
-                        return Result();                                   // no closing text: the call runs to the end
-                    }
-
-                    var json = close >= 0 ? all[..close] : all;
-                    if (close >= 0)
-                    {
-                        _pending.Append(all[(close + callClose.Length)..]);
-                    }
-
-                    if (TryParseCalls(json.ToString()) is { } parsed)
-                    {
-                        calls.AddRange(parsed);
-                    }
-                    else
-                    {
-                        content.Append(callOpen).Append(json).Append(close >= 0 ? callClose : "");   // not a valid call: keep as text
-                    }
-
-                    _toolText.Clear();
-                    _toolSearched = 0;
-                    _mode = Mode.Content;
-                    continue;
-                }
-
-                default:
-                {
-                    if (_afterThinking)
-                    {
-                        int skip = p.IndexOfAnyExcept('\n', '\r');
-                        if (skip < 0)
-                        {
-                            _pending.Clear();
-                            return Result();                                   // only newlines so far: keep waiting
-                        }
-
-                        _pending.Remove(skip);
-                        _afterThinking = false;
-                        p = _pending.Span;
-                    }
-
-                    if (callOpen.Length == 0)
-                    {
-                        // The answer itself may be the call's JSON: decided by its first character.
-                        if (!_answerStarted)
-                        {
-                            var trimmed = p.TrimStart();
-                            if (trimmed.Length == 0 && !final)
-                            {
-                                return Result();
-                            }
-
-                            _answerStarted = true;
-                            if (trimmed.Length > 0 && trimmed[0] is '{' or '[')
-                            {
-                                _pending.Remove(p.Length - trimmed.Length);
-                                _mode = Mode.ToolCall;
-                                continue;
-                            }
-                        }
-
-                        content.Append(p);
-                        _pending.Clear();
-                        return Result();
-                    }
-
-                    int open = p.IndexOf(callOpen, StringComparison.Ordinal);
-                    if (open >= 0)
-                    {
-                        content.Append(p[..open]);
-                        _pending.Remove(open + callOpen.Length);
-                        _mode = Mode.ToolCall;
-                        continue;
-                    }
-
-                    int safe = final ? p.Length : SafeLength(p, callOpen);
-                    content.Append(p[..safe]);
-                    _pending.Remove(safe);
-                    return Result();
-                }
+                _mode = Mode.Content;
+                continue;
             }
+
+            if (_mode == Mode.Thinking)
+            {
+                int close = p.IndexOf(thinkClose, StringComparison.Ordinal);
+                if (close >= 0)
+                {
+                    thinking.Append(p[..close]);
+                    _pending.Remove(close + thinkClose.Length);
+                    _mode = Mode.Content;
+                    _afterThinking = true;                               // drop the blank lines that follow reasoning
+                    continue;
+                }
+
+                int safe = final ? p.Length : ToolCallText.SafeLength(p, thinkClose);
+                thinking.Append(p[..safe]);
+                _pending.Remove(safe);
+                break;
+            }
+
+            if (_afterThinking)
+            {
+                int skip = p.IndexOfAnyExcept('\n', '\r');
+                if (skip < 0)
+                {
+                    _pending.Clear();
+                    break;                                                 // only newlines so far: keep waiting
+                }
+
+                _pending.Remove(skip);
+                _afterThinking = false;
+                p = _pending.Span;
+            }
+
+            // The answer: the tool-call parser decides what is text and what is a call.
+            Add(_calls.Feed(p.ToString()));
+            _pending.Clear();
+        }
+
+        if (final)
+        {
+            Add(_calls.Finish());
         }
 
         return Result();
 
+        void Add(ChatDelta delta)
+        {
+            content.Append(delta.Content);
+            thinking.Append(delta.Thinking);
+            if (delta.ToolCalls.Count > 0)
+            {
+                (calls ??= []).AddRange(delta.ToolCalls);
+            }
+        }
+
         ChatDelta Result()
         {
-            if (!separateThinking && thinking.Length > 0)
+            IReadOnlyList<ToolCall> completed = calls ?? (IReadOnlyList<ToolCall>)[];
+            if (!_separateThinking && thinking.Length > 0)
             {
-                return new ChatDelta(thinking.Append(content).ToString(), "", calls);
+                return new ChatDelta(thinking.Append(content).ToString(), "", completed);
             }
 
-            return new ChatDelta(content.ToString(), thinking.ToString(), calls);
+            return new ChatDelta(content.ToString(), thinking.ToString(), completed);
         }
-    }
-
-    /// <summary>Length of <paramref name="text"/> that cannot be the start of <paramref name="tag"/>.</summary>
-    private static int SafeLength(ReadOnlySpan<char> text, string tag)
-    {
-        for (int keep = Math.Min(tag.Length - 1, text.Length); keep > 0; keep--)
-        {
-            if (tag.AsSpan().StartsWith(text[^keep..], StringComparison.Ordinal))
-            {
-                return text.Length - keep;
-            }
-        }
-
-        return text.Length;
-    }
-
-    // Text held back between chunks: a char array with a moving start, so taking from the front copies nothing.
-    private sealed class CharBuffer
-    {
-        private char[] _chars = new char[64];
-        private int _start;
-
-        public int Length { get; private set; }
-
-        public ReadOnlySpan<char> Span => _chars.AsSpan(_start, Length);
-
-        public void Append(ReadOnlySpan<char> text)
-        {
-            if (_start + Length + text.Length > _chars.Length)
-            {
-                var chars = Length + text.Length > _chars.Length ? new char[Math.Max(_chars.Length * 2, Length + text.Length)] : _chars;
-                _chars.AsSpan(_start, Length).CopyTo(chars);
-                (_chars, _start) = (chars, 0);
-            }
-
-            text.CopyTo(_chars.AsSpan(_start + Length));
-            Length += text.Length;
-        }
-
-        public void Remove(int count)
-        {
-            _start = count == Length ? 0 : _start + count;
-            Length -= count;
-        }
-
-        public void Clear() => (_start, Length) = (0, 0);
     }
 
     /// <summary>
@@ -444,7 +380,7 @@ public sealed class ChatOutputParser(ChatTemplate template, bool separateThinkin
     /// </summary>
     public (IReadOnlyList<ToolCall> Calls, string Text)? CallsInAnswer(string answer)
     {
-        if (toolNames is not { Count: > 0 })
+        if (_toolNames is not { Count: > 0 })
         {
             return null;
         }
@@ -469,44 +405,7 @@ public sealed class ChatOutputParser(ChatTemplate template, bool separateThinkin
             return null;
         }
 
-        var calls = TryParseCalls(text);
-        return calls is not null && calls.All(c => toolNames.Contains(c.Name)) ? (calls, before) : null;
-    }
-
-    // One call ({"name", arguments}) or a list of them; null when the text is not calls (then it stays answer text).
-    private List<ToolCall>? TryParseCalls(string json)
-    {
-        try
-        {
-            var node = JsonNode.Parse(json.Trim());
-            var items = node is JsonArray array ? array.ToList() : [node];
-            var calls = new List<ToolCall>();
-            foreach (var item in items)
-            {
-                if (item is not JsonObject o || o["name"] is not JsonValue nameValue || !nameValue.TryGetValue<string>(out var name) || name.Length == 0
-                    || (_format.Open.Length == 0 && toolNames is not null && !toolNames.Contains(name)))
-                {
-                    return null;
-                }
-
-                var args = (o[_format.ArgumentsKey] ?? o["arguments"] ?? o["parameters"]) switch
-                {
-                    JsonObject a => (JsonObject)a.DeepClone(),
-                    JsonValue v when v.TryGetValue<string>(out var s) && JsonNode.Parse(s) is JsonObject parsed => parsed,
-                    _ => new JsonObject(),
-                };
-                calls.Add(new ToolCall(name, args));
-            }
-
-            return calls.Count > 0 ? calls : null;
-        }
-        catch (JsonException)
-        {
-        }
-        catch (InvalidOperationException)
-        {
-        }
-
-        return null;
+        var calls = ToolCallText.JsonCalls(text, _template.ToolCalls.ArgumentsKey, null);
+        return calls is not null && calls.All(c => _toolNames.Contains(c.Name)) ? (calls, before) : null;
     }
 }

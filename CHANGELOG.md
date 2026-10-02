@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Tool calls are parsed in the model's own format, not only as JSON between tags. `ChatOutputParser` takes the
+  reasoning out and feeds the answer to an `IToolCallParser` (`Feed`, `Finish`, emitting text, reasoning and calls as
+  before) that the template makes per reply (`ChatTemplate.CreateToolCallParser`, by `ToolCallFormatName`).
+  `ToolCallFormats.Register(name, detect, create)`, `Unregister`, `Names`, `Create` and `Detect` add formats; a
+  `JinjaChatTemplate` detects its format from its source and a rendered probe call (`ProbeToolCalls`), or is told
+  with `CallFormatName`. Built in, each checked against the family's published template and round-tripped through it:
+  `json` (the previous behaviour, plus Llama 3.1's `<|python_tag|>`, calls separated by `;` and built-in
+  `name.call(...)`), `pythonic` (`[f(a=1, b="x"), g()]`), `qwen3-coder` (XML parameters, typed by the tool's schema),
+  `mistral` (`[TOOL_CALLS]` with a JSON list or `name[ARGS]{...}`), `harmony` (GPT-OSS channels; analysis becomes
+  reasoning) and `deepseek` (V3/R1 fenced JSON, V3.1 bare JSON). `ChatOutputParser` gains a constructor taking the
+  request's tools, which `ChatGenerator` uses. Messages given to Jinja templates carry `thinking` next to
+  `reasoning_content`, the name GPT-OSS's template reads.
+
 - Direct decoding steps (not recorded as a graph) keep the residual addition fused with the next block's RMS norm for
   that norm: `Sequential` freed it with the layer's intermediate results, so the norm ran again, one kernel more per
   layer and token on every device (74 dispatches per token instead of 82 for the medium decoder of `--bench-vulkan`).
