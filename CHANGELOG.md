@@ -363,6 +363,10 @@
   4,000 positions 28.8 / 24.9 / 29.6 → 27.8 / 18.5 / 16.7 ms (float32 / int8 / bfloat16 caches; 200 positions slower
   there, 4.1 → 9.1 ms, from the splits sized for a full cache).
 
+- `idrak` Measure and Retrieval commands: `bench` (alias `b`; a model's prompt and generation speed, GFLOP/s and
+  memory, or the kernel benchmarks; `--devices`, `--matrix`, `--save`, `--compare`), `eval`, `perplexity`, `profile`,
+  `check`, `tuning show`, and `rag index`, `rag search`, `rag ask`, `rag eval`.
+
 ## 0.1.7 (2026-10-01)
 
 - License: Apache License 2.0 instead of MIT, from this version on (`LICENSE`, `NOTICE`, the packages' license
