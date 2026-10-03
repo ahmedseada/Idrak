@@ -274,12 +274,10 @@ Done (branch `feature-neutral-serving`):
   is one `Map...Api` and one options type per wire format, as `MapCompletionsApi` and `CompletionsApiOptions` already
   were for `/v1`, rather than a format option on one method: the two formats differ in routes, bodies and streaming,
   and a further format (item 17) is added the same way. Endpoint names are `Chat-NAME`, `ChatTags-NAME`, ... .
-- The former names are `[Obsolete]` forwarders for one release (ChatApiObsolete.cs, and `MapOllamaApi` on
-  `IdrakEndpointExtensions`): `OllamaApiOptions` wraps the new options, each former record converts implicitly to and
-  from its new type, `OllamaTranslation` forwards. A test maps the API through the former names and converts and
-  translates the former types.
-- The model source: `ModelSource.LocalStoreModel` (the former `OllamaModel` is an obsolete forwarder), the source is
-  named "store" and reads `store:NAME`; the former prefix is still read. It still reads that store's folder, its
+- The former names are removed rather than kept as obsolete forwarders: nothing was released under them (versions
+  are 0.y.z), so there is no one to stay compatible with.
+- The model source: `ModelSource.LocalStoreModel` (the former name is removed), the source is
+  named "store" and reads `store:NAME`. It still reads that store's folder, its
   `OLLAMA_MODELS` variable and its manifest layout, which belong to the store, not to Idrak's names.
 - A test scans the public types, members and parameters of every Idrak assembly for provider names (obsolete members
   allowed). Documentation (README, the AspNetCore and FineTuning.Cli READMEs, the samples) names no product; test data

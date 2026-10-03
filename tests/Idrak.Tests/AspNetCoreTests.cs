@@ -51,9 +51,6 @@ internal static partial class Tests
         app.MapPredictor<Row, float>("/predict/rows", "rows");
         app.MapGenerate("/generate", "text");
         app.MapChatApi("/api", "chat", o => o.Tools(ToolExecution.Client).ModelName("tiny:latest").Version("test-1"));
-#pragma warning disable CS0618 // the former names, kept for one release, must still work
-        app.MapOllamaApi("/former", "text", o => o.Tools(ToolExecution.Client).Version("former-1"));   // another model: endpoint names differ
-#pragma warning restore CS0618
         app.MapIdrakStatus("/status");
         app.MapGet("/di", async (IPredictor<Row, float> p) => await p.PredictAsync(new Row(1, 6, 11)));
         app.StartAsync().GetAwaiter().GetResult();
@@ -98,8 +95,6 @@ internal static partial class Tests
             var status = JsonNode.Parse(http.GetStringAsync("/status").Result)!;
             Check(status["models"]!.AsArray().Count == 3 && status["devices"]!.AsArray().Count >= 1, "status");
 
-            Check((string?)JsonNode.Parse(http.GetStringAsync("/former/version").Result)!["version"] == "former-1", "the former MapOllamaApi maps the same API");
-            FormerChatApiNames();
 
             bool threw = false;
             try { app.MapChatApi("/x", "chat", _ => { }); } catch (InvalidOperationException) { threw = true; }
@@ -113,23 +108,4 @@ internal static partial class Tests
             File.Delete(package);
         }
     }
-
-    // The chat API's former type names convert to and from the new ones and translate requests the same way.
-#pragma warning disable CS0618
-    private static void FormerChatApiNames()
-    {
-        var call = new OllamaToolCall(new OllamaCalledFunction("web_fetch", new JsonObject { ["url"] = "https://example.com" }, 0));
-        var former = new OllamaChatRequest("any", [new OllamaMessage("user", "hi"), new OllamaMessage("assistant", "", ToolCalls: [call])],
-            Options: new() { ["num_predict"] = System.Text.Json.JsonDocument.Parse("7").RootElement });
-        ChatApiRequest current = former;
-        var (a, _, _) = ChatApiTranslation.Translate(current);
-        var (b, _, _) = OllamaTranslation.Translate(former);
-        Check(a.Messages.Count == 2 && a.Messages[1].ToolCalls![0].Name == "web_fetch" && a.Options!.NumPredict == 7
-              && b.Messages[1].ToolCalls![0].Arguments.ToJsonString() == a.Messages[1].ToolCalls![0].Arguments.ToJsonString() && b.Options!.NumPredict == 7,
-            "former request types translate as the new ones");
-        OllamaChatResponse back = new ChatApiResponse("m", DateTimeOffset.UnixEpoch, new ChatApiMessage("assistant", "ok"), true, "stop");
-        Check(back.Message.Content == "ok" && back.DoneReason == "stop"
-              && System.Text.Json.JsonSerializer.Serialize(back) == System.Text.Json.JsonSerializer.Serialize((ChatApiResponse)back), "former response type, same JSON");
-    }
-#pragma warning restore CS0618
 }

@@ -98,7 +98,6 @@ internal static partial class Tests
                 string prepared = ModelSource.Resolve("store:tiny:q8");
                 using var stored = PretrainedModel.Load(prepared, new PretrainedOptions { Device = device });
                 Check(stored.Spec.Layers == 2 && prepared.StartsWith(Path.Combine(cache, "gguf"), StringComparison.Ordinal), "a model of the local store loads");
-                Check(ModelSource.Resolve("ollama:tiny:q8") == prepared, "the former prefix still resolves");
                 try
                 {
                     ModelSource.LocalStoreModel("missing");

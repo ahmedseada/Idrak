@@ -5,8 +5,7 @@
 - Idrak.AspNetCore: provider-neutral names for the chat API (`/api/chat`, `/api/tags`, `/api/ps`, `/api/version`,
   routes unchanged): `MapChatApi`, `ChatApiOptions` and the `ChatApi*` wire types (`ChatApiRequest`,
   `ChatApiResponse`, `ChatApiMessage`, `ChatApiToolCall`, `ChatApiModelTag`, ... , `ChatApiTranslation`). The former
-  names (`MapOllamaApi`, `OllamaApiOptions`, `OllamaChatRequest`, ...) still compile for one release, as obsolete
-  forwarders that convert to and from the new types. Endpoint names are now `Chat-NAME`, `ChatTags-NAME`, ... .
+  names are removed (nothing was released under them). Endpoint names are now `Chat-NAME`, `ChatTags-NAME`, ... .
 - Idrak.LanguageModels: the local model store source is `ModelSource.LocalStoreModel` and the "store" source
   (`store:NAME`); `ModelSource.OllamaModel` is an obsolete forwarder and the former prefix is still read.
 - `idrak serve` and `ui` listen on port 7317 by default (it was 11434, another local server's default); `-p/--port`,
