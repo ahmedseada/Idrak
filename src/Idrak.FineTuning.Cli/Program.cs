@@ -45,7 +45,11 @@ const string Usage = """
                as bfloat16 between the passes: half their memory; default: turned on second), --no-packing,
                --no-graphs, --fp8 (the frozen base's forward products in FP8, checked against bfloat16 first),
                --adapter DIR (continue training an adapter), --profile (time a few steps instead of training),
-               --cpu-optimizer (AdamW's update on the CPU, its state in system memory)
+               --cpu-optimizer (the optimizer's update on the CPU, its state in system memory),
+               --optimizer adamw|adam|adamw8bit|sgd, --weight-decay 0, --momentum 0.9 (sgd),
+               --schedule cosine|linear|constant|wsd, --warmup 0.03 (fraction of the steps), --min-lr 0, --decay 0.2 (wsd),
+               --loss sft|dpo|orpo|simpo (dpo, orpo, simpo: preference rows with prompt, chosen and rejected), --beta B
+               (dpo 0.1, orpo's lambda 0.1, simpo 2), --margin G (simpo 1), --adapter-type lora|dora
     Evaluate:  --adapter DIR, --samples 100 (0: all), --batch 8, --max-new 512, --metric auto|number|exact|contains|f1, --out F.jsonl,
                --choices a,b,c | auto (the answer is one of these: each is scored as the model's answer, the most likely one
                taken, nothing generated; auto: the distinct answers in the data; accuracy and recall per answer)
@@ -70,6 +74,9 @@ var metric = AnswerMetric.Auto;
 var rowKind = RowKind.Auto;
 MatMulPrecision? matmul = null;
 var tuning = new FineTuningOptions();
+string optimizerName = "adamw", scheduleName = "cosine", lossName = "sft", adapterType = "lora";
+float weightDecay = 0f, momentum = 0.9f, decayFraction = 0.2f;
+float? beta = null, margin = null;
 Device device = Device.Default;                                       // the best GPU found, else the CPU
 try
 {
@@ -125,6 +132,17 @@ try
             case "--profile": profileTraining = true; break;
             case "--offload": ComputeResources.OffloadToHostMemory = true; break;
             case "--cpu-optimizer": tuning = tuning with { HostOptimizer = true }; break;
+            case "--optimizer": optimizerName = Next().ToLowerInvariant(); break;
+            case "--weight-decay": weightDecay = NextFloat(); break;
+            case "--momentum": momentum = NextFloat(); break;
+            case "--schedule": scheduleName = Next().ToLowerInvariant(); break;
+            case "--warmup": tuning = tuning with { WarmupFraction = NextFloat() }; break;
+            case "--min-lr": tuning = tuning with { MinLearningRate = NextFloat() }; break;
+            case "--decay": decayFraction = NextFloat(); break;
+            case "--loss": lossName = Next().ToLowerInvariant(); break;
+            case "--beta": beta = NextFloat(); break;
+            case "--margin": margin = NextFloat(); break;
+            case "--adapter-type": adapterType = Next().ToLowerInvariant(); break;
             case "--gpu-memory": ComputeResources.GpuMemoryLimit = (long)(double.Parse(Next(), CultureInfo.InvariantCulture) * (1L << 30)); break;
             case "--matmul":
                 matmul = Next() switch
@@ -159,6 +177,42 @@ try
                 throw new ArgumentException($"Unknown option {args[i]}.");
             default: positional.Add(args[i]); break;
         }
+    }
+
+    // The optimizer, schedule and loss: built-in choices by name (the defaults are the library's own: AdamW, cosine,
+    // token cross-entropy).
+    tuning = tuning with
+    {
+        WeightDecay = weightDecay,
+        Optimizer = optimizerName == "adamw" ? null : FineTuningOptimizers.Names.Contains(optimizerName)
+            ? FineTuningOptimizers.Create(optimizerName, tuning.LearningRate, weightDecay, momentum)
+            : throw new ArgumentException($"--optimizer {optimizerName}: use {string.Join(", ", FineTuningOptimizers.Names)}."),
+        Scheduler = scheduleName switch
+        {
+            "cosine" => null,
+            "linear" => FineTuningSchedules.Linear(tuning.WarmupFraction, tuning.MinLearningRate),
+            "constant" => FineTuningSchedules.Constant(tuning.WarmupFraction),
+            "wsd" => FineTuningSchedules.WarmupStableDecay(tuning.WarmupFraction, decayFraction, tuning.MinLearningRate),
+            _ => throw new ArgumentException($"--schedule {scheduleName}: use cosine, linear, constant or wsd."),
+        },
+        Loss = lossName switch
+        {
+            "sft" => null,
+            "dpo" => FineTuningLosses.Dpo(beta ?? 0.1f),
+            "orpo" => FineTuningLosses.Orpo(beta ?? 0.1f),
+            "simpo" => FineTuningLosses.SimPo(beta ?? 2f, margin ?? 1f),
+            _ => throw new ArgumentException($"--loss {lossName}: use sft, dpo, orpo or simpo."),
+        },
+        Dora = adapterType switch
+        {
+            "lora" => false,
+            "dora" => true,
+            _ => throw new ArgumentException($"--adapter-type {adapterType}: use lora or dora."),
+        },
+    };
+    if (lossName != "sft")
+    {
+        rowKind = RowKind.Preference;                                       // rows as prompt, chosen and rejected
     }
 }
 catch (Exception ex) when (ex is ArgumentException or FormatException)
@@ -269,14 +323,23 @@ int Train()
     var recipe = Recipe(positional.Skip(2).ToList(), forTraining: true);
     var counts = new RecipeCounts();
     var (trainRows, heldOut) = recipe.Build(downloads, counts);
-    var train = ReadSequences(encoder, trainRows, "training");
+    bool preference = rowKind == RowKind.Preference;
+    var pairs = preference ? ReadPairs(encoder, trainRows, "training") : null;
+    var train = preference ? [] : ReadSequences(encoder, trainRows, "training");
     Console.WriteLine($"data: {counts.Rows:N0} rows"
                       + (recipe.Deduplicate ? $", {counts.Duplicates:N0} repeats dropped (--no-dedup keeps them: repeats weigh what is common)" : "")
                       + (counts.OutsideLengths > 0 ? $", {counts.OutsideLengths:N0} outside the length limits" : "")
                       + (heldOut is not null ? $"; prompts held out for evaluation: {recipe.EvaluationFraction:P1}" : ""));
-    if (train.Count == 0)
+    if ((pairs?.Count ?? train.Count) == 0)
     {
-        Console.Error.WriteLine("error: nothing to train on (no conversation with an assistant turn and no text).");
+        Console.Error.WriteLine(preference ? "error: nothing to train on (no row with a prompt, a chosen and a rejected answer)."
+            : "error: nothing to train on (no conversation with an assistant turn and no text).");
+        return 1;
+    }
+
+    if (preference && (balance > 1 || profileTraining))
+    {
+        Console.Error.WriteLine("error: --balance and --profile are for supervised fine-tuning (--loss sft).");
         return 1;
     }
 
@@ -302,7 +365,8 @@ int Train()
     }
 
     var evaluationRows = evalFile is not null ? (Recipe([evalFile], forTraining: true) with { EvaluationFraction = 0 }).Build(downloads).Train : heldOut;
-    var evaluation = evaluationRows is null ? null : ReadSequences(encoder, evaluationRows, "evaluation");
+    var evaluation = evaluationRows is null || preference ? null : ReadSequences(encoder, evaluationRows, "evaluation");
+    var evaluationPairs = evaluationRows is null || !preference ? null : ReadPairs(encoder, evaluationRows, "evaluation");
     Console.WriteLine($"assistant turns start with {JsonValue.Create(encoder.AssistantHeader).ToJsonString(readable)} and end with {JsonValue.Create(encoder.AssistantEnd).ToJsonString(readable)}");
     if (evaluation is { Count: > 0 })
     {
@@ -351,7 +415,15 @@ int Train()
 
     try
     {
-        FineTuner.Train(model, train, evaluation, tuning, output, progress, cancel.Token, Trace);
+        if (pairs is not null)
+        {
+            FineTuner.Train(model, pairs, evaluationPairs, tuning, output, progress, cancel.Token, Trace);
+        }
+        else
+        {
+            FineTuner.Train(model, train, evaluation, tuning, output, progress, cancel.Token, Trace);
+        }
+
         record.Save(output!);
         status.Finish();
         Console.WriteLine($"trained in {Elapsed(clock.Elapsed)}{(lastEvaluation is { } l ? $", evaluation loss {l:F4}" : "")}; adapter written to {Path.GetFullPath(output!)}");
@@ -732,6 +804,27 @@ List<TrainingSequence> ReadSequences(ChatTranscriptEncoder encoder, Dataset rows
                       + $"{sequences.Sum(q => (long)q.Tokens.Length):N0} tokens, {sequences.Sum(q => (long)q.TrainedTokens):N0} trained; "
                       + $"{skipped:N0} rows without trainable tokens skipped ({watch.Elapsed.TotalSeconds:F1} s)");
     return sequences;
+}
+
+// Preference rows (prompt, chosen, rejected) tokenized into pairs that train only the answers.
+List<PreferencePair> ReadPairs(ChatTranscriptEncoder encoder, Dataset rows, string what)
+{
+    var watch = Stopwatch.StartNew();
+    var pairs = new List<PreferencePair>();
+    long read = 0;
+    Console.WriteLine($"{what}: reading and tokenizing preference pairs from {rows.Name}");
+    foreach (var (_, pair) in encoder.EncodePreferences(status.Track(rows, what), tuning.MaxLength))
+    {
+        read++;
+        if (pair is not null)
+        {
+            pairs.Add(pair);
+        }
+    }
+
+    Console.WriteLine($"{what}: {read:N0} rows → {pairs.Count:N0} pairs, {pairs.Sum(p => (long)p.Chosen.TrainedTokens + p.Rejected.TrainedTokens):N0} answer tokens; "
+                      + $"{read - pairs.Count:N0} rows without a trainable pair skipped ({watch.Elapsed.TotalSeconds:F1} s)");
+    return pairs;
 }
 
 static Device Gpu() => Device.Default.IsGpu ? Device.Default : throw new ArgumentException("--gpu: no GPU was found.");

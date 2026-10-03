@@ -410,7 +410,7 @@ internal static partial class Tests
             Expect<NotSupportedException>("rank_pattern", c => c["rank_pattern"] = new JsonObject { ["q_proj"] = 8 }, "rank_pattern");
             Expect<NotSupportedException>("trained biases", c => c["bias"] = "all", "bias \"all\"");
             Expect<NotSupportedException>("modules to save", c => c["modules_to_save"] = new JsonArray("lm_head"), "modules_to_save");
-            Expect<NotSupportedException>("use_dora", c => c["use_dora"] = true, "use_dora");
+            Expect<InvalidDataException>("use_dora without magnitude vectors", c => c["use_dora"] = true, "lora_magnitude_vector");
 
             // A tensor for a layer the model does not adapt.
             List<(string, int[], float[])> tensors;
@@ -435,6 +435,150 @@ internal static partial class Tests
                 Check(model.Network.Descendants().OfType<Linear>().Select(l => l.Adapter).OfType<LoraAdapter>().All(a => Math.Abs(a.Scale - 4f / MathF.Sqrt(2f)) < 1e-6f),
                     "use_rslora scales by alpha / √r");
             }
+        }
+        finally
+        {
+            Directory.Delete(folder, true);
+        }
+    }
+
+    private static void DoraLayer(Device device)
+    {
+        const int In = 24, Out = 20, Rank = 3, Rows = 5;
+        const float Scale = 0.7f;
+        var random = new Random(31);
+        float[] Values(int n, float range) => [.. Enumerable.Range(0, n).Select(_ => (random.NextSingle() * 2f - 1f) * range)];
+        float[] w = Values(In * Out, 0.3f), bias = Values(Out, 0.1f), a = Values(In * Rank, 0.4f), b = Values(Rank * Out, 0.4f), x = Values(Rows * In, 1f);
+        float[] m = [.. Enumerable.Range(0, Out).Select(_ => 0.5f + random.NextSingle())], c = Values(Rows * Out, 1f);
+
+        foreach (bool int4 in new[] { false, true })
+        {
+            using var scope = new TensorScope();
+            var layer = Linear.FromWeights(Tensor.Persistent(w, [In, Out], device, requiresGrad: false), Tensor.Persistent(bias, [Out], device, requiresGrad: false));
+            if (int4)
+            {
+                layer.QuantizeInt4();
+            }
+
+            float[] dense = layer.WeightValues();                        // the weights as the layer holds them
+            var dora = new DoraAdapter(Tensor.Persistent(a, [In, Rank], device, requiresGrad: true), Tensor.Persistent(b, [Rank, Out], device, requiresGrad: true),
+                Tensor.Persistent(m, [Out], device, requiresGrad: true), Rank, Scale);
+            layer.Adapter = dora;
+            var input = Tensor.From(x, [Rows, In], device);
+            var y = layer.Forward(input);
+            (y * Tensor.From(c, [Rows, Out], device)).Sum().Backward();
+
+            // The reference on the host, in double: z = x·W + s·x·A·B, n = ‖W + s·A·B‖ per column, y = z·m/n + b;
+            // d/dm (with the norm a constant, as peft) = Σ_rows c·z / n.
+            var expected = new float[Rows * Out];
+            var magnitudeGradient = new float[Out];
+            var norms = new double[Out];
+            for (int o = 0; o < Out; o++)
+            {
+                for (int i = 0; i < In; i++)
+                {
+                    double ab = 0;
+                    for (int r = 0; r < Rank; r++)
+                    {
+                        ab += a[i * Rank + r] * b[r * Out + o];
+                    }
+
+                    double v = dense[i * Out + o] + Scale * ab;
+                    norms[o] += v * v;
+                }
+
+                norms[o] = Math.Sqrt(norms[o]);
+            }
+
+            for (int row = 0; row < Rows; row++)
+            {
+                for (int o = 0; o < Out; o++)
+                {
+                    double z = 0;
+                    for (int i = 0; i < In; i++)
+                    {
+                        double ab = 0;
+                        for (int r = 0; r < Rank; r++)
+                        {
+                            ab += a[i * Rank + r] * b[r * Out + o];
+                        }
+
+                        z += x[row * In + i] * (dense[i * Out + o] + Scale * ab);
+                    }
+
+                    expected[row * Out + o] = (float)(z * m[o] / norms[o] + bias[o]);
+                    magnitudeGradient[o] += (float)(c[row * Out + o] * z / norms[o]);
+                }
+            }
+
+            string kind = int4 ? "4-bit base" : "float base";
+            CloseByNorm(expected, y.ToArray(), 2e-3f, $"DoRA output, {kind}");
+            CloseByNorm(magnitudeGradient, dora.Magnitude.Grad!.ToArray(), 2e-3f, $"DoRA magnitude gradient, {kind}");
+            Check(dora.A.Grad!.ToArray().Any(v => v != 0f) && dora.B.Grad!.ToArray().Any(v => v != 0f), $"A and B receive gradients, {kind}");
+            if (!int4)
+            {
+                float[] adapted;
+                using (Autograd.NoGrad())
+                {
+                    adapted = layer.Forward(input).ToArray();
+                    layer.MergeAdapter();
+                    Check(layer.Adapter is null, "merged: no adapter");
+                    CloseByNorm(adapted, layer.Forward(input).ToArray(), 1e-5f, "merged DoRA weight gives the adapted output");
+                }
+            }
+        }
+    }
+
+    private static void DoraTraining(Device device)
+    {
+        string folder = WriteChatModel(TinyChatSpec()), adapter = Path.Combine(folder, "dora"), exported = Path.Combine(folder, "merged");
+        try
+        {
+            var sequences = RandomSequences(16, 75);
+            float before, after;
+            using (var model = PretrainedModel.Load(folder, new PretrainedOptions { Device = device }))
+            {
+                before = FineTuner.Evaluate(model, sequences);
+                model.AddAdapters(4, 8, ["q", "v", "gate", "down"], seed: 3, dora: true);
+                AssertClose([before], [FineTuner.Evaluate(model, sequences)], 1e-5f, "DoRA adapters start as the identity");
+                var options = new FineTuningOptions { Rank = 4, Alpha = 8, LearningRate = 1e-2f, Epochs = 8, BatchTokens = 512, WarmupFraction = 0f, Dora = true };
+                FineTuner.Train(model, sequences, null, options, adapter);
+                after = FineTuner.Evaluate(model, sequences);
+                Check(after < before * 0.9f, $"DoRA trains: loss {before:F4} → {after:F4}");
+                Check(model.Network.Descendants().OfType<Linear>().Count(l => l.Adapter is DoraAdapter) == 4 * 2, "DoRA adapters on the chosen layers");
+            }
+
+            var config = JsonNode.Parse(File.ReadAllText(Path.Combine(adapter, "adapter_config.json")))!;
+            Check((bool)config["use_dora"]! && (string)config["peft_type"]! == "LORA", $"PEFT config: {config}");
+            using (var reader = SafeTensorsReader.Open(Path.Combine(adapter, "adapter_model.safetensors")))
+            {
+                Check(reader.Tensors["base_model.model.model.layers.0.self_attn.q_proj.lora_magnitude_vector"].Shape.SequenceEqual([32])
+                      && reader.Tensors["base_model.model.model.layers.1.mlp.down_proj.lora_magnitude_vector"].Shape.SequenceEqual([32]), "magnitude vectors in the PEFT layout");
+            }
+
+            using (var reloaded = PretrainedModel.Load(folder, new PretrainedOptions { Device = device }))
+            {
+                Check(reloaded.LoadAdapter(adapter) == 4 * 2, "every DoRA adapter loads");
+                AssertClose([after], [FineTuner.Evaluate(reloaded, sequences)], 1e-4f, "loss with the reloaded DoRA adapters");
+                reloaded.SaveHuggingFace(exported, SafeTensorType.F32);
+            }
+
+            using (var merged = PretrainedModel.Load(folder, new PretrainedOptions { Device = device, MergeAdapter = adapter }))
+            {
+                AssertClose([after], [FineTuner.Evaluate(merged, sequences)], 1e-3f, "loss with DoRA merged while loading");
+            }
+
+            using (var merged = PretrainedModel.Load(exported, new PretrainedOptions { Device = device }))
+            {
+                AssertClose([after], [FineTuner.Evaluate(merged, sequences)], 1e-3f, "loss of the merged DoRA export");
+            }
+
+            // QLoRA with DoRA: a 4-bit base trains too.
+            using var quantized = PretrainedModel.Load(folder, new PretrainedOptions { Device = device, Int4 = true });
+            float q0 = FineTuner.Evaluate(quantized, sequences);
+            FineTuner.Train(quantized, sequences, null, new FineTuningOptions { Rank = 4, Alpha = 8, LearningRate = 1e-2f, Epochs = 6, BatchTokens = 512, Dora = true });
+            float q1 = FineTuner.Evaluate(quantized, sequences);
+            Check(q1 < q0 * 0.95f, $"DoRA on a 4-bit base: loss {q0:F4} → {q1:F4}");
         }
         finally
         {

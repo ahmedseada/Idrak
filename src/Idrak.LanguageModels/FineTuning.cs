@@ -540,6 +540,13 @@ public sealed record FineTuningOptions
     /// <summary>LoRA alpha: the adapters' output is scaled by alpha / rank.</summary>
     public float Alpha { get; init; } = 32f;
 
+    /// <summary>
+    /// DoRA adapters (<see cref="DoraAdapter"/>: LoRA on the weight's direction plus a trainable magnitude per output)
+    /// instead of LoRA. They train with the same settings, saved in the PEFT format with <c>use_dora</c>; their products run
+    /// without the fused LoRA kernels (and the norm of each adapted weight is computed every step), so steps are slower.
+    /// </summary>
+    public bool Dora { get; init; }
+
     /// <summary>Layers that get adapters, by name: q, k, v, o (attention), gate, up, down (feed-forward), head.</summary>
     public IReadOnlyList<string> Targets { get; init; } = ["q", "k", "v", "o", "gate", "up", "down"];
 
@@ -855,7 +862,7 @@ public static class FineTuner
         var network = model.Network;
         if (!network.Descendants().OfType<Linear>().Any(l => l.Adapter is not null))
         {
-            model.AddAdapters(options.Rank, options.Alpha, options.Targets, options.Seed);
+            model.AddAdapters(options.Rank, options.Alpha, options.Targets, options.Seed, options.Dora);
         }
 
         var parameters = network.TrainableParameters().ToList();
@@ -1218,7 +1225,7 @@ public static class FineTuner
         ArgumentNullException.ThrowIfNull(model);
         if (!model.Network.Descendants().OfType<Linear>().Any(l => l.Adapter is not null))
         {
-            model.AddAdapters(options.Rank, options.Alpha, options.Targets, options.Seed);
+            model.AddAdapters(options.Rank, options.Alpha, options.Targets, options.Seed, options.Dora);
         }
 
         using var float8 = PrepareFloat8(model, train, options, trace);
