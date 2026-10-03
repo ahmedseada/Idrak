@@ -27,8 +27,10 @@ public delegate Tensor FineTuningLoss(FineTuningLossInput input);
 public sealed class FineTuningLossInput
 {
     private readonly Func<float[]>? _reference;
+    private Func<float, float[]>? _divergence;
     private Tensor? _referenceTensor;
     private Tensor? _sums, _means;
+    private readonly List<(Tensor Values, float Temperature)> _divergences = [];
 
     /// <summary>
     /// The input for <paramref name="logProbabilities"/> [tokens] divided into sequences of
@@ -40,12 +42,17 @@ public sealed class FineTuningLossInput
     /// <param name="pairs">Whether the sequences are preference pairs (see <see cref="Pairs"/>).</param>
     /// <param name="stepTokens">Trained tokens of the whole step (0: this input's).</param>
     /// <param name="stepSequences">Sequences of the whole step (0: this input's).</param>
+    /// <param name="teacherDivergence">
+    /// The divergence from a teacher of each trained token at a temperature (see <see cref="TeacherDivergence"/>), or null
+    /// when there is no teacher.
+    /// </param>
     public FineTuningLossInput(Tensor logProbabilities, IReadOnlyList<int> tokenCounts, Tensor? referenceLogProbabilities = null, bool pairs = false,
-        int stepTokens = 0, int stepSequences = 0)
+        int stepTokens = 0, int stepSequences = 0, Func<float, float[]>? teacherDivergence = null)
         : this(logProbabilities, tokenCounts, [], null, pairs, stepTokens, stepSequences)
     {
         ArgumentNullException.ThrowIfNull(logProbabilities);
         _referenceTensor = referenceLogProbabilities;
+        _divergence = teacherDivergence;
         if (referenceLogProbabilities is not null && referenceLogProbabilities.Size != logProbabilities.Size)
         {
             throw new ArgumentException("The reference log-probabilities need one value per trained token.", nameof(referenceLogProbabilities));
@@ -53,8 +60,9 @@ public sealed class FineTuningLossInput
     }
 
     internal FineTuningLossInput(Tensor logProbabilities, IReadOnlyList<int> tokenCounts, IReadOnlyList<TrainingSequence> sequences, Func<float[]>? reference,
-        bool pairs, int stepTokens, int stepSequences)
+        bool pairs, int stepTokens, int stepSequences, Func<float, float[]>? divergence = null)
     {
+        _divergence = divergence;
         ArgumentNullException.ThrowIfNull(tokenCounts);
         if (tokenCounts.Count == 0 || tokenCounts.Any(c => c < 0) || tokenCounts.Sum() != logProbabilities.Size)
         {
@@ -97,6 +105,46 @@ public sealed class FineTuningLossInput
             return _referenceTensor;
         }
     }
+
+    /// <summary>
+    /// The teacher's divergence from the model at each trained token [tokens]: KL(q ‖ p) between the teacher's
+    /// distribution over the next token, q = softmax(teacher logits / T), and the model's, p = softmax(logits / T), at
+    /// <paramref name="temperature"/> T (the teacher is <see cref="FineTuningOptions.Teacher"/>; see
+    /// <see cref="DistillationTeacher"/>). Recorded: a loss may combine it with <see cref="LogProbabilities"/> freely, and
+    /// the trainer turns its gradient into the network's with one more pass of the output head over the trained rows
+    /// (row t's logits receive g_t · (p − q) / T), so the [tokens, vocabulary] logits are never stored. Each temperature
+    /// asked for costs one more pass of the head (and of the teacher's head) over the trained rows.
+    /// </summary>
+    /// <param name="temperature">Softens both distributions (1: as they are).</param>
+    public Tensor TeacherDivergence(float temperature = 1f)
+    {
+        if (!(temperature > 0f) || float.IsInfinity(temperature))
+        {
+            throw new ArgumentOutOfRangeException(nameof(temperature), "The temperature is a positive number.");
+        }
+
+        foreach (var (values, t) in _divergences)
+        {
+            if (t == temperature)
+            {
+                return values;
+            }
+        }
+
+        var divergence = _divergence?.Invoke(temperature)
+                         ?? throw new InvalidOperationException("No teacher for this input: set FineTuningOptions.Teacher (DistillationTeacher.FromModel or FromFile) to distil.");
+        if (divergence.Length != LogProbabilities.Size)
+        {
+            throw new InvalidOperationException($"The teacher gave {divergence.Length} divergences for {LogProbabilities.Size} trained tokens.");
+        }
+
+        var tensor = Tensor.From(divergence, [divergence.Length], LogProbabilities.Device, requiresGrad: LogProbabilities.RequiresGrad);
+        _divergences.Add((tensor, temperature));
+        return tensor;
+    }
+
+    /// <summary>The <see cref="TeacherDivergence"/> tensors the loss asked for, with their temperatures (the trainer back-propagates them).</summary>
+    internal IReadOnlyList<(Tensor Values, float Temperature)> Divergences => _divergences;
 
     /// <summary>Trained tokens of each sequence of the batch, in order.</summary>
     public IReadOnlyList<int> TokenCounts { get; }
@@ -202,6 +250,41 @@ public static class FineTuningLosses
     /// record it as a graph); this form is a starting point for losses of one's own.
     /// </summary>
     public static FineTuningLoss TokenCrossEntropy { get; } = input => -input.LogProbabilities.Sum() / input.StepTokens;
+
+    /// <summary>
+    /// Knowledge distillation per token (Hinton, Vinyals and Dean 2015, "Distilling the Knowledge in a Neural Network",
+    /// arXiv:1503.02531): the mean over the step's trained tokens of α · T² · KL(q_T ‖ p_T) + (1 − α) · (−log p(token)),
+    /// with q_T and p_T the teacher's and the model's next-token distributions softened by the temperature T
+    /// (<see cref="FineTuningLossInput.TeacherDivergence"/>; the teacher is <see cref="FineTuningOptions.Teacher"/>). The
+    /// T² factor keeps the soft term's gradient about as large as at T = 1, so α weighs the two terms as it says. Training
+    /// with a teacher and no <see cref="FineTuningOptions.Loss"/> uses this loss with its defaults.
+    /// </summary>
+    /// <param name="temperature">Softens both distributions (1: as they are; 1 to 2 is usual for language models).</param>
+    /// <param name="alpha">The weight of the distillation term (1: the teacher alone); the label cross-entropy gets 1 − α.</param>
+    public static FineTuningLoss Distillation(float temperature = 1f, float alpha = 0.5f)
+    {
+        if (!(temperature > 0f) || float.IsInfinity(temperature))
+        {
+            throw new ArgumentOutOfRangeException(nameof(temperature), "The temperature is a positive number.");
+        }
+
+        if (alpha is < 0f or > 1f || float.IsNaN(alpha))
+        {
+            throw new ArgumentOutOfRangeException(nameof(alpha), "Alpha is in [0, 1].");
+        }
+
+        return input =>
+        {
+            var hard = alpha >= 1f ? null : input.LogProbabilities.Sum() * (-(1f - alpha) / input.StepTokens);
+            if (alpha <= 0f)
+            {
+                return hard!;
+            }
+
+            var soft = input.TeacherDivergence(temperature).Sum() * (alpha * temperature * temperature / input.StepTokens);
+            return hard is null ? soft : soft + hard;
+        };
+    }
 
     /// <summary>
     /// Direct preference optimization (Rafailov et al. 2023, "Direct Preference Optimization: Your Language Model is

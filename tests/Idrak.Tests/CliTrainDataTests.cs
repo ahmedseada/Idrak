@@ -23,7 +23,8 @@ internal static partial class Tests
         ("cli train data: data show, count, build, preview, validate, stats", CliDataInspect),
         ("cli train data: data convert, dedupe, split, sample, mix", CliDataTransform),
         ("cli train data: train, predict, runs, resume, package on CSV", CliTrainCsv),
-        ("cli train data: train and predict on an image folder; distill explains its gap", CliTrainImages),
+        ("cli train data: train and predict on an image folder", CliTrainImages),
+        ("cli train data: distill on the fly, precomputed top-k logits then trained from the file, teacher-written answers; a vocabulary mismatch is refused", CliDistill),
     ];
 
     private static (int Code, string Out, string Err) TrainCli(params string[] args)
@@ -420,10 +421,6 @@ internal static partial class Tests
             var predicted = TrainCliJson("predict", Path.Combine(folder, "halves.ikm"), "-i", Path.Combine(folder, "images", "right"), "-d", d);
             int right = predicted["predictions"]!.AsArray().Count(r => (string?)r!["prediction"] == "right");
             Check(right >= 22, $"images predicted: {right} of 24");
-
-            var distill = TrainCli("distill", "--teacher", "big", "--student", "small", "--data", "x.jsonl");
-            Check(distill.Code == 1 && distill.Err.Contains("teacher pattern", StringComparison.Ordinal), $"distill explains: {distill.Err}");
-            Check(TrainCli("distill", "--teacher", "big").Code == 2, "distill without a student is a usage error");
         }
         finally
         {

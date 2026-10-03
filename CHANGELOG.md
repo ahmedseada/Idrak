@@ -53,6 +53,16 @@
   decoding attention over a 4096-position cache with a window of 512 takes 7.1 ms instead of 62 ms without one.
   `--bench-vulkan window` measures both. The window-sized ring-buffer cache is not done (plans/plug-in.md says why).
 
+- Knowledge distillation (the teacher pattern): `FineTuningOptions.Teacher` with `DistillationTeacher.FromModel` (the
+  teacher run on the fly, any weight format, on the student's device or another) or `DistillationTeacher.FromFile`
+  (top-k logits per token written by `TeacherLogitsWriter`, read by `TeacherLogitsFile`; the stored top k
+  renormalized); `FineTuningLossInput.TeacherDivergence(T)` and `FineTuningLosses.Distillation(temperature, alpha)`
+  (α · T² · KL plus (1 − α) · the token cross-entropy, without storing the full logits); a vocabulary check that refuses
+  a teacher with another tokenizer (`DistillationTeacher.CheckVocabulary`, `VocabularyFingerprint`); teacher-written
+  data for sequence-level distillation (`TeacherData.Generate`, optionally with the teacher's reasoning); for
+  classifiers, `Losses.Distillation` and `Distillation.WithTeacher` for the `Trainer`. `idrak distill` replaces its
+  stub: on the fly, `--precompute FILE` then `--teacher FILE`, or `--generate`, with `--temperature`, `--alpha`,
+  `--top-k`, `--teacher-weights`, `--teacher-device` and idrak tune's options.
 
 - idrak, across the groups: every command's help has one layout (usage and aliases, "Arguments:", "Options:" with
   short forms, examples, limits and gaps, the common options, and the environment variables that affect it, generated
@@ -94,6 +104,7 @@
   --data FILE|FOLDER` (a builder network on a CSV or a folder of class folders of PNG/PGM/PPM images; run folders with
   checkpoints and a JSON Lines log; a `.ikm` package), `resume`, `runs list/show/compare` (text loss plots), `predict`,
   `package` and `distill` (explains that it waits for the teacher pattern); `idrak data` (the former idrak-data's commands) with
+  `package` and `distill` (see the distillation entry above); `idrak data` (idrak-data's commands) with
   `preview`, `validate --as chat|preference|table`, `stats -m MODEL`, `convert`, `dedupe`, `split`, `sample`, `mix`.
 - The separate tools `idrak-tune` (package `Idrak.FineTuning.Cli`) and `idrak-data` (package `Idrak.Datasets.Cli`)
   are removed, folded into `idrak`: `idrak tune` and `idrak data` take the same commands and options (see `idrak help
