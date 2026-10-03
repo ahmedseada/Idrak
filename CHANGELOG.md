@@ -32,6 +32,13 @@
   `package` and `distill` (explains that it waits for the teacher pattern); `idrak data` (idrak-data's commands) with
   `preview`, `validate --as chat|preference|table`, `stats -m MODEL`, `convert`, `dedupe`, `split`, `sample`, `mix`.
   idrak-tune and idrak-data are now thin forwarders compiling the same code (`TuneTool`, `DataTool`), unchanged in use.
+- `idrak` tool, Health group: `doctor` (`--android`, `--network`, `--explain`, `--fix`), `devices`, `version` with the
+  drivers, `report` (`--tests`, `--bench`, `--readme`, `--zip`), `env` and `help env` (every environment variable the
+  libraries read, from one table a test keeps complete), `init`, `cache info/clear`, `config get/set/unset/list` with
+  profiles, `plugins list`, `formats`, `completion`, `update`, `login`/`logout`, `setup android` and `help topics`;
+  with the shared `@file`, `--log`, `--output`, `--format`, `--color`, `--plain`, `--offline`, `--threads`, `--seed`
+  and `--timeout` options, progress lines, questions with `--yes` and Ctrl+C handling. `Idrak.Diagnostics.
+  DeviceListing` lists every device with what it reports (memory, compute units, lanes, kernel width, driver).
 
 - Tool calls are parsed in the model's own format, not only as JSON between tags. `ChatOutputParser` takes the
   reasoning out and feeds the answer to an `IToolCallParser` (`Feed`, `Finish`, emitting text, reasoning and calls as

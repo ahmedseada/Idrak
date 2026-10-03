@@ -112,6 +112,28 @@ the work and decides what the first release must have. Short forms and aliases a
 | `idrak completion bash\|zsh\|fish\|pwsh` | Prints a shell completion script for commands, options and cached model names | 2 |
 | `idrak update` | Tells whether a newer tool version exists and the command to install it (no self-replacement) | 3 |
 
+Built with the group beyond the rows above (found while building):
+
+- `report --source DIR` (the checkout `--tests` runs from; otherwise found from the current folder upwards) and
+  `report --readme` printing both README tables' rows; `doctor --rc FILE` and `setup android --rc FILE` (the start-up
+  file the safe fixes add lines to, each line once); `plugins list --added` (only what the plug-ins added; their names
+  are marked "+" otherwise); `update --prerelease`; `env NAME...` (only those variables); `idrak environment` as an
+  alias of `env` (so `help environment` works); `init --profile NAME` and `--dry-run`.
+- `idrak completion --complete -- WORDS...`: the candidates the scripts ask for, so completion follows the commands,
+  options, device names, weight and KV formats, profiles, cached models and aliases of this install (plug-ins too).
+- A group word alone (`idrak cache`, `idrak config`) lists its subcommands instead of "unknown command".
+- `idrak login github` keeps the token in the config ("tokens.github") and the tool passes it on as `GITHUB_TOKEN`
+  (the library reads only that variable); config listings show any key holding a token or key only as "set".
+- The library gains a read-only `Idrak.Diagnostics.DeviceListing` (`Backends`, `All()`, `Describe(device)`: memory,
+  compute units, lanes, kernel width, matrix units, driver, hardware kind) that `devices`, `doctor`, `version` and
+  `report` read; the test runner's `--list-devices` can move onto it.
+
+Gaps (Health): `report --bench` times the float32 products on each device (GFLOP/s); model speeds come from `idrak
+bench` once the Measure group lands. `report --tests` runs the test runner of a source checkout as a child process (no
+test list ships with the tool). `devices` shows no compute units for Vulkan devices (core Vulkan reports none) and no
+hardware kind for CUDA devices (not read yet). `doctor` checks the Vulkan driver files on Linux only (Windows keeps
+them in the registry).
+
 ### Run models
 
 | Command | What it does | Priority |
@@ -458,6 +480,17 @@ Common options added by the second pass (built by the Health agent with the foun
 | `--color auto\|always\|never` | Colour control (`NO_COLOR` still wins) |
 | `--plain` | No Unicode box or progress characters (screen readers, old terminals, logs) |
 | `--timeout DURATION` | Give up after a time (downloads, server calls, long runs) |
+
+For the other groups: `CommandContext` has `Offline`, `Threads` (already applied to `ComputeResources.MaxCpuThreads`),
+`Seed`, `Format` (`Json` is true for `--format json`; `Table` prints CSV or Markdown tables; `Write` lines are left out
+of CSV), `Output` (the `-O` file, `ConsoleOutput` stays the console), `ColorMode`, `Plain`, `Timeout` and
+`TimeoutToken` (cancelled when the time runs out), and `Log`. `Shared/Terminal.cs` has `Paint` (colour rules),
+`Confirm`/`Ask`/`AskSecret` (`--yes`; without a terminal an error naming it), `DryRun`, `ConfirmFlags` and
+`ConfirmShortForms` (`--yes`, `-y`, `--dry-run`) and `Interrupt` (Ctrl+C: the first press cancels a token);
+`Shared/Progress.cs` has `ProgressLine` (rate and time left on the error output, only on a terminal);
+`Shared/EnvironmentVariables.cs` is the variable table (`HelpSection(command)` ends each command's help; add the
+command names a variable affects there); `Shared/HelpTopics.cs` the concept pages; `Command.BeforePlugins` runs
+before `--plugin` assemblies load.
 
 Later, not in this build: messages in Arabic (`--lang ar`) given the library's name and audience; a plug-in marketplace
 listing; remote devices (run a command on another machine's `idrak serve`).
