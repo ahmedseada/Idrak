@@ -20,3 +20,21 @@ names ("cache info") are matched before shorter ones. `CommandContext` gives the
 
 The assembly is named `Idrak.Cli`, not `idrak`: assembly names ignore case, so `idrak` would clash with the Idrak
 library. The installed command is still `idrak` (`ToolCommandName`).
+
+## Run models
+
+`chat` (`c`), `run` (`r`), `batch`, `compare`, `complete`, `embed`, `tokenize`, `template`, `agent`, `tools list` and
+`tools test` (`Commands/Run/`). Every one takes a Hugging Face id, a model folder, a `.gguf` file or an alias, with
+`-w, --weights` and `-k, --kv`; the generation settings (`-s, --system`, `--temperature`, `--top-k`, `--top-p`,
+`--max-tokens`, `--seed`, `--think`, `--no-think`, `--tools FILE.dll`) are shared through `Shared/GenerationSettings.cs`.
+
+```
+idrak chat Qwen/Qwen3-0.6B -s "Answer briefly." --history talk.json
+cat notes.txt | idrak run qwen "Summarize in three bullets"
+idrak batch qwen -i prompts.jsonl -o answers.jsonl
+idrak tokenize qwen --chat "Hello" --count
+idrak agent qwen "Add a test for Parse" --workspace ./src
+```
+
+Chat reads its input through `Shared/StandardInput.cs`, so the tests drive a conversation (with slash commands)
+in-process.

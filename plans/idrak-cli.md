@@ -128,6 +128,39 @@ the work and decides what the first release must have. Short forms and aliases a
 | `idrak agent MODEL` | The coding agent (read, search, edit, run commands in a folder), from the CodingAgent sample; `--yes` to allow commands without asking | 3 |
 | `idrak tools list/test TOOLS.dll` | The tools an assembly registers and a call of each with sample arguments | 3 |
 
+Built (branch `cli-run`): every command above, with the second pass's `chat --file`/`--mcp` and `run --schema`.
+Added while building (all built and tested):
+
+- `--no-think` beside `--think` (chat, run, batch, compare, agent; `/think default` returns to the model's own mode);
+  `--temperature 0` means greedy decoding.
+- `chat`: `/file FILE` (a file's text joins the next message), `/system none`, a line ending with `\` continues on the
+  next, `//text` sends a message that starts with `/`; Ctrl+C stops the answer, not the chat; `/copy` uses the
+  terminal's clipboard escape (OSC 52) and prints the answer elsewhere.
+- `run --mcp SERVER` as in chat; `run` writes the figures to the error output with `-v` so pipes stay clean.
+- `batch --batch-size N`; prompts may be strings, `{"prompt", "id"}` or `{"messages"}`; a torn last line from an
+  interruption is dropped and answered again.
+- `compare --weights-b F`, `--kv-b F` (two settings of one model), `--width N` (0: one after the other); one seed for both.
+- `complete --stop TEXT`; `template --source`, `--think`; `embed --whole`, `--max-length N`, `--batch-size N`.
+- `agent --workspace DIR`, `--read-only`, `--rounds N`, a task argument (or tasks read line by line), and `-y, --yes`;
+  without `--yes` each command is asked about.
+- `tools test --tool NAME`, `--args JSON`, `--timeout S`; tool assemblies also export static `Tool` properties or fields.
+- Shared helpers for serve and bench: `Shared/GenerationSettings.cs` (sampling options, `/set`), `Shared/ToolAssemblies.cs`,
+  `Shared/StructuredOutput.cs`, `Shared/StandardInput.cs` (injectable input: tests drive chat in-process), and
+  `Models.CacheLayout`/`CreateChat`/`CreateGenerator`/`ContextLength` (generation uses a 4096-token window unless
+  `--context` says otherwise, since the KV cache is sized by it); model paths that do not exist are a usage error
+  instead of a download attempt.
+
+Gaps (in the commands' help too):
+
+- `run --schema`: the library has no JSON-schema constrained sampling (plug-in gap 13). The schema is given to the
+  model as an instruction and the answer is checked afterwards (types, required properties, items, enums), exit 1 when
+  it does not match.
+- `embed`: no embedding heads for decoder models trained as embedders (last-token pooling, instruction prefixes); the
+  command mean-pools the last hidden states (through the library's `TextEncoder`) and scales to unit length.
+- `/stats` memory: the library reports no device memory in use; the process and managed memory are shown.
+- `agent`: `CodingAgent` has no approval hook, so the command runs the coding tools through its own tool loop with
+  `ToolRegistry.RequireApproval` on `run_command` (no task verification, which only suite runs need).
+
 ### Serve
 
 | Command | What it does | Priority |
