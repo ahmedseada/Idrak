@@ -136,8 +136,9 @@ public sealed class PackedSequences : IDisposable
 
     /// <summary>
     /// Whether <paramref name="network"/> can run packed batches on its device: its attention layers are
-    /// <see cref="CausalSelfAttention"/> without a sliding window or soft-capped scores, with a head size the device's packed attention supports (on CUDA, bfloat16
-    /// tensor cores with head size 64 or 128), and no layer with positions of its own that ignores the packing.
+    /// <see cref="CausalSelfAttention"/> with a head size the device's packed attention supports (on CUDA, bfloat16 tensor cores with
+    /// head size 64 or 128, and no sliding window that can mask or soft-capped scores), and no layer with positions of its own
+    /// that ignores the packing.
     /// </summary>
     public static bool Supports(Module network)
     {
@@ -145,7 +146,7 @@ public sealed class PackedSequences : IDisposable
         var modules = network.Descendants().ToList();
         var attention = modules.OfType<CausalSelfAttention>().ToList();
         return attention.Count > 0 && !modules.Any(m => m is MultiHeadAttention or PositionalEncoding)
-            && attention.All(a => a.PlainCausal && a.Query.Device.Backend.SupportsSegmentedAttention(a.HeadDim));
+            && attention.All(a => a.SupportsSegmented(a.Query.Device.Backend));
     }
 
     /// <summary>Restores the previous packing when disposed.</summary>

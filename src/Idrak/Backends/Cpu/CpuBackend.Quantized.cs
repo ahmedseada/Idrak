@@ -315,11 +315,13 @@ internal sealed partial class CpuBackend
     }
 
     public override void AttentionDecode(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead,
-        int steps, int capacity, int dim, float scale) =>
-        AttentionTiled(q, keys, values, position, y, null, heads, rowsPerHead, steps, capacity, dim, scale);
+        int steps, int capacity, int dim, float scale, AttentionVariant variant = default) =>
+        AttentionTiled(q, keys, values, position, y, null, heads, rowsPerHead, steps, capacity, dim, scale, variant);
 
+    // The reference for every attention kernel: each row's positions from its window's start (0 without a window) up to
+    // its causal limit, the scaled scores soft-capped when a cap is set, then the softmax and the weighted values.
     public override void AttentionTiled(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage? logSumExp, int heads,
-        int rowsPerHead, int steps, int capacity, int dim, float scale)
+        int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
         float[] qv = D(q), kv = D(keys), vv = D(values), yv = D(y);
         float[]? lv = logSumExp is null ? null : D(logSumExp);
@@ -329,14 +331,15 @@ internal sealed partial class CpuBackend
             var scores = ArrayPool<float>.Shared.Rent(capacity);
             for (int row = first; row < last; row++)
             {
-                int h = row / rowsPerHead, count = Math.Min(position0 + row % rowsPerHead % steps, capacity - 1) + 1;
+                int h = row / rowsPerHead, end = Math.Min(position0 + row % rowsPerHead % steps, capacity - 1) + 1;
+                int begin = variant.Start(end), count = end - begin;
                 var query = qv.AsSpan(row * dim, dim);
                 float max = float.NegativeInfinity;
                 for (int c = 0; c < count; c++)
                 {
-                    float dot = Dot(query, kv.AsSpan((int)(((long)h * capacity + c) * dim), dim));
+                    float dot = Dot(query, kv.AsSpan((int)(((long)h * capacity + begin + c) * dim), dim));
 
-                    scores[c] = dot * scale;
+                    scores[c] = variant.Cap(dot * scale);
                     max = MathF.Max(max, scores[c]);
                 }
 
@@ -352,7 +355,7 @@ internal sealed partial class CpuBackend
                 for (int c = 0; c < count; c++)
                 {
                     float weight = scores[c] / sum;
-                    AddScaled(output, vv.AsSpan((int)(((long)h * capacity + c) * dim), dim), weight);
+                    AddScaled(output, vv.AsSpan((int)(((long)h * capacity + begin + c) * dim), dim), weight);
                 }
             }
             ArrayPool<float>.Shared.Return(scores);
@@ -360,7 +363,7 @@ internal sealed partial class CpuBackend
     }
 
     public override void AttentionTiledBackward(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput,
-        Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale)
+        Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
         float[] qv = D(q), kv = D(keys), vv = D(values), ov = D(output), lv = D(logSumExp), gv = D(dOutput);
         float[] dqv = D(dq), dkv = D(dkeys), dvv = D(dvalues);
@@ -375,12 +378,12 @@ internal sealed partial class CpuBackend
                     var gradOut = gv.AsSpan(row * dim, dim);
                     float delta = Dot(gradOut, ov.AsSpan(row * dim, dim));
 
-                    for (int c = 0; c < count; c++)
+                    for (int c = variant.Start(count); c < count; c++)
                     {
                         int key = (h * capacity + c) * dim;
                         float dot = Dot(query, kv.AsSpan(key, dim)), dp = Dot(gradOut, vv.AsSpan(key, dim));
 
-                        float p = MathF.Exp(dot * scale - lv[row]), ds = p * (dp - delta);
+                        float score = variant.Cap(dot * scale), p = MathF.Exp(score - lv[row]), ds = p * (dp - delta) * variant.Slope(score);
                         AddScaled(dqv.AsSpan(row * dim, dim), kv.AsSpan(key, dim), scale * ds);
                         AddScaled(dkv.AsSpan(key, dim), query, scale * ds);
                         AddScaled(dvv.AsSpan(key, dim), gradOut, p);
@@ -390,10 +393,10 @@ internal sealed partial class CpuBackend
         });
     }
 
-    public override bool SupportsSegmentedAttention(int dim) => true;
+    public override bool SupportsSegmentedAttention(int dim, AttentionVariant variant = default) => true;
 
     public override bool AttentionRows(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow,
-        int rowsPerHead, int steps, int capacity, int dim, float scale)
+        int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
         float[] qv = D(q), kv = D(keys), vv = D(values), yv = D(y), sv = D(starts);
         int position0 = (int)D(position)[0];
@@ -403,7 +406,7 @@ internal sealed partial class CpuBackend
             for (int row = first; row < last; row++)
             {
                 int h = row / rowsPerHead, t = row % rowsPerHead % steps;
-                int begin = (int)sv[h / headsPerRow * steps + t], end = Math.Min(position0 + t, capacity - 1) + 1, count = end - begin;
+                int end = Math.Min(position0 + t, capacity - 1) + 1, begin = Math.Max((int)sv[h / headsPerRow * steps + t], variant.Start(end)), count = end - begin;
                 var output = yv.AsSpan(row * dim, dim);
                 output.Clear();
                 if (count <= 0)
@@ -417,7 +420,7 @@ internal sealed partial class CpuBackend
                 {
                     float dot = Dot(query, kv.AsSpan((int)(((long)h * capacity + begin + c) * dim), dim));
 
-                    scores[c] = dot * scale;
+                    scores[c] = variant.Cap(dot * scale);
                     max = MathF.Max(max, scores[c]);
                 }
 
@@ -434,7 +437,7 @@ internal sealed partial class CpuBackend
     }
 
     public override bool AttentionSegmented(Storage q, Storage keys, Storage values, Storage y, Storage? logSumExp, Storage starts, Storage ends,
-        int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale)
+        int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant = default)
     {
         float[] qv = D(q), kv = D(keys), vv = D(values), yv = D(y), sv = D(starts);
         float[]? lv = logSumExp is null ? null : D(logSumExp);
@@ -443,14 +446,15 @@ internal sealed partial class CpuBackend
             var scores = ArrayPool<float>.Shared.Rent(steps);
             for (int row = first; row < last; row++)
             {
-                int h = row / rowsPerHead, t = row % rowsPerHead % steps, begin = (int)sv[h / headsPerRow * steps + t], count = t + 1 - begin;
+                int h = row / rowsPerHead, t = row % rowsPerHead % steps, begin = Math.Max((int)sv[h / headsPerRow * steps + t], variant.Start(t + 1));
+                int count = t + 1 - begin;
                 var query = qv.AsSpan(row * dim, dim);
                 float max = float.NegativeInfinity;
                 for (int c = 0; c < count; c++)
                 {
                     float dot = Dot(query, kv.AsSpan((int)(((long)h * steps + begin + c) * dim), dim));
 
-                    scores[c] = dot * scale;
+                    scores[c] = variant.Cap(dot * scale);
                     max = MathF.Max(max, scores[c]);
                 }
 
@@ -474,7 +478,8 @@ internal sealed partial class CpuBackend
     }
 
     public override bool AttentionSegmentedBackward(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput,
-        Storage dq, Storage dkeys, Storage dvalues, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale)
+        Storage dq, Storage dkeys, Storage dvalues, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale,
+        AttentionVariant variant = default)
     {
         float[] qv = D(q), kv = D(keys), vv = D(values), ov = D(output), lv = D(logSumExp), gv = D(dOutput), sv = D(starts);
         float[] dqv = D(dq), dkv = D(dkeys), dvv = D(dvalues);
@@ -484,7 +489,7 @@ internal sealed partial class CpuBackend
             {
                 for (int i = 0; i < rowsPerHead; i++)
                 {
-                    int row = h * rowsPerHead + i, t = i % steps, begin = (int)sv[h / headsPerRow * steps + t];
+                    int row = h * rowsPerHead + i, t = i % steps, begin = Math.Max((int)sv[h / headsPerRow * steps + t], variant.Start(t + 1));
                     var query = qv.AsSpan(row * dim, dim);
                     var gradOut = gv.AsSpan(row * dim, dim);
                     float delta = Dot(gradOut, ov.AsSpan(row * dim, dim));
@@ -494,7 +499,7 @@ internal sealed partial class CpuBackend
                         int key = (h * steps + c) * dim;
                         float dot = Dot(query, kv.AsSpan(key, dim)), dp = Dot(gradOut, vv.AsSpan(key, dim));
 
-                        float p = MathF.Exp(dot * scale - lv[row]), ds = p * (dp - delta);
+                        float score = variant.Cap(dot * scale), p = MathF.Exp(score - lv[row]), ds = p * (dp - delta) * variant.Slope(score);
                         AddScaled(dqv.AsSpan(row * dim, dim), kv.AsSpan(key, dim), scale * ds);
                         AddScaled(dkv.AsSpan(key, dim), query, scale * ds);
                         AddScaled(dvv.AsSpan(key, dim), gradOut, p);
@@ -506,7 +511,7 @@ internal sealed partial class CpuBackend
     }
 
     public override void AttentionInt8(Storage q, Storage keys, Storage values, Storage keyScales, Storage valueScales, Storage position,
-        Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, bool tiled)
+        Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, bool tiled, AttentionVariant variant = default)
     {
         float[] qv = D(q), ks = D(keyScales), vs = D(valueScales), yv = D(y);
         int position0 = (int)D(position)[0], stride = (dim + 3) / 4 * 4;
@@ -517,14 +522,15 @@ internal sealed partial class CpuBackend
             var scores = ArrayPool<float>.Shared.Rent(capacity);
             for (int row = first; row < last; row++)
             {
-                int h = row / rowsPerHead, count = Math.Min(position0 + row % rowsPerHead % steps, capacity - 1) + 1;
+                int h = row / rowsPerHead, end = Math.Min(position0 + row % rowsPerHead % steps, capacity - 1) + 1;
+                int begin = variant.Start(end), count = end - begin;
                 var query = qv.AsSpan(row * dim, dim);
                 float max = float.NegativeInfinity;
                 for (int c = 0; c < count; c++)
                 {
-                    float dot = Dot(query, kb.Slice((h * capacity + c) * stride, dim));
+                    float dot = Dot(query, kb.Slice((h * capacity + begin + c) * stride, dim));
 
-                    scores[c] = dot * ks[h * capacity + c] * scale;
+                    scores[c] = variant.Cap(dot * ks[h * capacity + begin + c] * scale);
                     max = MathF.Max(max, scores[c]);
                 }
 
@@ -534,9 +540,10 @@ internal sealed partial class CpuBackend
                 output.Clear();
                 for (int c = 0; c < count; c++)
                 {
-                    float weight = scores[c] / sum * vs[h * capacity + c];
-                    AddScaled(output, vb.Slice((h * capacity + c) * stride, dim), weight);
+                    float weight = scores[c] / sum * vs[h * capacity + begin + c];
+                    AddScaled(output, vb.Slice((h * capacity + begin + c) * stride, dim), weight);
                 }
+
             }
             ArrayPool<float>.Shared.Return(scores);
         });

@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak.Backends;
 using Idrak.Diagnostics;
 
 namespace Idrak;
@@ -107,13 +108,13 @@ public sealed partial class Tensor
     /// Attention of q [heads, rowsPerHead, dim] over a float cache filled up to <paramref name="position"/> (see
     /// Backend.AttentionDecode): the softmax and the weighted values in one pass, reading only filled positions.
     /// </summary>
-    internal static Tensor AttentionDecode(Tensor q, Layers.KeyValueCache cache, Tensor position, int steps, float scale)
+    internal static Tensor AttentionDecode(Tensor q, Layers.KeyValueCache cache, Tensor position, int steps, float scale, AttentionVariant variant = default)
     {
         long start = Telemetry.Start(TelemetryLevel.Operations);
         int heads = q._shape[0], rowsPerHead = q._shape[1], dim = q._shape[2];
         var y = Empty([heads, rowsPerHead, dim], q.Device);
         q.Backend.AttentionDecode(q.Storage, cache.Keys.Storage, cache.Values.Storage, position.Storage, y.Storage, heads, rowsPerHead, steps,
-            cache.Keys._shape[1], dim, scale);
+            cache.Keys._shape[1], dim, scale, variant);
         return Traced("attention_decode", y, start);
     }
 
@@ -121,22 +122,23 @@ public sealed partial class Tensor
     /// Attention of q [heads, rowsPerHead, dim] over keys and values [heads, capacity, dim] up to the causal limit
     /// position[0] + (row % steps), tiled for many query rows (a prompt or a whole sequence; see Backend.AttentionTiled).
     /// </summary>
-    internal static Tensor AttentionTiled(Tensor q, Tensor keys, Tensor values, Tensor position, int steps, float scale)
+    internal static Tensor AttentionTiled(Tensor q, Tensor keys, Tensor values, Tensor position, int steps, float scale, AttentionVariant variant = default)
     {
         long start = Telemetry.Start(TelemetryLevel.Operations);
         int heads = q._shape[0], rowsPerHead = q._shape[1], dim = q._shape[2];
         var y = Empty([heads, rowsPerHead, dim], q.Device);
         q.Backend.AttentionTiled(q.Storage, keys.Storage, values.Storage, position.Storage, y.Storage, null, heads, rowsPerHead, steps,
-            keys._shape[1], dim, scale);
+            keys._shape[1], dim, scale, variant);
         return Traced("attention_tiled", y, start);
     }
 
     /// <summary>
     /// Causal attention of q [heads, rowsPerHead, dim] over keys and values [heads, steps, dim] (row i sees positions
     /// ≤ i % steps) with its gradient, without storing attention weights: the backward pass recomputes them from each
-    /// row's log-sum-exp (FlashAttention-style). Memory grows with the sequence length, not its square.
+    /// row's log-sum-exp (FlashAttention-style). Memory grows with the sequence length, not its square. With a
+    /// <paramref name="variant"/>, each row sees only its window and its scores are soft-capped, forward and backward.
     /// </summary>
-    internal static Tensor CausalAttention(Tensor q, Tensor keys, Tensor values, Tensor zero, int steps, float scale)
+    internal static Tensor CausalAttention(Tensor q, Tensor keys, Tensor values, Tensor zero, int steps, float scale, AttentionVariant variant = default)
     {
         long start = Telemetry.Start(TelemetryLevel.Operations);
         int heads = q._shape[0], rowsPerHead = q._shape[1], dim = q._shape[2], capacity = keys._shape[1];
@@ -144,7 +146,7 @@ public sealed partial class Tensor
         bool record = Autograd.IsEnabled && (q.RequiresGrad || keys.RequiresGrad || values.RequiresGrad);
         var lse = record ? Empty([heads, rowsPerHead], q.Device, track: false) : null;
         q.Backend.AttentionTiled(q.Storage, keys.Storage, values.Storage, zero.Storage, y.Storage, lse?.Storage, heads, rowsPerHead, steps,
-            capacity, dim, scale);
+            capacity, dim, scale, variant);
         if (record)
         {
             y.Record("attention", g =>
@@ -155,7 +157,7 @@ public sealed partial class Tensor
                 using var dv = values.RequiresGrad ? null : Empty(values._shape, q.Device, zeroed: true, track: false);
                 q.Backend.AttentionTiledBackward(q.Storage, keys.Storage, values.Storage, y.Storage, lse!.Storage, g.Storage,
                     dq?.Storage ?? q.GradStorage(), dk?.Storage ?? keys.GradStorage(), dv?.Storage ?? values.GradStorage(),
-                    heads, rowsPerHead, steps, capacity, dim, scale);
+                    heads, rowsPerHead, steps, capacity, dim, scale, variant);
                 lse.Dispose();
             }, q, keys, values);
         }
@@ -167,13 +169,14 @@ public sealed partial class Tensor
     /// <see cref="AttentionTiled"/> for rows of different lengths: head h's row i sees cached positions c with
     /// starts[(h / headsPerRow)·steps + i % steps] ≤ c ≤ position[0] + i % steps. Null when the device has no such pass.
     /// </summary>
-    internal static Tensor? AttentionRows(Tensor q, Tensor keys, Tensor values, Tensor position, int steps, float scale, Tensor starts, int headsPerRow)
+    internal static Tensor? AttentionRows(Tensor q, Tensor keys, Tensor values, Tensor position, int steps, float scale, Tensor starts, int headsPerRow,
+        AttentionVariant variant = default)
     {
         long start = Telemetry.Start(TelemetryLevel.Operations);
         int heads = q._shape[0], rowsPerHead = q._shape[1], dim = q._shape[2];
         var y = Empty([heads, rowsPerHead, dim], q.Device);
         if (!q.Backend.AttentionRows(q.Storage, keys.Storage, values.Storage, position.Storage, y.Storage, starts.Storage, heads, headsPerRow, rowsPerHead,
-                steps, keys._shape[1], dim, scale))
+                steps, keys._shape[1], dim, scale, variant))
         {
             y.Dispose();
             return null;
@@ -187,7 +190,8 @@ public sealed partial class Tensor
     /// only its own sequence (<paramref name="packing"/>'s starts; head h belongs to packed row h / <paramref name="headsPerRow"/>).
     /// Null when the device has no such pass.
     /// </summary>
-    internal static Tensor? CausalAttentionSegmented(Tensor q, Tensor keys, Tensor values, Layers.PackedSequences packing, int headsPerRow, float scale)
+    internal static Tensor? CausalAttentionSegmented(Tensor q, Tensor keys, Tensor values, Layers.PackedSequences packing, int headsPerRow, float scale,
+        AttentionVariant variant = default)
     {
         long start = Telemetry.Start(TelemetryLevel.Operations);
         int heads = q._shape[0], rowsPerHead = q._shape[1], dim = q._shape[2], steps = keys._shape[1];
@@ -195,7 +199,7 @@ public sealed partial class Tensor
         bool record = Autograd.IsEnabled && (q.RequiresGrad || keys.RequiresGrad || values.RequiresGrad);
         var lse = record ? Empty([heads, rowsPerHead], q.Device, track: false) : null;
         if (!q.Backend.AttentionSegmented(q.Storage, keys.Storage, values.Storage, y.Storage, lse?.Storage, packing.Starts.Storage, packing.Ends.Storage,
-                heads, headsPerRow, rowsPerHead, steps, dim, scale))
+                heads, headsPerRow, rowsPerHead, steps, dim, scale, variant))
         {
             y.Dispose();
             lse?.Dispose();
@@ -211,7 +215,7 @@ public sealed partial class Tensor
                 using var dv = values.RequiresGrad ? null : Empty(values._shape, q.Device, zeroed: true, track: false);
                 if (!q.Backend.AttentionSegmentedBackward(q.Storage, keys.Storage, values.Storage, y.Storage, lse!.Storage, g.Storage,
                         dq?.Storage ?? q.GradStorage(), dk?.Storage ?? keys.GradStorage(), dv?.Storage ?? values.GradStorage(),
-                        packing.Starts.Storage, packing.Ends.Storage, heads, headsPerRow, rowsPerHead, steps, dim, scale))
+                        packing.Starts.Storage, packing.Ends.Storage, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant))
                 {
                     throw new NotSupportedException("Packed attention's backward pass is not available on this device.");
                 }
@@ -224,13 +228,13 @@ public sealed partial class Tensor
     }
 
     /// <summary>Attention of q [heads, rowsPerHead, dim] over an int8 cache filled up to <paramref name="position"/>.</summary>
-    internal static Tensor AttentionInt8(Tensor q, Layers.KeyValueCache cache, Tensor position, int steps, float scale, bool tiled)
+    internal static Tensor AttentionInt8(Tensor q, Layers.KeyValueCache cache, Tensor position, int steps, float scale, bool tiled, AttentionVariant variant = default)
     {
         long start = Telemetry.Start(TelemetryLevel.Operations);
         int heads = q._shape[0], rowsPerHead = q._shape[1], dim = q._shape[2];
         var y = Empty([heads, rowsPerHead, dim], q.Device);
         q.Backend.AttentionInt8(q.Storage, cache.Keys.Storage, cache.Values.Storage, cache.KeyScales!.Storage, cache.ValueScales!.Storage,
-            position.Storage, y.Storage, heads, rowsPerHead, steps, cache.Keys._shape[1], dim, scale, tiled);
+            position.Storage, y.Storage, heads, rowsPerHead, steps, cache.Keys._shape[1], dim, scale, tiled, variant);
         return Traced("attention_int8", y, start);
     }
 
@@ -242,13 +246,14 @@ public sealed partial class Tensor
     }
 
     /// <summary>Attention of q [heads, rows, dim] over the filled part of a bfloat16 cache.</summary>
-    internal static Tensor AttentionBFloat16(Tensor q, Layers.KeyValueCache cache, Tensor position, int steps, float scale, bool tiled)
+    internal static Tensor AttentionBFloat16(Tensor q, Layers.KeyValueCache cache, Tensor position, int steps, float scale, bool tiled, AttentionVariant variant = default)
     {
         long start = Telemetry.Start(TelemetryLevel.Operations);
         int heads = q._shape[0], rowsPerHead = q._shape[1], dim = q._shape[2];
         var y = Empty([heads, rowsPerHead, dim], q.Device);
         q.Backend.AttentionBFloat16(q.Storage, cache.Keys.Storage, cache.Values.Storage, position.Storage, y.Storage, heads, rowsPerHead, steps,
-            cache.Keys._shape[1], dim, scale, tiled);
+            cache.Keys._shape[1], dim, scale, tiled, variant);
+
         return Traced("attention_bf16", y, start);
     }
 
