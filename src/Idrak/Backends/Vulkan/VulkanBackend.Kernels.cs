@@ -751,7 +751,10 @@ internal sealed partial class VulkanBackend
     /// <summary>Tests and benchmarks only: the position splits of decoding attention instead of the measured or formula's.</summary>
     internal static int? AttentionSplits { get; set; }
 
-    /// <summary>Tests and benchmarks only: the float32 product kernel (0 small, 1 tiled, 2 register-blocked, 3 cooperative matrices) when it fits.</summary>
+    /// <summary>
+    /// Tests and benchmarks only: the float32 product kernel (0 small, 1 tiled, 2 register-blocked, 3 cooperative matrices,
+    /// 4 the reduced-precision cooperative matrices, only where MixedPrecision asks for reduced precision) when it fits.
+    /// </summary>
     internal static int? MatMulKernel { get; set; }
 
     // Fewest rows of k per split of a packed product (a format fact, not a device one): the partial sums written and
@@ -759,7 +762,7 @@ internal sealed partial class VulkanBackend
     // bfloat16's.
     private const int GemvMinChunk = 128;
 
-    private const int MatSmall = 0, MatTiled = 1, MatBlocked = 2, MatCoop = 3;
+    private const int MatSmall = 0, MatTiled = 1, MatBlocked = 2, MatCoop = 3, MatMixed = 4;
 
     public override void BatchedMatMul(Storage a, Storage b, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
     {
@@ -798,9 +801,37 @@ internal sealed partial class VulkanBackend
                         (choice, s) => RunMatMul(choice, s[0], s[1], s[2], batch, m, n, pushed));
                 }
             }
+
+            chosen = MixedMatMulChoice(chosen, a, b, c, batch, m, n, k, transA, transB, push);
         }
 
         RunMatMul(chosen, a, b, c, batch, m, n, push);
+    }
+
+    // Reduced precision (MixedPrecision, VulkanBackend.Matrix.cs): the float32 choice or the single-pass cooperative-matrix
+    // kernel, measured per shape under a key of its own (the float32 choice stays what float32 products measured); the
+    // float32 choice while nothing is measured, in float32 mode and where the kernel cannot run.
+    private int MixedMatMulChoice(int chosen, Storage a, Storage b, Storage c, int batch, int m, int n, int k, bool transA, bool transB, ReadOnlySpan<byte> push)
+    {
+        int mixed = WithWidth(Width, MatMixed);
+        if (!MatValid(mixed, m, n))
+        {
+            return chosen;
+        }
+
+        var key = new VulkanTuneKey(VulkanTuneOp.MixedMatMul, (transA ? 2 : 0) + (transB ? 1 : 0), batch, m, n, k);
+        if (!TryTuned(key, out int decided) || decided is not (0 or 1))
+        {
+            decided = 0;
+            if (CanTune)
+            {
+                var pushed = push.ToArray();
+                decided = TuneWithScratch(key, [0, 1], 0, [a, b, c], 1UL << 2,
+                    (choice, s) => RunMatMul(choice == 1 ? mixed : chosen, s[0], s[1], s[2], batch, m, n, pushed));
+            }
+        }
+
+        return decided == 1 ? mixed : chosen;
     }
 
     // At each candidate width: the small kernel (an invocation per output, any shape), the tiled one and the
@@ -838,6 +869,7 @@ internal sealed partial class VulkanBackend
             MatTiled => MatFits(VulkanKernels.MatSide(width), m, n),
             MatBlocked => MatFits(VulkanKernels.MatPer * VulkanKernels.MatSide(width), m, n),
             MatCoop => width == Width && MatFits(VulkanKernels.CoopBlock, m, n) && CoopKernel(null) is not null,
+            MatMixed => width == Width && MatFits(VulkanKernels.CoopBlock, m, n) && MixedKernel(null) is not null,
             _ => false,
         };
     }
@@ -857,10 +889,11 @@ internal sealed partial class VulkanBackend
         }
 
         uint gz = (uint)Math.Min(batch, Limits.MaxGroupsZ);
-        if (variant == MatCoop)
+        if (variant is MatCoop or MatMixed)
         {
             const int Block = VulkanKernels.CoopBlock;
-            DispatchKernel(CoopKernel(null)!, (uint)((n + Block - 1) / Block), (uint)((m + Block - 1) / Block), gz, [a, b, c], push);
+            var kernel = variant == MatCoop ? CoopKernel(null)! : MixedKernel(null)!;
+            DispatchKernel(kernel, (uint)((n + Block - 1) / Block), (uint)((m + Block - 1) / Block), gz, [a, b, c], push);
             return;
         }
 

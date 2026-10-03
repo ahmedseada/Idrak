@@ -78,6 +78,22 @@
 - idrak-tune: `--optimizer`, `--schedule`, `--warmup`, `--min-lr`, `--weight-decay`, `--loss dpo|orpo|simpo`,
   `--beta`, `--margin`, `--adapter-type lora|dora`.
 
+- Vulkan: reduced-precision matrix products when the user opts in with `MixedPrecision` (`BFloat16`, or `Float8`,
+  which takes the same path as on CUDA GPUs without FP8). Before, Vulkan ignored `MixedPrecision` and computed every
+  product in float32. On a device with cooperative matrices, the float32 product and the int8, int4 and bfloat16 prompt
+  products now gain a single-pass kernel in mixed mode: each operand rounded once (to nearest, ties to even), one
+  matrix product per step instead of three, sums in float32. Operands are bfloat16 where the device reports
+  `VK_KHR_shader_bfloat16` (shaderBFloat16Type, shaderBFloat16CooperativeMatrix) and a bfloat16 × bfloat16 → float32
+  shape, exactly the rounding `MatMulPrecision.BFloat16` states; otherwise 16-bit floats after the per-row and
+  per-column power-of-two scaling (11 significant bits, within bfloat16's error bound; a bfloat16 kernel the driver
+  rejects falls back to it). The kernel is measured against the float32 choice for each shape under a tuning key of its
+  own and used only where faster; float32 mode runs exactly what it ran before. Tests check each output against the
+  product of the rounded operands and against bfloat16's error bound of float32 (the device's kernel, or emulated on
+  lavapipe for both operand types), and that float32 mode never runs it; spirv-val checks every new kernel (the
+  bfloat16 ones with a validator that knows SPV_KHR_bfloat16, named by `IDRAK_SPIRV_VAL`; newer validators require the
+  Vulkan memory model with cooperative matrices, so the matrix kernels are validated with it declared, as they are
+  otherwise unchanged). `--bench-vulkan matmul` prints the float32 and the mixed-mode product, the path each took and
+  every kernel's time.
 - Direct decoding steps (not recorded as a graph) keep the residual addition fused with the next block's RMS norm for
   that norm: `Sequential` freed it with the layer's intermediate results, so the norm ran again, one kernel more per
   layer and token on every device (74 dispatches per token instead of 82 for the medium decoder of `--bench-vulkan`).

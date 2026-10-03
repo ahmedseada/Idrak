@@ -22,8 +22,37 @@ namespace Idrak.Backends.Vulkan;
 // overflows, and only values below 2^-29 of their row's (or column's) largest lose bits, which changes no sum by more
 // than float32 rounding would. (An infinite input, whose row or column is lost anyway, may give NaN where the float32
 // kernels give an infinity: its low part is 0 and infinity · 0 is NaN.)
+//
+// Reduced precision (CoopPrecision.BFloat16 and Float16), only for products the user asked to run in reduced precision
+// (MixedPrecision.BFloat16 or Float8, as on CUDA): one matrix product per step instead of three, each operand rounded
+// once to the nearest value, ties to even (in integer arithmetic, so the result does not depend on how the device
+// rounds conversions), the sums in float32.
+//   - bfloat16 operands, on devices that report bfloat16 cooperative matrices: what MatMulPrecision.BFloat16 states and
+//     the CUDA tensor cores compute, every operand rounded to bfloat16 (8 significant bits, float32's exponent range, so
+//     no scaling pass) and summed in float32. A bfloat16 or int8 weight is exact; an int4 weight times its scale is
+//     rounded like any operand.
+//   - 16-bit float operands, on devices with float16 cooperative matrices only: the lines scaled by powers of two as
+//     above, then each operand rounded once to a 16-bit float: 11 significant bits for every value within 2^-29 of its
+//     line's largest magnitude (bfloat16 keeps 8), fewer below that, 0 below about 2^-39 of it. Each term's error is at
+//     most a quarter of what bfloat16 rounding allows, plus, for such small values, less than 2^-39 of the line's
+//     largest magnitude times the other operand (far below float32's resolution of the sum): the error bound of
+//     MatMulPrecision.BFloat16 holds, but the bits are not bfloat16's (the outputs are closer to float32).
+// FP8 matrices are not used: MatMulPrecision.Float8 takes the same path, as it takes bfloat16 on CUDA GPUs without FP8.
 internal static partial class VulkanKernels
 {
+    /// <summary>How a cooperative-matrix product treats its float32 operands.</summary>
+    internal enum CoopPrecision
+    {
+        /// <summary>As precise as the float32 kernels: high and low 16-bit parts, three products per step.</summary>
+        Split,
+
+        /// <summary>Reduced precision: operands rounded once to 16-bit floats after the power-of-two scaling, one product per step.</summary>
+        Float16,
+
+        /// <summary>Reduced precision: operands rounded once to bfloat16 (no scaling), one product per step.</summary>
+        BFloat16,
+    }
+
     /// <summary>A cooperative-matrix shape a device reports: A is M × K, B is K × N, the accumulator M × N.</summary>
     internal readonly record struct CoopShape(int M, int N, int K)
     {
@@ -34,14 +63,27 @@ internal static partial class VulkanKernels
     /// <summary>
     /// A cooperative-matrix product kernel: the right operand (null: float32 for batched_matmul; else a packed weight
     /// format), the matrix shape, the workgroup width, for tests the subgroup size of an emulation (0: the device's
-    /// cooperative matrices), and the rows of k staged per step (<see cref="CoopDepths"/>, at least K).
+    /// cooperative matrices), the rows of k staged per step (<see cref="CoopDepths"/>, at least K) and how the operands
+    /// are treated (<see cref="CoopPrecision"/>).
     /// </summary>
-    internal readonly record struct CoopSpec(PackedFormat? Format, CoopShape Shape, int Width, int Emulated = 0, int Depth = 32)
+    internal readonly record struct CoopSpec(PackedFormat? Format, CoopShape Shape, int Width, int Emulated = 0, int Depth = 32,
+        CoopPrecision Precision = CoopPrecision.Split)
     {
-        /// <summary>The kernel's name: "coop_f32_m16n16k16_w128_d32" (with "_emulated8" for an emulation).</summary>
+        /// <summary>
+        /// The kernel's name: "coop_f32_m16n16k16_w128_d32" (with "_round_f16" or "_round_bf16" for reduced precision and
+        /// "_emulated8" for an emulation).
+        /// </summary>
         public string Name => $"coop_{Format switch { null => "f32", PackedFormat.Int8 => "int8", PackedFormat.Int4 => "int4", _ => "bf16" }}_" +
-            $"m{Shape.M}n{Shape.N}k{Shape.K}_w{Width}_d{Depth}{(Emulated > 0 ? $"_emulated{Emulated}" : "")}";
+            $"m{Shape.M}n{Shape.N}k{Shape.K}_w{Width}_d{Depth}{RoundSuffix(Precision)}{(Emulated > 0 ? $"_emulated{Emulated}" : "")}";
     }
+
+    /// <summary>The name suffix of a precision: "" (float32 accuracy), "_round_f16" or "_round_bf16".</summary>
+    public static string RoundSuffix(CoopPrecision precision) => precision switch
+    {
+        CoopPrecision.Float16 => "_round_f16",
+        CoopPrecision.BFloat16 => "_round_bf16",
+        _ => "",
+    };
 
     /// <summary>Rows (and columns) of the output one cooperative-matrix workgroup computes: 2 × 2 subgroup blocks of 32 × 32.</summary>
     public const int CoopBlock = 64;
@@ -112,6 +154,10 @@ internal static partial class VulkanKernels
     // until the shifts are computed, then the rounds' tiles (each subgroup block written by one subgroup), read in step 3;
     // shifts[64 + 64] written in step 1 by one invocation per line; aHigh, aLow[64 · (D + 8)], bHigh, bLow[D · 72] written
     // only between the barrier ending a step's products and the barrier before the next step's.
+    //
+    // Reduced precision: aHigh and bHigh hold the operands rounded once (no low parts) and each subgroup adds one product
+    // per matrix depth; with bfloat16 operands step 1 and the powers of two of steps 2 and 3 are left out (shifts is not
+    // declared). An emulation of bfloat16 operands keeps them in float arrays (the rounded values, exact in a float).
     private static SpirvKernel CoopGemm(CoopSpec spec)
     {
         var (M, N, K) = (spec.Shape.M, spec.Shape.N, spec.Shape.K);
@@ -119,7 +165,11 @@ internal static partial class VulkanKernels
         const int Edge = CoopBlock, EdgeShift = 6, StrideB = Edge + CoopPad;   // EdgeShift = log2 Edge
         int Depth = spec.Depth, DepthShift = System.Numerics.BitOperations.Log2((uint)spec.Depth), StrideA = Depth + CoopPad;
         var format = spec.Format;
-        bool splitB = format is null or PackedFormat.Int4;               // float32 and int4 · scale are not exact in 16 bits
+        var precision = spec.Precision;
+        bool split = precision == CoopPrecision.Split;                   // high and low parts (float32 accuracy)
+        bool scaling = precision != CoopPrecision.BFloat16;              // lines scaled into the 16-bit float range
+        bool splitB = split && (format is null or PackedFormat.Int4);    // float32 and int4 · scale are not exact in 16 bits
+        var operandType = precision != CoopPrecision.BFloat16 ? OperandType.Float16 : spec.Emulated > 0 ? OperandType.Float32 : OperandType.BFloat16;
         var k = new KernelBuilder(spec.Name, width);
         Buf a, b, c;
         Buf? scales = null;
@@ -143,13 +193,13 @@ internal static partial class VulkanKernels
             (batch, beta) = (k.Int(1), k.Float(0f));
         }
 
-        var aHigh = k.SharedHalf("aHigh", Edge * StrideA);
-        var aLow = k.SharedHalf("aLow", Edge * StrideA);
-        var bHigh = k.SharedHalf("bHigh", Depth * StrideB);
+        var aHigh = k.SharedOperand("aHigh", Edge * StrideA, operandType);
+        var aLow = split ? k.SharedHalf("aLow", Edge * StrideA) : null;
+        var bHigh = k.SharedOperand("bHigh", Depth * StrideB, operandType);
         var bLow = splitB ? k.SharedHalf("bLow", Depth * StrideB) : null;
         var staged = k.Shared("staged", Edge * Edge);
-        var shifts = k.Shared("shifts", 2 * Edge);                       // rows of op(a), then columns of op(b)
-        var ops = new MatrixOps(k, spec.Shape, spec.Emulated);
+        var shifts = scaling ? k.Shared("shifts", 2 * Edge) : null;       // rows of op(a), then columns of op(b)
+        var ops = new MatrixOps(k, spec.Shape, spec.Emulated, precision == CoopPrecision.BFloat16 ? OperandType.BFloat16 : OperandType.Float16);
         var accumulators = new MatrixOps.Accumulator[tm * tn];
         for (int i = 0; i < accumulators.Length; i++)
         {
@@ -178,6 +228,18 @@ internal static partial class VulkanKernels
         // x's sign, exponent and first 10 mantissa bits: a 16-bit float wherever x is in its normal range (every value of
         // a line within 2^29 of the line's largest), and x - High(x) is exact (13 bits at most). An infinity stays one.
         Val High(Val x) => (x.AsUInt() & k.UInt(0xFFFFE000u)).AsFloat();
+
+        // Reduced precision: x rounded to the nearest value with 10 (16-bit float) or 7 (bfloat16) mantissa bits, ties to
+        // even, as a float (exact in the operand type wherever x is in its normal range, so the conversion that stores it
+        // does not round again). An infinity stays one; a float32 within half a step of the largest finite one rounds
+        // to an infinity, as a bfloat16 conversion does (scaled 16-bit float operands stay below 2^15).
+        Val Round(Val x)
+        {
+            var bits = x.AsUInt();
+            int drop = precision == CoopPrecision.BFloat16 ? 16 : 13;
+            uint half = (1u << (drop - 1)) - 1, mask = ~((1u << drop) - 1);
+            return ((bits + k.UInt(half) + ((bits >> drop) & k.UInt(1))) & k.UInt(mask)).AsFloat();
+        }
 
         // Runs `contiguous` where a line's elements are consecutive in memory (op(a) not transposed, op(b) transposed),
         // `strided` otherwise: chosen at run time for float32 operands, known for the packed ones.
@@ -223,7 +285,7 @@ internal static partial class VulkanKernels
             var best = k.Local(0f);
             k.For(k.Int(0), parts, 1, j => best.V = k.Max(best.V, staged[offset + line * 16 + j]));
             var exponent = (best.V.AsInt() >> 23) & 0xFF;                // 0 for zeros, 255 for infinities
-            shifts[shiftOffset + line] = k.Clamp(141 - exponent, k.Int(-126), k.Int(126)).AsFloat();
+            shifts![shiftOffset + line] = k.Clamp(141 - exponent, k.Int(-126), k.Int(126)).AsFloat();
         });
 
         k.For(k.GroupZ, batch, bi =>
@@ -231,12 +293,15 @@ internal static partial class VulkanKernels
             var aBase = bi * m * depth;
             var bBase = bi * depth * n;
             Val? aContiguous = ta is { } flagA ? !flagA : null;
-            Maxima(aContiguous, true, 0, rowBase, m, (line, kk) => LoadA(aBase, rowBase + line, kk));
-            Maxima(tb, false, Edge * 16, colBase, n, (line, kk) => LoadB(bBase, kk, colBase + line));
-            k.Barrier();
-            Shifts(aContiguous, true, 0, 0);
-            Shifts(tb, false, Edge * 16, Edge);
-            k.Barrier();
+            if (scaling)
+            {
+                Maxima(aContiguous, true, 0, rowBase, m, (line, kk) => LoadA(aBase, rowBase + line, kk));
+                Maxima(tb, false, Edge * 16, colBase, n, (line, kk) => LoadB(bBase, kk, colBase + line));
+                k.Barrier();
+                Shifts(aContiguous, true, 0, 0);
+                Shifts(tb, false, Edge * 16, Edge);
+                k.Barrier();
+            }
 
             var rounds = (4 + k.NumSubgroups - 1) / k.NumSubgroups;
             k.For(k.Int(0), rounds, 1, round =>
@@ -264,10 +329,17 @@ internal static partial class VulkanKernels
                         var (row, kg) = (rowBase + r, t0 + kk);
                         var value = k.Local(0f);
                         k.If((row < m) & (kg < depth), () => value.V = LoadA(aBase, row, kg));
-                        var scaled = value.V * Power(shifts[r].AsInt());
-                        var high = High(scaled);
-                        aHigh[r * StrideA + kk] = high;
-                        aLow[r * StrideA + kk] = k.Select(k.IsInf(scaled), k.Float(0f), scaled - high);
+                        var scaled = shifts is null ? value.V : value.V * Power(shifts[r].AsInt());
+                        if (aLow is null)
+                        {
+                            aHigh[r * StrideA + kk] = Round(scaled);
+                        }
+                        else
+                        {
+                            var high = High(scaled);
+                            aHigh[r * StrideA + kk] = high;
+                            aLow[r * StrideA + kk] = k.Select(k.IsInf(scaled), k.Float(0f), scaled - high);
+                        }
                     });
 
                     // op(b)[D × 64]: consecutive invocations along n (not transposed, packed) or along k (transposed).
@@ -282,12 +354,19 @@ internal static partial class VulkanKernels
                         var (col, kg) = (colBase + cc, t0 + kk);
                         var value = k.Local(0f);
                         k.If((col < n) & (kg < depth), () => value.V = LoadB(bBase, kg, col));
-                        var scaled = value.V * Power(shifts[Edge + cc].AsInt());
-                        var high = High(scaled);
-                        bHigh[kk * StrideB + cc] = high;
-                        if (bLow is not null)
+                        var scaled = shifts is null ? value.V : value.V * Power(shifts[Edge + cc].AsInt());
+                        if (!split)
                         {
-                            bLow[kk * StrideB + cc] = k.Select(k.IsInf(scaled), k.Float(0f), scaled - high);
+                            bHigh[kk * StrideB + cc] = Round(scaled);
+                        }
+                        else
+                        {
+                            var high = High(scaled);
+                            bHigh[kk * StrideB + cc] = high;
+                            if (bLow is not null)
+                            {
+                                bLow[kk * StrideB + cc] = k.Select(k.IsInf(scaled), k.Float(0f), scaled - high);
+                            }
                         }
                     });
 
@@ -297,11 +376,11 @@ internal static partial class VulkanKernels
                         for (int kq = 0; kq < Depth; kq += K)
                         {
                             var aHi = new MatrixOps.Operand[tm];
-                            var aLo = new MatrixOps.Operand[tm];
+                            var aLo = new MatrixOps.Operand?[tm];
                             for (int i = 0; i < tm; i++)
                             {
                                 var offset = (subRow + i * M) * StrideA + kq;
-                                (aHi[i], aLo[i]) = (ops.LoadA(aHigh, offset, StrideA), ops.LoadA(aLow, offset, StrideA));
+                                (aHi[i], aLo[i]) = (ops.LoadA(aHigh, offset, StrideA), aLow is null ? null : ops.LoadA(aLow, offset, StrideA));
                             }
 
                             var bHi = new MatrixOps.Operand[tn];
@@ -318,7 +397,11 @@ internal static partial class VulkanKernels
                                 for (int j = 0; j < tn; j++)
                                 {
                                     var accumulator = accumulators[i * tn + j];
-                                    ops.MulAdd(accumulator, aLo[i], bHi[j]);
+                                    if (aLo[i] is { } lowA)
+                                    {
+                                        ops.MulAdd(accumulator, lowA, bHi[j]);
+                                    }
+
                                     if (bLo[j] is { } low)
                                     {
                                         ops.MulAdd(accumulator, aHi[i], low);
@@ -352,7 +435,7 @@ internal static partial class VulkanKernels
                 var (row, col) = (rowBase + r, colBase + cc);
                 k.If((row < m) & (col < n), () =>
                 {
-                    var value = staged[l] * Power(-shifts[r].AsInt()) * Power(-shifts[Edge + cc].AsInt());
+                    var value = shifts is null ? staged[l] : staged[l] * Power(-shifts[r].AsInt()) * Power(-shifts[Edge + cc].AsInt());
                     switch (format)
                     {
                         case null:
@@ -385,14 +468,14 @@ internal static partial class VulkanKernels
         private readonly int _emulated;
         private readonly uint _aType, _bType, _accumulatorType;
 
-        public MatrixOps(KernelBuilder k, CoopShape shape, int emulated)
+        public MatrixOps(KernelBuilder k, CoopShape shape, int emulated, OperandType operand)
         {
             (_k, _shape, _emulated) = (k, shape, emulated);
             if (emulated == 0)
             {
-                _aType = k.MatrixType(shape.M, shape.K, MatrixUse.A);
-                _bType = k.MatrixType(shape.K, shape.N, MatrixUse.B);
-                _accumulatorType = k.MatrixType(shape.M, shape.N, MatrixUse.Accumulator);
+                _aType = k.MatrixType(shape.M, shape.K, MatrixUse.A, operand);
+                _bType = k.MatrixType(shape.K, shape.N, MatrixUse.B, operand);
+                _accumulatorType = k.MatrixType(shape.M, shape.N, MatrixUse.Accumulator, operand);
             }
         }
 
@@ -405,7 +488,7 @@ internal static partial class VulkanKernels
         }
 
         /// <summary>A loaded operand: the matrix (its id), or where an emulation reads it.</summary>
-        public readonly record struct Operand(uint Id, HalfArray Source, Val Offset, int Stride);
+        public readonly record struct Operand(uint Id, OperandArray Source, Val Offset, int Stride);
 
         public Accumulator NewAccumulator()
         {
@@ -438,10 +521,10 @@ internal static partial class VulkanKernels
             }
         }
 
-        public Operand LoadA(HalfArray source, Val offset, int stride) =>
+        public Operand LoadA(OperandArray source, Val offset, int stride) =>
             new(_emulated == 0 ? _k.MatrixLoad(_aType, source, offset, stride) : 0, source, offset, stride);
 
-        public Operand LoadB(HalfArray source, Val offset, int stride) =>
+        public Operand LoadB(OperandArray source, Val offset, int stride) =>
             new(_emulated == 0 ? _k.MatrixLoad(_bType, source, offset, stride) : 0, source, offset, stride);
 
         // accumulator += a · b.

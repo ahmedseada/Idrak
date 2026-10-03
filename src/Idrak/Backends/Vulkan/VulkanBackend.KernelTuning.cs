@@ -44,6 +44,12 @@ internal enum VulkanTuneOp : byte
 
     /// <summary>A kernel with subgroup operations: the subgroup size its pipeline requires (0: the device's default).</summary>
     SubgroupSize,
+
+    /// <summary>A float32 product in reduced precision (MixedPrecision): the float32 choice (0) or the single-pass cooperative-matrix kernel (1).</summary>
+    MixedMatMul,
+
+    /// <summary>A prompt-sized packed product in reduced precision (MixedPrecision): the float32 choice (0) or the single-pass cooperative-matrix kernel (1).</summary>
+    MixedPackedPrompt,
 }
 
 /// <summary>What a measured choice is for: the operation, its variant (kernel, format) and its shape.</summary>

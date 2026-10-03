@@ -79,7 +79,8 @@ internal static partial class Tests
             }
 
             string names = string.Join(", ", kernels.Keys.Order(StringComparer.Ordinal));
-            return kernels.Keys.Any(k => k.StartsWith("coop_", StringComparison.Ordinal)) ? $"cooperative matrices ({names})" : $"no matrix units ({names})";
+            return kernels.Keys.Any(k => k.Contains("_round_", StringComparison.Ordinal)) ? $"cooperative matrices, reduced precision ({names})"
+                : kernels.Keys.Any(k => k.StartsWith("coop_", StringComparison.Ordinal)) ? $"cooperative matrices ({names})" : $"no matrix units ({names})";
         }
 
         // Average time of `run` in µs over `repeats` calls (after one warm-up), the device drained before and after.
@@ -183,10 +184,57 @@ internal static partial class Tests
             var values = Values(elements);
             backend.Upload(values, a);
             backend.Upload(values, b);
-            double us = Micros(() => backend.BatchedMatMul(a, b, c, 1, size, size, size, false, false, 0f), size == 1024 ? 5 : 2);
+            int repeats = size == 1024 ? 5 : 2;
+            void Product() => backend.BatchedMatMul(a, b, c, 1, size, size, size, false, false, 0f);
+            double us = Micros(Product, repeats);
             double gflops = 2.0 * size * size * size / (us * 1e3);
             gflops1024 ??= gflops;
-            Console.WriteLine(Row($"matrix product {size}³ (float32)", $"{gflops:F1} GFLOP/s ({us / 1000:F1} ms), {MatrixPath(() => backend.BatchedMatMul(a, b, c, 1, size, size, size, false, false, 0f))}"));
+            Console.WriteLine(Row($"matrix product {size}³ (float32)", $"{gflops:F1} GFLOP/s ({us / 1000:F1} ms), {MatrixPath(Product)}"));
+
+            // Each kernel forced once (the device's width), what the measured choice picks among: tiled, register-blocked,
+            // cooperative matrices at float32 accuracy, and with MixedPrecision bfloat16 the reduced-precision kernel.
+            string Candidates(bool mixed)
+            {
+                var parts = new List<string>();
+                foreach (var (kernel, name) in new[] { (1, "tiled"), (2, "blocked"), (3, "matrix units, float32-accurate"), (4, "matrix units, reduced precision") })
+                {
+                    if (kernel == 4 && !mixed)
+                    {
+                        continue;
+                    }
+
+                    VulkanBackend.MatMulKernel = kernel;
+                    try
+                    {
+                        string path = MatrixPath(Product);
+                        bool ran = kernel switch { 3 => path.Contains("coop_") && !path.Contains("_round_"), 4 => path.Contains("_round_"), _ => !path.Contains("coop_") };
+                        parts.Add(ran ? $"{name} {Micros(Product, repeats) / 1000:F1} ms" : $"{name} n/a");
+                    }
+                    finally
+                    {
+                        VulkanBackend.MatMulKernel = null;
+                    }
+                }
+
+                return string.Join(", ", parts);
+            }
+
+            bool timeEach = us < 1e6;                                           // each kernel timed when a product takes under a second
+            if (timeEach)
+            {
+                Console.WriteLine(Row("  kernels (float32)", Candidates(mixed: false)));
+            }
+
+            using (MixedPrecision.BFloat16())
+            {
+                double mixedUs = Micros(Product, repeats);
+                Console.WriteLine(Row($"matrix product {size}³ (MixedPrecision bfloat16)",
+                    $"{2.0 * size * size * size / (mixedUs * 1e3):F1} GFLOP/s ({mixedUs / 1000:F1} ms), {MatrixPath(Product)}"));
+                if (timeEach && backend.MatrixShape is not null)
+                {
+                    Console.WriteLine(Row("  kernels (bfloat16)", Candidates(mixed: true)));
+                }
+            }
             a.Release();
             b.Release();
             c.Release();
