@@ -26,11 +26,11 @@ using Idrak.Retrieval;
 public sealed class CliServeTestTools
 {
     /// <summary>Adds two integers.</summary>
-    [Tool("cli_add", "Adds two integers.")]
+    [Tool("serve_add", "Adds two integers.")]
     public int Add(int a, int b) => a + b;
 
     /// <summary>Repeats a text.</summary>
-    [Tool("cli_echo", "Repeats the text.")]
+    [Tool("serve_echo", "Repeats the text.")]
     public static string Echo(string text) => text;
 }
 
@@ -218,8 +218,9 @@ internal static partial class Tests
     {
         string tools = typeof(CliServeTestTools).Assembly.Location;
         var list = Cli("mcp", "serve", tools, "--list", "--json");
-        var names = JsonNode.Parse(list.Output)!["tools"]!.AsArray().Select(t => (string)t!["name"]!).Order().ToList();
-        Check(list.Code == 0 && names.SequenceEqual(["cli_add", "cli_echo"]), $"mcp serve --list: {list.Output}{list.Error}");
+        var names = JsonNode.Parse(list.Output)!["tools"]!.AsArray().Select(t => (string)t!["name"]!)
+            .Where(n => n.StartsWith("serve_", StringComparison.Ordinal)).Order().ToList();          // the test assembly holds other groups' tools too
+        Check(list.Code == 0 && names.SequenceEqual(["serve_add", "serve_echo"]), $"mcp serve --list: {list.Output}{list.Error}");
         Check(Cli("mcp", "serve").Code == 2 && Cli("mcp", "serve", "missing.dll").Code == 2, "mcp serve usage errors");
 
         var toServer = new Pipe();
@@ -235,12 +236,12 @@ internal static partial class Tests
                 await using var source = await McpTools.ConnectAsync(new StreamClientTransport(toServer.Writer.AsStream(), toClient.Reader.AsStream()));
                 Check(source.ServerName == "idrak", $"server name {source.ServerName}");
                 var listed = await source.ListToolsAsync();
-                Check(listed.Select(t => t.Definition.Name).Order().SequenceEqual(["cli_add", "cli_echo"]), "tools over MCP");
-                Check(await source.CallAsync("cli_add", new JsonObject { ["a"] = 2, ["b"] = 40 }) == "42", "a call over MCP");
-                Check(await source.CallAsync("cli_echo", new JsonObject { ["text"] = "hi" }) == "hi", "a static tool over MCP");
+                Check(listed.Select(t => t.Definition.Name).Where(n => n.StartsWith("serve_", StringComparison.Ordinal)).Order().SequenceEqual(["serve_add", "serve_echo"]), "tools over MCP");
+                Check(await source.CallAsync("serve_add", new JsonObject { ["a"] = 2, ["b"] = 40 }) == "42", "a call over MCP");
+                Check(await source.CallAsync("serve_echo", new JsonObject { ["text"] = "hi" }) == "hi", "a static tool over MCP");
             }).GetAwaiter().GetResult();
             toServer.Writer.Complete();
-            Check(serving.Wait(TimeSpan.FromSeconds(30)) && serving.Result == 0 && error.ToString().Contains("Serving 2 tools"), $"mcp serve ends with its input: {error}");
+            Check(serving.Wait(TimeSpan.FromSeconds(30)) && serving.Result == 0 && error.ToString().Contains("tools over MCP") && error.ToString().Contains("serve_add"), $"mcp serve ends with its input: {error}");
         }
         finally
         {
