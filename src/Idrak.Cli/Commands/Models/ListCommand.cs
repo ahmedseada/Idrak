@@ -54,15 +54,20 @@ internal sealed class ListCommand : Command
             var other => throw new UsageException($"--sort takes used, name or size, not '{other}'."),
         };
 
+        string[] headers = ["Model", "Size", "Format", "Last use", "Kind"];
         if (entries.Count == 0)
         {
             context.Write(filter is null
                 ? $"No models in {context.CacheFolder}. Download one with: idrak pull Qwen/Qwen3-0.6B"
                 : $"No cached model matches '{filter}'.");
+            if (context.Format is OutputFormat.Csv)
+            {
+                context.Table(headers, []);                                     // the header line, for scripts
+            }
         }
         else
         {
-            context.Table(["Model", "Size", "Format", "Last use", "Kind"],
+            context.Table(headers,
                 entries.Select(e => (IReadOnlyList<string>)[e.Name + (e.Revision is null || e.Kind == "gguf" ? "" : $"@{e.Revision}"), Units.Bytes(e.Bytes), e.Format,
                     e.LastUse == DateTime.MinValue ? "-" : Units.Ago(e.LastUse), e.Kind]));
             context.Write($"{entries.Count} {(entries.Count == 1 ? "entry" : "entries")}, {Units.Bytes(entries.Sum(e => e.Bytes))} in {context.CacheFolder}");

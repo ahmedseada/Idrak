@@ -21,7 +21,7 @@ A self-contained deep-learning library for **.NET 10**, written in C#, with its 
   KV caches, CUDA graphs; on any CUDA GPU from Maxwell to Blackwell, with CPU fallbacks everywhere.
 - **Use it in applications**: an inference engine with batching, ASP.NET Core endpoints (including an
   Ollama-compatible API), retrieval and RAG, MCP tools, ONNX export and import, datasets from files and hubs, and
-  two command-line tools (`idrak-tune`, `idrak-data`).
+  one command-line tool, `idrak`, for all of it (checks, chat, serving, models, benchmarks, training, data).
 
 | Backend | How it works | Requirements |
 |---------|--------------|--------------|
@@ -44,6 +44,7 @@ Set `IDRAK_DISABLE_CUDA=1` to force the CPU.
 | `Idrak.Mcp` | Tools of Model Context Protocol servers, and serving tools over MCP |
 | `Idrak.Onnx` | Export to `.onnx` (opset 17) and import `.onnx` into layers |
 | `Idrak.Onnx.Runtime` | Run `.onnx` models with ONNX Runtime as Idrak modules |
+| `idrak` (CLI, package `Idrak.Cli`) | One tool for the whole library: `doctor`, `devices`, `chat`, `run`, `serve`, `pull`, `list`, `bench`, `tune`, `train`, `data`, `rag`, `suggest` and more (see "idrak: the command-line tool") |
 | `idrak-tune` (CLI) | Fine-tune, evaluate, chat with and export any language model the library loads |
 | `idrak-data` (CLI) | Inspect, download and assemble training datasets |
 
@@ -136,12 +137,35 @@ dotnet add package Idrak.Onnx.Runtime         # run ONNX models with ONNX Runtim
 the tools, the others are libraries):
 
 ```bash
+dotnet tool install -g Idrak.Cli              # the idrak command: every tool below and more in one (idrak help)
 dotnet tool install -g Idrak.FineTuning.Cli   # the idrak-tune command: fine-tune, evaluate, chat with and export language models
 dotnet tool install -g Idrak.Datasets.Cli     # the idrak-data command: inspect, download and build datasets
 idrak-tune --help
 idrak-data --help
-dotnet tool update -g Idrak.FineTuning.Cli    # later: update to the newest version (same for Idrak.Datasets.Cli)
+dotnet tool update -g Idrak.FineTuning.Cli    # later: update to the newest version (same for the other tools)
 ```
+
+## idrak: the command-line tool
+
+`idrak` runs the library from the command line, with nothing else to install: it checks the machine, chats with and
+serves language models, manages the model cache, benchmarks, fine-tunes and trains, prepares data, builds retrieval
+indexes and designs networks. Text by default, `--json` for scripts, the same options and short forms in every
+command (`-d vulkan:0`, `-w int8`, `-k int8`, `--offline`, `--cache DIR`, ...).
+
+```bash
+idrak doctor                                   # what works on this machine and what to fix
+idrak dev                                      # the devices and what each offers
+idrak pull Qwen/Qwen3-0.6B                     # into the cache, with progress and resume
+idrak c Qwen/Qwen3-0.6B -d vulkan:0 -w int8    # chat on the GPU with int8 weights
+cat notes.txt | idrak r Qwen/Qwen3-0.6B "Summarize in three bullets"
+idrak s Qwen/Qwen3-0.6B -p 8080                # the chat API and the OpenAI-style API on one port
+idrak b Qwen/Qwen3-0.6B --devices all          # tokens per second on every device, in one table
+idrak sg houses.csv -t SalePrice -e            # design a network for a CSV, with the reasons
+idrak help                                     # every command by group; idrak help COMMAND for one
+```
+
+The commands, options, examples and environment variables are in [src/Idrak.Cli/README.md](src/Idrak.Cli/README.md)
+(and in `idrak help`); the design is [plans/idrak-cli.md](plans/idrak-cli.md).
 
 Licensed under the [Apache License 2.0](LICENSE) (see [NOTICE](NOTICE)) from 0.1.7 on; versions up to 0.1.6 were released under the MIT license. Contributions: see [CONTRIBUTING.md](CONTRIBUTING.md) and the [CLA](CLA.md). Releases are listed in the [changelog](CHANGELOG.md).
 
@@ -186,6 +210,7 @@ src/Idrak.AspNetCore/               optional package: AddIdrak(), MapPredictor, 
 src/Idrak.Mcp/                      optional package: tools of Model Context Protocol servers, and serving tools over MCP
 src/Idrak.Onnx/                     optional package, no dependencies: export networks to .onnx (opset 17), import .onnx into layers
 src/Idrak.Onnx.Runtime/             optional package: run .onnx models with ONNX Runtime as Idrak modules
+src/Idrak.Cli/                      idrak: the command-line tool (commands under Commands/, shared helpers under Shared/)
 src/Idrak.FineTuning.Cli/           idrak-tune: fine-tune any language model the library loads (LoRA / QLoRA), evaluate, chat, export
 src/Idrak.Datasets.Cli/             idrak-data: inspect, download and assemble training datasets
 samples/
