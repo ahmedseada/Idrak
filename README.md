@@ -67,7 +67,7 @@ Set `IDRAK_DISABLE_CUDA=1` to force the CPU.
 | Weight formats | safetensors; GGUF (F32/F16/BF16, Q4_0 to Q8_0, K-quants, IQ4) |
 | Generation | Streaming, batches, sampling (temperature, top-k/p, min-p, penalties), float32, int8 or bfloat16 KV caches |
 | Chat | Each model's own Jinja template, reasoning, tool calls, conversations, a coding agent |
-| Fine-tuning | LoRA, DoRA and QLoRA, packing, assistant-only loss, DPO / ORPO / SimPO on preference pairs, any optimizer, schedule or loss, PEFT adapters (checked), merged export |
+| Fine-tuning | LoRA, DoRA and QLoRA, packing, assistant-only loss, DPO / ORPO / SimPO on preference pairs, knowledge distillation from a teacher (its token probabilities, on the fly or stored as top-k, or its written answers), any optimizer, schedule or loss, PEFT adapters (checked), merged export |
 | Evaluation | Answer scoring by log-probabilities, answer metrics |
 
 ### Retrieval, serving and deployment
@@ -1121,6 +1121,35 @@ optimizer that keeps its gradient buffers (every built-in one but the CPU update
 adapters are checked when loaded: another `peft_type`, per-module ranks, trained biases or modules to save are refused
 with an error instead of being read as plain LoRA.
 
+#### Knowledge distillation: a teacher guides a smaller student
+
+A larger teacher's next-token distributions are soft targets for the student (Hinton et al. 2015): the loss is
+α · T² · KL(teacher ‖ student) at temperature T plus (1 − α) · the cross-entropy on the data, per trained token. The
+teacher runs on the fly (loaded in any weight format, on the student's device or another, in inference mode; only its
+hidden states at the trained positions are kept, and both heads run a chunk of rows at a time), or its top-k logits are
+written once to a compact file (six bytes per kept token) and read while the student trains; the stored top k are
+renormalized, an approximation that drops the tail of each distribution. Teacher and student must share a vocabulary;
+a mismatch is refused with the first token that differs. Across vocabularies, distil through answers the teacher writes:
+
+```csharp
+using var teacher = PretrainedModel.Load(teacherFolder, new PretrainedOptions { Int4 = true, Device = Device.Parse("cuda:1") });
+using var source = DistillationTeacher.FromModel(teacher);                // or FromFile("teacher.topk")
+FineTuner.Train(student, sequences, evaluation, options with
+{
+    Teacher = source, Loss = FineTuningLosses.Distillation(temperature: 2f, alpha: 0.8f),
+}, "adapters/distilled");
+
+TeacherLogitsWriter.Write("teacher.topk", teacher, sequences, topK: 16);  // precomputed: the teacher need not be loaded later
+
+// Sequence-level: the teacher answers prompts (optionally with its reasoning); the rows fine-tune any student.
+var rows = TeacherData.Generate(teacher.CreateChat(), prompts, new TeacherDataOptions { Reasoning = true });
+```
+
+`FineTuningLossInput.TeacherDivergence(T)` gives the per-token divergence to losses of one's own. Classifiers distil
+per sample with the `Trainer`: `data.WithTeacher(teacher)` stores the teacher's logits before the labels, and
+`Losses.Distillation(temperature, alpha)` trains on them. From the command line: `idrak distill --teacher A --student B
+--data FILE -o DIR` (with `--temperature`, `--alpha`, `--top-k`, `--precompute FILE`, `--generate`).
+
 ## Extending Idrak: plug-in points
 
 Formats, operators, model families and data sources plug in through registries and interfaces, without changing the
@@ -1367,6 +1396,7 @@ The 170 tests, by area:
 | Decoder | 8 | RMSNorm, rotary embeddings and tiled attention (with gradients); every DecoderSpec variant against a plain reference; cached decoding through quantized weights; LoRA by layer name |
 | Language models | 7 | safetensors; Hugging Face checkpoints through the registry; BPE tokenizers (byte-level and SentencePiece); text with half a character; Jinja templates against jinja2; a Qwen3 template as transformers renders it; tool-call formats |
 | Fine-tuning and scoring | 27 | chunked cross-entropy and LoRA terms in tensor-core products; sequence packing; CUDA-graph steps; out-of-memory fallbacks; checkpointing; answer balancing; answer scoring; model download; PEFT adapters (checked) and merged export; optimizer, schedule and loss options; DPO, ORPO and SimPO; DoRA |
+| Distillation | 6 | the token divergence and its gradient against a dense computation (full and top-k teachers); the classifier loss against its formula; the fine-tuning loss and adapter gradients against both models' full logits (a teacher on another device too); top-k logits stored and read back; a vocabulary mismatch refused; teacher-written data; a distilled student ends closer to its teacher than one trained on labels |
 | Mixed precision | 11 | bfloat16 and 8-bit (FP8, int8) tensor-core products; flash attention (forward and backward); fused LayerNorm and decoder blocks; 8-bit AdamW |
 | Coding agent | 4 | workspace-bound file tools; allowlisted commands; agent transcripts; a task run and verified |
 | Data loaders | 10 | every built-in source (streamed CSV, image folders, token files, .npy, tables, views, streams) trains to the weights of the same samples in memory; PNG, BMP and Netpbm decoded as independent encoders wrote them; transforms against direct computation; the source registry |

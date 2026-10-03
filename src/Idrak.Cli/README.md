@@ -242,7 +242,7 @@ Fine-tuning language models (`tune`) and training networks from the builder's JS
 | `idrak runs compare` | Training runs side by side: settings, best epoch and loss, time, and their validation curves |
 | `idrak predict` | Run a model package (.ikm) on new rows (CSV, JSON Lines, Parquet) or images and write the predictions |
 | `idrak package` | Bundle a network, its weights, scalers and tokenizer from a folder into one model package (.ikm) |
-| `idrak distill` | Distil a teacher model into a student (not available yet: waits for the library's teacher pattern) |
+| `idrak distill` | Distil a teacher model into a student: its token probabilities (on the fly, or precomputed as top-k logits with `--precompute`) or its written answers (`--generate`) |
 
 ```bash
 idrak tune init -b Qwen/Qwen3-0.6B --data chats.jsonl && idrak tune --config tune.json
@@ -251,6 +251,7 @@ idrak train network.json --data houses.csv -t price -o houses.ikm
 idrak train cnn.json --data ./shapes -d vulkan:0    # a folder of class folders of images
 idrak predict houses.ikm -i new-houses.csv -o priced.csv
 idrak runs list && idrak runs show NAME && idrak resume NAME --epochs 20
+idrak distill --teacher Qwen/Qwen3-8B --teacher-weights int4 --student Qwen/Qwen3-0.6B --data chats.jsonl --alpha 0.8 -o adapters/distilled
 ```
 
 #### Fine-tuning with `idrak tune`
