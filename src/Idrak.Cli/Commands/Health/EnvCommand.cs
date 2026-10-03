@@ -27,12 +27,15 @@ internal sealed class EnvCommand : Command
         Options:
               --all  also the variables that are not set
 
-        Tokens and keys are shown as set or not set, never their values.
+        Tokens and keys are shown as set or not set, never their values. From says where a value comes from: the
+        terminal, or saved (idrak env set saves variables for every idrak run, in any terminal; idrak env unset
+        removes them).
 
         Examples:
           idrak env
           idrak env --all -j
           idrak env IDRAK_CACHE VK_ICD_FILENAMES
+          idrak env set
 
         Every variable:
         {EnvironmentVariables.Reference()}
@@ -59,8 +62,9 @@ internal sealed class EnvCommand : Command
         }
         else
         {
-            context.Table(["Variable", "Value", "Default", "Meaning"],
-                chosen.Select(v => (IReadOnlyList<string>)[v.Variable.Name, Short(v.Value) ?? (v.Variable.Secret ? "not set" : "-"), v.Variable.Default, v.Variable.Meaning]));
+            context.Table(["Variable", "Value", "From", "Default", "Meaning"],
+                chosen.Select(v => (IReadOnlyList<string>)[v.Variable.Name, Short(v.Value) ?? (v.Variable.Secret ? "not set" : "-"), Source(v.Variable, v.Value) ?? "-",
+                    v.Variable.Default, v.Variable.Meaning]));
         }
 
         if (!all)
@@ -76,6 +80,7 @@ internal sealed class EnvCommand : Command
                 ["name"] = v.Variable.Name,
                 ["group"] = v.Variable.Group,
                 ["set"] = v.Value is not null,
+                ["source"] = Source(v.Variable, v.Value),
                 ["value"] = v.Variable.Secret ? null : v.Value,
                 ["secret"] = v.Variable.Secret,
                 ["default"] = v.Variable.Default,
@@ -84,6 +89,10 @@ internal sealed class EnvCommand : Command
         });
         return ExitCodes.Ok;
     }
+
+    // Where a set value comes from: saved by idrak env set, or the terminal.
+    private static string? Source(EnvironmentVariables.Variable variable, string? value) =>
+        value is null ? null : SavedEnvironment.Applied.Contains(variable.Name) ? "saved" : "terminal";
 
     // Long values (PATH, NO_PROXY) cut in the table; --json has them whole.
     private static string? Short(string? value) => value is { Length: > 60 } ? value[..57] + "..." : value;

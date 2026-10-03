@@ -25,6 +25,7 @@ internal static partial class Tests
         ("cli health: devices and version list the device and the drivers (text and JSON)", CliDevicesVersion),
         ("cli health: report writes Markdown and JSON, a zip, README rows and benchmarks", CliReport),
         ("cli health: env lists values, defaults and meanings; secrets only as set; help env", CliEnv),
+        ("cli health: env set saves variables every run applies (asked or given), the terminal wins; env unset; idrak test passes runner arguments", CliEnvSet),
         ("cli health: cache info and cache clear with --dry-run, --yes and no terminal", CliCache),
         ("cli health: config get/set/unset/list with profiles and hidden tokens; init --yes", CliConfigInit),
         ("cli health: plugins list, formats, completion scripts and candidates", CliPluginsFormatsCompletion),
@@ -279,6 +280,73 @@ internal static partial class Tests
         Check(h == 0 && help.Contains("VK_ICD_FILENAMES") && help.Contains("default:"), "help env");
         Check(Cli("help", "environment").Out == help, "help environment differs from help env");
         Check(Cli("help", "doctor").Out.Contains("Environment (idrak help env for all):"), "help doctor: no environment section");
+    }
+
+    private static void CliEnvSet(Device device)
+    {
+        _ = device;
+        string folder = CliTemp();
+        string config = Path.Combine(folder, "config.json");
+        WithEnvironment(new Dictionary<string, string?> { ["IDRAK_CUDA_DEBUG"] = null, ["IDRAK_WINDOW_KERNELS"] = null, ["IDRAK_TRACE"] = null, ["IDRAK_PORT"] = null }, () =>
+        {
+            // Given: saved in the config, applied to each run, undone after it.
+            var set = CliJson("env", "set", "IDRAK_CUDA_DEBUG", "1", "-C", config, "-j");
+            Check((string?)set["changes"]![0]!["value"] == "1" && (string?)CliConfig.Load(config).Root["env"]!["IDRAK_CUDA_DEBUG"] == "1", $"env set NAME VALUE: {set}");
+            var shown = CliJson("env", "IDRAK_CUDA_DEBUG", "-C", config, "-j")["variables"]![0]!;
+            Check((string?)shown["value"] == "1" && (string?)shown["source"] == "saved", $"env: saved value applied: {shown}");
+            Check(Environment.GetEnvironmentVariable("IDRAK_CUDA_DEBUG") is null, "a saved variable stayed set after the run");
+
+            // The terminal's value wins over the saved one.
+            WithEnvironment(new Dictionary<string, string?> { ["IDRAK_CUDA_DEBUG"] = "0" }, () =>
+            {
+                var terminal = CliJson("env", "IDRAK_CUDA_DEBUG", "-C", config, "-j")["variables"]![0]!;
+                Check((string?)terminal["value"] == "0" && (string?)terminal["source"] == "terminal", $"env: the terminal's value: {terminal}");
+                Check(Environment.GetEnvironmentVariable("IDRAK_CUDA_DEBUG") == "0", "the terminal's value was undone");
+            });
+
+            // A profile's saved values apply when it is in use.
+            Check(Cli("env", "set", "IDRAK_TRACE", "1", "--profile", "laptop", "-C", config).Exit == 0, "env set --profile");
+            Check(CliJson("env", "IDRAK_TRACE", "-C", config, "-j")["variables"]![0]!["value"] is null, "a profile's variable applied without the profile");
+            WithEnvironment(new Dictionary<string, string?> { ["IDRAK_PROFILE"] = "laptop" }, () =>
+                Check((string?)CliJson("env", "IDRAK_TRACE", "-C", config, "-j")["variables"]![0]!["source"] == "saved", "the profile's variable"));
+
+            // Refused: tokens, variables read before the tool starts, unknown names, too many arguments; no terminal to ask on.
+            var (secret, _, secretError) = Cli("env", "set", "HF_TOKEN", "hf_x", "-C", config);
+            Check(secret == 2 && secretError.Contains("idrak login") && !File.ReadAllText(config).Contains("hf_x"), $"env set a token: {secretError}");
+            Check(Cli("env", "set", "IDRAK_CONFIG", "x", "-C", config).Exit == 2 && Cli("env", "set", "NOT_A_VARIABLE", "1", "-C", config).Exit == 2
+                  && Cli("env", "set", "IDRAK_TRACE", "1", "2", "-C", config).Exit == 2, "env set refusals");
+            var (asked, _, askedError) = Cli("env", "set", "-C", config);
+            Check(asked == 2 && askedError.Contains("NAME VALUE"), $"env set without a terminal: {askedError}");
+
+            // Asked: a number takes the suggestion, part of a name finds the variable, a value typed, "-" removes one.
+            Terminal.TestInput = new StringReader("4\n\ny\nport\n8080\ny\ncuda_debug\n-\nn\n");
+            try
+            {
+                var (exit, output, error) = Cli("env", "set", "-C", config);
+                Check(exit == 0 && output.Contains("Saved IDRAK_WINDOW_KERNELS=0") && output.Contains("Saved IDRAK_PORT=8080") && output.Contains("Removed IDRAK_CUDA_DEBUG"),
+                    $"env set asked: {output} {error}");
+                Terminal.TestInput = new StringReader("\n");
+                Check(Cli("env", "set", "IDRAK_VULKAN_DEFAULT", "-C", config).Exit == 0, "env set NAME asks for the value");
+            }
+            finally
+            {
+                Terminal.TestInput = null;
+            }
+
+            var saved = CliConfig.Load(config).Root["env"]!.AsObject();
+            Check((string?)saved["IDRAK_WINDOW_KERNELS"] == "0" && (string?)saved["IDRAK_PORT"] == "8080" && (string?)saved["IDRAK_VULKAN_DEFAULT"] == "1"
+                  && !saved.ContainsKey("IDRAK_CUDA_DEBUG"), $"env set answers: {saved.ToJsonString()}");
+
+            // Unset; the list no longer has it.
+            var unset = CliJson("env", "unset", "IDRAK_PORT", "IDRAK_LANG", "-C", config, "-j");
+            Check(unset["removed"]!.AsArray().Count == 1 && !CliConfig.Load(config).Root["env"]!.AsObject().ContainsKey("IDRAK_PORT"), $"env unset: {unset}");
+            Check(Cli("env", "unset", "-C", config).Exit == 2, "env unset without a name");
+            Check(Cli("help", "env", "set").Out.Contains("Enter takes the suggested one"), "help env set");
+        });
+
+        // The test runner gets arguments after --; a stray argument is still refused.
+        Check(Cli("test", "window").Exit == 2, "test with a stray argument");
+        Directory.Delete(folder, true);
     }
 
     private static void CliCache(Device device)

@@ -24,23 +24,25 @@ internal sealed class TestCommand : Command
     public override string Summary => "Runs the library's tests from a source checkout";
 
     public override string Usage =>
-        "[--filter TEXT] [--device NAME]\n\n" +
-        "Runs tests/Idrak.Tests of the Idrak source checkout that holds the current folder (dotnet run -c Release).\n\n" +
+        "[--filter TEXT] [--device NAME] [-- RUNNER ARGUMENTS]\n\n" +
+        "Runs tests/Idrak.Tests of the Idrak source checkout that holds the current folder (dotnet run -c Release).\n" +
+        "Arguments after -- go to the test runner (e.g. -- --bench-window). Variables saved by idrak env set reach it too.\n\n" +
         "Options:\n" +
         "      --filter TEXT   only tests whose name contains TEXT (IDRAK_FILTER)\n" +
         "  -d, --device NAME   only this device, or several separated by commas (IDRAK_DEVICES); default every device found\n\n" +
         "Examples:\n" +
         "  idrak test\n" +
         "  idrak test --filter \"cli dev\" -d cpu\n" +
-        "  idrak test -d vulkan:0 -j";
+        "  idrak test -d vulkan:0 -j\n" +
+        "  idrak test -d cuda:0 -- --bench-window";
 
     public override IReadOnlyCollection<string> ValueOptions => ["--filter"];
 
     public override int Run(CommandContext context)
     {
-        if (context.Positional.Count > 0)
+        if (context.Positional.FirstOrDefault(a => !a.StartsWith('-')) is { } stray)
         {
-            throw new UsageException($"Unexpected argument '{context.Positional[0]}'; pass test names with --filter.");
+            throw new UsageException($"Unexpected argument '{stray}'; pass test names with --filter, and runner options after -- (e.g. -- --bench-window).");
         }
 
         string start = StartFolder ?? Environment.CurrentDirectory;
@@ -57,6 +59,15 @@ internal sealed class TestCommand : Command
         foreach (string arg in new[] { "run", "-c", "Release", "--project", RunnerProject })
         {
             info.ArgumentList.Add(arg);
+        }
+
+        if (context.Positional.Count > 0)
+        {
+            info.ArgumentList.Add("--");
+            foreach (string arg in context.Positional)
+            {
+                info.ArgumentList.Add(arg);
+            }
         }
 
         if (filter is not null)
