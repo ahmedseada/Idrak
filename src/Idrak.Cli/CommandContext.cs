@@ -19,7 +19,14 @@ internal sealed class CommandContext
 {
     // Options every command accepts; the value-taking ones are listed for the parser.
     internal static readonly string[] CommonValueOptions = ["--device", "--plugin", "--cache", "--config"];
-    internal static readonly string[] CommonFlags = ["--json", "--quiet", "--verbose", "--help", "-h"];
+    internal static readonly string[] CommonFlags = ["--json", "--quiet", "--verbose", "--help"];
+
+    /// <summary>Short forms every command accepts (plans/idrak-cli.md, "Short forms").</summary>
+    internal static readonly IReadOnlyDictionary<string, string> CommonShortForms = new Dictionary<string, string>
+    {
+        ["-h"] = "--help", ["-d"] = "--device", ["-j"] = "--json", ["-q"] = "--quiet", ["-v"] = "--verbose",
+        ["-P"] = "--plugin", ["-C"] = "--config",
+    };
 
     // Indented, and without escaping characters such as '+' that are safe outside HTML.
     internal static readonly JsonSerializerOptions JsonOutput = new() { WriteIndented = true, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
@@ -188,6 +195,24 @@ internal sealed class CliConfig
 
     public string? Get(string key) => _values[key] is JsonValue v && v.TryGetValue(out string? s) ? s : _values[key]?.ToJsonString();
 
+    /// <summary>A JSON object value (e.g. "aliases"), or null.</summary>
+    public JsonObject? Object(string key) => _values[key] as JsonObject;
+
+    /// <summary>Sets a JSON value (null removes it) and saves the file.</summary>
+    public void SetNode(string key, JsonNode? value)
+    {
+        if (value is null)
+        {
+            _values.Remove(key);
+        }
+        else
+        {
+            _values[key] = value;
+        }
+
+        Save();
+    }
+
     public IEnumerable<string> List(string key) => _values[key] is JsonArray a ? a.Select(n => n?.GetValue<string>()).OfType<string>() : [];
 
     public void Set(string key, string? value)
@@ -201,6 +226,11 @@ internal sealed class CliConfig
             _values[key] = value;
         }
 
+        Save();
+    }
+
+    private void Save()
+    {
         Directory.CreateDirectory(System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(Path))!);
         File.WriteAllText(Path, _values.ToJsonString(CommandContext.JsonOutput));
     }
