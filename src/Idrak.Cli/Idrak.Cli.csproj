@@ -16,6 +16,19 @@
     <ProjectReference Include="..\Idrak\Idrak.csproj" />
     <ProjectReference Include="..\Idrak.LanguageModels\Idrak.LanguageModels.csproj" />
     <ProjectReference Include="..\Idrak.Datasets\Idrak.Datasets.csproj" />
+    <ProjectReference Include="..\Idrak.Onnx\Idrak.Onnx.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Idrak.Tests" />
+  </ItemGroup>
+
+  <!-- idrak new: the project templates, embedded as Templates/KIND/PATH (file names and contents carry __NAME__ and
+       the other placeholders NewCommand fills in); they are not part of this project's own build. -->
+  <ItemGroup>
+    <Compile Remove="Templates\**" />
+    <None Remove="Templates\**" />
+    <EmbeddedResource Include="Templates\**\*.template" LogicalName="Templates/%(RecursiveDir)%(Filename)" WithCulture="false" />
   </ItemGroup>
 
 </Project>

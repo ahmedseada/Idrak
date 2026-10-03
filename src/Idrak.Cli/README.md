@@ -20,3 +20,20 @@ names ("cache info") are matched before shorter ones. `CommandContext` gives the
 
 The assembly is named `Idrak.Cli`, not `idrak`: assembly names ignore case, so `idrak` would clash with the Idrak
 library. The installed command is still `idrak` (`ToolCommandName`).
+
+## Developer commands
+
+| Command | What it does |
+|---|---|
+| `idrak new console\|webapi\|rag\|plugin NAME` | A ready-to-build project referencing the Idrak packages (`--source DIR`: the projects of a checkout); the plug-in registers a packed weight format and a network step and has tests on the public API only |
+| `idrak test [--filter TEXT] [-d NAME]` | Runs tests/Idrak.Tests of the checkout around the current folder |
+| `idrak onnx import FILE.onnx` | Rebuilds the model from Idrak layers and saves a model package (.ikm) |
+| `idrak onnx export MODEL.ikm\|network.json` | Writes an .onnx file |
+| `idrak onnx check FILE.onnx` | Compares Idrak's import with a round trip, ONNX Runtime (when Idrak.Onnx.Runtime is loaded) and reference outputs |
+| `idrak kernels dump [ptx\|spirv\|hip]` | The generated GPU kernels, for debugging |
+| `idrak trace [-o FILE.jsonl] -- COMMAND ...` | Runs a command with telemetry printed live or written to JSON Lines |
+| `idrak demo xor\|spirals\|shapes\|gpt` | Trains a small sample in seconds on the device, with the speed |
+| `idrak shell` | An interactive prompt for idrak commands, with history and completion |
+
+The templates live in `Templates/KIND/` as `*.template` files, embedded in the tool; `__NAME__`, `__NAMESPACE__`,
+`__FORMAT__` and `__REF(Package)__` are filled in by `idrak new`.

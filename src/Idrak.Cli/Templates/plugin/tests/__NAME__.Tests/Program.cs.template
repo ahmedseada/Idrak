@@ -1,0 +1,108 @@
+// Tests for the __NAME__ plug-in, on the CPU or on the device given as the first argument:
+//   dotnet run --project tests/__NAME__.Tests [-- vulkan:0]
+
+using System.Reflection;
+using System.Runtime.CompilerServices;
+using Idrak;
+using Idrak.Layers;
+using Idrak.Optimizers;
+using __NAMESPACE__;
+
+var device = args.Length > 0 ? Device.Parse(args[0]) : Device.Cpu;
+Plugin.Register();
+int failed = 0;
+foreach (var (name, test) in new (string, Action)[]
+{
+    ("public API only: Idrak grants this assembly no internal access", NoInternalAccess),
+    ("the packed format multiplies like its expanded weights, with the input's gradient", PackedFormat),
+    ("the network step trains and replays from JSON", NetworkStep),
+})
+{
+    try
+    {
+        using (new TensorScope())
+        {
+            test();
+        }
+
+        Console.WriteLine($"  PASS {name}");
+    }
+    catch (Exception e)
+    {
+        failed++;
+        Console.WriteLine($"  FAIL {name}: {e.Message}");
+    }
+}
+
+Console.WriteLine(failed == 0 ? $"All passed on {device}" : $"{failed} failed on {device}");
+return failed == 0 ? 0 : 1;
+
+void NoInternalAccess()
+{
+    string self = typeof(Plugin).Assembly.GetName().Name!;
+    var friends = typeof(Tensor).Assembly.GetCustomAttributes<InternalsVisibleToAttribute>().Select(a => a.AssemblyName);
+    Check(!friends.Contains(self), $"Idrak lists {self} among its friends");
+}
+
+void PackedFormat()
+{
+    Check(PackedWeight.FormatNames.Contains(Plugin.FormatName), "the format is registered");
+    var random = new Random(7);
+    const int Rows = 24, Columns = 10, Batch = 5;
+    var values = Enumerable.Range(0, Rows * Columns).Select(_ => random.NextSingle() * 0.2f - 0.1f).ToArray();
+    var inputs = Enumerable.Range(0, Batch * Rows).Select(_ => random.NextSingle() * 2f - 1f).ToArray();
+    using var linear = Linear.FromPacked(PackedWeight.FromValues(Plugin.FormatName, values, Rows, Columns, device), Tensor.Persistent(new float[Columns], [Columns], device));
+    var expanded = linear.PackedWeight!.Dequantize();
+    var x = Tensor.From(inputs, [Batch, Rows], device, requiresGrad: true);
+    var reference = Tensor.From(inputs, [Batch, Rows], device, requiresGrad: true);
+    var y = linear.Forward(x);
+    var expected = reference.MatMul(expanded);
+    CheckClose(expected.ToArray(), y.ToArray(), 1e-4f, "the product");
+    y.Sum().Backward();
+    expected.Sum().Backward();
+    CheckClose(reference.Grad!.ToArray(), x.Grad!.ToArray(), 1e-4f, "the input's gradient");
+}
+
+void NetworkStep()
+{
+    var random = new Random(5);
+    const int Samples = 48;
+    var xs = Enumerable.Range(0, Samples * 2).Select(_ => random.NextSingle() * 4f - 2f).ToArray();
+    var ys = Enumerable.Range(0, Samples).Select(i => MathF.Abs(xs[2 * i]) - 0.5f * xs[2 * i + 1]).ToArray();
+    using var x = Tensor.From(xs, [Samples, 2], device);
+    using var y = Tensor.From(ys, [Samples, 1], device);
+    var builder = Network.Input(2).Seed(6).Linear(16).Op(Plugin.StepName).Linear(1);
+    using var model = builder.OnDevice(device).Build();
+    using var optimizer = new Adam(model.Parameters(), learningRate: 0.01f);
+    float first = 0f, last = 0f;
+    for (int step = 0; step < 200; step++)
+    {
+        using var scope = new TensorScope();
+        var loss = Losses.MeanSquaredError(model.Forward(x), y);
+        optimizer.ZeroGrad();
+        loss.Backward();
+        optimizer.Step();
+        last = loss.Item();
+        first = step == 0 ? last : first;
+    }
+
+    Check(last < 0.2f * first, $"loss {first} -> {last}");
+    Check(Network.FromJson(builder.ToJson()).ToJson().ToJsonString() == builder.ToJson().ToJsonString(), "the step replays from JSON");
+}
+
+static void Check(bool condition, string message)
+{
+    if (!condition)
+    {
+        throw new InvalidOperationException(message);
+    }
+}
+
+static void CheckClose(float[] expected, float[] actual, float tolerance, string what)
+{
+    Check(expected.Length == actual.Length, $"{what}: {actual.Length} values, expected {expected.Length}");
+    for (int i = 0; i < expected.Length; i++)
+    {
+        Check(MathF.Abs(expected[i] - actual[i]) <= tolerance * MathF.Max(1f, MathF.Abs(expected[i])), $"{what}: value {i} is {actual[i]}, expected {expected[i]}");
+    }
+}
