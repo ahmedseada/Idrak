@@ -608,11 +608,46 @@ internal static partial class PtxKernels
     /// <summary>Largest head size <c>attention_flash_f32</c> handles (4 dimensions per lane).</summary>
     public const int FlashMaxDim = 128;
 
+    // The attention kernels' sliding window and soft-cap (see AttentionVariant): `window` 0 for none, else a query whose
+    // causal limit is `end` (exclusive) starts at max(end - window, 0); `softcap` 0 for none, else each scaled score s
+    // becomes cap · tanh(s / cap) before the softmax. Both are uniform per launch and predicated, so plain attention runs
+    // the same instructions to the same results as before they were added.
+
+    // %{start} = max(end - window, 0) with a window, else 0 (`pred` a scratch predicate).
+    private static string WindowStartPtx(string start, string end, string window, string pred) => $"""
+        mov.u32 {start}, 0;
+        setp.gt.u32 {pred}, {end}, {window};
+        setp.ne.and.u32 {pred}, {window}, 0, {pred};
+        @{pred} sub.u32 {start}, {end}, {window};
+        """;
+
+    // value = cap · tanh(value / cap) where `capped` holds (cap > 0); tanh(x) = 1 - 2 / (2^(2x·log2 e) + 1), as tanh_f32
+    // (±1 for large |x|). `temp` is a scratch float register.
+    private static string SoftcapPtx(string value, string cap, string capped, string temp) => $"""
+        @{capped} div.rn.f32 {temp}, {value}, {cap};
+        @{capped} mul.f32 {temp}, {temp}, {F(2.8853900817779268f)};
+        @{capped} ex2.approx.ftz.f32 {temp}, {temp};
+        @{capped} add.f32 {temp}, {temp}, {One};
+        @{capped} rcp.rn.f32 {temp}, {temp};
+        @{capped} fma.rn.f32 {temp}, {temp}, {F(-2f)}, {One};
+        @{capped} mul.f32 {value}, {temp}, {cap};
+        """;
+
+    // gradient ·= 1 - (score / cap)² where `capped` holds: the cap's slope, given the capped score.
+    private static string SoftcapSlopePtx(string gradient, string score, string cap, string capped, string temp) => $"""
+        @{capped} div.rn.f32 {temp}, {score}, {cap};
+        @{capped} mul.f32 {temp}, {temp}, {temp};
+        @{capped} sub.f32 {temp}, {One}, {temp};
+        @{capped} mul.f32 {gradient}, {gradient}, {temp};
+        """;
+
     /// <summary>Query rows per <c>attention_flash_f32</c> block, and key positions per tile.</summary>
     public const int FlashTile = 32;
 
     // Tiled attention (as in FlashAttention): o[h, i] = Σ_c softmax(scale · q[h, i] · k[h, c]) · v[h, c] over positions
-    // c ≤ position[0] + (i % steps) (and < capacity), for q [heads, rowsPerHead, dim] and k, v [heads, capacity, dim].
+    // c ≤ position[0] + (i % steps) (and < capacity), for q [heads, rowsPerHead, dim] and k, v [heads, capacity, dim];
+    // with a window (p_window) from each row's window start (%lo per row; the block's tiles from its smallest), the
+    // scores soft-capped with a cap (p_softcap).
     // A block of 4 warps takes 32 query rows (8 per warp) of one head and walks the keys in tiles of 32 positions held
     // in shared memory (keys transposed): lane p scores position p against the warp's 8 rows, the running maximum and
     // sum update per row (online softmax), and the lanes then split the head dimension to add Σ_p weight_p · v_p.
@@ -628,10 +663,15 @@ internal static partial class PtxKernels
         s.AppendLine($$"""
             .visible .entry {{(int8 ? "attention_flash_int8" : bf16 ? "attention_flash_bf16" : "attention_flash_f32")}}(
                 .param .u64 p_q, .param .u64 p_k, .param .u64 p_v, .param .u64 p_pos, .param .u64 p_o, .param .u64 p_lse,
-                .param .u32 p_rph, .param .u32 p_steps, .param .u32 p_cap, .param .u32 p_dim, .param .f32 p_scale{{(int8 ? ",\n    .param .u64 p_ks, .param .u64 p_vs, .param .u32 p_words" : bf16 ? ",\n    .param .u32 p_words" : "")}}
+                .param .u32 p_rph, .param .u32 p_steps, .param .u32 p_cap, .param .u32 p_dim, .param .f32 p_scale{{(int8 ? ",\n    .param .u64 p_ks, .param .u64 p_vs, .param .u32 p_words" : bf16 ? ",\n    .param .u32 p_words" : "")}},
+                .param .u32 p_window, .param .f32 p_softcap
             )
             {
                 .reg .pred %p<16>;
+                .reg .b32 %lo<{{Rows}}>;
+                .reg .b32 %window;
+                .reg .f32 %softcap, %captmp;
+                .reg .pred %capped, %windowed;
                 .reg .f32 %o<{{Rows * 4}}>;
                 .reg .f32 %m<{{Rows}}>;
                 .reg .f32 %l<{{Rows}}>;
@@ -661,6 +701,9 @@ internal static partial class PtxKernels
                 ld.param.u32 %r3, [p_cap];
                 ld.param.u32 %r4, [p_dim];
                 ld.param.f32 %f15, [p_scale];
+                ld.param.u32 %window, [p_window];
+                ld.param.f32 %softcap, [p_softcap];
+                setp.gt.f32 %capped, %softcap, 0f00000000;
                 ld.global.f32 %f1, [%rd4];
                 cvt.rzi.u32.f32 %r5, %f1;
                 mov.u32 %r6, %tid.x;
@@ -729,6 +772,10 @@ internal static partial class PtxKernels
                     add.u32 %r21, %r21, %r9;
                     rem.u32 %r22, %r21, %r2;
                     add.u32 %r{{24 + i}}, %r5, %r22;
+                    sub.u32 %r21, %r3, 1;
+                    min.u32 %r21, %r21, %r{{24 + i}};
+                    add.u32 %r21, %r21, 1;
+                    {{WindowStartPtx($"%lo{i}", "%r21", "%window", "%windowed")}}
                     mov.f32 %m{{i}}, 0fFF800000;
                     mov.f32 %l{{i}}, 0f00000000;
                 """);
@@ -758,8 +805,15 @@ internal static partial class PtxKernels
             s.AppendLine($"    setp.lt.u32 %dv{j}, %r38, %r4;");
         }
 
-        s.AppendLine("""
-                mov.u32 %r39, 0;
+        // The block's first tile: the window start of its smallest step (its first row's, or step 0 when it wraps).
+        s.AppendLine($$"""
+                rem.u32 %r37, %r9, %r2;
+                selp.b32 %r37, 0, %r37, %p3;
+                add.u32 %r37, %r37, %r5;
+                sub.u32 %r38, %r3, 1;
+                min.u32 %r37, %r37, %r38;
+                add.u32 %r37, %r37, 1;
+                {{WindowStartPtx("%r39", "%r37", "%window", "%windowed")}}
             TILE:
                 setp.gt.u32 %p4, %r39, %r36;
                 @%p4 bra TILE_END;
@@ -892,7 +946,9 @@ internal static partial class PtxKernels
             s.AppendLine($$"""
                     setp.le.u32 %p6, %r45, %r{{24 + i}};
                     setp.lt.and.u32 %p6, %r45, %r3, %p6;
+                    setp.ge.and.u32 %p6, %r45, %lo{{i}}, %p6;
                     mul.f32 %s{{i}}, %s{{i}}, %f15;
+                    {{SoftcapPtx($"%s{i}", "%softcap", "%capped", "%captmp")}}
                     selp.f32 %s{{i}}, %s{{i}}, 0fFF800000, %p6;
                     mov.f32 %f6, %s{{i}};
                 """);
@@ -1027,11 +1083,14 @@ internal static partial class PtxKernels
     }
 
     // Common prologue: pointers of this head (q, dout, dq [heads, rph, dim]; k, v, dk, dv [heads, cap, dim]; lse, dd
-    // [heads, rph]), %r1 rph, %r2 steps, %r3 cap, %r4 dim, %f31 scale, %r6 tid, %r7 lane, %r8 warp, %r10 head.
+    // [heads, rph]), %r1 rph, %r2 steps, %r3 cap, %r4 dim, %f31 scale, %r6 tid, %r7 lane, %r8 warp, %r10 head; the
+    // window in %r9 and the soft-cap in %f30, %p15 when there is a cap (see WindowStartPtx). With a window, row t sees key
+    // p when t - p < window; with a cap, P = exp(s - lse) for the capped score s and dS takes the cap's slope.
     private const string BackwardParameters = """
             .param .u64 p_q, .param .u64 p_k, .param .u64 p_v, .param .u64 p_dout, .param .u64 p_lse, .param .u64 p_dd,
             .param .u64 p_dq, .param .u64 p_dk, .param .u64 p_dv,
-            .param .u32 p_rph, .param .u32 p_steps, .param .u32 p_cap, .param .u32 p_dim, .param .f32 p_scale
+            .param .u32 p_rph, .param .u32 p_steps, .param .u32 p_cap, .param .u32 p_dim, .param .f32 p_scale,
+            .param .u32 p_window, .param .f32 p_softcap
         """;
 
     private static string BackwardPrologue => """
@@ -1040,6 +1099,9 @@ internal static partial class PtxKernels
             ld.param.u32 %r3, [p_cap];
             ld.param.u32 %r4, [p_dim];
             ld.param.f32 %f31, [p_scale];
+            ld.param.u32 %r9, [p_window];
+            ld.param.f32 %f30, [p_softcap];
+            setp.gt.f32 %p15, %f30, 0f00000000;
             mov.u32 %r6, %tid.x;
             and.b32 %r7, %r6, 31;
             shr.u32 %r8, %r6, 5;
@@ -1219,13 +1281,20 @@ internal static partial class PtxKernels
                     setp.le.u32 %p8, %r37, %r33;
                     and.pred %p8, %p8, %p5;
                     and.pred %p8, %p8, %p6;
+                    sub.u32 %r5, %r33, %r37;
+                    setp.lt.u32 %p14, %r5, %r9;
+                    setp.eq.or.u32 %p14, %r9, 0, %p14;
+                    and.pred %p8, %p8, %p14;
                     mul.f32 %f11, %f5, %f31;
+                    {{SoftcapPtx("%f11", "%f30", "%p15", "%f26")}}
+                    mov.f32 %f25, %f11;
                     sub.f32 %f11, %f11, %f3;
                     mul.f32 %f11, %f11, 0f3FB8AA3B;
                     ex2.approx.ftz.f32 %f11, %f11;
                     selp.f32 %sp{{kk}}, %f11, 0f00000000, %p8;
                     sub.f32 %f12, %f6, %f4;
                     mul.f32 %sd{{kk}}, %sp{{kk}}, %f12;
+                    {{SoftcapSlopePtx($"%sd{kk}", "%f25", "%f30", "%p15", "%f26")}}
                 """);
         }
 
@@ -1426,13 +1495,20 @@ internal static partial class PtxKernels
                     setp.le.u32 %p8, %r32, %r37;
                     and.pred %p8, %p8, %p5;
                     and.pred %p8, %p8, %p6;
+                    sub.u32 %r5, %r37, %r32;
+                    setp.lt.u32 %p14, %r5, %r9;
+                    setp.eq.or.u32 %p14, %r9, 0, %p14;
+                    and.pred %p8, %p8, %p14;
                     mul.f32 %f11, %f5, %f31;
+                    {{SoftcapPtx("%f11", "%f30", "%p15", "%f26")}}
+                    mov.f32 %f25, %f11;
                     sub.f32 %f11, %f11, %f3;
                     mul.f32 %f11, %f11, 0f3FB8AA3B;
                     ex2.approx.ftz.f32 %f11, %f11;
                     selp.f32 %f11, %f11, 0f00000000, %p8;
                     sub.f32 %f12, %f6, %f4;
                     mul.f32 %f12, %f11, %f12;
+                    {{SoftcapSlopePtx("%f12", "%f25", "%f30", "%p15", "%f26")}}
                     mov.u32 %r44, 0;
                     mov.u32 %r45, %r34;
                     add.u32 %r45, %r45, %r16;
@@ -1782,7 +1858,9 @@ internal static partial class PtxKernels
         sb.AppendLine(s.ToString());
     }
 
-    // Attention of one query row over the filled part of a key/value cache (see Backend.AttentionDecode). One block
+    // Attention of one query row over the filled part of a key/value cache (see Backend.AttentionDecode), from its
+    // window's start with a window (%r28; the splits share the window's positions) and with soft-capped scores with a
+    // cap (%p0 in the loop). One block
     // per row; warp w takes positions w, w + 8, … with the lanes splitting the head dimension (lane + 32·i), keeping a
     // running maximum, softmax sum and weighted value sum (online softmax). The warps' partial results are then
     // combined in shared memory: part[w] = (max, sum, acc[256]).
@@ -1845,13 +1923,15 @@ internal static partial class PtxKernels
             sub.u32 %r11, %s_cap, 1;
             min.u32 %r10, %r10, %r11;
             add.u32 %r10, %r10, 1;
+            {{WindowStartPtx("%r28", "%r10", "%s_window", "%p0")}}
             mov.u32 %r22, %ctaid.y;
             mov.u32 %r23, %nctaid.y;
             add.u32 %r24, %r10, %r23;
+            sub.u32 %r24, %r24, %r28;
             sub.u32 %r24, %r24, 1;
             div.u32 %r24, %r24, %r23;
             max.u32 %r24, %r24, %s_minchunk;
-            mul.lo.u32 %r25, %r22, %r24;
+            mad.lo.u32 %r25, %r22, %r24, %r28;
             add.u32 %r26, %r25, %r24;
             min.u32 %r10, %r26, %r10;
             mul.lo.u32 %r12, %row, %s_dim;
@@ -1882,6 +1962,7 @@ internal static partial class PtxKernels
             mov.f32 %f20, {NegInf};
             mov.f32 %f21, {Zero};
             add.u32 %r15, %r25, %warp;
+            setp.gt.f32 %p0, %s_softcap, {Zero};
             DL:
             setp.ge.u32 %p9, %r15, %r10;
             @%p9 bra DL_END;
@@ -1917,6 +1998,7 @@ internal static partial class PtxKernels
 
         b.AppendLine($"""
             mul.f32 %f2, %f2, %s_scale;
+            {SoftcapPtx("%f2", "%s_softcap", "%p0", "%f18")}
             max.f32 %f4, %f20, %f2;
             sub.f32 %f5, %f20, %f4;
             mul.f32 %f5, %f5, {Log2E};
@@ -2121,20 +2203,21 @@ internal static partial class PtxKernels
         if (bf16)
         {
             RowBlock(sb, "attention_decode_bf16", ["q", "keys", "values", "pos", "y", "part", "counters"],
-                [("u32", "rph"), ("u32", "steps"), ("u32", "cap"), ("u32", "dim"), ("f32", "scale"), ("u32", "words"), ("u32", "minchunk")], b.ToString(),
-                sharedFloats: RowThreads / 32 * (2 + DecodeMaxDim));
+                [("u32", "rph"), ("u32", "steps"), ("u32", "cap"), ("u32", "dim"), ("f32", "scale"), ("u32", "words"), ("u32", "minchunk"), ("u32", "window"), ("f32", "softcap")],
+                b.ToString(), sharedFloats: RowThreads / 32 * (2 + DecodeMaxDim));
         }
         else if (int8)
         {
             RowBlock(sb, "attention_decode_int8", ["q", "keys", "values", "kscales", "vscales", "pos", "y", "part", "counters"],
-                [("u32", "rph"), ("u32", "steps"), ("u32", "cap"), ("u32", "dim"), ("f32", "scale"), ("u32", "words"), ("u32", "minchunk")], b.ToString(),
-                sharedFloats: RowThreads / 32 * (2 + DecodeMaxDim));
+                [("u32", "rph"), ("u32", "steps"), ("u32", "cap"), ("u32", "dim"), ("f32", "scale"), ("u32", "words"), ("u32", "minchunk"), ("u32", "window"), ("f32", "softcap")],
+                b.ToString(), sharedFloats: RowThreads / 32 * (2 + DecodeMaxDim));
         }
         else
         {
             RowBlock(sb, "attention_decode_f32", ["q", "keys", "values", "pos", "y", "part", "counters"],
-                [("u32", "rph"), ("u32", "steps"), ("u32", "cap"), ("u32", "dim"), ("f32", "scale"), ("u32", "minchunk")], b.ToString(),
-                sharedFloats: RowThreads / 32 * (2 + DecodeMaxDim));
+                [("u32", "rph"), ("u32", "steps"), ("u32", "cap"), ("u32", "dim"), ("f32", "scale"), ("u32", "minchunk"), ("u32", "window"), ("f32", "softcap")],
+                b.ToString(), sharedFloats: RowThreads / 32 * (2 + DecodeMaxDim));
+
         }
     }
 

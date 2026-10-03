@@ -24,11 +24,11 @@ internal sealed partial class VulkanBackend
     // ------------------------------------------------------------------ attention over many rows
 
     public override void AttentionTiled(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage? logSumExp, int heads,
-        int rowsPerHead, int steps, int capacity, int dim, float scale)
+        int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
         if (dim <= 0 || dim > VulkanKernels.AttentionMaxDim || steps <= 0 || !Fit(q, keys, values, position, y) || logSumExp is not null && !Fit(logSumExp))
         {
-            base.AttentionTiled(q, keys, values, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale);
+            base.AttentionTiled(q, keys, values, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
             return;
         }
 
@@ -48,18 +48,22 @@ internal sealed partial class VulkanBackend
         }
         else
         {
-            var key = new VulkanTuneKey(VulkanTuneOp.TiledAttention, lse ? 1 : 0, rows, rowsPerHead, steps, capacity, dim);
+            // A window shorter than the capacity under a key of its own (variants 2 and 3, the window last).
+            bool windowed = variant.Window > 0 && variant.Window < capacity;
+            var key = windowed
+                ? new VulkanTuneKey(VulkanTuneOp.TiledAttention, lse ? 3 : 2, rows, rowsPerHead, steps, capacity, dim, variant.Window)
+                : new VulkanTuneKey(VulkanTuneOp.TiledAttention, lse ? 1 : 0, rows, rowsPerHead, steps, capacity, dim);
             if (!TryTuned(key, out choice) || !TiledAttentionValid(choice, lse))
             {
                 choice = fallback;
                 if (Autotune && !t_timing)
                 {
-                    choice = TuneTiledAttention(key, storages, fallback, heads, rowsPerHead, steps, capacity, dim, scale);
+                    choice = TuneTiledAttention(key, storages, fallback, heads, rowsPerHead, steps, capacity, dim, scale, variant);
                 }
             }
         }
 
-        RunTiledAttention(choice, storages, heads, rowsPerHead, steps, capacity, dim, scale);
+        RunTiledAttention(choice, storages, heads, rowsPerHead, steps, capacity, dim, scale, variant);
     }
 
     // Whether a choice (a stored one too) can run here: the tiled kernel at a candidate width, or the decoding kernel
@@ -75,7 +79,8 @@ internal sealed partial class VulkanBackend
     // full cache: the position read from a scratch storage holding capacity - steps, so the last row sees every position
     // (where attention costs most), the outputs written to scratch storages. The decoding kernel's own choice (its
     // splits) is settled first, outside the timing.
-    private int TuneTiledAttention(VulkanTuneKey key, Storage[] storages, int fallback, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale)
+    private int TuneTiledAttention(VulkanTuneKey key, Storage[] storages, int fallback, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale,
+        AttentionVariant variant)
     {
         bool lse = storages.Length == 6;
         var candidates = CandidateWidths.Select(w => WithWidth(w, TiledKernel)).ToList();
@@ -97,28 +102,30 @@ internal sealed partial class VulkanBackend
 
             if (!lse)
             {
-                RunTiledAttention(WithWidth(Width, TiledDecode), bound, heads, rowsPerHead, steps, capacity, dim, scale);
+                RunTiledAttention(WithWidth(Width, TiledDecode), bound, heads, rowsPerHead, steps, capacity, dim, scale, variant);
             }
 
-            chosen = Tune(key, [.. candidates], fallback, c => RunTiledAttention(c, bound, heads, rowsPerHead, steps, capacity, dim, scale));
+            chosen = Tune(key, [.. candidates], fallback, c => RunTiledAttention(c, bound, heads, rowsPerHead, steps, capacity, dim, scale, variant));
         });
         return chosen;
     }
 
     // Runs attention for many rows with `choice`: the decoding kernel, or the tiled kernel at its width (a workgroup per
     // block of TiledAttentionRows rows of a head, at most what the device takes; the kernel loops over the rest).
-    private void RunTiledAttention(int choice, Storage[] storages, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale)
+    private void RunTiledAttention(int choice, Storage[] storages, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale,
+        AttentionVariant variant)
     {
         if ((choice & Rest) == TiledDecode)
         {
-            Attend("attention_decode", 0, storages.AsSpan(0, 5), heads, rowsPerHead, steps, capacity, dim, scale);
+            Attend("attention_decode", 0, storages.AsSpan(0, 5), heads, rowsPerHead, steps, capacity, dim, scale, variant);
             return;
         }
 
         int width = WidthOf(choice), rowsPerBlock = VulkanKernels.TiledAttentionRows(width);
         long blocks = (long)heads * ((rowsPerHead + rowsPerBlock - 1) / rowsPerBlock);
-        Span<byte> b = stackalloc byte[24];
-        var push = new Push(b).I(heads).I(rowsPerHead).I(steps).I(capacity).I(dim).F(scale).Bytes;
+        Span<byte> b = stackalloc byte[32];
+        var push = new Push(b).I(heads).I(rowsPerHead).I(steps).I(capacity).I(dim).F(scale).I(variant.Window).F(variant.Softcap).Bytes;
+
         RunAt(storages.Length == 6 ? "attention_tiled_lse" : "attention_tiled", width, RowGroups(blocks), 1, 1, storages, push);
     }
 

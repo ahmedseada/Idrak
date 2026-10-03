@@ -404,12 +404,12 @@ internal sealed partial class VulkanBackend
     // Two passes (VulkanKernels.Training.cs): a workgroup per query row adds its dq and writes delta = dOutput · output
     // to a temporary; then a workgroup per key position adds its dk and dv. Every sum runs in a fixed order.
     public override void AttentionTiledBackward(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput,
-        Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale)
+        Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
         long rows = (long)heads * rowsPerHead;
         if (dim > VulkanKernels.AttentionMaxDim || rows > int.MaxValue || !Fit(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues))
         {
-            base.AttentionTiledBackward(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale);
+            base.AttentionTiledBackward(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
             return;
         }
 
@@ -421,9 +421,10 @@ internal sealed partial class VulkanBackend
         var delta = Allocate((int)rows, zeroed: false);
         try
         {
-            Span<byte> b = stackalloc byte[24];
-            var push = new Push(b).I(heads).I(rowsPerHead).I(steps).I(capacity).I(dim).F(scale).Bytes;
-            Run("attention_backward_dq", RowGroups(rows), 1, 1, [q, keys, values, output, logSumExp, dOutput, dq, delta], push);
+            Span<byte> b = stackalloc byte[32];
+            var push = new Push(b).I(heads).I(rowsPerHead).I(steps).I(capacity).I(dim).F(scale).I(variant.Window).F(variant.Softcap).Bytes;
+            Run("attention_backward_dq",
+ RowGroups(rows), 1, 1, [q, keys, values, output, logSumExp, dOutput, dq, delta], push);
             Run("attention_backward_dkv", RowGroups((long)heads * Math.Min(capacity, steps)), 1, 1, [q, keys, values, logSumExp, dOutput, delta, dkeys, dvalues], push);
         }
         finally

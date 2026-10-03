@@ -29,19 +29,23 @@ internal static partial class VulkanKernels
     private const int TiledAttentionDepth = 64;
 
     // Attention of query rows q [heads, rowsPerHead, dim] over keys and values [heads, capacity, dim], as attention_decode
-    // (row i of head h sees positions c ≤ min(position[0] + i % steps, capacity - 1)), for many rows: a workgroup of W
+    // (row i of head h sees positions c ≤ min(position[0] + i % steps, capacity - 1), from its window's start with a
+    // window, its scores soft-capped with a cap), for many rows: a workgroup of W
     // invocations takes R = TiledAttentionRows(W) consecutive rows of one head (a block) and goes through the positions
     // C = W / R at a time (a tile), so each key and value it reads serves R rows (attention_decode reads them once per
     // row). Invocation t is (r, c) = (t / C, t % C) for the scores and (r, lane = t % C) for the outputs, which it keeps in
     // registers: dimensions lane + j·C, j < 256 / C. Per tile, with an online softmax per row:
     //   1. the score of (r, c): q_r · k_c over the head, staged 64 dimensions at a time (the block's queries and the
-    //      tile's keys, zeros past dim or past the block's last position), then times scale (-∞ past row r's limit);
+    //      tile's keys, zeros past dim or past the block's last position), then times scale and soft-capped (-∞ outside
+    //      row r's window and past its limit);
     //   2. invocation r < R takes the tile's largest score of row r: max' = max(max, tile max), alpha = exp(max - max');
     //   3. invocation (r, c) stores p = exp(score - max') (0 past the limit); invocation r < R updates its row's total,
     //      total · alpha + Σ p, and every invocation rescales its outputs by its row's alpha;
     //   4. the tile's values, 64 dimensions at a time, are staged and each output adds Σ_c p[r, c] · v[c, d].
     // At the end y = outputs / total (and the log-sum-exp max + log total). Rows past rowsPerHead repeat the last row of
-    // the head and store nothing. Every row sees position 0, so its max is finite after the first tile.
+    // the head and store nothing. The tiles start at the block's lowest window start (0 without a window). Without a
+    // window every row sees position 0, so its max is finite after the first tile; with one, a row may see nothing in the
+    // block's first tiles, and its max stays -∞ (alpha 1, its sums 0) until its window begins.
     //
     // Workgroup memory — every phase is separated by a barrier:
     //   queries[R · 65] and staged[C · 65] (keys, rows padded by one so (r, c) read different banks; then values, C · 64)
@@ -59,6 +63,7 @@ internal static partial class VulkanKernels
         var lse = logSumExp ? k.Buffer("logSumExp") : null;
         var (heads, rowsPerHead, steps, capacity, dim) = (k.PushInt("heads"), k.PushInt("rowsPerHead"), k.PushInt("steps"), k.PushInt("capacity"), k.PushInt("dim"));
         var scale = k.PushFloat("scale");
+        var (window, softcap) = (k.PushInt("window"), k.PushFloat("softcap"));
         var queries = k.Shared("queries", rows * Stride);
         var staged = k.Shared("staged", tile * Stride);
         var scores = k.Shared("scores", width);
@@ -82,10 +87,15 @@ internal static partial class VulkanKernels
             var first = h * capacity;                                         // the head's first cached row
             var mine = k.Min(r0 + r, rowsPerHead - 1);                         // this invocation's row within the head
             var limit = k.Min(start + mine % steps, capacity - 1) + 1;         // positions the row sees
-            // Positions the block sees: its rows' largest step (the last row's, unless the block wraps past a step).
+            var lo = WindowStart(k, limit, window);                            // the first of them
+            // Positions the block sees: its rows' largest step (the last row's, unless the block wraps past a step), from
+            // its smallest step's window start (the first row's, unless the block wraps).
             var last = k.Min(r0 + rows, rowsPerHead) - 1;
-            var lastStep = k.Select((last / steps).Ne(r0 / steps), steps - 1, last % steps);
+            var wraps = (last / steps).Ne(r0 / steps);
+            var lastStep = k.Select(wraps, steps - 1, last % steps);
             var count = k.Min(start + lastStep, capacity - 1) + 1;
+            var firstStep = k.Select(wraps, k.Int(0), r0 % steps);
+            var from = WindowStart(k, k.Min(start + firstStep, capacity - 1) + 1, window);
             var queryBase = h * rowsPerHead;
             foreach (var v in acc)
             {
@@ -98,7 +108,7 @@ internal static partial class VulkanKernels
                 totals[tid] = k.Float(0f);
             });
 
-            k.For(k.Int(0), count, tile, c0 =>
+            k.For(from, count, tile, c0 =>
             {
                 // 1. Scores, a stage of 64 dimensions at a time.
                 var score = k.Local(0f);
@@ -129,8 +139,8 @@ internal static partial class VulkanKernels
                     k.Barrier();                                              // the stage is read before the next is written
                 });
 
-                var seen = c0 + c < limit;
-                var scaled = score.V * scale;
+                var seen = (c0 + c < limit) & (c0 + c >= lo);
+                var scaled = Capped(k, score.V * scale, softcap);
                 scores[tid] = k.Select(seen, scaled, k.Float(float.NegativeInfinity));
                 k.Barrier();
 
@@ -145,8 +155,10 @@ internal static partial class VulkanKernels
 
                     var old = maxes[tid];
                     var updated = k.Max(old, tileMax);
-                    alphas[tid] = k.Exp(old - updated);                       // 0 on the first tile (old = -∞)
+                    // 0 on the row's first tile with a position (old = -∞); 1 while it has none (updated = -∞ too).
+                    alphas[tid] = k.Select(updated > float.NegativeInfinity, k.Exp(old - updated), k.Float(1f));
                     maxes[tid] = updated;
+
                 });
                 k.Barrier();
 

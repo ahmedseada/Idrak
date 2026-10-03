@@ -8,7 +8,8 @@ using Idrak.Backends.Vulkan;
 using Idrak.Generation;
 using Idrak.Layers;
 
-// dotnet run -c Release --project tests/Idrak.Tests -- --bench-vulkan [dispatch|copies|matmul|gemv|attention|sampling|decoder …]
+// dotnet run -c Release --project tests/Idrak.Tests -- --bench-vulkan [dispatch|copies|matmul|gemv|attention|sampling|window|decoder …]
+
 // Every Vulkan device found (listed or not, so software drivers too), or the ones IDRAK_DEVICES names (vulkan:0, …):
 // dispatch overhead, copies, element-wise bandwidth, matrix products, decoding-sized packed products, decoding attention
 // and whole decoders generating text (all of them, or the sections named).
@@ -309,6 +310,12 @@ internal static partial class Tests
                     sampler.Reset();
                 }
             }
+        }
+
+        // ---- sliding windows and soft-caps (BenchWindowDevice), with this device's dispatch counts
+        if (Run("window"))
+        {
+            BenchWindowDevice(device, () => (backend.Dispatches, backend.HostCalls));
         }
 
         // ---- whole decoders generating text

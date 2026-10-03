@@ -95,20 +95,59 @@ internal (the first-party packages keep calling it); outside code uses `CopyFrom
   - Sliding-window attention per layer: `DecoderSpec.SlidingWindow`, `SlidingWindowLayers`, `SlidingWindowRope`
     (Gemma 3's local base); `CausalSelfAttention.SlidingWindow`. Read from config.json for Mistral (every layer),
     Qwen2/Qwen3 (`use_sliding_window`, `max_window_layers`), `layer_types`, and Gemma 2/3 (alternating defaults).
-    The device kernels (tiled, decoding, segmented, per-row, CUDA flash and packed) mask causally only, so a layer
-    whose window falls inside the keys attends through basic operations (scores over every cached slot, a device-built
-    window mask, so recorded graphs stay valid) on every backend; a window covering the keys keeps the kernels.
-    Packed sequences and rows of different lengths are refused for such layers (`PackedSequences.Supports` and
-    `TextGenerator.SupportsBatches` say no, so fine-tuning pads and batches run one by one).
+    At first the device kernels masked causally only, so such layers attended through basic operations; the windowed
+    kernels below replaced that.
   - Soft-capping and score scale: `DecoderSpec.AttentionSoftcap`, `LogitSoftcap`, `AttentionScale`
     (`CausalSelfAttention.ScoreSoftcap`, `ScoreScale`; `Linear.OutputSoftcap` on the head, so fine-tuning losses and
-    answer scoring see capped logits). Soft-capped layers always take the composed path.
+    answer scoring see capped logits).
+- Item 4, windowed and soft-capped kernels (done):
+  - `AttentionVariant` (internal: window, cap; the default is plain causal attention) goes to every attention method
+    of `Backend`. A query whose causal limit is `end` (exclusive) starts at max(end - window, 0), as transformers
+    masks (keys above the query's position minus the window); the scaled score s becomes cap · tanh(s / cap) before
+    the softmax, and the gradients take the cap's slope 1 - (s / cap)².
+  - CPU: the reference (tiled, decoding over float32, int8 and bfloat16 caches, per-row, packed, both gradients).
+  - Vulkan: `attention_decode`/`_bf16`/`_int8` (the splits share the window's positions; a window shorter than the
+    capacity is measured under its own tuning key, over the window), `attention_tiled`/`_lse` (tiles from the block's
+    smallest window start; a row with no position yet in a tile keeps alpha 1) and `attention_backward_dq`/`_dkv`.
+    Two push constants each (window, cap), selected off for plain attention: the same results as before.
+  - CUDA (not run here): `attention_decode_f32`/`_int8`/`_bf16` (window start before the splits, cap after the
+    scale), `attention_flash_f32`/`_int8`/`_bf16` (a start per row, the block's tiles from its smallest) and
+    `attn_bwd_kv_f32`/`attn_bwd_q_f32` (mask and slope); window and cap are predicated, so plain launches execute the
+    old instructions. Windowed or soft-capped layers do not use the tensor-core flash kernels (prompt and training go
+    to `attention_flash_f32` and its float32 gradient; packed sequences and per-row starts are refused there, so
+    `PackedSequences.Supports` and `TextGenerator.SupportsBatches` say no on CUDA for these layers).
+  - `KeyValueLayout.AttendVariant` (internal) gives the built-in formats' kernels a variant; a format of one's own
+    returns null and the layer takes the composed path. Packed sequences and rows of different lengths pass the
+    variant (`CausalSelfAttention.SupportsSegmented`). Recorded steps keep the kernels past the window.
+  - `IDRAK_WINDOW_KERNELS=0` (`CausalSelfAttention.WindowKernels`) forces the composed path for windowed and
+    soft-capped layers, refusing packing and per-row starts as before.
+  - Tests: "window kernels" (every kernel against a direct reference written in the test; a window beyond the keys is
+    the plain result bit for bit; gradients by finite differences and against the CPU; the Vulkan kernels against the
+    CPU at every width and split count with no host fallback; Mistral, Gemma 2 and Gemma 3 style decoders through the
+    kernels against the composed path: prompt, training and every gradient, cached decoding in every format, recorded
+    steps, packed sequences, rows of different lengths).
+  - Measured on lavapipe (`--bench-vulkan window`): decoding attention over a 4096-position cache, 62 ms without a
+    window, 7.1 ms with a window of 512; a windowed, soft-capped decoder (dim 256, 4 layers, window 128, a context of
+    1024) 42 → 67 tokens/s. Its 630-token prompt took 3.2 s through the tiled kernel against 2.5 s composed: on a CPU
+    driver one large matrix product beats the tiled kernel for prefill, as for plain layers (the tiled kernel's choice
+    is measured against the decoding kernel only). To measure on a GPU: `IDRAK_DEVICES=vulkan:0 dotnet run -c
+    Release --project tests/Idrak.Tests -- --bench-vulkan window`.
+  - Not done, the ring-buffer cache of the window's size: it does not fit the current design. `DecodingContext.Truncate`
+    and the generator's prompt reuse rewind to earlier positions, which a ring has overwritten; a prompt longer than
+    the ring in one step would overwrite keys its own earlier queries read (prefill would have to go in window-sized
+    chunks); `KeyValueLayout` is public and addresses slots by position (`Write` at a position, `Expand` to
+    [rows, capacity]), as do the composed path's masks; every write and read kernel (the fused projection's cache
+    write on every backend included) would take positions modulo the ring. A plan: per-layer capacity window +
+    largest step, slot = position mod capacity in the layouts' kernels, prefill chunked to the window, `Truncate`
+    allowed only within the positions still held; a layout property so custom formats opt in.
+  - Not done: Vulkan kernels for packed sequences and per-row starts (Vulkan runs both through the host fallback,
+    the CPU reference, for plain layers too); the tensor-core flash kernels with a window (CUDA packing for these layers).
   - Gemma 2 and Gemma 3 (text, `Gemma3ForCausalLM`) registered, with their four norms per layer
     (`PretrainedArchitectures.GemmaTensorName`). gelu_pytorch_tanh was already read; gelu_fast added.
 - Remaining for item 4:
-  - Fast windowed and soft-capped kernels (CUDA flash attention, Vulkan tiled and decoding attention with a window
-    start and a cap), so these layers stop attending over the whole cache; a ring-buffer KV cache of the window's size.
-  - Packed sequences and per-row batches for windowed layers (a window term in the segmented kernels).
+  - A ring-buffer KV cache of the window's size (see "windowed and soft-capped kernels" above for why and a plan);
+    Vulkan packed and per-row kernels; a window in the CUDA tensor-core flash kernels.
+
   - An activation registry (the closed `FeedForwardActivation`) and `DecoderNorm`; ALiBi; encoder-only models (BERT,
     BGE) and fused qkv (Phi-3), which the `Build` delegate already allows as a family's own network.
   - GGUF families unlike Llama (item 12: Gemma 2/3 tensor names, sliding_window key).
