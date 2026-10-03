@@ -406,3 +406,118 @@ internal sealed class EnvUnsetCommand : EnvSaveCommand
         return ExitCodes.Ok;
     }
 }
+
+/// <summary>
+/// <c>idrak env reset</c>: removes every saved variable (top level, a profile's, or with <c>--all-profiles</c> all of
+/// them), so every variable is back to its default or the terminal's value. Asks first (<c>--yes</c>, <c>--dry-run</c>).
+/// </summary>
+internal sealed class EnvResetCommand : EnvSaveCommand
+{
+    public override string Name => "env reset";
+
+    public override string Summary => "Remove every saved environment variable: all back to their defaults (asks first)";
+
+    public override string Usage => """
+        [--all-profiles] [--profile NAME] [--user] [--yes] [--dry-run]
+
+        Removes the variables idrak env set saved, so each one is back to its default (or to the terminal's value).
+        Lists them and asks first.
+
+        Options:
+              --profile NAME  only the named profile's saved variables
+              --all-profiles  the top-level ones and every profile's
+              --user          also remove them from the Windows user environment
+          -y, --yes           no question
+              --dry-run       list what would be removed, change nothing
+
+        Examples:
+          idrak env reset
+          idrak env reset -y --user
+          idrak env reset --all-profiles --dry-run
+        """;
+
+    public override IReadOnlyCollection<string> Flags => ["--user", "--all-profiles", .. Terminal.ConfirmFlags];
+
+    public override IReadOnlyDictionary<string, string> ShortForms => Terminal.ConfirmShortForms;
+
+    public override int Run(CommandContext context)
+    {
+        if (context.Positional.Count > 0)
+        {
+            throw new UsageException($"env reset takes no NAME (idrak env unset {context.Positional[0]} removes one).");
+        }
+
+        if (context.Flag("--all-profiles") && context.Option("--profile") is not null)
+        {
+            throw new UsageException("Give --profile NAME or --all-profiles, not both.");
+        }
+
+        // Each place variables are saved in: (label, the object holding "env").
+        var places = new List<(string Label, JsonObject Holder)>();
+        var root = context.Config.Root;
+        if (context.Option("--profile") is { } profile)
+        {
+            if (root["profiles"]?[profile] is JsonObject named)
+            {
+                places.Add(($"profile {profile}", named));
+            }
+        }
+        else
+        {
+            places.Add(("top level", root));
+            if (context.Flag("--all-profiles") && root["profiles"] is JsonObject profiles)
+            {
+                places.AddRange(profiles.Where(p => p.Value is JsonObject).Select(p => ($"profile {p.Key}", (JsonObject)p.Value!)));
+            }
+        }
+
+        var found = places.Select(p => (p.Label, p.Holder, Names: p.Holder[SavedEnvironment.Key] is JsonObject saved ? saved.Select(v => v.Key).ToList() : []))
+            .Where(p => p.Names.Count > 0).ToList();
+        var removed = new JsonArray();
+        if (found.Count == 0)
+        {
+            context.Write($"No saved variables to remove ({Where(context)}).");
+        }
+        else
+        {
+            foreach (var (label, _, names) in found)
+            {
+                context.Write($"{label}: {string.Join(", ", names)}");
+            }
+
+            int count = found.Sum(p => p.Names.Count);
+            if (Terminal.DryRun(context))
+            {
+                context.Write($"Would remove {count} saved variable{(count == 1 ? "" : "s")} (--dry-run: nothing changed).");
+            }
+            else if (!Terminal.Confirm(context, $"Remove {count} saved variable{(count == 1 ? "" : "s")}?"))
+            {
+                context.Write("Nothing changed.");
+            }
+            else
+            {
+                foreach (var (label, holder, names) in found)
+                {
+                    holder.Remove(SavedEnvironment.Key);
+                    foreach (string name in names)
+                    {
+                        removed.Add(new JsonObject { ["name"] = name, ["place"] = label });
+                    }
+                }
+
+                context.Config.SaveChanges();
+                context.Write($"Removed {count} saved variable{(count == 1 ? "" : "s")} ({context.Config.Path}); each is back to its default.");
+                foreach (string name in found.SelectMany(p => p.Names).Distinct())
+                {
+                    if (User(context, name, null) is { } user)
+                    {
+                        context.Write($"  {name}: {user}");
+                    }
+                }
+            }
+        }
+
+        context.WriteJson(new JsonObject { ["file"] = context.Config.Path, ["dryRun"] = Terminal.DryRun(context), ["removed"] = removed });
+        return ExitCodes.Ok;
+    }
+}

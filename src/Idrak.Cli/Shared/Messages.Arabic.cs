@@ -284,6 +284,8 @@ internal static partial class Messages
         ["Prints a config value (dotted keys, e.g. aliases.qwen.model)"] = "طباعة قيمة من الإعدادات (مفاتيح بنقاط، مثل aliases.qwen.model)",
         ["Save environment variables for every idrak run, in any terminal (asks for them, with suggested values)"] =
             "حفظ متغيرات البيئة لكل تشغيل للأداة idrak في أي طرفية (يسأل عنها ويقترح قيمها)",
+        ["Remove every saved environment variable: all back to their defaults (asks first)"] =
+            "إزالة كل متغيرات البيئة المحفوظة لتعود كلها إلى قيمها الافتراضية (يسأل أولا)",
         ["Remove environment variables saved by idrak env set"] = "إزالة متغيرات البيئة التي حفظها idrak env set",
         ["Sets a config value (JSON values such as [\"a.dll\"] or 4 are kept as JSON)"] = "تعيين قيمة في الإعدادات (تحفظ قيم JSON مثل [\"a.dll\"] أو 4 بصيغة JSON)",
         ["Removes a config value"] = "إزالة قيمة من الإعدادات",

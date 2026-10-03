@@ -108,7 +108,7 @@ the work and decides what the first release must have. Short forms and aliases a
 | `idrak report` | One file (Markdown and JSON) with the machine, devices, drivers, the test list and benchmark results, for the README's tested-on tables; `--tests`, `--bench`, `--out FILE`, `--zip` | 1 |
 | `idrak init` | Writes a config file by asking a few questions (default device, cache folder, model aliases), or with `--yes` from what `doctor` finds | 2 |
 | `idrak env` | Every environment variable Idrak reads, its value, default and meaning (see "Environment variables"); `--all`, `--json`; also `idrak help env` | 1 |
-| `idrak env set` / `env unset` | Save variables in the config's "env" for every run, the same in every shell; asks with suggested values when no NAME is given; `--user` (Windows user environment), `--profile` | 1 |
+| `idrak env set` / `env unset` / `env reset` | Save variables in the config's "env" for every run, the same in every shell; asks with suggested values when no NAME is given; `--user` (Windows user environment), `--profile` | 1 |
 | `idrak cache info` / `cache clear [models\|tuning\|kernels\|all]` | Sizes and paths of the caches; clears one or all (`--yes` skips the question) | 2 |
 | `idrak config get/set/unset/list` | Reads and writes the config file; `--profile NAME` keeps several named profiles (e.g. phone, desktop) | 2 |
 | `idrak plugins list` | Everything registered: packed and KV formats, model families, RoPE scalings, tool-call formats, checkpoint and dataset formats, graph ops and layer types, ONNX ops, devices; `--plugin` shows what an assembly adds | 2 |
@@ -621,7 +621,8 @@ name, `?` for all), its value with a suggestion (the saved value, else the "on" 
 concrete default; Enter takes it, `-` removes it), then "set another". Tokens, `IDRAK_CONFIG`, the variables the
 terminal or the runtime sets before the tool starts, and the ones the tool sets for the coding tools' commands are
 refused with the reason. `--user` writes the Windows user environment too (elsewhere it prints the profile line).
-`idrak env` has a From column (saved or terminal). `idrak test` gets them, and passes arguments after `--` to the runner.
+`idrak env reset` removes them all after listing them and asking (`-y`, `--dry-run`, `--profile`, `--all-profiles`,
+`--user`). `idrak env` has a From column (saved or terminal). `idrak test` gets them, and passes arguments after `--` to the runner.
 
 | Group | Variables |
 |---|---|
