@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Idrak.Cli</RootNamespace>
+    <!-- Not "idrak": assembly names ignore case, so it would clash with the Idrak library; the command stays idrak. -->
+    <AssemblyName>Idrak.Cli</AssemblyName>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>idrak</ToolCommandName>
+    <PackageId>Idrak.Cli</PackageId>
+    <Description>idrak: one command-line tool for Idrak: check devices, chat with and serve language models, manage models, benchmark, fine-tune and prepare data.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Idrak\Idrak.csproj" />
+    <ProjectReference Include="..\Idrak.LanguageModels\Idrak.LanguageModels.csproj" />
+    <ProjectReference Include="..\Idrak.Datasets\Idrak.Datasets.csproj" />
+  </ItemGroup>
+
+</Project>
