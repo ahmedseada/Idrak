@@ -206,7 +206,14 @@ internal static partial class Tests
             Check(load.Code == 0 && (bool)JsonNode.Parse(ServeCli("ps", "-p", port.ToString(), "--api-key", "secret", "-j").Output)!["models"]![0]!["loaded"]!, $"load: {load.Output}{load.Error}");
             Check(ServeCli("server", "load", "nope", "-p", port.ToString(), "--api-key", "secret").Code == 1, "loading an unknown model fails");
 
-            var logged = File.ReadAllLines(log).Select(l => JsonNode.Parse(l)!).ToList();
+            // The server may still hold the log open for writing (Windows refuses a reader that does not share writing).
+            string logText;
+            using (var reader = new StreamReader(new FileStream(log, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete)))
+            {
+                logText = reader.ReadToEnd();
+            }
+
+            var logged = logText.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => JsonNode.Parse(l)!).ToList();
             Check(logged.Count >= 7 && logged.All(l => l["request"] is null) && logged.Any(l => (string?)l["path"] == "/api/chat" && (int?)l["completion_tokens"] > 0)
                 && logged.Any(l => (string?)l["path"] == "/v1/chat/completions" && (string?)l["model"] == "tiny" && (int?)l["completion_tokens"] > 0), $"request log: {string.Join('\n', logged)}");
         }

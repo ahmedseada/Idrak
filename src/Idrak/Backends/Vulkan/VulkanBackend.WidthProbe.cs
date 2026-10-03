@@ -184,6 +184,17 @@ internal sealed partial class VulkanBackend
             {
                 storage?.Release();
             }
+
+            // Nothing measured stays behind: the probe's blocks and pages, and the staging buffer its reads went through.
+            ReleaseCachedMemory();
+            lock (_gate)
+            {
+                if (_staging is not null)
+                {
+                    DestroyBlock(_staging);
+                    _staging = null;
+                }
+            }
         }
     }
 }
