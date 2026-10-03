@@ -106,6 +106,7 @@ What works on this machine, and the tool's own settings.
 | `idrak env` (`environment`) | Every environment variable Idrak reads: value, where it comes from, default and meaning |
 | `idrak env set` | Save environment variables for every idrak run, in any terminal (asks for them, with suggested values) |
 | `idrak env unset` | Remove saved environment variables |
+| `idrak env reset` | Remove every saved environment variable: all back to their defaults (asks first) |
 | `idrak init` | Writes the config file: default device, cache folder, model aliases |
 | `idrak cache info` | Sizes and paths of the caches (models, tuning, kernels, downloads) |
 | `idrak cache clear` | Clears one part of the cache (models, tuning, kernels) or all of it |
@@ -540,6 +541,7 @@ idrak env set IDRAK_CUDA_DEBUG 1       # or directly
 idrak env set IDRAK_DEVICES cuda:0 --user   # also in the Windows user environment, for programs started without idrak
 idrak env                              # the values, and whether each is saved or from the terminal
 idrak env unset IDRAK_CUDA_DEBUG
+idrak env reset                        # every saved one back to its default (asks; -y, --dry-run, --all-profiles)
 ```
 
 A variable set in the terminal wins over the saved value; `--profile NAME` saves one for a profile only; tokens are

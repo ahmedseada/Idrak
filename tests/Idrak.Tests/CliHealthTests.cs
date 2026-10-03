@@ -342,6 +342,28 @@ internal static partial class Tests
             Check(unset["removed"]!.AsArray().Count == 1 && !CliConfig.Load(config).Root["env"]!.AsObject().ContainsKey("IDRAK_PORT"), $"env unset: {unset}");
             Check(Cli("env", "unset", "-C", config).Exit == 2, "env unset without a name");
             Check(Cli("help", "env", "set").Out.Contains("Enter takes the suggested one"), "help env set");
+
+            // Reset: lists and asks; --dry-run and no answer change nothing; -y removes the top level, --all-profiles every profile's too.
+            Check(Cli("env", "reset", "-C", config).Exit == 2, "env reset without a terminal or --yes");
+            var dry = CliJson("env", "reset", "--dry-run", "-C", config, "-j");
+            Check((bool)dry["dryRun"]! && CliConfig.Load(config).Root["env"]!.AsObject().Count > 0, $"env reset --dry-run: {dry}");
+            Terminal.TestInput = new StringReader("n\n");
+            try
+            {
+                Check(Cli("env", "reset", "-C", config).Out.Contains("Nothing changed") && CliConfig.Load(config).Root["env"] is not null, "env reset answered no");
+            }
+            finally
+            {
+                Terminal.TestInput = null;
+            }
+
+            var reset = CliJson("env", "reset", "-y", "-C", config, "-j");
+            Check(reset["removed"]!.AsArray().Count >= 2 && CliConfig.Load(config).Root["env"] is null
+                  && CliConfig.Load(config).Root["profiles"]!["laptop"]!["env"] is not null, $"env reset -y: {reset}");
+            Check(CliJson("env", "reset", "-y", "--all-profiles", "-C", config, "-j")["removed"]!.AsArray().Count == 1
+                  && CliConfig.Load(config).Root["profiles"]!["laptop"]!["env"] is null, "env reset --all-profiles");
+            Check(Cli("env", "reset", "-y", "-C", config).Out.Contains("No saved variables"), "env reset with nothing saved");
+            Check(Cli("env", "reset", "IDRAK_PORT", "-C", config).Exit == 2, "env reset with a name");
         });
 
         // The test runner gets arguments after --; a stray argument is still refused.

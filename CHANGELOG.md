@@ -7,7 +7,8 @@
   arguments it asks: pick a variable (number, name or part of it; `?` lists all), take the suggested value with Enter or
   type another (`-` removes it), then set another or finish. A variable set in the terminal wins. `--user` also sets it
   in the Windows user environment; `--profile` saves it in a profile; tokens are refused (`idrak login`). `idrak env
-  unset NAME...` removes them, and `idrak env` shows where each value comes from (saved or terminal).
+  unset NAME...` removes them, `idrak env reset` removes them all (asks first; `--dry-run`, `-y`, `--profile`,
+  `--all-profiles`, `--user`), and `idrak env` shows where each value comes from (saved or terminal).
 - `idrak test` passes the arguments after `--` to the test runner (`idrak test -d cuda:0 -- --bench-window`).
 - Idrak.AspNetCore: provider-neutral names for the chat API (`/api/chat`, `/api/tags`, `/api/ps`, `/api/version`,
   routes unchanged): `MapChatApi`, `ChatApiOptions` and the `ChatApi*` wire types (`ChatApiRequest`,
