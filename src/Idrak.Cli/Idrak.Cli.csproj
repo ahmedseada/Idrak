@@ -18,4 +18,8 @@
     <ProjectReference Include="..\Idrak.Datasets\Idrak.Datasets.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Idrak.Tests" />
+  </ItemGroup>
+
 </Project>
