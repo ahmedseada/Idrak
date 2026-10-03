@@ -117,7 +117,10 @@ public sealed class PretrainedModel : IDisposable
         using var reader = format.Open(folder);
         using var adapter = options.MergeAdapter is { } adapterFolder ? new AdapterMerge(adapterFolder) : null;
         var weights = new CheckpointWeights(reader, architecture) { Adapter = adapter };
-        var network = spec.Build(weights, new DecoderBuildOptions { Device = options.Device, Int8 = options.Int8, BFloat16 = options.BFloat16, Int4 = options.Int4, PackedFormatName = options.PackedFormatName, MaxPositions = maxPositions });
+        var buildOptions = new DecoderBuildOptions { Device = options.Device, Int8 = options.Int8, BFloat16 = options.BFloat16, Int4 = options.Int4, PackedFormatName = options.PackedFormatName, MaxPositions = maxPositions };
+        var network = architecture.Build is { } build
+            ? build(new PretrainedBuildContext(config, spec, weights, reader, buildOptions, notes)) ?? throw new InvalidOperationException($"The architecture '{name}' built no network.")
+            : spec.Build(weights, buildOptions);
         var unused = reader.Names.Where(k => !weights.Used.Contains(k) && !k.EndsWith("rotary_emb.inv_freq", StringComparison.Ordinal)).ToList();
         if (unused.Count > 0)
         {
