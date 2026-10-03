@@ -9,7 +9,8 @@
 - `idrak serve` gets a default port of its own (not 11434, which another local server uses); `-p/--port`, the config
   and an environment variable choose another. Done: 7317, then `-p`, `IDRAK_PORT`, `serve.port` (plans/idrak-cli.md).
 - Arabic messages: only if the console can show them correctly (right to left, joined letters); otherwise dropped.
-- Round 3, all built and merged into idrak-cli: mixture of experts, fast sliding-window and soft-cap kernels
+- Branches: idrak-cli was fast-forwarded into `architecture` and retired; all work continues on `architecture`.
+- Round 3, all built and merged (now on architecture): mixture of experts, fast sliding-window and soft-cap kernels
   (CPU and Vulkan run; CUDA written, hardware check 9), dataset loaders, the teacher pattern (`idrak distill`),
   provider-neutral serving names, Arabic output. Arabic: the tool shapes and reorders it itself for terminals that
   do not (plans/idrak-cli.md, "Arabic messages"), checked against the Unicode conformance suite and an independent
@@ -23,7 +24,7 @@ needed, the options, and the recommended one. Nothing here blocks the work in pr
 
 | # | Question | Options | Recommended |
 |---|---|---|---|
-| 1 | When to merge `architecture` (and later `idrak-cli`) into `main` | a) after the CLI lands and real-GPU checks pass · b) now · c) per feature | a |
+| 1 | When to merge `architecture` (which now holds the CLI) into `main` | a) after the CLI lands and real-GPU checks pass · b) now · c) per feature | a |
 | 2 | Public backend API (item 12c) | a) start now, using the HIP backend's list of awkward contract points (plans/8-hip.md) · b) keep parked until HIP runs on real AMD hardware | b |
 | 3 | Provider-neutral names for the serving API (plans/plug-in.md, "Noted for later") | a) rename with obsolete forwarders in the next release · b) keep the old names longer | a, done |
 | 4 | SPIR-V memory model for the cooperative-matrix kernels: SPIRV-Tools 2025.2 and later reject cooperative matrices without the Vulkan memory model; the drivers tested accept the kernels as they are | a) move the matrix kernels to the Vulkan memory model as its own task, tested on real GPUs · b) leave as is until a driver refuses them | a, after the RTX checks below |
