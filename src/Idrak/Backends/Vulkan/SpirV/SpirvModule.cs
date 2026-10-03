@@ -76,6 +76,12 @@ internal sealed class SpirvModule
     public uint TypeHalf() => Type("half", () => Emit(_globals, SpirvOp.TypeFloat, Id(), 16));
 
     /// <summary>
+    /// The bfloat16 type (SPV_KHR_bfloat16: a 16-bit float with encoding BFloat16KHR, 0; capability BFloat16TypeKHR and the
+    /// extension declared by the caller).
+    /// </summary>
+    public uint TypeBFloat16() => Type("bfloat16", () => Emit(_globals, SpirvOp.TypeFloat, Id(), 16, 0));
+
+    /// <summary>
     /// A cooperative matrix type (SPV_KHR_cooperative_matrix) of <paramref name="component"/>, subgroup scope,
     /// <paramref name="rows"/> × <paramref name="columns"/>, for use <paramref name="use"/> (0 the left operand A, 1 the
     /// right operand B, 2 the accumulator).

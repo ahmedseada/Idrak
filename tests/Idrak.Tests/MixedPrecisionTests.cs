@@ -3,6 +3,7 @@
 
 using Idrak;
 using Idrak.Backends.Cuda;
+using Idrak.Backends.Vulkan;
 using Idrak.Layers;
 using Idrak.Optimizers;
 
@@ -1410,9 +1411,36 @@ internal static partial class Tests
                         using var ta_ = Tensor.From(a, [a.Length], device);
                         using var tb_ = Tensor.From(b, [b.Length], device);
                         using var tc_ = Tensor.From(c, [c.Length], device);
+                        string? vulkanRounding = null;
                         using (MixedPrecision.BFloat16())
                         {
-                            device.Backend.BatchedMatMul(ta_.Storage, tb_.Storage, tc_.Storage, batch, m, n, k, ta, tb, beta);
+                            if (device.Backend is VulkanBackend vulkan)
+                            {
+                                // Vulkan measures the reduced-precision kernel against the float32 ones per shape: settled
+                                // first on a copy, then the reference follows the kernel that ran.
+                                using (var scratch = Tensor.From(c, [c.Length], device))
+                                {
+                                    vulkan.BatchedMatMul(ta_.Storage, tb_.Storage, scratch.Storage, batch, m, n, k, ta, tb, beta);
+                                }
+
+                                var kernels = new System.Collections.Concurrent.ConcurrentDictionary<string, long>();
+                                vulkan.DispatchesByKernel = kernels;
+                                try
+                                {
+                                    vulkan.BatchedMatMul(ta_.Storage, tb_.Storage, tc_.Storage, batch, m, n, k, ta, tb, beta);
+                                    device.Synchronize();
+                                }
+                                finally
+                                {
+                                    vulkan.DispatchesByKernel = null;
+                                }
+
+                                vulkanRounding = kernels.Keys.FirstOrDefault(name => name.Contains("_round_", StringComparison.Ordinal));
+                            }
+                            else
+                            {
+                                device.Backend.BatchedMatMul(ta_.Storage, tb_.Storage, tc_.Storage, batch, m, n, k, ta, tb, beta);
+                            }
                         }
 
                         var got = tc_.ToArray();
@@ -1440,7 +1468,13 @@ internal static partial class Tests
                         }
 
                         string what = $"{m}×{n}×{k} batch {batch}, {(ta ? "t" : "n")}{(tb ? "t" : "n")}, beta {beta}";
-                        var reference = tensorCores ? rounded : exact;
+                        var reference = tensorCores || vulkanRounding?.Contains("_round_bf16", StringComparison.Ordinal) == true ? rounded : exact;
+                        if (vulkanRounding?.Contains("_round_f16", StringComparison.Ordinal) == true)
+                        {
+                            // 16-bit float operands after power-of-two scaling (VulkanKernels.Coop.cs).
+                            reference = RoundedProduct(a, b, batch, m, n, k, ta, tb, beta, c, VulkanKernels.CoopPrecision.Float16, roundB: true).Sum;
+                        }
+
                         AssertClose([.. reference.Select(v => (float)v)], got, 1e-3f, what);
                         anyDifferent |= got.Zip(exact).Any(p => Math.Abs(p.First - p.Second) > 1e-3 * Math.Max(1, Math.Abs(p.Second)));
                     }

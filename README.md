@@ -1266,7 +1266,11 @@ Matrix units on Vulkan: where a device reports `VK_KHR_cooperative_matrix` with 
 the float32 product and the int8, int4 and bfloat16 prompt products gain a cooperative-matrix kernel, used only where
 it is measured faster on that device. Its operands are split into two float16 halves with per-row and per-column
 power-of-two scaling, so results stay within float32 error of the CPU (no `MixedPrecision` needed); `IDRAK_VULKAN_MATRIX=0`
-turns it off. The "not used yet" rows above predate it and have not been run on real matrix units yet.
+turns it off. With `MixedPrecision.BFloat16` (or `Float8`, which takes the same path here) those products also try a
+single-pass kernel, as CUDA's tensor cores do: operands rounded once to bfloat16 where the device reports bfloat16
+cooperative matrices (`VK_KHR_shader_bfloat16`), else to float16 after the same scaling (within bfloat16's error), sums
+in float32; it too runs only where measured faster, and `--bench-vulkan matmul` shows both products, the path each took
+and each kernel's time. The "not used yet" rows above predate it and have not been run on real matrix units yet.
 
 Benchmarks on the RTX 3060 Laptop GPU (`--bench-gemv`, Qwen3-0.6B shapes, int8 weights): decoding products of one row
 run at 75–125 GB/s (q/k/v 34 µs, gate/up 84 µs, the 151,936-column head 1.9 ms); decoding attention over 4,000 cached

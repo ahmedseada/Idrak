@@ -5,23 +5,28 @@ using System.Runtime.InteropServices;
 
 namespace Idrak.Backends.Vulkan;
 
-// Cooperative matrices (VK_KHR_cooperative_matrix) and 16-bit floats in shaders (shaderFloat16: Vulkan 1.2, or
-// VK_KHR_shader_float16_int8): the features a device is asked for, and the matrix shapes it reports.
+// Cooperative matrices (VK_KHR_cooperative_matrix), 16-bit floats in shaders (shaderFloat16: Vulkan 1.2, or
+// VK_KHR_shader_float16_int8) and bfloat16 in shaders (VK_KHR_shader_bfloat16): the features a device is asked for, and
+// the matrix shapes it reports.
 internal static unsafe partial class VulkanDriver
 {
     public const uint StructurePhysicalDeviceShaderFloat16Int8Features = 1000082000,
         StructurePhysicalDeviceCooperativeMatrixFeatures = 1000506000,
         StructureCooperativeMatrixProperties = 1000506001,
-        StructurePhysicalDeviceCooperativeMatrixProperties = 1000506002;
+        StructurePhysicalDeviceCooperativeMatrixProperties = 1000506002,
+        StructurePhysicalDeviceShaderBfloat16Features = 1000141000;
 
-    // VkComponentTypeKHR and VkScopeKHR values the products use.
-    public const uint ComponentFloat16 = 0, ComponentFloat32 = 1, ScopeSubgroup = 3;
+    // VkComponentTypeKHR and VkScopeKHR values the products use (VK_COMPONENT_TYPE_BFLOAT16_KHR from VK_KHR_shader_bfloat16).
+    public const uint ComponentFloat16 = 0, ComponentFloat32 = 1, ComponentBFloat16 = 1000141000, ScopeSubgroup = 3;
 
     /// <summary>VK_KHR_cooperative_matrix: matrix operations a subgroup does together (on matrix units where the device has them).</summary>
     public const string CooperativeMatrixExtension = "VK_KHR_cooperative_matrix";
 
     /// <summary>VK_KHR_shader_float16_int8: 16-bit floats in shaders (core in Vulkan 1.2).</summary>
     public const string ShaderFloat16Int8Extension = "VK_KHR_shader_float16_int8";
+
+    /// <summary>VK_KHR_shader_bfloat16: bfloat16 values in shaders, and as cooperative matrix components.</summary>
+    public const string ShaderBFloat16Extension = "VK_KHR_shader_bfloat16";
 
     [LibraryImport(Library)]
     public static partial IntPtr vkGetInstanceProcAddr(IntPtr instance, byte* name);
@@ -71,4 +76,15 @@ internal unsafe struct VkPhysicalDeviceShaderFloat16Int8Features
     public void* PNext;
     public uint ShaderFloat16;
     public uint ShaderInt8;
+}
+
+/// <summary>VkPhysicalDeviceShaderBfloat16FeaturesKHR (VK_KHR_shader_bfloat16).</summary>
+[StructLayout(LayoutKind.Sequential)]
+internal unsafe struct VkPhysicalDeviceShaderBfloat16Features
+{
+    public uint SType;
+    public void* PNext;
+    public uint ShaderBFloat16Type;
+    public uint ShaderBFloat16DotProduct;
+    public uint ShaderBFloat16CooperativeMatrix;
 }
