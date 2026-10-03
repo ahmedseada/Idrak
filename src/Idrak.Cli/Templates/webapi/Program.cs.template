@@ -1,0 +1,64 @@
+// __NAME__: a Web API that serves a model package (.ikm) through Idrak's inference engine, with request batching.
+// Without --Package it trains a small XOR network first and serves that.
+//   dotnet run
+//   dotnet run -- --Package path/to/model.ikm --Urls http://localhost:5100
+//   curl localhost:5090/predict/xor -H 'Content-Type: application/json' -d '{"a":1,"b":0}'
+//   curl localhost:5090/status
+
+using Idrak;
+using Idrak.AspNetCore;
+using Idrak.Inference;
+using Idrak.Layers;
+using Idrak.Optimizers;
+using __NAMESPACE__;
+
+var builder = WebApplication.CreateBuilder(args);
+string package = builder.Configuration["Package"] ?? Path.Combine(AppContext.BaseDirectory, "xor.ikm");
+if (!File.Exists(package))
+{
+    Starter.TrainXor(package);
+}
+
+builder.Services.AddIdrak()
+    .AddPredictor<Pair, Answer>("xor", package, p => p
+        .Input<Pair>(pair => [pair.A, pair.B])
+        .Output(v => new Answer(v[0]))
+        .Batching(maxBatch: 64, maxWait: TimeSpan.FromMilliseconds(2)));
+
+var app = builder.Build();
+app.MapPredictor<Pair, Answer>("/predict/xor", "xor");
+app.MapIdrakStatus("/status");
+app.Run(builder.Configuration["Urls"] is null ? "http://localhost:5090" : null);
+
+namespace __NAMESPACE__
+{
+    /// <summary>The model's input.</summary>
+    public sealed record Pair(float A, float B);
+
+    /// <summary>The model's answer.</summary>
+    public sealed record Answer(float Value);
+
+    /// <summary>Makes a package to serve when none is given.</summary>
+    public static class Starter
+    {
+        /// <summary>Trains 2 → 8 → 1 on XOR and saves the architecture and weights to <paramref name="path"/>.</summary>
+        public static void TrainXor(string path)
+        {
+            var network = Network.Input(2).Seed(42).Linear(8).Tanh().Linear(1).Sigmoid();
+            using var model = network.Build();
+            using var optimizer = new Adam(model.Parameters(), learningRate: 0.05f);
+            using var x = Tensor.From([0f, 0, 0, 1, 1, 0, 1, 1], [4, 2]);
+            using var y = Tensor.From([0f, 1, 1, 0], [4, 1]);
+            for (int epoch = 0; epoch < 1000; epoch++)
+            {
+                using var scope = new TensorScope();
+                var loss = Losses.MeanSquaredError(model.Forward(x), y);
+                optimizer.ZeroGrad();
+                loss.Backward();
+                optimizer.Step();
+            }
+
+            ModelPackage.Create(path).Architecture(network).Weights(model).Save();
+        }
+    }
+}

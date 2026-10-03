@@ -1,0 +1,47 @@
+// __NAME__: trains a small network on XOR, saves it as a model package (.ikm) and answers from the saved package.
+//   dotnet run                 on the default device
+//   dotnet run -- vulkan:0     on another device (cpu, cuda:0, vulkan:0, hip:0; `idrak devices` lists them)
+
+using Idrak;
+using Idrak.Inference;
+using Idrak.Layers;
+using Idrak.Optimizers;
+
+var device = args.Length > 0 ? Device.Parse(args[0]) : Device.Default;
+Console.WriteLine($"Device: {device} - {device.Name}");
+
+// The four XOR cases: the output is 1 when exactly one input is 1.
+float[] inputs = [0, 0, 0, 1, 1, 0, 1, 1];
+float[] targets = [0, 1, 1, 0];
+
+// 2 inputs -> 8 hidden units (tanh) -> 1 output (sigmoid), described with the network builder so the package can
+// rebuild it.
+var network = Network.Input(2).Seed(42).Linear(8).Tanh().Linear(1).Sigmoid().Named("__NAMESPACE__");
+using var model = network.OnDevice(device).Build();
+using var optimizer = new Adam(model.Parameters(), learningRate: 0.05f);
+using var x = Tensor.From(inputs, [4, 2], device);
+using var y = Tensor.From(targets, [4, 1], device);
+for (int epoch = 1; epoch <= 1000; epoch++)
+{
+    using var scope = new TensorScope();
+    var loss = Losses.MeanSquaredError(model.Forward(x), y);
+    optimizer.ZeroGrad();
+    loss.Backward();
+    optimizer.Step();
+    if (epoch % 250 == 0)
+    {
+        Console.WriteLine($"epoch {epoch,4}: loss {loss.Item():F5}");
+    }
+}
+
+// One file with the architecture and the weights; Predictor.Load rebuilds the network from it.
+string package = Path.Combine(AppContext.BaseDirectory, "__NAME__.ikm");
+ModelPackage.Create(package).Architecture(network).Weights(model).Save();
+using var predictor = Predictor.Load(package, device).Build();
+for (int i = 0; i < 4; i++)
+{
+    float[] sample = [inputs[2 * i], inputs[2 * i + 1]];
+    Console.WriteLine($"{sample[0]} xor {sample[1]} = {predictor.Predict(sample)[0]:F3}");
+}
+
+Console.WriteLine($"Saved {package}");

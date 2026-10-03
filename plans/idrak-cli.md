@@ -274,6 +274,30 @@ local chat model explain the choices in plain words; it never changes them.
 | `idrak kernels dump [ptx\|spirv\|hip]` | The generated kernels, for debugging | 3 |
 | `idrak trace COMMAND ...` | Runs a command with telemetry printed live (layers, batches, kernels) or written to JSON Lines | 3 |
 
+Built on the `cli-dev` branch, with these additions found while building: `new --source DIR` (project references to a
+source checkout instead of packages, for working against unreleased changes), `-o/--out` and `-f/--force` on `new`;
+`onnx export` also takes the network builder's JSON (exported with initialized weights) and `--shape`; `onnx check`
+also compares with a reference file of another framework's outputs (`FILE.onnx.expected.json`, as
+tools/pytorch writes it, or `--expected FILE`) and takes `--batch` and `--tolerance`; `kernels dump` writes each HIP
+kernel's parameters next to the source; `trace` takes `--levels` (training, batches, gradients, layers, operations,
+inference, tools, engine) and `--sync` (true GPU timings), and with `--json` wraps the traced command's document in
+its own; `demo` and `shell` from the second pass are in this group.
+
+Gaps (Developers):
+
+- `onnx check` against ONNX Runtime needs the Idrak.Onnx.Runtime assembly (and Microsoft.ML.OnnxRuntime with its
+  native library) next to the tool or loaded with `--plugin`: the tool does not depend on it, so a plain install
+  reports the comparison as unavailable and still runs the round-trip and reference checks.
+- `kernels dump` writes the kernels in their default shapes (Vulkan at its widest width, cooperative-matrix products
+  in 16 x 16 x 16, PTX for the default kernel shapes); the library has no public way to ask a device which variants
+  it built, so per-device dumps wait for that. The tool reads the generators through `InternalsVisibleTo` (Idrak
+  grants it to Idrak.Cli for this command only).
+- `new` refers to packages of the tool's own version; a local prerelease build asks for `VERSION-*`, which resolves
+  only where such packages are published (a local feed), so `--source` is the way to use unreleased code.
+- `test` runs the runner as a child process (`dotnet run`), so it needs the .NET SDK, not only the runtime.
+- `shell` completes command names and options; completing model names and file paths waits for the shared
+  completion helper (`idrak completion`).
+
 ### More from a second pass
 
 Found while planning the build; each belongs to the group in brackets and is built with it.

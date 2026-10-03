@@ -1,0 +1,60 @@
+using Idrak;
+using Idrak.Layers;
+
+namespace __NAMESPACE__;
+
+/// <summary>
+/// A packed weight format: the values rounded to bfloat16 precision and kept as float32, multiplied through the base
+/// class's expanded product. Replace <see cref="Pack"/>, <see cref="Dequantize"/> and <see cref="MatMul"/> with your
+/// own packing and kernels; the rest is the contract every format follows.
+/// </summary>
+public sealed class RoundedWeight : PackedWeight
+{
+    /// <summary>The name it is registered under.</summary>
+    public const string FormatName = "__FORMAT__";
+
+    private RoundedWeight(Tensor values) => Values = values;
+
+    /// <summary>The rounded values, [rows, columns].</summary>
+    public Tensor Values { get; private set; }
+
+    /// <inheritdoc />
+    public override string Name => FormatName;
+
+    /// <inheritdoc />
+    public override int Rows => Values.Shape[0];
+
+    /// <inheritdoc />
+    public override int Columns => Values.Shape[1];
+
+    /// <inheritdoc />
+    public override long Bytes => 4L * Values.Size;
+
+    /// <summary>Packs <paramref name="values"/> ([rows, columns], row-major) on <paramref name="device"/>.</summary>
+    public static RoundedWeight Pack(ReadOnlySpan<float> values, int rows, int columns, Device device)
+    {
+        var rounded = new float[values.Length];
+        for (int i = 0; i < values.Length; i++)
+        {
+            uint bits = BitConverter.SingleToUInt32Bits(values[i]);
+            rounded[i] = BitConverter.UInt32BitsToSingle(((bits + 0x7FFFu + ((bits >> 16) & 1u)) >> 16) << 16);
+        }
+
+        return new RoundedWeight(Tensor.Persistent(rounded, [rows, columns], device));
+    }
+
+    /// <inheritdoc />
+    public override Tensor Dequantize() => Values * 1f;
+
+    /// <inheritdoc />
+    public override IEnumerable<Tensor> Buffers() => [Values];
+
+    /// <inheritdoc />
+    protected override void MoveTo(Device device, Func<Tensor, Device, Tensor> move) => Values = move(Values, device);
+
+    /// <inheritdoc />
+    public override Tensor MatMul(Tensor input) => base.MatMul(input);
+
+    /// <inheritdoc />
+    public override void Dispose() => Values.Dispose();
+}

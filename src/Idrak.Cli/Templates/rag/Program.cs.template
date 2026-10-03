@@ -1,0 +1,42 @@
+// __NAME__: retrieval-augmented generation over a folder of text files. The files are split into passages and
+// indexed with BM25 keywords; a question finds the best passages, and with a model a chat model answers from them,
+// citing them as [1], [2], ...
+//   dotnet run -- "How do I reset the device?"                the passages only
+//   dotnet run -- "How do I reset the device?" MODEL          answered by a model (a Hugging Face id, a folder or a GGUF file)
+//   dotnet run -- "How do I reset the device?" MODEL vulkan:0 on another device
+// Put your own .txt and .md files in docs/.
+
+using Idrak;
+using Idrak.LanguageModels;
+using Idrak.Retrieval;
+
+string question = args.Length > 0 ? args[0] : "How do I reset the device?";
+string folder = Path.Combine(AppContext.BaseDirectory, "docs");
+var documents = Directory.EnumerateFiles(folder, "*.*", SearchOption.AllDirectories)
+    .Where(f => f.EndsWith(".txt", StringComparison.OrdinalIgnoreCase) || f.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
+    .Select(f => new Document(Path.GetRelativePath(folder, f), File.ReadAllText(f)))
+    .ToList();
+var index = RetrievalIndex.Create().Documents(documents, ChunkUnit.Sentences, size: 3, overlap: 1).Bm25().Build();
+Console.WriteLine($"{documents.Count} documents, {index.Chunks.Count} passages\n\nQuestion: {question}\n");
+
+if (args.Length < 2)
+{
+    foreach (var hit in index.Search(question, 3))
+    {
+        Console.WriteLine($"  ({hit.Chunk.DocumentId}, score {hit.Score:F2}) {hit.Chunk.Text}");
+    }
+
+    return 0;
+}
+
+var device = args.Length > 2 ? Device.Parse(args[2]) : Device.Default;
+using var model = PretrainedModel.Load(ModelSource.Resolve(args[1]), new PretrainedOptions { Device = device });
+var rag = Rag.For(model.CreateChat()).Retrieve(index, 3).Build();
+var answer = await rag.AskAsync(question);
+Console.WriteLine(answer.Text);
+foreach (var cited in answer.Cited)
+{
+    Console.WriteLine($"  [{cited.Number}] {cited.Label}: {cited.Chunk.Text}");
+}
+
+return 0;
