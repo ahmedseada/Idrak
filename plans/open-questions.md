@@ -9,8 +9,11 @@
 - `idrak serve` gets a default port of its own (not 11434, which another local server uses); `-p/--port`, the config
   and an environment variable choose another. Done: 7317, then `-p`, `IDRAK_PORT`, `serve.port` (plans/idrak-cli.md).
 - Arabic messages: only if the console can show them correctly (right to left, joined letters); otherwise dropped.
-- Started: mixture of experts, fast sliding-window kernels, dataset loaders, the teacher pattern (distillation; done on
-  feature-distillation), provider-neutral serving names, Arabic output (render check first).
+- Round 3, all built and merged into idrak-cli: mixture of experts, fast sliding-window and soft-cap kernels
+  (CPU and Vulkan run; CUDA written, hardware check 9), dataset loaders, the teacher pattern (`idrak distill`),
+  provider-neutral serving names, Arabic output. Arabic: the tool shapes and reorders it itself for terminals that
+  do not (plans/idrak-cli.md, "Arabic messages"), checked against the Unicode conformance suite and an independent
+  implementation; `--lang ar` built. The look in real Windows terminals is hardware check 11 below.
 
 
 Decisions and hardware checks that wait for the maintainer, collected while work continued. Each item says what is
@@ -44,3 +47,4 @@ needed, the options, and the recommended one. Nothing here blocks the work in pr
 | 8 | Honor tablet (later) | CPU tests and, if its GPU has a Vulkan driver reachable from Termux (Mali through Mesa's Panfrost/PanVK, or Adreno through Turnip), the Vulkan list and a chat; first check the SoC and GPU with the phone guide's step 6 | installation/android-termux.md, steps 1-9 |
 | 9 | RTX 5070 Ti, a laptop with CUDA | The windowed and soft-capped CUDA kernels (decoding, `attention_flash_*`, the float32 gradients; never run): correctness, then the windowed decoder's speed against the composed path | `$env:IDRAK_DEVICES="cuda:0"; $env:IDRAK_FILTER="window kernels"; dotnet run -c Release --project tests/Idrak.Tests`, then `$env:IDRAK_FILTER="sliding windows"` and `"decoding"`; a failure there: `$env:IDRAK_CUDA_DEBUG="1"` names the kernel, `$env:IDRAK_WINDOW_KERNELS="0"` confirms the composed path still passes |
 | 10 | RTX 5070 Ti | The windowed kernels on Vulkan, and their speed | `$env:IDRAK_DEVICES="vulkan:0"; $env:IDRAK_FILTER="window kernels"; dotnet run -c Release --project tests/Idrak.Tests`, then `dotnet run -c Release --project tests/Idrak.Tests -- --bench-vulkan window` |
+| 11 | Windows (Windows Terminal, a PowerShell or cmd window), Git Bash, a Linux terminal | Arabic messages read right to left with joined letters; the device table aligned; `logical` reversed where `auto` is right (or the other way round in terminals that reorder text themselves) | `idrak help --lang ar`, `idrak doctor --lang ar`, `idrak devices --lang ar`, then the same with `--lang-render logical` (plans/idrak-cli.md, "Arabic messages") |

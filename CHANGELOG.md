@@ -63,6 +63,15 @@
   classifiers, `Losses.Distillation` and `Distillation.WithTeacher` for the `Trainer`. `idrak distill` replaces its
   stub: on the fly, `--precompute FILE` then `--teacher FILE`, or `--generate`, with `--temperature`, `--alpha`,
   `--top-k`, `--teacher-weights`, `--teacher-device` and idrak tune's options.
+- idrak: messages in Arabic with `--lang ar` (the config's `lang`, `IDRAK_LANG`): `idrak help` (titles, groups, every
+  command's summary, the common options), usage errors, questions, `doctor`, `devices` and the chat's own lines; JSON,
+  CSV and Markdown output are never translated. Because most terminals (Windows' console host, Windows Terminal, VS
+  Code's, xterm, kitty, ...) show Arabic reversed and unjoined, the tool shapes it (presentation forms, lam-alef
+  ligatures) and reorders each line by the Unicode Bidirectional Algorithm (complete UAX #9, passing Unicode 18.0's
+  conformance suite; tables generated from the Unicode Character Database by tools/unicode), keeping English words,
+  numbers, paths and table columns in place; terminals that do it themselves (VTE, Konsole, mlterm, mintty, macOS
+  Terminal) and files get the text as stored. `--lang-render auto|visual|visual-right|logical` (`IDRAK_LANG_RENDER`)
+  overrides; `idrak help arabic` explains.
 
 - idrak, across the groups: every command's help has one layout (usage and aliases, "Arguments:", "Options:" with
   short forms, examples, limits and gaps, the common options, and the environment variables that affect it, generated

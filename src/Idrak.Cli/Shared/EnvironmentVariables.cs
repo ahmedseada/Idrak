@@ -136,8 +136,15 @@ internal static class EnvironmentVariables
         new("IDRAK_PORT", Tool, "the config's serve.port, else 7317", "The port serve and ui listen on and the client commands call when --port is not given", ["serve", "ui", "api", "ping", "server ps", "server stop", "server load", "server unload"]),
         new("IDRAK_API_KEY", Tool, "not set", "The key serve requires and the client commands (api, ping, server ...) send when --api-key is not given", ["serve", "ui", "api", "ping", "server ps", "server stop", "server load", "server unload"], Secret: true),
         new("IDRAK_TRACE", Tool, "not set", "1 or true: errors print the stack as well", [Every]),
+        new("IDRAK_LANG", Tool, "en", "The language of the tool's messages: en or ar (--lang and the config's \"lang\" win); JSON stays English", [Every]),
+        new("IDRAK_LANG_RENDER", Tool, "auto", "How Arabic reaches the terminal: auto, visual (shaped and reordered by the tool), visual-right or logical (--lang-render and the config's \"lang-render\" win)", [Every]),
         new("NO_COLOR", Tool, "not set", "Set and not empty: no colour in the output", [Every]),
-        new("TERM", Tool, "as the terminal sets it", "dumb: no colour in the output", [Every]),
+        new("TERM", Tool, "as the terminal sets it", "dumb: no colour in the output; mlterm...: the terminal shows Arabic itself (--lang-render auto)", [Every]),
+        new("TERM_PROGRAM", Tool, "as the terminal sets it", "mintty or Apple_Terminal: the terminal shows Arabic right to left itself; vscode, iTerm.app, WezTerm: it does not (--lang-render auto)", [Every]),
+        new("VTE_VERSION", Tool, "as the terminal sets it", "5800 or above (VTE 0.58, GNOME Terminal and others): the terminal shows Arabic right to left itself (--lang-render auto)", [Every]),
+        new("KONSOLE_VERSION", Tool, "as the terminal sets it", "Set (Konsole): the terminal shows Arabic right to left itself (--lang-render auto)", [Every]),
+        new("MLTERM", Tool, "as the terminal sets it", "Set (mlterm): the terminal shows Arabic right to left itself (--lang-render auto)", [Every]),
+        new("WT_SESSION", Tool, "as the terminal sets it", "Set (Windows Terminal): Arabic is shaped and reordered by the tool (--lang-render auto)", [Every]),
         new("IDRAK_UPDATE_INDEX", Tool, "the package feed", "Where idrak update reads the published versions (a URL or a local file; mirrors and tests)", ["update"]),
 
         new("IDRAK_DEVICES", Tests, "every listed device", "Devices the test runner uses, comma-separated (cpu, cuda:0, vulkan:0, ...)", ["test", "report"]),
@@ -179,7 +186,7 @@ internal static class EnvironmentVariables
     public static string HelpSection(string command, params string[] extra)
     {
         var variables = For(command).Concat(extra.Select(Find).OfType<Variable>()).DistinctBy(v => v.Name).ToList();
-        var text = new StringBuilder("\nEnvironment (idrak help env for all):\n");
+        var text = new StringBuilder("\n").Append(Messages.T("Environment (idrak help env for all):")).Append('\n');
         if (variables.Count > 8)
         {
             // Long lists (the device and tuning variables) by group, names only.
@@ -197,7 +204,7 @@ internal static class EnvironmentVariables
             }
         }
 
-        Names(text, "Every command", All.Where(v => v.Commands.Contains(Every)).Select(v => v.Name));
+        Names(text, Messages.T("Every command"), All.Where(v => v.Commands.Contains(Every)).Select(v => v.Name));
         return text.ToString();
     }
 

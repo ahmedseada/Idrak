@@ -166,6 +166,8 @@ idrak help                                     # every command by group; idrak h
 `idrak serve` listens on port 7317 by default (`-p`, `IDRAK_PORT` or the config's `serve.port` choose another): point
 clients at `http://127.0.0.1:7317` for the chat API or `http://127.0.0.1:7317/v1` for the OpenAI-style API, or serve
 with `-p 11434` for clients that expect the chat API on that port.
+`--lang ar` prints the tool's messages in Arabic (help, errors, `doctor`, `devices`, the chat), shaped and reordered
+by the tool for terminals that do not show right-to-left text themselves (`idrak help arabic`); JSON stays English.
 
 The commands, options, examples and environment variables are in [src/Idrak.Cli/README.md](src/Idrak.Cli/README.md)
 (and in `idrak help`); the design is [plans/idrak-cli.md](plans/idrak-cli.md).
