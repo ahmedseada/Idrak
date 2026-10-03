@@ -26,6 +26,58 @@ Rules that apply to every command:
 | `--cache DIR` | The cache folder (models, tuning, kernels); default `IDRAK_CACHE` or `~/.cache/idrak` |
 | `--help`, `-h` | Help for the command; `idrak help COMMAND` |
 
+### Short forms (as Angular's CLI has them)
+
+Every option has its long form; the common ones also have a one-letter short form, and the most used commands have a
+short alias (as `ng g c` for `ng generate component`). Help lists both (`-d, --device NAME`), and both work everywhere.
+
+Common options:
+
+| Short | Long |
+|---|---|
+| `-h` | `--help` |
+| `-d` | `--device NAME` |
+| `-j` | `--json` |
+| `-q` | `--quiet` |
+| `-v` | `--verbose` |
+| `-P` | `--plugin PATH` |
+| `-C` | `--config FILE` |
+| (none) | `--cache DIR` (rarely typed) |
+
+`idrak --version` (and `idrak -V`) print the same as `idrak version`.
+
+Command aliases:
+
+| Alias | Command |
+|---|---|
+| `idrak c` | `chat` |
+| `idrak r` | `run` |
+| `idrak s` | `serve` |
+| `idrak b` | `bench` |
+| `idrak ls` | `list` |
+| `idrak dev` | `devices` |
+| `idrak doc` | `doctor` |
+
+Short forms of commands' own options, kept the same across commands where the meaning is the same:
+
+| Short | Long | Commands |
+|---|---|---|
+| `-m` | `--model NAME` | where a model is an option rather than the first argument |
+| `-s` | `--system TEXT` | chat, run |
+| `-t` | `--target COL` | suggest, data |
+| `-o` | `--out PATH` | suggest, convert, quantize, report, embed |
+| `-p` | `--port N` | serve, ui |
+| `-H` | `--host NAME` | serve, ui |
+| `-f` | `--force` | pull, rm, convert |
+| `-n` | `--search N` / `--repeat N` | suggest / bench |
+| `-y` | `--yes` (no confirmation) | rm, cache clear |
+
+Rules: short forms are case-sensitive (`-v` verbose, `-V` version); one letter per short form, not combined
+(`-q -j`, not `-qj`), so a value never hides inside a group; `-d=vulkan:0` and `-d vulkan:0` both work, as for long
+forms; a command may not reuse a common short form for another meaning, and a test checks that no two options of a
+command share a short form. The skeleton on the `cli` branch knows only `-h` so far: the dispatcher gains a short form
+for each option and an alias list for commands.
+
 A config file (`~/.idrak/config.json`, or `IDRAK_CONFIG`) gives defaults for these (device, cache, plug-ins, model
 aliases, a Hugging Face token); options on the command line win.
 
