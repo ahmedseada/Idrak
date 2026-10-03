@@ -167,17 +167,32 @@ internal static partial class Messages
             // A broken config is reported by the command itself.
         }
 
-        string language = lang is not null ? ParseLanguage(lang, "--lang")
-            : Current.Value ?? (settings?.Get("lang") is { Length: > 0 } fromConfig ? ParseLanguage(fromConfig, "the config's \"lang\"")
-            : Environment.GetEnvironmentVariable("IDRAK_LANG") is { Length: > 0 } fromEnvironment ? ParseLanguage(fromEnvironment, "IDRAK_LANG") : "en");
-        var (rendering, right) = VisualText.Parse(render ?? settings?.Get("lang-render") ?? Environment.GetEnvironmentVariable("IDRAK_LANG_RENDER") ?? "auto",
-            render is not null ? "--lang-render" : "lang-render");
+        // Variables saved by idrak env set apply before anything reads them (IDRAK_LANG below included).
+        var saved = SavedEnvironment.Apply(settings);
+
+        string language;
+        (TextRendering Rendering, bool RightAlign) visual;
+        try
+        {
+            language = lang is not null ? ParseLanguage(lang, "--lang")
+                : Current.Value ?? (settings?.Get("lang") is { Length: > 0 } fromConfig ? ParseLanguage(fromConfig, "the config's \"lang\"")
+                : Environment.GetEnvironmentVariable("IDRAK_LANG") is { Length: > 0 } fromEnvironment ? ParseLanguage(fromEnvironment, "IDRAK_LANG") : "en");
+            visual = VisualText.Parse(render ?? settings?.Get("lang-render") ?? Environment.GetEnvironmentVariable("IDRAK_LANG_RENDER") ?? "auto",
+                render is not null ? "--lang-render" : "lang-render");
+        }
+        catch
+        {
+            saved.Dispose();
+            throw;
+        }
+
+        var (rendering, right) = visual;
         if (data)
         {
             language = "en";
         }
 
-        var scope = new Scope(Current.Value);
+        var scope = new Scope(Current.Value, saved);
         Current.Value = language;
         if (language == "ar")
         {
@@ -189,7 +204,7 @@ internal static partial class Messages
         return scope;
     }
 
-    private sealed class Scope(string? previous) : IDisposable
+    private sealed class Scope(string? previous, IDisposable saved) : IDisposable
     {
         private readonly List<VisualWriter> _writers = [];
         private System.Text.Encoding? _encoding;
@@ -256,6 +271,7 @@ internal static partial class Messages
             }
 
             Current.Value = previous;
+            saved.Dispose();
         }
     }
 }

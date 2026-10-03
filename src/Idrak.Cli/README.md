@@ -103,7 +103,9 @@ What works on this machine, and the tool's own settings.
 | `idrak devices` (`dev`) | Every device: backend, name, memory, compute units, subgroup size, matrix units, kernel width |
 | `idrak version` | Versions of the tool, the libraries, the .NET runtime and the device drivers |
 | `idrak report` | A report (Markdown and JSON) of the machine, devices, drivers, tests and benchmarks |
-| `idrak env` (`environment`) | Every environment variable Idrak reads: value, default and meaning |
+| `idrak env` (`environment`) | Every environment variable Idrak reads: value, where it comes from, default and meaning |
+| `idrak env set` | Save environment variables for every idrak run, in any terminal (asks for them, with suggested values) |
+| `idrak env unset` | Remove saved environment variables |
 | `idrak init` | Writes the config file: default device, cache folder, model aliases |
 | `idrak cache info` | Sizes and paths of the caches (models, tuning, kernels, downloads) |
 | `idrak cache clear` | Clears one part of the cache (models, tuning, kernels) or all of it |
@@ -525,7 +527,23 @@ what to do next; `IDRAK_TRACE=1` adds the stack.
 
 `idrak env` lists every environment variable the libraries and the tool read, with its value, default and meaning
 (`--all` includes unset ones; tokens and keys show only as set). `idrak help env` prints the same reference without
-values, and every command's help ends with the variables that affect it. The most used:
+values, and every command's help ends with the variables that affect it.
+
+Setting a variable differs in every shell (`$env:NAME="1"`, `set NAME=1`, `export NAME=1`, `set -x NAME 1`), so
+`idrak env set` saves them in the config instead, and every idrak run sets them before it starts, in any terminal.
+The programs the tool starts get them too, so `idrak test` runs the tests with them:
+
+```
+idrak env set                          # asks: a variable (number, name or part of it; ? lists all), its value
+                                       # (Enter takes the suggestion, - removes it), then another or done
+idrak env set IDRAK_CUDA_DEBUG 1       # or directly
+idrak env set IDRAK_DEVICES cuda:0 --user   # also in the Windows user environment, for programs started without idrak
+idrak env                              # the values, and whether each is saved or from the terminal
+idrak env unset IDRAK_CUDA_DEBUG
+```
+
+A variable set in the terminal wins over the saved value; `--profile NAME` saves one for a profile only; tokens are
+stored by `idrak login`, not here. The most used:
 
 | Variable | Meaning |
 |---|---|

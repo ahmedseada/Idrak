@@ -2,12 +2,19 @@
 
 ## Unreleased
 
+- `idrak env set` saves environment variables in the config ("env"), and every idrak run sets them before it starts,
+  the same in every terminal and shell; the processes the tool starts (`idrak test`'s runner) get them too. With no
+  arguments it asks: pick a variable (number, name or part of it; `?` lists all), take the suggested value with Enter or
+  type another (`-` removes it), then set another or finish. A variable set in the terminal wins. `--user` also sets it
+  in the Windows user environment; `--profile` saves it in a profile; tokens are refused (`idrak login`). `idrak env
+  unset NAME...` removes them, and `idrak env` shows where each value comes from (saved or terminal).
+- `idrak test` passes the arguments after `--` to the test runner (`idrak test -d cuda:0 -- --bench-window`).
 - Idrak.AspNetCore: provider-neutral names for the chat API (`/api/chat`, `/api/tags`, `/api/ps`, `/api/version`,
   routes unchanged): `MapChatApi`, `ChatApiOptions` and the `ChatApi*` wire types (`ChatApiRequest`,
   `ChatApiResponse`, `ChatApiMessage`, `ChatApiToolCall`, `ChatApiModelTag`, ... , `ChatApiTranslation`). The former
   names are removed (nothing was released under them). Endpoint names are now `Chat-NAME`, `ChatTags-NAME`, ... .
 - Idrak.LanguageModels: the local model store source is `ModelSource.LocalStoreModel` and the "store" source
-  (`store:NAME`); `ModelSource.OllamaModel` is an obsolete forwarder and the former prefix is still read.
+  (`store:NAME`); the former method and prefix are removed (nothing was released under them).
 - `idrak serve` and `ui` listen on port 7317 by default (it was 11434, another local server's default); `-p/--port`,
   then `IDRAK_PORT`, then the config's `serve.port` choose another, and `-p 11434` serves clients that expect that
   port. The client commands (`api`, `ping`, `server ...`) take `--port` or `IDRAK_PORT`, then the server started

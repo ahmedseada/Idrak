@@ -62,6 +62,9 @@ internal static class EnvironmentVariables
 
     private const string Child = "Set for the coding tools' commands";
 
+    /// <summary>The group of the variables the tool sets for the coding tools' commands (not settings).</summary>
+    public const string ChildGroup = Child;
+
     private const string Devices = "Devices and backends", Tuning = "Tuning and caches", Precision = "Precision and memory", Cpu = "CPU",
         Vulkan = "Vulkan", Hip = "HIP", Sources = "Model and data sources", Tool = "The tool", Tests = "Tests and diagnostics", DotNet = ".NET";
 
