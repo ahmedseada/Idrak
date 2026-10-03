@@ -9,15 +9,15 @@ namespace Idrak.Cli.Commands;
 
 /// <summary>
 /// <c>idrak families</c>: the model families Idrak loads (<see cref="PretrainedArchitectures"/>, with plug-ins' too) and
-/// what each supports: sliding-window attention, soft-capping, RoPE scaling, query/key norms, biases, and loading from
-/// GGUF (<see cref="GgufArchitectures"/>). Features are found by reading a small probe config that asks for all of them
+/// what each supports: sliding-window attention, soft-capping, RoPE scaling, query/key norms, biases, mixture of experts,
+/// and loading from GGUF (<see cref="GgufArchitectures"/>). Features are found by reading a small probe config that asks for all of them
 /// through the family's own reader, so a plug-in's family is described the same way.
 /// </summary>
 internal sealed class FamiliesCommand : Command
 {
     public override string Name => "families";
 
-    public override string Summary => "Supported model families and what each supports (windows, soft-capping, RoPE scalings, GGUF)";
+    public override string Summary => "Supported model families and what each supports (windows, soft-capping, RoPE scalings, experts, GGUF)";
 
     public override string Usage => """
         [FILTER]
@@ -26,6 +26,7 @@ internal sealed class FamiliesCommand : Command
           FILTER  only families whose name contains this text (e.g. qwen)
 
         A family is the "architectures" name in a model's config.json. "own network": the family builds its own layers.
+        Experts: the family reads mixture-of-experts models (a router choosing a few expert feed-forward blocks per token).
         Plug-ins (--plugin) add families, GGUF architectures and RoPE scalings; they are listed too.
 
         Examples:
@@ -37,22 +38,26 @@ internal sealed class FamiliesCommand : Command
     public override int Run(CommandContext context)
     {
         string? filter = context.Positional.Count > 0 ? context.Positional[0] : null;
-        var ggufByFamily = GgufArchitectures.Names.GroupBy(n => GgufArchitectures.Get(n).HuggingFace, StringComparer.Ordinal)
-            .ToDictionary(g => g.Key, g => g.Order(StringComparer.Ordinal).ToList(), StringComparer.Ordinal);
+        var ggufByFamily = GgufArchitectures.Names
+            .SelectMany(n => new[] { GgufArchitectures.Get(n).HuggingFace, GgufArchitectures.Get(n).WithExperts }.OfType<string>().Select(family => (Family: family, Name: n)))
+            .GroupBy(p => p.Family, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.Select(p => p.Name).Order(StringComparer.Ordinal).ToList(), StringComparer.Ordinal);
         var rows = new List<JsonObject>();
         foreach (string name in PretrainedArchitectures.Names.Order(StringComparer.Ordinal).Where(n => filter is null || n.Contains(filter, StringComparison.OrdinalIgnoreCase)))
         {
             var architecture = PretrainedArchitectures.Get(name);
             var row = new JsonObject { ["family"] = name, ["ownNetwork"] = architecture.Build is not null };
+            var withExperts = ExpertSpec(architecture, name);
             try
             {
-                var spec = architecture.Spec(Probe(name), []);
+                var spec = withExperts ?? architecture.Spec(Probe(name), []);
                 row["slidingWindow"] = spec.SlidingWindow is not null;
                 row["softCapping"] = spec.AttentionSoftcap is not null || spec.LogitSoftcap is not null;
                 row["ropeScaling"] = spec.Rope?.Scaling is not null;
                 row["queryKeyNorm"] = spec.QkNorm;
                 row["qkvBias"] = spec.QkvBias;
                 row["tiedEmbeddings"] = spec.TieEmbeddings;
+                row["experts"] = withExperts is not null;
             }
             catch (Exception e) when (e is not OutOfMemoryException)
             {
@@ -70,9 +75,9 @@ internal sealed class FamiliesCommand : Command
         }
         else
         {
-            context.Table(["Family", "Windows", "Soft-capping", "RoPE scaling", "Q/K norm", "QKV bias", "GGUF", "Note"],
+            context.Table(["Family", "Windows", "Soft-capping", "RoPE scaling", "Q/K norm", "QKV bias", "Experts", "GGUF", "Note"],
                 rows.Select(r => (IReadOnlyList<string>)[(string)r["family"]!, Yes(r["slidingWindow"]), Yes(r["softCapping"]), Yes(r["ropeScaling"]),
-                    Yes(r["queryKeyNorm"]), Yes(r["qkvBias"]), ((JsonArray)r["gguf"]!).Count == 0 ? "-" : string.Join(", ", (JsonArray)r["gguf"]!),
+                    Yes(r["queryKeyNorm"]), Yes(r["qkvBias"]), Yes(r["experts"]), ((JsonArray)r["gguf"]!).Count == 0 ? "-" : string.Join(", ", (JsonArray)r["gguf"]!),
                     (bool)r["ownNetwork"]! ? "own network" : (string?)r["probe"] ?? ""]));
         }
 
@@ -86,6 +91,25 @@ internal sealed class FamiliesCommand : Command
             ["ggufArchitectures"] = new JsonArray([.. GgufArchitectures.Names.Order(StringComparer.Ordinal).Select(s => (JsonNode?)JsonValue.Create(s))]),
         });
         return ExitCodes.Ok;
+    }
+
+    // The family's spec of the probe with Mixtral's and Qwen's expert keys added, when it reads them into a spec with
+    // experts; null for families without experts, which refuse such a configuration.
+    private static DecoderSpec? ExpertSpec(PretrainedArchitecture architecture, string name)
+    {
+        var probe = Probe(name);
+        probe["num_local_experts"] = 4;
+        probe["num_experts"] = 4;
+        probe["num_experts_per_tok"] = 2;
+        probe["moe_intermediate_size"] = 32;
+        try
+        {
+            return architecture.Spec(probe, []) is { Experts: > 0 } spec ? spec : null;
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            return null;
+        }
     }
 
     // A small config with every optional feature switched on, in the keys Hugging Face's configs use (parsed from text,

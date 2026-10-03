@@ -14,9 +14,9 @@ A self-contained deep-learning library for **.NET 10**, written in C#, with its 
 - **Build and train networks**: N-D tensors with automatic differentiation; dense, convolutional, recurrent,
   attention and transformer layers; losses, optimizers (including 8-bit AdamW) and schedules; a trainer, data
   loading, predictors, model packages, telemetry and resource limits.
-- **Run and fine-tune language models**: Llama, Qwen, Mistral and Gemma (1, 2 and 3) from Hugging Face folders or GGUF files,
-  with their own tokenizers and chat templates; streaming chat with reasoning and tool calls; LoRA / QLoRA
-  fine-tuning; answer scoring and evaluation.
+- **Run and fine-tune language models**: Llama, Qwen, Mistral, Gemma (1, 2 and 3) and the mixture-of-experts Mixtral
+  and Qwen-MoE from Hugging Face folders or GGUF files, with their own tokenizers and chat templates; streaming chat
+  with reasoning and tool calls; LoRA / QLoRA fine-tuning; answer scoring and evaluation.
 - **Fast on NVIDIA GPUs**: bfloat16 and FP8 tensor cores, flash attention, int8 / int4 / bfloat16 weights, int8
   KV caches, CUDA graphs; on any CUDA GPU from Maxwell to Blackwell, with CPU fallbacks everywhere.
 - **Use it in applications**: an inference engine with batching, ASP.NET Core endpoints (including an
@@ -64,7 +64,7 @@ Set `IDRAK_DISABLE_CUDA=1` to force the CPU.
 
 | Area | What is there |
 |------|---------------|
-| Model families | Llama, Mistral, Qwen2/3, Gemma 1/2/3 (sliding windows, soft-capping, YaRN and dynamic RoPE); a registry for more |
+| Model families | Llama, Mistral, Qwen2/3, Gemma 1/2/3 (sliding windows, soft-capping, YaRN and dynamic RoPE); mixture of experts: Mixtral, Qwen2-MoE, Qwen3-MoE; a registry for more |
 | Weight formats | safetensors; GGUF (F32/F16/BF16, Q4_0 to Q8_0, K-quants, IQ4) |
 | Generation | Streaming, batches, sampling (temperature, top-k/p, min-p, penalties), float32, int8 or bfloat16 KV caches |
 | Chat | Each model's own Jinja template, reasoning, tool calls, conversations, a coding agent |
@@ -1030,8 +1030,8 @@ RopeScalings.Register("my-scaling", input => new RopeScalingResult(input.Frequen
 ```
 
 A model folder in the Hugging Face layout becomes an ordinary Idrak `Sequential`: `config.json` is read into a
-`DecoderSpec` by an architecture registry (Llama, Mistral, Qwen2, Qwen3, Gemma, Gemma 2 and Gemma 3 text models are
-registered; others are one `Register` call, usually `LlamaStyle` with a few spec changes, or a `Build` delegate for a
+`DecoderSpec` by an architecture registry (Llama, Mistral, Qwen2, Qwen3, Gemma, Gemma 2 and Gemma 3 text models, and
+the mixture-of-experts families Mixtral, Qwen2-MoE and Qwen3-MoE, are registered; others are one `Register` call, usually `LlamaStyle` with a few spec changes, or a `Build` delegate for a
 family that does not fit `DecoderSpec`), and the weights are read from safetensors (F32, F16,
 BF16; single files or sharded with an index) one tensor at a time, transposed to Idrak's layout and, with
 `Int8`, quantized as they are read. Nothing is built for one family: the decoder is assembled from generic blocks
@@ -1043,6 +1043,18 @@ every device (the attention kernels mask causally only), so they are correct eve
 attention; packed fine-tuning batches and batched generation are not offered for them (batches are padded, prompts
 run one by one). The model runs on Idrak's CPU and CUDA
 backends, and trains, takes LoRA adapters, quantizes and saves like any other.
+
+Mixture-of-experts models (Mixtral, Qwen2-MoE, Qwen3-MoE, from Hugging Face folders or GGUF files) replace the
+feed-forward block of their expert layers with a `MixtureOfExperts`: a router scores the experts, each token goes to
+its `num_experts_per_tok` most probable ones (ties to the lowest index, as transformers), and their outputs are added,
+weighted by the probabilities (renormalized for Mixtral, per `norm_topk_prob` for Qwen); Qwen2-MoE adds a shared expert
+scaled by a sigmoid gate. `DecoderSpec.Experts`, `ExpertsPerToken`, `ExpertFfDim`, `SharedExpertFfDim`,
+`NormalizeTopK` and `ExpertLayers` describe them, and `ActiveParameterCount` gives the parameters a token goes through.
+The experts run only on their tokens and can be packed (int8, int4, bfloat16; the router stays float32), the KV cache
+and batched generation work as for dense models, and LoRA fine-tuning works, optionally with the router's
+load-balancing loss (`FineTuningOptions.LoadBalancingWeight`). The routing is read back to the host in each layer
+(a few values per token), so decoding steps are not recorded as graphs and each layer waits for its router: correct on
+every device, but slower on GPUs than a dense model of the same active size until grouped expert kernels exist.
 
 `BpeTokenizer` reads `tokenizer.json` (byte-level BPE as in Qwen, Llama 3 and GPT-2; SentencePiece-style BPE with
 byte fallback as in Llama 2 and Mistral; the normalizers, pre-tokenizers and decoders those use), and

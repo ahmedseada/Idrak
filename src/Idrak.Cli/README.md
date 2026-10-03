@@ -207,7 +207,7 @@ The model cache: what `pull` downloads is what loading reads (Hugging Face model
 | `idrak verify` | Check a cached model's files: sizes, hashes where the hub gives them, readable tensors |
 | `idrak convert` | Convert between GGUF and Hugging Face folders (safetensors bf16, f16, f32) |
 | `idrak diff` | Which tensors differ between two checkpoints, and by how much |
-| `idrak families` | Supported model families and what each supports (windows, soft-capping, RoPE scalings, GGUF) |
+| `idrak families` | Supported model families and what each supports (windows, soft-capping, RoPE scalings, experts, GGUF) |
 
 ```bash
 idrak pull Qwen/Qwen3-0.6B-GGUF:Q8_0           # one GGUF file of a repository

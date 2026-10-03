@@ -86,6 +86,13 @@ public sealed record DecoderBuildOptions
 /// (not read when the embeddings are tied). Each name is followed by ".weight" or ".bias"; normalizations have
 /// ".weight" (and ".bias" for layer normalization).
 /// </para>
+/// <para>
+/// Mixture-of-experts layers (<see cref="Experts"/> above 0; see <see cref="MixtureOfExperts"/>) have instead
+/// <c>layers.i.mlp.router</c> [dim, experts], <c>layers.i.mlp.experts.j.gate</c>/<c>up</c> [dim, expertFfDim] and
+/// <c>layers.i.mlp.experts.j.down</c> [expertFfDim, dim] for each expert j, and with a shared expert
+/// <c>layers.i.mlp.shared.gate</c>/<c>up</c>/<c>down</c> (its hidden size <see cref="SharedExpertFfDim"/>) and
+/// <c>layers.i.mlp.shared_gate</c> [dim, 1].
+/// </para>
 /// </summary>
 public sealed record DecoderSpec
 {
@@ -196,20 +203,63 @@ public sealed record DecoderSpec
     /// <summary>Soft-capping of the output logits, cap · tanh(logit / cap) (Gemma 2: 30), or null.</summary>
     public float? LogitSoftcap { get; init; }
 
+    /// <summary>
+    /// Experts in each mixture-of-experts layer (Mixtral's num_local_experts, Qwen's num_experts), or 0 for dense
+    /// feed-forward blocks everywhere.
+    /// </summary>
+    public int Experts { get; init; }
+
+    /// <summary>Experts each token is routed to (num_experts_per_tok), between 1 and <see cref="Experts"/>.</summary>
+    public int ExpertsPerToken { get; init; }
+
+    /// <summary>Hidden size of each expert (Qwen's moe_intermediate_size), or 0 for <see cref="FfDim"/>.</summary>
+    public int ExpertFfDim { get; init; }
+
+    /// <summary>Hidden size of the shared expert every token also goes through, scaled by a sigmoid gate (Qwen2-MoE), or 0 for none.</summary>
+    public int SharedExpertFfDim { get; init; }
+
+    /// <summary>Renormalize the chosen experts' probabilities to sum to one (Mixtral always; Qwen per norm_topk_prob).</summary>
+    public bool NormalizeTopK { get; init; } = true;
+
+    /// <summary>
+    /// Which layers are mixture-of-experts layers, one entry per layer (the others are dense, of width <see cref="FfDim"/>;
+    /// Qwen's decoder_sparse_step and mlp_only_layers); null: every layer, when <see cref="Experts"/> is set.
+    /// </summary>
+    public IReadOnlyList<bool>? ExpertLayers { get; init; }
+
+    /// <summary>Whether layer <paramref name="layer"/> is a mixture-of-experts layer.</summary>
+    public bool IsExpertLayer(int layer) => Experts > 0 && (ExpertLayers is not { } layers || layers[layer]);
+
+    private int ExpertHidden => ExpertFfDim > 0 ? ExpertFfDim : FfDim;
+
     /// <summary>Whether layer <paramref name="layer"/> attends through the sliding window.</summary>
     public bool IsWindowed(int layer) => SlidingWindow is not null && (SlidingWindowLayers is not { } layers || layers[layer]);
 
     /// <summary>Parameters of the model (weights and biases).</summary>
-    public long ParameterCount
+    public long ParameterCount => Count(Experts);
+
+    /// <summary>
+    /// Parameters each token goes through: <see cref="ParameterCount"/> for a dense model; with experts, only
+    /// <see cref="ExpertsPerToken"/> experts of each mixture-of-experts layer count (the router and a shared expert do).
+    /// </summary>
+    public long ActiveParameterCount => Count(ExpertsPerToken);
+
+    // The parameters with `experts` experts counted in each mixture-of-experts layer.
+    private long Count(int experts)
     {
-        get
+        long attention = (long)Dim * HeadDim * (Heads + 2 * KvHeads) + (long)Heads * HeadDim * Dim;
+        int projections = Gated ? 3 : 2;
+        long dense = (long)Dim * FfDim * projections;
+        long sparse = (long)Dim * Experts + (long)experts * Dim * ExpertHidden * projections
+            + (SharedExpertFfDim > 0 ? (long)Dim * SharedExpertFfDim * projections + Dim : 0);
+        long norms = Dim * (ParallelBlocks ? 1 : 2) * (PostNorms ? 2 : 1) + (QkNorm ? 2 * HeadDim : 0);
+        long layers = 0;
+        for (int i = 0; i < Layers; i++)
         {
-            long attention = (long)Dim * HeadDim * (Heads + 2 * KvHeads) + (long)Heads * HeadDim * Dim;
-            long feedForward = (long)Dim * FfDim * (Gated ? 3 : 2);
-            long norms = Dim * (ParallelBlocks ? 1 : 2) * (PostNorms ? 2 : 1) + (QkNorm ? 2 * HeadDim : 0);
-            return (long)Vocabulary * Dim * (TieEmbeddings ? 1 : 2) + (LearnedPositions ? (long)MaxPositions * Dim : 0)
-                + Layers * (attention + feedForward + norms) + Dim;
+            layers += attention + (IsExpertLayer(i) ? sparse : dense) + norms;
         }
+
+        return (long)Vocabulary * Dim * (TieEmbeddings ? 1 : 2) + (LearnedPositions ? (long)MaxPositions * Dim : 0) + layers + Dim;
     }
 
     /// <summary>
@@ -222,6 +272,16 @@ public sealed record DecoderSpec
         if (SlidingWindowLayers is { } windowed && windowed.Count != Layers)
         {
             throw new ArgumentException($"SlidingWindowLayers has {windowed.Count} entries for {Layers} layers.");
+        }
+
+        if (ExpertLayers is { } expertLayers && expertLayers.Count != Layers)
+        {
+            throw new ArgumentException($"ExpertLayers has {expertLayers.Count} entries for {Layers} layers.");
+        }
+
+        if (Experts < 0 || Experts > 0 && (ExpertsPerToken < 1 || ExpertsPerToken > Experts))
+        {
+            throw new ArgumentException($"{ExpertsPerToken} experts per token of {Experts}: each token goes to between 1 and {Experts}.");
         }
 
         var device = options.Device ?? Device.Default;
@@ -332,11 +392,23 @@ public sealed record DecoderSpec
                     ScoreSoftcap = AttentionSoftcap,
                 };
                 var feedForwardNorm = ParallelBlocks ? null : Normalization($"{p}.mlp_norm", Dim);
-                var feedForward = new FeedForward(
-                    Gated ? Projection($"{p}.mlp.gate", Dim, FfDim, FeedForwardBias) : null,
-                    Projection($"{p}.mlp.up", Dim, FfDim, FeedForwardBias),
-                    Projection($"{p}.mlp.down", FfDim, Dim, FeedForwardBias),
+                FeedForward Dense(string name, int hidden) => new(
+                    Gated ? Projection($"{name}.gate", Dim, hidden, FeedForwardBias) : null,
+                    Projection($"{name}.up", Dim, hidden, FeedForwardBias),
+                    Projection($"{name}.down", hidden, Dim, FeedForwardBias),
                     Activation);
+
+                // The router and the shared expert's gate stay float32 in every build: they are small, and a packed
+                // router's rounding could change which experts a token goes to.
+                Linear Float(string name, int outputs) => Linear.FromWeights(Tensor($"{name}.weight", [Dim, outputs],
+                    () => Initial(Dim * outputs, MathF.Sqrt(6f / (Dim + outputs)))));
+
+                Module feedForward = IsExpertLayer(i)
+                    ? new MixtureOfExperts(Float($"{p}.mlp.router", Experts),
+                        [.. Enumerable.Range(0, Experts).Select(j => Dense($"{p}.mlp.experts.{j}", ExpertHidden))], ExpertsPerToken, NormalizeTopK,
+                        SharedExpertFfDim > 0 ? Dense($"{p}.mlp.shared", SharedExpertFfDim) : null,
+                        SharedExpertFfDim > 0 ? Float($"{p}.mlp.shared_gate", 1) : null)
+                    : Dense($"{p}.mlp", FfDim);
                 created.Add(new DecoderBlock(attentionNorm, attention, feedForwardNorm, feedForward,
                     PostNorms ? Normalization($"{p}.post_attn_norm", Dim) : null,
                     PostNorms ? Normalization($"{p}.post_mlp_norm", Dim) : null,
@@ -436,6 +508,19 @@ public sealed record DecoderSpec
             json["logitSoftcap"] = logitSoftcap;
         }
 
+        if (Experts > 0)
+        {
+            json["experts"] = Experts;
+            json["expertsPerToken"] = ExpertsPerToken;
+            json["expertFfDim"] = ExpertFfDim;
+            json["sharedExpertFfDim"] = SharedExpertFfDim;
+            json["normalizeTopK"] = NormalizeTopK;
+            if (ExpertLayers is { } expertLayers)
+            {
+                json["expertLayers"] = new JsonArray([.. expertLayers.Select(l => (JsonNode)l)]);
+            }
+        }
+
         return json;
     }
 
@@ -487,6 +572,9 @@ public sealed record DecoderSpec
             SlidingWindowLayers = json["slidingWindowLayers"] is JsonArray layers ? [.. layers.Select(l => (bool)l!)] : null,
             SlidingWindowRope = json["slidingWindowRope"] is JsonObject local ? RopeFromJson(local) : null,
             AttentionScale = (float?)json["attentionScale"], AttentionSoftcap = (float?)json["attentionSoftcap"], LogitSoftcap = (float?)json["logitSoftcap"],
+            Experts = (int?)json["experts"] ?? 0, ExpertsPerToken = (int?)json["expertsPerToken"] ?? 0, ExpertFfDim = (int?)json["expertFfDim"] ?? 0,
+            SharedExpertFfDim = (int?)json["sharedExpertFfDim"] ?? 0, NormalizeTopK = (bool?)json["normalizeTopK"] ?? true,
+            ExpertLayers = json["expertLayers"] is JsonArray expertLayers ? [.. expertLayers.Select(l => (bool)l!)] : null,
         };
     }
 

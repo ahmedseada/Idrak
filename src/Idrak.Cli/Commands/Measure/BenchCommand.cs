@@ -275,7 +275,7 @@ internal sealed class BenchCommand : Command
 
         var memory = ComputeResources.GetMemoryUsage(device);
         double promptRate = Median(prompts), generationRate = Median(generated);
-        double flopsPerToken = 2.0 * model.Spec.ParameterCount;
+        double flopsPerToken = 2.0 * model.Spec.ActiveParameterCount;                  // with experts, only those a token goes through
         document["settings"] = new JsonObject
         {
             ["weights"] = choice.Weights,

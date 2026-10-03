@@ -750,7 +750,9 @@ public sealed class FeedForward : Module
 
 /// <summary>
 /// One decoder layer. Sequential (the usual): x + attention(norm1(x)), then + feedForward(norm2(·)); optionally with
-/// normalizations after each block too. Parallel: x + attention(norm1(x)) + feedForward(norm1(x)).
+/// normalizations after each block too. Parallel: x + attention(norm1(x)) + feedForward(norm1(x)). The feed-forward part is
+/// any module mapping [batch, time, dim] to itself: a <see cref="Layers.FeedForward"/> (whose fused inference paths the
+/// block uses), a <see cref="MixtureOfExperts"/>, or one of your own.
 /// </summary>
 public sealed class DecoderBlock : Module, ICachedModule
 {
@@ -758,11 +760,11 @@ public sealed class DecoderBlock : Module, ICachedModule
     /// <param name="attentionNorm">Normalization before attention ("attn_norm").</param>
     /// <param name="attention">The attention layer.</param>
     /// <param name="feedForwardNorm">Normalization before the feed-forward block ("mlp_norm"); null for a parallel block.</param>
-    /// <param name="feedForward">The feed-forward block.</param>
+    /// <param name="feedForward">The feed-forward block (a <see cref="Layers.FeedForward"/>, a <see cref="MixtureOfExperts"/>, or any module keeping the shape).</param>
     /// <param name="postAttentionNorm">Normalization of the attention output before the residual addition, or null.</param>
     /// <param name="postFeedForwardNorm">Normalization of the feed-forward output before the residual addition, or null.</param>
     /// <param name="residualDropout">Dropout on the attention and feed-forward outputs before each residual addition (training only), or null.</param>
-    public DecoderBlock(Module attentionNorm, CausalSelfAttention attention, Module? feedForwardNorm, FeedForward feedForward,
+    public DecoderBlock(Module attentionNorm, CausalSelfAttention attention, Module? feedForwardNorm, Module feedForward,
         Module? postAttentionNorm = null, Module? postFeedForwardNorm = null, Dropout? residualDropout = null)
     {
         (AttentionNorm, Attention, FeedForwardNorm, FeedForward, PostAttentionNorm, PostFeedForwardNorm) =
@@ -801,8 +803,8 @@ public sealed class DecoderBlock : Module, ICachedModule
     /// <summary>Normalization before the feed-forward block, or null for a parallel block.</summary>
     public Module? FeedForwardNorm { get; }
 
-    /// <summary>The feed-forward block.</summary>
-    public FeedForward FeedForward { get; }
+    /// <summary>The feed-forward block ("mlp"): a <see cref="Layers.FeedForward"/>, a <see cref="MixtureOfExperts"/>, or another module.</summary>
+    public Module FeedForward { get; }
 
     /// <summary>Normalization after attention, or null.</summary>
     public Module? PostAttentionNorm { get; }
@@ -850,9 +852,9 @@ public sealed class DecoderBlock : Module, ICachedModule
                 ? AddProjected(attendHeads(normalized), Attention.Output, input, norm)
                 : Tensor.AddRmsNormAffine(input, Attend(normalized, attend), norm.Gain, norm.Epsilon, norm.Offset);   // one pass
             x = sum;
-            if (PostFeedForwardNorm is null && NextNorm is { } following && FeedForward.DownFusable)
+            if (PostFeedForwardNorm is null && NextNorm is { } following && FeedForward is Layers.FeedForward { DownFusable: true } dense)
             {
-                var (output, nextInput) = AddProjected(FeedForward.DownInput(fedInput), FeedForward.Down, x, following);
+                var (output, nextInput) = AddProjected(dense.DownInput(fedInput), dense.Down, x, following);
                 RMSNorm.HandOff(following, output, nextInput);
                 return output;
             }
