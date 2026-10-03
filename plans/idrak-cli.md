@@ -287,6 +287,33 @@ and call `ModelCache.Touch` so `idrak list` shows the last use by chat, run and 
 | `idrak check MODEL --reference FILE` | Compares ids, template and logits with a transformers reference (the Chat sample's check) | 3 |
 | `idrak tuning show` | The kernel choices measured on this device (from the tuning caches), and `--reset` | 3 |
 
+Built (Retrieval and measure), with what was added while building and the gaps found:
+
+- `bench`: `--prompt-tokens N`, `--tokens N`, `--small` (small kernel shapes for slow devices and tests), `-n`/`--repeat`
+  (median of the runs), `--devices all|LIST` and `--matrix` (one table across devices, and across weight x KV
+  formats; `-w`/`-k` take comma-separated lists there; a run that fails is reported and the others go on). Saved
+  results are `bench/NAME.json` under the cache folder; `--compare` matches by run and measurement name and marks
+  changes over 3% better or worse. The kernel benchmarks use the public tensor API on any device (matrix products in
+  float32 and mixed bfloat16, one-row products in every packed format or `-w`, an attention layer's decoding step
+  per KV format); the test runner's `--bench-vulkan`/`--bench-gemv` time backend internals the tool cannot reach, so
+  they stay in the test runner. GFLOP/s of a model is 2 x parameters per token (attention not counted).
+- `eval`: `--metric`, `--max-tokens`, `--batch`, `--limit`, `--think`/`--no-think`, `-o` (answers as JSON Lines).
+- `perplexity`: `--window N` (non-overlapping windows), `--max-tokens N`.
+- `profile`: `--prompt-tokens N`, `--top N`; each top-level layer timed with the device drained, the inner layers and
+  operations from telemetry, kernels from the GPU profiler where the device times them (CUDA).
+- `check`: exit code 1 when anything differs (the sample returned 2, which the tool keeps for usage errors).
+- `tuning show`: `--backend cpu|cuda|vulkan`; also reads the CPU's measured cut-overs.
+- `rag index`: `-m MODEL` adds vectors (hybrid, fused with k 60), `--chunk`, `--overlap`, `--sentences`,
+  `--extensions`, `--max-tokens`, `-f`/`--force`; one index file holds the library's index plus the vectors and the
+  name of the model that made them. `rag search`/`rag eval`: `--top`; `rag eval` reads `{"question", "document"
+  and/or "passage"}` rows. `rag ask`: `--top`, `-s`, `--max-tokens`, `--temperature`, `--think`/`--no-think`, streams
+  the answer and lists the cited passages.
+- Gaps: the library has no embedding-model loader (a bi-encoder from a Hugging Face embedding model), so `rag index
+  -m` embeds with a chat model's averaged hidden states, a rough complement to BM25; `RetrievalIndex.Save` does not
+  keep the vectors of a non-`TextEncoder` embedder (the tool stores them itself); eval metrics beyond
+  number/exact/contains/F1 wait for plug-in gap 16. `--format csv|md` and `--output` (second pass) apply once the
+  Health agent's common options land.
+
 ### Design a model
 
 | Command | What it does | Priority |
