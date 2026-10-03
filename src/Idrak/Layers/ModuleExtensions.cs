@@ -146,7 +146,25 @@ public static class ModuleExtensions
     /// <param name="targets">Which layers get an adapter, e.g. <c>l =&gt; true</c> or <c>l =&gt; l.OutFeatures == 3 * dim</c>.</param>
     /// <param name="freezeBase">Freeze the existing parameters (the usual LoRA setup).</param>
     /// <param name="random">Source of A's initial values; pass a seeded <see cref="Random"/> for reproducible runs.</param>
-    public static int AddLora(this Module model, int rank, float alpha, Func<Linear, bool> targets, bool freezeBase, Random? random = null)
+    public static int AddLora(this Module model, int rank, float alpha, Func<Linear, bool> targets, bool freezeBase, Random? random = null) =>
+        AddAdapters(model, rank, alpha, targets, freezeBase, random, dora: false);
+
+    /// <summary>
+    /// Adds a DoRA adapter (<see cref="DoraAdapter"/>: LoRA on the weight's direction and a trainable magnitude per
+    /// output) to every <see cref="Linear"/> inside <paramref name="model"/> for which <paramref name="targets"/> returns
+    /// true, as <see cref="AddLora"/> adds LoRA adapters: A uniform in ±1/√in, B zero, the magnitude the weight's norm per
+    /// output column, so the outputs are unchanged until training. Returns how many were added.
+    /// </summary>
+    /// <param name="model">The model to adapt.</param>
+    /// <param name="rank">The adapter rank r.</param>
+    /// <param name="alpha">Scaling numerator; the low-rank term is multiplied by alpha / r.</param>
+    /// <param name="targets">Which layers get an adapter.</param>
+    /// <param name="freezeBase">Freeze the existing parameters (the usual setup).</param>
+    /// <param name="random">Source of A's initial values.</param>
+    public static int AddDora(this Module model, int rank, float alpha, Func<Linear, bool> targets, bool freezeBase, Random? random = null) =>
+        AddAdapters(model, rank, alpha, targets, freezeBase, random, dora: true);
+
+    private static int AddAdapters(Module model, int rank, float alpha, Func<Linear, bool> targets, bool freezeBase, Random? random, bool dora)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(rank);
         ArgumentNullException.ThrowIfNull(targets);
@@ -161,7 +179,7 @@ public static class ModuleExtensions
         {
             if (linear.Adapter is not null)
             {
-                throw new InvalidOperationException($"{linear} already has a LoRA adapter.");
+                throw new InvalidOperationException($"{linear} already has an adapter.");
             }
 
             var device = linear.Device;
@@ -172,10 +190,12 @@ public static class ModuleExtensions
                 a[i] = (random.NextSingle() * 2f - 1f) * bound;
             }
 
-            linear.Adapter = new LoraAdapter(
-                Tensor.Persistent(a, [linear.InFeatures, rank], device, requiresGrad: true),
-                Tensor.Persistent(new float[rank * linear.OutFeatures], [rank, linear.OutFeatures], device, requiresGrad: true),
-                rank, alpha / rank);
+            var down = Tensor.Persistent(a, [linear.InFeatures, rank], device, requiresGrad: true);
+            var up = Tensor.Persistent(new float[rank * linear.OutFeatures], [rank, linear.OutFeatures], device, requiresGrad: true);
+            linear.Adapter = dora
+                ? new DoraAdapter(down, up, Tensor.Persistent([.. DoraAdapter.SquaredNorms(linear).Select(MathF.Sqrt)], [linear.OutFeatures], device, requiresGrad: true),
+                    rank, alpha / rank)
+                : new LoraAdapter(down, up, rank, alpha / rank);
             added++;
         }
 
@@ -277,7 +297,7 @@ public static class ModuleExtensions
         return count;
     }
 
-    /// <summary>Folds every LoRA adapter into its layer's weight and removes it (smaller, faster model; same outputs).</summary>
+    /// <summary>Folds every adapter (LoRA, DoRA or another <see cref="ILinearAdapter"/>) into its layer's weight and removes it (smaller, faster model; same outputs).</summary>
     public static int MergeLora(this Module model)
     {
         int merged = 0;
@@ -288,6 +308,36 @@ public static class ModuleExtensions
         }
 
         return merged;
+    }
+
+    /// <summary>
+    /// Detaches every adapter inside <paramref name="model"/> until the result is disposed, so the model computes as its
+    /// base model (the reference model of preference losses, or a comparison with the base) without a second copy of it;
+    /// disposing puts the same adapters back, their values and training state unchanged.
+    /// </summary>
+    public static IDisposable DisableAdapters(this Module model)
+    {
+        ArgumentNullException.ThrowIfNull(model);
+        var detached = model.Descendants().OfType<Linear>().Where(l => l.Adapter is not null).Select(l => (l, l.Adapter)).ToList();
+        foreach (var (linear, _) in detached)
+        {
+            linear.Adapter = null;
+        }
+
+        return new AdapterRestore(detached);
+    }
+
+    private sealed class AdapterRestore(List<(Linear Layer, ILinearAdapter? Adapter)> detached) : IDisposable
+    {
+        public void Dispose()
+        {
+            foreach (var (layer, adapter) in detached)
+            {
+                layer.Adapter = adapter;
+            }
+
+            detached.Clear();
+        }
     }
 
     private static T SetTrainable<T>(T module, IEnumerable<Tensor> parameters, bool trainable) where T : Module

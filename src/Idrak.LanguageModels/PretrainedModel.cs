@@ -134,6 +134,8 @@ public sealed class PretrainedModel : IDisposable
             {
                 throw new InvalidDataException($"The adapter in {options.MergeAdapter} matches none of the model's weights.");
             }
+
+            adapter.CheckAllUsed();
         }
 
         notes.InsertRange(0, format.Notes(folder));                 // where the weights come from, first
@@ -171,13 +173,16 @@ public sealed class PretrainedModel : IDisposable
         new(CreateGenerator(cacheLayout, contextLength), ChatTemplate ?? throw new InvalidOperationException("The model has no chat template."));
 
     /// <summary>
-    /// Adds LoRA adapters (rank <paramref name="rank"/>, scale alpha / rank) to the projections named in
-    /// <paramref name="targets"/> (q, k, v, o, gate, up, down, head) and freezes everything else. Returns how many were added.
+    /// Adds LoRA adapters (rank <paramref name="rank"/>, scale alpha / rank), or DoRA adapters with <paramref name="dora"/>
+    /// (see <see cref="DoraAdapter"/>), to the projections named in <paramref name="targets"/> (q, k, v, o, gate, up,
+    /// down, head) and freezes everything else. Returns how many were added.
     /// </summary>
-    public int AddAdapters(int rank, float alpha, IEnumerable<string> targets, int seed = 0)
+    public int AddAdapters(int rank, float alpha, IEnumerable<string> targets, int seed = 0, bool dora = false)
     {
         var names = targets.ToHashSet(StringComparer.Ordinal);
-        return Network.AddLora(rank, alpha, l => l.Name is { } name && names.Contains(name) && l.TiedTo is null, freezeBase: true, new Random(seed));
+        Func<Linear, bool> chosen = l => l.Name is { } name && names.Contains(name) && l.TiedTo is null;
+        return dora ? Network.AddDora(rank, alpha, chosen, freezeBase: true, new Random(seed))
+            : Network.AddLora(rank, alpha, chosen, freezeBase: true, new Random(seed));
     }
 
     /// <summary>The model's modules with their Idrak paths (layers.3.attn.q, norm, …), which name their weights.</summary>
@@ -205,7 +210,8 @@ public sealed class PretrainedModel : IDisposable
     /// <summary>
     /// Writes the LoRA adapters in the PEFT layout (adapter_model.safetensors with base_model.model.… names, A as
     /// [rank, in] and B as [out, rank]; adapter_config.json), which transformers / peft / vLLM load on top of the
-    /// original checkpoint, and <see cref="LoadAdapter"/> reads back.
+    /// original checkpoint, and <see cref="LoadAdapter"/> reads back. DoRA adapters add their magnitude vectors
+    /// (lora_magnitude_vector, [out]) and <c>use_dora: true</c>; a model cannot mix LoRA and DoRA adapters in one folder.
     /// </summary>
     public void SaveAdapter(string folder)
     {
@@ -214,19 +220,36 @@ public sealed class PretrainedModel : IDisposable
         var modules = new SortedSet<string>(StringComparer.Ordinal);
         int rank = 0;
         float alpha = 0f;
+        bool? dora = null;
         foreach (var (path, module) in NamedModules())
         {
-            if (module is not Linear { Adapter: { } adapter } linear)
+            if (module is not Linear { Adapter: { } any } linear)
             {
                 continue;
             }
 
+            var (a, b, magnitude, adapterRank, scale) = any switch
+            {
+                LoraAdapter l => (l.A, l.B, (Tensor?)null, l.Rank, l.Scale),
+                DoraAdapter d => (d.A, d.B, d.Magnitude, d.Rank, d.Scale),
+                _ => throw new InvalidOperationException($"{linear}: a {any.GetType().Name} has no PEFT layout; only LoRA and DoRA adapters are saved."),
+            };
+            if (dora is { } kind && kind != magnitude is not null)
+            {
+                throw new InvalidOperationException("The model has both LoRA and DoRA adapters; PEFT stores one kind per folder.");
+            }
+
+            dora = magnitude is not null;
             string weight = CheckpointName($"{path}.weight");
             string prefix = "base_model.model." + weight[..^".weight".Length];
             modules.Add(weight.Split('.')[^2]);
-            (rank, alpha) = (adapter.Rank, adapter.Scale * adapter.Rank);
-            tensors.Add(($"{prefix}.lora_A.weight", [adapter.Rank, linear.InFeatures], HostParallel.Transpose(adapter.A.ToArray(), linear.InFeatures, adapter.Rank)));
-            tensors.Add(($"{prefix}.lora_B.weight", [linear.OutFeatures, adapter.Rank], HostParallel.Transpose(adapter.B.ToArray(), adapter.Rank, linear.OutFeatures)));
+            (rank, alpha) = (adapterRank, scale * adapterRank);
+            tensors.Add(($"{prefix}.lora_A.weight", [adapterRank, linear.InFeatures], HostParallel.Transpose(a.ToArray(), linear.InFeatures, adapterRank)));
+            tensors.Add(($"{prefix}.lora_B.weight", [linear.OutFeatures, adapterRank], HostParallel.Transpose(b.ToArray(), adapterRank, linear.OutFeatures)));
+            if (magnitude is not null)
+            {
+                tensors.Add(($"{prefix}.lora_magnitude_vector", [linear.OutFeatures], magnitude.ToArray()));
+            }
         }
 
         if (tensors.Count == 0)
@@ -239,7 +262,7 @@ public sealed class PretrainedModel : IDisposable
         var config = new JsonObject
         {
             ["peft_type"] = "LORA", ["task_type"] = "CAUSAL_LM", ["r"] = rank, ["lora_alpha"] = alpha, ["lora_dropout"] = 0.0,
-            ["bias"] = "none", ["fan_in_fan_out"] = false, ["inference_mode"] = true,
+            ["bias"] = "none", ["fan_in_fan_out"] = false, ["inference_mode"] = true, ["use_dora"] = dora == true,
             ["target_modules"] = new JsonArray([.. modules.Select(m => (JsonNode)m)]),
             ["base_model_name_or_path"] = (string?)Config["_name_or_path"] ?? Path.GetFileName(Path.TrimEndingDirectorySeparator(Folder)),
         };
@@ -248,45 +271,77 @@ public sealed class PretrainedModel : IDisposable
 
     /// <summary>
     /// Reads LoRA adapters in the PEFT layout (from <see cref="SaveAdapter"/>, or trained with peft on the same base
-    /// model) and attaches them to the matching projections. Returns how many layers received one.
+    /// model) and attaches them to the matching projections. Returns how many layers received one. The configuration is
+    /// checked first: another peft_type, or an option Idrak does not apply (per-module ranks, trained biases, modules to
+    /// save), is refused with an error, as is a file holding tensors for layers the model does not adapt; use_rslora sets
+    /// the scale to alpha / √r; use_dora loads DoRA adapters (<see cref="DoraAdapter"/>) with their magnitude vectors.
     /// </summary>
     public int LoadAdapter(string folder)
     {
-        var config = JsonNode.Parse(File.ReadAllText(Path.Combine(folder, "adapter_config.json")))!.AsObject();
-        int rank = (int?)config["r"] ?? throw new InvalidDataException("adapter_config.json has no r.");
-        float alpha = (float?)config["lora_alpha"] ?? rank;
+        var config = PeftAdapterConfig.Read(folder);
         using var reader = SafeTensorsReader.Open(Path.Combine(folder, "adapter_model.safetensors"));
-        int loaded = 0;
-        foreach (var (path, module) in NamedModules().ToList())
+        var found = new List<(Linear Layer, string A, string B, string? Magnitude)>();
+        var used = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var (path, module) in NamedModules())
         {
-            if (module is not Linear linear || Architecture.TensorName($"{path}.weight") is not { } weight)
+            if (module is Linear linear && Architecture.TensorName($"{path}.weight") is { } weight
+                && config.Names(reader, weight[..^".weight".Length]) is var (a, b, magnitude))
             {
-                continue;
+                found.Add((linear, a, b, magnitude));
+                used.UnionWith(new[] { a, b, magnitude }.OfType<string>());
             }
+        }
 
-            string prefix = "base_model.model." + weight[..^".weight".Length];
-            string a = $"{prefix}.lora_A.weight", b = $"{prefix}.lora_B.weight";
-            if (!reader.Contains(a))
+        PeftAdapterConfig.CheckAllUsed(reader, used, folder);                   // before any layer changes
+        foreach (var (linear, a, b, magnitude) in found)
+        {
+            int rank = reader.Tensors[a].Shape[0];
+            bool fits = linear.Adapter switch
             {
-                (a, b) = ($"{prefix}.lora_A.default.weight", $"{prefix}.lora_B.default.weight");
-                if (!reader.Contains(a))
-                {
-                    continue;
-                }
+                null => true,
+                LoraAdapter l => magnitude is null && l.Rank == rank,
+                DoraAdapter d => magnitude is not null && d.Rank == rank,
+                _ => false,
+            };
+            if (!fits)
+            {
+                throw new InvalidDataException($"{linear} has an adapter of another kind or rank than the rank-{rank} {(magnitude is null ? "LoRA" : "DoRA")} adapter in {folder}.");
             }
 
             if (linear.Adapter is null)
             {
-                linear.AddLora(rank, alpha, l => ReferenceEquals(l, linear), freezeBase: false);
+                if (magnitude is null)
+                {
+                    linear.AddLora(rank, config.Alpha, l => ReferenceEquals(l, linear), freezeBase: false);
+                }
+                else
+                {
+                    linear.AddDora(rank, config.Alpha, l => ReferenceEquals(l, linear), freezeBase: false);
+                }
             }
 
-            var adapter = linear.Adapter!;
-            adapter.A.Load(HostParallel.Transpose(reader.Read(a), adapter.Rank, linear.InFeatures));
-            adapter.B.Load(HostParallel.Transpose(reader.Read(b), linear.OutFeatures, adapter.Rank));
-            loaded++;
+            (Tensor down, Tensor up) = linear.Adapter switch
+            {
+                LoraAdapter l => (l.A, l.B),
+                DoraAdapter d => (d.A, d.B),
+                _ => throw new InvalidOperationException($"{linear} has no LoRA or DoRA adapter."),
+            };
+            if (linear.Adapter is LoraAdapter lora)
+            {
+                linear.Adapter = lora with { Scale = config.Scale };
+            }
+            else if (linear.Adapter is DoraAdapter old)
+            {
+                old.Magnitude.Load(reader.Read(magnitude!));
+                linear.Adapter = new DoraAdapter(old.A, old.B, old.Magnitude, old.Rank, config.Scale);
+                old.Dispose();
+            }
+
+            down.Load(HostParallel.Transpose(reader.Read(a), rank, linear.InFeatures));
+            up.Load(HostParallel.Transpose(reader.Read(b), linear.OutFeatures, rank));
         }
 
-        return loaded;
+        return found.Count;
     }
 
     /// <summary>

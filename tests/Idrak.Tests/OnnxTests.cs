@@ -372,7 +372,7 @@ internal static partial class Tests
         tuned.AddLora(rank: 2, alpha: 4, targets: _ => true, freezeBase: true, random: new Random(17));
         foreach (var linear in tuned.OfType<Linear>())
         {
-            linear.Adapter!.B.Load([.. Enumerable.Range(0, linear.Adapter.B.Size).Select(i => MathF.Sin(i))]);   // a non-zero update
+            linear.Lora!.B.Load([.. Enumerable.Range(0, linear.Lora.B.Size).Select(i => MathF.Sin(i))]);   // a non-zero update
         }
 
         CheckOnnx(tuned, [5], RandomInput(device, r, 3, 5), "lora");

@@ -254,7 +254,7 @@ public sealed partial class Tensor
         input.ThrowIfDisposed();
         int k = input._shape[^1], m = input.Size / Math.Max(1, k);
         if (!input.Backend.Capabilities.MatrixUnits || layers.Count is < 1 or > 3 || m < 64 || k < 32 || !MixedPrecision.UsesTensorCores
-            || layers[0].Adapter is not { } first || first.Rank > 32)
+            || layers[0].Lora is not { } first || first.Rank > 32)
         {
             return null;
         }
@@ -268,7 +268,7 @@ public sealed partial class Tensor
             bool fits = dense
                 ? layer.PackedWeight is null && layer.TiedTo is null && layers.Count == 1 && !layer.Weight.RequiresGrad
                 : layer.PackedWeight is { LowRankProducts: true, Format: { } own } && own == packedFormat;
-            if (!fits || layer.InFeatures != k || layer.Adapter is not { } adapter || adapter.Rank != first.Rank
+            if (!fits || layer.InFeatures != k || layer.Lora is not { } adapter || adapter.Rank != first.Rank
                 || adapter.A.Device != input.Device || withBias && layer.Bias is { RequiresGrad: true })
             {
                 return null;
@@ -283,7 +283,7 @@ public sealed partial class Tensor
         var outputs = new Tensor[layers.Count];
         for (int j = 0; j < layers.Count; j++)
         {
-            var adapter = layers[j].Adapter!;
+            var adapter = layers[j].Lora!;
             us[j] = Empty([m, rank], input.Device);                                      // scale · x·A (kept for dB)
             backend.BatchedMatMul(flat.Storage, adapter.A.Storage, us[j].Storage, 1, m, rank, k, false, false, 0f);
             backend.Affine(us[j].Storage, us[j].Storage, m * rank, adapter.Scale, 0f);
@@ -298,7 +298,7 @@ public sealed partial class Tensor
             for (int j = 0; j < layers.Count && done; j++)
             {
                 var f8 = layers[j].Float8!;
-                backend.BatchedMatMul(us[j].Storage, layers[j].Adapter!.B.Storage, outputs[j].Storage, 1, m, layers[j].OutFeatures, rank, false, false, 0f);
+                backend.BatchedMatMul(us[j].Storage, layers[j].Lora!.B.Storage, outputs[j].Storage, 1, m, layers[j].OutFeatures, rank, false, false, 0f);
                 done = backend.Float8MatMul(flat.Storage, m, k, f8.Values.Storage, f8.Scales.Storage, f8.Columns, outputs[j].Storage, 1f);
             }
         }
@@ -306,13 +306,13 @@ public sealed partial class Tensor
         if (!done && dense)
         {
             done = backend.MatMulLowRank(flat.Storage, layers[0].Weight.Storage, outputs[0].Storage, m, layers[0].OutFeatures, k, false, 0f,
-                us[0].Storage, layers[0].Adapter!.B.Storage, rank);
+                us[0].Storage, layers[0].Lora!.B.Storage, rank);
         }
         else if (!done)
         {
             done = backend.PackedMatMulLowRank(packedFormat!.Value, flat.Storage, m, k,
                 [.. layers.Select((l, j) => (l.PackedWeight!.PackedValues.Storage, l.PackedWeight.ScaleValues?.Storage,
-                    outputs[j].Storage, l.OutFeatures, us[j].Storage, l.Adapter!.B.Storage))], rank);
+                    outputs[j].Storage, l.OutFeatures, us[j].Storage, l.Lora!.B.Storage))], rank);
         }
 
         if (!done)
@@ -339,7 +339,7 @@ public sealed partial class Tensor
                 backend.AddRowVector(outputs[j].Storage, bias.Storage, outputs[j].Storage, m, layer.OutFeatures);   // frozen: no gradient
             }
 
-            var (a, b, scale) = (layer.Adapter!.A, layer.Adapter.B, layer.Adapter.Scale);
+            var (a, b, scale) = (layer.Lora!.A, layer.Lora.B, layer.Lora.Scale);
             var u = us[j];
             int n = layer.OutFeatures;
             if (Autograd.IsEnabled && (flat.RequiresGrad || a.RequiresGrad || b.RequiresGrad))

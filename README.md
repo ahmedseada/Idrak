@@ -67,7 +67,7 @@ Set `IDRAK_DISABLE_CUDA=1` to force the CPU.
 | Weight formats | safetensors; GGUF (F32/F16/BF16, Q4_0 to Q8_0, K-quants, IQ4) |
 | Generation | Streaming, batches, sampling (temperature, top-k/p, min-p, penalties), float32, int8 or bfloat16 KV caches |
 | Chat | Each model's own Jinja template, reasoning, tool calls, conversations, a coding agent |
-| Fine-tuning | LoRA / QLoRA, packing, assistant-only loss, PEFT adapters, merged export |
+| Fine-tuning | LoRA, DoRA and QLoRA, packing, assistant-only loss, DPO / ORPO / SimPO on preference pairs, any optimizer, schedule or loss, PEFT adapters (checked), merged export |
 | Evaluation | Answer scoring by log-probabilities, answer metrics |
 
 ### Retrieval, serving and deployment
@@ -104,6 +104,8 @@ points"):
 | Dataset file formats, sources, Parquet codecs | `DataFileFormats`, `DatasetSources`, `ParquetCodecs` | `Idrak.Datasets` |
 | Optimizers | derive from `Optimizer` | `Idrak` |
 | Differentiable operations | `Autograd.Function(name, forward, backward)` | `Idrak` |
+| Adapters on linear layers | `ILinearAdapter` (LoRA and DoRA built in) on `Linear.Adapter` | `Idrak` |
+| Fine-tuning optimizer, schedule and loss | `FineTuningOptions.Optimizer`, `Scheduler`, `Loss` | `Idrak.LanguageModels` |
 | Devices (backends) | the device registry, internal until the public backend API (plans/7-backends.md, item 12c) | `Idrak` |
 
 ### Hardware
@@ -1046,6 +1048,34 @@ gpt.AddLora(rank: 8, alpha: 16, targets: layer => true, freezeBase: true);   // 
 gpt.MergeLora();                                                // fold them into the weights
 ```
 
+Language models (`Idrak.LanguageModels`) train adapters with `FineTuner`; the defaults are AdamW, a warm-up and cosine
+decay, and the token cross-entropy of the assistant's tokens. Each can be replaced, and preference pairs train with DPO,
+ORPO or SimPO:
+
+```csharp
+var options = new FineTuningOptions
+{
+    Rank = 16, Alpha = 32, LearningRate = 2e-4f,
+    Dora = true,                                                          // DoRA instead of LoRA (saved with use_dora)
+    Optimizer = ps => new Sgd(ps, 0.05f, momentum: 0.9f),                 // or FineTuningOptimizers.Create("adamw8bit", 2e-4f)
+    Scheduler = FineTuningSchedules.WarmupStableDecay(0.03f, 0.2f),       // cosine, linear, constant, wsd; or your own
+};
+FineTuner.Train(model, sequences, evaluation, options, "adapters/sft");
+
+// Preference pairs: {"prompt", "chosen", "rejected"} rows (TRL's layouts) train only the answers.
+var pairs = rows.Select(r => encoder.EncodePreference(r, 2048)).OfType<PreferencePair>().ToList();
+FineTuner.Train(model, pairs, null, options with { Loss = FineTuningLosses.Dpo(beta: 0.1f) }, "adapters/dpo");
+```
+
+A loss is a delegate over the log-probabilities of the trained tokens (`FineTuningLossInput`: per token, summed or
+averaged per sequence, chosen and rejected answers, and for DPO the reference model's values), written with ordinary
+tensor operations; the trainer turns its gradient into the network's with one more pass of the output head, so the full
+logits are never stored. DPO's reference model is the same model with its adapters disabled (`DisableAdapters`), so no
+second copy is loaded. The default loss records each step as a graph on devices that record graphs; so does another
+optimizer that keeps its gradient buffers (every built-in one but the CPU update, which runs ordinary steps). PEFT
+adapters are checked when loaded: another `peft_type`, per-module ranks, trained biases or modules to save are refused
+with an error instead of being read as plain LoRA.
+
 ## Extending Idrak: plug-in points
 
 Formats, operators, model families and data sources plug in through registries and interfaces, without changing the
@@ -1072,6 +1102,8 @@ the registered names and how to register.
 | Model sources (`name:` prefixes, asked before the built-ins) | `ModelSources.Register(IModelSource)` | `Idrak.LanguageModels` |
 | Tokenizer normalizers, pre-tokenizers, decoders | `TokenizerComponents.RegisterNormalizer` / `RegisterPreTokenizer` / `RegisterDecoder` | `Idrak.LanguageModels` |
 | Dataset file formats, sources, Parquet codecs | `DataFileFormats.Register`, `DatasetSources.Register`, `ParquetCodecs.Register` | `Idrak.Datasets` |
+| Adapters on linear layers (LoRA and DoRA built in) | implement `ILinearAdapter`, set `Linear.Adapter` | `Idrak` |
+| Fine-tuning optimizers, learning-rate schedules and losses | `FineTuningOptions.Optimizer`, `Scheduler` and `Loss` (a `FineTuningLoss` delegate) | `Idrak.LanguageModels` |
 
 Chat templates are read from each model's own Jinja template (`tokenizer_config.json` or GGUF metadata), and the
 tool-call format is read off that template, so a new model family needs no code for either: `JinjaChatTemplate`
@@ -1246,7 +1278,7 @@ The 170 tests, by area:
 | Quantization | 11 | int8, int4 and bfloat16 weights (products, gradients, save/load, QLoRA); packed projections; half-precision files; int8 KV cache |
 | Decoder | 8 | RMSNorm, rotary embeddings and tiled attention (with gradients); every DecoderSpec variant against a plain reference; cached decoding through quantized weights; LoRA by layer name |
 | Language models | 7 | safetensors; Hugging Face checkpoints through the registry; BPE tokenizers (byte-level and SentencePiece); text with half a character; Jinja templates against jinja2; a Qwen3 template as transformers renders it; tool-call formats |
-| Fine-tuning and scoring | 19 | chunked cross-entropy and LoRA terms in tensor-core products; sequence packing; CUDA-graph steps; out-of-memory fallbacks; checkpointing; answer balancing; answer scoring; model download; PEFT adapters and merged export |
+| Fine-tuning and scoring | 27 | chunked cross-entropy and LoRA terms in tensor-core products; sequence packing; CUDA-graph steps; out-of-memory fallbacks; checkpointing; answer balancing; answer scoring; model download; PEFT adapters (checked) and merged export; optimizer, schedule and loss options; DPO, ORPO and SimPO; DoRA |
 | Mixed precision | 11 | bfloat16 and 8-bit (FP8, int8) tensor-core products; flash attention (forward and backward); fused LayerNorm and decoder blocks; 8-bit AdamW |
 | Coding agent | 4 | workspace-bound file tools; allowlisted commands; agent transcripts; a task run and verified |
 | Datasets | 7 | Parquet (as pyarrow reads it); JSON Lines, JSON, CSV, text, archives; lazy transforms; download cache; conversation layouts; recipes; hub sources against a fake server |

@@ -63,6 +63,21 @@
 - Gemma 2 and Gemma 3 (text) are registered model families.
 - `PretrainedArchitecture.Build`: a family can build its own network from the config, the weights and the build
   options instead of a `DecoderSpec`. `PretrainedArchitectures.Unregister`.
+- Fine-tuning options: `FineTuningOptions.Optimizer`, `Scheduler` and `Loss` replace the fixed AdamW, cosine schedule
+  and token cross-entropy (null keeps them, with the same results and recorded steps). Built-ins in
+  `FineTuningOptimizers`, `FineTuningSchedules` (cosine, linear, constant, warm-up/stable/decay) and `FineTuningLosses`.
+  Recorded steps work with any optimizer that keeps its gradient buffers; others run ordinary steps.
+- Preference training: DPO (with label smoothing), ORPO and SimPO over `PreferencePair`s, read from TRL's preference
+  layouts (`RowKind.Preference`, `ChatRows.Preference`, `ChatTranscriptEncoder.EncodePreference`); DPO's reference is the
+  model with its adapters disabled (`ModuleExtensions.DisableAdapters`).
+- Adapters: `Linear.Adapter` is an `ILinearAdapter` (LoRA one implementation; `Linear.Lora` for the LoRA case) and
+  `DoraAdapter` adds DoRA (`AddDora`, `FineTuningOptions.Dora`), saved and loaded in the PEFT format with `use_dora` and
+  merged like LoRA. Code reading `linear.Adapter.A` reads `linear.Lora.A` now.
+- PEFT adapters are checked: another `peft_type`, per-module ranks or alphas, trained biases, modules to save and tensors
+  no layer takes are refused with an error instead of loading as plain LoRA; `LoadAdapter` applies `use_rslora`.
+- idrak-tune: `--optimizer`, `--schedule`, `--warmup`, `--min-lr`, `--weight-decay`, `--loss dpo|orpo|simpo`,
+  `--beta`, `--margin`, `--adapter-type lora|dora`.
+
 - Direct decoding steps (not recorded as a graph) keep the residual addition fused with the next block's RMS norm for
   that norm: `Sequential` freed it with the layer's intermediate results, so the norm ran again, one kernel more per
   layer and token on every device (74 dispatches per token instead of 82 for the medium decoder of `--bench-vulkan`).

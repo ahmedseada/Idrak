@@ -30,6 +30,14 @@ internal static partial class Tests
         ("fine-tuning: agent transcripts through the chat template, assistant-only tokens, LoRA and QLoRA training, PEFT adapters, merged export", AgentFineTuning),
         ("fine-tuning: a conversation too long for the maximum length keeps its whole answer (the user message is shortened, its start kept); rows encode on all cores in order", LongMessageKeepsAnswer),
         ("fine-tuning: an adapter folder's manifest round-trips, names a local base model by its full path, and loads the model with the adapter merged", ManifestRoundTrip),
+        ("fine-tuning options: AdamW and cosine given explicitly match the default; another optimizer's recorded steps match its ordinary ones; an optimizer that cannot be recorded runs ordinary steps; the built-in schedules", OptimizerAndSchedule),
+        ("fine-tuning options: the token cross-entropy as a loss delegate trains as the fused default does (with gradient accumulation)", LossHook),
+        ("fine-tuning options: DPO, conservative DPO, ORPO and SimPO match their formulas for fixed log-probabilities (and DPO its gradient)", PreferenceFormulas),
+        ("fine-tuning options: DPO (reference: adapters disabled), ORPO and SimPO lower their loss on preference pairs; DPO starts at log 2; disabled adapters give the base model", PreferenceTraining),
+        ("fine-tuning options: preference rows in TRL's layouts read as one shape; only the answers train", PreferenceRows),
+        ("fine-tuning options: a DoRA layer (float and 4-bit bases) gives the reference output and magnitude gradient; merging keeps the output", DoraLayer),
+        ("fine-tuning options: DoRA adapters start as the identity, train, round-trip through the PEFT files (use_dora, magnitude vectors), merge while loading and export; DoRA over a 4-bit base", DoraTraining),
+        ("fine-tuning options: PEFT adapters with another peft_type, unsupported options or tensors for layers not adapted are refused; use_rslora scales by alpha / sqrt(r)", PeftConfigChecks),
     ];
 
     private static void HostOffload(Device device)
@@ -922,7 +930,7 @@ internal static partial class Tests
         {
             using var head = new Linear(Dim, Vocabulary, bias: true, device, new Random(82));
             head.AddLora(rank: 2, alpha: 2, targets: _ => true, freezeBase: true, random: new Random(83));
-            head.Adapter!.B.Load(adapterB);
+            head.Lora!.B.Load(adapterB);
             using var scope = new TensorScope();
             var hidden = Tensor.From(hiddenValues, [Rows, Dim], device, requiresGrad: true);
             Tensor loss;
@@ -953,7 +961,7 @@ internal static partial class Tests
 
             loss.Backward();
             hiddenGrad = hidden.Grad!.ToArray();
-            adapterGrad = head.Adapter.A.Grad!.ToArray();
+            adapterGrad = head.Lora!.A.Grad!.ToArray();
             return loss.ToArray();
         }
 
@@ -1144,14 +1152,14 @@ internal static partial class Tests
                         ys = [.. layers.Select(l =>
                         {
                             var product = l.BFloat16 is { } h ? x.MatMulBFloat16(h) : l.Int4 is { } q ? x.MatMulInt4(q) : x.MatMul(l.Weight);
-                            return product + x.MatMul(l.Adapter!.A).MatMul(l.Adapter.B) * l.Adapter.Scale;
+                            return product + x.MatMul(l.Lora!.A).MatMul(l.Lora!.B) * l.Lora!.Scale;
                         })];
                     }
 
                     var loss = ys.Select((y, j) => (y * Tensor.From(coefficients[j], [Batch, Steps, Out], device)).Sum()).Aggregate((p, q) => p + q);
                     loss.Backward();
-                    return [.. ys.Select(y => y.ToArray()), x.Grad!.ToArray(), .. layers.Select(l => l.Adapter!.A.Grad!.ToArray()),
-                        .. layers.Select(l => l.Adapter!.B.Grad!.ToArray())];
+                    return [.. ys.Select(y => y.ToArray()), x.Grad!.ToArray(), .. layers.Select(l => l.Lora!.A.Grad!.ToArray()),
+                        .. layers.Select(l => l.Lora!.B.Grad!.ToArray())];
                 }
 
                 var expected = Run(false);
