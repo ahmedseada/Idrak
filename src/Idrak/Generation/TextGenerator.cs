@@ -154,12 +154,13 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
 
     /// <summary>
     /// Whether <see cref="GenerateBatch"/> decodes several prompts together on this model and device (attention from
-    /// per-row starts: on CUDA, bfloat16 tensor cores with head size 64 or 128); otherwise it runs them one by one.
+    /// per-row starts: on CUDA, bfloat16 tensor cores with head size 64 or 128; no attention layer with a sliding window or
+    /// soft-capped scores); otherwise it runs them one by one.
     /// </summary>
     public bool SupportsBatches =>
         Model.Descendants().OfType<CausalSelfAttention>().ToList() is { Count: > 0 } attention
         && !Model.Descendants().Any(m => m is MultiHeadAttention or PositionalEncoding)
-        && attention.All(a => Device.Backend.SupportsSegmentedAttention(a.HeadDim));
+        && attention.All(a => a.PlainCausal && Device.Backend.SupportsSegmentedAttention(a.HeadDim));
 
     /// <summary>
     /// Generates the continuations of several prompts together (one batch through the model per token, so the GPU

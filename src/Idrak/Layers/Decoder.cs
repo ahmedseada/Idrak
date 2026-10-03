@@ -84,14 +84,6 @@ public sealed class RMSNorm : Module
     public override string ToString() => $"RMSNorm({Features})";
 }
 
-/// <summary>How rotary position embeddings stretch their frequencies for contexts longer than the model was trained on.</summary>
-/// <param name="Type">"linear" (positions divided by <paramref name="Factor"/>) or "llama3" (low frequencies stretched, high kept).</param>
-/// <param name="Factor">The stretch factor.</param>
-/// <param name="LowFrequencyFactor">llama3: wavelengths longer than original / this are fully stretched.</param>
-/// <param name="HighFrequencyFactor">llama3: wavelengths shorter than original / this are kept.</param>
-/// <param name="OriginalMaxPositions">llama3: the training context length.</param>
-public sealed record RopeScaling(string Type, float Factor, float LowFrequencyFactor = 1f, float HighFrequencyFactor = 4f, int OriginalMaxPositions = 8192);
-
 /// <summary>Rotary position embedding settings.</summary>
 /// <param name="Theta">The base of the frequencies (10000 in the original paper; larger for long-context models).</param>
 /// <param name="RotaryDim">Dimensions of each head that rotate (all when null).</param>
@@ -99,8 +91,14 @@ public sealed record RopeScaling(string Type, float Factor, float LowFrequencyFa
 /// <param name="Scaling">Frequency scaling for long contexts, or null.</param>
 public sealed record RopeSettings(float Theta, int? RotaryDim = null, bool Interleaved = false, RopeScaling? Scaling = null)
 {
-    /// <summary>The rotation frequency of each pair (after scaling).</summary>
-    public double[] Frequencies(int headDim)
+    /// <summary>The rotation frequency of each pair (after scaling; for a scaling whose frequencies depend on the position, those of the first positions).</summary>
+    public double[] Frequencies(int headDim) => Scaled(headDim).Frequencies;
+
+    /// <summary>
+    /// The frequencies of each pair and the factor on the cos and sin tables, after <see cref="Scaling"/> (computed by the
+    /// method registered for its type in <see cref="RopeScalings"/>).
+    /// </summary>
+    public RopeScalingResult Scaled(int headDim)
     {
         int rotary = RotaryDim ?? headDim, half = rotary / 2;
         var frequencies = new double[half];
@@ -109,41 +107,18 @@ public sealed record RopeSettings(float Theta, int? RotaryDim = null, bool Inter
             frequencies[i] = 1.0 / Math.Pow(Theta, 2.0 * i / rotary);
         }
 
-        switch (Scaling?.Type)
+        if (Scaling is null)
         {
-            case null:
-                break;
-            case "linear":
-                for (int i = 0; i < half; i++)
-                {
-                    frequencies[i] /= Scaling.Factor;
-                }
-
-                break;
-            case "llama3":
-                double lowWavelength = Scaling.OriginalMaxPositions / Scaling.LowFrequencyFactor;
-                double highWavelength = Scaling.OriginalMaxPositions / Scaling.HighFrequencyFactor;
-                for (int i = 0; i < half; i++)
-                {
-                    double wavelength = 2 * Math.PI / frequencies[i];
-                    if (wavelength > lowWavelength)
-                    {
-                        frequencies[i] /= Scaling.Factor;
-                    }
-                    else if (wavelength >= highWavelength)
-                    {
-                        double smooth = (Scaling.OriginalMaxPositions / wavelength - Scaling.LowFrequencyFactor)
-                            / (Scaling.HighFrequencyFactor - Scaling.LowFrequencyFactor);
-                        frequencies[i] = (1 - smooth) * frequencies[i] / Scaling.Factor + smooth * frequencies[i];
-                    }
-                }
-
-                break;
-            default:
-                throw new NotSupportedException($"RoPE scaling '{Scaling.Type}' is not supported (linear, llama3).");
+            return new RopeScalingResult(frequencies);
         }
 
-        return frequencies;
+        var result = RopeScalings.Get(Scaling.Type)(new RopeScalingInput(frequencies, Theta, rotary, Scaling.Parameters));
+        if (result.Frequencies.Length != half)
+        {
+            throw new InvalidOperationException($"RoPE scaling '{Scaling.Type}' returned {result.Frequencies.Length} frequencies; {half} expected.");
+        }
+
+        return result;
     }
 }
 
@@ -152,6 +127,13 @@ public sealed record RopeSettings(float Theta, int? RotaryDim = null, bool Inter
 /// "v"; output "o"), grouped-query attention (fewer key/value heads, each shared by a group of query heads),
 /// a head size independent of the model width, optional biases, optional RMS normalization of each head's queries and
 /// keys, and rotary position embeddings. Works with the KV cache (float32 or int8) for incremental decoding.
+/// <para>
+/// Optionally (<see cref="SlidingWindow"/>, <see cref="ScoreSoftcap"/>): each position attends only to the last positions
+/// up to a window (Mistral, Qwen2, Gemma 2 and 3), and the scores are soft-capped, cap · tanh(score / cap) (Gemma 2).
+/// The device attention kernels mask causally only, so a windowed layer whose window falls inside the sequence, and a
+/// soft-capped layer, attend through basic operations every backend has (the scores of all positions, masked); a window
+/// longer than the sequence uses the kernels, with identical results.
+/// </para>
 /// </summary>
 public sealed class CausalSelfAttention : Module, ICachedModule
 {
@@ -215,6 +197,7 @@ public sealed class CausalSelfAttention : Module, ICachedModule
         Heads = heads;
         KvHeads = kvHeads;
         HeadDim = headDim;
+        ScoreScale = 1f / MathF.Sqrt(headDim);
         Rope = rope;
         MaxPositions = maxPositions;
         if (rope is not null)
@@ -256,6 +239,40 @@ public sealed class CausalSelfAttention : Module, ICachedModule
     /// <summary>RMS normalization of each key head, or null.</summary>
     public RMSNorm? KeyNorm { get; }
 
+    /// <summary>The factor on each query·key product before the softmax (1 / √<see cref="HeadDim"/> unless set).</summary>
+    public float ScoreScale { get; init; }
+
+    /// <summary>
+    /// How many positions each query attends to, itself included (query position minus key position below the window),
+    /// or null for every earlier position. A window of <see cref="MaxPositions"/> or more is the same as none.
+    /// </summary>
+    public int? SlidingWindow
+    {
+        get => _window;
+        init => _window = value is null or > 0 ? value : throw new ArgumentOutOfRangeException(nameof(SlidingWindow), "The window must be positive.");
+    }
+
+    private readonly int? _window;
+
+    /// <summary>Soft-caps the scaled scores before the mask and softmax, cap · tanh(score / cap), or null for none.</summary>
+    public float? ScoreSoftcap
+    {
+        get => _softcap;
+        init => _softcap = value is null or > 0f ? value : throw new ArgumentOutOfRangeException(nameof(ScoreSoftcap), "The cap must be positive.");
+    }
+
+    private readonly float? _softcap;
+
+    // A window shorter than the longest sequence (else it never masks anything).
+    private bool Windowed => _window is { } w && w < MaxPositions;
+
+    /// <summary>Plain causal attention: no window that can mask and no soft-capping (what the segmented and per-row kernels compute).</summary>
+    internal bool PlainCausal => !Windowed && _softcap is null;
+
+    // Whether attention over keys at positions [0, keys) for queries ending at keys - 1 needs the composed path: soft-capped
+    // scores, or a window some query reaches past.
+    private bool Composed(int keys) => _softcap is not null || Windowed && keys > _window!.Value;
+
     private int Group => Heads / KvHeads;
 
     /// <inheritdoc />
@@ -285,9 +302,15 @@ public sealed class CausalSelfAttention : Module, ICachedModule
             throw new ArgumentException($"{t} positions exceed the layer's maximum of {MaxPositions}.");
         }
 
-        float scale = 1f / MathF.Sqrt(HeadDim);
+        float scale = ScoreScale;
         var packing = PackedSequences.Current is { } current && current.Matches(n, t) ? current : null;
-        if (packing is null && Rope is null && QueryNorm is null && KeyNorm is null && FusedTraining.Enabled && input.Backend.Capabilities.MatrixUnitAttentionHeadDim(HeadDim)
+        bool composed = Composed(t);
+        if (packing is not null && !PlainCausal)
+        {
+            throw new NotSupportedException("Packed sequences need plain causal attention; this layer has a sliding window or soft-capped scores (pad the batches instead).");
+        }
+
+        if (packing is null && !composed && Rope is null && QueryNorm is null && KeyNorm is null && FusedTraining.Enabled && input.Backend.Capabilities.MatrixUnitAttentionHeadDim(HeadDim)
             && input.Backend.Capabilities.MatrixUnits && MixedPrecision.UsesTensorCores
             && Linear.PlainFloat(Query) && Linear.PlainFloat(Key) && Linear.PlainFloat(Value)
             && Tensor.ProjectPacked(input, [Query, Key, Value]) is { } packed)
@@ -314,7 +337,7 @@ public sealed class CausalSelfAttention : Module, ICachedModule
             return Merge(segmented, n, t);
         }
 
-        if (HeadDim <= input.Backend.Capabilities.TiledAttentionHeadDim)
+        if (!composed && HeadDim <= input.Backend.Capabilities.TiledAttentionHeadDim)
         {
             // Tiled attention, forward and backward: no [t, t] weights stored (positions[0] = 0 is the causal offset).
             var attended = Tensor.CausalAttention(q, k, v, positions, t, scale);
@@ -323,6 +346,11 @@ public sealed class CausalSelfAttention : Module, ICachedModule
         }
 
         var raw = q.MatMul(k, transposeB: true);                                  // [n·kv, group·t, t]
+        if (_softcap is { } cap)
+        {
+            (raw, scale) = (Softcap(raw, scale, cap), 1f);
+        }
+
         Tensor weights;
         if (!Autograd.IsEnabled)
         {
@@ -353,24 +381,64 @@ public sealed class CausalSelfAttention : Module, ICachedModule
                 throw new NotSupportedException("Rows of different lengths need a float32 key/value cache.");
             }
 
+            if (!PlainCausal)
+            {
+                throw new NotSupportedException("Rows of different lengths need plain causal attention; this layer has a sliding window or soft-capped scores.");
+            }
+
             var (rq, rk, rv) = Project(input, context.TokenPositions!, packed: true);
             Tensor.WriteKeyValues(rk!, cache.Keys, context.Position);
             Tensor.WriteKeyValues(rv!, cache.Values, context.Position);
-            var rows = Tensor.AttentionRows(q: rq, cache.Keys, cache.Values, context.Position, t, 1f / MathF.Sqrt(HeadDim), context.TokenStarts!, KvHeads)
+            var rows = Tensor.AttentionRows(q: rq, cache.Keys, cache.Values, context.Position, t, ScoreScale, context.TokenStarts!, KvHeads)
                        ?? throw new NotSupportedException($"Rows of different lengths need attention from per-row starts, which {input.Device} does not provide for head size {HeadDim} (on CUDA: bfloat16 tensor cores, head size 64 or 128).");
             return MergeHeads(rows, n, t);
         }
 
         var (q, k, v) = Project(input, positions, cache, context.Position);   // k and v null: already in the cache
-        float scale = 1f / MathF.Sqrt(HeadDim);
+        float scale = ScoreScale;
         if (k is not null)
         {
             cache.Layout.Write(k, v!, cache, context.Position);
         }
 
+        // A step being recorded is replayed at later positions, so it takes the composed path whenever the window can mask.
+        if (_softcap is not null || Windowed && (ComputeGraph.IsCapturing || Composed(context.Length + t)))
+        {
+            return MergeHeads(AttendComposed(q, cache, context, t, scale), n, t);
+        }
+
         var context8 = cache.Layout.Attend(q, cache, context, t, scale, decoderKernels: true);
         return MergeHeads(context8, n, t);
     }
+
+    // Attention over every cached slot from basic operations (any layout, any backend; device-side masks, so recordable):
+    // the scores [rows, group·t, capacity], soft-capped, with the causal mask and, for a window, the positions before it
+    // masked too.
+    private Tensor AttendComposed(Tensor q, KeyValueCache cache, DecodingContext context, int t, float scale)
+    {
+        var keys = cache.Layout.Expand(cache, keys: true);
+        var values = cache.Layout.Expand(cache, keys: false);
+        var raw = q.MatMul(keys, transposeB: true);
+        if (_softcap is { } cap)
+        {
+            (raw, scale) = (Softcap(raw, scale, cap), 1f);
+        }
+
+        var mask = context.Mask!;
+        if (Windowed)
+        {
+            // Key j is before query i's window when j <= position + i - window: the causal mask of a cache `window` slots
+            // wider, read from slot `window` on, is 0 exactly there (-1e9 elsewhere), so -1e9 - it masks those keys.
+            int capacity = keys.Shape[1], window = _window!.Value;
+            var wider = Tensor.DecoderMask(context.Position, t, capacity + window);
+            mask = mask + (wider.Narrow(1, window, capacity) * -1f + -1e9f);
+        }
+
+        return raw.ScaleMaskSoftmax(scale, mask).MatMul(values);
+    }
+
+    // cap · tanh(scale · scores / cap): the scaled scores, soft-capped.
+    private static Tensor Softcap(Tensor scores, float scale, float cap) => (scores * (scale / cap)).Tanh() * cap;
 
     // Projections → q [n·kv, group·t, d] (the query heads sharing a key/value head are stacked), k and v [n·kv, t, d];
     // with a (float32 or bfloat16) cache, inference writes k and v into it in the same pass and returns them null.
@@ -460,7 +528,8 @@ public sealed class CausalSelfAttention : Module, ICachedModule
         return _iota;
     }
 
-    // A [repeats·t, t] causal mask (0 on and below the diagonal, -1e9 above), cached per size.
+    // A [repeats·t, t] causal mask (0 on and below the diagonal, -1e9 above; with a window, also -1e9 from the window's
+    // length below the diagonal on), cached per size.
     private Tensor CausalMask(int t, int repeats)
     {
         int key = t * 1024 + repeats;
@@ -474,9 +543,12 @@ public sealed class CausalSelfAttention : Module, ICachedModule
         {
             for (int i = 0; i < t; i++)
             {
-                for (int j = i + 1; j < t; j++)
+                for (int j = 0; j < t; j++)
                 {
-                    values[(r * t + i) * t + j] = -1e9f;
+                    if (j > i || Windowed && i - j >= _window!.Value)
+                    {
+                        values[(r * t + i) * t + j] = -1e9f;
+                    }
                 }
             }
         }
@@ -517,7 +589,8 @@ public sealed class CausalSelfAttention : Module, ICachedModule
 
     /// <inheritdoc />
     public override string ToString() =>
-        $"CausalSelfAttention({Heads} heads{(KvHeads != Heads ? $", {KvHeads} kv heads" : "")}, head size {HeadDim}{(Rope is null ? "" : ", rope")}{(QueryNorm is null ? "" : ", qk-norm")})";
+        $"CausalSelfAttention({Heads} heads{(KvHeads != Heads ? $", {KvHeads} kv heads" : "")}, head size {HeadDim}{(Rope is null ? "" : ", rope")}{(QueryNorm is null ? "" : ", qk-norm")}"
+        + $"{(_window is { } w ? $", window {w}" : "")}{(_softcap is { } c ? $", softcap {c}" : "")})";
 }
 
 /// <summary>The activation of a <see cref="FeedForward"/> block.</summary>
@@ -961,17 +1034,21 @@ internal static class RopeTables
         {
             if (!Tables.TryGetValue(key, out var entry))
             {
-                var frequencies = rope.Frequencies(headDim);
-                int half = frequencies.Length;
+                // The scaled frequencies (per position for a scaling that depends on it), and the attention factor on both
+                // tables, as transformers multiplies cos and sin by it.
+                var scaled = rope.Scaled(headDim);
+                int half = scaled.Frequencies.Length;
+                double factor = scaled.AttentionFactor;
                 var cos = new float[maxPositions * half];
                 var sin = new float[maxPositions * half];
                 Parallel.For(0, maxPositions, ComputeResources.ParallelOptions, p =>
                 {
+                    var frequencies = scaled.FrequenciesAt?.Invoke(p) ?? scaled.Frequencies;
                     for (int i = 0; i < half; i++)
                     {
                         double angle = p * frequencies[i];
-                        cos[p * half + i] = (float)Math.Cos(angle);
-                        sin[p * half + i] = (float)Math.Sin(angle);
+                        cos[p * half + i] = (float)(Math.Cos(angle) * factor);
+                        sin[p * half + i] = (float)(Math.Sin(angle) * factor);
                     }
                 });
                 entry = new Entry(Tensor.Persistent(cos, [maxPositions, half], device, requiresGrad: false),

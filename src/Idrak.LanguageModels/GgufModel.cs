@@ -291,13 +291,28 @@ public static class GgufModel
         }
         else if (scaling is "yarn" && factor > 1)
         {
+            // llama.cpp's YaRN keys, as Hugging Face's rope_scaling (the scaling registered as "yarn" reads it): the context
+            // the model was trained on, and the ramp's bounds when the file sets them. The context length stays the file's.
+            var yarn = new JsonObject { ["rope_type"] = "yarn", ["factor"] = factor };
             int original = file.Get($"{arch}.rope.scaling.original_context_length", 0);
             if (original > 0)
             {
-                config["max_position_embeddings"] = original;
+                yarn["original_max_position_embeddings"] = original;
             }
 
-            notes.Add($"the file extends its context with YaRN (factor {factor}); it is used within its original context of {original} positions.");
+            foreach (var (key, name) in new[] { ("yarn_beta_fast", "beta_fast"), ("yarn_beta_slow", "beta_slow") })
+            {
+                if (file.Metadata.ContainsKey($"{arch}.rope.scaling.{key}"))
+                {
+                    yarn[name] = file.Get($"{arch}.rope.scaling.{key}", 0.0);
+                }
+            }
+
+            config["rope_scaling"] = yarn;
+        }
+        else if (scaling is not ("none" or "linear"))
+        {
+            notes.Add($"the file's RoPE scaling '{scaling}' is not read; the model is used within its stored context.");
         }
 
         return config;

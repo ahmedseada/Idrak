@@ -172,6 +172,33 @@ public sealed record DecoderSpec
     /// </summary>
     public float Dropout { get; init; }
 
+    /// <summary>
+    /// How many positions each query of a windowed layer attends to, itself included (sliding-window attention, as in
+    /// Mistral, Qwen2, Gemma 2 and 3), or null for full causal attention in every layer.
+    /// </summary>
+    public int? SlidingWindow { get; init; }
+
+    /// <summary>
+    /// Which layers use <see cref="SlidingWindow"/>, one entry per layer (Gemma 2 alternates; Qwen2 windows the layers from
+    /// max_window_layers on); null: every layer, when a window is set.
+    /// </summary>
+    public IReadOnlyList<bool>? SlidingWindowLayers { get; init; }
+
+    /// <summary>The rotary settings of the windowed layers (Gemma 3's local base), or null to use <see cref="Rope"/> in every layer.</summary>
+    public RopeSettings? SlidingWindowRope { get; init; }
+
+    /// <summary>The factor on the attention scores (1 / √<see cref="HeadDim"/> when null; Gemma 2 and 3: query_pre_attn_scalar^-1/2).</summary>
+    public float? AttentionScale { get; init; }
+
+    /// <summary>Soft-capping of the attention scores, cap · tanh(score / cap) before the mask (Gemma 2: 50), or null.</summary>
+    public float? AttentionSoftcap { get; init; }
+
+    /// <summary>Soft-capping of the output logits, cap · tanh(logit / cap) (Gemma 2: 30), or null.</summary>
+    public float? LogitSoftcap { get; init; }
+
+    /// <summary>Whether layer <paramref name="layer"/> attends through the sliding window.</summary>
+    public bool IsWindowed(int layer) => SlidingWindow is not null && (SlidingWindowLayers is not { } layers || layers[layer]);
+
     /// <summary>Parameters of the model (weights and biases).</summary>
     public long ParameterCount
     {
@@ -192,6 +219,11 @@ public sealed record DecoderSpec
     public Sequential Build(IWeightSource? weights = null, DecoderBuildOptions? options = null)
     {
         options ??= new DecoderBuildOptions();
+        if (SlidingWindowLayers is { } windowed && windowed.Count != Layers)
+        {
+            throw new ArgumentException($"SlidingWindowLayers has {windowed.Count} entries for {Layers} layers.");
+        }
+
         var device = options.Device ?? Device.Default;
         int maxPositions = options.MaxPositions ?? MaxPositions;
         var random = new Random(options.Seed);
@@ -293,7 +325,12 @@ public sealed record DecoderSpec
                     Projection($"{p}.attn.o", Heads * HeadDim, Dim, OutputBias),
                     QkNorm ? RMSNorm.FromWeights(Tensor($"{p}.attn.q_norm.weight", [HeadDim], () => Enumerable.Repeat(1f - NormOffset, HeadDim).ToArray()), NormEpsilon, NormOffset) : null,
                     QkNorm ? RMSNorm.FromWeights(Tensor($"{p}.attn.k_norm.weight", [HeadDim], () => Enumerable.Repeat(1f - NormOffset, HeadDim).ToArray()), NormEpsilon, NormOffset) : null,
-                    Heads, KvHeads, HeadDim, Rope, maxPositions);
+                    Heads, KvHeads, HeadDim, IsWindowed(i) ? SlidingWindowRope ?? Rope : Rope, maxPositions)
+                {
+                    SlidingWindow = IsWindowed(i) ? SlidingWindow : null,
+                    ScoreScale = AttentionScale ?? 1f / MathF.Sqrt(HeadDim),
+                    ScoreSoftcap = AttentionSoftcap,
+                };
                 var feedForwardNorm = ParallelBlocks ? null : Normalization($"{p}.mlp_norm", Dim);
                 var feedForward = new FeedForward(
                     Gated ? Projection($"{p}.mlp.gate", Dim, FfDim, FeedForwardBias) : null,
@@ -314,6 +351,7 @@ public sealed record DecoderSpec
                 ? Linear.Tied(embedding, HeadBias ? Tensor("head.bias", [Vocabulary], () => new float[Vocabulary]) : null)
                 : Projection("head", Dim, Vocabulary, HeadBias);
             head.Name = "head";
+            head.OutputSoftcap = LogitSoftcap;
             created.Add(head);
             var blocks = created.OfType<DecoderBlock>().ToList();
             for (int i = 0; i < blocks.Count; i++)
@@ -365,25 +403,66 @@ public sealed record DecoderSpec
 
         if (Rope is { } rope)
         {
-            var r = new JsonObject { ["theta"] = rope.Theta, ["interleaved"] = rope.Interleaved };
-            if (rope.RotaryDim is { } rotary)
-            {
-                r["rotaryDim"] = rotary;
-            }
+            json["rope"] = RopeJson(rope);
+        }
 
-            if (rope.Scaling is { } s)
-            {
-                r["scaling"] = new JsonObject
-                {
-                    ["type"] = s.Type, ["factor"] = s.Factor, ["lowFrequencyFactor"] = s.LowFrequencyFactor,
-                    ["highFrequencyFactor"] = s.HighFrequencyFactor, ["originalMaxPositions"] = s.OriginalMaxPositions,
-                };
-            }
+        if (SlidingWindow is { } window)
+        {
+            json["slidingWindow"] = window;
+        }
 
-            json["rope"] = r;
+        if (SlidingWindowLayers is { } layers)
+        {
+            json["slidingWindowLayers"] = new JsonArray([.. layers.Select(l => (JsonNode)l)]);
+        }
+
+        if (SlidingWindowRope is { } local)
+        {
+            json["slidingWindowRope"] = RopeJson(local);
+        }
+
+        if (AttentionScale is { } attentionScale)
+        {
+            json["attentionScale"] = attentionScale;
+        }
+
+        if (AttentionSoftcap is { } attentionSoftcap)
+        {
+            json["attentionSoftcap"] = attentionSoftcap;
+        }
+
+        if (LogitSoftcap is { } logitSoftcap)
+        {
+            json["logitSoftcap"] = logitSoftcap;
         }
 
         return json;
+    }
+
+    private static JsonObject RopeJson(RopeSettings rope)
+    {
+        var r = new JsonObject { ["theta"] = rope.Theta, ["interleaved"] = rope.Interleaved };
+        if (rope.RotaryDim is { } rotary)
+        {
+            r["rotaryDim"] = rotary;
+        }
+
+        if (rope.Scaling is { } s)
+        {
+            r["scaling"] = new JsonObject { ["type"] = s.Type, ["parameters"] = s.Parameters };
+        }
+
+        return r;
+    }
+
+    private static RopeSettings RopeFromJson(JsonObject r)
+    {
+        RopeScaling? scaling = r["scaling"] is not JsonObject s ? null
+            : s["parameters"] is JsonObject parameters ? new((string)s["type"]!, parameters)
+            : (string)s["type"]! == "llama3"                                  // written before scalings were registered
+                ? RopeScaling.Llama3((double)s["factor"]!, (double)s["lowFrequencyFactor"]!, (double)s["highFrequencyFactor"]!, (int)s["originalMaxPositions"]!)
+                : new((string)s["type"]!, new JsonObject { ["factor"] = (double)s["factor"]! });
+        return new RopeSettings((float)r["theta"]!, (int?)r["rotaryDim"], (bool)r["interleaved"]!, scaling);
     }
 
     /// <summary>Reads a spec written by <see cref="ToJson"/>.</summary>
@@ -392,15 +471,6 @@ public sealed record DecoderSpec
         if (!IsDescription(json))
         {
             throw new InvalidDataException($"Not a decoder description (format '{json["format"]}').");
-        }
-
-        RopeSettings? rope = null;
-        if (json["rope"] is JsonObject r)
-        {
-            RopeScaling? scaling = r["scaling"] is JsonObject s
-                ? new((string)s["type"]!, (float)s["factor"]!, (float)s["lowFrequencyFactor"]!, (float)s["highFrequencyFactor"]!, (int)s["originalMaxPositions"]!)
-                : null;
-            rope = new RopeSettings((float)r["theta"]!, (int?)r["rotaryDim"], (bool)r["interleaved"]!, scaling);
         }
 
         return new DecoderSpec
@@ -412,7 +482,11 @@ public sealed record DecoderSpec
             QkvBias = (bool)json["qkvBias"]!, OutputBias = (bool)json["outputBias"]!, FeedForwardBias = (bool)json["feedForwardBias"]!,
             QkNorm = (bool)json["qkNorm"]!, PostNorms = (bool)json["postNorms"]!, ParallelBlocks = (bool)json["parallelBlocks"]!,
             TieEmbeddings = (bool)json["tieEmbeddings"]!, HeadBias = (bool)json["headBias"]!, EmbeddingScale = (float?)json["embeddingScale"],
-            Rope = rope, LearnedPositions = (bool?)json["learnedPositions"] ?? false, Dropout = (float?)json["dropout"] ?? 0f,
+            Rope = json["rope"] is JsonObject r ? RopeFromJson(r) : null, LearnedPositions = (bool?)json["learnedPositions"] ?? false, Dropout = (float?)json["dropout"] ?? 0f,
+            SlidingWindow = (int?)json["slidingWindow"],
+            SlidingWindowLayers = json["slidingWindowLayers"] is JsonArray layers ? [.. layers.Select(l => (bool)l!)] : null,
+            SlidingWindowRope = json["slidingWindowRope"] is JsonObject local ? RopeFromJson(local) : null,
+            AttentionScale = (float?)json["attentionScale"], AttentionSoftcap = (float?)json["attentionSoftcap"], LogitSoftcap = (float?)json["logitSoftcap"],
         };
     }
 

@@ -9,12 +9,25 @@ namespace Idrak.LanguageModels;
 /// <summary>
 /// How to read one family of pretrained models: its configuration (a Hugging Face <c>config.json</c>) becomes a
 /// <see cref="DecoderSpec"/>, and each of Idrak's weight names (see <see cref="DecoderSpec"/>) is found in the
-/// checkpoint. Register new families with <see cref="PretrainedArchitectures.Register"/>.
+/// checkpoint. A family that does not fit <see cref="DecoderSpec"/> builds its own network with <see cref="Build"/>.
+/// Register new families with <see cref="PretrainedArchitectures.Register"/>.
 /// </summary>
 public sealed class PretrainedArchitecture
 {
-    /// <summary>The model described by a configuration; append anything approximated to the notes.</summary>
+    /// <summary>
+    /// The model described by a configuration; append anything approximated to the notes. With <see cref="Build"/>, the
+    /// spec still gives the model's sizes (vocabulary, width, layers, heads, context length) to the tokenizer, generation
+    /// and tools, and is not built.
+    /// </summary>
     public required Func<JsonObject, List<string>, DecoderSpec> Spec { get; init; }
+
+    /// <summary>
+    /// Builds the network itself instead of <see cref="DecoderSpec.Build"/>, or null (the default) to build the spec. The
+    /// network takes token ids [batch, time] and returns logits [batch, time, vocabulary]; to work with the KV cache its
+    /// attention layers implement <see cref="ICachedModule"/>, and to be fine-tuned it ends with its output head (a
+    /// <see cref="Linear"/>).
+    /// </summary>
+    public Func<PretrainedBuildContext, Sequential>? Build { get; init; }
 
     /// <summary>The checkpoint's name for one of Idrak's weight names (null when the checkpoint does not store it).</summary>
     public required Func<string, string?> TensorName { get; init; }
@@ -29,10 +42,23 @@ public sealed class PretrainedArchitecture
         || name == "head.weight";
 }
 
+/// <summary>What <see cref="PretrainedArchitecture.Build"/> receives.</summary>
+/// <param name="Config">The model's config.json.</param>
+/// <param name="Spec">The spec <see cref="PretrainedArchitecture.Spec"/> read from it.</param>
+/// <param name="Weights">
+/// The checkpoint's tensors by Idrak's names, through <see cref="PretrainedArchitecture.TensorName"/> and
+/// <see cref="PretrainedArchitecture.Transposed"/> (with a merged adapter's updates added), as <see cref="DecoderSpec.Build"/> reads them.
+/// </param>
+/// <param name="Checkpoint">The checkpoint's tensors by their stored names, as stored.</param>
+/// <param name="Options">Device, packed weight format and context length chosen by the caller.</param>
+/// <param name="Notes">Append anything approximated (shown in <see cref="PretrainedModel.Notes"/>).</param>
+public sealed record PretrainedBuildContext(JsonObject Config, DecoderSpec Spec, IWeightSource Weights, ITensorStore Checkpoint,
+    DecoderBuildOptions Options, List<string> Notes);
+
 /// <summary>
 /// The model families <see cref="PretrainedModel.Load"/> knows, by the architecture name in <c>config.json</c>
-/// ("architectures": [...]). Llama, Mistral, Qwen2, Qwen3 and Gemma are registered; add others with
-/// <see cref="Register"/>, usually with <see cref="LlamaStyle"/> when they share the Llama naming.
+/// ("architectures": [...]). Llama, Mistral, Qwen2, Qwen3, Gemma, Gemma 2 and Gemma 3 (text) are registered; add others
+/// with <see cref="Register"/>, usually with <see cref="LlamaStyle"/> when they share the Llama naming.
 /// </summary>
 public static class PretrainedArchitectures
 {
@@ -48,14 +74,27 @@ public static class PretrainedArchitectures
             EmbeddingScale = MathF.Sqrt(spec.Dim),
             TieEmbeddings = true,
         }),
+        ["Gemma2ForCausalLM"] = new() { Spec = (config, notes) => GemmaSpec(config, CommonSpec(config, notes), version: 2), TensorName = GemmaTensorName },
+        ["Gemma3ForCausalLM"] = new() { Spec = (config, notes) => GemmaSpec(config, CommonSpec(config, notes), version: 3), TensorName = GemmaTensorName },
     };
 
     /// <summary>Registers (or replaces) how to read the architecture <paramref name="name"/>.</summary>
     public static void Register(string name, PretrainedArchitecture architecture)
     {
+        ArgumentException.ThrowIfNullOrEmpty(name);
+        ArgumentNullException.ThrowIfNull(architecture);
         lock (Registry)
         {
             Registry[name] = architecture;
+        }
+    }
+
+    /// <summary>Removes the architecture <paramref name="name"/>; returns whether it was registered.</summary>
+    public static bool Unregister(string name)
+    {
+        lock (Registry)
+        {
+            return Registry.Remove(name);
         }
     }
 
@@ -110,19 +149,42 @@ public static class PretrainedArchitectures
         if (c["rope_scaling"] is JsonObject s)
         {
             string type = (string?)s["rope_type"] ?? (string?)s["type"] ?? "default";
-            scaling = type switch
+            if (type != "default")
             {
-                "default" => null,
-                "linear" => new RopeScaling("linear", (float)s["factor"]!),
-                "llama3" => new RopeScaling("llama3", (float)s["factor"]!, (float?)s["low_freq_factor"] ?? 1f, (float?)s["high_freq_factor"] ?? 4f,
-                    (int?)s["original_max_position_embeddings"] ?? 8192),
-                _ => throw new NotSupportedException($"RoPE scaling '{type}' is not supported (linear, llama3); remove rope_scaling to use the model within its original context."),
-            };
+                if (!RopeScalings.Contains(type))
+                {
+                    throw new NotSupportedException($"RoPE scaling '{type}' is not registered ({string.Join(", ", RopeScalings.Names)}); add it with RopeScalings.Register, "
+                        + "or remove rope_scaling to use the model within its original context.");
+                }
+
+                // The parameters as the configuration gives them, plus the model's context length, which several methods
+                // fall back on (yarn without original_max_position_embeddings; dynamic always).
+                var parameters = (JsonObject)s.DeepClone();
+                parameters.Remove("type");
+                parameters.Remove("rope_type");
+                parameters["max_position_embeddings"] ??= maxPositions;
+                scaling = new RopeScaling(type, parameters);
+            }
         }
 
-        if (c["sliding_window"] is { } window && (int?)window is int w && w < maxPositions && ((bool?)c["use_sliding_window"] ?? true))
+        // Sliding-window attention, as transformers reads it: the window (none when use_sliding_window is false, as Qwen2
+        // and Qwen3 have it), in the layers layer_types marks "sliding_attention", else from max_window_layers on (Qwen2,
+        // Qwen3), else in every layer (Mistral).
+        int layers = Int("num_hidden_layers");
+        int? window = (bool?)c["use_sliding_window"] ?? true ? (int?)c["sliding_window"] : null;
+        bool[]? windowed = null;
+        if (window is not null && c["layer_types"] is JsonArray types)
         {
-            notes.Add($"Sliding-window attention ({w} positions) is not implemented: outputs are identical up to {w} positions, attention is full beyond.");
+            windowed = [.. types.Select(type => (string?)type == "sliding_attention")];
+        }
+        else if (window is not null && (int?)c["max_window_layers"] is int fullLayers)
+        {
+            windowed = [.. Enumerable.Range(0, layers).Select(i => i >= fullLayers)];
+        }
+
+        if (windowed is not null && !windowed.Contains(true))
+        {
+            (window, windowed) = (null, null);
         }
 
         string activation = (string?)c["hidden_act"] ?? (string?)c["hidden_activation"] ?? "silu";
@@ -134,20 +196,88 @@ public static class PretrainedArchitectures
         bool attentionBias = (bool?)c["attention_bias"] ?? false;
         return new DecoderSpec
         {
-            Vocabulary = Int("vocab_size"), Dim = dim, Layers = Int("num_hidden_layers"), Heads = heads,
+            Vocabulary = Int("vocab_size"), Dim = dim, Layers = layers, Heads = heads,
             KvHeads = (int?)c["num_key_value_heads"] ?? heads, HeadDim = headDim, FfDim = Int("intermediate_size"), MaxPositions = maxPositions,
             NormEpsilon = (float?)c["rms_norm_eps"] ?? 1e-6f,
             Activation = activation switch
             {
                 "silu" or "swish" => FeedForwardActivation.Silu,
-                "gelu" or "gelu_new" or "gelu_pytorch_tanh" => FeedForwardActivation.Gelu,
+                "gelu" or "gelu_new" or "gelu_pytorch_tanh" or "gelu_fast" => FeedForwardActivation.Gelu,
                 "relu" => FeedForwardActivation.Relu,
                 _ => throw new NotSupportedException($"Activation '{activation}' is not supported."),
             },
             Rope = new RopeSettings(theta, rotary, Interleaved: false, scaling),
             QkvBias = attentionBias, OutputBias = attentionBias, FeedForwardBias = (bool?)c["mlp_bias"] ?? false,
             TieEmbeddings = (bool?)c["tie_word_embeddings"] ?? false,
+            SlidingWindow = window, SlidingWindowLayers = windowed,
         };
+    }
+
+    // Gemma 2 and Gemma 3 (text) on top of the common keys: gains stored as a difference from 1, embeddings scaled by √dim
+    // and tied, normalizations after attention and the feed-forward block too, scores scaled by query_pre_attn_scalar^-1/2,
+    // windowed layers alternating (every other layer for Gemma 2, five in six for Gemma 3, unless layer_types says), and
+    // soft-capping (Gemma 2 by default). Gemma 3 also normalizes queries and keys and rotates the windowed layers with a
+    // local base (rope_local_base_freq), unscaled. Defaults are transformers'.
+    private static DecoderSpec GemmaSpec(JsonObject c, DecoderSpec spec, int version)
+    {
+        float? Optional(string key, float? fallback) => c.ContainsKey(key) ? (float?)c[key] : fallback;
+        if (version == 3 && (bool?)c["use_bidirectional_attention"] == true)
+        {
+            throw new NotSupportedException("Gemma 3 with bidirectional attention (an embedding model) is not supported.");
+        }
+
+        int window = (int?)c["sliding_window"] ?? 4096;
+        int pattern = version == 2 ? 2 : (int?)c["sliding_window_pattern"] ?? 6;
+        bool[] windowed = c["layer_types"] is JsonArray types
+            ? [.. types.Select(type => (string?)type == "sliding_attention")]
+            : [.. Enumerable.Range(0, spec.Layers).Select(i => (i + 1) % pattern != 0)];
+        var rope = spec.Rope!;
+        if (version == 3 && c["rope_theta"] is null)
+        {
+            rope = rope with { Theta = 1_000_000f };
+        }
+
+        return spec with
+        {
+            NormOffset = 1f,
+            EmbeddingScale = MathF.Sqrt(spec.Dim),
+            TieEmbeddings = (bool?)c["tie_word_embeddings"] ?? true,
+            PostNorms = true,
+            QkNorm = version == 3,
+            AttentionScale = 1f / MathF.Sqrt(Optional("query_pre_attn_scalar", null) ?? 256f),
+            AttentionSoftcap = Optional("attn_logit_softcapping", version == 2 ? 50f : null),
+            LogitSoftcap = Optional("final_logit_softcapping", version == 2 ? 30f : null),
+            SlidingWindow = windowed.Contains(true) ? window : null,
+            SlidingWindowLayers = windowed.Contains(true) ? windowed : null,
+            Rope = rope,
+            SlidingWindowRope = version == 3 ? new RopeSettings((float?)c["rope_local_base_freq"] ?? 10000f, rope.RotaryDim) : null,
+        };
+    }
+
+    /// <summary>
+    /// Idrak weight names → Gemma 2 / Gemma 3 checkpoint names: the Llama names, with four normalizations per layer
+    /// (input_layernorm, post_attention_layernorm after attention, pre_feedforward_layernorm, post_feedforward_layernorm).
+    /// </summary>
+    public static string? GemmaTensorName(string name)
+    {
+        var parts = name.Split('.');
+        if (parts.Length == 4 && parts[0] == "layers" && parts[3] == "weight")
+        {
+            string? norm = parts[2] switch
+            {
+                "attn_norm" => "input_layernorm",
+                "post_attn_norm" => "post_attention_layernorm",
+                "mlp_norm" => "pre_feedforward_layernorm",
+                "post_mlp_norm" => "post_feedforward_layernorm",
+                _ => null,
+            };
+            if (norm is not null)
+            {
+                return $"model.layers.{parts[1]}.{norm}.weight";
+            }
+        }
+
+        return LlamaTensorName(name);
     }
 
     /// <summary>Idrak weight names → Llama-style checkpoint names.</summary>

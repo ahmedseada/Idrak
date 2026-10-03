@@ -120,11 +120,30 @@ public sealed class Linear : Module
     /// </summary>
     public LoraAdapter? Adapter { get; internal set; }
 
+    /// <summary>
+    /// Soft-caps the outputs, cap · tanh(y / cap), or null for none: Gemma 2's final logit soft-capping on an output head,
+    /// applied wherever the layer runs (generation, losses, scoring).
+    /// </summary>
+    public float? OutputSoftcap
+    {
+        get => _softcap;
+        set => _softcap = value is null or > 0f ? value : throw new ArgumentOutOfRangeException(nameof(OutputSoftcap), "The cap must be positive.");
+    }
+
+    private float? _softcap;
+
     /// <summary>A float32 weight of its own, no adapter: the layer is x·W (+ b), which fused operations may compute themselves.</summary>
-    internal static bool PlainFloat(Linear layer) => layer._weight is not null && layer._tiedTo is null && layer.Adapter is null;
+    internal static bool PlainFloat(Linear layer) => layer._weight is not null && layer._tiedTo is null && layer.Adapter is null && layer._softcap is null;
 
     /// <inheritdoc />
     protected override Tensor ForwardCore(Tensor input)
+    {
+        var y = Project(input);
+        return _softcap is { } cap ? (y * (1f / cap)).Tanh() * cap : y;
+    }
+
+    // x·W + b (and the adapter's update).
+    private Tensor Project(Tensor input)
     {
         if (Bias is not null && _weight is not null && _tiedTo is null && Adapter is null && input.Rank >= 2)
         {
@@ -482,7 +501,7 @@ public sealed class Linear : Module
 
     /// <inheritdoc />
     public override string ToString() =>
-        $"Linear({InFeatures} -> {OutFeatures}{(Bias is null ? ", no bias" : "")}{(_packed is null ? "" : $", {_packed.ShortName}")}{(_tiedTo is null ? "" : ", tied")}{(Adapter is { } a ? $", LoRA rank {a.Rank}" : "")})";
+        $"Linear({InFeatures} -> {OutFeatures}{(Bias is null ? ", no bias" : "")}{(_packed is null ? "" : $", {_packed.ShortName}")}{(_tiedTo is null ? "" : ", tied")}{(Adapter is { } a ? $", LoRA rank {a.Rank}" : "")}{(_softcap is { } c ? $", softcap {c}" : "")})";
 }
 
 /// <summary>
