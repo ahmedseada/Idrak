@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Sliding windows and soft-capped scores in the attention kernels: the CPU reference, Vulkan (decoding attention with
+  split positions over float32, int8 and bfloat16 caches, the tiled prompt and training kernel, the gradient kernels)
+  and CUDA (the decoding kernels, `attention_flash_f32`/`_int8`/`_bf16` and the float32 gradient kernels; windowed
+  and soft-capped layers leave the tensor-core flash kernels for these) start each query at its window and cap its
+  scores, so windowed layers (Mistral, Qwen2/3, Gemma 2/3) read only their window of the cache instead of scoring
+  every cached slot, and soft-capped layers (Gemma 2) stop taking the composed path. Plain layers run the same
+  arithmetic as before (window and cap are uniform and predicated off). Recorded decoding steps stay on the kernels
+  past the window (the start is computed on the device). Packed fine-tuning batches and batched generation now work
+  for windowed and soft-capped layers where the device's packed attention takes a window (CPU, Vulkan; not the CUDA
+  tensor-core packed kernels). `IDRAK_WINDOW_KERNELS=0` forces the earlier composed path. On lavapipe a windowed,
+  soft-capped decoder (dim 256, 4 layers, window 128, a 1024-position context) generates 67 tokens/s instead of 42;
+  decoding attention over a 4096-position cache with a window of 512 takes 7.1 ms instead of 62 ms without one.
+  `--bench-vulkan window` measures both. The window-sized ring-buffer cache is not done (plans/plug-in.md says why).
+
+
 - idrak, across the groups: every command's help has one layout (usage and aliases, "Arguments:", "Options:" with
   short forms, examples, limits and gaps, the common options, and the environment variables that affect it, generated
   from the one variable table instead of hand-written lines); `idrak help` lists the commands by group with their

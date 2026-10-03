@@ -1038,11 +1038,17 @@ BF16; single files or sharded with an index) one tensor at a time, transposed to
 (RMSNorm; RoPE with the linear, llama3, YaRN and dynamic NTK scalings of `RopeScalings`, or one registered there;
 grouped-query attention with an optional sliding window per layer and soft-capped scores; gated feed-forward;
 optional q/k norm, biases, post-norms, tied embeddings, soft-capped logits), so other models use the same code.
-Windowed layers whose window falls inside the sequence, and soft-capped layers, attend through basic operations on
-every device (the attention kernels mask causally only), so they are correct everywhere but slower than plain
-attention; packed fine-tuning batches and batched generation are not offered for them (batches are padded, prompts
-run one by one). The model runs on Idrak's CPU and CUDA
-backends, and trains, takes LoRA adapters, quantizes and saves like any other.
+The attention kernels take the window and the cap themselves: each query starts at its window (keys at positions above
+its own minus the window, as transformers masks them) and its scores are capped, in the tiled prompt and training
+kernels, the decoding kernels over every cache format (float32, int8, bfloat16; split positions share the window) and
+their gradients, so a windowed layer reads only its window of the cache, and recorded decoding steps stay valid past
+the window. Packed fine-tuning batches and batched generation work for these layers where the device's packed
+attention takes a window (the CPU and Vulkan; on CUDA the tensor-core packed kernels compute plain causal attention, so
+there batches are padded and prompts run one by one). `IDRAK_WINDOW_KERNELS=0` sends windowed and soft-capped layers
+back through basic operations over the whole cache (the earlier path, kept to compare or isolate the kernels); the
+cache itself keeps every position (a window-sized ring buffer is noted in plans/plug-in.md). The model runs on Idrak's
+CPU and CUDA backends, and trains, takes LoRA adapters, quantizes and saves like any other.
+
 
 `BpeTokenizer` reads `tokenizer.json` (byte-level BPE as in Qwen, Llama 3 and GPT-2; SentencePiece-style BPE with
 byte fallback as in Llama 2 and Mistral; the normalizers, pre-tokenizers and decoders those use), and

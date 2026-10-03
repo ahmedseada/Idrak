@@ -239,7 +239,7 @@ internal sealed partial class CpuBackend
     }
 
     public override void AttentionBFloat16(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead,
-        int steps, int capacity, int dim, float scale, bool tiled)
+        int steps, int capacity, int dim, float scale, bool tiled, AttentionVariant variant = default)
     {
         // Straight from the bfloat16 cache: each cached key and value row is widened into a small buffer as it is used,
         // in parallel over the query rows (no float copy of the whole filled cache per call).
@@ -254,13 +254,14 @@ internal sealed partial class CpuBackend
             var row = widened.AsSpan(0, dim);
             for (int r = first; r < last; r++)
             {
-                int h = r / rowsPerHead, count = Math.Min(position0 + r % rowsPerHead % steps, capacity - 1) + 1;
+                int h = r / rowsPerHead, end = Math.Min(position0 + r % rowsPerHead % steps, capacity - 1) + 1;
+                int begin = variant.Start(end), count = end - begin;
                 var query = qv.AsSpan(r * dim, dim);
                 float max = float.NegativeInfinity;
                 for (int c = 0; c < count; c++)
                 {
-                    WidenBFloat16(kh.Slice((h * capacity + c) * stride, dim), row);
-                    scores[c] = Dot(query, row) * scale;
+                    WidenBFloat16(kh.Slice((h * capacity + begin + c) * stride, dim), row);
+                    scores[c] = variant.Cap(Dot(query, row) * scale);
                     max = MathF.Max(max, scores[c]);
                 }
 
@@ -269,7 +270,8 @@ internal sealed partial class CpuBackend
                 output.Clear();
                 for (int c = 0; c < count; c++)
                 {
-                    WidenBFloat16(vh.Slice((h * capacity + c) * stride, dim), row);
+                    WidenBFloat16(vh.Slice((h * capacity + begin + c) * stride, dim), row);
+
                     AddScaled(output, row, scores[c] / sum);
                 }
             }

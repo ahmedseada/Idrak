@@ -438,10 +438,11 @@ internal static partial class VulkanKernels
     private static int AttentionDimsPerLane => Math.Max(1, AttentionMaxDim / Block);
 
     // The gradient of tiled causal attention for the queries (see Backend.AttentionTiledBackward): a workgroup per query
-    // row (h, i), which sees keys c ≤ min(i % steps, capacity - 1). It stages the row's query and dOutput, writes
-    // delta = dOutput · output for the keys' pass, then takes the keys a width at a time: invocation j computes the score
-    // of key c0 + j, its weight p = exp(score · scale - lse) and ds = p · (dOutput · v_c - delta) into workgroup memory;
-    // then every invocation adds Σ_j ds_j · k_(c0+j) to the dimensions it keeps, keys in order. dq += scale · that sum.
+    // row (h, i), which sees keys c ≤ min(i % steps, capacity - 1) from its window's start (0 without a window). It stages
+    // the row's query and dOutput, writes delta = dOutput · output for the keys' pass, then takes the keys a width at a
+    // time: invocation j computes the score s of key c0 + j (soft-capped with a cap), its weight p = exp(s - lse) and
+    // ds = p · (dOutput · v_c - delta) · s' into workgroup memory (s' the cap's slope, 1 without one); then every
+    // invocation adds Σ_j ds_j · k_(c0+j) to the dimensions it keeps, keys in order. dq += scale · that sum.
     //
     // Workgroup memory: qs and gs (the row's query and dOutput) are written before a barrier and only read after it;
     // ds is written between the barrier ending the previous chunk's reads and the barrier before this chunk's reads.
@@ -452,6 +453,7 @@ internal static partial class VulkanKernels
         var (dq, delta) = (k.Buffer("dq"), k.Buffer("delta"));
         var (heads, rowsPerHead, steps, capacity, dim, scale) = (k.PushInt("heads"), k.PushInt("rowsPerHead"), k.PushInt("steps"), k.PushInt("capacity"),
             k.PushInt("dim"), k.PushFloat("scale"));
+        var (window, softcap) = (k.PushInt("window"), k.PushFloat("softcap"));
         var qs = k.Shared("qs", AttentionMaxDim);
         var gs = k.Shared("gs", AttentionMaxDim);
         var ds = k.Shared("ds", Block);
@@ -485,7 +487,7 @@ internal static partial class VulkanKernels
                 a.V = k.Float(0f);
             }
 
-            k.For(k.Int(0), count, Block, c0 =>
+            k.For(WindowStart(k, count, window), count, Block, c0 =>
             {
                 var c = c0 + lane;
                 var weight = k.Local(0f);
@@ -498,8 +500,9 @@ internal static partial class VulkanKernels
                         dot.V = k.Fma(qs[d], keys[key + d], dot.V);
                         dp.V = k.Fma(gs[d], values[key + d], dp.V);
                     });
-                    var pr = k.Exp(dot.V * scale - rowLse);
-                    weight.V = pr * (dp.V - rowDelta);
+                    var score = Capped(k, dot.V * scale, softcap);
+                    var pr = k.Exp(score - rowLse);
+                    weight.V = pr * (dp.V - rowDelta) * CapSlope(k, score, softcap);
                 });
                 ds[lane] = weight.V;
                 k.Barrier();
@@ -525,7 +528,8 @@ internal static partial class VulkanKernels
     }
 
     // The gradient for the keys and values: a workgroup per key position (h, c) with c < min(capacity, steps), seen by
-    // the rows i of head h with min(i % steps, capacity - 1) ≥ c. It stages k_c and v_c, then takes the rows a width at
+    // the rows i of head h with min(i % steps, capacity - 1) ≥ c (and, with a window, less than the window past c; the
+    // scores soft-capped as in the queries' pass). It stages k_c and v_c, then takes the rows a width at
     // a time: invocation j computes row i0 + j's weight p and ds (with the delta the queries' pass wrote) into workgroup
     // memory, zero for rows that do not see c; then every invocation adds Σ_j ds_j · q_(i0+j) and Σ_j p_j · dOutput_(i0+j)
     // to the dimensions it keeps, rows in order. dk += scale · the first sum, dv += the second.
@@ -538,6 +542,7 @@ internal static partial class VulkanKernels
         var (dkeys, dvalues) = (k.Buffer("dkeys"), k.Buffer("dvalues"));
         var (heads, rowsPerHead, steps, capacity, dim, scale) = (k.PushInt("heads"), k.PushInt("rowsPerHead"), k.PushInt("steps"), k.PushInt("capacity"),
             k.PushInt("dim"), k.PushFloat("scale"));
+        var (window, softcap) = (k.PushInt("window"), k.PushFloat("softcap"));
         var ks = k.Shared("ks", AttentionMaxDim);
         var vs = k.Shared("vs", AttentionMaxDim);
         var ps = k.Shared("ps", Block);
@@ -572,7 +577,8 @@ internal static partial class VulkanKernels
             {
                 var i = i0 + lane;
                 var (weight, slope) = (k.Local(0f), k.Local(0f));
-                k.If((i < rowsPerHead) & (k.Min(i % steps, capacity - 1) >= c), () =>
+                var limit = k.Min(i % steps, capacity - 1);
+                k.If((i < rowsPerHead) & (limit >= c) & ((window <= 0) | (limit - c < window)), () =>
                 {
                     var row = h * rowsPerHead + i;
                     var o = row * dim;
@@ -582,10 +588,12 @@ internal static partial class VulkanKernels
                         dot.V = k.Fma(q[o + d], ks[d], dot.V);
                         dp.V = k.Fma(dOutput[o + d], vs[d], dp.V);
                     });
-                    var pr = k.Exp(dot.V * scale - lse[row]);
+                    var score = Capped(k, dot.V * scale, softcap);
+                    var pr = k.Exp(score - lse[row]);
                     weight.V = pr;
-                    slope.V = pr * (dp.V - delta[row]);
+                    slope.V = pr * (dp.V - delta[row]) * CapSlope(k, score, softcap);
                 });
+
                 ps[lane] = weight.V;
                 ds[lane] = slope.V;
                 k.Barrier();

@@ -1263,42 +1263,42 @@ internal sealed partial class VulkanBackend
     }
 
     public override void AttentionDecode(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead,
-        int steps, int capacity, int dim, float scale)
+        int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
         if (dim > VulkanKernels.AttentionMaxDim || !Fit(q, keys, values, position, y))
         {
-            base.AttentionDecode(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale);
+            base.AttentionDecode(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, variant);
             return;
         }
 
         Span<Storage> storages = [q, keys, values, position, y];
-        Attend("attention_decode", 0, storages, heads, rowsPerHead, steps, capacity, dim, scale);
+        Attend("attention_decode", 0, storages, heads, rowsPerHead, steps, capacity, dim, scale, variant);
     }
 
     public override void AttentionBFloat16(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead,
-        int steps, int capacity, int dim, float scale, bool tiled)
+        int steps, int capacity, int dim, float scale, bool tiled, AttentionVariant variant = default)
     {
         if (dim > VulkanKernels.AttentionMaxDim || !Fit(q, keys, values, position, y))
         {
-            base.AttentionBFloat16(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled);
+            base.AttentionBFloat16(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
             return;
         }
 
         Span<Storage> storages = [q, keys, values, position, y];
-        Attend("attention_bf16", 1, storages, heads, rowsPerHead, steps, capacity, dim, scale);
+        Attend("attention_bf16", 1, storages, heads, rowsPerHead, steps, capacity, dim, scale, variant);
     }
 
     public override void AttentionInt8(Storage q, Storage keys, Storage values, Storage keyScales, Storage valueScales, Storage position,
-        Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, bool tiled)
+        Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, bool tiled, AttentionVariant variant = default)
     {
         if (dim > VulkanKernels.AttentionMaxDim || !Fit(q, keys, values, keyScales, valueScales, position, y))
         {
-            base.AttentionInt8(q, keys, values, keyScales, valueScales, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled);
+            base.AttentionInt8(q, keys, values, keyScales, valueScales, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
             return;
         }
 
         Span<Storage> storages = [q, keys, values, keyScales, valueScales, position, y];
-        Attend("attention_int8", 2, storages, heads, rowsPerHead, steps, capacity, dim, scale);
+        Attend("attention_int8", 2, storages, heads, rowsPerHead, steps, capacity, dim, scale, variant);
     }
 
     // Dispatches an attention kernel (storages: its bindings, the position second to last, the output last): query rows ×
@@ -1307,8 +1307,10 @@ internal sealed partial class VulkanBackend
     // attention costs most; shorter contexts then leave the extra splits empty), up to one per AttentionMinChunk
     // positions of capacity; the formula's choice is a tile (the width) of positions per split. With several splits the
     // kernel writes each split's (weighted values, max, total) to a temporary [rows, splits, dim + 2] and
-    // attention_combine merges them into the output.
-    private void Attend(string kernel, int format, Span<Storage> storages, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale)
+    // attention_combine merges them into the output. A window shorter than the capacity is measured under a key of its
+    // own (formats 3 to 5), over the window's positions: each split then takes a share of the window.
+    private void Attend(string kernel, int format, Span<Storage> storages, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale,
+        AttentionVariant variant = default)
     {
         int rows = heads * rowsPerHead;
         if (rows <= 0 || dim <= 0)
@@ -1316,25 +1318,30 @@ internal sealed partial class VulkanBackend
             return;
         }
 
-        // Formula: the device's width, a tile (the width) of positions per split. Measured: every candidate.
-        int fallback = WithWidth(Width, PowersOfTwo(Math.Min(Math.Max(1, capacity / Width), AttentionMaxSplits(Width, rows, capacity, dim)))[^1]);
+        // Formula: the device's width, a tile (the width) of positions per split. Measured: every candidate. A window
+        // shorter than the capacity counts as the positions each row reads.
+        bool windowed = variant.Window > 0 && variant.Window < capacity;
+        int span = windowed ? variant.Window : capacity;
+        int fallback = WithWidth(Width, PowersOfTwo(Math.Min(Math.Max(1, span / Width), AttentionMaxSplits(Width, rows, span, dim)))[^1]);
         int choice;
         if (AttentionSplits is int forced)
         {
-            choice = WithWidth(Width, PowersOfTwo(Math.Min(Math.Max(1, forced), AttentionMaxSplits(Width, rows, capacity, dim)))[^1]);
+            choice = WithWidth(Width, PowersOfTwo(Math.Min(Math.Max(1, forced), AttentionMaxSplits(Width, rows, span, dim)))[^1]);
         }
         else
         {
-            var key = new VulkanTuneKey(VulkanTuneOp.Attention, format, rows, rowsPerHead, steps, capacity, dim);
+            var key = windowed
+                ? new VulkanTuneKey(VulkanTuneOp.Attention, format + 3, rows, rowsPerHead, steps, capacity, dim, span)
+                : new VulkanTuneKey(VulkanTuneOp.Attention, format, rows, rowsPerHead, steps, capacity, dim);
             if (!TryTuned(key, out choice) || Array.IndexOf(CandidateWidths, WidthOf(choice)) < 0
-                || (choice & Rest) > AttentionMaxSplits(WidthOf(choice), rows, capacity, dim) || (choice & Plain) != 0 && !Limits.SubgroupArithmetic)
+                || (choice & Rest) > AttentionMaxSplits(WidthOf(choice), rows, span, dim) || (choice & Plain) != 0 && !Limits.SubgroupArithmetic)
             {
                 choice = fallback;
                 if (CanTune)
                 {
                     // At each candidate width, 1, 2, 4, … splits; timed over a full cache: the position read from a
                     // scratch storage holding capacity - 1.
-                    var candidates = CandidateWidths.SelectMany(w => PowersOfTwo(AttentionMaxSplits(w, rows, capacity, dim))
+                    var candidates = CandidateWidths.SelectMany(w => PowersOfTwo(AttentionMaxSplits(w, rows, span, dim))
                         .SelectMany(s => ReductionFlags.Select(f => WithWidth(w, s | f)))).ToArray();
                     var saved = storages.ToArray();
                     var full = Allocate(1, zeroed: false);
@@ -1343,7 +1350,7 @@ internal sealed partial class VulkanBackend
                         Fill(full, 1, capacity - 1);
                         saved[^2] = full;
                         choice = TuneWithScratch(key, candidates, fallback, saved, 1UL << (saved.Length - 1),
-                            (c, bound) => RunAttention(kernel, bound, rows, c, heads, rowsPerHead, steps, capacity, dim, scale));
+                            (c, bound) => RunAttention(kernel, bound, rows, c, heads, rowsPerHead, steps, capacity, dim, scale, variant));
                     }
                     finally
                     {
@@ -1353,7 +1360,7 @@ internal sealed partial class VulkanBackend
             }
         }
 
-        RunAttention(kernel, storages, rows, choice, heads, rowsPerHead, steps, capacity, dim, scale);
+        RunAttention(kernel, storages, rows, choice, heads, rowsPerHead, steps, capacity, dim, scale, variant);
     }
 
     // Most splits at a width: one per AttentionMinChunk(width) positions of capacity, fewer when the partial results would
@@ -1370,14 +1377,16 @@ internal sealed partial class VulkanBackend
     }
 
     // Runs attention with `choice` = its width (WithWidth) and split count.
-    private void RunAttention(string kernel, Span<Storage> storages, int rows, int choice, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale)
+    private void RunAttention(string kernel, Span<Storage> storages, int rows, int choice, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale,
+        AttentionVariant variant)
     {
         // Dimensions per part of the workgroup: the head size rounded up to a power of two, at most the width.
         int width = WidthOf(choice), splits = choice & (Plain - 1);
         bool subgroups = SubgroupsOf(choice);
         int dimShift = Math.Min(BitOperations.Log2(BitOperations.RoundUpToPowerOf2((uint)dim)), BitOperations.Log2((uint)width));
-        Span<byte> b = stackalloc byte[28];
-        var push = new Push(b).I(heads).I(rowsPerHead).I(steps).I(capacity).I(dim).F(scale).I(dimShift).Bytes;
+        Span<byte> b = stackalloc byte[36];
+        var push = new Push(b).I(heads).I(rowsPerHead).I(steps).I(capacity).I(dim).F(scale).I(dimShift).I(variant.Window).F(variant.Softcap).Bytes;
+
         if (splits <= 1)
         {
             RunAt(kernel, width, RowGroups(rows), 1, 1, storages, push, subgroups);

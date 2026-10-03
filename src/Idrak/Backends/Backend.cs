@@ -47,6 +47,27 @@ internal readonly record struct ConvGeometry(
 }
 
 /// <summary>
+/// What the attention kernels do beyond plain causal attention: a sliding window (a query at position p sees keys at
+/// positions c with p - <see cref="Window"/> &lt; c ≤ p, as transformers masks them; 0 for every earlier position) and a
+/// soft-cap on the scaled scores, cap · tanh(score / cap) before the softmax (0 for none). The default is plain causal
+/// attention, which every kernel computes exactly as before these were added.
+/// </summary>
+internal readonly record struct AttentionVariant(int Window, float Softcap)
+{
+    /// <summary>Plain causal attention: no window and no cap.</summary>
+    public bool IsPlain => Window <= 0 && Softcap <= 0f;
+
+    /// <summary>The first position a query whose causal limit is <paramref name="end"/> (exclusive) sees.</summary>
+    public int Start(int end) => Window > 0 ? Math.Max(0, end - Window) : 0;
+
+    /// <summary>A scaled score, soft-capped when a cap is set.</summary>
+    public float Cap(float score) => Softcap > 0f ? MathF.Tanh(score / Softcap) * Softcap : score;
+
+    /// <summary>The derivative of <see cref="Cap"/> given its result: 1 - (capped / cap)² (1 without a cap).</summary>
+    public float Slope(float capped) => Softcap > 0f ? 1f - capped / Softcap * (capped / Softcap) : 1f;
+}
+
+/// <summary>
 /// A reference-counted block of device memory holding <see cref="Length"/> floats.
 /// When the last reference is released the block goes back to its backend's pool.
 /// </summary>
@@ -1023,13 +1044,15 @@ internal abstract class Backend
     /// Attention over a key/value cache filled up to the device position: for head h and row i of q [heads, rowsPerHead,
     /// dim], y[h, i] = Σ_c softmax(scale · q[h, i] · keys[h, c]) · values[h, c] over positions c = 0 … position[0] +
     /// (i % steps) (the causal limit of that row's step). Keys and values are [heads, capacity, dim]; unfilled
-    /// positions are never read, so the cost follows the context length rather than the capacity.
+    /// positions are never read, so the cost follows the context length rather than the capacity. With a
+    /// <paramref name="variant"/>, each row starts at its window's first position and its scores are soft-capped (every
+    /// attention method below takes one; the default is plain causal attention).
     /// </summary>
     public virtual void AttentionDecode(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead,
-        int steps, int capacity, int dim, float scale)
+        int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
         using var h = new HostCall(this);
-        CpuBackend.Instance.AttentionDecode(h[q], h[keys], h[values], h[position], h[y], heads, rowsPerHead, steps, capacity, dim, scale);
+        CpuBackend.Instance.AttentionDecode(h[q], h[keys], h[values], h[position], h[y], heads, rowsPerHead, steps, capacity, dim, scale, variant);
     }
 
     /// <summary>
@@ -1038,10 +1061,10 @@ internal abstract class Backend
     /// [heads, capacity]).
     /// </summary>
     public virtual void AttentionInt8(Storage q, Storage keys, Storage values, Storage keyScales, Storage valueScales, Storage position,
-        Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, bool tiled)
+        Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, bool tiled, AttentionVariant variant = default)
     {
         using var h = new HostCall(this);
-        CpuBackend.Instance.AttentionInt8(h[q], h[keys], h[values], h[keyScales], h[valueScales], h[position], h[y], heads, rowsPerHead, steps, capacity, dim, scale, tiled);
+        CpuBackend.Instance.AttentionInt8(h[q], h[keys], h[values], h[keyScales], h[valueScales], h[position], h[y], heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
     }
 
     /// <summary>
@@ -1049,10 +1072,10 @@ internal abstract class Backend
     /// [heads, capacity, ⌈dim / 2⌉ words], dimension d in the low (even d) or high (odd d) half of word d / 2.
     /// </summary>
     public virtual void AttentionBFloat16(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead,
-        int steps, int capacity, int dim, float scale, bool tiled)
+        int steps, int capacity, int dim, float scale, bool tiled, AttentionVariant variant = default)
     {
         using var h = new HostCall(this);
-        CpuBackend.Instance.AttentionBFloat16(h[q], h[keys], h[values], h[position], h[y], heads, rowsPerHead, steps, capacity, dim, scale, tiled);
+        CpuBackend.Instance.AttentionBFloat16(h[q], h[keys], h[values], h[position], h[y], heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
     }
 
     /// <summary><see cref="KeyValueWrite"/> into a bfloat16 cache (values rounded to nearest, ties to even).</summary>
@@ -1068,10 +1091,10 @@ internal abstract class Backend
     /// are recomputed, never stored.
     /// </summary>
     public virtual void AttentionTiledBackward(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput,
-        Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale)
+        Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
         using var h = new HostCall(this);
-        CpuBackend.Instance.AttentionTiledBackward(h[q], h[keys], h[values], h[output], h[logSumExp], h[dOutput], h[dq], h[dkeys], h[dvalues], heads, rowsPerHead, steps, capacity, dim, scale);
+        CpuBackend.Instance.AttentionTiledBackward(h[q], h[keys], h[values], h[output], h[logSumExp], h[dOutput], h[dq], h[dkeys], h[dvalues], heads, rowsPerHead, steps, capacity, dim, scale, variant);
     }
 
     /// <summary>
@@ -1087,10 +1110,10 @@ internal abstract class Backend
     /// (exclusive), as floats. Writes the log-sum-exp when given. Returns false when the device has no such pass.
     /// </summary>
     public virtual bool AttentionSegmented(Storage q, Storage keys, Storage values, Storage y, Storage? logSumExp, Storage starts, Storage ends,
-        int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale)
+        int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant = default)
     {
         using var h = new HostCall(this);
-        return CpuBackend.Instance.AttentionSegmented(h[q], h[keys], h[values], h[y], h.Maybe(logSumExp), h[starts], h[ends], heads, headsPerRow, rowsPerHead, steps, dim, scale);
+        return CpuBackend.Instance.AttentionSegmented(h[q], h[keys], h[values], h[y], h.Maybe(logSumExp), h[starts], h[ends], heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
     }
 
     /// <summary>
@@ -1099,22 +1122,23 @@ internal abstract class Backend
     /// none, padding, gets zeros). Returns false when the device has no such pass.
     /// </summary>
     public virtual bool AttentionRows(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow,
-        int rowsPerHead, int steps, int capacity, int dim, float scale)
+        int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
         using var h = new HostCall(this);
-        return CpuBackend.Instance.AttentionRows(h[q], h[keys], h[values], h[position], h[y], h[starts], heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale);
+        return CpuBackend.Instance.AttentionRows(h[q], h[keys], h[values], h[position], h[y], h[starts], heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
     }
 
     /// <summary>Whether <see cref="AttentionSegmented"/> and its gradient run for this head size (with the current <see cref="MixedPrecision"/>).</summary>
-    public virtual bool SupportsSegmentedAttention(int dim) => CpuBackend.Instance.SupportsSegmentedAttention(dim);
+    public virtual bool SupportsSegmentedAttention(int dim, AttentionVariant variant = default) => CpuBackend.Instance.SupportsSegmentedAttention(dim, variant);
 
     /// <summary>The gradient of <see cref="AttentionSegmented"/> (as <see cref="AttentionTiledBackward"/>); false when unsupported.</summary>
     public virtual bool AttentionSegmentedBackward(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput,
-        Storage dq, Storage dkeys, Storage dvalues, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale)
+        Storage dq, Storage dkeys, Storage dvalues, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale,
+        AttentionVariant variant = default)
     {
         using var h = new HostCall(this);
         return CpuBackend.Instance.AttentionSegmentedBackward(h[q], h[keys], h[values], h[output], h[logSumExp], h[dOutput], h[dq], h[dkeys], h[dvalues],
-            h[starts], h[ends], heads, headsPerRow, rowsPerHead, steps, dim, scale);
+            h[starts], h[ends], heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
     }
 
     /// <summary>
@@ -1122,16 +1146,16 @@ internal abstract class Backend
     /// set (training). The default runs <see cref="AttentionDecode"/> for inference and the host fallback for training.
     /// </summary>
     public virtual void AttentionTiled(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage? logSumExp, int heads,
-        int rowsPerHead, int steps, int capacity, int dim, float scale)
+        int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
         if (logSumExp is null)
         {
-            AttentionDecode(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale);
+            AttentionDecode(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, variant);
             return;
         }
 
         using var h = new HostCall(this);
-        CpuBackend.Instance.AttentionTiled(h[q], h[keys], h[values], h[position], h[y], h[logSumExp], heads, rowsPerHead, steps, capacity, dim, scale);
+        CpuBackend.Instance.AttentionTiled(h[q], h[keys], h[values], h[position], h[y], h[logSumExp], heads, rowsPerHead, steps, capacity, dim, scale, variant);
     }
 
     // ---------------------------------------------------------------- incremental decoding (positions live on the device)

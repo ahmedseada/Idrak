@@ -211,13 +211,14 @@ internal static partial class VulkanKernels
     }
 
     // Attention over a key/value cache [heads, capacity, dim] for query rows q [heads, rowsPerHead, dim]: row i of head h
-    // sees positions c = 0 … count - 1, count = min(position[0] + i % rowsPerHead % steps, capacity - 1) + 1.
+    // sees positions c = lo … count - 1, count = min(position[0] + i % rowsPerHead % steps, capacity - 1) + 1, lo =
+    // max(count - window, 0) with a window (window > 0), else 0.
     // Grid: x = query rows (a group takes rows x, x + groups, …), y = splits: split s takes positions
-    // [s · chunk, min(count, (s + 1) · chunk)), chunk = max(⌈count / splits⌉, width / 8), computed here from the current
-    // length (so the dispatch shape depends only on the shapes). A workgroup of `width` (W) goes through its positions W
-    // at a time (a tile) with an online softmax:
-    //   1. invocation t scores position c0 + t (q · k_c · scale, -∞ past the split) into scratch → the tile's max by a
-    //      reduction; max' = max(max, tile max), every running sum is rescaled by exp(max - max');
+    // [lo + s · chunk, min(count, lo + (s + 1) · chunk)), chunk = max(⌈(count - lo) / splits⌉, width / 8), computed here
+    // from the current length (so the dispatch shape depends only on the shapes). A workgroup of `width` (W) goes through
+    // its positions W at a time (a tile) with an online softmax:
+    //   1. invocation t scores position c0 + t (q · k_c · scale, soft-capped when softcap > 0, -∞ past the split) into
+    //      scratch → the tile's max by a reduction; max' = max(max, tile max), every running sum is rescaled by exp(max - max');
     //   2. invocation t stores e_t = exp(score_t - max') (int8: times the value row's scale) in weights[t] and adds e_t
     //      to its running total;
     //   3. invocation (p, d) = (t >> dimShift, t & (2^dimShift - 1)) adds Σ weights[w] · v[c0 + w, d + j·W] over the
@@ -243,6 +244,7 @@ internal static partial class VulkanKernels
         var (position, y) = (k.Buffer("position"), k.Buffer("y"));
         var (heads, rowsPerHead, steps, capacity, dim) = (k.PushInt("heads"), k.PushInt("rowsPerHead"), k.PushInt("steps"), k.PushInt("capacity"), k.PushInt("dim"));
         var (scale, dimShift) = (k.PushFloat("scale"), k.PushInt("dimShift"));
+        var (window, softcap) = (k.PushInt("window"), k.PushFloat("softcap"));
         var query = k.Shared("query", dimsPerLane * lanes);
         var weights = k.Shared("weights", lanes);
         var scratch = k.Shared("scratch", lanes);
@@ -302,7 +304,7 @@ internal static partial class VulkanKernels
                 k.If((dim & 1).Eq(1), () => dot.V = dot.V + query[dim - 1] * (keys.UInt(rowStart + whole) << 16).AsFloat());
             }
 
-            return keyScales is null ? dot.V * scale : dot.V * keyScales[slot] * scale;
+            return Capped(k, keyScales is null ? dot.V * scale : dot.V * keyScales[slot] * scale, softcap);
         }
 
         var acc = new Var[dimsPerLane];
@@ -315,9 +317,10 @@ internal static partial class VulkanKernels
         {
             var h = row / rowsPerHead;
             var count = k.Min(start + row % rowsPerHead % steps, capacity - 1) + 1;
+            var lo = WindowStart(k, count, window);
             var first = h * capacity;
-            var chunk = k.Max((count + splits - 1) / splits, k.Int(AttentionMinChunk(lanes)));
-            var begin = k.GroupY * chunk;
+            var chunk = k.Max((count - lo + splits - 1) / splits, k.Int(AttentionMinChunk(lanes)));
+            var begin = lo + k.GroupY * chunk;
             var end = k.Min(count, begin + chunk);
             for (int j = 0; j < dimsPerLane; j++)
             {
@@ -391,7 +394,22 @@ internal static partial class VulkanKernels
         return k.Build();
     }
 
+    // The first position a query whose causal limit is `end` (exclusive) sees: end - window, at least 0, with a window
+    // (window > 0); else 0 (see AttentionVariant).
+    private static Val WindowStart(KernelBuilder k, Val end, Val window) => k.Select(window > 0, k.Max(end - window, k.Int(0)), k.Int(0));
+
+    // A scaled score soft-capped when cap > 0, cap · tanh(score / cap); else the score itself.
+    private static Val Capped(KernelBuilder k, Val score, Val cap) => k.Select(cap > 0f, Tanh(k, score / cap) * cap, score);
+
+    // The derivative of Capped given its result: 1 - (capped / cap)² when cap > 0, else 1.
+    private static Val CapSlope(KernelBuilder k, Val capped, Val cap)
+    {
+        var ratio = capped / cap;
+        return k.Select(cap > 0f, 1f - ratio * ratio, k.Float(1f));
+    }
+
     // for (i = 0; i < count; i++) use(i, load(i)), `unroll` at a time with their loads first, then the rest one by one.
+
     private static void Unrolled(KernelBuilder k, Val count, int unroll, Func<Val, Val> load, Action<Val, Val> use)
     {
         var i = k.Local(k.Int(0));
