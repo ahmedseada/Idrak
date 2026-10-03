@@ -73,7 +73,7 @@ Short forms of commands' own options, kept the same across commands where the me
 | `-p` | `--port N` | serve, ui |
 | `-H` | `--host NAME` | serve, ui |
 | `-f` | `--force` | pull, rm, convert |
-| `-n` | `--search N` / `--repeat N` | suggest / bench |
+| `-n` | a count: `--search N` / `--repeat N` / `--rows N` | suggest / bench / data preview, data sample |
 | `-y` | `--yes` (no confirmation) | rm, cache clear, data dedupe |
 | `-e` | `--explain` | suggest, doctor |
 | `-b` | `--base MODEL` | suggest, tune, distill |
@@ -367,7 +367,7 @@ Built (Retrieval and measure), with what was added while building and the gaps f
 |---|---|---|
 | `idrak suggest DATA` (`sg`) | Reads the data, picks the task and writes a network and training setup: `network.json` (the builder's JSON, so `Network.FromJson` and `idrak train` read it), `train.json` and `prep.json`; `--search N` tries N candidates briefly on the chosen device and keeps the best; `--explain` gives the rule behind each choice | 2 |
 | `idrak explain network.json` (`x`) | Layers, output shapes, parameters, FLOPs per sample and memory for training and inference on the chosen device | 2 |
-| `idrak viz network.json` | The network as a text diagram, or Mermaid / SVG (`--format`) | 3 |
+| `idrak viz network.json` | The network as a text diagram, or Mermaid / SVG (`--as`; `--format` is the common table format) | 3 |
 
 How `suggest` decides, in three steps:
 

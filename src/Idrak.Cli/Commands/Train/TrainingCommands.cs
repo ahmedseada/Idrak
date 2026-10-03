@@ -49,7 +49,7 @@ internal sealed class TrainCommand : Command
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } =
-        ["--data", "--target", "--ignore", "--task", "--epochs", "--lr", "--batch", "--patience", "--validation", "--seed", "--optimizer", "--weight-decay", "--out", "--run"];
+        ["--data", "--target", "--ignore", "--task", "--epochs", "--lr", "--batch", "--patience", "--validation", "--optimizer", "--weight-decay", "--out", "--run"];
 
     public override IReadOnlyCollection<string> Flags { get; } = ["--no-scale"];
 

@@ -594,7 +594,7 @@ internal sealed class DataSplitCommand : Command
         Environment: none
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions { get; } = ["--validation", "--test", "--seed", "--target", "--out"];
+    public override IReadOnlyCollection<string> ValueOptions { get; } = ["--validation", "--test", "--target", "--out"];
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } = new Dictionary<string, string> { ["-t"] = "--target", ["-o"] = "--out" };
 
@@ -686,7 +686,7 @@ internal sealed class DataSampleCommand : Command
         Environment: none
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions { get; } = ["--rows", "--seed", "--target", "--out"];
+    public override IReadOnlyCollection<string> ValueOptions { get; } = ["--rows", "--target", "--out"];
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } = new Dictionary<string, string> { ["-n"] = "--rows", ["-t"] = "--target", ["-o"] = "--out" };
 
@@ -761,7 +761,7 @@ internal sealed class DataMixCommand : Command
         Environment: IDRAK_CACHE, HF_TOKEN, GITHUB_TOKEN, KAGGLE_USERNAME, KAGGLE_KEY, ZENODO_TOKEN
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions { get; } = ["--out", "--eval", "--eval-fraction", "--seed"];
+    public override IReadOnlyCollection<string> ValueOptions { get; } = ["--out", "--eval", "--eval-fraction"];
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } = new Dictionary<string, string> { ["-o"] = "--out" };
 

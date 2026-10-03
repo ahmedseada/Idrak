@@ -313,11 +313,11 @@ internal static partial class Tests
 
             (code, text, _) = RunIdrak("viz", Path.Combine(folder, "mlp.json"));
             Check(code == 0 && text.Contains("linear 32") && text.Contains("  |"), text);
-            (code, text, _) = RunIdrak("viz", Path.Combine(folder, "mlp.json"), "--format", "mermaid");
+            (code, text, _) = RunIdrak("viz", Path.Combine(folder, "mlp.json"), "--as", "mermaid");
             Check(code == 0 && text.StartsWith("flowchart TD", StringComparison.Ordinal) && text.Contains("n0 --> n1"), text);
-            (code, text, _) = RunIdrak("viz", Path.Combine(folder, "gpt.json"), "--format=svg");
+            (code, text, _) = RunIdrak("viz", Path.Combine(folder, "gpt.json"), "--as=svg");
             Check(code == 0 && text.StartsWith("<svg", StringComparison.Ordinal) && text.TrimEnd().EndsWith("</svg>", StringComparison.Ordinal), "an SVG document");
-            Check(RunIdrak("viz", Path.Combine(folder, "mlp.json"), "--format", "png").Code == 2, "an unknown format is a usage error");
+            Check(RunIdrak("viz", Path.Combine(folder, "mlp.json"), "--as", "png").Code == 2, "an unknown format is a usage error");
             Check(RunIdrak("explain", Path.Combine(folder, "missing.json")).Code == 2, "a missing file is a usage error");
         }
         finally

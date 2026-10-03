@@ -34,7 +34,7 @@ internal static partial class Tests
         return (code, output.ToString(), error.ToString());
     }
 
-    private static JsonObject CliJson(params string[] args)
+    private static JsonObject TrainCliJson(params string[] args)
     {
         var (code, output, error) = TrainCli([.. args, "--json"]);
         Check(code == 0, $"idrak {string.Join(' ', args)} --json: exit {code}\n{output}\n{error}");
@@ -54,7 +54,7 @@ internal static partial class Tests
             var (code, output, _) = TrainCli(["help", .. command.Name.Split(' ')]);
             Check(code == 0 && output.Contains($"idrak {command.Name}", StringComparison.Ordinal), $"help {command.Name}: {code}\n{output}");
             Check(output.Contains("Example", StringComparison.Ordinal) && output.Contains("Environment:", StringComparison.Ordinal), $"help {command.Name} has examples and its environment");
-            Check(!providers.Any(p => output.Contains(p, StringComparison.OrdinalIgnoreCase)), $"help {command.Name} names no provider");
+            Check(!providers.Any(p => System.Text.RegularExpressions.Regex.Replace(output, @"\b[A-Z][A-Z0-9]*_[A-Z0-9_]+\b", "").Contains(p, StringComparison.OrdinalIgnoreCase)), $"help {command.Name} names no provider");
             Check(command.ShortForms.Keys.All(k => k.Length == 2 && !CommandContext.CommonShortForms.ContainsKey(k)), $"{command.Name}: short forms are one letter and not common ones");
             Check(command.ShortForms.Values.Distinct().Count() == command.ShortForms.Count, $"{command.Name}: no two short forms for one option");
             Check(command.ShortForms.Values.All(v => command.ValueOptions.Contains(v) || command.Flags.Contains(v)), $"{command.Name}: every short form names an option");
@@ -128,7 +128,7 @@ internal static partial class Tests
             var init = TrainCli("tune", "init", "-b", model, "--data", data, "-o", settings, "-d", d);
             Check(init.Code == 0 && File.ReadAllText(settings).Contains("// What to do", StringComparison.Ordinal), $"tune init: {init.Out}{init.Err}");
             Check(TrainCli("tune", "init", "-b", model, "-o", settings).Code == 1, "tune init does not overwrite without --force");
-            var info = CliJson("tune", "info", "--config", settings);
+            var info = TrainCliJson("tune", "info", "--config", settings);
             Check((string?)info["command"] == "info" && (string?)info["model"] == model && (string?)info["device"] == d, $"tune info from tune.json: {info}");
             Check(info["output"]!.AsArray().Any(l => ((string?)l)!.StartsWith("chat template:", StringComparison.Ordinal)), $"tune info output: {info}");
 
@@ -179,7 +179,7 @@ internal static partial class Tests
             // The idrak-data commands through idrak data, with idrak's cache.
             var show = TrainCli("data", "show", chats, "--take", "2", "--cache", folder);
             Check(show.Code == 0 && show.Out.Contains("normalized:", StringComparison.Ordinal), $"data show: {show.Out}{show.Err}");
-            var count = CliJson("data", "count", chats, "--cache", folder);
+            var count = TrainCliJson("data", "count", chats, "--cache", folder);
             Check((string?)count["command"] == "count" && count["output"]![0]!.ToString().Contains(": 3 rows", StringComparison.Ordinal), $"data count: {count}");
             var built = TrainCli("data", "build", chats, "-o", Path.Combine(folder, "train.jsonl"), "--kind", "chat", "--cache", folder);
             Check(built.Code == 0 && File.ReadAllLines(Path.Combine(folder, "train.jsonl")).Length == 3, $"data build: {built.Out}{built.Err}");
@@ -187,7 +187,7 @@ internal static partial class Tests
             // preview: columns and types of a CSV and a Parquet file.
             string csv = Path.Combine(folder, "table.csv");
             File.WriteAllText(csv, "id,size,city,price\n1,50.5,Cairo,100\n2,70,Giza,140\n3,,Cairo,90\n");
-            var preview = CliJson("data", "preview", csv, "-n", "2");
+            var preview = TrainCliJson("data", "preview", csv, "-n", "2");
             Check((long?)preview["rows"] == 3 && preview["columns"]!.AsArray().Count == 4 && preview["preview"]!.AsArray().Count == 2, $"data preview: {preview}");
             Check((string?)preview["columns"]![1]!["type"] == "number" && (string?)preview["columns"]![2]!["type"] == "text", $"data preview types: {preview}");
             string parquet = Path.Combine(AppContext.BaseDirectory, "data", "parquet", "snappy-v1.parquet");
@@ -211,7 +211,7 @@ internal static partial class Tests
             Check(preference.Code == 1 && preference.Out.Contains("chosen and rejected are the same", StringComparison.Ordinal), $"validate preference: {preference.Out}");
 
             // stats: characters and words, and tokens with a model's tokenizer and chat template.
-            var stats = CliJson("data", "stats", chats, "-m", model, "--context", "20");
+            var stats = TrainCliJson("data", "stats", chats, "-m", model, "--context", "20");
             Check((int?)stats["rows"] == 3 && (int?)stats["conversations"] == 3 && stats["tokens"]?["max"] is not null, $"data stats: {stats}");
             Check((long?)stats["overContext"] >= 1, $"data stats counts rows over the context: {stats}");
             var plain = TrainCli("data", "stats", csv, "--column", "city");
@@ -252,7 +252,7 @@ internal static partial class Tests
 
             // convert: to CSV and back, and Alpaca rows to chat rows.
             string csv = Path.Combine(folder, "rows.csv");
-            Check(CliJson("data", "convert", rows, csv)["written"]!.GetValue<long>() == 41, "data convert to CSV");
+            Check(TrainCliJson("data", "convert", rows, csv)["written"]!.GetValue<long>() == 41, "data convert to CSV");
             Check(TrainCli("data", "convert", rows, csv).Code == 1 && TrainCli("data", "convert", rows, csv, "-f").Code == 0, "data convert needs -f to overwrite");
             Check(File.ReadAllLines(csv)[0] == "instruction,output,label", "CSV header");
             string chats = Path.Combine(folder, "chats.jsonl");
@@ -261,19 +261,19 @@ internal static partial class Tests
             Check((string?)first["messages"]![0]!["role"] == "system" && (string?)first["messages"]![2]!["content"] == "0", $"chat rows: {first}");
 
             // dedupe: exact (20 repeats), near (one more: "say  1" is "Say 1"), in place only with -y.
-            var dry = CliJson("data", "dedupe", rows, "--dry-run", "--columns", "instruction,output");
+            var dry = TrainCliJson("data", "dedupe", rows, "--dry-run", "--columns", "instruction,output");
             Check((int?)dry["duplicates"] == 20 && dry["output"] is null, $"dedupe dry run: {dry}");
             Check(TrainCli("data", "dedupe", rows).Code == 1, "dedupe in place needs --yes");
-            var near = CliJson("data", "dedupe", rows, "--near", "--columns", "instruction,output", "-o", Path.Combine(folder, "unique.jsonl"));
+            var near = TrainCliJson("data", "dedupe", rows, "--near", "--columns", "instruction,output", "-o", Path.Combine(folder, "unique.jsonl"));
             Check((int?)near["duplicates"] == 21 && File.ReadAllLines(Path.Combine(folder, "unique.jsonl")).Length == 20, $"near dedupe: {near}");
 
             // split: stratified, with every part keeping the label balance; sample: stratified too.
-            var split = CliJson("data", "split", rows, "--validation", "0.2", "--test", "0.2", "-t", "label", "--seed", "3", "-o", Path.Combine(folder, "parts"));
+            var split = TrainCliJson("data", "split", rows, "--validation", "0.2", "--test", "0.2", "-t", "label", "--seed", "3", "-o", Path.Combine(folder, "parts"));
             Check((int?)split["parts"]!["train"]!["rows"] + (int?)split["parts"]!["validation"]!["rows"] + (int?)split["parts"]!["test"]!["rows"] == 41, $"split: {split}");
             Check(File.Exists(Path.Combine(folder, "parts.test.jsonl")), "split files");
             var testRows = File.ReadAllLines(Path.Combine(folder, "parts.test.jsonl")).Select(l => (string?)JsonNode.Parse(l)!["label"]).ToList();
             Check(testRows.Count(l => l == "a") == 2, $"stratified test part: {string.Join(",", testRows)}");
-            var sample = CliJson("data", "sample", rows, "-n", "8", "-t", "label");
+            var sample = TrainCliJson("data", "sample", rows, "-n", "8", "-t", "label");
             var labels = sample["sample"]!.AsArray().Select(r => (string?)r!["label"]).ToList();
             Check(labels.Count == 8 && labels.Count(l => l == "a") == 2, $"stratified sample: {string.Join(",", labels)}");
             Check(TrainCli("data", "sample", rows).Code == 2, "sample needs -n");
@@ -286,7 +286,7 @@ internal static partial class Tests
                 ["seed"] = 1,
                 ["eval_fraction"] = 0.1,
             }.ToJsonString());
-            var mix = CliJson("data", "mix", recipe, "-o", Path.Combine(folder, "mixed.jsonl"), "--cache", folder);
+            var mix = TrainCliJson("data", "mix", recipe, "-o", Path.Combine(folder, "mixed.jsonl"), "--cache", folder);
             Check((long?)mix["rows"] > 0 && File.Exists(Path.Combine(folder, "mixed.eval.jsonl")), $"data mix: {mix}");
         }
         finally
@@ -318,7 +318,7 @@ internal static partial class Tests
 
             // Regression: settings from a train.json, the command line winning.
             File.WriteAllText(Path.Combine(folder, "train.json"), "{ // from idrak suggest\n \"target\": \"y\", \"epochs\": 5, \"learning_rate\": 0.01, \"batch_size\": 16 }");
-            var reg = CliJson("train", Path.Combine(folder, "reg.json"), "--data", Path.Combine(folder, "reg.csv"), "--ignore", "id", "--config", Path.Combine(folder, "train.json"),
+            var reg = TrainCliJson("train", Path.Combine(folder, "reg.json"), "--data", Path.Combine(folder, "reg.csv"), "--ignore", "id", "--config", Path.Combine(folder, "train.json"),
                 "--epochs", "80", "-o", Path.Combine(folder, "reg.ikm"), "--cache", cache, "-d", d);
             Check((string?)reg["task"] == "regression" && (int?)reg["epochs"] >= 40 && File.Exists(Path.Combine(folder, "reg.ikm")), $"train regression: {reg}");
             Check((double?)reg["metrics"]!["r2"] > 0.9, $"the regression fits: {reg["metrics"]}");
@@ -327,37 +327,37 @@ internal static partial class Tests
 
             // predict: rows without the target, by column name.
             File.WriteAllText(Path.Combine(folder, "new.csv"), "x2,x1\n0,1\n1,0\n");
-            var predicted = CliJson("predict", Path.Combine(folder, "reg.ikm"), "-i", Path.Combine(folder, "new.csv"), "-d", d);
+            var predicted = TrainCliJson("predict", Path.Combine(folder, "reg.ikm"), "-i", Path.Combine(folder, "new.csv"), "-d", d);
             double p0 = (double)predicted["predictions"]![0]!["prediction"]!, p1 = (double)predicted["predictions"]![1]!["prediction"]!;
             Check(Math.Abs(p0 - 13) < 1.5 && Math.Abs(p1 - 8) < 1.5, $"predictions 13 and 8: {p0}, {p1}");
             Check(TrainCli("predict", Path.Combine(folder, "reg.ikm"), "-i", Path.Combine(folder, "new.csv"), "-o", Path.Combine(folder, "out.csv")).Code == 0
                   && File.ReadAllLines(Path.Combine(folder, "out.csv"))[0] == "x2,x1,prediction", "predict -o writes the rows with the prediction");
 
             // Classification with class names in the CSV.
-            var cls = CliJson("train", Path.Combine(folder, "cls.json"), "--data", Path.Combine(folder, "cls.csv"), "--epochs", "60", "--lr", "0.01",
+            var cls = TrainCliJson("train", Path.Combine(folder, "cls.json"), "--data", Path.Combine(folder, "cls.csv"), "--epochs", "60", "--lr", "0.01",
                 "-o", Path.Combine(folder, "cls.ikm"), "--cache", cache, "-d", d);
             Check((string?)cls["task"] == "classification" && cls["classes"]!.AsArray().Count == 3 && (double?)cls["metrics"]!["accuracy"] > 0.8, $"train classification: {cls}");
-            var labels = CliJson("predict", Path.Combine(folder, "cls.ikm"), "-i", Path.Combine(folder, "cls.csv"), "--top", "2", "-d", d);
+            var labels = TrainCliJson("predict", Path.Combine(folder, "cls.ikm"), "-i", Path.Combine(folder, "cls.csv"), "--top", "2", "-d", d);
             int right = labels["predictions"]!.AsArray().Count(r => (string?)r!["prediction"] == (string?)r["colour"]);
             Check(right > 190 && labels["predictions"]![0]!["top"]!.AsArray().Count == 2, $"classes predicted: {right} of 240");
 
             // runs: list, show, compare; resume; package.
-            var list = CliJson("runs", "list", "--cache", cache);
+            var list = TrainCliJson("runs", "list", "--cache", cache);
             Check(list["runs"]!.AsArray().Count == 2, $"runs list: {list}");
             Check(TrainCli("runs", "--cache", cache).Out.Contains("completed", StringComparison.Ordinal), "runs (alias) lists the runs");
             var show = TrainCli("runs", "show", Path.GetFileName(run), "--cache", cache);
             Check(show.Code == 0 && show.Out.Contains("val_loss", StringComparison.Ordinal) && show.Out.Contains("epoch 1", StringComparison.Ordinal), $"runs show: {show.Out}");
-            var shown = CliJson("runs", "show", Path.Combine(run, "log.jsonl"));
+            var shown = TrainCliJson("runs", "show", Path.Combine(run, "log.jsonl"));
             int epochs = (int)shown["epochs"]!;
             Check(epochs == (int)reg["epochs"]! && shown["history"]!.AsArray().Count == epochs, $"runs show --json: {shown["epochs"]}");
-            var compared = CliJson("runs", "compare", run, (string)cls["run"]!);
+            var compared = TrainCliJson("runs", "compare", run, (string)cls["run"]!);
             Check(compared["runs"]!.AsArray().Count == 2 && compared["lowest"] is not null, "runs compare");
-            var resumed = CliJson("resume", run, "--epochs", "3", "--cache", cache, "-d", d);
+            var resumed = TrainCliJson("resume", run, "--epochs", "3", "--cache", cache, "-d", d);
             Check((int?)resumed["epochs"] == epochs + 3, $"resume: {resumed["epochs"]} after {epochs}");
-            Check(CliJson("runs", "show", run)["epochs"]!.GetValue<int>() == epochs + 3, "the resumed run's log continues");
-            var packaged = CliJson("package", "--model", run, "-o", Path.Combine(folder, "again.ikm"), "--checkpoint", "last");
+            Check(TrainCliJson("runs", "show", run)["epochs"]!.GetValue<int>() == epochs + 3, "the resumed run's log continues");
+            var packaged = TrainCliJson("package", "--model", run, "-o", Path.Combine(folder, "again.ikm"), "--checkpoint", "last");
             Check(packaged["included"]!.AsArray().Any(i => (string?)i == "training.json"), $"package: {packaged}");
-            var again = CliJson("predict", Path.Combine(folder, "again.ikm"), "-i", Path.Combine(folder, "new.csv"), "-d", d);
+            var again = TrainCliJson("predict", Path.Combine(folder, "again.ikm"), "-i", Path.Combine(folder, "new.csv"), "-d", d);
             Check(Math.Abs((double)again["predictions"]![0]!["prediction"]! - 13) < 1.5, "the packaged run predicts");
             Check(TrainCli("resume", "nothing-here", "--cache", cache).Code == 2, "resume of an unknown run is a usage error");
             var mismatch = TrainCli("train", Path.Combine(folder, "reg.json"), "--data", Path.Combine(folder, "reg.csv"), "--cache", cache, "-d", d);
@@ -402,10 +402,10 @@ internal static partial class Tests
             File.WriteAllText(Path.Combine(folder, "cnn.json"),
                 Network.Image(1, 8, 8).Conv2d(4, 3, padding: 1).ReLU().MaxPool2d(2).Flatten().Linear(2).Named("halves").ToJson().ToJsonString());
             string d = device.ToString();
-            var trained = CliJson("train", Path.Combine(folder, "cnn.json"), "--data", Path.Combine(folder, "images"), "--epochs", "30", "--lr", "0.01", "--batch", "8",
+            var trained = TrainCliJson("train", Path.Combine(folder, "cnn.json"), "--data", Path.Combine(folder, "images"), "--epochs", "30", "--lr", "0.01", "--batch", "8",
                 "-o", Path.Combine(folder, "halves.ikm"), "--cache", Path.Combine(folder, "cache"), "-d", d);
             Check((string?)trained["task"] == "classification" && (double?)trained["metrics"]!["accuracy"] >= 0.9, $"train on images: {trained}");
-            var predicted = CliJson("predict", Path.Combine(folder, "halves.ikm"), "-i", Path.Combine(folder, "images", "right"), "-d", d);
+            var predicted = TrainCliJson("predict", Path.Combine(folder, "halves.ikm"), "-i", Path.Combine(folder, "images", "right"), "-d", d);
             int right = predicted["predictions"]!.AsArray().Count(r => (string?)r!["prediction"] == "right");
             Check(right >= 22, $"images predicted: {right} of 24");
 

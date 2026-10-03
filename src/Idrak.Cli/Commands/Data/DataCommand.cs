@@ -37,7 +37,7 @@ internal sealed class DataCommand : Command
         Environment: IDRAK_CACHE, HF_TOKEN, HF_ENDPOINT, GITHUB_TOKEN, KAGGLE_USERNAME, KAGGLE_KEY, ZENODO_TOKEN
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions { get; } = [.. DataTool.ValueOptions.Where(o => o != "--cache")];
+    public override IReadOnlyCollection<string> ValueOptions { get; } = [.. DataTool.ValueOptions.Where(o => o is not ("--cache" or "--seed"))];      // --cache and --seed are common options
 
     public override IReadOnlyCollection<string> Flags => DataTool.Flags;
 
@@ -46,7 +46,7 @@ internal sealed class DataCommand : Command
     public override int Run(CommandContext context)
     {
         var args = new List<string>(context.Positional);
-        foreach (string option in ValueOptions)
+        foreach (string option in ValueOptions.Append("--seed"))
         {
             foreach (string value in context.Options(option))
             {

@@ -18,11 +18,11 @@ internal sealed class SearchCommand : Command
     public override string Summary => "Search the Hugging Face hub for models Idrak can load";
 
     public override string Usage => """
-        QUERY [--limit N] [--format safetensors|gguf] [--all] [--token TOKEN]
+        QUERY [--limit N] [--kind safetensors|gguf] [--all] [--token TOKEN]
 
           QUERY              words in the model's name (e.g. qwen3 0.6b)
               --limit N      at most N results (default 20)
-              --format F     only transformers models with safetensors weights, or only GGUF repositories
+              --kind K     only transformers models with safetensors weights, or only GGUF repositories
               --all          also models Idrak cannot load (marked)
               --token TOKEN  for private models (default: the config's hf_token, HF_TOKEN or the saved login)
 
@@ -31,12 +31,12 @@ internal sealed class SearchCommand : Command
 
         Examples:
           idrak search qwen3
-          idrak search llama --format gguf --limit 5 --json
+          idrak search llama --kind gguf --limit 5 --json
 
         Environment: HF_ENDPOINT (a hub mirror), HF_TOKEN, HUGGING_FACE_HUB_TOKEN, HF_TOKEN_PATH, HF_HOME
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => ["--limit", "--format", "--token"];
+    public override IReadOnlyCollection<string> ValueOptions => ["--limit", "--kind", "--token"];
 
     public override IReadOnlyCollection<string> Flags => ["--all"];
 
@@ -59,10 +59,10 @@ internal sealed class SearchCommand : Command
             throw new UsageException("--limit needs a positive number.");
         }
 
-        string? format = context.Option("--format")?.ToLowerInvariant();
+        string? format = context.Option("--kind")?.ToLowerInvariant();
         if (format is not (null or "safetensors" or "gguf"))
         {
-            throw new UsageException($"--format takes safetensors or gguf, not '{format}'.");
+            throw new UsageException($"--kind takes safetensors or gguf, not '{format}'.");
         }
 
         bool all = context.Flag("--all");

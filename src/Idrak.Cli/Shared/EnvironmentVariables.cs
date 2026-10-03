@@ -119,6 +119,7 @@ internal static class EnvironmentVariables
 
         new("IDRAK_CONFIG", Tool, "~/.idrak/config.json", "The config file (--config wins)", [Every]),
         new("IDRAK_PROFILE", Tool, "the config's \"profile\"", "The config profile to use (a name under \"profiles\" in the config)", [Every]),
+        new("IDRAK_API_KEY", Tool, "not set", "The key serve requires and the client commands (api, ping, server ...) send when --api-key is not given", ["serve", "ui", "api", "ping", "server ps", "server stop", "server load", "server unload"], Secret: true),
         new("IDRAK_TRACE", Tool, "not set", "1 or true: errors print the stack as well", [Every]),
         new("NO_COLOR", Tool, "not set", "Set and not empty: no colour in the output", [Every]),
         new("TERM", Tool, "as the terminal sets it", "dumb: no colour in the output", [Every]),
