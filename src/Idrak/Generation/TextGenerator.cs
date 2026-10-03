@@ -95,6 +95,11 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
     /// </summary>
     public bool KeepCache { get; set; } = true;
 
+    // Whether a decoding step can be recorded: not with experts, whose routing is read back to the host on every step.
+    private bool StepsRecordable => _stepsRecordable ??= !Model.Descendants().Any(m => m is MixtureOfExperts);
+
+    private bool? _stepsRecordable;
+
     private readonly Lock _keptLock = new();
     private DecodingContext? _kept;
     private List<int> _keptIds = [];
@@ -616,7 +621,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                     {
                         // The first step runs as it is: the device measures its card-dependent choices for these
                         // shapes (which it cannot while recording), and the graph recorded from the second step keeps them.
-                        if (graph is null && options.UseGraph && steppedOnce && sampler.Recordable && decoding.Layout.Recordable)
+                        if (graph is null && options.UseGraph && steppedOnce && sampler.Recordable && decoding.Layout.Recordable && StepsRecordable)
                         {
                             graph = decoding.CaptureStep(Step);
                         }

@@ -456,12 +456,12 @@ internal static partial class Tests
                 attended.Add(s.PostNorms ? Norm(o, $"{p}.post_attn_norm") : o);
             }
 
-            float[] FeedForward(float[] x)
+            float[] Dense(float[] x, string m, int hidden)
             {
-                var up = MatVec(x, W($"{p}.mlp.up.weight"), D, s.FfDim, Bias($"{p}.mlp.up.bias"));
+                var up = MatVec(x, W($"{m}.up.weight"), D, hidden, Bias($"{m}.up.bias"));
                 if (s.Gated)
                 {
-                    var gate = MatVec(x, W($"{p}.mlp.gate.weight"), D, s.FfDim, Bias($"{p}.mlp.gate.bias"));
+                    var gate = MatVec(x, W($"{m}.gate.weight"), D, hidden, Bias($"{m}.gate.bias"));
                     up = [.. up.Select((u, i) => Act(gate[i]) * u)];
                 }
                 else
@@ -469,7 +469,47 @@ internal static partial class Tests
                     up = [.. up.Select(Act)];
                 }
 
-                var down = MatVec(up, W($"{p}.mlp.down.weight"), s.FfDim, D, Bias($"{p}.mlp.down.bias"));
+                return MatVec(up, W($"{m}.down.weight"), hidden, D, Bias($"{m}.down.bias"));
+            }
+
+            // Mixtral / Qwen-MoE: softmax over the router's scores, the k most probable experts (a stable sort, so ties go to
+            // the lowest index, as torch.topk), their probabilities renormalized when configured, the weighted sum of
+            // their outputs; plus a shared expert scaled by sigmoid of its gate.
+            float[] Experts(float[] x)
+            {
+                var scores = MatVec(x, W($"{p}.mlp.router.weight"), D, s.Experts, null);
+                double max = scores.Max();
+                var probabilities = scores.Select(v => Math.Exp(v - max)).ToArray();
+                double total = probabilities.Sum();
+                var chosen = Enumerable.Range(0, s.Experts).OrderByDescending(e => (float)(probabilities[e] / total)).Take(s.ExpertsPerToken).ToList();
+                double norm = s.NormalizeTopK ? chosen.Sum(e => probabilities[e] / total) : 1;
+                var output = new double[D];
+                foreach (int e in chosen)
+                {
+                    var y = Dense(x, $"{p}.mlp.experts.{e}", s.ExpertFfDim > 0 ? s.ExpertFfDim : s.FfDim);
+                    double weight = probabilities[e] / total / norm;
+                    for (int i = 0; i < D; i++)
+                    {
+                        output[i] += weight * y[i];
+                    }
+                }
+
+                if (s.SharedExpertFfDim > 0)
+                {
+                    var y = Dense(x, $"{p}.mlp.shared", s.SharedExpertFfDim);
+                    double gate = 1 / (1 + Math.Exp(-MatVec(x, W($"{p}.mlp.shared_gate.weight"), D, 1, null)[0]));
+                    for (int i = 0; i < D; i++)
+                    {
+                        output[i] += gate * y[i];
+                    }
+                }
+
+                return [.. output.Select(v => (float)v)];
+            }
+
+            float[] FeedForward(float[] x)
+            {
+                var down = s.IsExpertLayer(layer) ? Experts(x) : Dense(x, $"{p}.mlp", s.FfDim);
                 return s.PostNorms ? Norm(down, $"{p}.post_mlp_norm") : down;
             }
 

@@ -142,14 +142,17 @@ internal static partial class Tests
     {
         string last = name.Split('.')[^2];
         bool bias = name.EndsWith(".bias");
+        int hidden = name.Contains(".experts.") && s.ExpertFfDim > 0 ? s.ExpertFfDim : name.Contains(".mlp.shared.") ? s.SharedExpertFfDim : s.FfDim;
         int[] matrix = last switch
         {
+            "router" => [s.Dim, s.Experts],
+            "shared_gate" => [s.Dim, 1],
             "embed" => [s.Vocabulary, s.Dim],
             "q" => [s.Dim, s.Heads * s.HeadDim],
             "k" or "v" => [s.Dim, s.KvHeads * s.HeadDim],
             "o" => [s.Heads * s.HeadDim, s.Dim],
-            "gate" or "up" => [s.Dim, s.FfDim],
-            "down" => [s.FfDim, s.Dim],
+            "gate" or "up" => [s.Dim, hidden],
+            "down" => [hidden, s.Dim],
             "head" => [s.Dim, s.Vocabulary],
             "q_norm" or "k_norm" => [s.HeadDim],
             _ => [s.Dim],

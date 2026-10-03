@@ -186,6 +186,13 @@ internal static partial class Tests
             var qwen3 = families["families"]!.AsArray().First(f => (string?)f!["family"] == "Qwen3ForCausalLM")!;
             var gemma2 = families["families"]!.AsArray().First(f => (string?)f!["family"] == "Gemma2ForCausalLM")!;
             Check((bool)qwen3["queryKeyNorm"]! && qwen3["gguf"]!.AsArray().Count == 1 && (bool)gemma2["softCapping"]! && !(bool)qwen3["softCapping"]!, $"families: {families}");
+            JsonNode Family(string name) => families["families"]!.AsArray().First(f => (string?)f!["family"] == name)!;
+            Check(new[] { "MixtralForCausalLM", "Qwen2MoeForCausalLM", "Qwen3MoeForCausalLM" }.All(n => (bool)Family(n)["experts"]! && Family(n)["probe"] is null)
+                  && !(bool)qwen3["experts"]! && !(bool)Family("LlamaForCausalLM")["experts"]! && (bool)Family("Qwen3MoeForCausalLM")["queryKeyNorm"]!
+                  && Family("MixtralForCausalLM")["gguf"]!.AsArray().Select(g => (string?)g).SequenceEqual(["llama"])
+                  && Family("Qwen2MoeForCausalLM")["gguf"]!.AsArray().Select(g => (string?)g).SequenceEqual(["qwen2moe"]), $"families with experts: {families}");
+            var table = ModelsCli("families", "moe").Out;
+            Check(table.Contains("Experts") && table.Contains("Qwen2MoeForCausalLM") && !table.Contains("LlamaForCausalLM"), $"families moe: {table}");
 
             var memory = ModelsJson(["memory", hf, "-d", "cpu", "-w", "float32,int8", "-k", "float32", "--context", "128", "--memory", "1M", .. c]);
             var rows = memory["formats"]!.AsArray();

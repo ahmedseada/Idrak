@@ -21,19 +21,33 @@ public sealed class GgufArchitecture
 
     /// <summary>Whether llama.cpp interleaved each head's query and key rows (Llama does; they are put back on load).</summary>
     public bool InterleavedQueryKeys { get; init; }
+
+    /// <summary>
+    /// The Hugging Face architecture of this family's files with experts ({name}.expert_count above 0), when it is not
+    /// <see cref="HuggingFace"/> (llama files with experts are Mixtral); null: <see cref="HuggingFace"/>.
+    /// </summary>
+    public string? WithExperts { get; init; }
+
+    /// <summary>
+    /// Whether the family renormalizes the chosen experts' weights when the file does not say ({name}.expert_weights_norm),
+    /// as llama.cpp decides per family; null leaves it to the Hugging Face family's default.
+    /// </summary>
+    public bool? NormalizeTopK { get; init; }
 }
 
 /// <summary>
-/// The model families <see cref="GgufModel"/> reads, by GGUF architecture name: llama (Llama, Mistral), qwen2 and qwen3
-/// are registered; add others with <see cref="Register"/>.
+/// The model families <see cref="GgufModel"/> reads, by GGUF architecture name: llama (Llama, Mistral, and Mixtral when the
+/// file has experts), qwen2, qwen3, qwen2moe and qwen3moe are registered; add others with <see cref="Register"/>.
 /// </summary>
 public static class GgufArchitectures
 {
     private static readonly Dictionary<string, GgufArchitecture> Registry = new(StringComparer.Ordinal)
     {
-        ["llama"] = new() { HuggingFace = "LlamaForCausalLM", InterleavedQueryKeys = true },
+        ["llama"] = new() { HuggingFace = "LlamaForCausalLM", InterleavedQueryKeys = true, WithExperts = "MixtralForCausalLM" },
         ["qwen2"] = new() { HuggingFace = "Qwen2ForCausalLM", InterleavedQueryKeys = false },
         ["qwen3"] = new() { HuggingFace = "Qwen3ForCausalLM", InterleavedQueryKeys = false },
+        ["qwen2moe"] = new() { HuggingFace = "Qwen2MoeForCausalLM", InterleavedQueryKeys = false, NormalizeTopK = false },
+        ["qwen3moe"] = new() { HuggingFace = "Qwen3MoeForCausalLM", InterleavedQueryKeys = false, NormalizeTopK = true },
     };
 
     /// <summary>Registers (or replaces) how to read the GGUF architecture <paramref name="name"/>.</summary>
@@ -170,7 +184,9 @@ public static class GgufPreTokenizers
 /// file's metadata describes, in the Hugging Face layout (config.json, tokenizer.json, tokenizer_config.json with the chat
 /// template, generation_config.json), and <see cref="PretrainedModel.Load"/> reads the weights from the GGUF file itself,
 /// dequantized tensor by tensor, with llama.cpp's names and layouts turned back into the Hugging Face ones.
-/// Architectures: llama (Llama, Mistral), qwen2, qwen3, and those registered with <see cref="GgufArchitectures.Register"/>.
+/// Architectures: llama (Llama, Mistral, Mixtral), qwen2, qwen3, qwen2moe, qwen3moe, and those registered with
+/// <see cref="GgufArchitectures.Register"/>. Experts stored together (blk.N.ffn_gate_exps, [experts, ff, dim]) are read
+/// one expert at a time.
 /// Tokenizers: byte-level BPE (tokenizer.ggml.model "gpt2").
 /// </summary>
 public static class GgufModel
@@ -222,7 +238,7 @@ public static class GgufModel
 
         Directory.CreateDirectory(temp);
         var tokens = file.Get<string[]>("tokenizer.ggml.tokens", []);
-        WriteJson(Path.Combine(temp, "config.json"), Config(file, arch, architecture.HuggingFace, tokens.Length, notes));
+        WriteJson(Path.Combine(temp, "config.json"), Config(file, arch, architecture, tokens.Length, notes));
         WriteTokenizer(file, temp, tokens, notes);
         WriteJson(Path.Combine(temp, Marker), new JsonObject
         {
@@ -248,8 +264,13 @@ public static class GgufModel
 
     internal static ITensorStore OpenTensors(string folder) => new GgufTensors(GgufFile.Open(SourceOf(folder)));
 
-    private static JsonObject Config(GgufFile file, string arch, string hfArchitecture, int vocabulary, List<string> notes)
+    // The Hugging Face architecture of a file: the family's, or its one with experts when the file has experts.
+    private static string HuggingFaceOf(GgufFile file, string arch, GgufArchitecture architecture) =>
+        file.Get($"{arch}.expert_count", 0) > 0 ? architecture.WithExperts ?? architecture.HuggingFace : architecture.HuggingFace;
+
+    private static JsonObject Config(GgufFile file, string arch, GgufArchitecture architecture, int vocabulary, List<string> notes)
     {
+        string hfArchitecture = HuggingFaceOf(file, arch, architecture);
         int dim = file.Get($"{arch}.embedding_length", 0), heads = file.Get($"{arch}.attention.head_count", 0);
         var config = new JsonObject
         {
@@ -269,6 +290,40 @@ public static class GgufModel
             ["hidden_act"] = "silu",
             ["torch_dtype"] = "bfloat16",
         };
+        int experts = file.Get($"{arch}.expert_count", 0);
+        if (experts > 0)
+        {
+            // The experts' keys as transformers names them (Mixtral counts its experts as num_local_experts).
+            config[hfArchitecture == "MixtralForCausalLM" ? "num_local_experts" : "num_experts"] = experts;
+            config["num_experts_per_tok"] = file.Get($"{arch}.expert_used_count", 0);
+            if (file.Metadata.ContainsKey($"{arch}.expert_feed_forward_length"))
+            {
+                config["moe_intermediate_size"] = file.Get($"{arch}.expert_feed_forward_length", 0);
+            }
+
+            if (file.Metadata.ContainsKey($"{arch}.expert_shared_feed_forward_length"))
+            {
+                config["shared_expert_intermediate_size"] = file.Get($"{arch}.expert_shared_feed_forward_length", 0);
+            }
+
+            if (file.Metadata.ContainsKey($"{arch}.expert_weights_norm"))
+            {
+                config["norm_topk_prob"] = file.Get($"{arch}.expert_weights_norm", false);
+            }
+            else if (architecture.NormalizeTopK is { } normalize)
+            {
+                config["norm_topk_prob"] = normalize;
+            }
+
+            // Layers without a router are dense (Qwen's mlp_only_layers).
+            int layers = file.Get($"{arch}.block_count", 0);
+            var dense = Enumerable.Range(0, layers).Where(l => !file.Tensors.ContainsKey($"blk.{l}.ffn_gate_inp.weight")).ToList();
+            if (dense.Count > 0)
+            {
+                config["mlp_only_layers"] = new JsonArray([.. dense.Select(l => (JsonNode)l)]);
+            }
+        }
+
         if (file.Metadata.ContainsKey("tokenizer.ggml.bos_token_id"))
         {
             config["bos_token_id"] = file.Get("tokenizer.ggml.bos_token_id", 0);
@@ -454,8 +509,12 @@ public static class GgufModel
     // The GGUF file's tensors under Hugging Face names, in Hugging Face layouts.
     private sealed class GgufTensors : ITensorStore
     {
+        // A Hugging Face tensor: the GGUF tensor holding it, which expert of a tensor of all the experts (-1 for the whole
+        // tensor), and its shape.
+        private sealed record Source(string Gguf, int Expert, int[] Shape);
+
         private readonly GgufFile _file;
-        private readonly Dictionary<string, string> _names = new(StringComparer.Ordinal);    // Hugging Face name → GGUF name
+        private readonly Dictionary<string, Source> _names = new(StringComparer.Ordinal);    // Hugging Face name → GGUF tensor
         private readonly string _arch;
         private readonly bool _interleavedQueryKeys;
         private readonly int _heads, _kvHeads;
@@ -464,15 +523,65 @@ public static class GgufModel
         {
             _file = file;
             _arch = file.Get("general.architecture", "");
-            _interleavedQueryKeys = GgufArchitectures.Find(_arch) is { InterleavedQueryKeys: true };
+            var architecture = GgufArchitectures.Find(_arch);
+            _interleavedQueryKeys = architecture is { InterleavedQueryKeys: true };
             _heads = file.Get($"{_arch}.attention.head_count", 0);
             _kvHeads = file.Get($"{_arch}.attention.head_count_kv", _heads);
-            foreach (var name in file.Tensors.Keys)
+            // Experts' tensors are named through the Hugging Face family's own names (Mixtral's and Qwen's differ).
+            var family = architecture is null ? null
+                : PretrainedArchitectures.Names.Contains(HuggingFaceOf(file, _arch, architecture)) ? PretrainedArchitectures.Get(HuggingFaceOf(file, _arch, architecture)) : null;
+            foreach (var (name, info) in file.Tensors)
             {
                 if (HfName(name) is { } hf)
                 {
-                    _names[hf] = name;
+                    _names[hf] = new Source(name, -1, info.Shape);
                 }
+                else if (family is not null)
+                {
+                    AddExperts(name, info, family);
+                }
+            }
+        }
+
+        // The experts' tensors under the family's names: the router (ffn_gate_inp), the experts stored together
+        // (ffn_gate_exps, ffn_up_exps, ffn_down_exps: [experts, rows, columns], one Hugging Face tensor per expert) or one
+        // by one (ffn_gate.j, older Mixtral files), and the shared expert (ffn_*_shexp) and its gate (ffn_gate_inp_shexp,
+        // stored as a vector).
+        private void AddExperts(string name, GgufTensorInfo info, PretrainedArchitecture family)
+        {
+            void Add(string idrak, int expert, int[] shape)
+            {
+                if (family.TensorName(idrak) is { } hf)
+                {
+                    _names[hf] = new Source(name, expert, shape);
+                }
+            }
+
+            string? Projection(string part) => part switch { "gate" => "gate", "up" => "up", "down" => "down", _ => null };
+            var shape = info.Shape;
+            switch (name.Split('.'))
+            {
+                case ["blk", var layer, "ffn_gate_inp", var kind]:
+                    Add($"layers.{layer}.mlp.router.{kind}", -1, shape);
+                    break;
+                case ["blk", var layer, "ffn_gate_inp_shexp", var kind]:
+                    Add($"layers.{layer}.mlp.shared_gate.{kind}", -1, shape.Length == 1 ? [1, shape[0]] : shape);
+                    break;
+                case ["blk", var layer, var part, var kind] when part.EndsWith("_exps", StringComparison.Ordinal) && shape.Length == 3
+                                                                && Projection(part[4..^5]) is { } projection:
+                    for (int j = 0; j < shape[0]; j++)
+                    {
+                        Add($"layers.{layer}.mlp.experts.{j}.{projection}.{kind}", j, [shape[1], shape[2]]);
+                    }
+
+                    break;
+                case ["blk", var layer, var part, var kind] when part.EndsWith("_shexp", StringComparison.Ordinal) && Projection(part[4..^6]) is { } projection:
+                    Add($"layers.{layer}.mlp.shared.{projection}.{kind}", -1, shape);
+                    break;
+                case ["blk", var layer, var part, var expert, var kind] when part.StartsWith("ffn_", StringComparison.Ordinal) && int.TryParse(expert, out _)
+                                                                            && Projection(part[4..]) is { } projection:
+                    Add($"layers.{layer}.mlp.experts.{expert}.{projection}.{kind}", -1, shape);
+                    break;
             }
         }
 
@@ -480,11 +589,21 @@ public static class GgufModel
 
         public bool Contains(string name) => _names.ContainsKey(name);
 
-        public int[] ShapeOf(string name) => _file.Tensors[_names[name]].Shape;
+        public int[] ShapeOf(string name) => _names[name].Shape;
 
         public float[] Read(string name)
         {
-            string gguf = _names[name];
+            var source = _names[name];
+            string gguf = source.Gguf;
+            if (source.Expert >= 0)
+            {
+                // One expert's rows of the tensor of all the experts.
+                int rows = source.Shape[0], columns = source.Shape[1];
+                var slice = GC.AllocateUninitializedArray<float>(checked(rows * columns));
+                _file.ReadRows(gguf, source.Expert * rows, slice, new byte[checked((int)(rows * _file.RowBytes(gguf)))]);
+                return slice;
+            }
+
             var values = _file.Read(gguf);
             if (Permuted(gguf) is { } heads)
             {
@@ -498,8 +617,9 @@ public static class GgufModel
 
         public float[] ReadTransposed(string name)
         {
-            string gguf = _names[name];
-            var shape = ShapeOf(name);
+            var source = _names[name];
+            string gguf = source.Gguf;
+            var shape = source.Shape;
             if (shape.Length != 2)
             {
                 throw new ArgumentException($"'{name}' is [{string.Join(", ", shape)}], not a matrix.", nameof(name));
@@ -507,7 +627,7 @@ public static class GgufModel
 
             // Chunks of stored rows are dequantized through pooled buffers and scattered into the transposed result (with
             // Llama's q / k rows put back in order on the way), so the stored order never exists as a full array.
-            int rows = shape[0], columns = shape[1];
+            int rows = shape[0], columns = shape[1], start = Math.Max(0, source.Expert) * rows;   // an expert's first row
             int? heads = Permuted(gguf);
             int headDim = heads is { } h ? rows / h : 1, half = headDim / 2;
             var values = GC.AllocateUninitializedArray<float>(checked(rows * columns));
@@ -519,7 +639,7 @@ public static class GgufModel
                 for (int r0 = 0; r0 < rows; r0 += chunkRows)
                 {
                     int n = Math.Min(chunkRows, rows - r0), first = r0;
-                    _file.ReadRows(gguf, r0, chunk.AsSpan(0, n * columns), raw);
+                    _file.ReadRows(gguf, start + r0, chunk.AsSpan(0, n * columns), raw);
                     Idrak.HostParallel.For(columns, Math.Max(1, (1 << 14) / n), (c0, c1) =>
                     {
                         const int Tile = 64;
