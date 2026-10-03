@@ -56,7 +56,7 @@ internal static class CpuMatMul
         {
             // B is stored [n, k]; transpose it once into [k, n] so the kernel always streams contiguous B rows.
             rented = ArrayPool<float>.Shared.Rent(k * n);
-            Transpose(b, bOffset, rented, n, k, CpuTuning.TransposeSide);
+            Transpose(b, bOffset, rented, n, k, CpuTuning.TransposeSide, options);
             b = rented;
             bOffset = 0;
         }
@@ -67,8 +67,12 @@ internal static class CpuMatMul
         int blocks = (m + Mr - 1) / Mr;
 
         int columnBlock = CpuTuning.ColumnBlock;
+        var kernel = CpuTuning.Kernel;
+        // Rows below one register block of the tiled kernel (or below Mr without one) would otherwise go to the row-block
+        // path, whose one or two blocks leave most threads idle (5 to 7 rows ran several times slower than 4 or 8).
+        int fewRows = kernel != TiledKernel.None ? Math.Max(Mr, CpuTuning.KernelShape(kernel).Rows - 1) : Mr;
         bool columnSplit = beta == 0f
-            ? m <= Mr && n >= 2 * columnBlock && parallel                    // same results either way: tuned
+            ? m <= fewRows && n >= 2 * columnBlock && parallel               // same results either way: tuned
             : m <= CpuTuning.ColumnSplitRows && n >= CpuTuning.ColumnSplitColumns && (long)m * n * k >= CpuTuning.ColumnSplitWork
               && options.MaxDegreeOfParallelism > 1;                         // beta · C rounds differently there: the contract
         if (columnSplit)
@@ -84,7 +88,6 @@ internal static class CpuMatMul
             return;
         }
 
-        var kernel = CpuTuning.Kernel;
         if (kernel != TiledKernel.None && m >= CpuTuning.KernelShape(kernel).Rows)
         {
             // At least one register block of the tiled kernel (fewer rows would leave the kernel unused).
@@ -548,15 +551,17 @@ internal static class CpuMatMul
     }
 
     // Square tiles of `tile` (CpuTuning.TransposeTile: source and destination tiles within half the L1).
-    private static void Transpose(float[] src, int srcOffset, float[] dst, int rows, int cols, int tile)
+    private static void Transpose(float[] src, int srcOffset, float[] dst, int rows, int cols, int tile, ParallelOptions? options = null)
     {
         int Tile = tile;
-        for (int r0 = 0; r0 < rows; r0 += Tile)
+        // One band of source columns (destination rows) at a time; the bands write disjoint parts of dst, so large
+        // transposes (B of a big product) spread over the threads instead of running on one.
+        void Band(int c0)
         {
-            int r1 = Math.Min(r0 + Tile, rows);
-            for (int c0 = 0; c0 < cols; c0 += Tile)
+            int c1 = Math.Min(c0 + Tile, cols);
+            for (int r0 = 0; r0 < rows; r0 += Tile)
             {
-                int c1 = Math.Min(c0 + Tile, cols);
+                int r1 = Math.Min(r0 + Tile, rows);
                 for (int r = r0; r < r1; r++)
                 {
                     for (int col = c0; col < c1; col++)
@@ -564,6 +569,19 @@ internal static class CpuMatMul
                         dst[col * rows + r] = src[srcOffset + r * cols + col];
                     }
                 }
+            }
+        }
+
+        int bands = (cols + Tile - 1) / Tile;
+        if (options is { MaxDegreeOfParallelism: not 1 } && bands > 1 && (long)rows * cols >= 1 << 16)
+        {
+            Parallel.For(0, bands, options, band => Band(band * Tile));
+        }
+        else
+        {
+            for (int band = 0; band < bands; band++)
+            {
+                Band(band * Tile);
             }
         }
     }

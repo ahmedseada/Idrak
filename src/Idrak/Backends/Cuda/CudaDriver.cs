@@ -36,7 +36,8 @@ internal static unsafe partial class CudaDriver
             }
         }
 
-        reason = $"the NVIDIA driver library ({string.Join(" / ", CandidateNames())}) was not found";
+        reason = CandidateNames().Length == 0 ? "CUDA is not used on this operating system"
+            : $"the NVIDIA driver library ({string.Join(" / ", CandidateNames())}) was not found";
         return false;
     }
 

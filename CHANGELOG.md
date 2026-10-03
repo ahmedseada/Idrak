@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- CPU: float32 products of more rows than the few-row block but fewer than one register block of the tiled kernel
+  (5 to 7 rows with the NEON 8x8 kernel, 5 with AVX2 6x16) split the columns over the threads instead of running one
+  or two row blocks; on an Apple M4 Max, 5 and 6 rows of a 4096 x 1024 product took 1.7 and 3.2 ms against 0.47 ms
+  for 8. Large B transposes before a product run over the threads.
+- `idrak doctor` reports CUDA, Vulkan and HIP as information, not warnings, on systems that do not use them (macOS);
+  the CUDA reason says so instead of naming an empty library list.
+- macOS (Apple silicon) tested: the CPU backend, the tool and language models (installation/macos.md).
 - `idrak env set` saves environment variables in the config ("env"), and every idrak run sets them before it starts,
   the same in every terminal and shell; the processes the tool starts (`idrak test`'s runner) get them too. With no
   arguments it asks: pick a variable (number, name or part of it; `?` lists all), take the suggested value with Enter or
