@@ -45,8 +45,8 @@ internal (the first-party packages keep calling it); outside code uses `CopyFrom
 | 6 | (done: translators in graphs, `GraphOps`, `LayerTypes`, Clip/Pow/Sqrt/...; Erf, ConvTranspose and several inputs/outputs remain) ONNX import of graph models ignores registered operators | fixed `Primitives` map (OnnxImport.cs:336-344) and closed `MatchLayer` (402-413), documented at OnnxImportOps.cs:90-92; closed `GraphModule` operation switch (GraphModule.cs:159-233) and layer list (`LayerDescriptions`, GraphModule.cs:464-522); one input and output (OnnxImport.cs:125, 350) | a ResNet or U-Net with Erf, Pow, Clip or ConvTranspose; a custom layer inside a graph | `GraphOps.Register(op, ...)`; `LayerDescriptions` becomes a layer type registry (describe, create), shared with item 7 | medium | high |
 | 7 | Model packages (.ikm) cannot store custom architectures, scalers or tokenizers | `BuildModel` handles DecoderSpec, GraphModule or builder JSON only (Inference/ModelPackage.cs:293-325); scalers in a closed switch (ModelPackage.cs:111-116) with the `PackageEntryKind` enum (:50); tokenizers limited to character and word (:118-126; Generation/Tokenizer.cs:282-298) | shipping a custom module, a robust scaler or a BPE model in one file | an architecture registry keyed by the description's format; `IScaler` gains a save method and a format name with a scaler registry; the same for tokenizers | medium | medium |
 | 8 | Done (plugin/tool-calls): `IToolCallParser` and `ToolCallFormats` with json, pythonic, qwen3-coder, mistral, harmony and deepseek built in. Was: tool-call parsing handles only JSON between tags | sealed `ToolCallFormat(Open, Close, List, ArgumentsKey)` (Generation/Chat.cs:33); sealed, JSON-only `ChatOutputParser` (Chat.cs:211, 492); the detector probes that shape only (ChatTemplates.cs:67-120) | Llama 3 pythonic calls, Qwen3-Coder XML, Mistral `[TOOL_CALLS]`, GPT-OSS channels, DeepSeek special tokens | an `IToolCallParser` (feed text, finish, calls) created by the chat template; `ToolCallFormat` stays the default | medium | high |
-| 9 | Fine-tuning fixes the optimizer, schedule, loss and adapter type | AdamW (LanguageModels/FineTuning.cs:984-987), cosine schedule (:729-730), token cross-entropy (:1324, :1443); LoRA only, through a sealed `LoraAdapter` record with an internal setter (Layers/Linear.cs:121, 497) | other optimizers, a warm-up/stable/decay schedule, DPO, ORPO or KTO losses, DoRA | `FineTuningOptions.Optimizer`, `Scheduler` and loss delegates; adapters need an `IAdapter` on `Linear` | medium (adapters: large) | high |
-| 10 | PEFT adapters: only plain LoRA, and the configuration is not checked | `LoadAdapter` and `AdapterMerge` read only `r`, `lora_alpha`, `use_rslora` (PretrainedModel.cs:250-283; Architectures.cs:240-246); `peft_type` and `use_dora` are never checked, so a DoRA adapter would likely load as plain LoRA (inferred from the code, not run) | loading DoRA, IA3 or VeRA adapters | first reject an unknown `peft_type` and `use_dora`; then an adapter type registry | small (checks), large (variants) | medium |
+| 9 (done) | Fine-tuning fixes the optimizer, schedule, loss and adapter type | AdamW (LanguageModels/FineTuning.cs:984-987), cosine schedule (:729-730), token cross-entropy (:1324, :1443); LoRA only, through a sealed `LoraAdapter` record with an internal setter (Layers/Linear.cs:121, 497) | other optimizers, a warm-up/stable/decay schedule, DPO, ORPO or KTO losses, DoRA | `FineTuningOptions.Optimizer`, `Scheduler` and loss delegates; adapters need an `IAdapter` on `Linear` | medium (adapters: large) | high |
+| 10 (checks and DoRA done) | PEFT adapters: only plain LoRA, and the configuration is not checked | `LoadAdapter` and `AdapterMerge` read only `r`, `lora_alpha`, `use_rslora` (PretrainedModel.cs:250-283; Architectures.cs:240-246); `peft_type` and `use_dora` are never checked, so a DoRA adapter would likely load as plain LoRA (inferred from the code, not run) | loading DoRA, IA3 or VeRA adapters | first reject an unknown `peft_type` and `use_dora`; then an adapter type registry | small (checks), large (variants) | medium |
 | 11 | Only BPE tokenizer models | other tokenizer.json models throw (BpeTokenizer.cs:87-90); GGUF accepts only the "gpt2" tokenizer model (GgufModel.cs:339-342); `BpeTokenizer` is always created (PretrainedModel.cs:138); `TokenizerComponents` has no model or post-processor entry (TokenizerComponents.cs:57-63) | WordPiece (BERT, BGE), Unigram/SentencePiece (T5, Gemma, Llama-2-style GGUF) | `TokenizerModels.Register(type, Func<JsonObject, ITokenizerModel>)` | medium to large | medium |
 | 12 | The GGUF architecture registry cannot describe a family unlike Llama | `GgufArchitecture` holds only the Hugging Face name and query/key interleaving (GgufModel.cs:17-23); tensor names in a closed switch (:563-595); fixed config translation with `hidden_act` set to silu (:250-270) | Phi-3 (`attn_qkv`), Gemma 2 (post norms, GELU), Command R | `TensorName` and `Config` delegates on `GgufArchitecture` | small | medium |
 | 13 | Generation: no stopping hook, logits processors, speculative decoding or structured output | string stops only (TextGenerator.cs:409-411, 470-488); the only plug point replaces the whole sampler (:89) and loses temperature, top-k and top-p; no logit bias (Sampling.cs); the Ollama request has no `format` field (AspNetCore/Ollama.cs:14-21) | stopping on token ids or a pattern, logit bias, a JSON schema mask over the normal sampler, a draft model | `GenerationOptions.StopWhen`; an `ILogitsProcessor` run before the sampler; a speculative mode with a draft model | small (stop, bias), medium (processors), large (speculative) | medium |
@@ -128,6 +128,30 @@ internal (the first-party packages keep calling it); outside code uses `CopyFrom
   `shared_expert`, `shared_expert_gate`) in their `TensorName`.
 - Tests: a tiny random model against a loop reference with a known routing; ties broken as torch.topk does (lowest
   index first); then GPU kernels (grouped products per expert) and packed expert weights.
+
+### Items 9 and 10: what was done
+
+- `FineTuningOptions.Optimizer` (factory from the trainable parameters), `Scheduler` (from the optimizer and the step
+  count) and `Loss` (a `FineTuningLoss` over the trained tokens' log-probabilities); null keeps AdamW, cosine and the
+  fused token cross-entropy with identical results. Built-ins: `FineTuningOptimizers`, `FineTuningSchedules` (cosine,
+  linear, constant, warm-up/stable/decay), `FineTuningLosses` (token cross-entropy, DPO, ORPO, SimPO).
+- Recorded steps record only the forward and backward pass, so any optimizer that keeps its gradient buffers is
+  recorded; the CPU update (and any optimizer that releases or replaces the buffers, checked before recording and before
+  every replay) runs ordinary steps. A custom loss runs ordinary steps (its gradient becomes the weights of a token
+  cross-entropy pass). Not run on CUDA here: on Mesa's software Vulkan the recording itself falls back (a read during
+  capture), so the recorded path with a custom optimizer is covered by construction and by CUDA runs to come.
+- Preference data: `RowKind.Preference`, `ChatRows.Preference`, `ChatTranscriptEncoder.EncodePreference`,
+  `PreferencePair` and `FineTuner.Train(model, pairs, ...)`. DPO's reference: adapters disabled
+  (`ModuleExtensions.DisableAdapters`), computed once per sequence.
+- `ILinearAdapter` on `Linear.Adapter` (LoRA one implementation, `Linear.Lora` for the fused paths) and `DoraAdapter`
+  with PEFT save/load (`use_dora`, `lora_magnitude_vector`), merging (in memory, while loading, ONNX export).
+- PEFT checks: another `peft_type`, `rank_pattern`, `alpha_pattern`, trained biases, `lora_bias`, `modules_to_save`,
+  `layer_replication`, `trainable_token_indices`, `use_qalora`, and tensors no layer takes are refused; `use_rslora`
+  now applies to `LoadAdapter` too.
+
+Still open: KTO (unpaired data and a KL reference point) and IPO; a loss over hidden states rather than log-probabilities;
+packing for preference batches; per-module ranks; IA3 and VeRA as `ILinearAdapter`s with a PEFT type registry; DoRA
+through the fused LoRA kernels (its products run unfused today).
 
 ## Gaps inside the existing registries
 

@@ -321,7 +321,7 @@ internal static partial class Tests
             var logits = model.Forward(Tensor.From([.. ids.Select(i => (float)i)], [1, ids.Length], device));
             logits.Square().Mean().Backward();
             var adapters = model.Descendants().OfType<Linear>().Where(l => l.Adapter is not null).ToList();
-            Check(adapters.Count == added && adapters.All(l => l.PackedWeight is RoundedWeight && l.Adapter!.B.Grad is { } g && g.ToArray().Any(v => v != 0f)),
+            Check(adapters.Count == added && adapters.All(l => l.PackedWeight is RoundedWeight && l.Lora!.B.Grad is { } g && g.ToArray().Any(v => v != 0f)),
                 "the adapters' gradients through the format's product");
         }
     }

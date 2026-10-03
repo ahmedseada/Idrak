@@ -115,10 +115,16 @@ public sealed class Linear : Module
     public Tensor? Bias { get; private set; }
 
     /// <summary>
-    /// A low-rank adapter (LoRA) added to this layer by <see cref="ModuleExtensions.AddLora"/>, or null. When present the
-    /// output is <c>x·W + b + (x·A·B)·scale</c>; its A and B come after W and b in <see cref="Parameters"/>.
+    /// The adapter on this layer, or null: a LoRA adapter (<see cref="LoraAdapter"/>, added by
+    /// <see cref="ModuleExtensions.AddLora"/>: the output is <c>x·W + b + (x·A·B)·scale</c>), a DoRA adapter
+    /// (<see cref="DoraAdapter"/>, <see cref="ModuleExtensions.AddDora"/>) or one of your own implementing
+    /// <see cref="ILinearAdapter"/>. Its parameters come after W and b in <see cref="Parameters"/>. Setting it does not
+    /// freeze anything; create the optimizer afterwards.
     /// </summary>
-    public LoraAdapter? Adapter { get; internal set; }
+    public ILinearAdapter? Adapter { get; set; }
+
+    /// <summary>The adapter when it is a plain LoRA adapter (the fused LoRA products read only those), else null.</summary>
+    public LoraAdapter? Lora => Adapter as LoraAdapter;
 
     /// <summary>
     /// Soft-caps the outputs, cap · tanh(y / cap), or null for none: Gemma 2's final logit soft-capping on an output head,
@@ -150,7 +156,7 @@ public sealed class Linear : Module
             return Tensor.MatMulBias(input, _weight, Bias);                 // one pass on tensor cores
         }
 
-        if (Bias is { RequiresGrad: false } && Adapter is not null && Tensor.LoraProducts(input, [this]) is [var withBias])
+        if (Bias is { RequiresGrad: false } && Lora is not null && Tensor.LoraProducts(input, [this]) is [var withBias])
         {
             return withBias;                                            // the frozen bias added inside the fused product
         }
@@ -196,7 +202,7 @@ public sealed class Linear : Module
         }
 
         // Adapters on every layer (LoRA / QLoRA, training or evaluation): one pass with each low-rank term inside its product.
-        if (layers.All(l => l.Adapter is not null && l.Bias is not { RequiresGrad: true }) && Tensor.LoraProducts(input, layers) is { } lora)
+        if (layers.All(l => l.Lora is not null && l.Bias is not { RequiresGrad: true }) && Tensor.LoraProducts(input, layers) is { } lora)
         {
             return lora;
         }
@@ -207,7 +213,7 @@ public sealed class Linear : Module
             && layers.All(l => l.Bias is null && l.InFeatures == k && l.PackedWeight?.Format == format);
         if (training && Tensor.MatMulPackedManyRecorded(input, format!.Value, layers) is { } products)
         {
-            return [.. products.Select((product, j) => layers[j].Adapter is { } a ? Tensor.AddLowRank(product, input, a.A, a.B, a.Scale) : product)];
+            return [.. products.Select((product, j) => layers[j].Adapter is { } a ? a.Forward(layers[j], input, product) : product)];
         }
 
         // Training: the layers read one flattened view of the input, so their input gradients add up in its one buffer
@@ -221,17 +227,21 @@ public sealed class Linear : Module
         return [.. layers.Select(l => l.Forward(input))];
     }
 
-    /// <summary>x·W, plus the adapter's low-rank term when an adapter is attached.</summary>
+    /// <summary>x·W, adapted by the adapter when one is attached.</summary>
     internal Tensor ProjectWithoutBias(Tensor input)
     {
-        if (Adapter is not null && Tensor.LoraProducts(input, [this], withBias: false) is [var fused])
+        if (Lora is not null && Tensor.LoraProducts(input, [this], withBias: false) is [var fused])
         {
             return fused;
         }
 
-        var product = _packed is { } packed ? packed.MatMul(input) : _tiedTo is { } e ? TiedProduct(input, e.Weight) : input.MatMul(Weight);
-        return Adapter is { } a ? Tensor.AddLowRank(product, input, a.A, a.B, a.Scale) : product;
+        var product = BaseProduct(input);
+        return Adapter is { } a ? a.Forward(this, input, product) : product;
     }
+
+    /// <summary>x·W with the layer's own weights (float, packed or tied), without bias or adapter.</summary>
+    internal Tensor BaseProduct(Tensor input) =>
+        _packed is { } packed ? packed.MatMul(input) : _tiedTo is { } e ? TiedProduct(input, e.Weight) : input.MatMul(Weight);
 
     // The tied head (x · Eᵀ). While the table is frozen, large products read a transposed bfloat16 copy made once (the
     // tensor-core kernels would otherwise copy the whole table transposed on every call; bfloat16 is what they multiply in
@@ -288,6 +298,7 @@ public sealed class Linear : Module
     /// <inheritdoc />
     public override void Dispose()
     {
+        (Adapter as IDisposable)?.Dispose();
         _tiedTransposed?.Dispose();
         _tiedTransposed = null;
         DetachFloat8();
@@ -304,7 +315,7 @@ public sealed class Linear : Module
             ({ } w, null) => [w],
             ({ } w, { } b) => [w, b],
         };
-        return Adapter is { } a ? own.Concat([a.A, a.B]) : own;
+        return Adapter is { } a ? own.Concat(a.Parameters) : own;
     }
 
     /// <summary>Folds the adapter into the weight (<c>W += A·B·scale</c>) and removes it; the outputs stay the same.</summary>
@@ -471,20 +482,24 @@ public sealed class Linear : Module
 
         if (Packed)
         {
-            throw new InvalidOperationException($"{this}: merging a LoRA adapter into {_packed!.Description} weights would lose precision; call {_packed.FloatMethod} first, or keep the adapter.");
+            throw new InvalidOperationException($"{this}: merging an adapter into {_packed!.Description} weights would lose precision; call {_packed.FloatMethod} first, or keep the adapter.");
         }
 
         Untie();
         using (Autograd.NoGrad())
         using (var scope = new TensorScope())
         {
-            var merged = Weight + a.A.MatMul(a.B) * a.Scale;
+            var merged = a.Merge(this, Weight);
             Weight.Load(merged.ToArray());
         }
 
         Adapter = null;
-        a.A.Dispose();
-        a.B.Dispose();
+        foreach (var p in a.Parameters)
+        {
+            p.Dispose();
+        }
+
+        (a as IDisposable)?.Dispose();
     }
 
     /// <inheritdoc />
@@ -495,13 +510,13 @@ public sealed class Linear : Module
         Bias = Bias is null ? null : MoveTensor(Bias, device);
         if (Adapter is { } a)
         {
-            Adapter = a with { A = MoveTensor(a.A, device), B = MoveTensor(a.B, device) };
+            Adapter = a.MoveTo(t => MoveTensor(t, device));
         }
     }
 
     /// <inheritdoc />
     public override string ToString() =>
-        $"Linear({InFeatures} -> {OutFeatures}{(Bias is null ? ", no bias" : "")}{(_packed is null ? "" : $", {_packed.ShortName}")}{(_tiedTo is null ? "" : ", tied")}{(Adapter is { } a ? $", LoRA rank {a.Rank}" : "")}{(_softcap is { } c ? $", softcap {c}" : "")})";
+        $"Linear({InFeatures} -> {OutFeatures}{(Bias is null ? ", no bias" : "")}{(_packed is null ? "" : $", {_packed.ShortName}")}{(_tiedTo is null ? "" : ", tied")}{Adapter switch { null => "", LoraAdapter a => $", LoRA rank {a.Rank}", DoraAdapter d => $", DoRA rank {d.Rank}", var other => $", {other.GetType().Name}" }}{(_softcap is { } c ? $", softcap {c}" : "")})";
 }
 
 /// <summary>
@@ -513,4 +528,155 @@ public sealed class Linear : Module
 /// <param name="B">[rank, outFeatures], zeros at creation.</param>
 /// <param name="Rank">The rank r.</param>
 /// <param name="Scale">alpha / r.</param>
-public sealed record LoraAdapter(Tensor A, Tensor B, int Rank, float Scale);
+public sealed record LoraAdapter(Tensor A, Tensor B, int Rank, float Scale) : ILinearAdapter
+{
+    /// <inheritdoc />
+    public IReadOnlyList<Tensor> Parameters => [A, B];
+
+    /// <inheritdoc />
+    public Tensor Forward(Linear layer, Tensor input, Tensor product) => Tensor.AddLowRank(product, input, A, B, Scale);
+
+    /// <inheritdoc />
+    public Tensor Merge(Linear layer, Tensor weight) => weight + A.MatMul(B) * Scale;
+
+    /// <inheritdoc />
+    public ILinearAdapter MoveTo(Func<Tensor, Tensor> move) => this with { A = move(A), B = move(B) };
+}
+
+/// <summary>
+/// An adapter on a <see cref="Linear"/> layer (<see cref="Linear.Adapter"/>): trainable tensors that change the layer's
+/// product x·W, and the weight they fold into. <see cref="LoraAdapter"/> and <see cref="DoraAdapter"/> are the built-in
+/// ones; another kind (IA3, VeRA …) implements this interface with ordinary tensor operations.
+/// </summary>
+public interface ILinearAdapter
+{
+    /// <summary>The adapter's trainable tensors (after the layer's own in <see cref="Linear.Parameters"/>).</summary>
+    IReadOnlyList<Tensor> Parameters { get; }
+
+    /// <summary>
+    /// The adapted product for <paramref name="input"/> [..., in], given <paramref name="product"/> = input·W [..., out]
+    /// computed with the layer's own weights (a fresh result the adapter may overwrite); the bias is added afterwards.
+    /// </summary>
+    Tensor Forward(Linear layer, Tensor input, Tensor product);
+
+    /// <summary>The weight with the adapter folded in, from the layer's float <paramref name="weight"/> [in, out] (called without gradients).</summary>
+    Tensor Merge(Linear layer, Tensor weight);
+
+    /// <summary>The adapter with each of its tensors replaced by <paramref name="move"/>(tensor) (the layer moves to another device).</summary>
+    ILinearAdapter MoveTo(Func<Tensor, Tensor> move);
+}
+
+/// <summary>
+/// A DoRA adapter (weight-decomposed low-rank adaptation; Liu et al. 2024, "DoRA: Weight-Decomposed Low-Rank
+/// Adaptation", arXiv:2402.09353, computed as peft's <c>DoraLinearLayer</c>): the weight is split into a magnitude per
+/// output and a direction, LoRA adapts the direction and the magnitude trains on its own:
+/// <c>W' = m ⊙ (W + s·A·B) / ‖W + s·A·B‖</c>, the norm taken per output column over the inputs. The output is
+/// <c>(x·W + s·x·A·B) ⊙ m / ‖W + s·A·B‖ + b</c>. As in the paper (section 4.3) and peft, the norm is treated as a constant
+/// in the backward pass (no gradient through it), which saves memory and changes the gradients only slightly. The norm
+/// is computed each forward pass without forming W + s·A·B: ‖W‖² (once, the base is frozen) + 2s·Σ_r B ⊙ (Aᵀ·W) +
+/// s²·Σ_r B ⊙ (AᵀA·B), so a packed (QLoRA) base is read through its own product, never expanded. The magnitude starts as
+/// ‖W‖ and B at zero, so adding the adapter does not change the outputs.
+/// </summary>
+public sealed class DoraAdapter : ILinearAdapter, IDisposable
+{
+    private Tensor? _squaredNorms;
+
+    /// <summary>Creates the adapter from its tensors (see the properties).</summary>
+    public DoraAdapter(Tensor a, Tensor b, Tensor magnitude, int rank, float scale)
+    {
+        ArgumentNullException.ThrowIfNull(a);
+        ArgumentNullException.ThrowIfNull(b);
+        ArgumentNullException.ThrowIfNull(magnitude);
+        if (a.Rank != 2 || b.Rank != 2 || a.Shape[1] != rank || b.Shape[0] != rank || magnitude.Size != b.Shape[1])
+        {
+            throw new ArgumentException($"DoRA needs A [in, {rank}], B [{rank}, out] and a magnitude [out]; got {Tensor.FormatShape(a.Shape)}, "
+                                        + $"{Tensor.FormatShape(b.Shape)} and {Tensor.FormatShape(magnitude.Shape)}.");
+        }
+
+        (A, B, Magnitude, Rank, Scale) = (a, b, magnitude, rank, scale);
+    }
+
+    /// <summary>[inFeatures, rank], small random values.</summary>
+    public Tensor A { get; }
+
+    /// <summary>[rank, outFeatures], zeros at creation.</summary>
+    public Tensor B { get; }
+
+    /// <summary>[outFeatures]: the adapted weight's norm per output column (‖W‖ at creation).</summary>
+    public Tensor Magnitude { get; }
+
+    /// <summary>The rank r.</summary>
+    public int Rank { get; }
+
+    /// <summary>alpha / r (alpha / √r with rank-stabilized scaling).</summary>
+    public float Scale { get; }
+
+    /// <inheritdoc />
+    public IReadOnlyList<Tensor> Parameters => [A, B, Magnitude];
+
+    /// <inheritdoc />
+    public Tensor Forward(Linear layer, Tensor input, Tensor product)
+    {
+        var adapted = Tensor.AddLowRank(product, input, A, B, Scale);       // x·W + s·x·A·B
+        Tensor inverse;
+        using (Autograd.NoGrad())
+        {
+            inverse = InverseNorms(layer);                                  // 1 / ‖W + s·A·B‖, a constant for the backward pass
+        }
+
+        var factor = Magnitude * inverse;                                   // the magnitude's gradient flows through here
+        return adapted.GroupAffine(factor, null, layer.OutFeatures, 1);
+    }
+
+    /// <inheritdoc />
+    public Tensor Merge(Linear layer, Tensor weight)
+    {
+        var dense = weight + A.MatMul(B) * Scale;
+        var inverse = ((dense * dense).Sum(0).Log() * -0.5f).Exp();
+        return dense.GroupAffine(Magnitude * inverse, null, layer.OutFeatures, 1);
+    }
+
+    /// <inheritdoc />
+    public ILinearAdapter MoveTo(Func<Tensor, Tensor> move)
+    {
+        _squaredNorms?.Dispose();
+        _squaredNorms = null;
+        return new DoraAdapter(move(A), move(B), move(Magnitude), Rank, Scale);
+    }
+
+    /// <summary>The squared norm of each output column of the layer's frozen weight W (computed on the host).</summary>
+    internal static float[] SquaredNorms(Linear layer)
+    {
+        var w = layer.WeightValues();
+        int inputs = layer.InFeatures, outputs = layer.OutFeatures;
+        var sums = new double[outputs];
+        for (int i = 0; i < inputs; i++)
+        {
+            for (int o = 0; o < outputs; o++)
+            {
+                double v = w[i * outputs + o];
+                sums[o] += v * v;
+            }
+        }
+
+        return [.. sums.Select(v => (float)v)];
+    }
+
+    // 1 / ‖W + s·A·B‖ per output column, from ‖W‖², Aᵀ·W (the layer's own product of Aᵀ) and AᵀA·B.
+    private Tensor InverseNorms(Linear layer)
+    {
+        _squaredNorms ??= Tensor.Persistent(SquaredNorms(layer), [layer.OutFeatures], A.Device, requiresGrad: false);
+        var transposed = A.Transpose();                                     // [r, in], on the device
+        var crossTerms = layer.BaseProduct(transposed);                     // Aᵀ·W [r, out]
+        var gram = A.MatMul(A, transposeA: true).MatMul(B);                 // AᵀA·B [r, out]
+        var squared = _squaredNorms + (B * crossTerms).Sum(0) * (2f * Scale) + (B * gram).Sum(0) * (Scale * Scale);
+        return (squared.Log() * -0.5f).Exp();
+    }
+
+    /// <summary>Releases the cached norms of the base weight (the parameters belong to the layer).</summary>
+    public void Dispose()
+    {
+        _squaredNorms?.Dispose();
+        _squaredNorms = null;
+    }
+}
