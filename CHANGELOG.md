@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `idrak` model commands: `pull` (Hugging Face models and GGUF files, with progress, resume, `--dry-run`), `list`
+  (`ls`), `rm`, `show`, `search`, `alias set/list/rm`, `memory`, `quantize`, `merge`, `inspect` (`i`), `verify`,
+  `convert`, `diff` and `families`, over the library's download cache.
 - Tool calls are parsed in the model's own format, not only as JSON between tags. `ChatOutputParser` takes the
   reasoning out and feeds the answer to an `IToolCallParser` (`Feed`, `Finish`, emitting text, reasoning and calls as
   before) that the template makes per reply (`ChatTemplate.CreateToolCallParser`, by `ToolCallFormatName`).
