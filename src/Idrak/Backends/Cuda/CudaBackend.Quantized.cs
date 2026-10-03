@@ -697,7 +697,7 @@ internal sealed unsafe partial class CudaBackend
     }
 
     public override void AttentionDecode(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead,
-        int steps, int capacity, int dim, float scale)
+        int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
         if (dim > PtxKernels.DecodeMaxDim)
         {
@@ -705,9 +705,15 @@ internal sealed unsafe partial class CudaBackend
         }
 
         int rows = heads * rowsPerHead;
-        DecodeSplit(0, rows, capacity, dim, position, y, (splits, minChunk, part, counters, at) => Launch(K("attention_decode_f32"), (uint)rows, (uint)splits, 1, PtxKernels.RowThreads, 1,
-            P(q), P(keys), P(values), at, P(y), P(part), P(counters), U(rowsPerHead), U(steps), U(capacity), U(dim), F(scale), U(minChunk), U(rows)));
+        DecodeSplit(WindowedTuning(0, variant, capacity), rows, capacity, dim, position, y, (splits, minChunk, part, counters, at) => Launch(K("attention_decode_f32"), (uint)rows, (uint)splits, 1, PtxKernels.RowThreads, 1,
+            P(q), P(keys), P(values), at, P(y), P(part), P(counters), U(rowsPerHead), U(steps), U(capacity), U(dim), F(scale), U(minChunk),
+            U(variant.Window), F(variant.Softcap), U(rows)));
     }
+
+    // The tuning variant of a decoding attention kernel (0 float32, 1 int8, 2 bfloat16): a window shorter than the
+    // capacity is measured under its own (3 to 5), since its rows read only the window's positions.
+    private static int WindowedTuning(int format, AttentionVariant variant, int capacity) =>
+        variant.Window > 0 && variant.Window < capacity ? format + 3 : format;
 
     // Decoding attention has one block per query row (few rows: the heads of one token), so the cached positions are
     // split over several blocks per row; each writes (max, sum, weighted values) for its chunk and the last block of a
@@ -847,10 +853,12 @@ internal sealed unsafe partial class CudaBackend
     public override void GatedActivationBackwardPacked(Storage packedGate, Storage packedUp, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags) =>
         Launch1D(K("gated_act_bwd_bf16_f32"), (n + 1) / 2, P(packedGate), P(packedUp), P(dy), P(dgate), P(dup), U(kind), U(flags), U(n), U((n + 1) / 2));
 
+    // Windows and soft-caps run on the float32 kernels (attention_flash_f32 and its backward); the tensor-core ones
+    // compute plain causal attention only.
     public override void AttentionTiled(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage? logSumExp, int heads,
-        int rowsPerHead, int steps, int capacity, int dim, float scale)
+        int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
-        if (FlashTensorCore(dim) is { } tc)
+        if (variant.IsPlain && FlashTensorCore(dim) is { } tc)
         {
             Launch(tc[FlashNames(dim).Forward], (uint)((rowsPerHead + PtxKernels.FlashTensorRows - 1) / PtxKernels.FlashTensorRows), (uint)heads, 1, 128, 1,
                 [P(q), P(keys), P(values), P(position), P(y), logSumExp is null ? 0UL : P(logSumExp),
@@ -860,13 +868,13 @@ internal sealed unsafe partial class CudaBackend
 
         if (dim > PtxKernels.FlashMaxDim)
         {
-            base.AttentionTiled(q, keys, values, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale);
+            base.AttentionTiled(q, keys, values, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
             return;
         }
 
         Launch(K("attention_flash_f32"), (uint)((rowsPerHead + PtxKernels.FlashTile - 1) / PtxKernels.FlashTile), (uint)heads, 1, 128, 1,
             P(q), P(keys), P(values), P(position), P(y), logSumExp is null ? 0UL : P(logSumExp),
-            U(rowsPerHead), U(steps), U(capacity), U(dim), F(scale));
+            U(rowsPerHead), U(steps), U(capacity), U(dim), F(scale), U(variant.Window), F(variant.Softcap));
     }
 
     private const float Log2E = 1.4426950408889634f;
@@ -965,14 +973,14 @@ internal sealed unsafe partial class CudaBackend
     };
 
     public override void AttentionTiledBackward(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput,
-        Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale)
+        Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
         int rows = heads * rowsPerHead;
         var delta = Allocate(rows, zeroed: false);
         try
         {
             Launch1D(K("attn_bwd_d_f32"), rows, P(output), P(dOutput), P(delta), U(dim), U(rows));
-            if (FlashTensorCore(dim) is { } tc)
+            if (variant.IsPlain && FlashTensorCore(dim) is { } tc)
             {
                 var layout = ContiguousLayout(rowsPerHead, steps, capacity, dim);
                 t_sharedBytes = (uint)PtxKernels.FlashTensorBackwardKvShared(dim);
@@ -987,7 +995,7 @@ internal sealed unsafe partial class CudaBackend
             }
 
             ReadOnlySpan<ulong> args = [P(q), P(keys), P(values), P(dOutput), P(logSumExp), P(delta), P(dq), P(dkeys), P(dvalues),
-                U(rowsPerHead), U(steps), U(capacity), U(dim), F(scale)];
+                U(rowsPerHead), U(steps), U(capacity), U(dim), F(scale), U(variant.Window), F(variant.Softcap)];
             Launch(K("attn_bwd_kv_f32"), (uint)((capacity + 15) / 16), (uint)heads, 1, 128, 1, args);
             Launch(K("attn_bwd_q_f32"), (uint)((rowsPerHead + 31) / 32), (uint)heads, 1, 128, 1, args);
         }
@@ -997,12 +1005,14 @@ internal sealed unsafe partial class CudaBackend
         }
     }
 
-    public override bool SupportsSegmentedAttention(int dim) => FlashTensorCore(dim) is not null;
+    // Packed sequences and rows of different lengths run on the tensor-core flash kernels, which compute plain causal
+    // attention only: a window or a cap is refused (fine-tuning then pads, batches decode one by one).
+    public override bool SupportsSegmentedAttention(int dim, AttentionVariant variant = default) => variant.IsPlain && FlashTensorCore(dim) is not null;
 
     public override bool AttentionRows(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow,
-        int rowsPerHead, int steps, int capacity, int dim, float scale)
+        int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
-        if (FlashTensorCore(dim) is not { } tc)
+        if (!variant.IsPlain || FlashTensorCore(dim) is not { } tc)
         {
             return false;
         }
@@ -1014,9 +1024,9 @@ internal sealed unsafe partial class CudaBackend
     }
 
     public override bool AttentionSegmented(Storage q, Storage keys, Storage values, Storage y, Storage? logSumExp, Storage starts, Storage ends,
-        int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale)
+        int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant = default)
     {
-        if (FlashTensorCore(dim) is not { } tc)
+        if (!variant.IsPlain || FlashTensorCore(dim) is not { } tc)
         {
             return false;
         }
@@ -1028,9 +1038,10 @@ internal sealed unsafe partial class CudaBackend
     }
 
     public override bool AttentionSegmentedBackward(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput,
-        Storage dq, Storage dkeys, Storage dvalues, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale)
+        Storage dq, Storage dkeys, Storage dvalues, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale,
+        AttentionVariant variant = default)
     {
-        if (FlashTensorCore(dim) is not { } tc)
+        if (!variant.IsPlain || FlashTensorCore(dim) is not { } tc)
         {
             return false;
         }
@@ -1059,14 +1070,14 @@ internal sealed unsafe partial class CudaBackend
     }
 
     public override void AttentionInt8(Storage q, Storage keys, Storage values, Storage keyScales, Storage valueScales, Storage position,
-        Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, bool tiled)
+        Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, bool tiled, AttentionVariant variant = default)
     {
         int words = (dim + 3) / 4;
         if (tiled && dim <= PtxKernels.FlashMaxDim)
         {
             Launch(K("attention_flash_int8"), (uint)((rowsPerHead + PtxKernels.FlashTile - 1) / PtxKernels.FlashTile), (uint)heads, 1, 128, 1,
                 P(q), P(keys), P(values), P(position), P(y), 0UL, U(rowsPerHead), U(steps), U(capacity), U(dim), F(scale),
-                P(keyScales), P(valueScales), U(words));
+                P(keyScales), P(valueScales), U(words), U(variant.Window), F(variant.Softcap));
             return;
         }
 
@@ -1076,22 +1087,23 @@ internal sealed unsafe partial class CudaBackend
         }
 
         int rows = heads * rowsPerHead;
-        DecodeSplit(1, rows, capacity, dim, position, y, (splits, minChunk, part, counters, at) => Launch(K("attention_decode_int8"), (uint)rows, (uint)splits, 1, PtxKernels.RowThreads, 1,
+        DecodeSplit(WindowedTuning(1, variant, capacity), rows, capacity, dim, position, y, (splits, minChunk, part, counters, at) => Launch(K("attention_decode_int8"), (uint)rows, (uint)splits, 1, PtxKernels.RowThreads, 1,
             P(q), P(keys), P(values), P(keyScales), P(valueScales), at, P(y), P(part), P(counters),
-            U(rowsPerHead), U(steps), U(capacity), U(dim), F(scale), U(words), U(minChunk), U(rows)));
+            U(rowsPerHead), U(steps), U(capacity), U(dim), F(scale), U(words), U(minChunk), U(variant.Window), F(variant.Softcap), U(rows)));
     }
 
     public override void SoftmaxCrossEntropyRows(Storage logits, Storage targets, Storage weights, Storage losses, int rows, int vocabulary, float scale) =>
         LaunchRows(K("softmax_ce_rows_f32"), rows, PtxKernels.RowThreads * 4, P(logits), P(targets), P(weights), P(losses), U(vocabulary), F(scale), U(rows));
 
     public override void AttentionBFloat16(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead,
-        int steps, int capacity, int dim, float scale, bool tiled)
+        int steps, int capacity, int dim, float scale, bool tiled, AttentionVariant variant = default)
     {
         int words = (dim + 1) / 2;
         if (tiled && dim <= PtxKernels.FlashMaxDim)
         {
             Launch(K("attention_flash_bf16"), (uint)((rowsPerHead + PtxKernels.FlashTile - 1) / PtxKernels.FlashTile), (uint)heads, 1, 128, 1,
-                P(q), P(keys), P(values), P(position), P(y), 0UL, U(rowsPerHead), U(steps), U(capacity), U(dim), F(scale), U(words));
+                P(q), P(keys), P(values), P(position), P(y), 0UL, U(rowsPerHead), U(steps), U(capacity), U(dim), F(scale), U(words),
+                U(variant.Window), F(variant.Softcap));
             return;
         }
 
@@ -1101,8 +1113,10 @@ internal sealed unsafe partial class CudaBackend
         }
 
         int rows = heads * rowsPerHead;
-        DecodeSplit(2, rows, capacity, dim, position, y, (splits, minChunk, part, counters, at) => Launch(K("attention_decode_bf16"), (uint)rows, (uint)splits, 1, PtxKernels.RowThreads, 1,
-            P(q), P(keys), P(values), at, P(y), P(part), P(counters), U(rowsPerHead), U(steps), U(capacity), U(dim), F(scale), U(words), U(minChunk), U(rows)));
+        DecodeSplit(WindowedTuning(2, variant, capacity), rows, capacity, dim, position, y, (splits, minChunk, part, counters, at) => Launch(K("attention_decode_bf16"), (uint)rows, (uint)splits, 1, PtxKernels.RowThreads, 1,
+            P(q), P(keys), P(values), at, P(y), P(part), P(counters), U(rowsPerHead), U(steps), U(capacity), U(dim), F(scale), U(words), U(minChunk),
+            U(variant.Window), F(variant.Softcap), U(rows)));
+
     }
 
     public override void KeyValueWriteBFloat16(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)

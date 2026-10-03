@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak.Backends;
+
 namespace Idrak.Layers;
 
 /// <summary>
@@ -117,6 +119,13 @@ public abstract class KeyValueLayout
     /// <summary>Whether rows of different lengths (per-row starts, batched prompts) can attend from this cache.</summary>
     internal virtual bool RowStarts => false;
 
+    /// <summary>
+    /// <see cref="Attend"/> for a decoder layer with a sliding window or soft-capped scores (<paramref name="variant"/>),
+    /// through the format's own kernels, which start each query at its window and cap the scores; null when the format
+    /// has none for this head size (the layer then attends through basic operations over every cached slot).
+    /// </summary>
+    internal virtual Tensor? AttendVariant(Tensor q, KeyValueCache cache, DecodingContext context, int steps, float scale, AttentionVariant variant) => null;
+
     /// <inheritdoc />
     public override string ToString() => Name;
 }
@@ -213,20 +222,30 @@ public static class KeyValueLayouts
 
         public override Tensor Attend(Tensor q, KeyValueCache cache, DecodingContext context, int steps, float scale, bool decoderKernels)
         {
-            var capabilities = q.Backend.Capabilities;
-            if (decoderKernels && steps >= 8 && cache.HeadDim <= capabilities.TiledAttentionHeadDim)
+            if (decoderKernels && Kernels(q, cache, context, steps, scale, default) is { } attended)
             {
-                return Tensor.AttentionTiled(q, cache.Keys, cache.Values, context.Position, steps, scale);   // a prompt: tiled
-            }
-
-            if (decoderKernels && cache.HeadDim <= capabilities.DecodeAttentionHeadDim)
-            {
-                return Tensor.AttentionDecode(q, cache, context.Position, steps, scale);      // only the filled positions
+                return attended;
             }
 
             // Every slot of the cache, the unwritten ones masked out.
             var weights = q.MatMul(cache.Keys, transposeB: true).ScaleMaskSoftmax(scale, context.Mask);
             return weights.MatMul(cache.Values);
+        }
+
+        internal override Tensor? AttendVariant(Tensor q, KeyValueCache cache, DecodingContext context, int steps, float scale, AttentionVariant variant) =>
+            Kernels(q, cache, context, steps, scale, variant);
+
+        private static Tensor? Kernels(Tensor q, KeyValueCache cache, DecodingContext context, int steps, float scale, AttentionVariant variant)
+        {
+            var capabilities = q.Backend.Capabilities;
+            if (steps >= 8 && cache.HeadDim <= capabilities.TiledAttentionHeadDim)
+            {
+                return Tensor.AttentionTiled(q, cache.Keys, cache.Values, context.Position, steps, scale, variant);   // a prompt: tiled
+            }
+
+            return cache.HeadDim <= capabilities.DecodeAttentionHeadDim
+                ? Tensor.AttentionDecode(q, cache, context.Position, steps, scale, variant)                        // only the filled positions
+                : null;
         }
     }
 
@@ -272,6 +291,11 @@ public static class KeyValueLayouts
             var weights = Tensor.AttentionScoresInt8(q, cache).ScaleMaskSoftmax(scale, context.Mask);
             return Tensor.AttentionContextInt8(weights, cache);
         }
+
+        internal override Tensor? AttendVariant(Tensor q, KeyValueCache cache, DecodingContext context, int steps, float scale, AttentionVariant variant) =>
+            cache.HeadDim <= q.Backend.Capabilities.DecodeAttentionHeadDim
+                ? Tensor.AttentionInt8(q, cache, context.Position, steps, scale, tiled: steps >= 8, variant)
+                : null;
     }
 
     private sealed class BFloat16Layout : KeyValueLayout
@@ -309,5 +333,9 @@ public static class KeyValueLayouts
             decoderKernels
                 ? Tensor.AttentionBFloat16(q, cache, context.Position, steps, scale, tiled: steps >= 8)   // only the filled positions
                 : base.Attend(q, cache, context, steps, scale, decoderKernels);
+
+        internal override Tensor? AttendVariant(Tensor q, KeyValueCache cache, DecodingContext context, int steps, float scale, AttentionVariant variant) =>
+            Tensor.AttentionBFloat16(q, cache, context.Position, steps, scale, tiled: steps >= 8, variant);
     }
+
 }

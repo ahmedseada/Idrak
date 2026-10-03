@@ -304,7 +304,8 @@ internal static partial class Tests
         var expected = unwindowed.Predict(sequence).ToArray();
         Check(wide.Predict(sequence).ToArray().SequenceEqual(expected), "a window as long as the sequence equals full attention");
         Check(narrow.Predict(sequence).ToArray().Zip(expected).Max(p => MathF.Abs(p.First - p.Second)) > 1e-3f, "a shorter window changes the outputs");
-        Check(!PackedSequences.Supports(narrow), "packing is not offered for windows that can mask");
+        Check(PackedSequences.Supports(narrow) == narrow.Descendants().OfType<CausalSelfAttention>().All(a => device.Backend.SupportsSegmentedAttention(a.HeadDim, a.Variant)),
+            "packing is offered for windows that can mask where the device's packed attention takes a window");
         var round = DecoderSpec.FromJson(variants[1].Spec.ToJson());
         Check(round.ToJson().ToJsonString() == variants[1].Spec.ToJson().ToJsonString() && round.SlidingWindowLayers!.SequenceEqual([true, false]) && round.LogitSoftcap == 2f,
             "windows and soft-capping round-trip through JSON");

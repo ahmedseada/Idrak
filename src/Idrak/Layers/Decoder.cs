@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak.Backends;
+
 namespace Idrak.Layers;
 
 /// <summary>
@@ -130,9 +132,11 @@ public sealed record RopeSettings(float Theta, int? RotaryDim = null, bool Inter
 /// <para>
 /// Optionally (<see cref="SlidingWindow"/>, <see cref="ScoreSoftcap"/>): each position attends only to the last positions
 /// up to a window (Mistral, Qwen2, Gemma 2 and 3), and the scores are soft-capped, cap · tanh(score / cap) (Gemma 2).
-/// The device attention kernels mask causally only, so a windowed layer whose window falls inside the sequence, and a
-/// soft-capped layer, attend through basic operations every backend has (the scores of all positions, masked); a window
-/// longer than the sequence uses the kernels, with identical results.
+/// The attention kernels (tiled, decoding over every cache format, packed sequences, rows of different lengths) start
+/// each query at its window and cap the scores, so such layers read only the window's keys and values; a window longer
+/// than the sequence changes nothing. Where a device has no kernel for the head size, and when the environment variable
+/// IDRAK_WINDOW_KERNELS=0 asks for it, they attend through basic operations every backend has instead (the scores of
+/// all cached positions, masked), as before the kernels took a window.
 /// </para>
 /// </summary>
 public sealed class CausalSelfAttention : Module, ICachedModule
@@ -266,11 +270,24 @@ public sealed class CausalSelfAttention : Module, ICachedModule
     // A window shorter than the longest sequence (else it never masks anything).
     private bool Windowed => _window is { } w && w < MaxPositions;
 
-    /// <summary>Plain causal attention: no window that can mask and no soft-capping (what the segmented and per-row kernels compute).</summary>
+    /// <summary>Plain causal attention: no window that can mask and no soft-capping.</summary>
     internal bool PlainCausal => !Windowed && _softcap is null;
 
-    // Whether attention over keys at positions [0, keys) for queries ending at keys - 1 needs the composed path: soft-capped
-    // scores, or a window some query reaches past.
+    /// <summary>The window and soft-cap the attention kernels apply (the default, plain causal attention, when neither can mask).</summary>
+    internal AttentionVariant Variant => new(Windowed ? _window!.Value : 0, _softcap ?? 0f);
+
+    /// <summary>
+    /// Whether windowed and soft-capped layers attend through the kernels (true unless IDRAK_WINDOW_KERNELS is 0 or false);
+    /// false forces the composed path (basic operations over every cached slot, packing and rows of different lengths
+    /// refused), to compare or isolate a kernel. Plain layers always use the kernels.
+    /// </summary>
+    internal static bool WindowKernels { get; set; } = Environment.GetEnvironmentVariable("IDRAK_WINDOW_KERNELS") is not ("0" or "false");
+
+    /// <summary>Whether packed sequences and rows of different lengths can attend through <paramref name="backend"/>'s kernels for this layer.</summary>
+    internal bool SupportsSegmented(Backend backend) => (PlainCausal || WindowKernels) && backend.SupportsSegmentedAttention(HeadDim, Variant);
+
+    // Whether attention over keys at positions [0, keys) for queries ending at keys - 1 needs more than plain causal
+    // attention (the kernels with Variant, or the composed path): soft-capped scores, or a window some query reaches past.
     private bool Composed(int keys) => _softcap is not null || Windowed && keys > _window!.Value;
 
     private int Group => Heads / KvHeads;
@@ -305,9 +322,9 @@ public sealed class CausalSelfAttention : Module, ICachedModule
         float scale = ScoreScale;
         var packing = PackedSequences.Current is { } current && current.Matches(n, t) ? current : null;
         bool composed = Composed(t);
-        if (packing is not null && !PlainCausal)
+        if (packing is not null && !PlainCausal && !WindowKernels)
         {
-            throw new NotSupportedException("Packed sequences need plain causal attention; this layer has a sliding window or soft-capped scores (pad the batches instead).");
+            throw new NotSupportedException("Packed sequences need the windowed attention kernels (IDRAK_WINDOW_KERNELS is off); this layer has a sliding window or soft-capped scores (pad the batches instead).");
         }
 
         if (packing is null && !composed && Rope is null && QueryNorm is null && KeyNorm is null && FusedTraining.Enabled && input.Backend.Capabilities.MatrixUnitAttentionHeadDim(HeadDim)
@@ -331,16 +348,17 @@ public sealed class CausalSelfAttention : Module, ICachedModule
         if (packing is not null)
         {
             // Several sequences per row: each position attends within its own sequence only.
-            var segmented = Tensor.CausalAttentionSegmented(q, k, v, packing, KvHeads, scale)
-                ?? throw new NotSupportedException($"Packed sequences need attention within each sequence, which {input.Device} does not provide for head size {HeadDim} (on CUDA: bfloat16 tensor cores, head size 64 or 128).");
+            var segmented = Tensor.CausalAttentionSegmented(q, k, v, packing, KvHeads, scale, Variant)
+                ?? throw new NotSupportedException($"Packed sequences need attention within each sequence, which {input.Device} does not provide for head size {HeadDim}{(PlainCausal ? "" : " with a sliding window or soft-capped scores")} (on CUDA: bfloat16 tensor cores, head size 64 or 128, plain causal attention only).");
             ActivationMemory.Compress(q, k, v);
             return Merge(segmented, n, t);
         }
 
-        if (!composed && HeadDim <= input.Backend.Capabilities.TiledAttentionHeadDim)
+        if ((!composed || WindowKernels) && HeadDim <= input.Backend.Capabilities.TiledAttentionHeadDim)
         {
-            // Tiled attention, forward and backward: no [t, t] weights stored (positions[0] = 0 is the causal offset).
-            var attended = Tensor.CausalAttention(q, k, v, positions, t, scale);
+            // Tiled attention, forward and backward: no [t, t] weights stored (positions[0] = 0 is the causal offset); a
+            // window that masks and a cap go to the kernels with it.
+            var attended = Tensor.CausalAttention(q, k, v, positions, t, scale, composed ? Variant : default);
             ActivationMemory.Compress(q, k, v);
             return Merge(attended, n, t);
         }
@@ -381,16 +399,16 @@ public sealed class CausalSelfAttention : Module, ICachedModule
                 throw new NotSupportedException("Rows of different lengths need a float32 key/value cache.");
             }
 
-            if (!PlainCausal)
+            if (!PlainCausal && !WindowKernels)
             {
-                throw new NotSupportedException("Rows of different lengths need plain causal attention; this layer has a sliding window or soft-capped scores.");
+                throw new NotSupportedException("Rows of different lengths need the windowed attention kernels (IDRAK_WINDOW_KERNELS is off); this layer has a sliding window or soft-capped scores.");
             }
 
             var (rq, rk, rv) = Project(input, context.TokenPositions!, packed: true);
             Tensor.WriteKeyValues(rk!, cache.Keys, context.Position);
             Tensor.WriteKeyValues(rv!, cache.Values, context.Position);
-            var rows = Tensor.AttentionRows(q: rq, cache.Keys, cache.Values, context.Position, t, ScoreScale, context.TokenStarts!, KvHeads)
-                       ?? throw new NotSupportedException($"Rows of different lengths need attention from per-row starts, which {input.Device} does not provide for head size {HeadDim} (on CUDA: bfloat16 tensor cores, head size 64 or 128).");
+            var rows = Tensor.AttentionRows(q: rq, cache.Keys, cache.Values, context.Position, t, ScoreScale, context.TokenStarts!, KvHeads, Variant)
+                       ?? throw new NotSupportedException($"Rows of different lengths need attention from per-row starts, which {input.Device} does not provide for head size {HeadDim}{(PlainCausal ? "" : " with a sliding window or soft-capped scores")} (on CUDA: bfloat16 tensor cores, head size 64 or 128, plain causal attention only).");
             return MergeHeads(rows, n, t);
         }
 
@@ -401,10 +419,12 @@ public sealed class CausalSelfAttention : Module, ICachedModule
             cache.Layout.Write(k, v!, cache, context.Position);
         }
 
-        // A step being recorded is replayed at later positions, so it takes the composed path whenever the window can mask.
+        // A step being recorded is replayed at later positions, so it takes the window whenever the window can mask (the
+        // kernels compute each query's window start on the device, from the position).
         if (_softcap is not null || Windowed && (ComputeGraph.IsCapturing || Composed(context.Length + t)))
         {
-            return MergeHeads(AttendComposed(q, cache, context, t, scale), n, t);
+            var windowed = WindowKernels ? cache.Layout.AttendVariant(q, cache, context, t, scale, Variant) : null;
+            return MergeHeads(windowed ?? AttendComposed(q, cache, context, t, scale), n, t);
         }
 
         var context8 = cache.Layout.Attend(q, cache, context, t, scale, decoderKernels: true);
