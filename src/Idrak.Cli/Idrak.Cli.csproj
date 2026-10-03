@@ -16,6 +16,11 @@
     <ProjectReference Include="..\Idrak\Idrak.csproj" />
     <ProjectReference Include="..\Idrak.LanguageModels\Idrak.LanguageModels.csproj" />
     <ProjectReference Include="..\Idrak.Datasets\Idrak.Datasets.csproj" />
+    <ProjectReference Include="..\Idrak.Onnx\Idrak.Onnx.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Idrak.Tests" />
   </ItemGroup>
 
 </Project>
