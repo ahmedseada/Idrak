@@ -93,3 +93,16 @@ The templates live in `Templates/KIND/` as `*.template` files, embedded in the t
 
 The cache layout (downloads/huggingface/models/OWNER/NAME/COMMIT, downloads/urls, gguf/) is the library's
 (`ModelSource`, `Downloader`); `Shared/ModelCache.cs` reads it.
+## Design commands
+
+| Command | What it does |
+|---|---|
+| `idrak suggest DATA` (`sg`) | Reads a table, image folder, text, chat or preference rows; writes `network.json` (builder JSON), `train.json`, `prep.json`, or `tune.json` with `--base`; `--search N` measures N candidates on the device, `--explain` prints the rules |
+| `idrak explain network.json` (`x`) | Layers, output shapes, parameters, FLOPs per sample, inference and training memory against the device |
+| `idrak viz network.json` | The network as text, Mermaid (`--format mermaid`) or SVG (`--format svg`) |
+
+```
+idrak sg houses.csv -t SalePrice -e -o ./run
+idrak x ./run/network.json
+idrak viz ./run/network.json --format mermaid
+```

@@ -315,6 +315,26 @@ Rules stay deterministic and explainable; the search is opt-in. Limits are repor
 strong regularization and a warning; unbalanced classes: class weights or resampling). `--assist MODEL` may let a
 local chat model explain the choices in plain words; it never changes them.
 
+Built (Design group): the files `suggest` writes are documented in code. `network.json` is the builder's own JSON
+(`idrak-network/1`). `train.json` (`idrak-train/1`): task, target, optimizer, learningRate, weightDecay, batchSize,
+epochs, earlyStopping, schedule, warmupEpochs, loss (`mse`, `cross-entropy`, `token-cross-entropy`), metric,
+validationFraction, seed. `prep.json` (`idrak-prep/1`): kind `table` (scaled numbers with their fill, mean and std;
+one-hot values), `text` (a word vocabulary and length), `images` (channels, height, width, classes, augmentation),
+`language-model` (a character vocabulary and window) or `chat-mapping` (with `--base`), with the target, split and
+balance; `Shared/DataPreparation.cs` applies it to the data, so `idrak train` can reuse it. `tune.json`
+(`idrak-tune/1`) holds `idrak tune` long option names as keys (model, data, loss, rank, alpha, targets, lr, epochs,
+max-length, batch-tokens, bf16 or int4, ...). Chat rows without `--base` get a small character-level language model
+from scratch (with a warning); preference rows need `--base`.
+
+Additions made while building: `--max-params` takes `50k`, `2M`; `suggest` takes `-w`, `-k`, `--context` for the
+`--assist` model; `explain` takes `--batch N` (else the batch of a `train.json` next to the network, else 32) and a
+folder holding `network.json`; `viz` prints an SVG with a white background that any viewer shows.
+
+Gaps (Design): the library has no image decoder, so the tool reads image headers (PNG, JPEG, BMP, PGM/PPM) and
+decodes PNG, BMP and Netpbm itself; JPEG folders are profiled but not trained by `--search`. The library does not
+report a GPU's memory size (only a configured `ComputeResources.GpuMemoryLimit`), so memory checks on a GPU say the
+size is unknown unless a limit is set.
+
 ### Developers
 
 | Command | What it does | Priority |
