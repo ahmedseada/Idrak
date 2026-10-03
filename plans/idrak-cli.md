@@ -80,6 +80,7 @@ Short forms of commands' own options, kept the same across commands where the me
 | `-k` | `--kv FORMAT` | chat, run, serve, bench |
 | `-w` | `--weights FORMAT` (int8, int4, bf16 or any registered packed format) | chat, run, serve, bench, quantize |
 | `-i` | `--input FILE` | run, batch, predict, embed |
+| `-O` | `--output FILE` | every command that prints a result |
 
 Rules: short forms are case-sensitive (`-v` verbose, `-V` version); one letter per short form, not combined
 (`-q -j`, not `-qj`), so a value never hides inside a group; `-d=vulkan:0` and `-d vulkan:0` both work, as for long
@@ -239,6 +240,47 @@ local chat model explain the choices in plain words; it never changes them.
 | `idrak onnx import/export/check` | ONNX conversions with an output check against ONNX Runtime when installed | 3 |
 | `idrak kernels dump [ptx\|spirv\|hip]` | The generated kernels, for debugging | 3 |
 | `idrak trace COMMAND ...` | Runs a command with telemetry printed live (layers, batches, kernels) or written to JSON Lines | 3 |
+
+### More from a second pass
+
+Found while planning the build; each belongs to the group in brackets and is built with it.
+
+| Command or option | What it does | Group | Priority |
+|---|---|---|---|
+| `idrak help topics` and `idrak help TOPIC` | Concept pages without leaving the terminal: devices, formats (weights, KV caches, checkpoints, datasets), models (supported families and features), precision, plugins, config, env, exit codes | Health | 1 |
+| `idrak formats` | Every registered weight, KV cache, checkpoint, dataset and tool-call format, built in or from a plug-in | Health | 2 |
+| `idrak families` | Supported model families with what each supports (windows, soft-capping, RoPE scalings, GGUF) | Models | 2 |
+| `idrak doctor --fix` | Prints the exact commands that fix what failed (and runs safe ones with `--yes`) | Health | 2 |
+| `idrak doctor --network` | Checks the hub and proxy reachability and tokens (set or not) | Health | 2 |
+| `idrak login hf\|github\|kaggle` / `logout` | Stores a token where the library already looks for it (never printed) | Health | 2 |
+| `idrak demo xor\|spirals\|shapes\|gpt` | Runs a built-in sample in seconds to show the library works on this device, with the device and speed | Developers | 2 |
+| `idrak report --readme` | Prints the README tested-on table rows for this machine, ready to paste | Health | 1 |
+| `idrak bench --devices all` / `--matrix` | The same benchmark on every device, or across weight and KV formats, in one table | Measure | 2 |
+| `idrak serve --metrics` | A metrics endpoint (requests, tokens per second, queue, memory) in the plain text format monitoring tools read | Serve | 2 |
+| `idrak serve --log-requests FILE` | One JSON line per request (time, model, tokens, speed; no prompt text unless `--log-content`) | Serve | 2 |
+| `idrak server keys add/list/rm` | API keys for `serve`, stored hashed in the config | Serve | 3 |
+| `idrak ping URL` | Checks a running server (any compatible one): reachable, models, latency | Serve | 2 |
+| `idrak chat --mcp SERVER` | Uses an MCP server's tools in the chat | Run | 3 |
+| `idrak chat --file FILE` | Adds a text file's content to the conversation (several allowed) | Run | 2 |
+| `idrak run --schema schema.json` | Structured output when the library has a JSON-schema logits processor (plug-in gap 13); until then a clear message | Run | 3 |
+| `idrak shell` | An interactive prompt for idrak commands with history and completion | Developers | 3 |
+| `idrak setup android` | Prints (or with `--yes`, runs) the Android steps of installation/android-termux.md that are safe to automate, then `doctor --android` | Health | 3 |
+
+Common options added by the second pass (built by the Health agent with the foundation, used by every group):
+
+| Option | Meaning |
+|---|---|
+| `--offline` | Use only what is cached; any download is an error naming the missing file |
+| `--threads N` | CPU threads for the CPU backend and host work |
+| `--seed N` | One seed for sampling, shuffling and initialization, for reproducible runs |
+| `--format text\|json\|csv\|md` | Output format for commands that print tables (`--json` stays the short way to JSON) |
+| `--output FILE` (`-O`) | Write the command's main output to a file |
+| `--color auto\|always\|never` | Colour control (`NO_COLOR` still wins) |
+| `--plain` | No Unicode box or progress characters (screen readers, old terminals, logs) |
+| `--timeout DURATION` | Give up after a time (downloads, server calls, long runs) |
+
+Later, not in this build: messages in Arabic (`--lang ar`) given the library's name and audience; a plug-in marketplace
+listing; remote devices (run a command on another machine's `idrak serve`).
 
 ## Helpers every command shares
 
