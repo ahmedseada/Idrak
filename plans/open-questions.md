@@ -14,6 +14,7 @@ needed, the options, and the recommended one. Nothing here blocks the work in pr
 | 5 | README tagline | a) "Deep learning in pure .NET. Every GPU. Zero dependencies." · b) another | a |
 | 6 | LinkedIn series | a) post 2 next (GPU code without the CUDA toolkit) · b) post 4 next (an LLM on a phone) ; English only or with Arabic | a, English only |
 | 7 | Native Linux GPU drivers (NVIDIA's Linux driver, RADV, ANV, NVK) | a) live USB on a laptop · b) a cloud GPU instance (a T4 also covers compute 7.5) · c) keep "WSL2 only" | c for now; a when convenient |
+| 9 | `idrak serve`'s default port: 11434, the one common local-model clients connect to by default (so they work without settings), or a port of Idrak's own | a) keep 11434 for drop-in use · b) an Idrak port, with `-p 11434` documented for those clients | a |
 | 8 | Mixture of experts (Mixtral, Qwen-MoE): planned in plans/plug-in.md, not built | a) next after the CLI · b) later | a |
 
 ## Hardware checks to run
