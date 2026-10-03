@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `idrak serve` and `ui` answer clients that append their own route to the address they were given (given
+  `http://127.0.0.1:7317/api/chat` as a base, a client posting to `.../api/chat/chat/completions` or
+  `.../api/chat/api/chat` now gets the OpenAI-style or chat API instead of 404), and print the right addresses
+  whenever a request gets 404.
 - CPU: float32 products of more rows than the few-row block but fewer than one register block of the tiled kernel
   (5 to 7 rows with the NEON 8x8 kernel, 5 with AVX2 6x16) split the columns over the threads instead of running one
   or two row blocks; on an Apple M4 Max, 5 and 6 rows of a 4096 x 1024 product took 1.7 and 3.2 ms against 0.47 ms

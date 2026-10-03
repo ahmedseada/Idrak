@@ -145,6 +145,12 @@ internal static partial class Tests
             var chat = Post("/v1/chat/completions", """{"model":"tiny","messages":[{"role":"user","content":"hi"}],"max_tokens":4,"seed":1}""");
             Check((string?)chat["object"] == "chat.completion" && (string?)chat["choices"]![0]!["message"]!["role"] == "assistant"
                 && (int)chat["usage"]!["completion_tokens"]! is > 0 and <= 4, $"chat completion: {chat}");
+            // A client given one API's address as its base appends its own route: still answered.
+            var appended = Post("/api/chat/chat/completions", """{"model":"tiny","messages":[{"role":"user","content":"hi"}],"max_tokens":2,"seed":1}""");
+            Check((string?)appended["object"] == "chat.completion", $"/api/chat/chat/completions: {appended}");
+            var doubled = Post("/api/chat/api/chat", """{"model":"tiny","messages":[{"role":"user","content":"hi"}],"stream":false,"options":{"num_predict":2}}""");
+            Check(doubled["message"] is not null, $"/api/chat/api/chat: {doubled}");
+            Check(ServeHost.Alias("/v1/chat/completions") is null && ServeHost.Alias("/nothing") is null && ServeHost.Alias("/v1/models/x/models") == "/v1/models", "aliases");
             string sse = PostText("/v1/chat/completions", """{"model":"tiny","messages":[{"role":"user","content":"hi"}],"max_tokens":4,"seed":1,"stream":true,"stream_options":{"include_usage":true}}""");
             var events = sse.Split("\n\n", StringSplitOptions.RemoveEmptyEntries);
             Check(events.All(e => e.StartsWith("data: ", StringComparison.Ordinal)) && events[^1] == "data: [DONE]", $"SSE framing: {sse}");

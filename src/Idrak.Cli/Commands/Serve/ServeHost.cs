@@ -410,12 +410,59 @@ internal sealed class ServeHost
     {
         var watch = Stopwatch.StartNew();
         string path = http.Request.Path;                    // before /api/chat is sent to its model's route
+        string? alias = Alias(path);
+        if (alias is not null)
+        {
+            http.Request.Path = alias;
+        }
+
         await next();
         if (_context.Verbose)
         {
-            Print($"{http.Request.Method} {path} {http.Response.StatusCode} {watch.Elapsed.TotalMilliseconds:F0} ms");
+            Print($"{http.Request.Method} {path}{(alias is null ? "" : $" (as {alias})")} {http.Response.StatusCode} {watch.Elapsed.TotalMilliseconds:F0} ms");
+        }
+        else if (http.Response.StatusCode == StatusCodes.Status404NotFound && http.Request.Path.Value is { } asked && !asked.StartsWith(Internal, StringComparison.Ordinal))
+        {
+            // A client pointed at the wrong address is the usual cause; say which ones exist.
+            string root = $"{http.Request.Scheme}://{http.Request.Host}";
+            Print($"{http.Request.Method} {path}: 404; the chat API is POST {root}/api/chat, the OpenAI-style API {root}/v1 (POST /v1/chat/completions)");
         }
     }
+
+    /// <summary>
+    /// The served route a client meant when it appended its own route to one of ours (a client given
+    /// <c>http://host:7317/api/chat</c> as its base posting to <c>.../api/chat/chat/completions</c>, or the full
+    /// address of one API with another's path after it); null when <paramref name="path"/> is a route as it is, or none.
+    /// </summary>
+    internal static string? Alias(string path)
+    {
+        if (KnownRoutes.Contains(path))
+        {
+            return null;
+        }
+
+        foreach (var (suffix, route) in Suffixes)
+        {
+            if (path.EndsWith(suffix, StringComparison.Ordinal))
+            {
+                return route;
+            }
+        }
+
+        return null;
+    }
+
+    private static readonly HashSet<string> KnownRoutes = new(StringComparer.Ordinal)
+    {
+        "/", "/ui", "/api/chat", "/api/tags", "/api/ps", "/api/version", "/v1/chat/completions", "/v1/completions", "/v1/embeddings", "/v1/models",
+    };
+
+    // Longest first: "/chat/completions" before "/completions".
+    private static readonly (string Suffix, string Route)[] Suffixes =
+    [
+        ("/chat/completions", "/v1/chat/completions"), ("/completions", "/v1/completions"), ("/embeddings", "/v1/embeddings"),
+        ("/api/chat", "/api/chat"), ("/api/tags", "/api/tags"), ("/api/version", "/api/version"), ("/models", "/v1/models"),
+    ];
 
     private async Task Authorize(HttpContext http, Func<Task> next)
     {
