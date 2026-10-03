@@ -104,7 +104,7 @@ the work and decides what the first release must have. Short forms and aliases a
 | `idrak version` (`--version`, `-V`) | Versions of the tool, the libraries, the runtime and the drivers | 1 |
 | `idrak report` | One file (Markdown and JSON) with the machine, devices, drivers, the test list and benchmark results, for the README's tested-on tables; `--tests`, `--bench`, `--out FILE`, `--zip` | 1 |
 | `idrak init` | Writes a config file by asking a few questions (default device, cache folder, model aliases), or with `--yes` from what `doctor` finds | 2 |
-| `idrak env` | Every environment variable Idrak reads (`IDRAK_*`, `VK_ICD_FILENAMES`, `DOTNET_GCHeapHardLimit`, ...), its value and meaning | 2 |
+| `idrak env` | Every environment variable Idrak reads, its value, default and meaning (see "Environment variables"); `--all`, `--json`; also `idrak help env` | 1 |
 | `idrak cache info` / `cache clear [models\|tuning\|kernels\|all]` | Sizes and paths of the caches; clears one or all (`--yes` skips the question) | 2 |
 | `idrak config get/set/unset/list` | Reads and writes the config file; `--profile NAME` keeps several named profiles (e.g. phone, desktop) | 2 |
 | `idrak plugins list` | Everything registered: packed and KV formats, model families, RoPE scalings, tool-call formats, checkpoint and dataset formats, graph ops and layer types, ONNX ops, devices; `--plugin` shows what an assembly adds | 2 |
@@ -255,6 +255,29 @@ local chat model explain the choices in plain words; it never changes them.
   servers drain open requests.
 - Errors say what to do next (the exact command or option), and `IDRAK_TRACE=1` adds the stack.
 
+## Environment variables
+
+`idrak env` lists every environment variable the libraries and the tool read, with its current value, its default
+and what it does; `--all` includes unset ones, `--json` gives them as data, and `idrak help env` (also
+`idrak help environment`) prints the same reference without values. Each command's help ends with the variables that
+affect it. The list is generated from one table in the tool (the source of truth), and a test fails when a variable
+read by the libraries (a string literal passed to `Environment.GetEnvironmentVariable`) is missing from it.
+
+| Group | Variables |
+|---|---|
+| Devices and backends | `IDRAK_DISABLE_CUDA`, `IDRAK_DISABLE_VULKAN`, `IDRAK_DISABLE_HIP`, `IDRAK_VULKAN_DEFAULT`, `IDRAK_HIP_DEFAULT`, `IDRAK_CUDA_DEBUG`, `IDRAK_POWER_SOURCE` |
+| Tuning and caches | `IDRAK_CACHE`, `IDRAK_AUTOTUNE`, `IDRAK_TUNING_CACHE`, `IDRAK_TUNE_LOG`, `IDRAK_CPU_TUNING_FILE`, `IDRAK_VULKAN_TUNING_CACHE`, `IDRAK_HIP_KERNEL_CACHE` |
+| Precision and memory | `IDRAK_MATMUL`, `IDRAK_FP8_DELAYED`, `IDRAK_OFFLOAD` |
+| CPU | `IDRAK_CPU_KCHUNK`, `IDRAK_CPU_PARALLEL_ELEMENTS`, `IDRAK_CPU_PARALLEL_FLOPS` |
+| Vulkan | `IDRAK_VULKAN_KERNELS`, `IDRAK_VULKAN_MATRIX`, `IDRAK_VULKAN_WIDTH`, `IDRAK_VULKAN_WIDTH_PROBE`, `IDRAK_VULKAN_SUBGROUPS`, `IDRAK_VULKAN_SUBGROUP_SIZE`, `IDRAK_VULKAN_STORAGE`, `IDRAK_VULKAN_STAGING`, `IDRAK_VULKAN_STAGING_BYTES`, `IDRAK_VULKAN_PAGE_BYTES`, `IDRAK_VULKAN_MAX_STORAGE_BYTES`, `IDRAK_VULKAN_MAX_ALLOCATIONS`, `IDRAK_VULKAN_PUSH_DESCRIPTORS`, `IDRAK_VULKAN_BATCH_COMMANDS`, `IDRAK_VULKAN_IN_FLIGHT`; the Vulkan loader's `VK_ICD_FILENAMES` (which driver; needed for Turnip on a phone) and `VK_INSTANCE_LAYERS` (validation layers) |
+| HIP | `IDRAK_HIP_KERNELS`, `HIP_PATH`, `ROCM_PATH` |
+| Model and data sources | `HF_TOKEN`, `HUGGING_FACE_HUB_TOKEN`, `HF_TOKEN_PATH`, `HF_HOME`, `HF_HUB_CACHE`, `HF_ENDPOINT`, `GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_API_URL`, `KAGGLE_USERNAME`, `KAGGLE_KEY`, `KAGGLE_CONFIG_DIR`, `ZENODO_TOKEN`, and the local model store's folder variable the GGUF source reads |
+| The tool | `IDRAK_CONFIG`, `IDRAK_TRACE`, `NO_COLOR` |
+| Tests and diagnostics | `IDRAK_DEVICES`, `IDRAK_FILTER`, `IDRAK_TIMEOUT`, `IDRAK_SPIRV_VAL` |
+| .NET | `DOTNET_GCHeapHardLimit` (needed on Android), `DOTNET_CLI_TELEMETRY_OPTOUT`, `DOTNET_NOLOGO` |
+
+Tokens and keys are shown as set or not set, never their values.
+
 ## Examples
 
 ```
@@ -361,6 +384,9 @@ commands.
 | 6 Retrieval and measure | `RetrievalCommands`, `MeasureCommands` | rag index/ask/search/eval, bench, eval, perplexity, profile, check, tuning show |
 | 7 Design | `DesignCommands` | suggest (rules and `--search`), explain, viz |
 | 8 Developers | `DeveloperCommands` | new (templates), test, onnx, kernels dump, trace |
+
+Improvements found while building (a missing option, a helper several commands need, a command that would make the
+tool more useful) are added to this plan and built, not only noted.
 
 Where a command needs something the library lacks (for example `distill`, structured output, the OpenAI-style API),
 the agent builds the command around what exists, marks the missing part in its help and in this plan, and does not
