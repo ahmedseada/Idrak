@@ -8,10 +8,11 @@ Datasets for Idrak (no dependencies): read JSON Lines, JSON, CSV, text and Parqu
 dotnet add package Idrak.Datasets
 ```
 
-This is a library (for your code). The command-line tool `idrak-data` (inspect, download and build datasets, no code needed) is a separate package:
+This is a library (for your code). The command-line tool `idrak` inspects, downloads and builds datasets with no code needed (`idrak data`); it is a separate package:
 
 ```bash
-dotnet tool install -g Idrak.Datasets.Cli
+dotnet tool install -g Idrak.Cli
+idrak help data
 ```
 
 Part of [Idrak](https://www.nuget.org/packages/Idrak), a self-contained deep-learning library for .NET.

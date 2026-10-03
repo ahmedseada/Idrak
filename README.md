@@ -45,8 +45,6 @@ Set `IDRAK_DISABLE_CUDA=1` to force the CPU.
 | `Idrak.Onnx` | Export to `.onnx` (opset 17) and import `.onnx` into layers |
 | `Idrak.Onnx.Runtime` | Run `.onnx` models with ONNX Runtime as Idrak modules |
 | `idrak` (CLI, package `Idrak.Cli`) | One tool for the whole library: `doctor`, `devices`, `chat`, `run`, `serve`, `pull`, `list`, `bench`, `tune`, `train`, `data`, `rag`, `suggest` and more (see "idrak: the command-line tool") |
-| `idrak-tune` (CLI) | Fine-tune, evaluate, chat with and export any language model the library loads |
-| `idrak-data` (CLI) | Inspect, download and assemble training datasets |
 
 ### Building and training models
 
@@ -133,16 +131,14 @@ dotnet add package Idrak.Onnx                 # ONNX export
 dotnet add package Idrak.Onnx.Runtime         # run ONNX models with ONNX Runtime
 ```
 
-**Command-line tools**: install once, then run them from any folder (no project needed; the `.Cli` packages are
-the tools, the others are libraries):
+**Command-line tool**: install once, then run it from any folder (no project needed; `Idrak.Cli` is the tool, the
+other packages are libraries):
 
 ```bash
-dotnet tool install -g Idrak.Cli              # the idrak command: every tool below and more in one (idrak help)
-dotnet tool install -g Idrak.FineTuning.Cli   # the idrak-tune command: fine-tune, evaluate, chat with and export language models
-dotnet tool install -g Idrak.Datasets.Cli     # the idrak-data command: inspect, download and build datasets
-idrak-tune --help
-idrak-data --help
-dotnet tool update -g Idrak.FineTuning.Cli    # later: update to the newest version (same for the other tools)
+dotnet tool install -g Idrak.Cli              # the idrak command (idrak help lists every command)
+idrak help tune                               # fine-tune, evaluate, chat with and export language models
+idrak help data                               # inspect, download and build datasets
+dotnet tool update -g Idrak.Cli               # later: update to the newest version
 ```
 
 ## idrak: the command-line tool
@@ -215,8 +211,6 @@ src/Idrak.Mcp/                      optional package: tools of Model Context Pro
 src/Idrak.Onnx/                     optional package, no dependencies: export networks to .onnx (opset 17), import .onnx into layers
 src/Idrak.Onnx.Runtime/             optional package: run .onnx models with ONNX Runtime as Idrak modules
 src/Idrak.Cli/                      idrak: the command-line tool (commands under Commands/, shared helpers under Shared/)
-src/Idrak.FineTuning.Cli/           idrak-tune: fine-tune any language model the library loads (LoRA / QLoRA), evaluate, chat, export
-src/Idrak.Datasets.Cli/             idrak-data: inspect, download and assemble training datasets
 samples/
   Idrak.Samples.Xor                 the classic XOR problem
   Idrak.Samples.HousePrices         regression: predict house prices from a CSV file
