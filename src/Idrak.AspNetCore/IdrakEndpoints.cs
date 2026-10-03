@@ -219,13 +219,6 @@ public static class IdrakEndpointExtensions
         return group;
     }
 
-    /// <summary>Former name of <see cref="MapChatApi"/>: the same endpoints and routes.</summary>
-    [Obsolete("Use MapChatApi; this name is removed in the next release.")]
-#pragma warning disable CS0618 // the former options type
-    public static RouteGroupBuilder MapOllamaApi(this IEndpointRouteBuilder app, string route, string name, Action<OllamaApiOptions> configure) =>
-        app.MapChatApi(route, name, options => configure(new OllamaApiOptions(options)));
-#pragma warning restore CS0618
-
     /// <summary>GET <paramref name="route"/>: every engine model with its state and statistics, and every device with its memory use.</summary>
     public static RouteHandlerBuilder MapIdrakStatus(this IEndpointRouteBuilder app, string route) =>
         app.MapGet(route, (InferenceEngine engine) =>

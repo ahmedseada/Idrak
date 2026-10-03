@@ -165,13 +165,8 @@ public static class ModelSource
         return File.Exists(blob) ? blob : throw new FileNotFoundException($"'{name}' in the local model store: its weights {blob} are missing (pull the model again).");
     }
 
-    /// <summary>Former name of <see cref="LocalStoreModel"/>.</summary>
-    [Obsolete("Use LocalStoreModel; this name is removed in the next release.")]
-    public static string OllamaModel(string name) => LocalStoreModel(name);
-
-    // The length of the local model store's prefix on a model name ("store:"; the former prefix is still read), else 0.
-    private static int StorePrefix(string model) =>
-        model.StartsWith("store:", StringComparison.OrdinalIgnoreCase) ? 6 : model.StartsWith("ollama:", StringComparison.OrdinalIgnoreCase) ? 7 : 0;
+    // The length of the local model store's prefix on a model name ("store:"), else 0.
+    private static int StorePrefix(string model) => model.StartsWith("store:", StringComparison.OrdinalIgnoreCase) ? 6 : 0;
 
     /// <summary>Whether <paramref name="model"/> reads as a Hugging Face id ("owner/name") rather than a folder.</summary>
     public static bool IsModelId(string model) =>
