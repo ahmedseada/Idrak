@@ -204,7 +204,10 @@ internal sealed class DoctorCommand : Command
             }
 
             string reason = backend.UnavailableReason is { Length: > 0 } r ? r : Messages.T("no devices found");
-            bool disabled = Environment.GetEnvironmentVariable($"IDRAK_DISABLE_{backend.Kind.ToUpperInvariant()}") is "1" or "true";
+            // Turned off by the user, or a backend this operating system does not use (CUDA, Vulkan and HIP on macOS):
+            // nothing to fix, so information rather than a warning.
+            bool disabled = Environment.GetEnvironmentVariable($"IDRAK_DISABLE_{backend.Kind.ToUpperInvariant()}") is "1" or "true"
+                || reason.Contains("is not used on", StringComparison.Ordinal);
             checks.Add(new("backend", backend.Display, disabled ? Status.Info : Status.Warn, Messages.T("none found: {0}", reason), disabled ? null : Fix(backend.Kind), Why(backend.Kind)));
         }
 

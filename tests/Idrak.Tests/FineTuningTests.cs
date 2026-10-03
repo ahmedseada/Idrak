@@ -721,11 +721,15 @@ internal static partial class Tests
             }
 
             // Named relative to the working directory, as a user types it.
+            // The working directory comes back with links resolved (macOS: /var is /private/var), so the full path
+            // written is the folder as the working directory names it.
+            Directory.SetCurrentDirectory(folder);
+            string resolved = Directory.GetCurrentDirectory();
             Directory.SetCurrentDirectory(Path.GetDirectoryName(folder)!);
             new TuningManifest { BaseModel = Path.GetFileName(folder), System = "Be brief.", MaxLength = 100 }.Save(adapter);
             Directory.SetCurrentDirectory(previous);
             var read = TuningManifest.Read(adapter)!;
-            Check(read.BaseModel == folder && read.System == "Be brief." && read.MaxLength == 100 && TuningManifest.Exists(adapter),
+            Check((read.BaseModel == folder || read.BaseModel == resolved) && read.System == "Be brief." && read.MaxLength == 100 && TuningManifest.Exists(adapter),
                 $"read back: {read.BaseModel}, {read.System}, {read.MaxLength}");
             Check(TuningManifest.Read(folder) is null, "a folder without a manifest has none");
             new TuningManifest { BaseModel = "owner/model" }.Save(adapter);

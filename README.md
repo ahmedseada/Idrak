@@ -114,11 +114,11 @@ points"):
 
 | Backend | Devices | Status |
 |---------|---------|--------|
-| CPU | x64 (AVX2, AVX-512), ARM64 (NEON) | Every test passes, including on an Android phone |
+| CPU | x64 (AVX2, AVX-512), ARM64 (NEON) | Every test passes, including on an Android phone and an Apple M4 Max (macOS) |
 | CUDA | NVIDIA GPUs, through the driver API | Every test passes on Ampere and Blackwell GPUs |
 | Vulkan (`architecture` branch) | NVIDIA, AMD, Intel, Qualcomm Adreno, Mesa's software driver | Every test passes on each GPU tested (see "Tested on architectures") |
 | ROCm / HIP (`architecture` branch) | AMD GPUs through the HIP runtime: memory, copies and a first set of kernels, the rest through host fallbacks | Added; not yet run on an AMD GPU |
-| Metal, NPUs | | Not supported yet |
+| Metal, NPUs | Apple GPUs (macOS runs on the CPU backend for now) | Not supported yet |
 
 ## Install
 
@@ -1451,6 +1451,7 @@ native Linux GPU drivers have not run yet:
 | UHD Graphics (i7-13620H) | Intel Xe-LP (Gen12) | integrated | Windows laptop (with the RTX 5050) | Vulkan | 273 of 273 | 229–256 tokens/s |
 | Adreno 730 (Snapdragon 8+ Gen 1) | Qualcomm Adreno 7xx | integrated | Android phone, Termux + Ubuntu, Mesa Turnip | Vulkan | 247 of 247 | chat 14.4–17.4 tokens/s |
 | Snapdragon 8+ Gen 1 CPU | ARM64 NEON (DotProd, RDM) | CPU | Android phone, Termux + Ubuntu | CPU | 245 of 245 | chat 5–6.4 tokens/s |
+| Apple M4 Max CPU, 36 GB | ARM64 NEON (DotProd, RDM), 10 performance + 4 efficiency cores | CPU | MacBook Pro, macOS 27.2 | CPU | 425 of 426 (the failure was a test's own path check, fixed) | Qwen3-0.6B 23.5 tokens/s (int8 weights 37.8) |
 | llvmpipe (lavapipe, LLVM 20) | Mesa software Vulkan | CPU driver | Linux container, WSL2 | Vulkan | 273 of 273 | 30–34 tokens/s |
 | x64 CPU (AVX2) | x64 | CPU | Linux container | CPU | 273 of 273 | – |
 
@@ -1480,6 +1481,8 @@ Each run in detail, results of the whole test list, grouped by vendor, architect
     <tr><td>2026-10-02</td><td><b>llvmpipe</b> (lavapipe, LLVM 20)<br>Vulkan 1.4</td><td>CPU driver</td><td>mapped</td><td>–</td><td>273 of 273 with every merged Vulkan kernel (prompts, training, convolutions, fused decoding, graph replay, windowed large storages; also through staging and with a cap of 64 allocations); CPU list 273 of 273</td></tr>
     <tr><th colspan="6" align="left">CPU · ARM64, NEON (DotProd, RDM) · Android phone, Termux + proot Ubuntu 26.04, .NET 10</th></tr>
     <tr><td>2026-10-02</td><td><b>CPU only</b>, 6 cores<br>CPU backend</td><td>CPU</td><td>–</td><td>–</td><td>245 of 245; .NET needs <code>DOTNET_GCHeapHardLimit</code> (e.g. 4 GB) under Android's smaller address space</td></tr>
+    <tr><th colspan="6" align="left">CPU · ARM64, NEON (DotProd, RDM) · Apple M4 Max, macOS 27.2, .NET 10.0.12</th></tr>
+    <tr><td>2026-10-03</td><td><b>CPU only</b>, 14 cores (10 performance, 4 efficiency), 36 GB<br>CPU backend</td><td>CPU</td><td>unified memory</td><td>– (the GPU, 32 cores with Metal 4, is not used: no Metal backend yet)</td><td>425 of 426; the one failure was the fine-tuning manifest test comparing a temp path with the working directory's (macOS links <code>/var</code> to <code>/private/var</code>), fixed in the test. Tiled kernel NEON 8x8; float32 products 448–477 GFLOP/s, mixed bfloat16 456–511 GFLOP/s (1024³ and 2048³); Qwen3-0.6B prompt 378 tokens/s, generation 23.5 tokens/s (stored weights) and 37.8 tokens/s (int8), English and Arabic answers through <code>idrak run</code>; every <code>idrak</code> command tried worked (doctor, devices, env set/reset, pull, bench, run). Found here and fixed: 5 to 7 rows of a float32 product ran 4–7x slower than 4 or 8 rows (they now split the columns over the threads), and the doctor warned about CUDA, Vulkan and HIP on macOS, where none of them is used (now information)</td></tr>
     <tr><th colspan="6" align="left">CPU · x64, AVX2</th></tr>
     <tr><td>2026-10-02</td><td><b>CPU only</b>, 4 threads<br>CPU backend</td><td>CPU</td><td>–</td><td>–</td><td>all pass</td></tr>
     <tr><td>2026-10-02</td><td><b>Minimal test backend</b> (memory and copies only)<br>host fallback</td><td>test</td><td>host</td><td>–</td><td>all pass (729 across CPU, minimal and lavapipe)</td></tr>
