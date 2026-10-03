@@ -493,8 +493,93 @@ of CSV), `Output` (the `-O` file, `ConsoleOutput` stays the console), `ColorMode
 command names a variable affects there); `Shared/HelpTopics.cs` the concept pages; `Command.BeforePlugins` runs
 before `--plugin` assemblies load.
 
-Later, not in this build: messages in Arabic (`--lang ar`) given the library's name and audience; a plug-in marketplace
-listing; remote devices (run a command on another machine's `idrak serve`).
+Later, not in this build: a plug-in marketplace listing; remote devices (run a command on another machine's `idrak
+serve`). Messages in Arabic were built after the render check (branch `feature-arabic`; "Arabic messages" below).
+
+## Arabic messages
+
+The maintainer's rule (plans/open-questions.md, 2026-10-03): Arabic messages only if consoles show them correctly,
+right to left with joined letters; otherwise dropped. Arabic printed in logical order shows reversed and unjoined in
+most terminals, UTF-8 or not, because they draw one character per cell in arrival order and apply neither the Unicode
+Bidirectional Algorithm nor Arabic shaping: Windows' console host (cmd and PowerShell windows), Windows Terminal (no
+bidirectional support yet), VS Code's terminal (xterm.js), xterm, kitty, Alacritty, WezTerm (its bidi setting is off by
+default), foot, iTerm2. A few do both themselves: GNOME Terminal and the other VTE terminals from 0.58, Konsole,
+mlterm, mintty (Git Bash, Cygwin) and macOS Terminal.
+
+Decision: feasible, so built. The tool renders the text itself for the first kind of terminal, which is what such
+terminals need to show Arabic correctly: shaping and reordering are deterministic, defined by Unicode, and checkable
+against its conformance data, and the result is plain characters (presentation forms) that any font with Arabic
+Presentation Forms-B draws joined, one cell each. What it cannot control is the font (a console font without Arabic
+shows boxes) and terminals that misreport themselves (`--lang-render` overrides).
+
+How it works (src/Idrak.Cli/Shared):
+
+- `Bidi.cs`: the Unicode Bidirectional Algorithm (UAX #9) for one paragraph, complete: explicit embeddings,
+  overrides and isolates (X1-X10), weak types (W1-W7), paired brackets (N0), neutrals (N1-N2), implicit levels
+  (I1-I2), line rules L1 and L2. `ArabicShaping.cs`: each Arabic letter to its isolated, initial, medial or final
+  presentation form by the joining types of ArabicShaping.txt (vowel marks transparent), lam-alef to its isolated or
+  final ligature. `UnicodeTables.cs`: the bidirectional classes, brackets, mirrors, joining types and presentation
+  forms, generated from the Unicode Character Database 18.0 by tools/unicode/make_tables.py (no runtime dependency).
+- `VisualText.cs`: a line is split at its column gaps (two or more spaces, as tables, name-value lines and help items
+  are laid out); each part is shaped, reordered as a paragraph of its own whose direction is that of its first strong
+  letter (P2, P3), has its marks put after their base (L3) and its brackets mirrored in right-to-left runs (L4); parts
+  keep their starting columns (a part shortened by a ligature or a mark is padded), indentation stays on the left,
+  colour escapes keep colouring their characters, direction marks are dropped after use. `VisualWriter` passes text
+  straight through until a line's first right-to-left character and holds the rest until the line break (a prompt
+  shows at once, a streamed answer appears line by line), breaks a held line wider than the terminal at spaces before
+  reordering it (each displayed row is its own line for the algorithm; continuation rows hang under the first), and
+  renders a held line before a question waits for its answer. Right alignment (`visual-right`) ends one-paragraph
+  right-to-left lines at the terminal's right edge.
+- Detection, `--lang-render auto` (the default): visual on a terminal unless it reorders text itself (`VTE_VERSION`
+  5800 and above, `KONSOLE_VERSION`, `MLTERM` or `TERM=mlterm*`, `TERM_PROGRAM=mintty` or `Apple_Terminal`); logical
+  when the output is a file or a pipe. `visual`, `visual-right` and `logical` override (also the config's
+  "lang-render" and `IDRAK_LANG_RENDER`). On Windows the console writes UTF-8 for the run (the legacy code pages,
+  1256 included, have no presentation forms) and the previous code page is restored at the end.
+- `Messages.cs`, `Messages.Arabic.cs`: the English text is the key, as written at the call (`Messages.T("No file
+  {0}.", path)`), and the Arabic catalog maps it to its translation. Language: `--lang en|ar`, the config's "lang",
+  `IDRAK_LANG`, else English. Translated: `idrak help` (title, groups, every command's summary, the common options, the
+  labels of a command's help, whose body stays English with a note saying so), the dispatcher's usage errors,
+  questions and Ctrl+C, `doctor` (every check's name, detail, fix and reason, the status words, the totals),
+  `devices` (headers and cells) and the chat's own lines (slash command help and replies, `/stats`). JSON, CSV and
+  Markdown output are never translated (the run's language is English for them), so scripts read the same keys and
+  values. Values put into Arabic text (paths, device names, sizes) and English words that start or end with
+  punctuation (`--device`, `.NET`, `/help`) get left-to-right marks so the algorithm keeps their punctuation with
+  them; the visual renderer drops the marks, terminals that reorder text themselves read them. Translations carry no
+  vowel marks (consoles draw combining marks poorly) and start with an Arabic word where they can, so the line reads
+  right to left as a whole. `idrak help arabic` explains the choice and the checks.
+
+Verified here: the algorithm passes the whole Unicode 18.0 conformance suite (BidiTest.txt: 770,241 cases;
+BidiCharacterTest.txt: 91,707 cases; run in a scratch harness, the files are not committed); shaping and reordering
+match GNU FriBidi 1.0.13 (`fribidi_log2vis` with shaping and mirroring, an independent implementation) on 369 lines
+of Arabic mixed with English, numbers, paths, brackets, lam-alef, tatweel and vowel marks (the lines and FriBidi's
+output are tests/Idrak.Tests/data/arabic/visual-order.jsonl, written by tools/unicode/make_visual_vectors.py); the
+tests (group "cli arabic") check shaping and known lines worked out from the standard, the renderer and writer,
+detection, that every message, summary and group title has both languages with the same placeholders, and the
+commands end to end. `idrak help`, `doctor` and `devices` in visual mode were drawn cell by cell in arrival order
+with DejaVu Sans Mono (as a terminal without bidirectional support draws them): Arabic read right to left, joined,
+with paths, options and numbers in order and the table columns aligned.
+
+Not verifiable here, for the maintainer (no Windows console in this container): run in each terminal
+
+```
+idrak help --lang ar
+idrak doctor --lang ar
+idrak devices --lang ar
+idrak help --lang ar --lang-render logical
+```
+
+and look at the first line: "idrak:" then Arabic that reads right to left with joined letters ("أداة سطر الأوامر
+لمكتبة إدراك"), and in the device table the column headers in Arabic above aligned columns. In Windows Terminal and
+in a PowerShell or cmd window (the console host) the default (auto) should be right and `logical` reversed; in Git
+Bash (mintty) and GNOME Terminal or Konsole the default should be right and `--lang-render visual` reversed. Boxes
+instead of letters: a font without Arabic (the console host's default Consolas has none; choose Courier New in the
+window's properties, or a font with Arabic Presentation Forms-B; Windows Terminal falls back to a system font). If a
+terminal is detected wrongly, say which (and its `TERM_PROGRAM`, `VTE_VERSION`, `WT_SESSION`) so the detection can
+learn it; `IDRAK_LANG_RENDER` fixes it per terminal meanwhile.
+
+Remains: the bodies of commands' help (options, examples) and the other commands' messages are English; an answer a
+model streams in Arabic is rendered line by line (a line appears when it ends) and the user's own typing is echoed
+by the terminal, unreordered, in terminals without bidirectional support; tables keep their columns left to right.
 
 ## Helpers every command shares
 

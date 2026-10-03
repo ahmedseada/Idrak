@@ -3,3 +3,6 @@ Copyright 2026 Ahmed Seada
 
 This product is licensed under the Apache License, Version 2.0 (see LICENSE), from version 0.1.7 on.
 Versions 0.1.0 through 0.1.6 were released under the MIT License, which continues to apply to those versions.
+
+src/Idrak.Cli/Shared/UnicodeTables.cs is generated from the Unicode Character Database, Copyright (c) 1991-2026
+Unicode, Inc., used under the Unicode License v3 (https://www.unicode.org/license.txt).

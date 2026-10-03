@@ -90,20 +90,21 @@ internal sealed class DoctorCommand : Command
         {
             var (word, colour) = c.Status switch
             {
-                Status.Ok => ("ok  ", Colour.Green),
-                Status.Info => ("info", Colour.Dim),
-                Status.Warn => ("warn", Colour.Yellow),
-                _ => ("FAIL", Colour.Red),
+                Status.Ok => (StatusWord(Status.Ok), Colour.Green),
+                Status.Info => (StatusWord(Status.Info), Colour.Dim),
+                Status.Warn => (StatusWord(Status.Warn), Colour.Yellow),
+                _ => (StatusWord(Status.Fail), Colour.Red),
             };
             context.Write($"{Terminal.Paint(context, word, colour)}  {c.Name.PadRight(18)} {c.Detail}");
+            string indent = new(' ', word.Length + 2);
             if (c.Fix is not null && c.Status is Status.Warn or Status.Fail)
             {
-                context.Write($"      {"".PadRight(18)} fix: {c.Fix}");
+                context.Write($"{indent}{"".PadRight(18)} {Messages.T("fix: {0}", c.Fix)}");
             }
 
             if (explain)
             {
-                context.Write($"      {"".PadRight(18)} why: {c.Why}");
+                context.Write($"{indent}{"".PadRight(18)} {Messages.T("why: {0}", c.Why)}");
             }
         }
 
@@ -112,10 +113,10 @@ internal sealed class DoctorCommand : Command
         {
             var fixable = checks.Where(c => c.Status is Status.Warn or Status.Fail && c.Command is not null).ToList();
             context.Write("");
-            context.Write(fixable.Count == 0 ? "No command fixes what is left; see the fix lines above." : "To fix:");
+            context.Write(fixable.Count == 0 ? Messages.T("No command fixes what is left; see the fix lines above.") : Messages.T("To fix:"));
             foreach (var c in fixable)
             {
-                context.Write($"  {c.Command}    # {c.Name}{(c.Repair is not null ? context.Flag("--yes") ? "" : " (safe: --fix --yes does it)" : "")}");
+                context.Write($"  {c.Command}    # {c.Name}{(c.Repair is not null ? context.Flag("--yes") ? "" : Messages.T(" (safe: --fix --yes does it)") : "")}");
             }
 
             if (context.Flag("--yes"))
@@ -123,7 +124,7 @@ internal sealed class DoctorCommand : Command
                 foreach (var c in fixable.Where(c => c.Repair is not null))
                 {
                     string done = c.Repair!();
-                    context.Write($"Done: {done}");
+                    context.Write(Messages.T("Done: {0}", done));
                     repaired.Add(done);
                 }
             }
@@ -131,7 +132,8 @@ internal sealed class DoctorCommand : Command
 
         int failed = checks.Count(c => c.Status == Status.Fail), warned = checks.Count(c => c.Status == Status.Warn);
         context.Write("");
-        context.Write(failed > 0 ? $"{failed} check(s) failed, {warned} warning(s)." : warned > 0 ? $"Everything needed works; {warned} warning(s)." : "Everything works.");
+        context.Write(failed > 0 ? Messages.T("{0} check(s) failed, {1} warning(s).", failed, warned)
+            : warned > 0 ? Messages.T("Everything needed works; {0} warning(s).", warned) : Messages.T("Everything works."));
         context.WriteJson(new JsonObject
         {
             ["failed"] = failed,
@@ -149,6 +151,13 @@ internal sealed class DoctorCommand : Command
             ["repaired"] = repaired,
         });
         return failed > 0 ? ExitCodes.Failed : ExitCodes.Ok;
+    }
+
+    // The status word of a line, padded to the longest of the four in this language so the columns line up.
+    private static string StatusWord(Status status)
+    {
+        string[] words = [Messages.T("ok"), Messages.T("info"), Messages.T("warn"), Messages.T("FAIL")];
+        return words[(int)status].PadRight(words.Max(w => w.Length));
     }
 
     /// <summary>Every check, in the order printed.</summary>
@@ -171,17 +180,17 @@ internal sealed class DoctorCommand : Command
     private static void Runtime(List<Check> checks)
     {
         var version = Environment.Version;
-        checks.Add(new("runtime", ".NET runtime", version.Major >= 10 ? Status.Ok : Status.Fail,
-            $"{RuntimeInformation.FrameworkDescription} ({RuntimeInformation.ProcessArchitecture}) on {RuntimeInformation.OSDescription}",
-            "install the .NET 10 runtime or SDK (dotnet --version prints 10.x)",
-            "Idrak is built for .NET 10; an older runtime cannot load it."));
+        checks.Add(new("runtime", Messages.T(".NET runtime"), version.Major >= 10 ? Status.Ok : Status.Fail,
+            Messages.T("{0} ({1}) on {2}", RuntimeInformation.FrameworkDescription, RuntimeInformation.ProcessArchitecture, RuntimeInformation.OSDescription),
+            Messages.T("install the .NET 10 runtime or SDK (dotnet --version prints 10.x)"),
+            Messages.T("Idrak is built for .NET 10; an older runtime cannot load it.")));
         string simd = RuntimeInformation.ProcessArchitecture is Architecture.X64 or Architecture.X86
             ? string.Join(' ', new[] { ("AVX2", Avx2.IsSupported), ("FMA", Fma.IsSupported), ("AVX-512", Avx512F.IsSupported) }.Where(f => f.Item2).Select(f => f.Item1))
             : System.Runtime.Intrinsics.Arm.AdvSimd.IsSupported ? "AdvSIMD" : "";
         checks.Add(new("runtime", "CPU", Status.Info,
-            $"{Environment.ProcessorCount} logical processors, {System.Numerics.Vector<float>.Count} float lanes per vector{(simd.Length > 0 ? $" ({simd})" : "")}, " +
-            $"{Units.Bytes(Machine.Memory)} memory for the process",
-            null, "The CPU backend always works; its speed follows the vector width and the processor count."));
+            Messages.T("{0} logical processors, {1} float lanes per vector{2}, {3} memory for the process", Environment.ProcessorCount,
+                System.Numerics.Vector<float>.Count, simd.Length > 0 ? $" ({simd})" : "", Units.Bytes(Machine.Memory)),
+            null, Messages.T("The CPU backend always works; its speed follows the vector width and the processor count.")));
     }
 
     private static void Backends(List<Check> checks)
@@ -190,26 +199,26 @@ internal sealed class DoctorCommand : Command
         {
             if (backend.Count > 0)
             {
-                checks.Add(new("backend", backend.Display, Status.Ok, $"{backend.Count} device(s) found", null, Why(backend.Kind)));
+                checks.Add(new("backend", backend.Display, Status.Ok, Messages.T("{0} device(s) found", backend.Count), null, Why(backend.Kind)));
                 continue;
             }
 
-            string reason = backend.UnavailableReason is { Length: > 0 } r ? r : "no devices found";
+            string reason = backend.UnavailableReason is { Length: > 0 } r ? r : Messages.T("no devices found");
             bool disabled = Environment.GetEnvironmentVariable($"IDRAK_DISABLE_{backend.Kind.ToUpperInvariant()}") is "1" or "true";
-            checks.Add(new("backend", backend.Display, disabled ? Status.Info : Status.Warn, $"none found: {reason}", disabled ? null : Fix(backend.Kind), Why(backend.Kind)));
+            checks.Add(new("backend", backend.Display, disabled ? Status.Info : Status.Warn, Messages.T("none found: {0}", reason), disabled ? null : Fix(backend.Kind), Why(backend.Kind)));
         }
 
         if (OperatingSystem.IsLinux())
         {
             var icds = VulkanDriverFiles();
             checks.Add(icds.Count > 0
-                ? new("backend", "Vulkan drivers", Status.Info, $"{icds.Count} driver file(s): {string.Join(", ", icds.Select(Path.GetFileName))}", null, VulkanDriversWhy)
-                : new("backend", "Vulkan drivers", Status.Warn, "no Vulkan driver (ICD) files found",
-                    "install the GPU's Vulkan driver (or a software one for tests); VK_ICD_FILENAMES can point at a driver file", VulkanDriversWhy));
+                ? new("backend", Messages.T("Vulkan drivers"), Status.Info, Messages.T("{0} driver file(s): {1}", icds.Count, string.Join(", ", icds.Select(Path.GetFileName))), null, VulkanDriversWhy)
+                : new("backend", Messages.T("Vulkan drivers"), Status.Warn, Messages.T("no Vulkan driver (ICD) files found"),
+                    Messages.T("install the GPU's Vulkan driver (or a software one for tests); VK_ICD_FILENAMES can point at a driver file"), VulkanDriversWhy));
         }
     }
 
-    private const string VulkanDriversWhy = "The Vulkan loader reaches GPUs only through the driver (ICD) files it finds; without one there is no Vulkan device.";
+    private static string VulkanDriversWhy => Messages.T("The Vulkan loader reaches GPUs only through the driver (ICD) files it finds; without one there is no Vulkan device.");
 
     // The Vulkan driver files the loader would read on Linux: VK_DRIVER_FILES / VK_ICD_FILENAMES, else the standard folders.
     internal static List<string> VulkanDriverFiles()
@@ -226,18 +235,18 @@ internal sealed class DoctorCommand : Command
 
     private static string Fix(string kind) => kind switch
     {
-        "cuda" => "install a GPU driver with CUDA support (only for GPUs that have it); the other backends work without it",
-        "vulkan" => "install the Vulkan loader (libvulkan.so.1, vulkan-1.dll) and the GPU's Vulkan driver",
-        "hip" => "install the HIP runtime and hipRTC (ROCm on Linux, the HIP SDK on Windows; HIP_PATH or ROCM_PATH finds them)",
-        _ => $"install what the {kind} backend needs (see the plug-in that registers it)",
+        "cuda" => Messages.T("install a GPU driver with CUDA support (only for GPUs that have it); the other backends work without it"),
+        "vulkan" => Messages.T("install the Vulkan loader (libvulkan.so.1, vulkan-1.dll) and the GPU's Vulkan driver"),
+        "hip" => Messages.T("install the HIP runtime and hipRTC (ROCm on Linux, the HIP SDK on Windows; HIP_PATH or ROCM_PATH finds them)"),
+        _ => Messages.T("install what the {0} backend needs (see the plug-in that registers it)", kind),
     };
 
     private static string Why(string kind) => kind switch
     {
-        "cuda" => "CUDA drives GPUs through their CUDA driver; without it those GPUs can still run through Vulkan.",
-        "vulkan" => "Vulkan compute runs Idrak's generated kernels on most GPUs (and on phones); it needs the loader and a driver.",
-        "hip" => "HIP runs kernels compiled at run time by hipRTC; without the runtime those GPUs can still run through Vulkan.",
-        _ => "A registered backend adds devices of its kind.",
+        "cuda" => Messages.T("CUDA drives GPUs through their CUDA driver; without it those GPUs can still run through Vulkan."),
+        "vulkan" => Messages.T("Vulkan compute runs Idrak's generated kernels on most GPUs (and on phones); it needs the loader and a driver."),
+        "hip" => Messages.T("HIP runs kernels compiled at run time by hipRTC; without the runtime those GPUs can still run through Vulkan."),
+        _ => Messages.T("A registered backend adds devices of its kind."),
     };
 
     private static void Devices(CommandContext context, List<Check> checks)
@@ -246,9 +255,9 @@ internal sealed class DoctorCommand : Command
         {
             if (d.Error is not null)
             {
-                string disable = d.Kind is "cuda" or "vulkan" or "hip" ? $", or leave the backend out with IDRAK_DISABLE_{d.Kind.ToUpperInvariant()}=1" : "";
-                checks.Add(new("device", d.Device, d.Listed ? Status.Fail : Status.Warn, $"cannot start: {d.Error}",
-                    $"update the device's driver{disable}", "A device that is found but cannot start fails every model placed on it.")
+                string disable = d.Kind is "cuda" or "vulkan" or "hip" ? Messages.T(", or leave the backend out with {0}", $"IDRAK_DISABLE_{d.Kind.ToUpperInvariant()}=1") : "";
+                checks.Add(new("device", d.Device, d.Listed ? Status.Fail : Status.Warn, Messages.T("cannot start: {0}", d.Error),
+                    Messages.T("update the device's driver{0}", disable), Messages.T("A device that is found but cannot start fails every model placed on it."))
                 {
                     Command = disable.Length > 0 ? $"export IDRAK_DISABLE_{d.Kind.ToUpperInvariant()}=1" : null,
                 });
@@ -263,27 +272,27 @@ internal sealed class DoctorCommand : Command
 
             if (d.ComputeUnits is int units && d.Kind != "cpu")
             {
-                facts.Add($"{units} compute units");
+                facts.Add(Messages.T("{0} compute units", units));
             }
 
             if (d.SubgroupSize is int lanes && d.Kind != "cpu")
             {
-                facts.Add($"subgroup {lanes}");
+                facts.Add(Messages.T("subgroup {0}", lanes));
             }
 
             if (d.KernelWidth is int width)
             {
-                facts.Add($"kernels width {width}");
+                facts.Add(Messages.T("kernels width {0}", width));
             }
 
-            facts.Add(d.MatrixUnits ? "matrix units" : "no matrix units");
-            string use = d.IsDefault ? "default device" : d.Listed ? "listed" : d.Note is { Length: > 0 } n ? n : "by name only";
+            facts.Add(d.MatrixUnits ? Messages.T("matrix units") : Messages.T("no matrix units"));
+            string use = d.IsDefault ? Messages.T("default device") : d.Listed ? Messages.T("listed") : d.Note is { Length: > 0 } n ? n : Messages.T("by name only");
             checks.Add(new("device", d.Device, Status.Ok, $"{d.Name}; {string.Join(", ", facts)}; {use}", null,
-                "Each device's limits (memory, subgroup size, matrix units) decide which kernels run and what models fit."));
+                Messages.T("Each device's limits (memory, subgroup size, matrix units) decide which kernels run and what models fit.")));
         }
 
-        checks.Add(new("device", "default device", Status.Info, Device.Default.ToString(), null,
-            "Commands run on the default device unless --device (or the config's \"device\") names another."));
+        checks.Add(new("device", Messages.T("default device"), Status.Info, Device.Default.ToString(), null,
+            Messages.T("Commands run on the default device unless --device (or the config's \"device\") names another.")));
     }
 
     private static void Storage(CommandContext context, List<Check> checks)
@@ -291,8 +300,8 @@ internal sealed class DoctorCommand : Command
         string cache = Path.GetFullPath(context.CacheFolder);
         string? writable = Writable(cache);
         checks.Add(writable is null
-            ? new("storage", "cache", Status.Ok, $"{cache} ({(Directory.Exists(cache) ? Units.Bytes(CacheLayout.Size(cache)) : "not created yet")})", null, CacheWhy)
-            : new("storage", "cache", Status.Fail, $"{cache} is not writable: {writable}", "choose another folder with --cache DIR or IDRAK_CACHE", CacheWhy));
+            ? new("storage", Messages.T("cache"), Status.Ok, $"{cache} ({(Directory.Exists(cache) ? Units.Bytes(CacheLayout.Size(cache)) : Messages.T("not created yet"))})", null, CacheWhy)
+            : new("storage", Messages.T("cache"), Status.Fail, Messages.T("{0} is not writable: {1}", cache, writable), Messages.T("choose another folder with --cache DIR or IDRAK_CACHE"), CacheWhy));
 
         try
         {
@@ -304,17 +313,17 @@ internal sealed class DoctorCommand : Command
 
             var drive = new DriveInfo(existing ?? cache);
             long free = drive.AvailableFreeSpace;
-            checks.Add(new("storage", "disk space", free < 5L << 30 ? Status.Warn : Status.Ok, $"{Units.Bytes(free)} free for the cache",
-                "free some space, or move the cache to a larger disk with --cache DIR or IDRAK_CACHE",
-                "Models take 0.5 to 20 GB each; a full disk stops downloads part way.") { Command = "idrak cache clear models --dry-run" });
+            checks.Add(new("storage", Messages.T("disk space"), free < 5L << 30 ? Status.Warn : Status.Ok, Messages.T("{0} free for the cache", Units.Bytes(free)),
+                Messages.T("free some space, or move the cache to a larger disk with --cache DIR or IDRAK_CACHE"),
+                Messages.T("Models take 0.5 to 20 GB each; a full disk stops downloads part way.")) { Command = "idrak cache clear models --dry-run" });
         }
         catch (Exception e) when (e is IOException or ArgumentException or UnauthorizedAccessException)
         {
-            checks.Add(new("storage", "disk space", Status.Info, $"unknown ({e.Message})", null, "Models take 0.5 to 20 GB each."));
+            checks.Add(new("storage", Messages.T("disk space"), Status.Info, Messages.T("unknown ({0})", e.Message), null, Messages.T("Models take 0.5 to 20 GB each.")));
         }
     }
 
-    private const string CacheWhy = "Downloaded models, measured kernel choices and compiled kernels are kept in the cache folder.";
+    private static string CacheWhy => Messages.T("Downloaded models, measured kernel choices and compiled kernels are kept in the cache folder.");
 
     // Null when files can be created in the folder (or in the nearest existing parent, where it would be created).
     private static string? Writable(string folder)
@@ -327,7 +336,7 @@ internal sealed class DoctorCommand : Command
 
         if (existing is null)
         {
-            return "no existing parent folder";
+            return Messages.T("no existing parent folder");
         }
 
         try
@@ -347,15 +356,15 @@ internal sealed class DoctorCommand : Command
     {
         string path = Path.GetFullPath(context.Config.Path);
         checks.Add(File.Exists(path)
-            ? new("settings", "config", Status.Ok, $"{path}{(context.Config.Profile is { } p ? $" (profile {p})" : "")}", null, ConfigWhy)
-            : new("settings", "config", Status.Info, $"none at {path} (defaults apply; idrak init writes one)", null, ConfigWhy));
+            ? new("settings", Messages.T("config"), Status.Ok, $"{path}{(context.Config.Profile is { } p ? Messages.T(" (profile {0})", p) : "")}", null, ConfigWhy)
+            : new("settings", Messages.T("config"), Status.Info, Messages.T("none at {0} (defaults apply; idrak init writes one)", path), null, ConfigWhy));
 
         var set = EnvironmentVariables.All.Where(v => !v.Secret && v.Name.StartsWith("IDRAK_", StringComparison.Ordinal) && Environment.GetEnvironmentVariable(v.Name) is { Length: > 0 }).Select(v => v.Name).ToList();
-        checks.Add(new("settings", "environment", Status.Info, set.Count == 0 ? "no Idrak variables set" : $"set: {string.Join(", ", set)} (idrak env shows them)", null,
-            "Environment variables change devices, tuning and memory for every Idrak program; a forgotten one explains surprises."));
+        checks.Add(new("settings", Messages.T("environment"), Status.Info, set.Count == 0 ? Messages.T("no Idrak variables set") : Messages.T("set: {0} (idrak env shows them)", string.Join(", ", set)), null,
+            Messages.T("Environment variables change devices, tuning and memory for every Idrak program; a forgotten one explains surprises.")));
     }
 
-    private const string ConfigWhy = "The config file gives defaults (device, cache, plug-ins, model aliases) for every command.";
+    private static string ConfigWhy => Messages.T("The config file gives defaults (device, cache, plug-ins, model aliases) for every command.");
 
     /// <summary>The phone checks; fixes add lines to <paramref name="rc"/> (the shell start-up file).</summary>
     internal static void Android(List<Check> checks, string rc)
@@ -363,21 +372,21 @@ internal sealed class DoctorCommand : Command
         string? icd = Environment.GetEnvironmentVariable("VK_ICD_FILENAMES") ?? Environment.GetEnvironmentVariable("VK_DRIVER_FILES");
         var files = icd?.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries) ?? [];
         var missing = files.Where(f => !File.Exists(f)).ToList();
-        const string IcdFix = "build Turnip with -Dfreedreno-kmds=kgsl and export VK_ICD_FILENAMES=<its icd.d/freedreno_icd*.json> (installation/android-termux.md, step 7)";
-        const string IcdWhy = "On the phone the Vulkan loader finds the GPU only through the Turnip driver file that VK_ICD_FILENAMES names.";
+        string icdFix = Messages.T("build Turnip with -Dfreedreno-kmds=kgsl and export VK_ICD_FILENAMES=<its icd.d/freedreno_icd*.json> (installation/android-termux.md, step 7)");
+        string icdWhy = Messages.T("On the phone the Vulkan loader finds the GPU only through the Turnip driver file that VK_ICD_FILENAMES names.");
         string? turnip = SetupAndroidCommand.FindTurnip();
         string? icdLine = turnip is null ? null : $"export VK_ICD_FILENAMES={turnip}";
-        Check IcdCheck(Status status, string detail) => new("android", "VK_ICD_FILENAMES", status, detail, IcdFix, IcdWhy)
+        Check IcdCheck(Status status, string detail) => new("android", "VK_ICD_FILENAMES", status, detail, icdFix, icdWhy)
         {
             Command = icdLine is null ? null : $"echo '{icdLine}' >> {rc}",
             Repair = icdLine is null ? null : () => SetupAndroidCommand.AddLine(rc, icdLine),
         };
-        checks.Add(icd is null ? IcdCheck(Status.Warn, "not set")
-            : missing.Count > 0 ? IcdCheck(Status.Fail, $"names missing file(s): {string.Join(", ", missing)}")
-            : new("android", "VK_ICD_FILENAMES", Status.Ok, icd, null, IcdWhy));
+        checks.Add(icd is null ? IcdCheck(Status.Warn, Messages.T("not set"))
+            : missing.Count > 0 ? IcdCheck(Status.Fail, Messages.T("names missing file(s): {0}", string.Join(", ", missing)))
+            : new("android", "VK_ICD_FILENAMES", Status.Ok, icd, null, icdWhy));
 
         const string Node = "/dev/kgsl-3d0";
-        const string NodeWhy = "The GPU driver reaches the phone's GPU through its kernel device node; without access there is no GPU.";
+        string nodeWhy = Messages.T("The GPU driver reaches the phone's GPU through its kernel device node; without access there is no GPU.");
         string? access = null;
         if (File.Exists(Node))
         {
@@ -391,14 +400,14 @@ internal sealed class DoctorCommand : Command
             }
         }
 
-        checks.Add(!File.Exists(Node) ? new("android", Node, Status.Fail, "not found", "run on the phone (Termux, with proot sharing /dev); ls -la /dev/kgsl-3d0 should list it", NodeWhy)
-            : access is not null ? new("android", Node, Status.Fail, $"not readable and writable: {access}", "give the user access to the device node (installation/android-termux.md)", NodeWhy)
-            : new("android", Node, Status.Ok, "readable and writable", null, NodeWhy));
+        checks.Add(!File.Exists(Node) ? new("android", Node, Status.Fail, Messages.T("not found"), Messages.T("run on the phone (Termux, with proot sharing /dev); ls -la /dev/kgsl-3d0 should list it"), nodeWhy)
+            : access is not null ? new("android", Node, Status.Fail, Messages.T("not readable and writable: {0}", access), Messages.T("give the user access to the device node (installation/android-termux.md)"), nodeWhy)
+            : new("android", Node, Status.Ok, Messages.T("readable and writable"), null, nodeWhy));
 
         string? heap = Environment.GetEnvironmentVariable("DOTNET_GCHeapHardLimit");
         checks.Add(heap is { Length: > 0 }
             ? new("android", "DOTNET_GCHeapHardLimit", Status.Ok, heap, null, HeapWhy)
-            : new("android", "DOTNET_GCHeapHardLimit", Status.Warn, "not set", "export DOTNET_GCHeapHardLimit=0x100000000 (4 GiB)", HeapWhy)
+            : new("android", "DOTNET_GCHeapHardLimit", Status.Warn, Messages.T("not set"), Messages.T("export DOTNET_GCHeapHardLimit=0x100000000 (4 GiB)"), HeapWhy)
             {
                 Command = $"echo '{SetupAndroidCommand.HeapLine}' >> {rc}",
                 Repair = () => SetupAndroidCommand.AddLine(rc, SetupAndroidCommand.HeapLine),
@@ -408,12 +417,12 @@ internal sealed class DoctorCommand : Command
     /// <summary>The network checks: proxy settings, whether the hub, the repository API and the package feed answer, tokens set.</summary>
     internal static void Network(CommandContext context, List<Check> checks)
     {
-        const string ProxyWhy = "Downloads go through the proxy these variables name (read by .NET's HTTP client); a wrong one stops every download.";
+        string proxyWhy = Messages.T("Downloads go through the proxy these variables name (read by .NET's HTTP client); a wrong one stops every download.");
         var proxies = new[] { "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY" }.Where(v => Environment.GetEnvironmentVariable(v) is { Length: > 0 }).ToList();
-        checks.Add(new("network", "proxy", Status.Info, proxies.Count == 0 ? "none set" : $"set: {string.Join(", ", proxies)}", null, ProxyWhy));
+        checks.Add(new("network", Messages.T("proxy"), Status.Info, proxies.Count == 0 ? Messages.T("none set") : Messages.T("set: {0}", string.Join(", ", proxies)), null, proxyWhy));
         if (context.Offline)
         {
-            checks.Add(new("network", "reachability", Status.Info, "not checked (--offline)", null, "With --offline nothing is downloaded."));
+            checks.Add(new("network", Messages.T("reachability"), Status.Info, Messages.T("not checked (--offline)"), null, Messages.T("With --offline nothing is downloaded.")));
         }
         else
         {
@@ -423,21 +432,21 @@ internal sealed class DoctorCommand : Command
             http.DefaultRequestHeaders.UserAgent.ParseAdd($"idrak/{Machine.ToolVersion}");
             foreach (var (name, url, why) in new[]
             {
-                ("model hub", $"{hub}/api/models?limit=1", "Models and datasets download from the hub (HF_ENDPOINT names a mirror)."),
-                ("repository API", api, "github: data sources read repositories through this API (GITHUB_API_URL)."),
-                ("package feed", UpdateCommand.DefaultIndex, "idrak update and new projects read the package feed."),
+                (Messages.T("model hub"), $"{hub}/api/models?limit=1", Messages.T("Models and datasets download from the hub (HF_ENDPOINT names a mirror).")),
+                (Messages.T("repository API"), api, Messages.T("github: data sources read repositories through this API (GITHUB_API_URL).")),
+                (Messages.T("package feed"), UpdateCommand.DefaultIndex, Messages.T("idrak update and new projects read the package feed.")),
             })
             {
                 var watch = System.Diagnostics.Stopwatch.StartNew();
                 try
                 {
                     using var response = http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, context.TimeoutToken).GetAwaiter().GetResult();
-                    checks.Add(new("network", name, Status.Ok, $"{url} answered {(int)response.StatusCode} in {watch.ElapsedMilliseconds} ms", null, why));
+                    checks.Add(new("network", name, Status.Ok, Messages.T("{0} answered {1} in {2} ms", url, (int)response.StatusCode, watch.ElapsedMilliseconds), null, why));
                 }
                 catch (Exception e) when (e is HttpRequestException or TaskCanceledException or InvalidOperationException)
                 {
-                    checks.Add(new("network", name, Status.Warn, $"{url} did not answer: {e.Message}",
-                        "check the connection and the proxy (HTTPS_PROXY); local models and --offline still work", why));
+                    checks.Add(new("network", name, Status.Warn, Messages.T("{0} did not answer: {1}", url, e.Message),
+                        Messages.T("check the connection and the proxy (HTTPS_PROXY); local models and --offline still work"), why));
                 }
             }
         }
@@ -446,10 +455,10 @@ internal sealed class DoctorCommand : Command
                   || File.Exists(LoginCommand.HuggingFaceTokenFile());
         bool gh = Environment.GetEnvironmentVariable("GITHUB_TOKEN") is { Length: > 0 } || Environment.GetEnvironmentVariable("GH_TOKEN") is { Length: > 0 };
         bool kaggle = Environment.GetEnvironmentVariable("KAGGLE_KEY") is { Length: > 0 } || File.Exists(LoginCommand.KaggleFile());
-        checks.Add(new("network", "tokens", Status.Info, $"Hugging Face: {Set(hf)}, GitHub: {Set(gh)}, Kaggle: {Set(kaggle)} (idrak login stores one)", null,
-            "Gated and private models, private repositories and Kaggle datasets need a token; public ones do not."));
-        static string Set(bool set) => set ? "set" : "not set";
+        checks.Add(new("network", Messages.T("tokens"), Status.Info, Messages.T("Hugging Face: {0}, GitHub: {1}, Kaggle: {2} (idrak login stores one)", Set(hf), Set(gh), Set(kaggle)), null,
+            Messages.T("Gated and private models, private repositories and Kaggle datasets need a token; public ones do not.")));
+        static string Set(bool set) => set ? Messages.T("set") : Messages.T("not set");
     }
 
-    private const string HeapWhy = "Android's address space is too small for .NET's default heap reservation; without a limit dotnet fails at start.";
+    private static string HeapWhy => Messages.T("Android's address space is too small for .NET's default heap reservation; without a limit dotnet fails at start.");
 }

@@ -9,6 +9,9 @@
 - `idrak serve` gets a default port of its own (not 11434, which another local server uses); `-p/--port`, the config
   and an environment variable choose another.
 - Arabic messages: only if the console can show them correctly (right to left, joined letters); otherwise dropped.
+  Result: the tool shapes and reorders Arabic itself for terminals that do not (plans/idrak-cli.md, "Arabic
+  messages"), checked against the Unicode conformance suite and an independent implementation; `--lang ar` built.
+  The look in real Windows terminals is hardware check 7 below.
 - Started: mixture of experts, fast sliding-window kernels, dataset loaders, the teacher pattern (distillation),
   provider-neutral serving names, Arabic output (render check first).
 
@@ -40,3 +43,4 @@ needed, the options, and the recommended one. Nothing here blocks the work in pr
 | 4 | An AMD discrete GPU with ROCm, or Windows with the HIP SDK | The HIP backend's first run | plans/8-hip.md, "Commands to validate" |
 | 5 | Phone | The width probe and the chat after the merged kernels | installation/android-termux.md, steps 8 and 9 |
 | 6 | Any machine | The `idrak` tool once the CLI lands: `idrak doctor`, `idrak devices`, `idrak c MODEL`, `idrak s MODEL`, `idrak b MODEL` | plans/idrak-cli.md, "Examples" |
+| 7 | Windows (Windows Terminal, a PowerShell or cmd window), Git Bash, a Linux terminal | Arabic messages read right to left with joined letters; the device table aligned; `logical` reversed where `auto` is right (or the other way round in terminals that reorder text themselves) | `idrak help --lang ar`, `idrak doctor --lang ar`, `idrak devices --lang ar`, then the same with `--lang-render logical` (plans/idrak-cli.md, "Arabic messages") |

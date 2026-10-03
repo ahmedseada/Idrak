@@ -18,7 +18,7 @@ internal sealed class ToolHost(CommandContext context) : IToolHost
     /// <summary>A console for the tools writing to <paramref name="output"/>, with this host.</summary>
     public static ToolConsole Console(CommandContext context, TextWriter output) =>
         new(output, context.ErrorOutput, System.Console.In, live: false, new ToolHost(context),
-            colour: ReferenceEquals(output, System.Console.Out) && Terminal.UseColour(context, output));
+            colour: ReferenceEquals(Terminal.Unwrap(output), System.Console.Out) && Terminal.UseColour(context, output));
 
     public void Progress(string label, long done, long total)
     {

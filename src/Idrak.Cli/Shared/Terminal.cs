@@ -32,10 +32,32 @@ internal static class Terminal
     /// <summary>Tests: answers questions as a terminal would, reading from this reader (null: the console decides).</summary>
     internal static TextReader? TestInput { get; set; }
 
-    /// <summary>Whether <paramref name="writer"/> is the console's output or error stream and that stream is a terminal.</summary>
-    public static bool IsTerminal(TextWriter writer) =>
-        ReferenceEquals(writer, Console.Out) ? !Console.IsOutputRedirected
-        : ReferenceEquals(writer, Console.Error) && !Console.IsErrorRedirected;
+    /// <summary>
+    /// Whether <paramref name="writer"/> is the console's output or error stream (directly or through the
+    /// right-to-left renderer, <see cref="VisualWriter"/>) and that stream is a terminal.
+    /// </summary>
+    public static bool IsTerminal(TextWriter writer)
+    {
+        writer = Unwrap(writer);
+        return ReferenceEquals(writer, Console.Out) ? !Console.IsOutputRedirected
+            : ReferenceEquals(writer, Console.Error) && !Console.IsErrorRedirected;
+    }
+
+    /// <summary>The writer under the right-to-left renderer (<see cref="VisualWriter"/>), or <paramref name="writer"/> itself.</summary>
+    public static TextWriter Unwrap(TextWriter writer) => writer is VisualWriter visual ? visual.Inner : writer;
+
+    // A question's text is shown now, even when the renderer holds a right-to-left line until its line break.
+    private static void ShowPrompt(TextWriter writer)
+    {
+        if (writer is VisualWriter visual)
+        {
+            visual.RenderPending();
+        }
+        else
+        {
+            writer.Flush();
+        }
+    }
 
     /// <summary>Whether questions can be asked: the command's output is a terminal and the input is the keyboard.</summary>
     public static bool IsInteractive(CommandContext context) => TestInput is not null || IsTerminal(context.ConsoleOutput) && !Console.IsInputRedirected;
@@ -77,7 +99,7 @@ internal static class Terminal
         }
 
         string answer = Ask(context, $"{question} [y/N]", "", requireTerminal: "--yes");
-        return answer.Equals("y", StringComparison.OrdinalIgnoreCase) || answer.Equals("yes", StringComparison.OrdinalIgnoreCase);
+        return answer.Equals("y", StringComparison.OrdinalIgnoreCase) || answer.Equals("yes", StringComparison.OrdinalIgnoreCase) || answer == Messages.T("yes");
     }
 
     /// <summary>
@@ -90,13 +112,13 @@ internal static class Terminal
         if (!IsInteractive(context) || context.Json && TestInput is null)
         {
             string fix = requireTerminal == "--yes"
-                ? context.Command.Flags.Contains("--dry-run") ? "add --yes (-y) to go ahead, or --dry-run to see what would happen" : "add --yes (-y) to go ahead"
-                : $"add {requireTerminal}";
-            throw new UsageException($"'{question}' needs an answer, and there is no terminal to ask on{(context.Json ? " with --json" : "")}; {fix}.");
+                ? context.Command.Flags.Contains("--dry-run") ? Messages.T("add --yes (-y) to go ahead, or --dry-run to see what would happen") : Messages.T("add --yes (-y) to go ahead")
+                : Messages.T("add {0}", requireTerminal);
+            throw new UsageException(Messages.T("'{0}' needs an answer, and there is no terminal to ask on{1}; {2}.", question, context.Json ? " with --json" : "", fix));
         }
 
         context.ConsoleOutput.Write(fallback.Length > 0 ? $"{question} [{fallback}] " : $"{question} ");
-        context.ConsoleOutput.Flush();
+        ShowPrompt(context.ConsoleOutput);
         string? line = (TestInput ?? Console.In).ReadLine();
         return string.IsNullOrWhiteSpace(line) ? fallback : line.Trim();
     }
@@ -115,7 +137,7 @@ internal static class Terminal
         else if (IsTerminal(context.ConsoleOutput))
         {
             context.ConsoleOutput.Write($"{prompt}: ");
-            context.ConsoleOutput.Flush();
+            ShowPrompt(context.ConsoleOutput);
             var typed = new System.Text.StringBuilder();
             while (Console.ReadKey(intercept: true) is var key && key.Key != ConsoleKey.Enter)
             {
@@ -195,7 +217,7 @@ internal sealed class Interrupt : IDisposable
         }
 
         e.Cancel = true;
-        _context?.ErrorOutput.WriteLine("Stopping (Ctrl+C again to end at once)...");
+        _context?.ErrorOutput.WriteLine(Messages.T("Stopping (Ctrl+C again to end at once)..."));
         _source.Cancel();
     }
 }

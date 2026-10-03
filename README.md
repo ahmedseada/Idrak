@@ -164,6 +164,9 @@ idrak sg houses.csv -t SalePrice -e            # design a network for a CSV, wit
 idrak help                                     # every command by group; idrak help COMMAND for one
 ```
 
+`--lang ar` prints the tool's messages in Arabic (help, errors, `doctor`, `devices`, the chat), shaped and reordered
+by the tool for terminals that do not show right-to-left text themselves (`idrak help arabic`); JSON stays English.
+
 The commands, options, examples and environment variables are in [src/Idrak.Cli/README.md](src/Idrak.Cli/README.md)
 (and in `idrak help`); the design is [plans/idrak-cli.md](plans/idrak-cli.md).
 
