@@ -64,7 +64,8 @@ internal sealed unsafe partial class VulkanBackend
         public readonly int Count = count;
     }
 
-    public override bool SupportsGraphs => true;
+    // IDRAK_VULKAN_GRAPHS=0: no recorded graphs; callers run their steps directly (diagnostics).
+    public override bool SupportsGraphs => Environment.GetEnvironmentVariable("IDRAK_VULKAN_GRAPHS") is not ("0" or "false");
 
     public override void BeginCapture()
     {

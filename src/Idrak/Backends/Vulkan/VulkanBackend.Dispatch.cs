@@ -32,6 +32,10 @@ internal sealed unsafe partial class VulkanBackend
     // Commands per batch before it is submitted on its own, and batches submitted but not waited for, at most: measured
     // when the backend starts (VulkanBackend.Tuning.cs; the measurement sets its own while it runs).
     private int _maxBatchCommands = 1;
+
+    // IDRAK_VULKAN_BARRIERS=all: a barrier before every command, not only where a storage is shared (diagnostics: when
+    // results change with it, a dependency was missed).
+    private static readonly bool s_barrierEveryCommand = Environment.GetEnvironmentVariable("IDRAK_VULKAN_BARRIERS") == "all";
     private int _maxInFlight = 1;
 
     // A descriptor pool holds as many sets as a batch has commands, each as wide as a kernel may bind (the device's
@@ -323,6 +327,7 @@ internal sealed unsafe partial class VulkanBackend
             hazard |= block.WrittenIn == _span || ((writes >> i & 1) != 0 && block.ReadIn == _span);
         }
 
+        hazard |= s_barrierEveryCommand && blocks.Length > 0;
         if (hazard)
         {
             var barrier = new VkMemoryBarrier
