@@ -21,6 +21,10 @@
 - `idrak` model commands: `pull` (Hugging Face models and GGUF files, with progress, resume, `--dry-run`), `list`
   (`ls`), `rm`, `show`, `search`, `alias set/list/rm`, `memory`, `quantize`, `merge`, `inspect` (`i`), `verify`,
   `convert`, `diff` and `families`, over the library's download cache.
+- `idrak suggest` (`sg`), `idrak explain` (`x`) and `idrak viz`: design a network for a table, an image folder, text,
+  chat or preference rows from documented rules (network.json in the builder's JSON, train.json, prep.json, or a LoRA
+  tune.json with `--base`), measure candidates with `--search N`, and show a network's shapes, parameters, FLOPs and
+  memory, or draw it as text, Mermaid or SVG.
 - Tool calls are parsed in the model's own format, not only as JSON between tags. `ChatOutputParser` takes the
   reasoning out and feeds the answer to an `IToolCallParser` (`Feed`, `Finish`, emitting text, reasoning and calls as
   before) that the template makes per reply (`ChatTemplate.CreateToolCallParser`, by `ToolCallFormatName`).
