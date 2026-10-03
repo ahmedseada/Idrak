@@ -19,8 +19,8 @@ A self-contained deep-learning library for **.NET 10**, written in C#, with its 
   fine-tuning; answer scoring and evaluation.
 - **Fast on NVIDIA GPUs**: bfloat16 and FP8 tensor cores, flash attention, int8 / int4 / bfloat16 weights, int8
   KV caches, CUDA graphs; on any CUDA GPU from Maxwell to Blackwell, with CPU fallbacks everywhere.
-- **Use it in applications**: an inference engine with batching, ASP.NET Core endpoints (including an
-  Ollama-compatible API), retrieval and RAG, MCP tools, ONNX export and import, datasets from files and hubs, and
+- **Use it in applications**: an inference engine with batching, ASP.NET Core endpoints (including the
+  chat API common local-model clients speak), retrieval and RAG, MCP tools, ONNX export and import, datasets from files and hubs, and
   one command-line tool, `idrak`, for all of it (checks, chat, serving, models, benchmarks, training, data).
 
 | Backend | How it works | Requirements |
@@ -40,7 +40,7 @@ Set `IDRAK_DISABLE_CUDA=1` to force the CPU.
 | `Idrak` (core) | Tensors and autograd, layers, training, generation, chat and tools, retrieval, the inference engine, telemetry, every backend |
 | `Idrak.LanguageModels` | Hugging Face and GGUF models, tokenizers, the models' own Jinja chat templates, LoRA / QLoRA fine-tuning, evaluation |
 | `Idrak.Datasets` | JSON Lines, JSON, CSV, text, code and Parquet files (also compressed or archived); Hugging Face, GitHub, Kaggle, Zenodo and URL sources |
-| `Idrak.AspNetCore` | `AddIdrak()`, `MapPredictor`, `MapGenerate` (JSON and streaming), an Ollama-compatible API |
+| `Idrak.AspNetCore` | `AddIdrak()`, `MapPredictor`, `MapGenerate` (JSON and streaming), `MapChatApi` (the local chat API) and `MapCompletionsApi` (`/v1`) |
 | `Idrak.Mcp` | Tools of Model Context Protocol servers, and serving tools over MCP |
 | `Idrak.Onnx` | Export to `.onnx` (opset 17) and import `.onnx` into layers |
 | `Idrak.Onnx.Runtime` | Run `.onnx` models with ONNX Runtime as Idrak modules |
@@ -76,7 +76,7 @@ Set `IDRAK_DISABLE_CUDA=1` to force the CPU.
 | Area | What is there |
 |------|---------------|
 | Retrieval and RAG | Chunking, BM25, bi-encoder vectors, hybrid search with rank fusion, cross-encoder re-ranking, a pipeline that cites passages |
-| Serving | The inference engine (loading, batching), model packages (`.ikm`), Web API endpoints, an Ollama-style chat API, MCP |
+| Serving | The inference engine (loading, batching), model packages (`.ikm`), Web API endpoints, a local chat API (`/api/chat`), MCP |
 | Interop | ONNX import and export; reference checks against PyTorch and transformers |
 | Telemetry | Hooks that cost nothing when unused: console, CSV metrics, JSON Lines; training, batch, gradient and layer events |
 
@@ -164,6 +164,10 @@ idrak sg houses.csv -t SalePrice -e            # design a network for a CSV, wit
 idrak help                                     # every command by group; idrak help COMMAND for one
 ```
 
+`idrak serve` listens on port 7317 by default (`-p`, `IDRAK_PORT` or the config's `serve.port` choose another): point
+clients at `http://127.0.0.1:7317` for the chat API or `http://127.0.0.1:7317/v1` for the OpenAI-style API, or serve
+with `-p 11434` for clients that expect the chat API on that port.
+
 The commands, options, examples and environment variables are in [src/Idrak.Cli/README.md](src/Idrak.Cli/README.md)
 (and in `idrak help`); the design is [plans/idrak-cli.md](plans/idrak-cli.md).
 
@@ -206,7 +210,7 @@ src/Idrak.LanguageModels/           optional package, no dependencies: language 
 src/Idrak.Datasets/                 optional package, no dependencies: JSON Lines, JSON, CSV, text, code and Parquet
                                     files (also compressed and archived); Hugging Face, GitHub, Kaggle, Zenodo and URL
                                     sources with a download cache; rows into conversations; recipes
-src/Idrak.AspNetCore/               optional package: AddIdrak(), MapPredictor, MapGenerate, MapOllamaApi, MapIdrakStatus
+src/Idrak.AspNetCore/               optional package: AddIdrak(), MapPredictor, MapGenerate, MapChatApi, MapIdrakStatus
 src/Idrak.Mcp/                      optional package: tools of Model Context Protocol servers, and serving tools over MCP
 src/Idrak.Onnx/                     optional package, no dependencies: export networks to .onnx (opset 17), import .onnx into layers
 src/Idrak.Onnx.Runtime/             optional package: run .onnx models with ONNX Runtime as Idrak modules
@@ -222,7 +226,7 @@ samples/
   Idrak.Samples.Ocr                 OCR: CNN character recognizer + line segmentation, reads PGM images
   Idrak.Samples.Sentiment           sentiment with negation: bag-of-words vs LSTM, GRU, Transformer
   Idrak.Samples.TextGeneration      small GPT: character-level causal transformer that generates text
-  Idrak.Samples.GptApi              ASP.NET Core Web API + browser UI serving the GPT (Scalar docs, streaming, Ollama-style /api/chat)
+  Idrak.Samples.GptApi              ASP.NET Core Web API + browser UI serving the GPT (Scalar docs, streaming, the chat API on /api/chat)
   Idrak.Samples.GptTraining         trains a full-size character-level GPT (bfloat16 / FP8 tensor cores, checkpoints, resume)
   Idrak.Samples.Summarizer          summarization: extractive baselines vs a word-level transformer (WordTokenizer + TextGenerator)
   Idrak.Samples.ReRanker            search re-ranking: BM25 first stage + transformer cross-encoder, listwise training
@@ -257,7 +261,7 @@ assets/                             the icon (icon.svg source, icon.png for the 
 | `Sentiment` | Embedding, LSTM, GRU, Transformer vs an order-blind baseline | LSTM/GRU/Transformer 99.5–100%, bag of words 70% |
 | `Ocr` | CNN over 36 characters, projection-profile segmentation, PGM input | 100% per character, 99.9% of characters across whole lines |
 | `TextGeneration` | decoder-only GPT: causal attention, sparse cross-entropy, sampling | 89% next-character accuracy, 100% real words generated |
-| `GptApi` | serving a model: REST + server-sent events, Scalar, browser UI, Ollama-compatible `/api/chat` | about 600 characters/s on 4 CPU cores |
+| `GptApi` | serving a model: REST + server-sent events, Scalar, browser UI, the chat API on `/api/chat` | about 600 characters/s on 4 CPU cores |
 | `ReRanker` | two-stage search: BM25 + cross-encoder, hard negatives, listwise loss, placeholder tokens for unseen names | Hit@1 on unseen towns 27.1% (BM25) → 86.6% re-ranked, 6.9 ms per question, 180 s training |
 | `HouseApi` | `AddIdrak().AddPredictor(...)` + `MapPredictor`: the HousePrices package served over HTTP with micro-batching | same prices as `HousePrices --predict` |
 | `Summarizer` | word-level decoder-only transformer, loss masking, greedy generation with a stop token, ROUGE | ROUGE-1 0.999 vs 0.503 (first sentence), 90% exact, 7.7 ms per summary |
@@ -588,7 +592,7 @@ local LLM servers:
 ```csharp
 var chat = new ChatGenerator(new TextGenerator(model, new CharTokenizer(vocabulary), contextLength: 256));
 var request = new ChatRequest(
-    [new ChatMessage("system", "You are a helpful assistant."), new ChatMessage("user", "What is the latest Ollama version?")],
+    [new ChatMessage("system", "You are a helpful assistant."), new ChatMessage("user", "What is the latest Idrak version?")],
     Tools: [new ToolDefinition("web_fetch", "Fetch a page.", JsonNode.Parse("""{"type":"object","properties":{"url":{"type":"string"}}}"""))],
     Think: true,
     Options: new GenerationOptions { Temperature = 1f, TopK = 20, TopP = 0.95f, NumCtx = 4096, NumPredict = 2048 });
@@ -596,25 +600,25 @@ foreach (var chunk in chat.Stream(request))
     Console.Write(chunk.Delta.Thinking + chunk.Delta.Content);   // chunk.Delta.ToolCalls: completed tool calls
 ```
 
-### Ollama-compatible chat API
+### Chat API (`/api/chat`)
 
-The GPT Web API also serves `POST /api/chat` with the Ollama request body: `model` (any name selects the
-served model), `messages`, `stream` (NDJSON, default true), `think` (true/false or low/medium/high),
-`keep_alive`, `options` (the keys above in snake_case; other keys are accepted and ignored) and `tools`.
-Replies have Ollama's shape: `message.content`, `message.thinking`, `message.tool_calls`, `done`,
-`done_reason` and nanosecond `total_duration`, `load_duration`, `prompt_eval_count`,
+The GPT Web API also serves `POST /api/chat`, the chat API common local-model clients speak. The request
+body: `model` (any name selects the served model), `messages`, `stream` (NDJSON, default true), `think`
+(true/false or low/medium/high), `keep_alive`, `options` (the keys above in snake_case; other keys are
+accepted and ignored) and `tools`. Replies carry `message.content`, `message.thinking`, `message.tool_calls`,
+`done`, `done_reason` and nanosecond `total_duration`, `load_duration`, `prompt_eval_count`,
 `prompt_eval_duration`, `eval_count`, `eval_duration`. `GET /api/tags`, `GET /api/ps` (loaded models with
 `expires_at`) and `GET /api/version` are there too.
 
 ```bash
 curl http://localhost:5080/api/chat -d '{"model":"any","stream":true,"think":true,"keep_alive":"30m",
   "options":{"temperature":1,"top_k":20,"top_p":0.95,"num_ctx":4096,"num_predict":2048},
-  "messages":[{"role":"user","content":"What is the latest Ollama version?"}],
+  "messages":[{"role":"user","content":"What is the latest Idrak version?"}],
   "tools":[{"type":"function","function":{"name":"web_fetch","parameters":{"type":"object","properties":{"url":{"type":"string"}}}}}]}'
 ```
 
-The GptApi sample maps these endpoints with `app.MapOllamaApi(...)` from `Idrak.AspNetCore` (see
-below); the request body is read as JSON whatever its Content-Type, as Ollama does. The endpoint serves
+The GptApi sample maps these endpoints with `app.MapChatApi(...)` from `Idrak.AspNetCore` (see
+below); the request body is read as JSON whatever its Content-Type (clients often send none). The endpoint serves
 `Gpt:ChatModelPath` if that file exists, otherwise `Gpt:ModelPath`. A model trained on
 plain text only continues text. To see reasoning and tool calls, train the small chat model on synthetic
 ChatML transcripts (reasoning, `web_fetch` calls, answers citing tool results):
@@ -829,14 +833,14 @@ plus a weights file.
 public sealed class ReleaseTools(HttpClient http)
 {
     [Tool("latest_release", "Fetch the release notes page of a product.")]
-    public Task<string> LatestAsync([Description("Product name, e.g. ollama.")] string product) =>
-        http.GetStringAsync($"https://{product}.com/releases");
+    public Task<string> LatestAsync([Description("Product name, e.g. idrak.")] string product) =>
+        http.GetStringAsync($"https://releases.example.com/{product}");
 }
 
 var tools = ToolRegistry.Create()
     .Add(new ReleaseTools(http))                                        // every [Tool] method; schema from the parameters
-    .Add(WebTools.Fetch(http, allow: u => u.Host == "ollama.com", maxCharacters: 4000))   // built-in, allowlist required
-    .Allow("web_fetch", args => ((string)args["url"]!).StartsWith("https://ollama.com"))
+    .Add(WebTools.Fetch(http, allow: u => u.Host == "releases.example.com", maxCharacters: 4000))   // built-in, allowlist required
+    .Allow("web_fetch", args => ((string)args["url"]!).StartsWith("https://releases.example.com"))
     .RequireApproval("delete_file", (call, token) => AskUserAsync(call, token))
     .Timeout(TimeSpan.FromSeconds(10)).Parallel()
     .Build();
@@ -845,7 +849,7 @@ var conversation = Conversation.For(chatGenerator)       // or engine.Conversati
     .System("You are a helpful assistant. Cite sources as [1], [2].")
     .Think(true).Tools(tools).MaxToolRounds(5)             // MaxToolRounds is required when tools are added
     .Build();
-var reply = await conversation.SendAsync("What is the latest Ollama version?");   // runs the tool loop
+var reply = await conversation.SendAsync("What is the latest Idrak version?");   // runs the tool loop
 ```
 
 Arguments are validated against each tool's schema before the tool runs; mistakes go back to the model as
@@ -861,13 +865,13 @@ builder.Services.AddIdrak()
 
 app.MapPredictor<House, float>("/predict/house-price", "house-price");      // POST a House (or /batch an array)
 app.MapGenerate("/api/generate", "my-gpt");                                 // JSON, or server-sent events with "stream": true
-app.MapOllamaApi("/api", "my-gpt", o => o.Tools(ToolExecution.Client));    // or ToolExecution.Server with maxRounds
+app.MapChatApi("/api", "my-gpt", o => o.Tools(ToolExecution.Client));    // or ToolExecution.Server with maxRounds
 app.MapIdrakStatus("/status");
 ```
 
 The endpoints are ordinary ASP.NET Core endpoints (`.RequireAuthorization()`, rate limiting and OpenAPI work
 as usual), and `IPredictor<TIn, TOut>` can be injected (keyed by model name). The GptApi sample serves its
-Ollama-compatible API this way, and the HouseApi sample is a complete prediction API in about ten lines.
+chat API this way, and the HouseApi sample is a complete prediction API in about ten lines.
 
 ### Retrieval and RAG (`Idrak.Retrieval`)
 
@@ -934,7 +938,7 @@ await using var files = await McpTools.ConnectStdioAsync("npx", ["-y", "@modelco
 var tools = ToolRegistry.Create()
     .Add(await files.ListToolsAsync(prefix: "fs_"))                         // the server's tools as Idrak tools
     .RequireApproval("fs_write_file", (call, ct) => AskUserAsync(call, ct))
-    .Build();                                                                // use in a Conversation, the engine or MapOllamaApi
+    .Build();                                                                // use in a Conversation, the engine or MapChatApi
 
 options.ToolCollection = [.. McpTools.ServerTools(registry)];                // or serve a registry to MCP clients
 ```
@@ -1297,7 +1301,7 @@ The 170 tests, by area:
 | Decoding | 7 | fused kernels equal their unfused forms; KV-cache and batched decoding equal the full pass; CUDA graph replay; the sampler (top-k/p, min-p, penalties); every kernel's parameter count |
 | Generation | 8 | streamed output parsed into thinking, content and tool calls; tokenizers; templates; stop sequences; cache/graph/recompute agree; prompt-cache reuse; emoji and other characters stay whole however tokens split them |
 | Simplified API, engine and tools | 18 | builder, predictors, packages and trainer equal the manual steps; LoRA; tools and conversations; the inference engine (batching, queues, timeouts, keep-alive) |
-| ASP.NET Core | 1 | predict, generate (JSON and server-sent events), Ollama API, status, over a real Kestrel server |
+| ASP.NET Core | 1 | predict, generate (JSON and server-sent events), chat API, status, over a real Kestrel server |
 | Retrieval and MCP | 6 | chunking; BM25 against the formula; encoders; hybrid index with rank fusion; re-ranking and RAG citations; tools served over MCP |
 | ONNX | 13 | MLP, CNN, LSTM/GRU, transformer and GPT exported and run in ONNX Runtime, and imported back (PyTorch-style graphs, ResNet blocks); the export registry; imported graphs exported again; custom graph operators and layer types |
 | Quantization | 11 | int8, int4 and bfloat16 weights (products, gradients, save/load, QLoRA); packed projections; half-precision files; int8 KV cache |

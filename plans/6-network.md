@@ -51,7 +51,7 @@ using var big = PretrainedModel.Load("Qwen/Qwen2.5-7B", new PretrainedOptions
 builder.Services.AddIdrak()
     .AddCluster(c => c.Node("gpu-a", "http://10.0.0.5:8080").Node("gpu-b", "http://10.0.0.6:8080"))
     .AddChatModel("chat", "Qwen/Qwen3-0.6B", m => m.Replicas(2));         // placed on two nodes
-app.MapOllamaApi("/api", "chat");                         // the gateway routes each request to a node
+app.MapChatApi("/api", "chat");                         // the gateway routes each request to a node
 ```
 
 ### Building blocks every part uses

@@ -36,7 +36,7 @@ internal sealed class TuneTool(ToolConsole console)
           idrak-tune info <model>                         what the loader made of a model
 
         <model>: any chat or base model the library loads (its own tokenizer and chat template): a Hugging Face id (owner/name,
-        found in a cache or downloaded once; HF_TOKEN for gated models), a model folder, a .gguf file, ollama:name, or an
+        found in a cache or downloaded once; HF_TOKEN for gated models), a model folder, a .gguf file, store:name (the local model store), or an
         adapter folder written by train (its base model and the adapter).
 
         <data…>: files, folders, hf:, github:, kaggle:, zenodo: or URLs (JSON Lines, JSON, CSV, Parquet, text), or a recipe

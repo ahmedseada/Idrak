@@ -160,7 +160,7 @@ public static class GgufTypes
 }
 
 /// <summary>
-/// Reads GGUF files (the format of llama.cpp and Ollama): metadata, the tensor index, and tensors dequantized to
+/// Reads GGUF files (the format of llama.cpp and of the local model store): metadata, the tensor index, and tensors dequantized to
 /// float32 from F32, F16, BF16, Q4_0, Q4_1, Q5_0, Q5_1, Q8_0, Q2_K, Q3_K, Q4_K, Q5_K, Q6_K, IQ4_NL and IQ4_XS, and any
 /// type registered with <see cref="GgufTypes.Register"/>.
 /// </summary>

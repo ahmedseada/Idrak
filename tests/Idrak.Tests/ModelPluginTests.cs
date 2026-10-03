@@ -46,8 +46,8 @@ internal static partial class Tests
             "Q8_0 and Q6_K blocks; names of types not registered");
         Check(GgufArchitectures.Names.ToHashSet().SetEquals(["llama", "qwen2", "qwen3"]) && GgufArchitectures.Get("llama").InterleavedQueryKeys
               && GgufArchitectures.Get("qwen3") is { HuggingFace: "Qwen3ForCausalLM", InterleavedQueryKeys: false }, "GGUF architectures");
-        Check(ModelSources.Names.SequenceEqual(["folder", "ollama", "gguf", "huggingface"]), $"sources: {string.Join(", ", ModelSources.Names)}");
-        Check(ModelSources.For(folder)?.Name == "folder" && ModelSources.For(gguf)?.Name == "gguf" && ModelSources.For("ollama:x")?.Name == "ollama"
+        Check(ModelSources.Names.SequenceEqual(["folder", "store", "gguf", "huggingface"]), $"sources: {string.Join(", ", ModelSources.Names)}");
+        Check(ModelSources.For(folder)?.Name == "folder" && ModelSources.For(gguf)?.Name == "gguf" && ModelSources.For("store:x")?.Name == "store"
               && ModelSources.For("Qwen/Qwen3-0.6B")?.Name == "huggingface" && ModelSources.For("no such thing") is null, "sources claim their names");
         Check(TokenizerComponents.NormalizerTypes.Contains("NFC") && TokenizerComponents.PreTokenizerTypes.Contains("ByteLevel")
               && TokenizerComponents.DecoderTypes.Contains("ByteFallback") && TokenizerComponents.DecoderTypes.Count == 7, "tokenizer component types");

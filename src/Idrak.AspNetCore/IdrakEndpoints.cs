@@ -18,15 +18,15 @@ namespace Idrak.AspNetCore;
 /// <summary>Who runs the tools a chat model asks for.</summary>
 public enum ToolExecution
 {
-    /// <summary>The model's tool calls are returned in <c>message.tool_calls</c> and the client runs them (Ollama's behaviour).</summary>
+    /// <summary>The model's tool calls are returned in <c>message.tool_calls</c> and the client runs them (the API's usual behaviour).</summary>
     Client,
 
     /// <summary>The server runs the tools registered with the chat model (<see cref="GenerativeModelBuilder.Tools"/>) and returns the final answer.</summary>
     Server,
 }
 
-/// <summary>Settings of <see cref="IdrakEndpointExtensions.MapOllamaApi"/>. <see cref="Tools"/> must be called.</summary>
-public sealed class OllamaApiOptions
+/// <summary>Settings of <see cref="IdrakEndpointExtensions.MapChatApi"/>. <see cref="Tools"/> must be called.</summary>
+public sealed class ChatApiOptions
 {
     internal ToolExecution? Execution { get; private set; }
     internal int? Rounds { get; private set; }
@@ -35,7 +35,7 @@ public sealed class OllamaApiOptions
         typeof(InferenceEngine).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
 
     /// <summary>Who runs tool calls; with <see cref="ToolExecution.Server"/>, <paramref name="maxRounds"/> (required) bounds the call→result rounds per request.</summary>
-    public OllamaApiOptions Tools(ToolExecution execution, int? maxRounds = null)
+    public ChatApiOptions Tools(ToolExecution execution, int? maxRounds = null)
     {
         if (execution == ToolExecution.Server && maxRounds is null)
         {
@@ -48,21 +48,21 @@ public sealed class OllamaApiOptions
     }
 
     /// <summary>The name reported by /tags and /ps (the engine's model name unless set).</summary>
-    public OllamaApiOptions ModelName(string name)
+    public ChatApiOptions ModelName(string name)
     {
         Served = name;
         return this;
     }
 
     /// <summary>The version reported by /version (the Idrak assembly version unless set).</summary>
-    public OllamaApiOptions Version(string version)
+    public ChatApiOptions Version(string version)
     {
         VersionText = version;
         return this;
     }
 }
 
-/// <summary>A request to <see cref="IdrakEndpointExtensions.MapGenerate"/>: the prompt, Ollama-style options and whether to stream (server-sent events).</summary>
+/// <summary>A request to <see cref="IdrakEndpointExtensions.MapGenerate"/>: the prompt, the chat API's options (temperature, top_k, num_predict, ...) and whether to stream (server-sent events).</summary>
 public sealed record GenerationRequest(
     [property: JsonPropertyName("prompt")] string Prompt,
     [property: JsonPropertyName("options")] Dictionary<string, JsonElement>? Options = null,
@@ -104,7 +104,7 @@ public static class IdrakEndpointExtensions
             GenerationOptions options;
             try
             {
-                options = OllamaTranslation.Options(request.Options);
+                options = ChatApiTranslation.Options(request.Options);
             }
             catch (ArgumentException ex)
             {
@@ -159,22 +159,24 @@ public static class IdrakEndpointExtensions
         }).WithName($"Generate-{name}");
 
     /// <summary>
-    /// Ollama-compatible endpoints under <paramref name="route"/>: POST /chat (NDJSON streaming, think, tools, options,
-    /// keep_alive), GET /tags, GET /ps and GET /version, all serving the chat model <paramref name="name"/>. The request
-    /// body is read as JSON whatever its Content-Type (as Ollama does). <see cref="OllamaApiOptions.Tools"/> must be set.
+    /// The chat API under <paramref name="route"/>, on the routes common local-model clients call: POST /chat (NDJSON
+    /// streaming, think, tools, options, keep_alive), GET /tags, GET /ps and GET /version, all serving the chat model
+    /// <paramref name="name"/>. The request body is read as JSON whatever its Content-Type (clients often send none).
+    /// <see cref="ChatApiOptions.Tools"/> must be set. The OpenAI-style <c>/v1</c> API is
+    /// <see cref="CompletionsApiEndpoints.MapCompletionsApi"/>.
     /// </summary>
-    public static RouteGroupBuilder MapOllamaApi(this IEndpointRouteBuilder app, string route, string name, Action<OllamaApiOptions> configure)
+    public static RouteGroupBuilder MapChatApi(this IEndpointRouteBuilder app, string route, string name, Action<ChatApiOptions> configure)
     {
-        var settings = new OllamaApiOptions();
+        var settings = new ChatApiOptions();
         configure(settings);
         if (settings.Execution is null)
         {
-            throw new InvalidOperationException("MapOllamaApi needs options.Tools(ToolExecution.Client) or options.Tools(ToolExecution.Server, maxRounds).");
+            throw new InvalidOperationException("MapChatApi needs options.Tools(ToolExecution.Client) or options.Tools(ToolExecution.Server, maxRounds).");
         }
 
         var group = app.MapGroup(route);
         group.MapPost("/chat", (HttpRequest http, InferenceEngine engine, CancellationToken token) => Chat(http, engine, name, settings, token))
-            .WithName($"OllamaChat-{name}");
+            .WithName($"Chat-{name}");
         group.MapGet("/tags", async (InferenceEngine engine, CancellationToken token) =>
         {
             ModelDescription d;
@@ -184,7 +186,7 @@ public static class IdrakEndpointExtensions
             }
             catch (FileNotFoundException)
             {
-                return Results.Ok(new { models = Array.Empty<OllamaModelTag>() });     // nothing to serve yet
+                return Results.Ok(new { models = Array.Empty<ChatApiModelTag>() });     // nothing to serve yet
             }
 
             string served = settings.Served ?? name;
@@ -192,30 +194,37 @@ public static class IdrakEndpointExtensions
             {
                 models = new[]
                 {
-                    new OllamaModelTag(served, served, DateTimeOffset.UtcNow, d.Parameters * sizeof(float),
-                        new OllamaModelDetails("idrak", d.Kind.ToString().ToLowerInvariant(), FormatCount(d.Parameters), d.ContextLength ?? 0)),
+                    new ChatApiModelTag(served, served, DateTimeOffset.UtcNow, d.Parameters * sizeof(float),
+                        new ChatApiModelDetails("idrak", d.Kind.ToString().ToLowerInvariant(), FormatCount(d.Parameters), d.ContextLength ?? 0)),
                 },
             });
-        }).WithName($"OllamaTags-{name}");
+        }).WithName($"ChatTags-{name}");
         group.MapGet("/ps", (InferenceEngine engine) =>
         {
             var status = engine.Models.First(m => m.Name == name);
             string served = settings.Served ?? name;
             if (!status.Loaded)
             {
-                return Results.Ok(new { models = Array.Empty<OllamaRunningModel>() });
+                return Results.Ok(new { models = Array.Empty<ChatApiRunningModel>() });
             }
 
             var d = engine.DescribeAsync(name).GetAwaiter().GetResult();
             long size = d.Parameters * sizeof(float);
             return Results.Ok(new
             {
-                models = new[] { new OllamaRunningModel(served, served, size, status.ExpiresAt, d.Device.IsGpu ? size : 0, d.ContextLength ?? 0) },
+                models = new[] { new ChatApiRunningModel(served, served, size, status.ExpiresAt, d.Device.IsGpu ? size : 0, d.ContextLength ?? 0) },
             });
-        }).WithName($"OllamaPs-{name}");
-        group.MapGet("/version", () => Results.Ok(new { version = settings.VersionText })).WithName($"OllamaVersion-{name}");
+        }).WithName($"ChatPs-{name}");
+        group.MapGet("/version", () => Results.Ok(new { version = settings.VersionText })).WithName($"ChatVersion-{name}");
         return group;
     }
+
+    /// <summary>Former name of <see cref="MapChatApi"/>: the same endpoints and routes.</summary>
+    [Obsolete("Use MapChatApi; this name is removed in the next release.")]
+#pragma warning disable CS0618 // the former options type
+    public static RouteGroupBuilder MapOllamaApi(this IEndpointRouteBuilder app, string route, string name, Action<OllamaApiOptions> configure) =>
+        app.MapChatApi(route, name, options => configure(new OllamaApiOptions(options)));
+#pragma warning restore CS0618
 
     /// <summary>GET <paramref name="route"/>: every engine model with its state and statistics, and every device with its memory use.</summary>
     public static RouteHandlerBuilder MapIdrakStatus(this IEndpointRouteBuilder app, string route) =>
@@ -240,15 +249,15 @@ public static class IdrakEndpointExtensions
 
     // ------------------------------------------------------------------ /chat
 
-    private static async Task<IResult> Chat(HttpRequest http, InferenceEngine engine, string name, OllamaApiOptions settings, CancellationToken token)
+    private static async Task<IResult> Chat(HttpRequest http, InferenceEngine engine, string name, ChatApiOptions settings, CancellationToken token)
     {
-        OllamaChatRequest? request;
+        ChatApiRequest? request;
         ChatRequest chat;
         try
         {
-            request = await JsonSerializer.DeserializeAsync<OllamaChatRequest>(http.Body, Json, token)
+            request = await JsonSerializer.DeserializeAsync<ChatApiRequest>(http.Body, Json, token)
                 ?? throw new ArgumentException("empty request body");
-            (chat, var keepAlive, bool given) = OllamaTranslation.Translate(request);
+            (chat, var keepAlive, bool given) = ChatApiTranslation.Translate(request);
             if (given)
             {
                 engine.KeepAlive(name, keepAlive);
@@ -262,7 +271,7 @@ public static class IdrakEndpointExtensions
         string served = request.Model ?? settings.Served ?? name;
         bool stream = request.Stream != false;
         var clock = Stopwatch.StartNew();
-        IAsyncEnumerator<OllamaChatResponse> lines;
+        IAsyncEnumerator<ChatApiResponse> lines;
         if (settings.Execution == ToolExecution.Server)
         {
             var tools = engine.ToolsOf(name);
@@ -295,7 +304,7 @@ public static class IdrakEndpointExtensions
 
         if (!stream)
         {
-            OllamaChatResponse last = lines.Current;
+            ChatApiResponse last = lines.Current;
             while (await lines.MoveNextAsync())
             {
                 last = lines.Current;
@@ -325,7 +334,7 @@ public static class IdrakEndpointExtensions
         }, "application/x-ndjson");
     }
 
-    private static async IAsyncEnumerable<OllamaChatResponse> ClientLines(IAsyncEnumerable<ChatChunk> chunks, string served, bool stream, Stopwatch clock)
+    private static async IAsyncEnumerable<ChatApiResponse> ClientLines(IAsyncEnumerable<ChatChunk> chunks, string served, bool stream, Stopwatch clock)
     {
         int toolIndex = 0;
         await foreach (var chunk in chunks)
@@ -334,20 +343,20 @@ public static class IdrakEndpointExtensions
             {
                 if (stream)
                 {
-                    yield return Line(served, chunk.Delta.Content, chunk.Delta.Thinking, OllamaTranslation.Calls(chunk.Delta.ToolCalls, ref toolIndex));
+                    yield return Line(served, chunk.Delta.Content, chunk.Delta.Thinking, ChatApiTranslation.Calls(chunk.Delta.ToolCalls, ref toolIndex));
                 }
 
                 continue;
             }
 
             var message = stream
-                ? new OllamaMessage("assistant", chunk.Delta.Content, NullIfEmpty(chunk.Delta.Thinking), OllamaTranslation.Calls(chunk.Delta.ToolCalls, ref toolIndex))
-                : new OllamaMessage("assistant", chunk.Message!.Content, chunk.Message.Thinking, OllamaTranslation.Calls(chunk.Message.ToolCalls ?? [], ref toolIndex));
+                ? new ChatApiMessage("assistant", chunk.Delta.Content, NullIfEmpty(chunk.Delta.Thinking), ChatApiTranslation.Calls(chunk.Delta.ToolCalls, ref toolIndex))
+                : new ChatApiMessage("assistant", chunk.Message!.Content, chunk.Message.Thinking, ChatApiTranslation.Calls(chunk.Message.ToolCalls ?? [], ref toolIndex));
             yield return Final(served, message, chunk.DoneReason, chunk.Stats, clock);
         }
     }
 
-    private static async IAsyncEnumerable<OllamaChatResponse> ServerLines(Conversation conversation, string served, bool stream, Stopwatch clock,
+    private static async IAsyncEnumerable<ChatApiResponse> ServerLines(Conversation conversation, string served, bool stream, Stopwatch clock,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken token)
     {
         await foreach (var delta in conversation.StreamContinueAsync(token))
@@ -361,16 +370,16 @@ public static class IdrakEndpointExtensions
         var reply = conversation.LastReply!;
         int index = 0;
         var message = stream
-            ? new OllamaMessage("assistant", "", null, reply.ToolLimitReached ? OllamaTranslation.Calls(reply.Message.ToolCalls ?? [], ref index) : null)
-            : new OllamaMessage("assistant", reply.Message.Content, reply.Message.Thinking,
-                reply.ToolLimitReached ? OllamaTranslation.Calls(reply.Message.ToolCalls ?? [], ref index) : null);
+            ? new ChatApiMessage("assistant", "", null, reply.ToolLimitReached ? ChatApiTranslation.Calls(reply.Message.ToolCalls ?? [], ref index) : null)
+            : new ChatApiMessage("assistant", reply.Message.Content, reply.Message.Thinking,
+                reply.ToolLimitReached ? ChatApiTranslation.Calls(reply.Message.ToolCalls ?? [], ref index) : null);
         yield return Final(served, message, reply.DoneReason, reply.Stats, clock);
     }
 
-    private static OllamaChatResponse Line(string served, string content, string thinking, List<OllamaToolCall>? calls) =>
-        new(served, DateTimeOffset.UtcNow, new OllamaMessage("assistant", content, NullIfEmpty(thinking), calls), false);
+    private static ChatApiResponse Line(string served, string content, string thinking, List<ChatApiToolCall>? calls) =>
+        new(served, DateTimeOffset.UtcNow, new ChatApiMessage("assistant", content, NullIfEmpty(thinking), calls), false);
 
-    private static OllamaChatResponse Final(string served, OllamaMessage message, string? reason, GenerationStats? s, Stopwatch clock) =>
+    private static ChatApiResponse Final(string served, ChatApiMessage message, string? reason, GenerationStats? s, Stopwatch clock) =>
         new(served, DateTimeOffset.UtcNow, message, true, reason, Nanoseconds(clock.Elapsed), 0,
             s?.PromptTokens, s is null ? null : Nanoseconds(s.PromptDuration), s?.GeneratedTokens, s is null ? null : Nanoseconds(s.GenerationDuration));
 

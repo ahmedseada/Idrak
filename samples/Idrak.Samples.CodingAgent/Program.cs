@@ -24,7 +24,7 @@ using Idrak.LanguageModels;
 //   agent-check <suite>             checks every task without a model: verification fails on the starting files and
 //                                   passes with the task's solution/ folder (--filter S, --work DIR)
 //
-//   (<folder> may also be a Hugging Face model id, for example Qwen/Qwen3-0.6B, a .gguf file or ollama:name.)
+//   (<folder> may also be a Hugging Face model id, for example Qwen/Qwen3-0.6B, a .gguf file or store:name.)
 //   data/agent-demo-*.jsonl: tool-calling transcripts in this layout, to fine-tune a model for the agent with idrak-tune.
 //
 // Options: --cuda / --cpu / --vulkan / --device NAME (cpu, cuda:N, vulkan:N), --int8 | --int4 | --bf16 (base weights), --kv8 | --kv16 (KV cache), --context N (default

@@ -85,13 +85,13 @@ api.MapPost("/generate/stream", Results<ServerSentEventsResult<object>, ProblemH
     .WithSummary("Generate text as a live stream (server-sent events)")
     .WithDescription("Same as /api/generate, but emits \"token\" events (each with its sample index) every chunkSize characters as they are produced, then a \"metrics\" event.");
 
-// ---------------------------------------------------------------- Ollama-compatible endpoints (Idrak.AspNetCore)
+// ---------------------------------------------------------------- the chat API (Idrak.AspNetCore)
 // /api/chat, /api/tags, /api/ps and /api/version, served by the inference engine: the chat model loads on the first
 // request and stays loaded for 5 minutes after the last one (or the request's keep_alive); tool calls go to the client.
-app.MapOllamaApi("/api", "chat", o => o
+app.MapChatApi("/api", "chat", o => o
         .Tools(ToolExecution.Client)
         .ModelName(app.Configuration["Gpt:ModelName"] ?? "idrak-char-gpt:latest"))
-    .WithTags("Ollama-compatible");
+    .WithTags("Chat API");
 
 app.Run();
 

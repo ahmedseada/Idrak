@@ -2,13 +2,14 @@
 
 Things left as they are for now that need a decision later.
 
-## Ollama-compatible server in Idrak.AspNetCore
+## The chat API server in Idrak.AspNetCore
 
-`src/Idrak.AspNetCore` (`MapOllamaApi` in IdrakEndpoints.cs, wire types in Ollama.cs) serves
-Idrak's own models over an Ollama-compatible HTTP API (`/api/chat`, `/api/tags`, `/api/ps`, `/api/version`), so
-other tools that speak Ollama's protocol can use a Idrak model. It is a server, not a client: the library does
-not call Ollama or any other model server. It was kept when the OpenAI-compatible client and the teacher paths were
-removed (commit 6d5efb3). To decide: keep, change or remove.
+`src/Idrak.AspNetCore` (`MapChatApi` in IdrakEndpoints.cs, wire types in ChatApi.cs) serves Idrak's own models over
+the local chat API common clients speak (`/api/chat`, `/api/tags`, `/api/ps`, `/api/version`), so those clients can
+use an Idrak model. It is a server, not a client: the library does not call any other model server. It was kept when
+the OpenAI-compatible client and the teacher paths were removed (commit 6d5efb3). Decided: kept, under
+provider-neutral names (`MapChatApi`, `ChatApiOptions`, `ChatApi*` types; the former names are obsolete forwarders
+for one release).
 
 ## Teacher-generated samples
 

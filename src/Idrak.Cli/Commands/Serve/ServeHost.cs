@@ -56,8 +56,17 @@ internal sealed record ServeSettings(string Host, int Port, string? ApiKey, IRea
 /// </summary>
 internal sealed class ServeHost
 {
-    /// <summary>The port when none is given: the one common local-model clients connect to.</summary>
-    public const int DefaultPort = 11434;
+    /// <summary>
+    /// The port when none is chosen: Idrak's own, so a server does not collide with another local model server
+    /// (<c>-p 11434</c> serves clients that expect that port).
+    /// </summary>
+    public const int DefaultPort = 7317;
+
+    /// <summary>The environment variable choosing the port when <c>--port</c> is not given.</summary>
+    public const string PortVariable = "IDRAK_PORT";
+
+    /// <summary>The config key choosing the port when neither <c>--port</c> nor <see cref="PortVariable"/> is given.</summary>
+    public const string PortKey = "serve.port";
 
     /// <summary>The options of serve and ui (besides the model options).</summary>
     public static readonly string[] ValueOptions = ["--host", "--port", "--api-key", "--cors", "--max-concurrency", "--keep-alive", "--log-requests"];
@@ -90,15 +99,39 @@ internal sealed class ServeHost
 
     public IReadOnlyList<ServedModel> Served { get; }
 
+    /// <summary>
+    /// The port a server listens on: <c>--port</c>, else <see cref="PortVariable"/>, else the config's
+    /// <see cref="PortKey"/>, else <see cref="DefaultPort"/> (usage errors for values that are not ports).
+    /// </summary>
+    public static int Port(CommandContext context) => ExplicitPort(context) ?? ConfiguredPort(context) ?? DefaultPort;
+
+    /// <summary>The port given with <c>--port</c> or <see cref="PortVariable"/>, or null.</summary>
+    public static int? ExplicitPort(CommandContext context) =>
+        context.Option("--port") is not null ? Checked(context.IntOption("--port", DefaultPort), "--port")
+        : Environment.GetEnvironmentVariable(PortVariable) is { Length: > 0 } text ? Parsed(text, PortVariable)
+        : null;
+
+    /// <summary>The config's <see cref="PortKey"/> (a number, or a number as text), or null.</summary>
+    public static int? ConfiguredPort(CommandContext context)
+    {
+        var parts = PortKey.Split('.');
+        return context.Config.Object(parts[0])?[parts[1]] is { } node
+            ? Parsed(node is JsonValue v && v.TryGetValue(out string? text) ? text : node.ToJsonString(), $"{PortKey} in {context.Config.Path}")
+            : null;
+    }
+
+    private static int Parsed(string text, string source) =>
+        int.TryParse(text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int port) ? Checked(port, source)
+        : throw new UsageException($"{source} must be a port number (0 to 65535), not '{text}'.");
+
+    private static int Checked(int port, string source) =>
+        port is >= 0 and <= 65535 ? port : throw new UsageException($"{source} must be between 0 and 65535, not {port}.");
+
     /// <summary>The settings from the command's options (usage errors for bad values).</summary>
     public static ServeSettings ReadSettings(CommandContext context)
     {
         string host = context.Option("--host") ?? "127.0.0.1";
-        int port = context.IntOption("--port", DefaultPort);
-        if (port is < 0 or > 65535)
-        {
-            throw new UsageException($"--port must be between 0 and 65535, not {port}.");
-        }
+        int port = Port(context);
 
         int concurrency = context.IntOption("--max-concurrency", 0);
         if (concurrency < 0)
@@ -309,7 +342,7 @@ internal sealed class ServeHost
         for (int i = 0; i < Served.Count; i++)
         {
             string name = Served[i].Name;
-            app.MapOllamaApi($"{Internal}/{i}/api", name, o => o.Tools(ToolExecution.Client).ModelName(name).Version(Version));
+            app.MapChatApi($"{Internal}/{i}/api", name, o => o.Tools(ToolExecution.Client).ModelName(name).Version(Version));
         }
 
         app.MapGet("/", () => Results.Text("Idrak is running\n"));

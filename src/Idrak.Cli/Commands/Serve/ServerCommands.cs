@@ -11,8 +11,9 @@ using Idrak.Cli.Shared;
 namespace Idrak.Cli.Commands.Serve;
 
 /// <summary>
-/// How the server commands reach a running server: <c>--host</c>/<c>--port</c> when given, else the most recently
-/// started server on this machine (its state file in the cache folder), else 127.0.0.1 on the default port.
+/// How the server commands reach a running server: <c>--host</c>/<c>--port</c> (or IDRAK_PORT) when given, else the
+/// most recently started server on this machine (its state file in the cache folder), else 127.0.0.1 on the config's
+/// serve.port or the default port.
 /// </summary>
 internal static class ServerClient
 {
@@ -22,19 +23,21 @@ internal static class ServerClient
 
     public const string OptionsHelp = """
           -H, --host NAME    the server's address (default: the server started last on this machine, else 127.0.0.1)
-          -p, --port N       the server's port (default: as above, else 11434)
+          -p, --port N       the server's port (default: IDRAK_PORT, else as above, else the config's serve.port,
+                             else 7317)
               --api-key KEY  the server's API key (default IDRAK_API_KEY)
         """;
 
     public static string BaseUrl(CommandContext context)
     {
-        string? host = context.Option("--host"), port = context.Option("--port");
+        string? host = context.Option("--host");
+        int? port = ServeHost.ExplicitPort(context);
         if (host is null && port is null && ServerState.Find(context) is { } running)
         {
             return running;
         }
 
-        int number = context.IntOption("--port", ServeHost.DefaultPort);
+        int number = port ?? ServeHost.ConfiguredPort(context) ?? ServeHost.DefaultPort;
         host ??= "127.0.0.1";
         host = host is "0.0.0.0" or "*" ? "127.0.0.1" : host;
         return host.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || host.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
