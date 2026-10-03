@@ -16,6 +16,17 @@
     <ProjectReference Include="..\Idrak\Idrak.csproj" />
     <ProjectReference Include="..\Idrak.LanguageModels\Idrak.LanguageModels.csproj" />
     <ProjectReference Include="..\Idrak.Datasets\Idrak.Datasets.csproj" />
+    <ProjectReference Include="..\Idrak.AspNetCore\Idrak.AspNetCore.csproj" />
+    <ProjectReference Include="..\Idrak.Mcp\Idrak.Mcp.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- serve, ui: the web server -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Idrak.Tests" />
   </ItemGroup>
 
 </Project>

@@ -9,6 +9,24 @@ dotnet run -c Release --project src/Idrak.Cli -- help
 dotnet run -c Release --project src/Idrak.Cli -- version --json
 ```
 
+## Serve
+
+| Command | What it does |
+|---|---|
+| `idrak serve MODEL [MODEL...]` (`s`) | The chat API (`/api/chat`, `/api/tags`, `/api/ps`, `/api/version`) and the OpenAI-style API (`/v1/models`, `/v1/chat/completions`, `/v1/completions`) on one port, streaming and tool calls; models load on first use and unload after `--keep-alive`; `--host`, `--port`, `--api-key`, `--cors`, `--max-concurrency`, `--metrics`, `--log-requests` |
+| `idrak ui MODEL` | The same server with its web chat page (`/ui`) opened in the browser |
+| `idrak server ps` (`ps`), `server stop`, `server load MODEL`, `server unload MODEL` | A running server's models (state, memory, context, last use) and control |
+| `idrak server keys add/list/rm` | API keys for serve, stored as hashes in the config |
+| `idrak api PATH [JSON]` | Calls an endpoint of a running server |
+| `idrak ping [URL]` | Checks a server (any compatible one): which API answers, models, latency |
+| `idrak mcp serve TOOLS.dll` | Serves an assembly's `[Tool]` methods over MCP (standard input/output) |
+
+```
+idrak s qwen phi -p 8080 --api-key $KEY        # two models on one port
+idrak ps
+idrak api /v1/chat/completions '{"model":"qwen","messages":[{"role":"user","content":"Hi"}]}'
+```
+
 ## Adding a command
 
 A command derives from `Command` (name, one-line summary, usage, its value options and flags, `Run(CommandContext)`

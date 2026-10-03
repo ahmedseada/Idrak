@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- `idrak serve`, `ui`, `server ps/stop/load/unload/keys`, `api`, `ping` and `mcp serve`: several models on one port
+  over the chat API and the OpenAI-style API, loaded on first use and unloaded when idle, with API keys, CORS, a
+  concurrency limit, metrics and a request log.
+- Idrak.AspNetCore: the OpenAI-style API, `MapCompletionsApi` (`/models`, `/chat/completions` with streaming and tool
+  calls, `/completions`, `/embeddings`) over the engine's text and chat models and any `IChatModel` or `IEmbedder`
+  given in `CompletionsApiOptions`; `CompletionsTranslation` converts requests and messages.
 - Tool calls are parsed in the model's own format, not only as JSON between tags. `ChatOutputParser` takes the
   reasoning out and feeds the answer to an `IToolCallParser` (`Feed`, `Finish`, emitting text, reasoning and calls as
   before) that the template makes per reply (`ChatTemplate.CreateToolCallParser`, by `ToolCallFormatName`).
