@@ -1,0 +1,369 @@
+{"text": "مرحبا", "dir": "auto", "visual": "ﺎﺒﺣﺮﻣ"}
+{"text": "مرحبا", "dir": "rtl", "visual": "ﺎﺒﺣﺮﻣ"}
+{"text": "مرحبا", "dir": "ltr", "visual": "ﺎﺒﺣﺮﻣ"}
+{"text": "لا يوجد جهاز", "dir": "auto", "visual": "ﺯﺎﻬﺟ ﺪﺟﻮﻳ ﻻ"}
+{"text": "لا يوجد جهاز", "dir": "rtl", "visual": "ﺯﺎﻬﺟ ﺪﺟﻮﻳ ﻻ"}
+{"text": "لا يوجد جهاز", "dir": "ltr", "visual": "ﺯﺎﻬﺟ ﺪﺟﻮﻳ ﻻ"}
+{"text": "السلام عليكم", "dir": "auto", "visual": "ﻢﻜﻴﻠﻋ ﻡﻼﺴﻟﺍ"}
+{"text": "السلام عليكم", "dir": "rtl", "visual": "ﻢﻜﻴﻠﻋ ﻡﻼﺴﻟﺍ"}
+{"text": "السلام عليكم", "dir": "ltr", "visual": "ﻢﻜﻴﻠﻋ ﻡﻼﺴﻟﺍ"}
+{"text": "إلا أن الأمر", "dir": "auto", "visual": "ﺮﻣﻷﺍ ﻥﺃ ﻻﺇ"}
+{"text": "إلا أن الأمر", "dir": "rtl", "visual": "ﺮﻣﻷﺍ ﻥﺃ ﻻﺇ"}
+{"text": "إلا أن الأمر", "dir": "ltr", "visual": "ﺮﻣﻷﺍ ﻥﺃ ﻻﺇ"}
+{"text": "آلة لآلئ لإنسان", "dir": "auto", "visual": "ﻥﺎﺴﻧﻹ ﺊﻟﻵ ﺔﻟﺁ"}
+{"text": "آلة لآلئ لإنسان", "dir": "rtl", "visual": "ﻥﺎﺴﻧﻹ ﺊﻟﻵ ﺔﻟﺁ"}
+{"text": "آلة لآلئ لإنسان", "dir": "ltr", "visual": "ﻥﺎﺴﻧﻹ ﺊﻟﻵ ﺔﻟﺁ"}
+{"text": "الجهاز cpu جاهز", "dir": "auto", "visual": "ﺰﻫﺎﺟ cpu ﺯﺎﻬﺠﻟﺍ"}
+{"text": "الجهاز cpu جاهز", "dir": "rtl", "visual": "ﺰﻫﺎﺟ cpu ﺯﺎﻬﺠﻟﺍ"}
+{"text": "الجهاز cpu جاهز", "dir": "ltr", "visual": "ﺯﺎﻬﺠﻟﺍ cpu ﺰﻫﺎﺟ"}
+{"text": "تعذر فتح الملف C:\\models\\qwen.gguf", "dir": "auto", "visual": "C:\\models\\qwen.gguf ﻒﻠﻤﻟﺍ ﺢﺘﻓ ﺭﺬﻌﺗ"}
+{"text": "تعذر فتح الملف C:\\models\\qwen.gguf", "dir": "rtl", "visual": "C:\\models\\qwen.gguf ﻒﻠﻤﻟﺍ ﺢﺘﻓ ﺭﺬﻌﺗ"}
+{"text": "تعذر فتح الملف C:\\models\\qwen.gguf", "dir": "ltr", "visual": "ﻒﻠﻤﻟﺍ ﺢﺘﻓ ﺭﺬﻌﺗ C:\\models\\qwen.gguf"}
+{"text": "الذاكرة 16 GB من 24 GB", "dir": "auto", "visual": "GB 24 ﻦﻣ GB 16 ﺓﺮﻛﺍﺬﻟﺍ"}
+{"text": "الذاكرة 16 GB من 24 GB", "dir": "rtl", "visual": "GB 24 ﻦﻣ GB 16 ﺓﺮﻛﺍﺬﻟﺍ"}
+{"text": "الذاكرة 16 GB من 24 GB", "dir": "ltr", "visual": "16 ﺓﺮﻛﺍﺬﻟﺍ GB 24 ﻦﻣ GB"}
+{"text": "النسخة 0.1.7 من idrak", "dir": "auto", "visual": "idrak ﻦﻣ 0.1.7 ﺔﺨﺴﻨﻟﺍ"}
+{"text": "النسخة 0.1.7 من idrak", "dir": "rtl", "visual": "idrak ﻦﻣ 0.1.7 ﺔﺨﺴﻨﻟﺍ"}
+{"text": "النسخة 0.1.7 من idrak", "dir": "ltr", "visual": "ﻦﻣ 0.1.7 ﺔﺨﺴﻨﻟﺍ idrak"}
+{"text": "(تجربة) [قوس] {معقوف}", "dir": "auto", "visual": "{ﻑﻮﻘﻌﻣ} [ﺱﻮﻗ] (ﺔﺑﺮﺠﺗ)"}
+{"text": "(تجربة) [قوس] {معقوف}", "dir": "rtl", "visual": "{ﻑﻮﻘﻌﻣ} [ﺱﻮﻗ] (ﺔﺑﺮﺠﺗ)"}
+{"text": "(تجربة) [قوس] {معقوف}", "dir": "ltr", "visual": "(ﺔﺑﺮﺠﺗ) [ﺱﻮﻗ] {ﻑﻮﻘﻌﻣ}"}
+{"text": "اكتب idrak help لعرض الأوامر.", "dir": "auto", "visual": ".ﺮﻣﺍﻭﻷﺍ ﺽﺮﻌﻟ idrak help ﺐﺘﻛﺍ"}
+{"text": "اكتب idrak help لعرض الأوامر.", "dir": "rtl", "visual": ".ﺮﻣﺍﻭﻷﺍ ﺽﺮﻌﻟ idrak help ﺐﺘﻛﺍ"}
+{"text": "اكتب idrak help لعرض الأوامر.", "dir": "ltr", "visual": "ﺐﺘﻛﺍ idrak help ﺮﻣﺍﻭﻷﺍ ﺽﺮﻌﻟ."}
+{"text": "خطأ: لم يُعثر على النموذج 'qwen'.", "dir": "auto", "visual": ".'qwen' ﺝﺫﻮﻤﻨﻟﺍ ﻰﻠﻋ ﺮﺜﻌﻳُ ﻢﻟ :ﺄﻄﺧ"}
+{"text": "خطأ: لم يُعثر على النموذج 'qwen'.", "dir": "rtl", "visual": ".'qwen' ﺝﺫﻮﻤﻨﻟﺍ ﻰﻠﻋ ﺮﺜﻌﻳُ ﻢﻟ :ﺄﻄﺧ"}
+{"text": "خطأ: لم يُعثر على النموذج 'qwen'.", "dir": "ltr", "visual": "ﺝﺫﻮﻤﻨﻟﺍ ﻰﻠﻋ ﺮﺜﻌﻳُ ﻢﻟ :ﺄﻄﺧ 'qwen'."}
+{"text": "السرعة 123.5 رمزًا/ث", "dir": "auto", "visual": "ﺙ/ﺍﺰًﻣﺭ 123.5 ﺔﻋﺮﺴﻟﺍ"}
+{"text": "السرعة 123.5 رمزًا/ث", "dir": "rtl", "visual": "ﺙ/ﺍﺰًﻣﺭ 123.5 ﺔﻋﺮﺴﻟﺍ"}
+{"text": "السرعة 123.5 رمزًا/ث", "dir": "ltr", "visual": "ﺙ/ﺍﺰًﻣﺭ 123.5 ﺔﻋﺮﺴﻟﺍ"}
+{"text": "شغّل: idrak doctor --android", "dir": "auto", "visual": "idrak doctor --android :ﻞﻐّﺷ"}
+{"text": "شغّل: idrak doctor --android", "dir": "rtl", "visual": "idrak doctor --android :ﻞﻐّﺷ"}
+{"text": "شغّل: idrak doctor --android", "dir": "ltr", "visual": "ﻞﻐّﺷ: idrak doctor --android"}
+{"text": "Error: لا يوجد", "dir": "auto", "visual": "Error: ﺪﺟﻮﻳ ﻻ"}
+{"text": "Error: لا يوجد", "dir": "rtl", "visual": "ﺪﺟﻮﻳ ﻻ :Error"}
+{"text": "Error: لا يوجد", "dir": "ltr", "visual": "Error: ﺪﺟﻮﻳ ﻻ"}
+{"text": "vulkan:0 (بطاقة رسومات)", "dir": "auto", "visual": "vulkan:0 (ﺕﺎﻣﻮﺳﺭ ﺔﻗﺎﻄﺑ)"}
+{"text": "vulkan:0 (بطاقة رسومات)", "dir": "rtl", "visual": "(ﺕﺎﻣﻮﺳﺭ ﺔﻗﺎﻄﺑ) vulkan:0"}
+{"text": "vulkan:0 (بطاقة رسومات)", "dir": "ltr", "visual": "vulkan:0 (ﺕﺎﻣﻮﺳﺭ ﺔﻗﺎﻄﺑ)"}
+{"text": "النسبة 45% من 100", "dir": "auto", "visual": "100 ﻦﻣ %45 ﺔﺒﺴﻨﻟﺍ"}
+{"text": "النسبة 45% من 100", "dir": "rtl", "visual": "100 ﻦﻣ %45 ﺔﺒﺴﻨﻟﺍ"}
+{"text": "النسبة 45% من 100", "dir": "ltr", "visual": "100 ﻦﻣ %45 ﺔﺒﺴﻨﻟﺍ"}
+{"text": "١٢٣ و 456", "dir": "auto", "visual": "456 ﻭ ١٢٣"}
+{"text": "١٢٣ و 456", "dir": "rtl", "visual": "456 ﻭ ١٢٣"}
+{"text": "١٢٣ و 456", "dir": "ltr", "visual": "456 ﻭ ١٢٣"}
+{"text": "المسار /home/user/.cache/idrak", "dir": "auto", "visual": "home/user/.cache/idrak/ ﺭﺎﺴﻤﻟﺍ"}
+{"text": "المسار /home/user/.cache/idrak", "dir": "rtl", "visual": "home/user/.cache/idrak/ ﺭﺎﺴﻤﻟﺍ"}
+{"text": "المسار /home/user/.cache/idrak", "dir": "ltr", "visual": "ﺭﺎﺴﻤﻟﺍ /home/user/.cache/idrak"}
+{"text": "ـــ تطويل", "dir": "auto", "visual": "ﻞﻳﻮﻄﺗ ـــ"}
+{"text": "ـــ تطويل", "dir": "rtl", "visual": "ﻞﻳﻮﻄﺗ ـــ"}
+{"text": "ـــ تطويل", "dir": "ltr", "visual": "ﻞﻳﻮﻄﺗ ـــ"}
+{"text": "a (b) ج (د) e", "dir": "auto", "visual": "a (b) (ﺩ) ﺝ e"}
+{"text": "a (b) ج (د) e", "dir": "rtl", "visual": "e (ﺩ) ﺝ a (b)"}
+{"text": "a (b) ج (د) e", "dir": "ltr", "visual": "a (b) (ﺩ) ﺝ e"}
+{"text": "لأ للا ؟", "dir": "auto", "visual": "؟ ﻼﻟ ﻷ"}
+{"text": "لأ للا ؟", "dir": "rtl", "visual": "؟ ﻼﻟ ﻷ"}
+{"text": "لأ للا ؟", "dir": "ltr", "visual": "؟ ﻼﻟ ﻷ"}
+{"text": "عدد 3-4 أو 5+6", "dir": "auto", "visual": "6+5 ﻭﺃ 4-3 ﺩﺪﻋ"}
+{"text": "عدد 3-4 أو 5+6", "dir": "rtl", "visual": "6+5 ﻭﺃ 4-3 ﺩﺪﻋ"}
+{"text": "عدد 3-4 أو 5+6", "dir": "ltr", "visual": "6+5 ﻭﺃ 4-3 ﺩﺪﻋ"}
+{"text": "سعر $20 ثم 30€", "dir": "auto", "visual": "€30 ﻢﺛ 20$ ﺮﻌﺳ"}
+{"text": "سعر $20 ثم 30€", "dir": "rtl", "visual": "€30 ﻢﺛ 20$ ﺮﻌﺳ"}
+{"text": "سعر $20 ثم 30€", "dir": "ltr", "visual": "30 ﻢﺛ 20$ ﺮﻌﺳ€"}
+{"text": "‏idrak‏ أداة", "dir": "auto", "visual": "ﺓﺍﺩﺃ idrak"}
+{"text": "‏idrak‏ أداة", "dir": "rtl", "visual": "ﺓﺍﺩﺃ idrak"}
+{"text": "‏idrak‏ أداة", "dir": "ltr", "visual": "idrakﺓﺍﺩﺃ "}
+{"text": "[XZث.يطيلضّ", "dir": "auto", "visual": "[XZﺾّﻠﻴﻄﻳ.ﺙ"}
+{"text": "ثcذرلسل(جاةقآط:فك+X", "dir": "auto", "visual": "X+ﻚﻓ:ﻁﺂﻗﺓﺎﺟ)ﻞﺴﻟﺭﺫcﺙ"}
+{"text": "كإجَ%لاX-جف>ن#آاث", "dir": "auto", "visual": "ﺙﺍﺁ#ﻥ<ﻒﺟ-Xﻻ%ﺝَﺈﻛ"}
+{"text": "طإءع<-#)1ر", "dir": "auto", "visual": "ﺭ1(#->ﻉءﺈﻃ"}
+{"text": "إ3اةلذ١ ىهأ صدثلخbص1#'", "dir": "auto", "visual": "'#1ﺹbﺦﻠﺛﺪﺻ ﺄﻬﯨ ١ﺬﻟﺓﺍ3ﺇ"}
+{"text": "\"فخ;", "dir": "rtl", "visual": ";ﺦﻓ\""}
+{"text": "بئة٢ا;زضؤض [,إب-ش#ل(خشأ", "dir": "ltr", "visual": "ﺄﺸﺧ)ﻝ#ﺵ-ﺏﺇ,] ﺽﺆﺿﺯ;ﺍ٢ﺔﺌﺑ"}
+{"text": "'#Y  سلهح2bآ1ـ#ىاZذش", "dir": "auto", "visual": "'#Y  2ﺢﻬﻠﺳbﺎﯨ#ـ1ﺁZﺵﺫ"}
+{"text": "غ", "dir": "ltr", "visual": "ﻍ"}
+{"text": "%و #ّ٢ؤر", "dir": "ltr", "visual": "%ﺭﺅ٢#ّ ﻭ"}
+{"text": "ءـرأ ق٢خ عخىجاـعة", "dir": "rtl", "visual": "ﺔﻌـﺎﺠﯩﺨﻋ ﺥ٢ﻕ ﺃﺮـء"}
+{"text": "٢; 0هج<ف1(ذ,Zإضي[", "dir": "rtl", "visual": "]ﻲﺿﺇZ,ﺫ)1ﻑ>ﺞﻫ0 ;٢"}
+{"text": "قمىبئ١ ,Zعسذ;ة", "dir": "ltr", "visual": "١ﺊﺒﯩﻤﻗ ,Zﺓ;ﺬﺴﻋ"}
+{"text": "قث3جب;ضدك]-cط2سف٢+س", "dir": "rtl", "visual": "ﺱ+٢ﻒﺳ2ﻁc-[ﻙﺪﺿ;ﺐﺟ3ﺚﻗ"}
+{"text": ";ب ١ءاإه/,لل", "dir": "auto", "visual": "ﻞﻟ,/ﻩﺇﺍء١ ﺏ;"}
+{"text": "ل;ثن+", "dir": "ltr", "visual": "ﻦﺛ;ﻝ+"}
+{"text": "cزاك ت/س", "dir": "auto", "visual": "cﺱ/ﺕ ﻙﺍﺯ"}
+{"text": "أاؤYحابلا1ـ", "dir": "rtl", "visual": "ـ1ﻼﺑﺎﺣYﺅﺍﺃ"}
+{"text": "اc١١ئَbّ,ت", "dir": "auto", "visual": "ﺕ,bّﺉَc١١ﺍ"}
+{"text": "خءلة آ١YX'ج:.ا Xغ را/", "dir": "ltr", "visual": "١ﺁ ﺔﻟءﺥYX'ﺍ.:ﺝ Xﺍﺭ ﻍ/"}
+{"text": "أعZ ئآد حbج>)صحئملد", "dir": "ltr", "visual": "ﻉﺃZ ﺡ ﺩﺂﺋbﺪﻠﻤﺌﺤﺻ(<ﺝ"}
+{"text": "إزإ[رنكك  +ج", "dir": "rtl", "visual": "ﺝ+  ﻚﻜﻧﺭ]ﺇﺯﺇ"}
+{"text": "]ذ", "dir": "ltr", "visual": "]ﺫ"}
+{"text": "ىأغااأهاصإ", "dir": "ltr", "visual": "ﺈﺻﺎﻫﺃﺍﺎﻏﺄﯨ"}
+{"text": "ك>ىحىطلب", "dir": "ltr", "visual": "ﺐﻠﻄﯩﺤﯨ<ﻙ"}
+{"text": "ئعثل0٢.طافbي'", "dir": "auto", "visual": "'ﻱbﻑﺎﻃ.0٢ﻞﺜﻌﺋ"}
+{"text": "ئ>خ", "dir": "auto", "visual": "ﺥ<ﺉ"}
+{"text": "خ\"تذت", "dir": "ltr", "visual": "ﺕﺬﺗ\"ﺥ"}
+{"text": "ذ٢ فاظلةآق:طب/شاظي,ك( غ", "dir": "ltr", "visual": "ﻍ )ﻙ,ﻲﻇﺎﺷ/ﺐﻃ:ﻕﺁﺔﻠﻇﺎﻓ ٢ﺫ"}
+{"text": "إ/ ضغاس ث1 لث3قY$", "dir": "auto", "visual": "$Yﻕ3ﺚﻟ 1ﺙ ﺱﺎﻐﺿ /ﺇ"}
+{"text": "٢cن$خع", "dir": "auto", "visual": "٢cﻊﺧ$ﻥ"}
+{"text": "دصف<أة أولcآ", "dir": "auto", "visual": "ﺁcﻝﻭﺃ ﺓﺃ>ﻒﺻﺩ"}
+{"text": "ج$", "dir": "rtl", "visual": "$ﺝ"}
+{"text": "اق/لXضآ)<", "dir": "rtl", "visual": ">(ﺂﺿXﻝ/ﻕﺍ"}
+{"text": "3ف1%\"", "dir": "rtl", "visual": "\"%1ﻑ3"}
+{"text": "شزج'قيXحوءذا: +لظ سر", "dir": "rtl", "visual": "ﺮﺳ ﻆﻟ+ :ﺍﺫءﻮﺣXﻲﻗ'ﺝﺰﺷ"}
+{"text": "جطضZcأ,(غثاجسظaل#مت", "dir": "auto", "visual": "ﺖﻣ#ﻝaﻆﺴﺟﺎﺜﻏ),ﺃZcﺾﻄﺟ"}
+{"text": "اa]3Xإجه1", "dir": "ltr", "visual": "ﺍa]3X1ﻪﺟﺇ"}
+{"text": "زعغ]/#ب([.<<حمزثا[", "dir": "auto", "visual": "]ﺎﺛﺰﻤﺣ>>.])ﺏ#/[ﻎﻋﺯ"}
+{"text": "(2غزZشت'ل)ا2, 3تئلط", "dir": "ltr", "visual": "(2ﺰﻏZﻝ'ﺖﺷ)ﻂﻠﺌﺗ3 ,2ﺍ"}
+{"text": "ىc%لل]ط", "dir": "rtl", "visual": "ﻁ[ﻞﻟ%cﻯ"}
+{"text": ">سا\"ا\"'جيءتذق", "dir": "ltr", "visual": ">ﻕﺬﺗءﻲﺟ'\"ﺍ\"ﺎﺳ"}
+{"text": "ؤ0ج إز,ل;اآؤ'ظ:ته", "dir": "auto", "visual": "ﻪﺗ:ﻅ'ﺅﺁﺍ;ﻝ,ﺯﺇ ﺝ0ﺅ"}
+{"text": "%2;ئم>اZة[(ممحس ئلّ%c", "dir": "auto", "visual": "c%ﻞّﺋ ﺲﺤﻤﻣ)]ﺓZﺍ<ﻢﺋ;%2"}
+{"text": "لؤثضc", "dir": "auto", "visual": "cﺾﺛﺆﻟ"}
+{"text": "لئ", "dir": "rtl", "visual": "ﺊﻟ"}
+{"text": "اذا2ط>لعظ  ـ>٢:اةس", "dir": "auto", "visual": "ﺱﺓﺍ:٢<ـ  ﻆﻌﻟ<ﻁ2ﺍﺫﺍ"}
+{"text": "خى شاا", "dir": "rtl", "visual": "ﺍﺎﺷ ﻰﺧ"}
+{"text": "فلأaي\"اض;تظ-<٢+.ؤظ %", "dir": "auto", "visual": "% ﻅﺅ.+٢>-ﻆﺗ;ﺽﺍ\"ﻱaﻸﻓ"}
+{"text": "طل٣ئbضف[Xزبا#", "dir": "auto", "visual": "#ﺎﺑﺯX]ﻒﺿbﺉ٣ﻞﻃ"}
+{"text": "تاXX(ةX)صتلل'خ.كبغمـغbb", "dir": "rtl", "visual": "bbﻎـﻤﻐﺒﻛ.ﺥ'ﻞﻠﺘﺻ(Xﺓ)XXﺎﺗ"}
+{"text": "#ثصYغاغ إسّؤزص,دY", "dir": "rtl", "visual": "Yﺩ,ﺹﺯﺆﺳّﺇ ﻍﺎﻏYﺺﺛ#"}
+{"text": "خ#هYاصي١لآلـ#ئء%ء;ذا:عا", "dir": "auto", "visual": "ﺎﻋ:ﺍﺫ;ء%ءﺉ#ـﻟﻵ١ﻲﺻﺍYﻩ#ﺥ"}
+{"text": "طـزشخخر/<خZناي١+رهط<ّ]ّ3", "dir": "ltr", "visual": "ﺥ>/ﺮﺨﺨﺷﺰـﻃZ3[ّ>ّﻂﻫﺭ+١ﻱﺎﻧ"}
+{"text": "قخ:2", "dir": "rtl", "visual": "2:ﺦﻗ"}
+{"text": "ب]س%)Zةشخ\"أل(و", "dir": "ltr", "visual": "ﺱ[ﺏ%)Zﻭ)ﻝﺃ\"ﺦﺷﺓ"}
+{"text": "سد#;هجو#خه٢[زج", "dir": "rtl", "visual": "ﺝﺯ]٢ﻪﺧ#ﻮﺠﻫ;#ﺪﺳ"}
+{"text": "ض1ل]غ0'ضن<'عاأا(ف ل0ل", "dir": "ltr", "visual": "ﻝ0ﻝ ﻑ)ﺍﺃﺎﻋ'>ﻦﺿ'0ﻍ[ﻝ1ﺽ"}
+{"text": "اج;ّضءره2ـY /صء ظذى", "dir": "auto", "visual": "ﻯﺬﻇ ءﺹ/ Yـ2ﻩﺭءﺽ;ّﺝﺍ"}
+{"text": "ر:ةاقلغ(جمbت$Zإ1", "dir": "auto", "visual": "1ﺇZ$ﺕbﻢﺟ)ﻎﻠﻗﺍﺓ:ﺭ"}
+{"text": "0مئصكىغ", "dir": "rtl", "visual": "ﻎﯩﻜﺼﺌﻣ0"}
+{"text": "[ع# $فلتى٣ها", "dir": "auto", "visual": "ﺎﻫ٣ﻰﺘﻠﻓ$ #ﻉ]"}
+{"text": "' ٣1ـYل", "dir": "rtl", "visual": "ﻝYـ٣1 '"}
+{"text": "Zcخaذ /تيا ئد]هاـروح.", "dir": "auto", "visual": "Zcﺥaﺡﻭﺮـﺎﻫ[ﺪﺋ ﺎﻴﺗ/ ﺫ."}
+{"text": "ادYدبلس(1Yى\"; aاYف2 %", "dir": "rtl", "visual": "% 2ﻑYﺍa ;\"ﻯ1Y)ﺲﻠﺑﺩYﺩﺍ"}
+{"text": "'1 اوءَعاـلaـّطن,+%", "dir": "rtl", "visual": "%+,ﻦﻄـّaﻞـﺎﻋءَﻭﺍ 1'"}
+{"text": "اcرَى حإ", "dir": "ltr", "visual": "ﺍcﺈﺣ ﻯﺭَ"}
+{"text": "ث\";ا\"ةXا", "dir": "ltr", "visual": "ﺓ\"ﺍ;\"ﺙXﺍ"}
+{"text": "٢ؤشحغلئ:إ", "dir": "rtl", "visual": "ﺇ:ﺊﻠﻐﺤﺷﺅ٢"}
+{"text": "آ1بئ", "dir": "ltr", "visual": "ﺊﺑ1ﺁ"}
+{"text": "ص", "dir": "ltr", "visual": "ﺹ"}
+{"text": "صعءـ;$سبىآج[Yلح١", "dir": "rtl", "visual": "١ﺢﻟY]ﺝﺂﯩﺒﺳ$;ـءﻊﺻ"}
+{"text": "زط,ظ b", "dir": "auto", "visual": "b ﻅ,ﻁﺯ"}
+{"text": "'را/ءZمدن", "dir": "auto", "visual": "ﻥﺪﻣZء/ﺍﺭ'"}
+{"text": "رaش2,ا0Z)Xكضلكث", "dir": "auto", "visual": "ﺚﻜﻠﻀﻛ0Z)Xﺍ,2ﺵaﺭ"}
+{"text": "رروبغزخأؤصغش<:Zو +لؤذئم", "dir": "rtl", "visual": "ﻢﺋﺫﺆﻟ+ ﻭZ:>ﺶﻐﺻﺅﺄﺧﺰﻐﺑﻭﺭﺭ"}
+{"text": ".س", "dir": "auto", "visual": "ﺱ."}
+{"text": "ض Y 3ا", "dir": "ltr", "visual": "ﺽ Y 3ﺍ"}
+{"text": "شئثلل و'عل(ماءXط%)ثخ ب", "dir": "ltr", "visual": "ﻞﻋ'ﻭ ﻞﻠﺜﺌﺷ(ءﺎﻣXﻁ%)ﺏ ﺦﺛ"}
+{"text": "ط,2ظبشل\"ءخcآؤ ه٣ضل", "dir": "rtl", "visual": "ﻞﺿ٣ﻩ ﺅﺁcﺥء\"ﻞﺸﺒﻇ2,ﻁ"}
+{"text": "ب)ـ٢ث$كَ% ئليaئقؤ,ه\"cا-c", "dir": "ltr", "visual": "ﻲﻠﺋ %ﻙَ$ﺙ٢ـ(ﺏaﻩ,ﺆﻘﺋ\"cﺍ-c"}
+{"text": "ئط+ل", "dir": "ltr", "visual": "ﻝ+ﻂﺋ"}
+{"text": "ل١Yة>ذ", "dir": "rtl", "visual": "ﺫ<ﺓ١Yﻝ"}
+{"text": "عح+َنمىأفكؤالط", "dir": "rtl", "visual": "ﻂﻟﺍﺆﻜﻓﺄﯩﻤﻧ+َﺢﻋ"}
+{"text": "عصبج#ثءخرلش-٢أل0خى", "dir": "ltr", "visual": "ﻰﺧ0ﻝﺃ٢-ﺶﻟﺮﺧءﺙ#ﺞﺒﺼﻋ"}
+{"text": "لعـء", "dir": "ltr", "visual": "ءـﻌﻟ"}
+{"text": "لهلقإفف<اكل%يaظ", "dir": "ltr", "visual": "ﻱ%ﻞﻛﺍ>ﻒﻓﺈﻘﻠﻬﻟaﻅ"}
+{"text": "ة٣<ئ<للا٢وهَش اّ", "dir": "rtl", "visual": "ﺍّ ﺶﻫَﻭ٢ﻼﻟ>ﺉ>٣ﺓ"}
+{"text": "حقج١ا$١]٢ؤشثـلca/ فخبإَ", "dir": "rtl", "visual": "ﺈَﺒﺨﻓ /caﻞـﺜﺷﺅ٢[١$ﺍ١ﺞﻘﺣ"}
+{"text": "١َلزؤخئآ ّطزلاشنضّcاض", "dir": "auto", "visual": "ﺽﺍcﺾّﻨﺷﻻﺰﻃ ّﺂﺌﺧﺅﺰﻟ١َ"}
+{"text": "3آلإXن", "dir": "ltr", "visual": "3ﻹﺁXﻥ"}
+{"text": "وإطزسغمة$ج<#نغيبرذعذآ:ل", "dir": "auto", "visual": "ﻝ:ﺁﺬﻋﺫﺮﺒﻴﻐﻧ#>ﺝ$ﺔﻤﻐﺳﺰﻃﺇﻭ"}
+{"text": "ل.أض0;ءمه.دYع)لاح,خم/فغه", "dir": "rtl", "visual": "ﻪﻐﻓ/ﻢﺧ,ﺡﻻ(ﻉYﺩ.ﻪﻣء;0ﺽﺃ.ﻝ"}
+{"text": "آ03لb\"هلغلcل", "dir": "auto", "visual": "ﻝcﻞﻐﻠﻫ\"bﻝ03ﺁ"}
+{"text": "فتل3ضئيَااتّ", "dir": "auto", "visual": "ﺕّﺍﺎﻴَﺌﺿ3ﻞﺘﻓ"}
+{"text": "لYه,حيك>صؤ0", "dir": "rtl", "visual": "0ﺆﺻ<ﻚﻴﺣ,ﻩYﻝ"}
+{"text": "ىةلظثلش", "dir": "ltr", "visual": "ﺶﻠﺜﻈﻟﺔﯨ"}
+{"text": "إ:aءافرطدز", "dir": "ltr", "visual": "ﺇ:aﺯﺪﻃﺮﻓﺍء"}
+{"text": "آ[ aصعد>2آغجآ كَايةل+;", "dir": "ltr", "visual": "ﺁ[ aﻝﺔﻳﺎﻛَ ﺂﺠﻏﺁ2<ﺪﻌﺻ+;"}
+{"text": "به+لزف%ا", "dir": "rtl", "visual": "ﺍ%ﻑﺰﻟ+ﻪﺑ"}
+{"text": "ذم;تل[.إ/Yض", "dir": "auto", "visual": "ﺽY/ﺇ.]ﻞﺗ;ﻡﺫ"}
+{"text": "هت'ما", "dir": "ltr", "visual": "ﺎﻣ'ﺖﻫ"}
+{"text": "ج١$ا32الَحئة1ـ", "dir": "ltr", "visual": "ـ1ﺔﺌﺤﻟَﺍ32ﺍ$١ﺝ"}
+{"text": "$/", "dir": "ltr", "visual": "$/"}
+{"text": "ماكلشء1(وطهضشدظ ظ,ض", "dir": "ltr", "visual": "ﺽ,ﻅ ﻅﺪﺸﻀﻬﻃﻭ)1ءﺶﻠﻛﺎﻣ"}
+{"text": "١َو>ؤد١هشحاطتل\"ذح ل", "dir": "auto", "visual": "ﻝ ﺡﺫ\"ﻞﺘﻃﺎﺤﺸﻫ١ﺩﺅ<ﻭ١َ"}
+{"text": "$a ؤ#c#ىلطشb", "dir": "ltr", "visual": "$a ﺅ#c#ﺶﻄﻠﯨb"}
+{"text": "بج3غ)ّ٣-aرأcاـأ", "dir": "auto", "visual": "ﺄـﺍcﺃﺭa-٣(ّﻍ3ﺞﺑ"}
+{"text": "[امصذتم$ن%اضآـر1عظلذcZ<", "dir": "ltr", "visual": "[ﺬﻠﻈﻋ1ﺮـﺂﺿﺍ%ﻥ$ﻢﺗﺬﺼﻣﺍcZ<"}
+{"text": "(:1/$١:ى$ك'ط#صآهفّف", "dir": "ltr", "visual": "(:1/$ﻒﻔّﻫﺂﺻ#ﻁ'ﻙ$ﻯ:١"}
+{"text": "لكشحفآيX%-", "dir": "rtl", "visual": "-%Xﻱﺂﻔﺤﺸﻜﻟ"}
+{"text": "ز:.ءلؤ ثـجَذعاbقb[", "dir": "ltr", "visual": "ﺎﻋﺬﺠَـﺛ ﺆﻟء.:ﺯbﻕb["}
+{"text": "3وY$ـآbَ%ا$برحمة لض;'/", "dir": "ltr", "visual": "3ﻭY$ﺂـbَ%ﺾﻟ ﺔﻤﺣﺮﺑ$ﺍ;'/"}
+{"text": "\"معاخ(لح0ةى;(32ل:إ", "dir": "auto", "visual": "ﺇ:ﻝ32);ﻯﺓ0ﺢﻟ)ﺥﺎﻌﻣ\""}
+{"text": ")قbاا#لن,بيلي/ ل'-0+ا", "dir": "rtl", "visual": "ﺍ+0-'ﻝ /ﻲﻠﻴﺑ,ﻦﻟ#ﺍﺍbﻕ("}
+{"text": "اءث.(ءذ/", "dir": "ltr", "visual": "ﺫء).ﺙءﺍ/"}
+{"text": "1", "dir": "auto", "visual": "1"}
+{"text": "1لزهك", "dir": "ltr", "visual": "1ﻚﻫﺰﻟ"}
+{"text": "$cشaؤلخ %دإ٢سةةدإXص,-a", "dir": "rtl", "visual": "a-,ﺹXﺇﺩﺓﺔﺳ٢ﺇﺩ% ﺦﻟﺅaﺵc$"}
+{"text": "تثى-ت٣ك-ق", "dir": "ltr", "visual": "ﻕ-ﻙ٣ﺕ-ﻰﺜﺗ"}
+{"text": "رن1aؤ;) Yc ىاق", "dir": "rtl", "visual": "ﻕﺎﯨ Yc (;ﺅ1aﻥﺭ"}
+{"text": "ا١ة:)جئقة;أ#أرئصمسآ", "dir": "auto", "visual": "ﺂﺴﻤﺼﺋﺭﺃ#ﺃ;ﺔﻘﺌﺟ(:ﺓ١ﺍ"}
+{"text": "cم<ر)ل٢ء-ء>31ذئ(نىلاة", "dir": "rtl", "visual": "ﺓﻼﯩﻧ)ﺉﺫ31<ء-ء٢ﻝ(ﺭ>ﻡc"}
+{"text": "ظYإ غ(>ت+<;", "dir": "rtl", "visual": ";>+ﺕ<)ﻍ ﺇYﻅ"}
+{"text": "اااصجءئا", "dir": "auto", "visual": "ﺎﺋءﺞﺻﺍﺍﺍ"}
+{"text": "آ<أج", "dir": "rtl", "visual": "ﺝﺃ>ﺁ"}
+{"text": "ؤa ت+ن جاح.ث", "dir": "ltr", "visual": "ﺅa ﺙ.ﺡﺎﺟ ﻥ+ﺕ"}
+{"text": "ثو0 1شاةظنف", "dir": "ltr", "visual": "ﻒﻨﻇﺓﺎﺷ1 0ﻮﺛ"}
+{"text": "و/ن٣شصم 1كى%ج", "dir": "rtl", "visual": "ﺝ%ﻰﻛ1 ﻢﺼﺷ٣ﻥ/ﻭ"}
+{"text": "cءصّ[>صي ج ى2غ٣1.آح", "dir": "auto", "visual": "cﺡﺁ.٣1ﻍ2ﻯ ﺝ ﻲﺻ<]ﺹّء"}
+{"text": "ظ>10ءض%1ظصضتر,", "dir": "ltr", "visual": "ﺮﺘﻀﺼﻇ1%ﺽء10<ﻅ,"}
+{"text": "سهلص٢غب Yعـحأضفلا", "dir": "rtl", "visual": "ﻼﻔﺿﺄﺤـﻋY ﺐﻏ٢ﺺﻠﻬﺳ"}
+{"text": "/كأمف ى", "dir": "auto", "visual": "ﻯ ﻒﻣﺄﻛ/"}
+{"text": "آتخذلز", "dir": "rtl", "visual": "ﺰﻟﺬﺨﺗﺁ"}
+{"text": "Yا'ظطإ", "dir": "rtl", "visual": "ﺈﻄﻇ'ﺍY"}
+{"text": "قزتم+ص:٣خثلضزظ<ئلY", "dir": "ltr", "visual": "ﻞﺋ>ﻅﺰﻀﻠﺜﺧ٣:ﺹ+ﻢﺗﺰﻗY"}
+{"text": "طؤ Xخا3$آسوcطؤ10ضX'", "dir": "auto", "visual": "'Xﺽ10ﺆﻃcﻮﺳﺁ$3ﺎﺧX ﺆﻃ"}
+{"text": "كـ  ]لإ ف\"ّن١الظ", "dir": "auto", "visual": "ﻆﻟﺍ١ﻥ\"ّﻑ ﻹ[  ـﻛ"}
+{"text": "آإثه$[,$", "dir": "ltr", "visual": "ﻪﺛﺇﺁ$[,$"}
+{"text": "<aلد'لرصهcح3>ة لسك(ل", "dir": "ltr", "visual": "<aﻪﺻﺮﻟ'ﺪﻟcﻝ)ﻚﺴﻟ ﺓ<3ﺡ"}
+{"text": "ق١ـزاسطظZ١0;X", "dir": "ltr", "visual": "ﻆﻄﺳﺍﺰـ١ﻕZ١0;X"}
+{"text": "ع(ل٢  بدءؤـc'عا١ها-:", "dir": "rtl", "visual": ":-ﺎﻫ١ﺎﻋ'cـﺅءﺪﺑ  ٢ﻝ)ﻉ"}
+{"text": "ىY)م-لث# ثئفّن(3أق", "dir": "rtl", "visual": "ﻕﺃ3)ﻦﻔّﺌﺛ #ﺚﻟ-ﻡ(Yﻯ"}
+{"text": "ظقأص>و%ع']-هغ", "dir": "ltr", "visual": "ﻎﻫ-['ﻉ%ﻭ<ﺹﺄﻘﻇ"}
+{"text": "الل;", "dir": "auto", "visual": ";ﻞﻟﺍ"}
+{"text": "Z]", "dir": "rtl", "visual": "[Z"}
+{"text": "[$إ#1", "dir": "ltr", "visual": "[$1#ﺇ"}
+{"text": "غك]ا:هع0طغ)0)-ـ١ص/لYئقآ0", "dir": "rtl", "visual": "0ﺂﻘﺋYﻝ/ﺹ١ـ-(0(ﻎﻃ0ﻊﻫ:ﺍ[ﻚﻏ"}
+{"text": "ءلcآضك٢صص", "dir": "rtl", "visual": "ﺺﺻ٢ﻚﺿﺁcﻝء"}
+{"text": "بسؤملحهاث٣ظأياك غX٢", "dir": "auto", "visual": "X٢ﻍ ﻙﺎﻳﺄﻇ٣ﺙﺎﻬﺤﻠﻣﺆﺴﺑ"}
+{"text": "غbbصا٣لَ#ت#ب\"", "dir": "auto", "visual": "\"ﺏ#ﺕ#ﻝَ٣ﺎﺻbbﻍ"}
+{"text": "رأح%ذ٢ؤلب ٢", "dir": "rtl", "visual": "٢ ﺐﻟﺅ٢ﺫ%ﺡﺃﺭ"}
+{"text": "2<اابحتلج$\"لaلخذ>ا>َ 2ط'", "dir": "ltr", "visual": "2<ﻝ\"$ﺞﻠﺘﺤﺑﺍﺍaﻁ2 <َﺍ<ﺬﺨﻟ'"}
+{"text": "ـط,ل,cشcهضcَ;آخ", "dir": "ltr", "visual": "ﻝ,ﻂـ,cﺵcﺾﻫcَ;ﺥﺁ"}
+{"text": "ئؤؤ)", "dir": "auto", "visual": "(ﺅﺆﺋ"}
+{"text": "Yا", "dir": "ltr", "visual": "Yﺍ"}
+{"text": "٣ث+اصؤ\"ا<YلYZعغلكaتل", "dir": "auto", "visual": "ﻞﺗaﻚﻠﻐﻋYZﻝY>ﺍ\"ﺆﺻﺍ+ﺙ٣"}
+{"text": "وَY b0< غذفbخز'%ط", "dir": "auto", "visual": "ﻁ%'ﺰﺧbﻑﺬﻏ >Y b0ﻭَ"}
+{"text": "كل$طYخقكةآئةو٢", "dir": "ltr", "visual": "ﻁ$ﻞﻛY٢ﻭﺔﺋﺁﺔﻜﻘﺧ"}
+{"text": "صا<32+:بصّجهج٣مىإ١->خ", "dir": "rtl", "visual": "ﺥ<-١ﺈﯩﻣ٣ﺞﻬﺠﺼّﺑ:+32>ﺎﺻ"}
+{"text": "سخ\"صضص$اX2", "dir": "ltr", "visual": "ﺍ$ﺺﻀﺻ\"ﺦﺳX2"}
+{"text": "ظرثااجع0#سظزد2نbش):'ان", "dir": "rtl", "visual": "ﻥﺍ':(ﺵbﻥ2ﺩﺰﻈﺳ#0ﻊﺟﺍﺎﺛﺮﻇ"}
+{"text": "أدىYإس<د", "dir": "auto", "visual": "ﺩ>ﺱﺇYﻯﺩﺃ"}
+{"text": "ءكج", "dir": "ltr", "visual": "ﺞﻛء"}
+{"text": "صنيطؤ.أآ", "dir": "ltr", "visual": "ﺁﺃ.ﺆﻄﻴﻨﺻ"}
+{"text": "ءZمأس", "dir": "ltr", "visual": "ءZﺱﺄﻣ"}
+{"text": "١", "dir": "auto", "visual": "١"}
+{"text": "تضـمق(3bحتذ/ّجزأأإ..أ", "dir": "auto", "visual": "ﺃ..ﺇﺃﺃﺰﺟ/ّﺬﺘﺣ3b)ﻖﻤـﻀﺗ"}
+{"text": "\"قسبزاظ'نط", "dir": "ltr", "visual": "\"ﻂﻧ'ﻅﺍﺰﺒﺴﻗ"}
+{"text": "وذ0ث", "dir": "auto", "visual": "ﺙ0ﺫﻭ"}
+{"text": "حء;,-]يZ", "dir": "auto", "visual": "Zﻱ[-,;ءﺡ"}
+{"text": "س]ن١ءئم جظ", "dir": "ltr", "visual": "ﻆﺟ ﻢﺋء١ﻥ[ﺱ"}
+{"text": "ظ]ئج 'قaك3ق,Y", "dir": "auto", "visual": "Y,ﻕ3ﻙaﻕ' ﺞﺋ[ﻅ"}
+{"text": "ذ,مإ0. ذ]'كليأ2د+.", "dir": "ltr", "visual": "ﺩ2ﺄﻴﻠﻛ'[ﺫ .0ﺈﻣ,ﺫ+."}
+{"text": "ف2ـااو-", "dir": "auto", "visual": "-ﻭﺍﺎـ2ﻑ"}
+{"text": "3طض", "dir": "auto", "visual": "ﺾﻃ3"}
+{"text": ":دح1جقأ$ح", "dir": "rtl", "visual": "ﺡ$ﺄﻘﺟ1ﺡﺩ:"}
+{"text": "ج;كإل", "dir": "auto", "visual": "ﻝﺈﻛ;ﺝ"}
+{"text": "<بجZر", "dir": "auto", "visual": "ﺭZﺞﺑ>"}
+{"text": "آ,'ذالظئثبغآ3ف;ثك/ئ %ثط", "dir": "auto", "visual": "ﻂﺛ% ﺉ/ﻚﺛ;ﻑ3ﺂﻐﺒﺜﺌﻈﻟﺍﺫ',ﺁ"}
+{"text": ":شؤ('ج", "dir": "auto", "visual": "ﺝ')ﺆﺷ:"}
+{"text": "نجؤق](قZY-ىآcج$حخ ذجة]", "dir": "auto", "visual": "[ﺔﺟﺫ ﺦﺣ$ﺝcﺂﯨ-ZYﻕ)[ﻕﺆﺠﻧ"}
+{"text": "ي(طىظ)س+", "dir": "rtl", "visual": "+ﺱ(ﻆﯩﻃ)ﻱ"}
+{"text": "0 ؤطؤر%ك]اَظc", "dir": "rtl", "visual": "cﻅﺍَ[ﻙ%ﺭﺆﻃﺅ 0"}
+{"text": "-/لغضوَ:", "dir": "ltr", "visual": "-/ﻮَﻀﻐﻟ:"}
+{"text": "2/", "dir": "rtl", "visual": "/2"}
+{"text": ")فة س0٣  $آ.(خبbج", "dir": "ltr", "visual": ")ﺐﺧ).ﺁ$  0٣ﺱ ﺔﻓbﺝ"}
+{"text": "ثآ/", "dir": "rtl", "visual": "/ﺂﺛ"}
+{"text": "لَل/#خئءضمدَا", "dir": "ltr", "visual": "ﺍﺪَﻤﺿءﺊﺧ#/ﻞﻟَ"}
+{"text": "ذحغ#ل,يل]ف١3ؤر", "dir": "ltr", "visual": "ﺭﺅ١3ﻑ[ﻞﻳ,ﻝ#ﻎﺣﺫ"}
+{"text": "2اد(ثب.ررء<ظ", "dir": "ltr", "visual": "2ﻅ>ءﺭﺭ.ﺐﺛ)ﺩﺍ"}
+{"text": "صآا2:ضسس", "dir": "ltr", "visual": "ﺲﺴﺿ:2ﺍﺂﺻ"}
+{"text": "\".ي اح 1ز٣ط,ويز>شدسءّعشؤ", "dir": "auto", "visual": "ﺆﺸﻋءّﺱﺪﺷ<ﺰﻳﻭ,ﻁ٣ﺯ1 ﺡﺍ ﻱ.\""}
+{"text": "جن[يه\"َت'ل[/اa1[ّ", "dir": "ltr", "visual": "ﺍ/]ﻝ'ﺕ\"َﻪﻳ]ﻦﺟa1[ّ"}
+{"text": "زه+ب'عبة%'ظلظنلع+2)شذض", "dir": "auto", "visual": "ﺽﺬﺷ(2+ﻊﻠﻨﻈﻠﻇ'%ﺔﺒﻋ'ﺏ+ﻩﺯ"}
+{"text": "دZ", "dir": "auto", "visual": "Zﺩ"}
+{"text": "ح1شإ)ل3فثتلآسل يوض", "dir": "rtl", "visual": "ﺽﻮﻳ ﻞﺳﻶﺘﺜﻓ3ﻝ(ﺈﺷ1ﺡ"}
+{"text": "3", "dir": "auto", "visual": "3"}
+{"text": "# اc َ", "dir": "auto", "visual": " َcﺍ #"}
+{"text": "ب$١  إناؤ(شوأ2ن", "dir": "auto", "visual": "ﻥ2ﺃﻮﺷ)ﺅﺎﻧﺇ  ١$ﺏ"}
+{"text": ".a%ىال Yت", "dir": "auto", "visual": ".a%ﻝﺎﯨ Yﺕ"}
+{"text": "١<-قأc1", "dir": "ltr", "visual": "ﺄﻗ->١c1"}
+{"text": "ة0ن;cبتلح$", "dir": "ltr", "visual": "ﻥ0ﺓ;cﺢﻠﺘﺑ$"}
+{"text": "١زضضث", "dir": "auto", "visual": "ﺚﻀﺿﺯ١"}
+{"text": "/X٣>و%", "dir": "ltr", "visual": "/Xﻭ<٣%"}
+{"text": ",'", "dir": "ltr", "visual": ",'"}
+{"text": "2ده0'عخ", "dir": "ltr", "visual": "2ﺦﻋ'0ﻩﺩ"}
+{"text": "طّاجؤ:+", "dir": "auto", "visual": "+:ﺆﺟﺎﻃّ"}
+{"text": "aيعل١اس", "dir": "auto", "visual": "aﺱﺍ١ﻞﻌﻳ"}
+{"text": "س,دؤ)بيعيب ٣2مل(ررا", "dir": "auto", "visual": "ﺍﺭﺭ)ﻞﻣ٣2 ﺐﻴﻌﻴﺑ(ﺅﺩ,ﺱ"}
+{"text": "لىآا:ط", "dir": "auto", "visual": "ﻁ:ﺍﺂﯩﻟ"}
+{"text": "#حّكتثؤت", "dir": "ltr", "visual": "#ﺕﺆﺜﺘﻜﺣّ"}
+{"text": "ظك$<Xء", "dir": "auto", "visual": "ءX>$ﻚﻇ"}
+{"text": "فخ<ّد2 تخشزصآآضZحغ$كهي", "dir": "auto", "visual": "ﻲﻬﻛ$ﻎﺣZﺽﺁﺂﺻﺰﺸﺨﺗ 2ﺩ>ّﺦﻓ"}
+{"text": "ثظZإخ", "dir": "ltr", "visual": "ﻆﺛZﺥﺇ"}
+{"text": "ءا'جذbّcXقضعمعءا", "dir": "auto", "visual": "ﺍءﻊﻤﻌﻀﻗbّcXﺬﺟ'ﺍء"}
+{"text": "ي1;", "dir": "ltr", "visual": "1ﻱ;"}
+{"text": "نضتY", "dir": "rtl", "visual": "Yﺖﻀﻧ"}
+{"text": "ىّاَفأ0ؤض١بلةد>٢ؤةه", "dir": "ltr", "visual": "ﻩﺓﺅ٢<ﺩﺔﻠﺑ١ﺽﺅ0ﺄﻓﺎَﯨّ"}
+{"text": "'ص", "dir": "ltr", "visual": "'ﺹ"}
+{"text": "/ح.<;bثولف,أسمإ", "dir": "auto", "visual": "ﺈﻤﺳﺃ,ﻒﻟﻮﺛb;>.ﺡ/"}
+{"text": "ك>رازث:س<ر(د>لbسا $ت ا,", "dir": "rtl", "visual": ",ﺍ ﺕ$ ﺎﺳbﻝ<ﺩ)ﺭ>ﺱ:ﺙﺯﺍﺭ<ﻙ"}
+{"text": "طا%ل", "dir": "rtl", "visual": "ﻝ%ﺎﻃ"}
+{"text": "ـآصوa هيالى-أانلـ", "dir": "rtl", "visual": "ـﻠﻧﺍﺃ-ﻰﻟﺎﻴﻫ aﻮﺻﺂـ"}
+{"text": "2Z>YصXحاؤلزئمةنك غ", "dir": "auto", "visual": "2Z>YﺹXﻍ ﻚﻧﺔﻤﺋﺰﻟﺅﺎﺣ"}
+{"text": "((٣0دوماش>ظآم ض%cأ٣ا", "dir": "auto", "visual": "ﺍ٣ﺃc%ﺽ ﻡﺂﻇ<ﺵﺎﻣﻭﺩ٣0))"}
+{"text": "اا١+ذ فشاَ>%مى Zاؤ-Xئا>", "dir": "auto", "visual": "<ﺎﺋX-ﺅﺍZ ﻰﻣ%<ﺎَﺸﻓ ﺫ+١ﺍﺍ"}
+{"text": "ط لبمجدغ/Y>-ا+ح ل1ةآ,ؤف", "dir": "rtl", "visual": "ﻑﺅ,ﺁﺓ1ﻝ ﺡ+ﺍ-<Y/ﻍﺪﺠﻤﺒﻟ ﻁ"}
+{"text": "صم", "dir": "rtl", "visual": "ﻢﺻ"}
+{"text": "إلزهرسؤش:خل'اصا/ذ", "dir": "ltr", "visual": "ﺫ/ﺎﺻﺍ'ﻞﺧ:ﺵﺆﺳﺮﻫﺰﻟﺇ"}
+{"text": "02خ<<<خسرا)خل2ةاخش", "dir": "rtl", "visual": "ﺶﺧﺍﺓ2ﻞﺧ(ﺍﺮﺴﺧ>>>ﺥ02"}
+{"text": "/ـللأ21", "dir": "rtl", "visual": "21ﻸﻠـ/"}
+{"text": "Zل صظ;ظآط]ض خإ,تنة", "dir": "rtl", "visual": "ﺔﻨﺗ,ﺈﺧ ﺽ[ﻁﺂﻇ;ﻆﺻ ﻝZ"}
+{"text": "ج١<ئ'و]ث", "dir": "ltr", "visual": "ﺙ[ﻭ'ﺉ>١ﺝ"}
+{"text": "ل دم<aإ", "dir": "ltr", "visual": "ﻡﺩ ﻝ<aﺇ"}
+{"text": "'/ل.ه+", "dir": "auto", "visual": "+ﻩ.ﻝ/'"}
+{"text": "قضذحغة2افم[]", "dir": "ltr", "visual": "ﻢﻓﺍ2ﺔﻐﺣﺬﻀﻗ[]"}
+{"text": "ءي)%نىداشن-ليع:", "dir": "auto", "visual": ":ﻊﻴﻟ-ﻦﺷﺍﺪﯩﻧ%(ﻱء"}
+{"text": "حء/>Xخؤb(أبضYلذواث", "dir": "ltr", "visual": "ءﺡ/>Xﺆﺧb(ﺾﺑﺃYﺙﺍﻭﺬﻟ"}
+{"text": "٣]ثZلّ-+يآفلYئضقؤفو١ل<;.", "dir": "auto", "visual": ".;>ﻝ١ﻮﻓﺆﻘﻀﺋYﻞﻓﺂﻳ+-ﻝّZﺙ[٣"}
+{"text": "ظ3ا[اخا]ش[يى+لهر$", "dir": "ltr", "visual": "ﺮﻬﻟ+ﻰﻳ]ﺵ[ﺎﺧﺍ]ﺍ3ﻅ$"}
+{"text": "حج3-\"ف33ر٢ك٢ىك+", "dir": "rtl", "visual": "+ﻚﯨ٢ﻙ٢ﺭ33ﻑ\"-3ﺞﺣ"}
+{"text": "ه<آ", "dir": "auto", "visual": "ﺁ>ﻩ"}
+{"text": ")Z,طخوؤءثت ّا ه", "dir": "auto", "visual": ")Z,ﻩ ﺍ ّﺖﺛءﺅﻮﺨﻃ"}
+{"text": "لشل$شَ (تاع٢آلد3:0", "dir": "auto", "visual": "3:0ﺪﻟﺁ٢ﻉﺎﺗ) ﺵَ$ﻞﺸﻟ"}
+{"text": "كك>ت3", "dir": "auto", "visual": "3ﺕ<ﻚﻛ"}
+{"text": "جب]حذّ", "dir": "rtl", "visual": "ﺬّﺣ[ﺐﺟ"}
+{"text": "لهؤت<كbث", "dir": "rtl", "visual": "ﺙbﻙ>ﺕﺆﻬﻟ"}
+{"text": "(ّقن]Xئإخيـلفو-a", "dir": "rtl", "visual": "a-ﻮﻔﻠـﻴﺧﺈﺋX[ﻦﻗ)ّ"}
+{"text": "آغـ$طَلb", "dir": "rtl", "visual": "bﻞﻃَ$ـﻏﺁ"}
+{"text": "13+bإداىXجذ٣ّ", "dir": "auto", "visual": "13+bﻯﺍﺩﺇX٣ّﺬﺟ"}
+{"text": "ردر, ;س٢%0%[َظ3", "dir": "auto", "visual": "3ﻅ]َ%0%٢ﺱ; ,ﺭﺩﺭ"}
+{"text": "1ب ف/غ\"٣خه2اهطث] كا#", "dir": "rtl", "visual": "#ﺎﻛ [ﺚﻄﻫﺍ2ﻪﺧ٣\"ﻍ/ﻑ ﺏ1"}
+{"text": "ذXغدقش'ا ليظضايان$", "dir": "rtl", "visual": "$ﻥﺎﻳﺎﻀﻈﻴﻟ ﺍ'ﺶﻗﺪﻏXﺫ"}
+{"text": "لY1ؤقآااظbبة(.بوYضشل\"", "dir": "ltr", "visual": "ﻝY1ﻅﺍﺍﺂﻗﺅbﻮﺑ.)ﺔﺑYﻞﺸﺿ\""}
+{"text": "خفا]َزلة$ق>إص2", "dir": "auto", "visual": "2ﺹﺇ<ﻕ$ﺔﻟﺯ[َﺎﻔﺧ"}
+{"text": "ح:فةججص)ئ/را", "dir": "rtl", "visual": "ﺍﺭ/ﺉ(ﺺﺠﺟﺔﻓ:ﺡ"}
+{"text": "حت[-ضآآ#", "dir": "auto", "visual": "#ﺁﺂﺿ-]ﺖﺣ"}
+{"text": "[Xم٣خنقء<(ضضلأنابن%ي", "dir": "ltr", "visual": "[Xﻱ%ﻦﺑﺎﻧﻸﻀﺿ)>ءﻖﻨﺧ٣ﻡ"}
+{"text": "صتصا+0>.إش[خشسغاخؤ", "dir": "rtl", "visual": "ﺆﺧﺎﻐﺴﺸﺧ]ﺵﺇ.<0+ﺎﺼﺘﺻ"}
+{"text": "\"+ اضش;b/", "dir": "rtl", "visual": "/b;ﺶﺿﺍ +\""}
+{"text": "ع", "dir": "auto", "visual": "ﻉ"}
+{"text": "لديا ئت", "dir": "rtl", "visual": "ﺖﺋ ﺎﻳﺪﻟ"}
+{"text": ";أذظZطcئة إثلئ", "dir": "rtl", "visual": "ﺊﻠﺛﺇ ﺔﺋcﻁZﻅﺫﺃ;"}
+{"text": "كعإئZر0", "dir": "rtl", "visual": "0ﺭZﺉﺈﻌﻛ"}
+{"text": "كأهلإ ؤ", "dir": "auto", "visual": "ﺅ ﻺﻫﺄﻛ"}
+{"text": ",Zرى%حةلآكة حل<جYتbإل;ب", "dir": "rtl", "visual": "ﺏ;ﻝﺇbﺕYﺝ>ﻞﺣ ﺔﻛﻵﺔﺣ%ﻯﺭZ,"}
+{"text": "تآ.بّإاثخاcذإؤذوحآ(", "dir": "ltr", "visual": "ﺎﺨﺛﺍﺈﺑّ.ﺂﺗcﺂﺣﻭﺫﺅﺇﺫ("}
+{"text": "١س.ح", "dir": "rtl", "visual": "ﺡ.ﺱ١"}
+{"text": "دسأص/.لأ", "dir": "auto", "visual": "ﻷ./ﺹﺄﺳﺩ"}
+{"text": "ص", "dir": "ltr", "visual": "ﺹ"}
+{"text": "د$٢ر ّل", "dir": "rtl", "visual": "ﻝ ّﺭ٢$ﺩ"}
+{"text": "كوطمرملبدءدطر+%::أد", "dir": "auto", "visual": "ﺩﺃ::%+ﺮﻃﺩءﺪﺒﻠﻣﺮﻤﻃﻮﻛ"}
+{"text": "(ا\" صء", "dir": "ltr", "visual": "(ءﺹ \"ﺍ"}
+{"text": "ااودءلYس٢جلظاؤتقز٣١", "dir": "rtl", "visual": "٣١ﺰﻘﺗﺅﺎﻈﻠﺟ٢ﺱYﻝءﺩﻭﺍﺍ"}
+{"text": "-رءلشص3فأ", "dir": "rtl", "visual": "ﺄﻓ3ﺺﺸﻟءﺭ-"}
+{"text": "ائصع", "dir": "auto", "visual": "ﻊﺼﺋﺍ"}
+{"text": "(\"لس٣", "dir": "rtl", "visual": "٣ﺲﻟ\")"}
+{"text": "<", "dir": "auto", "visual": "<"}
+{"text": "Yغق", "dir": "ltr", "visual": "Yﻖﻏ"}
+{"text": "- َ بظYّ", "dir": "rtl", "visual": "Yّﻆﺑ  َ-"}
+{"text": "ة$فدل خ", "dir": "ltr", "visual": "ﺥ ﻝﺪﻓ$ﺓ"}
+{"text": "ـ%ع,cنس", "dir": "ltr", "visual": "ﻉ%ـ,cﺲﻧ"}
+{"text": "عز٢سدبؤذو\"مb1ث", "dir": "auto", "visual": "ﺙb1ﻡ\"ﻭﺫﺆﺑﺪﺳ٢ﺰﻋ"}
+{"text": "خز]٣%", "dir": "auto", "visual": "%٣[ﺰﺧ"}
+{"text": "ءذذىم", "dir": "auto", "visual": "ﻢﯨﺫﺫء"}
+{"text": "آZ٣لداكوخو;ر-(اآت", "dir": "rtl", "visual": "ﺕﺁﺍ)-ﺭ;ﻮﺧﻮﻛﺍﺪﻟZ٣ﺁ"}
+{"text": "ؤق#٢ل ءج/", "dir": "ltr", "visual": "ﺝء ﻝ٢#ﻕﺅ/"}
+{"text": "ئةىذZ>a ط1رئَأ", "dir": "rtl", "visual": "ﺄﺋَﺭ1ﻁ Z>aﺬﯨﺔﺋ"}
+{"text": ",", "dir": "ltr", "visual": ","}
+{"text": "إcذ>ل٢اإىكه", "dir": "rtl", "visual": "ﻪﻜﯨﺇﺍ٢ﻝ<ﺫcﺇ"}
+{"text": "دحقاحة ّلإ.Xؤذص,كع", "dir": "rtl", "visual": "ﻊﻛ,ﺹﺫﺅX.ﻹ ّﺔﺣﺎﻘﺣﺩ"}
+{"text": "وى", "dir": "rtl", "visual": "ﻯﻭ"}
+{"text": "Zص٣كبةىX", "dir": "ltr", "visual": "Zﻯﺔﺒﻛ٣ﺹX"}

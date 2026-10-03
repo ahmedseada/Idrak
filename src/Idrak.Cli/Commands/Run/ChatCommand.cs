@@ -82,7 +82,7 @@ internal sealed class ChatCommand : Command
 /// <summary>A chat: the conversation, the settings and the slash commands, reading lines from any reader (tests drive it).</summary>
 internal sealed class ChatSession
 {
-    /// <summary>The slash commands, for help.</summary>
+    /// <summary>The slash commands, for help (translated whole, as one catalog entry).</summary>
     public const string CommandHelp =
         "  /help                 these commands\n" +
         "  /system [TEXT]        show or set the system prompt (/system none removes it)\n" +
@@ -141,10 +141,10 @@ internal sealed class ChatSession
     {
         if (interactive)
         {
-            _context.Write($"Chatting with {_loaded.Describe(_context)}. /help lists the commands, /exit ends.");
+            _context.Write(Shared.Messages.T("Chatting with {0}. /help lists the commands, /exit ends.", _loaded.Describe(_context)));
             if (_messages.Count(m => m.Role != "system") is > 0 and int count)
             {
-                _context.Write($"Continuing {count} messages from {_historyPath}.");
+                _context.Write(Shared.Messages.T("Continuing {0} messages from {1}.", count, _historyPath));
             }
 
             Console.CancelKeyPress += OnCancel;
@@ -245,7 +245,7 @@ internal sealed class ChatSession
             _context.Write(Dim(answer.Summary(_loaded.Context)));
             if (answer.Message.ToolCalls is { Count: > 0 } && _loaded.Registry is null)
             {
-                _context.Write("(the model asked for tools; give them with --tools FILE.dll)");
+                _context.Write(Shared.Messages.T("(the model asked for tools; give them with --tools FILE.dll)"));
             }
         }
         catch (OperationCanceledException)
@@ -253,7 +253,7 @@ internal sealed class ChatSession
             // Drop the unanswered turn so the conversation stays well formed.
             int last = _messages.FindLastIndex(m => m.Role == "user");
             _messages.RemoveRange(last, _messages.Count - last);
-            _context.Write("\n[stopped]");
+            _context.Write("\n" + Shared.Messages.T("[stopped]"));
         }
         finally
         {
@@ -290,60 +290,60 @@ internal sealed class ChatSession
             case "/exit" or "/quit" or "/bye":
                 return false;
             case "/help" or "/?":
-                Say("Commands:\n" + CommandHelp.TrimEnd() + "\nA message starting with / is sent as typed when it starts with //.");
+                Say(Shared.Messages.T("Commands:") + "\n" + Shared.Messages.T(CommandHelp).TrimEnd() + "\n" + Shared.Messages.T("A message starting with / is sent as typed when it starts with //."));
                 break;
             case "/system" when argument.Length == 0:
-                Say(_settings.System is { } current ? $"System prompt: {current}" : "No system prompt (set one with /system TEXT).");
+                Say(_settings.System is { } current ? Shared.Messages.T("System prompt: {0}", current) : Shared.Messages.T("No system prompt (set one with /system TEXT)."));
                 break;
             case "/system":
                 _settings.System = argument is "none" or "off" ? null : argument;
                 ApplySystem();
-                Say(_settings.System is null ? "System prompt removed." : "System prompt set.");
+                Say(_settings.System is null ? Shared.Messages.T("System prompt removed.") : Shared.Messages.T("System prompt set."));
                 break;
             case "/reset" or "/clear":
                 _messages.Clear();
                 _answers.Clear();
                 ApplySystem();
                 SaveHistory();
-                Say("Conversation cleared.");
+                Say(Shared.Messages.T("Conversation cleared."));
                 break;
             case "/save" when argument.Length > 0:
                 ChatHistory.Save(argument, _messages, _loaded.Registry?.Definitions, _settings.Think);
-                Say($"Saved {_messages.Count} messages to {argument}.");
+                Say(Shared.Messages.T("Saved {0} messages to {1}.", _messages.Count, argument));
                 break;
             case "/load" when argument.Length > 0:
                 if (!File.Exists(argument))
                 {
-                    Say($"No file {argument}.");
+                    Say(Shared.Messages.T("No file {0}.", argument));
                     break;
                 }
 
                 _messages.Clear();
                 _messages.AddRange(ChatHistory.Load(argument));
                 _settings.System = _messages.FirstOrDefault(m => m.Role == "system")?.Content;
-                Say($"Loaded {_messages.Count} messages from {argument}.");
+                Say(Shared.Messages.T("Loaded {0} messages from {1}.", _messages.Count, argument));
                 break;
             case "/file" when argument.Length > 0:
                 if (!File.Exists(argument))
                 {
-                    Say($"No file {argument}.");
+                    Say(Shared.Messages.T("No file {0}.", argument));
                     break;
                 }
 
                 Attach(argument);
-                Say($"{argument} will be sent with the next message.");
+                Say(Shared.Messages.T("{0} will be sent with the next message.", argument));
                 break;
             case "/save" or "/load" or "/file":
-                Say($"{command} needs a file name, e.g. {command} talk.json");
+                Say(Shared.Messages.T("{0} needs a file name, e.g. {0} talk.json", command));
                 break;
             case "/stats":
                 Say(Stats());
                 break;
             case "/think":
-                Say(_settings.Set("think", argument.Length == 0 ? "on" : argument.ToLowerInvariant()) ?? $"Reasoning: {_settings.Describe().First(d => d.Name == "think").Value}.");
+                Say(_settings.Set("think", argument.Length == 0 ? "on" : argument.ToLowerInvariant()) ?? Shared.Messages.T("Reasoning: {0}.", _settings.Describe().First(d => d.Name == "think").Value));
                 break;
             case "/tools":
-                Say(_loaded.Tools.Count == 0 ? "No tools; give an assembly with --tools FILE.dll."
+                Say(_loaded.Tools.Count == 0 ? Shared.Messages.T("No tools; give an assembly with --tools FILE.dll.")
                     : string.Join('\n', _loaded.Tools.Select(t => $"  {t.Definition.Name}: {t.Definition.Description}")));
                 break;
             case "/set" when argument.Length == 0:
@@ -352,7 +352,7 @@ internal sealed class ChatSession
             case "/set":
                 var parts = argument.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
                 string setting = parts[0].ToLowerInvariant().Replace('_', '-');
-                Say(parts.Length < 2 ? $"/set {setting} needs a value, e.g. /set temperature 0.7"
+                Say(parts.Length < 2 ? Shared.Messages.T("/set {0} needs a value, e.g. /set temperature 0.7", setting)
                     : _settings.Set(setting, parts[1]) ?? $"{setting} = {_settings.Describe().FirstOrDefault(d => d.Name == setting).Value}");
                 break;
             case "/copy":
@@ -362,7 +362,7 @@ internal sealed class ChatSession
                 int lastUser = _messages.FindLastIndex(m => m.Role == "user");
                 if (lastUser < 0)
                 {
-                    Say("Nothing to retry yet.");
+                    Say(Shared.Messages.T("Nothing to retry yet."));
                     break;
                 }
 
@@ -370,7 +370,7 @@ internal sealed class ChatSession
                 Answer();
                 break;
             default:
-                Say($"Unknown command {command}; /help lists them.");
+                Say(Shared.Messages.T("Unknown command {0}; /help lists them.", command));
                 break;
         }
 
@@ -381,7 +381,7 @@ internal sealed class ChatSession
     {
         if (_messages.LastOrDefault(m => m.Role == "assistant") is not { } last)
         {
-            Say("No answer to copy yet.");
+            Say(Shared.Messages.T("No answer to copy yet."));
             return;
         }
 
@@ -389,7 +389,7 @@ internal sealed class ChatSession
         {
             // OSC 52: terminals that allow it put the text on the clipboard (no clipboard library needed).
             _context.Output.Write($"\u001b]52;c;{Convert.ToBase64String(Encoding.UTF8.GetBytes(last.Content))}\u0007");
-            Say($"Copied the last answer ({last.Content.Length} characters) to the clipboard.");
+            Say(Shared.Messages.T("Copied the last answer ({0} characters) to the clipboard.", last.Content.Length));
         }
         else
         {
@@ -400,19 +400,20 @@ internal sealed class ChatSession
     private string Stats()
     {
         var text = new StringBuilder();
-        var invariant = CultureInfo.InvariantCulture;
         int turns = _answers.Count, generated = _answers.Sum(a => a.GeneratedTokens);
         double seconds = _answers.Sum(a => a.GenerationSeconds);
-        text.Append(invariant, $"Model     {_loaded.Describe(_context)}\n");
+        text.Append(Shared.Messages.T("Model     {0}", _loaded.Describe(_context))).Append('\n');
         if (_answers.LastOrDefault() is { } last)
         {
-            text.Append(invariant, $"Last      {last.GeneratedTokens} tokens at {last.TokensPerSecond:F1} tokens/s; prompt {last.PromptTokens} tokens in {last.PromptSeconds:F2} s\n");
-            text.Append(invariant, $"Context   {Math.Min(last.PromptTokens + last.GeneratedTokens, _loaded.Context)} of {_loaded.Context} tokens used\n");
+            text.Append(Shared.Messages.T("Last      {0} tokens at {1:F1} tokens/s; prompt {2} tokens in {3:F2} s", last.GeneratedTokens, last.TokensPerSecond,
+                last.PromptTokens, last.PromptSeconds)).Append('\n');
+            text.Append(Shared.Messages.T("Context   {0} of {1} tokens used", Math.Min(last.PromptTokens + last.GeneratedTokens, _loaded.Context), _loaded.Context)).Append('\n');
         }
 
-        text.Append(invariant, $"Session   {turns} answers, {generated} tokens, {(seconds > 0 ? generated / seconds : 0):F1} tokens/s on average, {_messages.Count} messages\n");
+        text.Append(Shared.Messages.T("Session   {0} answers, {1} tokens, {2:F1} tokens/s on average, {3} messages", turns, generated, seconds > 0 ? generated / seconds : 0,
+            _messages.Count)).Append('\n');
         using var process = Process.GetCurrentProcess();
-        text.Append(invariant, $"Memory    process {process.WorkingSet64 / (1 << 20)} MiB, managed {GC.GetTotalMemory(false) / (1 << 20)} MiB");
+        text.Append(Shared.Messages.T("Memory    process {0} MiB, managed {1} MiB", process.WorkingSet64 / (1 << 20), GC.GetTotalMemory(false) / (1 << 20)));
         return text.ToString();
     }
 

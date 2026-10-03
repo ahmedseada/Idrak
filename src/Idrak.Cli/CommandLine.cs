@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak.Cli.Shared;
+
 namespace Idrak.Cli;
 
 /// <summary>
@@ -24,6 +26,26 @@ internal static class CommandLine
             return ExitCodes.Usage;
         }
 
+        IDisposable language;
+        try
+        {
+            language = Messages.Begin(ref args, ref output, ref error);
+        }
+        catch (UsageException e)
+        {
+            error.WriteLine(e.Message);
+            return ExitCodes.Usage;
+        }
+
+        using (language)
+        {
+            return Dispatch(commands, args, output, error);
+        }
+    }
+
+    // Runs the command args name, once the language and the rendering are set up.
+    private static int Dispatch(IReadOnlyList<Command> commands, IReadOnlyList<string> args, TextWriter output, TextWriter error)
+    {
         if (args.Count > 0 && args[0] is "--version" or "-V")
         {
             args = ["version", .. args.Skip(1)];
@@ -56,8 +78,8 @@ internal static class CommandLine
             // A group word alone ("idrak cache") lists the group's commands.
             var group = commands.Where(c => c.Name.StartsWith(args[0] + " ", StringComparison.Ordinal)).Select(c => "idrak " + c.Name).ToList();
             error.WriteLine(group.Count > 0
-                ? $"'{args[0]}' needs a subcommand: {string.Join(", ", group)}."
-                : $"Unknown command '{string.Join(' ', args.TakeWhile(a => !a.StartsWith('-')).Take(2))}'. Run 'idrak help' for the commands.");
+                ? Messages.T("'{0}' needs a subcommand: {1}.", args[0], string.Join(", ", group))
+                : Messages.T("Unknown command '{0}'. Run 'idrak help' for the commands.", string.Join(' ', args.TakeWhile(a => !a.StartsWith('-')).Take(2))));
             return ExitCodes.Usage;
         }
 
@@ -79,13 +101,13 @@ internal static class CommandLine
         catch (UsageException e)
         {
             error.WriteLine(e.Message);
-            error.WriteLine($"Usage: idrak {command.Name} {command.Usage.Split('\n')[0]}".TrimEnd());
+            error.WriteLine(Messages.T("Usage: {0}", $"idrak {command.Name} {command.Usage.Split('\n')[0]}".TrimEnd()));
             return ExitCodes.Usage;
         }
         catch (Exception e) when (e is not OutOfMemoryException && context?.Timeout is { } limit && context.TimeoutToken.IsCancellationRequested)
         {
             // Whatever the cancelled call threw (a cancelled task, a closed connection), the reason is the time limit.
-            error.WriteLine($"idrak {command.Name}: gave up after --timeout {Shared.Units.Duration(limit)} ({e.Message.Split('\n')[0]})");
+            error.WriteLine(Messages.T("idrak {0}: gave up after --timeout {1} ({2})", command.Name, Units.Duration(limit), e.Message.Split('\n')[0]));
             return ExitCodes.Failed;
         }
         catch (Exception e) when (e is not OutOfMemoryException)
@@ -158,21 +180,21 @@ internal static class CommandLine
                 {
                     name = CommandContext.CommonShortForms.TryGetValue(name, out string? common) ? common
                         : command.ShortForms.TryGetValue(name, out string? own) ? own
-                        : throw new UsageException($"Unknown option {name}.");
+                        : throw new UsageException(Messages.T("Unknown option {0}.", name));
                 }
 
                 if (valueOptions.Contains(name))
                 {
                     if (!inline)
                     {
-                        value = i + 1 < args.Count ? args[++i] : throw new UsageException($"{name} needs a value.");
+                        value = i + 1 < args.Count ? args[++i] : throw new UsageException(Messages.T("{0} needs a value.", name));
                     }
 
                     (options.TryGetValue(name, out var list) ? list : options[name] = []).Add(value);
                 }
                 else if (inline)
                 {
-                    throw new UsageException($"{name} takes no value.");
+                    throw new UsageException(Messages.T("{0} takes no value.", name));
                 }
                 else if (knownFlags.Contains(name))
                 {
@@ -180,7 +202,7 @@ internal static class CommandLine
                 }
                 else
                 {
-                    throw new UsageException($"Unknown option {name}.");
+                    throw new UsageException(Messages.T("Unknown option {0}.", name));
                 }
             }
         }
@@ -198,22 +220,26 @@ internal static class Help
     /// </summary>
     public static string Overview(IReadOnlyList<Command> commands)
     {
-        var text = new System.Text.StringBuilder("idrak: Idrak's command-line tool\n\nUsage: idrak COMMAND [arguments] [options]\n");
+        var text = new System.Text.StringBuilder(Messages.T("idrak: Idrak's command-line tool")).Append("\n\n")
+            .Append(Messages.T("Usage: {0}", "idrak COMMAND [arguments] [options]")).Append('\n');
         string Name(Command c) => c.Aliases.Count > 0 ? $"{c.Name} ({string.Join(", ", c.Aliases)})" : c.Name;
         int width = commands.Count == 0 ? 0 : commands.Max(c => Name(c).Length);
         var groups = CommandTable.Groups.Select(g => (Title: g.Title, Commands: g.Commands.Where(commands.Contains).ToList()))
-            .Append((Title: "Other", Commands: commands.Where(c => !CommandTable.All.Contains(c)).ToList()));
+            .Append((Title: Messages.T("Other"), Commands: commands.Where(c => !CommandTable.All.Contains(c)).ToList()));
         foreach (var (title, members) in groups.Where(g => g.Commands.Count > 0))
         {
-            text.Append('\n').Append(title).Append(":\n");
+            text.Append('\n').Append(Messages.T(title)).Append(":\n");
             foreach (var c in members)
             {
-                text.Append("  ").Append(Name(c).PadRight(width)).Append("  ").Append(c.Summary).Append('\n');
+                text.Append("  ").Append(Name(c).PadRight(width)).Append("  ").Append(Messages.Summary(c)).Append('\n');
             }
         }
 
-        return text.Append('\n').Append(CommonOptions)
-            .Append("\nRun 'idrak help COMMAND' (or 'idrak COMMAND --help') for a command's options; 'idrak help topics' for concept pages.\n").ToString();
+        text.Append('\n').Append(Messages.T(CommonOptions)).Append('\n')
+            .Append(Messages.T("Run 'idrak help COMMAND' (or 'idrak COMMAND --help') for a command's options; 'idrak help topics' for concept pages."))
+            .Append('\n');
+        // Summaries longer than the width (translated ones can be) continue under their own column.
+        return string.Join('\n', Reflow(text.ToString().Split('\n'), Width));
     }
 
     /// <summary>
@@ -226,25 +252,27 @@ internal static class Help
     {
         string synopsis = command.Usage.Split('\n')[0].Trim();
         string body = Body(command);
-        var text = new System.Text.StringBuilder($"idrak {command.Name}: {command.Summary}\n\n");
-        text.Append($"Usage: idrak {command.Name} {synopsis}".TrimEnd()).Append('\n');
+        var text = new System.Text.StringBuilder($"idrak {command.Name}: {Messages.Summary(command)}\n\n");
+        text.Append(Messages.T("Usage: {0}", $"idrak {command.Name} {synopsis}".TrimEnd())).Append('\n');
         if (command.Aliases.Count > 0)
         {
-            text.Append("Aliases: ").Append(string.Join(", ", command.Aliases.Select(a => "idrak " + a))).Append('\n');
+            text.Append(Messages.T("Aliases: {0}", string.Join(", ", command.Aliases.Select(a => "idrak " + a)))).Append('\n');
         }
 
         if (body.Length > 0)
         {
-            text.Append('\n').Append(body).Append('\n');
+            // The command's own text is English in every language (the summary and the labels around it are translated).
+            string note = Messages.T("(The rest of this help is in English.)");
+            text.Append('\n').Append(Messages.IsArabic ? note + "\n" : "").Append(body).Append('\n');
         }
 
         var unshown = command.ShortForms.Where(p => !body.Contains($"{p.Key}, {p.Value}", StringComparison.Ordinal)).ToList();
         if (unshown.Count > 0)
         {
-            text.Append("\nShort forms: ").Append(string.Join(", ", unshown.Select(p => $"{p.Key} {p.Value}"))).Append('\n');
+            text.Append('\n').Append(Messages.T("Short forms: {0}", string.Join(", ", unshown.Select(p => $"{p.Key} {p.Value}")))).Append('\n');
         }
 
-        return text.Append('\n').Append(CommonOptions).Append(Shared.EnvironmentVariables.HelpSection(command.Name)).ToString();
+        return text.Append('\n').Append(Messages.T(CommonOptions)).Append(EnvironmentVariables.HelpSection(command.Name)).ToString();
     }
 
     /// <summary>The command's own text in its help (the usage after its first line), as <see cref="For"/> shows it.</summary>
@@ -303,7 +331,8 @@ internal static class Help
         return lines;
     }
 
-    private const string CommonOptions =
+    /// <summary>The common options' part of every help (translated whole, as one catalog entry).</summary>
+    internal const string CommonOptions =
         "Common options:\n" +
         "  -d, --device NAME   cpu, cuda:0, vulkan:1, hip:0 (default: the default device)\n" +
         "  -P, --plugin PATH   load an assembly that registers formats, families, ... (repeatable)\n" +
@@ -319,5 +348,6 @@ internal static class Help
         "      --offline       use only what is cached; a download is an error\n" +
         "      --threads N     CPU threads; --seed N: one seed for sampling, shuffling and initialization\n" +
         "      --timeout D     give up after a duration (30s, 5m, 1h30m)\n" +
+        "      --lang L        messages in en or ar (config \"lang\", IDRAK_LANG); --lang-render auto, visual or logical\n" +
         "  -h, --help          this help; idrak -V, --version: the versions; idrak help topics: concept pages\n";
 }
