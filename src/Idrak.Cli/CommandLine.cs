@@ -14,6 +14,16 @@ internal static class CommandLine
     public static int Run(IReadOnlyList<string> args, TextWriter output, TextWriter error)
     {
         var commands = CommandTable.All;
+        try
+        {
+            args = Shared.ResponseFiles.Expand(args);
+        }
+        catch (UsageException e)
+        {
+            error.WriteLine(e.Message);
+            return ExitCodes.Usage;
+        }
+
         if (args.Count > 0 && args[0] is "--version" or "-V")
         {
             args = ["version", .. args.Skip(1)];
@@ -27,7 +37,15 @@ internal static class CommandLine
 
         if (args[0] == "help")
         {
+            // A concept page (idrak help topics, help devices, help exit codes) first, then the command of that name.
             var target = Find(commands, args.Skip(1).ToList(), out _);
+            string? topic = Shared.HelpTopics.Page(string.Join(' ', args.Skip(1)));
+            if (topic is not null)
+            {
+                output.Write(target is null ? topic : target.Name == "env" ? Help.For(target) : $"{topic}\n{Help.For(target)}");
+                return ExitCodes.Ok;
+            }
+
             output.Write(target is null ? Help.Overview(commands) : Help.For(target));
             return target is null ? ExitCodes.Usage : ExitCodes.Ok;
         }
@@ -35,7 +53,11 @@ internal static class CommandLine
         var command = Find(commands, args, out int used);
         if (command is null)
         {
-            error.WriteLine($"Unknown command '{string.Join(' ', args.TakeWhile(a => !a.StartsWith('-')).Take(2))}'. Run 'idrak help' for the commands.");
+            // A group word alone ("idrak cache") lists the group's commands.
+            var group = commands.Where(c => c.Name.StartsWith(args[0] + " ", StringComparison.Ordinal)).Select(c => "idrak " + c.Name).ToList();
+            error.WriteLine(group.Count > 0
+                ? $"'{args[0]}' needs a subcommand: {string.Join(", ", group)}."
+                : $"Unknown command '{string.Join(' ', args.TakeWhile(a => !a.StartsWith('-')).Take(2))}'. Run 'idrak help' for the commands.");
             return ExitCodes.Usage;
         }
 
@@ -48,7 +70,8 @@ internal static class CommandLine
                 return ExitCodes.Ok;
             }
 
-            var context = new CommandContext(command, positional, options, flags, output, error);
+            using var context = new CommandContext(command, positional, options, flags, output, error);
+            command.BeforePlugins(context);
             context.LoadPlugins();
             return command.Run(context);
         }
@@ -184,7 +207,7 @@ internal static class Help
             text.Append("Short forms: ").Append(string.Join(", ", command.ShortForms.Select(p => $"{p.Key} {p.Value}"))).Append('\n');
         }
 
-        return text.Append('\n').Append(CommonOptions).ToString();
+        return text.Append('\n').Append(CommonOptions).Append(Shared.EnvironmentVariables.HelpSection(command.Name)).ToString();
     }
 
     private const string CommonOptions =
@@ -195,5 +218,13 @@ internal static class Help
         "  -q, --quiet         less output; -v, --verbose: more\n" +
         "      --cache DIR     the cache folder (default IDRAK_CACHE or ~/.cache/idrak)\n" +
         "  -C, --config FILE   the config file (default IDRAK_CONFIG or ~/.idrak/config.json)\n" +
-        "  -h, --help          this help; idrak -V, --version: the versions\n";
+        "      --log FILE      also write every line, verbose ones included, to FILE\n" +
+        "      @FILE           read arguments from FILE, one per line (@@text: a literal @text)\n" +
+        "  -O, --output FILE   write the command's main output to FILE\n" +
+        "      --format F      text, json, csv or md (tables)\n" +
+        "      --color WHEN    auto, always or never (NO_COLOR still wins); --plain: no Unicode or progress line\n" +
+        "      --offline       use only what is cached; a download is an error\n" +
+        "      --threads N     CPU threads; --seed N: one seed for sampling, shuffling and initialization\n" +
+        "      --timeout D     give up after a duration (30s, 5m, 1h30m)\n" +
+        "  -h, --help          this help; idrak -V, --version: the versions; idrak help topics: concept pages\n";
 }

@@ -101,6 +101,9 @@ internal sealed unsafe partial class VulkanBackend
     /// <summary>What the device reports about itself (subgroups, workgroup and memory limits, UUIDs).</summary>
     internal VulkanDeviceFacts Facts => _physical.Facts;
 
+    /// <summary>The driver's name and version as the device reports them (device listings).</summary>
+    internal string Driver => _physical.Driver;
+
     /// <summary>The device facts and the device's own one-line summary (for benchmark headers).</summary>
     internal string Describe() =>
         $"{Name}: storages {DescribeStorage()} on a {StorageHeapBytes >> 20:N0} MiB heap{(ReadsThroughStaging ? ", reads through staging" : "")}, " +

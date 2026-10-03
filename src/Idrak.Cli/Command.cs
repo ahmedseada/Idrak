@@ -32,6 +32,11 @@ internal abstract class Command
 
     private static readonly Dictionary<string, string> EmptyShortForms = [];
 
+    /// <summary>Called before the <c>--plugin</c> assemblies load (e.g. to note what was registered before them).</summary>
+    public virtual void BeforePlugins(CommandContext context)
+    {
+    }
+
     /// <summary>Runs the command; returns the exit code (<see cref="ExitCodes"/>).</summary>
     public abstract int Run(CommandContext context);
 }
