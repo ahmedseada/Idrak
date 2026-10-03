@@ -12,24 +12,24 @@ namespace Idrak.Cli.Commands.Data;
 
 /// <summary>
 /// The dataset tool: show, count, download and assemble datasets, written as JSON Lines that any tool reads.
-/// <c>idrak data</c> runs it, and the <c>idrak-data</c> forwarder compiles this same file and calls <see cref="RunTool"/>,
-/// so both behave the same. <see cref="Parse"/> reads the arguments and <see cref="Execute"/> runs the command (its
-/// errors are exceptions: idrak-data prints them and exits with 2, idrak with 1).
+/// Run by <c>idrak data</c> (<see cref="DataCommand"/>, which turns idrak's options into these). <see cref="Parse"/>
+/// reads the arguments and <see cref="Execute"/> runs the command (its errors are exceptions, which idrak prints and
+/// exits with 1).
 /// </summary>
 internal sealed class DataTool(ToolConsole console)
 {
     public const string Usage = """
-        idrak-data: inspect, download and assemble datasets
+        Inspect, download and assemble datasets.
 
-          idrak-data show <spec…>                 columns, detected layout and the first rows, as read and as conversations
-          idrak-data count <spec…>                rows per source
-          idrak-data download <spec…>             fetch every file of the sources into the cache and list them (--refresh: again)
-          idrak-data build <spec…|recipe.json> --out <file.jsonl>
+          idrak data show <spec…>                 columns, detected layout and the first rows, as read and as conversations
+          idrak data count <spec…>                rows per source
+          idrak data download <spec…>             fetch every file of the sources into the cache and list them (--refresh: again)
+          idrak data build <spec…|recipe.json> --out <file.jsonl>
                                                   assemble a training set (conversations {"messages"} and / or texts {"text"})
-          idrak-data cache [--clear]              where downloads are kept (and remove them)
+          idrak data cache [--clear]              where downloads are kept (and remove them)
 
         A spec is a source with options after '?':
-          hf:openai/gsm8k?config=main                     Hugging Face (config, split, files, max_files, revision)
+          hf:owner/qa-set?config=main                     Hugging Face (config, split, files, max_files, revision)
           hf:HuggingFaceH4/ultrachat_200k?split=train_sft  HF_TOKEN or huggingface-cli login for gated / private data
           github:owner/repo[@ref][?files=src/**/*.cs]      a repository's files as documents (GITHUB_TOKEN)
           github:owner/repo?files=data/*.jsonl             data files in a repository
@@ -71,42 +71,6 @@ internal sealed class DataTool(ToolConsole console)
 
     /// <summary>The arguments that are not options: the command and the specs.</summary>
     public IReadOnlyList<string> Positional => positional;
-
-    /// <summary>What idrak-data does with <paramref name="args"/>: help, a usage error, or the command; returns the exit code.</summary>
-    public static int RunTool(IReadOnlyList<string> args, ToolConsole console)
-    {
-        var tool = new DataTool(console);
-        try
-        {
-            if (!tool.Parse(args))
-            {
-                console.Out.WriteLine(Usage);
-                return 0;
-            }
-        }
-        catch (Exception ex) when (ex is ArgumentException or FormatException)
-        {
-            console.Error.WriteLine(ex.Message);
-            return 1;
-        }
-
-        if (tool.Problem() is not null)
-        {
-            console.Out.WriteLine(Usage);
-            return 1;
-        }
-
-        try
-        {
-            return tool.Execute();
-        }
-        catch (Exception ex) when (IsDataError(ex))
-        {
-            console.Clear();
-            console.Error.WriteLine($"error: {ex.Message}");
-            return 2;
-        }
-    }
 
     /// <summary>The failures the tool reports as a message (others are bugs and keep their stack).</summary>
     public static bool IsDataError(Exception ex) =>

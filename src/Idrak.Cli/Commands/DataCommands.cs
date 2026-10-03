@@ -5,7 +5,7 @@ using Idrak.Cli.Commands.Data;
 
 namespace Idrak.Cli.Commands;
 
-/// <summary>The data command (idrak-data's show, count, download, build, cache) and its subcommands (plans/idrak-cli.md).</summary>
+/// <summary>The data command (show, count, download, build, cache: <see cref="Data.DataTool"/>) and its subcommands (plans/idrak-cli.md).</summary>
 internal static class DataCommands
 {
     public static IReadOnlyList<Command> All { get; } =

@@ -37,13 +37,19 @@
   chat or preference rows from documented rules (network.json in the builder's JSON, train.json, prep.json, or a LoRA
   tune.json with `--base`), measure candidates with `--search N`, and show a network's shapes, parameters, FLOPs and
   memory, or draw it as text, Mermaid or SVG.
-- idrak CLI, Train and data group: `idrak tune` (idrak-tune's commands and options, plus `-b`/`--base`, `-w`/`--weights`,
+- idrak CLI, Train and data group: `idrak tune` (the commands and options of the former idrak-tune, plus `-b`/`--base`, `-w`/`--weights`,
   aliases and a tune.json given with `--config`) and `tune init` (writes a commented tune.json); `idrak train SPEC.json
   --data FILE|FOLDER` (a builder network on a CSV or a folder of class folders of PNG/PGM/PPM images; run folders with
   checkpoints and a JSON Lines log; a `.ikm` package), `resume`, `runs list/show/compare` (text loss plots), `predict`,
-  `package` and `distill` (explains that it waits for the teacher pattern); `idrak data` (idrak-data's commands) with
+  `package` and `distill` (explains that it waits for the teacher pattern); `idrak data` (the former idrak-data's commands) with
   `preview`, `validate --as chat|preference|table`, `stats -m MODEL`, `convert`, `dedupe`, `split`, `sample`, `mix`.
-  idrak-tune and idrak-data are now thin forwarders compiling the same code (`TuneTool`, `DataTool`), unchanged in use.
+- The separate tools `idrak-tune` (package `Idrak.FineTuning.Cli`) and `idrak-data` (package `Idrak.Datasets.Cli`)
+  are removed, folded into `idrak`: `idrak tune` and `idrak data` take the same commands and options (see `idrak help
+  tune`, `idrak help data` and src/Idrak.Cli/README.md, which now holds their documentation). Differences from the old
+  tools: idrak's exit codes (a usage error exits with 2, a failed data command with 1, where idrak-data used 2), and
+  idrak's options for the model, device, cache and output. A tune.json keeps its format `idrak-tune/1` (it names the
+  kind of file, like `idrak-train/1`); `idrak tune init` now writes it, and `idrak tune --config` accepts it (it
+  rejected the key, so a tune.json from `idrak suggest --base` did not run) and refuses another file's format.
 - `idrak` tool, Health group: `doctor` (`--android`, `--network`, `--explain`, `--fix`), `devices`, `version` with the
   drivers, `report` (`--tests`, `--bench`, `--readme`, `--zip`), `env` and `help env` (every environment variable the
   libraries read, from one table a test keeps complete), `init`, `cache info/clear`, `config get/set/unset/list` with

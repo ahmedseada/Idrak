@@ -24,7 +24,7 @@ using Idrak.LanguageModels;
 //   model such as ollama:qwen3:8b, read from Ollama's own store)
 //
 //   A coding agent on the same models: samples/Idrak.Samples.CodingAgent. Fine-tuning, evaluating, exporting and
-//   downloading models: the idrak-tune tool (src/Idrak.FineTuning.Cli).
+//   downloading models: the idrak tool (idrak tune, idrak pull; src/Idrak.Cli).
 //
 // Options: --offload (when the GPU is full, keep tensors in system memory: slower, but larger models and batches fit),
 //          --gpu-memory GiB (cap the GPU memory used), --adapter <dir> (load a PEFT adapter), --cuda / --cpu / --vulkan / --device NAME (cpu, cuda:N, vulkan:N), --int8 (int8 weights), --int4 (4-bit weights), --bf16 (bfloat16 weights), --kv8 (int8 KV cache), --kv16 (bfloat16 KV cache), --context N (default 4096),
@@ -75,7 +75,7 @@ if (positional.Count < 2 || positional[0] is not ("info" or "chat" or "check" or
 {
     Console.WriteLine("usage: info <folder> | chat <folder> | profile <folder> | check <reference.json>");
     Console.WriteLine("       [--cuda|--cpu|--vulkan|--device NAME] [--int8|--int4|--bf16] [--kv8|--kv16] [--context N] [--adapter DIR] [--folder F] [--no-think] [--matmul fp32|bf16|fp8]");
-    Console.WriteLine("fine-tuning, evaluating, exporting and downloading models: idrak-tune (src/Idrak.FineTuning.Cli)");
+    Console.WriteLine("fine-tuning, evaluating, exporting and downloading models: idrak tune, idrak pull (src/Idrak.Cli)");
     return 1;
 }
 
