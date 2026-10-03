@@ -441,35 +441,20 @@ internal static class TrainSession
         }
 
         var (channels, height, width) = (builder.InputShape[0], builder.InputShape[1], builder.InputShape[2]);
-        var classFolders = Directory.GetDirectories(folder).Order(StringComparer.Ordinal).ToList();
-        var files = classFolders.Select((d, label) => Directory.EnumerateFiles(d, "*", SearchOption.AllDirectories).Where(ImageFiles.IsDecoded).Order(StringComparer.Ordinal).Select(f => (f, label)))
-            .SelectMany(x => x).ToList();
-        if (classFolders.Count < 2 || files.Count == 0)
+        var images = new ImageFolderSource(folder, channels, height, width);
+        if (images.Classes.Count < 2 || images.Count == 0)
         {
             throw new InvalidDataException($"{folder} needs a folder per class with images in them ({string.Join(", ", ImageFiles.DecodedExtensions)}).");
         }
 
-        int size = channels * height * width;
-        var features = new float[files.Count, size];
-        var labels = new int[files.Count];
-        for (int i = 0; i < files.Count; i++)
-        {
-            var pixels = ImageFiles.Load(files[i].f, channels, height, width);
-            for (int j = 0; j < size; j++)
-            {
-                features[i, j] = pixels[j];
-            }
-
-            labels[i] = files[i].label;
-        }
-
         int outputs = builder.CurrentShape.Aggregate(1, (a, b) => a * b);
-        if (outputs != classFolders.Count)
+        if (outputs != images.Classes.Count)
         {
-            throw new InvalidDataException($"{folder} has {classFolders.Count} classes but the network has {outputs} outputs; make its last layer {classFolders.Count} wide.");
+            throw new InvalidDataException($"{folder} has {images.Classes.Count} classes but the network has {outputs} outputs; make its last layer {images.Classes.Count} wide.");
         }
 
-        string[] names = [.. classFolders.Select(Path.GetFileName).OfType<string>()];
-        return (Dataset.FromClassLabels(features, labels, names.Length, names).WithFeatureShape(channels, height, width), "classification", names);
+        var names = images.Classes;
+        var data = Dataset.FromSource(images, [.. Enumerable.Range(0, channels * height * width).Select(i => $"x{i}")], names);
+        return (data, "classification", names);
     }
 }

@@ -410,8 +410,11 @@ Additions made while building: `--max-params` takes `50k`, `2M`; `suggest` takes
 `--assist` model; `explain` takes `--batch N` (else the batch of a `train.json` next to the network, else 32) and a
 folder holding `network.json`; `viz` prints an SVG with a white background that any viewer shows.
 
-Gaps (Design): the library has no image decoder, so the tool reads image headers (PNG, JPEG, BMP, PGM/PPM) and
-decodes PNG, BMP and Netpbm itself; JPEG folders are profiled but not trained by `--search`. The library does not
+Gaps (Design): images are decoded by the library (`ImageCodecs`, `ImageFolderSource`: PNG, BMP, PGM/PPM, and any
+registered codec); the tool still reads JPEG headers itself, so JPEG folders are profiled, but trained by `--search` and
+`train` only when a JPEG codec is registered. The "augment" list of prep.json maps onto the library's transforms
+(`RandomFlip`, `RandomRotation`, `RandomShift`) but is not applied yet, to keep the search and training results as they
+were; applying it is a later step. The library does not
 report a GPU's memory size (only a configured `ComputeResources.GpuMemoryLimit`), so memory checks on a GPU say the
 size is unknown unless a limit is set.
 
