@@ -25,6 +25,14 @@
   chat or preference rows from documented rules (network.json in the builder's JSON, train.json, prep.json, or a LoRA
   tune.json with `--base`), measure candidates with `--search N`, and show a network's shapes, parameters, FLOPs and
   memory, or draw it as text, Mermaid or SVG.
+- idrak CLI, Train and data group: `idrak tune` (idrak-tune's commands and options, plus `-b`/`--base`, `-w`/`--weights`,
+  aliases and a tune.json given with `--config`) and `tune init` (writes a commented tune.json); `idrak train SPEC.json
+  --data FILE|FOLDER` (a builder network on a CSV or a folder of class folders of PNG/PGM/PPM images; run folders with
+  checkpoints and a JSON Lines log; a `.ikm` package), `resume`, `runs list/show/compare` (text loss plots), `predict`,
+  `package` and `distill` (explains that it waits for the teacher pattern); `idrak data` (idrak-data's commands) with
+  `preview`, `validate --as chat|preference|table`, `stats -m MODEL`, `convert`, `dedupe`, `split`, `sample`, `mix`.
+  idrak-tune and idrak-data are now thin forwarders compiling the same code (`TuneTool`, `DataTool`), unchanged in use.
+
 - Tool calls are parsed in the model's own format, not only as JSON between tags. `ChatOutputParser` takes the
   reasoning out and feeds the answer to an `IToolCallParser` (`Feed`, `Finish`, emitting text, reasoning and calls as
   before) that the template makes per reply (`ChatTemplate.CreateToolCallParser`, by `ToolCallFormatName`).

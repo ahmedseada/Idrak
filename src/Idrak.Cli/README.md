@@ -120,3 +120,22 @@ idrak sg houses.csv -t SalePrice -e -o ./run
 idrak x ./run/network.json
 idrak viz ./run/network.json --format mermaid
 ```
+## Train and data
+
+```
+idrak tune init -b Qwen/Qwen3-0.6B --data chats.jsonl      # a commented tune.json
+idrak tune --config tune.json                               # idrak-tune's train with those settings
+idrak tune train qwen chats.jsonl -o adapters/chat -w int4  # or every option on the command line
+idrak train network.json --data houses.csv -t price -o houses.ikm
+idrak train cnn.json --data ./shapes -d vulkan:0            # a folder of class folders of images
+idrak predict houses.ikm -i new-houses.csv -o priced.csv
+idrak runs list && idrak runs show NAME && idrak runs compare A B
+idrak resume NAME --epochs 20 && idrak package --model RUN_FOLDER -o model.ikm
+idrak data preview train.parquet && idrak data validate chats.jsonl --as chat && idrak data stats chats.jsonl -m qwen
+idrak data convert alpaca.json chats.jsonl --as chat && idrak data split chats.jsonl -t label
+```
+
+`idrak tune` and `idrak data` run the code of idrak-tune and idrak-data (`Commands/Train/TuneTool.cs`,
+`Commands/Data/DataTool.cs`); those tools compile the same files as thin forwarders. `idrak train` writes a run folder
+under `CACHE/runs` (run.json, network.json, scalers, `last.ikw`/`best.ikw`, `log.jsonl` in the library's telemetry
+format) that `runs`, `resume` and `package` read.

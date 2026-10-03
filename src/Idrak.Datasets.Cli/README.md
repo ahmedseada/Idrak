@@ -4,6 +4,9 @@ Inspect, download and assemble datasets from the command line. The output is JSO
 conversations as `{"messages": [...], "tools": [...]}` and plain text as `{"text": ...}`, the layout Idrak's
 fine-tuning, Hugging Face's `datasets` and most training tools read.
 
+The same tool is `idrak data` in the `idrak` command-line tool (src/Idrak.Cli), which runs this code; this package stays
+as a forwarder with the same commands and options.
+
 ## Install
 
 From nuget.org (needs the .NET SDK): `dotnet tool install --global Idrak.Datasets.Cli`, then `idrak-data --help`.
