@@ -216,6 +216,31 @@ Gaps (Serve):
 | `idrak convert IN OUT` | Hugging Face folder, GGUF and `.ikm` conversions | 3 |
 | `idrak diff A B` | Which tensors differ between two checkpoints, and by how much | 3 |
 
+Built (agent 4), with what building them added: `pull` takes `owner/name`, `owner/name:TAG` and `owner/name/FILE.gguf`
+(one GGUF file of a repository, by quantization tag or name), a `.gguf` URL, `--file`, `--revision`, `--token`,
+`--force` and `--dry-run`; it downloads through `ModelSource.DownloadAsync` (the files loading reads, into the folder
+loading looks in) and prepares a pulled GGUF file's description in the cache. `list` takes a filter, `--sort
+used|name|size` and `--all` (folders prepared from GGUF files, and Hugging Face's own cache, read-only), shows
+interrupted downloads as "partial", and records last use in `models-last-use.json` in the cache (the commands that
+read a cached model update it). `rm` takes several names and `owner/name@REVISION`, removes a GGUF file's prepared
+folders with it and the empty folders left, and refuses Hugging Face's own cache. `memory` takes several formats
+(`-w int8,int4`), `--batch N` and `--memory SIZE`; bytes per weight are measured by packing a sample in each
+registered format, KV bytes from each registered KV layout's row width. `verify` takes `--read` (every tensor read,
+all values finite) and `--hub` (sizes and SHA-256 against the hub). `inspect` takes `--filter`, `--limit`,
+`--no-tensors`; `diff` takes `--tolerance`, `--filter`, `--limit`. `idrak families` (second pass) is built here.
+`--offline` (a common option from the foundation) is honoured: pull reports a cached model and fails otherwise, search
+fails, every other model command reads only the cache. A model the cache lacks is an error naming `idrak pull`.
+
+Gaps (Models): a GPU's total memory is not reported by the library (only a configured `GpuMemoryLimit`), so `memory`
+shows "?" for GPUs unless `--memory SIZE` is given; there is no loader for pre-packed language-model weights, so
+`quantize --out` writes the packed module (`Module.Save`) with the config and tokenizer, and chat/run/serve pack at
+load time with `-w`; the library has no GGUF writer and loads no language model from an `.ikm` package, so `convert`
+writes Hugging Face folders only (from GGUF or another folder, in bf16, f16 or f32).
+
+Improvement for the shared model loading (Shared/Models.cs, agent 2): `Models.Resolve` should download into
+`--cache` (a downloader on `CommandContext.CacheFolder`, as `ModelCache.Downloader` makes) and prepare GGUF files there,
+and call `ModelCache.Touch` so `idrak list` shows the last use by chat, run and serve.
+
 ### Train and fine-tune
 
 | Command | What it does | Priority |
