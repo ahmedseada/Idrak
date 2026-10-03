@@ -65,14 +65,14 @@ internal sealed class ToolsTestCommand : Command
         Options:
               --tool NAME        test only this tool (repeatable)
               --args JSON        the arguments to use instead of the samples (with one --tool)
-              --timeout S        seconds each call may take (default 30)
+              --timeout DURATION each call's limit (the common option; default 30 s)
 
         Examples:
           idrak tools test ./MyTools.dll
           idrak tools test ./MyTools.dll --tool get_weather --args '{"city": "Cairo"}'
         """ + "\n\nEnvironment:\n  IDRAK_CONFIG, IDRAK_TRACE   the config file, error stacks\n";
 
-    public override IReadOnlyCollection<string> ValueOptions => ["--tool", "--args", "--timeout"];
+    public override IReadOnlyCollection<string> ValueOptions => ["--tool", "--args"];
 
     public override int Run(CommandContext context)
     {
@@ -97,7 +97,7 @@ internal sealed class ToolsTestCommand : Command
         }
 
         var chosen = tools.Where(t => only.Count == 0 || only.Contains(t.Definition.Name)).ToList();
-        var registry = ToolRegistry.Create().Add(chosen).Timeout(TimeSpan.FromSeconds(context.IntOption("--timeout", 30))).Build();
+        var registry = ToolRegistry.Create().Add(chosen).Timeout(context.Timeout ?? TimeSpan.FromSeconds(30)).Build();
         var results = new JsonArray();
         int failed = 0;
         foreach (var tool in chosen)

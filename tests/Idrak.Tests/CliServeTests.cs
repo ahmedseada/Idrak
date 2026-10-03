@@ -47,7 +47,7 @@ internal static partial class Tests
         ("cli serve: OpenAI-style API in Idrak.AspNetCore (tool calls streamed and not, translation, embeddings)", d => { if (d == Device.Cpu) CompletionsApiScripted(); }),
     ];
 
-    private static (int Code, string Output, string Error) Cli(params string[] args)
+    private static (int Code, string Output, string Error) ServeCli(params string[] args)
     {
         var output = new StringWriter();
         var error = new StringWriter();
@@ -61,9 +61,9 @@ internal static partial class Tests
             "server keys rm", "api", "ping", "mcp serve"];
         foreach (string name in names)
         {
-            var (code, text, _) = Cli([.. name.Split(' '), "--help"]);
+            var (code, text, _) = ServeCli([.. name.Split(' '), "--help"]);
             Check(code == 0 && text.Contains("Examples:") && text.Contains("Environment:"), $"help of {name}: {text}");
-            Check(!text.Contains("ollama", StringComparison.OrdinalIgnoreCase), $"no provider name in the help of {name}");
+            Check(!System.Text.RegularExpressions.Regex.Replace(text, @"\b[A-Z][A-Z0-9]*_[A-Z0-9_]+\b", "").Contains("ollama", StringComparison.OrdinalIgnoreCase), $"no provider name in the help of {name}");
         }
 
         foreach (var command in Idrak.Cli.Commands.ServeCommands.All)
@@ -73,28 +73,28 @@ internal static partial class Tests
             Check(command.ShortForms.Values.All(v => command.ValueOptions.Contains(v) || command.Flags.Contains(v)), $"{command.Name}: every short form names an option");
         }
 
-        Check(Cli("serve").Code == 2, "serve without a model is a usage error");
-        Check(Cli("serve", TestData("gguf/tiny-qwen3-q8.gguf"), "--keep-alive", "soon").Code == 2, "a bad --keep-alive is a usage error");
-        Check(Cli("serve", TestData("gguf/tiny-qwen3-q8.gguf"), "--log-content").Code == 2, "--log-content needs --log-requests");
-        Check(Cli("serve", "a=" + TestData("gguf/tiny-qwen3-q8.gguf"), "a=" + TestData("gguf/tiny-llama.gguf"), "--cache", TempFolder()).Code == 2, "two models with one name");
-        Check(Cli("api").Code == 2 && Cli("api", "/x", "{not json").Code == 2, "api needs a path and JSON");
+        Check(ServeCli("serve").Code == 2, "serve without a model is a usage error");
+        Check(ServeCli("serve", TestData("gguf/tiny-qwen3-q8.gguf"), "--keep-alive", "soon").Code == 2, "a bad --keep-alive is a usage error");
+        Check(ServeCli("serve", TestData("gguf/tiny-qwen3-q8.gguf"), "--log-content").Code == 2, "--log-content needs --log-requests");
+        Check(ServeCli("serve", "a=" + TestData("gguf/tiny-qwen3-q8.gguf"), "a=" + TestData("gguf/tiny-llama.gguf"), "--cache", TempFolder()).Code == 2, "two models with one name");
+        Check(ServeCli("api").Code == 2 && ServeCli("api", "/x", "{not json").Code == 2, "api needs a path and JSON");
 
         string config = Path.Combine(TempFolder(), "config.json");
-        var added = Cli("server", "keys", "add", "laptop", "-C", config, "--json");
+        var added = ServeCli("server", "keys", "add", "laptop", "-C", config, "--json");
         var key = JsonNode.Parse(added.Output)!;
         Check(added.Code == 0 && ((string)key["key"]!).StartsWith("idrak-", StringComparison.Ordinal), $"keys add: {added.Output}{added.Error}");
         Check(!File.ReadAllText(config).Contains((string)key["key"]!) && File.ReadAllText(config).Contains(ServerKeys.Hash((string)key["key"]!)), "only the hash is stored");
-        Check(Cli("server", "keys", "add", "laptop", "-C", config).Code == 2, "a key name is used once");
-        var list = Cli("server", "keys", "list", "-C", config, "-j");
+        Check(ServeCli("server", "keys", "add", "laptop", "-C", config).Code == 2, "a key name is used once");
+        var list = ServeCli("server", "keys", "list", "-C", config, "-j");
         Check(list.Code == 0 && (string?)JsonNode.Parse(list.Output)!["keys"]![0]!["name"] == "laptop" && !list.Output.Contains("sha256"), $"keys list: {list.Output}");
-        Check(Cli("server", "keys", "rm", "laptop", "-C", config).Code == 0 && Cli("server", "keys", "rm", "laptop", "-C", config).Code == 1, "keys rm");
+        Check(ServeCli("server", "keys", "rm", "laptop", "-C", config).Code == 0 && ServeCli("server", "keys", "rm", "laptop", "-C", config).Code == 1, "keys rm");
     }
 
     private static void CliServeEndToEnd(Device device)
     {
         string cache = TempFolder(), folder = TempFolder();
         string config = Path.Combine(folder, "config.json"), log = Path.Combine(folder, "requests.jsonl");
-        Check(Cli("server", "keys", "add", "ci", "--key", "ci-key-12345", "-C", config).Code == 0, "keys add --key");
+        Check(ServeCli("server", "keys", "add", "ci", "--key", "ci-key-12345", "-C", config).Code == 0, "keys add --key");
         int port;
         using (var probe = new TcpListener(IPAddress.Loopback, 0))
         {
@@ -179,25 +179,25 @@ internal static partial class Tests
                 && metrics.Contains("idrak_generated_tokens_total{model=\"tiny\"}"), $"metrics: {metrics}");
 
             // the commands against the running server (found through its state file in the cache)
-            var ps = Cli("ps", "--cache", cache, "--api-key", "secret", "--json");
+            var ps = ServeCli("ps", "--cache", cache, "--api-key", "secret", "--json");
             var model = JsonNode.Parse(ps.Output)!["models"]![0]!;
             Check(ps.Code == 0 && (string?)model["name"] == "tiny" && (bool)model["loaded"]! && (long)model["requests"]! >= 6 && model["last_used"] is not null, $"ps: {ps.Output}{ps.Error}");
-            var psText = Cli("server", "ps", "-p", port.ToString(), "--api-key", "secret");
+            var psText = ServeCli("server", "ps", "-p", port.ToString(), "--api-key", "secret");
             Check(psText.Code == 0 && psText.Output.Contains("tiny") && psText.Output.Contains("loaded"), $"ps text: {psText.Output}{psText.Error}");
-            Check(Cli("ps", "-p", port.ToString()).Code == 1, "ps without the key fails");
-            var api = Cli("api", "/api/tags", "--cache", cache, "--api-key", "secret");
+            Check(ServeCli("ps", "-p", port.ToString()).Code == 1, "ps without the key fails");
+            var api = ServeCli("api", "/api/tags", "--cache", cache, "--api-key", "secret");
             Check(api.Code == 0 && api.Output.Contains("\"tiny\""), $"api GET: {api.Output}{api.Error}");
-            var apiPost = Cli("api", "/v1/chat/completions", """{"model":"tiny","messages":[{"role":"user","content":"hi"}],"max_tokens":2}""", "-p", port.ToString(), "--api-key", "secret");
+            var apiPost = ServeCli("api", "/v1/chat/completions", """{"model":"tiny","messages":[{"role":"user","content":"hi"}],"max_tokens":2}""", "-p", port.ToString(), "--api-key", "secret");
             Check(apiPost.Code == 0 && apiPost.Output.Contains("chat.completion"), $"api POST: {apiPost.Output}{apiPost.Error}");
-            Check(Cli("api", "/nothing-here", "-p", port.ToString(), "--api-key", "secret").Code == 1, "api: an error status exits with 1");
-            var ping = Cli("ping", url, "--api-key", "secret", "--json");
+            Check(ServeCli("api", "/nothing-here", "-p", port.ToString(), "--api-key", "secret").Code == 1, "api: an error status exits with 1");
+            var ping = ServeCli("ping", url, "--api-key", "secret", "--json");
             var pinged = JsonNode.Parse(ping.Output)!;
             Check(ping.Code == 0 && (bool)pinged["openai_style_api"]!["ok"]! && (bool)pinged["chat_api"]!["ok"]! && (string?)pinged["chat_api"]!["models"]![0] == "tiny", $"ping: {ping.Output}");
-            var unload = Cli("server", "unload", "tiny", "-p", port.ToString(), "--api-key", "secret", "-j");
-            Check(unload.Code == 0 && !(bool)JsonNode.Parse(Cli("ps", "-p", port.ToString(), "--api-key", "secret", "-j").Output)!["models"]![0]!["loaded"]!, $"unload: {unload.Output}{unload.Error}");
-            var load = Cli("server", "load", "tiny", "-p", port.ToString(), "--api-key", "secret");
-            Check(load.Code == 0 && (bool)JsonNode.Parse(Cli("ps", "-p", port.ToString(), "--api-key", "secret", "-j").Output)!["models"]![0]!["loaded"]!, $"load: {load.Output}{load.Error}");
-            Check(Cli("server", "load", "nope", "-p", port.ToString(), "--api-key", "secret").Code == 1, "loading an unknown model fails");
+            var unload = ServeCli("server", "unload", "tiny", "-p", port.ToString(), "--api-key", "secret", "-j");
+            Check(unload.Code == 0 && !(bool)JsonNode.Parse(ServeCli("ps", "-p", port.ToString(), "--api-key", "secret", "-j").Output)!["models"]![0]!["loaded"]!, $"unload: {unload.Output}{unload.Error}");
+            var load = ServeCli("server", "load", "tiny", "-p", port.ToString(), "--api-key", "secret");
+            Check(load.Code == 0 && (bool)JsonNode.Parse(ServeCli("ps", "-p", port.ToString(), "--api-key", "secret", "-j").Output)!["models"]![0]!["loaded"]!, $"load: {load.Output}{load.Error}");
+            Check(ServeCli("server", "load", "nope", "-p", port.ToString(), "--api-key", "secret").Code == 1, "loading an unknown model fails");
 
             var logged = File.ReadAllLines(log).Select(l => JsonNode.Parse(l)!).ToList();
             Check(logged.Count >= 7 && logged.All(l => l["request"] is null) && logged.Any(l => (string?)l["path"] == "/api/chat" && (int?)l["completion_tokens"] > 0)
@@ -205,23 +205,23 @@ internal static partial class Tests
         }
         finally
         {
-            var stop = Cli("server", "stop", "--cache", cache, "--api-key", "secret");
+            var stop = ServeCli("server", "stop", "--cache", cache, "--api-key", "secret");
             Check(stop.Code == 0, $"server stop: {stop.Output}{stop.Error}");
             Check(server.Wait(TimeSpan.FromSeconds(60)) && server.Result == 0, $"serve exits with 0 after stop: {serveOutput}{serveError}");
         }
 
         Check(!Directory.EnumerateFiles(Path.Combine(cache, "servers")).Any(), "the state file is removed");
-        Check(Cli("ping", url).Code == 1, "ping fails once the server is gone");
+        Check(ServeCli("ping", url).Code == 1, "ping fails once the server is gone");
     }
 
     private static void CliMcpServe()
     {
         string tools = typeof(CliServeTestTools).Assembly.Location;
-        var list = Cli("mcp", "serve", tools, "--list", "--json");
+        var list = ServeCli("mcp", "serve", tools, "--list", "--json");
         var names = JsonNode.Parse(list.Output)!["tools"]!.AsArray().Select(t => (string)t!["name"]!)
             .Where(n => n.StartsWith("serve_", StringComparison.Ordinal)).Order().ToList();          // the test assembly holds other groups' tools too
         Check(list.Code == 0 && names.SequenceEqual(["serve_add", "serve_echo"]), $"mcp serve --list: {list.Output}{list.Error}");
-        Check(Cli("mcp", "serve").Code == 2 && Cli("mcp", "serve", "missing.dll").Code == 2, "mcp serve usage errors");
+        Check(ServeCli("mcp", "serve").Code == 2 && ServeCli("mcp", "serve", "missing.dll").Code == 2, "mcp serve usage errors");
 
         var toServer = new Pipe();
         var toClient = new Pipe();

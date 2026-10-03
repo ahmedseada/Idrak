@@ -49,7 +49,7 @@ internal sealed class TuneCommand : Command
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } =
-        [.. TuneTool.ValueOptions.Where(o => o != "--device"), "--weights", "--base"];
+        [.. TuneTool.ValueOptions.Where(o => o is not ("--device" or "--seed")), "--weights", "--base"];      // --device and --seed are common options
 
     public override IReadOnlyCollection<string> Flags => TuneTool.Flags;
 
@@ -112,7 +112,7 @@ internal sealed class TuneCommand : Command
             args.AddRange(["--device", device]);
         }
 
-        foreach (string option in ValueOptions.Where(o => o is not ("--weights" or "--base")))
+        foreach (string option in ValueOptions.Where(o => o is not ("--weights" or "--base")).Append("--seed"))
         {
             var values = option == "--kv" && choice.Kv is { } kv ? [kv] : context.Options(option);
             if (values.Count == 0 && Text(settings, option[2..]) is { } fromFile)
@@ -182,7 +182,7 @@ internal sealed class TuneCommand : Command
 
         var json = JsonNode.Parse(File.ReadAllText(path), documentOptions: CliConfig.ReadOptions) as JsonObject
             ?? throw new UsageException($"{path} is not a JSON object.");
-        var known = ValueOptions.Concat(Flags).Select(o => o[2..]).ToHashSet(StringComparer.Ordinal);
+        var known = ValueOptions.Append("--seed").Concat(Flags).Select(o => o[2..]).ToHashSet(StringComparer.Ordinal);
         foreach (var (key, _) in json)
         {
             if (!known.Contains(key) && !OwnKeys.Contains(key))

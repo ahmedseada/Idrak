@@ -15,7 +15,7 @@ namespace Idrak.Cli.Shared;
 internal sealed class GenerationSettings
 {
     /// <summary>The value options.</summary>
-    public static readonly string[] ValueOptions = ["--temperature", "--top-k", "--top-p", "--max-tokens", "--seed", "--system", "--tools"];
+    public static readonly string[] ValueOptions = ["--temperature", "--top-k", "--top-p", "--max-tokens", "--system", "--tools"];
 
     /// <summary>The flags.</summary>
     public static readonly string[] Flags = ["--think", "--no-think"];

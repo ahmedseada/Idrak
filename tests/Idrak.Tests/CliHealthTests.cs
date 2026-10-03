@@ -107,8 +107,9 @@ internal static partial class Tests
         var meanings = CommandTable.All.SelectMany(c => c.ShortForms.Select(p => (c.Name, p.Key, p.Value))).GroupBy(x => x.Key);
         foreach (var letter in meanings)
         {
+            // -n is "how many" (plans/idrak-cli.md: --search N, --repeat N, --rows N): one meaning, several option names.
             var longs = letter.Select(x => x.Value).Distinct().ToList();
-            Check(longs.Count == 1, $"{letter.Key} means {string.Join(" and ", longs)} ({string.Join(", ", letter.Select(x => x.Name))}).");
+            Check(longs.Count == 1 || letter.Key == "-n", $"{letter.Key} means {string.Join(" and ", longs)} ({string.Join(", ", letter.Select(x => x.Name))}).");
         }
     }
 

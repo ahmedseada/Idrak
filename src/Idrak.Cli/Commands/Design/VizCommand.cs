@@ -16,23 +16,23 @@ internal sealed class VizCommand : Command
     public override string Summary => "Draw a network.json as text, Mermaid or SVG";
 
     public override string Usage =>
-        "NETWORK.json [--format text|mermaid|svg]\n\n" +
+        "NETWORK.json [--as text|mermaid|svg]\n\n" +
         "Prints the layers top to bottom with their output shapes and parameters: as a text diagram (default), a Mermaid\n" +
         "flowchart (paste into Markdown) or an SVG picture (redirect to a file).\n\n" +
         "Options:\n" +
-        "      --format NAME   text (default), mermaid or svg\n\n" +
+        "      --as NAME       text (default), mermaid or svg\n\n" +
         "Examples:\n" +
         "  idrak viz ./run/network.json\n" +
-        "  idrak viz network.json --format svg > network.svg\n\n" +
+        "  idrak viz network.json --as svg > network.svg\n\n" +
         "Environment: IDRAK_CONFIG, IDRAK_TRACE.";
 
-    public override IReadOnlyCollection<string> ValueOptions => ["--format"];
+    public override IReadOnlyCollection<string> ValueOptions => ["--as"];
 
     public override int Run(CommandContext context)
     {
         var (path, description) = ExplainCommand.Read(context.Argument(0, "NETWORK.json"));
         var analysis = NetworkAnalysis.Of(description);
-        string format = context.Option("--format")?.ToLowerInvariant() ?? "text";
+        string format = context.Option("--as")?.ToLowerInvariant() ?? "text";
         var nodes = new List<(string Title, string Detail)> { ($"input ({analysis.Kind})", NetworkAnalysis.Shape(analysis.Input)) };
         nodes.AddRange(analysis.Layers.Select(l => (l.Description, NetworkAnalysis.Shape(l.Output) + (l.Parameters > 0 ? $", {DeviceMemory.Count(l.Parameters)} parameters" : ""))));
         string diagram = format switch
@@ -40,7 +40,7 @@ internal sealed class VizCommand : Command
             "text" => Text(nodes, analysis),
             "mermaid" => Mermaid(nodes),
             "svg" => Svg(nodes, (string?)description["name"] ?? Path.GetFileNameWithoutExtension(path)),
-            _ => throw new UsageException($"--format {format}: use text, mermaid or svg."),
+            _ => throw new UsageException($"--as {format}: use text, mermaid or svg."),
         };
         if (!context.Quiet && !context.Json)
         {

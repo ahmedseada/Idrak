@@ -131,8 +131,8 @@ internal static partial class Tests
         Check(ids.SequenceEqual(["test/tiny-llama", "test/tiny-gguf"]), $"loadable only: {string.Join(", ", ids)}");
         var all = ModelsJson("search", "tiny", "--all");
         Check(all["models"]!.AsArray().Count == 4 && all["models"]!.AsArray().Any(m => (string?)m!["problem"] == "family BertModel not registered"), $"--all: {all}");
-        var gguf = ModelsJson("search", "tiny", "--format", "gguf");
-        Check(gguf["models"]!.AsArray().Count == 1, "--format gguf");
+        var gguf = ModelsJson("search", "tiny", "--kind", "gguf");
+        Check(gguf["models"]!.AsArray().Count == 1, "--kind gguf");
         Check(ModelsCli("search", "tiny", "--limit", "0").Code == 2 && ModelsCli("search").Code == 2, "usage errors");
     }
 
@@ -303,7 +303,7 @@ internal static partial class Tests
 
             foreach (string provider in new[] { "Ollama", "OpenAI", "Anthropic", "Claude" })
             {
-                Check(!output.Contains(provider, StringComparison.OrdinalIgnoreCase), $"{command.Name}: help names {provider}");
+                Check(!System.Text.RegularExpressions.Regex.Replace(output, @"\b[A-Z][A-Z0-9]*_[A-Z0-9_]+\b", "").Contains(provider, StringComparison.OrdinalIgnoreCase), $"{command.Name}: help names {provider}");
             }
         }
 

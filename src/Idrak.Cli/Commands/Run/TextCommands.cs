@@ -225,7 +225,7 @@ internal sealed class CompleteCommand : Command
         """ + "\n\n" + GenerationSettings.EnvironmentHelp;
 
     public override IReadOnlyCollection<string> ValueOptions =>
-        [.. Models.ValueOptions, "--temperature", "--top-k", "--top-p", "--max-tokens", "--seed", "--input", "--stop"];
+        [.. Models.ValueOptions, "--temperature", "--top-k", "--top-p", "--max-tokens", "--input", "--stop"];
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } =
         new Dictionary<string, string>(Models.ShortForms.Append(KeyValuePair.Create("-i", "--input")));
