@@ -173,7 +173,7 @@ Clients: give them `http://127.0.0.1:7317` as the chat API's address and `http:/
 OpenAI-style API's base URL (any API key unless the server needs one). Clients that expect the chat API on port 11434
 and cannot be told another work unchanged with `idrak serve MODEL -p 11434` (or `idrak config set serve.port 11434`),
 as long as no other server uses that port. Checked with an API client's AI request (OpenAI-compatible, base URL
-`http://127.0.0.1:7317/v1`, model `Qwen/Qwen3-0.6B`): English and Arabic answers in 2.5 to 3 s on an RTX 5070 Ti. A
+`http://127.0.0.1:7317/v1`, model `Qwen/Qwen3-0.6B`): English and Arabic answers in 2.5 to 3 s each. A
 client that appends its own route to the address it was given (`.../api/chat/chat/completions`) is answered too, and
 any 404 prints the right addresses in the server's window.
 
