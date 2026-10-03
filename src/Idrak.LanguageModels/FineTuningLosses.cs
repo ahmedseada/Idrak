@@ -343,7 +343,7 @@ public static class FineTuningSchedules
         return (optimizer, steps) =>
         {
             int warmup = Warmup(warmupFraction, steps);
-            int decay = Math.Min(steps - warmup, (int)Math.Round(decayFraction * steps));
+            int decay = Math.Max(0, Math.Min(steps - warmup, (int)Math.Round(decayFraction * steps)));
             int stable = steps - decay;
             return new LambdaSchedule(optimizer, (step, rate) => step < warmup ? rate * (step + 1) / (warmup + 1)
                 : step < stable ? rate
