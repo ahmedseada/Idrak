@@ -36,6 +36,24 @@ internal sealed unsafe partial class VulkanBackend
     // IDRAK_VULKAN_BARRIERS=all: a barrier before every command, not only where a storage is shared (diagnostics: when
     // results change with it, a dependency was missed).
     private static readonly bool s_barrierEveryCommand = Environment.GetEnvironmentVariable("IDRAK_VULKAN_BARRIERS") == "all";
+
+    // IDRAK_VULKAN_BARRIER_KERNELS=a,b: a barrier before every command of these kernels ("copy" and "fill" for copies
+    // and fills); IDRAK_VULKAN_KERNEL_LOG=FILE: the names of the commands recorded, once each (diagnostics: which
+    // command needs a dependency the bookkeeping missed).
+    private static readonly HashSet<string>? s_barrierKernels = Environment.GetEnvironmentVariable("IDRAK_VULKAN_BARRIER_KERNELS") is { Length: > 0 } names
+        ? new HashSet<string>(names.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries), StringComparer.Ordinal) : null;
+
+    private static readonly string? s_kernelLog = Environment.GetEnvironmentVariable("IDRAK_VULKAN_KERNEL_LOG") is { Length: > 0 } log ? log : null;
+
+    private static readonly HashSet<string> s_logged = new(StringComparer.Ordinal);
+
+    private static void LogCommand(string name)
+    {
+        if (s_kernelLog is not null && s_logged.Add(name))
+        {
+            File.AppendAllText(s_kernelLog, name + Environment.NewLine);
+        }
+    }
     private int _maxInFlight = 1;
 
     // A descriptor pool holds as many sets as a batch has commands, each as wide as a kernel may bind (the device's
@@ -165,7 +183,7 @@ internal sealed unsafe partial class VulkanBackend
                     };
                 }
 
-                var commands = Record(blocks, kernel.Writes);
+                var commands = Record(blocks, kernel.Writes, kernel.Name);
                 if (_boundPipeline != pipeline.Handle)
                 {
                     vkCmdBindPipeline(commands, PipelineBindPointCompute, pipeline.Handle);
@@ -308,7 +326,7 @@ internal sealed unsafe partial class VulkanBackend
     // The current batch's command buffer, begun if needed, for a command that uses `blocks` (bit i of `writes` set when
     // it writes blocks[i]): a barrier first when it depends on a command of the current span (the barrier then waits
     // for every earlier command, in this batch or an earlier one, and makes its writes visible); the blocks are marked.
-    private IntPtr Record(ReadOnlySpan<VulkanBlock> blocks, ulong writes)
+    private IntPtr Record(ReadOnlySpan<VulkanBlock> blocks, ulong writes, string name = "")
     {
         var batch = _batch;
         if (!batch.Recording)
@@ -328,6 +346,12 @@ internal sealed unsafe partial class VulkanBackend
         }
 
         hazard |= s_barrierEveryCommand && blocks.Length > 0;
+        hazard |= s_barrierKernels is not null && blocks.Length > 0 && s_barrierKernels.Contains(name);
+        if (name.Length > 0)
+        {
+            LogCommand(name);
+        }
+
         if (hazard)
         {
             var barrier = new VkMemoryBarrier
@@ -378,7 +402,7 @@ internal sealed unsafe partial class VulkanBackend
     {
         _commandBlocks[0] = source;
         _commandBlocks[1] = destination;
-        var commands = Record(_commandBlocks.AsSpan(0, 2), writes: 0b10);
+        var commands = Record(_commandBlocks.AsSpan(0, 2), writes: 0b10, "copy");
         _commandBlocks.AsSpan(0, 2).Clear();
         var region = new VkBufferCopy { SourceOffset = (ulong)sourceOffset, DestinationOffset = (ulong)destinationOffset, Size = (ulong)bytes };
         vkCmdCopyBuffer(commands, source.Buffer, destination.Buffer, 1, &region);
@@ -388,7 +412,7 @@ internal sealed unsafe partial class VulkanBackend
     // Zeros a block in queue order.
     private void RecordFill(VulkanBlock block)
     {
-        var commands = Record(new ReadOnlySpan<VulkanBlock>(in block), writes: 1);
+        var commands = Record(new ReadOnlySpan<VulkanBlock>(in block), writes: 1, "fill");
         vkCmdFillBuffer(commands, block.Buffer, 0, WholeSize, 0);
         Recorded();
     }
