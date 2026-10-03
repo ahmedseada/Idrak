@@ -57,8 +57,9 @@ public sealed record PretrainedBuildContext(JsonObject Config, DecoderSpec Spec,
 
 /// <summary>
 /// The model families <see cref="PretrainedModel.Load"/> knows, by the architecture name in <c>config.json</c>
-/// ("architectures": [...]). Llama, Mistral, Qwen2, Qwen3, Gemma, Gemma 2 and Gemma 3 (text) are registered; add others
-/// with <see cref="Register"/>, usually with <see cref="LlamaStyle"/> when they share the Llama naming.
+/// ("architectures": [...]). Llama, Mistral, Qwen2, Qwen3, Gemma, Gemma 2 and Gemma 3 (text), and the mixture-of-experts
+/// families Mixtral, Qwen2-MoE and Qwen3-MoE are registered; add others with <see cref="Register"/>, usually with
+/// <see cref="LlamaStyle"/> when they share the Llama naming.
 /// </summary>
 public static class PretrainedArchitectures
 {
@@ -76,6 +77,9 @@ public static class PretrainedArchitectures
         }),
         ["Gemma2ForCausalLM"] = new() { Spec = (config, notes) => GemmaSpec(config, CommonSpec(config, notes), version: 2), TensorName = GemmaTensorName },
         ["Gemma3ForCausalLM"] = new() { Spec = (config, notes) => GemmaSpec(config, CommonSpec(config, notes), version: 3), TensorName = GemmaTensorName },
+        ["MixtralForCausalLM"] = new() { Spec = (config, notes) => ExpertSpec(config, notes, normalizeTopK: true), TensorName = MixtralTensorName },
+        ["Qwen2MoeForCausalLM"] = new() { Spec = (config, notes) => ExpertSpec(config, notes, normalizeTopK: false) with { QkvBias = true }, TensorName = QwenMoeTensorName },
+        ["Qwen3MoeForCausalLM"] = new() { Spec = (config, notes) => ExpertSpec(config, notes, normalizeTopK: false) with { QkNorm = true }, TensorName = QwenMoeTensorName },
     };
 
     /// <summary>Registers (or replaces) how to read the architecture <paramref name="name"/>.</summary>
@@ -131,14 +135,61 @@ public static class PretrainedArchitectures
         TensorName = LlamaTensorName,
     };
 
-    /// <summary>The spec from the configuration keys most families share (hidden_size, num_attention_heads, rope_theta, …).</summary>
+    /// <summary>
+    /// The spec from the configuration keys most families share (hidden_size, num_attention_heads, rope_theta, …). A
+    /// configuration with experts is refused: families with experts read it with <see cref="ExpertSpec"/>.
+    /// </summary>
     public static DecoderSpec CommonSpec(JsonObject c, List<string> notes)
     {
-        int Int(string key) => (int?)c[key] ?? throw new InvalidDataException($"config.json has no '{key}'.");
-        if (c["num_local_experts"] is not null || c["num_experts"] is not null)
+        if (c["num_local_experts"] is not null || (int?)c["num_experts"] is > 0)
         {
-            throw new NotSupportedException("Mixture-of-experts models are not supported.");
+            throw new NotSupportedException("This configuration has experts, which this family does not read; mixture-of-experts families "
+                + "(MixtralForCausalLM, Qwen2MoeForCausalLM, Qwen3MoeForCausalLM, or one registered with PretrainedArchitectures.ExpertSpec) do.");
         }
+
+        return Common(c, notes);
+    }
+
+    /// <summary>
+    /// The spec of a mixture-of-experts model: the common keys (<see cref="CommonSpec"/>) and the experts' keys:
+    /// num_local_experts (Mixtral) or num_experts (Qwen), num_experts_per_tok, moe_intermediate_size (each expert's
+    /// hidden size; intermediate_size when absent), shared_expert_intermediate_size (a gated shared expert), norm_topk_prob
+    /// (<paramref name="normalizeTopK"/> when absent), and which layers have experts (decoder_sparse_step, mlp_only_layers).
+    /// </summary>
+    public static DecoderSpec ExpertSpec(JsonObject c, List<string> notes, bool normalizeTopK)
+    {
+        var spec = Common(c, notes);
+        int experts = (int?)c["num_local_experts"] ?? (int?)c["num_experts"] ?? throw new InvalidDataException("config.json has no 'num_local_experts' or 'num_experts'.");
+        int perToken = (int?)c["num_experts_per_tok"] ?? throw new InvalidDataException("config.json has no 'num_experts_per_tok'.");
+        if (experts < 1 || perToken < 1 || perToken > experts)
+        {
+            throw new InvalidDataException($"config.json routes each token to {perToken} of {experts} experts.");
+        }
+
+        // Qwen: layer i has experts unless listed in mlp_only_layers, and when (i + 1) is a multiple of decoder_sparse_step.
+        int step = Math.Max(1, (int?)c["decoder_sparse_step"] ?? 1);
+        var dense = c["mlp_only_layers"] is JsonArray only ? only.Select(l => (int)l!).ToHashSet() : [];
+        bool[] layers = [.. Enumerable.Range(0, spec.Layers).Select(i => !dense.Contains(i) && (i + 1) % step == 0)];
+        if ((double?)c["router_jitter_noise"] is > 0)
+        {
+            notes.Add("router_jitter_noise (noise on the router's scores while training) is not applied.");
+        }
+
+        return spec with
+        {
+            Experts = experts,
+            ExpertsPerToken = perToken,
+            ExpertFfDim = (int?)c["moe_intermediate_size"] ?? 0,
+            SharedExpertFfDim = (int?)c["shared_expert_intermediate_size"] ?? 0,
+            NormalizeTopK = (bool?)c["norm_topk_prob"] ?? normalizeTopK,
+            ExpertLayers = layers.All(l => l) ? null : layers,
+        };
+    }
+
+    // The common keys, experts or not.
+    private static DecoderSpec Common(JsonObject c, List<string> notes)
+    {
+        int Int(string key) => (int?)c[key] ?? throw new InvalidDataException($"config.json has no '{key}'.");
 
         int dim = Int("hidden_size"), heads = Int("num_attention_heads");
         int headDim = (int?)c["head_dim"] ?? dim / heads;
@@ -274,6 +325,58 @@ public static class PretrainedArchitectures
             if (norm is not null)
             {
                 return $"model.layers.{parts[1]}.{norm}.weight";
+            }
+        }
+
+        return LlamaTensorName(name);
+    }
+
+    /// <summary>
+    /// Idrak weight names → Mixtral checkpoint names: the Llama names, with each layer's experts under block_sparse_moe
+    /// (the router "gate", and experts.j.w1 / w3 / w2 for each expert's gate, up and down projections).
+    /// </summary>
+    public static string? MixtralTensorName(string name)
+    {
+        var parts = name.Split('.');
+        if (parts.Length >= 5 && parts[0] == "layers" && parts[2] == "mlp")
+        {
+            string layer = $"model.layers.{parts[1]}.block_sparse_moe";
+            if (parts is [_, _, _, "router", var kind])
+            {
+                return $"{layer}.gate.{kind}";
+            }
+
+            if (parts is [_, _, _, "experts", var expert, var projection, var kind2])
+            {
+                string? stored = projection switch { "gate" => "w1", "up" => "w3", "down" => "w2", _ => null };
+                return stored is null ? null : $"{layer}.experts.{expert}.{stored}.{kind2}";
+            }
+        }
+
+        return LlamaTensorName(name);
+    }
+
+    /// <summary>
+    /// Idrak weight names → Qwen2-MoE / Qwen3-MoE checkpoint names: the Llama names, with the router as mlp.gate, the
+    /// experts as mlp.experts.j.gate_proj / up_proj / down_proj, the shared expert as mlp.shared_expert.*_proj and its
+    /// gate as mlp.shared_expert_gate.
+    /// </summary>
+    public static string? QwenMoeTensorName(string name)
+    {
+        var parts = name.Split('.');
+        if (parts.Length >= 5 && parts[0] == "layers" && parts[2] == "mlp")
+        {
+            string layer = $"model.layers.{parts[1]}.mlp";
+            switch (parts)
+            {
+                case [_, _, _, "router", var kind]:
+                    return $"{layer}.gate.{kind}";
+                case [_, _, _, "shared_gate", var kind]:
+                    return $"{layer}.shared_expert_gate.{kind}";
+                case [_, _, _, "shared", var projection, var kind]:
+                    return $"{layer}.shared_expert.{projection}_proj.{kind}";
+                case [_, _, _, "experts", var expert, var projection, var kind]:
+                    return $"{layer}.experts.{expert}.{projection}_proj.{kind}";
             }
         }
 

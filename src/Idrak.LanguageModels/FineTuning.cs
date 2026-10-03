@@ -653,6 +653,14 @@ public sealed record FineTuningOptions
     public int Seed { get; init; }
 
     /// <summary>
+    /// For models with experts: the weight of their load-balancing loss (<see cref="MixtureOfExperts.LoadBalancingLoss"/>,
+    /// averaged over the layers) added to the training loss, which pushes the router towards using the experts evenly
+    /// (transformers' router_aux_loss_coef; 0.001 to 0.02 is usual). 0 (the default): none. Blocks recomputed by
+    /// <see cref="Checkpointing"/> contribute none; the reported loss includes it.
+    /// </summary>
+    public float LoadBalancingWeight { get; init; }
+
+    /// <summary>
     /// Creates the optimizer from the trainable parameters (the adapters), e.g. <c>ps =&gt; new Sgd(ps, 0.05f, momentum: 0.9f)</c>
     /// or <see cref="FineTuningOptimizers.Create"/>. Null (the default): AdamW with <see cref="LearningRate"/> and
     /// <see cref="WeightDecay"/>. The rate the optimizer starts with is the peak the schedule works from. With
@@ -926,12 +934,13 @@ public static class FineTuner
         int lossRows, CustomLoss? custom, Action<string>? trace) : IDisposable
     {
         // Not with offloading (tensors move between steps, a graph holds their addresses) or the CPU update. The recorded
-        // pass is the token cross-entropy's; a loss of one's own runs ordinary steps.
+        // pass is the token cross-entropy's; a loss of one's own runs ordinary steps. Experts' routing is read back to the
+        // host on every pass, which a recording cannot.
         private readonly bool _graphsAllowed = options.CudaGraphs && options.GradientAccumulation <= 1
             && !ComputeResources.OffloadToHostMemory && !options.HostOptimizer
             && model.Device.Backend.SupportsGraphs
             && custom is null && Recordable(optimizer)
-            && !model.Network.Descendants().Any(m => m is Dropout { Probability: > 0f });   // a recorded pass would reuse its masks
+            && !model.Network.Descendants().Any(m => m is Dropout { Probability: > 0f } or MixtureOfExperts);   // a recorded pass would reuse dropout masks
 
         // An optimizer of one's own (FineTuningOptions.Optimizer): the recorded backward pass writes into the gradient
         // buffers the parameters had when it was recorded, so they must stay the parameters' between steps. Checked before
@@ -1201,6 +1210,11 @@ public static class FineTuner
             using var recompute = options.RecomputeFeedForward == true ? ActivationMemory.Recompute() : (ActivationMemory.Scope?)null;
             using var compress = options.BFloat16Activations == true ? ActivationMemory.CompressToBFloat16() : (ActivationMemory.Scope?)null;
             var (lossTensor, count) = BatchLoss(model, train, batch, normalizer, options.LossChunkRows, options.Checkpointing == true, custom, sequences);
+            if (options.LoadBalancingWeight > 0f && LoadBalancing(network) is { } balance)
+            {
+                lossTensor += (balance * (options.LoadBalancingWeight / group.Count)).Reshape(lossTensor.Shape);
+            }
+
             lossTensor.Backward();                                           // queued behind the forward pass, no wait between
             float batchLoss = lossTensor.Item();                             // waits for the batch's forward and backward
             loss += batchLoss;
@@ -1211,6 +1225,25 @@ public static class FineTuner
 
         Update(model, optimizer, options);
         return (loss, tokens);
+    }
+
+    // The mean of the experts' load-balancing losses of the pass just run (null without experts, or when checkpointed
+    // blocks recorded none).
+    private static Tensor? LoadBalancing(Module network)
+    {
+        var losses = network.Descendants().OfType<MixtureOfExperts>().Select(m => m.LoadBalancingLoss).OfType<Tensor>().ToList();
+        if (losses.Count == 0)
+        {
+            return null;
+        }
+
+        var sum = losses[0];
+        for (int i = 1; i < losses.Count; i++)
+        {
+            sum += losses[i];
+        }
+
+        return sum * (1f / losses.Count);
     }
 
     /// <summary>

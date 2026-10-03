@@ -27,8 +27,8 @@ needed, the options, and the recommended one. Nothing here blocks the work in pr
 | 5 | README tagline | a) "Deep learning in pure .NET. Every GPU. Zero dependencies." · b) another | a |
 | 6 | LinkedIn series | a) post 2 next (GPU code without the CUDA toolkit) · b) post 4 next (an LLM on a phone) ; English only or with Arabic | a, English only |
 | 7 | Native Linux GPU drivers (NVIDIA's Linux driver, RADV, ANV, NVK) | a) live USB on a laptop · b) a cloud GPU instance (a T4 also covers compute 7.5) · c) keep "WSL2 only" | c for now; a when convenient |
-| 9 | `idrak serve`'s default port: 11434, the one common local-model clients connect to by default (so they work without settings), or a port of Idrak's own | a) keep 11434 for drop-in use · b) an Idrak port, with `-p 11434` documented for those clients | decided b (7317), done |
-| 8 | Mixture of experts (Mixtral, Qwen-MoE): planned in plans/plug-in.md, not built | a) next after the CLI · b) later | a |
+| 8 | Mixture of experts (Mixtral, Qwen-MoE): built (branch feature-moe, plans/plug-in.md); grouped expert kernels remain | a) next after the CLI · b) later | done |
+| 9 | `idrak serve`'s default port: 11434, the one common local-model clients connect to by default (so they work without settings), or a port of Idrak's own | a) keep 11434 for drop-in use · b) an Idrak port, with `-p 11434` documented for those clients | a |
 
 ## Hardware checks to run
 
@@ -39,4 +39,6 @@ needed, the options, and the recommended one. Nothing here blocks the work in pr
 | 3 | RTX 5070 Ti, laptops | The full lists after the plug-in work (315+ tests), CUDA and Vulkan | the per-device blocks in installation/windows.md |
 | 4 | An AMD discrete GPU with ROCm, or Windows with the HIP SDK | The HIP backend's first run | plans/8-hip.md, "Commands to validate" |
 | 5 | Phone | The width probe and the chat after the merged kernels | installation/android-termux.md, steps 8 and 9 |
-| 6 | Any machine | The `idrak` tool once the CLI lands: `idrak doctor`, `idrak devices`, `idrak c MODEL`, `idrak s MODEL`, `idrak b MODEL` | plans/idrak-cli.md, "Examples" |
+| 6 | RTX 5070 Ti, laptops | Mixture of experts on CUDA (composed operations, never run on CUDA here) and a real model's speed | `$env:IDRAK_DEVICES="cuda:0"; $env:IDRAK_FILTER="experts"; dotnet run -c Release --project tests/Idrak.Tests`, then `idrak c Qwen/Qwen1.5-MoE-A2.7B-Chat -w int4`, then `idrak b` on it |
+| 7 | Any machine | The `idrak` tool once the CLI lands: `idrak doctor`, `idrak devices`, `idrak c MODEL`, `idrak s MODEL`, `idrak b MODEL` | plans/idrak-cli.md, "Examples" |
+| 8 | Honor tablet (later) | CPU tests and, if its GPU has a Vulkan driver reachable from Termux (Mali through Mesa's Panfrost/PanVK, or Adreno through Turnip), the Vulkan list and a chat; first check the SoC and GPU with the phone guide's step 6 | installation/android-termux.md, steps 1-9 |

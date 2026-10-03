@@ -110,9 +110,46 @@ internal (the first-party packages keep calling it); outside code uses `CopyFrom
   - An activation registry (the closed `FeedForwardActivation`) and `DecoderNorm`; ALiBi; encoder-only models (BERT,
     BGE) and fused qkv (Phi-3), which the `Build` delegate already allows as a family's own network.
   - GGUF families unlike Llama (item 12: Gemma 2/3 tensor names, sliding_window key).
-  - Mixture of experts (Mixtral, Qwen-MoE), planned below.
+  - Mixture of experts: done (below); grouped expert kernels remain.
 
 ### Plan: mixture of experts (Mixtral, Qwen2-MoE, Qwen3-MoE)
+
+Status (feature-moe): done as planned, with these choices and what remains:
+
+- `MixtureOfExperts` (src/Idrak/Layers/MixtureOfExperts.cs): router ("router", float32 in every build, also when the
+  experts are packed: its rounding could change the routing), experts ("experts.j"), optional shared expert ("shared")
+  and its gate ("shared_gate", [dim, 1]). The router's softmax is read back to the host and the top-k chosen there
+  (`Route`, ties to the lowest index); each expert gathers its rows (the embedding lookup's gather/scatter, so the
+  gradients flow), the outputs are stacked, gathered back per token and combined with one batched product [tokens, 1, k]
+  × [tokens, k, dim]. With gradients, the weights are gathered from the softmax (and divided by their sum), so the
+  router trains. Composed from existing operations, so it runs and trains on every backend with the CPU's results.
+  `LoadBalancingLoss` (transformers' definition, so router_aux_loss_coef applies) and
+  `FineTuningOptions.LoadBalancingWeight`.
+- `DecoderBlock.FeedForward` is a `Module` (breaking for code reading `.FeedForward.Up`; cast to `FeedForward`); the
+  fused down projection + residual + norm path stays for `FeedForward`.
+- `DecoderSpec.Experts`, `ExpertsPerToken`, `ExpertFfDim`, `SharedExpertFfDim`, `NormalizeTopK`, `ExpertLayers` (Qwen's
+  decoder_sparse_step and mlp_only_layers), `IsExpertLayer`, `ActiveParameterCount`; written to JSON only for models
+  with experts. Weight names `layers.i.mlp.router`, `layers.i.mlp.experts.j.gate/up/down`, `layers.i.mlp.shared.*`,
+  `layers.i.mlp.shared_gate`.
+- Families: `MixtralForCausalLM`, `Qwen2MoeForCausalLM`, `Qwen3MoeForCausalLM` with `PretrainedArchitectures.ExpertSpec`,
+  `MixtralTensorName`, `QwenMoeTensorName`; `CommonSpec` still refuses expert keys so dense families never misread
+  them. GGUF: qwen2moe, qwen3moe, and llama files with experts as Mixtral (`GgufArchitecture.WithExperts`,
+  `NormalizeTopK`); stacked expert tensors (`ffn_*_exps`) are read one expert at a time, the older per-expert names
+  (`ffn_gate.j`) too, and layers without `ffn_gate_inp` become mlp_only_layers.
+- Recorded graphs: a decoding step through experts cannot be recorded (the routing is read back): `TextGenerator`
+  does not try, `ComputeGraph.Capture` fails cleanly with a reason (replays run the step), and fine-tuning does not
+  record steps of models with experts.
+- `idrak families` has an Experts column (the probe with expert keys added).
+- Tests (MixtureOfExpertsTests.cs): the routing and its ties, a known routing on the device, three family-shaped
+  decoders against the loop reference (prompt, training path, cached decoding, two-row batches), packed experts
+  (device against CPU, near float32, cached against prompt), recording falls back, gradients against finite
+  differences, the load-balancing loss, LoRA fine-tuning, configs, and checkpoints in each family's names as
+  safetensors and GGUF; CPU and Vulkan (lavapipe).
+- Remaining: device-side routing and grouped expert kernels (one launch for all experts' gate/up and down products,
+  reading only the chosen experts' packed weights), which would remove the per-layer host round trip, make decoding
+  recordable and batch the experts' products; until then a GPU decodes a mixture-of-experts model slower than a dense
+  model of its active size. Checked only on CPU and lavapipe here; CUDA and HIP run the same composed operations
+  (gather, scatter-add, batched products), not run here. Expert parallelism across devices is not planned.
 
 - A `MixtureOfExperts : Module` beside `FeedForward`: a router `Linear(dim, experts)` ("router"), `experts` ×
   `FeedForward` ("experts.i"), and for Qwen2-MoE a shared expert with a sigmoid gate. Forward on the CPU first:

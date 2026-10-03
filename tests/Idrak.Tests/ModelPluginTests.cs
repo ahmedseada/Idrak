@@ -44,7 +44,7 @@ internal static partial class Tests
         var q8 = GgufTypes.Get(8);
         Check(q8.Name == "Q8_0" && q8.BlockValues == 32 && q8.BlockBytes == 34 && GgufFile.BlockSize(14) == (256, 210) && GgufFile.TypeName(15) == "Q8_K",
             "Q8_0 and Q6_K blocks; names of types not registered");
-        Check(GgufArchitectures.Names.ToHashSet().SetEquals(["llama", "qwen2", "qwen3"]) && GgufArchitectures.Get("llama").InterleavedQueryKeys
+        Check(GgufArchitectures.Names.ToHashSet().SetEquals(["llama", "qwen2", "qwen3", "qwen2moe", "qwen3moe"]) && GgufArchitectures.Get("llama") is { InterleavedQueryKeys: true, WithExperts: "MixtralForCausalLM" }
               && GgufArchitectures.Get("qwen3") is { HuggingFace: "Qwen3ForCausalLM", InterleavedQueryKeys: false }, "GGUF architectures");
         Check(ModelSources.Names.SequenceEqual(["folder", "store", "gguf", "huggingface"]), $"sources: {string.Join(", ", ModelSources.Names)}");
         Check(ModelSources.For(folder)?.Name == "folder" && ModelSources.For(gguf)?.Name == "gguf" && ModelSources.For("store:x")?.Name == "store"

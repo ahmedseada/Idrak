@@ -51,6 +51,11 @@ internal sealed class ShowCommand : Command
         if (info.Spec is { } spec)
         {
             fields.Add(("Layers", $"{spec.Layers} · width {spec.Dim} · feed-forward {spec.FfDim}{(spec.Gated ? $" (gated, {spec.Activation})" : $" ({spec.Activation})")}"));
+            if (spec.Experts > 0)
+            {
+                fields.Add(("Experts", $"{spec.Experts} of width {(spec.ExpertFfDim > 0 ? spec.ExpertFfDim : spec.FfDim)}, {spec.ExpertsPerToken} per token{(spec.SharedExpertFfDim > 0 ? $", a shared expert of width {spec.SharedExpertFfDim}" : "")} · {Units.Count(spec.ActiveParameterCount)} parameters active per token"));
+            }
+
             fields.Add(("Attention", $"{spec.Heads} heads, {spec.KvHeads} key/value heads, head size {spec.HeadDim}{(spec.QkNorm ? ", query/key norms" : "")}"));
             fields.Add(("Context", $"{spec.MaxPositions:N0} positions"));
             fields.Add(("Vocabulary", $"{spec.Vocabulary:N0}{(spec.TieEmbeddings ? " (embeddings tied to the output head)" : "")}"));

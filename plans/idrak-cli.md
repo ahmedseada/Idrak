@@ -456,7 +456,7 @@ Found while planning the build; each belongs to the group in brackets and is bui
 |---|---|---|---|
 | `idrak help topics` and `idrak help TOPIC` | Concept pages without leaving the terminal: devices, formats (weights, KV caches, checkpoints, datasets), models (supported families and features), precision, plugins, config, env, exit codes | Health | 1 |
 | `idrak formats` | Every registered weight, KV cache, checkpoint, dataset and tool-call format, built in or from a plug-in | Health | 2 |
-| `idrak families` | Supported model families with what each supports (windows, soft-capping, RoPE scalings, GGUF) | Models | 2 |
+| `idrak families` | Supported model families with what each supports (windows, soft-capping, RoPE scalings, experts, GGUF) | Models | 2 |
 | `idrak doctor --fix` | Prints the exact commands that fix what failed (and runs safe ones with `--yes`) | Health | 2 |
 | `idrak doctor --network` | Checks the hub and proxy reachability and tokens (set or not) | Health | 2 |
 | `idrak login hf\|github\|kaggle` / `logout` | Stores a token where the library already looks for it (never printed) | Health | 2 |
