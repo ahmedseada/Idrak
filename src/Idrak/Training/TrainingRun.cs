@@ -44,13 +44,13 @@ public sealed record TrainingRun
     public required Func<IEnumerable<Tensor>, Optimizer> Optimizer { get; init; }
 
     /// <summary>The training batches (the <c>train</c> argument of <see cref="Trainer.Fit"/>).</summary>
-    public required DataLoader Train { get; init; }
+    public required IBatchSource Train { get; init; }
 
     /// <summary>The number of epochs (the <c>epochs</c> argument of <see cref="Trainer.Fit"/>).</summary>
     public required int Epochs { get; init; }
 
     /// <summary>Validation batches (the <c>validation</c> argument of <see cref="Trainer.Fit"/>), or null.</summary>
-    public DataLoader? Validation { get; init; }
+    public IBatchSource? Validation { get; init; }
 
     /// <summary>Creates the learning-rate schedule from the optimizer (<see cref="Trainer.Scheduler"/>), or null.</summary>
     public Func<Optimizer, LearningRateScheduler>? Scheduler { get; init; }
@@ -124,7 +124,7 @@ public sealed record TrainingRun
     }
 
     /// <summary>Creates a trainer (with these loss and metrics) and runs <see cref="Trainer.Evaluate"/> on <paramref name="data"/>.</summary>
-    public EvaluationResult Evaluate(DataLoader data)
+    public EvaluationResult Evaluate(IBatchSource data)
     {
         using var trainer = CreateTrainer();
         return trainer.Evaluate(data);

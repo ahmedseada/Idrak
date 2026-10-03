@@ -8,10 +8,10 @@ namespace Idrak.Diagnostics;
 /// <param name="Optimizer">The optimizer type, e.g. "Adam".</param>
 /// <param name="Device">Where training runs.</param>
 /// <param name="Epochs">The maximum number of epochs requested.</param>
-/// <param name="TrainingSamples">Samples per training epoch.</param>
+/// <param name="TrainingSamples">Samples per training epoch (0 when the batch source does not say).</param>
 /// <param name="ValidationSamples">Samples in the validation set, if one was given.</param>
-/// <param name="BatchSize">Samples per batch.</param>
-/// <param name="BatchesPerEpoch">Optimizer steps per epoch.</param>
+/// <param name="BatchSize">Samples per batch (0 when the batch source does not say).</param>
+/// <param name="BatchesPerEpoch">Optimizer steps per epoch (0 when the batch source does not say).</param>
 /// <param name="ParameterCount">Trainable values in the model.</param>
 /// <param name="LearningRate">The optimizer's learning rate at the start.</param>
 /// <param name="CpuThreads">The CPU thread budget from <see cref="ComputeResources.MaxCpuThreads"/>.</param>
@@ -31,7 +31,7 @@ public readonly record struct TrainingStarted(
 /// <summary>Published after every optimizer step when <see cref="TelemetryLevel.Batches"/> is enabled.</summary>
 /// <param name="Epoch">1-based epoch number.</param>
 /// <param name="Batch">1-based batch number within the epoch.</param>
-/// <param name="BatchesPerEpoch">Batches in the epoch.</param>
+/// <param name="BatchesPerEpoch">Batches in the epoch (0 when the batch source does not say).</param>
 /// <param name="Step">1-based optimizer step since training started.</param>
 /// <param name="BatchSize">Samples in this batch.</param>
 /// <param name="Loss">The batch loss.</param>
