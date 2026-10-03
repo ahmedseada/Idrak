@@ -18,6 +18,7 @@ audience first.
 | 8 | [HIP](8-hip.md) | AMD GPUs through ROCm (Linux) and the HIP SDK (Windows): HIP runtime, hipRTC kernels | first slice on `backend/hip`, untested on real hardware | the third backend family (after CUDA and Vulkan): memory and copies on the device, a first kernel set, host fallbacks for the rest; input for the public backend API |
 
 Plug-in points that are still closed, and the dataset loader abstraction: [plug-in.md](plug-in.md).
+One command-line tool for everything (`idrak doctor`, `chat`, `serve`, `bench`, ...): [idrak-cli.md](idrak-cli.md).
 
 ## Not supported yet
 
