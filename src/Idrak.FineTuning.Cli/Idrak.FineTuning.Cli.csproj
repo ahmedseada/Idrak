@@ -18,4 +18,10 @@
     <ProjectReference Include="..\Idrak.LanguageModels\Idrak.LanguageModels.csproj" />
   </ItemGroup>
 
+  <!-- The tool's code is shared with idrak (idrak tune / idrak data): one source, two entry points. -->
+  <ItemGroup>
+    <Compile Include="..\Idrak.Cli\Commands\Train\TuneTool.cs" Link="TuneTool.cs" />
+    <Compile Include="..\Idrak.Cli\Shared\ToolConsole.cs" Link="ToolConsole.cs" />
+  </ItemGroup>
+
 </Project>

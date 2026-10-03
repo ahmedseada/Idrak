@@ -185,11 +185,14 @@ internal sealed class CliConfig
         JsonObject values = [];
         if (File.Exists(path))
         {
-            values = JsonNode.Parse(File.ReadAllText(path)) as JsonObject ?? throw new UsageException($"{path} is not a JSON object.");
+            values = JsonNode.Parse(File.ReadAllText(path), documentOptions: ReadOptions) as JsonObject ?? throw new UsageException($"{path} is not a JSON object.");
         }
 
         return new CliConfig(path, values);
     }
+
+    /// <summary>How config files are read: comments and trailing commas are allowed (a tune.json written by <c>idrak tune init</c> has comments).</summary>
+    internal static readonly JsonDocumentOptions ReadOptions = new() { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true };
 
     public IEnumerable<KeyValuePair<string, JsonNode?>> All => _values;
 
