@@ -42,7 +42,13 @@ internal static class Models
     /// <summary>A local folder or file for the model: found in the cache or downloaded (with progress unless quiet).</summary>
     public static string Resolve(CommandContext context, string model) =>
         Directory.Exists(model) || File.Exists(model) ? model
+        : LooksLocal(model) ? throw new UsageException($"Model not found: {model}. Give a Hugging Face id (owner/name), a model folder, a .gguf file or an alias from the config.")
         : ModelSource.Resolve(model, downloader: context.Quiet || context.Json ? null : new Idrak.Datasets.ConsoleStatus().CreateDownloader());
+
+    // A path rather than a hub id: never looked up online.
+    private static bool LooksLocal(string model) =>
+        Path.IsPathRooted(model) || model.StartsWith('.') || model.StartsWith('~') || model.Contains('\\')
+        || model.EndsWith(".gguf", StringComparison.OrdinalIgnoreCase) || model.EndsWith(".ikm", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Loads a pretrained language model on the context's device with the chosen formats.</summary>
     public static PretrainedModel Load(CommandContext context, ModelChoice choice)
@@ -66,4 +72,38 @@ internal static class Models
 
     /// <summary>The KV cache format name for generation (null: the library's default).</summary>
     public static string? KvFormat(ModelChoice choice) => choice.Kv;
+
+    /// <summary>The context window generation uses when <c>--context</c> is not given (the KV cache is sized by it).</summary>
+    public const int DefaultContext = 4096;
+
+    /// <summary>The context window for generating with <paramref name="model"/>: <c>--context</c> or <see cref="DefaultContext"/>, at most the model's.</summary>
+    public static int ContextLength(ModelChoice choice, PretrainedModel model) => Math.Min(choice.Context ?? DefaultContext, model.MaxPositions);
+
+    /// <summary>
+    /// The KV cache layout named by <c>--kv</c>: float32 (f32), int8, bfloat16 (bf16) or any registered format; float32
+    /// when not given.
+    /// </summary>
+    public static Idrak.Layers.KeyValueLayout CacheLayout(ModelChoice choice)
+    {
+        string name = choice.Kv?.ToLowerInvariant() switch { null or "f32" or "fp32" => "float32", "bf16" => "bfloat16", var other => other };
+        try
+        {
+            return Idrak.Layers.KeyValueLayouts.Get(name);
+        }
+        catch (NotSupportedException)
+        {
+            throw new UsageException($"Unknown --kv format '{choice.Kv}'; use {string.Join(", ", Idrak.Layers.KeyValueLayouts.Names.Order(StringComparer.Ordinal))}, "
+                                     + "or load a plug-in that registers it (--plugin).");
+        }
+    }
+
+    /// <summary>A text generator for <paramref name="model"/> with the chosen KV cache format and context window.</summary>
+    public static Idrak.Generation.TextGenerator CreateGenerator(PretrainedModel model, ModelChoice choice) =>
+        model.CreateGenerator(CacheLayout(choice), ContextLength(choice, model));
+
+    /// <summary>A chat generator for <paramref name="model"/> (its own chat template) with the chosen KV cache format and context window.</summary>
+    public static Idrak.Generation.ChatGenerator CreateChat(PretrainedModel model, ModelChoice choice) =>
+        model.ChatTemplate is null
+            ? throw new InvalidOperationException($"{choice.Model} has no chat template (tokenizer_config.json); use 'idrak complete' for raw completion.")
+            : model.CreateChat(CacheLayout(choice), ContextLength(choice, model));
 }

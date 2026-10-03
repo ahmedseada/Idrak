@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- idrak: the run commands: `chat` (streamed, with `/help`, `/system`, `/reset`, `/save`, `/load`, `/file`, `/stats`,
+  `/think`, `/tools`, `/set`, `/copy`, `/retry`, `/exit`; `--history`, `--file`, `--mcp`), `run` (argument, `--input` or piped
+  prompt; `--json`; `--schema` checked afterwards), `batch` (resumable), `compare`, `complete`, `embed` (JSON or `.npy`),
+  `tokenize`, `template`, `agent` and `tools list`/`test`.
 - Tool calls are parsed in the model's own format, not only as JSON between tags. `ChatOutputParser` takes the
   reasoning out and feeds the answer to an `IToolCallParser` (`Feed`, `Finish`, emitting text, reasoning and calls as
   before) that the template makes per reply (`ChatTemplate.CreateToolCallParser`, by `ToolCallFormatName`).
