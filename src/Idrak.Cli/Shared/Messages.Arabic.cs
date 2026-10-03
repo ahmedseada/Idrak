@@ -311,8 +311,8 @@ internal static partial class Messages
         ["Remove a model alias from the config"] = "إزالة اسم مختصر لنموذج من الإعدادات",
         ["Convert between GGUF and Hugging Face folders (safetensors bf16, f16, f32)"] = "التحويل بين GGUF ومجلدات Hugging Face (ملفات safetensors بصيغة bf16 أو f16 أو f32)",
         ["Which tensors differ between two checkpoints, and by how much"] = "الموترات المختلفة بين نقطتي حفظ، ومقدار الاختلاف",
-        ["Supported model families and what each supports (windows, soft-capping, RoPE scalings, GGUF)"] =
-            "عائلات النماذج المدعومة وما تدعمه كل منها (النوافذ والتحديد الناعم وتحجيمات RoPE و GGUF)",
+        ["Supported model families and what each supports (windows, soft-capping, RoPE scalings, experts, GGUF)"] =
+            "عائلات النماذج المدعومة وما تدعمه كل منها (النوافذ والتحديد الناعم وتحجيمات RoPE والخبراء و GGUF)",
         ["Tensor names, shapes, types and metadata of a GGUF, safetensors or .ikm file"] = "أسماء الموترات وأشكالها وأنواعها وبياناتها الوصفية في ملف GGUF أو safetensors أو .ikm",
         ["Cached models with sizes, formats and last use"] = "النماذج المخزنة مع أحجامها وصيغها وآخر استخدام",
         ["Memory per weight and KV format at a context length, against each device's memory"] = "الذاكرة لكل صيغة أوزان وذاكرة KV عند طول سياق، مقابل ذاكرة كل جهاز",
@@ -365,8 +365,8 @@ internal static partial class Messages
             "تشغيل حزمة نموذج (.ikm) على صفوف جديدة (CSV أو JSON Lines أو Parquet) أو صور وكتابة التنبؤات",
         ["Bundle a network, its weights, scalers and tokenizer from a folder into one model package (.ikm)"] =
             "جمع شبكة وأوزانها ومقاييسها ومقطع رموزها من مجلد في حزمة نموذج واحدة (.ikm)",
-        ["Distil a teacher model into a student (not available yet: waits for the library's teacher pattern)"] =
-            "تقطير نموذج معلم في نموذج طالب (غير متاح بعد: ينتظر نمط المعلم في المكتبة)",
+        ["Distil a teacher model into a student: its token probabilities (on the fly or precomputed) or its answers"] =
+            "تقطير نموذج معلم في نموذج طالب: احتمالات رموزه (أثناء التدريب أو محسوبة مسبقا) أو إجاباته",
         ["Fine-tune language models (LoRA, QLoRA, DoRA, DPO/ORPO/SimPO); evaluate, chat, export, download, info"] =
             "الضبط الدقيق لنماذج اللغة (LoRA و QLoRA و DoRA و DPO/ORPO/SimPO)؛ والتقييم والمحادثة والتصدير والتنزيل والمعلومات",
         ["Write a commented tune.json (model, data, adapter and training settings) for idrak tune --config"] =
