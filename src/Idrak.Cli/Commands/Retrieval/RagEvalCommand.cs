@@ -85,6 +85,12 @@ internal sealed class RagEvalCommand : Command
         double hitRate1 = (double)hitsAtOne / n, hitRate = (double)hitsAtTop / n, mrr = reciprocal / n;
         context.Write($"{n} questions on {path} ({opened.Search}), top {top}:");
         context.Write($"  hit rate @1 {hitRate1:P1} · hit rate @{top} {hitRate:P1} · MRR {mrr:F3}");
+        if (context.Format is OutputFormat.Csv or OutputFormat.Markdown)
+        {
+            var invariant = System.Globalization.CultureInfo.InvariantCulture;
+            context.Fields([("questions", n.ToString(invariant)), ("hit rate @1", hitRate1.ToString("F4", invariant)),
+                ($"hit rate @{top}", hitRate.ToString("F4", invariant)), ("MRR", mrr.ToString("F4", invariant))], "Measurement", "Value");
+        }
         context.WriteJson(new JsonObject
         {
             ["index"] = path,

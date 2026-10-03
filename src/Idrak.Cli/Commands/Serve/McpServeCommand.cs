@@ -66,7 +66,7 @@ internal sealed class McpServeCommand : Command
 
         if (context.Flag("--list"))
         {
-            context.Table(["TOOL", "DESCRIPTION"], listed.Select(t => (IReadOnlyList<string>)[(string)t!["name"]!, (string?)t["description"] ?? ""]));
+            context.Table(["Tool", "Description"], listed.Select(t => (IReadOnlyList<string>)[(string)t!["name"]!, (string?)t["description"] ?? ""]));
             context.WriteJson(new JsonObject { ["tools"] = listed });
             return ExitCodes.Ok;
         }

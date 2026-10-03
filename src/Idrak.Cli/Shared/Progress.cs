@@ -126,7 +126,7 @@ internal sealed class ProgressLine : IProgress<long>, IDisposable
     {
         if (unit == ProgressUnit.Elapsed)
         {
-            return $"{label}  {Duration(elapsed)}";
+            return $"{label}  {Units.Duration(elapsed)}";
         }
 
         double seconds = elapsed.TotalSeconds;
@@ -147,7 +147,7 @@ internal sealed class ProgressLine : IProgress<long>, IDisposable
             parts.Add($"{Amount((long)rate, unit)}/s");
             if (total is long all && all > done)
             {
-                parts.Add($"{Duration(TimeSpan.FromSeconds((all - done) / rate))} left");
+                parts.Add($"{Units.Duration(TimeSpan.FromSeconds((all - done) / rate))} left");
             }
         }
 
@@ -157,30 +157,9 @@ internal sealed class ProgressLine : IProgress<long>, IDisposable
     /// <summary>An amount as the unit shows it (bytes as "12.3 MB", items as "1,234").</summary>
     public static string Amount(long value, ProgressUnit unit) => unit switch
     {
-        ProgressUnit.Bytes => Bytes(value),
+        ProgressUnit.Bytes => Units.Bytes(value),
         _ => value.ToString("N0", CultureInfo.InvariantCulture),
     };
-
-    /// <summary>A byte count as "512 B", "12.3 KB", "1.5 GB" (powers of 1024).</summary>
-    public static string Bytes(long value)
-    {
-        string[] units = ["B", "KB", "MB", "GB", "TB"];
-        double size = value;
-        int i = 0;
-        while (Math.Abs(size) >= 1024 && i < units.Length - 1)
-        {
-            size /= 1024;
-            i++;
-        }
-
-        return i == 0 ? $"{value} B" : string.Create(CultureInfo.InvariantCulture, $"{size:F1} {units[i]}");
-    }
-
-    /// <summary>A duration as "4s", "3m 05s" or "1h 02m".</summary>
-    public static string Duration(TimeSpan time) =>
-        time.TotalHours >= 1 ? $"{(int)time.TotalHours}h {time.Minutes:D2}m"
-        : time.TotalMinutes >= 1 ? $"{(int)time.TotalMinutes}m {time.Seconds:D2}s"
-        : $"{Math.Max(0, (int)Math.Ceiling(time.TotalSeconds))}s";
 
     private void Draw(bool force)
     {

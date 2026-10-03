@@ -228,7 +228,7 @@ internal sealed class ServeHost
     {
         string keep = Settings.KeepAlive is null ? "stays loaded" : Settings.KeepAlive == TimeSpan.Zero ? "unloads after each request" : $"unloads after {Settings.KeepAliveText} idle";
         _context.Write($"Serving {Served.Count} model{(Served.Count == 1 ? "" : "s")} on {url} (device {_context.Device}; each loads on its first request and {keep})");
-        _context.Table(["MODEL", "SOURCE"], Served.Select(m => (IReadOnlyList<string>)[m.Name, m.Source]));
+        _context.Table(["Model", "Source"], Served.Select(m => (IReadOnlyList<string>)[m.Name, m.Source]));
         _context.Write($"Chat API          {url}/api/chat");
         _context.Write($"OpenAI-style API  {url}/v1");
         _context.Write($"Web chat          {url}/ui");

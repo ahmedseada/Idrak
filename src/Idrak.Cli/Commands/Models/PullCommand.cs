@@ -65,7 +65,7 @@ internal sealed class PullCommand : Command
             // Cache only: a cached model is reported, anything else is an error naming what is missing.
             var cached = ModelCache.Locate(context, model);
             var path = cached.File ?? cached.Folder;
-            context.Write($"{model} is already in the cache: {ModelCache.Size(cached.File is null ? ModelCache.FolderBytes(path) : new FileInfo(path).Length)} in {path} (offline)");
+            context.Write($"{model} is already in the cache: {Units.Bytes(cached.File is null ? ModelCache.FolderBytes(path) : new FileInfo(path).Length)} in {path} (offline)");
             context.WriteJson(new JsonObject { ["model"] = model, ["path"] = path, ["downloaded"] = 0, ["offline"] = true });
             return ExitCodes.Ok;
         }
@@ -148,9 +148,9 @@ internal sealed class PullCommand : Command
         long total = wanted.Sum(w => w.Size);
         if (dryRun)
         {
-            context.Write($"{repo} at {commit[..Math.Min(12, commit.Length)]}: {wanted.Count} files ({ModelCache.Size(total)}), {missing.Count} to download"
-                          + (missing.Count > 0 ? $" ({ModelCache.Size(missing.Sum(m => m.Size))})" : "") + $" into {folder}");
-            context.Table(["File", "Size", "State"], wanted.Select(w => (IReadOnlyList<string>)[w.Path, ModelCache.Size(w.Size), missing.Contains(w) ? "to download" : "cached"]));
+            context.Write($"{repo} at {commit[..Math.Min(12, commit.Length)]}: {wanted.Count} files ({Units.Bytes(total)}), {missing.Count} to download"
+                          + (missing.Count > 0 ? $" ({Units.Bytes(missing.Sum(m => m.Size))})" : "") + $" into {folder}");
+            context.Table(["File", "Size", "State"], wanted.Select(w => (IReadOnlyList<string>)[w.Path, Units.Bytes(w.Size), missing.Contains(w) ? "to download" : "cached"]));
             context.WriteJson(new JsonObject
             {
                 ["model"] = repo,
@@ -199,7 +199,7 @@ internal sealed class PullCommand : Command
             : tag is not null
                 ? [.. ggufs.Where(f => Path.GetFileName(f.Path).Contains(tag, StringComparison.OrdinalIgnoreCase))]
                 : ggufs;
-        string list = string.Join(", ", ggufs.Select(g => $"{g.Path} ({ModelCache.Size(g.Size)})"));
+        string list = string.Join(", ", ggufs.Select(g => $"{g.Path} ({Units.Bytes(g.Size)})"));
         if (chosen.Count == 0)
         {
             throw new UsageException($"{repo} has no GGUF file {(file is not null ? $"named {file}" : $"tagged {tag}")}. Its GGUF files: {list}");
@@ -209,7 +209,7 @@ internal sealed class PullCommand : Command
         string Stem(string path) => System.Text.RegularExpressions.Regex.Replace(path, @"-\d{5}-of-\d{5}\.gguf$", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
         if (chosen.Select(c => Stem(c.Path)).Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1)
         {
-            throw new UsageException($"{repo} has {chosen.Count} GGUF files: {string.Join(", ", chosen.Select(g => $"{g.Path} ({ModelCache.Size(g.Size)})"))}. "
+            throw new UsageException($"{repo} has {chosen.Count} GGUF files: {string.Join(", ", chosen.Select(g => $"{g.Path} ({Units.Bytes(g.Size)})"))}. "
                                      + $"Choose one with --file NAME or {repo}:TAG (e.g. {repo}:Q4_K_M).");
         }
 
@@ -236,10 +236,10 @@ internal sealed class PullCommand : Command
         long bytes = files.Sum(f => f.Bytes), fetched = files.Where(f => f.Downloaded).Sum(f => f.Bytes);
         int downloaded = files.Count(f => f.Downloaded);
         context.Write(downloaded == 0
-            ? $"{model} is already in the cache: {files.Count} files, {ModelCache.Size(bytes)} in {path}"
+            ? $"{model} is already in the cache: {files.Count} files, {Units.Bytes(bytes)} in {path}"
             : $"Pulled {model}{(commit is null ? "" : $" ({commit[..Math.Min(12, commit.Length)]})")}: {downloaded} of {files.Count} files downloaded "
-              + $"({ModelCache.Size(fetched)} in {elapsed.TotalSeconds:F1} s), {ModelCache.Size(bytes)} in {path}");
-        context.Detail(string.Join(Environment.NewLine, files.Select(f => $"  {f.Name}  {ModelCache.Size(f.Bytes)}{(f.Downloaded ? "" : "  (cached)")}")));
+              + $"({Units.Bytes(fetched)} in {elapsed.TotalSeconds:F1} s), {Units.Bytes(bytes)} in {path}");
+        context.Detail(string.Join(Environment.NewLine, files.Select(f => $"  {f.Name}  {Units.Bytes(f.Bytes)}{(f.Downloaded ? "" : "  (cached)")}")));
         context.WriteJson(new JsonObject
         {
             ["model"] = model,

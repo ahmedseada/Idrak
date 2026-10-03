@@ -126,13 +126,13 @@ internal sealed class ServerPsCommand : Command
         context.WriteJson(answer);
         var models = answer["models"]?.AsArray() ?? [];
         context.Write($"Server {ServerClient.BaseUrl(context)} (keep-alive {answer["keep_alive"]})");
-        context.Table(["MODEL", "STATE", "DEVICE", "PARAMETERS", "MEMORY", "CONTEXT", "UNLOADS", "LAST USED", "REQUESTS"], models.Select(m => (IReadOnlyList<string>)
+        context.Table(["Model", "State", "Device", "Parameters", "Memory", "Context", "Unloads", "Last used", "Requests"], models.Select(m => (IReadOnlyList<string>)
         [
             (string)m!["name"]!,
             (bool)m["loaded"]! ? ((int)m["running"]! > 0 ? "running" : "loaded") : "not loaded",
             (string?)m["device"] ?? "",
             m["parameters"] is { } p ? Count((long)p) : "-",
-            (long)m["memory_bytes"]! > 0 ? Bytes((long)m["memory_bytes"]!) : "-",
+            (long)m["memory_bytes"]! > 0 ? Units.Bytes((long)m["memory_bytes"]!) : "-",
             m["context_length"]?.ToString() ?? "-",
             (bool)m["loaded"]! ? When((string?)m["expires_at"], future: true) ?? "never" : "-",
             When((string?)m["last_used"], future: false) ?? "never",
@@ -140,13 +140,12 @@ internal sealed class ServerPsCommand : Command
         ]));
         foreach (var d in answer["devices"]?.AsArray() ?? [])
         {
-            context.Write($"{d!["device"]}: {Bytes((long)d["memory_in_use"]!)} in use" + (d["memory_limit"] is { } limit ? $" of {Bytes((long)limit)}" : ""));
+            context.Write($"{d!["device"]}: {Units.Bytes((long)d["memory_in_use"]!)} in use" + (d["memory_limit"] is { } limit ? $" of {Units.Bytes((long)limit)}" : ""));
         }
 
         return ExitCodes.Ok;
     }
 
-    internal static string Bytes(long n) => n >= 1L << 30 ? $"{n / (double)(1L << 30):0.0} GB" : n >= 1L << 20 ? $"{n / (double)(1L << 20):0.0} MB" : $"{n / 1024.0:0} KB";
 
     private static string Count(long n) => n >= 1_000_000_000 ? $"{n / 1e9:0.#}B" : n >= 1_000_000 ? $"{n / 1e6:0.#}M" : n >= 1_000 ? $"{n / 1e3:0.#}K" : n.ToString(CultureInfo.InvariantCulture);
 

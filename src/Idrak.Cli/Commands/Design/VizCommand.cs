@@ -33,7 +33,7 @@ internal sealed class VizCommand : Command
         var analysis = NetworkAnalysis.Of(description);
         string format = context.Option("--as")?.ToLowerInvariant() ?? "text";
         var nodes = new List<(string Title, string Detail)> { ($"input ({analysis.Kind})", NetworkAnalysis.Shape(analysis.Input)) };
-        nodes.AddRange(analysis.Layers.Select(l => (l.Description, NetworkAnalysis.Shape(l.Output) + (l.Parameters > 0 ? $", {DeviceMemory.Count(l.Parameters)} parameters" : ""))));
+        nodes.AddRange(analysis.Layers.Select(l => (l.Description, NetworkAnalysis.Shape(l.Output) + (l.Parameters > 0 ? $", {Units.Short(l.Parameters)} parameters" : ""))));
         string diagram = format switch
         {
             "text" => Text(nodes, analysis),
@@ -70,7 +70,7 @@ internal sealed class VizCommand : Command
             sb.Append(nodes[i].Title.PadRight(width)).Append("  -> ").Append(nodes[i].Detail).Append('\n');
         }
 
-        return sb.Append($"\n{analysis.Parameters:N0} parameters, {DeviceMemory.Count(analysis.Flops)} FLOPs per sample\n").ToString();
+        return sb.Append($"\n{analysis.Parameters:N0} parameters, {Units.Short(analysis.Flops)} FLOPs per sample\n").ToString();
     }
 
     private static string Mermaid(List<(string Title, string Detail)> nodes)

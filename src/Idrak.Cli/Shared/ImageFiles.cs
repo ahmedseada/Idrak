@@ -8,10 +8,11 @@ using System.Text;
 namespace Idrak.Cli.Shared;
 
 /// <summary>
-/// Image files for <c>idrak suggest</c> and the data it prepares: the size and channels of PNG, JPEG, BMP and Netpbm
-/// (PGM, PPM) files from their headers, and the pixels of PNG (8-bit, not interlaced), BMP (24 and 32 bits,
-/// uncompressed) and Netpbm files. The library has no image decoder; JPEG pixels are not read here (a gap noted in
-/// the plan), so a folder of JPEG files is profiled but not trained by <c>--search</c>.
+/// Image files for every command that reads them (<c>idrak suggest</c> and the data it prepares, <c>idrak train</c> and
+/// <c>idrak predict</c> on image folders): the size and channels of PNG, JPEG, BMP and Netpbm (PGM, PPM) files from
+/// their headers, and the pixels of PNG (8-bit grey, grey with alpha, RGB, RGBA and palette images, not interlaced),
+/// BMP (24 and 32 bits, uncompressed) and Netpbm files. The library has no image decoder; JPEG pixels are not read here
+/// (a gap noted in the plan), so a folder of JPEG files is profiled but not trained.
 /// </summary>
 internal static class ImageFiles
 {
@@ -20,6 +21,21 @@ internal static class ImageFiles
 
     /// <summary>Whether <paramref name="path"/> has an image extension.</summary>
     public static bool IsImage(string path) => Extensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The extensions whose pixels are decoded (training and prediction read these).</summary>
+    public static readonly string[] DecodedExtensions = [".png", ".bmp", ".pgm", ".ppm", ".pnm"];
+
+    /// <summary>Whether <paramref name="path"/> has the extension of an image whose pixels are decoded.</summary>
+    public static bool IsDecoded(string path) => DecodedExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The image as [channels, height, width] values in [0, 1] with <paramref name="channels"/> channels and the given
+    /// size (<see cref="Fit"/>); a file this reader cannot decode is an error naming it.
+    /// </summary>
+    public static float[] Load(string path, int channels, int height, int width) =>
+        Decode(path) is var (pixels, c, h, w)
+            ? Fit(pixels, c, h, w, channels, height, width)
+            : throw new InvalidDataException($"{path}: not an image this tool decodes (PNG 8-bit not interlaced, BMP 24/32-bit uncompressed, PGM/PPM).");
 
     /// <summary>What an image header says.</summary>
     public readonly record struct ImageInfo(int Width, int Height, int Channels, string Format, bool Decodable);

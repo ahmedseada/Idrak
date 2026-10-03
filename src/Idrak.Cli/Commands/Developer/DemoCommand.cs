@@ -52,12 +52,13 @@ internal sealed class DemoCommand : Command
         context.Write($"Device: {device} - {device.Name}");
         context.Write($"Demo:   {Demos[name]}");
         var watch = Stopwatch.StartNew();
+        int shift = context.Seed ?? 0;                                  // --seed moves every draw (weights, data, shuffling)
         var result = name switch
         {
-            "xor" => Xor(device),
-            "spirals" => Spirals(device),
-            "shapes" => Shapes(device),
-            _ => Gpt(device),
+            "xor" => Xor(device, shift),
+            "spirals" => Spirals(device, shift),
+            "shapes" => Shapes(device, shift),
+            _ => Gpt(device, shift),
         };
         double seconds = watch.Elapsed.TotalSeconds;
         double rate = result.Samples / Math.Max(seconds, 1e-9);
@@ -87,10 +88,10 @@ internal sealed class DemoCommand : Command
     /// <summary>What a demo reached: its metric, the samples (or tokens) it processed, and whether that is the usual result.</summary>
     internal sealed record DemoResult(string Metric, double Value, string Summary, long Samples, string Unit, bool Passed, string? Sample = null);
 
-    private static DemoResult Xor(Device device)
+    private static DemoResult Xor(Device device, int shift)
     {
         const int Steps = 600;
-        using var model = Network.Input(2).Seed(42).Linear(8).Tanh().Linear(1).Sigmoid().OnDevice(device).Build();
+        using var model = Network.Input(2).Seed(42 + shift).Linear(8).Tanh().Linear(1).Sigmoid().OnDevice(device).Build();
         using var optimizer = new Adam(model.Parameters(), learningRate: 0.05f);
         using var x = Tensor.From([0f, 0, 0, 1, 1, 0, 1, 1], [4, 2], device);
         using var y = Tensor.From([0f, 1, 1, 0], [4, 1], device);
@@ -115,10 +116,10 @@ internal sealed class DemoCommand : Command
         return new DemoResult("correct", correct, $"{correct}/4 correct, loss {loss:F4}", 4L * Steps, "samples", correct == 4);
     }
 
-    private static DemoResult Spirals(Device device)
+    private static DemoResult Spirals(Device device, int shift)
     {
         const int Classes = 3, PerClass = 200, Epochs = 40;
-        var random = new Random(1);
+        var random = new Random(1 + shift);
         var features = new float[Classes * PerClass, 2];
         var labels = new int[Classes * PerClass];
         for (int c = 0; c < Classes; c++)
@@ -132,28 +133,28 @@ internal sealed class DemoCommand : Command
             }
         }
 
-        var (train, test) = Dataset.FromClassLabels(features, labels, Classes).Split(0.8, seed: 2);
-        using var model = Network.Input(2).Seed(3).Linear(64).ReLU().Linear(64).ReLU().Linear(Classes).OnDevice(device).Build();
+        var (train, test) = Dataset.FromClassLabels(features, labels, Classes).Split(0.8, seed: 2 + shift);
+        using var model = Network.Input(2).Seed(3 + shift).Linear(64).ReLU().Linear(64).ReLU().Linear(Classes).OnDevice(device).Build();
         using var optimizer = new AdamW(model.Parameters(), learningRate: 0.01f, weightDecay: 1e-4f);
         var trainer = new Trainer(model, optimizer, Losses.CrossEntropy) { Metrics = { Metric.Accuracy } };
-        trainer.Fit(new DataLoader(train, 64, shuffle: true, device: device, seed: 4), Epochs);
+        trainer.Fit(new DataLoader(train, 64, shuffle: true, device: device, seed: 4 + shift), Epochs);
         double accuracy = trainer.Evaluate(new DataLoader(test, 512, device: device)).Metrics["accuracy"];
         return new DemoResult("accuracy", accuracy, $"test accuracy {accuracy * 100:F1}% on {test.Count} points",
             (long)train.Count * Epochs, "samples", accuracy >= 0.8);
     }
 
-    private static DemoResult Shapes(Device device)
+    private static DemoResult Shapes(Device device, int shift)
     {
         const int Size = 16, Epochs = 4;
-        var train = DrawShapes(1600, Size, seed: 1);
-        var test = DrawShapes(400, Size, seed: 2);
-        using var model = Network.Image(1, Size, Size).Seed(3)
+        var train = DrawShapes(1600, Size, seed: 1 + shift);
+        var test = DrawShapes(400, Size, seed: 2 + shift);
+        using var model = Network.Image(1, Size, Size).Seed(3 + shift)
             .Conv2d(8, 3, padding: 1).ReLU().MaxPool2d(2)
             .Conv2d(16, 3, padding: 1).ReLU().MaxPool2d(2)
             .Flatten().Linear(32).ReLU().Linear(4).OnDevice(device).Build();
         using var optimizer = new AdamW(model.Parameters(), learningRate: 0.003f);
         var trainer = new Trainer(model, optimizer, Losses.CrossEntropy) { Metrics = { Metric.Accuracy } };
-        trainer.Fit(new DataLoader(train, 64, shuffle: true, device: device, seed: 4), Epochs);
+        trainer.Fit(new DataLoader(train, 64, shuffle: true, device: device, seed: 4 + shift), Epochs);
         double accuracy = trainer.Evaluate(new DataLoader(test, 200, device: device)).Metrics["accuracy"];
         return new DemoResult("accuracy", accuracy, $"test accuracy {accuracy * 100:F1}% on {test.Count} images (4 classes)",
             (long)train.Count * Epochs, "images", accuracy >= 0.5);
@@ -192,16 +193,16 @@ internal sealed class DemoCommand : Command
         return Dataset.FromClassLabels(pixels, labels, 4).WithFeatureShape(1, size, size);
     }
 
-    private static DemoResult Gpt(Device device)
+    private static DemoResult Gpt(Device device, int shift)
     {
         const string Text = "idrak runs on every device. ";
         const int Context = 32, Batch = 16, Steps = 200;
         string corpus = string.Concat(Enumerable.Repeat(Text, 40));
         var tokenizer = new CharTokenizer(new string([.. Text.Distinct().Order()]));
         var ids = tokenizer.Encode(corpus);
-        using var model = Architectures.Gpt(tokenizer.VocabularySize, Context, dim: 32, heads: 2, layers: 1, ffDim: 64, dropout: 0f).Seed(5).OnDevice(device).Build();
+        using var model = Architectures.Gpt(tokenizer.VocabularySize, Context, dim: 32, heads: 2, layers: 1, ffDim: 64, dropout: 0f).Seed(5 + shift).OnDevice(device).Build();
         using var optimizer = new Adam(model.Parameters(), learningRate: 0.003f);
-        var random = new Random(6);
+        var random = new Random(6 + shift);
         float first = 0f, last = 0f;
         for (int step = 0; step < Steps; step++)
         {

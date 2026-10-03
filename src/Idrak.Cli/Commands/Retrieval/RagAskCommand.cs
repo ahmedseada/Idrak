@@ -70,10 +70,10 @@ internal sealed class RagAskCommand : Command
         var choice = Models.Choose(context, modelName);
         using var model = Models.Load(context, choice);
         using var opened = RagIndexFile.Open(context, path, (choice.Model, choice.Weights, model));
-        var chat = model.CreateChat(KeyValueLayouts.Get(choice.Kv ?? "float32"), model.MaxPositions);
+        var chat = model.CreateChat(Models.CacheLayout(choice), model.MaxPositions);
         var options = temperature == 0f
             ? new GenerationOptions { Temperature = 0f, TopK = 1, TopP = 1f, RepeatPenalty = 1f, NumPredict = maxTokens, NumCtx = model.MaxPositions }
-            : new GenerationOptions { Temperature = temperature, NumPredict = maxTokens, NumCtx = model.MaxPositions };
+            : new GenerationOptions { Temperature = temperature, NumPredict = maxTokens, NumCtx = model.MaxPositions, Seed = context.Seed };
         var builder = Rag.For(chat).Retrieve(opened.Index, top).Options(options)
             .Think(context.Flag("--think") ? true : context.Flag("--no-think") ? false : null)
             .Label(c => $"{c.DocumentId}#{c.Position}");

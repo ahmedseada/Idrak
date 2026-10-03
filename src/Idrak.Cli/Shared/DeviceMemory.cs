@@ -22,22 +22,4 @@ internal static class DeviceMemory
 
         return ComputeResources.GpuMemoryLimit;
     }
-
-    /// <summary>Bytes as text: "1.5 GB", "320 MB", "12 KB".</summary>
-    public static string Format(double bytes) => bytes switch
-    {
-        >= 1e9 => $"{bytes / 1e9:0.#} GB",
-        >= 1e6 => $"{bytes / 1e6:0.#} MB",
-        >= 1e3 => $"{bytes / 1e3:0.#} KB",
-        _ => $"{bytes:0} B",
-    };
-
-    /// <summary>A count as text: "45k", "1.2M", "3.4G", "812".</summary>
-    public static string Count(double value) => value switch
-    {
-        >= 1e9 => $"{value / 1e9:0.#}G",
-        >= 1e6 => $"{value / 1e6:0.#}M",
-        >= 1e3 => $"{value / 1e3:0.#}k",
-        _ => $"{value:0}",
-    };
 }

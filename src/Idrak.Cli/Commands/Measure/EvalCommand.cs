@@ -83,8 +83,16 @@ internal sealed class EvalCommand : Command
         using var model = Models.Load(context, choice);
         var chat = model.CreateChat(KeyValueLayouts.Get(choice.Kv ?? "float32"), model.MaxPositions);
         int done = 0;
-        var report = ChatEvaluation.Run(chat, rows, metric, maxTokens, think,
-            new Progress(a => context.Detail($"  {++done}: score {a.Score:F2}, {a.Tokens} tokens")), model.MaxPositions, batchSize: batch);
+        EvaluationReport report;
+        using (var progress = new ProgressLine(context, "answering", rows.Count))
+        {
+            report = ChatEvaluation.Run(chat, rows, metric, maxTokens, think, new Progress(a =>
+            {
+                context.Detail($"  {++done}: score {a.Score:F2}, {a.Tokens} tokens");
+                progress.Report(done);
+            }), model.MaxPositions, batchSize: batch);
+            progress.Clear();
+        }
 
         if (context.Option("--out") is { } outPath)
         {
@@ -98,6 +106,14 @@ internal sealed class EvalCommand : Command
         string metricName = report.Metric.ToString().ToLowerInvariant();
         context.Write($"{choice.Model} on {context.Device}: {report.Answers.Count} of {rows.Count} conversations scored ({rows.Count - report.Answers.Count} without a final assistant answer skipped)");
         context.Write($"{metricName} {report.Score:P1} · {report.MeanTokens:F0} tokens per answer · {report.TokensPerSecond:F1} tokens/s · {report.Duration.TotalSeconds:F1} s");
+        if (context.Format is OutputFormat.Csv or OutputFormat.Markdown)
+        {
+            var invariant = System.Globalization.CultureInfo.InvariantCulture;
+            context.Fields([("conversations", rows.Count.ToString(invariant)), ("scored", report.Answers.Count.ToString(invariant)),
+                (metricName, report.Score.ToString("F4", invariant)), ("tokens per answer", report.MeanTokens.ToString("F1", invariant)),
+                ("tokens per second", report.TokensPerSecond.ToString("F2", invariant)), ("seconds", report.Duration.TotalSeconds.ToString("F2", invariant))],
+                "Measurement", "Value");
+        }
         if (context.Verbose)
         {
             foreach (var wrong in report.Answers.Where(a => a.Score < 1).Take(5))

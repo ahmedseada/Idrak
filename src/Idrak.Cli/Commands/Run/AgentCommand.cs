@@ -87,7 +87,7 @@ internal sealed class AgentCommand : Command
         var registry = builder.Add(extra).Build();
         settings.ToolAssemblies = [];
         using var loaded = LoadedChat.Load(context, name, settings);
-        var color = StandardInput.IsTerminal(context.Output) && !context.Json;
+        var color = Terminal.UseColour(context);
         var responder = new ChatResponder(loaded.Chat, registry)
         {
             MaxToolRounds = rounds,

@@ -60,9 +60,9 @@ internal sealed class ListCommand : Command
         else
         {
             context.Table(["Model", "Size", "Format", "Last use", "Kind"],
-                entries.Select(e => (IReadOnlyList<string>)[e.Name + (e.Revision is null || e.Kind == "gguf" ? "" : $"@{e.Revision}"), ModelCache.Size(e.Bytes), e.Format,
-                    e.LastUse == DateTime.MinValue ? "-" : ModelCache.Ago(e.LastUse), e.Kind]));
-            context.Write($"{entries.Count} {(entries.Count == 1 ? "entry" : "entries")}, {ModelCache.Size(entries.Sum(e => e.Bytes))} in {context.CacheFolder}");
+                entries.Select(e => (IReadOnlyList<string>)[e.Name + (e.Revision is null || e.Kind == "gguf" ? "" : $"@{e.Revision}"), Units.Bytes(e.Bytes), e.Format,
+                    e.LastUse == DateTime.MinValue ? "-" : Units.Ago(e.LastUse), e.Kind]));
+            context.Write($"{entries.Count} {(entries.Count == 1 ? "entry" : "entries")}, {Units.Bytes(entries.Sum(e => e.Bytes))} in {context.CacheFolder}");
         }
 
         foreach (var e in entries)

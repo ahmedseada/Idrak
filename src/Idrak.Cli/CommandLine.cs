@@ -85,7 +85,7 @@ internal static class CommandLine
         catch (Exception e) when (e is not OutOfMemoryException && context?.Timeout is { } limit && context.TimeoutToken.IsCancellationRequested)
         {
             // Whatever the cancelled call threw (a cancelled task, a closed connection), the reason is the time limit.
-            error.WriteLine($"idrak {command.Name}: gave up after --timeout {Shared.ProgressLine.Duration(limit)} ({e.Message.Split('\n')[0]})");
+            error.WriteLine($"idrak {command.Name}: gave up after --timeout {Shared.Units.Duration(limit)} ({e.Message.Split('\n')[0]})");
             return ExitCodes.Failed;
         }
         catch (Exception e) when (e is not OutOfMemoryException)

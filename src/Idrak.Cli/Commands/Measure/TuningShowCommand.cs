@@ -85,7 +85,7 @@ internal sealed class TuningShowCommand : Command
             foreach (var device in entries.GroupBy(e => e.Device))
             {
                 context.Write($"  {device.Key}");
-                context.Table(["choice", "value"], device.Select(e => (IReadOnlyList<string>)[e.Choice, e.Value]));
+                context.Table(["Choice", "Value"], device.Select(e => (IReadOnlyList<string>)[e.Choice, e.Value]));
             }
 
             json.Add(new JsonObject

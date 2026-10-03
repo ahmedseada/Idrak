@@ -8,7 +8,7 @@ using Idrak.Layers;
 namespace Idrak.Cli.Shared;
 
 /// <summary>What the person asked of <c>idrak suggest</c>.</summary>
-internal sealed record DesignOptions(string? Target, string? TextColumn, string? Task, string? Budget, long? MaxParams, Device Device, BaseModelInfo? Base);
+internal sealed record DesignOptions(string? Target, string? TextColumn, string? Task, string? Budget, long? MaxParams, Device Device, BaseModelInfo? Base, int Seed = 1);
 
 /// <summary>
 /// The sizes a network is made from, so the search can vary them: the width (first hidden width of an MLP, filters
@@ -299,7 +299,7 @@ internal static class DesignRules
         design.Prep = new JsonObject
         {
             ["format"] = "idrak-prep/1", ["kind"] = "table", ["source"] = profile.Path, ["target"] = targetSpec, ["features"] = features, ["dropped"] = dropped,
-            ["split"] = new JsonObject { ["validation"] = 0.2, ["seed"] = 1 },
+            ["split"] = new JsonObject { ["validation"] = 0.2, ["seed"] = options.Seed },
         };
 
         // Width: the next power of two at or above twice the features, between 16 and 256. Depth: one hidden layer under
@@ -307,7 +307,7 @@ internal static class DesignRules
         int first = Math.Clamp(NextPowerOfTwo(2 * width), 16, 256);
         int depth = rows < 500 ? 1 : rows < 50_000 ? 2 : 3;
         float dropout = rows < 1_000 ? 0.2f : rows < 10_000 ? 0.1f : 0f;
-        Func<Variant, NetworkBuilder> make = v => Mlp(width, outputs, v);
+        Func<Variant, NetworkBuilder> make = v => Mlp(width, outputs, v, options.Seed);
         long cap = Cap(options, train, 50, 2_000, 5_000_000);
         var variant = FitToCap(new Variant(first, depth, dropout, 1e-3f), make, cap, minWidth: 8);
         design = Copy(design, make);
@@ -323,10 +323,10 @@ internal static class DesignRules
         design.Lines.Add(("Task", task == "classify" ? $"classification, {outputs} classes (target '{target.Name}')" : $"regression (target '{target.Name}' is a number)"));
         string prepLine = $"standard-scale {numbers} numbers · one-hot {categories} categories (-> {width} features) · fill missing with medians"
             + ((bool?)targetSpec["log"] == true ? $" · log-transform the target (skew {(double)targetSpec["skew"]!:0.0})" : "")
-            + $" · {profile.Duplicates} duplicates · 80/20 split, seed 1" + (dropped.Count > 0 ? $" · dropped {string.Join(", ", dropped.Select(d => (string)d!["column"]!))}" : "");
+            + $" · {profile.Duplicates} duplicates · 80/20 split, seed {options.Seed}" + (dropped.Count > 0 ? $" · dropped {string.Join(", ", dropped.Select(d => (string)d!["column"]!))}" : "");
         design.Lines.Add(("Prep", prepLine));
         design.Lines.Add(("Network", $"MLP {width} -> {string.Join(" -> ", hidden)} -> {outputs}, ReLU" + (variant.Dropout > 0 ? $", dropout {variant.Dropout:0.##}" : "")
-            + $" (about {DeviceMemory.Count(analysis.Parameters)} parameters; cap {DeviceMemory.Count(cap)} for {rows:N0} rows)"));
+            + $" (about {Units.Short(analysis.Parameters)} parameters; cap {Units.Short(cap)} for {rows:N0} rows)"));
         design.Why("prep", "standard-scale numbers, one-hot categories", "numbers are centred and scaled so no feature dominates; a category becomes one 0/1 feature per value (its 32 most frequent values)");
         design.Why("prep", "fill missing numbers with the median", "the median is not pulled by outliers; a missing category is all zeros");
         if ((bool?)targetSpec["log"] == true)
@@ -337,7 +337,7 @@ internal static class DesignRules
         design.Why("network", $"width {variant.Width}", "the next power of two at or above twice the features, between 16 and 256, halved until the parameters fit the cap");
         design.Why("network", $"{variant.Depth} hidden layer{(variant.Depth == 1 ? "" : "s")}", "one under 500 rows, two under 50,000, three above");
         design.Why("network", variant.Dropout > 0 ? $"dropout {variant.Dropout:0.##}" : "no dropout", "0.2 under 1,000 rows, 0.1 under 10,000, none above");
-        design.Why("network", $"cap {DeviceMemory.Count(cap)} parameters", "50 per training row, between 2k and 5M (--budget small ÷4, large ×4, --max-params replaces it)");
+        design.Why("network", $"cap {Units.Short(cap)} parameters", "50 per training row, between 2k and 5M (--budget small ÷4, large ×4, --max-params replaces it)");
         foreach (var d in dropped)
         {
             design.Why("prep", $"drop '{(string)d!["column"]!}'", (string)d["reason"]!);
@@ -409,7 +409,7 @@ internal static class DesignRules
         int v = vocabulary.Count + 2;
         int rows = profile.Rows.Count(r => r[target.Name] is not null);
         int outputs = (string?)targetSpec["type"] == "classes" ? targetSpec["classes"]!.AsArray().Count : 1;
-        Func<Variant, NetworkBuilder> make = variant => TextNetwork(v, length, outputs, variant);
+        Func<Variant, NetworkBuilder> make = variant => TextNetwork(v, length, outputs, variant, options.Seed);
 
         // Under 5,000 rows: mean of word embeddings (a bag of words, robust on little data), width 32 under 1,000 rows
         // else 64. From 5,000 rows: two transformer layers of width 64 (128 from 50,000 rows), learning rate 5e-4.
@@ -427,17 +427,17 @@ internal static class DesignRules
                 ["type"] = "words", ["lowercase"] = true, ["length"] = length,
                 ["vocabulary"] = new JsonArray([.. new[] { "<pad>", "<unk>" }.Concat(vocabulary).Select(w => (JsonNode)w)]),
             },
-            ["split"] = new JsonObject { ["validation"] = 0.2, ["seed"] = 1 },
+            ["split"] = new JsonObject { ["validation"] = 0.2, ["seed"] = options.Seed },
         };
         var analysis = NetworkAnalysis.Of(make(variant).ToJson());
         Training(design, profile, task, rows * 0.8, rows, targetSpec, isImage: false);
         design.Lines.Add(("Data", $"{profile.TotalRows:N0} rows · text column '{text.Name}': {text.MeanWords:0} words on average, {text.MaxWords:N0} longest · {counts.Count:N0} distinct words"));
         design.Lines.Add(("Task", $"text {(task == "classify" ? $"classification, {outputs} classes" : "regression")} (target '{target.Name}', text '{text.Name}')"));
-        design.Lines.Add(("Prep", $"lower-case words · vocabulary {v:N0} (words seen {minCount}+ times) · {length} words per row (95th percentile), cut or padded · 80/20 split, seed 1"));
+        design.Lines.Add(("Prep", $"lower-case words · vocabulary {v:N0} (words seen {minCount}+ times) · {length} words per row (95th percentile), cut or padded · 80/20 split, seed {options.Seed}"));
         design.Lines.Add(("Network", (variant.Depth == 0
             ? $"embedding {v:N0} x {variant.Width} -> mean over words -> linear {variant.Width} -> ReLU -> linear {outputs}"
             : $"embedding {v:N0} x {variant.Width} -> positions -> transformer x {variant.Depth} ({Heads(variant.Width)} heads) -> layer norm -> mean -> linear {outputs}")
-            + $" (about {DeviceMemory.Count(analysis.Parameters)} parameters)"));
+            + $" (about {Units.Short(analysis.Parameters)} parameters)"));
         design.Why("prep", $"{length} words per row", "the 95th percentile of words per row, between 4 and 256: longer rows are cut");
         design.Why("prep", $"vocabulary of {v:N0}", "words seen at least twice (every word when fewer than 50 are), at most 20,000 (--budget small 5,000, large 50,000), plus padding and unknown");
         design.Why("network", variant.Depth == 0 ? "mean of word embeddings" : $"{variant.Depth} transformer layers",
@@ -474,7 +474,7 @@ internal static class DesignRules
         // under 5,000 images, else 32, doubling per block up to 256. Dropout 0.2 under 10,000 images, else 0.
         int blocks = Math.Clamp((int)Math.Floor(Math.Log2(Math.Min(width, height) / 4.0)), 1, 4);
         var first = new Variant(n < 5_000 ? 16 : 32, blocks, n < 10_000 ? 0.2f : 0f, 3e-3f);
-        Func<Variant, NetworkBuilder> make = v => Cnn(channels, height, width, classes, v);
+        Func<Variant, NetworkBuilder> make = v => Cnn(channels, height, width, classes, v, options.Seed);
         long cap = Cap(options, n * 0.8, 100, 20_000, 20_000_000);
         var variant = FitToCap(first, make, cap, minWidth: 8);
         var design = new DesignPlan { Task = "image", Make = make, Variant = variant, ParameterCap = cap };
@@ -483,7 +483,7 @@ internal static class DesignRules
         {
             ["format"] = "idrak-prep/1", ["kind"] = "images", ["source"] = profile.Path, ["channels"] = channels, ["height"] = height, ["width"] = width,
             ["scale"] = "0-1", ["classes"] = new JsonArray([.. profile.ClassNames.Select(c => (JsonNode)c)]), ["augment"] = augment,
-            ["split"] = new JsonObject { ["validation"] = 0.2, ["seed"] = 1 },
+            ["split"] = new JsonObject { ["validation"] = 0.2, ["seed"] = options.Seed },
         };
         var spec = new JsonObject { ["type"] = "classes", ["classes"] = design.Prep["classes"]!.DeepClone() };
         Training(design, profile, "image", n * 0.8, n, spec, isImage: true);
@@ -494,7 +494,7 @@ internal static class DesignRules
         design.Lines.Add(("Task", $"image classification, {classes} classes"));
         design.Lines.Add(("Prep", $"{(sameSize && scale == 1 ? "" : $"resize to {width}x{height} · ")}scale to [0, 1]" + (augment.Count > 0 ? " · augment: flips, ±10° rotations, ±2 px shifts (small set)" : "")));
         design.Lines.Add(("Network", $"[conv {variant.Width} -> batch norm -> ReLU -> pool] x {variant.Depth} -> global average pool -> {(variant.Dropout > 0 ? $"dropout {variant.Dropout:0.##} -> " : "")}linear {classes}"
-            + $" (about {DeviceMemory.Count(analysis.Parameters)} parameters)"));
+            + $" (about {Units.Short(analysis.Parameters)} parameters)"));
         int undecodable = profile.Images.Count(i => !i.Info.Decodable);
         if (undecodable > 0)
         {
@@ -530,7 +530,7 @@ internal static class DesignRules
         // Width 64 and 2 layers; 128 and 4 layers from 5 million characters. Learning rate 1e-3 (3e-4 when larger).
         bool large = characters >= 5_000_000;
         var first = new Variant(large ? 128 : 64, large ? 4 : 2, 0.1f, large ? 3e-4f : 1e-3f);
-        Func<Variant, NetworkBuilder> make = v => Architectures.Gpt(vocabulary, length, v.Width, Heads(v.Width), v.Depth, 4 * v.Width, v.Dropout).Named("suggested-language-model").Seed(1);
+        Func<Variant, NetworkBuilder> make = v => Architectures.Gpt(vocabulary, length, v.Width, Heads(v.Width), v.Depth, 4 * v.Width, v.Dropout).Named("suggested-language-model").Seed(options.Seed);
         long cap = Cap(options, characters, 1, 20_000, 50_000_000);
         var variant = FitToCap(first, make, cap, minWidth: 16);
         var design = new DesignPlan { Task = "chat", Make = make, Variant = variant, ParameterCap = cap };
@@ -542,16 +542,16 @@ internal static class DesignRules
                 ["type"] = "characters", ["length"] = length,
                 ["vocabulary"] = new JsonArray([.. new[] { "<pad>", "<unk>" }.Concat(counts).Select(s => (JsonNode)s)]),
             },
-            ["split"] = new JsonObject { ["validation"] = 0.1, ["seed"] = 1 },
+            ["split"] = new JsonObject { ["validation"] = 0.1, ["seed"] = options.Seed },
         };
         var analysis = NetworkAnalysis.Of(make(variant).ToJson());
         int windows = (int)Math.Max(1, characters / length);
         Training(design, profile, "chat", windows * 0.9, windows, new JsonObject { ["type"] = "tokens" }, isImage: false);
         design.Lines.Add(("Data", $"{profile.Conversations.Count:N0} {(profile.Layout is "text" ? "texts" : "conversations")} ({profile.Layout ?? "rows"}) · {characters:N0} characters · {length} characters per window"));
         design.Lines.Add(("Task", "language model from scratch (next character), as no --base model was given"));
-        design.Lines.Add(("Prep", $"render as 'role: content' lines · characters as tokens ({vocabulary} symbols) · windows of {length} · 90/10 split, seed 1"));
+        design.Lines.Add(("Prep", $"render as 'role: content' lines · characters as tokens ({vocabulary} symbols) · windows of {length} · 90/10 split, seed {options.Seed}"));
         design.Lines.Add(("Network", $"GPT: embedding {vocabulary} x {variant.Width} -> positions -> causal transformer x {variant.Depth} ({Heads(variant.Width)} heads) -> layer norm -> linear {vocabulary}"
-            + $" (about {DeviceMemory.Count(analysis.Parameters)} parameters)"));
+            + $" (about {Units.Short(analysis.Parameters)} parameters)"));
         design.Warnings.Add("no --base model: a small model trained from scratch learns the style of this data, not to answer; --base MODEL sets up a LoRA fine-tune instead");
         design.Why("task", "language model from scratch", "chat rows are a chat fine-tune of a base model; without --base, the rows train a small next-character model");
         design.Why("prep", "characters as tokens", "no tokenizer without a base model; characters need no vocabulary file and have no unknown words");
@@ -595,7 +595,7 @@ internal static class DesignRules
                 precision = bf16 <= 0.8 * m ? "bf16" : "int4";
                 string fits = bf16 <= 0.8 * m ? "bfloat16 base with LoRA fits; QLoRA not needed"
                     : int4 <= 0.8 * m ? "bfloat16 does not fit; 4-bit base (QLoRA)" : "even a 4-bit base may not fit: add --offload to the tune run";
-                design.Lines.Add(("Memory", $"{options.Device} offers {DeviceMemory.Format(m)}; the setup needs about {DeviceMemory.Format(precision == "bf16" ? bf16 : int4)} -> {fits}"));
+                design.Lines.Add(("Memory", $"{options.Device} offers {Units.Bytes(m)}; the setup needs about {Units.Bytes(precision == "bf16" ? bf16 : int4)} -> {fits}"));
                 if (int4 > 0.8 * m)
                 {
                     design.Warnings.Add("the model may not fit this device's memory even at 4 bits");
@@ -603,7 +603,7 @@ internal static class DesignRules
             }
             else
             {
-                design.Lines.Add(("Memory", $"{options.Device}'s memory is not reported; a bfloat16 base needs about {DeviceMemory.Format(bf16)}, a 4-bit one {DeviceMemory.Format(int4)}"));
+                design.Lines.Add(("Memory", $"{options.Device}'s memory is not reported; a bfloat16 base needs about {Units.Bytes(bf16)}, a 4-bit one {Units.Bytes(int4)}"));
                 design.Warnings.Add($"the memory of {options.Device} is unknown: check the bfloat16 / 4-bit choice against the card");
             }
         }
@@ -617,7 +617,7 @@ internal static class DesignRules
         {
             ["format"] = "idrak-tune/1", ["model"] = model.Name, ["data"] = profile.Path, ["loss"] = dpo ? "dpo" : "sft", ["adapter-type"] = "lora",
             ["rank"] = rank, ["alpha"] = 2 * rank, ["targets"] = targets, ["lr"] = lr, ["schedule"] = "cosine", ["warmup"] = 0.03, ["epochs"] = epochs,
-            ["max-length"] = maxLength, ["batch-tokens"] = batchTokens, ["eval-fraction"] = rows >= 200 ? 0.05 : 0.0, ["seed"] = 1,
+            ["max-length"] = maxLength, ["batch-tokens"] = batchTokens, ["eval-fraction"] = rows >= 200 ? 0.05 : 0.0, ["seed"] = options.Seed,
         };
         if (precision == "int4")
         {
@@ -719,7 +719,7 @@ internal static class DesignRules
             ["format"] = "idrak-train/1", ["task"] = task, ["target"] = (string?)targetSpec["column"], ["optimizer"] = "adamw",
             ["learningRate"] = v.LearningRate, ["weightDecay"] = decay, ["batchSize"] = batch, ["epochs"] = epochs, ["earlyStopping"] = patience,
             ["schedule"] = "cosine", ["warmupEpochs"] = warmup, ["loss"] = loss, ["metric"] = metric, ["validationFraction"] = (double?)design.Prep?["split"]?["validation"] ?? 0.2,
-            ["seed"] = 1,
+            ["seed"] = (int?)design.Prep?["split"]?["seed"] ?? 1,
         };
         design.Lines.Add(("Training", $"AdamW {v.LearningRate:0e0}, weight decay {decay:0e0} · {(warmup > 0 ? $"cosine with {warmup} warm-up epochs" : "cosine")} · batch {batch} · up to {epochs} epochs, early stop after {patience} · {LossName(loss)}"));
         design.Why("training", $"batch {batch}", $"the power of two at or below a 32nd of the training rows, between 8 and {maxBatch}");
@@ -760,7 +760,7 @@ internal static class DesignRules
         long need = analysis.TrainingBytes(batch);
         if (DeviceMemory.Total(device) is { } memory && need > memory * 0.8)
         {
-            design.Warnings.Add($"training at batch {batch} needs about {DeviceMemory.Format(need)}, more than 80% of {device}'s {DeviceMemory.Format(memory)}: lower the batch or --budget");
+            design.Warnings.Add($"training at batch {batch} needs about {Units.Bytes(need)}, more than 80% of {device}'s {Units.Bytes(memory)}: lower the batch or --budget");
         }
     }
 
@@ -782,7 +782,7 @@ internal static class DesignRules
     }
 
     /// <summary>The MLP: Input(features) → depth × [Linear(width / 2^i, at least 8), ReLU, Dropout] → Linear(outputs).</summary>
-    public static NetworkBuilder Mlp(int features, int outputs, Variant v)
+    public static NetworkBuilder Mlp(int features, int outputs, Variant v, int seed = 1)
     {
         var b = Network.Input(features);
         for (int i = 0; i < v.Depth; i++)
@@ -794,11 +794,11 @@ internal static class DesignRules
             }
         }
 
-        return b.Linear(outputs).Named("suggested-mlp").Seed(1);
+        return b.Linear(outputs).Named("suggested-mlp").Seed(seed);
     }
 
     /// <summary>The CNN: depth × [Conv2d 3×3 (width, doubling, at most 256), BatchNorm, ReLU, MaxPool2d(2)] → global average pool → Dropout → Linear.</summary>
-    public static NetworkBuilder Cnn(int channels, int height, int width, int classes, Variant v)
+    public static NetworkBuilder Cnn(int channels, int height, int width, int classes, Variant v, int seed = 1)
     {
         var b = Network.Image(channels, height, width);
         int filters = v.Width;
@@ -814,11 +814,11 @@ internal static class DesignRules
             b.Dropout(v.Dropout);
         }
 
-        return b.Linear(classes).Named("suggested-cnn").Seed(1);
+        return b.Linear(classes).Named("suggested-cnn").Seed(seed);
     }
 
     /// <summary>The text model: depth 0 is the mean of word embeddings with one hidden layer; otherwise transformer layers.</summary>
-    public static NetworkBuilder TextNetwork(int vocabulary, int length, int outputs, Variant v)
+    public static NetworkBuilder TextNetwork(int vocabulary, int length, int outputs, Variant v, int seed = 1)
     {
         var b = Network.Tokens(length).Embedding(vocabulary, v.Width);
         if (v.Depth == 0)
@@ -834,7 +834,7 @@ internal static class DesignRules
             b.PositionalEncoding().Repeat(v.Depth, x => x.TransformerEncoderLayer(Heads(v.Width), 2 * v.Width, v.Dropout)).LayerNorm().MeanOverTime();
         }
 
-        return b.Linear(outputs).Named("suggested-text").Seed(1);
+        return b.Linear(outputs).Named("suggested-text").Seed(seed);
     }
 
     // Attention heads: one per 32 of width, 1 to 8 (the width is a power of two, so they divide it).

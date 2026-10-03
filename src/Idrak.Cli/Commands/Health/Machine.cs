@@ -50,7 +50,7 @@ internal static class Machine
     /// <summary>One line: OS, architecture, processors, memory, runtime.</summary>
     public static string Describe() =>
         $"{RuntimeInformation.OSDescription} ({RuntimeInformation.ProcessArchitecture}), {Environment.ProcessorCount} logical processors, " +
-        $"{ProgressLine.Bytes(Memory)} memory, {RuntimeInformation.FrameworkDescription}";
+        $"{Units.Bytes(Memory)} memory, {RuntimeInformation.FrameworkDescription}";
 
     /// <summary>A device as JSON.</summary>
     public static JsonObject Json(DeviceInfo d) => new()
@@ -81,7 +81,7 @@ internal static class Machine
     };
 
     /// <summary>"16.0 GB", or "-" when unknown.</summary>
-    public static string Bytes(long? value) => value is long v ? ProgressLine.Bytes(v) : "-";
+    public static string Bytes(long? value) => value is long v ? Units.Bytes(v) : "-";
 
     /// <summary>A number, or "-" when unknown.</summary>
     public static string Number(int? value) => value is int v ? v.ToString(CultureInfo.InvariantCulture) : "-";

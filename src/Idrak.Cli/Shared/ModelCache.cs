@@ -261,26 +261,6 @@ internal static class ModelCache
         }
     }
 
-    /// <summary>A byte count for people (the downloader's units).</summary>
-    public static string Size(long bytes) => Datasets.Downloader.Size(bytes);
-
-    /// <summary>A count of parameters for people: 751.6 M, 8.03 B.</summary>
-    public static string Count(long count) => count switch
-    {
-        < 10_000 => count.ToString("N0", CultureInfo.InvariantCulture),
-        < 1_000_000 => $"{count / 1e3:0.#} K",
-        < 1_000_000_000 => $"{count / 1e6:0.#} M",
-        _ => $"{count / 1e9:0.##} B",
-    };
-
-    /// <summary>A time for people, relative to now.</summary>
-    public static string Ago(DateTime utc)
-    {
-        var age = DateTime.UtcNow - utc;
-        return age.TotalMinutes < 1 ? "just now" : age.TotalHours < 1 ? $"{(int)age.TotalMinutes} min ago" : age.TotalDays < 1 ? $"{(int)age.TotalHours} h ago"
-            : age.TotalDays < 60 ? $"{(int)age.TotalDays} days ago" : utc.ToLocalTime().ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-    }
-
     /// <summary>Bytes of every file under <paramref name="folder"/>.</summary>
     public static long FolderBytes(string folder) =>
         Directory.Exists(folder) ? Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories).Sum(f => new FileInfo(f).Length) : 0;

@@ -109,7 +109,7 @@ internal sealed class InspectCommand : Command
         var shown = tensors.Where(t => Wanted(t.Name)).ToList();
         long parameters = shown.Sum(t => t.Shape.Aggregate(1L, (a, b) => a * b));
         context.Write($"{path}: {format}{(version is null ? "" : $" version {version}")}, {shown.Count} tensors{(filter is null ? "" : $" matching '{filter}'")}, "
-                      + $"{ModelCache.Count(parameters)} values, {ModelCache.Size(shown.Sum(t => t.Bytes))}");
+                      + $"{Units.Count(parameters)} values, {Units.Bytes(shown.Sum(t => t.Bytes))}");
         if (metadata.Count > 0)
         {
             context.Write("");
@@ -124,7 +124,7 @@ internal sealed class InspectCommand : Command
             int limit = context.IntOption("--limit", int.MaxValue);
             context.Write("");
             context.Table(["Tensor", "Shape", "Type", "Size"],
-                shown.Take(limit).Select(t => (IReadOnlyList<string>)[t.Name, "[" + string.Join(", ", t.Shape) + "]", t.Type, ModelCache.Size(t.Bytes)]));
+                shown.Take(limit).Select(t => (IReadOnlyList<string>)[t.Name, "[" + string.Join(", ", t.Shape) + "]", t.Type, Units.Bytes(t.Bytes)]));
             if (shown.Count > limit)
             {
                 context.Write($"... {shown.Count - limit} more (--limit)");
@@ -175,8 +175,8 @@ internal sealed class InspectCommand : Command
             rows.Add((entry.Kind.ToString(), entry.Name, bytes, detail));
         }
 
-        context.Write($"{path}: Idrak package, {rows.Count} entries, {ModelCache.Size(new FileInfo(path).Length)}");
-        context.Table(["Kind", "Name", "Size", "Detail"], rows.Select(r => (IReadOnlyList<string>)[r.Kind, r.Name, r.Bytes > 0 ? ModelCache.Size(r.Bytes) : "-", r.Detail]));
+        context.Write($"{path}: Idrak package, {rows.Count} entries, {Units.Bytes(new FileInfo(path).Length)}");
+        context.Table(["Kind", "Name", "Size", "Detail"], rows.Select(r => (IReadOnlyList<string>)[r.Kind, r.Name, r.Bytes > 0 ? Units.Bytes(r.Bytes) : "-", r.Detail]));
         context.WriteJson(new JsonObject
         {
             ["file"] = path,

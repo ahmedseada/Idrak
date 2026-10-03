@@ -484,9 +484,9 @@ internal static partial class Tests
         }
 
         // Progress text, byte amounts and questions without a terminal.
-        Check(ProgressLine.Format("pull", 512L << 20, 1L << 30, TimeSpan.FromSeconds(4), ProgressUnit.Bytes) == "pull   50%  512.0 MB / 1.0 GB  128.0 MB/s  4s left",
+        Check(ProgressLine.Format("pull", 512L << 20, 1L << 30, TimeSpan.FromSeconds(4), ProgressUnit.Bytes) == "pull   50%  512 MB / 1.00 GB  128 MB/s  4s left",
             $"progress: {ProgressLine.Format("pull", 512L << 20, 1L << 30, TimeSpan.FromSeconds(4), ProgressUnit.Bytes)}");
-        Check(ProgressLine.Bytes(1536) == "1.5 KB" && ProgressLine.Duration(TimeSpan.FromSeconds(185)) == "3m 05s", "bytes and durations");
+        Check(Units.Bytes(1536) == "1.5 KB" && Units.Duration(TimeSpan.FromSeconds(185)) == "3m 05s", "bytes and durations");
         Check(Cli("logout", "github", "--dry-run", "-C", Path.Combine(folder, "c.json")).Exit == 0, "logout --dry-run");
         Directory.Delete(folder, true);
     }

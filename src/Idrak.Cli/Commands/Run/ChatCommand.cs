@@ -114,7 +114,7 @@ internal sealed class ChatSession
         _loaded = loaded;
         _settings = settings;
         _historyPath = historyPath;
-        _color = StandardInput.IsTerminal(context.Output) && !context.Json;
+        _color = Terminal.UseColour(context);
         var stream = context.Json ? null : context.Output;
         _responder = new ChatResponder(loaded.Chat, loaded.Registry) { Stream = stream, ThinkingStream = context.Quiet ? null : stream, Color = _color };
         if (historyPath is not null && File.Exists(historyPath))

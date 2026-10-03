@@ -39,27 +39,28 @@ internal sealed class ShowCommand : Command
         var local = ModelCache.Locate(context, name);
         var info = ModelFacts.Read(local);
 
-        context.Write($"Model        {name}{(name == (local.File ?? local.Folder) ? "" : $" ({local.File ?? local.Folder})")}");
-        context.Write($"Family       {info.Architecture}{(info.ModelType is null ? "" : $" ({info.ModelType})")}{(info.Loadable ? "" : $"  (not loadable: {info.Problem})")}");
-        context.Write($"Parameters   {ModelCache.Count(info.Parameters)} ({info.Parameters:N0})");
+        var fields = new List<(string, string)>
+        {
+            ("Model", $"{name}{(name == (local.File ?? local.Folder) ? "" : $" ({local.File ?? local.Folder})")}"),
+            ("Family", $"{info.Architecture}{(info.ModelType is null ? "" : $" ({info.ModelType})")}{(info.Loadable ? "" : $"  (not loadable: {info.Problem})")}"),
+            ("Parameters", $"{Units.Count(info.Parameters)} ({info.Parameters:N0})"),
+        };
         if (info.Spec is { } spec)
         {
-            context.Write($"Layers       {spec.Layers} · width {spec.Dim} · feed-forward {spec.FfDim}{(spec.Gated ? $" (gated, {spec.Activation})" : $" ({spec.Activation})")}");
-            context.Write($"Attention    {spec.Heads} heads, {spec.KvHeads} key/value heads, head size {spec.HeadDim}{(spec.QkNorm ? ", query/key norms" : "")}");
-            context.Write($"Context      {spec.MaxPositions:N0} positions");
-            context.Write($"Vocabulary   {spec.Vocabulary:N0}{(spec.TieEmbeddings ? " (embeddings tied to the output head)" : "")}");
-            context.Write($"RoPE         {info.Rope}");
-            context.Write($"Windows      {info.Windows}");
+            fields.Add(("Layers", $"{spec.Layers} · width {spec.Dim} · feed-forward {spec.FfDim}{(spec.Gated ? $" (gated, {spec.Activation})" : $" ({spec.Activation})")}"));
+            fields.Add(("Attention", $"{spec.Heads} heads, {spec.KvHeads} key/value heads, head size {spec.HeadDim}{(spec.QkNorm ? ", query/key norms" : "")}"));
+            fields.Add(("Context", $"{spec.MaxPositions:N0} positions"));
+            fields.Add(("Vocabulary", $"{spec.Vocabulary:N0}{(spec.TieEmbeddings ? " (embeddings tied to the output head)" : "")}"));
+            fields.Add(("RoPE", info.Rope));
+            fields.Add(("Windows", info.Windows));
         }
 
-        context.Write($"Weights      {info.Format} · {ModelCache.Size(info.WeightBytes)}");
-        context.Write($"Chat         {(info.Template is null ? "no chat template" : $"chat template ({info.TemplateSource}), tool calls: {info.ToolCallFormat}")}");
-        context.Write($"License      {info.License ?? "not stated"}");
-        context.Write("Files        " + string.Join(", ", info.Files.Select(f => $"{f.Name} {ModelCache.Size(f.Bytes)}")));
-        foreach (string note in info.Notes)
-        {
-            context.Write($"Note         {note}");
-        }
+        fields.Add(("Weights", $"{info.Format} · {Units.Bytes(info.WeightBytes)}"));
+        fields.Add(("Chat", info.Template is null ? "no chat template" : $"chat template ({info.TemplateSource}), tool calls: {info.ToolCallFormat}"));
+        fields.Add(("License", info.License ?? "not stated"));
+        fields.Add(("Files", string.Join(", ", info.Files.Select(f => $"{f.Name} {Units.Bytes(f.Bytes)}"))));
+        fields.AddRange(info.Notes.Select(note => ("Note", note)));
+        context.Fields(fields);
 
         if (context.Flag("--template") && info.Template is not null)
         {

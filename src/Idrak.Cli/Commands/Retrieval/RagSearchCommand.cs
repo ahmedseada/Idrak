@@ -43,7 +43,7 @@ internal sealed class RagSearchCommand : Command
         using var opened = RagIndexFile.Open(context, path);
         var hits = opened.Index.SearchAsync(query, top).AsTask().GetAwaiter().GetResult();
         context.Write($"{hits.Count} of {opened.Index.Chunks.Count} chunks for \"{query}\" ({opened.Search}):");
-        context.Table(["#", "score", "source", "passage"], hits.Select((h, i) => (IReadOnlyList<string>)
+        context.Table(["#", "Score", "Source", "Passage"], hits.Select((h, i) => (IReadOnlyList<string>)
             [(i + 1).ToString(), h.Score.ToString("G4"), $"{h.Chunk.DocumentId}#{h.Chunk.Position}", RagIndexFile.Snippet(h.Chunk.Text)]));
         context.WriteJson(new JsonObject
         {

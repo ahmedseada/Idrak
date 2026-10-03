@@ -29,9 +29,9 @@ internal sealed class CacheInfoCommand : Command
         var parts = CacheLayout.Parts.Select(p => (Part: p, Size: CacheLayout.Size(root, p), Paths: CacheLayout.Existing(root, p).ToList())).ToList();
         long total = CacheLayout.Size(root);
         context.Write($"Cache folder: {root}{(Directory.Exists(root) ? "" : " (not created yet)")}");
-        context.Table(["Kind", "Size", "Holds", "Paths"], parts.Select(p => (IReadOnlyList<string>)[p.Part.Kind, ProgressLine.Bytes(p.Size), p.Part.Meaning,
+        context.Table(["Kind", "Size", "Holds", "Paths"], parts.Select(p => (IReadOnlyList<string>)[p.Part.Kind, Units.Bytes(p.Size), p.Part.Meaning,
             p.Paths.Count == 0 ? "-" : string.Join(", ", p.Paths.Select(x => Path.GetRelativePath(root, x)))]));
-        context.Write($"Total: {ProgressLine.Bytes(total)}");
+        context.Write($"Total: {Units.Bytes(total)}");
         context.WriteJson(new JsonObject
         {
             ["folder"] = root,
@@ -101,7 +101,7 @@ internal sealed class CacheClearCommand : Command
 
         if (Terminal.DryRun(context))
         {
-            context.Write($"Would delete {ProgressLine.Bytes(size)}:");
+            context.Write($"Would delete {Units.Bytes(size)}:");
             paths.ForEach(p => context.Write($"  {p}"));
             json["cleared"] = false;
             json["dryRun"] = true;
@@ -109,7 +109,7 @@ internal sealed class CacheClearCommand : Command
             return ExitCodes.Ok;
         }
 
-        if (!Terminal.Confirm(context, $"Delete the {kind} cache ({ProgressLine.Bytes(size)} in {string.Join(", ", paths)})?"))
+        if (!Terminal.Confirm(context, $"Delete the {kind} cache ({Units.Bytes(size)} in {string.Join(", ", paths)})?"))
         {
             context.Write("Nothing deleted.");
             json["cleared"] = false;
@@ -118,7 +118,7 @@ internal sealed class CacheClearCommand : Command
         }
 
         long freed = paths.Sum(CacheLayout.Delete);
-        context.Write($"Freed {ProgressLine.Bytes(freed)}.");
+        context.Write($"Freed {Units.Bytes(freed)}.");
         json["cleared"] = true;
         context.WriteJson(json);
         return ExitCodes.Ok;

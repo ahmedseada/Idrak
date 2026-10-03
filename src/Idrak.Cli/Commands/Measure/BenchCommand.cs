@@ -164,7 +164,7 @@ internal sealed class BenchCommand : Command
         else
         {
             context.Write("");
-            context.Table(["measurement", "value", "unit", "detail"],
+            context.Table(["Measurement", "Value", "Unit", "Detail"],
                 all.Select(p => (IReadOnlyList<string>)[p.Result.Name, Format(p.Result.Value), p.Result.Unit, p.Result.Note ?? ""]));
         }
 
@@ -337,11 +337,11 @@ internal sealed class BenchCommand : Command
         context.Write("");
         if (names.Count >= labels.Count)
         {
-            context.Table(["measurement", "unit", .. labels], names.Select(n => (IReadOnlyList<string>)[n.Name, n.Unit, .. labels.Select(l => Cell(l, n.Name))]));
+            context.Table(["Measurement", "Unit", .. labels], names.Select(n => (IReadOnlyList<string>)[n.Name, n.Unit, .. labels.Select(l => Cell(l, n.Name))]));
         }
         else
         {
-            context.Table(["run", .. names.Select(n => $"{n.Name} ({n.Unit})")], labels.Select(l => (IReadOnlyList<string>)[l, .. names.Select(n => Cell(l, n.Name))]));
+            context.Table(["Run", .. names.Select(n => $"{n.Name} ({n.Unit})")], labels.Select(l => (IReadOnlyList<string>)[l, .. names.Select(n => Cell(l, n.Name))]));
         }
     }
 
@@ -384,7 +384,7 @@ internal sealed class BenchCommand : Command
         }
         else
         {
-            context.Table(["measurement", "now", "saved", "unit", "change"], table);
+            context.Table(["Measurement", "Now", "Saved", "Unit", "Change"], table);
         }
 
         return new JsonObject { ["name"] = name, ["date"] = saved["date"]?.DeepClone(), ["results"] = rows };

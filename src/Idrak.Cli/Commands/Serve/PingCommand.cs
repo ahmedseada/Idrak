@@ -56,7 +56,7 @@ internal sealed class PingCommand : Command
             }
             catch (Exception e) when (e is HttpRequestException or TaskCanceledException)
             {
-                return (0, null, watch.Elapsed.TotalMilliseconds, e is TaskCanceledException ? $"no answer within {ProgressLine.Duration(limit)}" : e.Message);
+                return (0, null, watch.Elapsed.TotalMilliseconds, e is TaskCanceledException ? $"no answer within {Units.Duration(limit)}" : e.Message);
             }
         }
 

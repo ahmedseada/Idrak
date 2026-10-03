@@ -78,7 +78,13 @@ internal sealed class DoctorCommand : Command
         }
 
         bool explain = context.Flag("--explain");
-        foreach (var c in checks)
+        if (context.Format is OutputFormat.Csv or OutputFormat.Markdown)
+        {
+            context.Table(explain ? ["Status", "Check", "Detail", "Fix", "Why"] : ["Status", "Check", "Detail", "Fix"], checks.Select(c => (IReadOnlyList<string>)
+                [c.Status.ToString().ToLowerInvariant(), c.Name, c.Detail, c.Status is Status.Warn or Status.Fail ? c.Fix ?? "" : "", .. explain ? [c.Why ?? ""] : Array.Empty<string>()]));
+        }
+
+        foreach (var c in context.Format is OutputFormat.Csv or OutputFormat.Markdown ? [] : checks)
         {
             var (word, colour) = c.Status switch
             {
@@ -172,7 +178,7 @@ internal sealed class DoctorCommand : Command
             : System.Runtime.Intrinsics.Arm.AdvSimd.IsSupported ? "AdvSIMD" : "";
         checks.Add(new("runtime", "CPU", Status.Info,
             $"{Environment.ProcessorCount} logical processors, {System.Numerics.Vector<float>.Count} float lanes per vector{(simd.Length > 0 ? $" ({simd})" : "")}, " +
-            $"{ProgressLine.Bytes(Machine.Memory)} memory for the process",
+            $"{Units.Bytes(Machine.Memory)} memory for the process",
             null, "The CPU backend always works; its speed follows the vector width and the processor count."));
     }
 
@@ -250,7 +256,7 @@ internal sealed class DoctorCommand : Command
             var facts = new List<string>();
             if (d.MemoryBytes is long memory)
             {
-                facts.Add($"{ProgressLine.Bytes(memory)}");
+                facts.Add($"{Units.Bytes(memory)}");
             }
 
             if (d.ComputeUnits is int units && d.Kind != "cpu")
@@ -283,7 +289,7 @@ internal sealed class DoctorCommand : Command
         string cache = Path.GetFullPath(context.CacheFolder);
         string? writable = Writable(cache);
         checks.Add(writable is null
-            ? new("storage", "cache", Status.Ok, $"{cache} ({(Directory.Exists(cache) ? ProgressLine.Bytes(CacheLayout.Size(cache)) : "not created yet")})", null, CacheWhy)
+            ? new("storage", "cache", Status.Ok, $"{cache} ({(Directory.Exists(cache) ? Units.Bytes(CacheLayout.Size(cache)) : "not created yet")})", null, CacheWhy)
             : new("storage", "cache", Status.Fail, $"{cache} is not writable: {writable}", "choose another folder with --cache DIR or IDRAK_CACHE", CacheWhy));
 
         try
@@ -296,7 +302,7 @@ internal sealed class DoctorCommand : Command
 
             var drive = new DriveInfo(existing ?? cache);
             long free = drive.AvailableFreeSpace;
-            checks.Add(new("storage", "disk space", free < 5L << 30 ? Status.Warn : Status.Ok, $"{ProgressLine.Bytes(free)} free for the cache",
+            checks.Add(new("storage", "disk space", free < 5L << 30 ? Status.Warn : Status.Ok, $"{Units.Bytes(free)} free for the cache",
                 "free some space, or move the cache to a larger disk with --cache DIR or IDRAK_CACHE",
                 "Models take 0.5 to 20 GB each; a full disk stops downloads part way.") { Command = "idrak cache clear models --dry-run" });
         }

@@ -77,11 +77,11 @@ internal sealed class RmCommand : Command
         bool dryRun = context.Flag("--dry-run");
         foreach (var c in chosen)
         {
-            context.Write($"{(dryRun ? "would remove" : "removing")} {c.Name}{(c.Revision is null || c.Kind == "gguf" ? "" : "@" + c.Revision)}  {ModelCache.Size(c.Bytes)}  {c.Path}");
+            context.Write($"{(dryRun ? "would remove" : "removing")} {c.Name}{(c.Revision is null || c.Kind == "gguf" ? "" : "@" + c.Revision)}  {Units.Bytes(c.Bytes)}  {c.Path}");
         }
 
         bool go = !dryRun && chosen.Count > 0
-                  && Terminal.Confirm(context, $"Remove {chosen.Count} {(chosen.Count == 1 ? "entry" : "entries")} ({ModelCache.Size(bytes)})?");
+                  && Terminal.Confirm(context, $"Remove {chosen.Count} {(chosen.Count == 1 ? "entry" : "entries")} ({Units.Bytes(bytes)})?");
         if (go)
         {
             foreach (var c in chosen)
@@ -92,8 +92,8 @@ internal sealed class RmCommand : Command
             }
         }
 
-        context.Write(dryRun ? $"{chosen.Count} would be removed, {ModelCache.Size(bytes)} freed (dry run)."
-            : go ? $"Removed {chosen.Count}, {ModelCache.Size(bytes)} freed."
+        context.Write(dryRun ? $"{chosen.Count} would be removed, {Units.Bytes(bytes)} freed (dry run)."
+            : go ? $"Removed {chosen.Count}, {Units.Bytes(bytes)} freed."
             : chosen.Count == 0 ? "Nothing to remove." : "Nothing removed.");
         context.WriteJson(new JsonObject
         {

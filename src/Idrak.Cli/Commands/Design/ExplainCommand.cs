@@ -51,14 +51,14 @@ internal sealed class ExplainCommand : Command
         context.Write($"{(string?)description["name"] ?? Path.GetFileName(path)}: {analysis.Kind} input {NetworkAnalysis.Shape(analysis.Input)} -> {NetworkAnalysis.Shape(analysis.Output)}, {analysis.Layers.Count} layers");
         context.Write("");
         context.Table(["#", "Layer", "Output", "Parameters", "FLOPs"],
-            analysis.Layers.Select(l => (IReadOnlyList<string>)[l.Index.ToString(), l.Description, NetworkAnalysis.Shape(l.Output), l.Parameters.ToString("N0"), DeviceMemory.Count(l.Flops)]));
+            analysis.Layers.Select(l => (IReadOnlyList<string>)[l.Index.ToString(), l.Description, NetworkAnalysis.Shape(l.Output), l.Parameters.ToString("N0"), Units.Short(l.Flops)]));
         context.Write("");
-        context.Write($"Parameters    {analysis.Parameters:N0} ({DeviceMemory.Format(analysis.Parameters * 4.0)} as float32)");
-        context.Write($"FLOPs         {DeviceMemory.Count(analysis.Flops)} per sample forward, about {DeviceMemory.Count(3.0 * analysis.Flops)} per sample to train");
-        context.Write($"Inference     {DeviceMemory.Format(inferenceOne)} at batch 1, {DeviceMemory.Format(inferenceBatch)} at batch {batch}");
-        context.Write($"Training      {DeviceMemory.Format(training)} at batch {batch} (AdamW)");
+        context.Write($"Parameters    {analysis.Parameters:N0} ({Units.Bytes(analysis.Parameters * 4.0)} as float32)");
+        context.Write($"FLOPs         {Units.Short(analysis.Flops)} per sample forward, about {Units.Short(3.0 * analysis.Flops)} per sample to train");
+        context.Write($"Inference     {Units.Bytes(inferenceOne)} at batch 1, {Units.Bytes(inferenceBatch)} at batch {batch}");
+        context.Write($"Training      {Units.Bytes(training)} at batch {batch} (AdamW)");
         context.Write(memory is { } m
-            ? $"Device        {context.Device} offers {DeviceMemory.Format(m)}: training {(training <= m * 0.8 ? "fits" : "does not fit (lower the batch or the network)")}, inference {(inferenceBatch <= m * 0.8 ? "fits" : "does not fit")}"
+            ? $"Device        {context.Device} offers {Units.Bytes(m)}: training {(training <= m * 0.8 ? "fits" : "does not fit (lower the batch or the network)")}, inference {(inferenceBatch <= m * 0.8 ? "fits" : "does not fit")}"
             : $"Device        {context.Device}: its memory is not reported (set a GPU memory limit to compare)");
         foreach (string op in analysis.Unknown.Distinct())
         {
