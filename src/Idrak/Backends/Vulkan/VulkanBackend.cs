@@ -100,11 +100,12 @@ internal sealed unsafe partial class VulkanBackend : Backend
         _matrix = ProbeMatrixUnits(physical);
         VkPhysicalDeviceCooperativeMatrixFeatures matrixFeatures;
         VkPhysicalDeviceShaderFloat16Int8Features float16Features;
-        void* features = MatrixFeatures(&matrixFeatures, &float16Features, _sizeControl.Enabled ? &sizeFeatures : null);
+        VkPhysicalDeviceShaderBfloat16Features bfloat16Features;
+        void* features = MatrixFeatures(&matrixFeatures, &float16Features, &bfloat16Features, _sizeControl.Enabled ? &sizeFeatures : null);
         fixed (byte* extensionName = "VK_KHR_push_descriptor\0"u8, sizeName = "VK_EXT_subgroup_size_control\0"u8,
-            matrixName = CooperativeMatrixName, float16Name = ShaderFloat16Int8Name)
+            matrixName = CooperativeMatrixName, float16Name = ShaderFloat16Int8Name, bfloat16Name = ShaderBFloat16Name)
         {
-            byte** extensions = stackalloc byte*[4];
+            byte** extensions = stackalloc byte*[5];
             uint count = 0;
             if (push)
             {
@@ -124,6 +125,11 @@ internal sealed unsafe partial class VulkanBackend : Backend
             if (_matrix is { Float16Extension: true })
             {
                 extensions[count++] = float16Name;
+            }
+
+            if (_matrix is { Emulated: 0, BFloat16Shape: not null })
+            {
+                extensions[count++] = bfloat16Name;
             }
 
             var deviceInfo = new VkDeviceCreateInfo

@@ -14,12 +14,12 @@ internal sealed partial class VulkanBackend
     /// <summary>Tests and benchmarks only: the attention for many rows, tiled (true) or the decoding kernel (false), instead of the measured choice.</summary>
     internal static bool? TiledAttentionKernel { get; set; }
 
-    /// <summary>Tests and benchmarks only: the prompt-sized packed product (0 the few-rows kernels, 1 expanding the weights, 2 the tiled kernel, 3 cooperative matrices) instead of the measured choice.</summary>
+    /// <summary>Tests and benchmarks only: the prompt-sized packed product (0 the few-rows kernels, 1 expanding the weights, 2 the tiled kernel, 3 cooperative matrices, 4 the reduced-precision cooperative matrices where MixedPrecision asks for reduced precision) instead of the measured choice.</summary>
     internal static int? PackedPromptKernel { get; set; }
 
     // The choices' own part (WithWidth adds the width).
     private const int TiledDecode = 1, TiledKernel = 2;
-    private const int PromptFewRows = 1, PromptExpand = 2, PromptTiled = 3, PromptCoop = 4;
+    private const int PromptFewRows = 1, PromptExpand = 2, PromptTiled = 3, PromptCoop = 4, PromptMixed = 5;
 
     // ------------------------------------------------------------------ attention over many rows
 
@@ -164,6 +164,41 @@ internal sealed partial class VulkanBackend
     // measurement finds where it pays.
     private int PromptChoice(VulkanKernels.PackedFormat format, Storage x, Storage weights, Storage? scales, Storage y, int m, int n, int k)
     {
+        // Reduced precision (MixedPrecision): the single-pass cooperative-matrix kernel where it can run, measured against
+        // the float32 choice under a key of its own (VulkanBackend.Matrix.cs).
+        const int Block = VulkanKernels.CoopBlock;
+        bool mixedFits = (n + Block - 1) / Block <= Limits.MaxGroupsX && (m + Block - 1) / Block <= Limits.MaxGroupsY && MixedKernel(format) is not null;
+        int mixed = WithWidth(Width, PromptMixed);
+        if (PackedPromptKernel == 4 && mixedFits)
+        {
+            return mixed;
+        }
+
+        int choice = Float32PromptChoice(format, x, weights, scales, y, m, n, k);
+        if (choice == 0 || !mixedFits || PackedPromptKernel is not null)
+        {
+            return choice;
+        }
+
+        var key = new VulkanTuneKey(VulkanTuneOp.MixedPackedPrompt, (int)format, m, n, k);
+        if (TryTuned(key, out int decided) && decided is 0 or 1)
+        {
+            return decided == 1 ? mixed : choice;
+        }
+
+        if (!Autotune || t_timing)
+        {
+            return choice;
+        }
+
+        WithScratch([y.Length], scratch =>
+            decided = Tune(key, [0, 1], 0, c => RunPrompt(c == 1 ? mixed : choice, format, x, weights, scales, scratch[0], m, n, k)));
+        return decided == 1 ? mixed : choice;
+    }
+
+    // PromptChoice as float32 products choose it (the reduced-precision kernel aside).
+    private int Float32PromptChoice(VulkanKernels.PackedFormat format, Storage x, Storage weights, Storage? scales, Storage y, int m, int n, int k)
+    {
         var candidates = PromptCandidates(format, m, n, k);
         if (candidates.Length == 0)
         {
@@ -174,6 +209,11 @@ internal sealed partial class VulkanBackend
             : Array.IndexOf(candidates, WithWidth(Width, PromptTiled)) >= 0 ? WithWidth(Width, PromptTiled) : candidates[0];
         if (PackedPromptKernel is int forced)
         {
+            if (forced == 4)
+            {
+                return fallback;                                               // the reduced-precision kernel, where it cannot run
+            }
+
             int wanted = WithWidth(Width, forced switch { 0 => PromptFewRows, 1 => PromptExpand, 2 => PromptTiled, _ => PromptCoop });
             return Array.IndexOf(candidates, wanted) >= 0 ? wanted : fallback;
         }
@@ -272,11 +312,11 @@ internal sealed partial class VulkanBackend
                 }
 
                 return true;
-            case PromptCoop:
+            case PromptCoop or PromptMixed:
                 const int Block = VulkanKernels.CoopBlock;
                 Span<byte> pushed = stackalloc byte[12];
                 var coopPush = new Push(pushed).I(m).I(n).I(k).Bytes;
-                var coop = CoopKernel(format)!;
+                var coop = (choice & Rest) == PromptCoop ? CoopKernel(format)! : MixedKernel(format)!;
                 uint blocksX = (uint)((n + Block - 1) / Block), blocksY = (uint)((m + Block - 1) / Block);
                 if (scales is null)
                 {
