@@ -275,7 +275,7 @@ and call `ModelCache.Touch` so `idrak list` shows the last use by chat, run and 
 | `idrak runs list/show/compare` | Training runs from their JSON Lines logs: loss curves (text plot), best epoch, settings, time | 3 |
 | `idrak predict MODEL.ikm --input FILE` | Runs a trained package on new rows (CSV or JSON Lines) and writes predictions | 2 |
 | `idrak package --model DIR --out MODEL.ikm` | Bundles a network, its scalers and tokenizer into one model package | 3 |
-| `idrak distill --teacher A --student B --data FILE` | The teacher pattern (plans/plug-in.md, "Noted for later"), when the library has it | 3 |
+| `idrak distill --teacher A --student B --data FILE` | Knowledge distillation (plans/plug-in.md, "Teacher pattern"): the teacher's token probabilities on the fly, or precomputed as top-k logits (`--precompute FILE`, then `--teacher FILE`), or its written answers (`--generate`); `--temperature`, `--alpha`, `--top-k` and tune's options. Done (feature-distillation) | 3 |
 
 ### Data
 
@@ -310,8 +310,8 @@ codes. Added while building:
 
 Gaps (library): the optimizer state and learning-rate schedule are not checkpointed, so `resume` continues from the
 weights with a fresh optimizer; there is no image decoding in the library (the tool reads 8-bit PNG, BMP and Netpbm itself, with one decoder shared with suggest);
-writing Parquet is not in the library (`data convert` reads it, writes JSON Lines, JSON, CSV or TSV); `distill` waits for
-the teacher pattern and only explains the workaround (`idrak batch`, then `idrak tune train`); `tune init` writes the
+writing Parquet is not in the library (`data convert` reads it, writes JSON Lines, JSON, CSV or TSV); `distill` has no
+vocabulary mapping (teacher and student must share a tokenizer for logits; `--generate` works across them); `tune init` writes the
 library's defaults until `idrak suggest` can size them; idrak tune loads base weights as int8, int4 or bf16 only (not
 other registered packed formats).
 
@@ -681,7 +681,7 @@ commands.
 | 2 Run | `RunCommands`, `Shared/` model loading | chat (with slash commands), run, batch, compare, complete, embed, tokenize, template, agent, tools |
 | 3 Serve | `ServeCommands` | serve, server ps/stop/load/unload, api, ui, mcp serve |
 | 4 Models | `ModelCommands` | pull, list, rm, show, search, alias, memory, quantize, merge, inspect, verify, convert, diff |
-| 5 Train and data | `TrainCommands`, `DataCommands` | tune (+ init), train, resume, runs, predict, package, distill (stub until the library has it), data and its subcommands |
+| 5 Train and data | `TrainCommands`, `DataCommands` | tune (+ init), train, resume, runs, predict, package, distill, data and its subcommands |
 | 6 Retrieval and measure | `RetrievalCommands`, `MeasureCommands` | rag index/ask/search/eval, bench, eval, perplexity, profile, check, tuning show |
 | 7 Design | `DesignCommands` | suggest (rules and `--search`), explain, viz |
 | 8 Developers | `DeveloperCommands` | new (templates), test, onnx, kernels dump, trace |
@@ -689,7 +689,7 @@ commands.
 Improvements found while building (a missing option, a helper several commands need, a command that would make the
 tool more useful) are added to this plan and built, not only noted.
 
-Where a command needs something the library lacks (for example `distill`, structured output, the OpenAI-style API),
+Where a command needs something the library lacks (for example structured output, the OpenAI-style API),
 the agent builds the command around what exists, marks the missing part in its help and in this plan, and does not
 change the library beyond small, tested additions.
 

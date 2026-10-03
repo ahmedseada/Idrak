@@ -675,9 +675,19 @@ public sealed record FineTuningOptions
     /// and SimPO need <see cref="PreferencePair"/> data). Null (the default): the mean token cross-entropy per trained token,
     /// computed in one fused pass that steps can record as a graph; with a loss of one's own, steps run as ordinary ones
     /// and the output head runs twice over the trained rows (once for the log-probabilities, once for their gradients).
-    /// Evaluation losses are this loss over the whole evaluation set.
+    /// Evaluation losses are this loss over the whole evaluation set. With a <see cref="Teacher"/> and no loss,
+    /// <see cref="FineTuningLosses.Distillation"/> with its defaults.
     /// </summary>
     public FineTuningLoss? Loss { get; init; }
+
+    /// <summary>
+    /// The teacher for knowledge distillation (<see cref="DistillationTeacher.FromModel"/> or
+    /// <see cref="DistillationTeacher.FromFile"/>), whose distributions a loss reads through
+    /// <see cref="FineTuningLossInput.TeacherDivergence"/> (see <see cref="FineTuningLosses.Distillation"/>). It must share the
+    /// student's vocabulary (<see cref="DistillationTeacher.Check"/>, which training runs first). Null: no teacher. Not
+    /// disposed by training.
+    /// </summary>
+    public DistillationTeacher? Teacher { get; init; }
 }
 
 /// <summary>What <see cref="FineTuner.Profile"/> measured.</summary>
@@ -812,8 +822,7 @@ public static class FineTuner
             throw new ArgumentException("There is nothing to train on.", nameof(train));
         }
 
-        var custom = options.Loss is { } loss ? new CustomLoss(loss, pairs: false) : null;
-        return TrainCore(model, train, evaluation, pairs: false, custom, options, outputFolder, progress, cancellationToken, trace);
+        return TrainCore(model, train, evaluation, pairs: false, Custom(model, options, pairs: false), options, outputFolder, progress, cancellationToken, trace);
     }
 
     /// <summary>
@@ -846,9 +855,18 @@ public static class FineTuner
             throw new ArgumentException("There is nothing to train on.", nameof(train));
         }
 
-        var custom = new CustomLoss(options.Loss ?? FineTuningLosses.Dpo(), pairs: true);
+        var custom = Custom(model, options with { Loss = options.Loss ?? FineTuningLosses.Dpo() }, pairs: true);
         return TrainCore(model, Flatten(train), evaluation is null ? null : Flatten(evaluation), pairs: true, custom, options, outputFolder, progress,
             cancellationToken, trace);
+    }
+
+    // The loss of one's own (or distillation, with a teacher and no loss), or null for the fused token cross-entropy. A
+    // teacher is checked against the model first.
+    private static CustomLoss? Custom(PretrainedModel model, FineTuningOptions options, bool pairs)
+    {
+        options.Teacher?.Check(model);
+        var loss = options.Loss ?? (options.Teacher is not null ? FineTuningLosses.Distillation() : null);
+        return loss is null ? null : new CustomLoss(loss, pairs, options.Teacher);
     }
 
     // Pair k as sequences 2k (chosen) and 2k + 1 (rejected).
@@ -1233,8 +1251,7 @@ public static class FineTuner
         var batches = MakeBatches(model, train, options, new Random(options.Seed));
         int accumulation = Math.Max(1, options.GradientAccumulation);
         int next = 0;
-        using var runner = new StepRunner(model, train, optimizer, options, MostTrained(batches, train),
-            options.Loss is { } loss ? new CustomLoss(loss, pairs: false) : null, trace);
+        using var runner = new StepRunner(model, train, optimizer, options, MostTrained(batches, train), Custom(model, options, pairs: false), trace);
         (float Loss, long Tokens, double Seconds) Step(string phase)
         {
             var group = Enumerable.Range(0, accumulation).Select(i => batches[(next + i) % batches.Count]).ToList();
@@ -1377,7 +1394,9 @@ public static class FineTuner
     // of a token cross-entropy over the same rows (d loss / d θ = Σ_t g_t · d log p_t / d θ, and the cross-entropy is
     // −log p_t), whose backward pass is the network's. The output head runs twice over the trained rows; the full logits
     // are never stored. Reference log-probabilities (adapters disabled) are kept per sequence for the whole run.
-    private sealed class CustomLoss(FineTuningLoss loss, bool pairs)
+    // A teacher's divergences (FineTuningLossInput.TeacherDivergence) go the same way: their values first, without
+    // gradients, then the divergence over the same rows weighted by their gradient g (d loss / d θ = Σ_t g_t · d KL_t / d θ).
+    private sealed class CustomLoss(FineTuningLoss loss, bool pairs, DistillationTeacher? teacher = null)
     {
         private readonly Dictionary<TrainingSequence, float[]> _reference = [];
 
@@ -1388,33 +1407,70 @@ public static class FineTuner
             var values = Losses.TokenLogProbabilities(hidden, h => head.Forward(h), data.Trained, targets, chunkRows);
             bool training = Autograd.IsEnabled;
             var probabilities = Tensor.From(values, [values.Length], Device.Cpu, requiresGrad: training);
-            var input = new FineTuningLossInput(probabilities, [.. sequences.Select(s => s.TrainedTokens)], sequences,
-                () => Reference(model, tokens, sequences, data, targets, chunkRows), pairs, stepTokens, stepSequences);
-            var value = loss(input) ?? throw new InvalidOperationException("FineTuningOptions.Loss returned no tensor.");
-            if (value.Size != 1)
+            TeacherDistributions? distributions = null;
+            Func<int, int, Tensor> Teacher(float temperature) => (start, count) =>
             {
-                throw new InvalidOperationException($"FineTuningOptions.Loss must return one value, not {Tensor.FormatShape(value.Shape)}.");
-            }
+                distributions ??= teacher!.Distributions(sequences);
+                return distributions.Probabilities(start, count, temperature, head.OutFeatures, hidden.Device);
+            };
 
-            float result = value.Item();
-            if (!training || !value.RequiresGrad)
+            try
             {
-                return Tensor.From([result], [1], hidden.Device);
-            }
+                Func<float, float[]>? divergence = teacher is null ? null
+                    : temperature => Tensor.TokenDivergences(hidden, h => head.Forward(h), data.Trained, Teacher(temperature), temperature, chunkRows);
+                var input = new FineTuningLossInput(probabilities, [.. sequences.Select(s => s.TrainedTokens)], sequences,
+                    () => Reference(model, tokens, sequences, data, targets, chunkRows), pairs, stepTokens, stepSequences, divergence);
+                var value = loss(input) ?? throw new InvalidOperationException("FineTuningOptions.Loss returned no tensor.");
+                if (value.Size != 1)
+                {
+                    throw new InvalidOperationException($"FineTuningOptions.Loss must return one value, not {Tensor.FormatShape(value.Shape)}.");
+                }
 
-            value.Backward();
-            var gradient = probabilities.Grad?.ToArray() ?? new float[values.Length];
-            var weights = new float[values.Length];
-            double surrogate = 0;
-            for (int t = 0; t < values.Length; t++)
+                float result = value.Item();
+                if (!training || !value.RequiresGrad)
+                {
+                    return Tensor.From([result], [1], hidden.Device);
+                }
+
+                value.Backward();
+                var gradient = probabilities.Grad?.ToArray() ?? new float[values.Length];
+                var weights = new float[values.Length];
+                double surrogate = 0;
+                for (int t = 0; t < values.Length; t++)
+                {
+                    weights[t] = -gradient[t];
+                    surrogate += (double)gradient[t] * values[t];
+                }
+
+                // Each divergence weighted by its gradient: the value Σ g_t KL_t, the loss's gradient through it.
+                Tensor? total = null;
+                foreach (var (divergences, temperature) in input.Divergences)
+                {
+                    var g = divergences.Grad?.ToArray() ?? new float[values.Length];
+                    var kl = divergences.ToArray();
+                    for (int t = 0; t < g.Length; t++)
+                    {
+                        surrogate += (double)g[t] * kl[t];
+                    }
+
+                    var term = Tensor.TokenDivergenceRows(hidden, h => head.Forward(h), data.Trained, g, Teacher(temperature), temperature, chunkRows);
+                    total = total is null ? term : total + term;
+                }
+
+                // The cross-entropy weighted by −g has the loss's gradient and the value Σ g_t log p_t (skipped when the loss
+                // reads only divergences); shifted to the loss's value.
+                if (total is null || weights.Any(w => w != 0f))
+                {
+                    var weighted = Losses.TokenCrossEntropyRows(hidden, h => head.Forward(h), data.Trained, data.Targets, weights, 1f, chunkRows);
+                    total = total is null ? weighted : total + weighted;
+                }
+
+                return total + (float)(result - surrogate);
+            }
+            finally
             {
-                weights[t] = -gradient[t];
-                surrogate += (double)gradient[t] * values[t];
+                distributions?.Dispose();
             }
-
-            // The cross-entropy weighted by −g has the loss's gradient and the value Σ g_t log p_t; shifted to the loss's value.
-            var weighted = Losses.TokenCrossEntropyRows(hidden, h => head.Forward(h), data.Trained, data.Targets, weights, 1f, chunkRows);
-            return weighted + (float)(result - surrogate);
         }
 
         // The trained tokens' log-probabilities under the base model (adapters disabled, no gradients, dropout off), one

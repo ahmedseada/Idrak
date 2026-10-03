@@ -86,6 +86,81 @@ public static class Losses
         Tensor.TokenLogProbabilities(hidden, head, rows, targets, chunkRows);
 
     /// <summary>
+    /// Knowledge distillation (Hinton, Vinyals and Dean 2015, "Distilling the Knowledge in a Neural Network",
+    /// arXiv:1503.02531): T² · the mean over rows of KL(softmax(teacher / T) ‖ softmax(student / T)), the student learning
+    /// the teacher's softened distribution. The T² factor keeps the gradient's size about the same whatever the temperature
+    /// (the soft targets' gradients shrink as 1 / T²), so the term mixes with a label loss at a comparable weight. The
+    /// teacher's logits are constants (no gradient flows into them).
+    /// </summary>
+    /// <param name="studentLogits">[..., classes] the student's raw scores.</param>
+    /// <param name="teacherLogits">[..., classes] the teacher's raw scores for the same samples.</param>
+    /// <param name="temperature">Softens both distributions (1: as they are; 2 to 4 is usual).</param>
+    public static Tensor Distillation(Tensor studentLogits, Tensor teacherLogits, float temperature)
+    {
+        ArgumentNullException.ThrowIfNull(studentLogits);
+        ArgumentNullException.ThrowIfNull(teacherLogits);
+        CheckTemperature(temperature);
+        if (!studentLogits.Shape.SequenceEqual(teacherLogits.Shape))
+        {
+            throw new ArgumentException($"The student's and the teacher's logits differ in shape: {Tensor.FormatShape(studentLogits.Shape)} and {Tensor.FormatShape(teacherLogits.Shape)}.");
+        }
+
+        int classes = studentLogits.Shape[^1];
+        int rows = classes == 0 ? 0 : studentLogits.Size / classes;
+        var teacher = teacherLogits.Detach() * (1f / temperature);
+        var divergence = teacher.Softmax() * (teacher.LogSoftmax() - (studentLogits * (1f / temperature)).LogSoftmax());
+        return divergence.Sum() * (temperature * temperature / Math.Max(rows, 1));
+    }
+
+    /// <summary>
+    /// A distillation loss for <see cref="Training.Trainer"/>: α · <see cref="Distillation(Tensor, Tensor, float)"/> + (1 − α) ·
+    /// the cross-entropy on the labels. The targets carry the teacher's logits first and the labels after them, as
+    /// <see cref="Training.Distillation.WithTeacher"/> builds them: [samples, classes + classes] with one-hot (or
+    /// probability) labels, or [samples, classes + 1] with class indices. With α = 1 the labels are not used (and may be
+    /// left out).
+    /// </summary>
+    /// <param name="temperature">Softens both distributions (see <see cref="Distillation(Tensor, Tensor, float)"/>).</param>
+    /// <param name="alpha">The weight of the distillation term; the label cross-entropy gets 1 − α.</param>
+    public static Func<Tensor, Tensor, Tensor> Distillation(float temperature = 2f, float alpha = 0.5f)
+    {
+        CheckTemperature(temperature);
+        if (alpha is < 0f or > 1f || float.IsNaN(alpha))
+        {
+            throw new ArgumentOutOfRangeException(nameof(alpha), "Alpha is in [0, 1].");
+        }
+
+        return (prediction, target) =>
+        {
+            int classes = prediction.Shape[^1], columns = target.Shape[^1], dim = target.Rank - 1;
+            int labels = columns - classes;
+            if (target.Rank != prediction.Rank || labels < 0 || alpha < 1f && labels != classes && labels != 1)
+            {
+                throw new ArgumentException($"Distillation targets are the teacher's {classes} logits followed by the labels ({classes} one-hot columns or 1 class index), "
+                                            + $"not {columns} columns: build them with Distillation.WithTeacher.");
+            }
+
+            var teacher = labels == 0 ? target : target.Narrow(dim, 0, classes);
+            var soft = Distillation(prediction, teacher, temperature);
+            if (alpha >= 1f)
+            {
+                return soft;
+            }
+
+            var given = target.Narrow(dim, classes, labels);
+            var hard = labels == classes ? CrossEntropy(prediction, given) : SparseCrossEntropy(prediction, given);
+            return soft * alpha + hard * (1f - alpha);
+        };
+    }
+
+    private static void CheckTemperature(float temperature)
+    {
+        if (!(temperature > 0f) || float.IsInfinity(temperature))
+        {
+            throw new ArgumentOutOfRangeException(nameof(temperature), "The temperature is a positive number.");
+        }
+    }
+
+    /// <summary>
     /// Binary cross-entropy for probabilities in (0, 1), e.g. after a <see cref="Layers.Sigmoid"/> layer:
     /// -mean(y·log p + (1 - y)·log(1 - p)). Prefer <see cref="BinaryCrossEntropyWithLogits"/> for stability.
     /// </summary>

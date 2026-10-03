@@ -128,6 +128,13 @@ internal sealed class TuneTool(ToolConsole console)
     /// <summary>The device the command runs on.</summary>
     public Device Device => device;
 
+    /// <summary>
+    /// Called by train once the model is loaded and the data tokenized, before training (idrak distill sets it): receives
+    /// the model, the training and evaluation sequences and the training options, and returns the options to train with,
+    /// or null when it has done the work itself and nothing is to be trained (the command then ends with exit code 0).
+    /// </summary>
+    public Func<PretrainedModel, IReadOnlyList<TrainingSequence>, IReadOnlyList<TrainingSequence>?, FineTuningOptions, FineTuningOptions?>? BeforeTraining { get; set; }
+
     /// <summary>What idrak-tune does with <paramref name="args"/>: help, a usage error, or the command; returns the exit code.</summary>
     public static int RunTool(IReadOnlyList<string> args, ToolConsole console)
     {
@@ -474,6 +481,22 @@ internal sealed class TuneTool(ToolConsole console)
         var evaluationRows = evalFile is not null ? (Recipe([evalFile], forTraining: true) with { EvaluationFraction = 0 }).Build(downloads).Train : heldOut;
         var evaluation = evaluationRows is null || preference ? null : ReadSequences(encoder, evaluationRows, "evaluation");
         var evaluationPairs = evaluationRows is null || !preference ? null : ReadPairs(encoder, evaluationRows, "evaluation");
+        if (BeforeTraining is { } prepare)
+        {
+            if (preference)
+            {
+                _error.WriteLine("error: this training is for conversations and texts, not preference rows (--loss sft).");
+                return 1;
+            }
+
+            if (prepare(model, train, evaluation, tuning) is not { } prepared)
+            {
+                return 0;
+            }
+
+            tuning = prepared;
+        }
+
         _out.WriteLine($"assistant turns start with {JsonValue.Create(encoder.AssistantHeader).ToJsonString(readable)} and end with {JsonValue.Create(encoder.AssistantEnd).ToJsonString(readable)}");
         if (evaluation is { Count: > 0 })
         {

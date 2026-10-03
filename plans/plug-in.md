@@ -281,3 +281,45 @@ A larger "teacher" model guides a smaller "student" model, to be added later:
   run on another device than the student.
 - Done when: a student fine-tuned with distillation scores closer to its teacher than the same student fine-tuned on
   labels alone, in a test with tiny models, and the CLI offers it.
+
+Status (feature-distillation): done.
+
+- Loss, language models: `FineTuningLossInput.TeacherDivergence(T)` gives KL(q_T ‖ p_T) per trained token, recorded,
+  so any `FineTuningLoss` can use it; `FineTuningLosses.Distillation(temperature = 1, alpha = 0.5)` is α · T² · KL +
+  (1 − α) · the token cross-entropy, averaged over the step's trained tokens (the default loss when
+  `FineTuningOptions.Teacher` is set and `Loss` is not). The trainer handles it as it handles the log-probabilities:
+  values first without gradients, then `Tensor.TokenDivergenceRows` over the same rows weighted by their gradient (row
+  t's logits get g_t · (p − q) / T, back-propagated through the head chunk by chunk), so no [tokens, vocabulary] logits
+  are stored. Each temperature costs one more pass of both heads over the trained rows.
+- Loss, classifiers: `Losses.Distillation(student, teacher, T)` (T² · mean KL) and `Losses.Distillation(T, alpha)` for
+  the `Trainer`, whose targets are the teacher's logits followed by the labels (one-hot or index), built by
+  `Distillation.WithTeacher(data, teacher)` (the teacher's logits computed once, in inference mode on its own device).
+  Classifier teachers are stored with the targets rather than run on the fly: the loss receives (prediction, target),
+  not the input, and the logits of a dataset are small.
+- Teacher on the fly: `DistillationTeacher.FromModel(model, topK = 0)`: padded batches of the step's sequences, run
+  without the student's packing (`PackedSequences.Suspend`), on the teacher's own device and weight format; only its
+  hidden states at the trained positions are kept between the two passes of a batch, the head runs per chunk and the
+  probabilities move to the student's device. A head wider than the student's is cut (renormalized), a narrower one
+  padded with zeros, so a family's padded vocabularies work.
+- Stored: `TeacherLogitsWriter` (and `.Write(path, teacher, sequences, topK)`) writes the top k logits per trained
+  token as 32-bit ids and 16-bit floats relative to the position's largest, keyed by the sequence's content, with the
+  teacher's vocabulary fingerprint and an index; `TeacherLogitsFile` reads them; `DistillationTeacher.FromFile` trains on
+  them as the softmax over the k stored tokens, renormalized (documented as an approximation that drops the tail).
+- Vocabulary: `DistillationTeacher.CheckVocabulary` (same token text for every id; padding ids count as empty) and
+  `VocabularyFingerprint`; training checks the teacher first and refuses a mismatch with the first id that differs and
+  the advice to use teacher-written data. A vocabulary mapping is not built (left for later, if asked for).
+- Teacher-generated data: `TeacherData.Generate(chat, rows, TeacherDataOptions)` (in Idrak.LanguageModels, next to
+  `ChatTranscriptEncoder`, since Idrak.Datasets does not reference the generators): prompts from any chat layout or a
+  prompt column, greedy answers in batches, optionally with the teacher's reasoning (`reasoning_content`), answers cut
+  off by the length limit left out unless kept.
+- CLI: `idrak distill` (src/Idrak.Cli/Commands/Train/DistillCommand.cs) runs idrak tune's training with a
+  `TuneTool.BeforeTraining` hook: on the fly, `--precompute FILE` then `--teacher FILE`, or `--generate`; `--temperature`,
+  `--alpha`, `--top-k`, `--teacher-weights`, `--teacher-device`, and tune's options (`--lora-alpha` for tune's
+  `--alpha`).
+- Tests (tests/Idrak.Tests/DistillationTests.cs and the CLI group): the divergence and its gradient against a dense
+  computation; the classifier loss and gradient against the formula; the fine-tuning loss and the adapters' gradients
+  (one SGD step) against both models' full logits, with the teacher on the CPU for a GPU student too; top-k storage
+  round trip and the stored teacher's loss against the renormalized formula; mismatch refusal; teacher-written data;
+  and the done-when test (held-out KL to a tiny teacher after 16 epochs: 5.91 before, 5.50 from labels sampled from the
+  teacher, 5.26 distilled).
+- Not measured here: speed and memory with real models on a GPU (the teacher's head runs twice per batch).
