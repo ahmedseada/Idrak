@@ -23,7 +23,7 @@ internal sealed class ToolsListCommand : Command
         Examples:
           idrak tools list ./MyTools.dll
           idrak tools list ./MyTools.dll --json
-        """ + "\n\nEnvironment:\n  IDRAK_CONFIG, IDRAK_TRACE   the config file, error stacks\n";
+        """;
 
     public override int Run(CommandContext context)
     {
@@ -70,7 +70,7 @@ internal sealed class ToolsTestCommand : Command
         Examples:
           idrak tools test ./MyTools.dll
           idrak tools test ./MyTools.dll --tool get_weather --args '{"city": "Cairo"}'
-        """ + "\n\nEnvironment:\n  IDRAK_CONFIG, IDRAK_TRACE   the config file, error stacks\n";
+        """;
 
     public override IReadOnlyCollection<string> ValueOptions => ["--tool", "--args"];
 

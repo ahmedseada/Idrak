@@ -60,7 +60,7 @@ internal sealed class PullCommand : Command
             return Local(context, model, dryRun);
         }
 
-        if (ModelWork.Offline(context))
+        if (context.Offline)
         {
             // Cache only: a cached model is reported, anything else is an error naming what is missing.
             var cached = ModelCache.Locate(context, model);
@@ -70,23 +70,14 @@ internal sealed class PullCommand : Command
             return ExitCodes.Ok;
         }
 
-        // Progress on the terminal only (not with --quiet, --json, or when the output is captured).
-        bool live = !context.Quiet && !context.Json && !Console.IsOutputRedirected && ReferenceEquals(context.Output, Console.Out);
-        var status = live ? new ConsoleStatus() : null;
-        var downloader = status?.CreateDownloader(cacheFolder: ModelCache.Downloads(context.CacheFolder), refresh: force) ?? ModelCache.Downloader(context, force);
-        try
+        // A progress line per file on a terminal (none with --quiet, --json, --plain or captured output); --timeout applies.
+        var downloader = ModelCache.Downloader(context, force);
+        if (model.StartsWith("https://", StringComparison.OrdinalIgnoreCase) || model.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
         {
-            if (model.StartsWith("https://", StringComparison.OrdinalIgnoreCase) || model.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
-            {
-                return Url(context, model, downloader, dryRun);
-            }
+            return Url(context, model, downloader, dryRun);
+        }
 
-            return Hub(context, model, downloader, dryRun).GetAwaiter().GetResult();
-        }
-        finally
-        {
-            status?.Finish();
-        }
+        return Hub(context, model, downloader, dryRun).GetAwaiter().GetResult();
     }
 
     // A folder or file on disk: nothing to download; a GGUF file is prepared (its config, tokenizer and template written once).

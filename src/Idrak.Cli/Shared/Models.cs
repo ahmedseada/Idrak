@@ -39,34 +39,84 @@ internal static class Models
             context.Option("--context") is null ? null : context.IntOption("--context", 0), context.Option("--adapter"));
     }
 
-    /// <summary>A local folder or file for the model: found in the cache or downloaded (with progress unless quiet).</summary>
-    public static string Resolve(CommandContext context, string model) =>
-        Directory.Exists(model) || File.Exists(model) ? model
-        : LooksLocal(model) ? throw new UsageException($"Model not found: {model}. Give a Hugging Face id (owner/name), a model folder, a .gguf file or an alias from the config.")
-        : ModelSource.Resolve(model, downloader: context.Quiet || context.Json ? null : new Idrak.Datasets.ConsoleStatus().CreateDownloader());
+    /// <summary>
+    /// A local folder for the model, the same way in every command: a folder as it is; a .gguf file prepared under the
+    /// command's cache folder (<c>--cache</c>); a Hugging Face id or a pulled GGUF file from the cache first (no network,
+    /// its last use recorded for <c>idrak list</c>), else downloaded into the cache folder with a progress line. With
+    /// <c>--offline</c> a model the cache lacks is an error naming <c>idrak pull</c>.
+    /// </summary>
+    public static string Resolve(CommandContext context, string model)
+    {
+        if (Directory.Exists(model))
+        {
+            return model;
+        }
 
-    // A path rather than a hub id: never looked up online.
+        if (File.Exists(model))
+        {
+            return model.EndsWith(".gguf", StringComparison.OrdinalIgnoreCase) ? GgufModel.Prepare(model, context.CacheFolder) : model;
+        }
+
+        if (LooksLocal(model))
+        {
+            throw new UsageException($"Model not found: {model}. Give a Hugging Face id (owner/name), a model folder, a .gguf file or an alias from the config.");
+        }
+
+        if (ModelCache.TryLocate(context, model) is { } local)
+        {
+            context.Detail($"{model}: {local.File ?? local.Folder} (cached)");
+            return local.Folder;
+        }
+
+        if (context.Offline)
+        {
+            throw new InvalidOperationException($"{model} is not in the cache ({context.CacheFolder}) and --offline allows no download; run 'idrak pull {model}' while online.");
+        }
+
+        if (ModelSources.For(model) is null || ModelSource.IsModelId(model) && model.Contains(':'))
+        {
+            // A GGUF file of a repository (owner/name/FILE.gguf, owner/name:TAG) is fetched by pull, not by loading.
+            throw new InvalidOperationException($"{model} is not in the cache ({context.CacheFolder}). Download it first: idrak pull {model}");
+        }
+
+        string folder = ModelSource.Resolve(model, token: Hub.Token(context), downloader: Http.Downloader(context));
+        ModelCache.Touch(context.CacheFolder, folder);
+        return folder;
+    }
+
+    // A path rather than a hub id (or a pulled GGUF file's owner/name/FILE.gguf): never looked up online.
     private static bool LooksLocal(string model) =>
         Path.IsPathRooted(model) || model.StartsWith('.') || model.StartsWith('~') || model.Contains('\\')
-        || model.EndsWith(".gguf", StringComparison.OrdinalIgnoreCase) || model.EndsWith(".ikm", StringComparison.OrdinalIgnoreCase);
+        || model.EndsWith(".gguf", StringComparison.OrdinalIgnoreCase) && model.Count(c => c == '/') != 2
+        || model.EndsWith(".ikm", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>Loads a pretrained language model on the context's device with the chosen formats.</summary>
-    public static PretrainedModel Load(CommandContext context, ModelChoice choice)
+    /// <summary>
+    /// Loads a pretrained language model with the chosen formats on <paramref name="device"/> (default: the command's
+    /// device), with a progress line while it loads.
+    /// </summary>
+    public static PretrainedModel Load(CommandContext context, ModelChoice choice, Device? device = null)
     {
+        device ??= context.Device;
         string folder = Resolve(context, choice.Model);
         string? weights = choice.Weights?.ToLowerInvariant();
         var watch = Stopwatch.StartNew();
-        var model = PretrainedModel.Load(folder, new PretrainedOptions
+        PretrainedModel model;
+        using (var progress = new ProgressLine(context, $"loading {choice.Model} on {device}", unit: ProgressUnit.Elapsed))
         {
-            Device = context.Device,
-            Int8 = weights == "int8",
-            Int4 = weights == "int4",
-            BFloat16 = weights == "bf16" || weights == "bfloat16",
-            PackedFormatName = weights is null or "int8" or "int4" or "bf16" or "bfloat16" or "float32" or "f32" ? null : choice.Weights,
-            MaxPositions = choice.Context,
-            MergeAdapter = choice.Adapter,
-        });
-        context.Detail($"loaded {choice.Model} in {watch.Elapsed.TotalSeconds:F1} s on {context.Device}");
+            model = PretrainedModel.Load(folder, new PretrainedOptions
+            {
+                Device = device,
+                Int8 = weights == "int8",
+                Int4 = weights == "int4",
+                BFloat16 = weights is "bf16" or "bfloat16",
+                PackedFormatName = weights is null or "int8" or "int4" or "bf16" or "bfloat16" or "float32" or "f32" ? null : choice.Weights,
+                MaxPositions = choice.Context,
+                MergeAdapter = choice.Adapter,
+            });
+            progress.Clear();
+        }
+
+        context.Detail($"loaded {choice.Model} in {watch.Elapsed.TotalSeconds:F1} s on {device}");
         return model;
     }
 

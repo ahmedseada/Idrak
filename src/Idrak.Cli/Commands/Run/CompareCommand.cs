@@ -33,7 +33,7 @@ internal sealed class CompareCommand : Command
         Examples:
           idrak compare Qwen/Qwen3-0.6B Qwen/Qwen3-1.7B "Explain recursion in one paragraph"
           idrak compare qwen qwen --weights-b int4 "Explain recursion" --seed 1
-        """ + "\n\n" + GenerationSettings.EnvironmentHelp;
+        """;
 
     public override IReadOnlyCollection<string> ValueOptions =>
         [.. Models.ValueOptions, .. GenerationSettings.ValueOptions.Where(o => o != "--tools"), "--input", "--weights-b", "--kv-b", "--width"];

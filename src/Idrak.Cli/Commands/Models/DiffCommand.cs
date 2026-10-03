@@ -31,8 +31,6 @@ internal sealed class DiffCommand : Command
         Examples:
           idrak diff ./base ./merged
           idrak diff ./model.gguf ./model-hf --tolerance 1e-3 --json
-
-        Environment: IDRAK_CACHE (the cache)
         """;
 
     public override IReadOnlyCollection<string> ValueOptions => ["--limit", "--tolerance", "--filter"];

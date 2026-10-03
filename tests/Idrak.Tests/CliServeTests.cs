@@ -62,7 +62,7 @@ internal static partial class Tests
         foreach (string name in names)
         {
             var (code, text, _) = ServeCli([.. name.Split(' '), "--help"]);
-            Check(code == 0 && text.Contains("Examples:") && text.Contains("Environment:"), $"help of {name}: {text}");
+            Check(code == 0 && text.Contains("Examples:") && text.Contains("Environment (idrak help env for all):"), $"help of {name}: {text}");
             Check(!System.Text.RegularExpressions.Regex.Replace(text, @"\b[A-Z][A-Z0-9]*_[A-Z0-9_]+\b", "").Contains("ollama", StringComparison.OrdinalIgnoreCase), $"no provider name in the help of {name}");
         }
 

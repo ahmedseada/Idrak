@@ -30,8 +30,7 @@ internal sealed class ShellCommand : Command
         "      --history FILE  where the history is kept (default ~/.idrak/history; 'none' keeps none)\n\n" +
         "Examples:\n" +
         "  idrak shell\n" +
-        "  idrak shell -d vulkan:0 -P ./MyFormat.dll\n\n" +
-        "Environment: IDRAK_CONFIG (the config file, also for the commands typed), NO_COLOR.";
+        "  idrak shell -d vulkan:0 -P ./MyFormat.dll";
 
     public override IReadOnlyCollection<string> ValueOptions => ["--history"];
 

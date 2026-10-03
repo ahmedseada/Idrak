@@ -31,8 +31,7 @@ internal sealed class ExplainCommand : Command
         "  idrak x ./run/network.json                 parameters, FLOPs, memory\n" +
         "  idrak explain network.json -d vulkan:0 -j  against the GPU, as JSON\n" +
         "  idrak x network.json --batch 256           memory at a larger batch\n\n" +
-        "Limits: a GPU's memory is known only through a configured limit (the library does not report it).\n" +
-        "Environment: IDRAK_CONFIG, IDRAK_TRACE.";
+        "Limits: a GPU's memory is known only through a configured limit (the library does not report it).";
 
     public override IReadOnlyCollection<string> ValueOptions => ["--batch"];
 

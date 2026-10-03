@@ -28,8 +28,7 @@ internal sealed class OnnxImportCommand : Command
         "  -f, --force         overwrite the package\n\n" +
         "Examples:\n" +
         "  idrak onnx import model.onnx\n" +
-        "  idrak onnx import resnet.onnx --shape 3,224,224 -o resnet.ikm -d vulkan:0\n\n" +
-        "Environment: IDRAK_DISABLE_CUDA, IDRAK_DISABLE_VULKAN, IDRAK_DISABLE_HIP (which backends are tried), IDRAK_MATMUL (product precision), IDRAK_TRACE (stack traces of errors).";
+        "  idrak onnx import resnet.onnx --shape 3,224,224 -o resnet.ikm -d vulkan:0";
 
     public override IReadOnlyCollection<string> ValueOptions => ["--out", "--shape"];
 
@@ -100,8 +99,7 @@ internal sealed class OnnxExportCommand : Command
         "  -f, --force         overwrite the file\n\n" +
         "Examples:\n" +
         "  idrak onnx export houses.ikm\n" +
-        "  idrak onnx export ./run/network.json -o network.onnx\n\n" +
-        "Environment: IDRAK_DISABLE_CUDA, IDRAK_DISABLE_VULKAN, IDRAK_DISABLE_HIP (which backends are tried), IDRAK_MATMUL (product precision), IDRAK_TRACE (stack traces of errors).";
+        "  idrak onnx export ./run/network.json -o network.onnx";
 
     public override IReadOnlyCollection<string> ValueOptions => ["--out", "--shape"];
 
@@ -209,8 +207,7 @@ internal sealed class OnnxCheckCommand : Command
         "      --expected FILE reference inputs and outputs to compare with (default FILE.onnx.expected.json when present)\n\n" +
         "Examples:\n" +
         "  idrak onnx check model.onnx\n" +
-        "  idrak onnx check model.onnx -d vulkan:0 --tolerance 1e-3 -P ./ort/Idrak.Onnx.Runtime.dll\n\n" +
-        "Environment: IDRAK_DISABLE_CUDA, IDRAK_DISABLE_VULKAN, IDRAK_DISABLE_HIP (which backends are tried), IDRAK_MATMUL (product precision), IDRAK_TRACE (stack traces of errors).";
+        "  idrak onnx check model.onnx -d vulkan:0 --tolerance 1e-3 -P ./ort/Idrak.Onnx.Runtime.dll";
 
     public override IReadOnlyCollection<string> ValueOptions => ["--shape", "--batch", "--tolerance", "--expected"];
 

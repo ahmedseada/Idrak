@@ -34,8 +34,7 @@ internal sealed class CheckCommand : Command
         "      --context N       the context length; --adapter DIR: merge an adapter (default: the reference's)\n\n" +
         "Examples:\n" +
         "  idrak check org/model --reference reference.json\n" +
-        "  idrak check ./tuned --reference ref.json -d vulkan:0 -j\n\n" +
-        "Environment: IDRAK_CACHE (models), HF_TOKEN (gated downloads); products stay float32 here whatever IDRAK_MATMUL says";
+        "  idrak check ./tuned --reference ref.json -d vulkan:0 -j";
 
     public override IReadOnlyCollection<string> ValueOptions => [.. Models.ValueOptions, "--reference"];
 

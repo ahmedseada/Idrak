@@ -39,9 +39,6 @@ internal sealed class MemoryCommand : Command
         Examples:
           idrak memory Qwen/Qwen3-0.6B
           idrak memory Qwen/Qwen3-8B -k int8 --context 32768 -d vulkan:0
-
-        Environment: IDRAK_CACHE (the cache), IDRAK_DISABLE_CUDA, IDRAK_DISABLE_VULKAN, IDRAK_DISABLE_HIP (devices listed),
-        DOTNET_GCHeapHardLimit (the CPU's memory)
         """;
 
     public override IReadOnlyCollection<string> ValueOptions => [.. Shared.Models.ValueOptions, "--batch", "--memory"];

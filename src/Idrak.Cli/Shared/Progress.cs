@@ -25,6 +25,7 @@ internal sealed class ProgressLine : IProgress<long>, IDisposable
     private int _lastWidth;
     private long _done;
     private bool _finished;
+    private Timer? _clock;
 
     /// <param name="context">The command (its <c>--quiet</c>, <c>--json</c> and error output).</param>
     /// <param name="label">What is in progress ("pull Qwen/Qwen3-0.6B").</param>
@@ -38,6 +39,11 @@ internal sealed class ProgressLine : IProgress<long>, IDisposable
         Unit = unit;
         _writer = context.ErrorOutput;
         Enabled = enabled ?? (!context.Quiet && !context.Json && !context.Plain && Terminal.IsTerminal(_writer));
+        if (Enabled && unit == ProgressUnit.Elapsed)
+        {
+            // Work without amounts (loading a model): the time so far, redrawn twice a second.
+            _clock = new Timer(_ => Draw(force: true), null, TimeSpan.Zero, TimeSpan.FromMilliseconds(500));
+        }
     }
 
     public string Label { get; set; }
@@ -75,6 +81,7 @@ internal sealed class ProgressLine : IProgress<long>, IDisposable
         }
 
         _finished = true;
+        _clock?.Dispose();
         if (!Enabled)
         {
             return;
@@ -88,6 +95,28 @@ internal sealed class ProgressLine : IProgress<long>, IDisposable
         }
     }
 
+    /// <summary>Removes the line (nothing stays on the screen), for work whose result is reported elsewhere.</summary>
+    public void Clear()
+    {
+        if (_finished)
+        {
+            return;
+        }
+
+        _finished = true;
+        _clock?.Dispose();
+        if (!Enabled)
+        {
+            return;
+        }
+
+        lock (_writer)
+        {
+            _writer.Write("\r" + new string(' ', _lastWidth) + "\r");
+            _writer.Flush();
+        }
+    }
+
     public void Dispose() => Finish();
 
     /// <summary>
@@ -95,6 +124,11 @@ internal sealed class ProgressLine : IProgress<long>, IDisposable
     /// </summary>
     public static string Format(string label, long done, long? total, TimeSpan elapsed, ProgressUnit unit)
     {
+        if (unit == ProgressUnit.Elapsed)
+        {
+            return $"{label}  {Duration(elapsed)}";
+        }
+
         double seconds = elapsed.TotalSeconds;
         double rate = seconds > 0 ? done / seconds : 0;
         var parts = new List<string> { label };
@@ -163,6 +197,11 @@ internal sealed class ProgressLine : IProgress<long>, IDisposable
 
         lock (_writer)
         {
+            if (_finished)
+            {
+                return;                                                          // finished while the clock was drawing
+            }
+
             _lastDraw = now;
             string text = Format(Label, Done, Total, now, Unit);
             _writer.Write("\r" + text.PadRight(_lastWidth));
@@ -175,6 +214,12 @@ internal sealed class ProgressLine : IProgress<long>, IDisposable
 /// <summary>How a <see cref="ProgressLine"/> shows amounts.</summary>
 internal enum ProgressUnit
 {
+    /// <summary>Counted items ("1,234").</summary>
     Items,
+
+    /// <summary>Bytes ("12.3 MB").</summary>
     Bytes,
+
+    /// <summary>No amounts: the time so far, redrawn while the work runs (loading a model).</summary>
+    Elapsed,
 }

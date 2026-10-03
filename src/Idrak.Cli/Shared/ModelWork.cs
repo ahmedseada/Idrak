@@ -15,9 +15,6 @@ internal static class ModelWork
         + "Each step looks at the tokens so far, scores every word in the vocabulary and picks the next one. "
         + "Smaller weight formats save memory and time, and a short check like this one shows how much quality they cost.";
 
-    /// <summary>Whether the command may only use what is cached (<c>--offline</c>, a common option of the tool).</summary>
-    public static bool Offline(CommandContext context) => context.Flag("--offline");
-
     /// <summary>Bytes the model's parameters and buffers take on its device (packed weights at their packed size; tied tensors once).</summary>
     public static long Bytes(Module network)
     {

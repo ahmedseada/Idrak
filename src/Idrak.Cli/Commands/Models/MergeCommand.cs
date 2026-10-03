@@ -31,8 +31,6 @@ internal sealed class MergeCommand : Command
         Examples:
           idrak merge Qwen/Qwen3-0.6B ./run/adapter -o ./qwen-tuned
           idrak merge ./base ./adapter -o ./merged --type f32 -d cpu
-
-        Environment: IDRAK_CACHE (the cache)
         """;
 
     public override IReadOnlyCollection<string> ValueOptions => ["--out", "--type"];

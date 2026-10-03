@@ -61,6 +61,7 @@ internal static class CommandLine
             return ExitCodes.Usage;
         }
 
+        CommandContext? context = null;
         try
         {
             var (positional, options, flags) = Parse(command, args.Skip(used).ToList());
@@ -70,7 +71,7 @@ internal static class CommandLine
                 return ExitCodes.Ok;
             }
 
-            using var context = new CommandContext(command, positional, options, flags, output, error);
+            context = new CommandContext(command, positional, options, flags, output, error);
             command.BeforePlugins(context);
             context.LoadPlugins();
             return command.Run(context);
@@ -78,8 +79,14 @@ internal static class CommandLine
         catch (UsageException e)
         {
             error.WriteLine(e.Message);
-            error.WriteLine($"Usage: idrak {command.Name} {command.Usage}".TrimEnd());
+            error.WriteLine($"Usage: idrak {command.Name} {command.Usage.Split('\n')[0]}".TrimEnd());
             return ExitCodes.Usage;
+        }
+        catch (Exception e) when (e is not OutOfMemoryException && context?.Timeout is { } limit && context.TimeoutToken.IsCancellationRequested)
+        {
+            // Whatever the cancelled call threw (a cancelled task, a closed connection), the reason is the time limit.
+            error.WriteLine($"idrak {command.Name}: gave up after --timeout {Shared.ProgressLine.Duration(limit)} ({e.Message.Split('\n')[0]})");
+            return ExitCodes.Failed;
         }
         catch (Exception e) when (e is not OutOfMemoryException)
         {
@@ -90,6 +97,10 @@ internal static class CommandLine
             }
 
             return ExitCodes.Failed;
+        }
+        finally
+        {
+            context?.Dispose();
         }
     }
 
@@ -181,33 +192,67 @@ internal static class CommandLine
 /// <summary>Help text.</summary>
 internal static class Help
 {
+    /// <summary>
+    /// <c>idrak help</c>: the commands by group (plans/idrak-cli.md: setup and health, run models, serve, ...), each with
+    /// its aliases and summary, then the common options.
+    /// </summary>
     public static string Overview(IReadOnlyList<Command> commands)
     {
-        var text = new System.Text.StringBuilder("idrak: Idrak's command-line tool\n\nUsage: idrak COMMAND [arguments] [options]\n\nCommands:\n");
-        int width = commands.Count == 0 ? 0 : commands.Max(c => c.Name.Length);
-        foreach (var c in commands.OrderBy(c => c.Name, StringComparer.Ordinal))
+        var text = new System.Text.StringBuilder("idrak: Idrak's command-line tool\n\nUsage: idrak COMMAND [arguments] [options]\n");
+        string Name(Command c) => c.Aliases.Count > 0 ? $"{c.Name} ({string.Join(", ", c.Aliases)})" : c.Name;
+        int width = commands.Count == 0 ? 0 : commands.Max(c => Name(c).Length);
+        var groups = CommandTable.Groups.Select(g => (Title: g.Title, Commands: g.Commands.Where(commands.Contains).ToList()))
+            .Append((Title: "Other", Commands: commands.Where(c => !CommandTable.All.Contains(c)).ToList()));
+        foreach (var (title, members) in groups.Where(g => g.Commands.Count > 0))
         {
-            text.Append("  ").Append(c.Name.PadRight(width)).Append("  ").Append(c.Summary)
-                .Append(c.Aliases.Count > 0 ? $" ({string.Join(", ", c.Aliases)})" : "").Append('\n');
+            text.Append('\n').Append(title).Append(":\n");
+            foreach (var c in members)
+            {
+                text.Append("  ").Append(Name(c).PadRight(width)).Append("  ").Append(c.Summary).Append('\n');
+            }
         }
 
-        return text.Append('\n').Append(CommonOptions).Append("\nRun 'idrak help COMMAND' for a command's options.\n").ToString();
+        return text.Append('\n').Append(CommonOptions)
+            .Append("\nRun 'idrak help COMMAND' (or 'idrak COMMAND --help') for a command's options; 'idrak help topics' for concept pages.\n").ToString();
     }
 
+    /// <summary>
+    /// <c>idrak help COMMAND</c>, in one layout for every command: the summary, the usage line and aliases, the command's
+    /// own text (what it does, its arguments and options with their short forms, examples, limits and gaps), any short
+    /// form that text does not show, the common options, and the environment variables that affect it (generated from
+    /// <see cref="Shared.EnvironmentVariables"/>).
+    /// </summary>
     public static string For(Command command)
     {
-        var text = new System.Text.StringBuilder($"idrak {command.Name}: {command.Summary}\n\nUsage: idrak {command.Name} {command.Usage}".TrimEnd()).Append('\n');
+        string synopsis = command.Usage.Split('\n')[0].Trim();
+        string body = Body(command);
+        var text = new System.Text.StringBuilder($"idrak {command.Name}: {command.Summary}\n\n");
+        text.Append($"Usage: idrak {command.Name} {synopsis}".TrimEnd()).Append('\n');
         if (command.Aliases.Count > 0)
         {
             text.Append("Aliases: ").Append(string.Join(", ", command.Aliases.Select(a => "idrak " + a))).Append('\n');
         }
 
-        if (command.ShortForms.Count > 0)
+        if (body.Length > 0)
         {
-            text.Append("Short forms: ").Append(string.Join(", ", command.ShortForms.Select(p => $"{p.Key} {p.Value}"))).Append('\n');
+            text.Append('\n').Append(body).Append('\n');
+        }
+
+        var unshown = command.ShortForms.Where(p => !body.Contains($"{p.Key}, {p.Value}", StringComparison.Ordinal)).ToList();
+        if (unshown.Count > 0)
+        {
+            text.Append("\nShort forms: ").Append(string.Join(", ", unshown.Select(p => $"{p.Key} {p.Value}"))).Append('\n');
         }
 
         return text.Append('\n').Append(CommonOptions).Append(Shared.EnvironmentVariables.HelpSection(command.Name)).ToString();
+    }
+
+    /// <summary>The command's own text in its help (the usage after its first line), as <see cref="For"/> shows it.</summary>
+    public static string Body(Command command)
+    {
+        string usage = command.Usage.Replace("\r", "", StringComparison.Ordinal);
+        int newline = usage.IndexOf('\n');
+        return newline < 0 ? "" : usage[(newline + 1)..].Trim('\n').TrimEnd();
     }
 
     private const string CommonOptions =

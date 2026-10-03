@@ -32,8 +32,7 @@ internal sealed class RagAskCommand : Command
         "      --think / --no-think  the reasoning mode passed to the chat template\n\n" +
         "Examples:\n" +
         "  idrak rag ask \"How do I reset?\" --index docs.idx -m org/model --no-think\n" +
-        "  idrak rag ask \"What does IDRAK_CACHE change?\" --index docs.idx -m mymodel --top 6 -j\n\n" +
-        "Environment: IDRAK_CACHE (models), IDRAK_MATMUL, HF_TOKEN (gated downloads)";
+        "  idrak rag ask \"What does IDRAK_CACHE change?\" --index docs.idx -m mymodel --top 6 -j";
 
     public override IReadOnlyCollection<string> ValueOptions =>
         [.. Models.ValueOptions, "--index", "--model", "--top", "--system", "--max-tokens", "--temperature"];

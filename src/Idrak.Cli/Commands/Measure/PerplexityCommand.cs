@@ -28,8 +28,7 @@ internal sealed class PerplexityCommand : Command
         "      --max-tokens N    score only the first N tokens of the text\n\n" +
         "Examples:\n" +
         "  idrak perplexity org/model wiki.txt\n" +
-        "  idrak perplexity org/model wiki.txt -w int4 -j\n\n" +
-        "Environment: IDRAK_CACHE (models), IDRAK_MATMUL, IDRAK_OFFLOAD, HF_TOKEN (gated downloads)";
+        "  idrak perplexity org/model wiki.txt -w int4 -j";
 
     public override IReadOnlyCollection<string> ValueOptions => [.. Models.ValueOptions, "--window", "--max-tokens"];
 

@@ -38,7 +38,7 @@ internal sealed class AgentCommand : Command
         Examples:
           idrak agent Qwen/Qwen3-8B "Add a unit test for Parse" --workspace ./src
           idrak agent qwen -y --context 16384
-        """ + "\n\n" + GenerationSettings.EnvironmentHelp;
+        """;
 
     public override IReadOnlyCollection<string> ValueOptions => [.. Models.ValueOptions, .. GenerationSettings.ValueOptions, "--workspace", "--rounds"];
 

@@ -34,8 +34,6 @@ internal sealed class ConvertCommand : Command
         Examples:
           idrak convert ./qwen3-0.6b-q8_0.gguf ./qwen3-0.6b
           idrak convert Qwen/Qwen3-0.6B -o ./qwen-f32 --type f32
-
-        Environment: IDRAK_CACHE (the cache, where a GGUF file's description is prepared)
         """;
 
     public override IReadOnlyCollection<string> ValueOptions => ["--out", "--type"];

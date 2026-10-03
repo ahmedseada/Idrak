@@ -49,8 +49,7 @@ internal sealed class TraceCommand : Command
         "Examples:\n" +
         "  idrak trace -- onnx check model.onnx -d vulkan:0\n" +
         "  idrak trace -o train.jsonl --levels training,batches -- train network.json --data houses.csv\n" +
-        "  idrak trace --levels operations --sync -- bench --kernels matmul\n\n" +
-        "Environment: IDRAK_TRACE (stack traces of errors), and every variable of the traced command.";
+        "  idrak trace --levels operations --sync -- bench --kernels matmul";
 
     public override IReadOnlyCollection<string> ValueOptions => ["--out", "--levels"];
 

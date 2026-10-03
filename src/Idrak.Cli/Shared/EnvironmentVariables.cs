@@ -28,21 +28,34 @@ internal static class EnvironmentVariables
     // Commands that run models or kernels on a device (the device and backend variables affect these).
     private static readonly string[] OnDevice =
     [
-        "doctor", "devices", "version", "report", "init", "chat", "run", "batch", "compare", "complete", "embed", "tokenize", "agent", "serve", "ui",
-        "memory", "quantize", "merge", "bench", "eval", "perplexity", "profile", "check", "tuning show", "tune", "train", "resume", "predict", "distill",
-        "suggest", "explain", "rag index", "rag ask", "rag search", "rag eval", "test", "kernels dump", "trace",
+        "doctor", "devices", "version", "report", "init", "chat", "run", "batch", "compare", "complete", "embed", "agent", "serve", "ui",
+        "memory", "quantize", "merge", "convert", "bench", "eval", "perplexity", "profile", "check", "tuning show", "tune", "train", "resume", "predict",
+        "distill", "suggest", "explain", "rag index", "rag ask", "rag search", "rag eval", "test", "trace", "demo", "onnx import", "onnx export",
+        "onnx check",
     ];
 
-    // Commands that read models from the hub or the local stores.
+    // Commands that read models from the hub or the local stores (a model argument, or an index's embedding model).
     private static readonly string[] Models =
     [
-        "pull", "list", "rm", "show", "search", "verify", "convert", "chat", "run", "batch", "compare", "complete", "embed", "tokenize", "template",
-        "agent", "serve", "ui", "memory", "quantize", "merge", "bench", "eval", "perplexity", "profile", "check", "tune", "data stats", "rag index",
-        "rag ask", "report",
+        "pull", "list", "rm", "show", "search", "verify", "convert", "diff", "inspect", "chat", "run", "batch", "compare", "complete", "embed",
+        "tokenize", "template", "agent", "serve", "ui", "memory", "quantize", "merge", "bench", "eval", "perplexity", "profile", "check", "tune",
+        "distill", "data stats", "rag index", "rag ask", "rag search", "rag eval", "suggest",
     ];
 
-    // Commands that read datasets from remote sources.
-    private static readonly string[] Data = ["data", "data preview", "data validate", "data stats", "data convert", "data mix", "tune", "train", "rag index"];
+    // Commands that read datasets from remote sources (the others read local files only).
+    private static readonly string[] Data = ["data", "data mix", "tune"];
+
+    // Commands that read or clear the tuning caches and compiled kernels besides those running on a device.
+    private static readonly string[] Caches = [.. OnDevice, "cache info", "cache clear"];
+
+    // Commands that read or store the hub and repository tokens.
+    private static readonly string[] Logins = ["login", "logout", "doctor"];
+
+    // Commands that call a running server (they go through the proxy settings unless NO_PROXY spares the host).
+    private static readonly string[] Clients = ["ping", "api", "server ps", "server stop", "server load", "server unload"];
+
+    // Commands that reach the network: model and data downloads, the package feed, the network checks, server calls.
+    private static readonly string[] Network = [.. Models, .. Data, .. Clients, "update", "doctor"];
 
     // Commands whose child processes get the variables the coding tools set.
     private static readonly string[] ChildCommands = ["agent", "tools test"];
@@ -65,11 +78,11 @@ internal static class EnvironmentVariables
 
         new("IDRAK_CACHE", Tuning, "~/.cache/idrak", "The cache folder: downloaded models, tuning choices, compiled kernels (--cache wins for the tool)", [Every]),
         new("IDRAK_AUTOTUNE", Tuning, "1 (measure)", "0 or false: the formulas only, no measuring of kernel choices on the device", OnDevice),
-        new("IDRAK_TUNING_CACHE", Tuning, "on, under the cache folder", "0, false or off: measured choices are not kept; a path: the CUDA tuning folder", OnDevice),
+        new("IDRAK_TUNING_CACHE", Tuning, "on, under the cache folder", "0, false or off: measured choices are not kept; a path: the CUDA tuning folder", Caches),
         new("IDRAK_TUNE_LOG", Tuning, "not set", "1: print every tuning measurement (candidates, time ratios, the choice) to the error output", OnDevice),
-        new("IDRAK_CPU_TUNING_FILE", Tuning, "<cache>/cpu/tuning.tsv", "The CPU tuning file (empty: none)", OnDevice),
-        new("IDRAK_VULKAN_TUNING_CACHE", Tuning, "<cache>/vulkan/tuning.tsv", "0 or false: no Vulkan tuning file; a path: the file", OnDevice),
-        new("IDRAK_HIP_KERNEL_CACHE", Tuning, "<cache>/hip/kernels", "0 or false: compiled HIP kernels are not kept; a path: the folder", OnDevice),
+        new("IDRAK_CPU_TUNING_FILE", Tuning, "<cache>/cpu/tuning.tsv", "The CPU tuning file (empty: none)", Caches),
+        new("IDRAK_VULKAN_TUNING_CACHE", Tuning, "<cache>/vulkan/tuning.tsv", "0 or false: no Vulkan tuning file; a path: the file", Caches),
+        new("IDRAK_HIP_KERNEL_CACHE", Tuning, "<cache>/hip/kernels", "0 or false: compiled HIP kernels are not kept; a path: the folder", Caches),
 
         new("IDRAK_MATMUL", Precision, "float32", "bf16 (bfloat16) or fp8 (float8): the precision of matrix products outside any precision scope", OnDevice),
         new("IDRAK_FP8_DELAYED", Precision, "not set", "1: delayed column scaling for float8 products on CUDA", OnDevice),
@@ -94,27 +107,27 @@ internal static class EnvironmentVariables
         new("IDRAK_VULKAN_PUSH_DESCRIPTORS", Vulkan, "measured", "1 or 0: pushed descriptors or descriptor sets", OnDevice),
         new("IDRAK_VULKAN_BATCH_COMMANDS", Vulkan, "measured", "Commands recorded per submitted batch", OnDevice),
         new("IDRAK_VULKAN_IN_FLIGHT", Vulkan, "measured", "Batches in flight at once", OnDevice),
-        new("VK_ICD_FILENAMES", Vulkan, "the loader's search", "The Vulkan loader: which driver (ICD) files to use (needed for Turnip on a phone)", OnDevice),
-        new("VK_DRIVER_FILES", Vulkan, "the loader's search", "The Vulkan loader: the newer name of VK_ICD_FILENAMES", OnDevice),
+        new("VK_ICD_FILENAMES", Vulkan, "the loader's search", "The Vulkan loader: which driver (ICD) files to use (needed for Turnip on a phone)", [.. OnDevice, "setup android"]),
+        new("VK_DRIVER_FILES", Vulkan, "the loader's search", "The Vulkan loader: the newer name of VK_ICD_FILENAMES", [.. OnDevice, "setup android"]),
         new("VK_INSTANCE_LAYERS", Vulkan, "none", "The Vulkan loader: layers to enable (e.g. validation), read by the loader itself", OnDevice),
 
         new("IDRAK_HIP_KERNELS", Hip, "on", "0 or false: every HIP operation through the host fallback", OnDevice),
         new("HIP_PATH", Hip, "not set", "Where the HIP SDK is (Windows)", OnDevice),
         new("ROCM_PATH", Hip, "/opt/rocm", "Where ROCm is (Linux)", OnDevice),
 
-        new("HF_TOKEN", Sources, "the saved login", "The Hugging Face access token for gated and private models and datasets", Models.Concat(Data).ToArray(), Secret: true),
-        new("HUGGING_FACE_HUB_TOKEN", Sources, "not set", "The older name of HF_TOKEN", Models.Concat(Data).ToArray(), Secret: true),
-        new("HF_TOKEN_PATH", Sources, "<HF_HOME>/token", "The file holding the saved Hugging Face token", Models.Concat(Data).ToArray()),
-        new("HF_HOME", Sources, "~/.cache/huggingface", "The Hugging Face folder (its hub cache is searched for models; its token file is read)", Models.Concat(Data).ToArray()),
+        new("HF_TOKEN", Sources, "the saved login", "The Hugging Face access token for gated and private models and datasets", [.. Models, .. Data, .. Logins], Secret: true),
+        new("HUGGING_FACE_HUB_TOKEN", Sources, "not set", "The older name of HF_TOKEN", [.. Models, .. Data, "doctor"], Secret: true),
+        new("HF_TOKEN_PATH", Sources, "<HF_HOME>/token", "The file holding the saved Hugging Face token", [.. Models, .. Data, .. Logins]),
+        new("HF_HOME", Sources, "~/.cache/huggingface", "The Hugging Face folder (its hub cache is searched for models; its token file is read)", [.. Models, .. Data, .. Logins]),
         new("HF_HUB_CACHE", Sources, "<HF_HOME>/hub", "The Hugging Face hub cache searched for already downloaded models", Models),
-        new("HF_ENDPOINT", Sources, "https://huggingface.co", "The Hugging Face hub address (a mirror)", Models.Concat(Data).ToArray()),
+        new("HF_ENDPOINT", Sources, "https://huggingface.co", "The Hugging Face hub address (a mirror)", [.. Models, .. Data, "doctor"]),
         new("OLLAMA_MODELS", Sources, "the store's own folder in the home folder", "The local model store whose GGUF models are read by name", Models),
-        new("GITHUB_TOKEN", Sources, "not set", "A token for private repositories and higher rate limits (github: data sources)", Data, Secret: true),
+        new("GITHUB_TOKEN", Sources, "not set", "A token for private repositories and higher rate limits (github: data sources)", [.. Data, .. Logins], Secret: true),
         new("GH_TOKEN", Sources, "not set", "Read when GITHUB_TOKEN is not set", Data, Secret: true),
-        new("GITHUB_API_URL", Sources, "https://api.github.com", "The repository API root (an enterprise server)", Data),
-        new("KAGGLE_USERNAME", Sources, "from kaggle.json", "The Kaggle account name (kaggle: data sources)", Data),
-        new("KAGGLE_KEY", Sources, "from kaggle.json", "The Kaggle API key", Data, Secret: true),
-        new("KAGGLE_CONFIG_DIR", Sources, "~/.kaggle", "The folder holding kaggle.json", Data),
+        new("GITHUB_API_URL", Sources, "https://api.github.com", "The repository API root (an enterprise server)", [.. Data, "doctor"]),
+        new("KAGGLE_USERNAME", Sources, "from kaggle.json", "The Kaggle account name (kaggle: data sources)", [.. Data, .. Logins]),
+        new("KAGGLE_KEY", Sources, "from kaggle.json", "The Kaggle API key", [.. Data, .. Logins], Secret: true),
+        new("KAGGLE_CONFIG_DIR", Sources, "~/.kaggle", "The folder holding kaggle.json", [.. Data, .. Logins]),
         new("ZENODO_TOKEN", Sources, "not set", "A token for restricted Zenodo records (zenodo: data sources)", Data, Secret: true),
 
         new("IDRAK_CONFIG", Tool, "~/.idrak/config.json", "The config file (--config wins)", [Every]),
@@ -133,9 +146,9 @@ internal static class EnvironmentVariables
         new("PATHEXT", Tests, "as the system sets it", "Program extensions on Windows (the coding tools' program search)", ["agent", "tools test"]),
         new("PROCESSOR_IDENTIFIER", Devices, "as the system sets it", "The processor's name on Windows (device listings, tuning keys)", OnDevice),
 
-        new("HTTPS_PROXY", DotNet, "none", "The proxy for https downloads (read by .NET's HTTP client; also https_proxy)", Models.Concat(Data).Append("update").Append("doctor").ToArray()),
-        new("HTTP_PROXY", DotNet, "none", "The proxy for http downloads (read by .NET's HTTP client)", Models.Concat(Data).Append("update").Append("doctor").ToArray()),
-        new("NO_PROXY", DotNet, "none", "Hosts reached without the proxy (read by .NET's HTTP client)", Models.Concat(Data).Append("update").Append("doctor").ToArray()),
+        new("HTTPS_PROXY", DotNet, "none", "The proxy for https downloads (read by .NET's HTTP client; also https_proxy)", Network),
+        new("HTTP_PROXY", DotNet, "none", "The proxy for http downloads (read by .NET's HTTP client)", Network),
+        new("NO_PROXY", DotNet, "none", "Hosts reached without the proxy (read by .NET's HTTP client)", Network),
         new("DOTNET_GCHeapHardLimit", DotNet, "not set", "Caps the .NET heap reservation; needed on Android, whose address space is too small for the default", [Every]),
         new("DOTNET_CLI_TELEMETRY_OPTOUT", Child, "1", "Set for the commands the coding tools run (no telemetry prompt)", ChildCommands),
         new("DOTNET_NOLOGO", Child, "1", "Set for the commands the coding tools run (no logo)", ChildCommands),
@@ -170,7 +183,7 @@ internal static class EnvironmentVariables
             // Long lists (the device and tuning variables) by group, names only.
             foreach (var group in variables.GroupBy(v => v.Group))
             {
-                text.Append("  ").Append(group.Key).Append(": ").Append(string.Join(", ", group.Select(v => v.Name))).Append('\n');
+                Names(text, group.Key, group.Select(v => v.Name));
             }
         }
         else
@@ -182,7 +195,34 @@ internal static class EnvironmentVariables
             }
         }
 
-        return text.Append("  Every command: ").Append(string.Join(", ", All.Where(v => v.Commands.Contains(Every)).Select(v => v.Name))).Append('\n').ToString();
+        Names(text, "Every command", All.Where(v => v.Commands.Contains(Every)).Select(v => v.Name));
+        return text.ToString();
+    }
+
+    // "  Label: A, B, C" wrapped at the help's width, continuation lines indented under the first name.
+    private static void Names(StringBuilder text, string label, IEnumerable<string> names)
+    {
+        const int Width = 118;
+        string indent = new(' ', label.Length + 4);
+        var line = new StringBuilder("  ").Append(label).Append(": ");
+        bool first = true;
+        foreach (string name in names)
+        {
+            string piece = first ? name : ", " + name;
+            if (!first && line.Length + piece.Length > Width)
+            {
+                text.Append(line.Append(',')).Append('\n');
+                line.Clear().Append(indent).Append(name);
+            }
+            else
+            {
+                line.Append(piece);
+            }
+
+            first = false;
+        }
+
+        text.Append(line).Append('\n');
     }
 
     /// <summary>The whole reference without values (<c>idrak help env</c>): every variable by group, its default and meaning.</summary>

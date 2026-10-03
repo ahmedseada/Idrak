@@ -53,8 +53,7 @@ internal sealed class BenchCommand : Command
         "  idrak b mymodel --save laptop && idrak b mymodel --compare laptop\n" +
         "  idrak bench --kernels matmul,gemv -d cuda:0 -j\n" +
         "  idrak b mymodel --devices all\n" +
-        "  idrak b mymodel --matrix -w int8,int4 -d vulkan:0\n\n" +
-        "Environment: IDRAK_CACHE (models, saved results, tuning), IDRAK_AUTOTUNE, IDRAK_TUNING_CACHE, IDRAK_MATMUL, IDRAK_OFFLOAD, HF_TOKEN (gated downloads)";
+        "  idrak b mymodel --matrix -w int8,int4 -d vulkan:0";
 
     public override IReadOnlyCollection<string> ValueOptions =>
         [.. Models.ValueOptions, "--prompt-tokens", "--tokens", "--kernels", "--repeat", "--save", "--compare", "--devices"];
@@ -235,7 +234,7 @@ internal sealed class BenchCommand : Command
         int tokens = Positive(context, "--tokens", 128);
         var device = run.Device;
         long before = ComputeResources.GetMemoryUsage(device).InUse;
-        using var model = Load(context, choice, device);
+        using var model = Models.Load(context, choice, device);
         long weights = Math.Max(0, ComputeResources.GetMemoryUsage(device).InUse - before);
         var tokenizer = model.Tokenizer ?? throw new InvalidOperationException($"{choice.Model} has no tokenizer (tokenizer.json), so no prompt can be made for it.");
         int promptTokens = Math.Min(Positive(context, "--prompt-tokens", 512), Math.Max(1, model.MaxPositions - tokens - 1));
@@ -298,31 +297,6 @@ internal sealed class BenchCommand : Command
             new BenchResult("memory in use", memory.InUse / 1048576.0, "MiB", false,
                 memory.Limit is { } limit ? $"of {limit / 1048576.0:F0} MiB" : "after the runs"),
         ];
-    }
-
-    // Models.Load on a chosen device (the runs of --devices each load on their own).
-    private static PretrainedModel Load(CommandContext context, Models.ModelChoice choice, Device device)
-    {
-        if (device == context.Device)
-        {
-            return Models.Load(context, choice);
-        }
-
-        string folder = Models.Resolve(context, choice.Model);
-        string? weights = choice.Weights?.ToLowerInvariant();
-        var watch = Stopwatch.StartNew();
-        var model = PretrainedModel.Load(folder, new PretrainedOptions
-        {
-            Device = device,
-            Int8 = weights == "int8",
-            Int4 = weights == "int4",
-            BFloat16 = weights is "bf16" or "bfloat16",
-            PackedFormatName = weights is null or "int8" or "int4" or "bf16" or "bfloat16" or "float32" or "f32" ? null : choice.Weights,
-            MaxPositions = choice.Context,
-            MergeAdapter = choice.Adapter,
-        });
-        context.Detail($"loaded {choice.Model} in {watch.Elapsed.TotalSeconds:F1} s on {device}");
-        return model;
     }
 
     private static List<BenchResult> BenchKernels(CommandContext context, BenchRun run, JsonObject document)

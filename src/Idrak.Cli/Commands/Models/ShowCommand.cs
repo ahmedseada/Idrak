@@ -29,8 +29,6 @@ internal sealed class ShowCommand : Command
         Examples:
           idrak show Qwen/Qwen3-0.6B
           idrak show ./model.gguf --json
-
-        Environment: IDRAK_CACHE (the cache), HF_HOME, HF_HUB_CACHE (Hugging Face's own cache, searched too)
         """;
 
     public override IReadOnlyCollection<string> Flags => ["--template"];
