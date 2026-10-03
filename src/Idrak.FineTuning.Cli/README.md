@@ -5,6 +5,9 @@ One command-line tool for every fine-tuning job: LoRA / QLoRA adapters for any p
 with and exported. Nothing in it is specific to a model family or to an application: a project that needs a tuned model
 runs idrak-tune with its data instead of writing its own tuner.
 
+The same tool is `idrak tune` in the `idrak` command-line tool (src/Idrak.Cli), which runs this code; this package stays
+as a forwarder with the same commands and options.
+
 Install from nuget.org (needs the .NET SDK): `dotnet tool install --global Idrak.FineTuning.Cli`, then `idrak-tune --help`.
 From this repository:
 

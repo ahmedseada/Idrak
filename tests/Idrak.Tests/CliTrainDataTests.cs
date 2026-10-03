@@ -1,0 +1,421 @@
+// Copyright (c) 2026 Ahmed Seada
+// Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
+
+using System.Globalization;
+using System.Text;
+using System.Text.Json.Nodes;
+using Idrak;
+using Idrak.Cli;
+using Idrak.Cli.Commands.Data;
+using Idrak.Cli.Commands.Train;
+using Idrak.Cli.Shared;
+using Idrak.Layers;
+
+// The idrak CLI's Train and data group: tune (the idrak-tune code, also through its forwarder), train, resume, runs,
+// predict, package, distill, and data with its subcommands, run in-process on data built here and tiny models.
+internal static partial class Tests
+{
+    private static readonly (string Name, Action<Device> Run)[] CliTrainDataGroup =
+    [
+        ("cli train data: help, short forms and examples of every command", CliTrainDataHelp),
+        ("cli train data: idrak-tune and idrak-data forwarders behave as before", CliToolForwarders),
+        ("cli train data: tune init, tune --config, tune info and tune train on a tiny model", CliTune),
+        ("cli train data: data show, count, build, preview, validate, stats", CliDataInspect),
+        ("cli train data: data convert, dedupe, split, sample, mix", CliDataTransform),
+        ("cli train data: train, predict, runs, resume, package on CSV", CliTrainCsv),
+        ("cli train data: train and predict on an image folder; distill explains its gap", CliTrainImages),
+    ];
+
+    private static (int Code, string Out, string Err) Cli(params string[] args)
+    {
+        var output = new StringWriter();
+        var error = new StringWriter();
+        int code = CommandLine.Run(args, output, error);
+        return (code, output.ToString(), error.ToString());
+    }
+
+    private static JsonObject CliJson(params string[] args)
+    {
+        var (code, output, error) = Cli([.. args, "--json"]);
+        Check(code == 0, $"idrak {string.Join(' ', args)} --json: exit {code}\n{output}\n{error}");
+        return JsonNode.Parse(output) as JsonObject ?? throw new Exception($"not one JSON object: {output}");
+    }
+
+    private static void CliTrainDataHelp(Device device)
+    {
+        if (device.Type != DeviceType.Cpu)
+        {
+            return;
+        }
+
+        string[] providers = ["ollama", "openai", "anthropic", "claude"];
+        foreach (var command in Idrak.Cli.Commands.TrainCommands.All.Concat(Idrak.Cli.Commands.DataCommands.All))
+        {
+            var (code, output, _) = Cli(["help", .. command.Name.Split(' ')]);
+            Check(code == 0 && output.Contains($"idrak {command.Name}", StringComparison.Ordinal), $"help {command.Name}: {code}\n{output}");
+            Check(output.Contains("Example", StringComparison.Ordinal) && output.Contains("Environment:", StringComparison.Ordinal), $"help {command.Name} has examples and its environment");
+            Check(!providers.Any(p => output.Contains(p, StringComparison.OrdinalIgnoreCase)), $"help {command.Name} names no provider");
+            Check(command.ShortForms.Keys.All(k => k.Length == 2 && !CommandContext.CommonShortForms.ContainsKey(k)), $"{command.Name}: short forms are one letter and not common ones");
+            Check(command.ShortForms.Values.Distinct().Count() == command.ShortForms.Count, $"{command.Name}: no two short forms for one option");
+            Check(command.ShortForms.Values.All(v => command.ValueOptions.Contains(v) || command.Flags.Contains(v)), $"{command.Name}: every short form names an option");
+        }
+
+        // The same letter means the same option in every command of the group.
+        var meanings = Idrak.Cli.Commands.TrainCommands.All.Concat(Idrak.Cli.Commands.DataCommands.All).SelectMany(c => c.ShortForms).GroupBy(p => p.Key);
+        foreach (var group in meanings)
+        {
+            Check(group.Select(p => p.Value).Distinct().Count() == 1, $"{group.Key} means {string.Join(" and ", group.Select(p => p.Value).Distinct())}");
+        }
+
+        Check(Cli("train").Code == 2, "train without a spec is a usage error");
+        Check(Cli("tune").Code == 2 && Cli("tune", "fly", "m").Code == 2 && Cli("tune", "train", "m", "d.jsonl").Code == 2, "tune usage errors exit with 2");
+        Check(Cli("tune", "train", "m", "d.jsonl", "-o", "x", "--optimizer", "nope").Err.Contains("--optimizer nope", StringComparison.Ordinal), "a bad tune option is named");
+        Check(Cli("data", "fly").Code == 2 && Cli("data", "validate", "x.jsonl").Code == 2, "data usage errors exit with 2");
+    }
+
+    private static void CliToolForwarders(Device device)
+    {
+        if (device.Type != DeviceType.Cpu)
+        {
+            return;
+        }
+
+        (int, string, string) Run(Func<IReadOnlyList<string>, ToolConsole, int> tool, params string[] args)
+        {
+            var (output, error) = (new StringWriter(), new StringWriter());
+            int code = tool(args, new ToolConsole(output, error, TextReader.Null, live: false));
+            return (code, output.ToString(), error.ToString());
+        }
+
+        var help = Run(TuneTool.RunTool, "--help");
+        Check(help.Item1 == 0 && help.Item2.StartsWith("idrak-tune: fine-tune", StringComparison.Ordinal), "idrak-tune --help prints its usage");
+        Check(Run(TuneTool.RunTool).Item1 == 1, "idrak-tune without a command exits with 1 after the usage");
+        var bad = Run(TuneTool.RunTool, "train", "m", "d", "--rank", "x");
+        Check(bad.Item1 == 1 && bad.Item3.StartsWith("error:", StringComparison.Ordinal), $"idrak-tune reports a bad number: {bad.Item3}");
+        Check(Run(TuneTool.RunTool, "train", "m", "d", "--bogus").Item3.Contains("Unknown option --bogus", StringComparison.Ordinal), "idrak-tune names an unknown option");
+
+        string folder = TempFolder();
+        try
+        {
+            string file = Path.Combine(folder, "rows.jsonl");
+            File.WriteAllLines(file, ["{\"question\": \"1+1?\", \"answer\": \"2\"}", "{\"question\": \"2+2?\", \"answer\": \"4\"}"]);
+            var count = Run(DataTool.RunTool, "count", file);
+            Check(count.Item1 == 0 && count.Item2.Contains(": 2 rows", StringComparison.Ordinal), $"idrak-data count: {count.Item2}");
+            Check(Run(DataTool.RunTool, "help").Item1 == 0 && Run(DataTool.RunTool).Item1 == 1, "idrak-data help and usage");
+            Check(Run(DataTool.RunTool, "count", Path.Combine(folder, "missing.jsonl")).Item1 == 2, "idrak-data exits with 2 on a missing file");
+            var built = Run(DataTool.RunTool, "build", file, "--out", Path.Combine(folder, "out.jsonl"), "--cache", folder);
+            Check(built.Item1 == 0 && File.ReadAllLines(Path.Combine(folder, "out.jsonl")).Length == 2, $"idrak-data build: {built.Item2}{built.Item3}");
+        }
+        finally
+        {
+            Directory.Delete(folder, true);
+        }
+    }
+
+    private static void CliTune(Device device)
+    {
+        string model = WriteChatModel(TinyChatSpec());
+        string folder = TempFolder();
+        try
+        {
+            string d = device.ToString();
+            string data = Path.Combine(folder, "chats.jsonl");
+            File.WriteAllLines(data, Enumerable.Range(0, 12).Select(i =>
+                new JsonObject { ["question"] = $"What is {i} plus {i}?", ["answer"] = $"{i + i}" }.ToJsonString()));
+
+            // tune init writes a commented tune.json that tune --config reads (the command line wins).
+            string settings = Path.Combine(folder, "tune.json");
+            var init = Cli("tune", "init", "-b", model, "--data", data, "-o", settings, "-d", d);
+            Check(init.Code == 0 && File.ReadAllText(settings).Contains("// What to do", StringComparison.Ordinal), $"tune init: {init.Out}{init.Err}");
+            Check(Cli("tune", "init", "-b", model, "-o", settings).Code == 1, "tune init does not overwrite without --force");
+            var info = CliJson("tune", "info", "--config", settings);
+            Check((string?)info["command"] == "info" && (string?)info["model"] == model && (string?)info["device"] == d, $"tune info from tune.json: {info}");
+            Check(info["output"]!.AsArray().Any(l => ((string?)l)!.StartsWith("chat template:", StringComparison.Ordinal)), $"tune info output: {info}");
+
+            var (defaultDevice, precision) = (Device.Default, MixedPrecision.Default);
+
+            // A few steps of LoRA training, through idrak's options (-b, -o, a tune.json for the rest).
+            string adapter = Path.Combine(folder, "adapter");
+            var train = Cli("tune", "train", data, "-b", model, "-o", adapter, "--config", settings, "--rank", "4", "--alpha", "8", "--max-length", "64",
+                "--batch-tokens", "256", "--epochs", "1", "--eval-fraction", "0", "-d", d);
+            Check(train.Code == 0 && File.Exists(Path.Combine(adapter, "idrak-tuning.json")), $"tune train: {train.Out}\n{train.Err}");
+            Check(train.Out.Contains("trained in", StringComparison.Ordinal) && train.Out.Contains($"training on {d}", StringComparison.Ordinal), $"tune train output: {train.Out}");
+            Check(Device.Default == defaultDevice && MixedPrecision.Default == precision, "tune puts back the default device and precision");
+
+            // The adapter folder as the model: its base model and the adapter.
+            var adapted = Cli("tune", "info", adapter, "-d", d, "-q");
+            Check(adapted.Code == 0 && adapted.Out.Length == 0, $"tune info ADAPTER -q: {adapted.Code} {adapted.Err}");
+            var unknown = Cli("tune", "--config", Path.Combine(folder, "bad.json"));
+            Check(unknown.Code != 0, "a missing tune.json fails");
+            File.WriteAllText(Path.Combine(folder, "bad.json"), "{ \"command\": \"info\", \"model\": \"x\", \"rnak\": 4 }");
+            Check(Cli("tune", "--config", Path.Combine(folder, "bad.json")).Err.Contains("unknown key 'rnak'", StringComparison.Ordinal), "a misspelt tune.json key is named");
+        }
+        finally
+        {
+            Directory.Delete(folder, true);
+            Directory.Delete(model, true);
+        }
+    }
+
+    private static void CliDataInspect(Device device)
+    {
+        if (device.Type != DeviceType.Cpu)
+        {
+            return;
+        }
+
+        string folder = TempFolder();
+        string model = WriteChatModel(TinyChatSpec());
+        try
+        {
+            string chats = Path.Combine(folder, "chats.jsonl");
+            File.WriteAllLines(chats,
+            [
+                "{\"messages\": [{\"role\": \"user\", \"content\": \"Hello there\"}, {\"role\": \"assistant\", \"content\": \"Hi! How can I help?\"}]}",
+                "{\"question\": \"What is two plus two?\", \"answer\": \"Four.\"}",
+                "{\"messages\": [{\"role\": \"user\", \"content\": \"No answer here\"}]}",
+            ]);
+
+            // The idrak-data commands through idrak data, with idrak's cache.
+            var show = Cli("data", "show", chats, "--take", "2", "--cache", folder);
+            Check(show.Code == 0 && show.Out.Contains("normalized:", StringComparison.Ordinal), $"data show: {show.Out}{show.Err}");
+            var count = CliJson("data", "count", chats, "--cache", folder);
+            Check((string?)count["command"] == "count" && count["output"]![0]!.ToString().Contains(": 3 rows", StringComparison.Ordinal), $"data count: {count}");
+            var built = Cli("data", "build", chats, "-o", Path.Combine(folder, "train.jsonl"), "--kind", "chat", "--cache", folder);
+            Check(built.Code == 0 && File.ReadAllLines(Path.Combine(folder, "train.jsonl")).Length == 3, $"data build: {built.Out}{built.Err}");
+
+            // preview: columns and types of a CSV and a Parquet file.
+            string csv = Path.Combine(folder, "table.csv");
+            File.WriteAllText(csv, "id,size,city,price\n1,50.5,Cairo,100\n2,70,Giza,140\n3,,Cairo,90\n");
+            var preview = CliJson("data", "preview", csv, "-n", "2");
+            Check((long?)preview["rows"] == 3 && preview["columns"]!.AsArray().Count == 4 && preview["preview"]!.AsArray().Count == 2, $"data preview: {preview}");
+            Check((string?)preview["columns"]![1]!["type"] == "number" && (string?)preview["columns"]![2]!["type"] == "text", $"data preview types: {preview}");
+            string parquet = Path.Combine(AppContext.BaseDirectory, "data", "parquet", "snappy-v1.parquet");
+            if (!File.Exists(parquet))
+            {
+                parquet = Path.Combine(FindRepositoryRoot(), "tests", "Idrak.Tests", "data", "parquet", "snappy-v1.parquet");
+            }
+
+            Check(Cli("data", "preview", parquet).Code == 0, "data preview of a Parquet file");
+
+            // validate: the first bad rows and exit 1; a good table exits 0.
+            var chat = Cli("data", "validate", chats, "--as", "chat");
+            Check(chat.Code == 1 && chat.Out.Contains("2 valid, 1 invalid", StringComparison.Ordinal) && chat.Out.Contains("row 3: no assistant turn", StringComparison.Ordinal), $"validate chat: {chat.Out}");
+            Check(Cli("data", "validate", csv, "--as", "table", "-t", "price").Code == 0, "a good table validates");
+            File.AppendAllText(csv, "4,big,Cairo,10\n");
+            var tableText = Cli("data", "validate", csv, "--as", "table");
+            Check(tableText.Code == 1 && tableText.Out.Contains("'size' is big, not a number", StringComparison.Ordinal), $"validate table: {tableText.Out}");
+            string prefs = Path.Combine(folder, "prefs.jsonl");
+            File.WriteAllLines(prefs, ["{\"prompt\": \"Hi\", \"chosen\": \"Hello!\", \"rejected\": \"Go away.\"}", "{\"prompt\": \"Hi\", \"chosen\": \"Same\", \"rejected\": \"Same\"}"]);
+            var preference = Cli("data", "validate", prefs, "--as", "preference");
+            Check(preference.Code == 1 && preference.Out.Contains("chosen and rejected are the same", StringComparison.Ordinal), $"validate preference: {preference.Out}");
+
+            // stats: characters and words, and tokens with a model's tokenizer and chat template.
+            var stats = CliJson("data", "stats", chats, "-m", model, "--context", "20");
+            Check((int?)stats["rows"] == 3 && (int?)stats["conversations"] == 3 && stats["tokens"]?["max"] is not null, $"data stats: {stats}");
+            Check((long?)stats["overContext"] >= 1, $"data stats counts rows over the context: {stats}");
+            var plain = Cli("data", "stats", csv, "--column", "city");
+            Check(plain.Code == 0 && plain.Out.Contains("characters", StringComparison.Ordinal), $"data stats without a model: {plain.Out}");
+        }
+        finally
+        {
+            Directory.Delete(folder, true);
+            Directory.Delete(model, true);
+        }
+    }
+
+    private static string FindRepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "Idrak.slnx")))
+        {
+            directory = directory.Parent;
+        }
+
+        return directory?.FullName ?? Directory.GetCurrentDirectory();
+    }
+
+    private static void CliDataTransform(Device device)
+    {
+        if (device.Type != DeviceType.Cpu)
+        {
+            return;
+        }
+
+        string folder = TempFolder();
+        try
+        {
+            string rows = Path.Combine(folder, "rows.jsonl");
+            var lines = Enumerable.Range(0, 40).Select(i => new JsonObject { ["instruction"] = $"Say {i % 20}", ["output"] = i % 20 == 3 ? "THREE!" : $"{i % 20}", ["label"] = i % 4 == 0 ? "a" : "b" }.ToJsonString()).ToList();
+            lines.Add(new JsonObject { ["instruction"] = "say  1", ["output"] = "1", ["label"] = "b" }.ToJsonString());
+            File.WriteAllLines(rows, lines);
+
+            // convert: to CSV and back, and Alpaca rows to chat rows.
+            string csv = Path.Combine(folder, "rows.csv");
+            Check(CliJson("data", "convert", rows, csv)["written"]!.GetValue<long>() == 41, "data convert to CSV");
+            Check(Cli("data", "convert", rows, csv).Code == 1 && Cli("data", "convert", rows, csv, "-f").Code == 0, "data convert needs -f to overwrite");
+            Check(File.ReadAllLines(csv)[0] == "instruction,output,label", "CSV header");
+            string chats = Path.Combine(folder, "chats.jsonl");
+            Check(Cli("data", "convert", csv, chats, "--as", "chat", "-s", "Be brief.").Code == 0, "data convert --as chat");
+            var first = JsonNode.Parse(File.ReadLines(chats).First())!;
+            Check((string?)first["messages"]![0]!["role"] == "system" && (string?)first["messages"]![2]!["content"] == "0", $"chat rows: {first}");
+
+            // dedupe: exact (20 repeats), near (one more: "say  1" is "Say 1"), in place only with -y.
+            var dry = CliJson("data", "dedupe", rows, "--dry-run", "--columns", "instruction,output");
+            Check((int?)dry["duplicates"] == 20 && dry["output"] is null, $"dedupe dry run: {dry}");
+            Check(Cli("data", "dedupe", rows).Code == 1, "dedupe in place needs --yes");
+            var near = CliJson("data", "dedupe", rows, "--near", "--columns", "instruction,output", "-o", Path.Combine(folder, "unique.jsonl"));
+            Check((int?)near["duplicates"] == 21 && File.ReadAllLines(Path.Combine(folder, "unique.jsonl")).Length == 20, $"near dedupe: {near}");
+
+            // split: stratified, with every part keeping the label balance; sample: stratified too.
+            var split = CliJson("data", "split", rows, "--validation", "0.2", "--test", "0.2", "-t", "label", "--seed", "3", "-o", Path.Combine(folder, "parts"));
+            Check((int?)split["parts"]!["train"]!["rows"] + (int?)split["parts"]!["validation"]!["rows"] + (int?)split["parts"]!["test"]!["rows"] == 41, $"split: {split}");
+            Check(File.Exists(Path.Combine(folder, "parts.test.jsonl")), "split files");
+            var testRows = File.ReadAllLines(Path.Combine(folder, "parts.test.jsonl")).Select(l => (string?)JsonNode.Parse(l)!["label"]).ToList();
+            Check(testRows.Count(l => l == "a") == 2, $"stratified test part: {string.Join(",", testRows)}");
+            var sample = CliJson("data", "sample", rows, "-n", "8", "-t", "label");
+            var labels = sample["sample"]!.AsArray().Select(r => (string?)r!["label"]).ToList();
+            Check(labels.Count == 8 && labels.Count(l => l == "a") == 2, $"stratified sample: {string.Join(",", labels)}");
+            Check(Cli("data", "sample", rows).Code == 2, "sample needs -n");
+
+            // mix: a recipe of two local sources.
+            string recipe = Path.Combine(folder, "recipe.json");
+            File.WriteAllText(recipe, new JsonObject
+            {
+                ["sources"] = new JsonArray(rows, new JsonObject { ["source"] = chats, ["take"] = 5 }),
+                ["seed"] = 1,
+                ["eval_fraction"] = 0.1,
+            }.ToJsonString());
+            var mix = CliJson("data", "mix", recipe, "-o", Path.Combine(folder, "mixed.jsonl"), "--cache", folder);
+            Check((long?)mix["rows"] > 0 && File.Exists(Path.Combine(folder, "mixed.eval.jsonl")), $"data mix: {mix}");
+        }
+        finally
+        {
+            Directory.Delete(folder, true);
+        }
+    }
+
+    private static void CliTrainCsv(Device device)
+    {
+        string folder = TempFolder();
+        try
+        {
+            string d = device.ToString(), cache = Path.Combine(folder, "cache");
+            var random = new Random(5);
+            var csv = new StringBuilder("id,x1,x2,y\n");
+            var classes = new StringBuilder("x1,x2,colour\n");
+            for (int i = 0; i < 240; i++)
+            {
+                double a = random.NextDouble() * 4 - 2, b = random.NextDouble() * 4 - 2;
+                csv.Append(CultureInfo.InvariantCulture, $"{i},{a:F4},{b:F4},{3 * a - 2 * b + 10:F4}\n");
+                classes.Append(CultureInfo.InvariantCulture, $"{a:F4},{b:F4},{(a + b > 0.5 ? "red" : a - b > 0 ? "blue" : "green")}\n");
+            }
+
+            File.WriteAllText(Path.Combine(folder, "reg.csv"), csv.ToString());
+            File.WriteAllText(Path.Combine(folder, "cls.csv"), classes.ToString());
+            File.WriteAllText(Path.Combine(folder, "reg.json"), Network.Input(2).Linear(16).ReLU().Linear(1).Named("reg").ToJson().ToJsonString());
+            File.WriteAllText(Path.Combine(folder, "cls.json"), Network.Input(2).Linear(24).ReLU().Linear(3).Named("cls").ToJson().ToJsonString());
+
+            // Regression: settings from a train.json, the command line winning.
+            File.WriteAllText(Path.Combine(folder, "train.json"), "{ // from idrak suggest\n \"target\": \"y\", \"epochs\": 5, \"learning_rate\": 0.01, \"batch_size\": 16 }");
+            var reg = CliJson("train", Path.Combine(folder, "reg.json"), "--data", Path.Combine(folder, "reg.csv"), "--ignore", "id", "--config", Path.Combine(folder, "train.json"),
+                "--epochs", "80", "-o", Path.Combine(folder, "reg.ikm"), "--cache", cache, "-d", d);
+            Check((string?)reg["task"] == "regression" && (int?)reg["epochs"] >= 40 && File.Exists(Path.Combine(folder, "reg.ikm")), $"train regression: {reg}");
+            Check((double?)reg["metrics"]!["r2"] > 0.9, $"the regression fits: {reg["metrics"]}");
+            string run = (string)reg["run"]!;
+            Check(File.Exists(Path.Combine(run, "last.ikw")) && File.Exists(Path.Combine(run, "log.jsonl")) && File.Exists(Path.Combine(run, "run.json")), "the run folder");
+
+            // predict: rows without the target, by column name.
+            File.WriteAllText(Path.Combine(folder, "new.csv"), "x2,x1\n0,1\n1,0\n");
+            var predicted = CliJson("predict", Path.Combine(folder, "reg.ikm"), "-i", Path.Combine(folder, "new.csv"), "-d", d);
+            double p0 = (double)predicted["predictions"]![0]!["prediction"]!, p1 = (double)predicted["predictions"]![1]!["prediction"]!;
+            Check(Math.Abs(p0 - 13) < 1.5 && Math.Abs(p1 - 8) < 1.5, $"predictions 13 and 8: {p0}, {p1}");
+            Check(Cli("predict", Path.Combine(folder, "reg.ikm"), "-i", Path.Combine(folder, "new.csv"), "-o", Path.Combine(folder, "out.csv")).Code == 0
+                  && File.ReadAllLines(Path.Combine(folder, "out.csv"))[0] == "x2,x1,prediction", "predict -o writes the rows with the prediction");
+
+            // Classification with class names in the CSV.
+            var cls = CliJson("train", Path.Combine(folder, "cls.json"), "--data", Path.Combine(folder, "cls.csv"), "--epochs", "60", "--lr", "0.01",
+                "-o", Path.Combine(folder, "cls.ikm"), "--cache", cache, "-d", d);
+            Check((string?)cls["task"] == "classification" && cls["classes"]!.AsArray().Count == 3 && (double?)cls["metrics"]!["accuracy"] > 0.8, $"train classification: {cls}");
+            var labels = CliJson("predict", Path.Combine(folder, "cls.ikm"), "-i", Path.Combine(folder, "cls.csv"), "--top", "2", "-d", d);
+            int right = labels["predictions"]!.AsArray().Count(r => (string?)r!["prediction"] == (string?)r["colour"]);
+            Check(right > 190 && labels["predictions"]![0]!["top"]!.AsArray().Count == 2, $"classes predicted: {right} of 240");
+
+            // runs: list, show, compare; resume; package.
+            var list = CliJson("runs", "list", "--cache", cache);
+            Check(list["runs"]!.AsArray().Count == 2, $"runs list: {list}");
+            Check(Cli("runs", "--cache", cache).Out.Contains("completed", StringComparison.Ordinal), "runs (alias) lists the runs");
+            var show = Cli("runs", "show", Path.GetFileName(run), "--cache", cache);
+            Check(show.Code == 0 && show.Out.Contains("val_loss", StringComparison.Ordinal) && show.Out.Contains("epoch 1", StringComparison.Ordinal), $"runs show: {show.Out}");
+            var shown = CliJson("runs", "show", Path.Combine(run, "log.jsonl"));
+            int epochs = (int)shown["epochs"]!;
+            Check(epochs == (int)reg["epochs"]! && shown["history"]!.AsArray().Count == epochs, $"runs show --json: {shown["epochs"]}");
+            var compared = CliJson("runs", "compare", run, (string)cls["run"]!);
+            Check(compared["runs"]!.AsArray().Count == 2 && compared["lowest"] is not null, "runs compare");
+            var resumed = CliJson("resume", run, "--epochs", "3", "--cache", cache, "-d", d);
+            Check((int?)resumed["epochs"] == epochs + 3, $"resume: {resumed["epochs"]} after {epochs}");
+            Check(CliJson("runs", "show", run)["epochs"]!.GetValue<int>() == epochs + 3, "the resumed run's log continues");
+            var packaged = CliJson("package", "--model", run, "-o", Path.Combine(folder, "again.ikm"), "--checkpoint", "last");
+            Check(packaged["included"]!.AsArray().Any(i => (string?)i == "training.json"), $"package: {packaged}");
+            var again = CliJson("predict", Path.Combine(folder, "again.ikm"), "-i", Path.Combine(folder, "new.csv"), "-d", d);
+            Check(Math.Abs((double)again["predictions"]![0]!["prediction"]! - 13) < 1.5, "the packaged run predicts");
+            Check(Cli("resume", "nothing-here", "--cache", cache).Code == 2, "resume of an unknown run is a usage error");
+            var mismatch = Cli("train", Path.Combine(folder, "reg.json"), "--data", Path.Combine(folder, "reg.csv"), "--cache", cache, "-d", d);
+            Check(mismatch.Code == 1 && mismatch.Err.Contains("3 feature columns", StringComparison.Ordinal), $"a network that does not fit the data is explained: {mismatch.Err}");
+            var notClasses = Cli("train", Path.Combine(folder, "cls.json"), "--data", Path.Combine(folder, "reg.csv"), "--ignore", "id", "--cache", cache, "-d", d);
+            Check(notClasses.Code == 1 && notClasses.Err.Contains("not class indices", StringComparison.Ordinal), $"a classifier on a numeric target is explained: {notClasses.Err}");
+        }
+        finally
+        {
+            Directory.Delete(folder, true);
+        }
+    }
+
+    private static void CliTrainImages(Device device)
+    {
+        string folder = TempFolder();
+        try
+        {
+            // Two classes of 8x8 grey images: a bright left half or a bright right half (with noise), as PGM files.
+            var random = new Random(9);
+            foreach (string label in new[] { "left", "right" })
+            {
+                Directory.CreateDirectory(Path.Combine(folder, "images", label));
+                for (int n = 0; n < 24; n++)
+                {
+                    var text = new StringBuilder("P2\n8 8\n255\n");
+                    for (int y = 0; y < 8; y++)
+                    {
+                        for (int x = 0; x < 8; x++)
+                        {
+                            bool bright = label == "left" ? x < 4 : x >= 4;
+                            text.Append(Math.Clamp((bright ? 200 : 40) + random.Next(-30, 30), 0, 255)).Append(' ');
+                        }
+
+                        text.Append('\n');
+                    }
+
+                    File.WriteAllText(Path.Combine(folder, "images", label, $"{n}.pgm"), text.ToString());
+                }
+            }
+
+            File.WriteAllText(Path.Combine(folder, "cnn.json"),
+                Network.Image(1, 8, 8).Conv2d(4, 3, padding: 1).ReLU().MaxPool2d(2).Flatten().Linear(2).Named("halves").ToJson().ToJsonString());
+            string d = device.ToString();
+            var trained = CliJson("train", Path.Combine(folder, "cnn.json"), "--data", Path.Combine(folder, "images"), "--epochs", "30", "--lr", "0.01", "--batch", "8",
+                "-o", Path.Combine(folder, "halves.ikm"), "--cache", Path.Combine(folder, "cache"), "-d", d);
+            Check((string?)trained["task"] == "classification" && (double?)trained["metrics"]!["accuracy"] >= 0.9, $"train on images: {trained}");
+            var predicted = CliJson("predict", Path.Combine(folder, "halves.ikm"), "-i", Path.Combine(folder, "images", "right"), "-d", d);
+            int right = predicted["predictions"]!.AsArray().Count(r => (string?)r!["prediction"] == "right");
+            Check(right >= 22, $"images predicted: {right} of 24");
+
+            var distill = Cli("distill", "--teacher", "big", "--student", "small", "--data", "x.jsonl");
+            Check(distill.Code == 1 && distill.Err.Contains("teacher pattern", StringComparison.Ordinal), $"distill explains: {distill.Err}");
+            Check(Cli("distill", "--teacher", "big").Code == 2, "distill without a student is a usage error");
+        }
+        finally
+        {
+            Directory.Delete(folder, true);
+        }
+    }
+}
