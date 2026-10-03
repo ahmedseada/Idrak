@@ -9,8 +9,8 @@
 - `idrak serve` gets a default port of its own (not 11434, which another local server uses); `-p/--port`, the config
   and an environment variable choose another.
 - Arabic messages: only if the console can show them correctly (right to left, joined letters); otherwise dropped.
-- Started: mixture of experts, fast sliding-window kernels, dataset loaders, the teacher pattern (distillation),
-  provider-neutral serving names, Arabic output (render check first).
+- Started: mixture of experts, fast sliding-window kernels, dataset loaders, the teacher pattern (distillation; done on
+  feature-distillation), provider-neutral serving names, Arabic output (render check first).
 
 
 Decisions and hardware checks that wait for the maintainer, collected while work continued. Each item says what is

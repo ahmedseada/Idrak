@@ -126,6 +126,17 @@ public sealed class PackedSequences : IDisposable
         return new Scope(previous);
     }
 
+    /// <summary>
+    /// No packing on this thread until the returned scope is disposed: for another model's passes run in the middle of a
+    /// packed step (a distillation teacher on its own batches).
+    /// </summary>
+    internal static Scope Suspend()
+    {
+        var previous = t_current;
+        t_current = null;
+        return new Scope(previous);
+    }
+
     /// <inheritdoc />
     public void Dispose()
     {

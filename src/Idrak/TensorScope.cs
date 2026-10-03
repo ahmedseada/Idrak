@@ -55,6 +55,24 @@ public sealed class TensorScope : IDisposable
     }
 
     /// <summary>
+    /// Takes <paramref name="tensor"/> out of every scope on this thread: the caller disposes it (for tensors that outlive
+    /// the scopes they happen to be made in, such as a distillation teacher's states for one training batch).
+    /// </summary>
+    internal static Tensor Untrack(Tensor tensor)
+    {
+        for (var scope = t_current; scope is not null; scope = scope._parent)
+        {
+            int index = scope._tensors.FindLastIndex(t => ReferenceEquals(t, tensor));
+            if (index >= 0)
+            {
+                scope._tensors.RemoveAt(index);
+            }
+        }
+
+        return tensor;
+    }
+
+    /// <summary>
     /// Closes the scope without disposing its tensors and hands them to the caller, who becomes responsible for them
     /// (used by <see cref="ComputeGraph"/>, whose recorded work keeps using those tensors).
     /// </summary>
