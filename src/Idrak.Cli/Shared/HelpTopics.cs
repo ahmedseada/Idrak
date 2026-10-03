@@ -23,6 +23,7 @@ internal static class HelpTopics
         ("config", "The config file, its keys and profiles"),
         ("env", "Every environment variable Idrak reads"),
         ("exit-codes", "What the tool's exit codes mean"),
+        ("arabic", "Messages in Arabic (--lang ar) and how they are shown right to left in a terminal"),
     ];
 
     /// <summary>The topic names.</summary>
@@ -42,6 +43,7 @@ internal static class HelpTopics
         "config" => Config,
         "env" or "environment" => "idrak help env: every environment variable Idrak reads\n" + EnvironmentVariables.Reference(),
         "exit-codes" or "exitcodes" => ExitCodesPage,
+        "arabic" or "lang" or "language" or "rtl" => Arabic,
         _ => null,
     };
 
@@ -143,11 +145,45 @@ internal static class HelpTopics
         Commands: idrak plugins list (with -P: what the assembly added, marked "+"), idrak formats, idrak new plugin.
         """;
 
+    private const string Arabic = """
+        idrak help arabic
+
+        --lang ar (or the config's "lang", or IDRAK_LANG=ar) prints the tool's messages in Arabic: idrak help (titles,
+        command summaries, the common options), usage errors, doctor, devices, questions and the chat's own lines.
+        The rest of a command's help stays English. JSON, CSV and Markdown output are never translated, so scripts
+        read the same keys and values in every language.
+
+        Most terminals show characters left to right in the order they arrive: Windows' console host (cmd and
+        PowerShell windows), Windows Terminal, VS Code's terminal, xterm, kitty, Alacritty, WezTerm, foot and iTerm2.
+        For them the tool shapes Arabic (each letter in its joined form, lam-alef as one ligature) and reorders every
+        line by the Unicode Bidirectional Algorithm, so it reads right to left while English words, numbers and paths
+        inside it keep their order. Terminals that do this themselves get the text as it is: GNOME Terminal and other
+        VTE terminals (0.58 and later), Konsole, mlterm, mintty (Git Bash) and macOS Terminal. Output to a file or a
+        pipe is never reordered.
+
+        --lang-render (the config's "lang-render", IDRAK_LANG_RENDER) overrides the choice:
+          auto          reorder unless the terminal does it itself or the output is not a terminal (the default)
+          visual        always shape and reorder (for a terminal the tool does not recognize)
+          visual-right  as visual, and lines that read right to left end at the right edge of the terminal
+          logical       never: the text as stored (for a terminal that applies the algorithm itself)
+
+        Check: idrak help --lang ar should show the title line as "idrak" followed by Arabic that reads right to left
+        with joined letters. Letters apart or words in reverse order: try --lang-render visual (or logical if the text
+        was right before); boxes instead of letters: choose a terminal font with Arabic (Cascadia Code, Courier New,
+        DejaVu Sans Mono). The Windows console host needs such a font in the window's properties.
+
+        Examples:
+          idrak help --lang ar
+          idrak doctor --lang ar --lang-render visual
+          idrak config set lang ar
+        """;
+
     private const string Config = """
         idrak help config
 
         The config file (--config, IDRAK_CONFIG, or ~/.idrak/config.json) gives defaults; options on the command line
         win. Keys: "device", "cache", "plugins" (a list of paths), "aliases" (NAME: {"model", "weights", "kv"}),
+        "lang" (en or ar) and "lang-render" (auto, visual, visual-right or logical; idrak help arabic),
         "tokens" (written by idrak login; never printed), "profile" (the profile in use) and "profiles"
         (NAME: {keys...}): a profile's keys are read before the top-level ones, so one file serves a phone and a
         desktop. IDRAK_PROFILE chooses the profile for one shell.

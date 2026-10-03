@@ -62,7 +62,7 @@ internal sealed class ShellCommand : Command
         }
 
         inherited.AddRange(new[] { "--quiet", "--verbose" }.Where(context.Flag));
-        bool editor = Input is null && !Console.IsInputRedirected && !Console.IsOutputRedirected && ReferenceEquals(context.Output, Console.Out);
+        bool editor = Input is null && !Console.IsInputRedirected && !Console.IsOutputRedirected && ReferenceEquals(Shared.Terminal.Unwrap(context.Output), Console.Out);
         var reader = Input ?? Console.In;
         if (!context.Quiet)
         {
