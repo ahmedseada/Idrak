@@ -8,28 +8,43 @@
 >
 > <p dir="rtl" lang="ar"><b>إدراك</b>: الفهم والوعي، والقدرة على استيعاب الأشياء ومعرفة حقيقتها. اخترنا الاسم لأن المكتبة تُعلِّم النماذج أن تُدرِك الأنماط في البيانات وأن تفهم اللغة.</p>
 
-A self-contained deep-learning library for **.NET 10**, written in C#, with its own GPU kernels. The core has
-**no NuGet dependencies and no native libraries**: no TensorFlow, no PyTorch, no CUDA Toolkit, no cuBLAS or cuDNN.
+**Deep learning in pure .NET. Every GPU. Zero dependencies.**
+
+A self-contained deep-learning library for **.NET 10**, written in C#, with its own GPU kernels for every backend.
+The core has **no NuGet dependencies and no native libraries**: no TensorFlow, no PyTorch, no CUDA Toolkit, no cuBLAS
+or cuDNN, no shader compiler. Kernels are generated in C# (PTX for NVIDIA, SPIR-V for Vulkan, HIP C for AMD) and
+compiled by the GPU's own driver on the user's machine.
 
 - **Build and train networks**: N-D tensors with automatic differentiation; dense, convolutional, recurrent,
   attention and transformer layers; losses, optimizers (including 8-bit AdamW) and schedules; a trainer, data
-  loading, predictors, model packages, telemetry and resource limits.
+  loaders for data that is not in memory, predictors, model packages, telemetry and resource limits.
 - **Run and fine-tune language models**: Llama, Qwen, Mistral, Gemma (1, 2 and 3) and the mixture-of-experts Mixtral
   and Qwen-MoE from Hugging Face folders or GGUF files, with their own tokenizers and chat templates; streaming chat
-  with reasoning and tool calls; LoRA / QLoRA fine-tuning; answer scoring and evaluation.
-- **Fast on NVIDIA GPUs**: bfloat16 and FP8 tensor cores, flash attention, int8 / int4 / bfloat16 weights, int8
-  KV caches, CUDA graphs; on any CUDA GPU from Maxwell to Blackwell, with CPU fallbacks everywhere.
-- **Use it in applications**: an inference engine with batching, ASP.NET Core endpoints (including the
-  chat API common local-model clients speak), retrieval and RAG, MCP tools, ONNX export and import, datasets from files and hubs, and
-  one command-line tool, `idrak`, for all of it (checks, chat, serving, models, benchmarks, training, data).
+  with reasoning and tool calls; LoRA, DoRA and QLoRA fine-tuning, DPO / ORPO / SimPO, knowledge distillation from a
+  teacher; answer scoring and evaluation.
+- **Every GPU, one code base**: CUDA on NVIDIA (bfloat16 and FP8 tensor cores, flash attention, CUDA graphs), Vulkan
+  on NVIDIA, AMD, Intel and phone GPUs such as Qualcomm Adreno (fused decoding kernels, recorded graphs, cooperative
+  matrices), a first HIP backend for AMD, and SIMD CPU kernels on x64 and ARM64 (Windows, Linux, macOS, Android).
+  Kernel choices are measured on the user's device, never looked up by a card's name.
+- **Open where it matters**: more than twenty registries take formats, model families, tokenizer parts, samplers, KV
+  cache layouts, tool-call formats, data sources, image codecs, losses, optimizers and differentiable operations
+  from any package (see "Plug-in points").
+- **Use it in applications**: an inference engine with batching, ASP.NET Core endpoints (a local chat API and an
+  OpenAI-style `/v1` API), retrieval and RAG, MCP tools, ONNX export and import, datasets from files and hubs, and
+  one command-line tool, `idrak`, for all of it: checks, chat, a web chat page, serving, models, benchmarks,
+  fine-tuning, distillation, training, data, retrieval and network design.
 
 | Backend | How it works | Requirements |
 |---------|--------------|--------------|
-| **CPU** | `Vector<T>` SIMD kernels (AVX2/AVX-512/NEON), a register-blocked matrix multiply, multi-threading for large tensors, pooled buffers | Any machine running .NET 10 |
-| **CUDA** | P/Invoke straight into the NVIDIA **driver** API (`nvcuda.dll` / `libcuda.so.1`). The GPU kernels are PTX assembly generated in C# (`PtxKernels.cs`), and the driver JIT-compiles them for the installed GPU | An NVIDIA GPU and display driver. No CUDA Toolkit, cuBLAS, cuDNN or NVRTC |
+| **CPU** | `Vector<T>` SIMD kernels (AVX2, AVX-512, NEON), register-tiled matrix products sized from the CPU's caches, multi-threading measured per machine, pooled buffers | Any machine running .NET 10 (x64 or ARM64) |
+| **CUDA** | P/Invoke straight into the NVIDIA **driver** API (`nvcuda.dll` / `libcuda.so.1`); PTX kernels generated in C# (`PtxKernels.cs`), JIT-compiled by the driver for the installed GPU | An NVIDIA GPU and display driver. No CUDA Toolkit, cuBLAS, cuDNN or NVRTC |
+| **Vulkan** | Compute through the Vulkan loader; SPIR-V kernels generated in C# (`KernelBuilder`), with the kernels' width, memory path and cooperative-matrix use measured on the device | Any GPU with a Vulkan 1.1+ driver (`vulkan-1.dll`, `libvulkan.so.1`, Android's `libvulkan.so`) |
+| **HIP** (first slice) | The HIP runtime and hipRTC compile kernels written as source; memory, copies and a first set of kernels on the device, the rest through host fallbacks | ROCm (Linux) or the HIP SDK (Windows) and an AMD GPU; not yet run on one |
 
-`Device.Default` picks the first GPU when a driver is present and falls back to the CPU otherwise.
-Set `IDRAK_DISABLE_CUDA=1` to force the CPU.
+`Device.Default` picks a CUDA GPU when there is one, else the CPU; a HIP GPU (`IDRAK_HIP_DEFAULT=1`) or a Vulkan GPU
+(`IDRAK_VULKAN_DEFAULT=1`) only when asked, and any device by name: `Device.Parse("vulkan:0")`, or `-d vulkan:0` in the
+tool. `IDRAK_DISABLE_CUDA=1` (and `_VULKAN`, `_HIP`) turns a backend off. Vulkan and HIP are on the `architecture`
+branch, which is ahead of the released packages (see "Install").
 
 ## What Idrak gives you
 
@@ -125,7 +140,7 @@ points"):
 **Libraries**: add them to a project (`dotnet add package`, run in the project's folder):
 
 ```bash
-dotnet add package Idrak                      # tensors, layers, training, CPU and CUDA backends
+dotnet add package Idrak                      # tensors, layers, training, generation; every backend
 dotnet add package Idrak.LanguageModels       # Hugging Face and GGUF language models, fine-tuning
 dotnet add package Idrak.Datasets             # datasets from files, Hugging Face, GitHub, Kaggle, Zenodo, URLs
 dotnet add package Idrak.AspNetCore           # serve models from ASP.NET Core
@@ -139,16 +154,29 @@ other packages are libraries):
 
 ```bash
 dotnet tool install -g Idrak.Cli              # the idrak command (idrak help lists every command)
-idrak help tune                               # fine-tune, evaluate, chat with and export language models
-idrak help data                               # inspect, download and build datasets
+idrak doctor                                  # what works on this machine and what to fix
 dotnet tool update -g Idrak.Cli               # later: update to the newest version
 ```
 
+**From source** (the `architecture` branch: Vulkan, HIP, the full `idrak` tool and everything since the last
+release); the .NET 10 SDK is the only requirement:
+
+```bash
+git clone -b architecture https://github.com/ahmedseada/Idrak.git && cd Idrak
+dotnet build -c Release
+dotnet run -c Release --project tests/Idrak.Tests -- --list-devices    # the devices found and how to test each
+dotnet pack src/Idrak.Cli -c Release -o pkg
+dotnet tool install -g Idrak.Cli --add-source pkg --prerelease          # the idrak command from this checkout
+idrak test -d cpu                                                       # the test suite on one device
+```
+
+Step-by-step guides for Windows, Linux and WSL2, macOS and Android phones (Termux): [installation/](installation/README.md).
+
 ## idrak: the command-line tool
 
-`idrak` runs the library from the command line, with nothing else to install: it checks the machine, chats with and
-serves language models, manages the model cache, benchmarks, fine-tunes and trains, prepares data, builds retrieval
-indexes and designs networks. Text by default, `--json` for scripts, the same options and short forms in every
+`idrak` runs the library from the command line, with nothing else to install: about a hundred commands in ten groups
+that check the machine, chat with and serve language models (with a web chat page), manage the model cache, benchmark,
+fine-tune, distil and train, prepare data, build retrieval indexes, design networks for a data set and run the tests. Text by default, `--json` for scripts, the same options and short forms in every
 command (`-d vulkan:0`, `-w int8`, `-k int8`, `--offline`, `--cache DIR`, ...).
 
 ```bash
@@ -158,6 +186,10 @@ idrak pull Qwen/Qwen3-0.6B                     # into the cache, with progress a
 idrak c Qwen/Qwen3-0.6B -d vulkan:0 -w int8    # chat on the GPU with int8 weights
 cat notes.txt | idrak r Qwen/Qwen3-0.6B "Summarize in three bullets"
 idrak s Qwen/Qwen3-0.6B -p 8080                # the chat API and the OpenAI-style API on one port
+idrak ui Qwen/Qwen3-0.6B -w int8               # the same server and a web chat page in the browser
+idrak tune train Qwen/Qwen3-0.6B data.jsonl --out adapters/qa   # LoRA fine-tuning (DoRA, QLoRA, DPO, ...)
+idrak distill --teacher Qwen/Qwen3-8B --student Qwen/Qwen3-0.6B --data chats.jsonl -o adapters/d
+idrak env set                                  # save environment variables for every run, in any shell
 idrak b Qwen/Qwen3-0.6B --devices all          # tokens per second on every device, in one table
 idrak sg houses.csv -t SalePrice -e            # design a network for a CSV, with the reasons
 idrak help                                     # every command by group; idrak help COMMAND for one
@@ -201,12 +233,17 @@ src/Idrak/
                                     search with rank fusion), CrossEncoder (re-ranking), Rag pipeline, search tool
   Diagnostics/                      Telemetry hub, events, ConsoleLogger, MetricsRecorder,
                                     ChannelTelemetry, JsonLinesLogger
-  Backends/Cpu, Backends/Cuda       device implementations (CPU SIMD kernels, PTX kernels)
+  Backends/                         the device backends: Cpu (SIMD kernels, measured tiling), Cuda (PTX kernels
+                                    generated in C#), Vulkan (SPIR-V generated by SpirV/KernelBuilder; fused decoding,
+                                    graphs, cooperative matrices), Hip (hipRTC kernels), the minimum backend with host
+                                    fallbacks every new device starts from, and the device registry
 src/Idrak.LanguageModels/           optional package, no dependencies: language models and fine-tuning
-  PretrainedModel, Architectures    Hugging Face folders; the architecture registry (Llama, Mistral, Qwen2/3, Gemma 1/2/3)
+  PretrainedModel, Architectures    Hugging Face folders; the architecture registry (Llama, Mistral, Qwen2/3, Gemma 1/2/3,
+                                    Mixtral, Qwen2-MoE, Qwen3-MoE)
   SafeTensors, Gguf, GgufModel      safetensors and GGUF weights (F32/F16/BF16, Q4_0–Q8_0, K-quants, IQ4)
   BpeTokenizer, Jinja, ChatTemplates  tokenizer.json; the model's own Jinja chat template; tool-call formats
-  FineTuning, TuningManifest        LoRA / QLoRA fine-tuning (packing, CUDA graphs, memory fallbacks), adapters
+  FineTuning, TuningManifest        LoRA / DoRA / QLoRA fine-tuning, preference losses, distillation (a teacher model or
+                                    stored top-k logits), packing, CUDA graphs, memory fallbacks; adapters
   AnswerScorer, Evaluation          log-probabilities of given answers, answer metrics
   ModelSource                       Hugging Face ids: found in a cache or downloaded once
 src/Idrak.Datasets/                 optional package, no dependencies: JSON Lines, JSON, CSV, text, code and Parquet
@@ -216,7 +253,8 @@ src/Idrak.AspNetCore/               optional package: AddIdrak(), MapPredictor, 
 src/Idrak.Mcp/                      optional package: tools of Model Context Protocol servers, and serving tools over MCP
 src/Idrak.Onnx/                     optional package, no dependencies: export networks to .onnx (opset 17), import .onnx into layers
 src/Idrak.Onnx.Runtime/             optional package: run .onnx models with ONNX Runtime as Idrak modules
-src/Idrak.Cli/                      idrak: the command-line tool (commands under Commands/, shared helpers under Shared/)
+src/Idrak.Cli/                      idrak: the command-line tool (commands under Commands/ in ten groups, shared helpers
+                                    under Shared/: the environment table, saved variables, Arabic shaping and bidi)
 samples/
   Idrak.Samples.Xor                 the classic XOR problem
   Idrak.Samples.HousePrices         regression: predict house prices from a CSV file
@@ -237,7 +275,9 @@ samples/
   Idrak.Samples.CodingAgent         a coding agent (read, search, edit, run commands) on a language model, and a task-suite runner
   Shared/SampleOptions.cs           command-line options shared by the samples (train / predict modes)
   Shared/Gpt/                       GPT model, generation with metrics, training (console + Web API)
-tests/Idrak.Tests                   self-contained test runner: every test on the CPU and on every CUDA GPU present
+tests/Idrak.Tests                   self-contained test runner: every test on the CPU and on every CUDA, Vulkan and HIP
+                                    GPU present; benchmarks (--bench-cpu, --bench-vulkan, --bench-window, ...)
+tests/Idrak.PluginTests             plug-ins written outside the library (public API only), loaded by the runner
   data/                             small GGUF, safetensors and Parquet fixtures (made by the scripts in tools/)
 tools/
   pytorch/xor_to_onnx.py            trains XOR in PyTorch and exports it to ONNX with PyTorch's outputs, for OnnxImport
@@ -245,8 +285,11 @@ tools/
   pytorch/pretrained_reference.py   records transformers' ids, templates, logits and greedy output, for `Chat check`
   gguf/make_fixtures.py             the GGUF test fixtures (every quantization type, tiny Llama and Qwen3 models)
   datasets/make_parquet_fixtures.py the Parquet test fixtures, with the rows pyarrow reads
+  unicode/                          the Unicode tables and bidi test lines behind the tool's Arabic output
   publish.ps1                       publishes a release tag to nuget.org from a machine (when CI cannot)
 docs/                               performance notes (where optimization stopped) and items to review
+plans/                              design plans: backends, Vulkan, HIP, plug-in points, the idrak tool, open questions
+installation/                       how each tested machine was set up, step by step (Windows, Linux, macOS, Android)
 assets/                             the icon (icon.svg source, icon.png for the packages)
 ```
 
@@ -1004,7 +1047,7 @@ export are registered for every export in `OnnxExportOps` (modules by type, lamb
 name); those given to one exporter take precedence. Erf (except inside GELU), ConvTranspose and other operators
 without an Idrak tensor operation are not imported, and graphs have one input and one output. Exact GELU becomes the tanh approximation and is listed in
 `Notes`; an operator with no Idrak equivalent is reported by name. Imported models are ordinary Idrak
-models: they run on Idrak's own CPU and CUDA backends, can be fine-tuned, and save as `.ikm` (graphs included).
+models: they run on Idrak's own backends (CPU, CUDA, Vulkan), can be fine-tuned, and save as `.ikm` (graphs included).
 
 `Idrak.Onnx.Runtime` references `Microsoft.ML.OnnxRuntime`, which is ONNX Runtime's **CPU** build; running
 ONNX Runtime on a GPU needs its `.Gpu` (CUDA) or `.DirectML` package instead. `OnnxModule` works with predictors,
@@ -1051,7 +1094,7 @@ attention takes a window (the CPU and Vulkan; on CUDA the tensor-core packed ker
 there batches are padded and prompts run one by one). `IDRAK_WINDOW_KERNELS=0` sends windowed and soft-capped layers
 back through basic operations over the whole cache (the earlier path, kept to compare or isolate the kernels); the
 cache itself keeps every position (a window-sized ring buffer is noted in plans/plug-in.md). The model runs on Idrak's
-CPU and CUDA backends, and trains, takes LoRA adapters, quantizes and saves like any other.
+CPU, CUDA and Vulkan backends, and trains, takes LoRA adapters, quantizes and saves like any other.
 
 
 Mixture-of-experts models (Mixtral, Qwen2-MoE, Qwen3-MoE, from Hugging Face folders or GGUF files) replace the
@@ -1340,7 +1383,14 @@ The backend design (`Backends/Backend.cs`) leaves room for an optional add-on pa
 
 ## GPU support
 
-The GPU kernels are PTX (NVIDIA's GPU assembly) generated in C# and compiled by the display driver when the
+Three GPU backends share one set of operations, and every operation a backend lacks falls back to the host, so a model
+runs on any of them unchanged (`-d cuda:0`, `-d vulkan:1`, `-d hip:0`, or `Device.Parse`). Sizes and kernel choices
+come from what the device reports or from measurements on the user's device, stored per device and driver: never
+from a card's name ([plans/README.md](plans/README.md)).
+
+### CUDA (NVIDIA)
+
+The CUDA kernels are PTX (NVIDIA's GPU assembly) generated in C# and compiled by the display driver when the
 library starts, so any NVIDIA GPU the driver supports runs them. Faster kernels load where the GPU has the hardware
 for them; every feature has a fallback that runs everywhere.
 
@@ -1364,51 +1414,76 @@ Every kernel launch is also checked against the kernel's declared parameter coun
 Requirements: an NVIDIA display driver (Windows `nvcuda.dll`, Linux `libcuda.so.1`); nothing else. Without a
 driver, or with `IDRAK_DISABLE_CUDA=1`, everything runs on the CPU (SIMD: AVX2, AVX-512 or NEON).
 
+### Vulkan (NVIDIA, AMD, Intel, phone GPUs)
+
+The Vulkan kernels are SPIR-V generated in C# (`Backends/Vulkan/SpirV/KernelBuilder.cs`) and compiled by the GPU's
+Vulkan driver; no shader compiler or SDK is involved. They cover training (convolutions, normalization and attention
+gradients, fused AdamW, 8-bit Adam), prompts (tiled attention, packed int8/int4/bfloat16 products), fused decoding
+steps recorded and replayed like CUDA graphs, sliding-window and soft-capped attention, and storages larger than a
+device's binding range. At start the backend measures the kernels' workgroup width on the device's own work, the
+memory path (mapped or staged) and, where `VK_KHR_cooperative_matrix` is reported, whether matrix-unit products are
+faster. Every test passes on each GPU tried: RTX 5070 Ti, 5050 and 3060 (NVIDIA), Radeon Vega (AMD), UHD Xe-LP
+(Intel), Adreno 730 (a phone, through Mesa Turnip) and Mesa's software driver ("Tested on architectures"). A Vulkan
+GPU becomes `Device.Default` only with `IDRAK_VULKAN_DEFAULT=1`; by name it is always available. Details:
+[plans/7-backends.md](plans/7-backends.md).
+
+### HIP (AMD, first slice)
+
+The HIP backend loads the HIP runtime and hipRTC (ROCm on Linux, the HIP SDK on Windows), compiles its kernels from
+source on the device at first use and keeps them in the cache. Memory, copies and a first set of kernels run on the
+GPU; the rest goes through host fallbacks. It has not run on an AMD GPU yet ([plans/8-hip.md](plans/8-hip.md),
+[installation/hip.md](installation/hip.md)).
+
+### Apple GPUs and NPUs
+
+macOS runs on the CPU backend (tested on an M4 Max); a Metal backend is planned ([plans/5-apple.md](plans/5-apple.md)).
+NPUs: see "NPU support".
+
 ## Tests
 
 ```bash
 dotnet run -c Release --project tests/Idrak.Tests
 ```
 
-The runner prints the system it runs on, then runs **every test on every device**: the CPU and each CUDA GPU
-present (a machine with one GPU runs 170 tests twice, 340 in all). Each GPU's line shows its memory, SM count,
-compute capability and the CUDA version of its driver.
+Or with the tool: `idrak test -d cuda:0 --filter "window kernels"`. The runner prints the system it runs on, then runs
+**every test on every device**: the CPU and each CUDA GPU present, plus each Vulkan and HIP GPU found (426 tests per
+device on the `architecture` branch). `-- --list-devices` shows the devices and the command to test each one. Each
+device's line shows its memory, compute units, matrix units and driver.
 
 | Setting | Meaning |
 |---|---|
-| `IDRAK_DEVICES=cpu` / `cuda` / `cpu,cuda:1` | only these devices |
-| `IDRAK_FILTER=text` | only the tests whose name contains the text |
+| `IDRAK_DEVICES=cpu` / `cuda` / `vulkan:0` / `cpu,cuda:1` | only these devices (`idrak test -d ...`) |
+| `IDRAK_FILTER=text` | only the tests whose name contains the text (`idrak test --filter ...`) |
 | `IDRAK_TIMEOUT=600` | seconds a test may run before it counts as hung (default 300) |
 | `IDRAK_TRACE=1` | full stack traces for failures |
 | `IDRAK_CUDA_DEBUG=1` | synchronize after every kernel, to name the one that faults |
+| `-- --bench-cpu`, `--bench-vulkan`, `--bench-window`, `--bench-gemv`, `--bench-text` | benchmarks instead of tests |
 
-The 170 tests, by area:
+`idrak env set` saves any of these for every `idrak` run, in any shell.
+
+The 426 tests, by area:
 
 | Area | Tests | What they check |
 |---|---|---|
-| Tensors and training basics | 24 | matrix products and element-wise ops against references; gradients of every basic op (finite differences); dropout masks equal on CPU and GPU; save/load; CSV, scalers, data loader; trainer; telemetry; memory limits; thread counts; no leaks |
-| Layers and learning | 27 | softmax, cross-entropy, batched products, shape ops, BatchNorm, LayerNorm, embeddings, convolution, pooling, LSTM/GRU, attention: outputs against references and gradients; spirals, a CNN, an LSTM and a transformer learn; schedulers; number types |
-| Decoding | 7 | fused kernels equal their unfused forms; KV-cache and batched decoding equal the full pass; CUDA graph replay; the sampler (top-k/p, min-p, penalties); every kernel's parameter count |
-| Generation | 8 | streamed output parsed into thinking, content and tool calls; tokenizers; templates; stop sequences; cache/graph/recompute agree; prompt-cache reuse; emoji and other characters stay whole however tokens split them |
-| Simplified API, engine and tools | 18 | builder, predictors, packages and trainer equal the manual steps; LoRA; tools and conversations; the inference engine (batching, queues, timeouts, keep-alive) |
-| ASP.NET Core | 1 | predict, generate (JSON and server-sent events), chat API, status, over a real Kestrel server |
-| Retrieval and MCP | 6 | chunking; BM25 against the formula; encoders; hybrid index with rank fusion; re-ranking and RAG citations; tools served over MCP |
-| ONNX | 13 | MLP, CNN, LSTM/GRU, transformer and GPT exported and run in ONNX Runtime, and imported back (PyTorch-style graphs, ResNet blocks); the export registry; imported graphs exported again; custom graph operators and layer types |
-| Quantization | 11 | int8, int4 and bfloat16 weights (products, gradients, save/load, QLoRA); packed projections; half-precision files; int8 KV cache |
-| Decoder | 8 | RMSNorm, rotary embeddings and tiled attention (with gradients); every DecoderSpec variant against a plain reference; cached decoding through quantized weights; LoRA by layer name |
-| Language models | 7 | safetensors; Hugging Face checkpoints through the registry; BPE tokenizers (byte-level and SentencePiece); text with half a character; Jinja templates against jinja2; a Qwen3 template as transformers renders it; tool-call formats |
-| Fine-tuning and scoring | 27 | chunked cross-entropy and LoRA terms in tensor-core products; sequence packing; CUDA-graph steps; out-of-memory fallbacks; checkpointing; answer balancing; answer scoring; model download; PEFT adapters (checked) and merged export; optimizer, schedule and loss options; DPO, ORPO and SimPO; DoRA |
-| Distillation | 6 | the token divergence and its gradient against a dense computation (full and top-k teachers); the classifier loss against its formula; the fine-tuning loss and adapter gradients against both models' full logits (a teacher on another device too); top-k logits stored and read back; a vocabulary mismatch refused; teacher-written data; a distilled student ends closer to its teacher than one trained on labels |
-| Mixed precision | 11 | bfloat16 and 8-bit (FP8, int8) tensor-core products; flash attention (forward and backward); fused LayerNorm and decoder blocks; 8-bit AdamW |
-| Coding agent | 4 | workspace-bound file tools; allowlisted commands; agent transcripts; a task run and verified |
-| Data loaders | 10 | every built-in source (streamed CSV, image folders, token files, .npy, tables, views, streams) trains to the weights of the same samples in memory; PNG, BMP and Netpbm decoded as independent encoders wrote them; transforms against direct computation; the source registry |
-| Datasets | 7 | Parquet (as pyarrow reads it); JSON Lines, JSON, CSV, text, archives; lazy transforms; download cache; conversation layouts; recipes; hub sources against a fake server |
-| GGUF and evaluation | 3 | every GGUF quantization type dequantized as llama.cpp does; GGUF models equal their Hugging Face copies; answer metrics |
-| Naming | 1 | no file uses the library's former name |
+| The `idrak` tool | 80 | every command group run in-process: options and short forms, help and the environment table, doctor and devices, models, chat and serving, training and data, measuring, design, Arabic output, saved variables |
+| Tensors, layers, training and telemetry | 69 | matrix products and element-wise ops against references; layers against references; spirals, a CNN, an LSTM and a transformer learn; save/load; trainer, callbacks, schedulers; telemetry; memory limits; threads; no leaks |
+| Vulkan and SPIR-V | 52 | generated SPIR-V validated; every kernel against the CPU at every width (training, prompts, fused decoding, graphs, matrix units, limits, large storages); on a machine without Vulkan they check what they can |
+| Plug-in points | 33 | every registry, also from an assembly outside the library that sees only the public API |
+| Fine-tuning, scoring and distillation | 32 | chunked cross-entropy and LoRA/DoRA terms; packing; CUDA-graph steps; out-of-memory fallbacks; preference losses; PEFT adapters; the teacher's divergence and its gradient against dense computations |
+| Language models | 32 | checkpoints through the registry; GGUF against llama.cpp's reference; tokenizers; Jinja templates against jinja2; mixture of experts against a dense reference; sliding windows and soft-caps, kernels against the composed path |
+| Retrieval, ONNX, coding agent, MCP and ASP.NET Core | 29 | BM25, encoders, hybrid search, re-ranking and RAG; ONNX export to ONNX Runtime and import back; workspace-bound tools; MCP; endpoints over a real Kestrel server |
+| Generation, decoding and sampling | 25 | fused kernels equal their unfused forms; KV-cache and batched decoding equal the full pass; graph replay; the sampler; int8 weights and caches; the inference engine |
+| Mixed precision, offloading and tuning | 24 | bfloat16 and 8-bit tensor-core products; flash attention; offloading to system memory; measured choices stored and read back |
+| Gradients | 22 | every differentiable operation against finite differences |
+| Data loaders and datasets | 21 | every built-in source trains to the weights of the same samples in memory; PNG, BMP and Netpbm decoding; Parquet as pyarrow reads it; hub sources against a fake server; recipes |
+| HIP | 7 | the HIP kernels' source and launch contract; on a machine without HIP they check what they can |
 
-The ASP.NET Core, MCP, dataset and naming tests do not depend on the device, and run on each device like the others.
+Tests that do not depend on the device (the tool, ASP.NET Core, datasets, naming) run on each device like the others.
 
 ## Tested on
+
+Released packages, newest first (the `architecture` branch's runs, on every backend and machine, are in "Tested on
+architectures" below):
 
 | Date | Library | GPU | Compute | Driver | System | Result |
 |---|---|---|---|---|---|---|
@@ -1425,7 +1500,7 @@ Fine-tuning speed on the RTX 5070 Ti (Qwen2.5-0.5B, LoRA, 4k-token steps): 17.4k
 short classification rows; chat with Qwen3-0.6B generates about 140 tokens/s. Not tested yet: GPUs before
 compute 8.6 (the kernels assemble for them, see GPU support), native Linux GPU drivers (Linux GPUs: WSL2 only, where
 CUDA goes through the Windows driver and Vulkan only through lavapipe; NVIDIA's Linux driver and Mesa's RADV, ANV and
-NVK have not run), and macOS (CPU only).
+NVK have not run). macOS runs on the CPU backend (tested on an M4 Max, see below).
 
 ### Tested on architectures
 
