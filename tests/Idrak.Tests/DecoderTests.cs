@@ -361,19 +361,22 @@ internal static partial class Tests
             _ => MathF.Max(0, v),
         };
 
-        void Rotate(float[] x, int offset, int position)
+        // The rotation of one head at a position: the scaled frequencies (per position for a scaling that depends on it), the
+        // cos and sin multiplied by the scaling's attention factor, as transformers applies them.
+        void Rotate(float[] x, int offset, int position, RopeSettings? rope)
         {
-            if (s.Rope is not { } rope)
+            if (rope is null)
             {
                 return;
             }
 
-            var freq = rope.Frequencies(hd);
+            var scaled = rope.Scaled(hd);
+            var freq = scaled.FrequenciesAt?.Invoke(position) ?? scaled.Frequencies;
             int half = freq.Length;
             var original = x.AsSpan(offset, hd).ToArray();
             for (int i = 0; i < half; i++)
             {
-                double c = Math.Cos(position * freq[i]), sn = Math.Sin(position * freq[i]);
+                double c = Math.Cos(position * freq[i]) * scaled.AttentionFactor, sn = Math.Sin(position * freq[i]) * scaled.AttentionFactor;
                 int a = rope.Interleaved ? 2 * i : i, b = rope.Interleaved ? 2 * i + 1 : i + half;
                 x[offset + a] = (float)(original[a] * c - original[b] * sn);
                 x[offset + b] = (float)(original[b] * c + original[a] * sn);
@@ -385,6 +388,8 @@ internal static partial class Tests
         for (int layer = 0; layer < s.Layers; layer++)
         {
             string p = $"layers.{layer}";
+            var layerRope = s.IsWindowed(layer) ? s.SlidingWindowRope ?? s.Rope : s.Rope;
+            int WindowStart(int t) => s.IsWindowed(layer) ? Math.Max(0, t - s.SlidingWindow!.Value + 1) : 0;   // the window: the last positions, itself included
             var normed = h.Select(x => Norm(x, $"{p}.attn_norm")).ToList();
             float[]? Bias(string name) => w.Values.GetValueOrDefault(name);
             var q = normed.Select(x => MatVec(x, W($"{p}.attn.q.weight"), D, H * hd, Bias($"{p}.attn.q.bias"))).ToList();
@@ -399,7 +404,7 @@ internal static partial class Tests
                         q[t] = Norm(q[t], $"{p}.attn.q_norm", head * hd, hd);
                     }
 
-                    Rotate(q[t], head * hd, t);
+                    Rotate(q[t], head * hd, t, layerRope);
                 }
 
                 for (int head = 0; head < KV; head++)
@@ -409,7 +414,7 @@ internal static partial class Tests
                         k[t] = Norm(k[t], $"{p}.attn.k_norm", head * hd, hd);
                     }
 
-                    Rotate(k[t], head * hd, t);
+                    Rotate(k[t], head * hd, t, layerRope);
                 }
             }
 
@@ -420,8 +425,8 @@ internal static partial class Tests
                 for (int head = 0; head < H; head++)
                 {
                     int kvHead = head / G;
-                    var scores = new double[t + 1];
-                    for (int c = 0; c <= t; c++)
+                    var scores = Enumerable.Repeat(double.NegativeInfinity, t + 1).ToArray();
+                    for (int c = WindowStart(t); c <= t; c++)
                     {
                         double dot = 0;
                         for (int d = 0; d < hd; d++)
@@ -429,11 +434,15 @@ internal static partial class Tests
                             dot += q[t][head * hd + d] * k[c][kvHead * hd + d];
                         }
 
-                        scores[c] = dot / Math.Sqrt(hd);
+                        scores[c] = dot * (s.AttentionScale ?? 1 / Math.Sqrt(hd));
+                        if (s.AttentionSoftcap is { } cap)
+                        {
+                            scores[c] = cap * Math.Tanh(scores[c] / cap);
+                        }
                     }
 
                     double max = scores.Max(), total = scores.Sum(v => Math.Exp(v - max));
-                    for (int c = 0; c <= t; c++)
+                    for (int c = WindowStart(t); c <= t; c++)
                     {
                         double weight = Math.Exp(scores[c] - max) / total;
                         for (int d = 0; d < hd; d++)
@@ -493,7 +502,7 @@ internal static partial class Tests
                     sum += normed[i] * (headWeights is null ? embed[token * D + i] : headWeights[i * s.Vocabulary + token]);
                 }
 
-                logits.Add((float)sum);
+                logits.Add((float)(s.LogitSoftcap is { } cap ? cap * Math.Tanh(sum / cap) : sum));
             }
         }
 
@@ -519,7 +528,7 @@ internal static partial class Tests
             ("post-norms, GELU, llama3 rope scaling", SmallSpec with
             {
                 PostNorms = true, Activation = FeedForwardActivation.Gelu,
-                Rope = new RopeSettings(500f, Scaling: new RopeScaling("llama3", 8f, 1f, 4f, 8)),
+                Rope = new RopeSettings(500f, Scaling: RopeScaling.Llama3(8, 1, 4, 8)),
             }),
             ("parallel, layer norm, plain feed-forward, all biases", SmallSpec with
             {
@@ -673,7 +682,7 @@ internal static partial class Tests
         model.Eval();
 
         Check(DecoderSpec.FromJson(spec.ToJson()) == spec with { }, "JSON round trip");
-        var withRope = spec with { Rope = new RopeSettings(1e6f, 4, true, new RopeScaling("linear", 2f)) };
+        var withRope = spec with { Rope = new RopeSettings(1e6f, 4, true, RopeScaling.Linear(2)) };
         Check(DecoderSpec.FromJson(withRope.ToJson()).Rope == withRope.Rope, "rope settings round trip");
 
         string path = Path.Combine(Path.GetTempPath(), $"ns-{Guid.NewGuid():N}.ikm");
