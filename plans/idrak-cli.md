@@ -2,7 +2,8 @@
 
 Today Idrak has two separate tools (`idrak-tune`, `idrak-data`), and the most common actions (chat with a model,
 serve it, check the devices, benchmark) need `dotnet run` on a sample or the test runner. This plan puts everything
-behind one `dotnet tool` named `idrak`, with subcommands. Nothing here is built yet.
+behind one `dotnet tool` named `idrak`, with subcommands. Built on branch `idrak-cli` by eight groups in parallel, then
+polished across the groups ("Polish after the merge" below); the tool's guide is src/Idrak.Cli/README.md.
 
 Rules that apply to every command:
 
@@ -217,8 +218,8 @@ Gaps (Serve):
   loading shared with chat.
 - `ps` reports a model's memory as the device memory it took when it loaded (the engine does not expose a model's size).
 - `mcp serve` speaks MCP over standard input/output only; HTTP would need the MCP ASP.NET Core package.
-- `--timeout` and `--offline` (common options of the second pass) are not used yet: they arrive with the Health
-  agent's foundation; `ping` waits 10 s per call until then.
+- `--timeout` and `--offline` (common options of the second pass): done in the polish; `ping` waits `--timeout` (else
+  10 s) per call, `api` and `server ...` give up when `--timeout` runs out.
 
 ### Models
 
@@ -261,7 +262,7 @@ writes Hugging Face folders only (from GGUF or another folder, in bf16, f16 or f
 
 Improvement for the shared model loading (Shared/Models.cs, agent 2): `Models.Resolve` should download into
 `--cache` (a downloader on `CommandContext.CacheFolder`, as `ModelCache.Downloader` makes) and prepare GGUF files there,
-and call `ModelCache.Touch` so `idrak list` shows the last use by chat, run and serve.
+and call `ModelCache.Touch` so `idrak list` shows the last use by chat, run and serve. Done in the polish (below).
 
 ### Train and fine-tune
 
@@ -308,7 +309,7 @@ codes. Added while building:
   --test -t` (stratified); `data convert --as chat|preference|text -s SYSTEM -f`; `data stats --context --column`.
 
 Gaps (library): the optimizer state and learning-rate schedule are not checkpointed, so `resume` continues from the
-weights with a fresh optimizer; there is no image decoding in the library (the tool reads 8-bit PNG and Netpbm itself);
+weights with a fresh optimizer; there is no image decoding in the library (the tool reads 8-bit PNG, BMP and Netpbm itself, with one decoder shared with suggest);
 writing Parquet is not in the library (`data convert` reads it, writes JSON Lines, JSON, CSV or TSV); `distill` waits for
 the teacher pattern and only explains the workaround (`idrak batch`, then `idrak tune train`); `tune init` writes the
 library's defaults until `idrak suggest` can size them; idrak tune loads base weights as int8, int4 or bf16 only (not
@@ -358,7 +359,7 @@ Built (Retrieval and measure), with what was added while building and the gaps f
 - Gaps: the library has no embedding-model loader (a bi-encoder from a Hugging Face embedding model), so `rag index
   -m` embeds with a chat model's averaged hidden states, a rough complement to BM25; `RetrievalIndex.Save` does not
   keep the vectors of a non-`TextEncoder` embedder (the tool stores them itself); eval metrics beyond
-  number/exact/contains/F1 wait for plug-in gap 16. `--format csv|md` and `--output` (second pass) apply once the
+  number/exact/contains/F1 wait for plug-in gap 16. `--format csv|md` and `--output` (second pass, now applied) apply once the
   Health agent's common options land.
 
 ### Design a model
@@ -621,6 +622,51 @@ Wrote     tune.json → idrak tune --config tune.json
   output (no network: models from the test fixtures in `tests/Idrak.Tests/data`), checking exit codes, text and JSON
   output; a test checks every command's help, that no two options of a command share a short form, and that no
   command, option or output names a provider.
+
+## Polish after the merge
+
+Built after the eight groups were merged (branch `cli-polish`), so the tool reads as one:
+
+- Environment help: every command's help ends with the section generated from `Shared/EnvironmentVariables.cs`; the
+  hand-written "Environment:" lines are gone. The table names the commands each variable affects in groups (devices,
+  models, remote data, caches, logins, server clients, the network): the data subcommands read local files only, so
+  the hub tokens no longer show there; `demo`, `onnx`, `convert`, `diff`, `inspect`, `suggest`, `rag search` and `rag
+  eval` were added where they read models or run on a device, `setup android` to the Vulkan driver variables, `cache
+  info`/`clear` to the tuning caches. A test checks that every name in the table is a command.
+- One help layout: the summary, `Usage:` and aliases, the command's text with "Arguments:" and "Options:" sections
+  (short forms shown as `-x, --long`, descriptions in one column), "Examples:", then limits and gaps, the common
+  options and the environment. `idrak help` lists the commands by plan group (setup and health, run models, serve,
+  models, train, data, retrieval, measure, design, developers) with their aliases. Help is reflowed to 118 columns. A
+  usage error prints the usage line, not the whole help. A test checks the layout of every command's help and that
+  every option a command accepts is described; options that did nothing were dropped (`--kv` for embed and
+  perplexity, `--adapter` for memory and suggest).
+- Common options everywhere, through `Shared/Http.cs`: every download honours `--offline` (a refused request names the
+  missing file; the library still falls back to a copy it downloaded before), `--timeout` (each request and the body
+  being read) and `--cache`, and draws a progress line per file; `idrak tune` and `idrak data` get the same through
+  `Shared/ToolHost.cs` (the shared tool code keeps its own console for idrak-tune and idrak-data). Model resolution
+  looks in the cache first (no network; a cached hub model is used as it is, `idrak pull` updates it), prepares GGUF
+  files under `--cache`, records the last use for `idrak list`, and names `idrak pull` for a repository's GGUF file
+  (`owner/name:TAG`) it does not have. `--timeout`: `ping` per call, `api` and `server ...` for the whole call
+  (streamed answers too), `run`, `train` and `mcp serve` stop as at Ctrl+C (`Terminal.Interrupt`), and a command
+  that gives up says it was the time limit. `--format csv|md` covers the commands that printed name-value results as
+  text (`show`, `version`, `plugins list`, `doctor`, `eval`, `rag eval`) through `CommandContext.Fields`, and every
+  table's headers are in sentence case. `--seed` reaches `suggest` (split, initialization, search, the files it
+  writes, the `--assist` model), `demo`, `rag ask`, `profile` and `onnx check`.
+- Progress and confirmation: model loading (elapsed time), training (epoch and batch, as a trainer callback), model
+  and kernel benchmarks and `eval` draw a `ProgressLine`, which steps aside for output lines (`Erase`); a progress
+  line no longer overflows on its first draw. `data dedupe` asks before overwriting in place, as `rm` and `cache
+  clear` do; a question is refused with `--json` (the output is one document) and names `--dry-run` where the command
+  has it.
+- Shared code instead of copies: `Shared/Units.cs` (sizes, counts, durations, ages; five formatters before), one
+  image decoder (`ImageFiles`, train and predict now read BMP and resize as suggest does), `suggest --base` finds its
+  model as the model commands do (`ModelCache.TryLocate`, `ModelFacts`), `Models.Load` takes a device (bench's copy
+  removed), confirmation through `Terminal.Confirm` only, colour through `Terminal.UseColour`, `CommandContext.Offline`
+  and `Seed` instead of per-group readers.
+- Tests: the "cli polish" group (help layout and grouping, the environment table, `pull` then `run` from the same
+  `--cache` offline, `--offline` naming a missing file, `--timeout` on `ping` and `api`, `--format` on the table
+  commands, `--seed`, progress lines).
+- Docs: src/Idrak.Cli/README.md as the tool's guide, an "idrak: the command-line tool" section in the main README,
+  `idrak doctor` and `idrak setup android` in installation/README.md.
 
 ## Who builds what
 

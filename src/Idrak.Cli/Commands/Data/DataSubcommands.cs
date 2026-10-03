@@ -420,7 +420,9 @@ internal sealed class DataConvertCommand : Command
         IN OUT [--as chat|preference|text] [-s SYSTEM] [-f]
 
         Arguments:
-          OUT's extension picks the format: .jsonl, .json, .csv or .tsv (writing Parquet is not in the library yet)
+          IN   a CSV, TSV, JSON Lines, JSON or Parquet file
+          OUT  the file to write; its extension picks the format: .jsonl, .json, .csv or .tsv (writing Parquet is
+               not in the library yet)
 
         Options:
               --as chat        rows as conversations {"messages": [...]} (from messages, ShareGPT, Alpaca, question/answer, ...)

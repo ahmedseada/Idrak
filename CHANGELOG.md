@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- idrak, across the groups: every command's help has one layout (usage and aliases, "Arguments:", "Options:" with
+  short forms, examples, limits and gaps, the common options, and the environment variables that affect it, generated
+  from the one variable table instead of hand-written lines); `idrak help` lists the commands by group with their
+  aliases. Model resolution looks in the cache first (no network; last use shown by `idrak list`), downloads into
+  `--cache`, and honours `--offline` (a refused download names the missing file); downloads, model loading, training
+  and benchmarks draw one kind of progress line (none with `--plain` or without a terminal); `--timeout` bounds
+  downloads, server calls (`ping`, `api`, `server ...`) and long runs (`run`, `train`, `mcp serve` stop as at
+  Ctrl+C); `--format csv|md` covers `show`, `version`, `plugins list`, `doctor`, `eval` and `rag eval`; `--seed`
+  reaches `suggest`, `demo`, `rag ask`, `profile` and `onnx check`. Duplicate helpers merged (sizes and times, image
+  decoding, confirmation, the base-model reader); a test group checks the help layout, `--cache`/`--offline`,
+  `--timeout`, `--format` and progress.
+
 - idrak: the run commands: `chat` (streamed, with `/help`, `/system`, `/reset`, `/save`, `/load`, `/file`, `/stats`,
   `/think`, `/tools`, `/set`, `/copy`, `/retry`, `/exit`; `--history`, `--file`, `--mcp`), `run` (argument, `--input` or piped
   prompt; `--json`; `--schema` checked afterwards), `batch` (resumable), `compare`, `complete`, `embed` (JSON or `.npy`),
