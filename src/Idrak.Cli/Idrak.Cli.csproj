@@ -18,6 +18,12 @@
     <ProjectReference Include="..\Idrak.Datasets\Idrak.Datasets.csproj" />
     <ProjectReference Include="..\Idrak.Mcp\Idrak.Mcp.csproj" />
     <ProjectReference Include="..\Idrak.Onnx\Idrak.Onnx.csproj" />
+    <ProjectReference Include="..\Idrak.AspNetCore\Idrak.AspNetCore.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- serve, ui: the web server -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
   <ItemGroup>
