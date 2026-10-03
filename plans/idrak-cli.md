@@ -172,6 +172,32 @@ Gaps (in the commands' help too):
 | `idrak ui MODEL` | A small web chat page in the browser over the same server | 3 |
 | `idrak mcp serve TOOLS.dll` | Serves an assembly's tools over MCP | 3 |
 
+Built (branch `cli-serve`; also `serve --metrics`, `--log-requests`/`--log-content`, `server keys add/list/rm` and
+`ping` from the second pass below). Added while building, and built:
+
+- `NAME=MODEL` on serve and ui names a served model; a file or folder is named after itself, an alias keeps its name.
+- The default port is 11434 (the one common local-model clients connect to) and `-p 0` picks a free one; each running
+  server records itself in `CACHE/servers/PORT.json`, so `ps`, `api`, `ping` and `server ...` find it without `--port`.
+- `/ui` is served by every server (not only `ui`); `ui --no-browser` prints the address instead of opening it.
+- Control endpoints the server commands use: `GET /idrak/ps`, `POST /idrak/load`, `/idrak/unload`, `/idrak/stop`,
+  `GET /idrak/status`; `api --method NAME`; `mcp serve --list`.
+- `IDRAK_API_KEY` is the default of `--api-key` for serve and for the client commands (in the environment table).
+- Library: the OpenAI-style API is `MapCompletionsApi` in Idrak.AspNetCore (`CompletionsApiOptions` with
+  `ChatModel(name, IChatModel)` and `Embeddings(name, IEmbedder)`, and `CompletionsTranslation`), neutrally named.
+
+Gaps (Serve):
+
+- `/v1/embeddings` answers 404 from `idrak serve`: the library has no embedder over a pretrained language model (only
+  `TextEncoder` over a trained package), so nothing can be registered yet; the endpoint works when an `IEmbedder` is
+  given (`CompletionsApiOptions.Embeddings`).
+- The chat API's `/api/generate`, `/api/show`, `/api/embed` and `/api/pull` are not provided by Idrak.AspNetCore.
+- Tool calls go to the client (`ToolExecution.Client`); serving with server-side tools waits for `--tools FILE.dll`
+  loading shared with chat.
+- `ps` reports a model's memory as the device memory it took when it loaded (the engine does not expose a model's size).
+- `mcp serve` speaks MCP over standard input/output only; HTTP would need the MCP ASP.NET Core package.
+- `--timeout` and `--offline` (common options of the second pass) are not used yet: they arrive with the Health
+  agent's foundation; `ping` waits 10 s per call until then.
+
 ### Models
 
 | Command | What it does | Priority |
@@ -371,7 +397,7 @@ read by the libraries (a string literal passed to `Environment.GetEnvironmentVar
 | Vulkan | `IDRAK_VULKAN_KERNELS`, `IDRAK_VULKAN_MATRIX`, `IDRAK_VULKAN_WIDTH`, `IDRAK_VULKAN_WIDTH_PROBE`, `IDRAK_VULKAN_SUBGROUPS`, `IDRAK_VULKAN_SUBGROUP_SIZE`, `IDRAK_VULKAN_STORAGE`, `IDRAK_VULKAN_STAGING`, `IDRAK_VULKAN_STAGING_BYTES`, `IDRAK_VULKAN_PAGE_BYTES`, `IDRAK_VULKAN_MAX_STORAGE_BYTES`, `IDRAK_VULKAN_MAX_ALLOCATIONS`, `IDRAK_VULKAN_PUSH_DESCRIPTORS`, `IDRAK_VULKAN_BATCH_COMMANDS`, `IDRAK_VULKAN_IN_FLIGHT`; the Vulkan loader's `VK_ICD_FILENAMES` (which driver; needed for Turnip on a phone) and `VK_INSTANCE_LAYERS` (validation layers) |
 | HIP | `IDRAK_HIP_KERNELS`, `HIP_PATH`, `ROCM_PATH` |
 | Model and data sources | `HF_TOKEN`, `HUGGING_FACE_HUB_TOKEN`, `HF_TOKEN_PATH`, `HF_HOME`, `HF_HUB_CACHE`, `HF_ENDPOINT`, `GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_API_URL`, `KAGGLE_USERNAME`, `KAGGLE_KEY`, `KAGGLE_CONFIG_DIR`, `ZENODO_TOKEN`, and the local model store's folder variable the GGUF source reads |
-| The tool | `IDRAK_CONFIG`, `IDRAK_TRACE`, `NO_COLOR` |
+| The tool | `IDRAK_CONFIG`, `IDRAK_TRACE`, `NO_COLOR`, `IDRAK_API_KEY` (serve and the server commands) |
 | Tests and diagnostics | `IDRAK_DEVICES`, `IDRAK_FILTER`, `IDRAK_TIMEOUT`, `IDRAK_SPIRV_VAL` |
 | .NET | `DOTNET_GCHeapHardLimit` (needed on Android), `DOTNET_CLI_TELEMETRY_OPTOUT`, `DOTNET_NOLOGO` |
 
