@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Mixture-of-experts language models: Mixtral, Qwen2-MoE and Qwen3-MoE from Hugging Face folders and GGUF files
+  (qwen2moe, qwen3moe, llama with experts). `MixtureOfExperts` (router, top-k routing with ties to the lowest index,
+  renormalization per family, experts run only on their tokens, a gated shared expert), on every backend and in
+  training (gradients to the router; `LoadBalancingLoss`, `FineTuningOptions.LoadBalancingWeight`); `DecoderSpec`
+  `Experts`, `ExpertsPerToken`, `ExpertFfDim`, `SharedExpertFfDim`, `NormalizeTopK`, `ExpertLayers`,
+  `ActiveParameterCount`; `PretrainedArchitectures.ExpertSpec`, `MixtralTensorName`, `QwenMoeTensorName`;
+  `GgufArchitecture.WithExperts` and `NormalizeTopK`. Experts can be packed (int8, int4, bfloat16; the router stays
+  float32). Decoding steps of these models are not recorded as graphs (the routing is read back per layer).
+  `idrak families` shows which families read experts. Breaking: `DecoderBlock.FeedForward` and its constructor take
+  any `Module` (cast to `FeedForward` where its projections are read).
+
 - idrak, across the groups: every command's help has one layout (usage and aliases, "Arguments:", "Options:" with
   short forms, examples, limits and gaps, the common options, and the environment variables that affect it, generated
   from the one variable table instead of hand-written lines); `idrak help` lists the commands by group with their

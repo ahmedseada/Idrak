@@ -49,7 +49,7 @@ public sealed record GenerationOptions
     /// <summary>Incremental decoding with a KV cache (false recomputes the whole window every token).</summary>
     public bool UseCache { get; init; } = true;
 
-    /// <summary>Record the decoding step once and replay it (CUDA graphs on the GPU).</summary>
+    /// <summary>Record the decoding step once and replay it (CUDA graphs on the GPU; not for models with experts, whose routing is read back every step).</summary>
     public bool UseGraph { get; init; } = true;
 
     /// <summary>Tokens generated between host synchronizations while streaming.</summary>
