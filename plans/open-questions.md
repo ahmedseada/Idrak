@@ -39,4 +39,5 @@ needed, the options, and the recommended one. Nothing here blocks the work in pr
 | 3 | RTX 5070 Ti, laptops | The full lists after the plug-in work (315+ tests), CUDA and Vulkan | the per-device blocks in installation/windows.md |
 | 4 | An AMD discrete GPU with ROCm, or Windows with the HIP SDK | The HIP backend's first run | plans/8-hip.md, "Commands to validate" |
 | 5 | Phone | The width probe and the chat after the merged kernels | installation/android-termux.md, steps 8 and 9 |
+| 7 | Honor tablet (later) | CPU tests and, if its GPU has a Vulkan driver reachable from Termux (Mali through Mesa's Panfrost/PanVK, or Adreno through Turnip), the Vulkan list and a chat; first check the SoC and GPU with the phone guide's step 6 | installation/android-termux.md, steps 1-9 |
 | 6 | Any machine | The `idrak` tool once the CLI lands: `idrak doctor`, `idrak devices`, `idrak c MODEL`, `idrak s MODEL`, `idrak b MODEL` | plans/idrak-cli.md, "Examples" |
