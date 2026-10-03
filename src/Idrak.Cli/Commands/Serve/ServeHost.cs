@@ -220,7 +220,8 @@ internal sealed class ServeHost
         if (Settings.RequestLog is { } log)
         {
             Directory.CreateDirectory(System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(log))!);
-            _requestLog = new StreamWriter(log, append: true);
+            // Others may read (or tail) the log while the server writes it: on Windows a plain writer would lock them out.
+            _requestLog = new StreamWriter(new FileStream(log, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete));
         }
 
         var app = Build();
