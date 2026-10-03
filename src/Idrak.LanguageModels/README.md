@@ -8,10 +8,11 @@ Language models for Idrak (no dependencies): load Llama, Qwen, Mistral and Gemma
 dotnet add package Idrak.LanguageModels
 ```
 
-This is a library (for your code). The command-line tool `idrak-tune` (fine-tune, evaluate, chat with and export models, no code needed) is a separate package:
+This is a library (for your code). The command-line tool `idrak` chats with, serves, fine-tunes, evaluates and exports models with no code needed (`idrak chat`, `idrak serve`, `idrak tune`); it is a separate package:
 
 ```bash
-dotnet tool install -g Idrak.FineTuning.Cli
+dotnet tool install -g Idrak.Cli
+idrak help tune
 ```
 
 Part of [Idrak](https://www.nuget.org/packages/Idrak), a self-contained deep-learning library for .NET.

@@ -9,24 +9,28 @@ using Idrak.Cli.Shared;
 namespace Idrak.Cli.Commands.Train;
 
 /// <summary>
-/// <c>idrak tune</c>: the fine-tuning tool (idrak-tune) as a subcommand, with idrak's model arguments (aliases,
+/// <c>idrak tune</c>: the fine-tuning tool (<see cref="TuneTool"/>) as a command, with idrak's model arguments (aliases,
 /// <c>-w</c>/<c>--weights</c>, <c>-k</c>/<c>--kv</c>), <c>-b</c>/<c>--base</c> for the model, and settings from a
 /// tune.json given with <c>--config</c> (written by <c>idrak tune init</c>; the command line wins).
 /// </summary>
 internal sealed class TuneCommand : Command
 {
-    // Keys of a tune.json that are not tune options: the config file's own and the command, model and data.
-    private static readonly string[] OwnKeys = ["device", "cache", "plugins", "aliases", "token", "hf_token", "profiles", "command", "model", "data", "base", "weights"];
+    // Keys of a tune.json that are not tune options: the config file's own, the format, and the command, model and data.
+    private static readonly string[] OwnKeys = ["device", "cache", "plugins", "aliases", "token", "hf_token", "profiles", "format", "command", "model", "data", "base", "weights"];
+
+    /// <summary>
+    /// The "format" of a tune.json (written by <c>idrak tune init</c> and <c>idrak suggest --base</c>, optional when
+    /// read). It names the kind of file, as idrak-train/1, idrak-prep/1 and idrak-network/1 do, not a tool, so it stayed
+    /// when the separate fine-tuning tool was folded into idrak.
+    /// </summary>
+    public const string Format = "idrak-tune/1";
 
     public override string Name => "tune";
 
     public override string Summary => "Fine-tune language models (LoRA, QLoRA, DoRA, DPO/ORPO/SimPO); evaluate, chat, export, download, info";
 
     public override string Usage => "COMMAND MODEL [DATA...] [options]\n\n"
-        + TuneTool.Usage.Replace("idrak-tune: fine-tune", "Fine-tune", StringComparison.Ordinal).Replace("idrak-tune ", "idrak tune ", StringComparison.Ordinal)
-            .Replace("as idrak-data reads them", "as idrak data reads them", StringComparison.Ordinal)
-            .Replace("a .gguf file, ollama:name, or an", "a .gguf file, or an", StringComparison.Ordinal)
-        + "\n" + """
+        + TuneTool.Usage + "\n" + """
 
         Options:
           -b, --base MODEL     the model as an option (then every argument after the command is data)
@@ -141,7 +145,11 @@ internal sealed class TuneCommand : Command
         var tool = new TuneTool(console);
         try
         {
-            tool.Parse(args);
+            if (!tool.Parse(args))
+            {
+                context.Output.Write(Help.For(this));                       // help among the arguments
+                return ExitCodes.Ok;
+            }
         }
         catch (Exception e) when (e is ArgumentException or FormatException)
         {
@@ -153,7 +161,7 @@ internal sealed class TuneCommand : Command
             throw new UsageException(problem);
         }
 
-        context.Detail($"idrak-tune {string.Join(' ', args)}");
+        context.Detail($"tune {string.Join(' ', args)}");
         int code = tool.Execute();
         if (captured is not null)
         {
@@ -182,6 +190,11 @@ internal sealed class TuneCommand : Command
 
         var json = JsonNode.Parse(File.ReadAllText(path), documentOptions: CliConfig.ReadOptions) as JsonObject
             ?? throw new UsageException($"{path} is not a JSON object.");
+        if (json["format"] is { } format && (format.GetValueKind() != JsonValueKind.String || (string?)format != Format))
+        {
+            throw new UsageException($"{path}: format {format.ToJsonString()} is not a tune.json ({Format}).");
+        }
+
         var known = ValueOptions.Append("--seed").Concat(Flags).Select(o => o[2..]).ToHashSet(StringComparer.Ordinal);
         foreach (var (key, _) in json)
         {
@@ -286,6 +299,7 @@ internal sealed class TuneInitCommand : Command
             // Options on the command line win over these. The keys are idrak tune's options without the dashes
             // (idrak help tune lists every one), plus "command", "model" and "data".
             {
+              "format": "{{TuneCommand.Format}}",
               // What to do: train, evaluate, chat, export, download or info.
               "command": "train",
               // The base model: a Hugging Face id, a model folder, a .gguf file or an alias.

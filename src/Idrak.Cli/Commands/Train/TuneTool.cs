@@ -16,33 +16,32 @@ namespace Idrak.Cli.Commands.Train;
 
 /// <summary>
 /// The fine-tuning tool: LoRA / QLoRA / DoRA adapters on any dataset, preference losses, evaluation, chat, export,
-/// downloads and model information. <c>idrak tune</c> runs it, and the <c>idrak-tune</c> forwarder compiles this same
-/// file and calls <see cref="RunTool"/>, so both behave the same. <see cref="Parse"/> reads the arguments (an
-/// <see cref="ArgumentException"/> or <see cref="FormatException"/> for a bad one) and <see cref="Execute"/> runs the
-/// command.
+/// downloads and model information, run by <c>idrak tune</c> (<see cref="TuneCommand"/>, which turns idrak's options
+/// into these). <see cref="Parse"/> reads the arguments (an <see cref="ArgumentException"/> or
+/// <see cref="FormatException"/> for a bad one) and <see cref="Execute"/> runs the command.
 /// </summary>
 internal sealed class TuneTool(ToolConsole console)
 {
     public const string Usage = """
-        idrak-tune: fine-tune pretrained language models (LoRA / QLoRA) on any dataset, evaluate, chat and export.
+        Fine-tune pretrained language models (LoRA / QLoRA) on any dataset, evaluate, chat and export.
 
-          idrak-tune train <model> <data…> --out <dir>    tune adapters on the data and write them (PEFT format) with
+          idrak tune train <model> <data…> --out <dir>    tune adapters on the data and write them (PEFT format) with
                                                           idrak-tuning.json (base model, system prompt, max length)
-          idrak-tune evaluate <model> <data…>             loss and answer scores on held-out conversations (greedy answers against
+          idrak tune evaluate <model> <data…>             loss and answer scores on held-out conversations (greedy answers against
                                                           the references); with --adapter DIR, the base model and the adapter side by side
-          idrak-tune chat <model> [message…]              chat, streamed (the messages given, else one per line typed)
-          idrak-tune export <model> --out <dir>           merge the adapter into the weights and write a Hugging Face checkpoint
-          idrak-tune download <model id…>                 download models and print their folders
-          idrak-tune info <model>                         what the loader made of a model
+          idrak tune chat <model> [message…]              chat, streamed (the messages given, else one per line typed)
+          idrak tune export <model> --out <dir>           merge the adapter into the weights and write a Hugging Face checkpoint
+          idrak tune download <model id…>                 download models and print their folders
+          idrak tune info <model>                         what the loader made of a model
 
         <model>: any chat or base model the library loads (its own tokenizer and chat template): a Hugging Face id (owner/name,
-        found in a cache or downloaded once; HF_TOKEN for gated models), a model folder, a .gguf file, ollama:name, or an
+        found in a cache or downloaded once; HF_TOKEN for gated models), a model folder, a .gguf file, or an
         adapter folder written by train (its base model and the adapter).
 
         <data…>: files, folders, hf:, github:, kaggle:, zenodo: or URLs (JSON Lines, JSON, CSV, Parquet, text), or a recipe
-        (.json with "sources"), as idrak-data reads them. Conversations train the assistant's turns; text rows every token. Map
+        (.json with "sources"), as idrak data reads them. Conversations train the assistant's turns; text rows every token. Map
         columns into a conversation with user / assistant / system templates after "?" (joined with "&"):
-          idrak-tune train owner/model "data.csv?user={question}&assistant={answer}" --out adapters/qa
+          idrak tune train owner/model "data.csv?user={question}&assistant={answer}" --out adapters/qa
 
         Data:      --eval F|spec (evaluation data), --eval-fraction F (hold out a fraction; evaluate with the same data and
                    fraction scores that part), --system S (added to conversations without one), --kind auto|chat|text,
@@ -127,33 +126,6 @@ internal sealed class TuneTool(ToolConsole console)
 
     /// <summary>The device the command runs on.</summary>
     public Device Device => device;
-
-    /// <summary>What idrak-tune does with <paramref name="args"/>: help, a usage error, or the command; returns the exit code.</summary>
-    public static int RunTool(IReadOnlyList<string> args, ToolConsole console)
-    {
-        var tool = new TuneTool(console);
-        try
-        {
-            if (!tool.Parse(args))
-            {
-                console.Out.WriteLine(Usage);
-                return 0;
-            }
-        }
-        catch (Exception ex) when (ex is ArgumentException or FormatException)
-        {
-            console.Error.WriteLine($"error: {ex.Message}");
-            return 1;
-        }
-
-        if (tool.Problem() is not null)
-        {
-            console.Out.WriteLine(Usage);
-            return 1;
-        }
-
-        return tool.Execute();
-    }
 
     /// <summary>Reads the arguments; false when they ask for the help.</summary>
     public bool Parse(IReadOnlyList<string> args)

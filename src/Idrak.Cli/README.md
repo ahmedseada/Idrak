@@ -221,7 +221,7 @@ idrak rm Qwen/Qwen3-0.6B --dry-run
 
 ### Train
 
-Fine-tuning language models (`tune`, the code of `idrak-tune`) and training networks from the builder's JSON
+Fine-tuning language models (`tune`) and training networks from the builder's JSON
 (`train`), with run folders under `CACHE/runs` that `runs`, `resume` and `package` read.
 
 | Command | What it does |
@@ -246,10 +246,65 @@ idrak predict houses.ikm -i new-houses.csv -o priced.csv
 idrak runs list && idrak runs show NAME && idrak resume NAME --epochs 20
 ```
 
+#### Fine-tuning with `idrak tune`
+
+`idrak tune` trains LoRA / QLoRA / DoRA adapters for any model the library loads (Hugging Face ids, folders, .gguf
+files, aliases) on any data `idrak data` reads, then evaluates, chats with and exports them. Nothing in it is specific
+to a model family or an application: a project that needs a tuned model runs it with its data instead of writing its
+own tuner. Its commands are `train`, `evaluate`, `chat`, `export`, `download` and `info`; `idrak help tune` lists
+every option.
+
+```bash
+idrak tune train owner/model "data.csv?user={question}&assistant={answer}" -o adapters/qa --eval-fraction 0.02
+idrak tune evaluate adapters/qa "data.csv?user={question}&assistant={answer}" --eval-fraction 0.02
+idrak tune chat adapters/qa "a message"
+idrak tune export adapters/qa -o merged
+```
+
+- **Data.** Conversations train the assistant's turns (OpenAI / Hugging Face messages, ShareGPT, Alpaca, question /
+  answer pairs are recognized); text rows train every token. Columns map into a conversation with templates
+  (`"data.csv?user={question}&assistant={answer}"`, the spec syntax under Data below), and `-s, --system` adds an
+  instruction to conversations without one. `--eval-fraction` holds out part of the data; `evaluate` with the same
+  data and fraction scores that part.
+- **Fixed answers.** When every answer is one of a known list (labels, yes / no, multiple choice), `evaluate --choices
+  a,b,c` (or `--choices auto`: the distinct answers in the data) scores each as the model's answer after the prompt and
+  takes the most likely, generating nothing (the library's `AnswerScorer`: each prompt runs once for all its answers).
+  It prints accuracy and recall per answer, the base model and the adapter side by side; `-o F.jsonl` writes each
+  conversation's answer and every probability, for an application's own reports. `--samples 0` scores all rows.
+- **Preference training.** `--loss dpo`, `--loss orpo` or `--loss simpo` trains on preference rows instead of
+  conversations: TRL's layouts with a prompt and a chosen and a rejected answer (message lists or strings, or chosen and
+  rejected as whole conversations that share their prompt). Only the answers are trained. DPO's reference is the model
+  with its adapter disabled, so no second copy is loaded. `--beta` sets DPO's beta (0.1), ORPO's lambda (0.1) or
+  SimPO's beta (2), `--margin` SimPO's target margin (1).
+- **Optimizer and schedule.** `--optimizer adamw|adam|adamw8bit|sgd` (default adamw; `--weight-decay`, `--momentum`
+  for SGD), `--schedule cosine|linear|constant|wsd` (default cosine; `--warmup` fraction of the steps, `--min-lr`,
+  `--decay` for the decay part of warm-up/stable/decay).
+- **Adapter type.** `--adapter-type dora` trains DoRA adapters (a magnitude per output on top of LoRA), saved in the
+  PEFT format with `use_dora`; `lora` is the default. (`--adapter DIR` names an existing adapter folder.)
+- **Long conversations.** A conversation longer than `--max-length` keeps its whole answer: the user message before it
+  is shortened (its start kept) rather than the answer cut.
+- **Progress.** The steps done, still to do and in total, the epoch and loss, elapsed time and ETA on the progress
+  line; notable events (graph recording, FP8 checks, evaluation losses) print above it. Ctrl+C stops after the current
+  step and saves the adapter so far.
+- **Output.** The adapter in the PEFT format, and `idrak-tuning.json`: the base model as named on the command line,
+  the system prompt and the maximum length. Any program can then load the folder (`TuningManifest.Read(folder)
+  .LoadModel(folder, device)`), and every `idrak tune` command accepts the adapter folder in place of the model.
+- **Speed.** Sequence packing, graph replay of the training step where the backend records graphs, fused LoRA products
+  on matrix units (a frozen bfloat16 or 4-bit base read as stored in both directions), the optimizer over every adapter
+  matrix in three passes; `--fp8` for the frozen base's forward products (checked against bfloat16 first), `-w int4` /
+  `-w int8` for QLoRA. `train --profile` times a few steps per kernel instead of training.
+- **Memory.** Results no backward step reads are released during the forward pass. When a step runs out of device memory
+  the tuner steps down, each step at a small cost, and says so: feed-forward activations recomputed in the backward pass
+  (`--recompute`), then activations held as bfloat16 between the passes (`--bf16-activations`), then activation
+  checkpointing (`--checkpointing`, a third more compute). The flags start a run at that step.
+- **Settings files.** `idrak tune init` writes a commented `tune.json` and `idrak suggest --base` one sized to the data
+  and the device; `idrak tune --config tune.json` runs it. Its keys are the long options without the dashes, plus
+  `command`, `model` and `data`, and an optional `"format": "idrak-tune/1"`; options on the command line win.
+
 ### Data
 
-Datasets: `idrak data` runs the code of `idrak-data` (sources from files, Hugging Face, GitHub, Kaggle, Zenodo and
-URLs); the subcommands work on local files.
+Datasets: `idrak data` reads sources from files, Hugging Face, GitHub, Kaggle, Zenodo and URLs (below); the
+subcommands work on local files.
 
 | Command | What it does |
 |---|---|
@@ -271,6 +326,66 @@ idrak data stats chats.jsonl -m qwen
 idrak data convert alpaca.json chats.jsonl --as chat
 idrak data split chats.jsonl -t label --seed 2
 ```
+
+#### Data sources and recipes
+
+`idrak data show`, `count`, `download`, `build` and `cache` read sources from files, Hugging Face, GitHub, Kaggle,
+Zenodo and URLs and write JSON Lines (one JSON object per line): conversations as `{"messages": [...], "tools": [...]}`
+and plain text as `{"text": ...}`, the layout Idrak's fine-tuning, Hugging Face's `datasets` and most training tools
+read. A spec is a source with options after `?` (joined with `&`):
+
+| Spec | Source |
+|---|---|
+| `hf:owner/name?config=main` | A Hugging Face dataset (`config`, `split`, `files`, `max_files`, `revision`) |
+| `github:owner/repo[@ref][?files=src/**/*.cs]` | A repository's files as documents |
+| `github:owner/repo?files=data/*.jsonl` | Data files in a repository |
+| `github:owner/repo?release=latest&asset=*.csv` | Release assets |
+| `kaggle:owner/dataset`, `zenodo:123456` | Kaggle and Zenodo datasets |
+| `https://host/file.jsonl.gz`, a local file or folder | URLs and local data (JSON Lines, JSON, CSV, text, code, Parquet; compressed or archived) |
+
+Options for any source: `take`, `skip`, `weight`, `columns=a,b`, `text=lines|paragraphs|document`, `documents=true`,
+and conversations from columns: `user=...&assistant=...&system=...` (e.g. `user={question}&assistant={answer}`).
+
+```bash
+idrak data count "hf:owner/qa-set?config=main" "hf:owner/qa-set?config=main&split=test"
+idrak data build "hf:owner/qa-set?config=main&user={question}&assistant={answer}" -o qa.jsonl --eval-fraction 0.02
+idrak data show "github:owner/repo?files=src/**/*.cs"
+idrak data build recipe.json -o train.jsonl
+```
+
+A recipe (also read by `idrak tune` and `idrak data mix`) mixes sources:
+
+```json
+{
+  "sources": [
+    {"source": "hf:owner/qa-set", "config": "main", "user": "{question}", "assistant": "{answer}", "weight": 1, "take": 2000},
+    {"source": "hf:owner/instructions", "weight": 2, "take": 4000},
+    "my-examples.jsonl?weight=0.5"
+  ],
+  "system": "You are a helpful assistant.",
+  "seed": 1, "min_chars": 20, "eval_fraction": 0.02
+}
+```
+
+Credentials come from the environment (or `idrak login`): `HF_TOKEN` (or `huggingface-cli login`), `GITHUB_TOKEN`,
+`KAGGLE_USERNAME` and `KAGGLE_KEY` (or `~/.kaggle/kaggle.json`), `ZENODO_TOKEN`. Downloads are cached under the
+cache folder (`--cache`, the config, `IDRAK_CACHE` or `~/.cache/idrak`), in `downloads/` laid out by source:
+
+```
+downloads/huggingface/datasets/<owner>/<name>/<commit>/<path in the repository>
+downloads/huggingface/datasets/<owner>/<name>/parquet/<config>/<split>/00000.parquet   (the Hub's Parquet copy)
+downloads/github/<owner>/<repo>/<commit>.tar.gz                                     (repository snapshots)
+downloads/github/<owner>/<repo>/<commit>/<path>                                     (single files)
+downloads/github/<owner>/<repo>/releases/<tag>/<asset>
+downloads/kaggle/<owner>/<dataset>/<latest | vN>/<dataset>.zip
+downloads/zenodo/<record>/<file>
+downloads/urls/<host>/<path>
+```
+
+Branches and tags are resolved to their commit first, so new commits are downloaded again rather than read stale.
+`idrak data cache` shows the size per source; `idrak data cache --clear` empties it; `download --refresh` fetches
+again. The same features are available from code in the `Idrak.Datasets` library (`Dataset`, `HuggingFace`,
+`GitHub`, `Kaggle`, `Zenodo`, `ChatRows`, `DatasetSpec`, `DatasetRecipe`).
 
 ### Retrieval
 
@@ -407,8 +522,9 @@ values, and every command's help ends with the variables that affect it. The mos
   `EnvironmentVariables` (the variable table), `HelpTopics`, `GenerationSettings`, `ImageFiles`, `RowFiles` and the
   design rules.
 - The assembly is named `Idrak.Cli`, not `idrak` (assembly names ignore case, so it would clash with the Idrak
-  library); the installed command is still `idrak`. `idrak-tune` and `idrak-data` compile the same code as `idrak
-  tune` and `idrak data` (`Commands/Train/TuneTool.cs`, `Commands/Data/DataTool.cs`).
+  library); the installed command is still `idrak`. `idrak tune` and `idrak data` keep their own argument parsing
+  (`Commands/Train/TuneTool.cs`, `Commands/Data/DataTool.cs`, writing through `Shared/ToolConsole.cs`); `TuneCommand`
+  and `DataCommand` turn idrak's options into theirs.
 - Tests: `tests/Idrak.Tests` has a CLI group per command group (`Cli*Tests.cs`), all run in-process through
   `CommandLine.Run` with captured output and no network (the hub is a local stand-in; models are the fixtures in
   `tests/Idrak.Tests/data`). They check exit codes, text and JSON, every command's help layout, short forms, the

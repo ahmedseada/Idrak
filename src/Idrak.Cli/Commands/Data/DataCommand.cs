@@ -7,7 +7,7 @@ using Idrak.Cli.Shared;
 namespace Idrak.Cli.Commands.Data;
 
 /// <summary>
-/// <c>idrak data show|count|download|build|cache</c>: the dataset tool (idrak-data) as a subcommand. The cache is
+/// <c>idrak data show|count|download|build|cache</c>: the dataset tool (<see cref="DataTool"/>) as a command. The cache is
 /// idrak's (<c>--cache</c>, the config or <c>IDRAK_CACHE</c>), downloads under its <c>downloads</c> folder.
 /// </summary>
 internal sealed class DataCommand : Command
@@ -17,10 +17,7 @@ internal sealed class DataCommand : Command
     public override string Summary => "Datasets: show, count, download, build (and preview, validate, stats, convert, dedupe, split, sample, mix)";
 
     public override string Usage => "show|count|download|build|cache SPEC... [options]\n\n"
-        + DataTool.Usage.Replace("idrak-data: inspect, download and assemble datasets", "Inspect, download and assemble datasets.", StringComparison.Ordinal)
-            .Replace("idrak-data ", "idrak data ", StringComparison.Ordinal)
-            .Replace("hf:openai/gsm8k", "hf:owner/qa-set", StringComparison.Ordinal)
-        + """
+        + DataTool.Usage + """
 
         idrak data also takes -o, --out FILE and -s, --system TEXT. Its other commands, each with its own help:
           idrak data preview FILE                       first rows, columns and their types
