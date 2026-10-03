@@ -31,7 +31,7 @@ internal static partial class Tests
         ("cli retrieval: rag index with a model (hybrid), search and ask", CliRagHybrid),
     ];
 
-    private static string CliModel => TestData("gguf/tiny-llama-hf");
+    private static string MeasureModel => TestData("gguf/tiny-llama-hf");
 
     // Runs idrak with a cache and config of its own; returns the exit code and both outputs.
     private static (int Code, string Output, string Error) RunIdrak(string cache, params string[] args)
@@ -112,7 +112,7 @@ internal static partial class Tests
         string cache = CliTemp();
         try
         {
-            string[] args = ["bench", CliModel, "--prompt-tokens", "16", "--tokens", "8", "-n", "1", "-d", device.ToString()];
+            string[] args = ["bench", MeasureModel, "--prompt-tokens", "16", "--tokens", "8", "-n", "1", "-d", device.ToString()];
             var json = IdrakJson(cache, [.. args, "--save", "first"]);
             Check((string?)json["kind"] == "model", json.ToJsonString());
             var names = json["results"]!.AsArray().Select(r => (string)r!["name"]!).ToList();
@@ -138,7 +138,7 @@ internal static partial class Tests
         try
         {
             string devices = device == Device.Cpu ? "cpu" : $"cpu,{device}";
-            var json = IdrakJson(cache, "bench", CliModel, "--prompt-tokens", "8", "--tokens", "4", "-n", "1", "--matrix", "-w", "float32,int8", "-k", "float32,int8",
+            var json = IdrakJson(cache, "bench", MeasureModel, "--prompt-tokens", "8", "--tokens", "4", "-n", "1", "--matrix", "-w", "float32,int8", "-k", "float32,int8",
                 "--devices", devices);
             int expected = 4 * devices.Split(',').Length;
             var runs = json["runs"]!.AsArray();
@@ -163,7 +163,7 @@ internal static partial class Tests
             Check(RunIdrak(cache, "bench", "--kernels", "nope").Code == 2, "unknown kernel");
             Check(RunIdrak(cache, "bench", "--matrix").Code == 2, "--matrix without a model");
             Check(RunIdrak(cache, "bench", "--compare", "missing").Error.Contains("No saved results"), "missing saved results");
-            Check(RunIdrak(cache, "bench", CliModel, "--small").Code == 2, "--small with a model");
+            Check(RunIdrak(cache, "bench", MeasureModel, "--small").Code == 2, "--small with a model");
             Check(RunIdrak(cache, "bench", "-d", "cpu", "--devices", "cpu").Code == 2, "--device with --devices");
             Check(RunIdrak(cache, "bench", "--save", "../x", "--small", "--kernels", "matmul").Code == 2, "a path as a name");
         }
@@ -180,12 +180,12 @@ internal static partial class Tests
         {
             string text = Path.Combine(cache, "text.txt");
             File.WriteAllText(text, string.Concat(Enumerable.Repeat("The town by the river has a mill. People walk to the market in the morning. ", 20)));
-            var json = IdrakJson(cache, "perplexity", CliModel, text, "--window", "64", "-d", device.ToString());
+            var json = IdrakJson(cache, "perplexity", MeasureModel, text, "--window", "64", "-d", device.ToString());
             double perplexity = (double)json["perplexity"]!;
             Check(double.IsFinite(perplexity) && perplexity > 1 && (int)json["windows"]! > 1 && (int)json["scored_tokens"]! == (int)json["tokens"]! - (int)json["windows"]!, json.ToJsonString());
-            var int8 = IdrakJson(cache, "perplexity", CliModel, text, "--window", "64", "-w", "int8", "-d", device.ToString());
+            var int8 = IdrakJson(cache, "perplexity", MeasureModel, text, "--window", "64", "-w", "int8", "-d", device.ToString());
             Check(Math.Abs((double)int8["perplexity"]! - perplexity) < 0.1 * perplexity, $"int8 {int8["perplexity"]} near float32 {perplexity}");
-            Check(RunIdrak(cache, "perplexity", CliModel, text, "--window", "100000").Code == 2, "a window past the context");
+            Check(RunIdrak(cache, "perplexity", MeasureModel, text, "--window", "100000").Code == 2, "a window past the context");
         }
         finally
         {
@@ -198,11 +198,11 @@ internal static partial class Tests
         string cache = CliTemp();
         try
         {
-            var json = IdrakJson(cache, "profile", CliModel, "--prompt-tokens", "8", "-d", device.ToString());
+            var json = IdrakJson(cache, "profile", MeasureModel, "--prompt-tokens", "8", "-d", device.ToString());
             var layers = json["layers"]!.AsArray();
             Check(layers.Count == 5 && layers.Select(l => (string)l!["name"]!).SequenceEqual(["embed", "layers.0", "layers.1", "norm", "head"]), json["layers"]!.ToJsonString());
             Check(json["operations"]!.AsArray().Count > 0 && json["inner_layers"]!.AsArray().Count > 0 && (double)json["step_ms"]! > 0, json.ToJsonString());
-            var (code, text, _) = RunIdrak(cache, "profile", CliModel, "--prompt-tokens", "8", "--top", "3", "-d", device.ToString());
+            var (code, text, _) = RunIdrak(cache, "profile", MeasureModel, "--prompt-tokens", "8", "--top", "3", "-d", device.ToString());
             Check(code == 0 && text.Contains("Layers of the network") && text.Contains("Operations"), text);
         }
         finally
@@ -224,11 +224,11 @@ internal static partial class Tests
                 """{"messages": [{"role": "user", "content": "No answer here."}]}""",
             ]);
             string answers = Path.Combine(cache, "answers.jsonl");
-            var json = IdrakJson(cache, "eval", CliModel, set, "--max-tokens", "4", "--metric", "f1", "-o", answers, "-d", device.ToString());
+            var json = IdrakJson(cache, "eval", MeasureModel, set, "--max-tokens", "4", "--metric", "f1", "-o", answers, "-d", device.ToString());
             Check((int)json["conversations"]! == 3 && (int)json["scored"]! == 2 && (string?)json["metric"] == "f1", json.ToJsonString());
             Check(json["answers"]!.AsArray().All(a => a!["reference"] is not null && (double)a["score"]! is >= 0 and <= 1), json.ToJsonString());
             Check(File.ReadAllLines(answers).Length == 2, "two answers written");
-            Check(RunIdrak(cache, "eval", CliModel, set, "--metric", "bleu").Code == 2, "unknown metric");
+            Check(RunIdrak(cache, "eval", MeasureModel, set, "--metric", "bleu").Code == 2, "unknown metric");
         }
         finally
         {
@@ -247,7 +247,7 @@ internal static partial class Tests
             JsonObject reference;
             try
             {
-                using var model = PretrainedModel.Load(CliModel, new PretrainedOptions { Device = device });
+                using var model = PretrainedModel.Load(MeasureModel, new PretrainedOptions { Device = device });
                 var tokenizer = model.Tokenizer!;
                 string text = "hello world, the town by the river";
                 var ids = tokenizer.Encode(text);
@@ -290,15 +290,15 @@ internal static partial class Tests
 
             string path = Path.Combine(cache, "reference.json");
             File.WriteAllText(path, reference.ToJsonString());
-            var json = IdrakJson(cache, "check", CliModel, "--reference", path, "-d", device.ToString());
+            var json = IdrakJson(cache, "check", MeasureModel, "--reference", path, "-d", device.ToString());
             Check((bool)json["ok"]! && (int)json["failures"]! == 0 && json["runs"]!.AsArray().Count == 1, json.ToJsonString());
 
             reference["chats"]![0]!["rendered"] = "something else";
             reference["texts"]![0]!["ids"]![0] = 99999;
             File.WriteAllText(path, reference.ToJsonString());
-            var (code, output, _) = RunIdrak(cache, "check", CliModel, "--reference", path, "-d", device.ToString());
+            var (code, output, _) = RunIdrak(cache, "check", MeasureModel, "--reference", path, "-d", device.ToString());
             Check(code == 1 && output.Contains("DIFF") && output.Contains("2 check(s) differ"), output);
-            Check(RunIdrak(cache, "check", CliModel).Code == 2, "--reference is required");
+            Check(RunIdrak(cache, "check", MeasureModel).Code == 2, "--reference is required");
         }
         finally
         {
@@ -395,13 +395,13 @@ internal static partial class Tests
         try
         {
             string docs = CliDocuments(cache), index = Path.Combine(cache, "towns.idx");
-            var built = IdrakJson(cache, "rag", "index", docs, "-o", index, "--chunk", "12", "--overlap", "2", "-m", CliModel, "-d", device.ToString());
+            var built = IdrakJson(cache, "rag", "index", docs, "-o", index, "--chunk", "12", "--overlap", "2", "-m", MeasureModel, "-d", device.ToString());
             Check((bool)built["vectors"]! && (int)built["dimensions"]! == 64, built.ToJsonString());
             var found = IdrakJson(cache, "rag", "search", "harbour of Corin", "--index", index, "--top", "3", "-d", device.ToString());
             Check((string?)found["search"] == "hybrid" && found["hits"]!.AsArray().Any(h => (string?)h!["document"] == "towns/corin.md")
                 && found["hits"]!.AsArray().Any(h => h!["vector_rank"] is not null), found.ToJsonString());
 
-            var answer = IdrakJson(cache, "rag", "ask", "Which town is a port?", "--index", index, "-m", CliModel, "--top", "2", "--max-tokens", "4", "-d", device.ToString());
+            var answer = IdrakJson(cache, "rag", "ask", "Which town is a port?", "--index", index, "-m", MeasureModel, "--top", "2", "--max-tokens", "4", "-d", device.ToString());
             Check(answer["answer"] is not null && answer["passages"]!.AsArray().Count == 2 && answer["cited"] is JsonArray, answer.ToJsonString());
             Check(RunIdrak(cache, "rag", "ask", "q", "--index", index).Code == 2, "--model is required");
         }
