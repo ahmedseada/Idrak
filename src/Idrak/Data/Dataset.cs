@@ -27,9 +27,10 @@ public sealed record CsvOptions
 
 /// <summary>
 /// An in-memory table of samples: a [Count, FeatureCount] feature matrix and a [Count, TargetCount]
-/// target matrix, both row-major float32. Datasets are immutable; transformations return new ones.
+/// target matrix, both row-major float32. Datasets are immutable; transformations return new ones. A dataset is the
+/// in-memory <see cref="ISampleSource"/>; <see cref="FromSource"/> reads any other source into one.
 /// </summary>
-public sealed class Dataset
+public sealed class Dataset : ISampleSource
 {
     private readonly float[] _features;
     private readonly float[] _targets;
@@ -143,6 +144,55 @@ public sealed class Dataset
 
     /// <summary>The targets of one sample.</summary>
     public ReadOnlySpan<float> GetTargets(int index) => _targets.AsSpan(index * TargetCount, TargetCount);
+
+    /// <summary>The shape of one sample's targets: [<see cref="TargetCount"/>].</summary>
+    public IReadOnlyList<int> TargetShape => _targetShape ??= [TargetCount];
+
+    private int[]? _targetShape;
+
+    /// <summary>Copies sample <paramref name="index"/> into the spans (<see cref="ISampleSource.Read"/>).</summary>
+    public void Read(int index, Span<float> features, Span<float> targets)
+    {
+        GetFeatures(index).CopyTo(features);
+        GetTargets(index).CopyTo(targets);
+    }
+
+    /// <summary>
+    /// Reads every sample of <paramref name="source"/> into memory (several at once), keeping its feature shape; the
+    /// targets of a sample become one row (the product of the target shape). Column names default to x0, x1, ... and
+    /// y0, y1, ....
+    /// </summary>
+    /// <param name="source">The samples; it must allow concurrent reads (the built-in sources do).</param>
+    /// <param name="featureNames">One name per feature value, or null.</param>
+    /// <param name="targetNames">One name per target value (class names for one-hot targets), or null.</param>
+    public static Dataset FromSource(ISampleSource source, IReadOnlyList<string>? featureNames = null, IReadOnlyList<string>? targetNames = null)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        if (source is Dataset dataset && featureNames is null && targetNames is null)
+        {
+            return dataset;
+        }
+
+        int count = source.Count, f = SampleSourceExtensions.Size(source.FeatureShape), t = SampleSourceExtensions.Size(source.TargetShape);
+        if (featureNames is not null && featureNames.Count != f || targetNames is not null && targetNames.Count != t)
+        {
+            throw new ArgumentException($"The source has {f} feature and {t} target values per sample; the names do not match.");
+        }
+
+        var features = new float[checked(count * f)];
+        var targets = new float[checked(count * t)];
+        try
+        {
+            Parallel.For(0, count, ComputeResources.ParallelOptions, i => source.Read(i, features.AsSpan(i * f, f), targets.AsSpan(i * t, t)));
+        }
+        catch (AggregateException ex) when (ex.InnerExceptions.Count > 0)
+        {
+            // Surface the first read error itself rather than the parallel loop's wrapper.
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerExceptions[0]).Throw();
+        }
+
+        return new Dataset(features, targets, count, featureNames ?? DefaultNames("x", f), targetNames ?? DefaultNames("y", t), [.. source.FeatureShape]);
+    }
 
     /// <summary>Creates a dataset from rectangular arrays with one row per sample.</summary>
     public static Dataset FromArrays(float[,] features, float[,] targets, IReadOnlyList<string>? featureNames = null, IReadOnlyList<string>? targetNames = null)

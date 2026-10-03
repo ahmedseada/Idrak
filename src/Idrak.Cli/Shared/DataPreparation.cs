@@ -5,6 +5,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Idrak.Data;
 using TensorData = Idrak.Data.Dataset;
 
 namespace Idrak.Cli.Shared;
@@ -19,8 +20,9 @@ namespace Idrak.Cli.Shared;
 /// <item><c>text</c>: "column" holds the text; "tokenizer" is <c>{"type": "words", "lowercase", "length",
 /// "vocabulary"}</c>: lower-cased runs of letters and digits, id = position in the vocabulary (0 padding, 1 unknown),
 /// cut or padded to "length".</item>
-/// <item><c>images</c>: "channels", "height", "width": every image converted and resized to that shape, values in [0, 1];
-/// "classes" in folder order; "augment" lists what a trainer may add (not applied here).</item>
+/// <item><c>images</c>: "channels", "height", "width": every image converted and resized to that shape, values in [0, 1]
+/// (the library's <see cref="ImageFolderSource"/>); "classes" in folder order; "augment" lists what a trainer may add
+/// (not applied here).</item>
 /// <item><c>language-model</c>: "tokenizer" is <c>{"type": "characters", "length", "vocabulary"}</c>; each conversation
 /// is rendered as "role: content" lines, cut into windows of length + 1 characters: the inputs and the next characters.</item>
 /// </list>
@@ -211,31 +213,15 @@ internal static class DataPreparation
     private static TensorData Images(JsonObject prep, List<ImageItem> images)
     {
         int c = (int)prep["channels"]!, h = (int)prep["height"]!, w = (int)prep["width"]!;
-        int classes = prep["classes"]!.AsArray().Count;
-        var x = new List<float>();
-        var labels = new List<int>();
-        foreach (var image in images)
+        string[] classes = [.. prep["classes"]!.AsArray().Select(n => (string)n!)];
+        var decoded = images.Where(i => ImageFiles.IsDecoded(i.Path)).Select(i => (i.Path, i.Class)).ToList();
+        if (decoded.Count == 0)
         {
-            if (ImageFiles.Decode(image.Path) is { } decoded)
-            {
-                x.AddRange(ImageFiles.Fit(decoded.Pixels, decoded.Channels, decoded.Height, decoded.Width, c, h, w));
-                labels.Add(image.Class);
-            }
+            throw new InvalidDataException($"None of the images can be decoded here ({string.Join(", ", ImageCodecs.Names)} are read; JPEG needs a registered codec).");
         }
 
-        if (labels.Count == 0)
-        {
-            throw new InvalidDataException("None of the images can be decoded here (PNG, BMP, PGM and PPM are read; JPEG is not).");
-        }
-
-        var y = new float[labels.Count * classes];
-        for (int i = 0; i < labels.Count; i++)
-        {
-            y[i * classes + labels[i]] = 1;
-        }
-
-        return TensorData.FromFlat([.. x], y, labels.Count, [.. Enumerable.Range(0, c * h * w).Select(i => $"p{i}")],
-            [.. prep["classes"]!.AsArray().Select(n => (string)n!)]).WithFeatureShape(c, h, w);
+        var source = new ImageFolderSource(decoded, classes, c, h, w);
+        return TensorData.FromSource(source, [.. Enumerable.Range(0, c * h * w).Select(i => $"p{i}")], classes);
     }
 
     private static TensorData LanguageModel(JsonObject prep, List<JsonObject> conversations)

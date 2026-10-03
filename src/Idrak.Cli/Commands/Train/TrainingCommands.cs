@@ -27,7 +27,7 @@ internal sealed class TrainCommand : Command
 
         Options:
               --data FILE        a CSV with a header (numbers; a class column may hold names), or a folder with a folder of
-                                 images per class (PNG, BMP, PGM, PPM; fitted to the network's image input)
+                                 images per class (PNG, BMP, PGM, PPM, or a --plugin's codec; fitted to the image input)
           -t, --target COL       the target column (repeatable; default: the last column)
               --ignore A,B       columns that are not features (an id, ...)
               --task T           regression or classify (default: classify when the network has several outputs)
@@ -459,7 +459,7 @@ internal sealed class PredictCommand : Command
             }
 
             rows = [.. files.Select(f => new JsonObject { ["file"] = f })];
-            features = [.. files.SelectMany(f => ImageFiles.Load(f, shape[0], shape[1], shape[2]))];
+            features = [.. Dataset.FromSource(new ImageFolderSource(files, shape[0], shape[1], shape[2])).Features];
         }
         else
         {

@@ -53,6 +53,7 @@ Set `IDRAK_DISABLE_CUDA=1` to force the CPU.
 | Layers | Linear, Conv2d, pooling, BatchNorm, LayerNorm, Embedding, LSTM, GRU, multi-head attention, transformer layers, dropout, activations; graph modules (skip connections, branches) |
 | Building | A fluent network builder with a JSON round trip; ready-made architectures |
 | Training | `Trainer`, losses (MSE, MAE, cross-entropy, binary cross-entropy), metrics, early stopping, duplicate removal before splits |
+| Data | In-memory datasets and lazy sources (streamed CSV, image folders, memory-mapped token files and .npy arrays, Parquet and JSON Lines columns), views, image augmentation, PNG/BMP/PGM/PPM decoding without dependencies |
 | Optimizers | SGD, Adam, AdamW (fused on the GPU), 8-bit Adam, a learning rate per group; step, exponential and cosine (with warm-up) schedules; gradient clipping |
 | Precision | float32; bfloat16 and FP8 tensor cores; int8, int4 and bfloat16 weights; half-precision files |
 | Memory | Offloading to system memory, activation memory limits, deterministic freeing |
@@ -101,6 +102,8 @@ points"):
 | Model sources | `ModelSources` | `Idrak.LanguageModels` |
 | Tokenizer normalizers, pre-tokenizers, decoders | `TokenizerComponents` | `Idrak.LanguageModels` |
 | Dataset file formats, sources, Parquet codecs | `DataFileFormats`, `DatasetSources`, `ParquetCodecs` | `Idrak.Datasets` |
+| Training data: samples, streams, transforms, batches | `ISampleSource`, `ISampleStream`, `ISampleTransform`, `IBatchSource`; sources by name in `SampleSources` | `Idrak` |
+| Image formats (a JPEG decoder, for example) | `ImageCodecs` | `Idrak` |
 | Optimizers | derive from `Optimizer` | `Idrak` |
 | Differentiable operations | `Autograd.Function(name, forward, backward)` | `Idrak` |
 | Adapters on linear layers | `ILinearAdapter` (LoRA and DoRA built in) on `Linear.Adapter` | `Idrak` |
@@ -186,7 +189,8 @@ src/Idrak/
                                     Network builder, Blocks, Architectures; GraphModule (layers in a graph: skip
                                     connections, branches); freezing, LoRA (ModuleExtensions)
   Optimizers/                       Sgd, Adam, AdamW, GroupedOptimizer, schedulers (step, exponential, cosine + warm-up)
-  Data/                             Dataset (CSV, class labels, feature shapes), scalers, DataLoader, DataExtensions
+  Data/                             Dataset (CSV, class labels, feature shapes), sample sources (CSV, images, tokens, .npy),
+                                    views, image codecs and transforms, scalers, DataLoader, DataExtensions
   Training/                         Trainer, TrainingRun, Metric (MAE, RMSE, Accuracy), RegressionReport
   Generation/                       tokenizers, TextGenerator (streaming, batches), chat, Conversation, tools
                                     (ToolRegistry), ModelHost, CodingAgent and CodingTools
@@ -216,8 +220,8 @@ samples/
   Idrak.Samples.HousePrices         regression: predict house prices from a CSV file
   Idrak.Samples.HouseApi            house-price Web API in a few lines (Idrak.AspNetCore + the HousePrices package)
   Idrak.Samples.Spirals             multi-class: 3 spirals, softmax + cross-entropy, BatchNorm
-  Idrak.Samples.ShapeRecognition    CNN: classify drawn shapes (Conv2d, MaxPool2d, BatchNorm)
-  Idrak.Samples.Ocr                 OCR: CNN character recognizer + line segmentation, reads PGM images
+  Idrak.Samples.ShapeRecognition    CNN: classify drawn shapes (Conv2d, MaxPool2d, BatchNorm) from an image folder, augmented
+  Idrak.Samples.Ocr                 OCR: CNN character recognizer + line segmentation, trained from an image folder, reads PNG/BMP/PGM
   Idrak.Samples.Sentiment           sentiment with negation: bag-of-words vs LSTM, GRU, Transformer
   Idrak.Samples.TextGeneration      small GPT: character-level causal transformer that generates text
   Idrak.Samples.GptApi              ASP.NET Core Web API + browser UI serving the GPT (Scalar docs, streaming, the chat API on /api/chat)
@@ -251,9 +255,9 @@ assets/                             the icon (icon.svg source, icon.png for the 
 | `Xor` | smallest possible network | 4/4 correct in 0.1 s |
 | `HousePrices` | CSV loading, scaling, regression, early stopping | R² 0.975, 5.3% mean error, 1 s |
 | `Spirals` | softmax + cross-entropy, BatchNorm, AdamW, cosine schedule, confusion matrix | 97.8% accuracy, 2.4 s |
-| `ShapeRecognition` | Conv2d, MaxPool2d, BatchNorm, Flatten on 16×16 images | 100% accuracy, about 11 s |
+| `ShapeRecognition` | Conv2d, MaxPool2d, BatchNorm, Flatten on 16×16 images read from class folders, with flips, shifts and noise each epoch | 100% accuracy, about 20 s |
 | `Sentiment` | Embedding, LSTM, GRU, Transformer vs an order-blind baseline | LSTM/GRU/Transformer 99.5–100%, bag of words 70% |
-| `Ocr` | CNN over 36 characters, projection-profile segmentation, PGM input | 100% per character, 99.9% of characters across whole lines |
+| `Ocr` | CNN over 36 characters from class folders with shifts and noise each epoch, projection-profile segmentation, PNG/BMP/PGM input | 100% per character, 99.9% of characters across whole lines |
 | `TextGeneration` | decoder-only GPT: causal attention, sparse cross-entropy, sampling | 89% next-character accuracy, 100% real words generated |
 | `GptApi` | serving a model: REST + server-sent events, Scalar, browser UI, the chat API on `/api/chat` | about 600 characters/s on 4 CPU cores |
 | `ReRanker` | two-stage search: BM25 + cross-encoder, hard negatives, listwise loss, placeholder tokens for unseen names | Hit@1 on unseen towns 27.1% (BM25) → 86.6% re-ranked, 6.9 ms per question, 180 s training |
@@ -1137,6 +1141,9 @@ the registered names and how to register.
 | Model sources (`name:` prefixes, asked before the built-ins) | `ModelSources.Register(IModelSource)` | `Idrak.LanguageModels` |
 | Tokenizer normalizers, pre-tokenizers, decoders | `TokenizerComponents.RegisterNormalizer` / `RegisterPreTokenizer` / `RegisterDecoder` | `Idrak.LanguageModels` |
 | Dataset file formats, sources, Parquet codecs | `DataFileFormats.Register`, `DatasetSources.Register`, `ParquetCodecs.Register` | `Idrak.Datasets` |
+| Training data (samples, streams, per-sample transforms, whole batches) | implement `ISampleSource`, `ISampleStream`, `ISampleTransform` or `IBatchSource` | `Idrak` |
+| Sample sources by name (csv, images, tokens, npy built in) | `SampleSources.Register(name, SampleSourceFactory)` | `Idrak` |
+| Image formats (png, bmp, netpbm built in; JPEG and others as plug-ins) | `ImageCodecs.Register(IImageCodec)` | `Idrak` |
 | Adapters on linear layers (LoRA and DoRA built in) | implement `ILinearAdapter`, set `Linear.Adapter` | `Idrak` |
 | Fine-tuning optimizers, learning-rate schedules and losses | `FineTuningOptions.Optimizer`, `Scheduler` and `Loss` (a `FineTuningLoss` delegate) | `Idrak.LanguageModels` |
 
@@ -1154,7 +1161,8 @@ var template = new JinjaChatTemplate(source, stops) { CallFormatName = "my-forma
 
 Each registry has a test that plugs in an implementation of its own next to the built-ins. `tests/Idrak.PluginTests`, an assembly without
 internal access to Idrak, writes plug-ins with the public API alone (a Lion optimizer, a custom operation registered as
-a network step and an ONNX import operator, a packed weight format, a KV cache format); the test runner runs them as
+a network step and an ONNX import operator, a packed weight format, a KV cache format, a sample source and a batch
+source); the test runner runs them as
 the "outside plug-in" group (`IDRAK_FILTER="outside plug-in" dotnet run -c Release --project tests/Idrak.Tests`).
 
 ## Telemetry: logging and tracking
@@ -1212,6 +1220,45 @@ GPU work is asynchronous, so layer and operation timings measure launch time by 
 * `DataLoader` batches and shuffles data and moves each batch to the device. For large batches, the
   next batch is gathered on a worker thread while the current one trains, using double-buffered
   prefetch.
+
+### Sample sources: data that is not in memory
+
+A `DataLoader` batches any `ISampleSource` (`Count`, `FeatureShape`, `TargetShape`, `Read(index, features, targets)`);
+`Dataset` is the in-memory one, and these read files lazily:
+
+| Source | Reads | Notes |
+|---|---|---|
+| `CsvSource.Open(path, options)` | numeric CSV files of any size | one pass finds the rows (12 bytes each are kept), each read parses one row; the same samples as `Dataset.LoadCsv`; `AsStream()` reads front to back without the pass |
+| `ImageFolderSource(folder, channels, height, width)` | `folder/<class>/*` images, classes from the folder names | decoded when read and resized; one-hot targets; also from a list of files, or unlabelled for prediction |
+| `TokenFileSource(path, length, stride)` | packed token ids (16 or 32 bits, or a one-dimensional .npy) | memory-mapped; windows of `length` tokens and the next tokens as targets, for language-model pretraining |
+| `NpySource(features, targets, classes)` | NumPy `.npy` arrays | memory-mapped; the first dimension counts the samples; class indices to one-hot |
+| `TableSamples.Load` / `Stream` (Idrak.Datasets) | JSON Lines, JSON, CSV and Parquet columns | numbers, booleans, numbers in text and arrays of numbers; class names to one-hot; `Stream` reads large files again on every pass |
+
+Views copy nothing: `source.Subset(indices)`, `Shuffle(seed)`, `Split(0.8, seed)` (the samples `Dataset.Split` gives
+with `removeDuplicates: false`) and `Concat(others)`; `Dataset.FromSource(source)` (or `ToDataset()`) reads every
+sample into memory. Samples in order whose count is unknown are an `ISampleStream`, batched with
+`new DataLoader(stream, batchSize, shuffleBuffer: 10_000)`.
+
+Images are decoded without dependencies: PNG (every bit depth and colour type, interlaced or not, through .NET's zlib),
+BMP (1 to 32 bits, uncompressed or bit fields) and PGM/PPM; alpha is dropped. Other formats, JPEG among them, plug in
+as an `IImageCodec` registered with `ImageCodecs.Register`. Augmentation runs in the loader, with random numbers seeded
+by the loader's seed, the epoch and the sample, so a seeded run repeats exactly:
+
+```csharp
+var images = new ImageFolderSource("shapes", channels: 1, height: 28, width: 28);
+var (train, test) = images.Split(0.8, seed: 1);
+var loader = new DataLoader(train, 64, shuffle: true, seed: 2)
+{
+    Transforms = [new RandomFlip(), new RandomShift(2), new RandomRotation(10), new GaussianNoise(0.05f)],
+};
+trainer.Fit(loader, epochs: 20, validation: new DataLoader(test, 256));
+```
+
+`Trainer.Fit`, `Evaluate` and `TrainingRun` take any `IBatchSource` (an `IEnumerable<Batch>` with optional counts), so
+batching of your own (variable lengths, sampling by class, batches made on the device) needs no loader: make each
+`new Batch(features, targets, index)` and the trainer disposes it after its step. `SampleSources` opens sources by name
+(`csv`, `images`, `tokens`, `npy`; `SampleSources.Register(name, factory)` adds one, `TableSamples.Factory` is the
+table adapter's). `tests/Idrak.PluginTests` writes a source and a batch source with the public API alone.
 
 ## Resources and parallelism
 
@@ -1316,6 +1363,7 @@ The 170 tests, by area:
 | Fine-tuning and scoring | 27 | chunked cross-entropy and LoRA terms in tensor-core products; sequence packing; CUDA-graph steps; out-of-memory fallbacks; checkpointing; answer balancing; answer scoring; model download; PEFT adapters (checked) and merged export; optimizer, schedule and loss options; DPO, ORPO and SimPO; DoRA |
 | Mixed precision | 11 | bfloat16 and 8-bit (FP8, int8) tensor-core products; flash attention (forward and backward); fused LayerNorm and decoder blocks; 8-bit AdamW |
 | Coding agent | 4 | workspace-bound file tools; allowlisted commands; agent transcripts; a task run and verified |
+| Data loaders | 10 | every built-in source (streamed CSV, image folders, token files, .npy, tables, views, streams) trains to the weights of the same samples in memory; PNG, BMP and Netpbm decoded as independent encoders wrote them; transforms against direct computation; the source registry |
 | Datasets | 7 | Parquet (as pyarrow reads it); JSON Lines, JSON, CSV, text, archives; lazy transforms; download cache; conversation layouts; recipes; hub sources against a fake server |
 | GGUF and evaluation | 3 | every GGUF quantization type dequantized as llama.cpp does; GGUF models equal their Hugging Face copies; answer metrics |
 | Naming | 1 | no file uses the library's former name |
