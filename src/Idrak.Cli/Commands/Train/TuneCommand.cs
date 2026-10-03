@@ -26,16 +26,19 @@ internal sealed class TuneCommand : Command
         + TuneTool.Usage.Replace("idrak-tune: fine-tune", "Fine-tune", StringComparison.Ordinal).Replace("idrak-tune ", "idrak tune ", StringComparison.Ordinal)
             .Replace("as idrak-data reads them", "as idrak data reads them", StringComparison.Ordinal)
             .Replace("a .gguf file, ollama:name, or an", "a .gguf file, or an", StringComparison.Ordinal)
-        + """
+        + "\n" + """
 
-        idrak tune also takes:
+        Options:
           -b, --base MODEL     the model as an option (then every argument after the command is data)
           -w, --weights F      base weights: int8, int4 (QLoRA) or bf16 (as --int8, --int4, --bf16)
-          -k, --kv F           the KV cache format; -o, --out DIR; -s, --system TEXT
+          -k, --kv F           the KV cache format (chat, evaluate)
+          -o, --out DIR        where train writes the adapter, export the merged model, evaluate the answers
+          -s, --system TEXT    a system message for conversations without one
           -C, --config FILE    a tune.json (idrak tune init writes one): its keys are these options without the dashes,
                                plus "command", "model" and "data"; options on the command line win
-          MODEL may be an alias from the config (its weights and KV format apply unless given).
-          --json prints one JSON document at the end with the command's output lines.
+          and the options of each command above (Data, Training, Evaluate, Chat, Model). MODEL may be an alias from the
+          config (its weights and KV format apply unless given); --json prints one JSON document at the end with the
+          command's output lines.
 
         Examples:
           idrak tune init -b Qwen/Qwen3-0.6B --data chats.jsonl && idrak tune --config tune.json
@@ -218,13 +221,14 @@ internal sealed class TuneInitCommand : Command
     public override string Usage => """
         [-b MODEL] [--data FILE]... [-o tune.json] [--loss sft|dpo|orpo|simpo] [-w int8|int4|bf16] [-f]
 
-          -b, --base MODEL    the model to tune (a Hugging Face id, a folder, a .gguf file or an alias)
-          --data FILE         the data (repeatable): files, folders, hf:... specs or a recipe .json
-          -o, --out FILE      where to write the settings (default tune.json)
-          --adapter-out DIR   where idrak tune writes the adapter (default adapters/<model name>)
-          --loss NAME         sft (default), or dpo, orpo, simpo for preference rows
-          -w, --weights F     base weights: int8, int4 (QLoRA) or bf16
-          -f, --force         overwrite an existing file
+        Options:
+          -b, --base MODEL       the model to tune (a Hugging Face id, a folder, a .gguf file or an alias)
+              --data FILE        the data (repeatable): files, folders, hf:... specs or a recipe .json
+          -o, --out FILE         where to write the settings (default tune.json)
+              --adapter-out DIR  where idrak tune writes the adapter (default adapters/<model name>)
+              --loss NAME        sft (default), or dpo, orpo, simpo for preference rows
+          -w, --weights F        base weights: int8, int4 (QLoRA) or bf16
+          -f, --force            overwrite an existing file
 
         The values are the library's defaults (rank, alpha, learning rate, lengths); the device given with -d is written
         too. Sizing them to the data and the device's memory is what idrak suggest does, when it is available.

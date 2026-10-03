@@ -21,8 +21,11 @@ internal sealed class DiffCommand : Command
     public override string Usage => """
         A B [--limit N] [--tolerance X] [--filter TEXT]
 
-          A, B              model folders, .gguf or .safetensors files, cached Hugging Face ids or aliases
-              --limit N     show the N tensors that differ most (default 20; JSON has all)
+        Arguments:
+          A, B  model folders, .gguf or .safetensors files, cached Hugging Face ids or aliases
+
+        Options:
+              --limit N  show the N tensors that differ most (default 20; JSON has all)
               --tolerance X a relative L2 difference at most X counts as equal (default 0)
               --filter TEXT only tensors whose name contains this text
 

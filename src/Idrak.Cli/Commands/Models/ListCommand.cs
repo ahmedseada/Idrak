@@ -19,7 +19,10 @@ internal sealed class ListCommand : Command
     public override string Usage => """
         [FILTER] [--all] [--sort used|name|size]
 
-          FILTER          only models whose name contains this text
+        Arguments:
+          FILTER  only models whose name contains this text
+
+        Options:
               --all       also the folders prepared from GGUF files and the models in Hugging Face's own cache
               --sort KEY  used (most recent first, the default), name or size (largest first)
 

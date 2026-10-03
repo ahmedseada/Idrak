@@ -121,8 +121,8 @@ internal sealed class TemplateCommand : Command
         files are read, not the weights.
 
         Options:
-              --source       print only the template's source
-              --think        render the sample with reasoning on (default: the template's own default)
+              --source  print only the template's source
+              --think   render the sample with reasoning on (default: the template's own default)
 
         Examples:
           idrak template Qwen/Qwen3-0.6B
@@ -211,13 +211,13 @@ internal sealed class CompleteCommand : Command
         counts and speed.
 
         Options:
-          -i, --input FILE       read (more of) the text from FILE (repeatable)
-              --stop TEXT        end at this text (repeatable)
-          -w, --weights FORMAT   int8, int4, bf16 or a registered packed format (default: as stored)
-          -k, --kv FORMAT        KV cache format: float32, int8, bfloat16 or a registered one (default float32)
-              --context N        context window in tokens (default 4096, at most the model's)
-              --adapter DIR      merge a LoRA adapter into the weights as they are read
-              --temperature T, --top-k N, --top-p P, --max-tokens N, --seed N   as for run
+          -i, --input FILE      read (more of) the text from FILE (repeatable)
+              --stop TEXT       end at this text (repeatable)
+          -w, --weights FORMAT  int8, int4, bf16 or a registered packed format (default: as stored)
+          -k, --kv FORMAT       KV cache format: float32, int8, bfloat16 or a registered one (default float32)
+              --context N       context window in tokens (default 4096, at most the model's)
+              --adapter DIR     merge a LoRA adapter into the weights as they are read
+              --temperature T   sampling, as for run; also --top-k N, --top-p P, --max-tokens N and --seed N
 
         Examples:
           idrak complete Qwen/Qwen3-0.6B "def fibonacci(n):"

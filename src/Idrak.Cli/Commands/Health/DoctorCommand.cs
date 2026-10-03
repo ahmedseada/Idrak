@@ -25,14 +25,16 @@ internal sealed class DoctorCommand : Command
     public override string Usage => """
         [--android] [--network] [--explain] [--fix [--yes]]
 
-          --android      also the phone checks: the Vulkan driver file (VK_ICD_FILENAMES), the GPU device node
+        Options:
+              --android  also the phone checks: the Vulkan driver file (VK_ICD_FILENAMES), the GPU device node
                          (/dev/kgsl-3d0) and the .NET heap limit (DOTNET_GCHeapHardLimit)
-          --network      also the network: the proxy settings, whether the model hub, the repository API and the
+              --network  also the network: the proxy settings, whether the model hub, the repository API and the
                          package feed answer, and which tokens are set (never their values)
           -e, --explain  why each check matters
-          --fix          the exact commands that fix what failed or warned; with -y/--yes, the safe ones are done
+              --fix      the exact commands that fix what failed or warned; with --yes, the safe ones are done
                          (lines added to ~/.bashrc, or --rc FILE)
-          --rc FILE      the shell start-up file --fix --yes adds lines to (default ~/.bashrc)
+              --rc FILE  the shell start-up file --fix --yes adds lines to (default ~/.bashrc)
+          -y, --yes      with --fix: do the safe fixes
 
         Exits with 1 when a check fails; warnings (a backend not installed) leave it at 0.
 

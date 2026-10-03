@@ -30,9 +30,9 @@ internal sealed class PerplexityCommand : Command
         "  idrak perplexity org/model wiki.txt\n" +
         "  idrak perplexity org/model wiki.txt -w int4 -j";
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. Models.ValueOptions, "--window", "--max-tokens"];
+    public override IReadOnlyCollection<string> ValueOptions => [.. Models.ValueOptions.Where(o => o != "--kv"), "--window", "--max-tokens"];   // scored without a KV cache
 
-    public override IReadOnlyDictionary<string, string> ShortForms => Models.ShortForms;
+    public override IReadOnlyDictionary<string, string> ShortForms { get; } = Models.ShortForms.Where(p => p.Key != "-k").ToDictionary();
 
     public override int Run(CommandContext context)
     {

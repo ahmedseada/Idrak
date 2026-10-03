@@ -21,7 +21,9 @@ internal sealed class PingCommand : Command
         Asks URL (default: the server started last on this machine, else http://127.0.0.1:11434) for its models over
         the OpenAI-style API (GET /v1/models) and the chat API (GET /api/tags, /api/version), and reports which answer,
         the models and the time each answer took. Exits with 1 when neither API answers.
-              --api-key KEY   the server's API key (default IDRAK_API_KEY)
+
+        Options:
+              --api-key KEY  the server's API key (default IDRAK_API_KEY)
 
         Examples:
           idrak ping

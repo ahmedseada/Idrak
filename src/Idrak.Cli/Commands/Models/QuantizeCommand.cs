@@ -21,21 +21,24 @@ internal sealed class QuantizeCommand : Command
     public override string Usage => """
         MODEL -w FORMAT [-o DIR] [--text FILE] [--tokens N] [-f] [--dry-run]
 
-          MODEL              a cached Hugging Face id, a folder, a .gguf file or an alias
-          -w, --weights F    int8, int4, bf16 or any registered packed format (plug-ins add more with --plugin)
-          -o, --out DIR      write the packed weights (weights.bin), the config and tokenizer files, and quantize.json
-              --text FILE    the text the perplexity is measured on (default a short built-in paragraph)
-              --tokens N     at most N tokens of it (default 256)
-          -f, --force        write into a folder that is not empty
-              --dry-run      say what would be done without loading the model
+        Arguments:
+          MODEL  a cached Hugging Face id, a folder, a .gguf file or an alias
 
-        Gap: the library packs weights while it loads a checkpoint and has no loader for packed weights yet, so
-        chat, run and serve pack at load time (-w FORMAT gives the same weights); weights.bin is the packed module
-        as Module.Save writes it, for Module.Load into a model loaded with the same format.
+        Options:
+          -w, --weights F  int8, int4, bf16 or any registered packed format (plug-ins add more with --plugin)
+          -o, --out DIR    write the packed weights (weights.bin), the config and tokenizer files, and quantize.json
+              --text FILE  the text the perplexity is measured on (default a short built-in paragraph)
+              --tokens N   at most N tokens of it (default 256)
+          -f, --force      write into a folder that is not empty
+              --dry-run    say what would be done without loading the model
 
         Examples:
           idrak quantize Qwen/Qwen3-0.6B -w int4
           idrak quantize ./model -w int8 -o ./model-int8 -d vulkan:0
+
+        Gap: the library packs weights while it loads a checkpoint and has no loader for packed weights yet, so
+        chat, run and serve pack at load time (-w FORMAT gives the same weights); weights.bin is the packed module
+        as Module.Save writes it, for Module.Load into a model loaded with the same format.
         """;
 
     public override IReadOnlyCollection<string> ValueOptions => ["--weights", "--out", "--text", "--tokens"];
@@ -57,7 +60,7 @@ internal sealed class QuantizeCommand : Command
         }
 
         var local = ModelCache.Locate(context, name);
-        if (context.Flag("--dry-run"))
+        if (Terminal.DryRun(context))
         {
             context.Write($"Would load {name} ({local.File ?? local.Folder}) on {context.Device} in float32 and in {format}, compare their size and perplexity"
                           + (output is null ? "." : $", and write the {format} weights to {output}."));

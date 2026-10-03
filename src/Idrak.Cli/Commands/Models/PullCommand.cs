@@ -21,10 +21,13 @@ internal sealed class PullCommand : Command
     public override string Usage => """
         MODEL [--file NAME] [--revision REV] [--token TOKEN] [-f] [--dry-run]
 
-          MODEL               owner/name (a transformers model: config, tokenizer, chat template, safetensors weights),
-                              owner/name:TAG or owner/name/FILE.gguf (one GGUF file of a repository), a URL of a .gguf
-                              file, or an alias; a local folder or .gguf file needs no download (a GGUF file's
-                              description is prepared in the cache)
+        Arguments:
+          MODEL  owner/name (a transformers model: config, tokenizer, chat template, safetensors weights),
+                 owner/name:TAG or owner/name/FILE.gguf (one GGUF file of a repository), a URL of a .gguf
+                 file, or an alias; a local folder or .gguf file needs no download (a GGUF file's
+                 description is prepared in the cache)
+
+        Options:
               --file NAME     the GGUF file to take from a repository holding several
               --revision REV  a branch, tag or commit (default main)
               --token TOKEN   for gated and private models (default: the config's hf_token, HF_TOKEN or the saved login)
@@ -54,7 +57,7 @@ internal sealed class PullCommand : Command
         }
 
         string model = Shared.Models.Choose(context, name).Model;
-        bool dryRun = context.Flag("--dry-run"), force = context.Flag("--force");
+        bool dryRun = Terminal.DryRun(context), force = context.Flag("--force");
         if (Directory.Exists(model) || File.Exists(model))
         {
             return Local(context, model, dryRun);

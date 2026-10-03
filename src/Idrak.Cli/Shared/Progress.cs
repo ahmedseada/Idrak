@@ -3,6 +3,8 @@
 
 using System.Diagnostics;
 using System.Globalization;
+using Idrak.Diagnostics;
+using Idrak.Training;
 
 namespace Idrak.Cli.Shared;
 
@@ -19,9 +21,10 @@ namespace Idrak.Cli.Shared;
 internal sealed class ProgressLine : IProgress<long>, IDisposable
 {
     private static readonly TimeSpan Interval = TimeSpan.FromMilliseconds(100);
+    private static readonly TimeSpan NeverDrawn = TimeSpan.FromSeconds(-1);                // not MinValue: now - MinValue overflows
     private readonly TextWriter _writer;
     private readonly Stopwatch _watch = Stopwatch.StartNew();
-    private TimeSpan _lastDraw = TimeSpan.MinValue;
+    private TimeSpan _lastDraw = NeverDrawn;
     private int _lastWidth;
     private long _done;
     private bool _finished;
@@ -117,6 +120,26 @@ internal sealed class ProgressLine : IProgress<long>, IDisposable
         }
     }
 
+    /// <summary>
+    /// Takes the line off the screen for a moment, so a line of output can be written; the next report draws it again
+    /// below that output.
+    /// </summary>
+    public void Erase()
+    {
+        if (!Enabled || _finished)
+        {
+            return;
+        }
+
+        lock (_writer)
+        {
+            _writer.Write("\r" + new string(' ', _lastWidth) + "\r");
+            _writer.Flush();
+            _lastWidth = 0;
+            _lastDraw = NeverDrawn;
+        }
+    }
+
     public void Dispose() => Finish();
 
     /// <summary>
@@ -188,6 +211,25 @@ internal sealed class ProgressLine : IProgress<long>, IDisposable
             _writer.Flush();
         }
     }
+}
+
+/// <summary>
+/// A training run's progress line, as a trainer callback: "epoch 3/40", the batches done of the run, the rate and the
+/// time left. Lines the command writes meanwhile call <see cref="ProgressLine.Erase"/> first.
+/// </summary>
+/// <param name="line">The line (enabled on a terminal only).</param>
+/// <param name="epochs">Epochs in this run.</param>
+/// <param name="before">Epochs done before it (a resumed run), for the numbers shown.</param>
+internal sealed class TrainingProgress(ProgressLine line, int epochs, int before = 0) : ITrainerCallback
+{
+    public void OnBatchEnd(TrainerContext context, BatchCompleted batch)
+    {
+        line.Total = (long)epochs * batch.BatchesPerEpoch;
+        line.Label = $"epoch {batch.Epoch + before}/{epochs + before}";
+        line.Report((long)(batch.Epoch - 1) * batch.BatchesPerEpoch + batch.Batch);
+    }
+
+    public void OnTrainEnd(TrainerContext context, TrainingHistory history) => line.Clear();
 }
 
 /// <summary>How a <see cref="ProgressLine"/> shows amounts.</summary>

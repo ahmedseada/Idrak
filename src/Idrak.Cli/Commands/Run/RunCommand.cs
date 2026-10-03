@@ -31,10 +31,6 @@ internal sealed class RunCommand : Command
               --adapter DIR      merge a LoRA adapter into the weights as they are read
               --schema FILE      ask for JSON matching this JSON schema and check the answer (exit 1 when it is not)
               --mcp SERVER       let the model call an MCP server's tools (an http(s) URL or a command; repeatable)
-
-        Gap: the library has no JSON-schema constrained sampling yet (a logits processor; plans/plug-in.md gap 13), so
-        --schema gives the schema to the model as an instruction and checks the answer afterwards (it is JSON, has the
-        required properties and their types) instead of guaranteeing it while generating.
         """ + "\n" + GenerationSettings.Help + """
 
         Examples:
@@ -42,6 +38,10 @@ internal sealed class RunCommand : Command
           cat notes.txt | idrak r qwen "Summarize in three bullets"
           idrak run ./model.gguf -i question.txt --temperature 0 --json
           idrak run qwen "Extract the name and age: Sara is 31." --schema person.json
+
+        Gap: the library has no JSON-schema constrained sampling yet (a logits processor; plans/plug-in.md gap 13), so
+        --schema gives the schema to the model as an instruction and checks the answer afterwards (it is JSON, has the
+        required properties and their types) instead of guaranteeing it while generating.
         """;
 
     public override IReadOnlyCollection<string> ValueOptions => [.. Models.ValueOptions, .. GenerationSettings.ValueOptions, "--input", "--schema", "--mcp"];

@@ -22,26 +22,29 @@ internal sealed class MemoryCommand : Command
     public override string Usage => """
         MODEL [-w FORMAT...] [-k FORMAT...] [--context N] [--batch N] [--memory SIZE]
 
-          MODEL             a cached Hugging Face id, a folder, a .gguf file or an alias
-          -w, --weights F   weight formats to show (repeatable or comma-separated; default float32 and every registered
-                            packed format: int8, int4, bfloat16, ...)
-          -k, --kv F        KV cache formats (default every registered one: float32, int8, bfloat16, ...)
-              --context N   the context length (default the model's longest)
-              --batch N     sequences decoded together (default 1)
+        Arguments:
+          MODEL  a cached Hugging Face id, a folder, a .gguf file or an alias
+
+        Options:
+          -w, --weights F  weight formats to show (repeatable or comma-separated; default float32 and every registered
+                           packed format: int8, int4, bfloat16, ...)
+          -k, --kv F       KV cache formats (default every registered one: float32, int8, bfloat16, ...)
+              --context N  the context length (default the model's longest)
+              --batch N    sequences decoded together (default 1)
               --memory SIZE also compare with this much memory (e.g. 8G, 512M)
 
         Projections are counted in the weight format; embeddings and norms in float32. Activations and the runtime add
         a little more (a few hundred MB), so a total close to a device's memory may still not fit.
 
-        Gap: the library reports a GPU's total memory only when a limit is set (ComputeResources.GpuMemoryLimit); for
-        other GPUs pass --memory with the card's memory.
-
         Examples:
           idrak memory Qwen/Qwen3-0.6B
           idrak memory Qwen/Qwen3-8B -k int8 --context 32768 -d vulkan:0
+
+        Gap: the library reports a GPU's total memory only when a limit is set (ComputeResources.GpuMemoryLimit); for
+        other GPUs pass --memory with the card's memory.
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. Shared.Models.ValueOptions, "--batch", "--memory"];
+    public override IReadOnlyCollection<string> ValueOptions => [.. Shared.Models.ValueOptions.Where(o => o != "--adapter"), "--batch", "--memory"];
 
     public override IReadOnlyDictionary<string, string> ShortForms => Shared.Models.ShortForms;
 

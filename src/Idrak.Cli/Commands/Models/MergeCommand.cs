@@ -19,12 +19,15 @@ internal sealed class MergeCommand : Command
     public override string Usage => """
         MODEL ADAPTER -o DIR [--type bf16|f16|f32] [-f] [--dry-run]
 
-          MODEL            the base model: a cached Hugging Face id, a folder, a .gguf file or an alias
-          ADAPTER          the adapter folder (adapter_config.json, adapter_model.safetensors)
-          -o, --out DIR    the merged model, in the Hugging Face layout (model.safetensors, config, tokenizer)
-              --type T     the element type of the written weights (default bf16)
-          -f, --force      write into a folder that is not empty
-              --dry-run    check the adapter and say what would be written
+        Arguments:
+          MODEL    the base model: a cached Hugging Face id, a folder, a .gguf file or an alias
+          ADAPTER  the adapter folder (adapter_config.json, adapter_model.safetensors)
+
+        Options:
+          -o, --out DIR  the merged model, in the Hugging Face layout (model.safetensors, config, tokenizer)
+              --type T   the element type of the written weights (default bf16)
+          -f, --force    write into a folder that is not empty
+              --dry-run  check the adapter and say what would be written
 
         The merge runs in float32 on the chosen device (-d); the merged model loads like any other (idrak chat DIR).
 
@@ -53,7 +56,7 @@ internal sealed class MergeCommand : Command
         var local = ModelCache.Locate(context, name);
         var config = JsonNode.Parse(File.ReadAllText(Path.Combine(adapter, "adapter_config.json")));
         string kind = (bool?)config?["use_dora"] == true ? "DoRA" : "LoRA";
-        if (context.Flag("--dry-run"))
+        if (Terminal.DryRun(context))
         {
             context.Write($"Would merge the {kind} adapter {adapter} (rank {(int?)config?["r"]}) into {name} and write {output} ({type}).");
             context.WriteJson(new JsonObject { ["model"] = name, ["adapter"] = adapter, ["kind"] = kind, ["out"] = output, ["dryRun"] = true });

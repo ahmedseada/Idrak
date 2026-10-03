@@ -116,7 +116,8 @@ internal sealed class ConfigGetCommand : ConfigCommand
     public override string Usage => """
         KEY [--profile NAME]
 
-          --profile NAME   read the named profile (e.g. phone, desktop)
+        Options:
+              --profile NAME  read the named profile (e.g. phone, desktop)
 
         Examples:
           idrak config get device
@@ -153,8 +154,11 @@ internal sealed class ConfigSetCommand : ConfigCommand
     public override string Usage => """
         KEY VALUE [--profile NAME]
 
-          VALUE            text, or JSON when it is a number, true/false, null, an array or an object
-          --profile NAME   write to the named profile (idrak config set profile NAME makes it the one in use)
+        Arguments:
+          VALUE  text, or JSON when it is a number, true/false, null, an array or an object
+
+        Options:
+              --profile NAME  write to the named profile (idrak config set profile NAME makes it the one in use)
 
         Keys the tool reads: device, cache, plugins (a list of paths), aliases (NAME: {model, weights, kv}),
         profile, and any key another command documents.
@@ -205,6 +209,9 @@ internal sealed class ConfigUnsetCommand : ConfigCommand
     public override string Usage => """
         KEY [--profile NAME]
 
+        Options:
+              --profile NAME  remove it from the named profile instead of the top level
+
         Examples:
           idrak config unset device
           idrak config unset aliases.qwen
@@ -236,6 +243,9 @@ internal sealed class ConfigListCommand : ConfigCommand
 
     public override string Usage => """
         [--profile NAME]
+
+        Options:
+              --profile NAME  only the named profile's values
 
         Examples:
           idrak config list

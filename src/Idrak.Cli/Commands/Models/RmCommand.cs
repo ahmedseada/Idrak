@@ -16,8 +16,11 @@ internal sealed class RmCommand : Command
     public override string Usage => """
         MODEL... [-y] [--dry-run] [-f]
 
-          MODEL          a name as 'idrak list' shows it: owner/name (every revision), owner/name@REVISION,
-                         owner/name/FILE.gguf, a partial download, or the path of a cached folder or file
+        Arguments:
+          MODEL  a name as 'idrak list' shows it: owner/name (every revision), owner/name@REVISION,
+                 owner/name/FILE.gguf, a partial download, or the path of a cached folder or file
+
+        Options:
           -y, --yes      remove without asking
               --dry-run  show what would be removed
           -f, --force    no error when a name matches nothing
@@ -74,7 +77,7 @@ internal sealed class RmCommand : Command
         }
 
         long bytes = chosen.Sum(c => c.Bytes);
-        bool dryRun = context.Flag("--dry-run");
+        bool dryRun = Terminal.DryRun(context);
         foreach (var c in chosen)
         {
             context.Write($"{(dryRun ? "would remove" : "removing")} {c.Name}{(c.Revision is null || c.Kind == "gguf" ? "" : "@" + c.Revision)}  {Units.Bytes(c.Bytes)}  {c.Path}");

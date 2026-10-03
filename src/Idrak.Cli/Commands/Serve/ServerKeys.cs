@@ -48,7 +48,9 @@ internal sealed class ServerKeysAddCommand : Command
 
         Makes a random key named NAME, prints it once and stores its SHA-256 hash in the config file; 'idrak serve'
         then accepts it (as "Authorization: Bearer KEY"), along with --api-key and the other stored keys.
-              --key KEY   store this key instead of a random one
+
+        Options:
+              --key KEY  store this key instead of a random one
 
         Examples:
           idrak server keys add laptop

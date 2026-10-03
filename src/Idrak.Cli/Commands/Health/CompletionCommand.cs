@@ -23,7 +23,8 @@ internal sealed class CompletionCommand : Command
     public override string Usage => """
         bash|zsh|fish|pwsh
 
-          --complete -- WORDS...   the candidates for the last word (what the scripts call)
+        Options:
+              --complete -- WORDS...  the candidates for the last word (what the scripts call)
 
         Install:
           bash   echo 'eval "$(idrak completion bash)"' >> ~/.bashrc

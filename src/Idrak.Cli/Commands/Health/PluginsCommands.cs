@@ -20,7 +20,8 @@ internal sealed class PluginsListCommand : Command
     public override string Usage => """
         [--added]
 
-          --added   only what the --plugin assemblies (and the config's "plugins") added
+        Options:
+              --added  only what the --plugin assemblies (and the config's "plugins") added
 
         With --plugin PATH, each name an assembly added is marked with "+".
 
