@@ -8,7 +8,7 @@ namespace Idrak.LanguageModels;
 
 /// <summary>
 /// How an adapter folder was made, written next to the adapter (<see cref="FileName"/>): the base model it was tuned from,
-/// as the user named it (a Hugging Face id, folder, .gguf or ollama:name; PEFT's adapter_config.json often holds only a
+/// as the user named it (a Hugging Face id, folder, .gguf or store:name; PEFT's adapter_config.json often holds only a
 /// cache folder's name), the system prompt added to the training conversations, and the longest training sequence. A
 /// program can then load the folder, and prompt the model as it was trained, without being told how it was made.
 /// </summary>

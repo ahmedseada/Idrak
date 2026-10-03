@@ -1,6 +1,6 @@
 # Idrak.AspNetCore
 
-ASP.NET Core integration for Idrak: registers an InferenceEngine in dependency injection and maps prediction, generation, Ollama-compatible chat and status endpoints.
+ASP.NET Core integration for Idrak: registers an InferenceEngine in dependency injection and maps prediction, generation, chat (the local chat API and the OpenAI-style /v1 API) and status endpoints.
 
 ## Install
 

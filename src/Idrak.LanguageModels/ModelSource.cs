@@ -23,13 +23,13 @@ public sealed record ModelSourceOptions
 }
 
 /// <summary>
-/// A kind of name <see cref="ModelSource.Resolve"/> understands ("ollama:qwen3:8b", "owner/name", a folder …): it says
+/// A kind of name <see cref="ModelSource.Resolve"/> understands ("store:qwen3:8b", "owner/name", a folder …): it says
 /// which names are its own and turns one into a local folder (or a path a checkpoint format reads, such as a .gguf file's
 /// prepared folder). Register new ones with <see cref="ModelSources.Register"/>.
 /// </summary>
 public interface IModelSource
 {
-    /// <summary>The source's name ("folder", "ollama", "gguf", "huggingface", …): registering another under it replaces this one.</summary>
+    /// <summary>The source's name ("folder", "store", "gguf", "huggingface", …): registering another under it replaces this one.</summary>
     string Name { get; }
 
     /// <summary>Whether <paramref name="model"/> is a name this source resolves.</summary>
@@ -40,7 +40,7 @@ public interface IModelSource
 }
 
 /// <summary>
-/// The sources <see cref="ModelSource.Resolve"/> asks, in order: an existing folder, "ollama:name", a .gguf file, then
+/// The sources <see cref="ModelSource.Resolve"/> asks, in order: an existing folder, "store:name" (the local model store), a .gguf file, then
 /// a Hugging Face id ("owner/name"). A name goes to the first source that can resolve it, the most recently registered
 /// first, so a new source (for example a "myhub:" prefix) is asked before the built-in ones.
 /// </summary>
@@ -114,8 +114,8 @@ public static class ModelSources
 }
 
 /// <summary>
-/// Where a model comes from: a local folder, a GGUF file, an Ollama model ("ollama:qwen3:8b", read from Ollama's own
-/// store), or a Hugging Face model id such as "Qwen/Qwen3-0.6B". An id is looked up in
+/// Where a model comes from: a local folder, a GGUF file, a model of the local model store ("store:qwen3:8b", see
+/// <see cref="LocalStoreModel"/>), or a Hugging Face model id such as "Qwen/Qwen3-0.6B". An id is looked up in
 /// Hugging Face's own cache (models fetched with transformers or huggingface-cli), then in Idrak's download cache,
 /// and downloaded otherwise: only the files the library reads (config, tokenizer, chat template, generation config and
 /// the safetensors weights), into downloads/huggingface/models/&lt;owner&gt;/&lt;name&gt;/&lt;commit&gt;/. Gated and private models
@@ -127,10 +127,12 @@ public static class ModelSource
         "added_tokens.json", "chat_template.jinja", "chat_template.json", "model.safetensors.index.json"];
 
     /// <summary>
-    /// The GGUF file of an Ollama model ("qwen3:8b", "llama3.2" for :latest, "user/model:tag", "hf.co/owner/repo:tag") in
-    /// Ollama's store (OLLAMA_MODELS, or ~/.ollama/models): the manifest names the model layer's blob.
+    /// The GGUF file of a model in the local model store that another local model server keeps its pulled models in
+    /// ("qwen3:8b", "llama3.2" for :latest, "user/model:tag", "hf.co/owner/repo:tag"): the folder its OLLAMA_MODELS
+    /// variable names, or that server's default folder in the home folder. The model's manifest names the blob holding
+    /// the weights, which is read in place.
     /// </summary>
-    public static string OllamaModel(string name)
+    public static string LocalStoreModel(string name)
     {
         string store = Environment.GetEnvironmentVariable("OLLAMA_MODELS")
                        ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".ollama", "models");
@@ -153,15 +155,23 @@ public static class ModelSource
                     .Select(f => f.StartsWith("registry.ollama.ai/library/", StringComparison.Ordinal) ? f["registry.ollama.ai/library/".Length..] : f)
                     .Select(f => f[..f.LastIndexOf('/')] + ":" + f[(f.LastIndexOf('/') + 1)..]).Order().Take(30))
                 : "none";
-            throw new FileNotFoundException($"Ollama model '{name}' not found ({manifest}). Models in {store}: {known}.");
+            throw new FileNotFoundException($"Model '{name}' is not in the local model store ({manifest}). Models in {store}: {known}.");
         }
 
         var layers = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(manifest))?["layers"] as System.Text.Json.Nodes.JsonArray ?? [];
         string digest = layers.Where(l => (string?)l?["mediaType"] == "application/vnd.ollama.image.model").Select(l => (string?)l!["digest"]).FirstOrDefault()
-                        ?? throw new InvalidDataException($"The manifest of Ollama model '{name}' has no model layer.");
+                        ?? throw new InvalidDataException($"The manifest of '{name}' in the local model store has no model layer.");
         string blob = Path.Combine(store, "blobs", digest.Replace(':', '-'));
-        return File.Exists(blob) ? blob : throw new FileNotFoundException($"Ollama model '{name}': its weights {blob} are missing (pull the model again).");
+        return File.Exists(blob) ? blob : throw new FileNotFoundException($"'{name}' in the local model store: its weights {blob} are missing (pull the model again).");
     }
+
+    /// <summary>Former name of <see cref="LocalStoreModel"/>.</summary>
+    [Obsolete("Use LocalStoreModel; this name is removed in the next release.")]
+    public static string OllamaModel(string name) => LocalStoreModel(name);
+
+    // The length of the local model store's prefix on a model name ("store:"; the former prefix is still read), else 0.
+    private static int StorePrefix(string model) =>
+        model.StartsWith("store:", StringComparison.OrdinalIgnoreCase) ? 6 : model.StartsWith("ollama:", StringComparison.OrdinalIgnoreCase) ? 7 : 0;
 
     /// <summary>Whether <paramref name="model"/> reads as a Hugging Face id ("owner/name") rather than a folder.</summary>
     public static bool IsModelId(string model) =>
@@ -180,10 +190,10 @@ public static class ModelSource
     internal static IModelSource[] BuiltIn =>
     [
         new DelegateModelSource("folder", Directory.Exists, (model, _) => model),
-        new DelegateModelSource("ollama", model => model.StartsWith("ollama:", StringComparison.OrdinalIgnoreCase), (model, options) =>
+        new DelegateModelSource("store", model => StorePrefix(model) > 0, (model, options) =>
         {
-            string blob = OllamaModel(model[7..]);
-            (options.Downloader ?? Downloader.Shared).Log?.Invoke($"{model}: Ollama's model file {blob}");
+            string blob = LocalStoreModel(model[StorePrefix(model)..]);
+            (options.Downloader ?? Downloader.Shared).Log?.Invoke($"{model}: the local model store's file {blob}");
             return GgufModel.Prepare(blob);
         }),
         new DelegateModelSource("gguf", model => File.Exists(model) && model.EndsWith(".gguf", StringComparison.OrdinalIgnoreCase), (model, _) => GgufModel.Prepare(model)),

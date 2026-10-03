@@ -8,51 +8,51 @@ using Idrak.Generation;
 
 namespace Idrak.AspNetCore;
 
-// ------------------------------------------------------------------ wire format (Ollama-compatible JSON)
+// ------------------------------------------------------------------ wire format of the chat API (/api/chat, /api/tags, /api/ps)
 
-/// <summary>An /api/chat request in the Ollama format. Unknown fields are ignored; any model name selects the served model.</summary>
-public sealed record OllamaChatRequest(
+/// <summary>An /api/chat request. Unknown fields are ignored; any model name selects the served model.</summary>
+public sealed record ChatApiRequest(
     [property: JsonPropertyName("model")] string? Model,
-    [property: JsonPropertyName("messages")] List<OllamaMessage> Messages,
+    [property: JsonPropertyName("messages")] List<ChatApiMessage> Messages,
     [property: JsonPropertyName("stream")] bool? Stream = null,
     [property: JsonPropertyName("think")] JsonElement? Think = null,
     [property: JsonPropertyName("keep_alive")] JsonElement? KeepAlive = null,
     [property: JsonPropertyName("options")] Dictionary<string, JsonElement>? Options = null,
-    [property: JsonPropertyName("tools")] List<OllamaTool>? Tools = null);
+    [property: JsonPropertyName("tools")] List<ChatApiTool>? Tools = null);
 
 /// <summary>A chat message: role (system, user, assistant, tool), content, and optionally reasoning, tool calls or the tool name.</summary>
-public sealed record OllamaMessage(
+public sealed record ChatApiMessage(
     [property: JsonPropertyName("role")] string Role,
     [property: JsonPropertyName("content")] string? Content = null,
     [property: JsonPropertyName("thinking"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Thinking = null,
-    [property: JsonPropertyName("tool_calls"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] List<OllamaToolCall>? ToolCalls = null,
+    [property: JsonPropertyName("tool_calls"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] List<ChatApiToolCall>? ToolCalls = null,
     [property: JsonPropertyName("tool_name"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ToolName = null);
 
 /// <summary>A tool definition: {"type": "function", "function": {name, description, parameters}}.</summary>
-public sealed record OllamaTool(
+public sealed record ChatApiTool(
     [property: JsonPropertyName("type")] string Type,
-    [property: JsonPropertyName("function")] OllamaFunction Function);
+    [property: JsonPropertyName("function")] ChatApiFunction Function);
 
 /// <summary>A function's name, description and JSON-schema parameters.</summary>
-public sealed record OllamaFunction(
+public sealed record ChatApiFunction(
     [property: JsonPropertyName("name")] string Name,
     [property: JsonPropertyName("description")] string? Description = null,
     [property: JsonPropertyName("parameters")] JsonNode? Parameters = null);
 
 /// <summary>A tool call returned by the model.</summary>
-public sealed record OllamaToolCall([property: JsonPropertyName("function")] OllamaCalledFunction Function);
+public sealed record ChatApiToolCall([property: JsonPropertyName("function")] ChatApiCalledFunction Function);
 
 /// <summary>The called function and its arguments.</summary>
-public sealed record OllamaCalledFunction(
+public sealed record ChatApiCalledFunction(
     [property: JsonPropertyName("name")] string Name,
     [property: JsonPropertyName("arguments")] JsonObject Arguments,
     [property: JsonPropertyName("index"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Index = null);
 
 /// <summary>One streamed line (or the whole non-streamed reply) of /api/chat. Durations are in nanoseconds.</summary>
-public sealed record OllamaChatResponse(
+public sealed record ChatApiResponse(
     [property: JsonPropertyName("model")] string Model,
     [property: JsonPropertyName("created_at")] DateTimeOffset CreatedAt,
-    [property: JsonPropertyName("message")] OllamaMessage Message,
+    [property: JsonPropertyName("message")] ChatApiMessage Message,
     [property: JsonPropertyName("done")] bool Done,
     [property: JsonPropertyName("done_reason"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? DoneReason = null,
     [property: JsonPropertyName("total_duration"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? TotalDuration = null,
@@ -63,22 +63,22 @@ public sealed record OllamaChatResponse(
     [property: JsonPropertyName("eval_duration"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? EvalDuration = null);
 
 /// <summary>A model entry for /api/tags.</summary>
-public sealed record OllamaModelTag(
+public sealed record ChatApiModelTag(
     [property: JsonPropertyName("name")] string Name,
     [property: JsonPropertyName("model")] string Model,
     [property: JsonPropertyName("modified_at")] DateTimeOffset ModifiedAt,
     [property: JsonPropertyName("size")] long Size,
-    [property: JsonPropertyName("details")] OllamaModelDetails Details);
+    [property: JsonPropertyName("details")] ChatApiModelDetails Details);
 
 /// <summary>Model details.</summary>
-public sealed record OllamaModelDetails(
+public sealed record ChatApiModelDetails(
     [property: JsonPropertyName("format")] string Format,
     [property: JsonPropertyName("family")] string Family,
     [property: JsonPropertyName("parameter_size")] string ParameterSize,
     [property: JsonPropertyName("context_length")] int ContextLength);
 
 /// <summary>A loaded model for /api/ps.</summary>
-public sealed record OllamaRunningModel(
+public sealed record ChatApiRunningModel(
     [property: JsonPropertyName("name")] string Name,
     [property: JsonPropertyName("model")] string Model,
     [property: JsonPropertyName("size")] long Size,
@@ -86,14 +86,14 @@ public sealed record OllamaRunningModel(
     [property: JsonPropertyName("size_vram")] long SizeVram,
     [property: JsonPropertyName("context_length")] int ContextLength);
 
-/// <summary>Converts Ollama requests to the library's chat types.</summary>
-public static class OllamaTranslation
+/// <summary>Converts chat API requests to the library's chat types.</summary>
+public static class ChatApiTranslation
 {
     /// <summary>
     /// Validates the request and turns it into a <see cref="ChatRequest"/>; throws <see cref="ArgumentException"/> on bad input.
-    /// Known options map to <see cref="GenerationOptions"/>; other options are accepted and ignored, as Ollama does.
+    /// Known options map to <see cref="GenerationOptions"/>; other options are accepted and ignored, as common servers of this API do.
     /// </summary>
-    public static (ChatRequest Request, TimeSpan? KeepAlive, bool KeepAliveGiven) Translate(OllamaChatRequest request)
+    public static (ChatRequest Request, TimeSpan? KeepAlive, bool KeepAliveGiven) Translate(ChatApiRequest request)
     {
         if (request.Messages is null)
         {
@@ -117,7 +117,7 @@ public static class OllamaTranslation
         return (new ChatRequest(messages, tools, think, options), keepAlive, given);
     }
 
-    /// <summary>Maps Ollama's option names to <see cref="GenerationOptions"/> (unknown names are ignored).</summary>
+    /// <summary>Maps the chat API's option names to <see cref="GenerationOptions"/> (unknown names are ignored).</summary>
     public static GenerationOptions Options(Dictionary<string, JsonElement>? values)
     {
         var options = new GenerationOptions();
@@ -169,17 +169,17 @@ public static class OllamaTranslation
         }
     }
 
-    internal static List<OllamaToolCall>? Calls(IReadOnlyList<ToolCall> calls, ref int index)
+    internal static List<ChatApiToolCall>? Calls(IReadOnlyList<ToolCall> calls, ref int index)
     {
         if (calls.Count == 0)
         {
             return null;
         }
 
-        var list = new List<OllamaToolCall>();
+        var list = new List<ChatApiToolCall>();
         foreach (var c in calls)
         {
-            list.Add(new OllamaToolCall(new OllamaCalledFunction(c.Name, c.Arguments, index++)));
+            list.Add(new ChatApiToolCall(new ChatApiCalledFunction(c.Name, c.Arguments, index++)));
         }
 
         return list;

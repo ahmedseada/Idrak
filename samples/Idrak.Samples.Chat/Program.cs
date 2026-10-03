@@ -20,8 +20,8 @@ using Idrak.LanguageModels;
 //                                   (make the reference with tools/pytorch/pretrained_reference.py)
 //
 //   (<folder> may also be a Hugging Face model id, for example Qwen/Qwen3-0.6B: taken from the Hugging Face cache or
-//   Idrak's, else downloaded once; HF_TOKEN or huggingface-cli login for gated models; a .gguf file; or an Ollama
-//   model such as ollama:qwen3:8b, read from Ollama's own store)
+//   Idrak's, else downloaded once; HF_TOKEN or huggingface-cli login for gated models; a .gguf file; or a model
+//   of the local model store such as store:qwen3:8b, read in place)
 //
 //   A coding agent on the same models: samples/Idrak.Samples.CodingAgent. Fine-tuning, evaluating, exporting and
 //   downloading models: the idrak-tune tool (src/Idrak.FineTuning.Cli).

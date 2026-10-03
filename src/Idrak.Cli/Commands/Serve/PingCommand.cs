@@ -18,7 +18,7 @@ internal sealed class PingCommand : Command
     public override string Usage => """
         [URL] [options]
 
-        Asks URL (default: the server started last on this machine, else http://127.0.0.1:11434) for its models over
+        Asks URL (default: the server started last on this machine, else http://127.0.0.1:7317) for its models over
         the OpenAI-style API (GET /v1/models) and the chat API (GET /api/tags, /api/version), and reports which answer,
         the models and the time each answer took. Exits with 1 when neither API answers.
 
@@ -38,7 +38,7 @@ internal sealed class PingCommand : Command
         url = url.Contains("://", StringComparison.Ordinal) ? url.TrimEnd('/') : "http://" + url.TrimEnd('/');
         if (!Uri.TryCreate(url, UriKind.Absolute, out _))
         {
-            throw new UsageException($"'{url}' is not a URL (for example http://127.0.0.1:11434).");
+            throw new UsageException($"'{url}' is not a URL (for example http://127.0.0.1:7317).");
         }
 
         var limit = context.Timeout ?? TimeSpan.FromSeconds(10);                      // per call: --timeout, else 10 s

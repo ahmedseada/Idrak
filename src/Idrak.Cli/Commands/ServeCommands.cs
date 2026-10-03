@@ -39,7 +39,8 @@ internal sealed class ServeCommand : Command
     /// <summary>The options of the server (serve and ui).</summary>
     public const string OptionsHelp = """
           -H, --host NAME            address to listen on (default 127.0.0.1; 0.0.0.0 for every interface)
-          -p, --port N               port (default 11434, the port common local-model clients use; 0 picks a free one)
+          -p, --port N               port (default IDRAK_PORT, else the config's serve.port, else 7317; 0 picks a
+                                     free one; -p 11434 for clients that expect that port)
               --api-key KEY          require "Authorization: Bearer KEY" (default IDRAK_API_KEY when set); keys
                                      added with 'idrak server keys add' are accepted too
               --metrics              GET /metrics: requests, tokens, tokens per second, latency, queue and memory
@@ -73,10 +74,13 @@ internal sealed class ServeCommand : Command
           web chat           GET /ui
           control            GET /idrak/ps, POST /idrak/load, /idrak/unload, /idrak/stop, GET /idrak/status
           metrics            GET /metrics (with --metrics)
-        Tool calls are returned to the client, which runs the tools.
+        Tool calls are returned to the client, which runs the tools. Point clients at http://127.0.0.1:7317 (the
+        chat API's base address, or http://127.0.0.1:7317/v1 for the OpenAI-style API), or serve on the port they
+        expect with -p.
 
         Examples:
           idrak serve Qwen/Qwen3-0.6B
+          idrak serve qwen -p 11434                      # for clients that expect the chat API on port 11434
           idrak s qwen phi -p 8080 --api-key $KEY        # two models on one port
           idrak serve tiny=./tiny.gguf -d vulkan:0 -k int8 --keep-alive 30m --cors http://localhost:3000
         """;

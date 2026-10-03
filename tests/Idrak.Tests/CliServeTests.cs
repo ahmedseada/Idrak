@@ -42,6 +42,7 @@ internal static partial class Tests
     private static readonly (string Name, Action<Device> Run)[] CliServeGroup =
     [
         ("cli serve: help, short forms, usage errors, server keys", d => { if (d == Device.Cpu) CliServeHelpAndKeys(); }),
+        ("cli serve: the port (--port, IDRAK_PORT, config serve.port, default 7317) for serve and the client commands", d => { if (d == Device.Cpu) CliServePort(); }),
         ("cli serve: serve a tiny model, both APIs (streaming and not), ps, api, ping, load/unload, metrics, request log, stop", CliServeEndToEnd),
         ("cli serve: mcp serve over pipes, --list", d => { if (d == Device.Cpu) CliMcpServe(); }),
         ("cli serve: OpenAI-style API in Idrak.AspNetCore (tool calls streamed and not, translation, embeddings)", d => { if (d == Device.Cpu) CompletionsApiScripted(); }),
@@ -212,6 +213,86 @@ internal static partial class Tests
 
         Check(!Directory.EnumerateFiles(Path.Combine(cache, "servers")).Any(), "the state file is removed");
         Check(ServeCli("ping", url).Code == 1, "ping fails once the server is gone");
+    }
+
+    // The port: --port, else IDRAK_PORT, else the config's serve.port, else Idrak's own default; the client commands put
+    // the server started last on this machine between the environment and the config.
+    private static void CliServePort()
+    {
+        string folder = TempFolder(), cache = Path.Combine(folder, "cache"), config = Path.Combine(folder, "config.json");
+        var serve = CommandTable.All.First(c => c.Name == "serve");
+        var ps = CommandTable.All.First(c => c.Name == "server ps");
+        string? old = Environment.GetEnvironmentVariable(ServeHost.PortVariable);
+
+        (int Port, string Url) Chosen(params string[] port)
+        {
+            var options = new Dictionary<string, List<string>> { ["--config"] = [config], ["--cache"] = [cache] };
+            if (port.Length > 0)
+            {
+                options["--port"] = [.. port];
+            }
+
+            using var forServe = new CommandContext(serve, [], options, [], new StringWriter(), new StringWriter());
+            using var forClient = new CommandContext(ps, [], options, [], new StringWriter(), new StringWriter());
+            return (ServeHost.ReadSettings(forServe).Port, ServerClient.BaseUrl(forClient));
+        }
+
+        bool Refused(Action action)
+        {
+            try
+            {
+                action();
+                return false;
+            }
+            catch (UsageException)
+            {
+                return true;
+            }
+        }
+
+        try
+        {
+            Environment.SetEnvironmentVariable(ServeHost.PortVariable, null);
+            Check(ServeHost.DefaultPort == 7317 && Chosen() == (7317, "http://127.0.0.1:7317"), $"the default port: {Chosen()}");
+            Check(ServeCli("config", "set", "serve.port", "8123", "-C", config).Code == 0 && Chosen() == (8123, "http://127.0.0.1:8123"), $"config serve.port: {Chosen()}");
+            Environment.SetEnvironmentVariable(ServeHost.PortVariable, "8124");
+            Check(Chosen() == (8124, "http://127.0.0.1:8124"), $"IDRAK_PORT before the config: {Chosen()}");
+            Check(Chosen("8125") == (8125, "http://127.0.0.1:8125") && Chosen("0").Port == 0, $"--port before IDRAK_PORT: {Chosen("8125")}");
+
+            // A running server's state file (this process stands in for it): found by the clients unless the port is given.
+            Directory.CreateDirectory(Path.Combine(cache, "servers"));
+            File.WriteAllText(Path.Combine(cache, "servers", "9301.json"), new JsonObject
+            {
+                ["url"] = "http://127.0.0.1:9301", ["pid"] = Environment.ProcessId, ["started"] = DateTimeOffset.UtcNow.ToString("O"), ["models"] = new JsonArray(),
+            }.ToJsonString());
+            Check(Chosen().Url == "http://127.0.0.1:8124", "IDRAK_PORT before the running server");
+            Environment.SetEnvironmentVariable(ServeHost.PortVariable, null);
+            Check(Chosen() == (8123, "http://127.0.0.1:9301"), $"the running server before the config for clients, the config for serve: {Chosen()}");
+
+            Environment.SetEnvironmentVariable(ServeHost.PortVariable, "port");
+            Check(Refused(() => Chosen()), "IDRAK_PORT that is not a number is a usage error");
+            Environment.SetEnvironmentVariable(ServeHost.PortVariable, "70000");
+            Check(Refused(() => Chosen()), "IDRAK_PORT out of range is a usage error");
+            Environment.SetEnvironmentVariable(ServeHost.PortVariable, null);
+            Check(ServeCli("config", "set", "serve.port", "\"8126\"", "-C", config).Code == 0 && Chosen().Port == 8126, "serve.port as text");
+            Check(ServeCli("config", "set", "serve.port", "70000", "-C", config).Code == 0 && Refused(() => Chosen()), "serve.port out of range is a usage error");
+            Check(ServeCli("serve", TestData("gguf/tiny-qwen3-q8.gguf"), "-p", "65536").Code == 2, "--port out of range is a usage error");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(ServeHost.PortVariable, old);
+            Directory.Delete(folder, recursive: true);
+        }
+
+        string help = ServeCli("serve", "--help").Output;
+        Check(help.Contains("7317", StringComparison.Ordinal) && help.Contains("-p 11434", StringComparison.Ordinal) && help.Contains(ServeHost.PortVariable, StringComparison.Ordinal)
+              && help.Contains("serve.port", StringComparison.Ordinal), $"serve's help names the default, the variable, the config key and -p 11434: {help}");
+        Check(Idrak.Cli.Shared.EnvironmentVariables.Find(ServeHost.PortVariable) is { Group: "The tool" } variable && variable.Default.Contains("7317", StringComparison.Ordinal)
+              && variable.Commands.Contains("serve") && variable.Commands.Contains("ping"), "IDRAK_PORT in the environment table, with its default");
+        foreach (string name in new[] { "ui", "api", "ping", "server ps", "server stop" })
+        {
+            Check(Help.For(CommandTable.All.First(c => c.Name == name)).Contains(ServeHost.PortVariable, StringComparison.Ordinal), $"{name}'s help names {ServeHost.PortVariable}");
+        }
     }
 
     private static void CliMcpServe()

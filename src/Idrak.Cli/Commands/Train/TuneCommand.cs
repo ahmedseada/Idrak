@@ -25,7 +25,7 @@ internal sealed class TuneCommand : Command
     public override string Usage => "COMMAND MODEL [DATA...] [options]\n\n"
         + TuneTool.Usage.Replace("idrak-tune: fine-tune", "Fine-tune", StringComparison.Ordinal).Replace("idrak-tune ", "idrak tune ", StringComparison.Ordinal)
             .Replace("as idrak-data reads them", "as idrak data reads them", StringComparison.Ordinal)
-            .Replace("a .gguf file, ollama:name, or an", "a .gguf file, or an", StringComparison.Ordinal)
+            .Replace("a .gguf file, store:name (the local model store), or an", "a .gguf file, or an", StringComparison.Ordinal)
         + "\n" + """
 
         Options:

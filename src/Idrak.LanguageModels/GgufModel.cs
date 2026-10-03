@@ -166,7 +166,7 @@ public static class GgufPreTokenizers
 }
 
 /// <summary>
-/// Models from GGUF files (llama.cpp's and Ollama's format). <see cref="Prepare"/> writes a small folder with what the
+/// Models from GGUF files (the format of llama.cpp and of the local model store). <see cref="Prepare"/> writes a small folder with what the
 /// file's metadata describes, in the Hugging Face layout (config.json, tokenizer.json, tokenizer_config.json with the chat
 /// template, generation_config.json), and <see cref="PretrainedModel.Load"/> reads the weights from the GGUF file itself,
 /// dequantized tensor by tensor, with llama.cpp's names and layouts turned back into the Hugging Face ones.
@@ -201,7 +201,7 @@ public static class GgufModel
         string fingerprint = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(
             $"{FormatVersion}|{path}|{info.Length}|{info.LastWriteTimeUtc.Ticks}")))[..12];
         string name = Path.GetFileNameWithoutExtension(path);
-        name = name.StartsWith("sha256-", StringComparison.Ordinal) ? name[..Math.Min(name.Length, 19)] : name;   // Ollama blobs
+        name = name.StartsWith("sha256-", StringComparison.Ordinal) ? name[..Math.Min(name.Length, 19)] : name;   // blobs of the local model store
         string folder = Path.Combine(cacheRoot ?? Idrak.Datasets.Downloader.DefaultCacheRoot, "gguf", $"{name}-{fingerprint}");
         if (IsPrepared(folder))
         {

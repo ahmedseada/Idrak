@@ -1,7 +1,7 @@
 # idrak-tune
 
 One command-line tool for every fine-tuning job: LoRA / QLoRA adapters for any pretrained model Idrak loads
-(Hugging Face ids, folders, .gguf files, Ollama models), trained on any dataset `idrak-data` reads, then evaluated, chatted
+(Hugging Face ids, folders, .gguf files, models of the local model store), trained on any dataset `idrak-data` reads, then evaluated, chatted
 with and exported. Nothing in it is specific to a model family or to an application: a project that needs a tuned model
 runs idrak-tune with its data instead of writing its own tuner.
 

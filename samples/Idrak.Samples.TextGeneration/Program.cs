@@ -144,7 +144,7 @@ static void Benchmark(CharGpt gpt, GenerationSettings settings)
     }
 }
 
-// The chat model on a request like an Ollama /api/chat call: reasoning, a tool call, then an answer from the tool result.
+// The chat model on a request like an /api/chat call: reasoning, a tool call, then an answer from the tool result.
 static void ChatDemo(CharGpt gpt)
 {
     var chat = new Idrak.Generation.ChatGenerator(new Idrak.Generation.TextGenerator(gpt.Model,
@@ -153,7 +153,7 @@ static void ChatDemo(CharGpt gpt)
     var messages = new List<Idrak.Generation.ChatMessage>
     {
         new("system", "You are a helpful assistant. Cite sources as [1], [2] when a research pack is present."),
-        new("user", "What is the latest Ollama version?"),
+        new("user", "What is the latest Idrak version?"),
     };
     Idrak.Generation.ToolDefinition[] tools = [ChatCorpus.WebFetch];
 
@@ -177,7 +177,7 @@ static void ChatDemo(CharGpt gpt)
     if (messages[^1].ToolCalls is { Count: > 0 } calls)
     {
         string url = calls[0].Arguments["url"]?.GetValue<string>() ?? "";
-        messages.Add(new("tool", $"[1] {url}: Ollama 0.12.3 is the latest release.", ToolName: "web_fetch"));
+        messages.Add(new("tool", $"[1] {url}: Idrak 0.12.3 is the latest release.", ToolName: "web_fetch"));
         Turn("Turn 2 (after the tool result):");
     }
 }

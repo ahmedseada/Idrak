@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Idrak.AspNetCore: provider-neutral names for the chat API (`/api/chat`, `/api/tags`, `/api/ps`, `/api/version`,
+  routes unchanged): `MapChatApi`, `ChatApiOptions` and the `ChatApi*` wire types (`ChatApiRequest`,
+  `ChatApiResponse`, `ChatApiMessage`, `ChatApiToolCall`, `ChatApiModelTag`, ... , `ChatApiTranslation`). The former
+  names (`MapOllamaApi`, `OllamaApiOptions`, `OllamaChatRequest`, ...) still compile for one release, as obsolete
+  forwarders that convert to and from the new types. Endpoint names are now `Chat-NAME`, `ChatTags-NAME`, ... .
+- Idrak.LanguageModels: the local model store source is `ModelSource.LocalStoreModel` and the "store" source
+  (`store:NAME`); `ModelSource.OllamaModel` is an obsolete forwarder and the former prefix is still read.
+- `idrak serve` and `ui` listen on port 7317 by default (it was 11434, another local server's default); `-p/--port`,
+  then `IDRAK_PORT`, then the config's `serve.port` choose another, and `-p 11434` serves clients that expect that
+  port. The client commands (`api`, `ping`, `server ...`) take `--port` or `IDRAK_PORT`, then the server started
+  last, then `serve.port` and 7317.
+
 - idrak, across the groups: every command's help has one layout (usage and aliases, "Arguments:", "Options:" with
   short forms, examples, limits and gaps, the common options, and the environment variables that affect it, generated
   from the one variable table instead of hand-written lines); `idrak help` lists the commands by group with their

@@ -24,7 +24,7 @@ public static class ChatCorpus
     public static readonly ToolDefinition WebFetch = new("web_fetch", "Fetch a page from the allowlisted search results.",
         JsonNode.Parse("""{"type":"object","properties":{"url":{"type":"string","description":"Absolute http(s) URL from the allowlist."}},"required":["url"]}"""));
 
-    private static readonly string[] Products = ["Ollama", "Idrak", "Python", "Node", "Redis", "Postgres", "Docker", "Kafka", "Nginx", "Rust"];
+    private static readonly string[] Products = ["Caddy", "Idrak", "Python", "Node", "Redis", "Postgres", "Docker", "Kafka", "Nginx", "Rust"];
 
     /// <summary>Returns <paramref name="count"/> transcripts, each ending with the assistant turn and the end-of-turn marker.</summary>
     public static string Generate(int count, int seed)

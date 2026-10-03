@@ -159,8 +159,15 @@ idrak agent qwen "Add a test for Parse" --workspace ./src
 ### Serve
 
 Several models on one port over the chat API (the routes common local-model clients use) and the OpenAI-style
-API, loaded on first use and unloaded when idle. The default port is 11434; each running server records itself in
-the cache folder, so `ps`, `api`, `ping` and `server ...` find it without `--port`.
+API, loaded on first use and unloaded when idle. The port is `-p/--port`, else `IDRAK_PORT`, else the config's
+`serve.port`, else 7317, Idrak's own (so it does not collide with another local model server). Each running server
+records itself in the cache folder, so `ps`, `api`, `ping` and `server ...` find it without `--port` (they use
+`--port` or `IDRAK_PORT` when given, then the server started last, then `serve.port` and 7317).
+
+Clients: give them `http://127.0.0.1:7317` as the chat API's address and `http://127.0.0.1:7317/v1` as the
+OpenAI-style API's base URL (any API key unless the server needs one). Clients that expect the chat API on port 11434
+and cannot be told another work unchanged with `idrak serve MODEL -p 11434` (or `idrak config set serve.port 11434`),
+as long as no other server uses that port.
 
 | Command | What it does |
 |---|---|
@@ -386,6 +393,7 @@ values, and every command's help ends with the variables that affect it. The mos
 | `IDRAK_MATMUL`, `IDRAK_OFFLOAD` | Matrix product precision; spilling to system memory |
 | `HF_TOKEN`, `HF_ENDPOINT`, `HF_HOME` | The Hugging Face token, hub address and folder |
 | `IDRAK_API_KEY` | The key `serve` requires and the client commands send |
+| `IDRAK_PORT` | The port `serve` and `ui` listen on and the client commands call (`--port` wins; default 7317) |
 | `IDRAK_TRACE`, `NO_COLOR` | Error stacks; no colour |
 | `VK_ICD_FILENAMES`, `DOTNET_GCHeapHardLimit` | The Vulkan driver file and the heap limit a phone needs |
 

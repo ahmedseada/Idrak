@@ -6,7 +6,7 @@ using Idrak.Samples.Gpt;
 
 namespace Idrak.Samples.GptApi;
 
-/// <summary>Loads the model served by the Ollama-compatible endpoints: a chat-trained GPT if one exists, otherwise the text GPT.</summary>
+/// <summary>Loads the model served by the chat API endpoints: a chat-trained GPT if one exists, otherwise the text GPT.</summary>
 public static class ChatModelFile
 {
     public static TextGenerator Load(IConfiguration configuration)

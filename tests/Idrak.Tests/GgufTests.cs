@@ -81,8 +81,9 @@ internal static partial class Tests
                 Check(MathF.Abs(lossGguf - lossHf) < 1e-4f, $"{name}: loss {lossGguf} from GGUF, {lossHf} from the Hugging Face copy");
             }
 
-            // Ollama's store: the manifest of name:tag names the blob holding the GGUF file.
-            string store = Path.Combine(cache, "ollama");
+            // The local model store (its folder and manifests as that store writes them): the manifest of name:tag names the
+            // blob holding the GGUF file.
+            string store = Path.Combine(cache, "store");
             string? oldStore = Environment.GetEnvironmentVariable("OLLAMA_MODELS"), oldCache = Environment.GetEnvironmentVariable("IDRAK_CACHE");
             Directory.CreateDirectory(Path.Combine(store, "manifests", "registry.ollama.ai", "library", "tiny"));
             Directory.CreateDirectory(Path.Combine(store, "blobs"));
@@ -93,14 +94,15 @@ internal static partial class Tests
             {
                 Environment.SetEnvironmentVariable("OLLAMA_MODELS", store);
                 Environment.SetEnvironmentVariable("IDRAK_CACHE", cache);
-                Check(ModelSource.OllamaModel("tiny:q8") == Path.Combine(store, "blobs", "sha256-abc123"), "ollama name → blob");
-                string prepared = ModelSource.Resolve("ollama:tiny:q8");
-                using var ollama = PretrainedModel.Load(prepared, new PretrainedOptions { Device = device });
-                Check(ollama.Spec.Layers == 2 && prepared.StartsWith(Path.Combine(cache, "gguf"), StringComparison.Ordinal), "an Ollama model loads");
+                Check(ModelSource.LocalStoreModel("tiny:q8") == Path.Combine(store, "blobs", "sha256-abc123"), "store name → blob");
+                string prepared = ModelSource.Resolve("store:tiny:q8");
+                using var stored = PretrainedModel.Load(prepared, new PretrainedOptions { Device = device });
+                Check(stored.Spec.Layers == 2 && prepared.StartsWith(Path.Combine(cache, "gguf"), StringComparison.Ordinal), "a model of the local store loads");
+                Check(ModelSource.Resolve("ollama:tiny:q8") == prepared, "the former prefix still resolves");
                 try
                 {
-                    ModelSource.OllamaModel("missing");
-                    Check(false, "a missing Ollama model should fail");
+                    ModelSource.LocalStoreModel("missing");
+                    Check(false, "a model missing from the store should fail");
                 }
                 catch (FileNotFoundException ex)
                 {

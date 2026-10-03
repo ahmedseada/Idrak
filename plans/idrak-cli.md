@@ -199,8 +199,12 @@ Built (branch `cli-serve`; also `serve --metrics`, `--log-requests`/`--log-conte
 `ping` from the second pass below). Added while building, and built:
 
 - `NAME=MODEL` on serve and ui names a served model; a file or folder is named after itself, an alias keeps its name.
-- The default port is 11434 (the one common local-model clients connect to) and `-p 0` picks a free one; each running
-  server records itself in `CACHE/servers/PORT.json`, so `ps`, `api`, `ping` and `server ...` find it without `--port`.
+- The default port is 7317, Idrak's own (decided 2026-10-03: 11434 is another local server's default); `-p/--port`, then `IDRAK_PORT`, then the config's `serve.port` choose another, and `-p 0`
+  picks a free one. `-p 11434` (or `serve.port` 11434) gives drop-in use for clients that expect that port. 7317 lies
+  in IANA's registered range 7300-7359 (a financial exchange's own network protocol), which no tool of a developer
+  machine uses by default, so it was kept. Each running server records itself in `CACHE/servers/PORT.json`, so `ps`,
+  `api`, `ping` and `server ...` find it without `--port`; they take `--port` or `IDRAK_PORT` first, then the server
+  started last, then `serve.port` and 7317.
 - `/ui` is served by every server (not only `ui`); `ui --no-browser` prints the address instead of opening it.
 - Control endpoints the server commands use: `GET /idrak/ps`, `POST /idrak/load`, `/idrak/unload`, `/idrak/stop`,
   `GET /idrak/status`; `api --method NAME`; `mcp serve --list`.
