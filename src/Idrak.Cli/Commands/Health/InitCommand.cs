@@ -20,9 +20,10 @@ internal sealed class InitCommand : Command
     public override string Usage => """
         [--yes] [--dry-run] [--profile NAME]
 
-          -y, --yes        no questions: the default device and the cache folder doctor finds
-          --dry-run        print what would be written, write nothing
-          --profile NAME   write the values into a named profile (e.g. phone) instead of the top level
+        Options:
+          -y, --yes           no questions: the default device and the cache folder doctor finds
+              --dry-run       print what would be written, write nothing
+              --profile NAME  write the values into a named profile (e.g. phone) instead of the top level
 
         Keys already in the file are kept; the ones asked for are replaced. The file is --config, IDRAK_CONFIG or
         ~/.idrak/config.json.

@@ -22,7 +22,7 @@ internal sealed class DataCommand : Command
             .Replace("hf:openai/gsm8k", "hf:owner/qa-set", StringComparison.Ordinal)
         + """
 
-        idrak data also takes -o for --out and -s for --system. Its other commands, each with its own help:
+        idrak data also takes -o, --out FILE and -s, --system TEXT. Its other commands, each with its own help:
           idrak data preview FILE                       first rows, columns and their types
           idrak data validate FILE --as chat|preference|table
           idrak data stats FILE [-m MODEL]              lengths in characters, words and tokens

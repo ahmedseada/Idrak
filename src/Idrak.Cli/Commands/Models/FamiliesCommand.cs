@@ -22,6 +22,7 @@ internal sealed class FamiliesCommand : Command
     public override string Usage => """
         [FILTER]
 
+        Arguments:
           FILTER  only families whose name contains this text (e.g. qwen)
 
         A family is the "architectures" name in a model's config.json. "own network": the family builds its own layers.

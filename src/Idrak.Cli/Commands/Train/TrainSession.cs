@@ -181,6 +181,7 @@ internal static class TrainSession
         int? patience = validationSet is null ? null : settings.Patience ?? 20;
         int every = context.Verbose ? 1 : Math.Max(1, total / 10);
         var clock = Stopwatch.StartNew();
+        using var progress = new ProgressLine(context, "training", unit: ProgressUnit.Items);
         using var trainer = new Trainer(model, loss, optimizer)
         {
             Metrics = { metric },
@@ -189,6 +190,7 @@ internal static class TrainSession
             {
                 if (e.Epoch % every == 0 || e.Epoch == 1 || e.Epoch == total)
                 {
+                    progress.Erase();
                     context.Write($"  epoch {e.Epoch + epochsDone,4}  loss {RunLog.Format(e.Loss)}"
                                   + (e.ValidationLoss is { } v ? $"  val_loss {RunLog.Format(v)}" : "")
                                   + string.Concat((e.ValidationMetrics ?? e.Metrics).Select(m => $"  {(e.ValidationMetrics is null ? "" : "val_")}{m.Key} {RunLog.Format(m.Value)}")));
@@ -199,6 +201,7 @@ internal static class TrainSession
         var validationLoader = validationSet is null ? null : new DataLoader(validationSet, Math.Max(settings.Batch, 256), device: device);
         string log = Path.Combine(folder, "log.jsonl");
         trainer.Callbacks.Add(new Checkpoint(folder));
+        trainer.Callbacks.Add(new TrainingProgress(progress, total, epochsDone));
         trainer.Callbacks.Add(new RunLogWriter(log, new TrainingStarted(model.Name ?? "network", optimizerName, device, total + epochsDone, trainSet.Count,
             validationSet?.Count, settings.Batch, (trainSet.Count + settings.Batch - 1) / settings.Batch, model.ParameterCount, settings.LearningRate,
             ComputeResources.MaxCpuThreads), epochsDone));

@@ -36,28 +36,34 @@ internal sealed class ServeCommand : Command
 
     public override string Summary => "Serve models over the chat API and the OpenAI-style API on one port";
 
-    public override string Usage => """
+    /// <summary>The options of the server (serve and ui).</summary>
+    public const string OptionsHelp = """
+          -H, --host NAME            address to listen on (default 127.0.0.1; 0.0.0.0 for every interface)
+          -p, --port N               port (default 11434, the port common local-model clients use; 0 picks a free one)
+              --api-key KEY          require "Authorization: Bearer KEY" (default IDRAK_API_KEY when set); keys
+                                     added with 'idrak server keys add' are accepted too
+              --metrics              GET /metrics: requests, tokens, tokens per second, latency, queue and memory
+                                     in the plain text format monitoring tools scrape
+              --log-requests FILE    one JSON line per model request (time, model, status, tokens, speed)
+              --log-content          add the request bodies (prompts) to that log
+              --cors ORIGIN          allow browser pages from ORIGIN (repeatable or comma-separated; * for any)
+              --max-concurrency N    model requests answered at once; the rest wait (default 0: no limit)
+              --keep-alive DURATION  unload a model after this long without use: 30s, 5m, 1h, 0 (after each
+                                     request) or -1 (never) (default 5m)
+          -w, --weights FORMAT       int8, int4, bf16 or a registered packed format
+          -k, --kv FORMAT            the KV cache format (float32, int8, bfloat16 or a registered one)
+              --context N            the longest context to allocate
+              --adapter DIR          merge a LoRA or DoRA adapter into the weights
+        """;
+
+    public override string Usage => $"""
         MODEL [MODEL...] [options]
 
         Serves each MODEL (a Hugging Face id, a folder, a GGUF file, a .ikm package or an alias; NAME=MODEL serves it
         as NAME) on one port. Each model loads on its first request and unloads after --keep-alive without use.
 
-          -H, --host NAME             address to listen on (default 127.0.0.1; 0.0.0.0 for every interface)
-          -p, --port N                port (default 11434, the port common local-model clients use; 0 picks a free one)
-              --api-key KEY           require "Authorization: Bearer KEY" (default IDRAK_API_KEY when set); keys
-                                      added with 'idrak server keys add' are accepted too
-              --metrics               GET /metrics: requests, tokens, tokens per second, latency, queue and memory
-                                      in the plain text format monitoring tools scrape
-              --log-requests FILE     one JSON line per model request (time, model, status, tokens, speed)
-              --log-content           add the request bodies (prompts) to that log
-              --cors ORIGIN           allow browser pages from ORIGIN (repeatable or comma-separated; * for any)
-              --max-concurrency N     model requests answered at once; the rest wait (default 0: no limit)
-              --keep-alive DURATION   unload a model after this long without use: 30s, 5m, 1h, 0 (after each
-                                      request) or -1 (never) (default 5m)
-          -w, --weights FORMAT        int8, int4, bf16 or a registered packed format
-          -k, --kv FORMAT             the KV cache format (float32, int8, bfloat16 or a registered one)
-              --context N             the longest context to allocate
-              --adapter DIR           merge a LoRA or DoRA adapter into the weights
+        Options:
+        {OptionsHelp}
 
         Endpoints:
           chat API           POST /api/chat (streamed lines, tool calls, think, keep_alive), GET /api/tags,
@@ -96,15 +102,15 @@ internal sealed class UiCommand : Command
 
     public override string Summary => "Serve models and open a small web chat page in the browser";
 
-    public override string Usage => """
+    public override string Usage => $"""
         MODEL [MODEL...] [options]
 
         Starts the same server as 'idrak serve' (every serve option applies) and opens its chat page (/ui) in the
         browser; the page streams answers from the OpenAI-style API.
 
-          -H, --host NAME   address to listen on (default 127.0.0.1)
-          -p, --port N      port (default 11434; 0 picks a free one)
-              --no-browser  print the page's address instead of opening it
+        Options:
+              --no-browser           print the page's address instead of opening it
+        {ServeCommand.OptionsHelp}
 
         Examples:
           idrak ui Qwen/Qwen3-0.6B

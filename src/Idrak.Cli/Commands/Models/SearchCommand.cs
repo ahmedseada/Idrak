@@ -20,9 +20,12 @@ internal sealed class SearchCommand : Command
     public override string Usage => """
         QUERY [--limit N] [--kind safetensors|gguf] [--all] [--token TOKEN]
 
-          QUERY              words in the model's name (e.g. qwen3 0.6b)
+        Arguments:
+          QUERY  words in the model's name (e.g. qwen3 0.6b)
+
+        Options:
               --limit N      at most N results (default 20)
-              --kind K     only transformers models with safetensors weights, or only GGUF repositories
+              --kind K       only transformers models with safetensors weights, or only GGUF repositories
               --all          also models Idrak cannot load (marked)
               --token TOKEN  for private models (default: the config's hf_token, HF_TOKEN or the saved login)
 

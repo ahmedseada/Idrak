@@ -106,8 +106,9 @@ internal sealed class LogoutCommand : Command
     public override string Usage => """
         hf|github|kaggle [--yes] [--dry-run]
 
-          -y, --yes   no question
-          --dry-run   say what would be removed
+        Options:
+          -y, --yes      no question
+              --dry-run  say what would be removed
 
         Examples:
           idrak logout hf

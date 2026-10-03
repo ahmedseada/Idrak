@@ -258,15 +258,20 @@ internal sealed class BenchCommand : Command
         var prompts = new List<double>();
         var generated = new List<double>();
         int measuredPrompt = 0, measuredGenerated = 0;
+        using var progress = new ProgressLine(context, $"runs on {device}", repeats);
         for (int i = 0; i < repeats; i++)
         {
             var stats = generator.Generate(prompt, options).Stats;
+            progress.Report(i + 1);
             measuredPrompt = stats.PromptTokens;
             measuredGenerated = stats.GeneratedTokens;
             prompts.Add(stats.PromptDuration.TotalSeconds > 0 ? stats.PromptTokens / stats.PromptDuration.TotalSeconds : 0);
             generated.Add(stats.TokensPerSecond);
+            progress.Erase();
             context.Detail($"  run {i + 1}: prompt {prompts[^1]:F1} tokens/s, generation {generated[^1]:F1} tokens/s");
         }
+
+        progress.Clear();
 
         var memory = ComputeResources.GetMemoryUsage(device);
         double promptRate = Median(prompts), generationRate = Median(generated);
@@ -316,7 +321,19 @@ internal sealed class BenchCommand : Command
             : ["int8", "int4", "bfloat16"];
         var device = run.Device;
         context.Write($"kernels on {device} ({device.Name}): {string.Join(", ", kernels)}, {repeats} calls each{(small ? ", small shapes" : "")}");
-        var results = KernelBench.Run(device, kernels, repeats, small, formats, step => context.Detail($"  {step}"));
+        List<BenchResult> results;
+        using (var progress = new ProgressLine(context, "kernels"))
+        {
+            results = KernelBench.Run(device, kernels, repeats, small, formats, step =>
+            {
+                progress.Erase();
+                context.Detail($"  {step}");
+                progress.Label = step;
+                progress.Advance();
+            });
+            progress.Clear();
+        }
+
         document["settings"] = new JsonObject
         {
             ["kernels"] = new JsonArray([.. kernels.Select(k => (JsonNode)k)]),

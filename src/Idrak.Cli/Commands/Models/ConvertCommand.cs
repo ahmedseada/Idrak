@@ -19,21 +19,24 @@ internal sealed class ConvertCommand : Command
     public override string Usage => """
         IN OUT [--type bf16|f16|f32] [-f] [--dry-run]
 
-          IN              a .gguf file, a model folder, a cached Hugging Face id or an alias
-          OUT             a folder: the model in the Hugging Face layout (model.safetensors, config, tokenizer, template)
-          -o, --out DIR   OUT as an option
-              --type T    the element type of the written weights (default bf16)
-          -f, --force     write into a folder that is not empty
-              --dry-run   say what would be written
+        Arguments:
+          IN   a .gguf file, a model folder, a cached Hugging Face id or an alias
+          OUT  a folder: the model in the Hugging Face layout (model.safetensors, config, tokenizer, template)
+
+        Options:
+          -o, --out DIR  OUT as an option
+              --type T   the element type of the written weights (default bf16)
+          -f, --force    write into a folder that is not empty
+              --dry-run  say what would be written
 
         GGUF weights are dequantized (float32 in memory, one model at a time) and written in --type.
-
-        Gaps: writing GGUF files (the library reads GGUF but has no writer) and language models as .ikm packages (a
-        package holds a network built from a builder description; a pretrained decoder is not loaded from one yet).
 
         Examples:
           idrak convert ./qwen3-0.6b-q8_0.gguf ./qwen3-0.6b
           idrak convert Qwen/Qwen3-0.6B -o ./qwen-f32 --type f32
+
+        Gaps: writing GGUF files (the library reads GGUF but has no writer) and language models as .ikm packages (a
+        package holds a network built from a builder description; a pretrained decoder is not loaded from one yet).
         """;
 
     public override IReadOnlyCollection<string> ValueOptions => ["--out", "--type"];
@@ -60,7 +63,7 @@ internal sealed class ConvertCommand : Command
         ModelWork.CheckOutput(context, output);
         var local = ModelCache.Locate(context, input);
         string from = local.File is null ? "Hugging Face folder" : "GGUF file";
-        if (context.Flag("--dry-run"))
+        if (Terminal.DryRun(context))
         {
             context.Write($"Would read {input} ({from}) and write it to {output} as a Hugging Face folder ({type}).");
             context.WriteJson(new JsonObject { ["in"] = input, ["from"] = local.File is null ? "huggingface" : "gguf", ["out"] = output, ["type"] = type.ToString(), ["dryRun"] = true });

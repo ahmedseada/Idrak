@@ -252,7 +252,55 @@ internal static class Help
     {
         string usage = command.Usage.Replace("\r", "", StringComparison.Ordinal);
         int newline = usage.IndexOf('\n');
-        return newline < 0 ? "" : usage[(newline + 1)..].Trim('\n').TrimEnd();
+        string body = newline < 0 ? "" : usage[(newline + 1)..].Trim('\n').TrimEnd();
+        return string.Join('\n', Reflow(body.Split('\n'), Width));
+    }
+
+    /// <summary>The width help text is wrapped to.</summary>
+    public const int Width = 118;
+
+    /// <summary>
+    /// Lines longer than <paramref name="width"/> broken at spaces. The words that do not fit go under the text of an item
+    /// line (after its name and the gap of two or more spaces), else under the line's own indentation, and join the next
+    /// line when that line continues the same text (the same indentation), so a paragraph stays a paragraph.
+    /// </summary>
+    internal static List<string> Reflow(IEnumerable<string> text, int width)
+    {
+        var lines = text.ToList();
+        for (int i = 0; i < lines.Count; i++)
+        {
+            string line = lines[i];
+            if (line.Length <= width)
+            {
+                continue;
+            }
+
+            var item = System.Text.RegularExpressions.Regex.Match(line, @"^(\s*\S.*?\s{2,})\S");
+            int indent = line.Length - line.TrimStart().Length;
+            int hang = item.Success && item.Groups[1].Length < width / 2 ? item.Groups[1].Length : indent;
+            int cut = line.LastIndexOf(' ', width);
+            if (cut <= hang)
+            {
+                continue;                                                            // one long word: left as it is
+            }
+
+            lines[i] = line[..cut].TrimEnd();
+            string rest = line[(cut + 1)..].TrimStart();
+            string? next = i + 1 < lines.Count ? lines[i + 1] : null;
+            // The next line continues this text when it starts where the overflow goes and is not a new item ("Data: ...").
+            bool continues = next is { Length: > 0 } && next.Length - next.TrimStart().Length == hang
+                             && !System.Text.RegularExpressions.Regex.IsMatch(next.TrimStart(), @"^[\w<-][^ ]*:\s");
+            if (continues)
+            {
+                lines[i + 1] = new string(' ', hang) + rest + " " + next!.TrimStart();
+            }
+            else
+            {
+                lines.Insert(i + 1, new string(' ', hang) + rest);
+            }
+        }
+
+        return lines;
     }
 
     private const string CommonOptions =

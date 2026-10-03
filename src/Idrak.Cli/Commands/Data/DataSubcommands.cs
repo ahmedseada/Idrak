@@ -21,7 +21,8 @@ internal sealed class DataPreviewCommand : Command
     public override string Usage => """
         FILE [-n ROWS]
 
-          -n, --rows N   rows to show (default 5); the column types come from the first 1,000 rows
+        Options:
+          -n, --rows N  rows to show (default 5); the column types come from the first 1,000 rows
 
         Examples:
           idrak data preview houses.csv
@@ -73,16 +74,17 @@ internal sealed class DataValidateCommand : Command
 {
     public override string Name => "data validate";
 
-    public override string Summary => "Check rows against the shape a command expects (chat, preference or table), showing the first bad rows";
+    public override string Summary => "Check rows against the shape a command expects (chat, preference or table), with the first bad rows";
 
     public override string Usage => """
         FILE --as chat|preference|table [-t COL] [--show N]
 
-          --as KIND       chat: conversations with an assistant turn (as idrak tune reads them, any common layout);
+        Options:
+              --as KIND   chat: conversations with an assistant turn (as idrak tune reads them, any common layout);
                           preference: prompt, chosen and rejected (dpo, orpo, simpo); table: the same columns in every row,
                           scalar values, numbers where the column holds numbers (as idrak train reads a CSV)
           -t, --target C  table: this column must be present and filled
-          --show N        bad rows to show (default 5)
+              --show N    bad rows to show (default 5)
 
         Exit code 1 when a row is bad.
 
@@ -240,15 +242,16 @@ internal sealed class DataStatsCommand : Command
 {
     public override string Name => "data stats";
 
-    public override string Summary => "Row lengths (characters, words, tokens with a model's tokenizer), a length histogram, rows over a context length";
+    public override string Summary => "Row lengths in characters, words and tokens, a length histogram, and the rows over a context length";
 
     public override string Usage => """
         FILE [-m MODEL] [--context N] [--column COL]
 
-          -m, --model MODEL   count tokens with this model's tokenizer (a Hugging Face id, a folder, a .gguf file or an
-                              alias); conversations are rendered with its chat template first
-          --context N         count the rows longer than N tokens (default: the model's context length when known)
-          --column COL        the text column (default: conversations as rendered, else every text value of a row)
+        Options:
+          -m, --model MODEL  count tokens with this model's tokenizer (a Hugging Face id, a folder, a .gguf file or an
+                             alias); conversations are rendered with its chat template first
+              --context N    count the rows longer than N tokens (default: the model's context length when known)
+              --column COL   the text column (default: conversations as rendered, else every text value of a row)
 
         Examples:
           idrak data stats chats.jsonl -m qwen
@@ -411,16 +414,19 @@ internal sealed class DataConvertCommand : Command
 {
     public override string Name => "data convert";
 
-    public override string Summary => "Convert between CSV, JSON Lines and JSON (Parquet is read), and common chat layouts to the chat rows the tools read";
+    public override string Summary => "Convert rows between CSV, JSON Lines and JSON (Parquet is read), and chat layouts to chat rows";
 
     public override string Usage => """
         IN OUT [--as chat|preference|text] [-s SYSTEM] [-f]
 
+        Arguments:
           OUT's extension picks the format: .jsonl, .json, .csv or .tsv (writing Parquet is not in the library yet)
-          --as chat         rows as conversations {"messages": [...]} (from messages, ShareGPT, Alpaca, question/answer, ...)
-          --as preference   rows as {"prompt", "chosen", "rejected"}; --as text: rows as {"text"}
-          -s, --system S    a system message for conversations without one
-          -f, --force       overwrite OUT
+
+        Options:
+              --as chat        rows as conversations {"messages": [...]} (from messages, ShareGPT, Alpaca, question/answer, ...)
+              --as preference  rows as {"prompt", "chosen", "rejected"}; --as text: rows as {"text"}
+          -s, --system S       a system message for conversations without one
+          -f, --force          overwrite OUT
 
         Examples:
           idrak data convert train.parquet train.jsonl
@@ -494,11 +500,12 @@ internal sealed class DataDedupeCommand : Command
     public override string Usage => """
         FILE [-o OUT] [--columns A,B] [--near] [--dry-run] [-y]
 
-          -o, --out FILE    where to write the rows kept (default: FILE itself, which needs -y, --yes)
-          --columns A,B     compare only these columns (default: every column)
-          --near            text values are compared lower-cased, with letters and digits only, spaces collapsed
-          --dry-run         count the duplicates without writing
-          -y, --yes         overwrite FILE without asking
+        Options:
+          -o, --out FILE     where to write the rows kept (default: FILE itself, which needs -y, --yes)
+              --columns A,B  compare only these columns (default: every column)
+              --near         text values are compared lower-cased, with letters and digits only, spaces collapsed
+              --dry-run      count the duplicates without writing
+          -y, --yes          overwrite FILE without asking
 
         Examples:
           idrak data dedupe chats.jsonl -o chats.unique.jsonl --near
@@ -515,10 +522,10 @@ internal sealed class DataDedupeCommand : Command
     {
         string path = context.Argument(0, "FILE");
         string output = context.Option("--out") ?? path;
-        bool dryRun = context.Flag("--dry-run"), near = context.Flag("--near");
-        if (!dryRun && Path.GetFullPath(output) == Path.GetFullPath(path) && !context.Flag("--yes"))
+        bool dryRun = Terminal.DryRun(context), near = context.Flag("--near");
+        if (!dryRun && Path.GetFullPath(output) == Path.GetFullPath(path) && !Terminal.Confirm(context, $"Overwrite {path} with the rows kept (-o FILE writes elsewhere)?"))
         {
-            context.Error($"This would overwrite {path}: give -y, --yes to do it, -o FILE to write elsewhere, or --dry-run to count only.");
+            context.Error($"{path} is left as it was.");
             return ExitCodes.Failed;
         }
 
@@ -572,10 +579,11 @@ internal sealed class DataSplitCommand : Command
     public override string Usage => """
         FILE [--validation F] [--test F] [--seed N] [-t COL] [-o PREFIX]
 
-          --validation F   the validation fraction (default 0.1); --test F: the test fraction (default 0.1); 0 skips a part
-          --seed N         the shuffle's seed (default 1)
-          -t, --target C   keep this column's class balance in every part
-          -o, --out P      the files' prefix (default FILE without its extension): P.train.EXT, P.validation.EXT, P.test.EXT
+        Options:
+              --validation F  the validation fraction (default 0.1); --test F: the test fraction (default 0.1); 0 skips a part
+              --seed N        the shuffle's seed (default 1)
+          -t, --target C      keep this column's class balance in every part
+          -o, --out P         the files' prefix (default FILE without its extension): P.train.EXT, P.validation.EXT, P.test.EXT
 
         Examples:
           idrak data split houses.csv --test 0.2 --validation 0
@@ -662,10 +670,11 @@ internal sealed class DataSampleCommand : Command
     public override string Usage => """
         FILE -n N [--seed N] [-t COL] [-o OUT]
 
-          -n, --rows N     how many rows
-          --seed N         the seed (default 1)
-          -t, --target C   keep this column's class proportions
-          -o, --out FILE   write the sample (by extension); without it the rows are printed as JSON Lines
+        Options:
+          -n, --rows N    how many rows
+              --seed N    the seed (default 1)
+          -t, --target C  keep this column's class proportions
+          -o, --out FILE  write the sample (by extension); without it the rows are printed as JSON Lines
 
         Examples:
           idrak data sample chats.jsonl -n 100 -o small.jsonl
@@ -708,7 +717,7 @@ internal sealed class DataSampleCommand : Command
         {
             foreach (var row in sample)
             {
-                context.Output.WriteLine(row.ToJsonString(new System.Text.Json.JsonSerializerOptions { Encoder = CommandContext.JsonOutput.Encoder }));
+                context.Output.WriteLine(row.ToJsonString(CommandContext.JsonLine));
             }
         }
 
@@ -734,11 +743,14 @@ internal sealed class DataMixCommand : Command
     public override string Usage => """
         RECIPE.json -o OUT [--eval FILE] [--eval-fraction F] [--seed N]
 
-          RECIPE.json       {"sources": [{"source": "hf:...", "weight": 2, "take": 4000}, "local.jsonl?weight=0.5"],
-                            "system": "...", "seed": 1, "min_chars": 20, "eval_fraction": 0.02} (idrak help data has more)
-          -o, --out FILE    the training rows (.jsonl, .json or .csv)
-          --eval FILE       the held-out rows (default OUT.eval.jsonl) when the recipe or --eval-fraction holds some out
-          --eval-fraction F, --seed N   override the recipe's
+        Arguments:
+          RECIPE.json  {"sources": [{"source": "hf:...", "weight": 2, "take": 4000}, "local.jsonl?weight=0.5"],
+                       "system": "...", "seed": 1, "min_chars": 20, "eval_fraction": 0.02} (idrak help data has more)
+
+        Options:
+          -o, --out FILE                   the training rows (.jsonl, .json or .csv)
+              --eval FILE                  the held-out rows (default OUT.eval.jsonl) when the recipe or --eval-fraction holds some out
+              --eval-fraction F, --seed N  override the recipe's
 
         Examples:
           idrak data mix recipe.json -o train.jsonl

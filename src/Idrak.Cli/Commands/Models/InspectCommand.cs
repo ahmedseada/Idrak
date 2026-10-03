@@ -25,8 +25,11 @@ internal sealed class InspectCommand : Command
     public override string Usage => """
         FILE [--filter TEXT] [--limit N] [--no-tensors]
 
-          FILE              a .gguf file, a .safetensors file, a model folder (its safetensors, or sharded index), or an
-                            .ikm package
+        Arguments:
+          FILE  a .gguf file, a .safetensors file, a model folder (its safetensors, or sharded index), or an
+                .ikm package
+
+        Options:
               --filter TEXT only tensors (and metadata keys) whose name contains this text
               --limit N     at most N tensors in the text output (default all; JSON has all)
               --no-tensors  only the metadata and totals

@@ -21,9 +21,9 @@ internal static class ServerClient
     public static readonly Dictionary<string, string> ShortForms = new() { ["-H"] = "--host", ["-p"] = "--port" };
 
     public const string OptionsHelp = """
-          -H, --host NAME   the server's address (default: the server started last on this machine, else 127.0.0.1)
-          -p, --port N      the server's port (default: as above, else 11434)
-              --api-key KEY the server's API key (default IDRAK_API_KEY)
+          -H, --host NAME    the server's address (default: the server started last on this machine, else 127.0.0.1)
+          -p, --port N       the server's port (default: as above, else 11434)
+              --api-key KEY  the server's API key (default IDRAK_API_KEY)
         """;
 
     public static string BaseUrl(CommandContext context)
@@ -61,7 +61,7 @@ internal static class ServerClient
         context.Detail($"{method} {request.RequestUri}");
         try
         {
-            return http.SendAsync(request, stream ? HttpCompletionOption.ResponseHeadersRead : HttpCompletionOption.ResponseContentRead, context.TimeoutToken).GetAwaiter().GetResult();
+            return http.SendAsync(request, stream ? HttpCompletionOption.ResponseHeadersRead : HttpCompletionOption.ResponseContentRead).GetAwaiter().GetResult();
         }
         catch (HttpRequestException e)
         {
@@ -110,7 +110,9 @@ internal sealed class ServerPsCommand : Command
     public override string Usage => $"""
         [options]
 
+        Options:
         {ServerClient.OptionsHelp}
+
         Examples:
           idrak ps
           idrak server ps -p 8080 --json
@@ -173,7 +175,11 @@ internal sealed class ServerStopCommand : Command
     public override string Usage => $"""
         [options]
 
+        Open requests finish first; --timeout bounds how long the call waits.
+
+        Options:
         {ServerClient.OptionsHelp}
+
         Examples:
           idrak server stop
           idrak server stop -p 8080
@@ -200,7 +206,10 @@ internal abstract class ServerModelCommand(bool load) : Command
         MODEL [options]
 
         MODEL is a name the server serves (see 'idrak ps').
+
+        Options:
         {ServerClient.OptionsHelp}
+
         Examples:
           idrak server {(load ? "load" : "unload")} qwen
           idrak server {(load ? "load" : "unload")} qwen -p 8080 --json
@@ -247,9 +256,13 @@ internal sealed class ApiCommand : Command
         PATH [JSON] [options]
 
         GET PATH, or POST JSON to it ('-' reads the JSON from standard input). The answer is printed as it arrives
-        (streamed answers line by line); an error status exits with 1.
-              --method NAME   GET, POST, DELETE, ... (default GET, or POST with JSON)
+        (streamed answers line by line); an error status exits with 1. --timeout bounds the whole call, a streamed
+        answer included.
+
+        Options:
+              --method NAME  GET, POST, DELETE, ... (default GET, or POST with JSON)
         {{ServerClient.OptionsHelp}}
+
         Examples:
           idrak api /api/tags
           idrak api /v1/chat/completions '{"model":"qwen","messages":[{"role":"user","content":"Hi"}]}'

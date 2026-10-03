@@ -51,7 +51,7 @@ internal sealed class SuggestCommand : Command
         "through a configured limit (the library does not report it).";
 
     public override IReadOnlyCollection<string> ValueOptions =>
-        ["--target", "--text", "--task", "--budget", "--max-params", "--search", "--base", "--out", "--assist", .. Models.ValueOptions];
+        ["--target", "--text", "--task", "--budget", "--max-params", "--search", "--base", "--out", "--assist", .. Models.ValueOptions.Where(o => o != "--adapter")];
 
     public override IReadOnlyCollection<string> Flags => ["--explain"];
 

@@ -23,7 +23,10 @@ internal sealed class VerifyCommand : Command
     public override string Usage => """
         MODEL [--read] [--hub] [--token TOKEN]
 
-          MODEL              a cached Hugging Face id, a folder, a .gguf file or an alias
+        Arguments:
+          MODEL  a cached Hugging Face id, a folder, a .gguf file or an alias
+
+        Options:
               --read         read every tensor and check that all values are finite (slower: reads the whole model)
               --hub          compare each file's size and SHA-256 with the hub's (needs the network; hub models only)
               --token TOKEN  for gated and private models

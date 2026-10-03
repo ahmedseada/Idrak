@@ -21,7 +21,10 @@ internal sealed class ShowCommand : Command
     public override string Usage => """
         MODEL [--template]
 
-          MODEL         a cached Hugging Face id, a folder, a .gguf file or an alias
+        Arguments:
+          MODEL  a cached Hugging Face id, a folder, a .gguf file or an alias
+
+        Options:
               --template  also print the chat template's source
 
         Reads the config, the tokenizer files and the weights' headers; the model is not loaded.

@@ -61,12 +61,15 @@ internal sealed class CacheClearCommand : Command
     public override string Usage => """
         [models|tuning|kernels|all] [--yes] [--dry-run]
 
-          models     downloaded models
-          tuning     kernel choices measured on each device (measured again at the next run)
-          kernels    compiled kernels (compiled again when needed)
-          all        the whole cache folder (the default)
-          -y, --yes  no question
-          --dry-run  say what would be deleted, delete nothing
+        Arguments:
+          models   downloaded models
+          tuning   kernel choices measured on each device (measured again at the next run)
+          kernels  compiled kernels (compiled again when needed)
+          all      the whole cache folder (the default)
+
+        Options:
+          -y, --yes      no question
+              --dry-run  say what would be deleted, delete nothing
 
         Examples:
           idrak cache clear tuning

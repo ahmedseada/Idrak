@@ -32,6 +32,9 @@ internal sealed class CommandContext : IDisposable
     // Indented, and without escaping characters such as '+' that are safe outside HTML.
     internal static readonly JsonSerializerOptions JsonOutput = new() { WriteIndented = true, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
+    /// <summary>One JSON document per line (JSON Lines rows printed or written), with the same escaping as <see cref="JsonOutput"/>.</summary>
+    internal static readonly JsonSerializerOptions JsonLine = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+
     private readonly Dictionary<string, List<string>> _options;
     private readonly HashSet<string> _flags;
     private Device? _device;

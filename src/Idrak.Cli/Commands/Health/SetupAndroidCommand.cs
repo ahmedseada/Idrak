@@ -23,9 +23,10 @@ internal sealed class SetupAndroidCommand : Command
     public override string Usage => """
         [--yes] [--dry-run] [--rc FILE]
 
-          -y, --yes   add the lines to the shell start-up file (each only once)
-          --dry-run   print the lines, change nothing (the default without --yes)
-          --rc FILE   the start-up file (default ~/.bashrc)
+        Options:
+          -y, --yes      add the lines to the shell start-up file (each only once)
+              --dry-run  print the lines, change nothing (the default without --yes)
+              --rc FILE  the start-up file (default ~/.bashrc)
 
         Run inside the Ubuntu of proot-distro on the phone (installation/android-termux.md). After --yes, run
         source ~/.bashrc so the current shell has the variables.

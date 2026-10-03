@@ -25,29 +25,30 @@ internal sealed class EmbedCommand : Command
         (or each whole file with --whole). Without --out the vectors are printed as JSON.
 
         Options:
-          -i, --input FILE       texts, one per line (repeatable)
-              --whole            each --input file is one text instead of one per line
-          -o, --out FILE         write the vectors: FILE.npy (float32, one row per text) or FILE.json
-              --max-length N     tokens per text (default 512, at most the model's context)
-              --batch-size N     texts per batch (default 32)
-          -w, --weights FORMAT   int8, int4, bf16 or a registered packed format (default: as stored)
-              --adapter DIR      merge a LoRA adapter into the weights as they are read
-
-        Gap: the library has no pooling head for decoder models trained as embedders (last-token pooling, instruction
-        prefixes); mean pooling of the hidden states is what this command does.
+          -i, --input FILE      texts, one per line (repeatable)
+              --whole           each --input file is one text instead of one per line
+          -o, --out FILE        write the vectors: FILE.npy (float32, one row per text) or FILE.json
+              --max-length N    tokens per text (default 512, at most the model's context)
+              --batch-size N    texts per batch (default 32)
+          -w, --weights FORMAT  int8, int4, bf16 or a registered packed format (default: as stored)
+              --context N       the longest input the model is loaded for (default: the model's own)
+              --adapter DIR     merge a LoRA adapter into the weights as they are read
 
         Examples:
           idrak embed Qwen/Qwen3-0.6B "first text" "second text"
           idrak embed qwen -i sentences.txt -o vectors.npy
           idrak embed ./model.gguf -i ./docs/a.md -i ./docs/b.md --whole -o docs.json
+
+        Gap: the library has no pooling head for decoder models trained as embedders (last-token pooling, instruction
+        prefixes); mean pooling of the hidden states is what this command does.
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. Models.ValueOptions, "--input", "--out", "--max-length", "--batch-size"];
+    public override IReadOnlyCollection<string> ValueOptions => [.. Models.ValueOptions.Where(o => o != "--kv"), "--input", "--out", "--max-length", "--batch-size"];   // no KV cache
 
     public override IReadOnlyCollection<string> Flags => ["--whole"];
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } = new Dictionary<string, string>(
-        Models.ShortForms.Append(KeyValuePair.Create("-i", "--input")).Append(KeyValuePair.Create("-o", "--out")));
+        Models.ShortForms.Where(p => p.Key != "-k").Append(KeyValuePair.Create("-i", "--input")).Append(KeyValuePair.Create("-o", "--out")));
 
     public override int Run(CommandContext context)
     {

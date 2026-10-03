@@ -38,16 +38,21 @@ internal static class Http
     }
 
     /// <summary>
-    /// A client for calls to a running server (ping, api, server ...): each call gives up after <c>--timeout</c>, or
-    /// <paramref name="fallback"/> when it is not given (null: no limit, as for streamed answers).
+    /// A client for calls to a running server (api, server ...). Without <paramref name="perCall"/>, <c>--timeout</c> is
+    /// the command's whole time (a streamed answer is cut off when it runs out); with it, <c>--timeout</c> (else
+    /// <paramref name="perCall"/>) limits each call on its own (ping's checks).
     /// </summary>
-    public static HttpClient Client(CommandContext context, TimeSpan? fallback = null)
+    public static HttpClient Client(CommandContext context, TimeSpan? perCall = null)
     {
-        var http = new HttpClient(new Guard(context, offline: false) { InnerHandler = new SocketsHttpHandler() })
+        var http = new HttpClient(new Guard(context, offline: false, wholeCommand: perCall is null) { InnerHandler = new SocketsHttpHandler() })
         {
-            Timeout = context.Timeout ?? fallback ?? Timeout.InfiniteTimeSpan,
+            Timeout = context.Timeout ?? perCall ?? Timeout.InfiniteTimeSpan,
         };
-        StopAtTimeout(context, http);
+        if (perCall is null)
+        {
+            StopAtTimeout(context, http);
+        }
+
         return http;
     }
 
@@ -69,13 +74,18 @@ internal static class Http
     }
 
     // Refuses requests with --offline (downloads only) and ties each request to the command's --timeout.
-    private sealed class Guard(CommandContext context, bool offline) : DelegatingHandler
+    private sealed class Guard(CommandContext context, bool offline, bool wholeCommand = true) : DelegatingHandler
     {
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             if (offline && context.Offline)
             {
                 throw new OfflineException(OfflineMessage(request.RequestUri));
+            }
+
+            if (!wholeCommand)
+            {
+                return await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
             }
 
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, context.TimeoutToken);

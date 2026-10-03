@@ -21,8 +21,11 @@ internal sealed class EnvCommand : Command
     public override string Usage => $"""
         [--all] [NAME...]
 
-          --all    also the variables that are not set
-          NAME     only these variables (e.g. IDRAK_CACHE)
+        Arguments:
+          NAME  only these variables (e.g. IDRAK_CACHE)
+
+        Options:
+              --all  also the variables that are not set
 
         Tokens and keys are shown as set or not set, never their values.
 

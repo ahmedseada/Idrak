@@ -25,15 +25,16 @@ internal sealed class ReportCommand : Command
     public override string Usage => """
         [--tests] [--bench] [--readme] [-o FILE] [--zip] [--source DIR]
 
-          --tests         run the library's test list (from a source checkout, on --device or every listed device)
-                          and add the results; IDRAK_FILTER and IDRAK_TIMEOUT pass through to the test runner
-          --bench         time matrix products on each device (GFLOP/s) and add the results
-          --readme        print the README's tested-on rows for this machine, ready to paste (files only with
-                          -o or --zip)
-          -o, --out FILE  where to write (default idrak-report.md, with idrak-report.json beside it; a .zip name
-                          implies --zip)
-          --zip           one .zip with report.md, report.json and the test log
-          --source DIR    the source checkout for --tests (default: found from the current folder upwards)
+        Options:
+              --tests       run the library's test list (from a source checkout, on --device or every listed device)
+                            and add the results; IDRAK_FILTER and IDRAK_TIMEOUT pass through to the test runner
+              --bench       time matrix products on each device (GFLOP/s) and add the results
+              --readme      print the README's tested-on rows for this machine, ready to paste (files only with
+                            -o or --zip)
+          -o, --out FILE    where to write (default idrak-report.md, with idrak-report.json beside it; a .zip name
+                            implies --zip)
+              --zip         one .zip with report.md, report.json and the test log
+              --source DIR  the source checkout for --tests (default: found from the current folder upwards)
 
         Without --tests and --bench the report has the machine, devices and drivers only. The benchmarks are the kernel
         products only; model speeds come from idrak bench.

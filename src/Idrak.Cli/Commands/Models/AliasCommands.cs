@@ -19,10 +19,13 @@ internal sealed class AliasSetCommand : Command
     public override string Usage => """
         NAME MODEL [-w FORMAT] [-k FORMAT]
 
-          NAME               the short name (letters, digits, '.', '-', '_')
-          MODEL              a Hugging Face id, a folder, a .gguf file
-          -w, --weights F    the weight format to load it with (int8, int4, bf16 or a registered packed format)
-          -k, --kv F         the KV cache format (int8, bfloat16 or a registered one)
+        Arguments:
+          NAME   the short name (letters, digits, '.', '-', '_')
+          MODEL  a Hugging Face id, a folder, a .gguf file
+
+        Options:
+          -w, --weights F  the weight format to load it with (int8, int4, bf16 or a registered packed format)
+          -k, --kv F       the KV cache format (int8, bfloat16 or a registered one)
 
         Options given to a command override the alias's (idrak chat qwen -w int4).
 

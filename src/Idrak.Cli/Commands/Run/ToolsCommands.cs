@@ -63,8 +63,8 @@ internal sealed class ToolsTestCommand : Command
         a call fails.
 
         Options:
-              --tool NAME        test only this tool (repeatable)
-              --args JSON        the arguments to use instead of the samples (with one --tool)
+              --tool NAME  test only this tool (repeatable)
+              --args JSON  the arguments to use instead of the samples (with one --tool)
               --timeout DURATION each call's limit (the common option; default 30 s)
 
         Examples:

@@ -21,24 +21,27 @@ internal sealed class TrainCommand : Command
     public override string Usage => """
         SPEC.json --data FILE|FOLDER [-t COL]... [-o MODEL.ikm] [options]
 
-          SPEC.json           the network as the builder writes it (NetworkBuilder.ToJson, idrak suggest's network.json):
-                              {"format": "idrak-network/1", "input": "Features", "shape": [9], "steps": [...]}
-          --data FILE         a CSV with a header (numbers; a class column may hold names), or a folder with a folder of
-                              images per class (PNG, PGM, PPM; fitted to the network's image input)
-          -t, --target COL    the target column (repeatable; default: the last column)
-          --ignore A,B        columns that are not features (an id, ...)
-          --task T            regression or classify (default: classify when the network has several outputs)
-          --epochs N          at most N epochs (default 100); --patience N: stop after N epochs without a better
-                              validation loss (default 20, 0: never)
-          --lr F, --batch N   learning rate (default 0.001) and batch size (default 32)
-          --optimizer NAME    adamw (default), adam or sgd; --weight-decay F
-          --validation F      the fraction held out for validation (default 0.2, 0: none); --seed N (default 1)
-          --no-scale          keep the features (and a regression target) unscaled
-          -o, --out FILE      the model package (default: the network's name, or SPEC's, .ikm)
-          --run DIR           the run folder (default CACHE/runs/TIME-NAME): run.json, network.json, scalers, the
-                              checkpoints last.ikw and best.ikw, and log.jsonl (idrak runs, idrak resume read them)
-          -C, --config FILE   a train.json (from idrak suggest): the options above without the dashes
-                              ("target", "epochs", "lr", "batch", ...); options on the command line win
+        Arguments:
+          SPEC.json  the network as the builder writes it (NetworkBuilder.ToJson, idrak suggest's network.json):
+                     {"format": "idrak-network/1", "input": "Features", "shape": [9], "steps": [...]}
+
+        Options:
+              --data FILE        a CSV with a header (numbers; a class column may hold names), or a folder with a folder of
+                                 images per class (PNG, BMP, PGM, PPM; fitted to the network's image input)
+          -t, --target COL       the target column (repeatable; default: the last column)
+              --ignore A,B       columns that are not features (an id, ...)
+              --task T           regression or classify (default: classify when the network has several outputs)
+              --epochs N         at most N epochs (default 100); --patience N: stop after N epochs without a better
+                                 validation loss (default 20, 0: never)
+              --lr F, --batch N  learning rate (default 0.001) and batch size (default 32)
+              --optimizer NAME   adamw (default), adam or sgd; --weight-decay F
+              --validation F     the fraction held out for validation (default 0.2, 0: none); --seed N (default 1)
+              --no-scale         keep the features (and a regression target) unscaled
+          -o, --out FILE         the model package (default: the network's name, or SPEC's, .ikm)
+              --run DIR          the run folder (default CACHE/runs/TIME-NAME): run.json, network.json, scalers, the
+                                 checkpoints last.ikw and best.ikw, and log.jsonl (idrak runs, idrak resume read them)
+          -C, --config FILE      a train.json (from idrak suggest): the options above without the dashes
+                                 ("target", "epochs", "lr", "batch", ...); options on the command line win
 
         Examples:
           idrak train network.json --data houses.csv -t price -o houses.ikm
@@ -168,8 +171,11 @@ internal sealed class ResumeCommand : Command
     public override string Usage => """
         RUN [--epochs N] [-o MODEL.ikm]
 
-          RUN             a run folder, its log.jsonl, or a name from idrak runs list
-          --epochs N      train N more epochs (default: what is left of the run's epochs)
+        Arguments:
+          RUN  a run folder, its log.jsonl, or a name from idrak runs list
+
+        Options:
+              --epochs N  train N more epochs (default: what is left of the run's epochs)
           -o, --out FILE  the model package (default: the run's)
 
         The run's data, split, scalers and settings are reused and its log continues. The checkpoint holds the weights
@@ -235,8 +241,9 @@ internal sealed class RunsListCommand : Command
     public override string Usage => """
         [FOLDER]
 
-          FOLDER   where the runs are (default CACHE/runs, where idrak train writes them); any folder of run folders
-                   or of JSON Lines telemetry logs
+        Arguments:
+          FOLDER  where the runs are (default CACHE/runs, where idrak train writes them); any folder of run folders
+                  or of JSON Lines telemetry logs
 
         Examples:
           idrak runs list
@@ -276,7 +283,8 @@ internal sealed class RunsShowCommand : Command
     public override string Usage => """
         RUN
 
-          RUN   a run folder, a JSON Lines telemetry log, or a name from idrak runs list; -v lists every epoch
+        Arguments:
+          RUN  a run folder, a JSON Lines telemetry log, or a name from idrak runs list; -v lists every epoch
 
         Examples:
           idrak runs show 20261003-101500-houses
@@ -347,7 +355,8 @@ internal sealed class RunsCompareCommand : Command
     public override string Usage => """
         RUN RUN [RUN...]
 
-          RUN   run folders, JSON Lines telemetry logs, or names from idrak runs list
+        Arguments:
+          RUN  run folders, JSON Lines telemetry logs, or names from idrak runs list
 
         Examples:
           idrak runs compare 20261003-101500-houses 20261003-103000-houses
@@ -399,15 +408,16 @@ internal sealed class PredictCommand : Command
 {
     public override string Name => "predict";
 
-    public override string Summary => "Run a trained model package (.ikm) on new rows (CSV, JSON Lines, Parquet) or images, and write the predictions";
+    public override string Summary => "Run a model package (.ikm) on new rows (CSV, JSON Lines, Parquet) or images and write the predictions";
 
     public override string Usage => """
         MODEL.ikm -i FILE|FOLDER [-o OUT]
 
-          -i, --input FILE   rows with the training's feature columns (by name; a target column is ignored), or an image
-                             or a folder of images for an image model
-          -o, --out FILE     write the rows with the predictions added (.csv, .jsonl, .json); without it they are shown
-          --top N            classification: also give the N most likely classes (default 1)
+        Options:
+          -i, --input FILE  rows with the training's feature columns (by name; a target column is ignored), or an image
+                            or a folder of images for an image model
+          -o, --out FILE    write the rows with the predictions added (.csv, .jsonl, .json); without it they are shown
+              --top N       classification: also give the N most likely classes (default 1)
 
         Examples:
           idrak predict houses.ikm -i new-houses.csv
@@ -590,15 +600,16 @@ internal sealed class PackageCommand : Command
 {
     public override string Name => "package";
 
-    public override string Summary => "Bundle a network (builder JSON), its weights, scalers, tokenizer and metadata from a folder into one model package";
+    public override string Summary => "Bundle a network, its weights, scalers and tokenizer from a folder into one model package (.ikm)";
 
     public override string Usage => """
         --model DIR -o MODEL.ikm [--checkpoint best|last|FILE]
 
-          --model DIR         a folder with network.json and weights (.ikw): a run folder of idrak train, or your own;
+        Options:
+          -m, --model DIR     a folder with network.json and weights (.ikw): a run folder of idrak train, or your own;
                               also taken when present: features.txt and targets.txt (scalers), tokenizer.json (a
                               character or word tokenizer), training.json (what idrak predict reads)
-          --checkpoint W      which weights: best (default when present), last, or a .ikw file
+              --checkpoint W  which weights: best (default when present), last, or a .ikw file
           -o, --out FILE      the package to write
 
         Examples:
@@ -700,10 +711,11 @@ internal sealed class DistillCommand : Command
     public override string Usage => """
         --teacher MODEL --student MODEL --data FILE [-o DIR]
 
-          --teacher MODEL     the model whose answers (or token probabilities) are learned
-          --student MODEL     the model that learns them (-b, --base MODEL is the same)
-          --data FILE         the prompts or conversations
-          -o, --out DIR       where the student's adapter goes
+        Options:
+              --teacher MODEL  the model whose answers (or token probabilities) are learned
+              --student MODEL  the model that learns them (-b, --base MODEL is the same)
+              --data FILE      the prompts or conversations
+          -o, --out DIR        where the student's adapter goes
 
         Not available yet: the library has no teacher pattern (plans/plug-in.md, "Noted for later"). Meanwhile, generate
         the teacher's answers with idrak batch and fine-tune the student on them with idrak tune train.

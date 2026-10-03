@@ -26,7 +26,9 @@ internal sealed class McpServeCommand : Command
         Loads each assembly and serves every public method marked [Tool] (Idrak.Generation.ToolAttribute) on its public
         types (instance methods need a parameterless constructor) to an MCP client over standard input and output,
         until the client disconnects. Status lines go to the error output, since the output carries the protocol.
-              --list   print the tools (name and description) and exit, without serving
+
+        Options:
+              --list  print the tools (name and description) and exit, without serving
 
         Examples:
           idrak mcp serve ./MyTools.dll

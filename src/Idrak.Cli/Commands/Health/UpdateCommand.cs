@@ -22,7 +22,8 @@ internal sealed class UpdateCommand : Command
     public override string Usage => """
         [--prerelease]
 
-          --prerelease   also count preview versions
+        Options:
+              --prerelease  also count preview versions
 
         Reads the versions published on the package feed (IDRAK_UPDATE_INDEX names another list: a URL or a file);
         --offline and --timeout apply. Installing stays with dotnet tool update.
