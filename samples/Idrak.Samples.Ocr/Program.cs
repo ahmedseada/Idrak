@@ -2,12 +2,14 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 // Optical character recognition: a CNN learns to read the 36 characters 0-9 and A-Z from randomly
-// distorted renderings, then reads whole text lines by segmenting them into characters.
+// distorted renderings, then reads whole text lines by segmenting them into characters. The renderings
+// are saved as PGM files in a folder per character and read back with ImageFolderSource; the training
+// loader shifts them and adds noise, differently each epoch.
 //
 //   dotnet run -c Release --project samples/Idrak.Samples.Ocr                                   train, save, read (add --cpu / --cuda)
 //   dotnet run -c Release --project samples/Idrak.Samples.Ocr -- --predict --input "HELLO WORLD 2026"
 //                                                                    render that text and read it with the saved model
-//   dotnet run -c Release --project samples/Idrak.Samples.Ocr -- --predict --image page.pgm    read your own image
+//   dotnet run -c Release --project samples/Idrak.Samples.Ocr -- --predict --image page.png    read your own image (PNG, BMP, PGM)
 //   dotnet run -c Release --project samples/Idrak.Samples.Ocr -- --predict --save-image line.pgm  export the demo line
 
 using System.Diagnostics;
@@ -21,7 +23,7 @@ using Idrak.Samples.Ocr;
 using Idrak.Training;
 
 if (SampleOptions.Parse(args,
-        ("image", "PGM image to read (one or more lines of printed text)"),
+        ("image", "image to read: PNG, BMP, PGM or PPM (one or more lines of printed text)"),
         ("save-image", "write the rendered demo line to this PGM file")) is not { } options)
 {
     return 0;
@@ -64,9 +66,10 @@ else
 {
     // ---------------------------------------------------------------- data: distorted renderings of every character
     var stopwatch = Stopwatch.StartNew();
-    var train = Characters(perClass: 300, seed: 2);
-    var test = Characters(perClass: 60, seed: 3);
-    Console.WriteLine($"Rendered {train.Count:N0} training and {test.Count:N0} test characters in {stopwatch.ElapsedMilliseconds} ms\n");
+    string folder = Path.Combine(AppContext.BaseDirectory, "data", "ocr");
+    var train = new ImageFolderSource(Characters(perClass: 300, seed: 2, Path.Combine(folder, "train")), 1, Cell, Cell);
+    var test = new ImageFolderSource(Characters(perClass: 60, seed: 3, Path.Combine(folder, "test")), 1, Cell, Cell);
+    Console.WriteLine($"{train.Count:N0} training and {test.Count:N0} test characters in {folder} ({stopwatch.ElapsedMilliseconds} ms)\n");
 
     int epochs = options.Epochs ?? 10;
     using var optimizer = new AdamW(model.Parameters(), learningRate: 0.003f, weightDecay: 1e-4f);
@@ -75,12 +78,16 @@ else
         Metrics = { Metric.Accuracy },
         Scheduler = new CosineAnnealing(optimizer, epochs, warmupEpochs: 1),
     };
-    trainer.Fit(new DataLoader(train, options.BatchSize ?? 64, shuffle: true, device: device, seed: 4), epochs,
-        validation: new DataLoader(test, 500, device: device));
+    var augmented = new DataLoader(train, options.BatchSize ?? 64, shuffle: true, device: device, seed: 4)
+    {
+        Transforms = [new RandomShift(1), new GaussianNoise(0.03f, clamp: true)],
+    };
+    trainer.Fit(augmented, epochs, validation: new DataLoader(test, 500, device: device));
 
     var result = trainer.Evaluate(new DataLoader(test, 500, device: device));
     Console.WriteLine($"\nCharacter accuracy on unseen renderings: {result.Metrics["accuracy"]:P2}");
-    ReportConfusions(trainer.Predict(test), test);
+    var testSet = Dataset.FromSource(test);
+    ReportConfusions(trainer.Predict(testSet), testSet);
 
     model.Save(modelPath);
     Console.WriteLine($"Saved the model to {modelPath} (test it with --predict --input \"YOUR TEXT\")");
@@ -90,7 +97,7 @@ else
 // ---------------------------------------------------------------- demo
 if (options.Get("image") is { } imagePath)
 {
-    var (pixels, width, height) = Pgm.Read(imagePath);
+    var (pixels, width, height) = Pgm.ReadImage(imagePath);
     Console.WriteLine($"\n{imagePath} ({width}x{height}):");
     Preview(pixels, width, height);
     Console.WriteLine($"Text: {Read(pixels, width, height)}");
@@ -133,26 +140,29 @@ void MeasureLines()
     Console.WriteLine($"\nRead {Lines} random text lines: {1 - errors / (double)totalChars:P2} character accuracy, {exactLines}/{Lines} lines exactly right");
 }
 
-// Renders perClass distorted images of every character, as a [N, 1, 20, 20] classification dataset.
-Dataset Characters(int perClass, int seed)
+// Renders perClass distorted images of every character as 20x20 PGM files, a folder per character (root/A/0000.pgm, ...);
+// the folders' name order (digits, then letters) is the alphabet's. Kept when already written: the renderings are seeded.
+string Characters(int perClass, int seed, string root)
 {
-    var rng = new Random(seed);
     int count = perClass * alphabet.Length;
-    var pixels = new float[count, Cell * Cell];
-    var labels = new int[count];
+    if (Directory.Exists(root) && Directory.EnumerateFiles(root, "*.pgm", SearchOption.AllDirectories).Count() == count)
+    {
+        return root;
+    }
+
+    var rng = new Random(seed);
     var image = new float[Cell * Cell];
     for (int s = 0; s < count; s++)
     {
-        labels[s] = s % alphabet.Length;
+        int label = s % alphabet.Length;
         Array.Clear(image);
-        Renderer.RenderCharacter(labels[s], image, rng);
-        for (int i = 0; i < image.Length; i++)
-        {
-            pixels[s, i] = image[i];
-        }
+        Renderer.RenderCharacter(label, image, rng);
+        string classFolder = Path.Combine(root, alphabet[label].ToString());
+        Directory.CreateDirectory(classFolder);
+        Pgm.Write(Path.Combine(classFolder, $"{s:D5}.pgm"), image, Cell, Cell, inkIsDark: false);
     }
 
-    return Dataset.FromClassLabels(pixels, labels, alphabet.Length, [.. alphabet.Select(c => c.ToString())]).WithFeatureShape(1, Cell, Cell);
+    return root;
 }
 
 // Segments an image into characters, classifies them all in one batch, and reassembles the text.

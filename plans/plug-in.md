@@ -50,7 +50,7 @@ internal (the first-party packages keep calling it); outside code uses `CopyFrom
 | 11 | Only BPE tokenizer models | other tokenizer.json models throw (BpeTokenizer.cs:87-90); GGUF accepts only the "gpt2" tokenizer model (GgufModel.cs:339-342); `BpeTokenizer` is always created (PretrainedModel.cs:138); `TokenizerComponents` has no model or post-processor entry (TokenizerComponents.cs:57-63) | WordPiece (BERT, BGE), Unigram/SentencePiece (T5, Gemma, Llama-2-style GGUF) | `TokenizerModels.Register(type, Func<JsonObject, ITokenizerModel>)` | medium to large | medium |
 | 12 | The GGUF architecture registry cannot describe a family unlike Llama | `GgufArchitecture` holds only the Hugging Face name and query/key interleaving (GgufModel.cs:17-23); tensor names in a closed switch (:563-595); fixed config translation with `hidden_act` set to silu (:250-270) | Phi-3 (`attn_qkv`), Gemma 2 (post norms, GELU), Command R | `TensorName` and `Config` delegates on `GgufArchitecture` | small | medium |
 | 13 | Generation: no stopping hook, logits processors, speculative decoding or structured output | string stops only (TextGenerator.cs:409-411, 470-488); the only plug point replaces the whole sampler (:89) and loses temperature, top-k and top-p; no logit bias (Sampling.cs); the Ollama request has no `format` field (AspNetCore/Ollama.cs:14-21) | stopping on token ids or a pattern, logit bias, a JSON schema mask over the normal sampler, a draft model | `GenerationOptions.StopWhen`; an `ILogitsProcessor` run before the sampler; a speculative mode with a draft model | small (stop, bias), medium (processors), large (speculative) | medium |
-| 14 | Training data is in memory only | `Trainer.Fit` takes a sealed `DataLoader` (Training/Trainer.cs:162), which takes a sealed `Dataset` of `float[]` (Data/DataLoader.cs:52-67; Data/Dataset.cs:32-35); `Batch` has an internal constructor (DataLoader.cs:11) | images too large for memory, augmentation each epoch, custom batching | the dataset loader abstraction below | medium | high |
+| 14 | Done (feature-data-loaders): sample sources, streams, transforms, batch sources and the loaders below. Was: training data is in memory only | `Trainer.Fit` takes a sealed `DataLoader` (Training/Trainer.cs:162), which takes a sealed `Dataset` of `float[]` (Data/DataLoader.cs:52-67; Data/Dataset.cs:32-35); `Batch` has an internal constructor (DataLoader.cs:11) | images too large for memory, augmentation each epoch, custom batching | the dataset loader abstraction below | medium | high |
 | 15 | Metrics are batch means only; no optimizer state in checkpoints | `Metric(Name, BatchMean, Finalize)` (Trainer.cs:16) cannot express F1, AUC, precision or recall; `Tensor.MatchRate` internal (Tensor.Advanced.cs:197); the checkpoint callback saves weights only (TrainerCallbacks.cs:217-250) | classification users; resuming a run exactly | an `IMetric` accumulator (reset, update, compute); `Optimizer.State()` and `LoadState()` as named tensors | small to medium | medium |
 | 16 | Evaluation metrics are closed and need a concrete `ChatGenerator` | `AnswerMetric` enum and switch (LanguageModels/Evaluation.cs:13-29, 126-133); `Run(ChatGenerator ...)` (:68); the CLI parses the enum (FineTuning.Cli/Program.cs:141) | ROUGE, pass@k for code, a model as judge, multiple-choice letters; evaluating a remote model | a scoring delegate or an answer metric registry; take `IChatModel` | small | medium |
 | 17 | Serving: closed model kinds and options | `EngineModelKind` is predictor, text or chat (InferenceEngine.cs:16-26); `ChatModel(...)` accepts only a `TextGenerator` (:339-348); no embedding kind, no `/api/embed` or OpenAI `/v1` routes; unknown Ollama options are dropped (Ollama.cs:128-143) | serving an embedder, a proxy model or a custom chat model; passing extra sampling options through | `ChatModel(name, Func<IChatModel>)`; an embedding model kind; `GenerationOptions.Extra` for unknown options | medium | medium |
@@ -220,20 +220,52 @@ batch, background prefetch and device placement, for any source.
 ### Open choices
 
 1. Where the loaders live: the interfaces and the in-memory, CSV, image, token and `.npy` loaders in the core, the
-   JSON Lines and Parquet adapter in `Idrak.Datasets` (proposed); or everything in `Idrak.Datasets`.
-2. Images: PGM, PPM, BMP and PNG built in with JPEG as a plug-in (proposed); or PGM and BMP only built in.
+   JSON Lines and Parquet adapter in `Idrak.Datasets` (proposed); or everything in `Idrak.Datasets`. Chosen: the
+   proposal (`Idrak.Datasets` now references `Idrak`).
+2. Images: PGM, PPM, BMP and PNG built in with JPEG as a plug-in (proposed); or PGM and BMP only built in. Chosen: the
+   proposal.
 
 Done when: `Trainer.Fit` trains from each built-in loader with the same results as from an in-memory `Dataset` of
 the same samples; a custom `ISampleSource` and a custom `IBatchSource` written in a test project without internal
 access train a model; the OCR and shape-recognition samples use the image folder loader with an augmentation
 transform.
 
+### Status (feature-data-loaders): done
+
+Built as planned, in `src/Idrak/Data` and `src/Idrak.Datasets/TableSamples.cs`:
+
+- `ISampleSource`, `ISampleStream` (opened once per epoch as an `ISampleReader`), `ISampleTransform` (given a `Random`
+  seeded from the loader's seed, the epoch and the sample, so prefetching on a worker thread changes nothing) and
+  `IBatchSource` (optional `BatchCount`, `SampleCount`, `BatchSize` as default interface members). `Trainer.Fit`,
+  `FitAsync`, `TrainAsync`, `Evaluate` and `TrainingRun` take `IBatchSource`; `Trainer.Predict` takes `ISampleSource`;
+  telemetry reports 0 for counts a batch source does not give. `Batch` has a public constructor.
+- `Dataset : ISampleSource` and `Dataset.FromSource`; `DataLoader(ISampleSource ...)` keeps the shuffle order of the
+  old loader exactly (existing results unchanged) and adds `Transforms`; `DataLoader(ISampleStream ..., shuffleBuffer)`
+  batches streams (counts known after the first epoch).
+- `CsvSource` (one pass for row offsets, then positional reads; `AsStream()`), `ImageFolderSource` (class folders, a
+  file list, or unlabelled files), `TokenFileSource` and `NpySource` (memory-mapped), `TableSamples` (Datasets: `Load`,
+  `FromRows`, `Stream`, `Factory`), views (`Subset`, `Shuffle`, `Split`, `Concat`, `ToDataset`), transforms
+  (`RandomFlip`, `RandomShift`, `RandomRotation`, `GaussianNoise`), `SampleSources` (csv, images, tokens, npy) and
+  `ImageCodecs` (png, bmp, netpbm; `IImageCodec` for JPEG or others).
+- Beyond the plan: `ImageCodecs` is a registry of its own (the folder source picks up any registered codec's
+  extensions), the PNG decoder reads every bit depth and interlacing (the tool's old one read 8-bit, non-interlaced
+  only), and BMP reads palettes and bit fields.
+- The command-line tool's `train`, `predict` and `suggest --search` read images through `ImageFolderSource`; its own
+  decoder is gone (it still reads JPEG headers for profiling).
+- Tests: the "data loaders" group (each source trains to the weights of the same samples in memory; codecs against
+  encoders written in the test; transforms against direct computation) and two "outside plug-in" tests (a sample
+  source and a batch source in tests/Idrak.PluginTests).
+
+Remaining: a JPEG codec stays a plug-in (none ships); the tool does not apply prep.json's "augment" list yet; no
+loader for audio or video; `ISampleSource` reads one sample at a time (a batched read for sources that can do better,
+such as a memory-mapped array, could come later).
+
 ## Proposed order
 
 1. Plug-ins from outside the library: public tensor writes (item 1) and a test project without internal access.
 2. Quick, high-value registries: RoPE scaling (item 3), ONNX export (item 5), `--plugin` for the command-line tools
    (item 26), registry hygiene (unregister, collisions, one name-matching rule).
-3. Dataset loaders (item 14 and the section above).
+3. Dataset loaders (item 14 and the section above). Done.
 4. Tool-call parsers (item 8, done) and fine-tuning options (item 9).
 5. Custom differentiable operations and more element-wise operations (item 2).
 6. Model families beyond `DecoderSpec` (item 4), then tokenizer models (item 11) and GGUF families (item 12).

@@ -498,7 +498,7 @@ internal static class DesignRules
         int undecodable = profile.Images.Count(i => !i.Info.Decodable);
         if (undecodable > 0)
         {
-            design.Warnings.Add($"{undecodable} images cannot be decoded here ({string.Join(", ", profile.Images.Where(i => !i.Info.Decodable).Select(i => i.Info.Format).Distinct())}); --search and the trainer read PNG, BMP, PGM and PPM");
+            design.Warnings.Add($"{undecodable} images cannot be decoded here ({string.Join(", ", profile.Images.Where(i => !i.Info.Decodable).Select(i => i.Info.Format).Distinct())}); --search and the trainer read PNG, BMP, PGM and PPM, and formats a --plugin registers");
         }
 
         if (perClass.Min() < 20)

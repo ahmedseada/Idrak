@@ -66,10 +66,10 @@ public sealed class TrainingHistory
 }
 
 /// <summary>
-/// Runs the training loop: batches from a <see cref="DataLoader"/>, forward, loss, backward, optimizer
-/// step, metrics, validation, early stopping, and telemetry for every step. Memory for each step is
-/// recycled automatically, and the loss is accumulated on the device so the GPU is only synchronized
-/// once per epoch (unless per-batch telemetry is requested).
+/// Runs the training loop: batches from a <see cref="DataLoader"/> (or any other <see cref="IBatchSource"/>), forward,
+/// loss, backward, optimizer step, metrics, validation, early stopping, and telemetry for every step. Memory for each
+/// step is recycled automatically, and the loss is accumulated on the device so the GPU is only synchronized once per
+/// epoch (unless per-batch telemetry is requested).
 /// </summary>
 /// <example>
 /// <code>
@@ -159,7 +159,7 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
     /// <paramref name="cancellationToken"/> is cancelled: the loop ends after the current batch, callbacks see
     /// <see cref="ITrainerCallback.OnTrainEnd"/>, and <see cref="OperationCanceledException"/> is thrown.
     /// </summary>
-    public TrainingHistory Fit(DataLoader train, int epochs, DataLoader? validation = null, CancellationToken cancellationToken = default)
+    public TrainingHistory Fit(IBatchSource train, int epochs, IBatchSource? validation = null, CancellationToken cancellationToken = default)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(epochs);
         var device = Device;
@@ -177,8 +177,8 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
         if (Telemetry.IsEnabled(TelemetryLevel.Training))
         {
             Telemetry.TrainingStarted(new TrainingStarted(
-                Model.Summary(), Optimizer.GetType().Name, device, epochs, train.SampleCount, validation?.SampleCount,
-                train.BatchSize, train.BatchCount, Model.ParameterCount, Optimizer.LearningRate, ComputeResources.MaxCpuThreads));
+                Model.Summary(), Optimizer.GetType().Name, device, epochs, train.SampleCount ?? 0, validation?.SampleCount,
+                train.BatchSize ?? 0, train.BatchCount ?? 0, Model.ParameterCount, Optimizer.LearningRate, ComputeResources.MaxCpuThreads));
         }
 
         foreach (var callback in callbacks)
@@ -229,7 +229,7 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
                 {
                     // Reading the loss synchronizes (so compute time is real time); skipped when nobody needs it.
                     double lossValue = perBatch || callbacksNeedLoss ? batchLoss.Item() : double.NaN;
-                    var completed = new BatchCompleted(epoch, batch.Index + 1, train.BatchCount, step, batch.Size,
+                    var completed = new BatchCompleted(epoch, batch.Index + 1, train.BatchCount ?? 0, step, batch.Size,
                         lossValue, Optimizer.LearningRate, gradientNorm, dataTime, Stopwatch.GetElapsedTime(computeStart));
                     if (perBatch)
                     {
@@ -340,7 +340,7 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
     /// Runs <see cref="Fit"/> on a thread-pool thread, so UI and server threads stay free. <paramref name="progress"/>
     /// receives every epoch summary (on the captured synchronization context, as <see cref="Progress{T}"/> does).
     /// </summary>
-    public Task<TrainingHistory> FitAsync(DataLoader train, int epochs, DataLoader? validation = null,
+    public Task<TrainingHistory> FitAsync(IBatchSource train, int epochs, IBatchSource? validation = null,
         IProgress<EpochCompleted>? progress = null, CancellationToken cancellationToken = default)
     {
         return Task.Run(() =>
@@ -361,7 +361,7 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
     /// Trains on a thread-pool thread and yields every epoch summary as it completes. Leaving the <c>await foreach</c>
     /// early (break, exception) stops training before the next epoch and waits for it to end.
     /// </summary>
-    public async IAsyncEnumerable<EpochCompleted> TrainAsync(DataLoader train, int epochs, DataLoader? validation = null,
+    public async IAsyncEnumerable<EpochCompleted> TrainAsync(IBatchSource train, int epochs, IBatchSource? validation = null,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -413,13 +413,13 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
     }
 
     /// <summary>Computes the loss and metrics on <paramref name="data"/> in evaluation mode.</summary>
-    public EvaluationResult Evaluate(DataLoader data)
+    public EvaluationResult Evaluate(IBatchSource data)
     {
         bool wasTraining = Model.IsTraining;
         Model.Eval();
         try
         {
-            using var sums = Tensor.Zeros([1 + Metrics.Count], data.Device);
+            using var sums = Tensor.Zeros([1 + Metrics.Count], (data as DataLoader)?.Device ?? Device);
             int samples = 0;
             using (Autograd.NoGrad())
             {
@@ -443,7 +443,7 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
     }
 
     /// <summary>Predicts every sample of <paramref name="data"/>, batch by batch; returns [Count, outputs] (each sample's output flattened).</summary>
-    public float[,] Predict(Dataset data, int batchSize = 1024)
+    public float[,] Predict(ISampleSource data, int batchSize = 1024)
     {
         var device = Device;
         float[,]? result = null;

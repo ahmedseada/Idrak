@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- Data loaders: `ISampleSource` (random access), `ISampleStream` (in order), `ISampleTransform` (per sample, seeded by
+  the loader's seed, the epoch and the sample) and `IBatchSource` (what `Trainer.Fit`, `Evaluate`, `FitAsync`,
+  `TrainAsync` and `TrainingRun` now take; `Batch` has a public constructor). `Dataset` is a sample source and
+  `Dataset.FromSource` reads any source into memory; `DataLoader` batches any source or stream (shuffle buffer for
+  streams) with the same shuffling, dropLast, prefetch and device placement, and `Transforms`. Built in:
+  `CsvSource` (large CSV files read lazily, the samples of `Dataset.LoadCsv`), `ImageFolderSource` (class folders),
+  `TokenFileSource` (memory-mapped token ids in windows for pretraining), `NpySource` (memory-mapped .npy arrays),
+  views (`Subset`, `Shuffle`, `Split`, `Concat`), image transforms (`RandomFlip`, `RandomShift`, `RandomRotation`,
+  `GaussianNoise`), and the `SampleSources` registry (csv, images, tokens, npy). Image codecs without dependencies in
+  `ImageCodecs`: PNG at every depth and colour type, interlaced or not (zlib from .NET), BMP 1 to 32 bits, PGM/PPM;
+  JPEG and other formats register an `IImageCodec`. Idrak.Datasets: `TableSamples` turns JSON Lines, JSON, CSV and
+  Parquet columns (numbers, booleans, arrays, class names) into a dataset or a stream; the package now references
+  Idrak. `Trainer.Predict` takes any source. The OCR and shape-recognition samples train from image folders with
+  augmentation; the OCR sample reads PNG and BMP pages too.
+- idrak: `train`, `predict` and `suggest --search` read images through the library's `ImageFolderSource` and codecs
+  (the tool's own decoder is gone, JPEG headers are still profiled); PNG files of 16 bits, packed bits or interlacing
+  and BMP files of 1 to 16 bits are now read too, and a registered codec's formats are picked up.
+
 - idrak, across the groups: every command's help has one layout (usage and aliases, "Arguments:", "Options:" with
   short forms, examples, limits and gaps, the common options, and the environment variables that affect it, generated
   from the one variable table instead of hand-written lines); `idrak help` lists the commands by group with their

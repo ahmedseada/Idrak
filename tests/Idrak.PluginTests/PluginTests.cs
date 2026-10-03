@@ -27,6 +27,8 @@ public static class PluginTests
         ("outside plug-in: softplus through Autograd.Function matches finite differences, registers as a network step, trains with Lion and imports from ONNX", SoftplusStep),
         ("outside plug-in: a packed weight format multiplies like its expanded weights, with the input's gradient", PackedFormat),
         ("outside plug-in: a key/value cache format generates the float32 cache's greedy text", CacheFormat),
+        ("outside plug-in: a sample source computed when read trains a classifier, to the weights of its in-memory copy", DataPluginTests.SourceTrains),
+        ("outside plug-in: a batch source making tensors itself trains a linear model through Trainer.Fit", DataPluginTests.BatchSourceTrains),
     ];
 
     /// <summary>The ONNX operator and network step softplus is exported, imported and replayed as.</summary>
