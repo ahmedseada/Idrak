@@ -1,13 +1,14 @@
 # idrak: one command-line tool
 
-Today Idrak has two separate tools (`idrak-tune`, `idrak-data`), and the most common actions (chat with a model,
-serve it, check the devices, benchmark) need `dotnet run` on a sample or the test runner. This plan puts everything
-behind one `dotnet tool` named `idrak`, with subcommands. Built on branch `idrak-cli` by eight groups in parallel, then
+Idrak had two separate tools (`idrak-tune`, `idrak-data`), and the most common actions (chat with a model, serve
+it, check the devices, benchmark) needed `dotnet run` on a sample or the test runner. This plan puts everything behind
+one `dotnet tool` named `idrak`, with subcommands; the two old tools are removed (folded into `idrak tune` and `idrak
+data`, see "Old tools removed" below). Built on branch `idrak-cli` by eight groups in parallel, then
 polished across the groups ("Polish after the merge" below); the tool's guide is src/Idrak.Cli/README.md.
 
 Rules that apply to every command:
 
-- No dependencies beyond the Idrak packages (the argument parsing is written in the tool, as in `idrak-tune`); the
+- No dependencies beyond the Idrak packages (the argument parsing is written in the tool); the
   tool stays AOT-compatible where the libraries it uses are.
 - No provider names in commands, options or output: the serving API is "the chat API" (its routes are the ones common
   local-model clients use) and "the OpenAI-style API" is named by its wire format only (see plans/plug-in.md, "Noted
@@ -272,7 +273,7 @@ and call `ModelCache.Touch` so `idrak list` shows the last use by chat, run and 
 
 | Command | What it does | Priority |
 |---|---|---|
-| `idrak tune ...` | Today's `idrak-tune` as a subcommand: LoRA, QLoRA, DoRA, DPO/ORPO/SimPO, optimizers and schedules | 2 |
+| `idrak tune ...` | The former `idrak-tune` as a subcommand: LoRA, QLoRA, DoRA, DPO/ORPO/SimPO, optimizers and schedules | 2 |
 | `idrak tune init` | Writes a commented `tune.json` for a model and dataset (from `suggest` when available) | 2 |
 | `idrak train SPEC.json --data FILE` | Trains a network from a builder JSON and a CSV, image folder or (later) a dataset loader; writes a model package (`.ikm`) | 2 |
 | `idrak resume RUN` | Continues a run from its checkpoint | 3 |
@@ -285,7 +286,7 @@ and call `ModelCache.Touch` so `idrak list` shows the last use by chat, run and 
 
 | Command | What it does | Priority |
 |---|---|---|
-| `idrak data ...` | Today's `idrak-data` as a subcommand | 2 |
+| `idrak data ...` | The former `idrak-data` as a subcommand | 2 |
 | `idrak data preview FILE` | First rows, columns and types (Parquet, JSON Lines, CSV) | 2 |
 | `idrak data validate FILE --as chat\|preference\|table` | Checks rows against the shape a command expects, with the first bad rows shown | 2 |
 | `idrak data stats FILE --model MODEL` | Token counts per row with a model's tokenizer, length histogram, how many rows exceed a context length | 2 |
@@ -295,8 +296,8 @@ and call `ModelCache.Touch` so `idrak list` shows the last use by chat, run and 
 | `idrak data mix RECIPE.json` | Assembles a training set from several sources with weights (the dataset recipes) | 3 |
 
 Train and data, as built (agent 5): `idrak tune` runs idrak-tune's code (`Commands/Train/TuneTool.cs`) and `idrak data`
-idrak-data's (`Commands/Data/DataTool.cs`); the two old tools compile the same files and keep their behaviour and exit
-codes. Added while building:
+idrak-data's (`Commands/Data/DataTool.cs`); the two old tools compiled the same files as forwarders until they were
+removed (below). Added while building:
 
 - `idrak tune`: `-b`/`--base MODEL` (the model as an option), `-w`/`--weights int8|int4|bf16`, `-k`, `-o`, `-s`, model
   aliases, and a tune.json given with `-C`/`--config` (keys are the options without dashes plus `command`, `model`,
@@ -620,12 +621,27 @@ Wrote     tune.json → idrak tune --config tune.json
 - Shared helpers live in `src/Idrak.Cli/Shared/` (model resolution and loading with `--weights`/`--kv`, progress,
   terminal detection, confirmation questions); a group adds helpers in new files there rather than editing another
   group's.
-- `idrak-tune` and `idrak-data` keep working; their code moves behind `idrak tune` and `idrak data`, and the old tool
-  names become thin forwarders for a release.
+- `idrak-tune` and `idrak-data`: their code moves behind `idrak tune` and `idrak data`. Planned as thin forwarders
+  for a release; removed instead before any release (see "Old tools removed").
 - Tests: `tests/Idrak.Tests` gains CLI groups that run commands in-process through `CommandLine.Run` with captured
   output (no network: models from the test fixtures in `tests/Idrak.Tests/data`), checking exit codes, text and JSON
   output; a test checks every command's help, that no two options of a command share a short form, and that no
   command, option or output names a provider.
+
+## Old tools removed
+
+Done (branch `cleanup-old-tools`): the forwarders `idrak-tune` (src/Idrak.FineTuning.Cli, package
+`Idrak.FineTuning.Cli`) and `idrak-data` (src/Idrak.Datasets.Cli, package `Idrak.Datasets.Cli`) are deleted, with no
+deprecation period: nothing was released or shared yet (versions 0.y.z). Their READMEs moved into
+src/Idrak.Cli/README.md (fine-tuning features, the data spec syntax, recipes, credentials and the cache layout).
+`TuneTool` and `DataTool` serve only idrak: their usage text is idrak's own (no string replacements in `TuneCommand`
+and `DataCommand`), the `RunTool` entry points and idrak-data's exit code 2 for a failed data command are gone (idrak
+exits with 1, a usage error with 2), and `ToolConsole` lost its standalone console with the live status bar (the
+`IToolHost` is required). The tune.json format stays `idrak-tune/1`: it names the kind of file, alongside
+`idrak-train/1`, `idrak-prep/1` and `idrak-network/1`, not the tool. `idrak tune init` now writes it and `idrak tune
+--config` accepts it (it had rejected the key, so a tune.json from `idrak suggest --base` did not run) and refuses
+another file's format. The pack loops in the workflows and tools/publish.ps1 pack every project under src/, so they
+needed no change.
 
 ## Polish after the merge
 
@@ -647,7 +663,7 @@ Built after the eight groups were merged (branch `cli-polish`), so the tool read
 - Common options everywhere, through `Shared/Http.cs`: every download honours `--offline` (a refused request names the
   missing file; the library still falls back to a copy it downloaded before), `--timeout` (each request and the body
   being read) and `--cache`, and draws a progress line per file; `idrak tune` and `idrak data` get the same through
-  `Shared/ToolHost.cs` (the shared tool code keeps its own console for idrak-tune and idrak-data). Model resolution
+  `Shared/ToolHost.cs`. Model resolution
   looks in the cache first (no network; a cached hub model is used as it is, `idrak pull` updates it), prepares GGUF
   files under `--cache`, records the last use for `idrak list`, and names `idrak pull` for a repository's GGUF file
   (`owner/name:TAG`) it does not have. `--timeout`: `ping` per call, `api` and `server ...` for the whole call

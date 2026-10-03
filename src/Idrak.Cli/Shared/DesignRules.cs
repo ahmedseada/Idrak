@@ -615,7 +615,7 @@ internal static class DesignRules
         string targets = "q,k,v,o,gate,up,down";
         design.Tune = new JsonObject
         {
-            ["format"] = "idrak-tune/1", ["model"] = model.Name, ["data"] = profile.Path, ["loss"] = dpo ? "dpo" : "sft", ["adapter-type"] = "lora",
+            ["format"] = Commands.Train.TuneCommand.Format, ["model"] = model.Name, ["data"] = profile.Path, ["loss"] = dpo ? "dpo" : "sft", ["adapter-type"] = "lora",
             ["rank"] = rank, ["alpha"] = 2 * rank, ["targets"] = targets, ["lr"] = lr, ["schedule"] = "cosine", ["warmup"] = 0.03, ["epochs"] = epochs,
             ["max-length"] = maxLength, ["batch-tokens"] = batchTokens, ["eval-fraction"] = rows >= 200 ? 0.05 : 0.0, ["seed"] = options.Seed,
         };

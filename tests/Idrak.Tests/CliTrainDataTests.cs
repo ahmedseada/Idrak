@@ -11,14 +11,14 @@ using Idrak.Cli.Commands.Train;
 using Idrak.Cli.Shared;
 using Idrak.Layers;
 
-// The idrak CLI's Train and data group: tune (the idrak-tune code, also through its forwarder), train, resume, runs,
-// predict, package, distill, and data with its subcommands, run in-process on data built here and tiny models.
+// The idrak CLI's Train and data group: tune, train, resume, runs, predict, package, distill, and data with its
+// subcommands, run in-process on data built here and tiny models.
 internal static partial class Tests
 {
     private static readonly (string Name, Action<Device> Run)[] CliTrainDataGroup =
     [
         ("cli train data: help, short forms and examples of every command", CliTrainDataHelp),
-        ("cli train data: idrak-tune and idrak-data forwarders behave as before", CliToolForwarders),
+        ("cli train data: tune and data usage, errors and exit codes", CliTuneDataUsage),
         ("cli train data: tune init, tune --config, tune info and tune train on a tiny model", CliTune),
         ("cli train data: data show, count, build, preview, validate, stats", CliDataInspect),
         ("cli train data: data convert, dedupe, split, sample, mix", CliDataTransform),
@@ -73,38 +73,49 @@ internal static partial class Tests
         Check(TrainCli("data", "fly").Code == 2 && TrainCli("data", "validate", "x.jsonl").Code == 2, "data usage errors exit with 2");
     }
 
-    private static void CliToolForwarders(Device device)
+    private static void CliTuneDataUsage(Device device)
     {
         if (device.Type != DeviceType.Cpu)
         {
             return;
         }
 
-        (int, string, string) Run(Func<IReadOnlyList<string>, ToolConsole, int> tool, params string[] args)
-        {
-            var (output, error) = (new StringWriter(), new StringWriter());
-            int code = tool(args, new ToolConsole(output, error, TextReader.Null, live: false));
-            return (code, output.ToString(), error.ToString());
-        }
+        // The usage text is idrak's own: no other tool is named.
+        var tuneHelp = TrainCli("help", "tune");
+        Check(tuneHelp.Code == 0 && tuneHelp.Out.Contains("Fine-tune pretrained language models", StringComparison.Ordinal)
+            && tuneHelp.Out.Contains("idrak tune train <model> <data…> --out <dir>", StringComparison.Ordinal)
+            && tuneHelp.Out.Contains("as idrak data reads them", StringComparison.Ordinal), $"help tune: {tuneHelp.Out}");
+        var dataHelp = TrainCli("data", "help");
+        Check(dataHelp.Code == 0 && dataHelp.Out.Contains("Inspect, download and assemble datasets.", StringComparison.Ordinal)
+            && dataHelp.Out.Contains("idrak data show <spec…>", StringComparison.Ordinal), $"data help: {dataHelp.Out}");
+        Check(!(tuneHelp.Out + dataHelp.Out).Contains("idrak-tune ", StringComparison.Ordinal) && !(tuneHelp.Out + dataHelp.Out).Contains("idrak-data", StringComparison.Ordinal), "the tune and data help name no separate tool");
 
-        var help = Run(TuneTool.RunTool, "--help");
-        Check(help.Item1 == 0 && help.Item2.StartsWith("idrak-tune: fine-tune", StringComparison.Ordinal), "idrak-tune --help prints its usage");
-        Check(Run(TuneTool.RunTool).Item1 == 1, "idrak-tune without a command exits with 1 after the usage");
-        var bad = Run(TuneTool.RunTool, "train", "m", "d", "--rank", "x");
-        Check(bad.Item1 == 1 && bad.Item3.StartsWith("error:", StringComparison.Ordinal), $"idrak-tune reports a bad number: {bad.Item3}");
-        Check(Run(TuneTool.RunTool, "train", "m", "d", "--bogus").Item3.Contains("Unknown option --bogus", StringComparison.Ordinal), "idrak-tune names an unknown option");
+        // Usage errors exit with 2 and name the problem.
+        Check(TrainCli("tune", "train", "m", "d", "-o", "x", "--rank", "x").Code == 2, "tune: a bad number is a usage error");
+        var unknown = TrainCli("tune", "train", "m", "d", "-o", "x", "--bogus");
+        Check(unknown.Code == 2 && unknown.Err.Contains("--bogus", StringComparison.Ordinal), $"tune names an unknown option: {unknown.Err}");
+        Check(TrainCli("data").Code == 2 && TrainCli("data", "build", "x.jsonl").Code == 2, "data without a command, or build without --out, is a usage error");
 
         string folder = TempFolder();
         try
         {
             string file = Path.Combine(folder, "rows.jsonl");
             File.WriteAllLines(file, ["{\"question\": \"1+1?\", \"answer\": \"2\"}", "{\"question\": \"2+2?\", \"answer\": \"4\"}"]);
-            var count = Run(DataTool.RunTool, "count", file);
-            Check(count.Item1 == 0 && count.Item2.Contains(": 2 rows", StringComparison.Ordinal), $"idrak-data count: {count.Item2}");
-            Check(Run(DataTool.RunTool, "help").Item1 == 0 && Run(DataTool.RunTool).Item1 == 1, "idrak-data help and usage");
-            Check(Run(DataTool.RunTool, "count", Path.Combine(folder, "missing.jsonl")).Item1 == 2, "idrak-data exits with 2 on a missing file");
-            var built = Run(DataTool.RunTool, "build", file, "--out", Path.Combine(folder, "out.jsonl"), "--cache", folder);
-            Check(built.Item1 == 0 && File.ReadAllLines(Path.Combine(folder, "out.jsonl")).Length == 2, $"idrak-data build: {built.Item2}{built.Item3}");
+            var count = TrainCli("data", "count", file, "--cache", folder);
+            Check(count.Code == 0 && count.Out.Contains(": 2 rows", StringComparison.Ordinal), $"data count: {count.Out}");
+            var missing = TrainCli("data", "count", Path.Combine(folder, "missing.jsonl"), "--cache", folder);
+            Check(missing.Code == 1 && missing.Err.Length > 0, $"data exits with 1 on a missing file: {missing.Code} {missing.Err}");
+            var built = TrainCli("data", "build", file, "--out", Path.Combine(folder, "out.jsonl"), "--cache", folder);
+            Check(built.Code == 0 && File.ReadAllLines(Path.Combine(folder, "out.jsonl")).Length == 2, $"data build: {built.Out}{built.Err}");
+
+            // A tune.json's format, when given, must be a tune.json's.
+            string other = Path.Combine(folder, "train.json");
+            File.WriteAllText(other, "{ \"format\": \"idrak-train/1\", \"command\": \"info\", \"model\": \"x\" }");
+            var wrong = TrainCli("tune", "--config", other);
+            Check(wrong.Code == 2 && wrong.Err.Contains("is not a tune.json", StringComparison.Ordinal), $"tune --config with another file's format: {wrong.Err}");
+            File.WriteAllText(other, "{ \"format\": \"idrak-tune/1\", \"command\": \"info\", \"model\": \"no-such-model\" }");
+            var right = TrainCli("tune", "--config", other, "--offline");
+            Check(!right.Err.Contains("format", StringComparison.Ordinal) && right.Err.Contains("no-such-model", StringComparison.Ordinal), $"tune --config accepts its own format (as idrak suggest writes it): {right.Err}");
         }
         finally
         {
@@ -127,6 +138,7 @@ internal static partial class Tests
             string settings = Path.Combine(folder, "tune.json");
             var init = TrainCli("tune", "init", "-b", model, "--data", data, "-o", settings, "-d", d);
             Check(init.Code == 0 && File.ReadAllText(settings).Contains("// What to do", StringComparison.Ordinal), $"tune init: {init.Out}{init.Err}");
+            Check(File.ReadAllText(settings).Contains($"\"format\": \"{TuneCommand.Format}\"", StringComparison.Ordinal), "tune init writes the format");
             Check(TrainCli("tune", "init", "-b", model, "-o", settings).Code == 1, "tune init does not overwrite without --force");
             var info = TrainCliJson("tune", "info", "--config", settings);
             Check((string?)info["command"] == "info" && (string?)info["model"] == model && (string?)info["device"] == d, $"tune info from tune.json: {info}");
@@ -176,7 +188,7 @@ internal static partial class Tests
                 "{\"messages\": [{\"role\": \"user\", \"content\": \"No answer here\"}]}",
             ]);
 
-            // The idrak-data commands through idrak data, with idrak's cache.
+            // show, count and build, with idrak's cache.
             var show = TrainCli("data", "show", chats, "--take", "2", "--cache", folder);
             Check(show.Code == 0 && show.Out.Contains("normalized:", StringComparison.Ordinal), $"data show: {show.Out}{show.Err}");
             var count = TrainCliJson("data", "count", chats, "--cache", folder);

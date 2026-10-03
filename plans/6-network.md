@@ -83,13 +83,13 @@ kind of training in Idrak has. So one mechanism covers all of them:
 | `Trainer` / `TrainingRun` (any model: tabular, images, sequences, classifiers) | `trainer.DataParallel(group)` / `run.DataParallel(group)`; callbacks, metrics, early stopping and checkpoints keep working |
 | A GPT or other model trained from scratch (the GptTraining sample's loop) | the same, or `group.AllReduceGradients(model)` before `optimizer.Step()` in a hand-written loop |
 | Hand-written loops | `group.AllReduceGradients(model)` (or a `DistributedOptimizer` wrapping any optimizer) |
-| Language-model fine-tuning: full weights, LoRA, QLoRA (`FineTuner`, `idrak-tune train`) | `FineTuningOptions.Group`; only the trained values travel (adapters for LoRA, every weight otherwise) |
+| Language-model fine-tuning: full weights, LoRA, QLoRA (`FineTuner`, `idrak tune train`) | `FineTuningOptions.Group`; only the trained values travel (adapters for LoRA, every weight otherwise) |
 
 **How a run looks**
 
 ```powershell
 # on every machine: the same command, its own rank
-idrak-tune train Qwen/Qwen2.5-0.5B chats.jsonl --out adapters/chat --cuda `
+idrak tune train Qwen/Qwen2.5-0.5B chats.jsonl -o adapters/chat -d cuda:0 `
     --coordinator 192.168.1.10:29500 --node 0 --nodes 2      # --node 1 on the second PC; key from IDRAK_NETWORK_KEY
 ```
 
@@ -108,7 +108,7 @@ group.AllReduceGradients(model);        // averaged across machines, bfloat16 on
 optimizer.Step();
 ```
 
-(`--node` / `--nodes`, not `--rank`: `idrak-tune` already uses `--rank` for the LoRA rank.)
+(`--node` / `--nodes`, not `--rank`: `idrak tune` already uses `--rank` for the LoRA rank.)
 
 **What gets built**
 
@@ -152,7 +152,7 @@ Every kind of training runs over any network; the network decides how much of ea
 - Float32 on the wire stays available as an option for comparison.
 
 **Done when**, for each kind of training (a `TrainingRun` model such as the HousePrices or Spirals sample, the
-GptTraining sample trained from scratch, and a LoRA and a full fine-tune with `idrak-tune`):
+GptTraining sample trained from scratch, and a LoRA and a full fine-tune with `idrak tune`):
 - two PCs on a LAN get the same losses as one PC with twice the batch, within bfloat16 rounding of the gradients
   (both runs logged and compared with the existing `compare` tool), and the weights stay identical on both PCs;
 - the step time with two machines is measured on 1 Gb/s (and 2.5 or 10 Gb/s if available) and recorded in the README;
