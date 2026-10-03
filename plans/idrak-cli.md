@@ -182,6 +182,31 @@ the work and decides what the first release must have. Short forms and aliases a
 | `idrak data sample FILE -n N` | A random or stratified sample of rows | 3 |
 | `idrak data mix RECIPE.json` | Assembles a training set from several sources with weights (the dataset recipes) | 3 |
 
+Train and data, as built (agent 5): `idrak tune` runs idrak-tune's code (`Commands/Train/TuneTool.cs`) and `idrak data`
+idrak-data's (`Commands/Data/DataTool.cs`); the two old tools compile the same files and keep their behaviour and exit
+codes. Added while building:
+
+- `idrak tune`: `-b`/`--base MODEL` (the model as an option), `-w`/`--weights int8|int4|bf16`, `-k`, `-o`, `-s`, model
+  aliases, and a tune.json given with `-C`/`--config` (keys are the options without dashes plus `command`, `model`,
+  `data`; the command line wins; config files may hold comments). `--json` gives the output lines in one document.
+- `idrak train`: `-t`/`--target` (repeatable), `--ignore`, `--task`, `--epochs`, `--patience`, `--lr`, `--batch`,
+  `--optimizer`, `--weight-decay`, `--validation`, `--seed`, `--no-scale`, `--run DIR`, and a train.json through
+  `--config` (as `idrak suggest` writes it). A class column may hold names; CSV rows can feed image or sequence inputs
+  when their count matches. Runs go to `CACHE/runs/TIME-NAME` (run.json, network.json, scalers, `last.ikw`/`best.ikw`,
+  `log.jsonl` in the library's telemetry format).
+- `idrak runs` alone is `runs list`; `runs list FOLDER` reads any folder of runs or telemetry logs.
+- `idrak predict --top N` (the N most likely classes) and `-o` (rows with the predictions, by extension).
+- `idrak package --checkpoint best|last|FILE`.
+- `idrak data dedupe --columns`, `--near`, `--dry-run`, and in-place rewriting only with `-y`; `data split --validation
+  --test -t` (stratified); `data convert --as chat|preference|text -s SYSTEM -f`; `data stats --context --column`.
+
+Gaps (library): the optimizer state and learning-rate schedule are not checkpointed, so `resume` continues from the
+weights with a fresh optimizer; there is no image decoding in the library (the tool reads 8-bit PNG and Netpbm itself);
+writing Parquet is not in the library (`data convert` reads it, writes JSON Lines, JSON, CSV or TSV); `distill` waits for
+the teacher pattern and only explains the workaround (`idrak batch`, then `idrak tune train`); `tune init` writes the
+library's defaults until `idrak suggest` can size them; idrak tune loads base weights as int8, int4 or bf16 only (not
+other registered packed formats).
+
 ### Retrieval
 
 | Command | What it does | Priority |
