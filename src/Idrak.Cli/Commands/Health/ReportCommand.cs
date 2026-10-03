@@ -269,7 +269,7 @@ internal sealed class ReportCommand : Command
         md.Append($"{report["date"]}, idrak {report["tool"]}\n\n");
         var m = report["machine"]!;
         md.Append("## Machine\n\n");
-        md.Append($"- OS: {m["os"]} ({m["architecture"]})\n- Processors: {m["processors"]}\n- Memory: {ProgressLine.Bytes(m["memoryBytes"]!.GetValue<long>())}\n- Runtime: {m["runtime"]}\n");
+        md.Append($"- OS: {m["os"]} ({m["architecture"]})\n- Processors: {m["processors"]}\n- Memory: {Units.Bytes(m["memoryBytes"]!.GetValue<long>())}\n- Runtime: {m["runtime"]}\n");
         md.Append($"- Libraries: {string.Join(", ", report["libraries"]!.AsObject().Select(p => $"{p.Key} {p.Value}"))}\n\n");
 
         md.Append("## Devices\n\n| Device | Backend | Name | Memory | CUs | Lanes | Width | Matrix units | In a plain run |\n|---|---|---|---|---|---|---|---|---|\n");
@@ -346,7 +346,7 @@ internal sealed class ReportCommand : Command
             return $"{tests["passed"]} of {all}";
         }
 
-        string Memory(JsonObject d) => d["memoryBytes"] is { } bytes ? $", {ProgressLine.Bytes((long)bytes)}" : "";
+        string Memory(JsonObject d) => d["memoryBytes"] is { } bytes ? $", {Units.Bytes((long)bytes)}" : "";
         var md = new StringBuilder("Tested on (README \"Tested on\" table):\n\n| Date | Library | GPU | Compute | Driver | System | Result |\n|---|---|---|---|---|---|---|\n");
         var gpus = devices.Where(d => (string?)d["device"] != "cpu").ToList();
         foreach (var d in gpus)

@@ -29,17 +29,25 @@ internal sealed class VersionCommand : Command
     {
         string tool = Machine.ToolVersion;
         var libraries = Machine.Libraries();
-        context.Write($"idrak {tool}");
-        foreach (var (name, version) in libraries)
-        {
-            context.Write($"{name} {version}");
-        }
-
-        context.Write($"{RuntimeInformation.FrameworkDescription} on {RuntimeInformation.OSDescription} ({RuntimeInformation.ProcessArchitecture})");
         var drivers = Drivers();
-        foreach (var (device, driver) in drivers)
+        string runtime = $"{RuntimeInformation.FrameworkDescription} on {RuntimeInformation.OSDescription} ({RuntimeInformation.ProcessArchitecture})";
+        if (context.Format is OutputFormat.Csv or OutputFormat.Markdown)
         {
-            context.Write($"{device}: {driver}");
+            context.Fields([("idrak", tool), .. libraries, (".NET", runtime), .. drivers], "Component", "Version");
+        }
+        else
+        {
+            context.Write($"idrak {tool}");
+            foreach (var (name, version) in libraries)
+            {
+                context.Write($"{name} {version}");
+            }
+
+            context.Write(runtime);
+            foreach (var (device, driver) in drivers)
+            {
+                context.Write($"{device}: {driver}");
+            }
         }
 
         context.WriteJson(new JsonObject

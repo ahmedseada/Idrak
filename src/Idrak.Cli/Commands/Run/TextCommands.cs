@@ -89,7 +89,7 @@ internal sealed class TokenizeCommand : Command
             return ExitCodes.Ok;
         }
 
-        context.Table(["#", "id", "token"], ids.Select((id, i) => (IReadOnlyList<string>)[i.ToString(), id.ToString(), Show(model.Tokenizer.TokenOf(id))]));
+        context.Table(["#", "ID", "Token"], ids.Select((id, i) => (IReadOnlyList<string>)[i.ToString(), id.ToString(), Show(model.Tokenizer.TokenOf(id))]));
         context.Write($"{ids.Count} tokens");
         context.WriteJson(new JsonObject
         {

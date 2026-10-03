@@ -263,6 +263,26 @@ internal sealed class CommandContext : IDisposable
         }
     }
 
+    /// <summary>
+    /// Name and value pairs (a model's facts, a run's figures, the versions): aligned lines in text ("Family  Llama..."),
+    /// a two-column table with <c>--format csv</c> or <c>md</c>, nothing with <c>--json</c> (the command's document holds them).
+    /// </summary>
+    public void Fields(IEnumerable<(string Name, string Value)> fields, string nameHeader = "Field", string valueHeader = "Value")
+    {
+        var list = fields.ToList();
+        if (Format is OutputFormat.Csv or OutputFormat.Markdown)
+        {
+            Table([nameHeader, valueHeader], list.Select(f => (IReadOnlyList<string>)[f.Name, f.Value]));
+            return;
+        }
+
+        int width = list.Count == 0 ? 0 : list.Max(f => f.Name.Length);
+        foreach (var (name, value) in list)
+        {
+            Write($"{name.PadRight(width)}  {value}".TrimEnd());
+        }
+    }
+
     /// <summary>The command's JSON result, printed only with <c>--json</c> (one document per command).</summary>
     public void WriteJson(JsonNode node)
     {

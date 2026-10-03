@@ -48,7 +48,7 @@ internal static class DesignSearch
                     Scheduler = new CosineAnnealing(optimizer, epochs),
                     MaxGradientNorm = 1f,
                 };
-                trainer.Fit(new DataLoader(data.Train, batch, shuffle: true, device: device, seed: 1), epochs);
+                trainer.Fit(new DataLoader(data.Train, batch, shuffle: true, device: device, seed: (int?)train["seed"] ?? 1), epochs);
                 double validationLoss = trainer.Evaluate(new DataLoader(data.Validation, 256, device: device)).Loss;
                 double score = metric switch
                 {

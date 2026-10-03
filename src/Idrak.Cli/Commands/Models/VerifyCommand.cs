@@ -133,7 +133,7 @@ internal sealed class VerifyCommand : Command
                 add(Path.GetFileName(file.Key), end == length && sizesMatch,
                     end > length ? $"truncated: the header needs {end:N0} bytes, the file has {length:N0}"
                     : !sizesMatch ? "a tensor's byte range does not match its shape"
-                    : end < length ? $"{length - end:N0} bytes after the last tensor" : $"{file.Count()} tensors, {ModelCache.Size(length)}");
+                    : end < length ? $"{length - end:N0} bytes after the last tensor" : $"{file.Count()} tensors, {Units.Bytes(length)}");
             }
 
             if (read)
@@ -160,7 +160,7 @@ internal sealed class VerifyCommand : Command
         using (file)
         {
             string arch = file.Get("general.architecture", "");
-            add(Path.GetFileName(path), true, $"GGUF version {file.Version}, {file.Tensors.Count} tensors, {ModelCache.Size(new FileInfo(path).Length)}");
+            add(Path.GetFileName(path), true, $"GGUF version {file.Version}, {file.Tensors.Count} tensors, {Units.Bytes(new FileInfo(path).Length)}");
             add("architecture", GgufArchitectures.Names.Contains(arch, StringComparer.OrdinalIgnoreCase),
                 GgufArchitectures.Names.Contains(arch, StringComparer.OrdinalIgnoreCase) ? arch : $"'{arch}' is not registered (supported: {string.Join(", ", GgufArchitectures.Names)})");
             if (read)
@@ -200,7 +200,7 @@ internal sealed class VerifyCommand : Command
             count++;
         }
 
-        detail = $"all {count} tensors read, {ModelCache.Count(values)} values finite";
+        detail = $"all {count} tensors read, {Units.Count(values)} values finite";
         return true;
     }
 

@@ -47,6 +47,14 @@ internal sealed class PluginsListCommand : Command
     /// <summary>One section per category: its title and the names, those added marked with "+".</summary>
     internal static void Print(CommandContext context, IReadOnlyList<Registries.Category> categories, IReadOnlyList<Registries.Category> added)
     {
+        if (context.Format is OutputFormat.Csv or OutputFormat.Markdown)
+        {
+            context.Table(["Kind", "Count", "Names"], categories.Where(c => c.Names.Count > 0).Select(c => (IReadOnlyList<string>)
+                [c.Title, c.Names.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                 string.Join(", ", c.Names.Select(n => added.First(a => a.Key == c.Key).Names.Contains(n) ? $"+{n}" : n))]));
+            return;
+        }
+
         foreach (var c in categories.Where(c => c.Names.Count > 0))
         {
             var mine = added.First(a => a.Key == c.Key).Names;

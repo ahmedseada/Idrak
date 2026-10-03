@@ -18,10 +18,6 @@ internal static class StandardInput
     /// <summary>Whether the input is piped or a file rather than a person typing (always true with <see cref="Override"/>).</summary>
     public static bool IsRedirected => Override is not null || Console.IsInputRedirected;
 
-    /// <summary>Whether the output is the console's and a terminal (colour and the copy escape sequence are used only then).</summary>
-    public static bool IsTerminal(TextWriter output) =>
-        ReferenceEquals(output, Console.Out) && !Console.IsOutputRedirected && Environment.GetEnvironmentVariable("NO_COLOR") is null;
-
     /// <summary>Runs <paramref name="action"/> with <paramref name="input"/> as the input (tests).</summary>
     public static T With<T>(TextReader input, Func<T> action)
     {

@@ -29,7 +29,7 @@ internal sealed class ToolsListCommand : Command
     {
         _ = context.Argument(0, "TOOLS.dll");
         var tools = ToolAssemblies.Load(context.Positional);
-        context.Table(["tool", "parameters", "description"], tools.Select(t => (IReadOnlyList<string>)
+        context.Table(["Tool", "Parameters", "Description"], tools.Select(t => (IReadOnlyList<string>)
             [t.Definition.Name, Parameters(t.Definition.Parameters), t.Definition.Description ?? ""]));
         context.WriteJson(new JsonObject { ["tools"] = ChatJson.Tools([.. tools.Select(t => t.Definition)]) });
         return ExitCodes.Ok;

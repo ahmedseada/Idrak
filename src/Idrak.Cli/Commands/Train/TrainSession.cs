@@ -439,11 +439,11 @@ internal static class TrainSession
 
         var (channels, height, width) = (builder.InputShape[0], builder.InputShape[1], builder.InputShape[2]);
         var classFolders = Directory.GetDirectories(folder).Order(StringComparer.Ordinal).ToList();
-        var files = classFolders.Select((d, label) => Directory.EnumerateFiles(d, "*", SearchOption.AllDirectories).Where(Images.IsImage).Order(StringComparer.Ordinal).Select(f => (f, label)))
+        var files = classFolders.Select((d, label) => Directory.EnumerateFiles(d, "*", SearchOption.AllDirectories).Where(ImageFiles.IsDecoded).Order(StringComparer.Ordinal).Select(f => (f, label)))
             .SelectMany(x => x).ToList();
         if (classFolders.Count < 2 || files.Count == 0)
         {
-            throw new InvalidDataException($"{folder} needs a folder per class with images in them ({string.Join(", ", Images.Extensions)}).");
+            throw new InvalidDataException($"{folder} needs a folder per class with images in them ({string.Join(", ", ImageFiles.DecodedExtensions)}).");
         }
 
         int size = channels * height * width;
@@ -451,7 +451,7 @@ internal static class TrainSession
         var labels = new int[files.Count];
         for (int i = 0; i < files.Count; i++)
         {
-            var pixels = Images.Load(files[i].f, channels, height, width);
+            var pixels = ImageFiles.Load(files[i].f, channels, height, width);
             for (int j = 0; j < size; j++)
             {
                 features[i, j] = pixels[j];

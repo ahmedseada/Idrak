@@ -107,7 +107,7 @@ internal sealed class ServerKeysListCommand : Command
     public override int Run(CommandContext context)
     {
         var keys = context.Config.Object(ServerKeys.ConfigKey) ?? [];
-        context.Table(["NAME", "CREATED", "HASH"], keys.Select(p => (IReadOnlyList<string>)[p.Key, (string?)p.Value?["created"] ?? "", ((string?)p.Value?["sha256"] ?? "")[..Math.Min(12, ((string?)p.Value?["sha256"] ?? "").Length)] + "..."]));
+        context.Table(["Name", "Created", "Hash"], keys.Select(p => (IReadOnlyList<string>)[p.Key, (string?)p.Value?["created"] ?? "", ((string?)p.Value?["sha256"] ?? "")[..Math.Min(12, ((string?)p.Value?["sha256"] ?? "").Length)] + "..."]));
         if (keys.Count == 0)
         {
             context.Write("No keys; add one with 'idrak server keys add NAME'.");

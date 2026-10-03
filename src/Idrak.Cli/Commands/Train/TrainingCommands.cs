@@ -253,7 +253,7 @@ internal sealed class RunsListCommand : Command
         }
         else
         {
-            context.Table(["run", "started", "epochs", "best", "best loss", "final loss", "time", "status"], runs.Select(r => (IReadOnlyList<string>)
+            context.Table(["Run", "Started", "Epochs", "Best", "Best loss", "Final loss", "Time", "Status"], runs.Select(r => (IReadOnlyList<string>)
             [
                 r.Name, r.Time?.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture) ?? "", r.Epochs.Count.ToString(CultureInfo.InvariantCulture),
                 r.Best?.Epoch.ToString(CultureInfo.InvariantCulture) ?? "-", RunLog.Format(r.Best is { } b ? b.ValidationLoss ?? b.Loss : null),
@@ -319,7 +319,7 @@ internal sealed class RunsShowCommand : Command
             context.Write("");
             var metrics = run.Epochs.SelectMany(e => e.ValidationMetrics.Keys.Select(k => "val_" + k).Concat(e.Metrics.Keys)).Distinct().ToList();
             var shown = context.Verbose || run.Epochs.Count <= 12 ? run.Epochs : [.. run.Epochs.Take(5), .. run.Epochs.TakeLast(5)];
-            context.Table(["epoch", "loss", "val_loss", .. metrics, "lr", "ms", ""], shown.Select(e => (IReadOnlyList<string>)
+            context.Table(["Epoch", "Loss", "Validation loss", .. metrics, "LR", "ms", ""], shown.Select(e => (IReadOnlyList<string>)
             [
                 e.Epoch.ToString(CultureInfo.InvariantCulture), RunLog.Format(e.Loss), RunLog.Format(e.ValidationLoss),
                 .. metrics.Select(m => RunLog.Format(m.StartsWith("val_", StringComparison.Ordinal) && e.ValidationMetrics.TryGetValue(m[4..], out double vm) ? vm
@@ -363,7 +363,7 @@ internal sealed class RunsCompareCommand : Command
 
         var runs = context.Positional.Select(r => RunLog.Find(context, r)).ToList();
         string Setting(RunLog r, string key) => r.Settings?[key]?.ToString() ?? r.Started?[key]?.ToString() ?? "-";
-        context.Table(["run", "epochs", "best", "best loss", "final loss", "lr", "batch", "optimizer", "time"], runs.Select(r => (IReadOnlyList<string>)
+        context.Table(["Run", "Epochs", "Best", "Best loss", "Final loss", "LR", "Batch", "Optimizer", "Time"], runs.Select(r => (IReadOnlyList<string>)
         [
             r.Name, r.Epochs.Count.ToString(CultureInfo.InvariantCulture), r.Best?.Epoch.ToString(CultureInfo.InvariantCulture) ?? "-",
             RunLog.Format(r.Best is { } b ? b.ValidationLoss ?? b.Loss : null), RunLog.Format(r.Epochs.Count > 0 ? r.Epochs[^1].Loss : null),
@@ -440,16 +440,16 @@ internal sealed class PredictCommand : Command
         // The inputs: rows by feature name, or images.
         List<JsonObject> rows;
         float[] features;
-        if ((string?)meta?["input"] == "images" || Directory.Exists(input) || Images.IsImage(input))
+        if ((string?)meta?["input"] == "images" || Directory.Exists(input) || ImageFiles.IsDecoded(input))
         {
-            var files = Directory.Exists(input) ? Directory.EnumerateFiles(input, "*", SearchOption.AllDirectories).Where(Images.IsImage).Order(StringComparer.Ordinal).ToList() : [input];
+            var files = Directory.Exists(input) ? Directory.EnumerateFiles(input, "*", SearchOption.AllDirectories).Where(ImageFiles.IsDecoded).Order(StringComparer.Ordinal).ToList() : [input];
             if (builder.InputKind != InputKind.Image)
             {
                 throw new UsageException($"{modelPath} takes {builder.InputKind.ToString().ToLowerInvariant()} input, not images; give a CSV or JSON Lines file.");
             }
 
             rows = [.. files.Select(f => new JsonObject { ["file"] = f })];
-            features = [.. files.SelectMany(f => Images.Load(f, shape[0], shape[1], shape[2]))];
+            features = [.. files.SelectMany(f => ImageFiles.Load(f, shape[0], shape[1], shape[2]))];
         }
         else
         {

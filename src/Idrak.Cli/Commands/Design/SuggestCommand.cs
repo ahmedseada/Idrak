@@ -88,14 +88,14 @@ internal sealed class SuggestCommand : Command
         }
 
         string outDir = Path.GetFullPath(context.Option("--out") ?? ".");
-        var baseModel = context.Option("--base") is { } b ? BaseModelInfo.Inspect(Models.Choose(context, b).Model) : null;
+        var baseModel = context.Option("--base") is { } b ? BaseModelInfo.Inspect(context, Models.Choose(context, b).Model) : null;
         var profile = DataProfile.Read(data, context.Option("--target"), task);
         if (task == "image" && profile.Kind != DataKind.Images)
         {
             throw new UsageException($"--task image needs a folder of class folders of images; {data} is not one.");
         }
 
-        var options = new DesignOptions(context.Option("--target"), context.Option("--text"), task, budget, maxParams, context.Device, baseModel);
+        var options = new DesignOptions(context.Option("--target"), context.Option("--text"), task, budget, maxParams, context.Device, baseModel, context.Seed ?? 1);
         var design = DesignRules.Propose(profile, options);
         if (baseModel is not null && design.Make is not null)
         {
@@ -252,7 +252,7 @@ internal sealed class SuggestCommand : Command
         {
             var analysis = NetworkAnalysis.Of(design.Network(best.Variant)!);
             int network = design.Lines.FindIndex(l => l.Label == "Network");
-            design.Lines[network] = ("Network", design.Lines[network].Text + $"; searched: {best.Variant} ({DeviceMemory.Count(analysis.Parameters)} parameters)");
+            design.Lines[network] = ("Network", design.Lines[network].Text + $"; searched: {best.Variant} ({Units.Short(analysis.Parameters)} parameters)");
         }
 
         design.Why("search", best is null ? "first guess kept" : $"candidate {best.Index}", DesignSearch.HigherIsBetter(first.Metric)
@@ -289,7 +289,7 @@ internal sealed class SuggestCommand : Command
         [
             new ChatMessage("system", "You explain machine-learning setups to a developer in plain words. Explain only the choices given; do not change them."),
             new ChatMessage("user", "Explain this setup and why each choice fits the data, in a short paragraph:\n" + facts),
-        ], Think: false, Options: new GenerationOptions { Temperature = 0.3f, NumPredict = 300, Seed = 1 });
+        ], Think: false, Options: new GenerationOptions { Temperature = 0.3f, NumPredict = 300, Seed = context.Seed ?? 1 });
         return chat.Chat(request).Message?.Content.Trim() ?? "";
     }
 

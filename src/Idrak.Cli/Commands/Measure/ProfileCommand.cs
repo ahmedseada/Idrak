@@ -59,7 +59,7 @@ internal sealed class ProfileCommand : Command
         var device = context.Device;
         promptTokens = Math.Max(1, Math.Min(promptTokens, model.MaxPositions - 5));
         var network = model.Network;
-        var random = new Random(1);
+        var random = new Random(context.Seed ?? 1);
         float Token() => random.Next(Math.Min(model.Spec.Vocabulary, 1000));
         string kv = choice.Kv ?? "float32";
         using var decoding = new DecodingContext(device, 1, promptTokens + 5, KeyValueLayouts.Get(kv));
@@ -126,14 +126,14 @@ internal sealed class ProfileCommand : Command
         context.Write($"{choice.Model} on {device} ({device.Name}), weights {choice.Weights ?? "as stored"}, KV cache {kv}: one decoding step after {promptTokens} tokens");
         context.Write($"step {stepMs:F2} ms with each layer drained ({layerTotal:F2} ms in the layers)\n");
         context.Write("Layers of the network:");
-        context.Table(["layer", "type", "ms", "share"],
+        context.Table(["Layer", "Type", "ms", "Share"],
             layers.Select(l => (IReadOnlyList<string>)[l.Name, l.Type, l.Ms.ToString("F3"), Share(l.Ms, layerTotal)]));
         WriteTable(context, "\nInner layers (by type and depth):", recorder.Layers, top);
         WriteTable(context, "\nOperations (by name and shape):", recorder.Operations, top);
         if (kernelTiming)
         {
             context.Write($"\nKernels ({kernels.Sum(k => k.Calls)} launches):");
-            context.Table(["kernel", "calls", "ms", "share"],
+            context.Table(["Kernel", "Calls", "ms", "Share"],
                 kernels.Take(top).Select(k => (IReadOnlyList<string>)[k.Name, k.Calls.ToString(), k.Milliseconds.ToString("F3"), Share(k.Milliseconds, kernels.Sum(e => e.Milliseconds))]));
         }
         else
@@ -163,7 +163,7 @@ internal sealed class ProfileCommand : Command
     {
         double total = table.Values.Sum(v => v.Ms);
         context.Write($"{title} {total:F2} ms in {table.Values.Sum(v => v.Count)} calls");
-        context.Table(["name", "calls", "ms", "share"], table.OrderByDescending(p => p.Value.Ms).Take(top)
+        context.Table(["Name", "Calls", "ms", "Share"], table.OrderByDescending(p => p.Value.Ms).Take(top)
             .Select(p => (IReadOnlyList<string>)[p.Key, p.Value.Count.ToString(), p.Value.Ms.ToString("F3"), Share(p.Value.Ms, total)]));
     }
 

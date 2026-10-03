@@ -74,7 +74,7 @@ internal sealed class ConvertCommand : Command
         }
 
         long bytes = ModelCache.FolderBytes(output);
-        context.Write($"Converted {input} ({from}) to {output}: {ModelCache.Size(bytes)}, {type}, in {clock.Elapsed.TotalSeconds:F1} s.");
+        context.Write($"Converted {input} ({from}) to {output}: {Units.Bytes(bytes)}, {type}, in {clock.Elapsed.TotalSeconds:F1} s.");
         context.WriteJson(new JsonObject
         {
             ["in"] = input,

@@ -94,19 +94,19 @@ internal sealed class MemoryCommand : Command
             }
         }
 
-        context.Write($"{name}: {ModelCache.Count(facts.Parameters)} parameters ({ModelCache.Count(packed)} in projections), context {contextLength:N0}"
+        context.Write($"{name}: {Units.Count(facts.Parameters)} parameters ({Units.Count(packed)} in projections), context {contextLength:N0}"
                       + (batch > 1 ? $" × {batch} sequences" : ""));
         var memoryColumns = devices.Select(d => (Label: d.Name, d.Bytes)).ToList();
         if (given is { } g)
         {
-            memoryColumns.Add(($"{ModelCache.Size(g)}", g));
+            memoryColumns.Add(($"{Units.Bytes(g)}", g));
         }
 
         string Fits(long total, long? bytes) => bytes is not { } m ? "?" : total <= m ? $"fits ({Percent(total, m)})" : $"no ({Percent(total, m)})";
         context.Table(["Weights", "KV", "Weights size", "KV cache", "Total", .. memoryColumns.Select(c => c.Label)],
-            rows.Select(r => (IReadOnlyList<string>)[r.Weights, r.Kv, ModelCache.Size(r.WeightBytes), ModelCache.Size(r.KvBytes), ModelCache.Size(r.WeightBytes + r.KvBytes),
+            rows.Select(r => (IReadOnlyList<string>)[r.Weights, r.Kv, Units.Bytes(r.WeightBytes), Units.Bytes(r.KvBytes), Units.Bytes(r.WeightBytes + r.KvBytes),
                 .. memoryColumns.Select(c => Fits(r.WeightBytes + r.KvBytes, c.Bytes))]));
-        context.Write("Memory: " + string.Join(", ", devices.Select(d => $"{d.Name} {(d.Bytes is { } b ? ModelCache.Size(b) : "not reported (pass --memory SIZE)")}")));
+        context.Write("Memory: " + string.Join(", ", devices.Select(d => $"{d.Name} {(d.Bytes is { } b ? Units.Bytes(b) : "not reported (pass --memory SIZE)")}")));
 
         context.WriteJson(new JsonObject
         {

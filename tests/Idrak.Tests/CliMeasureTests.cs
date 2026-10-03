@@ -147,7 +147,7 @@ internal static partial class Tests
             Check(runs.Select(r => (string)r!["label"]!).Distinct().Count() == expected, "labels differ");
 
             var (code, text, _) = MeasureIdrak(cache, "bench", "--small", "-n", "1", "--kernels", "matmul", "--devices", devices);
-            Check(code == 0 && text.Contains("measurement") && text.Contains("matmul 256x256x256 float32"), text);
+            Check(code == 0 && text.Contains("Measurement") && text.Contains("matmul 256x256x256 float32"), text);
         }
         finally
         {

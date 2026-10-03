@@ -49,7 +49,7 @@ internal sealed class DataPreviewCommand : Command
 
         var columns = RowFiles.Columns(sample);
         context.Write($"{path}: {RowFiles.FormatName(path)}, {count:N0} rows, {columns.Count} columns");
-        context.Table(["column", "type", "missing"], columns.Select(c => (IReadOnlyList<string>)[c.Name, c.Type, c.Missing == 0 ? "" : $"{c.Missing:N0}"]));
+        context.Table(["Column", "Type", "Missing"], columns.Select(c => (IReadOnlyList<string>)[c.Name, c.Type, c.Missing == 0 ? "" : $"{c.Missing:N0}"]));
         if (show > 0 && sample.Count > 0)
         {
             context.Write("");
@@ -329,7 +329,7 @@ internal sealed class DataStatsCommand : Command
             string unit = tokens.Count > 0 ? "tokens" : "characters";
             long over = contextLength is { } limit && tokens.Count > 0 ? tokens.Count(t => t > limit) : 0;
             context.Write($"{path}: {rows.Count:N0} rows{(conversations > 0 ? $" ({conversations:N0} conversations)" : "")}");
-            context.Table(["", "mean", "median", "p95", "max", "total"],
+            context.Table(["", "Mean", "Median", "p95", "Max", "Total"],
             [
                 Row("characters", characters),
                 Row("words", words),

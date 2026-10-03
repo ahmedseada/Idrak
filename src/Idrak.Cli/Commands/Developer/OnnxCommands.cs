@@ -228,7 +228,7 @@ internal sealed class OnnxCheckCommand : Command
         using var imported = OnnxImport.Load(bytes, device, OnnxShared.Shape(context));
         int[] shape = OnnxShared.Shape(context) ?? (imported.InputShape is { } s ? [.. s]
             : throw new UsageException("The file leaves the input's shape dynamic; pass --shape (one sample without the batch, e.g. 3,32,32)."));
-        float[] input = Sample(imported.Model, shape, batch);
+        float[] input = Sample(imported.Model, shape, batch, context.Seed ?? 1);
         float[] reference = Run(imported.Model, input, shape, batch, device);
         context.Write($"Imported {Path.GetFileName(file)} on {device}: {(imported.IsGraph ? "a graph" : "a chain of layers")}, input [{string.Join(", ", shape)}], " +
             $"{batch} random samples, {reference.Length / batch} outputs each");
@@ -276,7 +276,7 @@ internal sealed class OnnxCheckCommand : Command
             checks.Add(Compare($"reference outputs ({Path.GetFileName(expectedPath)})", outputs, actual, tolerance));
         }
 
-        context.Table(["check", "largest difference", "result"],
+        context.Table(["Check", "Largest difference", "Result"],
             checks.Select(c => (IReadOnlyList<string>)[c.Name, c.Difference is { } d ? d.ToString("E2", CultureInfo.InvariantCulture) : "-", c.Note is null ? c.Status : $"{c.Status}: {c.Note}"]));
         bool ok = checks.All(c => c.Status != "mismatch");
         context.Write(ok ? $"OK (tolerance {tolerance:E0})" : $"MISMATCH: a difference is larger than {tolerance:E0}");
@@ -321,9 +321,9 @@ internal sealed class OnnxCheckCommand : Command
     }
 
     // Random samples, or token ids in the vocabulary when the model starts with an embedding.
-    private static float[] Sample(Module model, int[] shape, int batch)
+    private static float[] Sample(Module model, int[] shape, int batch, int seed)
     {
-        var random = new Random(1);
+        var random = new Random(seed);
         int vocabulary = model is Sequential { Count: > 0 } chain && chain[0] is Embedding embedding ? embedding.Vocabulary : 0;
         return [.. Enumerable.Range(0, batch * shape.Aggregate(1, (a, b) => a * b)).Select(_ => vocabulary > 0 ? random.Next(vocabulary) : random.NextSingle() * 2f - 1f)];
     }

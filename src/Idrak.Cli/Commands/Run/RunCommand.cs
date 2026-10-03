@@ -85,7 +85,7 @@ internal sealed class RunCommand : Command
         }
         catch (OperationCanceledException)
         {
-            context.Error(interrupt.TimedOut ? $"stopped: --timeout {ProgressLine.Duration(context.Timeout!.Value)} ran out" : "stopped");
+            context.Error(interrupt.TimedOut ? $"stopped: --timeout {Units.Duration(context.Timeout!.Value)} ran out" : "stopped");
             return ExitCodes.Failed;
         }
 
