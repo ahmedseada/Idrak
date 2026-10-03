@@ -326,7 +326,7 @@ internal sealed unsafe partial class VulkanBackend
     // The current batch's command buffer, begun if needed, for a command that uses `blocks` (bit i of `writes` set when
     // it writes blocks[i]): a barrier first when it depends on a command of the current span (the barrier then waits
     // for every earlier command, in this batch or an earlier one, and makes its writes visible); the blocks are marked.
-    private IntPtr Record(ReadOnlySpan<VulkanBlock> blocks, ulong writes, string name = "")
+    private IntPtr Record(ReadOnlySpan<VulkanBlock> blocks, ulong writes, string name = "", bool forceBarrier = false)
     {
         var batch = _batch;
         if (!batch.Recording)
@@ -338,7 +338,7 @@ internal sealed unsafe partial class VulkanBackend
             _boundPipeline = 0;
         }
 
-        bool hazard = false;
+        bool hazard = forceBarrier;
         for (int i = 0; i < blocks.Length; i++)
         {
             var block = blocks[i];
@@ -412,7 +412,11 @@ internal sealed unsafe partial class VulkanBackend
     // Zeros a block in queue order.
     private void RecordFill(VulkanBlock block)
     {
-        var commands = Record(new ReadOnlySpan<VulkanBlock>(in block), writes: 1, "fill");
+        // Always after a barrier when queued work may still use the block. The span bookkeeping already orders a fill
+        // after the commands it knows of, but on an RTX 5070 Ti (Vulkan, driver 610.88) training that zeros recycled
+        // blocks went wrong unless a barrier preceded the fill (synchronization validation finds no hazard in the same
+        // commands on Mesa's software driver). Fills are rare (a zeroed allocation of a busy block), so it costs little.
+        var commands = Record(new ReadOnlySpan<VulkanBlock>(in block), writes: 1, "fill", forceBarrier: block.LastUse > _completed);
         vkCmdFillBuffer(commands, block.Buffer, 0, WholeSize, 0);
         Recorded();
     }
