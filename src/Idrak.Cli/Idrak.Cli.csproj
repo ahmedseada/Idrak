@@ -42,4 +42,8 @@
     <EmbeddedResource Include="Templates\**\*.template" LogicalName="Templates/%(RecursiveDir)%(Filename)" WithCulture="false" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Idrak.Tests" />
+  </ItemGroup>
+
 </Project>

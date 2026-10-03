@@ -26,6 +26,20 @@ idrak s qwen phi -p 8080 --api-key $KEY        # two models on one port
 idrak ps
 idrak api /v1/chat/completions '{"model":"qwen","messages":[{"role":"user","content":"Hi"}]}'
 ```
+## Measure and retrieval
+
+| Command | What it does |
+|---|---|
+| `idrak bench [MODEL]` (`b`) | Prompt and generation tokens per second, GFLOP/s and memory of a model; without one, the kernel benchmarks (`--kernels matmul,gemv,attention`, `--small`); `--devices all`, `--matrix` (weight x KV formats), `--save NAME`, `--compare NAME` |
+| `idrak eval MODEL SET.jsonl` | Answer metrics (number, exact, contains, F1) on held-out conversations |
+| `idrak perplexity MODEL FILE` | Perplexity of a text, to compare weight formats and fine-tunes |
+| `idrak profile MODEL` | Time per layer, operation and kernel of one decoding step |
+| `idrak check MODEL --reference FILE` | Token ids, chat templates, logits and greedy output against a transformers reference |
+| `idrak tuning show` | The kernel choices kept in the CPU, CUDA and Vulkan tuning caches; `--reset` |
+| `idrak rag index DIR -o INDEX` | Chunks a folder's text files into a BM25 index, hybrid with `-m MODEL` |
+| `idrak rag search "query" --index INDEX` | The best passages with scores |
+| `idrak rag ask "question" --index INDEX -m MODEL` | An answer citing the passages |
+| `idrak rag eval --index INDEX --questions FILE` | Hit rate and MRR on questions with known documents or passages |
 
 ## Adding a command
 
