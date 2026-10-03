@@ -137,11 +137,6 @@ internal sealed class AdapterMerge : IDisposable
     public AdapterMerge(string folder)
     {
         _config = PeftAdapterConfig.Read(folder);
-        if (_config.UseDora)
-        {
-            throw new NotSupportedException($"{folder}: DoRA adapters (use_dora) are not supported yet.");
-        }
-
         _folder = folder;
         _reader = SafeTensorsReader.Open(Path.Combine(folder, "adapter_model.safetensors"));
     }
@@ -154,17 +149,23 @@ internal sealed class AdapterMerge : IDisposable
 
     /// <summary>
     /// Adds scale · (B·A)ᵀ to <paramref name="weight"/> ([inputs, outputs], Idrak's layout) when the adapter has
-    /// lora_A [r, inputs] and lora_B [outputs, r] for the checkpoint module <paramref name="module"/>.
+    /// lora_A [r, inputs] and lora_B [outputs, r] for the checkpoint module <paramref name="module"/>; for DoRA, then scales
+    /// each output column to its magnitude: W' = m ⊙ (W + s·A·B) / ‖W + s·A·B‖ (see <see cref="Idrak.Layers.DoraAdapter"/>).
     /// </summary>
     public void AddTo(string module, float[] weight, int inputs, int outputs)
     {
-        if (_config.Names(_reader, module) is not var (a, b, _))
+        if (_config.Names(_reader, module) is not var (a, b, magnitude))
         {
             return;
         }
 
         _used.Add(a);
         _used.Add(b);
+        if (magnitude is not null)
+        {
+            _used.Add(magnitude);
+        }
+
         var down = _reader.Read(a);                                           // [r, inputs]
         int rank = down.Length / inputs;
         var up = Idrak.HostParallel.Transpose(_reader.Read(b), outputs, rank); // [r, outputs]
@@ -183,6 +184,35 @@ internal sealed class AdapterMerge : IDisposable
                 AddScaled(row, up.AsSpan(k * outputs, outputs), factor);
             }
         });
+        if (magnitude is not null)
+        {
+            var m = _reader.Read(magnitude);
+            var norms = new double[outputs];
+            for (int i = 0; i < inputs; i++)
+            {
+                for (int o = 0; o < outputs; o++)
+                {
+                    double v = weight[i * outputs + o];
+                    norms[o] += v * v;
+                }
+            }
+
+            var factors = new float[outputs];
+            for (int o = 0; o < outputs; o++)
+            {
+                factors[o] = (float)(m[o] / Math.Sqrt(norms[o]));
+            }
+
+            Parallel.For(0, inputs, i =>
+            {
+                var row = weight.AsSpan(i * outputs, outputs);
+                for (int o = 0; o < outputs; o++)
+                {
+                    row[o] *= factors[o];
+                }
+            });
+        }
+
         Merged++;
     }
 

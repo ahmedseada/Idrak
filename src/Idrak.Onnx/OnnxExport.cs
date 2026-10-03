@@ -210,12 +210,10 @@ public sealed class OnnxExporter
         var weight = linear.WeightValues();                                      // int8 weights are exported dequantized
         if (linear.Adapter is { } a)
         {
-            using var update = a.A.MatMul(a.B) * a.Scale;                        // the LoRA update folded in, as MergeLora does
-            var delta = update.ToArray();
-            for (int i = 0; i < weight.Length; i++)
-            {
-                weight[i] += delta[i];
-            }
+            // The adapter folded in, as MergeLora does.
+            using var noGrad = Autograd.NoGrad();
+            using var scope = new TensorScope();
+            weight = a.Merge(linear, Tensor.From(weight, [linear.InFeatures, linear.OutFeatures], a.Parameters[0].Device)).ToArray();
         }
 
         var product = g.Node("MatMul", [x, g.Constant("weight", weight, linear.InFeatures, linear.OutFeatures)]);
