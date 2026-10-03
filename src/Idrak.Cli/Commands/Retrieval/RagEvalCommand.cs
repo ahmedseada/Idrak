@@ -28,8 +28,7 @@ internal sealed class RagEvalCommand : Command
         "      --top N           chunks retrieved per question (default 5)\n\n" +
         "Examples:\n" +
         "  idrak rag eval --index docs.idx --questions questions.jsonl\n" +
-        "  idrak rag eval --index docs.idx --questions questions.jsonl --top 10 -j\n\n" +
-        "Environment: IDRAK_CACHE (the embedding model of a hybrid index)";
+        "  idrak rag eval --index docs.idx --questions questions.jsonl --top 10 -j";
 
     public override IReadOnlyCollection<string> ValueOptions => ["--index", "--questions", "--top"];
 

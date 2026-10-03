@@ -73,10 +73,6 @@ internal sealed class ServeCommand : Command
           idrak serve Qwen/Qwen3-0.6B
           idrak s qwen phi -p 8080 --api-key $KEY        # two models on one port
           idrak serve tiny=./tiny.gguf -d vulkan:0 -k int8 --keep-alive 30m --cors http://localhost:3000
-
-        Environment: IDRAK_API_KEY (default --api-key), IDRAK_CACHE (model cache; running servers are recorded in
-        CACHE/servers), HF_TOKEN (gated Hugging Face models), IDRAK_CONFIG (aliases, device), IDRAK_TRACE, and the
-        device variables (idrak env)
         """;
 
     public override IReadOnlyCollection<string> ValueOptions => [.. ServeHost.ValueOptions, .. Models.ValueOptions];
@@ -113,10 +109,6 @@ internal sealed class UiCommand : Command
         Examples:
           idrak ui Qwen/Qwen3-0.6B
           idrak ui qwen -p 8080 --no-browser
-
-        Environment: IDRAK_API_KEY (default --api-key), IDRAK_CACHE (model cache; running servers are recorded in
-        CACHE/servers), HF_TOKEN (gated Hugging Face models), IDRAK_CONFIG (aliases, device), IDRAK_TRACE, and the
-        device variables (idrak env)
         """;
 
     public override IReadOnlyCollection<string> ValueOptions => [.. ServeHost.ValueOptions, .. Models.ValueOptions];

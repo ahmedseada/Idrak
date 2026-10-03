@@ -53,8 +53,6 @@ internal sealed class ServerKeysAddCommand : Command
         Examples:
           idrak server keys add laptop
           idrak server keys add ci --json
-
-        Environment: IDRAK_CONFIG (the config file)
         """;
 
     public override IReadOnlyCollection<string> ValueOptions => ["--key"];
@@ -104,8 +102,6 @@ internal sealed class ServerKeysListCommand : Command
         Examples:
           idrak server keys list
           idrak server keys list --json
-
-        Environment: IDRAK_CONFIG (the config file)
         """;
 
     public override int Run(CommandContext context)
@@ -137,8 +133,6 @@ internal sealed class ServerKeysRemoveCommand : Command
 
         Examples:
           idrak server keys rm laptop
-
-        Environment: IDRAK_CONFIG (the config file)
         """;
 
     public override int Run(CommandContext context)

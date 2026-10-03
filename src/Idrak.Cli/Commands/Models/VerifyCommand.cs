@@ -34,8 +34,6 @@ internal sealed class VerifyCommand : Command
         Examples:
           idrak verify Qwen/Qwen3-0.6B
           idrak verify ./model.gguf --read --json
-
-        Environment: IDRAK_CACHE (the cache), HF_ENDPOINT, HF_TOKEN (with --hub)
         """;
 
     public override IReadOnlyCollection<string> ValueOptions => ["--token"];

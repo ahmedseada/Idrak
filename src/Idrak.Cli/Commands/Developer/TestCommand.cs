@@ -32,10 +32,7 @@ internal sealed class TestCommand : Command
         "Examples:\n" +
         "  idrak test\n" +
         "  idrak test --filter \"cli dev\" -d cpu\n" +
-        "  idrak test -d vulkan:0 -j\n\n" +
-        "Environment: IDRAK_FILTER and IDRAK_DEVICES (set from --filter and --device), IDRAK_TIMEOUT (seconds before a test\n" +
-        "counts as hung, default 300), IDRAK_SPIRV_VAL (validate the Vulkan kernels with spirv-val), and every device and\n" +
-        "backend variable (IDRAK_DISABLE_CUDA, IDRAK_DISABLE_VULKAN, IDRAK_DISABLE_HIP, VK_ICD_FILENAMES, ...).";
+        "  idrak test -d vulkan:0 -j";
 
     public override IReadOnlyCollection<string> ValueOptions => ["--filter"];
 

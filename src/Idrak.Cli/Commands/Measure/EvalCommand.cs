@@ -35,8 +35,7 @@ internal sealed class EvalCommand : Command
         "Metrics beyond these (judged answers, pass@k) wait for the library's evaluation plug-ins (plug-in gap 16).\n\n" +
         "Examples:\n" +
         "  idrak eval org/model test-set.jsonl --limit 100 --no-think\n" +
-        "  idrak eval ./tuned held-out.jsonl --metric exact -o answers.jsonl -j\n\n" +
-        "Environment: IDRAK_CACHE (models), IDRAK_MATMUL, IDRAK_OFFLOAD, HF_TOKEN (gated downloads)";
+        "  idrak eval ./tuned held-out.jsonl --metric exact -o answers.jsonl -j";
 
     public override IReadOnlyCollection<string> ValueOptions => [.. Models.ValueOptions, "--metric", "--max-tokens", "--batch", "--limit", "--out"];
 

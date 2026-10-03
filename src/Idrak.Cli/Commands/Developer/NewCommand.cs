@@ -38,8 +38,7 @@ internal sealed partial class NewCommand : Command
         "Examples:\n" +
         "  idrak new plugin MyFormat\n" +
         "  idrak new webapi PriceApi -o ./services/price\n" +
-        "  idrak new console Demo --source ~/src/Idrak\n\n" +
-        "Environment: none of Idrak's; building the project uses dotnet's own (DOTNET_CLI_TELEMETRY_OPTOUT, DOTNET_NOLOGO).";
+        "  idrak new console Demo --source ~/src/Idrak";
 
     public override IReadOnlyCollection<string> ValueOptions => ["--out", "--source"];
 

@@ -33,8 +33,7 @@ internal sealed class ProfileCommand : Command
         "      --top N           rows per table (default 15)\n\n" +
         "Examples:\n" +
         "  idrak profile org/model -d vulkan:0 -w int8\n" +
-        "  idrak profile mymodel --prompt-tokens 1000 -j\n\n" +
-        "Environment: IDRAK_CACHE (models), IDRAK_MATMUL, IDRAK_AUTOTUNE, HF_TOKEN (gated downloads)";
+        "  idrak profile mymodel --prompt-tokens 1000 -j";
 
     public override IReadOnlyCollection<string> ValueOptions => [.. Models.ValueOptions, "--prompt-tokens", "--top"];
 

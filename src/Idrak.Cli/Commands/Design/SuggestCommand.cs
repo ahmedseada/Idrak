@@ -48,9 +48,7 @@ internal sealed class SuggestCommand : Command
         "  idrak sg reviews.jsonl -t label --text review  a text classifier\n" +
         "  idrak sg chats.jsonl -b owner/model -o ./run    LoRA setup sized to the device\n\n" +
         "Limits: JPEG pixels are not decoded (JPEG folders are profiled, not searched); a GPU's memory is known only\n" +
-        "through a configured limit (the library does not report it).\n" +
-        "Environment: HF_HOME, HF_HUB_CACHE (where --base and --assist models are found), IDRAK_CONFIG, IDRAK_TRACE, and\n" +
-        "the device variables ('idrak help env') for --search.";
+        "through a configured limit (the library does not report it).";
 
     public override IReadOnlyCollection<string> ValueOptions =>
         ["--target", "--text", "--task", "--budget", "--max-params", "--search", "--base", "--out", "--assist", .. Models.ValueOptions];

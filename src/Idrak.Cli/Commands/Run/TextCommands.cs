@@ -51,7 +51,7 @@ internal sealed class TokenizeCommand : Command
           idrak tokenize Qwen/Qwen3-0.6B "Hello, world"
           idrak tokenize qwen --chat -s "Be brief." "Hi"
           cat essay.txt | idrak tokenize ./model.gguf --count
-        """ + "\n\n" + GenerationSettings.EnvironmentHelp;
+        """;
 
     public override IReadOnlyCollection<string> ValueOptions => ["--input", "--system"];
 
@@ -128,7 +128,7 @@ internal sealed class TemplateCommand : Command
           idrak template Qwen/Qwen3-0.6B
           idrak template ./model.gguf --source > template.jinja
           idrak template qwen --json
-        """ + "\n\n" + GenerationSettings.EnvironmentHelp;
+        """;
 
     public override IReadOnlyCollection<string> Flags => ["--source", "--think"];
 
@@ -222,7 +222,7 @@ internal sealed class CompleteCommand : Command
         Examples:
           idrak complete Qwen/Qwen3-0.6B "def fibonacci(n):"
           idrak complete ./model.gguf "Once upon a time" --max-tokens 100 --seed 1
-        """ + "\n\n" + GenerationSettings.EnvironmentHelp;
+        """;
 
     public override IReadOnlyCollection<string> ValueOptions =>
         [.. Models.ValueOptions, "--temperature", "--top-k", "--top-p", "--max-tokens", "--input", "--stop"];

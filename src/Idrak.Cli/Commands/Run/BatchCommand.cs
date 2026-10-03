@@ -37,7 +37,7 @@ internal sealed class BatchCommand : Command
         Examples:
           idrak batch Qwen/Qwen3-0.6B --input prompts.jsonl --out answers.jsonl
           idrak batch qwen -i prompts.jsonl -o answers.jsonl --batch-size 16 --temperature 0
-        """ + "\n\n" + GenerationSettings.EnvironmentHelp;
+        """;
 
     public override IReadOnlyCollection<string> ValueOptions =>
         [.. Models.ValueOptions, .. GenerationSettings.ValueOptions.Where(o => o != "--tools"), "--input", "--out", "--batch-size"];

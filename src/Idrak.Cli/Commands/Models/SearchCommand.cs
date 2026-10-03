@@ -32,8 +32,6 @@ internal sealed class SearchCommand : Command
         Examples:
           idrak search qwen3
           idrak search llama --kind gguf --limit 5 --json
-
-        Environment: HF_ENDPOINT (a hub mirror), HF_TOKEN, HUGGING_FACE_HUB_TOKEN, HF_TOKEN_PATH, HF_HOME
         """;
 
     public override IReadOnlyCollection<string> ValueOptions => ["--limit", "--kind", "--token"];
@@ -47,7 +45,7 @@ internal sealed class SearchCommand : Command
             throw new UsageException("Missing QUERY (words in the model's name, e.g. qwen3).");
         }
 
-        if (ModelWork.Offline(context))
+        if (context.Offline)
         {
             throw new InvalidOperationException("search asks the Hugging Face hub, and --offline allows no network; 'idrak list' shows the cached models.");
         }

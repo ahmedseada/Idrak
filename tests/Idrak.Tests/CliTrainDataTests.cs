@@ -53,7 +53,7 @@ internal static partial class Tests
         {
             var (code, output, _) = TrainCli(["help", .. command.Name.Split(' ')]);
             Check(code == 0 && output.Contains($"idrak {command.Name}", StringComparison.Ordinal), $"help {command.Name}: {code}\n{output}");
-            Check(output.Contains("Example", StringComparison.Ordinal) && output.Contains("Environment:", StringComparison.Ordinal), $"help {command.Name} has examples and its environment");
+            Check(output.Contains("Example", StringComparison.Ordinal) && output.Contains("Environment (idrak help env for all):", StringComparison.Ordinal), $"help {command.Name} has examples and its environment");
             Check(!providers.Any(p => System.Text.RegularExpressions.Regex.Replace(output, @"\b[A-Z][A-Z0-9]*_[A-Z0-9_]+\b", "").Contains(p, StringComparison.OrdinalIgnoreCase)), $"help {command.Name} names no provider");
             Check(command.ShortForms.Keys.All(k => k.Length == 2 && !CommandContext.CommonShortForms.ContainsKey(k)), $"{command.Name}: short forms are one letter and not common ones");
             Check(command.ShortForms.Values.Distinct().Count() == command.ShortForms.Count, $"{command.Name}: no two short forms for one option");

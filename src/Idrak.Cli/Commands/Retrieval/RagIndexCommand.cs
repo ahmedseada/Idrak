@@ -35,8 +35,7 @@ internal sealed class RagIndexCommand : Command
         "      --max-tokens N    tokens of a chunk the model embeds (default 512)\n\n" +
         "Examples:\n" +
         "  idrak rag index ./docs -o docs.idx\n" +
-        "  idrak rag index ./docs -o docs.idx -m org/model -w int8 --chunk 120 --overlap 20\n\n" +
-        "Environment: IDRAK_CACHE (models), HF_TOKEN (gated downloads)";
+        "  idrak rag index ./docs -o docs.idx -m org/model -w int8 --chunk 120 --overlap 20";
 
     public override IReadOnlyCollection<string> ValueOptions => ["--out", "--model", "--weights", "--chunk", "--overlap", "--extensions", "--max-tokens"];
 

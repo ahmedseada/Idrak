@@ -35,9 +35,7 @@ internal sealed class KernelsDumpCommand : Command
         "  -o, --out DIR       the folder to write to (default ./kernels)\n\n" +
         "Examples:\n" +
         "  idrak kernels dump\n" +
-        "  idrak kernels dump spirv -o /tmp/spv && spirv-val /tmp/spv/spirv/add.spv\n\n" +
-        "Environment: none; the kernels are written in their default shapes (IDRAK_VULKAN_WIDTH, IDRAK_VULKAN_KERNELS,\n" +
-        "IDRAK_HIP_KERNELS and the tuning caches change what a device runs, not what is written).";
+        "  idrak kernels dump spirv -o /tmp/spv && spirv-val /tmp/spv/spirv/add.spv";
 
     public override IReadOnlyCollection<string> ValueOptions => ["--out"];
 

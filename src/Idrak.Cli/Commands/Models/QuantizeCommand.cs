@@ -36,8 +36,6 @@ internal sealed class QuantizeCommand : Command
         Examples:
           idrak quantize Qwen/Qwen3-0.6B -w int4
           idrak quantize ./model -w int8 -o ./model-int8 -d vulkan:0
-
-        Environment: IDRAK_CACHE (the cache), IDRAK_OFFLOAD (spill to system memory when the device is full)
         """;
 
     public override IReadOnlyCollection<string> ValueOptions => ["--weights", "--out", "--text", "--tokens"];

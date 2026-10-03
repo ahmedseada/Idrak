@@ -86,9 +86,13 @@ internal static class Terminal
     /// </summary>
     public static string Ask(CommandContext context, string question, string fallback, string requireTerminal = "--yes")
     {
-        if (!IsInteractive(context))
+        // With --json the output is one document, so no question is printed into it.
+        if (!IsInteractive(context) || context.Json && TestInput is null)
         {
-            throw new UsageException($"'{question}' needs an answer, and there is no terminal to ask on; add {requireTerminal}.");
+            string fix = requireTerminal == "--yes"
+                ? context.Command.Flags.Contains("--dry-run") ? "add --yes (-y) to go ahead, or --dry-run to see what would happen" : "add --yes (-y) to go ahead"
+                : $"add {requireTerminal}";
+            throw new UsageException($"'{question}' needs an answer, and there is no terminal to ask on{(context.Json ? " with --json" : "")}; {fix}.");
         }
 
         context.ConsoleOutput.Write(fallback.Length > 0 ? $"{question} [{fallback}] " : $"{question} ");
@@ -139,8 +143,9 @@ internal static class Terminal
 
 /// <summary>
 /// Ctrl+C handling for long commands: the first Ctrl+C cancels <see cref="Token"/> (the command stops cleanly after the
-/// current token, chunk or request) instead of ending the process; a second one ends the process as usual. Dispose to
-/// restore the default.
+/// current token, chunk or request) instead of ending the process; a second one ends the process as usual. With a
+/// command's context, <c>--timeout</c> running out cancels it the same way (<see cref="TimedOut"/> tells which). Dispose
+/// to restore the default.
 /// </summary>
 /// <example><code>
 /// using var interrupt = new Interrupt(context);
@@ -151,12 +156,20 @@ internal sealed class Interrupt : IDisposable
 {
     private readonly CancellationTokenSource _source = new();
     private readonly CommandContext? _context;
+    private readonly CancellationTokenRegistration _timeout;
 
     public Interrupt(CommandContext? context = null)
     {
         _context = context;
         Console.CancelKeyPress += OnCancel;
+        if (context?.Timeout is not null)
+        {
+            _timeout = context.TimeoutToken.Register(_source.Cancel);
+        }
     }
+
+    /// <summary>Whether <c>--timeout</c> ran out (rather than Ctrl+C being pressed).</summary>
+    public bool TimedOut => _context?.Timeout is not null && _context.TimeoutToken.IsCancellationRequested;
 
     /// <summary>Cancelled at the first Ctrl+C.</summary>
     public CancellationToken Token => _source.Token;
@@ -170,6 +183,7 @@ internal sealed class Interrupt : IDisposable
     public void Dispose()
     {
         Console.CancelKeyPress -= OnCancel;
+        _timeout.Dispose();
         _source.Dispose();
     }
 

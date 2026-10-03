@@ -30,9 +30,7 @@ internal sealed class TuningShowCommand : Command
         "Examples:\n" +
         "  idrak tuning show\n" +
         "  idrak tuning show --backend vulkan -j\n" +
-        "  idrak tuning show --reset --backend cuda\n\n" +
-        "Environment: IDRAK_CACHE, IDRAK_TUNING_CACHE (CUDA folder, or 0 for none), IDRAK_CPU_TUNING_FILE, IDRAK_VULKAN_TUNING_CACHE,\n" +
-        "IDRAK_AUTOTUNE (0: no measuring, formulas only)";
+        "  idrak tuning show --reset --backend cuda";
 
     public override IReadOnlyCollection<string> ValueOptions => ["--backend"];
 

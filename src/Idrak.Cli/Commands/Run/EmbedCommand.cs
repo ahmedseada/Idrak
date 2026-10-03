@@ -40,7 +40,7 @@ internal sealed class EmbedCommand : Command
           idrak embed Qwen/Qwen3-0.6B "first text" "second text"
           idrak embed qwen -i sentences.txt -o vectors.npy
           idrak embed ./model.gguf -i ./docs/a.md -i ./docs/b.md --whole -o docs.json
-        """ + "\n\n" + GenerationSettings.EnvironmentHelp;
+        """;
 
     public override IReadOnlyCollection<string> ValueOptions => [.. Models.ValueOptions, "--input", "--out", "--max-length", "--batch-size"];
 

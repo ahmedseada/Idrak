@@ -43,9 +43,6 @@ internal sealed class TuneCommand : Command
           idrak tune train -b qwen prefs.jsonl --loss dpo -o adapters/dpo -d cuda:0
           idrak tune evaluate adapters/chat held-out.jsonl --adapter adapters/chat
           idrak tune export adapters/chat -o merged
-
-        Environment: HF_TOKEN (gated models), IDRAK_CACHE, IDRAK_MATMUL, IDRAK_OFFLOAD, GITHUB_TOKEN, KAGGLE_USERNAME,
-          KAGGLE_KEY, ZENODO_TOKEN (data sources), IDRAK_CONFIG, IDRAK_TRACE
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } =
@@ -137,7 +134,7 @@ internal sealed class TuneCommand : Command
         // The tool itself: its output to idrak's writers (captured for --json, dropped with --quiet).
         var captured = context.Json ? new StringWriter() : null;
         var output = captured ?? (context.Quiet ? TextWriter.Null : context.Output);
-        var console = new ToolConsole(output, context.ErrorOutput, Console.In, live: captured is null && !context.Quiet && ReferenceEquals(context.Output, Console.Out));
+        var console = ToolHost.Console(context, output);
         var tool = new TuneTool(console);
         try
         {
@@ -235,8 +232,6 @@ internal sealed class TuneInitCommand : Command
         Examples:
           idrak tune init -b Qwen/Qwen3-0.6B --data chats.jsonl
           idrak tune init -b qwen --data prefs.jsonl --loss dpo -w int4 -o dpo.json && idrak tune --config dpo.json
-
-        Environment: IDRAK_CONFIG
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } = ["--base", "--data", "--out", "--adapter-out", "--loss", "--weights"];

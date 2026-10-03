@@ -38,9 +38,7 @@ internal sealed class DemoCommand : Command
         "Examples:\n" +
         "  idrak demo xor\n" +
         "  idrak demo shapes -d vulkan:0\n" +
-        "  idrak demo gpt -d cuda:0 -j\n\n" +
-        "Environment: IDRAK_DISABLE_CUDA, IDRAK_DISABLE_VULKAN, IDRAK_DISABLE_HIP (which backends are tried), IDRAK_MATMUL\n" +
-        "(product precision), IDRAK_AUTOTUNE and the tuning caches (kernel choices).";
+        "  idrak demo gpt -d cuda:0 -j";
 
     public override int Run(CommandContext context)
     {

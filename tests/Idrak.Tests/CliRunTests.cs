@@ -54,7 +54,7 @@ internal static partial class Tests
         foreach (var command in RunCommands.All)
         {
             var (code, text, _) = RunIdrakOn(device, null, [.. command.Name.Split(' '), "--help"]);
-            Check(code == 0 && text.Contains("Examples:") && text.Contains("Environment:") && text.Contains($"idrak {command.Name}"), $"{command.Name}: help");
+            Check(code == 0 && text.Contains("Examples:") && text.Contains("Environment (idrak help env for all):") && text.Contains($"idrak {command.Name}"), $"{command.Name}: help");
             Check(!providers.Any(p => System.Text.RegularExpressions.Regex.Replace(text, @"\b[A-Z][A-Z0-9]*_[A-Z0-9_]+\b", "").Contains(p, StringComparison.OrdinalIgnoreCase)), $"{command.Name}: help names no provider");
             var shorts = command.ShortForms.Keys.ToList();
             Check(shorts.Distinct().Count() == shorts.Count && !shorts.Any(CommandContext.CommonShortForms.ContainsKey), $"{command.Name}: short forms");

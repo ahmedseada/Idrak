@@ -4,6 +4,7 @@
 using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Text.Json.Nodes;
+using Idrak.Cli.Shared;
 
 namespace Idrak.Cli.Commands.Serve;
 
@@ -25,8 +26,6 @@ internal sealed class PingCommand : Command
         Examples:
           idrak ping
           idrak ping http://192.168.1.20:8080 --json
-
-        Environment: IDRAK_API_KEY, IDRAK_CACHE (where running servers are recorded)
         """;
 
     public override IReadOnlyCollection<string> ValueOptions => ["--api-key"];
@@ -40,7 +39,8 @@ internal sealed class PingCommand : Command
             throw new UsageException($"'{url}' is not a URL (for example http://127.0.0.1:11434).");
         }
 
-        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+        var limit = context.Timeout ?? TimeSpan.FromSeconds(10);                      // per call: --timeout, else 10 s
+        using var http = Http.Client(context, limit);
         if ((context.Option("--api-key") ?? Environment.GetEnvironmentVariable("IDRAK_API_KEY")) is { Length: > 0 } key)
         {
             http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", key);
@@ -56,7 +56,7 @@ internal sealed class PingCommand : Command
             }
             catch (Exception e) when (e is HttpRequestException or TaskCanceledException)
             {
-                return (0, null, watch.Elapsed.TotalMilliseconds, e is TaskCanceledException ? "no answer within 10 s" : e.Message);
+                return (0, null, watch.Elapsed.TotalMilliseconds, e is TaskCanceledException ? $"no answer within {ProgressLine.Duration(limit)}" : e.Message);
             }
         }
 

@@ -44,7 +44,7 @@ internal sealed class ChatCommand : Command
           idrak c qwen -d vulkan:0 -s "Answer briefly." --history talk.json
           idrak chat ./model.gguf -w int8 -k int8 --temperature 0 --think
           idrak chat qwen --file notes.md --file todo.txt
-        """ + "\n\n" + GenerationSettings.EnvironmentHelp;
+        """;
 
     public override IReadOnlyCollection<string> ValueOptions => [.. Models.ValueOptions, .. GenerationSettings.ValueOptions, "--history", "--file", "--mcp"];
 

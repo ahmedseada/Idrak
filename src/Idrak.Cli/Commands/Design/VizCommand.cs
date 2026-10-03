@@ -23,8 +23,7 @@ internal sealed class VizCommand : Command
         "      --as NAME       text (default), mermaid or svg\n\n" +
         "Examples:\n" +
         "  idrak viz ./run/network.json\n" +
-        "  idrak viz network.json --as svg > network.svg\n\n" +
-        "Environment: IDRAK_CONFIG, IDRAK_TRACE.";
+        "  idrak viz network.json --as svg > network.svg";
 
     public override IReadOnlyCollection<string> ValueOptions => ["--as"];
 

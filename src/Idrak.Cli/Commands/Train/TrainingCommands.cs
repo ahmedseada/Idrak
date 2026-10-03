@@ -44,8 +44,6 @@ internal sealed class TrainCommand : Command
           idrak train network.json --data houses.csv -t price -o houses.ikm
           idrak train cnn.json --data ./shapes --epochs 40 -d vulkan:0
           idrak train network.json --data houses.csv --config train.json
-
-        Environment: IDRAK_CACHE, IDRAK_MATMUL, IDRAK_OFFLOAD, IDRAK_TRACE
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } =
@@ -180,8 +178,6 @@ internal sealed class ResumeCommand : Command
         Examples:
           idrak resume 20261003-101500-houses
           idrak resume ./runs/houses --epochs 50 -d cuda:0
-
-        Environment: IDRAK_CACHE
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } = ["--epochs", "--out"];
@@ -245,8 +241,6 @@ internal sealed class RunsListCommand : Command
         Examples:
           idrak runs list
           idrak runs list ./experiments --json
-
-        Environment: IDRAK_CACHE
         """;
 
     public override int Run(CommandContext context)
@@ -287,8 +281,6 @@ internal sealed class RunsShowCommand : Command
         Examples:
           idrak runs show 20261003-101500-houses
           idrak runs show training.jsonl --json
-
-        Environment: IDRAK_CACHE
         """;
 
     public override int Run(CommandContext context)
@@ -360,8 +352,6 @@ internal sealed class RunsCompareCommand : Command
         Examples:
           idrak runs compare 20261003-101500-houses 20261003-103000-houses
           idrak runs compare a.jsonl b.jsonl --json
-
-        Environment: IDRAK_CACHE
         """;
 
     public override int Run(CommandContext context)
@@ -422,8 +412,6 @@ internal sealed class PredictCommand : Command
         Examples:
           idrak predict houses.ikm -i new-houses.csv
           idrak predict shapes.ikm -i ./unlabelled -o predictions.csv --top 3
-
-        Environment: none
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } = ["--input", "--out", "--top"];
@@ -616,8 +604,6 @@ internal sealed class PackageCommand : Command
         Examples:
           idrak package --model ~/.cache/idrak/runs/20261003-101500-houses -o houses-last.ikm --checkpoint last
           idrak package --model ./my-model -o my-model.ikm
-
-        Environment: none
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } = ["--model", "--out", "--checkpoint"];
@@ -724,8 +710,6 @@ internal sealed class DistillCommand : Command
 
         Examples:
           idrak distill --teacher Qwen/Qwen3-8B --student Qwen/Qwen3-0.6B --data prompts.jsonl -o adapters/distilled
-
-        Environment: HF_TOKEN, IDRAK_CACHE
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } = ["--teacher", "--student", "--base", "--data", "--out"];

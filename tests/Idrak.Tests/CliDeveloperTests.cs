@@ -53,7 +53,7 @@ internal static partial class Tests
         foreach (string name in new[] { "new", "test", "onnx import", "onnx export", "onnx check", "kernels dump", "trace", "demo", "shell" })
         {
             var (code, output, _) = DevRun([.. name.Split(' '), "--help"]);
-            Check(code == 0 && output.Contains("Examples:", StringComparison.Ordinal) && output.Contains("Environment:", StringComparison.Ordinal),
+            Check(code == 0 && output.Contains("Examples:", StringComparison.Ordinal) && output.Contains("Environment (idrak help env for all):", StringComparison.Ordinal),
                 $"help of {name}: exit {code}\n{output}");
             var command = CommandLine.Find(CommandTable.All, name.Split(' '), out _)!;
             Check(command.Name == name, $"{name} is found");

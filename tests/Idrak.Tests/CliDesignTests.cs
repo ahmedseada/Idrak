@@ -380,7 +380,7 @@ internal static partial class Tests
             foreach (string command in new[] { "suggest", "explain", "viz" })
             {
                 var (helpCode, help, _) = RunIdrak("help", command);
-                Check(helpCode == 0 && help.Contains("Examples:", StringComparison.Ordinal) && help.Contains("Environment:", StringComparison.Ordinal), $"help for {command}");
+                Check(helpCode == 0 && help.Contains("Examples:", StringComparison.Ordinal) && help.Contains("Environment (idrak help env for all):", StringComparison.Ordinal), $"help for {command}");
             }
 
             Check(RunIdrak("sg", "-h").Output.Contains("idrak suggest", StringComparison.Ordinal) && RunIdrak("x", "--help").Output.Contains("idrak explain", StringComparison.Ordinal), "aliases sg and x");

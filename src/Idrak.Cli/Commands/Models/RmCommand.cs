@@ -81,7 +81,7 @@ internal sealed class RmCommand : Command
         }
 
         bool go = !dryRun && chosen.Count > 0
-                  && ModelCache.Confirm(context, $"Remove {chosen.Count} {(chosen.Count == 1 ? "entry" : "entries")} ({ModelCache.Size(bytes)})?", context.Flag("--yes"));
+                  && Terminal.Confirm(context, $"Remove {chosen.Count} {(chosen.Count == 1 ? "entry" : "entries")} ({ModelCache.Size(bytes)})?");
         if (go)
         {
             foreach (var c in chosen)

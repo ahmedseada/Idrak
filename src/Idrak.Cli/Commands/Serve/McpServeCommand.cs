@@ -7,6 +7,7 @@ using System.Text.Json.Nodes;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using Idrak.Generation;
+using Idrak.Cli.Shared;
 using Idrak.Mcp;
 using Tool = Idrak.Generation.Tool;
 
@@ -31,8 +32,6 @@ internal sealed class McpServeCommand : Command
           idrak mcp serve ./MyTools.dll
           idrak mcp serve ./MyTools.dll --list --json
         A client's configuration starts it as: {"command": "idrak", "args": ["mcp", "serve", "/path/MyTools.dll"]}
-
-        Environment: IDRAK_CONFIG, IDRAK_TRACE
         """;
 
     public override IReadOnlyCollection<string> Flags => ["--list"];
@@ -85,21 +84,8 @@ internal sealed class McpServeCommand : Command
             context.Error($"Serving {count} tool{(count == 1 ? "" : "s")} over MCP on standard input/output: {string.Join(", ", registry.Definitions.Select(d => d.Name))}");
         }
 
-        using var stop = new CancellationTokenSource();
-        ConsoleCancelEventHandler cancel = (_, e) =>
-        {
-            e.Cancel = true;
-            stop.Cancel();
-        };
-        Console.CancelKeyPress += cancel;
-        try
-        {
-            RunServer(input, output, options, stop.Token).GetAwaiter().GetResult();
-        }
-        finally
-        {
-            Console.CancelKeyPress -= cancel;
-        }
+        using var interrupt = new Interrupt(context);           // Ctrl+C or --timeout ends the session
+        RunServer(input, output, options, interrupt.Token).GetAwaiter().GetResult();
 
         return ExitCodes.Ok;
     }

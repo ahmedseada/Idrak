@@ -33,9 +33,11 @@ internal static class ModelCache
     /// <summary>The folder Hugging Face models are downloaded into.</summary>
     public static string HubModels(string cacheFolder) => System.IO.Path.Combine(Downloads(cacheFolder), "huggingface", "models");
 
-    /// <summary>A downloader for the cache folder that logs to the verbose output.</summary>
-    public static Downloader Downloader(CommandContext context, bool refresh = false) =>
-        new(cacheFolder: Downloads(context.CacheFolder)) { Refresh = refresh, Log = line => context.Detail("  " + line) };
+    /// <summary>
+    /// A downloader for the cache folder: logs to the verbose output, draws a progress line on a terminal, and honours
+    /// <c>--offline</c> and <c>--timeout</c> (<see cref="Http.Downloader"/>).
+    /// </summary>
+    public static Downloader Downloader(CommandContext context, bool refresh = false) => Http.Downloader(context, refresh: refresh);
 
     /// <summary>
     /// Every model in the cache, newest use first: Idrak's downloads and GGUF files; with <paramref name="all"/> also the
@@ -158,6 +160,18 @@ internal static class ModelCache
     public static Local Locate(CommandContext context, string name)
     {
         string model = Models.Choose(context, name).Model;
+        return TryLocate(context, model) ?? throw new InvalidOperationException(context.Offline
+            ? $"{model} is not in the cache ({context.CacheFolder}) and --offline allows no download; run 'idrak pull {model}' while online."
+            : $"{model} is not in the cache ({context.CacheFolder}). Download it first: idrak pull {model}");
+    }
+
+    /// <summary>
+    /// The local files of <paramref name="model"/> (a folder, a .gguf file, a cached Hugging Face id or pulled GGUF
+    /// file, or a model in Hugging Face's own cache), or null when nothing local matches; no network. A cached model's
+    /// last use is recorded (<see cref="Touch"/>).
+    /// </summary>
+    public static Local? TryLocate(CommandContext context, string model)
+    {
         if (Directory.Exists(model))
         {
             return new Local(model, model, null);
@@ -204,9 +218,7 @@ internal static class ModelCache
             }
         }
 
-        throw new InvalidOperationException(ModelWork.Offline(context)
-            ? $"{model} is not in the cache ({context.CacheFolder}) and --offline allows no download; run 'idrak pull {model}' while online."
-            : $"{model} is not in the cache ({context.CacheFolder}). Download it first: idrak pull {model}");
+        return null;
     }
 
     /// <summary>The checkpoint's tensors by Hugging Face name (safetensors or GGUF), with their shapes.</summary>
@@ -247,27 +259,6 @@ internal static class ModelCache
         {
             System.IO.File.WriteAllText(file, uses.ToJsonString());
         }
-    }
-
-    /// <summary>
-    /// Asks <paramref name="question"/> (y/N) unless <paramref name="yes"/>; without a terminal (or with <c>--json</c>) the
-    /// question is a usage error naming <c>--yes</c>.
-    /// </summary>
-    public static bool Confirm(CommandContext context, string question, bool yes)
-    {
-        if (yes)
-        {
-            return true;
-        }
-
-        if (context.Json || Console.IsInputRedirected || !ReferenceEquals(context.Output, Console.Out))
-        {
-            throw new UsageException($"{question} Confirmation needed: pass --yes (-y) to go ahead, or --dry-run to see what would happen.");
-        }
-
-        context.Output.Write($"{question} [y/N] ");
-        string? answer = Console.ReadLine()?.Trim();
-        return answer is not null && (answer.Equals("y", StringComparison.OrdinalIgnoreCase) || answer.Equals("yes", StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>A byte count for people (the downloader's units).</summary>

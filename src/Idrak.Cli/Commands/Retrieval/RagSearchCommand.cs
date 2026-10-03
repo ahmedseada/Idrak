@@ -21,8 +21,7 @@ internal sealed class RagSearchCommand : Command
         "      --top N           passages to show (default 5)\n\n" +
         "Examples:\n" +
         "  idrak rag search \"reset the device\" --index docs.idx\n" +
-        "  idrak rag search \"install on Android\" --index docs.idx --top 10 -j\n\n" +
-        "Environment: IDRAK_CACHE (the embedding model of a hybrid index)";
+        "  idrak rag search \"install on Android\" --index docs.idx --top 10 -j";
 
     public override IReadOnlyCollection<string> ValueOptions => ["--index", "--top"];
 

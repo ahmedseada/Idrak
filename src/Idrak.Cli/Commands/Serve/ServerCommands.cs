@@ -6,6 +6,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Idrak.Cli.Shared;
 
 namespace Idrak.Cli.Commands.Serve;
 
@@ -24,9 +25,6 @@ internal static class ServerClient
           -p, --port N      the server's port (default: as above, else 11434)
               --api-key KEY the server's API key (default IDRAK_API_KEY)
         """;
-
-    /// <summary>The variables that affect the server commands (shown at the end of their help).</summary>
-    public const string Environment = "Environment: IDRAK_API_KEY (the API key), IDRAK_CACHE (where running servers are recorded), IDRAK_CONFIG, IDRAK_TRACE";
 
     public static string BaseUrl(CommandContext context)
     {
@@ -47,8 +45,8 @@ internal static class ServerClient
     public static HttpResponseMessage Send(CommandContext context, HttpMethod method, string path, string? json, bool stream = false)
     {
         string url = BaseUrl(context);
-        using var http = new HttpClient();
-        http.Timeout = Timeout.InfiniteTimeSpan;
+        // Not disposed here: a streamed answer is read after this returns (the client goes with the process; --timeout closes it).
+        var http = Http.Client(context);
         var request = new HttpRequestMessage(method, url + (path.StartsWith('/') ? path : "/" + path));
         if (json is not null)
         {
@@ -63,7 +61,7 @@ internal static class ServerClient
         context.Detail($"{method} {request.RequestUri}");
         try
         {
-            return http.SendAsync(request, stream ? HttpCompletionOption.ResponseHeadersRead : HttpCompletionOption.ResponseContentRead).GetAwaiter().GetResult();
+            return http.SendAsync(request, stream ? HttpCompletionOption.ResponseHeadersRead : HttpCompletionOption.ResponseContentRead, context.TimeoutToken).GetAwaiter().GetResult();
         }
         catch (HttpRequestException e)
         {
@@ -116,8 +114,6 @@ internal sealed class ServerPsCommand : Command
         Examples:
           idrak ps
           idrak server ps -p 8080 --json
-
-        {ServerClient.Environment}
         """;
 
     public override IReadOnlyCollection<string> ValueOptions => ServerClient.ValueOptions;
@@ -182,8 +178,6 @@ internal sealed class ServerStopCommand : Command
         Examples:
           idrak server stop
           idrak server stop -p 8080
-
-        {ServerClient.Environment}
         """;
 
     public override IReadOnlyCollection<string> ValueOptions => ServerClient.ValueOptions;
@@ -211,8 +205,6 @@ internal abstract class ServerModelCommand(bool load) : Command
         Examples:
           idrak server {(load ? "load" : "unload")} qwen
           idrak server {(load ? "load" : "unload")} qwen -p 8080 --json
-
-        {ServerClient.Environment}
         """;
 
     public override IReadOnlyCollection<string> ValueOptions => ServerClient.ValueOptions;
@@ -263,8 +255,6 @@ internal sealed class ApiCommand : Command
           idrak api /api/tags
           idrak api /v1/chat/completions '{"model":"qwen","messages":[{"role":"user","content":"Hi"}]}'
           idrak api /api/chat '{"model":"qwen","messages":[{"role":"user","content":"Hi"}]}' -p 8080
-
-        {{ServerClient.Environment}}
         """;
 
     public override IReadOnlyCollection<string> ValueOptions => [.. ServerClient.ValueOptions, "--method"];

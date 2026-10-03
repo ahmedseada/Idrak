@@ -26,8 +26,6 @@ internal sealed class DataPreviewCommand : Command
         Examples:
           idrak data preview houses.csv
           idrak data preview train.parquet -n 10 --json
-
-        Environment: none
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } = ["--rows"];
@@ -91,8 +89,6 @@ internal sealed class DataValidateCommand : Command
         Examples:
           idrak data validate chats.jsonl --as chat
           idrak data validate houses.csv --as table -t price
-
-        Environment: none
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } = ["--as", "--target", "--show"];
@@ -257,8 +253,6 @@ internal sealed class DataStatsCommand : Command
         Examples:
           idrak data stats chats.jsonl -m qwen
           idrak data stats reviews.csv --column review
-
-        Environment: HF_TOKEN, IDRAK_CACHE
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } = ["--model", "--context", "--column"];
@@ -431,8 +425,6 @@ internal sealed class DataConvertCommand : Command
         Examples:
           idrak data convert train.parquet train.jsonl
           idrak data convert alpaca.json chats.jsonl --as chat -s "Answer briefly."
-
-        Environment: none
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } = ["--as", "--system"];
@@ -511,8 +503,6 @@ internal sealed class DataDedupeCommand : Command
         Examples:
           idrak data dedupe chats.jsonl -o chats.unique.jsonl --near
           idrak data dedupe houses.csv --dry-run
-
-        Environment: none
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } = ["--out", "--columns"];
@@ -590,8 +580,6 @@ internal sealed class DataSplitCommand : Command
         Examples:
           idrak data split houses.csv --test 0.2 --validation 0
           idrak data split reviews.jsonl -t label -o splits/reviews
-
-        Environment: none
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } = ["--validation", "--test", "--target", "--out"];
@@ -607,7 +595,7 @@ internal sealed class DataSplitCommand : Command
             throw new UsageException($"--validation {validation} and --test {test} leave nothing to train on.");
         }
 
-        int seed = context.IntOption("--seed", 1);
+        int seed = context.Seed ?? 1;
         string? target = context.Option("--target");
         var rows = RowFiles.Read(path).ToList();
         string format = RowFiles.FormatName(path);
@@ -682,8 +670,6 @@ internal sealed class DataSampleCommand : Command
         Examples:
           idrak data sample chats.jsonl -n 100 -o small.jsonl
           idrak data sample reviews.csv -n 500 -t label -o reviews.sample.csv
-
-        Environment: none
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } = ["--rows", "--target", "--out"];
@@ -699,7 +685,7 @@ internal sealed class DataSampleCommand : Command
             throw new UsageException("-n needs a positive number of rows.");
         }
 
-        var random = new Random(context.IntOption("--seed", 1));
+        var random = new Random(context.Seed ?? 1);
         var rows = RowFiles.Read(path).ToList();
         var groups = DataSplitCommand.Groups(rows, context.Option("--target")).ToList();
         int wanted = Math.Min(count, rows.Count);
@@ -757,8 +743,6 @@ internal sealed class DataMixCommand : Command
         Examples:
           idrak data mix recipe.json -o train.jsonl
           idrak data mix recipe.json -o train.jsonl --eval-fraction 0.05 --seed 2
-
-        Environment: IDRAK_CACHE, HF_TOKEN, GITHUB_TOKEN, KAGGLE_USERNAME, KAGGLE_KEY, ZENODO_TOKEN
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } = ["--out", "--eval", "--eval-fraction"];
@@ -775,12 +759,12 @@ internal sealed class DataMixCommand : Command
             recipe = recipe with { EvaluationFraction = DataSplitCommand.Fraction(context, "--eval-fraction", 0) };
         }
 
-        if (context.Option("--seed") is not null)
+        if (context.Seed is { } seed)
         {
-            recipe = recipe with { Seed = context.IntOption("--seed", 0) };
+            recipe = recipe with { Seed = seed };
         }
 
-        var downloads = new Downloader(null, Path.Combine(context.CacheFolder, "downloads")) { Log = context.Detail };
+        var downloads = Http.Downloader(context);
         var counts = new RecipeCounts();
         var (train, evaluation) = recipe.Build(downloads, counts);
         long written = RowFiles.Write(train, output);

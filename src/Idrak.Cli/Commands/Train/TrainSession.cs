@@ -204,21 +204,15 @@ internal static class TrainSession
             ComputeResources.MaxCpuThreads), epochsDone));
         context.Write($"Training  {model.ParameterCount:N0} parameters on {device} · {optimizerName} {settings.LearningRate.ToString("G", CultureInfo.InvariantCulture)} · batch {settings.Batch} · "
                       + $"{(resume is null ? "" : $"from epoch {epochsDone + 1}, ")}up to {total} epochs" + (trainer.EarlyStoppingPatience is { } p ? $", early stop after {p}" : ""));
-        using var cancel = new CancellationTokenSource();
-        ConsoleCancelEventHandler onCancel = (_, e) =>
-        {
-            e.Cancel = !cancel.IsCancellationRequested;
-            cancel.Cancel();
-        };
-        Console.CancelKeyPress += onCancel;
+        // Ctrl+C or --timeout: training stops after the current batch, keeping the checkpoints (idrak resume continues).
         TrainingHistory history;
-        try
+        using (var interrupt = new Interrupt(context))
         {
-            history = trainer.Fit(trainLoader, total, validationLoader, cancel.Token);
-        }
-        finally
-        {
-            Console.CancelKeyPress -= onCancel;
+            history = trainer.Fit(trainLoader, total, validationLoader, interrupt.Token);
+            if (interrupt.Requested)
+            {
+                context.Write(interrupt.TimedOut ? $"Stopped   --timeout ran out; 'idrak resume {Path.GetFileName(folder)}' continues the run" : $"Stopped   'idrak resume {Path.GetFileName(folder)}' continues the run");
+            }
         }
 
         // ---------------------------------------------------------------- evaluate in the data's units

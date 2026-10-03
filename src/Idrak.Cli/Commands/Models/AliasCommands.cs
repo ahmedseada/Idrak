@@ -29,8 +29,6 @@ internal sealed class AliasSetCommand : Command
         Examples:
           idrak alias set qwen Qwen/Qwen3-0.6B -w int8 -k int8
           idrak c qwen
-
-        Environment: IDRAK_CONFIG (the config file)
         """;
 
     public override IReadOnlyCollection<string> ValueOptions => ["--weights", "--kv"];
@@ -85,8 +83,6 @@ internal sealed class AliasListCommand : Command
         Examples:
           idrak alias list
           idrak alias --json
-
-        Environment: IDRAK_CONFIG (the config file)
         """;
 
     public override int Run(CommandContext context)
@@ -127,8 +123,6 @@ internal sealed class AliasRmCommand : Command
 
         Examples:
           idrak alias rm qwen
-
-        Environment: IDRAK_CONFIG (the config file)
         """;
 
     public override int Run(CommandContext context)

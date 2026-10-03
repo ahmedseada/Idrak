@@ -33,8 +33,6 @@ internal sealed class DataCommand : Command
           idrak data show "hf:owner/qa-set?config=main"
           idrak data build "data.csv?user={question}&assistant={answer}" -o chats.jsonl --eval-fraction 0.02
           idrak data cache --json
-
-        Environment: IDRAK_CACHE, HF_TOKEN, HF_ENDPOINT, GITHUB_TOKEN, KAGGLE_USERNAME, KAGGLE_KEY, ZENODO_TOKEN
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } = [.. DataTool.ValueOptions.Where(o => o is not ("--cache" or "--seed"))];      // --cache and --seed are common options
@@ -59,7 +57,7 @@ internal sealed class DataCommand : Command
 
         var captured = context.Json ? new StringWriter() : null;
         var output = captured ?? (context.Quiet ? TextWriter.Null : context.Output);
-        var console = new ToolConsole(output, context.ErrorOutput, Console.In, live: captured is null && !context.Quiet && ReferenceEquals(context.Output, Console.Out));
+        var console = ToolHost.Console(context, output);
         var tool = new DataTool(console);
         try
         {

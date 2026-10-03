@@ -66,7 +66,7 @@ internal static partial class Tests
             foreach (var command in group)
             {
                 var (code, output, _) = MeasureIdrak(cache, ["help", .. command.Name.Split(' ')]);
-                Check(code == 0 && output.Contains("Examples:") && output.Contains("Environment:") && output.Contains($"idrak {command.Name}"), $"help {command.Name}: {output}");
+                Check(code == 0 && output.Contains("Examples:") && output.Contains("Environment (idrak help env for all):") && output.Contains($"idrak {command.Name}"), $"help {command.Name}: {output}");
                 foreach (var (shortForm, longForm) in command.ShortForms)
                 {
                     Check(!global::Idrak.Cli.CommandContext.CommonShortForms.ContainsKey(shortForm), $"{command.Name}: {shortForm} is a common short form");

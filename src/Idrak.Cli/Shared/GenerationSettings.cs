@@ -34,16 +34,6 @@ internal sealed class GenerationSettings
         "      --think            ask for reasoning (shown apart); --no-think: suppress it (default: the model's own)\n" +
         "      --tools FILE.dll   tools the model may call: the [Tool] methods of an assembly (repeatable)\n";
 
-    /// <summary>
-    /// The environment variables that affect a command that loads and runs a language model (the last lines of its
-    /// help; plans/idrak-cli.md, "Environment variables").
-    /// </summary>
-    public const string EnvironmentHelp =
-        "Environment:\n" +
-        "  models     IDRAK_CACHE, HF_TOKEN, HF_HOME, HF_HUB_CACHE, HF_ENDPOINT (where models are cached and downloaded from)\n" +
-        "  running    IDRAK_MATMUL, IDRAK_OFFLOAD, IDRAK_VULKAN_DEFAULT (precision of products, offloading, default device)\n" +
-        "  the tool   IDRAK_CONFIG, IDRAK_TRACE, NO_COLOR (the config file, error stacks, no colour)\n";
-
     /// <summary>The setting names <c>/set</c> knows.</summary>
     public static readonly string[] Names = ["temperature", "top-k", "top-p", "max-tokens", "seed", "think"];
 

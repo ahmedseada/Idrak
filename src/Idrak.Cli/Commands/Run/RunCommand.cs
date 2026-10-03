@@ -42,7 +42,7 @@ internal sealed class RunCommand : Command
           cat notes.txt | idrak r qwen "Summarize in three bullets"
           idrak run ./model.gguf -i question.txt --temperature 0 --json
           idrak run qwen "Extract the name and age: Sara is 31." --schema person.json
-        """ + "\n\n" + GenerationSettings.EnvironmentHelp;
+        """;
 
     public override IReadOnlyCollection<string> ValueOptions => [.. Models.ValueOptions, .. GenerationSettings.ValueOptions, "--input", "--schema", "--mcp"];
 
@@ -77,26 +77,16 @@ internal sealed class RunCommand : Command
             Stream = context.Json ? null : context.Output,
             ThinkingStream = context.Verbose && !context.Json ? context.ErrorOutput : null,
         };
-        using var cancel = new CancellationTokenSource();
-        ConsoleCancelEventHandler stop = (_, e) =>
-        {
-            e.Cancel = !cancel.IsCancellationRequested;       // the first Ctrl+C stops after the current token
-            cancel.Cancel();
-        };
-        Console.CancelKeyPress += stop;
+        using var interrupt = new Interrupt(context);           // the first Ctrl+C (or --timeout) stops after the current token
         ChatAnswer answer;
         try
         {
-            answer = responder.Answer(messages, settings, loaded.Context, cancel.Token);
+            answer = responder.Answer(messages, settings, loaded.Context, interrupt.Token);
         }
         catch (OperationCanceledException)
         {
-            context.Error("stopped");
+            context.Error(interrupt.TimedOut ? $"stopped: --timeout {ProgressLine.Duration(context.Timeout!.Value)} ran out" : "stopped");
             return ExitCodes.Failed;
-        }
-        finally
-        {
-            Console.CancelKeyPress -= stop;
         }
 
         if (context.Verbose && !context.Json)
