@@ -14,7 +14,7 @@ A self-contained deep-learning library for **.NET 10**, written in C#, with its 
 - **Build and train networks**: N-D tensors with automatic differentiation; dense, convolutional, recurrent,
   attention and transformer layers; losses, optimizers (including 8-bit AdamW) and schedules; a trainer, data
   loading, predictors, model packages, telemetry and resource limits.
-- **Run and fine-tune language models**: Llama, Qwen, Mistral and Gemma from Hugging Face folders or GGUF files,
+- **Run and fine-tune language models**: Llama, Qwen, Mistral and Gemma (1, 2 and 3) from Hugging Face folders or GGUF files,
   with their own tokenizers and chat templates; streaming chat with reasoning and tool calls; LoRA / QLoRA
   fine-tuning; answer scoring and evaluation.
 - **Fast on NVIDIA GPUs**: bfloat16 and FP8 tensor cores, flash attention, int8 / int4 / bfloat16 weights, int8
@@ -63,7 +63,7 @@ Set `IDRAK_DISABLE_CUDA=1` to force the CPU.
 
 | Area | What is there |
 |------|---------------|
-| Model families | Llama, Mistral, Qwen2/3, Gemma (a registry for more) |
+| Model families | Llama, Mistral, Qwen2/3, Gemma 1/2/3 (sliding windows, soft-capping, YaRN and dynamic RoPE); a registry for more |
 | Weight formats | safetensors; GGUF (F32/F16/BF16, Q4_0 to Q8_0, K-quants, IQ4) |
 | Generation | Streaming, batches, sampling (temperature, top-k/p, min-p, penalties), float32, int8 or bfloat16 KV caches |
 | Chat | Each model's own Jinja template, reasoning, tool calls, conversations, a coding agent |
@@ -91,12 +91,13 @@ points"):
 | Packed weight formats | `PackedWeight` | `Idrak` |
 | Network builder steps | `NetworkOps` | `Idrak` |
 | Graph operations and graph layer types | `GraphOps`, `LayerTypes` | `Idrak` |
+| RoPE scaling methods | `RopeScalings` | `Idrak` |
 | Telemetry listeners | `Telemetry.Subscribe` | `Idrak` |
 | Tool-call formats | `ToolCallFormats` | `Idrak` |
 | ONNX import operators | `OnnxImportOps` | `Idrak.Onnx` |
 | ONNX export of modules, lambdas and graph operations | `OnnxExportOps` | `Idrak.Onnx` |
 | Checkpoint formats | `CheckpointFormats` | `Idrak.LanguageModels` |
-| Model families | `PretrainedArchitectures` | `Idrak.LanguageModels` |
+| Model families (a spec, or a network built by the family) | `PretrainedArchitectures` | `Idrak.LanguageModels` |
 | GGUF architectures, quantization types, pre-tokenizers | `GgufArchitectures`, `GgufTypes`, `GgufPreTokenizers` | `Idrak.LanguageModels` |
 | Model sources | `ModelSources` | `Idrak.LanguageModels` |
 | Tokenizer normalizers, pre-tokenizers, decoders | `TokenizerComponents` | `Idrak.LanguageModels` |
@@ -170,7 +171,7 @@ src/Idrak/
                                     ChannelTelemetry, JsonLinesLogger
   Backends/Cpu, Backends/Cuda       device implementations (CPU SIMD kernels, PTX kernels)
 src/Idrak.LanguageModels/           optional package, no dependencies: language models and fine-tuning
-  PretrainedModel, Architectures    Hugging Face folders; the architecture registry (Llama, Mistral, Qwen2/3, Gemma)
+  PretrainedModel, Architectures    Hugging Face folders; the architecture registry (Llama, Mistral, Qwen2/3, Gemma 1/2/3)
   SafeTensors, Gguf, GgufModel      safetensors and GGUF weights (F32/F16/BF16, Q4_0–Q8_0, K-quants, IQ4)
   BpeTokenizer, Jinja, ChatTemplates  tokenizer.json; the model's own Jinja chat template; tool-call formats
   FineTuning, TuningManifest        LoRA / QLoRA fine-tuning (packing, CUDA graphs, memory fallbacks), adapters
@@ -984,7 +985,7 @@ import it back, and both must match Idrak within 1e-4.
 ```csharp
 using var model = PretrainedModel.Load("Qwen3-0.6B", new PretrainedOptions { Device = Device.Cuda(), Int8 = true, MaxPositions = 8192 });
 model.Spec;                      // the DecoderSpec read from config.json (layers, heads, GQA, RoPE, q/k norm, …)
-model.Notes;                     // anything approximated (for example sliding-window attention beyond the window)
+model.Notes;                     // anything approximated (for example exact GELU computed with the tanh form)
 
 var chat = model.CreateChat(KeyValueFormat.Int8);                          // the model's own chat template and stop tokens
 var reply = chat.Chat(new ChatRequest(messages, tools, Think: false));     // reasoning and tool calls come back parsed
@@ -992,15 +993,28 @@ var reply = chat.Chat(new ChatRequest(messages, tools, Think: false));     // re
 string text = model.ChatTemplate!.Render(messages, tools, think: null, addGenerationPrompt: false);   // training text
 
 PretrainedArchitectures.Register("MyForCausalLM", PretrainedArchitectures.LlamaStyle((config, spec, notes) => spec with { QkNorm = true }));
+PretrainedArchitectures.Register("OtherForCausalLM", new PretrainedArchitecture
+{
+    Spec = PretrainedArchitectures.CommonSpec,                             // sizes for the tokenizer, generation and tools
+    TensorName = name => name,
+    Build = context => MyNetwork(context.Config, context.Weights, context.Options),   // a family that is not a DecoderSpec
+});
+RopeScalings.Register("my-scaling", input => new RopeScalingResult(input.Frequencies, AttentionFactor: 1.1));
 ```
 
 A model folder in the Hugging Face layout becomes an ordinary Idrak `Sequential`: `config.json` is read into a
-`DecoderSpec` by an architecture registry (Llama, Mistral, Qwen2, Qwen3 and Gemma are registered; others are one
-`Register` call, usually `LlamaStyle` with a few spec changes), and the weights are read from safetensors (F32, F16,
+`DecoderSpec` by an architecture registry (Llama, Mistral, Qwen2, Qwen3, Gemma, Gemma 2 and Gemma 3 text models are
+registered; others are one `Register` call, usually `LlamaStyle` with a few spec changes, or a `Build` delegate for a
+family that does not fit `DecoderSpec`), and the weights are read from safetensors (F32, F16,
 BF16; single files or sharded with an index) one tensor at a time, transposed to Idrak's layout and, with
 `Int8`, quantized as they are read. Nothing is built for one family: the decoder is assembled from generic blocks
-(RMSNorm, RoPE with linear/llama3 scaling, grouped-query attention, gated feed-forward, optional q/k norm, biases,
-post-norms, tied embeddings), so other models use the same code. The model runs on Idrak's CPU and CUDA
+(RMSNorm; RoPE with the linear, llama3, YaRN and dynamic NTK scalings of `RopeScalings`, or one registered there;
+grouped-query attention with an optional sliding window per layer and soft-capped scores; gated feed-forward;
+optional q/k norm, biases, post-norms, tied embeddings, soft-capped logits), so other models use the same code.
+Windowed layers whose window falls inside the sequence, and soft-capped layers, attend through basic operations on
+every device (the attention kernels mask causally only), so they are correct everywhere but slower than plain
+attention; packed fine-tuning batches and batched generation are not offered for them (batches are padded, prompts
+run one by one). The model runs on Idrak's CPU and CUDA
 backends, and trains, takes LoRA adapters, quantizes and saves like any other.
 
 `BpeTokenizer` reads `tokenizer.json` (byte-level BPE as in Qwen, Llama 3 and GPT-2; SentencePiece-style BPE with
@@ -1051,8 +1065,9 @@ the registered names and how to register.
 | ONNX export of modules, lambdas and graph operations | `OnnxExportOps.Register<T>(OnnxTranslator<T>)`, `RegisterLambda(name, ...)`, `RegisterGraphOp(op, OnnxGraphOpTranslator)` | `Idrak.Onnx` |
 | Graph operations (`GraphModule` nodes; relu, clip, pow, ... built in) | `GraphOps.Register(name, GraphOp)` | `Idrak` |
 | Graph layer types (`GraphModule` JSON and model packages) | `LayerTypes.Register<T>(type, describe, create)` | `Idrak` |
+| RoPE scaling methods (linear, llama3, yarn, dynamic built in) | `RopeScalings.Register(type, RopeScalingMethod)` | `Idrak` |
 | Checkpoint formats (safetensors built in) | `CheckpointFormats.Register(ICheckpointFormat)` | `Idrak.LanguageModels` |
-| Model families (Hugging Face `architectures`) | `PretrainedArchitectures.Register(name, PretrainedArchitecture)` | `Idrak.LanguageModels` |
+| Model families (Hugging Face `architectures`; a `DecoderSpec`, or a `Build` delegate for its own network) | `PretrainedArchitectures.Register(name, PretrainedArchitecture)` | `Idrak.LanguageModels` |
 | GGUF architectures, quantization types and pre-tokenizers | `GgufArchitectures.Register(name, ...)`, `GgufTypes.Register(id, GgufType)`, `GgufPreTokenizers.Register(name, pattern)` | `Idrak.LanguageModels` |
 | Model sources (`name:` prefixes, asked before the built-ins) | `ModelSources.Register(IModelSource)` | `Idrak.LanguageModels` |
 | Tokenizer normalizers, pre-tokenizers, decoders | `TokenizerComponents.RegisterNormalizer` / `RegisterPreTokenizer` / `RegisterDecoder` | `Idrak.LanguageModels` |

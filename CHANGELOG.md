@@ -46,6 +46,23 @@
   network step and an ONNX import operator, a packed weight format, a KV cache format), run by the test runner as the
   "outside plug-in" group.
 
+- RoPE scaling is pluggable: `RopeScalings.Register(type, method)` (with `Unregister`, `Names`, `Get`); a method
+  returns the scaled frequencies, an attention factor on the rotary tables and optionally per-position frequencies.
+  `RopeScaling` now holds the type and the raw JSON parameters (`RopeScaling.Linear`, `Llama3`, `Yarn`, `Dynamic`
+  build them); its earlier constructor with llama3's fields is gone. Built in: linear and llama3 (unchanged results),
+  YaRN (beta_fast/slow, original context, attention factor or mscale/mscale_all_dim, truncate) and dynamic NTK, as
+  transformers computes them. config.json forwards any registered `rope_type`; GGUF files with YaRN keys use it
+  instead of falling back to the original context. Decoder specs written before keep reading.
+- Sliding-window attention: `DecoderSpec.SlidingWindow`, `SlidingWindowLayers` and `SlidingWindowRope`, read from
+  config.json for Mistral, Qwen2/Qwen3 (use_sliding_window, max_window_layers), layer_types and Gemma 2/3; outputs
+  beyond the window are now right instead of noted as approximate. Windowed layers attend through basic operations on
+  every device once the window falls inside the keys (correct, slower than the attention kernels); they refuse packed
+  sequences and rows of different lengths.
+- Soft-capping and score scale: `DecoderSpec.AttentionSoftcap`, `LogitSoftcap` and `AttentionScale`
+  (`CausalSelfAttention.ScoreSoftcap`/`ScoreScale`, `Linear.OutputSoftcap`).
+- Gemma 2 and Gemma 3 (text) are registered model families.
+- `PretrainedArchitecture.Build`: a family can build its own network from the config, the weights and the build
+  options instead of a `DecoderSpec`. `PretrainedArchitectures.Unregister`.
 - Direct decoding steps (not recorded as a graph) keep the residual addition fused with the next block's RMS norm for
   that norm: `Sequential` freed it with the layer's intermediate results, so the norm ran again, one kernel more per
   layer and token on every device (74 dispatches per token instead of 82 for the medium decoder of `--bench-vulkan`).

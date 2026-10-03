@@ -1,8 +1,8 @@
 # Plug-in points: what is still closed
 
 What a user or an outside package cannot plug into Idrak today without changing the library, from a read-only survey
-of the `architecture` branch (2026-10-02), and the dataset loader abstraction that follows from it. Items 1 and 2 and
-the outside-assembly test are built (marked below); the rest is not. File and line references are from that survey; check them again before starting an item.
+of the `architecture` branch (2026-10-02), and the dataset loader abstraction that follows from it. Items marked "Done" or
+"Partly done" below have been built since; the rest is not built yet. File and line references are from that survey; check them again before starting an item.
 
 "Closed" means a switch, enum, sealed type or fixed list that a user cannot extend without editing Idrak.
 
@@ -39,8 +39,8 @@ internal (the first-party packages keep calling it); outside code uses `CopyFrom
 |---|---|---|---|---|---|---|
 | 1 | Done (plugin/tensor-ops): `CopyFrom`, `Fill`, `Scale`, `AddScaled`, public `Persistent`/`PersistentZeros`, `Optimizer.ApplyDecoupledWeightDecay`. Was: no public way to write values into an existing tensor | `Tensor.Load` internal (Tensor.cs:188); `AddInPlace`/`FillInPlace` internal (Tensor.Decoding.cs:274, 281); the protected helpers of `Optimizer` are only weight decay, state and gradient scale (Optimizer.cs:143-177) | Lion, Adafactor or Muon optimizers; an ONNX import translator's `load:` callback (OnnxImportOps.cs:77); custom initializers; an outside packed weight format | public `Tensor.CopyFrom(ReadOnlySpan<float>)`, in-place `AddScaled`/`Assign`, or a protected `Optimizer.Update(Tensor parameter, Tensor value)` | small | high |
 | 2 | Done (plugin/tensor-ops): `Autograd.Function`; `Sqrt`, `Sin`, `Cos`, `Silu`, `Sign`, `Pow`, `Clamp`, `Maximum`/`Minimum`, `Where` (CPU and Vulkan kernels, CUDA through the host fallback). Still missing: Erf, Gather, tensor-by-tensor division, comparisons, a public `Checkpoint`. Was: no custom differentiable operation (own forward and backward); a small public operation set | `Record` private (Tensor.cs:685); `UnaryOp`/`BinaryOp` internal (Backends/Backend.cs:8-20); `Tensor.Checkpoint` internal (Tensor.Decoder.cs:71). No public Sqrt, Pow, Clamp, Max/Min, Where, Sin/Cos, Erf, SiLU, Gather; TextEncoder computes 1/norm through Log, scale and Exp (Retrieval/TextEncoder.cs:164) | RoPE variants, ALiBi, Mish, focal loss | `Autograd.Function(name, forward, backward)` composed from public operations (no backend access needed); more element-wise operations | medium | high |
-| 3 | RoPE scaling is closed: linear and llama3 only | switch at Layers/Decoder.cs:113-143; config parsing at LanguageModels/Architectures.cs:110-121; GGUF drops YaRN with a note (GgufModel.cs:292-301); `RopeScaling` is a sealed record with llama3's fields (Decoder.cs:93) | YaRN (Qwen2.5 and Qwen3 long context, DeepSeek), dynamic NTK, LongRoPE (Phi-3, Phi-4) | `RopeScalings.Register(type, Func<double[] frequencies, JsonObject parameters, double[]>)` plus an optional attention scale; `RopeScaling` holds the type and the JSON parameters | small (frequencies), medium (YaRN's attention factor) | high |
-| 4 | Model families must fit the fixed `DecoderSpec` | `PretrainedArchitecture.Spec` returns a sealed `DecoderSpec` of fixed flags (Architectures.cs:17; DecoderSpec.cs:97-175); mixture of experts rejected (Architectures.cs:102-105); sliding window noted, not implemented (Architectures.cs:123-126); `FeedForwardActivation` (Decoder.cs:524-534) and `DecoderNorm` (DecoderSpec.cs:9-16) closed; no ALiBi, logit soft-capping or encoder-only models | Gemma 2/3 (soft-capping, alternating sliding window), Mixtral and Qwen-MoE, Phi-3 (fused qkv), BERT and BGE embedding models | an optional `Build` delegate on `PretrainedArchitecture` so a family builds its own module; later per-layer attention options and an activation registry | large | high |
+| 3 | Done: `RopeScalings` (see "Done since the survey"). RoPE scaling is closed: linear and llama3 only | switch at Layers/Decoder.cs:113-143; config parsing at LanguageModels/Architectures.cs:110-121; GGUF drops YaRN with a note (GgufModel.cs:292-301); `RopeScaling` is a sealed record with llama3's fields (Decoder.cs:93) | YaRN (Qwen2.5 and Qwen3 long context, DeepSeek), dynamic NTK, LongRoPE (Phi-3, Phi-4) | `RopeScalings.Register(type, Func<double[] frequencies, JsonObject parameters, double[]>)` plus an optional attention scale; `RopeScaling` holds the type and the JSON parameters | small (frequencies), medium (YaRN's attention factor) | high |
+| 4 | Partly done (see "Done since the survey"). Model families must fit the fixed `DecoderSpec` | `PretrainedArchitecture.Spec` returns a sealed `DecoderSpec` of fixed flags (Architectures.cs:17; DecoderSpec.cs:97-175); mixture of experts rejected (Architectures.cs:102-105); sliding window noted, not implemented (Architectures.cs:123-126); `FeedForwardActivation` (Decoder.cs:524-534) and `DecoderNorm` (DecoderSpec.cs:9-16) closed; no ALiBi, logit soft-capping or encoder-only models | Gemma 2/3 (soft-capping, alternating sliding window), Mixtral and Qwen-MoE, Phi-3 (fused qkv), BERT and BGE embedding models | an optional `Build` delegate on `PretrainedArchitecture` so a family builds its own module; later per-layer attention options and an activation registry | large | high |
 | 5 | (done: `OnnxExportOps`, built-ins registered, `GraphModule` export; decoder layers and several inputs remain) ONNX export has no global registry and misses layer kinds | per-exporter `Module<T>`/`Lambda` only (OnnxExport.cs:90-101); built-ins in a closed switch (OnnxExport.cs:169-202); no `GraphModule` (an imported graph cannot be exported again), no decoder layers; one input only (OnnxExport.cs:70) | a package shipping a layer with its ONNX translator; round trips of imported graphs | `OnnxExportOps.Register<T>(OnnxTranslator<T>)` and `Unregister`, built-ins registered the same way; the per-exporter call keeps precedence | small to medium | high |
 | 6 | (done: translators in graphs, `GraphOps`, `LayerTypes`, Clip/Pow/Sqrt/...; Erf, ConvTranspose and several inputs/outputs remain) ONNX import of graph models ignores registered operators | fixed `Primitives` map (OnnxImport.cs:336-344) and closed `MatchLayer` (402-413), documented at OnnxImportOps.cs:90-92; closed `GraphModule` operation switch (GraphModule.cs:159-233) and layer list (`LayerDescriptions`, GraphModule.cs:464-522); one input and output (OnnxImport.cs:125, 350) | a ResNet or U-Net with Erf, Pow, Clip or ConvTranspose; a custom layer inside a graph | `GraphOps.Register(op, ...)`; `LayerDescriptions` becomes a layer type registry (describe, create), shared with item 7 | medium | high |
 | 7 | Model packages (.ikm) cannot store custom architectures, scalers or tokenizers | `BuildModel` handles DecoderSpec, GraphModule or builder JSON only (Inference/ModelPackage.cs:293-325); scalers in a closed switch (ModelPackage.cs:111-116) with the `PackageEntryKind` enum (:50); tokenizers limited to character and word (:118-126; Generation/Tokenizer.cs:282-298) | shipping a custom module, a robust scaler or a BPE model in one file | an architecture registry keyed by the description's format; `IScaler` gains a save method and a format name with a scaler registry; the same for tokenizers | medium | medium |
@@ -74,6 +74,60 @@ internal (the first-party packages keep calling it); outside code uses `CopyFrom
 - Calls are emitted when complete (no partial-argument streaming), as before.
 - Llama 3.1's built-in tools (`<|python_tag|>name.call(...)`) are parsed, but the template renders them back only
   when `builtin_tools` is passed as a template variable.
+
+## Done since the survey
+
+- Item 3, RoPE scaling: `RopeScalings.Register(type, RopeScalingMethod)` with `Unregister`, `Names`, `Contains` and
+  `Get` (names ignore case; unknown names list the registered ones). A method receives the unscaled frequencies, θ,
+  the rotary size and the JSON parameters, and returns the frequencies, an attention factor on the cos/sin tables
+  (YaRN's mscale) and optionally per-position frequencies. `RopeScaling` holds the type and the raw parameters;
+  config.json and GGUF (rope.scaling.type, factor, original_context_length, yarn_beta_fast/slow) forward them. Built
+  in: linear, llama3 (results unchanged), yarn and dynamic, following transformers' modeling_rope_utils.py. Limitation:
+  dynamic NTK rotates each token with the frequencies of its own position, as transformers does token by token; a
+  prompt longer than max_position_embeddings given in one pass differs from transformers for its earlier tokens.
+  Not done: LongRoPE (Phi-3/4) as a built-in; GGUF's yarn_log_multiplier and attn_factor keys.
+- Item 4, first slice:
+  - `PretrainedArchitecture.Build` (a delegate receiving `PretrainedBuildContext`: config, spec, weights by Idrak
+    name, the raw checkpoint, build options, notes) builds a family's own `Sequential`; `Spec` still gives the sizes.
+    `PretrainedArchitectures.Unregister` and null checks added.
+  - Sliding-window attention per layer: `DecoderSpec.SlidingWindow`, `SlidingWindowLayers`, `SlidingWindowRope`
+    (Gemma 3's local base); `CausalSelfAttention.SlidingWindow`. Read from config.json for Mistral (every layer),
+    Qwen2/Qwen3 (`use_sliding_window`, `max_window_layers`), `layer_types`, and Gemma 2/3 (alternating defaults).
+    The device kernels (tiled, decoding, segmented, per-row, CUDA flash and packed) mask causally only, so a layer
+    whose window falls inside the keys attends through basic operations (scores over every cached slot, a device-built
+    window mask, so recorded graphs stay valid) on every backend; a window covering the keys keeps the kernels.
+    Packed sequences and rows of different lengths are refused for such layers (`PackedSequences.Supports` and
+    `TextGenerator.SupportsBatches` say no, so fine-tuning pads and batches run one by one).
+  - Soft-capping and score scale: `DecoderSpec.AttentionSoftcap`, `LogitSoftcap`, `AttentionScale`
+    (`CausalSelfAttention.ScoreSoftcap`, `ScoreScale`; `Linear.OutputSoftcap` on the head, so fine-tuning losses and
+    answer scoring see capped logits). Soft-capped layers always take the composed path.
+  - Gemma 2 and Gemma 3 (text, `Gemma3ForCausalLM`) registered, with their four norms per layer
+    (`PretrainedArchitectures.GemmaTensorName`). gelu_pytorch_tanh was already read; gelu_fast added.
+- Remaining for item 4:
+  - Fast windowed and soft-capped kernels (CUDA flash attention, Vulkan tiled and decoding attention with a window
+    start and a cap), so these layers stop attending over the whole cache; a ring-buffer KV cache of the window's size.
+  - Packed sequences and per-row batches for windowed layers (a window term in the segmented kernels).
+  - An activation registry (the closed `FeedForwardActivation`) and `DecoderNorm`; ALiBi; encoder-only models (BERT,
+    BGE) and fused qkv (Phi-3), which the `Build` delegate already allows as a family's own network.
+  - GGUF families unlike Llama (item 12: Gemma 2/3 tensor names, sliding_window key).
+  - Mixture of experts (Mixtral, Qwen-MoE), planned below.
+
+### Plan: mixture of experts (Mixtral, Qwen2-MoE, Qwen3-MoE)
+
+- A `MixtureOfExperts : Module` beside `FeedForward`: a router `Linear(dim, experts)` ("router"), `experts` ×
+  `FeedForward` ("experts.i"), and for Qwen2-MoE a shared expert with a sigmoid gate. Forward on the CPU first:
+  router logits → softmax over experts → top-k per token (Mixtral k = 2; Qwen `num_experts_per_tok`) → renormalize the
+  k weights when `norm_topk_prob` (Mixtral always does; Qwen3-MoE per config) → per expert, gather its tokens, run it,
+  scatter-add weight · output. Training needs gather/scatter with gradients (item 2's public operations) and, for
+  fine-tuning, a load-balancing auxiliary loss (optional).
+- `DecoderBlock` takes a `Module` for its feed-forward part (today `FeedForward`); the fused inference paths stay for
+  `FeedForward` only.
+- `DecoderSpec.Experts`, `ExpertsPerToken`, `ExpertFfDim`, `SharedExpertFfDim`, `NormalizeTopK`; names
+  `layers.i.mlp.router`, `layers.i.mlp.experts.j.gate/up/down`; Mixtral's checkpoint names
+  (`block_sparse_moe.gate`, `experts.j.w1/w3/w2`) and Qwen's (`mlp.gate`, `mlp.experts.j.*_proj`,
+  `shared_expert`, `shared_expert_gate`) in their `TensorName`.
+- Tests: a tiny random model against a loop reference with a known routing; ties broken as torch.topk does (lowest
+  index first); then GPU kernels (grouped products per expert) and packed expert weights.
 
 ## Gaps inside the existing registries
 
