@@ -1,0 +1,32 @@
+using Idrak;
+using Idrak.Layers;
+
+namespace __NAMESPACE__;
+
+/// <summary>
+/// What this plug-in adds to Idrak: the packed weight format "__FORMAT__" (<see cref="RoundedWeight"/>) and the
+/// network step "__FORMAT__-softplus". `idrak --plugin __NAME__.dll` calls <see cref="RegisterIdrakPlugin"/>; your own
+/// code calls <see cref="Register"/>.
+/// </summary>
+public static class Plugin
+{
+    /// <summary>The packed weight format's name (for example `idrak run MODEL "prompt" -w __FORMAT__ --plugin __NAME__.dll`).</summary>
+    public const string FormatName = RoundedWeight.FormatName;
+
+    /// <summary>The network step's name (`Network.Input(4).Linear(8).Op(Plugin.StepName)`, or "op": "__FORMAT__-softplus" in a network JSON).</summary>
+    public const string StepName = "__FORMAT__-softplus";
+
+    /// <summary>softplus(x) = log(1 + e^x), with its derivative sigmoid(x) as the backward step.</summary>
+    public static DifferentiableFunction Softplus { get; } =
+        Autograd.Function("softplus", x => (x[0].Exp() + 1f).Log(), (x, y, g) => [g * x[0].Sigmoid()]);
+
+    /// <summary>Registers the format and the step (registering again replaces them).</summary>
+    public static void Register()
+    {
+        PackedWeight.Register(FormatName, RoundedWeight.Pack);
+        NetworkOps.Register(StepName, (builder, arguments) => builder.Lambda(t => Softplus.Apply(t), "Softplus", [.. builder.CurrentShape]));
+    }
+
+    /// <summary>Called by `idrak --plugin` after it loads this assembly.</summary>
+    public static void RegisterIdrakPlugin() => Register();
+}

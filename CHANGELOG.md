@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- idrak developer commands: `new console|webapi|rag|plugin NAME` (embedded project templates; the plug-in starter
+  registers a packed weight format and a network step, with tests on the public API only), `test` (the test runner of
+  a source checkout), `onnx import/export/check` (check against a round trip, ONNX Runtime when Idrak.Onnx.Runtime is
+  loaded, and reference outputs), `kernels dump ptx|spirv|hip`, `trace` (telemetry live or as JSON Lines), `demo
+  xor|spirals|shapes|gpt` and `shell` (history and completion).
+
 - Tool calls are parsed in the model's own format, not only as JSON between tags. `ChatOutputParser` takes the
   reasoning out and feeds the answer to an `IToolCallParser` (`Feed`, `Finish`, emitting text, reasoning and calls as
   before) that the template makes per reply (`ChatTemplate.CreateToolCallParser`, by `ToolCallFormatName`).
