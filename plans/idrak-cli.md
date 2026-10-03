@@ -113,6 +113,45 @@ Priority: 1 = first release, 2 = next, 3 = later.
 | `idrak profile MODEL` | Time per layer and kernel of one decoding step | 3 |
 | `idrak check MODEL --reference FILE` | Compares ids, template and logits with a transformers reference (the Chat sample's check) | 3 |
 
+### Design a model
+
+| Command | What it does | Priority |
+|---|---|---|
+| `idrak suggest DATA` | Reads the data, picks the task and writes a network and training setup: `network.json` (the builder's JSON, so `Network.FromJson` and `idrak train` read it), `train.json` and `prep.json`; `--search N` tries N candidates briefly on the chosen device and keeps the best; `--explain` gives the rule behind each choice | 2 |
+
+How it decides, in three steps:
+
+1. Read the data: file type (CSV, JSON Lines, Parquet, an image folder, chat rows), columns and value types, missing
+   values, row count, duplicates, class balance, image sizes and channels, text lengths in words and, with a model,
+   in tokens.
+2. Pick the task: a numeric target is regression, a target with few distinct values is classification, a folder of
+   class folders is image classification, text plus a label is text classification, chat rows are a chat fine-tune,
+   chosen/rejected pairs are preference training (DPO). `--task` overrides the guess.
+3. Propose a setup from rules sized by the data (rows, features, classes, sequence length, memory of the chosen
+   device), then optionally measure: `--search N` trains N variants (width, depth, dropout, learning rate) for a few
+   epochs on the device and keeps the best on held-out data.
+
+Examples of what it writes:
+
+- A house-price CSV (1,460 rows, 79 columns, numeric target): standard-scaled numbers, one-hot categories, medians for
+  missing values, a log-transformed skewed target; an MLP 288 → 128 → 64 → 1 with ReLU and dropout 0.1 (small for the
+  row count); AdamW 1e-3, batch 64, early stopping, mean squared error.
+- A folder of 28×28 grayscale images in 5 class folders: scaling, light augmentation for a small set; two conv →
+  batch norm → ReLU → pool blocks, global average pooling, a linear head; AdamW with cosine schedule and warm-up;
+  `--search` picks width, depth and dropout by validation accuracy.
+- Reviews with a label: a small transformer from scratch when no model is given, or LoRA on a pretrained model with
+  `--base MODEL`.
+- Chat rows with `--base MODEL`: LoRA rank and target modules, packing length from the token lengths, bfloat16 or
+  int4 base (QLoRA) from the device's memory, learning rate and epochs, and an estimate of the run's time from the
+  measured tokens per second; preference pairs choose DPO.
+
+Options: `--target COL`, `--text COL`, `--task regression|classify|image|sequence|chat|preference`,
+`--budget small|medium|large` or `--max-params N`, `--search N`, `--explain`, `--base MODEL`, `--out DIR`.
+
+Rules stay deterministic and explainable; the search is opt-in. Limits are reported rather than hidden (few rows:
+strong regularization and a warning; unbalanced classes: class weights or resampling). An optional `--assist MODEL`
+may let a local chat model explain the choices in plain words; it never changes them.
+
 ### Developers
 
 | Command | What it does | Priority |
