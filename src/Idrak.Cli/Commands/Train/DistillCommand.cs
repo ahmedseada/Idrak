@@ -74,11 +74,12 @@ internal sealed class DistillCommand : Command
           JSON document at the end with the output lines.
 
         Examples:
-          idrak distill --teacher Qwen/Qwen3-8B --student Qwen/Qwen3-0.6B --data chats.jsonl -o adapters/distilled
-          idrak distill --teacher Qwen/Qwen3-8B --teacher-weights int4 --student Qwen/Qwen3-0.6B --data chats.jsonl --temperature 2 --alpha 0.8 -o adapters/d
-          idrak distill --teacher Qwen/Qwen3-8B --student Qwen/Qwen3-0.6B --data chats.jsonl --precompute teacher.topk
-          idrak distill --teacher teacher.topk --student Qwen/Qwen3-0.6B --data chats.jsonl -o adapters/distilled
-          idrak distill --teacher big-model --student small-model --data prompts.jsonl --generate --reasoning -o adapters/small
+          idrak distill --teacher Qwen/Qwen3-8B --student Qwen/Qwen3-0.6B --data chats.jsonl -o adapters/d
+          idrak distill --teacher Qwen/Qwen3-8B --teacher-weights int4 --student Qwen/Qwen3-0.6B --data c.jsonl -o d
+          idrak distill --teacher Qwen/Qwen3-8B --student Qwen/Qwen3-0.6B --data c.jsonl --temperature 2 --alpha 0.8 -o d
+          idrak distill --teacher Qwen/Qwen3-8B --student Qwen/Qwen3-0.6B --data chats.jsonl --precompute t.topk
+          idrak distill --teacher t.topk --student Qwen/Qwen3-0.6B --data chats.jsonl -o adapters/d
+          idrak distill --teacher big-model --student small-model --data prompts.jsonl --generate -o adapters/s
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } =
