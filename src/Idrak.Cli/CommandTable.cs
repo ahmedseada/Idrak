@@ -18,6 +18,7 @@ internal static class CommandTable
         .. DataCommands.All,
         .. RetrievalCommands.All,
         .. MeasureCommands.All,
+        .. DesignCommands.All,
         .. DeveloperCommands.All,
     ];
 }

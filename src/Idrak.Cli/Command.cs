@@ -9,6 +9,9 @@ internal abstract class Command
     /// <summary>The words that select it after <c>idrak</c>, e.g. "doctor" or "cache info".</summary>
     public abstract string Name { get; }
 
+    /// <summary>Other names that select it, e.g. "ls" for "list" (plans/idrak-cli.md, "Short forms").</summary>
+    public virtual IReadOnlyCollection<string> Aliases => [];
+
     /// <summary>One line for <c>idrak help</c>.</summary>
     public abstract string Summary { get; }
 
@@ -20,6 +23,14 @@ internal abstract class Command
 
     /// <summary>Flags of this command (e.g. "--int8"); any other option is a usage error.</summary>
     public virtual IReadOnlyCollection<string> Flags => [];
+
+    /// <summary>
+    /// One-letter short forms of this command's options, short to long (e.g. "-p" to "--port"); the common ones
+    /// (<see cref="CommandContext.CommonShortForms"/>) apply to every command and may not be given another meaning.
+    /// </summary>
+    public virtual IReadOnlyDictionary<string, string> ShortForms => EmptyShortForms;
+
+    private static readonly Dictionary<string, string> EmptyShortForms = [];
 
     /// <summary>Runs the command; returns the exit code (<see cref="ExitCodes"/>).</summary>
     public abstract int Run(CommandContext context);

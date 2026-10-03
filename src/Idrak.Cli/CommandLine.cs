@@ -14,6 +14,11 @@ internal static class CommandLine
     public static int Run(IReadOnlyList<string> args, TextWriter output, TextWriter error)
     {
         var commands = CommandTable.All;
+        if (args.Count > 0 && args[0] is "--version" or "-V")
+        {
+            args = ["version", .. args.Skip(1)];
+        }
+
         if (args.Count == 0 || args[0] is "--help" or "-h" or "help" && args.Count == 1)
         {
             output.Write(Help.Overview(commands));
@@ -37,7 +42,7 @@ internal static class CommandLine
         try
         {
             var (positional, options, flags) = Parse(command, args.Skip(used).ToList());
-            if (flags.Contains("--help") || flags.Contains("-h"))
+            if (flags.Contains("--help"))
             {
                 output.Write(Help.For(command));
                 return ExitCodes.Ok;
@@ -72,11 +77,14 @@ internal static class CommandLine
         Command? best = null;
         foreach (var command in commands)
         {
-            var words = command.Name.Split(' ');
-            if (words.Length > used && words.Length <= args.Count && words.Select((w, i) => args[i] == w).All(m => m))
+            foreach (string name in command.Aliases.Prepend(command.Name))
             {
-                best = command;
-                used = words.Length;
+                var words = name.Split(' ');
+                if (words.Length > used && words.Length <= args.Count && words.Select((w, i) => args[i] == w).All(m => m))
+                {
+                    best = command;
+                    used = words.Length;
+                }
             }
         }
 
@@ -110,6 +118,13 @@ internal static class CommandLine
                 if (inline)
                 {
                     (name, value) = (arg[..equals], arg[(equals + 1)..]);
+                }
+
+                if (!name.StartsWith("--", StringComparison.Ordinal))
+                {
+                    name = CommandContext.CommonShortForms.TryGetValue(name, out string? common) ? common
+                        : command.ShortForms.TryGetValue(name, out string? own) ? own
+                        : throw new UsageException($"Unknown option {name}.");
                 }
 
                 if (valueOptions.Contains(name))
@@ -149,21 +164,36 @@ internal static class Help
         int width = commands.Count == 0 ? 0 : commands.Max(c => c.Name.Length);
         foreach (var c in commands.OrderBy(c => c.Name, StringComparer.Ordinal))
         {
-            text.Append("  ").Append(c.Name.PadRight(width)).Append("  ").Append(c.Summary).Append('\n');
+            text.Append("  ").Append(c.Name.PadRight(width)).Append("  ").Append(c.Summary)
+                .Append(c.Aliases.Count > 0 ? $" ({string.Join(", ", c.Aliases)})" : "").Append('\n');
         }
 
         return text.Append('\n').Append(CommonOptions).Append("\nRun 'idrak help COMMAND' for a command's options.\n").ToString();
     }
 
-    public static string For(Command command) =>
-        $"idrak {command.Name}: {command.Summary}\n\nUsage: idrak {command.Name} {command.Usage}".TrimEnd() + "\n\n" + CommonOptions;
+    public static string For(Command command)
+    {
+        var text = new System.Text.StringBuilder($"idrak {command.Name}: {command.Summary}\n\nUsage: idrak {command.Name} {command.Usage}".TrimEnd()).Append('\n');
+        if (command.Aliases.Count > 0)
+        {
+            text.Append("Aliases: ").Append(string.Join(", ", command.Aliases.Select(a => "idrak " + a))).Append('\n');
+        }
+
+        if (command.ShortForms.Count > 0)
+        {
+            text.Append("Short forms: ").Append(string.Join(", ", command.ShortForms.Select(p => $"{p.Key} {p.Value}"))).Append('\n');
+        }
+
+        return text.Append('\n').Append(CommonOptions).ToString();
+    }
 
     private const string CommonOptions =
         "Common options:\n" +
-        "  --device NAME   cpu, cuda:0, vulkan:1, hip:0 (default: the default device)\n" +
-        "  --plugin PATH   load an assembly that registers formats, families, ... (repeatable)\n" +
-        "  --json          machine-readable output\n" +
-        "  --quiet         less output; --verbose: more\n" +
-        "  --cache DIR     the cache folder (default IDRAK_CACHE or ~/.cache/idrak)\n" +
-        "  --config FILE   the config file (default IDRAK_CONFIG or ~/.idrak/config.json)\n";
+        "  -d, --device NAME   cpu, cuda:0, vulkan:1, hip:0 (default: the default device)\n" +
+        "  -P, --plugin PATH   load an assembly that registers formats, families, ... (repeatable)\n" +
+        "  -j, --json          machine-readable output\n" +
+        "  -q, --quiet         less output; -v, --verbose: more\n" +
+        "      --cache DIR     the cache folder (default IDRAK_CACHE or ~/.cache/idrak)\n" +
+        "  -C, --config FILE   the config file (default IDRAK_CONFIG or ~/.idrak/config.json)\n" +
+        "  -h, --help          this help; idrak -V, --version: the versions\n";
 }
