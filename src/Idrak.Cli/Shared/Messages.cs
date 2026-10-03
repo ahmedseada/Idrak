@@ -194,9 +194,11 @@ internal static partial class Messages
 
         var scope = new Scope(Current.Value, saved);
         Current.Value = language;
+        // Windows consoles and pipes start in a legacy code page, which turns Arabic, Chinese or emoji in a model's answer
+        // into "?": every run writes UTF-8 (restored at the end), whatever the language of the tool's own messages.
+        scope.UseUtf8(ref output, ref error);
         if (language == "ar")
         {
-            scope.UseUtf8(ref output, ref error);
             output = scope.Wrap(output, rendering, right);
             error = scope.Wrap(error, rendering, right);
         }

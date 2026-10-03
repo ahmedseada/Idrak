@@ -40,7 +40,8 @@ internal sealed class TestCommand : Command
 
     public override int Run(CommandContext context)
     {
-        if (context.Positional.FirstOrDefault(a => !a.StartsWith('-')) is { } stray)
+        // Arguments after -- go to the runner as they are (--bench-vulkan window): only a first one that is not an option is a mistake.
+        if (context.Positional.Count > 0 && !context.Positional[0].StartsWith('-') && context.Positional[0] is var stray)
         {
             throw new UsageException($"Unexpected argument '{stray}'; pass test names with --filter, and runner options after -- (e.g. -- --bench-window).");
         }

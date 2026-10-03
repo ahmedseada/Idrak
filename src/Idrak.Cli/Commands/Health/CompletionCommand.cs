@@ -43,9 +43,10 @@ internal sealed class CompletionCommand : Command
     {
         if (context.Flag("--complete"))
         {
+            // One per line with "\n" on every system: bash and zsh (Git Bash and WSL on Windows too) would keep a "\r".
             foreach (string candidate in Candidates(context, context.Positional))
             {
-                context.Output.WriteLine(candidate);
+                context.Output.Write(candidate + "\n");
             }
 
             return ExitCodes.Ok;

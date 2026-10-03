@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `idrak` writes UTF-8 on Windows for every run, not only with `--lang ar`: a model's Arabic, Chinese or emoji answer
+  printed `?` in a console or a pipe with a legacy code page. Completion candidates end in `\n` on every system, and
+  `idrak serve --log-requests` lets others read the log while it writes. `idrak test -- --bench-vulkan window` passes
+  every argument after `--` to the runner.
 - `idrak serve` and `ui` answer clients that append their own route to the address they were given (given
   `http://127.0.0.1:7317/api/chat` as a base, a client posting to `.../api/chat/chat/completions` or
   `.../api/chat/api/chat` now gets the OpenAI-style or chat API instead of 404), and print the right addresses
