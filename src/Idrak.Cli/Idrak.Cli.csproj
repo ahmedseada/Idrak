@@ -13,6 +13,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="Idrak.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Idrak\Idrak.csproj" />
     <ProjectReference Include="..\Idrak.LanguageModels\Idrak.LanguageModels.csproj" />
     <ProjectReference Include="..\Idrak.Datasets\Idrak.Datasets.csproj" />
