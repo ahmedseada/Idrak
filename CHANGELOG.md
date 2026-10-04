@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0 (next release; the date is set when it is tagged)
+## 0.2.0 (2026-10-04)
 
 Highlights: a Vulkan backend for NVIDIA, AMD, Intel and phone GPUs (SPIR-V generated in C#), a first HIP backend for
 AMD, macOS and Android tested on the CPU backend, mixture-of-experts models, sliding-window and soft-cap attention
