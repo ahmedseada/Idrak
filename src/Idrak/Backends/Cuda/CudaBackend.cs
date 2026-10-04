@@ -904,6 +904,27 @@ internal sealed unsafe partial class CudaBackend : Backend
 
         const int T = PtxKernels.Tile;
         int maxGridZ = _limits.MaxGridZ > 0 ? _limits.MaxGridZ : 65535;           // as reported (65535 on every CUDA GPU so far)
+
+        // Rows beyond the grid's y limit (a Conv2d's im2col product has N·OH·OW rows: 7.8 million for 10,000 MNIST images)
+        // run in row blocks below, each at most MaxGridY tiles of the smallest kernel tile high. A transposed A has no
+        // contiguous row blocks, so it is copied as stored first.
+        int maxGridY = _limits.MaxGridY > 0 ? _limits.MaxGridY : 65535;
+        int rowsPerLaunch = maxGridY * T;
+        if (transA && m > rowsPerLaunch)
+        {
+            var stored = Allocate(batch * m * k, zeroed: false);
+            try
+            {
+                TransposeBatched(a, stored, batch, k, m);
+                BatchedMatMul(stored, b, c, batch, m, n, k, false, transB, beta);
+            }
+            finally
+            {
+                stored.Release();
+            }
+
+            return;
+        }
         ulong mk = (ulong)m * (ulong)k, kn = (ulong)k * (ulong)n, mn = (ulong)m * (ulong)n;
         // Token-by-token decoding: few rows through a large matrix read each weight once. (Smaller products keep the
         // tiled kernel, whose sums do not depend on the number of rows, so small models predict identically in any batch.)
@@ -970,67 +991,72 @@ internal sealed unsafe partial class CudaBackend : Backend
         {
             int count = Math.Min(maxGridZ, batch - first);
             ulong offset = (ulong)first * sizeof(float);
-            if (few)
+            for (int row = 0; row < m; row += rowsPerLaunch)
             {
-                uint columnsPerBlock = transB ? 8u : 32u;
-                Launch(K(transB ? "gemv_nt_f32" : "gemv_nn_f32"), (uint)((n + columnsPerBlock - 1) / columnsPerBlock), 1, (uint)count,
-                    (uint)(transB ? PtxKernels.RowThreads : PtxKernels.GemvThreads), 1, P(a) + offset * mk, P(b) + offset * kn, P(c) + offset * mn, U(m), U(n), U(k), F(beta), mk, kn, mn);
-                continue;
-            }
-
-            if (_profile is not null)
-            {
-                string kind = tensorCore is not null ? "gemm_tc" : few ? "gemv" : gemmTile > 0 ? $"gemm{gemmTile}" : "matmul16";
-                _profileLabel = $"{kind}_{(transA ? 't' : 'n')}{(transB ? 't' : 'n')} {m}x{n}x{k}{(count > 1 ? $" batch {count}" : "")}";
-                _profileFlops = 2.0 * m * n * k * count;
-            }
-
-            if (tensorCore is not null)
-            {
-                string kernel = transA ? (transB ? "gemm_tc_tt_f32" : "gemm_tc_tn_f32") : (transB ? "gemm_tc_nt_f32" : "gemm_tc_nn_f32");
-                var function = tensorCore[kernel];
-                ulong aAt = P(a) + offset * mk, bAt = P(b) + offset * kn;
-                void Run(int splits, ulong target) =>
-                    Launch(function, (uint)((n + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile), (uint)((m + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile),
-                        (uint)(splits > 1 ? splits : count), PtxKernels.TensorThreads, 1, aAt, bAt, target,
-                        U(m), U(n), U(k), F(beta), splits > 1 ? 0UL : mk, splits > 1 ? 0UL : kn, splits > 1 ? 0UL : mn, 0UL, U(transA ? m : k), U(transB ? k : n), U(n), 0UL);
-                ulong cAt = P(c) + offset * mn;
-                Run(count == 1 ? TensorSplits(m, n, k, beta, cAt, n, (transA ? 2 : 0) + (transB ? 1 : 0), Run) : 1, cAt);
-                Interlocked.Increment(ref TensorCoreLaunches);
-                continue;
-            }
-
-            if (gemmTile > 0)
-            {
-                // The tile from the SM count, then measured once per shape (both tiles add k terms in the same order).
-                ulong aAt = P(a) + offset * mk, bAt = P(b) + offset * kn, cAt = P(c) + offset * mn;
-                int blocks = count;
-                void RunTile(int tile, ulong target) =>
-                    Launch(K(tile == 128 ? "gemm128_f32" : "gemm64_f32"), (uint)((n + tile - 1) / tile), (uint)((m + tile - 1) / tile),
-                        (uint)blocks, PtxKernels.GemmThreads, 1, aAt, bAt, target,
-                        U(m), U(n), U(k), U(transA ? 1 : 0), U(transB ? 1 : 0), F(beta), mk, kn, mn);
-                var key = new TuneKey(TuneOp.FloatTile, (transA ? 2 : 0) + (transB ? 1 : 0), m, n, k, count, beta == 0f ? 0 : 1);
-                int tile = gemmTile;
-                if (beta == 0f)
+                int rows = Math.Min(rowsPerLaunch, m - row);
+                ulong aRow = (ulong)row * (ulong)k * sizeof(float), cRow = (ulong)row * (ulong)n * sizeof(float);
+                if (few)
                 {
-                    tile = Tune(key, [64, 128], gemmTile, t => RunTile(t, cAt));
-                }
-                else if (!TunedKnown(key))
-                {
-                    WithScratch((long)count * m * n, scratch => tile = Tune(key, [64, 128], gemmTile, t => RunTile(t, scratch)));
-                }
-                else
-                {
-                    tile = Tune(key, [], gemmTile, _ => { });
+                    uint columnsPerBlock = transB ? 8u : 32u;
+                    Launch(K(transB ? "gemv_nt_f32" : "gemv_nn_f32"), (uint)((n + columnsPerBlock - 1) / columnsPerBlock), 1, (uint)count,
+                        (uint)(transB ? PtxKernels.RowThreads : PtxKernels.GemvThreads), 1, P(a) + offset * mk + aRow, P(b) + offset * kn, P(c) + offset * mn + cRow, U(rows), U(n), U(k), F(beta), mk, kn, mn);
+                    continue;
                 }
 
-                RunTile(tile, cAt);
-                continue;
-            }
+                if (_profile is not null)
+                {
+                    string kind = tensorCore is not null ? "gemm_tc" : few ? "gemv" : gemmTile > 0 ? $"gemm{gemmTile}" : "matmul16";
+                    _profileLabel = $"{kind}_{(transA ? 't' : 'n')}{(transB ? 't' : 'n')} {rows}x{n}x{k}{(count > 1 ? $" batch {count}" : "")}";
+                    _profileFlops = 2.0 * rows * n * k * count;
+                }
 
-            Launch(_matmul, (uint)((n + T - 1) / T), (uint)((m + T - 1) / T), (uint)count, T, T,
-                P(a) + offset * mk, P(b) + offset * kn, P(c) + offset * mn, U(m), U(n), U(k), U(transA ? 1 : 0), U(transB ? 1 : 0), F(beta),
-                mk, kn, mn);
+                if (tensorCore is not null)
+                {
+                    string kernel = transA ? (transB ? "gemm_tc_tt_f32" : "gemm_tc_tn_f32") : (transB ? "gemm_tc_nt_f32" : "gemm_tc_nn_f32");
+                    var function = tensorCore[kernel];
+                    ulong aAt = P(a) + offset * mk + aRow, bAt = P(b) + offset * kn;
+                    void Run(int splits, ulong target) =>
+                        Launch(function, (uint)((n + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile), (uint)((rows + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile),
+                            (uint)(splits > 1 ? splits : count), PtxKernels.TensorThreads, 1, aAt, bAt, target,
+                            U(rows), U(n), U(k), F(beta), splits > 1 ? 0UL : mk, splits > 1 ? 0UL : kn, splits > 1 ? 0UL : mn, 0UL, U(transA ? m : k), U(transB ? k : n), U(n), 0UL);
+                    ulong cAt = P(c) + offset * mn + cRow;
+                    Run(count == 1 ? TensorSplits(rows, n, k, beta, cAt, n, (transA ? 2 : 0) + (transB ? 1 : 0), Run) : 1, cAt);
+                    Interlocked.Increment(ref TensorCoreLaunches);
+                    continue;
+                }
+
+                if (gemmTile > 0)
+                {
+                    // The tile from the SM count, then measured once per shape (both tiles add k terms in the same order).
+                    ulong aAt = P(a) + offset * mk + aRow, bAt = P(b) + offset * kn, cAt = P(c) + offset * mn + cRow;
+                    int blocks = count;
+                    void RunTile(int tile, ulong target) =>
+                        Launch(K(tile == 128 ? "gemm128_f32" : "gemm64_f32"), (uint)((n + tile - 1) / tile), (uint)((rows + tile - 1) / tile),
+                            (uint)blocks, PtxKernels.GemmThreads, 1, aAt, bAt, target,
+                            U(rows), U(n), U(k), U(transA ? 1 : 0), U(transB ? 1 : 0), F(beta), mk, kn, mn);
+                    var key = new TuneKey(TuneOp.FloatTile, (transA ? 2 : 0) + (transB ? 1 : 0), rows, n, k, count, beta == 0f ? 0 : 1);
+                    int tile = gemmTile;
+                    if (beta == 0f)
+                    {
+                        tile = Tune(key, [64, 128], gemmTile, t => RunTile(t, cAt));
+                    }
+                    else if (!TunedKnown(key))
+                    {
+                        WithScratch((long)count * rows * n, scratch => tile = Tune(key, [64, 128], gemmTile, t => RunTile(t, scratch)));
+                    }
+                    else
+                    {
+                        tile = Tune(key, [], gemmTile, _ => { });
+                    }
+
+                    RunTile(tile, cAt);
+                    continue;
+                }
+
+                Launch(_matmul, (uint)((n + T - 1) / T), (uint)((rows + T - 1) / T), (uint)count, T, T,
+                    P(a) + offset * mk + aRow, P(b) + offset * kn, P(c) + offset * mn + cRow, U(rows), U(n), U(k), U(transA ? 1 : 0), U(transB ? 1 : 0), F(beta),
+                    mk, kn, mn);
+            }
         }
     }
 
