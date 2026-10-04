@@ -27,6 +27,7 @@ alone.
 | Generation | Streaming text generation, batches, sampling, float32 / int8 / bfloat16 KV caches, chat with reasoning and tool calls, a coding agent |
 | Inference | Predictors, model packages (`.ikm`), an inference engine with batching and keep-alive |
 | Retrieval | Chunking, BM25, vector and hybrid search, re-ranking, a RAG pipeline that cites passages |
+| Vision | Text recognition (OCR): page segmentation, character framing, a recognizer over any character classifier with scripts, look-alikes and right-to-left order |
 | Telemetry | Hooks that cost nothing when unused: console, CSV metrics, JSON Lines |
 | Extending | More than twenty registries: samplers, KV cache layouts, packed weight formats, builder steps, graph operations, RoPE scalings, tool-call formats, data sources, image codecs, optimizers, differentiable operations |
 
