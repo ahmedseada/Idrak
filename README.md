@@ -89,6 +89,7 @@ tool. `IDRAK_DISABLE_CUDA=1` (and `_VULKAN`, `_HIP`) turns a backend off.
 | Area | What is there |
 |------|---------------|
 | Retrieval and RAG | Chunking, BM25, bi-encoder vectors, hybrid search with rank fusion, cross-encoder re-ranking, a pipeline that cites passages |
+| Text recognition (OCR) | Page segmentation into lines, characters and spaces; EMNIST-style character framing into one batch buffer; a text recognizer for any character classifier, with one script per line, look-alike correction and right-to-left reading order (Arabic, Hebrew); synthetic pages |
 | Serving | The inference engine (loading, batching), model packages (`.ikm`), Web API endpoints, a local chat API (`/api/chat`), MCP |
 | Interop | ONNX import and export; reference checks against PyTorch and transformers |
 | Telemetry | Hooks that cost nothing when unused: console, CSV metrics, JSON Lines; training, batch, gradient and layer events |
@@ -229,6 +230,8 @@ src/Idrak/
   Inference/                        Predictor, ModelPackage (.ikm), InferenceEngine
   Retrieval/                        chunking, BM25, TextEncoder (bi-encoder), VectorIndex, RetrievalIndex (hybrid
                                     search with rank fusion), CrossEncoder (re-ranking), Rag pipeline, search tool
+  Vision/                           PageSegmenter (lines, characters, spaces), GlyphFrame (character framing),
+                                    TextRecognizer (OCR over a character classifier), WritingScript, PageComposer
   Diagnostics/                      Telemetry hub, events, ConsoleLogger, MetricsRecorder,
                                     ChannelTelemetry, JsonLinesLogger
   Backends/                         the device backends: Cpu (SIMD kernels, measured tiling), Cuda (PTX kernels
@@ -913,6 +916,46 @@ app.MapIdrakStatus("/status");
 The endpoints are ordinary ASP.NET Core endpoints (`.RequireAuthorization()`, rate limiting and OpenAPI work
 as usual), and `IPredictor<TIn, TOut>` can be injected (keyed by model name). The GptApi sample serves its
 chat API this way, and the HouseApi sample is a complete prediction API in about ten lines.
+
+### Text recognition (`Idrak.Vision`)
+
+Reads the text of a page with any character classifier (images `[N, 1, 28, 28]` in, one logit per class out), such
+as a CNN trained on EMNIST. The original way is writing the thresholding, the line and character splitting, the
+framing and the batching by hand.
+
+```csharp
+using Idrak.Vision;
+
+using var ocr = TextRecognizer.Load("letters.ikm").Build();   // a package from Predictor.Save: model, classes, input shape
+RecognizedPage page = ocr.Read("scan.png");
+Console.WriteLine(page.Text);                                   // lines in reading order
+foreach (var line in page.Lines)                                // each line: Script, RightToLeft, Box, Characters
+    Console.WriteLine($"{line.Script}: {line.Text} ({line.Characters.Min(c => c.Confidence):P0} lowest confidence)");
+
+// Or a model in memory, with settings.
+using var reader = TextRecognizer.For(model)
+    .Characters(classes)                 // "0".."9", "A".."Z", "ا".."ي", ... in output order
+    .BatchSize(1024)                     // characters per batch on the device
+    .LetterFor("7", "T")                 // add a look-alike (defaults: 1/I, 0/O, 5/S, ١/ا, ٥/ه, ...)
+    .Build();
+```
+
+- `PageSegmenter.Segment(image)` separates ink from paper (Otsu's threshold, either polarity, any colour). It finds
+  lines from rows with ink and characters from columns with ink, splits touching characters, and marks spaces. Thin
+  bands such as the dots of Arabic letters join their line; marks on their own are dropped. Its one page-sized buffer
+  is the ink, a float per pixel.
+- `GlyphFrame.Extract` frames a character as EMNIST did (cropped, centred, aspect kept, averaged to 28 x 28, full
+  contrast) straight into a span of the batch buffer. `GlyphFrame.Fit` and the `GlyphFrame.Reframe()` loader
+  transform frame a data set's images the same way, so training images and characters from pages match.
+- `TextRecognizer` classifies all of a page's characters in batches from one reused buffer. Each line is read within
+  one script (from the class names' Unicode blocks, `WritingScript`), so look-alikes across scripts (V/٧, l/ا) are
+  told apart by their neighbours. Within a word, digits among letters become letters (and the reverse), and a cased
+  word takes one case. Right-to-left lines come back in reading order, with numbers left to right.
+- `PageComposer.Compose(text, glyph)` writes a page of handwriting out of character images, for tests, demos and
+  synthetic training pages.
+
+It reads pages of separate characters: printed-style handwriting, forms, isolated Arabic letters. Joined (cursive)
+writing needs a model that reads whole words.
 
 ### Retrieval and RAG (`Idrak.Retrieval`)
 

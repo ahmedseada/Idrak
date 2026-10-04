@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- `Idrak.Vision`: text recognition (OCR) over any character classifier.
+  - `PageSegmenter` splits a page into lines, characters and spaces: Otsu's threshold (either polarity, any colour);
+    thin bands such as Arabic letters' dots join their line, and lone marks are dropped.
+  - `GlyphFrame` frames characters as EMNIST did, straight into a batch buffer. `GlyphFrame.Fit` and the
+    `GlyphFrame.Reframe()` loader transform frame training images the same way.
+  - `TextRecognizer` (`For(model)` or `Load(package)`, then `Read(page)`) classifies a page's characters in batches
+    from one reused buffer. It reads each line within one script (`WritingScript`, from Unicode blocks), corrects
+    look-alikes in words (1/I, 0/O, ١/ا...), gives a cased word one case, and returns right-to-left lines in reading
+    order with numbers left to right. Lines, characters, confidences, candidates and boxes come back.
+  - `PageComposer` writes synthetic pages from character images.
+  - On an A4 page at 300 dpi with 1,848 characters, segmentation and framing take 100 ms (CPU) and allocate 35 MB,
+    against 250-400 ms and 108 MB for the samples' hand-written version.
+
 ## 0.2.1 (2026-10-04)
 
 Fixes found by building convolutional samples on Idrak (MNIST digits, EMNIST letters, handwritten-page OCR) and
