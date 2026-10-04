@@ -9,7 +9,11 @@ using Idrak.Cli;
 using Idrak.Cli.Commands.Data;
 using Idrak.Cli.Commands.Train;
 using Idrak.Cli.Shared;
+using Idrak.Data;
+using Idrak.Inference;
 using Idrak.Layers;
+using Idrak.Optimizers;
+using Idrak.Training;
 
 // The idrak CLI's Train and data group: tune, train, resume, runs, predict, package, distill, and data with its
 // subcommands, run in-process on data built here and tiny models.
@@ -421,6 +425,24 @@ internal static partial class Tests
             var predicted = TrainCliJson("predict", Path.Combine(folder, "halves.ikm"), "-i", Path.Combine(folder, "images", "right"), "-d", d);
             int right = predicted["predictions"]!.AsArray().Count(r => (string?)r!["prediction"] == "right");
             Check(right >= 22, $"images predicted: {right} of 24");
+
+            // A package from Predictor.Save (no training entry): its class names make it a classifier for predict too.
+            var images = new ImageFolderSource(Path.Combine(folder, "images"), 1, 8, 8);
+            var network = Network.Image(1, 8, 8).OnDevice(device).Seed(3).Conv2d(4, 3, padding: 1).ReLU().MaxPool2d(2).Flatten().Linear(2);
+            using var model = network.Build();
+            new TrainingRun
+            {
+                Model = model, Loss = Losses.CrossEntropy, Optimizer = p => new Adam(p, 0.01f),
+                Train = images.ToDataset().Batches(8, shuffle: true, device: device, seed: 1), Epochs = 30,
+            }.Fit();
+            using (var saved = Predictor.For(model).InputShape(1, 8, 8).Softmax().Classes(images.Classes).Build())
+            {
+                saved.Save(Path.Combine(folder, "library.ikm"));
+            }
+
+            var fromLibrary = TrainCliJson("predict", Path.Combine(folder, "library.ikm"), "-i", Path.Combine(folder, "images", "right"), "--top", "2", "-d", d);
+            int libraryRight = fromLibrary["predictions"]!.AsArray().Count(r => (string?)r!["prediction"] == "right" && r["top"]!.AsArray().Count == 2);
+            Check((string?)fromLibrary["task"] == "classification" && libraryRight >= 22, $"Predictor.Save package: {libraryRight} of 24, task {fromLibrary["task"]}");
         }
         finally
         {

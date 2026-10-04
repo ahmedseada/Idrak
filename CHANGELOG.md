@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- `Predictor.Predict(Dataset)` and `Predict(list)` without `BatchSize` run batches of `Predictor.DefaultBatchSize`
+  (512) rows instead of the whole input as one batch. 10,000 MNIST images through a `Conv2d` were one product of
+  7.8 million im2col rows, which failed on CUDA with `cuLaunchKernel: CUDA_ERROR_INVALID_VALUE`.
+- `RestoreBestWeights` (the trainer's, `TrainingRun`'s and the `EarlyStopping` callback's) restores the best epoch's
+  weights when training runs every epoch too, not only when early stopping ends it. A run whose last epoch was worse
+  than its best kept the last epoch's weights while `TrainingHistory.BestEpoch` named the best one.
+- `idrak predict` runs packages written by `Predictor.Save`: without a training entry it reads the class names and
+  batch size of the predictor entry, so a classifier answers with its classes instead of one raw score per output
+  (`prediction_predicted`, `output1_predicted`, ...).
+
 ## 0.2.0 (2026-10-04)
 
 Highlights: a Vulkan backend for NVIDIA, AMD, Intel and phone GPUs (SPIR-V generated in C#), a first HIP backend for

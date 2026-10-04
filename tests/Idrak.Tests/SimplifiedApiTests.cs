@@ -538,6 +538,20 @@ internal static partial class Tests
         bool threw = false;
         try { Predictor.For(model).Batching(8, TimeSpan.FromMilliseconds(1)).Build(); } catch (InvalidOperationException) { threw = true; }
         Check(threw, "engine-only settings are rejected outside the engine");
+
+        // Without BatchSize, large inputs still go through in batches of DefaultBatchSize (a whole data set as one batch
+        // exceeded CUDA's grid limits in a convolution).
+        var sizes = new List<int>();
+        using var recorder = Network.Input(3).OnDevice(device).Lambda(t => { sizes.Add(t.Shape[0]); return t; }, "record", [3]).Build();
+        int count = 2 * Predictor<float[], float[]>.DefaultBatchSize + 7;
+        var data = Dataset.FromArrays(new float[count, 3], new float[count, 1]);
+        var unbatched = Predictor.For(recorder).Build();
+        Check(unbatched.Predict(data).Count == count, "every row predicted");
+        Check(sizes.SequenceEqual([Predictor<float[], float[]>.DefaultBatchSize, Predictor<float[], float[]>.DefaultBatchSize, 7]),
+            $"Predict(Dataset) batches: {string.Join(", ", sizes)}");
+        sizes.Clear();
+        unbatched.Predict([.. Enumerable.Range(0, count).Select(_ => new float[3])]);
+        Check(sizes.Max() == Predictor<float[], float[]>.DefaultBatchSize, $"Predict(list) batches: {string.Join(", ", sizes)}");
     }
 
     private static void PredictorClassesAndPackage(Device device)

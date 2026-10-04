@@ -139,7 +139,10 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
     /// </summary>
     public int? EarlyStoppingPatience { get; init; }
 
-    /// <summary>When early stopping is on, restore the weights of the best epoch at the end. Default true.</summary>
+    /// <summary>
+    /// When early stopping is on, restore the weights of the best epoch at the end of training, whether early stopping
+    /// ended it or it ran every epoch. Default true.
+    /// </summary>
     public bool RestoreBestWeights { get; init; } = true;
 
     /// <summary>Minimum decrease of the monitored loss that counts as an improvement.</summary>
@@ -311,7 +314,9 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
             }
         }
 
-        if (bestWeights is not null && history.StoppedEarly)
+        // Also when the run reached its last epoch: a last epoch that was not the best leaves worse weights than
+        // the history's BestEpoch reports.
+        if (bestWeights is not null && history.Epochs.Count > 0 && history.Epochs[^1].Epoch != history.BestEpoch)
         {
             foreach (var (parameter, values) in Model.Parameters().Zip(bestWeights))
             {

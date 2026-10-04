@@ -106,7 +106,10 @@ public sealed class TrainerContext
 /// <see cref="Trainer.RestoreBestWeights"/> do, and gives the same history and weights.
 /// </summary>
 /// <param name="patience">Epochs without improvement before stopping.</param>
-/// <param name="restoreBestWeights">When it stops, restore the weights of the best epoch. Default true.</param>
+/// <param name="restoreBestWeights">
+/// At the end of training, restore the weights of the best epoch: when it stops training, and when training runs every
+/// epoch with a later epoch worse than the best. Default true.
+/// </param>
 /// <param name="monitor">
 /// What to watch: "loss", "val_loss", a training metric name (e.g. "mae") or "val_" + a validation metric name. Null (the
 /// default) watches the validation loss when a validation set is given, else the training loss.
@@ -119,7 +122,7 @@ public sealed class EarlyStopping(int patience, bool restoreBestWeights = true, 
     private double _best;
     private int _epochsWithoutImprovement;
     private float[][]? _bestWeights;
-    private bool _stopped;
+    private int _lastEpoch;
 
     /// <summary>Epochs without improvement before stopping.</summary>
     public int Patience { get; } = patience > 0 ? patience : throw new ArgumentOutOfRangeException(nameof(patience));
@@ -133,13 +136,14 @@ public sealed class EarlyStopping(int patience, bool restoreBestWeights = true, 
         _best = maximize ? double.NegativeInfinity : double.PositiveInfinity;
         _epochsWithoutImprovement = 0;
         _bestWeights = null;
-        _stopped = false;
+        _lastEpoch = 0;
         BestEpoch = 0;
     }
 
     /// <inheritdoc />
     public void OnEpochEnd(TrainerContext context, EpochCompleted epoch)
     {
+        _lastEpoch = epoch.Epoch;
         double value = Monitored(epoch);
         bool improved = maximize ? value > _best + minImprovement : value < _best - minImprovement;
         if (improved)
@@ -154,7 +158,6 @@ public sealed class EarlyStopping(int patience, bool restoreBestWeights = true, 
         }
         else if (++_epochsWithoutImprovement >= Patience)
         {
-            _stopped = true;
             context.History.StoppedEarly = true;
             context.Stop();
         }
@@ -163,7 +166,7 @@ public sealed class EarlyStopping(int patience, bool restoreBestWeights = true, 
     /// <inheritdoc />
     public void OnTrainEnd(TrainerContext context, TrainingHistory history)
     {
-        if (_stopped && _bestWeights is not null)
+        if (_bestWeights is not null && _lastEpoch != BestEpoch)
         {
             foreach (var (parameter, values) in context.Model.Parameters().Zip(_bestWeights))
             {

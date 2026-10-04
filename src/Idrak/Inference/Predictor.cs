@@ -178,7 +178,10 @@ public sealed class PredictorBuilder<TIn, TOut>
         return this;
     }
 
-    /// <summary>Splits large lists into batches of <paramref name="rows"/> (like <see cref="Training.Trainer.Predict"/>'s <c>batchSize</c>).</summary>
+    /// <summary>
+    /// Splits large lists into batches of <paramref name="rows"/> (like <see cref="Training.Trainer.Predict"/>'s <c>batchSize</c>).
+    /// Without it, batches of <see cref="Predictor{TIn, TOut}.DefaultBatchSize"/> rows.
+    /// </summary>
     public PredictorBuilder<TIn, TOut> BatchSize(int rows)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(rows);
@@ -354,11 +357,18 @@ public sealed class Predictor<TIn, TOut> : IPredictor<TIn, TOut>, IDisposable
     /// <summary>Predicts one input.</summary>
     public TOut Predict(TIn input) => Predict([input])[0];
 
-    /// <summary>Predicts several inputs, in batches of <see cref="PredictorBuilder{TIn, TOut}.BatchSize"/> (all at once if not set).</summary>
+    /// <summary>
+    /// Rows per batch when <see cref="PredictorBuilder{TIn, TOut}.BatchSize"/> is not set. A whole data set as one batch
+    /// can exceed what a device runs in one launch (10,000 MNIST images through a convolution are 7.8 million im2col rows)
+    /// or holds in memory.
+    /// </summary>
+    public const int DefaultBatchSize = 512;
+
+    /// <summary>Predicts several inputs, in batches of <see cref="PredictorBuilder{TIn, TOut}.BatchSize"/> (<see cref="DefaultBatchSize"/> if not set).</summary>
     public IReadOnlyList<TOut> Predict(IReadOnlyList<TIn> inputs)
     {
         var results = new List<TOut>(inputs.Count);
-        int batch = _settings.BatchSize ?? Math.Max(inputs.Count, 1);
+        int batch = _settings.BatchSize ?? DefaultBatchSize;
         for (int start = 0; start < inputs.Count; start += batch)
         {
             int count = Math.Min(batch, inputs.Count - start);
@@ -377,11 +387,14 @@ public sealed class Predictor<TIn, TOut> : IPredictor<TIn, TOut>, IDisposable
         return results;
     }
 
-    /// <summary>Predicts every row of <paramref name="data"/> (raw, unscaled features, as loaded); targets are ignored.</summary>
+    /// <summary>
+    /// Predicts every row of <paramref name="data"/> (raw, unscaled features, as loaded), in batches of
+    /// <see cref="PredictorBuilder{TIn, TOut}.BatchSize"/> (<see cref="DefaultBatchSize"/> if not set); targets are ignored.
+    /// </summary>
     public IReadOnlyList<TOut> Predict(Dataset data)
     {
         var results = new List<TOut>(data.Count);
-        int batch = _settings.BatchSize ?? Math.Max(data.Count, 1);
+        int batch = _settings.BatchSize ?? DefaultBatchSize;
         for (int start = 0; start < data.Count; start += batch)
         {
             int count = Math.Min(batch, data.Count - start);
