@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `ImageData.Resize` (and with it `ImageCodecs.Load`, `ImageFolderSource` and `idrak predict` on images) shrinks by the
+  mean of the pixels each output pixel covers. It sampled one bilinear point per output pixel, which steps over thin
+  lines: a 3-pixel stroke in a 280 x 280 image came out blank at 28 x 28 in three of four positions. Enlarging and
+  same-size resizing are unchanged.
 - CUDA: products with more rows than the grid's y limit allows (65,535 blocks of 16 rows, 1,048,560 rows) run in row
   blocks instead of failing with `cuLaunchKernel: CUDA_ERROR_INVALID_VALUE`; a transposed A that large is copied as
   stored first. A `Conv2d` over 1,400 or more 28 x 28 images (its im2col product has N·OH·OW rows) hit it.
