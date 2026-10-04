@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.2.1 (2026-10-04)
+
+Fixes found by building convolutional samples on Idrak (MNIST digits, EMNIST letters, handwritten-page OCR) and
+running them on CPU, CUDA and Vulkan.
 
 - `ImageData.Resize` (and with it `ImageCodecs.Load`, `ImageFolderSource` and `idrak predict` on images) shrinks by the
   mean of the pixels each output pixel covers. It sampled one bilinear point per output pixel, which steps over thin
