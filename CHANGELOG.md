@@ -14,6 +14,9 @@
 - `idrak predict` runs packages written by `Predictor.Save`: without a training entry it reads the class names and
   batch size of the predictor entry, so a classifier answers with its classes instead of one raw score per output
   (`prediction_predicted`, `output1_predicted`, ...).
+- `idrak predict`'s table names each image relative to the input folder (`12.pgm`, `cat/3.png`), shortened from the
+  front when long. It showed the first 13 characters of every path, which for a folder of images was the same for
+  every row (`test-letters\...`). `-o` and `--json` keep the full paths.
 
 ## 0.2.0 (2026-10-04)
 

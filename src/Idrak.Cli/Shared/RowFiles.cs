@@ -101,6 +101,13 @@ internal static class RowFiles
         return text.Length > width ? text[..(width - 3)] + "..." : text;
     }
 
+    /// <summary>
+    /// A table cell that keeps the end of a long text (a file path: its name, where <see cref="Cell"/> would keep only
+    /// the folder every row shares).
+    /// </summary>
+    public static string CellEnd(string text, int width = 40) =>
+        text.Length > width ? "..." + text[^(width - 3)..] : text;
+
     /// <summary>The kind of a value: integer, number, text, bool, list, object or null.</summary>
     public static string TypeOf(JsonNode? node) => node switch
     {
