@@ -17,6 +17,7 @@ internal static partial class Tests
         ("callbacks: begin, batch, epoch and end run in order with the right epoch and step; no batch loss unless asked", CallbacksOrder),
         ("callbacks: Stop() from OnEpochEnd and OnBatchEnd ends training; cancellation ends it after the current batch", CallbacksStop),
         ("callbacks: EarlyStopping gives the same history and weights as EarlyStoppingPatience (Trainer and TrainingRun)", CallbacksEarlyStopping),
+        ("callbacks: the best weights are restored when training runs every epoch and the last is not the best", CallbacksRestoreAtLastEpoch),
         ("callbacks: Checkpoint writes last and best weights that load back; CsvLog writes one row per epoch", CallbacksCheckpointAndCsv),
     ];
 
@@ -185,6 +186,57 @@ internal static partial class Tests
 
         Check(early.BestEpoch == expected.BestEpoch, "EarlyStopping.BestEpoch");
         Check(Weights(viaCallback).SequenceEqual(Weights(builtIn)) && Weights(viaRun).SequenceEqual(Weights(builtIn)), "the best weights are restored");
+    }
+
+    // Wrecks the weights after one epoch (after the best weights of that epoch were kept), so the next epoch is worse.
+    private sealed class Wreck(int afterEpoch) : ITrainerCallback
+    {
+        public void OnEpochEnd(TrainerContext context, EpochCompleted epoch)
+        {
+            if (epoch.Epoch == afterEpoch)
+            {
+                foreach (var parameter in context.Model.Parameters())
+                {
+                    parameter.Load([.. parameter.ToArray().Select(v => v * 50f + 3f)]);
+                }
+            }
+        }
+    }
+
+    private static void CallbacksRestoreAtLastEpoch(Device device)
+    {
+        // Three epochs, patience far above three: training always runs to the end, and epoch 3 starts from wrecked weights.
+        var (train, validation) = CallbackData(device);
+        using var viaPatience = BuiltMlpFor3(device);
+        var snapshot = new BestSnapshot();
+        using var trainer = new Trainer(viaPatience, Losses.MeanSquaredError, p => new Adam(p, 0.08f))
+        {
+            EarlyStoppingPatience = 100, Callbacks = { snapshot, new Wreck(afterEpoch: 2) },
+        };
+        var history = trainer.Fit(train, 3, validation);
+        Check(!history.StoppedEarly && history.Epochs.Count == 3 && history.BestEpoch < 3,
+            $"ran every epoch, best {history.BestEpoch} of {history.Epochs.Count}");
+        Check(Weights(viaPatience).SequenceEqual(snapshot.Best!), "EarlyStoppingPatience: the best epoch's weights, not the last epoch's");
+
+        (train, validation) = CallbackData(device);
+        using var viaCallback = BuiltMlpFor3(device);
+        var callbackSnapshot = new BestSnapshot();
+        var early = new EarlyStopping(100);
+        using var callbackTrainer = new Trainer(viaCallback, Losses.MeanSquaredError, p => new Adam(p, 0.08f))
+        {
+            Callbacks = { callbackSnapshot, early, new Wreck(afterEpoch: 2) },
+        };
+        var callbackHistory = callbackTrainer.Fit(train, 3, validation);
+        Check(!callbackHistory.StoppedEarly && early.BestEpoch == history.BestEpoch, $"EarlyStopping: best {early.BestEpoch}");
+        Check(Weights(viaCallback).SequenceEqual(callbackSnapshot.Best!), "EarlyStopping: the best epoch's weights, not the last epoch's");
+
+        // Without early stopping nothing is restored: the weights are the last epoch's.
+        (train, validation) = CallbackData(device);
+        using var plain = BuiltMlpFor3(device);
+        var plainSnapshot = new BestSnapshot();
+        using var plainTrainer = new Trainer(plain, Losses.MeanSquaredError, p => new Adam(p, 0.08f)) { Callbacks = { plainSnapshot, new Wreck(afterEpoch: 2) } };
+        plainTrainer.Fit(train, 3, validation);
+        Check(!Weights(plain).SequenceEqual(plainSnapshot.Best!), "no early stopping: the last epoch's weights are kept");
     }
 
     private sealed class BestSnapshot : ITrainerCallback

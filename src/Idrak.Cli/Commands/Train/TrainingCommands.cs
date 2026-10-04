@@ -430,7 +430,7 @@ internal sealed class PredictCommand : Command
 
     public override int Run(CommandContext context)
     {
-        string modelPath = context.Argument(0, "MODEL.ikm (a package written by idrak train)");
+        string modelPath = context.Argument(0, "MODEL.ikm (a package written by idrak train or Predictor.Save)");
         string input = context.Option("--input") ?? (context.Positional.Count > 1 ? context.Positional[1] : throw new UsageException("Give -i, --input FILE with the rows to predict."));
         int top = context.IntOption("--top", 1);
         if (!File.Exists(modelPath))
@@ -440,11 +440,14 @@ internal sealed class PredictCommand : Command
 
         using var package = ModelPackage.Open(modelPath);
         var meta = package.Contains(PackageEntryKind.Json, "training") ? package.Json("training") as JsonObject : null;
+        // A package saved by Predictor.Save has no training entry; its predictor entry names the classes (and its
+        // softmax setting matches what the classification output below applies).
+        var predictor = meta is null && package.Contains(PackageEntryKind.Json, "predictor") ? package.Json("predictor") as JsonObject : null;
         var builder = package.Network();
         int[] shape = [.. builder.InputShape];
         int size = shape.Aggregate(1, (a, b) => a * b);
-        string task = (string?)meta?["task"] ?? "regression";
-        var classes = meta?["classes"] is JsonArray c ? c.Select(n => (string)n!).ToList() : null;
+        string task = (string?)meta?["task"] ?? (predictor?["classes"] is JsonArray ? "classification" : "regression");
+        var classes = (meta?["classes"] ?? predictor?["classes"]) is JsonArray c ? c.Select(n => (string)n!).ToList() : null;
         var targets = meta?["targets"] is JsonArray t ? t.Select(n => (string)n!).ToList() : ["prediction"];
 
         // The inputs: rows by feature name, or images.
@@ -500,10 +503,10 @@ internal sealed class PredictCommand : Command
         using var model = package.BuildNetwork(device: context.Device);
         int outputs = builder.CurrentShape.Aggregate(1, (a, b) => a * b);
         var output = new float[rows.Count * outputs];
-        const int Batch = 512;
-        for (int start = 0; start < rows.Count; start += Batch)
+        int batch = (int?)predictor?["batchSize"] ?? 512;
+        for (int start = 0; start < rows.Count; start += batch)
         {
-            int n = Math.Min(Batch, rows.Count - start);
+            int n = Math.Min(batch, rows.Count - start);
             using var x = Tensor.From(features.AsSpan(start * size, n * size).ToArray(), [n, .. shape], context.Device);
             using var y = model.Predict(x);
             y.ToArray().AsSpan(0, n * outputs).CopyTo(output.AsSpan(start * outputs));
