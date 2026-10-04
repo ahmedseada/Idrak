@@ -9,7 +9,8 @@
 - `idrak serve` gets a default port of its own (not 11434, which another local server uses); `-p/--port`, the config
   and an environment variable choose another. Done: 7317, then `-p`, `IDRAK_PORT`, `serve.port` (plans/idrak-cli.md).
 - Arabic messages: only if the console can show them correctly (right to left, joined letters); otherwise dropped.
-- Branches: idrak-cli was fast-forwarded into `architecture` and retired; all work continues on `architecture`.
+- Branches: idrak-cli was fast-forwarded into `architecture` and retired; on 2026-10-04 `architecture` was merged into
+  `main` (the maintainer's go-ahead), with the version set to 0.2.0 for the next release.
 - Round 3, all built and merged (now on architecture): mixture of experts, fast sliding-window and soft-cap kernels
   (CPU and Vulkan run; CUDA written, hardware check 9), dataset loaders, the teacher pattern (`idrak distill`),
   provider-neutral serving names, Arabic output. Arabic: the tool shapes and reorders it itself for terminals that
