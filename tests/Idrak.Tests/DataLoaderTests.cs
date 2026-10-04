@@ -545,6 +545,25 @@ internal static partial class Tests
         AssertClose([0f, 1f, 2f, 3f, 0f, 1f, 2f, 3f], image.Resize(2, 2, 2), 0, "grey to two channels");
         AssertClose([2f], new ImageData([1f, 2f, 3f], 3, 1, 1).Resize(1, 1, 1), 1e-6f, "colour to grey");
 
+        // Shrinking averages the pixels each output pixel covers: blocks of a 4 x 4 image, one axis shrunk and the other
+        // grown, and a 3-pixel line in a 280 x 280 image, which bilinear sampling at 28 points per row stepped over.
+        AssertClose([2.5f, 4.5f, 10.5f, 12.5f], new ImageData([.. Enumerable.Range(0, 16).Select(i => (float)i)], 1, 4, 4).Resize(1, 2, 2), 1e-6f, "shrink: block means");
+        AssertClose([0.5f, 2.5f, 0.5f, 2.5f], new ImageData([0f, 1f, 2f, 3f], 1, 1, 4).Resize(1, 2, 2), 1e-6f, "shrink one axis, grow the other");
+        foreach (int left in new[] { 100, 104, 108, 140 })
+        {
+            var line = new float[280 * 280];
+            for (int y = 40; y <= 240; y++)
+            {
+                for (int x = left; x < left + 3; x++)
+                {
+                    line[y * 280 + x] = 1f;
+                }
+            }
+
+            float ink = new ImageData(line, 1, 280, 280).Resize(1, 28, 28).Sum();
+            Check(MathF.Abs(ink - 3f * 201 / 100) < 1e-3f, $"shrink: a 3-pixel line at x = {left} keeps its ink ({ink:F3} of {3f * 201 / 100:F3})");
+        }
+
         // A damaged file names itself; an unknown format names the codecs.
         string damaged = Path.Combine(Path.GetTempPath(), $"idrak-damaged-{Guid.NewGuid():N}.png");
         File.WriteAllBytes(damaged, TestPng(W, H, 0, 8, false, (x, y, s) => x)[..60]);
