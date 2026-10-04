@@ -554,7 +554,11 @@ internal sealed class PredictCommand : Command
         else
         {
             var columns = results[0].Select(p => p.Key).Where(k => k != "top").ToList();
-            context.Table(columns, results.Take(context.Verbose ? int.MaxValue : 20).Select(r => (IReadOnlyList<string>)[.. columns.Select(k => RowFiles.Cell(r[k], 16))]));
+            // Image files relative to the input folder, shortened from the front, so the table shows which file is which.
+            string Shown(JsonObject r, string k) => k == "file" && (string?)r[k] is { } file
+                ? RowFiles.CellEnd(Directory.Exists(input) ? Path.GetRelativePath(input, file) : Path.GetFileName(file))
+                : RowFiles.Cell(r[k], 16);
+            context.Table(columns, results.Take(context.Verbose ? int.MaxValue : 20).Select(r => (IReadOnlyList<string>)[.. columns.Select(k => Shown(r, k))]));
             if (results.Count > 20 && !context.Verbose)
             {
                 context.Write($"({results.Count - 20} more rows; -o FILE writes them all, -v shows them)");

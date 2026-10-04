@@ -425,6 +425,10 @@ internal static partial class Tests
             var predicted = TrainCliJson("predict", Path.Combine(folder, "halves.ikm"), "-i", Path.Combine(folder, "images", "right"), "-d", d);
             int right = predicted["predictions"]!.AsArray().Count(r => (string?)r!["prediction"] == "right");
             Check(right >= 22, $"images predicted: {right} of 24");
+            var table = TrainCli("predict", Path.Combine(folder, "halves.ikm"), "-i", Path.Combine(folder, "images", "right"), "-d", d);
+            var lines = table.Out.Split('\n').Select(l => l.TrimEnd('\r')).ToList();
+            Check(table.Code == 0 && lines.Any(l => l.StartsWith("12.pgm ", StringComparison.Ordinal)) && lines.Any(l => l.StartsWith("3.pgm ", StringComparison.Ordinal)),
+                $"the table names each file relative to the input folder:\n{table.Out}");
 
             // A package from Predictor.Save (no training entry): its class names make it a classifier for predict too.
             var images = new ImageFolderSource(Path.Combine(folder, "images"), 1, 8, 8);
