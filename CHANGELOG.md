@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 (next release; the date is set when it is tagged)
+
+Highlights: a Vulkan backend for NVIDIA, AMD, Intel and phone GPUs (SPIR-V generated in C#), a first HIP backend for
+AMD, macOS and Android tested on the CPU backend, mixture-of-experts models, sliding-window and soft-cap attention
+kernels, knowledge distillation, data loaders for data that is not in memory, more than twenty plug-in registries, and
+one command-line tool, `idrak`, which replaces `idrak-tune` and `idrak-data`. Details below, newest first.
 
 - `idrak` writes UTF-8 on Windows for every run, not only with `--lang ar`: a model's Arabic, Chinese or emoji answer
   printed `?` in a console or a pipe with a legacy code page. Completion candidates end in `\n` on every system, and

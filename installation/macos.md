@@ -23,8 +23,8 @@ step 01-system bash -c 'sw_vers; uname -m; sysctl -n machdep.cpu.brand_string; s
 step 02-dotnet-install bash -c 'curl -sSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh && bash /tmp/dotnet-install.sh --channel 10.0 --install-dir ~/.dotnet'
 export DOTNET_ROOT=~/.dotnet PATH=~/.dotnet:~/.dotnet/tools:$PATH DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
 step 03-dotnet-info dotnet --info
-step 04-source bash -c 'rm -rf ~/Idrak-architecture ~/idrak-src.zip && curl -sSL -o ~/idrak-src.zip https://github.com/ahmedseada/Idrak/archive/refs/heads/architecture.zip && unzip -q ~/idrak-src.zip -d ~'
-cd ~/Idrak-architecture
+step 04-source bash -c 'rm -rf ~/Idrak-main ~/idrak-src.zip && curl -sSL -o ~/idrak-src.zip https://github.com/ahmedseada/Idrak/archive/refs/heads/main.zip && unzip -q ~/idrak-src.zip -d ~'
+cd ~/Idrak-main
 step 05-build dotnet build -c Release
 step 06-tests-cpu env IDRAK_DEVICES=cpu dotnet run -c Release --no-build --project tests/Idrak.Tests
 step 07-bench-cpu dotnet run -c Release --no-build --project tests/Idrak.Tests -- --bench-cpu
@@ -44,7 +44,7 @@ cd ~ && rm -f idrak-mac-results.zip && zip -qr idrak-mac-results.zip idrak-mac-r
 With git instead of the zip download (the Command Line Tools install git on first use):
 
 ```bash
-git clone -b architecture https://github.com/ahmedseada/Idrak.git ~/Idrak && cd ~/Idrak
+git clone https://github.com/ahmedseada/Idrak.git ~/Idrak && cd ~/Idrak
 ```
 
 ## The web chat page

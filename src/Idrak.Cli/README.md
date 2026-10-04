@@ -4,7 +4,7 @@
 the model cache, benchmark, fine-tune and train, prepare data, build retrieval indexes and design networks. It needs
 nothing beyond the Idrak packages, reports what the devices report (nothing is chosen by a card's or vendor's name),
 prints text by default and one JSON document with `--json`, and exits with 0 on success, 1 when the operation fails
-and 2 on a usage error. The design and the full command list are in [plans/idrak-cli.md](../../plans/idrak-cli.md).
+and 2 on a usage error. The design and the full command list are in [plans/idrak-cli.md](https://github.com/ahmedseada/Idrak/blob/main/plans/idrak-cli.md).
 
 ## Install
 
@@ -28,7 +28,7 @@ dotnet tool install -g Idrak.Cli --add-source ./packages --prerelease
 ```
 
 The tool targets .NET 10. On an Android phone (Termux with Ubuntu under proot, see
-[installation/android-termux.md](../../installation/android-termux.md)), `idrak setup android` adds the settings the
+[installation/android-termux.md](https://github.com/ahmedseada/Idrak/blob/main/installation/android-termux.md)), `idrak setup android` adds the settings the
 phone needs and runs `idrak doctor --android`.
 
 ## First steps

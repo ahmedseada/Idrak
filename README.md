@@ -43,8 +43,7 @@ compiled by the GPU's own driver on the user's machine.
 
 `Device.Default` picks a CUDA GPU when there is one, else the CPU; a HIP GPU (`IDRAK_HIP_DEFAULT=1`) or a Vulkan GPU
 (`IDRAK_VULKAN_DEFAULT=1`) only when asked, and any device by name: `Device.Parse("vulkan:0")`, or `-d vulkan:0` in the
-tool. `IDRAK_DISABLE_CUDA=1` (and `_VULKAN`, `_HIP`) turns a backend off. Vulkan and HIP are on the `architecture`
-branch, which is ahead of the released packages (see "Install").
+tool. `IDRAK_DISABLE_CUDA=1` (and `_VULKAN`, `_HIP`) turns a backend off.
 
 ## What Idrak gives you
 
@@ -131,8 +130,8 @@ points"):
 |---------|---------|--------|
 | CPU | x64 (AVX2, AVX-512), ARM64 (NEON) | Every test passes, including on an Android phone and an Apple M4 Max (macOS) |
 | CUDA | NVIDIA GPUs, through the driver API | Every test passes on Ampere and Blackwell GPUs |
-| Vulkan (`architecture` branch) | NVIDIA, AMD, Intel, Qualcomm Adreno, Mesa's software driver | Every test passes on each GPU tested (see "Tested on architectures") |
-| ROCm / HIP (`architecture` branch) | AMD GPUs through the HIP runtime: memory, copies and a first set of kernels, the rest through host fallbacks | Added; not yet run on an AMD GPU |
+| Vulkan | NVIDIA, AMD, Intel, Qualcomm Adreno, Mesa's software driver | Every test passes on each GPU tested (see "Tested on architectures") |
+| ROCm / HIP | AMD GPUs through the HIP runtime: memory, copies and a first set of kernels, the rest through host fallbacks | Added; not yet run on an AMD GPU |
 | Metal, NPUs | Apple GPUs (macOS runs on the CPU backend for now) | Not supported yet |
 
 ## Install
@@ -158,11 +157,10 @@ idrak doctor                                  # what works on this machine and w
 dotnet tool update -g Idrak.Cli               # later: update to the newest version
 ```
 
-**From source** (the `architecture` branch: Vulkan, HIP, the full `idrak` tool and everything since the last
-release); the .NET 10 SDK is the only requirement:
+**From source** (everything on `main`, also what is not released yet); the .NET 10 SDK is the only requirement:
 
 ```bash
-git clone -b architecture https://github.com/ahmedseada/Idrak.git && cd Idrak
+git clone https://github.com/ahmedseada/Idrak.git && cd Idrak
 dotnet build -c Release
 dotnet run -c Release --project tests/Idrak.Tests -- --list-devices    # the devices found and how to test each
 dotnet pack src/Idrak.Cli -c Release -o pkg
@@ -1447,7 +1445,7 @@ dotnet run -c Release --project tests/Idrak.Tests
 
 Or with the tool: `idrak test -d cuda:0 --filter "window kernels"`. The runner prints the system it runs on, then runs
 **every test on every device**: the CPU and each CUDA GPU present, plus each Vulkan and HIP GPU found (426 tests per
-device on the `architecture` branch). `-- --list-devices` shows the devices and the command to test each one. Each
+device). `-- --list-devices` shows the devices and the command to test each one. Each
 device's line shows its memory, compute units, matrix units and driver.
 
 | Setting | Meaning |
@@ -1482,7 +1480,7 @@ Tests that do not depend on the device (the tool, ASP.NET Core, datasets, naming
 
 ## Tested on
 
-Released packages, newest first (the `architecture` branch's runs, on every backend and machine, are in "Tested on
+Released packages up to 0.1.7, newest first (the runs since, on every backend and machine, are in "Tested on
 architectures" below):
 
 | Date | Library | GPU | Compute | Driver | System | Result |
@@ -1507,7 +1505,7 @@ NVK have not run). macOS runs on the CPU backend (tested on an M4 Max, see below
 Step-by-step setup for each machine below (drivers, .NET SDK, environment, tests and the chat sample), including an
 Android phone through Termux and Mesa Turnip: [installation/](installation/README.md).
 
-The `architecture` branch adds backends beyond CUDA: a Vulkan backend (SPIR-V kernels generated in C#, for Intel,
+Since 0.1.7 the library has backends beyond CUDA: a Vulkan backend (SPIR-V kernels generated in C#, for Intel,
 AMD and any Vulkan GPU) and the minimum backend every new device starts from (see
 [plans/7-backends.md](plans/7-backends.md)). A HIP backend for AMD GPUs through ROCm (Linux) or the HIP SDK (Windows)
 has been added as a first slice (`hip:N`: memory, copies and a few hipRTC kernels on the device, the rest through

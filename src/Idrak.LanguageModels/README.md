@@ -1,7 +1,6 @@
 # Idrak.LanguageModels
 
-Language models for Idrak (no dependencies): load Llama, Qwen, Mistral, Gemma (1, 2 and 3) and mixture-of-experts (Mixtral, Qwen2-MoE, Qwen3-MoE) models by Hugging Face id, folder or GGUF file (safetensors and quantized GGUF weights, an extensible architecture registry), with their own BPE tokenizers and chat templates; chat with them, fine-tune them (LoRA / QLoRA) and score their answers.
-Language models for Idrak (no dependencies): load Llama, Qwen, Mistral and Gemma (1, 2 and 3) models by Hugging Face id, folder or GGUF file (safetensors and quantized GGUF weights, an extensible architecture registry), with their own BPE tokenizers and chat templates; chat with them, fine-tune them (LoRA / QLoRA, preference losses, distillation from a teacher model) and score their answers.
+Language models for Idrak (no dependencies): load Llama, Qwen, Mistral, Gemma (1, 2 and 3) and mixture-of-experts (Mixtral, Qwen2-MoE, Qwen3-MoE) models by Hugging Face id, folder or GGUF file (safetensors and quantized GGUF weights, an extensible architecture registry), with their own BPE tokenizers and chat templates; chat with them, fine-tune them (LoRA, DoRA, QLoRA, DPO / ORPO / SimPO, distillation from a teacher model) and score their answers.
 
 ## Install
 

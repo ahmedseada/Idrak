@@ -11,7 +11,7 @@
        sets Version from the tag (v0.1.0 -> 0.1.0); any other pack is a prerelease with the time in it
        (0.1.0-dev.yyMMddHHmm, UTC), so a prerelease tool update always installs the latest local pack. -->
   <PropertyGroup>
-    <VersionPrefix>0.1.7</VersionPrefix>
+    <VersionPrefix>0.2.0</VersionPrefix>
     <VersionSuffix Condition="'$(Version)' == ''">dev.$([System.DateTime]::UtcNow.ToString("yyMMddHHmm"))</VersionSuffix>
     <Authors>Ahmed Seada</Authors>
     <Copyright>Copyright (c) 2026 Ahmed Seada</Copyright>
@@ -19,7 +19,7 @@
     <PackageProjectUrl>https://github.com/ahmedseada/Idrak</PackageProjectUrl>
     <RepositoryUrl>https://github.com/ahmedseada/Idrak</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
-    <PackageTags>deep-learning;neural-network;machine-learning;cuda;gpu;llm;fine-tuning;lora;transformer;tensor;autograd</PackageTags>
+    <PackageTags>deep-learning;neural-network;machine-learning;cuda;vulkan;gpu;llm;fine-tuning;lora;transformer;tensor;autograd</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageIcon>icon.png</PackageIcon>
     <PackageReleaseNotes>https://github.com/ahmedseada/Idrak/blob/main/CHANGELOG.md</PackageReleaseNotes>

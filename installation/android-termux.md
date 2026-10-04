@@ -86,7 +86,7 @@ If `dotnet` still fails to start, use 2 GiB instead (`0x80000000`).
 ## 5. Get Idrak and run it on the CPU
 
 ```bash
-git clone -b architecture https://github.com/ahmedseada/Idrak.git ~/Idrak
+git clone https://github.com/ahmedseada/Idrak.git ~/Idrak
 cd ~/Idrak
 dotnet run -c Release --project tests/Idrak.Tests -- --list-devices
 IDRAK_DEVICES=cpu dotnet run -c Release --project tests/Idrak.Tests > ~/phone-tests.txt 2>&1
