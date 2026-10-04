@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- CUDA: products with more rows than the grid's y limit allows (65,535 blocks of 16 rows, 1,048,560 rows) run in row
+  blocks instead of failing with `cuLaunchKernel: CUDA_ERROR_INVALID_VALUE`; a transposed A that large is copied as
+  stored first. A `Conv2d` over 1,400 or more 28 x 28 images (its im2col product has N·OH·OW rows) hit it.
 - `Predictor.Predict(Dataset)` and `Predict(list)` without `BatchSize` run batches of `Predictor.DefaultBatchSize`
   (512) rows instead of the whole input as one batch. 10,000 MNIST images through a `Conv2d` were one product of
   7.8 million im2col rows, which failed on CUDA with `cuLaunchKernel: CUDA_ERROR_INVALID_VALUE`.
