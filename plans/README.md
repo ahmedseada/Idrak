@@ -64,6 +64,12 @@ What the `architecture` branch cannot do today, with an example of each. "High" 
 | Intel Arc (XMX), AMD RDNA | no such GPU tested |
 | Android GPUs (Adreno and others, through Vulkan) | partly: an Adreno 730 passed the whole list through Mesa's Turnip (KGSL build) in Termux + proot Ubuntu, and the CPU (ARM64, NEON) too; Qualcomm's own driver, Mali GPUs and a .NET Android app (the loader now names libvulkan.so there) not yet |
 
+## Next abstraction
+
+[9-operations.md](9-operations.md): operations as data. One dispatcher picks a kernel per operation and device
+(device kernel, composed, host), so kernels and devices can come from outside packages; it leads to the public device
+API (item 12c). Planned, not started.
+
 ## Future improvements (measured)
 
 Found on real hardware; each one is a measurement to act on, not a guess.
