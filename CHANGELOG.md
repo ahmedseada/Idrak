@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- `ContentFrame` (and with it `RegionClassifier` and the `Reframe()` transform) enlarges small objects by bilinear
+  sampling with the corners aligned, as `ImageData.Resize` does. It averaged the source pixels each output pixel
+  covers in both directions, which enlarges in blocks of repeated pixels: small characters (Arabic letters such as
+  `ر` and `ن` on a page) came out blocky and were misread. Shrinking is unchanged. On a page of 14-pixel handwritten
+  digits, a model trained on smooth frames made 19 errors in 288 characters, against 28 before.
+
 ## 0.3.0 (2026-10-05)
 
 New `Idrak.Vision` building blocks for image networks (classification of regions, detection, segmentation,
