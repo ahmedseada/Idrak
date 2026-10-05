@@ -84,11 +84,39 @@ public static class ContentFrame
 
         var output = destination[..(size * size)];
         // The frame is fractional, so an object is centred exactly whatever its size: its larger side spans
-        // size - 2 * border output pixels, and each output pixel is the mean over the source pixels it covers.
+        // size - 2 * border output pixels. Shrinking, each output pixel is the mean over the source pixels it covers.
         double scale = Math.Max(box.Width, box.Height) / (double)(size - 2 * border);   // source pixels per output pixel
         double offsetX = (size * scale - box.Width) / 2, offsetY = (size * scale - box.Height) / 2;
         double area = scale * scale;
         float max = 0;
+        if (scale < 1)
+        {
+            // Enlarging: the output samples the frame bilinearly with its corners aligned (as ImageData.Resize does),
+            // so a small object grows smooth, as a data set's enlarged images do, not in blocks of repeated pixels.
+            // Outside the box reads as 0.
+            double step = (size * scale - 1) / (size - 1);   // source pixels between neighbouring output pixels
+            for (int oy = 0; oy < size; oy++)
+            {
+                double sy = oy * step - offsetY;
+                int y0 = (int)Math.Floor(sy);
+                float fy = (float)(sy - y0);
+                for (int ox = 0; ox < size; ox++)
+                {
+                    double sx = ox * step - offsetX;
+                    int x0 = (int)Math.Floor(sx);
+                    float fx = (float)(sx - x0);
+                    float top = (1 - fx) * At(values, stride, threshold, box, x0, y0) + fx * At(values, stride, threshold, box, x0 + 1, y0);
+                    float bottom = (1 - fx) * At(values, stride, threshold, box, x0, y0 + 1) + fx * At(values, stride, threshold, box, x0 + 1, y0 + 1);
+                    float value = (1 - fy) * top + fy * bottom;
+                    output[oy * size + ox] = value;
+                    max = Math.Max(max, value);
+                }
+            }
+
+            Stretch(output, max);
+            return;
+        }
+
         for (int oy = 0; oy < size; oy++)
         {
             double y0 = oy * scale - offsetY, y1 = y0 + scale;   // in the box's rows
@@ -117,6 +145,24 @@ public static class ContentFrame
             }
         }
 
+        Stretch(output, max);
+    }
+
+    // A pixel of the box (x, y within it): 0 outside the box or at or below the threshold.
+    private static float At(ReadOnlySpan<float> values, int stride, float threshold, PixelBox box, int x, int y)
+    {
+        if (x < 0 || y < 0 || x >= box.Width || y >= box.Height)
+        {
+            return 0;
+        }
+
+        float v = values[(box.Y + y) * stride + box.X + x];
+        return v > threshold ? v : 0;
+    }
+
+    // Full contrast: the brightest value becomes 1.
+    private static void Stretch(Span<float> output, float max)
+    {
         if (max > 0)
         {
             float inverse = 1f / max;
