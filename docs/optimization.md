@@ -18,7 +18,7 @@ every API, language rule and example below (Release build), and the analyzer and
   with AVX-512 turned off throws `PlatformNotSupportedException`), 53, 54, 55-59, 62-63, and the table's "tiny
   short-lived arrays" (see its note).
 - **Corrected or refined**: rule 42 (the per-instruction-set switch names), rule 63 (the calling thread only, measured), rule 65
-  (which analyzers the setting adds), the table's note on stack-allocated arrays Each note sits next to its rule, marked **Checked:**.
+  (which analyzers the setting adds), and the table's note on stack-allocated arrays. Each note sits next to its rule, marked **Checked:**.
 - **Not run (guidance, not a testable claim)**: 0-3, 5, 21, 30, 31-34, 37, 39-41, 43-44, 46-47, 49-51, 60-61, 64, 66-69.
 
 ---
