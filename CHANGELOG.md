@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.3.1 (2026-10-05)
+
+Fixes found by moving the MultiLanguageOcr sample onto `Idrak.Vision` and by running the tests on a laptop with an
+Intel integrated GPU next to its NVIDIA one.
 
 - `ContentFrame` (and with it `RegionClassifier` and the `Reframe()` transform) enlarges small objects by bilinear
   sampling with the corners aligned, as `ImageData.Resize` does. It averaged the source pixels each output pixel
