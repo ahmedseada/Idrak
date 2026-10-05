@@ -17,7 +17,8 @@ compiled by the GPU's own driver on the user's machine.
 
 - **Build and train networks**: N-D tensors with automatic differentiation; dense, convolutional, recurrent,
   attention and transformer layers; losses, optimizers (including 8-bit AdamW) and schedules; a trainer, data
-  loaders for data that is not in memory, predictors, model packages, telemetry and resource limits.
+  loaders for data that is not in memory, predictors, model packages, telemetry and resource limits; vision building
+  blocks for classification of objects, detection and segmentation (see "Vision").
 - **Run and fine-tune language models**: Llama, Qwen, Mistral, Gemma (1, 2 and 3) and the mixture-of-experts Mixtral
   and Qwen-MoE from Hugging Face folders or GGUF files, with their own tokenizers and chat templates; streaming chat
   with reasoning and tool calls; LoRA, DoRA and QLoRA fine-tuning, DPO / ORPO / SimPO, knowledge distillation from a
@@ -51,7 +52,7 @@ tool. `IDRAK_DISABLE_CUDA=1` (and `_VULKAN`, `_HIP`) turns a backend off.
 
 | Package | What it gives you |
 |---------|-------------------|
-| `Idrak` (core) | Tensors and autograd, layers, training, generation, chat and tools, retrieval, the inference engine, telemetry, every backend |
+| `Idrak` (core) | Tensors and autograd, layers, training, vision, generation, chat and tools, retrieval, the inference engine, telemetry, every backend |
 | `Idrak.LanguageModels` | Hugging Face and GGUF models, tokenizers, the models' own Jinja chat templates, LoRA / QLoRA fine-tuning, evaluation |
 | `Idrak.Datasets` | JSON Lines, JSON, CSV, text, code and Parquet files (also compressed or archived); Hugging Face, GitHub, Kaggle, Zenodo and URL sources |
 | `Idrak.AspNetCore` | `AddIdrak()`, `MapPredictor`, `MapGenerate` (JSON and streaming), `MapChatApi` (the local chat API) and `MapCompletionsApi` (`/v1`) |
@@ -66,12 +67,13 @@ tool. `IDRAK_DISABLE_CUDA=1` (and `_VULKAN`, `_HIP`) turns a backend off.
 |------|---------------|
 | Layers | Linear, Conv2d, pooling, BatchNorm, LayerNorm, Embedding, LSTM, GRU, multi-head attention, transformer layers, dropout, activations; graph modules (skip connections, branches) |
 | Building | A fluent network builder with a JSON round trip; ready-made architectures |
-| Training | `Trainer`, losses (MSE, MAE, cross-entropy, binary cross-entropy), metrics, early stopping, duplicate removal before splits |
+| Training | `Trainer`, losses (MSE, MAE, cross-entropy, binary cross-entropy, per-pixel cross-entropy), metrics, early stopping, duplicate removal before splits |
 | Data | In-memory datasets and lazy sources (streamed CSV, image folders, memory-mapped token files and .npy arrays, Parquet and JSON Lines columns), views, image augmentation, PNG/BMP/PGM/PPM decoding without dependencies |
 | Optimizers | SGD, Adam, AdamW (fused on the GPU), 8-bit Adam, a learning rate per group; step, exponential and cosine (with warm-up) schedules; gradient clipping |
 | Precision | float32; bfloat16 and FP8 tensor cores; int8, int4 and bfloat16 weights; half-precision files |
 | Memory | Offloading to system memory, activation memory limits, deterministic freeing |
 | Speed | Recorded graphs (CUDA and Vulkan), fused kernels, choices measured on the device and stored |
+| Vision | Per-channel normalization as a layer (`Normalize`, ImageNet's or a data set's statistics); foreground extraction (Otsu); connected components; content framing for classifiers of single objects; region classification in batches; boxes, IoU and non-maximum suppression with a detector over any network; segmentation masks, per-pixel cross-entropy and IoU metrics with a segmenter over any network |
 
 ### Language models and generation
 
@@ -89,7 +91,6 @@ tool. `IDRAK_DISABLE_CUDA=1` (and `_VULKAN`, `_HIP`) turns a backend off.
 | Area | What is there |
 |------|---------------|
 | Retrieval and RAG | Chunking, BM25, bi-encoder vectors, hybrid search with rank fusion, cross-encoder re-ranking, a pipeline that cites passages |
-| Vision | Per-channel normalization as a layer (`Normalize`, ImageNet's or a data set's statistics); foreground extraction (Otsu); connected components; content framing for classifiers of single objects; region classification in batches; boxes, IoU and non-maximum suppression with a detector over any network; segmentation masks, per-pixel cross-entropy and IoU metrics with a segmenter over any network |
 | Serving | The inference engine (loading, batching), model packages (`.ikm`), Web API endpoints, a local chat API (`/api/chat`), MCP |
 | Interop | ONNX import and export; reference checks against PyTorch and transformers |
 | Telemetry | Hooks that cost nothing when unused: console, CSV metrics, JSON Lines; training, batch, gradient and layer events |
@@ -315,6 +316,16 @@ assets/                             the icon (icon.svg source, icon.png for the 
 | `Rag` | `RetrievalIndex` (BM25 + trained bi-encoder + rank fusion), `CrossEncoder` re-ranking, `Rag.For(chat)` with a word-level ChatML model that cites passages; hashing and placeholder tokens for unseen names | unseen towns: Hit@1 27.1% (BM25), 85.8% (hybrid), 99.9% (re-ranked); answers 91.1% correct (0% closed book), 99.9% cite the right passage; 14 min training |
 | `Chat` | `PretrainedModel.Load(folder)` on a Hugging Face model folder; `chat` in the model's own template (reasoning, tool calls); `check` against a reference from `tools/pytorch/pretrained_reference.py` (token ids, chat templates, logits, greedy output) | on small Qwen3- and Llama-layout models built here (trained `tokenizers` tokenizers, transformers' `apply_chat_template`, a NumPy port of the Hugging Face forward pass): identical ids, templates and greedy text, logits within 1e-5 (F32 and BF16 files, sharded, SentencePiece and byte-level) |
 | `CodingAgent` | `CodingAgent` + `CodingTools` on any model `PretrainedModel` loads: `agent` works on a task in a folder (streams reasoning and tool calls); `agent-run` scores a model on a suite of tasks, each verified by its own commands; `agent-check` checks a suite without a model | runs every task in a fresh copy of its workspace |
+
+Convolutional samples built on the released packages, with datasets fetched by `idrak data download`, are in their
+own repository, [ahmedseada/CNN](https://github.com/ahmedseada/CNN):
+
+| Sample | Shows |
+|--------|-------|
+| `DigitsCnn` | handwritten digits (MNIST): the fluent CNN builder, augmentation, early stopping that keeps the best epoch, `idrak predict` on the package |
+| `LettersCnn` | handwritten English letters (EMNIST Letters), accuracy per class and the most common mistakes |
+| `DocumentOcr` | a handwritten page read character by character (EMNIST Balanced) with line and character segmentation |
+| `MultiLanguageOcr` | English and Arabic handwriting (EMNIST Balanced, AHCD, MADBase) in one 85-character model, script per line, right-to-left output: 92.5% per character, 2.4% character error rate on its demo page (RTX 5070 Ti) |
 
 ### Train and predict modes
 
