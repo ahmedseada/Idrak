@@ -83,4 +83,5 @@ plans/README.md, "Future improvements") and ONNX export.
 1. Attribute structs per operation, or one generic bag? (Proposed: a struct per operation; no allocation per call.)
 2. Should the composed form be written once per operation (in the descriptor) or per device? (Proposed: once, in the
    descriptor, since composed means "other operations, on any device".)
-3. Name of the public surface: `Idrak.Devices` namespace, or keep `Idrak.Backends`? (Proposed: `Idrak.Devices`.)
+3. Name of the public surface: decided by plan 10, every abstraction lives under `Idrak.Abstraction`; the device
+   contract is `Idrak.Abstraction.Devices` and the dispatcher `Idrak.Abstraction.Operations`.
