@@ -43,7 +43,7 @@ public sealed class TextEncoder : IEmbedder
     /// <summary>The padding id.</summary>
     public int PadId { get; }
 
-    private Device Device => Model.Parameters().FirstOrDefault()?.Device ?? Device.Default;
+    private Device Device => Model.WeightsDevice ?? Device.Default;
 
     /// <inheritdoc />
     public ValueTask<float[][]> EmbedAsync(IReadOnlyList<string> texts, CancellationToken cancellationToken = default) =>

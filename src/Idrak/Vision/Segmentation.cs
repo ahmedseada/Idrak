@@ -188,7 +188,7 @@ public interface ISegmenter
 public sealed class ModelSegmenter(Module model, int channels, int height, int width, Device? device = null) : ISegmenter
 {
     private readonly Module _model = model ?? throw new ArgumentNullException(nameof(model));
-    private readonly Device _device = device ?? model.Parameters().FirstOrDefault()?.Device ?? Device.Default;
+    private readonly Device _device = device ?? model.WeightsDevice ?? Device.Default;
 
     /// <inheritdoc />
     public SegmentationMask Segment(ImageData image) => Segment([image])[0];

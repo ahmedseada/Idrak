@@ -151,6 +151,9 @@ internal static partial class Tests
 
             using var loaded = Predictor.Load(path, device).Build();
             AssertClose(expected[..12], loaded.Predict(values[..12]), 1e-5f, "a package keeps it");
+            // A model with buffers and no parameters: inputs go to its device, not to the default one.
+            using var inMemory = Predictor.For(model).InputShape(3, 2, 2).Build();
+            Check(loaded.Device == device && inMemory.Device == device, $"inputs go to the model's device: {loaded.Device}, {inMemory.Device}");
         }
         finally
         {

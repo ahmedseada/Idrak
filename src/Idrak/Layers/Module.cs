@@ -102,10 +102,16 @@ public abstract class Module : IDisposable
         }
     }
 
+    /// <summary>
+    /// The device of the module's first parameter or, for a module without parameters (a fixed normalization), of its
+    /// first buffer; null when it has neither. Where inputs for it must go.
+    /// </summary>
+    internal Device? WeightsDevice => Parameters().FirstOrDefault()?.Device ?? Buffers().FirstOrDefault()?.Device;
+
     /// <summary>Predicts a batch given as a [rows, features] array and returns [rows, outputs].</summary>
     public float[,] Predict(float[,] input)
     {
-        var device = Parameters().FirstOrDefault()?.Device ?? Device.Default;
+        var device = WeightsDevice ?? Device.Default;
         using var x = Tensor.From(input, device);
         using var y = Predict(x);
         return y.ToArray2D();

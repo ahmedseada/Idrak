@@ -46,7 +46,7 @@ public sealed class ModelDetector(Module model, int channels, int height, int wi
     private readonly Module _model = model ?? throw new ArgumentNullException(nameof(model));
     private readonly DetectionDecoder _decoder = decoder ?? throw new ArgumentNullException(nameof(decoder));
     private readonly DetectorOptions _options = options ?? new DetectorOptions();
-    private readonly Device _device = device ?? model.Parameters().FirstOrDefault()?.Device ?? Device.Default;
+    private readonly Device _device = device ?? model.WeightsDevice ?? Device.Default;
 
     /// <inheritdoc />
     public IReadOnlyList<Detection> Detect(ImageData image) => Detect([image])[0];
