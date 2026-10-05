@@ -97,7 +97,7 @@ internal sealed unsafe partial class VulkanBackend : Backend
         };
 
         // Cooperative matrices only where the device reports them (VulkanBackend.Matrix.cs).
-        _matrix = ProbeMatrixUnits(physical);
+        _matrix = ProbeMatrixUnits(physical, _sizeControl);
         VkPhysicalDeviceCooperativeMatrixFeatures matrixFeatures;
         VkPhysicalDeviceShaderFloat16Int8Features float16Features;
         VkPhysicalDeviceShaderBfloat16Features bfloat16Features;

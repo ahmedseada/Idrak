@@ -7,6 +7,11 @@
   covers in both directions, which enlarges in blocks of repeated pixels: small characters (Arabic letters such as
   `ر` and `ن` on a page) came out blocky and were misread. Shrinking is unchanged. On a page of 14-pixel handwritten
   digits, a model trained on smooth frames made 19 errors in 288 characters, against 28 before.
+- Vulkan tests: the emulated cooperative-matrix products (run where a device has no matrix units) require the subgroup
+  size they are built for on devices whose compute subgroups vary. They kept each element by subgroup lane but ran at
+  the driver's default size, so on an Intel UHD Graphics (subgroups of 8 to 32) most of each block was never written
+  and two matrix tests failed. A device that varies and cannot require the size no longer runs the emulation. The
+  device's own cooperative-matrix products, and every product outside the tests, are unchanged.
 
 ## 0.3.0 (2026-10-05)
 
