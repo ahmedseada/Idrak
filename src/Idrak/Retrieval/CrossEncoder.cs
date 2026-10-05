@@ -60,7 +60,7 @@ public sealed class CrossEncoder : IReranker
             pair.CopyTo(values, i * size);
         }
 
-        var device = Model.Parameters().FirstOrDefault()?.Device ?? Device.Default;
+        var device = Model.WeightsDevice ?? Device.Default;
         using var input = Tensor.From(values, [passages.Count, .. PairShape], device);
         using var output = Model.Predict(input);
         var scores = output.ToArray();

@@ -107,7 +107,7 @@ public sealed class RegionClassifier : IDisposable
     internal RegionClassifier(RegionClassifierBuilder settings)
     {
         _settings = settings;
-        _device = settings.Device ?? settings.Model.Parameters().FirstOrDefault()?.Device ?? Device.Default;
+        _device = settings.Device ?? settings.Model.WeightsDevice ?? Device.Default;
         _classes = [.. settings.ClassNames ?? throw new InvalidOperationException("Give the model's classes in output order: RegionClassifier.For(model).Classes(...).")];
     }
 
