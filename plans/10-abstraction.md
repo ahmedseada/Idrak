@@ -74,8 +74,9 @@ change, so `[TypeForwardedTo]` alone cannot hide it.
   namespace. The `Idrak` package ships a `buildTransitive` props file adding `Idrak.Abstraction` to the global usings
   of projects that have implicit usings on, so most projects compile unchanged (🤔 to be confirmed in phase 1 on a
   fresh `dotnet new console`).
-- Plug-ins compiled against 0.3.x must be rebuilt. The change lands in one minor version (0.4.0) with a migration
-  table in the changelog, while the version is still 0.y.z.
+- Plug-ins compiled against 0.3.x must be rebuilt. The namespace change and the new assembly land together, in one
+  minor version (0.4.0), with a migration table in the changelog, while the version is still 0.y.z. Users break
+  once, not once per phase (see rule 5).
 
 ## Target layout
 
@@ -124,8 +125,10 @@ Heavy implementations (GGUF reading, Parquet, the GPU kernels) stay in their pac
    engines keep their namespaces (`Idrak.Layers`, `Idrak.Generation`, ...).
 4. **Card-agnostic, as every plan.** Kernel requirements read reported capabilities and measurements; no contract
    names a vendor or a card.
-5. **Every phase is a separate merge** that passes the whole list on every device we have (CPU, CUDA, Vulkan on
-   lavapipe, then the RTX 5070 Ti and one other real GPU) with the decoding benchmarks within 2%.
+5. **Every phase is a separate merge into the `abstraction` branch** that passes the whole list on every device we
+   have (CPU, CUDA, Vulkan on lavapipe, then the RTX 5070 Ti and one other real GPU) with the decoding benchmarks
+   within 2%. `main` receives the work once, after phase 4, and ships it as 0.4.0; fixes to `main` in between are
+   merged into `abstraction` so it never falls behind.
 
 ## Phases
 
@@ -171,3 +174,6 @@ Heavy implementations (GGUF reading, Parquet, the GPU kernels) stay in their pac
 5. **Every abstraction lives under the `Idrak.Abstraction` namespace**: every interface, abstract base, plug-in point
    and registry of every library package, with its default implementation beside it; a test enforces it. This
    replaces the earlier "namespaces stay" rule.
+6. **A separate package from the start**, not a namespace inside `Idrak` first: the contracts move into the
+   `Idrak.Abstraction` assembly and namespace together, so the compiler (not only a test) keeps the GPU devices on the
+   public API. The cost is the up-front work on `Tensor`'s internals (phase 2).
