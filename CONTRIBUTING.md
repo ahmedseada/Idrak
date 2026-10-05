@@ -4,6 +4,8 @@ Thank you for helping. Bug reports, benchmark runs on new hardware, and pull req
 
 ## Before a pull request
 
+- **Optimization rules:** read [docs/optimization.md](docs/optimization.md) before changing library code: the C#
+  performance rules for .NET 10 and Idrak's own, with the measurements behind them.
 - **Build:** `dotnet build -c Release` must show 0 warnings and 0 errors (warnings are errors).
 - **Tests:** `dotnet run -c Release --project tests/Idrak.Tests` runs every test on every device present (CPU, and CUDA
   GPUs); all must pass. `IDRAK_FILTER=<text>` runs the tests whose names contain the text.
