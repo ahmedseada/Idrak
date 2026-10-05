@@ -89,7 +89,7 @@ tool. `IDRAK_DISABLE_CUDA=1` (and `_VULKAN`, `_HIP`) turns a backend off.
 | Area | What is there |
 |------|---------------|
 | Retrieval and RAG | Chunking, BM25, bi-encoder vectors, hybrid search with rank fusion, cross-encoder re-ranking, a pipeline that cites passages |
-| Text recognition (OCR) | Page segmentation into lines, characters and spaces; EMNIST-style character framing into one batch buffer; a text recognizer for any character classifier, with one script per line, look-alike correction and right-to-left reading order (Arabic, Hebrew); synthetic pages |
+| Vision | Per-channel normalization as a layer (`Normalize`, ImageNet's or a data set's statistics); foreground extraction (Otsu); connected components; content framing for classifiers of single objects; region classification in batches; boxes, IoU and non-maximum suppression with a detector over any network; segmentation masks, per-pixel cross-entropy and IoU metrics with a segmenter over any network |
 | Serving | The inference engine (loading, batching), model packages (`.ikm`), Web API endpoints, a local chat API (`/api/chat`), MCP |
 | Interop | ONNX import and export; reference checks against PyTorch and transformers |
 | Telemetry | Hooks that cost nothing when unused: console, CSV metrics, JSON Lines; training, batch, gradient and layer events |
@@ -230,8 +230,9 @@ src/Idrak/
   Inference/                        Predictor, ModelPackage (.ikm), InferenceEngine
   Retrieval/                        chunking, BM25, TextEncoder (bi-encoder), VectorIndex, RetrievalIndex (hybrid
                                     search with rank fusion), CrossEncoder (re-ranking), Rag pipeline, search tool
-  Vision/                           PageSegmenter (lines, characters, spaces), GlyphFrame (character framing),
-                                    TextRecognizer (OCR over a character classifier), WritingScript, PageComposer
+  Vision/                           Foreground (Otsu), ConnectedComponents, ContentFrame, RegionClassifier
+                                    (IRegionProposer), boxes and NonMaxSuppression, ModelDetector (IObjectDetector),
+                                    SegmentationMask, SegmentationMetrics, ModelSegmenter (ISegmenter), ChannelStatistics
   Diagnostics/                      Telemetry hub, events, ConsoleLogger, MetricsRecorder,
                                     ChannelTelemetry, JsonLinesLogger
   Backends/                         the device backends: Cpu (SIMD kernels, measured tiling), Cuda (PTX kernels
@@ -917,45 +918,48 @@ The endpoints are ordinary ASP.NET Core endpoints (`.RequireAuthorization()`, ra
 as usual), and `IPredictor<TIn, TOut>` can be injected (keyed by model name). The GptApi sample serves its
 chat API this way, and the HouseApi sample is a complete prediction API in about ten lines.
 
-### Text recognition (`Idrak.Vision`)
+### Vision (`Idrak.Vision`)
 
-Reads the text of a page with any character classifier (images `[N, 1, 28, 28]` in, one logit per class out), such
-as a CNN trained on EMNIST. The original way is writing the thresholding, the line and character splitting, the
-framing and the batching by hand.
+Building blocks for image networks, independent of any one application. Interfaces (`IObjectDetector`,
+`ISegmenter`, `IRegionProposer`) let an application plug in its own parts; the library's implementations run any
+network that fits.
 
 ```csharp
 using Idrak.Vision;
 
-using var ocr = TextRecognizer.Load("letters.ikm").Build();   // a package from Predictor.Save: model, classes, input shape
-RecognizedPage page = ocr.Read("scan.png");
-Console.WriteLine(page.Text);                                   // lines in reading order
-foreach (var line in page.Lines)                                // each line: Script, RightToLeft, Box, Characters
-    Console.WriteLine($"{line.Script}: {line.Text} ({line.Characters.Min(c => c.Confidence):P0} lowest confidence)");
+// Normalization inside the network: callers feed plain [0, 1] images, the package keeps the statistics.
+var network = Network.Image(3, 224, 224).Normalize(ChannelStatistics.ImageNet.Mean, ChannelStatistics.ImageNet.Std)
+    .Conv2d(32, 3, padding: 1).ReLU() /* ... */;
+var stats = ChannelStatistics.Compute(trainSet);                     // or a data set's own
 
-// Or a model in memory, with settings.
-using var reader = TextRecognizer.For(model)
-    .Characters(classes)                 // "0".."9", "A".."Z", "ا".."ي", ... in output order
-    .BatchSize(1024)                     // characters per batch on the device
-    .LetterFor("7", "T")                 // add a look-alike (defaults: 1/I, 0/O, 5/S, ١/ا, ٥/ه, ...)
-    .Build();
+// Single objects on a plain background (symbols, parts, cells, characters): regions found, framed, classified in batches.
+using var classifier = RegionClassifier.Load("shapes.ikm").Build();   // a package from Predictor.Save
+var found = classifier.Classify(ImageCodecs.Decode("board.png"), new ComponentProposer());
+for (int i = 0; i < found.Count; i++) Console.WriteLine($"{found.Label(i)} at {found.Boxes[i]} ({found.Confidence(i):P0})");
+
+// Detection over any network: the application decodes its outputs; resizing, rescaling and suppression are done here.
+var detector = new ModelDetector(model, 3, 416, 416, (outputs, shape) => MyDecoder(outputs, shape),
+    new DetectorOptions { IouThreshold = 0.45f, MinScore = 0.3f, Classes = names });
+IReadOnlyList<Detection> objects = detector.Detect(image);
+
+// Segmentation: per-pixel loss for training, masks and IoU for evaluation, a segmenter over the trained network.
+var run = new TrainingRun { Model = unet, Loss = Losses.PixelCrossEntropy, /* ... */ };
+var mask = new ModelSegmenter(unet, 3, 256, 256).Segment(image);     // at the image's size
+var score = new SegmentationMetrics(classes).Add(mask, truth).Score(); // pixel accuracy, IoU per class, mean IoU
 ```
 
-- `PageSegmenter.Segment(image)` separates ink from paper (Otsu's threshold, either polarity, any colour). It finds
-  lines from rows with ink and characters from columns with ink, splits touching characters, and marks spaces. Thin
-  bands such as the dots of Arabic letters join their line; marks on their own are dropped. Its one page-sized buffer
-  is the ink, a float per pixel.
-- `GlyphFrame.Extract` frames a character as EMNIST did (cropped, centred, aspect kept, averaged to 28 x 28, full
-  contrast) straight into a span of the batch buffer. `GlyphFrame.Fit` and the `GlyphFrame.Reframe()` loader
-  transform frame a data set's images the same way, so training images and characters from pages match.
-- `TextRecognizer` classifies all of a page's characters in batches from one reused buffer. Each line is read within
-  one script (from the class names' Unicode blocks, `WritingScript`), so look-alikes across scripts (V/٧, l/ا) are
-  told apart by their neighbours. Within a word, digits among letters become letters (and the reverse), and a cased
-  word takes one case. Right-to-left lines come back in reading order, with numbers left to right.
-- `PageComposer.Compose(text, glyph)` writes a page of handwriting out of character images, for tests, demos and
-  synthetic training pages.
+| Piece | What it does |
+|-------|--------------|
+| `NetworkBuilder.Normalize(mean, std)` (`ChannelNormalize`) | (x - mean[c]) / std[c] on the device; saved with the architecture; `ChannelStatistics.ImageNet` and `ChannelStatistics.Compute(source)` give the values |
+| `Foreground.Extract` | Foreground high, background 0: either polarity (or decided from the image), any colour, Otsu's threshold or a given one |
+| `ConnectedComponents.Find` | Regions with box, area and centre, and a label per pixel; 4 or 8 neighbours, a minimum area; two passes with union-find |
+| `ContentFrame` | Crop to content, centre exactly, keep the aspect, average to size x size, full contrast, straight into a batch buffer; `Fit` and the `Reframe()` loader transform frame training images the same way |
+| `RegionClassifier`, `IRegionProposer`, `ComponentProposer` | Regions from any proposer, framed into one reused buffer and classified in batches on the device |
+| `BoundingBox`, `Detection`, `NonMaxSuppression`, `IObjectDetector`, `ModelDetector` | Box geometry and IoU; suppression per class or across classes, with a minimum score and a limit; a detector over any network with the application's decoder |
+| `SegmentationMask`, `SegmentationMetrics`, `Losses.PixelCrossEntropy`, `ISegmenter`, `ModelSegmenter` | Masks from [N, C, H, W] logits, nearest-neighbour resizing, pixel accuracy and IoU over a test set, the per-pixel loss, a segmenter over any network |
 
-It reads pages of separate characters: printed-style handwriting, forms, isolated Arabic letters. Joined (cursive)
-writing needs a model that reads whole words.
+On an A4 page at 300 dpi with 1,848 objects, foreground, connected components and framing take about 110 ms on a CPU
+and allocate 67 MB (the foreground and the label map).
 
 ### Retrieval and RAG (`Idrak.Retrieval`)
 

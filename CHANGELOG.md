@@ -2,18 +2,20 @@
 
 ## Unreleased
 
-- `Idrak.Vision`: text recognition (OCR) over any character classifier.
-  - `PageSegmenter` splits a page into lines, characters and spaces: Otsu's threshold (either polarity, any colour);
-    thin bands such as Arabic letters' dots join their line, and lone marks are dropped.
-  - `GlyphFrame` frames characters as EMNIST did, straight into a batch buffer. `GlyphFrame.Fit` and the
-    `GlyphFrame.Reframe()` loader transform frame training images the same way.
-  - `TextRecognizer` (`For(model)` or `Load(package)`, then `Read(page)`) classifies a page's characters in batches
-    from one reused buffer. It reads each line within one script (`WritingScript`, from Unicode blocks), corrects
-    look-alikes in words (1/I, 0/O, ١/ا...), gives a cased word one case, and returns right-to-left lines in reading
-    order with numbers left to right. Lines, characters, confidences, candidates and boxes come back.
-  - `PageComposer` writes synthetic pages from character images.
-  - On an A4 page at 300 dpi with 1,848 characters, segmentation and framing take 100 ms (CPU) and allocate 35 MB,
-    against 250-400 ms and 108 MB for the samples' hand-written version.
+- `Idrak.Vision`: building blocks for image networks, with interfaces for the parts an application supplies.
+  - `NetworkBuilder.Normalize(mean, std)` (`ChannelNormalize`): per-channel normalization as the network's first layer,
+    on the device and saved with the architecture, so callers feed [0, 1] images. `ChannelStatistics.ImageNet` and
+    `ChannelStatistics.Compute(source)` give the values.
+  - `Foreground.Extract` (either polarity, Otsu's threshold) and `ConnectedComponents.Find` (regions with box, area,
+    centre and a label map; 4 or 8 neighbours).
+  - `ContentFrame`: crop, centre and scale a single object for a classifier, straight into a batch buffer; `Fit` and
+    the `Reframe()` loader transform frame training images the same way.
+  - `RegionClassifier` with `IRegionProposer` (`ComponentProposer` built in): regions framed into one reused buffer and
+    classified in batches.
+  - Detection: `BoundingBox`, `Detection`, IoU, `NonMaxSuppression`, `IObjectDetector`, and `ModelDetector` over any
+    network with the application's output decoder.
+  - Segmentation: `SegmentationMask` (from [N, C, H, W] logits), `SegmentationMetrics` (pixel accuracy, IoU per class,
+    mean IoU), `Losses.PixelCrossEntropy`, `ISegmenter`, and `ModelSegmenter` over any network.
 
 ## 0.2.1 (2026-10-04)
 
