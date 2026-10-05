@@ -131,7 +131,7 @@ points"):
 | Backend | Devices | Status |
 |---------|---------|--------|
 | CPU | x64 (AVX2, AVX-512), ARM64 (NEON) | Every test passes, including on an Android phone and an Apple M4 Max (macOS) |
-| CUDA | NVIDIA GPUs, through the driver API | Every test passes on Ampere and Blackwell GPUs |
+| CUDA | NVIDIA GPUs, through the driver API | Every test passes on Turing, Ampere and Blackwell GPUs |
 | Vulkan | NVIDIA, AMD, Intel, Qualcomm Adreno, Mesa's software driver | Every test passes on each GPU tested (see "Tested on architectures") |
 | ROCm / HIP | AMD GPUs through the HIP runtime: memory, copies and a first set of kernels, the rest through host fallbacks | Added; not yet run on an AMD GPU |
 | Metal, NPUs | Apple GPUs (macOS runs on the CPU backend for now) | Not supported yet |
@@ -1554,7 +1554,7 @@ architectures" below):
 
 Fine-tuning speed on the RTX 5070 Ti (Qwen2.5-0.5B, LoRA, 4k-token steps): 17.4k tokens/s on chat data, 25.5k on
 short classification rows; chat with Qwen3-0.6B generates about 140 tokens/s. Not tested yet: GPUs before
-compute 8.6 (the kernels assemble for them, see GPU support), native Linux GPU drivers (Linux GPUs: WSL2 only, where
+compute 7.5 (the kernels assemble for them, see GPU support), native Linux GPU drivers (Linux GPUs: WSL2 only, where
 CUDA goes through the Windows driver and Vulkan only through lavapipe; NVIDIA's Linux driver and Mesa's RADV, ANV and
 NVK have not run). macOS runs on the CPU backend (tested on an M4 Max, see below).
 
@@ -1578,6 +1578,7 @@ native Linux GPU drivers have not run yet:
 | GeForce RTX 5070 Ti, 16 GB | NVIDIA Blackwell (sm_120) | discrete | Windows desktop; Linux: WSL2 only (CUDA) | CUDA, Vulkan | 424 of 426 (CUDA), 421 of 426 (Vulkan) on 2026-10-03, see the run below; earlier 488 of 488 (CUDA), 273 of 273 (Vulkan) | 1,889 tokens/s; Qwen3-0.6B int8: 441 tokens/s on CUDA and on Vulkan |
 | GeForce RTX 5050 Laptop GPU, 8 GB | NVIDIA Blackwell (sm_120) | discrete | Windows laptop | CUDA, Vulkan | 735 of 735 (CUDA run); 273 of 273 (Vulkan) | 1,296–1,350 tokens/s |
 | GeForce RTX 3060 Laptop GPU, 6 GB | NVIDIA Ampere (sm_86) | discrete | Windows laptop | CUDA, Vulkan | 735 of 735 (CUDA run); 273 of 273 (Vulkan) | 1,182 tokens/s |
+| Quadro RTX 3000, 6 GB | NVIDIA Turing (sm_75) | discrete | Windows 10 laptop (i9-10885H, with an Intel UHD) | CUDA, Vulkan | 434 of 434 on the CPU, CUDA and Vulkan, and on CUDA again with tuning off (`IDRAK_AUTOTUNE=0`) | 639 tokens/s; Qwen3-0.6B int8: 155 tokens/s (CUDA), 167 (Vulkan) |
 | Radeon Graphics (Ryzen 5000H "Cezanne") | AMD Vega (GCN 5) | integrated | Windows laptop (with the RTX 3060) | Vulkan | 273 of 273 | 371 tokens/s |
 | UHD Graphics (i7-13620H) | Intel Xe-LP (Gen12) | integrated | Windows laptop (with the RTX 5050) | Vulkan | 273 of 273 | 229–256 tokens/s |
 | Adreno 730 (Snapdragon 8+ Gen 1) | Qualcomm Adreno 7xx | integrated | Android phone, Termux + Ubuntu, Mesa Turnip | Vulkan | 247 of 247 | chat 14.4–17.4 tokens/s |
@@ -1604,6 +1605,9 @@ Each run in detail, results of the whole test list, grouped by vendor, architect
     <tr><th colspan="6" align="left">NVIDIA · Ampere (sm_86) · driver 581.29</th></tr>
     <tr><td>2026-10-02</td><td><b>GeForce RTX 3060 Laptop GPU</b>, 6 GB<br>CUDA 13.0</td><td>discrete</td><td>device memory</td><td>bfloat16, int8 tensor cores (no fp8)</td><td>735 of 735 (CPU, CUDA and the AMD GPU); prompt products and decoding attention "auto" at the best column (12.0 / 53.0 / 195 µs at 200 / 1,000 / 4,000 positions)</td></tr>
     <tr><td>2026-10-02</td><td><b>GeForce RTX 3060 Laptop GPU</b>, 6 GB<br>Vulkan 1.4, driver 581.29</td><td>discrete</td><td>mapped (resizable BAR, measured: 193 GB/s against 191 through staging), reads through staging</td><td>not used yet</td><td>273 of 273 on the GPU (measured width 256); decoder 1,182 tokens/s with fused kernels and graph replay (int8, 8 layers; 804 without graphs). This driver lost the second add of a repeated id in the embedding gradient until the scatter reread its table on every load</td></tr>
+    <tr><th colspan="6" align="left">NVIDIA · Turing (sm_75) · driver 595.95 · Windows 10, release 0.3.1</th></tr>
+    <tr><td>2026-10-05</td><td><b>Quadro RTX 3000</b>, 6 GB, 30 SMs<br>CUDA 13.2</td><td>discrete</td><td>device memory</td><td>tensor cores; no bfloat16, fp8 or int8 tensor-core products below compute 8 (those tests skip)</td><td>434 of 434, and 434 of 434 again with every measured choice off (<code>IDRAK_AUTOTUNE=0</code>, formulas only): the first card older than compute 8.6 and one never seen during development. Products 1,236 / 2,125 GFLOP/s float32 (1024³ / 2048³); int8 decoding product 139 GB/s (1 × 1024 → 32,000); Qwen3-0.6B prompt 1,648 and generation 86.7 tokens/s (stored weights), 1,579 and 155 (int8); i9-10885H CPU: 434 of 434</td></tr>
+    <tr><td>2026-10-05</td><td><b>Quadro RTX 3000</b>, 6 GB<br>Vulkan 1.4, driver 595.95</td><td>discrete</td><td>as measured</td><td>none used</td><td>434 of 434. Qwen3-0.6B with int8 weights: prompt 1,939 and generation 167 tokens/s (faster than CUDA's 1,579 and 155 on this card); bench decoder 639 tokens/s with recorded graphs but 779 without them (see plans/README.md, "Future improvements"); windowed decoder 1,504 tokens/s through the window kernels against 1,153 composed. The laptop's Intel UHD Graphics (Vulkan 1.3): bench decoder 117.5 tokens/s, benchmarks only</td></tr>
     <tr><th colspan="6" align="left">Intel · Xe-LP (Gen12) · driver 101.7088</th></tr>
     <tr><td>2026-10-02</td><td><b>UHD Graphics</b> (i7-13620H), 12 GB shared<br>Vulkan 1.4</td><td>integrated</td><td>mapped (shared with the CPU)</td><td>none (no XMX)</td><td>273 of 273 with the merged kernels (measured width 256), after two test bounds were set from what the tests allow (an 8-bit Adam parameter after a moment rounded to the neighbouring code; a graph replay's host time, one submission); decoder 229–256 tokens/s (int8, 8 layers, graphs no faster here), element-wise 31 GB/s, float32 product 203 GFLOP/s</td></tr>
     <tr><th colspan="6" align="left">AMD · Vega (GCN 5) · driver 23.19.21.13</th></tr>
