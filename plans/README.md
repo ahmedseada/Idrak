@@ -66,9 +66,9 @@ What the `architecture` branch cannot do today, with an example of each. "High" 
 
 ## Next abstraction
 
-[9-operations.md](9-operations.md): operations as data. One dispatcher picks a kernel per operation and device
-(device kernel, composed, host), so kernels and devices can come from outside packages; it leads to the public device
-API (item 12c). Planned, not started.
+[10-abstractions.md](10-abstractions.md): `Idrak.Abstractions`, one package with every contract and its default
+implementation, the public device API (item 12c) and plan 9's dispatcher; CUDA, Vulkan and HIP become packages built
+only on that public API. [9-operations.md](9-operations.md) (operations as data) is part of it. Planned, not started.
 
 ## Future improvements (measured)
 

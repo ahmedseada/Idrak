@@ -1,6 +1,7 @@
 # Plan 9: operations as data (one dispatcher, kernels per device)
 
-**Status:** planned (branch `abstraction`, 2026-10-05). Nothing built yet.
+**Status:** planned (branch `abstraction`, 2026-10-05). Nothing built yet. Part of plan 10 (`Idrak.Abstractions`): its
+dispatcher and descriptors live there, and its phases 1 to 5 map onto plan 10's phases 1, 3, 4, 5 and 6.
 
 ## Why
 
