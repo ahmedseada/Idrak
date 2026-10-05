@@ -18,8 +18,7 @@ every API, language rule and example below (Release build), and the analyzer and
   with AVX-512 turned off throws `PlatformNotSupportedException`), 53, 54, 55-59, 62-63, and the table's "tiny
   short-lived arrays" (see its note).
 - **Corrected or refined**: rule 42 (the per-instruction-set switch names), rule 63 (the calling thread only, measured), rule 65
-  (which analyzers the setting adds), the table's note on stack-allocated arrays, and section 10 (two items not
-  confirmed). Each note sits next to its rule, marked **Checked:**.
+  (which analyzers the setting adds), the table's note on stack-allocated arrays Each note sits next to its rule, marked **Checked:**.
 - **Not run (guidance, not a testable claim)**: 0-3, 5, 21, 30, 31-34, 37, 39-41, 43-44, 46-47, 49-51, 60-61, 64, 66-69.
 
 ---
@@ -327,36 +326,13 @@ static void Measure(string name, Action action, int iterations = 1_000_000)
 66. Prefer safe span code. The JIT removes more bounds checks every release.
 67. Prefer built-in APIs. They get faster every release, for free.
 68. Never hard-code a vector width.
-69. Ship on .NET 10 LTS (supported to Nov 2028). Run CI on .NET 11 to catch breaking changes early.
+69. Ship on .NET 10 LTS (supported to Nov 2028).
 
 ---
 
-## 10. Next upgrade: .NET 11 (GA Nov 2026, STS)
-
-> **Checked** against published sources (the SDK here is .NET 10, so none of this was run): confirmed are the x86-64-v2
-> CPU baseline (from Preview 4; the app does not start on an older CPU, and ReadyToRun code targets x86-64-v3 on
-> Windows and Linux), the span-based Deflate / ZLib / GZip encoders and decoders, the lane APIs (`Zip`, `Unzip`, the
-> `Concat` family, `CreateGeometricSequence`), `ReadOnlyMemoryStream`, `ReadOnlySequenceStream` and `StringStream`
-> (preview APIs), Runtime Async (no longer behind `EnablePreviewFeatures` for `net11.0`), and Deflate and GZip writing
-> a header and footer for an empty payload. **Not confirmed:** `INumberBase<T>.TryParsePartial` and a change in
-> `decimal` / `double` conversion rounding; check them before relying on them.
-
-**New (all built in):**
-- Stream adapters: `ReadOnlyMemoryStream`, `ReadOnlySequenceStream`, `StringStream`
-- `INumberBase<T>.TryParsePartial`
-- Span-based Deflate / ZLib / GZip encoders and decoders
-- SIMD lane APIs: `Zip`, `Unzip`, `Concat`, `Reverse`
-- Runtime Async (opt-in preview)
-- More bounds checks removed by the JIT
-
-**Breaking:**
-- The minimum CPU is now x86-64-v2.
-- `decimal` ↔ `double` conversions round differently. Use `1.23m` literals, never `(decimal)1.23`.
-- GZip / Deflate write a header even for an empty payload.
-
 ---
 
-## 11. Idrak's rules (learned from measured work)
+## 10. Idrak's rules (learned from measured work)
 
 Each came from a measurement in this repository or its samples; the numbers are the evidence, from the reads of
 handwritten pages in the CNN samples' MultiLanguageOcr (an RTX 5050 laptop and a 4-core x64 container), October 2026.
