@@ -57,6 +57,24 @@ public static class Losses
     }
 
     /// <summary>
+    /// Per-pixel cross-entropy for semantic segmentation: <paramref name="logits"/> [N, classes, H, W] (as convolutions
+    /// give them) against each pixel's class index, [N, H, W] or [N, H * W] (as a data set's targets). The mean over pixels.
+    /// </summary>
+    public static Tensor PixelCrossEntropy(Tensor logits, Tensor classIndices) => PixelCrossEntropy(logits, classIndices, 0f);
+
+    /// <summary><see cref="PixelCrossEntropy(Tensor, Tensor)"/> with label smoothing.</summary>
+    public static Tensor PixelCrossEntropy(Tensor logits, Tensor classIndices, float labelSmoothing)
+    {
+        if (logits.Rank != 4)
+        {
+            throw new ArgumentException($"PixelCrossEntropy takes logits [N, classes, H, W], not {Tensor.FormatShape(logits.Shape)}.", nameof(logits));
+        }
+
+        // Classes last, so each pixel is one row of SparseCrossEntropy (which reshapes the targets to [N, H, W]).
+        return SparseCrossEntropy(logits.Permute(0, 2, 3, 1), classIndices, labelSmoothing);
+    }
+
+    /// <summary>
     /// Language-model loss over token positions: the weighted cross-entropy of <paramref name="head"/>(hidden) against
     /// <paramref name="targets"/> (token ids as floats, [rows]) with <paramref name="weights"/> [rows] (0 masks a
     /// position, for example prompt tokens), divided by <paramref name="normalizer"/> (usually the number of weighted

@@ -7,28 +7,34 @@ using Idrak.Data;
 namespace Idrak.Vision;
 
 /// <summary>
-/// Frames a character for a classifier the way EMNIST framed its images: the character's ink, centred in a square that
-/// keeps its aspect ratio, <c>border</c> pixels from the edge, averaged down (or up) to <c>size</c> x <c>size</c>, at
-/// full contrast (its brightest pixel 1). Characters cut from a page and the images of a data set framed alike look
-/// alike to a model, whatever size and position they started at.
+/// Frames one object for a classifier: its foreground, centred in a square that keeps its aspect ratio, <c>border</c>
+/// pixels from the edge, averaged down (or up) to <c>size</c> x <c>size</c>, at full contrast (its brightest pixel 1).
+/// This is how EMNIST framed its characters. Objects found in a large image and the images of a data set, framed alike,
+/// look alike to a model whatever size and position they started at: characters, digits, symbols, sketches, cells.
 /// </summary>
 /// <remarks>
-/// Frames are written into the caller's span, so a page's characters go straight into one batch buffer without an
-/// array each. Use <see cref="Reframe"/> as a <see cref="DataLoader"/> transform to frame training images the same way.
+/// Frames are written into the caller's span, so many objects go straight into one batch buffer without an array each
+/// (<see cref="RegionClassifier"/> does that). Use <see cref="Reframe"/> as a <see cref="DataLoader"/> transform to frame
+/// training images the same way.
 /// </remarks>
-public static class GlyphFrame
+public static class ContentFrame
 {
-    /// <summary>Frames the character in <paramref name="box"/> of a segmented page into <paramref name="destination"/> (size x size values).</summary>
-    public static void Extract(PageLayout layout, PixelBox box, Span<float> destination, int size = 28, int border = 1)
+    /// <summary>Frames the object in <paramref name="box"/> of an image's foreground into <paramref name="destination"/> (size x size values).</summary>
+    public static void Extract(ForegroundImage image, PixelBox box, Span<float> destination, int size = 28, int border = 1)
     {
-        ArgumentNullException.ThrowIfNull(layout);
-        Frame(layout.Ink, layout.Width, layout.Threshold, box, destination, size, border);
+        ArgumentNullException.ThrowIfNull(image);
+        if (box.X < 0 || box.Y < 0 || box.Right > image.Width || box.Bottom > image.Height || box.Width <= 0 || box.Height <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(box), $"{box} is not inside the {image.Width} x {image.Height} image.");
+        }
+
+        Frame(image.Data, image.Width, image.Threshold, box, destination, size, border);
     }
 
     /// <summary>
-    /// Frames a data set's character image (<paramref name="rows"/> x <paramref name="columns"/>, ink high) into
+    /// Frames a data set's image (<paramref name="rows"/> x <paramref name="columns"/>, foreground high) into
     /// <paramref name="destination"/>: cropped to the pixels above <paramref name="threshold"/>, then framed as
-    /// <see cref="Extract"/> frames characters from a page. An image without ink gives zeros.
+    /// <see cref="Extract"/> frames objects of a larger image. An image without foreground gives zeros.
     /// </summary>
     public static void Fit(ReadOnlySpan<float> image, int rows, int columns, Span<float> destination, int size = 28, int border = 1, float threshold = 0.25f)
     {
@@ -62,8 +68,8 @@ public static class GlyphFrame
     /// <summary>A <see cref="DataLoader"/> transform that frames each image as <see cref="Fit"/> does, in place (the image stays size x size).</summary>
     public static ISampleTransform Reframe(int border = 1, float threshold = 0.25f) => new ReframeTransform(border, threshold);
 
-    // The ink of `box` (values at or below the threshold read as paper), centred in a square frame, averaged down (or up).
-    private static void Frame(ReadOnlySpan<float> ink, int stride, float threshold, PixelBox box, Span<float> destination, int size, int border)
+    // The foreground of `box` (values at or below the threshold read as background), centred in a square frame, averaged down (or up).
+    private static void Frame(ReadOnlySpan<float> values, int stride, float threshold, PixelBox box, Span<float> destination, int size, int border)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(size, 1);
         if (border < 0 || 2 * border >= size)
@@ -77,7 +83,7 @@ public static class GlyphFrame
         }
 
         var output = destination[..(size * size)];
-        // The frame is fractional, so a character is centred exactly whatever its size: its larger side spans
+        // The frame is fractional, so an object is centred exactly whatever its size: its larger side spans
         // size - 2 * border output pixels, and each output pixel is the mean over the source pixels it covers.
         double scale = Math.Max(box.Width, box.Height) / (double)(size - 2 * border);   // source pixels per output pixel
         double offsetX = (size * scale - box.Width) / 2, offsetY = (size * scale - box.Height) / 2;
@@ -97,7 +103,7 @@ public static class GlyphFrame
                     int row = (box.Y + gy) * stride + box.X;
                     for (int gx = gxStart; gx < gxEnd; gx++)
                     {
-                        float v = ink[row + gx];
+                        float v = values[row + gx];
                         if (v > threshold)
                         {
                             sum += wy * (Math.Min(x1, gx + 1) - Math.Max(x0, gx)) * v;
@@ -128,7 +134,7 @@ public static class GlyphFrame
             var (planes, h, w) = ImageShape.Of(featureShape, features.Length);
             if (planes != 1 || h != w)
             {
-                throw new ArgumentException($"GlyphFrame.Reframe takes square single-channel images, not {string.Join(" x ", featureShape)}.");
+                throw new ArgumentException($"ContentFrame.Reframe takes square single-channel images, not {string.Join(" x ", featureShape)}.");
             }
 
             var copy = ArrayPool<float>.Shared.Rent(h * w);

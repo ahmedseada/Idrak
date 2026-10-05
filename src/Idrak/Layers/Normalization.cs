@@ -107,6 +107,78 @@ public sealed class BatchNorm : Module
 }
 
 /// <summary>
+/// Fixed per-channel normalization: (x - mean[c]) / std[c] over [N, C, ...] (the channels of images, the features of
+/// [N, F]). Image networks expect inputs normalized by their training data's statistics (ImageNet's, for example);
+/// as the first layer of the network, the normalization runs on the device, is saved with the model, and every caller
+/// (predictors, packages, the CLI) feeds plain [0, 1] images. Nothing is trained; mean and std are kept as buffers.
+/// </summary>
+public sealed class ChannelNormalize : Module
+{
+    /// <summary>Creates the layer.</summary>
+    /// <param name="mean">Each channel's mean.</param>
+    /// <param name="std">Each channel's standard deviation (positive).</param>
+    /// <param name="device">Where the values live.</param>
+    public ChannelNormalize(IReadOnlyList<float> mean, IReadOnlyList<float> std, Device? device = null)
+    {
+        ArgumentNullException.ThrowIfNull(mean);
+        ArgumentNullException.ThrowIfNull(std);
+        if (mean.Count == 0 || mean.Count != std.Count)
+        {
+            throw new ArgumentException($"Give one mean and one std per channel ({mean.Count} means, {std.Count} stds).");
+        }
+
+        if (std.Any(s => !(s > 0)))
+        {
+            throw new ArgumentOutOfRangeException(nameof(std), "Every std must be positive.");
+        }
+
+        device ??= Device.Default;
+        Mean = [.. mean];
+        Std = [.. std];
+        Scale = CreateBuffer([.. std.Select(s => 1f / s)], [std.Count], device);
+        Shift = CreateBuffer([.. mean.Select((m, c) => -m / std[c])], [std.Count], device);
+    }
+
+    /// <summary>Each channel's mean.</summary>
+    public IReadOnlyList<float> Mean { get; }
+
+    /// <summary>Each channel's standard deviation.</summary>
+    public IReadOnlyList<float> Std { get; }
+
+    /// <summary>The number of channels.</summary>
+    public int Channels => Mean.Count;
+
+    private Tensor Scale { get; set; }
+
+    private Tensor Shift { get; set; }
+
+    /// <inheritdoc />
+    protected override Tensor ForwardCore(Tensor input)
+    {
+        if (input.Rank < 2 || input.Shape[1] != Channels)
+        {
+            throw new ArgumentException($"ChannelNormalize expects [N, {Channels}, ...], got {Tensor.FormatShape(input.Shape)}.");
+        }
+
+        int inner = input.Size / (input.Shape[0] * Channels);
+        return input.GroupAffine(Scale, Shift, Channels, inner);
+    }
+
+    /// <inheritdoc />
+    public override IEnumerable<Tensor> Buffers() => [Scale, Shift];
+
+    /// <inheritdoc />
+    protected internal override void MoveTo(Device device)
+    {
+        Scale = MoveTensor(Scale, device);
+        Shift = MoveTensor(Shift, device);
+    }
+
+    /// <inheritdoc />
+    public override string ToString() => $"ChannelNormalize({Channels})";
+}
+
+/// <summary>
 /// Layer normalization over the last dimension: each sample (or token) is normalized on its own, then scaled
 /// and shifted per feature. The standard normalization of transformers; independent of batch size.
 /// </summary>
