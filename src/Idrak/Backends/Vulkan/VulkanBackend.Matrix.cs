@@ -99,7 +99,7 @@ internal sealed unsafe partial class VulkanBackend
     }
 
     // What the device reports, read before the device is created.
-    private static MatrixUnitSupport? ProbeMatrixUnits(PhysicalDevice physical)
+    private static MatrixUnitSupport? ProbeMatrixUnits(PhysicalDevice physical, SubgroupSizeSupport sizeControl)
     {
         if (MatrixUnitsOverride == false || !physical.Facts.ComputeSubgroups(VulkanDeviceFacts.SubgroupBasic))
         {
@@ -137,9 +137,12 @@ internal sealed unsafe partial class VulkanBackend
 
         if (!cooperative || matrixFeatures.CooperativeMatrix == 0)
         {
-            // Tests: an emulation where the subgroup size divides the shape (else nothing).
+            // Tests: an emulation where the subgroup size divides the shape (else nothing). Its invocations keep elements
+            // by subgroup lane, so its subgroups must have exactly that size: a device whose compute subgroups vary (8 to
+            // 32, say) emulates only where its pipelines can require the size.
             int subgroup = (int)physical.Facts.SubgroupSize;
             return EmulatedMatrixUnits is { } shape && subgroup > 0 && shape.M * shape.N % subgroup == 0 && VulkanKernels.CoopShapeUsable(shape)
+                && EmulationSubgroupFixed(physical.Facts, sizeControl, subgroup)
                 ? new MatrixUnitSupport(shape, float16Extension, subgroup, EmulatedBFloat16 ? shape : null) : null;
         }
 
@@ -157,6 +160,12 @@ internal sealed unsafe partial class VulkanBackend
             ? new MatrixUnitSupport(chosen, float16Extension, 0, bfloat16Matrices ? ChooseMatrixShape(reported, ComponentBFloat16) : null)
             : null;
     }
+
+    // Whether an emulation's pipelines run in subgroups of exactly `subgroup` invocations: the device has one size, or
+    // subgroup size control can require this one (whole subgroups too).
+    private static bool EmulationSubgroupFixed(VulkanDeviceFacts facts, SubgroupSizeSupport sizeControl, int subgroup) =>
+        facts.MinSubgroupSize == facts.MaxSubgroupSize
+        || (sizeControl.Enabled && sizeControl.FullSubgroups && facts.MinSubgroupSize <= subgroup && subgroup <= facts.MaxSubgroupSize);
 
     // The matrix shapes the device lists (vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR), none when it lists none.
     private static VkCooperativeMatrixProperties[] ReportedMatrixShapes(IntPtr physical)
@@ -256,7 +265,13 @@ internal sealed unsafe partial class VulkanBackend
             }
 
             // Its subgroups take the four blocks in turns, whatever their size: the pipeline keeps the device's default size.
-            var kernel = new VulkanKernel(built.Words, built.Bindings, built.PushBytes, built.Name, built.Writes) { DefaultSubgroupSize = true };
+            // An emulation needs subgroups of the size it was built for, so it requires that size where the device varies.
+            int required = support.Emulated > 0 && Facts.MinSubgroupSize != Facts.MaxSubgroupSize ? support.Emulated : 0;
+            var kernel = new VulkanKernel(built.Words, built.Bindings, built.PushBytes, built.Name, built.Writes)
+            {
+                DefaultSubgroupSize = true,
+                RequiredSubgroupSize = required,
+            };
             try
             {
                 _ = PipelineOf(kernel);

@@ -95,6 +95,18 @@ internal static partial class Tests
         try { ContentFrame.Extract(fg, new PixelBox(45, 35, 10, 10), fromCanvas); } catch (ArgumentOutOfRangeException) { threw = true; }
         Check(threw, "a box outside the image is refused");
 
+        // A small object grows smooth, not in blocks of repeated pixels: a 4 x 4 ramp enlarged to 26 pixels changes
+        // between neighbouring output pixels along its middle row.
+        var ramp = new float[4 * 4];
+        for (int y = 0; y < 4; y++) for (int x = 0; x < 4; x++) ramp[y * 4 + x] = 0.4f + 0.2f * x;
+        var grown = new float[28 * 28];
+        ContentFrame.Fit(ramp, 4, 4, grown);
+        var middle = grown.AsSpan(14 * 28 + 2, 24).ToArray();
+        int longestRun = 1, run = 1;
+        for (int i = 1; i < middle.Length; i++) { run = middle[i] == middle[i - 1] ? run + 1 : 1; longestRun = Math.Max(longestRun, run); }
+        Check(longestRun <= 2 && middle.Zip(middle.Skip(1)).All(p => p.Second >= p.First - 1e-6f),
+            $"enlarging is smooth and keeps the ramp's order: longest run of equal pixels {longestRun}");
+
         var sample = image.ToArray();
         ContentFrame.Reframe().Apply(sample, Span<float>.Empty, [1, 28, 28], new Random(1));
         AssertClose(framed, sample, 0f, "Reframe = Fit, in place");
