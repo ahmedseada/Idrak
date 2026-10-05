@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 (2026-10-05)
+
+New `Idrak.Vision` building blocks for image networks (classification of regions, detection, segmentation,
+normalization), tested on CPU, CUDA and Vulkan.
 
 - `Idrak.Vision`: building blocks for image networks, with interfaces for the parts an application supplies.
   - `NetworkBuilder.Normalize(mean, std)` (`ChannelNormalize`): per-channel normalization as the network's first layer,
@@ -16,6 +19,10 @@
     network with the application's output decoder.
   - Segmentation: `SegmentationMask` (from [N, C, H, W] logits), `SegmentationMetrics` (pixel accuracy, IoU per class,
     mean IoU), `Losses.PixelCrossEntropy`, `ISegmenter`, and `ModelSegmenter` over any network.
+
+- Modules with buffers and no parameters (such as `ChannelNormalize`) get their inputs on their own device. The device
+  was read from the first parameter only, so `Predictor`, `Module.Predict`, the vision runners, the text encoders,
+  `Trainer`, distillation and ONNX export put such a model's inputs on the default device, which fails on a GPU.
 
 ## 0.2.1 (2026-10-04)
 
