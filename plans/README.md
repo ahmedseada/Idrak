@@ -40,7 +40,7 @@ What the `architecture` branch cannot do today, with an example of each. "High" 
 | Limit | Example |
 |---|---|
 | Not the default device | on a machine whose only GPU is integrated, `Device.Default` is the CPU unless `IDRAK_VULKAN_DEFAULT=1` |
-| No recorded steps (CUDA graphs have no Vulkan counterpart yet) | `new GenerationOptions { UseGraph = true }` on `vulkan:0` runs each step's dispatches anew |
+| Recorded steps are always used where they can be, even where replaying them is slower (see "Future improvements") | on a Quadro RTX 3000 the bench decoder ran at 639 tokens/s with graphs and 779 without |
 | Matrix units only through `VK_KHR_cooperative_matrix` float16 shapes (float32 and prompt products, measured per shape) and, with `MixedPrecision`, bfloat16 shapes (single-pass reduced precision); no int8 or float8 matrix types, no attention or fused training kernels on them | a device without the extension (or with only integer shapes) runs the float32 kernels |
 | Training operations on the host fallback (convolutions, group norms, 8-bit AdamW, training attention's backward) | training a CNN on `vulkan:1` works but each convolution round-trips to the CPU |
 | Tensors larger than the device's storage range | on a GPU reporting a 1 GiB `maxStorageBufferRange`, a 151,936 × 4096 float weight runs on the host fallback |
@@ -59,10 +59,33 @@ What the `architecture` branch cannot do today, with an example of each. "High" 
 | Platform | Status |
 |---|---|
 | Linux with a GPU (CUDA or Vulkan) | partly: CUDA under WSL2 (RTX 5070 Ti, all pass) and Mesa's software Vulkan driver; native Linux GPU drivers (NVIDIA, RADV, ANV, NVK) never run: WSL2 only for now (a live USB or a cloud GPU instance would cover them; guide in installation/linux.md) |
-| macOS (CPU) | never run |
-| NVIDIA before compute 8.6 | PTX is generated for them; never run |
+| macOS (CPU) | done: an Apple M4 Max passed the whole list on the CPU backend (README, "Tested on architectures") |
+| NVIDIA before compute 8.6 | partly: a Quadro RTX 3000 (Turing, compute 7.5) passed the whole list on CUDA and Vulkan, also with tuning off; Maxwell and Pascal (5.x, 6.x) never run |
 | Intel Arc (XMX), AMD RDNA | no such GPU tested |
 | Android GPUs (Adreno and others, through Vulkan) | partly: an Adreno 730 passed the whole list through Mesa's Turnip (KGSL build) in Termux + proot Ubuntu, and the CPU (ARM64, NEON) too; Qualcomm's own driver, Mali GPUs and a .NET Android app (the loader now names libvulkan.so there) not yet |
+
+## Future improvements (measured)
+
+Found on real hardware; each one is a measurement to act on, not a guess.
+
+### Vulkan: recorded graphs slower than direct steps on some GPUs
+
+On a Quadro RTX 3000 (Turing, compute 7.5, NVIDIA driver 595.95, Windows 10, release 0.3.1, 2026-10-05) the
+`--bench-vulkan` medium decoder (dim 1024, 8 layers, int8 weights) ran at **639 tokens/s with recorded graphs** (9
+dispatches per token) and **779 tokens/s without** (83 dispatches per token), 22% faster without. On the same laptop's
+Intel UHD Graphics the two were within a few percent (117.5 and 124.5), while on Mesa's software driver graphs cut the
+host time per step from about 300 µs to 5 µs. So whether replaying a recorded step pays off depends on the device and driver, while today a
+graph is used wherever one can be recorded.
+
+- **What to do:** measure it, like the other runtime choices. When a decoding graph is first recorded, time a few
+  replays against the same number of direct steps and keep the faster, stored per device, driver and power source in
+  the tuning cache (as the kernel width, batch size and in-flight count are), with `IDRAK_VULKAN_GRAPHS=0/1` to force
+  either. The fused kernels stay in both paths; only the replay is in question.
+- **What to look at first:** whether the slowdown comes from `vkCmdExecuteCommands` of secondary command buffers on
+  this driver (a replay as primary command buffers, or one secondary buffer per graph, may avoid it), or from the
+  barriers recorded into the graph, which cannot be dropped at replay even when the next step does not need them.
+- **How to check:** `idrak test -d vulkan:0 -- --bench-vulkan` prints both numbers ("again; without graphs") on every
+  device; the choice is right when the kept path is never the slower one on any GPU of the README's table.
 
 ## The rule every plan keeps
 
