@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.3.0 (2026-10-05)
+
+New `Idrak.Vision` building blocks for image networks (classification of regions, detection, segmentation,
+normalization), tested on CPU, CUDA and Vulkan.
+
+- `Idrak.Vision`: building blocks for image networks, with interfaces for the parts an application supplies.
+  - `NetworkBuilder.Normalize(mean, std)` (`ChannelNormalize`): per-channel normalization as the network's first layer,
+    on the device and saved with the architecture, so callers feed [0, 1] images. `ChannelStatistics.ImageNet` and
+    `ChannelStatistics.Compute(source)` give the values.
+  - `Foreground.Extract` (either polarity, Otsu's threshold) and `ConnectedComponents.Find` (regions with box, area,
+    centre and a label map; 4 or 8 neighbours).
+  - `ContentFrame`: crop, centre and scale a single object for a classifier, straight into a batch buffer; `Fit` and
+    the `Reframe()` loader transform frame training images the same way.
+  - `RegionClassifier` with `IRegionProposer` (`ComponentProposer` built in): regions framed into one reused buffer and
+    classified in batches.
+  - Detection: `BoundingBox`, `Detection`, IoU, `NonMaxSuppression`, `IObjectDetector`, and `ModelDetector` over any
+    network with the application's output decoder.
+  - Segmentation: `SegmentationMask` (from [N, C, H, W] logits), `SegmentationMetrics` (pixel accuracy, IoU per class,
+    mean IoU), `Losses.PixelCrossEntropy`, `ISegmenter`, and `ModelSegmenter` over any network.
+
+- Modules with buffers and no parameters (such as `ChannelNormalize`) get their inputs on their own device. The device
+  was read from the first parameter only, so `Predictor`, `Module.Predict`, the vision runners, the text encoders,
+  `Trainer`, distillation and ONNX export put such a model's inputs on the default device, which fails on a GPU.
+
 ## 0.2.1 (2026-10-04)
 
 Fixes found by building convolutional samples on Idrak (MNIST digits, EMNIST letters, handwritten-page OCR) and

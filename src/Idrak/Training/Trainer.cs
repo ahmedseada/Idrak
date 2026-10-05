@@ -154,7 +154,7 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
     /// <summary>When set, gradients are clipped to this global L2 norm before each step (recommended for RNNs).</summary>
     public float? MaxGradientNorm { get; init; }
 
-    private Device Device => Model.Parameters().FirstOrDefault()?.Device ?? Device.Default;
+    private Device Device => Model.WeightsDevice ?? Device.Default;
 
     /// <summary>
     /// Trains for up to <paramref name="epochs"/> passes over <paramref name="train"/>. Training ends early when early
