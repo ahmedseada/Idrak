@@ -336,7 +336,7 @@ public sealed class Predictor<TIn, TOut> : IPredictor<TIn, TOut>, IDisposable
         _settings = settings;
         _input = input;
         _output = output;
-        Device = settings.Device ?? model.Parameters().FirstOrDefault()?.Device ?? Device.Default;
+        Device = settings.Device ?? model.WeightsDevice ?? Device.Default;
         if (model.Parameters().FirstOrDefault() is { } p && p.Device != Device)
         {
             throw new InvalidOperationException($"The model is on {p.Device} but the predictor was set to use {Device}; move the model with model.To(device) first.");

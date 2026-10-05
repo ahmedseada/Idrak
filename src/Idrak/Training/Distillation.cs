@@ -35,7 +35,7 @@ public static class Distillation
         ArgumentNullException.ThrowIfNull(data);
         ArgumentNullException.ThrowIfNull(teacher);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(batchSize);
-        var device = teacher.Parameters().FirstOrDefault()?.Device ?? Device.Default;
+        var device = teacher.WeightsDevice ?? Device.Default;
         float[]? logits = null;
         int classes = 0;
         foreach (var batch in new DataLoader(data, batchSize, device: device))

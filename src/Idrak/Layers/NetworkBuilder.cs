@@ -219,6 +219,23 @@ public sealed class NetworkBuilder
         return Push(_ => new Layers.BatchNorm(channels, momentum, epsilon, _device), _shape, Step("batchnorm", ("momentum", momentum), ("epsilon", epsilon)));
     }
 
+    /// <summary>
+    /// <c>new Layers.ChannelNormalize(mean, std)</c>: (x - mean[c]) / std[c] per channel of [C, H, W] (or feature of
+    /// [F]). Put it first so the network takes plain [0, 1] images; <see cref="Vision.ChannelStatistics"/> has ImageNet's
+    /// values and computes a data set's.
+    /// </summary>
+    public NetworkBuilder Normalize(IReadOnlyList<float> mean, IReadOnlyList<float> std)
+    {
+        if (_shape.Length is not (1 or 3) || _shape[0] != mean.Count)
+        {
+            throw new InvalidOperationException($"Normalize needs one mean and std per channel of [channels, height, width] (or feature of [features]); the shape is {Tensor.FormatShape(_shape)}, with {mean.Count} means.");
+        }
+
+        float[] m = [.. mean], s = [.. std];
+        return Push(_ => new Layers.ChannelNormalize(m, s, _device), _shape,
+            Step("normalize", ("mean", new JsonArray([.. m.Select(v => JsonValue.Create(v))])), ("std", new JsonArray([.. s.Select(v => JsonValue.Create(v))]))));
+    }
+
     /// <summary><c>new Layers.LayerNorm(features, epsilon)</c>; features are the last dimension.</summary>
     public NetworkBuilder LayerNorm(float epsilon = 1e-5f)
     {

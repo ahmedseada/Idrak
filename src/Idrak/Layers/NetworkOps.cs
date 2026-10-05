@@ -40,6 +40,9 @@ public sealed class NetworkOpArguments
     /// <summary>The true/false argument <paramref name="key"/>; it must be present.</summary>
     public bool Bool(string key) => (bool)Required(key);
 
+    /// <summary>The number array argument <paramref name="key"/> (for example per-channel means); it must be present.</summary>
+    public float[] Floats(string key) => [.. Required(key).AsArray().Select(v => (float)v!)];
+
     /// <summary>The integer array argument <paramref name="key"/> (for example a shape); it must be present.</summary>
     public int[] Ints(string key) => [.. Required(key).AsArray().Select(v => (int)v!)];
 
@@ -65,6 +68,7 @@ public static class NetworkOps
         ["dropout"] = (b, a) => b.Dropout(a.Float("p")),
         ["batchnorm"] = (b, a) => b.BatchNorm(a.Float("momentum"), a.Float("epsilon")),
         ["layernorm"] = (b, a) => b.LayerNorm(a.Float("epsilon")),
+        ["normalize"] = (b, a) => b.Normalize(a.Floats("mean"), a.Floats("std")),
         ["conv2d"] = (b, a) => b.Conv2d(a.Int("out"), a.Int("kernel"), a.Int("stride"), a.Int("padding"), a.Bool("bias")),
         ["maxpool2d"] = (b, a) => b.MaxPool2d(a.Int("kernel"), a.OptionalInt("stride"), a.Int("padding")),
         ["globalavgpool2d"] = (b, _) => b.GlobalAveragePool2d(),

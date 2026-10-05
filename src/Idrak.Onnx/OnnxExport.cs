@@ -357,7 +357,7 @@ public sealed class OnnxExporter
     // a zero sample of that shape.
     internal OnnxValue Emit(OnnxGraph graph, Module module, OnnxValue x)
     {
-        var device = module.Parameters().FirstOrDefault()?.Device ?? _model.Parameters().FirstOrDefault()?.Device ?? Device.Default;
+        var device = module.WeightsDevice ?? _model.WeightsDevice ?? Device.Default;
         var inputShape = x.Shape ?? throw new InvalidOperationException($"The shape of the input of {module.DisplayName} is unknown.");
         var sample = Tensor.Zeros([1, .. inputShape.Skip(1)], device);
         var output = module.Forward(sample);                                   // both freed by the export's tensor scope
