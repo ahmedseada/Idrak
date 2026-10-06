@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-namespace Idrak;
+namespace Idrak.Abstraction;
 
 /// <summary>
 /// An operation with a forward and a backward step of one's own, both written with public tensor operations (no device

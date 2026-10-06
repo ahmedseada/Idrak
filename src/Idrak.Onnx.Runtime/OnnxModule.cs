@@ -4,6 +4,7 @@
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 using Idrak.Layers;
+using Tensor = Idrak.Abstraction.Tensor;   // not ONNX Runtime's Tensor
 
 namespace Idrak.Onnx.Runtime;
 

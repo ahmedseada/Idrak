@@ -13,7 +13,11 @@ namespace Idrak.Backends;
 /// </summary>
 internal static class LibraryDevices
 {
-    private static IEnumerable<DeviceProvider> Providers() => [new CudaProvider(), new VulkanProvider(), new HipProvider()];
+    private static IEnumerable<DeviceProvider> Providers()
+    {
+        Offloading.ConnectTensors();   // the devices that offload weights are these
+        return [new CudaProvider(), new VulkanProvider(), new HipProvider()];
+    }
 
     private sealed class CudaProvider : DeviceProvider
     {

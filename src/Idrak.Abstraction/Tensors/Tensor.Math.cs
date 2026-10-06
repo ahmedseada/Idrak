@@ -1,10 +1,10 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using Idrak.Backends;
-using Idrak.Diagnostics;
+using Idrak.Abstraction.Devices;
+using Idrak.Abstraction.Diagnostics;
 
-namespace Idrak;
+namespace Idrak.Abstraction;
 
 public sealed partial class Tensor
 {
@@ -35,7 +35,7 @@ public sealed partial class Tensor
     public Tensor Pow(float exponent)
     {
         ThrowIfDisposed();
-        long start = Telemetry.Start(TelemetryLevel.Operations);
+        long start = OperationTelemetry.Start();
         var y = Empty(_shape, Device);
         Backend.Pow(Storage, y.Storage, Size, exponent);
         if (WillRecord(this))
@@ -59,7 +59,7 @@ public sealed partial class Tensor
         }
 
         ThrowIfDisposed();
-        long start = Telemetry.Start(TelemetryLevel.Operations);
+        long start = OperationTelemetry.Start();
         var y = Empty(_shape, Device);
         Backend.Clamp(Storage, y.Storage, Size, min, max);
         if (WillRecord(this))
@@ -104,7 +104,7 @@ public sealed partial class Tensor
         CheckSameDevice(a, b);
         CheckSameShape(condition, a);
         CheckSameShape(a, b);
-        long start = Telemetry.Start(TelemetryLevel.Operations);
+        long start = OperationTelemetry.Start();
         var y = Empty(a._shape, a.Device);
         a.Backend.Where(condition.Storage, a.Storage, b.Storage, y.Storage, a.Size);
         if (WillRecord(a, b))
@@ -134,7 +134,7 @@ public sealed partial class Tensor
             CheckSameDevice(inputs[0], input);
         }
 
-        long start = Telemetry.Start(TelemetryLevel.Operations);
+        long start = OperationTelemetry.Start();
         Tensor output;
         using (var scope = new TensorScope())
         {
@@ -190,7 +190,7 @@ public sealed partial class Tensor
         b.ThrowIfDisposed();
         CheckSameDevice(a, b);
         CheckSameShape(a, b);
-        long start = Telemetry.Start(TelemetryLevel.Operations);
+        long start = OperationTelemetry.Start();
         var c = Empty(a._shape, a.Device);
         a.Backend.Binary(op, a.Storage, b.Storage, c.Storage, a.Size);
         if (WillRecord(a, b))

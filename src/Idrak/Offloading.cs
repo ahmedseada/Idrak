@@ -15,11 +15,18 @@ namespace Idrak;
 /// </summary>
 internal static class Offloading
 {
+    // Tensors live in Idrak.Abstraction and reach the offloading of Idrak's layers through these hooks, set when this
+    // assembly's devices are registered (LibraryDevices): only they offload, so the hooks are in place before anything is.
+    internal static void ConnectTensors()
+    {
+        TensorOffloading.TrainableChanged = TrainableChanged;
+        TensorOffloading.ForBackward = ForBackward;
+    }
+
     // The layer whose forward runs on this thread (tagged on the autograd nodes it records, for the backward pass), and
     // the layer staged before it (to learn which layer follows which).
-    // A layer (Module) or layers computed in one fused pass (LayerGroup).
-    [ThreadStatic]
-    private static object? t_current;
+    // A layer (Module) or layers computed in one fused pass (LayerGroup). Kept in TensorOffloading.Current, where the
+    // tensors (in Idrak.Abstraction) read it.
 
     [ThreadStatic]
     private static object? t_previous;
@@ -61,7 +68,7 @@ internal static class Offloading
     internal static bool StageWeights = true;
 
     /// <summary>The layer (or fused layers) whose forward runs on this thread while weights are offloaded (null otherwise).</summary>
-    public static object? Current => t_current;
+    public static object? Current => TensorOffloading.Current;
 
     private static bool Active(IMemoryOffload offload) => ComputeResources.OffloadToHostMemory || offload.OffloadedCount > 0;
 
@@ -106,8 +113,8 @@ internal static class Offloading
             return default;                                                // no weights (activations, dropout): not a step in the order
         }
 
-        var previous = t_current;
-        t_current = layer;
+        var previous = TensorOffloading.Current;
+        TensorOffloading.Current = layer;
         if (t_previous is { } before && !ReferenceEquals(before, layer))
         {
             NextLayer.AddOrUpdate(before, layer);
@@ -136,7 +143,7 @@ internal static class Offloading
             token?.Dispose();
             if (entered)
             {
-                t_current = previous;
+                TensorOffloading.Current = previous;
             }
         }
     }
@@ -248,7 +255,7 @@ internal static class Offloading
         return groups.Count == 0 ? null : new BackwardStaging(offload, groups);
     }
 
-    internal sealed class BackwardStaging(IMemoryOffload offload, List<(int Index, object Layer)> groups) : IDisposable
+    internal sealed class BackwardStaging(IMemoryOffload offload, List<(int Index, object Layer)> groups) : IBackwardStaging
     {
         private int _group = -1;
         private IDisposable? _token;

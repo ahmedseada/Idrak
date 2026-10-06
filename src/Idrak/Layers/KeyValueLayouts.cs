@@ -244,7 +244,7 @@ public static class KeyValueLayouts
             }
 
             return cache.HeadDim <= capabilities.DecodeAttentionHeadDim
-                ? Tensor.AttentionDecode(q, cache, context.Position, steps, scale, variant)                        // only the filled positions
+                ? TensorLayerPaths.AttentionDecode(q, cache, context.Position, steps, scale, variant)                        // only the filled positions
                 : null;
         }
     }
@@ -285,16 +285,16 @@ public static class KeyValueLayouts
         {
             if (cache.HeadDim <= q.Backend.Capabilities.DecodeAttentionHeadDim)
             {
-                return Tensor.AttentionInt8(q, cache, context.Position, steps, scale, tiled: steps >= 8);   // only the filled positions
+                return TensorLayerPaths.AttentionInt8(q, cache, context.Position, steps, scale, tiled: steps >= 8);   // only the filled positions
             }
 
-            var weights = Tensor.AttentionScoresInt8(q, cache).ScaleMaskSoftmax(scale, context.Mask);
-            return Tensor.AttentionContextInt8(weights, cache);
+            var weights = TensorLayerPaths.AttentionScoresInt8(q, cache).ScaleMaskSoftmax(scale, context.Mask);
+            return TensorLayerPaths.AttentionContextInt8(weights, cache);
         }
 
         internal override Tensor? AttendVariant(Tensor q, KeyValueCache cache, DecodingContext context, int steps, float scale, AttentionVariant variant) =>
             cache.HeadDim <= q.Backend.Capabilities.DecodeAttentionHeadDim
-                ? Tensor.AttentionInt8(q, cache, context.Position, steps, scale, tiled: steps >= 8, variant)
+                ? TensorLayerPaths.AttentionInt8(q, cache, context.Position, steps, scale, tiled: steps >= 8, variant)
                 : null;
     }
 
@@ -331,11 +331,11 @@ public static class KeyValueLayouts
         // Decoder models read the halves directly; the multi-head attention layer attends through the expanded values.
         public override Tensor Attend(Tensor q, KeyValueCache cache, DecodingContext context, int steps, float scale, bool decoderKernels) =>
             decoderKernels
-                ? Tensor.AttentionBFloat16(q, cache, context.Position, steps, scale, tiled: steps >= 8)   // only the filled positions
+                ? TensorLayerPaths.AttentionBFloat16(q, cache, context.Position, steps, scale, tiled: steps >= 8)   // only the filled positions
                 : base.Attend(q, cache, context, steps, scale, decoderKernels);
 
         internal override Tensor? AttendVariant(Tensor q, KeyValueCache cache, DecodingContext context, int steps, float scale, AttentionVariant variant) =>
-            Tensor.AttentionBFloat16(q, cache, context.Position, steps, scale, tiled: steps >= 8, variant);
+            TensorLayerPaths.AttentionBFloat16(q, cache, context.Position, steps, scale, tiled: steps >= 8, variant);
     }
 
 }

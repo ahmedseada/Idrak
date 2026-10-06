@@ -165,6 +165,7 @@ public static class Telemetry
         }
 
         s_levels = levels;
+        Idrak.Abstraction.Diagnostics.OperationTelemetry.Completed = (levels & TelemetryLevel.Operations) != 0 ? Operation : null;
     }
 
     /// <summary>Returns a start timestamp when <paramref name="level"/> is enabled, otherwise 0.</summary>

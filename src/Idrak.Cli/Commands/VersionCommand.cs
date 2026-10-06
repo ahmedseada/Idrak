@@ -53,7 +53,7 @@ internal sealed class VersionCommand : Command
         context.WriteJson(new JsonObject
         {
             ["tool"] = tool,
-            ["library"] = Machine.Version(typeof(Tensor).Assembly),
+            ["library"] = Machine.Version(typeof(Idrak.Layers.Sequential).Assembly),
             ["libraries"] = new JsonObject([.. libraries.Select(l => KeyValuePair.Create(l.Name, (JsonNode?)l.Version))]),
             ["runtime"] = RuntimeInformation.FrameworkDescription,
             ["os"] = RuntimeInformation.OSDescription,

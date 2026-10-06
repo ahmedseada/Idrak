@@ -1,19 +1,18 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using Idrak.Backends;
-using Idrak.Diagnostics;
+using Idrak.Abstraction.Devices;
+using Idrak.Abstraction.Diagnostics;
 
-namespace Idrak;
+namespace Idrak.Abstraction;
 
 // Operations of decoder-only language model layers.
 public sealed partial class Tensor
-{
-    /// <summary>x / sqrt(mean(x²) + eps) over the last dimension (RMS normalization without a gain).</summary>
+{    /// <summary>x / sqrt(mean(x²) + eps) over the last dimension (RMS normalization without a gain).</summary>
     internal Tensor RmsNormalize(float eps)
     {
         ThrowIfDisposed();
-        long start = Telemetry.Start(TelemetryLevel.Operations);
+        long start = OperationTelemetry.Start();
         int cols = _shape[^1], rows = Size / cols;
         var y = Empty(_shape, Device);
         var inv = Empty([rows], Device, track: false);
@@ -42,7 +41,7 @@ public sealed partial class Tensor
     internal static Tensor[] MatMulMany(Tensor input, IReadOnlyList<Tensor> weights, IReadOnlyList<Tensor?> biases)
     {
         input.ThrowIfDisposed();
-        long start = Telemetry.Start(TelemetryLevel.Operations);
+        long start = OperationTelemetry.Start();
         int k = input._shape[^1], m = input.Size / k;
         var outputs = new Tensor[weights.Count];
         var products = new (Abstraction.Devices.Storage, Abstraction.Devices.Storage?, Abstraction.Devices.Storage, int)[weights.Count];
@@ -63,58 +62,6 @@ public sealed partial class Tensor
     }
 
     /// <summary>
-    /// <paramref name="forward"/>(input) without storing its intermediate results (activation checkpointing): the
-    /// forward pass runs without recording, and the backward pass runs it again with recording, back-propagates through
-    /// it and frees it at once. Parameters used inside receive their gradients then. Memory drops to the checkpointed
-    /// outputs at the cost of a second forward pass. The function must be deterministic (no dropout).
-    /// </summary>
-    internal static Tensor Checkpoint(Func<Tensor, Tensor> forward, Tensor input)
-    {
-        if (!Autograd.IsEnabled)
-        {
-            return forward(input);
-        }
-
-        // Only the output survives the first pass: the module's intermediate results are freed at once.
-        Tensor output;
-        var seeds = new List<uint>();                                   // dropout masks are drawn again identically
-        using (Layers.DropoutSeeds.Record(seeds))
-        using (Autograd.NoGrad())
-        using (var pass = new TensorScope())
-        {
-            output = pass.Keep(forward(input));
-        }
-
-        if (ReferenceEquals(output, input))
-        {
-            return output;
-        }
-
-        output.Record("checkpoint", g =>
-        {
-            using var scope = new TensorScope();
-            var replay = input.Detach();
-            replay.RequiresGrad = input.RequiresGrad;
-            Tensor recomputed;
-            using (Layers.DropoutSeeds.Replay(seeds))
-            {
-                recomputed = forward(replay);
-            }
-
-            if (recomputed.RequiresGrad)
-            {
-                recomputed.Backward(g);
-            }
-
-            if (input.RequiresGrad && replay.Grad is { } grad)
-            {
-                input.AddGradient(grad, adopt: true);             // the replay dies with this scope
-            }
-        }, input);
-        return output;
-    }
-
-    /// <summary>
     /// Weighted token cross-entropy of a language model's output head applied to <paramref name="hidden"/> [rows, dim]:
     /// Σ_r w_r · (logsumexp(head(h_r)) - head(h_r)[t_r]) / <paramref name="normalizer"/>. The head runs on
     /// <paramref name="chunkRows"/> rows at a time and each chunk's gradient is back-propagated through the head at once,
@@ -131,7 +78,7 @@ public sealed partial class Tensor
             throw new ArgumentException($"TokenCrossEntropy needs hidden [rows, dim] with rows targets and weights, got {FormatShape(hidden._shape)}, {targets.Size} and {weights.Size}.");
         }
 
-        long start = Telemetry.Start(TelemetryLevel.Operations);
+        long start = OperationTelemetry.Start();
         int rows = hidden._shape[0], dim = hidden._shape[1];
         chunkRows = Math.Max(1, chunkRows);
         var device = hidden.Device;
@@ -193,7 +140,7 @@ public sealed partial class Tensor
             throw new ArgumentException($"AddLowRank: product {FormatShape(product._shape)}, input {FormatShape(x._shape)}, A {FormatShape(a._shape)}, B {FormatShape(b._shape)}.");
         }
 
-        long start = Telemetry.Start(TelemetryLevel.Operations);
+        long start = OperationTelemetry.Start();
         var backend = x.Backend;
         var u = Empty([m, rank], x.Device, zeroed: true);           // scale · x·A
         using (var t = Empty([m, rank], x.Device, track: false))
@@ -239,230 +186,6 @@ public sealed partial class Tensor
         }
 
         return Traced("lora", y, start);
-    }
-
-    /// <summary>
-    /// x · W_j + scale_j · (x·A_j)·B_j for 1-3 layers with frozen weights (float32, bfloat16 or 4-bit) and LoRA adapters of
-    /// one rank ≤ 32, with each low-rank term computed inside its base product (one more k step of the tensor-core kernel)
-    /// instead of in separate passes over the full-width output. The backward pass does the same for the input's
-    /// gradient: dx = g·Wᵀ + (scale · g·Bᵀ)·Aᵀ in one product. Null (nothing computed) when the device has no fused
-    /// version; callers then run the base products and <see cref="AddLowRank"/>. A frozen bias is added to each output in
-    /// place (a bias that trains is not: null then).
-    /// </summary>
-    internal static Tensor[]? LoraProducts(Tensor input, IReadOnlyList<Layers.Linear> layers, bool withBias = true)
-    {
-        input.ThrowIfDisposed();
-        int k = input._shape[^1], m = input.Size / Math.Max(1, k);
-        if (!input.Backend.Capabilities.MatrixUnits || layers.Count is < 1 or > 3 || m < 64 || k < 32 || !MixedPrecision.UsesTensorCores
-            || layers[0].Lora is not { } first || first.Rank > 32)
-        {
-            return null;
-        }
-
-        // One weight form for all: float32 (one frozen, untied layer), or one built-in packed format the low-rank products
-        // read (formats of one's own have no Format: their layers run their own products).
-        var packedFormat = layers[0].PackedWeight?.Format;
-        bool dense = layers[0].PackedWeight is null;
-        foreach (var layer in layers)
-        {
-            bool fits = dense
-                ? layer.PackedWeight is null && layer.TiedTo is null && layers.Count == 1 && !layer.Weight.RequiresGrad
-                : layer.PackedWeight is { LowRankProducts: true, Format: { } own } && own == packedFormat;
-            if (!fits || layer.InFeatures != k || layer.Lora is not { } adapter || adapter.Rank != first.Rank
-                || adapter.A.Device != input.Device || withBias && layer.Bias is { RequiresGrad: true })
-            {
-                return null;
-            }
-        }
-
-        long start = Telemetry.Start(TelemetryLevel.Operations);
-        var backend = input.Backend;
-        int rank = first.Rank;
-        var flat = input.Rank == 2 ? input : input.Reshape(-1, k);
-        var us = new Tensor[layers.Count];
-        var outputs = new Tensor[layers.Count];
-        for (int j = 0; j < layers.Count; j++)
-        {
-            var adapter = layers[j].Lora!;
-            us[j] = Empty([m, rank], input.Device);                                      // scale · x·A (kept for dB)
-            backend.BatchedMatMul(flat.Storage, adapter.A.Storage, us[j].Storage, 1, m, rank, k, false, false, 0f);
-            backend.Affine(us[j].Storage, us[j].Storage, m * rank, adapter.Scale, 0f);
-            outputs[j] = Empty([m, layers[j].OutFeatures], input.Device);
-        }
-
-        // FP8 copies of the frozen weights (Linear.AttachFloat8): y = u·B first, then x·W on FP8 tensor cores added to it.
-        bool done = false;
-        if (layers.All(l => l.Float8 is not null))
-        {
-            done = true;
-            for (int j = 0; j < layers.Count && done; j++)
-            {
-                var f8 = layers[j].Float8!;
-                backend.BatchedMatMul(us[j].Storage, layers[j].Lora!.B.Storage, outputs[j].Storage, 1, m, layers[j].OutFeatures, rank, false, false, 0f);
-                done = backend.Float8MatMul(flat.Storage, m, k, f8.Values.Storage, f8.Scales.Storage, f8.Columns, outputs[j].Storage, 1f);
-            }
-        }
-
-        if (!done && dense)
-        {
-            done = backend.MatMulLowRank(flat.Storage, layers[0].Weight.Storage, outputs[0].Storage, m, layers[0].OutFeatures, k, false, 0f,
-                us[0].Storage, layers[0].Lora!.B.Storage, rank);
-        }
-        else if (!done)
-        {
-            done = backend.PackedMatMulLowRank(packedFormat!.Value, flat.Storage, m, k,
-                [.. layers.Select((l, j) => (l.PackedWeight!.PackedValues.Storage, l.PackedWeight.ScaleValues?.Storage,
-                    outputs[j].Storage, l.OutFeatures, us[j].Storage, l.Lora!.B.Storage))], rank);
-        }
-
-        if (!done)
-        {
-            foreach (var unused in us.Concat(outputs))
-            {
-                unused.Dispose();
-            }
-
-            if (!ReferenceEquals(flat, input))
-            {
-                flat.Dispose();
-            }
-
-            return null;
-        }
-
-        var results = new Tensor[layers.Count];
-        for (int j = 0; j < layers.Count; j++)
-        {
-            var layer = layers[j];
-            if (withBias && layer.Bias is { } bias)
-            {
-                backend.AddRowVector(outputs[j].Storage, bias.Storage, outputs[j].Storage, m, layer.OutFeatures);   // frozen: no gradient
-            }
-
-            var (a, b, scale) = (layer.Lora!.A, layer.Lora.B, layer.Lora.Scale);
-            var u = us[j];
-            int n = layer.OutFeatures;
-            if (Autograd.IsEnabled && (flat.RequiresGrad || a.RequiresGrad || b.RequiresGrad))
-            {
-                outputs[j].Record("lora_fused", g =>
-                {
-                    if (b.RequiresGrad)
-                    {
-                        backend.BatchedMatMul(u.Storage, g.Storage, b.GradStorage(), 1, rank, n, m, true, false, 1f);         // dB += uᵀ·g
-                    }
-
-                    using var dt = Empty([m, rank], flat.Device, track: false);
-                    backend.BatchedMatMul(g.Storage, b.Storage, dt.Storage, 1, m, rank, n, false, true, 0f);                 // g·Bᵀ
-                    backend.Affine(dt.Storage, dt.Storage, m * rank, scale, 0f);                                            // dt = scale · g·Bᵀ
-                    if (a.RequiresGrad)
-                    {
-                        backend.BatchedMatMul(flat.Storage, dt.Storage, a.GradStorage(), 1, k, rank, m, true, false, 1f);   // dA += xᵀ·dt
-                    }
-
-                    float beta = 1f;
-                    var dx = flat.RequiresGrad ? flat.GradientTarget(out beta) : null;         // the first gradient written, not added
-                    if (dx is not null && layer.PackedWeight is { } stored && stored.TransposedProduct(g, dx, m, k, n, beta, dt.Storage, a.Storage, rank))
-                    {
-                        // dx (+)= g·Wᵀ + dt·Aᵀ with W read as the words it is stored in (bfloat16).
-                    }
-                    else if (dx is not null)
-                    {
-                        // dx += g·Wᵀ + dt·Aᵀ (W [k, n] as float32; packed weights expanded first).
-                        Tensor? expanded = null;
-                        if (layer.PackedWeight is { } weight)
-                        {
-                            expanded = Empty([k, n], flat.Device, track: false);
-                            weight.DequantizeInto(expanded.Storage);
-                        }
-
-                        using (expanded)
-                        {
-                            var w = (expanded ?? layer.Weight).Storage;
-                            if (!backend.MatMulLowRank(g.Storage, w, dx, m, k, n, true, beta, dt.Storage, a.Storage, rank))
-                            {
-                                backend.BatchedMatMul(g.Storage, w, dx, 1, m, k, n, false, true, beta);
-                                backend.BatchedMatMul(dt.Storage, a.Storage, dx, 1, m, k, rank, false, true, 1f);
-                            }
-                        }
-                    }
-                }, flat, a, b);
-            }
-            else
-            {
-                u.Dispose();
-            }
-
-            results[j] = input.Rank == 2 ? outputs[j] : outputs[j].Reshape([.. input._shape[..^1], n]);
-            Traced("lora_fused", results[j], start);
-        }
-
-        return results;
-    }
-
-    /// <summary>
-    /// The frozen packed layers' products of one input in one device pass (<see cref="MatMulPackedMany"/>), recorded for
-    /// training: each output's gradient flows to the input (dx += g · Wᵀ with the weight expanded to float32). Null when
-    /// the device has no such pass.
-    /// </summary>
-    internal static Tensor[]? MatMulPackedManyRecorded(Tensor input, PackedFormat format, IReadOnlyList<Layers.Linear> layers)
-    {
-        Tensor[]? outputs;
-        using (Autograd.NoGrad())
-        {
-            outputs = MatMulPackedMany(input, format, layers);
-        }
-
-        if (outputs is null || !WillRecord(input))
-        {
-            return outputs;
-        }
-
-        int k = input._shape[^1], m = input.Size / k;
-        for (int j = 0; j < outputs.Length; j++)
-        {
-            var layer = layers[j];
-            int n = layer.OutFeatures;
-            outputs[j].Record("matmul_packed", g =>
-            {
-                var weight = layer.PackedWeight!;
-                if (weight.TransposedProduct(g, input.GradStorage(), m, k, n, 1f, null, null, 0))
-                {
-                    return;                                                                        // dx += g · Wᵀ, W as stored
-                }
-
-                using var w = weight.Dequantize();
-                input.Backend.BatchedMatMul(g.Storage, w.Storage, input.GradStorage(), 1, m, k, n, false, true, 1f);   // dx += g · wᵀ
-            }, input);
-        }
-
-        return outputs;
-    }
-
-    /// <summary>
-    /// x · Wᵀ for a frozen <paramref name="weight"/> W [outputs, inputs] also kept as <paramref name="transposed"/> Wᵀ
-    /// [inputs, outputs]: the product reads Wᵀ as stored and the input's gradient (g · W) reads W as stored, so neither
-    /// direction makes a transposed copy of W (the tensor-core kernels copy transposed operands into place first).
-    /// W receives no gradient.
-    /// </summary>
-    internal static Tensor MatMulFrozenTransposed(Tensor input, Tensor weight, Layers.BFloat16Weight transposed)
-    {
-        Tensor output;
-        using (Autograd.NoGrad())
-        {
-            output = input.MatMulBFloat16(transposed);
-        }
-
-        if (WillRecord(input))
-        {
-            int outputs = weight._shape[0], inputs = weight._shape[1];
-            output.Record("matmul_frozen", g =>
-            {
-                // dx += g · W, accumulated by the product itself (no temporary).
-                input.Backend.BatchedMatMul(g.Storage, weight.Storage, input.GradStorage(), 1, g.Size / outputs, inputs, outputs, false, false, 1f);
-            }, input);
-        }
-
-        return output;
     }
 
     /// <summary>A transposed copy of a 2-D tensor that no <see cref="TensorScope"/> releases; the caller owns it.</summary>
@@ -582,7 +305,7 @@ public sealed partial class Tensor
             throw new ArgumentException("TokenCrossEntropyRows needs hidden [rows, dim] and one target and weight per listed row.");
         }
 
-        long start = Telemetry.Start(TelemetryLevel.Operations);
+        long start = OperationTelemetry.Start();
         int total = hidden._shape[0], dim = hidden._shape[1], count = rows.Size;
         chunkRows = Math.Max(1, chunkRows);
         var device = hidden.Device;
@@ -643,174 +366,11 @@ public sealed partial class Tensor
         return Traced("token_cross_entropy", loss, start);
     }
 
-    /// <summary>
-    /// (act(gate) · up) · W for a packed layer W with few rows, the activation applied as the input is read (not recorded;
-    /// no bias), or null when the layer is not packed or the device has no fused version.
-    /// </summary>
-    internal static Tensor? MatMulPackedGated(Tensor gate, Tensor up, int activation, Layers.Linear layer)
-    {
-        using var offload = Offloading.Enter(layer, gate);              // offloaded weights staged (else nothing)
-        gate.ThrowIfDisposed();
-        up.ThrowIfDisposed();
-        int k = gate._shape[^1], m = gate.Size / Math.Max(1, k);
-        if (layer.PackedWeight is not { Format: { } format } weight || k != layer.InFeatures || up.Size != gate.Size || m > gate.Backend.Capabilities.FewRows)
-        {
-            return null;                                                // not packed, or a format the kernels do not read
-        }
-
-        var (packed, scales) = (weight.PackedValues, weight.ScaleValues);
-        if (packed.Device != gate.Device)
-        {
-            return null;
-        }
-
-        long start = Telemetry.Start(TelemetryLevel.Operations);
-        var y = Empty([.. gate._shape[..^1], layer.OutFeatures], gate.Device);
-        if (!gate.Backend.PackedMatMulGated(format, activation, gate.Storage, up.Storage, packed.Storage, scales?.Storage, y.Storage, m, layer.OutFeatures, k))
-        {
-            y.Dispose();
-            return null;
-        }
-
-        return Traced("matmul_gated_packed", y, start);
-    }
-
-    /// <summary>
-    /// residual + x · W for a packed layer W with few rows (no bias, no adapter) and the RMS normalization of that sum
-    /// with gain, in one device pass (inference: not recorded): the output projection of a block, its residual addition
-    /// and the next normalization. Null when the layer or the shapes do not fit or the device has no fused version.
-    /// </summary>
-    internal static (Tensor Sum, Tensor Normalized)? MatMulPackedAddRmsNorm(Tensor x, Layers.Linear layer, Tensor residual, Layers.RMSNorm norm)
-    {
-        using var offload = Offloading.EnterMany([layer, norm], x);
-        x.ThrowIfDisposed();
-        residual.ThrowIfDisposed();
-        int k = x._shape[^1], m = x.Size / Math.Max(1, k), n = layer.OutFeatures;
-        if (layer.PackedWeight is not { Format: { } format } weight || layer.Bias is not null || layer.Adapter is not null || k != layer.InFeatures || m > x.Backend.Capabilities.FewRows
-            || residual.Size != m * n || residual._shape[^1] != n || norm.Features != n || !x.Backend.Capabilities.FusedKernels)
-        {
-            return null;
-        }
-
-        var (packed, scales) = (weight.PackedValues, weight.ScaleValues);
-        if (packed.Device != x.Device || residual.Device != x.Device || norm.Gain.Device != x.Device)
-        {
-            return null;
-        }
-
-        long start = Telemetry.Start(TelemetryLevel.Operations);
-        var y = Empty(residual._shape, x.Device, track: false);
-        var sum = Empty(residual._shape, x.Device);
-        var normalized = Empty(residual._shape, x.Device);
-        bool done = x.Backend.PackedMatMulAddRmsNorm(format, x.Storage, packed.Storage, scales?.Storage, y.Storage, m, n, k, residual.Storage, sum.Storage,
-            norm.Gain.Storage, normalized.Storage, norm.Epsilon, norm.Offset);
-        y.Dispose();                                                 // stream-ordered: freed after the kernel read it
-        if (!done)
-        {
-            sum.Dispose();
-            normalized.Dispose();
-            return null;
-        }
-
-        return (sum, Traced("matmul_add_rms_norm_packed", normalized, start));
-    }
-
-    /// <summary>
-    /// act(input · gate) · (input · up) for packed gate and up layers of one kind with few rows (no biases or adapters),
-    /// the activation applied by the product's own last blocks (inference: not recorded), or null when the layers do
-    /// not fit or the device has no fused version.
-    /// </summary>
-    internal static Tensor? MatMulPackedGatedPair(Tensor input, Layers.Linear gate, Layers.Linear up, int activation)
-    {
-        using var offload = Offloading.EnterMany([gate, up], input);
-        input.ThrowIfDisposed();
-        int k = input._shape[^1], m = input.Size / Math.Max(1, k), n = gate.OutFeatures;
-        if (gate.PackedWeight is not { Format: { } format } gateWeight || up.PackedWeight is not { } upWeight || upWeight.Format != format
-            || m > input.Backend.Capabilities.FewRows || !input.Backend.Capabilities.FusedKernels || up.OutFeatures != n
-            || gate.InFeatures != k || up.InFeatures != k || gate.Bias is not null || up.Bias is not null || gate.Adapter is not null
-            || up.Adapter is not null)
-        {
-            return null;
-        }
-
-        var (gatePacked, gateScales) = (gateWeight.PackedValues, gateWeight.ScaleValues);
-        var (upPacked, upScales) = (upWeight.PackedValues, upWeight.ScaleValues);
-        if (gatePacked.Device != input.Device || upPacked.Device != input.Device)
-        {
-            return null;
-        }
-
-        long start = Telemetry.Start(TelemetryLevel.Operations);
-        var gateOut = Empty([m * n], input.Device, track: false);
-        var upOut = Empty([m * n], input.Device, track: false);
-        var hidden = Empty([.. input._shape[..^1], n], input.Device);
-        bool done = input.Backend.PackedMatMulGatedPair(format, activation, input.Storage, m, k,
-            [(gatePacked.Storage, gateScales?.Storage, null, gateOut.Storage, n), (upPacked.Storage, upScales?.Storage, null, upOut.Storage, n)],
-            hidden.Storage);
-        gateOut.Dispose();                                           // stream-ordered: freed after the kernel read them
-        upOut.Dispose();
-        if (!done)
-        {
-            hidden.Dispose();
-            return null;
-        }
-
-        return Traced("matmul_gated_pair_packed", hidden, start);
-    }
-
-    /// <summary>
-    /// The layers' packed products of one input in one device pass (few rows, not recorded), or null when the device has
-    /// no single-pass version.
-    /// </summary>
-    internal static Tensor[]? MatMulPackedMany(Tensor input, PackedFormat format, IReadOnlyList<Layers.Linear> layers)
-    {
-        input.ThrowIfDisposed();
-        long start = Telemetry.Start(TelemetryLevel.Operations);
-        int k = input._shape[^1], m = input.Size / k;
-        var outputs = new Tensor[layers.Count];
-        var products = new (Abstraction.Devices.Storage, Abstraction.Devices.Storage?, Abstraction.Devices.Storage?, Abstraction.Devices.Storage, int)[layers.Count];
-        for (int j = 0; j < layers.Count; j++)
-        {
-            var layer = layers[j];
-            var weight = layer.PackedWeight!;                                  // the caller checked: one format for all
-            if (weight.Format != format)
-            {
-                return null;                                                   // never reached: a format the kernels do not read
-            }
-
-            var (packed, scales) = (weight.PackedValues, weight.ScaleValues);
-            if (packed.Device != input.Device)
-            {
-                return null;
-            }
-
-            outputs[j] = Empty([.. input._shape[..^1], layer.OutFeatures], input.Device);
-            products[j] = (packed.Storage, scales?.Storage, layer.Bias?.Storage, outputs[j].Storage, layer.OutFeatures);
-        }
-
-        if (!input.Backend.PackedMatMulMany(format, input.Storage, m, k, products))
-        {
-            foreach (var output in outputs)
-            {
-                output.Dispose();
-            }
-
-            return null;
-        }
-
-        foreach (var output in outputs)
-        {
-            Traced("matmul_many_packed", output, start);
-        }
-
-        return outputs;
-    }
-
     /// <summary>x / sqrt(mean(x²) + eps) · (gain + offset) over the last dimension in one pass (inference: not recorded).</summary>
     internal Tensor RmsNormAffine(Tensor gain, float eps, float offset)
     {
         ThrowIfDisposed();
-        long start = Telemetry.Start(TelemetryLevel.Operations);
+        long start = OperationTelemetry.Start();
         int cols = _shape[^1], rows = Size / cols;
         var y = Empty(_shape, Device);
         Backend.RmsNormAffine(Storage, gain.Storage, y.Storage, rows, cols, eps, offset);
@@ -823,7 +383,7 @@ public sealed partial class Tensor
         a.ThrowIfDisposed();
         b.ThrowIfDisposed();
         CheckSameDevice(a, b);
-        long start = Telemetry.Start(TelemetryLevel.Operations);
+        long start = OperationTelemetry.Start();
         int cols = a._shape[^1], rows = a.Size / cols;
         var sum = Empty(a._shape, a.Device);
         var y = Empty(a._shape, a.Device);
@@ -838,7 +398,7 @@ public sealed partial class Tensor
     internal Tensor RmsNormRope(Tensor gain, float eps, float offset, Tensor cos, Tensor sin, Tensor positions, int half, bool interleaved)
     {
         ThrowIfDisposed();
-        long start = Telemetry.Start(TelemetryLevel.Operations);
+        long start = OperationTelemetry.Start();
         int steps = _shape[1], heads = _shape[2], dim = _shape[3], rows = Size / dim;
         var y = Empty(_shape, Device);
         Backend.RmsNormRope(Storage, gain.Storage, cos.Storage, sin.Storage, positions.Storage, y.Storage, rows, dim, eps, offset, heads, steps,
@@ -852,7 +412,7 @@ public sealed partial class Tensor
     {
         q.ThrowIfDisposed();
         k.ThrowIfDisposed();
-        long start = Telemetry.Start(TelemetryLevel.Operations);
+        long start = OperationTelemetry.Start();
         int steps = q._shape[1], dim = q._shape[3];
         var yq = Empty(q._shape, q.Device);
         var yk = Empty(k._shape, k.Device);
@@ -861,59 +421,6 @@ public sealed partial class Tensor
             dim, steps, half, interleaved);
         Traced("rms_norm_rope", yq, start);
         return (yq, Traced("rms_norm_rope", yk, start));
-    }
-
-    /// <summary>
-    /// An attention layer's projections q [batch, steps, heads·dim], k and v [batch, steps, kvHeads·dim] in the layouts
-    /// attention reads, in one pass where the device can (inference: not recorded): each query and key head
-    /// RMS-normalized with gain (when the norms are given) and rotated (when the tables are given), queries as
-    /// [batch·kvHeads, group·steps, dim] (the heads sharing a key/value head stacked), keys and values as
-    /// [batch·kvHeads, steps, dim], or, with a cache, written into it at <paramref name="position"/> (then K and V are
-    /// null). Null when the device has no fused version.
-    /// </summary>
-    internal static (Tensor Q, Tensor? K, Tensor? V)? NormRopeHeads(Tensor q, Tensor k, Tensor v, int heads, int kvHeads, int dim,
-        Layers.RMSNorm? queryNorm, Layers.RMSNorm? keyNorm, Tensor? cos, Tensor? sin, Tensor positions, bool interleaved,
-        Layers.KeyValueCache? cache, Tensor? position)
-    {
-        q.ThrowIfDisposed();
-        k.ThrowIfDisposed();
-        v.ThrowIfDisposed();
-        if ((queryNorm is null) != (keyNorm is null) || (cos is null) != (sin is null) || (cache is null) != (position is null)
-            || cache is { Layout.FusedWrite: false } || !q.Backend.Capabilities.FusedKernels)
-        {
-            return null;
-        }
-
-        long start = Telemetry.Start(TelemetryLevel.Operations);
-        int n = q._shape[0], t = q._shape[1];
-        var yq = Empty([n * kvHeads, heads / kvHeads * t, dim], q.Device);
-        Tensor? yk = null, yv = null;
-        int capacity = t, stride = dim;
-        bool bfloat16 = cache is { Layout.HalfWords: true };
-        if (cache is null)
-        {
-            yk = Empty([n * kvHeads, t, dim], q.Device);
-            yv = Empty([n * kvHeads, t, dim], q.Device);
-        }
-        else
-        {
-            capacity = cache.Keys._shape[1];
-            stride = bfloat16 ? 2 * cache.Keys._shape[2] : cache.Keys._shape[2];
-        }
-
-        if (!q.Backend.NormRopeHeads(q.Storage, k.Storage, v.Storage, n, t, heads, kvHeads, dim, queryNorm?.Gain.Storage, queryNorm?.Epsilon ?? 0f,
-            queryNorm?.Offset ?? 0f, keyNorm?.Gain.Storage, keyNorm?.Epsilon ?? 0f, keyNorm?.Offset ?? 0f, cos?.Storage, sin?.Storage, positions.Storage,
-            cos?._shape[1] ?? 0, interleaved, yq.Storage, (yk ?? cache!.Keys).Storage, (yv ?? cache!.Values).Storage, position?.Storage, capacity, stride,
-            bfloat16))
-        {
-            yq.Dispose();
-            yk?.Dispose();
-            yv?.Dispose();
-            return null;
-        }
-
-        Traced("norm_rope_heads", yq, start);
-        return (yq, yk, yv);
     }
 
     /// <summary>act(gate) · up element-wise (kind 0 = SiLU, 1 = GELU, 2 = ReLU), with its gradient: one pass either way.</summary>
@@ -927,7 +434,7 @@ public sealed partial class Tensor
             throw new ArgumentException($"Gate {FormatShape(gate._shape)} and up {FormatShape(up._shape)} differ.");
         }
 
-        long start = Telemetry.Start(TelemetryLevel.Operations);
+        long start = OperationTelemetry.Start();
         var y = Empty(gate._shape, gate.Device);
         gate.Backend.GatedActivation(gate.Storage, up.Storage, y.Storage, gate.Size, kind);
         RecordGatedActivation(gate, up, y, kind);
@@ -953,7 +460,7 @@ public sealed partial class Tensor
             return null;
         }
 
-        long start = Telemetry.Start(TelemetryLevel.Operations);
+        long start = OperationTelemetry.Start();
         var backend = gate.Backend;
         var y = Empty(gate._shape, gate.Device);
         var (packedGate, packedUp) = (backend.Allocate((n + 1) / 2, zeroed: false), backend.Allocate((n + 1) / 2, zeroed: false));
@@ -1018,7 +525,7 @@ public sealed partial class Tensor
             throw new ArgumentException($"Rotary embedding expects [batch, steps, heads, dim], got {FormatShape(_shape)}.");
         }
 
-        long start = Telemetry.Start(TelemetryLevel.Operations);
+        long start = OperationTelemetry.Start();
         int steps = _shape[1], heads = _shape[2], dim = _shape[3], rows = Size / dim;
         var y = Empty(_shape, Device);
         if (2 * half < dim)

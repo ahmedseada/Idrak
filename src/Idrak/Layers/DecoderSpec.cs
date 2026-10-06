@@ -293,8 +293,8 @@ public sealed record DecoderSpec
         {
             Tensor Tensor(string name, int[] shape, Func<float[]> fallback)
             {
-                var values = weights is null ? fallback() : weights.Read(name, shape) ?? throw new InvalidDataException($"The weights have no '{name}' {Idrak.Tensor.FormatShape(shape)}.");
-                return Idrak.Tensor.Persistent(values, shape, device, requiresGrad: true);
+                var values = weights is null ? fallback() : weights.Read(name, shape) ?? throw new InvalidDataException($"The weights have no '{name}' {Idrak.Abstraction.Tensor.FormatShape(shape)}.");
+                return Idrak.Abstraction.Tensor.Persistent(values, shape, device, requiresGrad: true);
             }
 
             float[] Uniform(int count, float bound) => [.. Enumerable.Range(0, count).Select(_ => (random.NextSingle() * 2f - 1f) * bound)];
@@ -329,7 +329,7 @@ public sealed record DecoderSpec
                 var b = bias ? Tensor($"{name}.bias", [outputs], () => new float[outputs]) : null;
                 return factory is not null ? Linear.FromPacked(PackedWeight.Pack(factory, packedName!, Values(), inputs, outputs, device), b)
                     : packed is { } format ? Linear.FromPacked(PackedWeight.FromValues(format, Values(), inputs, outputs, device), b)
-                    : Linear.FromWeights(Idrak.Tensor.Persistent(Values(), shape, device, requiresGrad: true), b);
+                    : Linear.FromWeights(Idrak.Abstraction.Tensor.Persistent(Values(), shape, device, requiresGrad: true), b);
             }
 
             Module Normalization(string name, int features)
@@ -347,7 +347,7 @@ public sealed record DecoderSpec
             bool frozen = packed is not null || factory is not null;
             var embedding = frozen
                 ? Embedding.FromBFloat16(BFloat16Weight.FromValues(embeddingValues, Vocabulary, Dim, device))
-                : Embedding.FromWeights(Idrak.Tensor.Persistent(embeddingValues, [Vocabulary, Dim], device, requiresGrad: true));
+                : Embedding.FromWeights(Idrak.Abstraction.Tensor.Persistent(embeddingValues, [Vocabulary, Dim], device, requiresGrad: true));
             embedding.Name = "embed";
             created.Add(embedding);
             // A packed tied head gets its own transposed copy of the table: made now, so the table's float values are not

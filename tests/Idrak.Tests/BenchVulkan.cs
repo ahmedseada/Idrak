@@ -282,9 +282,9 @@ internal static partial class Tests
                     using var position = Tensor.From([length - 1f], [1], device);
                     Action run = format switch
                     {
-                        KeyValueFormat.Float32 => () => Tensor.AttentionDecode(q, cache, position, 1, 0.088f).Dispose(),
-                        KeyValueFormat.Int8 => () => Tensor.AttentionInt8(q, cache, position, 1, 0.088f, tiled: false).Dispose(),
-                        _ => () => Tensor.AttentionBFloat16(q, cache, position, 1, 0.088f, tiled: false).Dispose(),
+                        KeyValueFormat.Float32 => () => TensorLayerPaths.AttentionDecode(q, cache, position, 1, 0.088f).Dispose(),
+                        KeyValueFormat.Int8 => () => TensorLayerPaths.AttentionInt8(q, cache, position, 1, 0.088f, tiled: false).Dispose(),
+                        _ => () => TensorLayerPaths.AttentionBFloat16(q, cache, position, 1, 0.088f, tiled: false).Dispose(),
                     };
                     line.Append($"{length}: {Micros(run, 10),8:F1} µs  ");
                 }

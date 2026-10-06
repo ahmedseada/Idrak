@@ -74,7 +74,7 @@ internal sealed class McpServeCommand : Command
         }
 
         var registry = builder.Build();
-        var options = new McpServerOptions { ServerInfo = new Implementation { Name = "idrak", Version = typeof(Tensor).Assembly.GetName().Version?.ToString() ?? "0" }, ToolCollection = [] };
+        var options = new McpServerOptions { ServerInfo = new Implementation { Name = "idrak", Version = typeof(Idrak.Layers.Sequential).Assembly.GetName().Version?.ToString() ?? "0" }, ToolCollection = [] };
         foreach (var tool in McpTools.ServerTools(registry))
         {
             options.ToolCollection.Add(tool);

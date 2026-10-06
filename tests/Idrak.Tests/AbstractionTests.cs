@@ -22,7 +22,7 @@ internal static partial class Tests
         _ = device;
         string[] kinds = [.. DeviceProviders.All.Select(p => p.Kind)];
         Check(kinds.Length >= 3 && kinds[..3].SequenceEqual(["cuda", "vulkan", "hip"]), $"providers: {string.Join(", ", kinds)}");
-        Check(DeviceProviders.All.Take(3).All(p => p.GetType().Assembly == typeof(Tensor).Assembly), "the GPU providers come from Idrak");
+        Check(DeviceProviders.All.Take(3).All(p => p.GetType().Assembly == typeof(Sequential).Assembly), "the GPU providers come from Idrak");
         var references = typeof(Device).Assembly.GetReferencedAssemblies().Select(a => a.Name).ToArray();
         Check(!references.Contains("Idrak"), $"Idrak.Abstraction references: {string.Join(", ", references)}");
     }
