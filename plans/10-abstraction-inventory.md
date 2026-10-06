@@ -11,8 +11,8 @@ scanned only as a user of `Idrak`'s internals.
 
 | Assembly | Interfaces | Abstract classes | Registries | Total | Outside `Idrak.Abstraction.*` |
 |---|---|---|---|---|---|
-| `Idrak.Abstraction` | 4 | 3 | 2 | 9 | 0 |
-| `Idrak` | 24 | 10 | 9 | 42 | 42 |
+| `Idrak.Abstraction` | 5 | 4 | 2 | 11 | 0 |
+| `Idrak` | 24 | 9 | 9 | 41 | 41 |
 | `Idrak.LanguageModels` | 6 | 2 | 7 | 15 | 15 |
 | `Idrak.Datasets` | 4 | 0 | 3 | 7 | 7 |
 | `Idrak.Onnx` | 0 | 0 | 3 | 3 | 3 |
@@ -40,6 +40,8 @@ proposed namespace (phases 1 to 3 settle it).
 | `Idrak.Abstraction.Devices.IHostStaging` | interface | internal | Storage | CudaBackend.HostStaging |  | `Idrak.Abstraction.Devices` |
 | `Idrak.Abstraction.Devices.IMemoryOffload` | interface | internal | Storage | CudaBackend |  | `Idrak.Abstraction.Devices` |
 | `Idrak.Abstraction.Devices.Storage` | abstract class | internal | Backend | CpuStorage, CudaStorage, HipStorage, VulkanBackend.VulkanStorage |  | `Idrak.Abstraction.Devices` |
+| `Idrak.Abstraction.Module` | abstract class | public | Device, Tensor | BatchNorm, CausalSelfAttention, ChannelNormalize, Conv2d, DecoderBlock, Dropout, +25 |  | `Idrak.Abstraction` |
+| `Idrak.Abstraction.Modules.ILayerTelemetry` | interface | internal | Module, Tensor | Telemetry.LayerTelemetry |  | `Idrak.Abstraction.Modules` |
 | `Idrak.Abstraction.Operations.Kernels` | registry | internal | Backend |  | — | `Idrak.Abstraction.Operations` |
 
 ### Idrak
@@ -72,7 +74,6 @@ proposed namespace (phases 1 to 3 settle it).
 | `Idrak.Layers.KeyValueLayout` | abstract class | public | Tensor | KeyValueLayouts.BFloat16Layout, KeyValueLayouts.Float32Layout, KeyValueLayouts.Int8Layout |  | `Idrak.Abstraction.Generation` |
 | `Idrak.Layers.KeyValueLayouts` | registry | public | — |  | bfloat16, float32, int8 | `Idrak.Abstraction.Generation` |
 | `Idrak.Layers.LayerTypes` | registry | public | Device, Module |  | attention, batchnorm, conv2d, dropout, embedding, flatten, gelu, globalavgpool2d, +12 | `Idrak.Abstraction.Modules` |
-| `Idrak.Layers.Module` | abstract class | public | Device, Tensor | BatchNorm, CausalSelfAttention, ChannelNormalize, Conv2d, DecoderBlock, Dropout, +25 |  | `Idrak.Abstraction.Modules` |
 | `Idrak.Layers.NetworkOps` | registry | public | — |  | attention, batchnorm, conv2d, dropout, embedding, firstStep, flatten, gelu, +16 | `Idrak.Abstraction.Modules` |
 | `Idrak.Layers.PackedWeight` | abstract class, registry | public | Device, Storage, Tensor | BFloat16Weight, Int4Weight, Int8Weight | — | `Idrak.Abstraction.Generation` |
 | `Idrak.Layers.RecurrentModule` | abstract class | public | Device, Module, Tensor | GRU, LSTM |  | `Idrak.Abstraction.Modules` |
@@ -287,7 +288,7 @@ and members, read from that assembly's metadata. Phases 2 and 4 make each one pu
 
 ### Idrak
 
-89 members on 32 types.
+92 members on 35 types.
 
 | Type | Internal members used |
 |---|---|
@@ -321,6 +322,9 @@ and members, read from that assembly's metadata. Phases 2 and 4 make each one pu
 | `Idrak.Abstraction.Diagnostics.OperationTelemetry` | (the type) |
 | `Idrak.Abstraction.MemoryMarshalHelpers` | (the type) |
 | `Idrak.Abstraction.MixedPrecision` | UsesTensorCores |
+| `Idrak.Abstraction.Module` | WeightsDevice |
+| `Idrak.Abstraction.Modules.ILayerTelemetry` | (the type) |
+| `Idrak.Abstraction.Modules.ModuleHooks` | (the type) |
 | `Idrak.Abstraction.Tensor` | AddDropout(), AddGradient(), AddInPlace(), AddLowRank(), AddRmsNormAffine(), AttentionRows(), AttentionTiled(), Backend, BiasGelu(), CausalAttention(), CausalAttentionPacked(), DecoderMask(), EmbeddingLookup(), Empty(), Evict(), EvictToPacked(), FillInPlace(), FormatShape(), GatedActivation(), GatedActivationCompressed(), GradStorage(), GradientTarget(), GroupAffine(), Im2Col(), IsDisposed, LayerNormFused(), LayerNormTrain(), Load(), MatMulBias(), MatMulMany(), MatchRate(), MaxPool(), Normalize(), NormalizeWith(), RecomputeGatedActivation(), Record(), ReleaseGrad(), RmsNormAffine(), RmsNormRopePair(), RmsNormalize(), Rope(), ScaleMaskSoftmax(), StageGroup, Storage, ThrowIfDisposed(), TokenCrossEntropy(), TokenCrossEntropyRows(), TokenLogProbabilities(), Traced(), WillRecord(), WriteKeyValues(), WriteKeyValuesBFloat16(), WriteKeyValuesInt8(), _shape |
 | `Idrak.Abstraction.TensorScope` | Owns() |
 
@@ -340,10 +344,11 @@ and members, read from that assembly's metadata. Phases 2 and 4 make each one pu
 
 ### Idrak.Onnx
 
-1 members on 1 types.
+2 members on 2 types.
 
 | Type | Internal members used |
 |---|---|
+| `Idrak.Abstraction.Module` | WeightsDevice |
 | `Idrak.Abstraction.Tensor` | Load() |
 
 ### Idrak.Cli
@@ -357,7 +362,7 @@ and members, read from that assembly's metadata. Phases 2 and 4 make each one pu
 
 ### Idrak.Onnx
 
-10 members on 5 types.
+9 members on 4 types.
 
 | Type | Internal members used |
 |---|---|
@@ -365,7 +370,6 @@ and members, read from that assembly's metadata. Phases 2 and 4 make each one pu
 | `Idrak.Layers.GraphModule` | AsIntegers(), Constants, IntegerConstants, IntegerValue(), RunNode(), Trace() |
 | `Idrak.Layers.GraphOps` | IsKnown() |
 | `Idrak.Layers.Linear` | WeightValues() |
-| `Idrak.Layers.Module` | WeightsDevice |
 
 ### Idrak.LanguageModels
 

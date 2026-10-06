@@ -131,7 +131,7 @@ public sealed class GptService(IConfiguration configuration, ILogger<GptService>
         var gpt = Model;
         var c = gpt.Config;
         var summary = new List<LayerInfo>();
-        void Walk(Layers.Module module, int depth)
+        void Walk(Abstraction.Module module, int depth)
         {
             bool leaf = !module.Children().Any();
             summary.Add(new LayerInfo(module.DisplayName, depth, leaf ? module.ParameterCount : 0));

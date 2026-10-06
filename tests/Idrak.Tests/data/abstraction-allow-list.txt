@@ -48,7 +48,6 @@ Idrak.Layers.IWeightSource
 Idrak.Layers.KeyValueLayout
 Idrak.Layers.KeyValueLayouts
 Idrak.Layers.LayerTypes
-Idrak.Layers.Module
 Idrak.Layers.NetworkOps
 Idrak.Layers.PackedWeight
 Idrak.Layers.RecurrentModule

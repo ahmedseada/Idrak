@@ -1,8 +1,8 @@
 # Plan 10: Idrak.Abstraction (every contract, its default implementation, and the public device API)
 
-**Status:** phases 0, 1a and 1b done (branch `abstraction`, 2026-10-06): the inventory and the namespace test; the
-`Idrak.Abstraction` project with the device layer and the CPU device; plan 9's dispatcher (internal). GPUs and the
-decoding benchmarks not yet run for 1a and 1b. Next: phase 2, tensors and modules. It contains plan 9
+**Status:** phases 0, 1 and 2 done on the CPU (branch `abstraction`, 2026-10-06): the inventory and the namespace
+test; `Idrak.Abstraction` with the device layer, the CPU device, plan 9's dispatcher (internal), `Tensor` and `Module`.
+GPUs and the decoding benchmarks not yet run for phases 1 and 2. Next: phase 3, the other contracts and registries. It contains plan 9
 (operations as data) and plan 7's item 12c (devices from outside the library).
 
 ## Goal
@@ -45,8 +45,8 @@ assembly **and** under the `Idrak.Abstraction` namespace.
   (a type with `Register` / `Unregister`), every plug-in base (`Autograd.Function`, `PackedWeight`, `KeyValueLayout`,
   `ChatTemplate`, ...), and the device contract. Delegates that are extension points (a `Func` a registry stores)
   count too, by their registry.
-- **Public types every program names** (`Device`, `DeviceType`, `ComputeResources`, `PackedFormat`, then `Tensor` and
-  `TensorScope`) go in the root `Idrak.Abstraction` namespace, which the package adds as a global using; the device
+- **Public types every program names** (`Device`, `DeviceType`, `ComputeResources`, `PackedFormat`, `Tensor`,
+  `TensorScope`, `Autograd`, `Module`, ...) go in the root `Idrak.Abstraction` namespace, which the package adds as a global using; the device
   contract (internal until phase 4) is in `Idrak.Abstraction.Devices` and the CPU device in
   `Idrak.Abstraction.Devices.Cpu` (decided in phase 1a).
 - **Where it goes**: one namespace per area, mirroring the target layout; the default implementation sits in the
@@ -274,6 +274,7 @@ packaged form before the real release.
 | 1a | **The project, with devices.** Create `Idrak.Abstraction`; move `Device`, `DeviceType`, `ComputeResources`, `PackedFormat`, the device contract (`Backend`, `Storage`, capabilities, providers) and the CPU device in as the default implementation and host fallback. The GPU providers stay in `Idrak`, which registers them; `Idrak.Abstraction` finds them by name when the application ships `Idrak`, so `Device.Available` lists them before any other type of Idrak is used | done: `Idrak` references Abstraction; nothing else changes (436 of 436 on the CPU; GPUs to run); a test checks the GPU providers come first and Abstraction references nothing of Idrak |
 | 1b | **Operations.** Plan 9's operation descriptors, kernel table and dispatcher in `Idrak.Abstraction.Operations`; the old `Backend` methods registered through an adapter; every call site goes through the dispatcher | done on the CPU (see plan 9, "Phase 1 as built"): every call site goes through `Backend.Name(...)`; registered kernels tested on every device; about 1 ns per call; GPUs and the decoding gate to run |
 | 2 | **Tensors and modules.** Move `Tensor`, autograd, `TensorScope`, `Module` and the module contracts; turn the internals other assemblies use into public or protected members where they belong to the contract, and keep the rest internal behind a narrow, documented bridge during the move | the internals list from phase 0 is empty or justified line by line |
+| 2 (as built) | **2a**: `Tensor` (operations, autograd, decoding and distillation parts), `TensorScope`, `Autograd`, `DifferentiableFunction`, `ActivationMemory`, `MixedPrecision`, `ComputeGraph` move to the root namespace; the 24 internal members that take layer types stay in Idrak as `TensorLayerPaths`; telemetry and offloading reach Idrak through hooks (`OperationTelemetry`, `TensorOffloading`). **2b**: `Module` moves (root namespace); its weights files stay in Idrak as `ModuleFiles` extension methods (`model.Save(path)` unchanged); `Forward`/`Predict` report and stage weights through `ModuleHooks`. `RecurrentModule`, `ICachedModule` and `ILinearAdapter` move in phase 3 with the decoding and adapter contracts | done on the CPU: every internal another library assembly uses is listed with why in `tests/Idrak.Tests/data/internals-justified.txt`, which a test keeps exact (36 lines; Idrak's own use of Abstraction is phase 4's) |
 | 3 | **The other contracts and registries.** Training, generation, data and format contracts of `Idrak`, then those of `LanguageModels`, `Datasets` and `Onnx`, each with its registry and default | every registry lives in Abstraction; the satellites keep only implementations |
 | 4 | **Devices on the public API (item 12c).** Remove the last `InternalsVisibleTo` from `Idrak.Abstraction` to `Idrak`; the CUDA, Vulkan and HIP code in `Idrak` builds against the public surface alone | `Idrak.Abstraction` grants no internals; every device passes; `dotnet add package Idrak` behaves as before |
 | 5 | **A device from outside.** A plain-loop reference device in `tests/Idrak.PluginTests`, written against the public API only, passes the conformance kit | the kit (`Idrak.Abstraction.Testing`) runs it green |

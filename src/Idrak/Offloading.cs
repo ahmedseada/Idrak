@@ -21,7 +21,11 @@ internal static class Offloading
     {
         TensorOffloading.TrainableChanged = TrainableChanged;
         TensorOffloading.ForBackward = ForBackward;
+        Idrak.Abstraction.Modules.ModuleHooks.EnterForward = EnterForward;
     }
+
+    // Module.Forward's hook: a scope only when the layer was entered (boxed then; nothing is allocated otherwise).
+    private static IDisposable? EnterForward(Module module, Tensor input) => Enter(module, input) is { Entered: true } scope ? scope : null;
 
     // The layer whose forward runs on this thread (tagged on the autograd nodes it records, for the backward pass), and
     // the layer staged before it (to learn which layer follows which).
@@ -138,6 +142,9 @@ internal static class Offloading
     /// <summary>Ends a layer's forward: unstages its weights and restores the enclosing layer.</summary>
     public readonly struct LayerScope(IDisposable? token, object? previous, bool entered) : IDisposable
     {
+        /// <summary>Whether the layer was entered (its weights staged or its order recorded); false for the empty scope.</summary>
+        public bool Entered => entered;
+
         public void Dispose()
         {
             token?.Dispose();

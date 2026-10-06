@@ -21,6 +21,9 @@
   | `Idrak.Tensor`, `Idrak.TensorScope`, `Idrak.Autograd`, `Idrak.DifferentiableFunction` | the same names under `Idrak.Abstraction` |
   | `Idrak.ActivationMemory`, `Idrak.MixedPrecision`, `Idrak.MatMulPrecision`, `Idrak.ComputeGraph` | the same names under `Idrak.Abstraction` |
 
+  | `Idrak.Layers.Module` | `Idrak.Abstraction.Module` |
+  | `Module.Save(...)`, `Module.Load(...)` | extension methods in `Idrak.ModuleFiles`: `model.Save(path)` reads the same |
+
   A file that also imports another `Tensor` (ONNX Runtime's `Microsoft.ML.OnnxRuntime.Tensors`, or
   `System.Numerics.Tensors`) now sees two: `Idrak.Tensor` used to win as a member of an enclosing namespace. Add
   `using Tensor = Idrak.Abstraction.Tensor;`.

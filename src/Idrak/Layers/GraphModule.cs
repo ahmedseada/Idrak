@@ -373,7 +373,7 @@ public sealed class GraphModule : Module
 
     /// <summary>
     /// The graph as JSON (format "idrak-graph/1"): nodes with their layers' settings, constants' shapes and the
-    /// integer constants. Weights and float constants are not included; save them with <see cref="Module.Save(string)"/>.
+    /// integer constants. Weights and float constants are not included; save them with <see cref="Idrak.ModuleFiles.Save(Module, string)"/>.
     /// </summary>
     public JsonObject ToJson() => new()
     {

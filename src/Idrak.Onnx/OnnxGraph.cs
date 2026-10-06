@@ -92,7 +92,7 @@ public sealed class OnnxGraph
     /// returns its output, translated as the export translates every module (its own translators first, then
     /// <see cref="OnnxExportOps"/>). For translators of modules made of other modules (a custom residual block).
     /// </summary>
-    public OnnxValue Module(Layers.Module module, OnnxValue input)
+    public OnnxValue Module(Abstraction.Module module, OnnxValue input)
     {
         ArgumentNullException.ThrowIfNull(module);
         ArgumentNullException.ThrowIfNull(input);

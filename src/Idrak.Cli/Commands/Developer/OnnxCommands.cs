@@ -7,7 +7,7 @@ using System.Text.Json.Nodes;
 using Idrak.Inference;
 using Idrak.Layers;
 using Idrak.Onnx;
-using Module = Idrak.Layers.Module;
+using Module = Idrak.Abstraction.Module;
 
 namespace Idrak.Cli.Commands.Developer;
 
