@@ -6,6 +6,7 @@ using Idrak;
 using Idrak.Abstraction;
 using Idrak.Inference;
 using Idrak.Layers;
+using Idrak.Abstraction.Training;
 using Idrak.Optimizers;
 
 var device = args.Length > 0 ? Device.Parse(args[0]) : Device.Default;

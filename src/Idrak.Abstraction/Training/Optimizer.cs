@@ -1,7 +1,9 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-namespace Idrak.Optimizers;
+using Idrak.Abstraction.Devices;
+
+namespace Idrak.Abstraction.Training;
 
 /// <summary>Updates parameters from their gradients. Call <see cref="ZeroGrad"/>, then <c>loss.Backward()</c>, then <see cref="Step"/>.</summary>
 public abstract class Optimizer : IDisposable
@@ -28,7 +30,7 @@ public abstract class Optimizer : IDisposable
     public void ZeroGrad()
     {
         // Between steps: with offloading on, cold data makes room for the next step, or offloaded tensors come back.
-        Offloading.StepBoundary(Parameters[0].Device);
+        TensorOffloading.StepBoundary(Parameters[0].Device);
         if (GradientsZeroed)
         {
             GradientsZeroed = false;
@@ -192,7 +194,7 @@ public abstract class Optimizer : IDisposable
     protected static Tensor CreateState(ReadOnlySpan<int> shape, Device device)
     {
         var state = Tensor.PersistentZeros(shape, device);
-        Offloading.MarkCold(state.Storage, Abstraction.Devices.OffloadPriority.OptimizerState);
+        TensorOffloading.MarkCold(state.Storage, OffloadPriority.OptimizerState);
         return state;
     }
 

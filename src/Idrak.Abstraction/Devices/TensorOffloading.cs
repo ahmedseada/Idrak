@@ -18,6 +18,27 @@ internal static class TensorOffloading
 
     /// <summary>Stages offloaded weights back for a backward pass over <c>order</c>; null when nothing is offloaded.</summary>
     public static Func<Device, List<Tensor>, IBackwardStaging?>? ForBackward;
+
+    /// <summary>Whether offloading is on for a device's offload support: asked for, or something is offloaded already.</summary>
+    public static bool Active(IMemoryOffload offload) => ComputeResources.OffloadToHostMemory || offload.OffloadedCount > 0;
+
+    /// <summary>Raises a storage's offload priority (frozen weights, optimizer state go to system memory first).</summary>
+    public static void MarkCold(Storage storage, OffloadPriority priority)
+    {
+        if (storage.OffloadPriority < priority && storage.Backend.Offload is { } offload)
+        {
+            offload.SetPriority(storage, priority);
+        }
+    }
+
+    /// <summary>Between optimizer steps: cold data makes room for the next step, or offloaded tensors come back.</summary>
+    public static void StepBoundary(Device device)
+    {
+        if (device.Backend.Offload is { } offload && Active(offload))
+        {
+            offload.Rebalance();
+        }
+    }
 }
 
 /// <summary>Brings offloaded weights back group by group during a backward pass.</summary>

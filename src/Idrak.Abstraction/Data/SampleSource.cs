@@ -3,16 +3,16 @@
 
 using System.Globalization;
 
-namespace Idrak.Data;
+namespace Idrak.Abstraction.Data;
 
 /// <summary>
-/// Samples with random access, one at a time: what a <see cref="DataLoader"/> batches. <see cref="Dataset"/> is one
-/// (every sample in memory); <see cref="CsvSource"/>, <see cref="ImageFolderSource"/>, <see cref="TokenFileSource"/> and
-/// <see cref="NpySource"/> read files lazily; the views of <see cref="SampleSourceExtensions"/> (subsets, splits,
+/// Samples with random access, one at a time: what a <c>DataLoader</c> batches. <c>Dataset</c> is one
+/// (every sample in memory); <c>CsvSource</c>, <c>ImageFolderSource</c>, <c>TokenFileSource</c> and
+/// <c>NpySource</c> read files lazily; the views of <c>SampleSourceExtensions</c> (subsets, splits,
 /// shuffles, concatenation) copy nothing. Write your own for any other storage.
 /// </summary>
 /// <remarks>
-/// A <see cref="DataLoader"/> calls <see cref="Read"/> from one thread at a time, though not always the thread that
+/// A <c>DataLoader</c> calls <see cref="Read"/> from one thread at a time, though not always the thread that
 /// created it (the next batch is gathered on a worker thread while the model trains). A source read by several loaders
 /// at the same time must allow concurrent reads; the built-in sources and views do.
 /// </remarks>
@@ -36,7 +36,7 @@ public interface ISampleSource
 
 /// <summary>
 /// Samples in order, for data whose count is unknown or too large to index (a file read front to back, rows from a
-/// network stream, generated data). <see cref="DataLoader(ISampleStream, int, int, bool, Device?, int?)"/> batches it,
+/// network stream, generated data). <c>DataLoader</c> batches it,
 /// shuffling within a buffer.
 /// </summary>
 public interface ISampleStream
@@ -60,7 +60,7 @@ public interface ISampleReader : IDisposable
 
 /// <summary>
 /// A change made to each sample as it is batched (flips, shifts, rotations, noise, masking), set on
-/// <see cref="DataLoader.Transforms"/>. The random numbers it is given are seeded from the loader's seed, the epoch and
+/// <c>DataLoader.Transforms</c>. The random numbers it is given are seeded from the loader's seed, the epoch and
 /// the sample (its index in a source, its position in a stream), so a run repeats exactly and every epoch differs.
 /// </summary>
 public interface ISampleTransform
@@ -70,7 +70,7 @@ public interface ISampleTransform
 }
 
 /// <summary>
-/// Mini-batches for <see cref="Training.Trainer.Fit"/>: each enumeration is one epoch. <see cref="DataLoader"/> is
+/// Mini-batches for <c>Trainer.Fit</c>: each enumeration is one epoch. <c>DataLoader</c> is
 /// one; write your own to batch in another way (variable lengths, sampling by class, batches made on the device). The
 /// trainer disposes every batch after its step. The counts are for telemetry and progress; leave them null when unknown.
 /// </summary>
@@ -94,26 +94,23 @@ public delegate ISampleSource SampleSourceFactory(string path, IReadOnlyDictiona
 /// <summary>
 /// Sample sources by name (ignoring case), for tools and configuration files that name their data. The built-ins:
 /// <list type="bullet">
-/// <item><c>csv</c>: <see cref="CsvSource"/>; options <c>target</c> (required, comma-separated), <c>ignore</c>,
+/// <item><c>csv</c>: <c>CsvSource</c>; options <c>target</c> (required, comma-separated), <c>ignore</c>,
 /// <c>delimiter</c>, <c>header</c> (true or false).</item>
-/// <item><c>images</c>: <see cref="ImageFolderSource"/> over class folders; options <c>channels</c>, <c>height</c>,
+/// <item><c>images</c>: <c>ImageFolderSource</c> over class folders; options <c>channels</c>, <c>height</c>,
 /// <c>width</c> (each defaults to the first image's).</item>
-/// <item><c>tokens</c>: <see cref="TokenFileSource"/>; options <c>length</c> (required), <c>stride</c>, <c>type</c>
+/// <item><c>tokens</c>: <c>TokenFileSource</c>; options <c>length</c> (required), <c>stride</c>, <c>type</c>
 /// (uint16, int32 or uint32).</item>
-/// <item><c>npy</c>: <see cref="NpySource"/>; options <c>targets</c> (a second .npy file), <c>classes</c>.</item>
+/// <item><c>npy</c>: <c>NpySource</c>; options <c>targets</c> (a second .npy file), <c>classes</c>.</item>
 /// </list>
 /// Add your own with <see cref="Register"/> (Idrak.Datasets offers <c>TableSamples.Factory</c> for JSON Lines, Parquet
 /// and CSV columns).
 /// </summary>
 public static class SampleSources
 {
-    private static readonly Dictionary<string, SampleSourceFactory> Registry = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ["csv"] = OpenCsv,
-        ["images"] = OpenImages,
-        ["tokens"] = OpenTokens,
-        ["npy"] = OpenNpy,
-    };
+    private static readonly Dictionary<string, SampleSourceFactory> Registry = new(StringComparer.OrdinalIgnoreCase);
+
+    // Idrak's built-in sources (csv, images, tokens, npy) are registered before the first use.
+    static SampleSources() => LibraryDefaults.Ensure();
 
     /// <summary>Registers (or replaces) the source <paramref name="name"/> (names ignore case).</summary>
     public static void Register(string name, SampleSourceFactory factory)
@@ -170,53 +167,4 @@ public static class SampleSources
     public static ISampleSource Open(string name, string path, IReadOnlyDictionary<string, string>? options = null) =>
         Get(name)(path, options is null ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             : new Dictionary<string, string>(options, StringComparer.OrdinalIgnoreCase));
-
-    private static CsvSource OpenCsv(string path, IReadOnlyDictionary<string, string> options)
-    {
-        Known(options, "csv", "target", "ignore", "delimiter", "header");
-        string target = options.GetValueOrDefault("target") ?? throw new ArgumentException("The csv source needs the option 'target' (the target columns, comma-separated).");
-        return CsvSource.Open(path, new CsvOptions
-        {
-            TargetColumns = List(target),
-            IgnoreColumns = options.TryGetValue("ignore", out var ignore) ? List(ignore) : [],
-            Delimiter = options.TryGetValue("delimiter", out var d) ? (d == "\\t" ? '\t' : d.Length == 1 ? d[0] : throw new ArgumentException($"delimiter '{d}': one character.")) : ',',
-            HasHeader = !options.TryGetValue("header", out var header) || bool.Parse(header),
-        });
-    }
-
-    private static ImageFolderSource OpenImages(string path, IReadOnlyDictionary<string, string> options)
-    {
-        Known(options, "images", "channels", "height", "width");
-        int? Number(string name) => options.TryGetValue(name, out var v) ? int.Parse(v, CultureInfo.InvariantCulture) : null;
-        return ImageFolderSource.Open(path, Number("channels"), Number("height"), Number("width"));
-    }
-
-    private static TokenFileSource OpenTokens(string path, IReadOnlyDictionary<string, string> options)
-    {
-        Known(options, "tokens", "length", "stride", "type");
-        int length = int.Parse(options.GetValueOrDefault("length") ?? throw new ArgumentException("The tokens source needs the option 'length' (tokens per window)."), CultureInfo.InvariantCulture);
-        int? stride = options.TryGetValue("stride", out var s) ? int.Parse(s, CultureInfo.InvariantCulture) : null;
-        var type = options.TryGetValue("type", out var t) ? Enum.Parse<TokenType>(t, ignoreCase: true) : TokenType.UInt16;
-        return new TokenFileSource(path, length, stride, type);
-    }
-
-    private static NpySource OpenNpy(string path, IReadOnlyDictionary<string, string> options)
-    {
-        Known(options, "npy", "targets", "classes");
-        int? classes = options.TryGetValue("classes", out var c) ? int.Parse(c, CultureInfo.InvariantCulture) : null;
-        return new NpySource(path, options.GetValueOrDefault("targets"), classes);
-    }
-
-    private static void Known(IReadOnlyDictionary<string, string> options, string source, params string[] names)
-    {
-        foreach (string key in options.Keys)
-        {
-            if (!names.Contains(key, StringComparer.OrdinalIgnoreCase))
-            {
-                throw new ArgumentException($"The {source} source has no option '{key}' ({string.Join(", ", names)}).");
-            }
-        }
-    }
-
-    private static string[] List(string text) => text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 }

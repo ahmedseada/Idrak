@@ -8,8 +8,9 @@
 - New package `Idrak.Abstraction`: `Device`, `DeviceType`, `ComputeResources` and the CPU device (also every other
   device's host fallback). `dotnet add package Idrak` brings it along. The GPU devices (CUDA, Vulkan, HIP) stay in
   `Idrak`; `Device.Available` lists them as before, even when no other type of Idrak has been used yet.
-- Projects with implicit usings (the default for new projects) get `global using Idrak.Abstraction;` from the package,
-  so they compile unchanged. Projects without implicit usings add `using Idrak.Abstraction;`.
+- Projects with implicit usings (the default for new projects) get global usings for `Idrak.Abstraction`,
+  `Idrak.Abstraction.Training` and `Idrak.Abstraction.Data` from the package, so they compile unchanged. Projects
+  without implicit usings add those `using` lines.
 - Moved types (source and binary change: rebuild plug-ins compiled against 0.3.x):
 
   | Was | Now |
@@ -22,6 +23,10 @@
   | `Idrak.ActivationMemory`, `Idrak.MixedPrecision`, `Idrak.MatMulPrecision`, `Idrak.ComputeGraph` | the same names under `Idrak.Abstraction` |
 
   | `Idrak.Layers.Module` | `Idrak.Abstraction.Module` |
+  | `Idrak.Optimizers.Optimizer`, `Sgd`, `Adam`, `AdamW`, `LearningRateScheduler`, `StepDecay`, `ExponentialDecay`, `CosineAnnealing`, `LambdaSchedule` | the same names under `Idrak.Abstraction.Training` (`AdamW8Bit`, `GroupedOptimizer`, `HostOptimizer` stay in `Idrak.Optimizers`) |
+  | `Idrak.Data.IScaler` | `Idrak.Abstraction.Training.IScaler` (the scalers stay in `Idrak.Data`) |
+  | `Idrak.Data.ISampleSource`, `ISampleStream`, `ISampleReader`, `ISampleTransform`, `IBatchSource`, `Batch`, `SampleSources`, `SampleSourceFactory` | the same names under `Idrak.Abstraction.Data` |
+  | `Idrak.Data.IImageCodec`, `ImageCodecs`, `ImageData`, `ImageInfo` | the same names under `Idrak.Abstraction.Data` |
   | `Module.Save(...)`, `Module.Load(...)` | extension methods in `Idrak.ModuleFiles`: `model.Save(path)` reads the same |
 
   A file that also imports another `Tensor` (ONNX Runtime's `Microsoft.ML.OnnxRuntime.Tensors`, or

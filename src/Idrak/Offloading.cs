@@ -74,7 +74,7 @@ internal static class Offloading
     /// <summary>The layer (or fused layers) whose forward runs on this thread while weights are offloaded (null otherwise).</summary>
     public static object? Current => TensorOffloading.Current;
 
-    private static bool Active(IMemoryOffload offload) => ComputeResources.OffloadToHostMemory || offload.OffloadedCount > 0;
+    private static bool Active(IMemoryOffload offload) => TensorOffloading.Active(offload);
 
     /// <summary>
     /// Called by <see cref="Module.Forward"/>: for a layer without sub-layers, marks its frozen weights cold, stages its
@@ -202,13 +202,7 @@ internal static class Offloading
     }
 
     /// <summary>Marks <paramref name="storage"/> as moving to system memory before hotter data (never lowers a priority).</summary>
-    public static void MarkCold(Storage storage, OffloadPriority priority)
-    {
-        if (storage.OffloadPriority < priority && storage.Backend.Offload is { } offload)
-        {
-            offload.SetPriority(storage, priority);
-        }
-    }
+    public static void MarkCold(Storage storage, OffloadPriority priority) => TensorOffloading.MarkCold(storage, priority);
 
     /// <summary>A parameter's <see cref="Tensor.RequiresGrad"/> changed: frozen weights are cold, trained ones hot.</summary>
     public static void TrainableChanged(Tensor parameter, bool trainable)
@@ -230,13 +224,7 @@ internal static class Offloading
     }
 
     /// <summary>Between optimizer steps: makes room by moving cold data out, or brings offloaded tensors back (see <see cref="IMemoryOffload.Rebalance"/>).</summary>
-    public static void StepBoundary(Device device)
-    {
-        if (device.Backend.Offload is { } offload && Active(offload))
-        {
-            offload.Rebalance();
-        }
-    }
+    public static void StepBoundary(Device device) => TensorOffloading.StepBoundary(device);
 
     /// <summary>
     /// Stages each layer's offloaded weights during the backward pass, in the order its nodes run (nodes are tagged with

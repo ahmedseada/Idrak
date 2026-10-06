@@ -11,8 +11,8 @@ scanned only as a user of `Idrak`'s internals.
 
 | Assembly | Interfaces | Abstract classes | Registries | Total | Outside `Idrak.Abstraction.*` |
 |---|---|---|---|---|---|
-| `Idrak.Abstraction` | 5 | 4 | 2 | 11 | 0 |
-| `Idrak` | 24 | 9 | 9 | 41 | 41 |
+| `Idrak.Abstraction` | 12 | 6 | 4 | 22 | 0 |
+| `Idrak` | 17 | 7 | 7 | 30 | 30 |
 | `Idrak.LanguageModels` | 6 | 2 | 7 | 15 | 15 |
 | `Idrak.Datasets` | 4 | 0 | 3 | 7 | 7 |
 | `Idrak.Onnx` | 0 | 0 | 3 | 3 | 3 |
@@ -32,6 +32,14 @@ proposed namespace (phases 1 to 3 settle it).
 
 | Type | Kind | Visibility | Mentions | Implementations | Registered | Target |
 |---|---|---|---|---|---|---|
+| `Idrak.Abstraction.Data.IBatchSource` | interface | public | — | DataLoader |  | `Idrak.Abstraction.Data` |
+| `Idrak.Abstraction.Data.IImageCodec` | interface | public | — | BmpCodec, NetpbmCodec, PngCodec |  | `Idrak.Abstraction.Data` |
+| `Idrak.Abstraction.Data.ISampleReader` | interface | public | — | CsvSource.Reader, TableSamples.Reader |  | `Idrak.Abstraction.Data` |
+| `Idrak.Abstraction.Data.ISampleSource` | interface | public | — | CsvSource, Dataset, ImageFolderSource, NpySource, SampleSourceExtensions.ConcatSource, SampleSourceExtensions.SubsetSource, +1 |  | `Idrak.Abstraction.Data` |
+| `Idrak.Abstraction.Data.ISampleStream` | interface | public | — | CsvSource.Stream, TableSamples.RowStream |  | `Idrak.Abstraction.Data` |
+| `Idrak.Abstraction.Data.ISampleTransform` | interface | public | — | ContentFrame.ReframeTransform, GaussianNoise, RandomFlip, RandomRotation, RandomShift |  | `Idrak.Abstraction.Data` |
+| `Idrak.Abstraction.Data.ImageCodecs` | registry | public | — |  | bmp, netpbm, png | `Idrak.Abstraction.Data` |
+| `Idrak.Abstraction.Data.SampleSources` | registry | public | — |  | csv, images, npy, tokens | `Idrak.Abstraction.Data` |
 | `Idrak.Abstraction.Devices.Backend` | abstract class | internal | Storage | CpuBackend, CudaBackend, HipBackend, VulkanBackend |  | `Idrak.Abstraction.Devices` |
 | `Idrak.Abstraction.Devices.Cpu.CpuBackend.IRangeKernel` | interface | internal | — | CpuBackend.AbsBackwardLoop, CpuBackend.AbsLoop, CpuBackend.AdamLoop, CpuBackend.AddLoop, CpuBackend.AffineLoop, CpuBackend.AxpyLoop, +29 |  | `Idrak.Abstraction.Operations` |
 | `Idrak.Abstraction.Devices.DeviceProvider` | abstract class | internal | Backend | HipProvider, LibraryDevices.CudaProvider, VulkanProvider |  | `Idrak.Abstraction.Devices` |
@@ -43,20 +51,14 @@ proposed namespace (phases 1 to 3 settle it).
 | `Idrak.Abstraction.Module` | abstract class | public | Device, Tensor | BatchNorm, CausalSelfAttention, ChannelNormalize, Conv2d, DecoderBlock, Dropout, +25 |  | `Idrak.Abstraction` |
 | `Idrak.Abstraction.Modules.ILayerTelemetry` | interface | internal | Module, Tensor | Telemetry.LayerTelemetry |  | `Idrak.Abstraction.Modules` |
 | `Idrak.Abstraction.Operations.Kernels` | registry | internal | Backend |  | — | `Idrak.Abstraction.Operations` |
+| `Idrak.Abstraction.Training.IScaler` | interface | public | — | MinMaxScaler, StandardScaler |  | `Idrak.Abstraction.Training` |
+| `Idrak.Abstraction.Training.LearningRateScheduler` | abstract class | public | — | CosineAnnealing, ExponentialDecay, LambdaSchedule, StepDecay |  | `Idrak.Abstraction.Training` |
+| `Idrak.Abstraction.Training.Optimizer` | abstract class | public | Device, Tensor | Adam, AdamW, AdamW8Bit, GroupedOptimizer, HostOptimizer, Sgd |  | `Idrak.Abstraction.Training` |
 
 ### Idrak
 
 | Type | Kind | Visibility | Mentions | Implementations | Registered | Target |
 |---|---|---|---|---|---|---|
-| `Idrak.Data.IBatchSource` | interface | public | — | DataLoader |  | `Idrak.Abstraction.Data` |
-| `Idrak.Data.IImageCodec` | interface | public | — | BmpCodec, NetpbmCodec, PngCodec |  | `Idrak.Abstraction.Data` |
-| `Idrak.Data.ISampleReader` | interface | public | — | CsvSource.Reader, TableSamples.Reader |  | `Idrak.Abstraction.Data` |
-| `Idrak.Data.ISampleSource` | interface | public | — | CsvSource, Dataset, ImageFolderSource, NpySource, SampleSourceExtensions.ConcatSource, SampleSourceExtensions.SubsetSource, +1 |  | `Idrak.Abstraction.Data` |
-| `Idrak.Data.ISampleStream` | interface | public | — | CsvSource.Stream, TableSamples.RowStream |  | `Idrak.Abstraction.Data` |
-| `Idrak.Data.ISampleTransform` | interface | public | — | ContentFrame.ReframeTransform, GaussianNoise, RandomFlip, RandomRotation, RandomShift |  | `Idrak.Abstraction.Data` |
-| `Idrak.Data.IScaler` | interface | public | — | MinMaxScaler, StandardScaler |  | `Idrak.Abstraction.Training` |
-| `Idrak.Data.ImageCodecs` | registry | public | — |  | bmp, netpbm, png | `Idrak.Abstraction.Data` |
-| `Idrak.Data.SampleSources` | registry | public | — |  | csv, images, npy, tokens | `Idrak.Abstraction.Data` |
 | `Idrak.Diagnostics.ITelemetryHook` | interface | public | — | ChannelTelemetry, ConsoleLogger, JsonLinesLogger, MetricsRecorder |  | `Idrak.Abstraction.Diagnostics` |
 | `Idrak.Generation.ChatTemplate` | abstract class | public | — | ChatMLTemplate, JinjaChatTemplate |  | `Idrak.Abstraction.Generation` |
 | `Idrak.Generation.IChatModel` | interface | public | — | ChatGenerator, FakeChatModel, GenerativeModel.EngineChat |  | `Idrak.Abstraction.Generation` |
@@ -79,8 +81,6 @@ proposed namespace (phases 1 to 3 settle it).
 | `Idrak.Layers.RecurrentModule` | abstract class | public | Device, Module, Tensor | GRU, LSTM |  | `Idrak.Abstraction.Modules` |
 | `Idrak.Layers.RopeScalings` | registry | public | — |  | dynamic, linear, llama3, yarn | `Idrak.Abstraction.Generation` |
 | `Idrak.Layers.WeightCodec` | abstract class | internal | — | WeightCodec.BFloat16Codec, WeightCodec.Float16Codec, WeightCodec.Float32Codec |  | `Idrak.Abstraction.Formats` |
-| `Idrak.Optimizers.LearningRateScheduler` | abstract class | public | — | CosineAnnealing, ExponentialDecay, LambdaSchedule, StepDecay |  | `Idrak.Abstraction.Training` |
-| `Idrak.Optimizers.Optimizer` | abstract class | public | Device, Tensor | Adam, AdamW, AdamW8Bit, GroupedOptimizer, HostOptimizer, Sgd |  | `Idrak.Abstraction.Training` |
 | `Idrak.Retrieval.IEmbedder` | interface | public | — | TextEncoder |  | `Idrak.Abstraction.Retrieval` |
 | `Idrak.Retrieval.IReranker` | interface | public | — | CrossEncoder |  | `Idrak.Abstraction.Retrieval` |
 | `Idrak.Retrieval.IRetriever` | interface | public | — | RetrievalIndex |  | `Idrak.Abstraction.Retrieval` |

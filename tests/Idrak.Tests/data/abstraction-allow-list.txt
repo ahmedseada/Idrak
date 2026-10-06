@@ -1,14 +1,5 @@
 # Plan 10: abstractions still declared outside Idrak.Abstraction.*. This list may only shrink: declare new
 # interfaces, abstract classes and registries under Idrak.Abstraction.* (tests/Idrak.Tests/InventoryTests.cs).
-Idrak.Data.IBatchSource
-Idrak.Data.IImageCodec
-Idrak.Data.ISampleReader
-Idrak.Data.ISampleSource
-Idrak.Data.ISampleStream
-Idrak.Data.ISampleTransform
-Idrak.Data.IScaler
-Idrak.Data.ImageCodecs
-Idrak.Data.SampleSources
 Idrak.Datasets.DataFileFormats
 Idrak.Datasets.DatasetSources
 Idrak.Datasets.IDataFileFormat
@@ -56,8 +47,6 @@ Idrak.Layers.WeightCodec
 Idrak.Onnx.OnnxBuiltIns
 Idrak.Onnx.OnnxExportOps
 Idrak.Onnx.OnnxImportOps
-Idrak.Optimizers.LearningRateScheduler
-Idrak.Optimizers.Optimizer
 Idrak.Retrieval.IEmbedder
 Idrak.Retrieval.IReranker
 Idrak.Retrieval.IRetriever
