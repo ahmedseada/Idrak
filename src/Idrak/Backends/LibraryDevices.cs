@@ -8,16 +8,12 @@ using Idrak.Backends.Vulkan;
 namespace Idrak.Backends;
 
 /// <summary>
-/// The GPU devices this assembly ships: CUDA first, then Vulkan, then HIP. <see cref="DeviceProviders"/> (in
-/// Idrak.Abstraction, which cannot name them) asks for them by name the first time it is used.
+/// The GPU devices this assembly ships: CUDA first, then Vulkan, then HIP, registered by <see cref="LibraryRegistrations"/>
+/// in <see cref="DeviceProviders"/> (Idrak.Abstraction, which cannot name them).
 /// </summary>
 internal static class LibraryDevices
 {
-    private static IEnumerable<DeviceProvider> Providers()
-    {
-        Offloading.ConnectTensors();   // the devices that offload weights are these
-        return [new CudaProvider(), new VulkanProvider(), new HipProvider()];
-    }
+    public static IEnumerable<DeviceProvider> Providers() => [new CudaProvider(), new VulkanProvider(), new HipProvider()];
 
     private sealed class CudaProvider : DeviceProvider
     {

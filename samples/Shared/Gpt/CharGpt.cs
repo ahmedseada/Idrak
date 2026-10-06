@@ -412,11 +412,11 @@ public static class GptTraining
     {
         var data = Windows(corpus, gpt.Config, maxWindows: 20_000, seed: 3);
         var (train, validation) = data.Split(0.95, seed: 4);
-        using var optimizer = new Optimizers.AdamW(gpt.Model.Parameters(), learningRate: 0.002f, weightDecay: 0.01f);
+        using var optimizer = new Abstraction.Training.AdamW(gpt.Model.Parameters(), learningRate: 0.002f, weightDecay: 0.01f);
         var trainer = new Training.Trainer(gpt.Model, optimizer, (logits, next) => Losses.SparseCrossEntropy(logits, next))
         {
             Metrics = { Training.Metric.SparseAccuracy },
-            Scheduler = new Optimizers.CosineAnnealing(optimizer, epochs, minLearningRate: 2e-4f),
+            Scheduler = new Abstraction.Training.CosineAnnealing(optimizer, epochs, minLearningRate: 2e-4f),
             MaxGradientNorm = 1f,
         };
         var history = trainer.Fit(new Data.DataLoader(train, batchSize, shuffle: true, device: gpt.Device, seed: 5), epochs,

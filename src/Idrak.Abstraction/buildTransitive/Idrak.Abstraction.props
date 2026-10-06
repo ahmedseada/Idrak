@@ -3,5 +3,7 @@
        usings get it as a global using, so code written for Idrak 0.3 (`using Idrak;`) compiles unchanged. -->
   <ItemGroup Condition="'$(ImplicitUsings)' == 'enable' or '$(ImplicitUsings)' == 'true'">
     <Using Include="Idrak.Abstraction" />
+    <Using Include="Idrak.Abstraction.Data" />
+    <Using Include="Idrak.Abstraction.Training" />
   </ItemGroup>
 </Project>

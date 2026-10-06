@@ -1,8 +1,6 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.Diagnostics.CodeAnalysis;
-
 namespace Idrak.Abstraction.Devices;
 
 /// <summary>
@@ -61,29 +59,7 @@ internal static class DeviceProviders
 {
     private static readonly List<DeviceProvider> Registry = [];
 
-    static DeviceProviders() => RegisterLibraryDevices();
-
-    // Runs the registration of the Idrak assembly's GPU devices when the application ships that assembly; an application
-    // that references Idrak.Abstraction alone has the CPU and whatever it registers itself.
-    [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Backends.LibraryDevices", "Idrak")]
-    private static void RegisterLibraryDevices()
-    {
-        Type? devices;
-        try
-        {
-            devices = Type.GetType("Idrak.Backends.LibraryDevices, Idrak", throwOnError: false);
-        }
-        catch (FileLoadException)
-        {
-            return;
-        }
-
-        if (devices?.GetMethod("Providers", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)?.Invoke(null, null)
-            is IEnumerable<DeviceProvider> providers)
-        {
-            Registry.AddRange(providers);
-        }
-    }
+    static DeviceProviders() => LibraryDefaults.Ensure();   // Idrak's GPU devices, first
 
     /// <summary>The registered providers, in registration order.</summary>
     public static IReadOnlyList<DeviceProvider> All

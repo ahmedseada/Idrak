@@ -6,52 +6,6 @@ using System.Collections;
 namespace Idrak.Data;
 
 /// <summary>
-/// One mini-batch: [Size, ..FeatureShape] features and [Size, ..TargetShape] targets on one device. Dispose it (the
-/// trainer does) to recycle its memory. <see cref="DataLoader"/> makes them; a custom <see cref="IBatchSource"/> makes
-/// its own with the public constructor.
-/// </summary>
-public sealed class Batch : IDisposable
-{
-    /// <summary>Creates a batch that owns <paramref name="features"/> and <paramref name="targets"/> (disposing it disposes them).</summary>
-    /// <param name="features">The inputs, with the samples along the first dimension.</param>
-    /// <param name="targets">The expected outputs, with as many samples along the first dimension.</param>
-    /// <param name="index">Zero-based batch number within the epoch.</param>
-    public Batch(Tensor features, Tensor targets, int index = 0)
-    {
-        ArgumentNullException.ThrowIfNull(features);
-        ArgumentNullException.ThrowIfNull(targets);
-        if (features.Shape.Length == 0 || targets.Shape.Length == 0 || features.Shape[0] != targets.Shape[0])
-        {
-            throw new ArgumentException($"Features [{string.Join(", ", features.Shape.ToArray())}] and targets [{string.Join(", ", targets.Shape.ToArray())}] need the same number of samples along the first dimension.");
-        }
-
-        ArgumentOutOfRangeException.ThrowIfNegative(index);
-        Features = features;
-        Targets = targets;
-        Index = index;
-    }
-
-    /// <summary>[Size, ..FeatureShape] inputs.</summary>
-    public Tensor Features { get; }
-
-    /// <summary>[Size, ..TargetShape] expected outputs.</summary>
-    public Tensor Targets { get; }
-
-    /// <summary>Zero-based batch number within the epoch.</summary>
-    public int Index { get; }
-
-    /// <summary>Samples in this batch.</summary>
-    public int Size => Features.Shape[0];
-
-    /// <inheritdoc />
-    public void Dispose()
-    {
-        Features.Dispose();
-        Targets.Dispose();
-    }
-}
-
-/// <summary>
 /// Cuts an <see cref="ISampleSource"/> (a <see cref="Dataset"/>, a file source, a view) or an <see cref="ISampleStream"/>
 /// into mini-batches and moves them to a device. Each enumeration is one epoch, reshuffled when <see cref="Shuffle"/> is
 /// on, with the <see cref="Transforms"/> applied to every sample. While the model trains on batch n, batch n+1 is

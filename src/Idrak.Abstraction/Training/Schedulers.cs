@@ -1,11 +1,11 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-namespace Idrak.Optimizers;
+namespace Idrak.Abstraction.Training;
 
 /// <summary>
 /// Changes an optimizer's learning rate over epochs. Call <see cref="Step"/> once per epoch (the
-/// <see cref="Training.Trainer"/> does this when given a scheduler).
+/// <c>Trainer</c> does this when given a scheduler).
 /// </summary>
 public abstract class LearningRateScheduler
 {

@@ -112,7 +112,7 @@ internal static partial class Tests
             var x = Enumerable.Range(0, 32 * 8).Select(_ => r.NextSingle() * 2 - 1).ToArray();
             var t = Enumerable.Range(0, 32 * 3).Select(i => i % 3 == i / 3 % 3 ? 1f : 0f).ToArray();
             using var model = new Sequential(new Linear(8, 16, device: d, random: new Random(5)), new ReLU(), new LayerNorm(16, device: d), new Linear(16, 3, device: d, random: new Random(6)));
-            using var optimizer = new Idrak.Optimizers.AdamW(model.Parameters(), 1e-2f);
+            using var optimizer = new Idrak.Abstraction.Training.AdamW(model.Parameters(), 1e-2f);
             var losses = new List<float>();
             for (int step = 0; step < 5; step++)
             {

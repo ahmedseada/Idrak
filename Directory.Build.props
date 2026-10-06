@@ -11,6 +11,8 @@
        from src/Idrak.Abstraction/buildTransitive. -->
   <ItemGroup>
     <Using Include="Idrak.Abstraction" />
+    <Using Include="Idrak.Abstraction.Data" />
+    <Using Include="Idrak.Abstraction.Training" />
   </ItemGroup>
 
   <!-- NuGet: every project under src/ is a package (samples and tests set IsPackable to false). The release workflow

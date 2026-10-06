@@ -163,7 +163,7 @@ internal static partial class Tests
                 }
             }
 
-            var decoded = Idrak.Data.ImageCodecs.Decode(Path.Combine(root, "cross", "0.png"));
+            var decoded = Idrak.Abstraction.Data.ImageCodecs.Decode(Path.Combine(root, "cross", "0.png"));
             Check(decoded is { Channels: 1, Height: 16, Width: 16 }, "the PNG decoder reads the test image");
             Check(ImageFiles.ReadHeader(Path.Combine(root, "square", "0.pgm")) is { Width: 16, Height: 16, Channels: 1 }, "the PGM header");
 

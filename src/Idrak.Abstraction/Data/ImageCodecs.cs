@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-namespace Idrak.Data;
+namespace Idrak.Abstraction.Data;
 
 /// <summary>What an image file's header says.</summary>
 /// <param name="Width">Pixels per row.</param>
@@ -171,7 +171,7 @@ public interface IImageCodec
 }
 
 /// <summary>
-/// The image formats that <see cref="ImageFolderSource"/> and the command-line tool read, by name (ignoring case). Built
+/// The image formats that <c>ImageFolderSource</c> and the command-line tool read, by name (ignoring case). Built
 /// in, without dependencies: "png" (every bit depth and colour type, interlaced or not, inflated with the zlib in .NET),
 /// "bmp" (1, 4, 8, 16, 24 and 32 bits, uncompressed or with bit fields) and "netpbm" (PGM and PPM, text or binary).
 /// Alpha is dropped. JPEG is not built in: register a codec for it (or any other format) with <see cref="Register"/>.

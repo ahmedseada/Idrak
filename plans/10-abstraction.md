@@ -1,8 +1,7 @@
 # Plan 10: Idrak.Abstraction (every contract, its default implementation, and the public device API)
 
-**Status:** phases 0, 1 and 2 done on the CPU (branch `abstraction`, 2026-10-06): the inventory and the namespace
-test; `Idrak.Abstraction` with the device layer, the CPU device, plan 9's dispatcher (internal), `Tensor` and `Module`.
-GPUs and the decoding benchmarks not yet run for phases 1 and 2. Next: phase 3, the other contracts and registries. It contains plan 9
+**Status:** phases 0 to 2 done (CPU and an RTX 5070 Ti: 880 of 880; CUDA decoding unchanged), phase 3a (training and
+data contracts) done on the CPU (branch `abstraction`, 2026-10-06). Next: phase 3b, the generation contracts. It contains plan 9
 (operations as data) and plan 7's item 12c (devices from outside the library).
 
 ## Goal
@@ -276,6 +275,7 @@ packaged form before the real release.
 | 2 | **Tensors and modules.** Move `Tensor`, autograd, `TensorScope`, `Module` and the module contracts; turn the internals other assemblies use into public or protected members where they belong to the contract, and keep the rest internal behind a narrow, documented bridge during the move | the internals list from phase 0 is empty or justified line by line |
 | 2 (as built) | **2a**: `Tensor` (operations, autograd, decoding and distillation parts), `TensorScope`, `Autograd`, `DifferentiableFunction`, `ActivationMemory`, `MixedPrecision`, `ComputeGraph` move to the root namespace; the 24 internal members that take layer types stay in Idrak as `TensorLayerPaths`; telemetry and offloading reach Idrak through hooks (`OperationTelemetry`, `TensorOffloading`). **2b**: `Module` moves (root namespace); its weights files stay in Idrak as `ModuleFiles` extension methods (`model.Save(path)` unchanged); `Forward`/`Predict` report and stage weights through `ModuleHooks`. `RecurrentModule`, `ICachedModule` and `ILinearAdapter` move in phase 3 with the decoding and adapter contracts | done on the CPU: every internal another library assembly uses is listed with why in `tests/Idrak.Tests/data/internals-justified.txt`, which a test keeps exact (36 lines; Idrak's own use of Abstraction is phase 4's) |
 | 3 | **The other contracts and registries.** Training, generation, data and format contracts of `Idrak`, then those of `LanguageModels`, `Datasets` and `Onnx`, each with its registry and default | every registry lives in Abstraction; the satellites keep only implementations |
+| 3a (as built) | **Training and data.** `Optimizer`, `Sgd`, `Adam`, `AdamW` and the schedules (`Idrak.Abstraction.Training`), `IScaler`; the sample-source contracts, `Batch`, `SampleSources`, and `IImageCodec`/`ImageCodecs` with the PNG, BMP and Netpbm codecs (`Idrak.Abstraction.Data`). Built-ins that live in Idrak (its GPU devices, the csv/images/tokens/npy sources) are registered by `LibraryRegistrations` the first time any registry is used (`LibraryDefaults.Ensure`). Stay in Idrak: `AdamW8Bit`, `GroupedOptimizer`, `HostOptimizer`, the scalers (they take `Dataset`). **Not moved: `ITrainerCallback`** (its `TrainerContext` exposes the concrete `Trainer`; open question 4) | done on the CPU; allow list 66 to 55 |
 | 4 | **Devices on the public API (item 12c).** Remove the last `InternalsVisibleTo` from `Idrak.Abstraction` to `Idrak`; the CUDA, Vulkan and HIP code in `Idrak` builds against the public surface alone | `Idrak.Abstraction` grants no internals; every device passes; `dotnet add package Idrak` behaves as before |
 | 5 | **A device from outside.** A plain-loop reference device in `tests/Idrak.PluginTests`, written against the public API only, passes the conformance kit | the kit (`Idrak.Abstraction.Testing`) runs it green |
 | 6 | **Kernels for plug-ins.** `Autograd.Function`, `GraphOps`, `PackedWeight` and `KeyValueLayout` implementations register device kernels | a plug-in packed format and KV layout run their own device kernel |
@@ -318,6 +318,12 @@ packaged form before the real release.
 6. **A separate package from the start**, not a namespace inside `Idrak` first: the contracts move into the
    `Idrak.Abstraction` assembly and namespace together, so the compiler (not only a test) keeps the GPU devices on the
    public API. The cost is the up-front work on `Tensor`'s internals (phase 2).
+
+## Open (phase 3)
+
+4. `ITrainerCallback` is shaped around Idrak's `Trainer` (`TrainerContext.Trainer`). Either move `Trainer` into
+   Abstraction too (heavy: losses, metrics, data loaders, telemetry), or give the context the parts a callback uses
+   (model, optimizer, epoch, step, history, stop) and drop `TrainerContext.Trainer` in 0.4.0. Proposed: the second.
 
 ## Open (the override loop)
 

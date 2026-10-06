@@ -88,7 +88,7 @@ public sealed record Detection(BoundingBox Box, int Class, float Score, string? 
 public interface IObjectDetector
 {
     /// <summary>The objects in <paramref name="image"/>, in its pixel coordinates.</summary>
-    IReadOnlyList<Detection> Detect(Data.ImageData image);
+    IReadOnlyList<Detection> Detect(Abstraction.Data.ImageData image);
 }
 
 /// <summary>

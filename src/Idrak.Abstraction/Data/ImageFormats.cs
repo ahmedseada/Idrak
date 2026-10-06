@@ -5,7 +5,7 @@ using System.Buffers.Binary;
 using System.IO.Compression;
 using System.Numerics;
 
-namespace Idrak.Data;
+namespace Idrak.Abstraction.Data;
 
 // The built-in image codecs of ImageCodecs: PNG, BMP and Netpbm, decoded without dependencies.
 
