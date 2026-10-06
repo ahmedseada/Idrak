@@ -443,8 +443,9 @@ internal static partial class Tests
         }
 
         line($"`Idrak.Abstraction.Devices.Backend` ({Visibility(backend)}): {operations.Count(m => m.IsAbstract)} abstract and {operations.Count(m => !m.IsAbstract)} virtual "
-             + $"methods, {properties.Count} abstract or virtual properties. Devices: {string.Join(", ", devices.Select(d => $"`{d.Name}`"))}. Plan 9 turns");
-        line("the methods into operation descriptors with kernels per device; the CPU device becomes every device's host fallback.");
+             + $"methods, {properties.Count} abstract or virtual properties. Devices: {string.Join(", ", devices.Select(d => $"`{d.Name}`"))}. Each");
+        line($"operation ({Idrak.Abstraction.Operations.OperationIndex.Count}, `Ops`) is a `NameKernel` method, the device's own kernel; `Backend.Name(...)` runs the kernel registered");
+        line("for the device in `Kernels` instead, where there is one (plan 9). The rest is device plumbing: memory, copies, graphs, profiling.");
         line("");
         line("| Device | Methods overridden |");
         line("|---|---|");

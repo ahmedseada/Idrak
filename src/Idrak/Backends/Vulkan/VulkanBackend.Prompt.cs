@@ -23,12 +23,12 @@ internal sealed partial class VulkanBackend
 
     // ------------------------------------------------------------------ attention over many rows
 
-    public override void AttentionTiled(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage? logSumExp, int heads,
+    public override void AttentionTiledKernel(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage? logSumExp, int heads,
         int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
         if (dim <= 0 || dim > VulkanKernels.AttentionMaxDim || steps <= 0 || !Fit(q, keys, values, position, y) || logSumExp is not null && !Fit(logSumExp))
         {
-            base.AttentionTiled(q, keys, values, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+            base.AttentionTiledKernel(q, keys, values, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
             return;
         }
 
@@ -131,7 +131,7 @@ internal sealed partial class VulkanBackend
 
     // ------------------------------------------------------------------ packed products for many rows
 
-    public override bool PackedMatMulLarge(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k)
+    public override bool PackedMatMulLargeKernel(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k)
     {
         var f = (VulkanKernels.PackedFormat)(int)format;
         if (m < 1 || n < 1 || k < 1 || f != VulkanKernels.PackedFormat.BFloat16 && scales is null || !FitPacked(x, packed, scales, y))

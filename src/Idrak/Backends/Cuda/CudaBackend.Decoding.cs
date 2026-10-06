@@ -8,17 +8,17 @@ namespace Idrak.Backends.Cuda;
 // Fused inference kernels, incremental-decoding kernels and CUDA Graph capture/replay.
 internal sealed unsafe partial class CudaBackend
 {
-    public override void ScaleMaskSoftmax(Storage x, Storage? mask, Storage y, int rows, int cols, int maskRows, float scale) =>
+    public override void ScaleMaskSoftmaxKernel(Storage x, Storage? mask, Storage y, int rows, int cols, int maskRows, float scale) =>
         LaunchRows(K("scale_mask_softmax_f32"), rows, P(x), mask is null ? P(x) : P(mask), P(y),
             U(cols), U(Math.Max(maskRows, 1)), F(scale), U(mask is null ? 0 : 1), U(rows));
 
-    public override void LayerNormFused(Storage x, Storage gamma, Storage beta, Storage y, int rows, int cols, float eps) =>
+    public override void LayerNormFusedKernel(Storage x, Storage gamma, Storage beta, Storage y, int rows, int cols, float eps) =>
         LaunchRows(K("layernorm_fused_f32"), rows, P(x), P(gamma), P(beta), P(y), U(cols), F(eps), U(rows));
 
-    public override void LayerNormTrain(Storage x, Storage gamma, Storage beta, Storage y, Storage stats, int rows, int cols, float eps) =>
+    public override void LayerNormTrainKernel(Storage x, Storage gamma, Storage beta, Storage y, Storage stats, int rows, int cols, float eps) =>
         LaunchRows(K("layernorm_train_f32"), rows, P(x), P(gamma), P(beta), P(y), P(stats), U(cols), F(eps), U(rows));
 
-    public override void LayerNormBackward(Storage x, Storage gamma, Storage dy, Storage stats, Storage? dx, Storage? dgamma, Storage? dbeta, int rows, int cols)
+    public override void LayerNormBackwardKernel(Storage x, Storage gamma, Storage dy, Storage stats, Storage? dx, Storage? dgamma, Storage? dbeta, int rows, int cols)
     {
         if (dx is not null)
         {
@@ -33,22 +33,22 @@ internal sealed unsafe partial class CudaBackend
         }
     }
 
-    public override void BiasGelu(Storage x, Storage bias, Storage y, int n, int cols) =>
+    public override void BiasGeluKernel(Storage x, Storage bias, Storage y, int n, int cols) =>
         Launch1D(K("bias_gelu_f32"), n, P(x), P(bias), P(y), U(cols), U(n));
 
-    public override void DecoderMask(Storage position, Storage mask, int rows, int capacity)
+    public override void DecoderMaskKernel(Storage position, Storage mask, int rows, int capacity)
     {
         int n = rows * capacity;
         Launch1D(K("decoder_mask_f32"), n, P(position), P(mask), U(capacity), U(n));
     }
 
-    public override void KeyValueWrite(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
+    public override void KeyValueWriteKernel(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
     {
         int n = heads * steps * dim;
         Launch1D(K("kv_write_f32"), n, P(source), P(cache), P(position), U(steps * dim), U(capacity * dim), U(dim), U(n));
     }
 
-    public override void SampleRows(Storage logits, Storage ids, Storage stats, Storage step, int rows, int vocabulary,
+    public override void SampleRowsKernel(Storage logits, Storage ids, Storage stats, Storage step, int rows, int vocabulary,
         int rowStride, int rowOffset, float temperature, int topK, float topP, float minP, uint seed)
     {
         float invT = 1f / MathF.Max(temperature, 1e-3f);
@@ -80,12 +80,12 @@ internal sealed unsafe partial class CudaBackend
         }
     }
 
-    public override void PenalizeRows(Storage logits, Storage work, Storage history, Storage length, int rows, int vocabulary,
+    public override void PenalizeRowsKernel(Storage logits, Storage work, Storage history, Storage length, int rows, int vocabulary,
         int rowStride, int rowOffset, int capacity, int lastN, float repeat, float presence, float frequency) =>
         LaunchRows(K("penalize_rows_f32"), rows, P(logits), P(work), P(history), P(length),
             U(vocabulary), U(rowStride), U(rowOffset), U(capacity), U(Math.Min(lastN, capacity)), F(repeat), F(presence), F(frequency), U(rows), U(rows));
 
-    public override void HistoryPush(Storage ids, Storage history, Storage length, int rows, int capacity) =>
+    public override void HistoryPushKernel(Storage ids, Storage history, Storage length, int rows, int capacity) =>
         Launch1D(K("history_push_f32"), rows, P(ids), P(history), P(length), U(capacity), U(rows), U(rows));
 
     public override bool SupportsGraphs => true;

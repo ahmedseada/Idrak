@@ -36,7 +36,7 @@ internal sealed partial class CpuBackend
         });
     }
 
-    public override void BatchedMatMul(Storage a, Storage b, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
+    public override void BatchedMatMulKernel(Storage a, Storage b, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
     {
         float[] av = D(a), bv = D(b), cv = D(c);
         if (batch == 1)
@@ -56,7 +56,7 @@ internal sealed partial class CpuBackend
         });
     }
 
-    public override void Softmax(Storage x, Storage y, int rows, int cols, bool log)
+    public override void SoftmaxKernel(Storage x, Storage y, int rows, int cols, bool log)
     {
         float[] xv = D(x), yv = D(y);
         For(rows, (long)rows * cols * 8, (start, end) =>
@@ -100,7 +100,7 @@ internal sealed partial class CpuBackend
         });
     }
 
-    public override void SoftmaxBackward(Storage y, Storage dy, Storage dx, int rows, int cols, bool log)
+    public override void SoftmaxBackwardKernel(Storage y, Storage dy, Storage dx, int rows, int cols, bool log)
     {
         float[] yv = D(y), gv = D(dy), dv = D(dx);
         For(rows, (long)rows * cols * 4, (start, end) =>
@@ -137,7 +137,7 @@ internal sealed partial class CpuBackend
         return best;
     }
 
-    public override void ArgMax(Storage x, Storage y, int rows, int cols)
+    public override void ArgMaxKernel(Storage x, Storage y, int rows, int cols)
     {
         float[] xv = D(x), yv = D(y);
         for (int r = 0; r < rows; r++)
@@ -146,7 +146,7 @@ internal sealed partial class CpuBackend
         }
     }
 
-    public override void ClassMatch(Storage predictions, Storage targets, Storage y, int rows, int cols, float threshold)
+    public override void ClassMatchKernel(Storage predictions, Storage targets, Storage y, int rows, int cols, float threshold)
     {
         float[] pv = D(predictions), tv = D(targets), yv = D(y);
         for (int r = 0; r < rows; r++)
@@ -158,7 +158,7 @@ internal sealed partial class CpuBackend
         }
     }
 
-    public override void NormStats(Storage x, Storage mean, Storage variance, Storage invStd, int outer, int groups, int inner, float eps)
+    public override void NormStatsKernel(Storage x, Storage mean, Storage variance, Storage invStd, int outer, int groups, int inner, float eps)
     {
         var s1 = new double[groups];
         var s2 = new double[groups];
@@ -334,7 +334,7 @@ internal sealed partial class CpuBackend
     }
 
 
-    public override void NormApply(Storage x, Storage mean, Storage invStd, Storage y, int outer, int groups, int inner)
+    public override void NormApplyKernel(Storage x, Storage mean, Storage invStd, Storage y, int outer, int groups, int inner)
     {
         // (x - mean) * invStd == x * invStd + (-mean * invStd)
         float[] mv = D(mean), sv = D(invStd);
@@ -349,7 +349,7 @@ internal sealed partial class CpuBackend
     }
 
 
-    public override void NormBackward(Storage dxhat, Storage xhat, Storage sum1, Storage sum2, Storage invStd, Storage dx, int outer, int groups, int inner)
+    public override void NormBackwardKernel(Storage dxhat, Storage xhat, Storage sum1, Storage sum2, Storage invStd, Storage dx, int outer, int groups, int inner)
     {
         // dx += invStd/M * (M*dxhat - s1 - xhat*s2): two fused affine passes, dx += dxhat*invStd, then dx += xhat*(-invStd*s2/M) - invStd*s1/M.
         float[] s1 = D(sum1), s2 = D(sum2), sv = D(invStd);
@@ -370,7 +370,7 @@ internal sealed partial class CpuBackend
     }
 
 
-    public override void GroupScaleShift(Storage x, Storage? scale, Storage? shift, Storage y, int n, int groups, int inner, bool accumulate)
+    public override void GroupScaleShiftKernel(Storage x, Storage? scale, Storage? shift, Storage y, int n, int groups, int inner, bool accumulate)
     {
         var sc = scale is null ? Enumerable.Repeat(1f, groups).ToArray() : D(scale).AsSpan(0, groups).ToArray();
         var sh = shift is null ? new float[groups] : D(shift).AsSpan(0, groups).ToArray();
@@ -378,7 +378,7 @@ internal sealed partial class CpuBackend
     }
 
 
-    public override void GroupReduce(Storage a, Storage? b, Storage sumA, Storage? sumAB, int outer, int groups, int inner)
+    public override void GroupReduceKernel(Storage a, Storage? b, Storage sumA, Storage? sumAB, int outer, int groups, int inner)
     {
         var s1 = new double[groups];
         var s2 = new double[groups];
@@ -396,7 +396,7 @@ internal sealed partial class CpuBackend
     }
 
 
-    public override void InvSqrt(Storage x, Storage y, int n, float eps)
+    public override void InvSqrtKernel(Storage x, Storage y, int n, float eps)
     {
         float[] xv = D(x), yv = D(y);
         for (int i = 0; i < n; i++)
@@ -405,7 +405,7 @@ internal sealed partial class CpuBackend
         }
     }
 
-    public override void Gather(Storage table, Storage indices, Storage y, int count, int dim, int vocabulary)
+    public override void GatherKernel(Storage table, Storage indices, Storage y, int count, int dim, int vocabulary)
     {
         float[] tv = D(table), iv = D(indices), yv = D(y);
         for (int i = 0; i < count; i++)
@@ -415,7 +415,7 @@ internal sealed partial class CpuBackend
         }
     }
 
-    public override void OneHot(Storage indices, Storage y, int count, int classes)
+    public override void OneHotKernel(Storage indices, Storage y, int count, int classes)
     {
         float[] iv = D(indices), yv = D(y);
         yv.AsSpan(0, count * classes).Clear();
@@ -425,7 +425,7 @@ internal sealed partial class CpuBackend
         }
     }
 
-    public override void GatherBFloat16(Storage packed, Storage indices, Storage y, int count, int dim, int vocabulary)
+    public override void GatherBFloat16Kernel(Storage packed, Storage indices, Storage y, int count, int dim, int vocabulary)
     {
         var halves = System.Runtime.InteropServices.MemoryMarshal.Cast<float, ushort>(D(packed).AsSpan());
         float[] iv = D(indices), yv = D(y);
@@ -441,7 +441,7 @@ internal sealed partial class CpuBackend
         }
     }
 
-    public override void ScatterAdd(Storage dy, Storage indices, Storage dtable, int count, int dim, int vocabulary)
+    public override void ScatterAddKernel(Storage dy, Storage indices, Storage dtable, int count, int dim, int vocabulary)
     {
         float[] gv = D(dy), iv = D(indices), tv = D(dtable);
         for (int i = 0; i < count; i++)
@@ -478,7 +478,7 @@ internal sealed partial class CpuBackend
         }
     }
 
-    public override void Im2Col(Storage x, Storage cols, in ConvGeometry g)
+    public override void Im2ColKernel(Storage x, Storage cols, in ConvGeometry g)
     {
         float[] xv = D(x), cv = D(cols);
         var geo = g;
@@ -528,7 +528,7 @@ internal sealed partial class CpuBackend
     }
 
 
-    public override void Col2Im(Storage dcols, Storage dx, in ConvGeometry g)
+    public override void Col2ImKernel(Storage dcols, Storage dx, in ConvGeometry g)
     {
         float[] cv = D(dcols), dv = D(dx);
         var geo = g;
@@ -583,7 +583,7 @@ internal sealed partial class CpuBackend
     }
 
 
-    public override void MaxPool(Storage x, Storage y, Storage argmax, in ConvGeometry g)
+    public override void MaxPoolKernel(Storage x, Storage y, Storage argmax, in ConvGeometry g)
     {
         float[] xv = D(x), yv = D(y), av = D(argmax);
         var geo = g;
@@ -634,7 +634,7 @@ internal sealed partial class CpuBackend
 
 
 
-    public override void MaxPoolBackward(Storage dy, Storage argmax, Storage dx, int count)
+    public override void MaxPoolBackwardKernel(Storage dy, Storage argmax, Storage dx, int count)
     {
         float[] gv = D(dy), dv = D(dx);
         var indices = MemoryMarshal.Cast<float, int>(D(argmax).AsSpan(0, count));
@@ -644,7 +644,7 @@ internal sealed partial class CpuBackend
         }
     }
 
-    public override void Permute(Storage x, Storage y, ReadOnlySpan<int> outShape, ReadOnlySpan<int> inStrides, bool accumulate)
+    public override void PermuteKernel(Storage x, Storage y, ReadOnlySpan<int> outShape, ReadOnlySpan<int> inStrides, bool accumulate)
     {
         float[] xv = D(x), yv = D(y);
         int rank = outShape.Length;
@@ -706,7 +706,7 @@ internal sealed partial class CpuBackend
         }
     }
 
-    public override void SumAxis(Storage x, Storage y, int outer, int dim, int inner, float scale, bool accumulate)
+    public override void SumAxisKernel(Storage x, Storage y, int outer, int dim, int inner, float scale, bool accumulate)
     {
         float[] xv = D(x), yv = D(y);
         For(outer, (long)outer * dim * inner, (start, end) =>
@@ -729,7 +729,7 @@ internal sealed partial class CpuBackend
         });
     }
 
-    public override void BroadcastAxis(Storage dy, Storage dx, int outer, int dim, int inner, float scale)
+    public override void BroadcastAxisKernel(Storage dy, Storage dx, int outer, int dim, int inner, float scale)
     {
         float[] gv = D(dy), dv = D(dx);
         For(outer, (long)outer * dim * inner, (start, end) =>
@@ -751,7 +751,7 @@ internal sealed partial class CpuBackend
 
     // ------------------------------------------------------------ element-wise kernels
 
-    private readonly struct ExpKernel(float[] x, float[] y) : IRangeKernel
+    private readonly struct ExpLoop(float[] x, float[] y) : IRangeKernel
     {
         public void Execute(int start, int end)
         {
@@ -771,7 +771,7 @@ internal sealed partial class CpuBackend
         }
     }
 
-    private readonly struct LogKernel(float[] x, float[] y) : IRangeKernel
+    private readonly struct LogLoop(float[] x, float[] y) : IRangeKernel
     {
         public void Execute(int start, int end)
         {
@@ -791,7 +791,7 @@ internal sealed partial class CpuBackend
         }
     }
 
-    private readonly struct LogBackwardKernel(float[] x, float[] dy, float[] dx) : IRangeKernel
+    private readonly struct LogBackwardLoop(float[] x, float[] dy, float[] dx) : IRangeKernel
     {
         public void Execute(int start, int end)
         {
@@ -810,7 +810,7 @@ internal sealed partial class CpuBackend
     private static Vector<float> TanhVector(Vector<float> u) =>
         Vector<float>.One - new Vector<float>(2f) / (Vector.Exp(u + u) + Vector<float>.One);
 
-    private readonly struct GeluKernel(float[] x, float[] y) : IRangeKernel
+    private readonly struct GeluLoop(float[] x, float[] y) : IRangeKernel
     {
         public void Execute(int start, int end)
         {
@@ -836,7 +836,7 @@ internal sealed partial class CpuBackend
         }
     }
 
-    private readonly struct GeluBackwardKernel(float[] x, float[] dy, float[] dx) : IRangeKernel
+    private readonly struct GeluBackwardLoop(float[] x, float[] dy, float[] dx) : IRangeKernel
     {
         public void Execute(int start, int end)
         {

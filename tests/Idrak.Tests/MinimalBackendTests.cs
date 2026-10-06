@@ -29,6 +29,8 @@ internal static partial class Tests
 
         public override BackendCapabilities Capabilities => CpuBackend.Instance.Capabilities;
 
+        public override string Kind => "minimal";
+
         public override string Name => "minimal (memory and copies only)";
 
         public int Calls;

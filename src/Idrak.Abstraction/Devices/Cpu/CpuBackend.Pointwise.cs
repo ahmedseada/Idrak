@@ -8,28 +8,28 @@ namespace Idrak.Abstraction.Devices.Cpu;
 // rounding), split across cores like the other element-wise kernels; the reference the GPU kernels are checked against.
 internal sealed partial class CpuBackend
 {
-    public override void ExtremumBackward(BinaryOp op, Storage a, Storage b, Storage dy, Storage? da, Storage? db, int n) =>
-        Run(new ExtremumBackwardKernel(op == BinaryOp.Minimum, D(a), D(b), D(dy), da is null ? null : D(da), db is null ? null : D(db)), n);
+    public override void ExtremumBackwardKernel(BinaryOp op, Storage a, Storage b, Storage dy, Storage? da, Storage? db, int n) =>
+        Run(new ExtremumBackwardLoop(op == BinaryOp.Minimum, D(a), D(b), D(dy), da is null ? null : D(da), db is null ? null : D(db)), n);
 
-    public override void Pow(Storage x, Storage y, int n, float exponent) => Run(new PowKernel(D(x), D(y), exponent), n);
+    public override void PowKernel(Storage x, Storage y, int n, float exponent) => Run(new PowLoop(D(x), D(y), exponent), n);
 
-    public override void PowBackward(Storage x, Storage dy, Storage dx, int n, float exponent) => Run(new PowBackwardKernel(D(x), D(dy), D(dx), exponent), n);
+    public override void PowBackwardKernel(Storage x, Storage dy, Storage dx, int n, float exponent) => Run(new PowBackwardLoop(D(x), D(dy), D(dx), exponent), n);
 
-    public override void Clamp(Storage x, Storage y, int n, float min, float max) => Run(new ClampKernel(D(x), D(y), min, max), n);
+    public override void ClampKernel(Storage x, Storage y, int n, float min, float max) => Run(new ClampLoop(D(x), D(y), min, max), n);
 
-    public override void ClampBackward(Storage x, Storage dy, Storage dx, int n, float min, float max) => Run(new ClampBackwardKernel(D(x), D(dy), D(dx), min, max), n);
+    public override void ClampBackwardKernel(Storage x, Storage dy, Storage dx, int n, float min, float max) => Run(new ClampBackwardLoop(D(x), D(dy), D(dx), min, max), n);
 
-    public override void Where(Storage condition, Storage a, Storage b, Storage y, int n) => Run(new WhereKernel(D(condition), D(a), D(b), D(y)), n);
+    public override void WhereKernel(Storage condition, Storage a, Storage b, Storage y, int n) => Run(new WhereLoop(D(condition), D(a), D(b), D(y)), n);
 
-    public override void WhereBackward(Storage condition, Storage dy, Storage? da, Storage? db, int n) =>
-        Run(new WhereBackwardKernel(D(condition), D(dy), da is null ? null : D(da), db is null ? null : D(db)), n);
+    public override void WhereBackwardKernel(Storage condition, Storage dy, Storage? da, Storage? db, int n) =>
+        Run(new WhereBackwardLoop(D(condition), D(dy), da is null ? null : D(da), db is null ? null : D(db)), n);
 
     // sign(x): -1, 0 or 1, and NaN for NaN (MathF.Sign throws on NaN).
     private static float SignOf(float x) => x > 0f ? 1f : x < 0f ? -1f : x;
 
     private static float SigmoidOf(float x) => 1f / (1f + MathF.Exp(-x));
 
-    private readonly struct MathKernel(UnaryOp op, float[] x, float[] y) : IRangeKernel
+    private readonly struct MathLoop(UnaryOp op, float[] x, float[] y) : IRangeKernel
     {
         public void Execute(int start, int end)
         {
@@ -57,7 +57,7 @@ internal sealed partial class CpuBackend
     }
 
     // dx += dy · op'(x); sqrt's slope comes from y = sqrt(x), sign's is zero.
-    private readonly struct MathBackwardKernel(UnaryOp op, float[] x, float[] y, float[] dy, float[] dx) : IRangeKernel
+    private readonly struct MathBackwardLoop(UnaryOp op, float[] x, float[] y, float[] dy, float[] dx) : IRangeKernel
     {
         public void Execute(int start, int end)
         {
@@ -88,7 +88,7 @@ internal sealed partial class CpuBackend
         }
     }
 
-    private readonly struct ExtremumKernel(bool minimum, float[] a, float[] b, float[] c) : IRangeKernel
+    private readonly struct ExtremumLoop(bool minimum, float[] a, float[] b, float[] c) : IRangeKernel
     {
         public void Execute(int start, int end)
         {
@@ -104,7 +104,7 @@ internal sealed partial class CpuBackend
     }
 
     // Ties go to a.
-    private readonly struct ExtremumBackwardKernel(bool minimum, float[] a, float[] b, float[] dy, float[]? da, float[]? db) : IRangeKernel
+    private readonly struct ExtremumBackwardLoop(bool minimum, float[] a, float[] b, float[] dy, float[]? da, float[]? db) : IRangeKernel
     {
         public void Execute(int start, int end)
         {
@@ -117,7 +117,7 @@ internal sealed partial class CpuBackend
         }
     }
 
-    private readonly struct PowKernel(float[] x, float[] y, float exponent) : IRangeKernel
+    private readonly struct PowLoop(float[] x, float[] y, float exponent) : IRangeKernel
     {
         public void Execute(int start, int end)
         {
@@ -125,7 +125,7 @@ internal sealed partial class CpuBackend
         }
     }
 
-    private readonly struct PowBackwardKernel(float[] x, float[] dy, float[] dx, float exponent) : IRangeKernel
+    private readonly struct PowBackwardLoop(float[] x, float[] dy, float[] dx, float exponent) : IRangeKernel
     {
         public void Execute(int start, int end)
         {
@@ -138,7 +138,7 @@ internal sealed partial class CpuBackend
         }
     }
 
-    private readonly struct ClampKernel(float[] x, float[] y, float min, float max) : IRangeKernel
+    private readonly struct ClampLoop(float[] x, float[] y, float min, float max) : IRangeKernel
     {
         public void Execute(int start, int end)
         {
@@ -146,7 +146,7 @@ internal sealed partial class CpuBackend
         }
     }
 
-    private readonly struct ClampBackwardKernel(float[] x, float[] dy, float[] dx, float min, float max) : IRangeKernel
+    private readonly struct ClampBackwardLoop(float[] x, float[] dy, float[] dx, float min, float max) : IRangeKernel
     {
         public void Execute(int start, int end)
         {
@@ -157,7 +157,7 @@ internal sealed partial class CpuBackend
         }
     }
 
-    private readonly struct WhereKernel(float[] condition, float[] a, float[] b, float[] y) : IRangeKernel
+    private readonly struct WhereLoop(float[] condition, float[] a, float[] b, float[] y) : IRangeKernel
     {
         public void Execute(int start, int end)
         {
@@ -165,7 +165,7 @@ internal sealed partial class CpuBackend
         }
     }
 
-    private readonly struct WhereBackwardKernel(float[] condition, float[] dy, float[]? da, float[]? db) : IRangeKernel
+    private readonly struct WhereBackwardLoop(float[] condition, float[] dy, float[]? da, float[]? db) : IRangeKernel
     {
         public void Execute(int start, int end)
         {

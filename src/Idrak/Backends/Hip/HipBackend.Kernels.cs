@@ -200,7 +200,7 @@ internal sealed unsafe partial class HipBackend
 
     private static ulong U(int value) => (uint)value;
 
-    public override void Binary(BinaryOp op, Storage a, Storage b, Storage c, int n)
+    public override void BinaryKernel(BinaryOp op, Storage a, Storage b, Storage c, int n)
     {
         string name = op switch
         {
@@ -211,11 +211,11 @@ internal sealed unsafe partial class HipBackend
         };
         if (!Elements(name, n, P(a), P(b), P(c), U(n)))
         {
-            base.Binary(op, a, b, c, n);
+            base.BinaryKernel(op, a, b, c, n);
         }
     }
 
-    public override void Unary(UnaryOp op, Storage x, Storage y, int n)
+    public override void UnaryKernel(UnaryOp op, Storage x, Storage y, int n)
     {
         string? name = op switch
         {
@@ -230,59 +230,59 @@ internal sealed unsafe partial class HipBackend
         };
         if (name is null || !Elements(name, n, P(x), P(y), U(n)))
         {
-            base.Unary(op, x, y, n);
+            base.UnaryKernel(op, x, y, n);
         }
     }
 
-    public override void Axpy(Storage x, Storage y, int n, float alpha)
+    public override void AxpyKernel(Storage x, Storage y, int n, float alpha)
     {
         if (!Elements("axpy_f32", n, P(x), P(y), U(n), F(alpha)))
         {
-            base.Axpy(x, y, n, alpha);
+            base.AxpyKernel(x, y, n, alpha);
         }
     }
 
-    public override void Affine(Storage x, Storage y, int n, float alpha, float beta)
+    public override void AffineKernel(Storage x, Storage y, int n, float alpha, float beta)
     {
         if (!Elements("affine_f32", n, P(x), P(y), U(n), F(alpha), F(beta)))
         {
-            base.Affine(x, y, n, alpha, beta);
+            base.AffineKernel(x, y, n, alpha, beta);
         }
     }
 
-    public override void MulAdd(Storage a, Storage b, Storage c, int n)
+    public override void MulAddKernel(Storage a, Storage b, Storage c, int n)
     {
         if (!Elements("muladd_f32", n, P(a), P(b), P(c), U(n)))
         {
-            base.MulAdd(a, b, c, n);
+            base.MulAddKernel(a, b, c, n);
         }
     }
 
-    public override void AddRowVector(Storage a, Storage v, Storage c, int rows, int cols)
+    public override void AddRowVectorKernel(Storage a, Storage v, Storage c, int rows, int cols)
     {
         if (cols <= 0 || !Elements("add_rowvec_f32", (long)rows * cols, P(a), P(v), P(c), U(rows), U(cols)))
         {
-            base.AddRowVector(a, v, c, rows, cols);
+            base.AddRowVectorKernel(a, v, c, rows, cols);
         }
     }
 
-    public override void RmsNorm(Storage x, Storage y, Storage inv, int rows, int cols, float eps)
+    public override void RmsNormKernel(Storage x, Storage y, Storage inv, int rows, int cols, float eps)
     {
         if (!Rows("rms_norm_f32", rows, P(x), P(y), P(inv), U(rows), U(cols), F(eps)))
         {
-            base.RmsNorm(x, y, inv, rows, cols, eps);
+            base.RmsNormKernel(x, y, inv, rows, cols, eps);
         }
     }
 
-    public override void RmsNormAffine(Storage x, Storage gain, Storage y, int rows, int cols, float eps, float offset)
+    public override void RmsNormAffineKernel(Storage x, Storage gain, Storage y, int rows, int cols, float eps, float offset)
     {
         if (!Rows("rms_norm_affine_f32", rows, P(x), P(gain), P(y), U(rows), U(cols), F(eps), F(offset)))
         {
-            base.RmsNormAffine(x, gain, y, rows, cols, eps, offset);
+            base.RmsNormAffineKernel(x, gain, y, rows, cols, eps, offset);
         }
     }
 
-    public override void Int8MatMul(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
+    public override void Int8MatMulKernel(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
     {
         // One thread per output: column blocks along x, rows along y (within the reported grid limits).
         if (Kernel("int8_matmul_f32") is { } function)
@@ -300,6 +300,6 @@ internal sealed unsafe partial class HipBackend
             }
         }
 
-        base.Int8MatMul(x, q, scales, y, m, n, k);
+        base.Int8MatMulKernel(x, q, scales, y, m, n, k);
     }
 }

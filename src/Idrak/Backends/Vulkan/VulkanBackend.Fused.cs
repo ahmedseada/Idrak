@@ -113,7 +113,7 @@ internal sealed partial class VulkanBackend
 
     // ------------------------------------------------------------------ several products sharing an input
 
-    public override bool PackedMatMulMany(PackedFormat format, Storage x, int m, int k,
+    public override bool PackedMatMulManyKernel(PackedFormat format, Storage x, int m, int k,
         ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products)
     {
         if (FusedOff || KernelFormat(format) is not { } f || products.Length is 0 or > 3 || m <= 0 || m > Capabilities.FewRows || k <= 0)
@@ -214,7 +214,7 @@ internal sealed partial class VulkanBackend
 
     // ------------------------------------------------------------------ gate and up with the activation
 
-    public override bool PackedMatMulGatedPair(PackedFormat format, int activation, Storage x, int m, int k,
+    public override bool PackedMatMulGatedPairKernel(PackedFormat format, int activation, Storage x, int m, int k,
         ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products, Storage hidden)
     {
         if (FusedOff || KernelFormat(format) is not { } f || products.Length != 2 || products[0].Columns != products[1].Columns || products[0].Columns <= 0
@@ -306,7 +306,7 @@ internal sealed partial class VulkanBackend
 
     // ------------------------------------------------------------------ a down projection reading the activation
 
-    public override bool PackedMatMulGated(PackedFormat format, int activation, Storage gate, Storage up, Storage packed, Storage? scales, Storage y,
+    public override bool PackedMatMulGatedKernel(PackedFormat format, int activation, Storage gate, Storage up, Storage packed, Storage? scales, Storage y,
         int m, int n, int k)
     {
         if (FusedOff || KernelFormat(format) is not { } f || activation is not (0 or 1) || m <= 0 || m > Capabilities.FewRows || n <= 0 || k <= 0
@@ -392,7 +392,7 @@ internal sealed partial class VulkanBackend
 
     // ------------------------------------------------------------------ a projection, its residual and the next norm
 
-    public override bool PackedMatMulAddRmsNorm(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k,
+    public override bool PackedMatMulAddRmsNormKernel(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k,
         Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset)
     {
         if (FusedOff || KernelFormat(format) is not { } f || m <= 0 || m > Capabilities.FewRows || n <= 0 || k <= 0
@@ -450,7 +450,7 @@ internal sealed partial class VulkanBackend
 
     // ------------------------------------------------------------------ attention heads: norms, rotation, layout, cache
 
-    public override bool NormRopeHeads(Storage q, Storage k, Storage v, int batch, int steps, int heads, int kvHeads, int cols,
+    public override bool NormRopeHeadsKernel(Storage q, Storage k, Storage v, int batch, int steps, int heads, int kvHeads, int cols,
         Storage? gainQ, float epsQ, float offsetQ, Storage? gainK, float epsK, float offsetK, Storage? cos, Storage? sin, Storage? positions,
         int half, bool interleaved, Storage yq, Storage yk, Storage yv, Storage? position, int capacity, int stride, bool bfloat16)
     {

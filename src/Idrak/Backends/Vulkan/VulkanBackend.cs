@@ -260,6 +260,8 @@ internal sealed unsafe partial class VulkanBackend : Backend
     /// operation can (VulkanBackend.LargeStorage.cs), else take the host fallback.</summary>
     public long MaxStorageBytes { get; private set; }
 
+    public override string Kind => "vulkan";
+
     public override string Name { get; }
 
     public override BackendCapabilities Capabilities { get; } = CpuBackend.Instance.Capabilities with

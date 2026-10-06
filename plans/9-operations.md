@@ -1,6 +1,7 @@
 # Plan 9: operations as data (one dispatcher, kernels per device)
 
-**Status:** planned (branch `abstraction`, 2026-10-05). Nothing built yet. Part of plan 10 (`Idrak.Abstraction`): its
+**Status:** phase 1 done (branch `abstraction`, 2026-10-06, as plan 10's phase 1b): descriptors, the kernel table and
+the dispatcher, internal; phases 0 and 2 to 5 not started. Part of plan 10 (`Idrak.Abstraction`): its
 dispatcher and descriptors live there, and its phases 1 to 5 map onto plan 10's phases 1, 3, 4, 5 and 6.
 
 ## Why
@@ -52,11 +53,30 @@ one other real GPU before merging), and the decoding benchmarks within 2% of the
 | # | Phase | Done when |
 |---|---|---|
 | 0 | **Inventory**: a generated catalogue of the 136 operations (inputs, outputs, attributes, which backends run each natively, which fall back). A test regenerates it and fails when it drifts | `plans/9-operations-catalogue.md` exists and the test keeps it current |
-| 1 | **Descriptors and the dispatcher, internal**: `Op`, kernel keys, requirements, the table and the cached resolution. The existing virtual methods are registered as kernels by an adapter, so nothing changes in behaviour | every call site goes through the dispatcher; 434 of 434 on every device; a micro-benchmark of a million tiny dispatches within 1% of the virtual call |
+| 1 | **Descriptors and the dispatcher, internal**: `Op`, kernel keys, requirements, the table and the cached resolution. The existing virtual methods are registered as kernels by an adapter, so nothing changes in behaviour | done, see "Phase 1 as built" below; the 1% micro-benchmark bar was not met (about 1 ns per call, measured) and the decoding gate is to be measured on a quiet machine |
 | 2 | **The chain made visible**: per device and operation, which kernel ran (device, composed, host); `idrak kernels -d vulkan:0` lists it; profiling, tracing and host-call counting move into the dispatcher | the host-call counters are read from the dispatcher; `idrak kernels` output is tested |
 | 3 | **Backends register kernels directly**, one at a time (minimal, HIP, Vulkan, CUDA, CPU): overrides become registrations, and `Backend` shrinks to memory, copies, synchronization, capabilities and graph hooks | `Backend` has about 15 members; no operation is a virtual method any more |
 | 4 | **Public device API (item 12c)**: public `DeviceProvider`, storage, the kernel table and `Kernels.Register`. A conformance kit (the operation tests, runnable against any registered device) and a device written outside the library in `tests/Idrak.PluginTests` (a plain-loop reference device) prove it | an outside assembly registers a device that passes the conformance kit; README and plans/7 updated |
 | 5 | **Kernels for plug-ins**: `Autograd.Function`, `GraphOps`, `PackedWeight` and `KeyValueLayout` implementations can register device kernels, so a plug-in format gets fast paths instead of the generic one | a packed format and a KV layout from the plug-in tests run a registered device kernel (checked through `idrak kernels`) |
+
+## Phase 1 as built (2026-10-06)
+
+- **Operations**: the 109 compute methods of `Backend` are renamed `NameKernel` (the device's own kernel, its default
+  body the host fallback, as before); 15 members stay device plumbing (copies, graph capture, profiling, and the
+  questions a caller asks before choosing a path: `PrefersPackedMatMul`, `SupportsSegmentedAttention`, ...).
+- **Generated** by `tools/operations/generate.py` from those declarations: a descriptor per operation (`Ops.Softmax`,
+  overloads numbered: `MaxPoolBackward2`), its slot (`OperationIndex`), its kernel delegate (`OperationKernels`, the
+  backend then the arguments), and `Backend.Name(...)`, which every call site already calls. A test fails when
+  `Backend` and the generated files disagree, or when a public virtual method is neither an operation nor plumbing.
+- **Kernel table** (`Kernels.Register(operation, deviceKind, kernel, requirement)`, returning a handle that removes
+  it): the last registration whose requirement holds wins, else the device's own kernel. The key is the device kind
+  (`Backend.Kind`: cpu, cuda, vulkan, hip); formats come with phase 5.
+- **Cost**: a device with nothing registered for it reads one field per call (the fast path is inlined at the call
+  site); a registration marks every device to resolve its slots again on its next call. A million 16-float CPU fills:
+  1.75 ms straight to the kernel, 2.72 ms through the dispatcher (about 1 ns per call, `--bench-dispatch`). Decoding on
+  a 4-core shared CPU moved within the machine's own run-to-run spread (an A/A run of one build differed by 7%), so the
+  2% gate is still to be measured on a quiet machine and on the GPUs.
+- **Host-call counting by operation** keeps the operation's name (`Fill`, not `FillKernel`).
 
 After phase 5, a separate plan: a lazy graph built on the descriptors (trace a step, fuse element-wise chains, plan
 memory, replay on any device), which would unify CUDA graphs, Vulkan's recorded steps (and the choice in

@@ -9,7 +9,7 @@ namespace Idrak.Backends.Cuda;
 // Int8 weight-only quantization kernels (see PtxKernels.Quantized.cs).
 internal sealed unsafe partial class CudaBackend
 {
-    public override void Int8MatMul(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
+    public override void Int8MatMulKernel(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
     {
         int words = (n + 3) / 4;
         if (m > PtxKernels.GemvRows || k == 0)
@@ -21,7 +21,7 @@ internal sealed unsafe partial class CudaBackend
         PackedFewRows((int)PackedFormat.Int8 * 4 + GemvPlain, x, q, scales, y, m, n, k, words);
     }
 
-    public override void BFloat16MatMul(Storage x, Storage packed, Storage y, int m, int n, int k)
+    public override void BFloat16MatMulKernel(Storage x, Storage packed, Storage y, int m, int n, int k)
     {
         int words = (n + 1) / 2;
         if (m > PtxKernels.GemvRows && PackedMatMulLarge(PackedFormat.BFloat16, x, packed, null, y, m, n, k))
@@ -48,7 +48,7 @@ internal sealed unsafe partial class CudaBackend
         PackedFewRows((int)PackedFormat.BFloat16 * 4 + GemvPlain, x, packed, packed, y, m, n, k, words);
     }
 
-    public override void Int4MatMul(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
+    public override void Int4MatMulKernel(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
     {
         int words = (n + 7) / 8;
         if (m > PtxKernels.GemvRows && PackedMatMulLarge(PackedFormat.Int4, x, q, scales, y, m, n, k))
@@ -75,13 +75,13 @@ internal sealed unsafe partial class CudaBackend
         PackedFewRows((int)PackedFormat.Int4 * 4 + GemvPlain, x, q, scales, y, m, n, k, words, align: 64);
     }
 
-    public override void Int4Dequantize(Storage q, Storage scales, Storage w, int k, int n)
+    public override void Int4DequantizeKernel(Storage q, Storage scales, Storage w, int k, int n)
     {
         int words = (n + 7) / 8;
         Launch1D(K("int4_dequant_f32"), k * words, P(q), P(scales), P(w), U(words), U(n), U(k * words));
     }
 
-    public override void BFloat16Dequantize(Storage packed, Storage w, int k, int n)
+    public override void BFloat16DequantizeKernel(Storage packed, Storage w, int k, int n)
     {
         int words = (n + 1) / 2;
         Launch1D(K("bf16_dequant_f32"), k * words, P(packed), P(w), U(words), U(n), U(k * words));
@@ -292,7 +292,7 @@ internal sealed unsafe partial class CudaBackend
         return tiles >= 4 * Math.Max(1, _multiprocessors) ? formula : Tune(key, SplitCounts(Math.Min(16, k / 128)), formula, run);
     }
 
-    public override bool PackedMatMulLarge(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k)
+    public override bool PackedMatMulLargeKernel(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k)
     {
         // Any row count the caller sends (above the GEMV kernels' limit, or fewer rows when PrefersPackedMatMul): short
         // prompts fill part of one row tile, which the kernels bound-check, instead of expanding the whole weight to float32
@@ -415,7 +415,7 @@ internal sealed unsafe partial class CudaBackend
         return true;
     }
 
-    public override bool PackedMatMulLowRank(PackedFormat format, Storage x, int m, int k,
+    public override bool PackedMatMulLowRankKernel(PackedFormat format, Storage x, int m, int k,
         ReadOnlySpan<(Storage Packed, Storage? Scales, Storage Output, int Columns, Storage U, Storage V)> products, int rank)
     {
         if (products.Length is < 1 or > 3 || format is not (PackedFormat.Int4 or PackedFormat.BFloat16) || m < 64 || k < 32 || rank is < 1 or > 32 || !MixedPrecision.UsesTensorCores
@@ -493,7 +493,7 @@ internal sealed unsafe partial class CudaBackend
         return true;
     }
 
-    public override bool PackedMatMulGated(PackedFormat format, int activation, Storage gate, Storage up, Storage packed, Storage? scales, Storage y,
+    public override bool PackedMatMulGatedKernel(PackedFormat format, int activation, Storage gate, Storage up, Storage packed, Storage? scales, Storage y,
         int m, int n, int k)
     {
         if (m > PtxKernels.GemvRows || k == 0 || activation is not (0 or 1))
@@ -532,7 +532,7 @@ internal sealed unsafe partial class CudaBackend
         return true;
     }
 
-    public override bool PackedMatMulAddRmsNorm(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k,
+    public override bool PackedMatMulAddRmsNormKernel(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k,
         Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset)
     {
         if (m > PtxKernels.GemvRows || k == 0)
@@ -546,11 +546,11 @@ internal sealed unsafe partial class CudaBackend
         return true;
     }
 
-    public override bool PackedMatMulMany(PackedFormat format, Storage x, int m, int k,
+    public override bool PackedMatMulManyKernel(PackedFormat format, Storage x, int m, int k,
         ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products) =>
         PackedMany(format, x, m, k, products, -1, null);
 
-    public override bool PackedMatMulGatedPair(PackedFormat format, int activation, Storage x, int m, int k,
+    public override bool PackedMatMulGatedPairKernel(PackedFormat format, int activation, Storage x, int m, int k,
         ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products, Storage hidden) =>
         products.Length == 2 && products[0].Columns == products[1].Columns && activation is >= 0 and <= 2
         && PackedMany(format, x, m, k, products, activation, hidden);
@@ -660,43 +660,43 @@ internal sealed unsafe partial class CudaBackend
         return current;
     }
 
-    public override void Int8Dequantize(Storage q, Storage scales, Storage w, int k, int n)
+    public override void Int8DequantizeKernel(Storage q, Storage scales, Storage w, int k, int n)
     {
         int words = (n + 3) / 4;
         Launch1D(K("int8_dequant_f32"), k * words, P(q), P(scales), P(w), U(words), U(n), U(k * words));
     }
 
-    public override void KeyValueWriteInt8(Storage source, Storage cache, Storage scales, Storage position, int heads, int steps, int capacity, int dim)
+    public override void KeyValueWriteInt8Kernel(Storage source, Storage cache, Storage scales, Storage position, int heads, int steps, int capacity, int dim)
     {
         int n = heads * steps;
         Launch1D(K("kv_write_int8"), n, P(source), P(cache), P(scales), P(position), U(steps), U(capacity), U(dim), U((dim + 3) / 4), U(n));
     }
 
-    public override void AttentionScoresInt8(Storage q, Storage cache, Storage scales, Storage y, int rows, int steps, int capacity, int dim)
+    public override void AttentionScoresInt8Kernel(Storage q, Storage cache, Storage scales, Storage y, int rows, int steps, int capacity, int dim)
     {
         int n = rows * steps * capacity;
         Launch1D(K("attn_scores_int8"), n, P(q), P(cache), P(scales), P(y), U(steps), U(capacity), U(dim), U((dim + 3) / 4), U(n));
     }
 
-    public override void AttentionContextInt8(Storage weights, Storage cache, Storage scales, Storage y, int rows, int steps, int capacity, int dim)
+    public override void AttentionContextInt8Kernel(Storage weights, Storage cache, Storage scales, Storage y, int rows, int steps, int capacity, int dim)
     {
         int words = (dim + 3) / 4, n = rows * steps * words;
         Launch1D(K("attn_context_int8"), n, P(weights), P(cache), P(scales), P(y), U(steps), U(capacity), U(dim), U(words), U(n));
     }
 
-    public override void RmsNorm(Storage x, Storage y, Storage inv, int rows, int cols, float eps) =>
+    public override void RmsNormKernel(Storage x, Storage y, Storage inv, int rows, int cols, float eps) =>
         LaunchRows(K("rms_norm_f32"), rows, P(x), P(y), P(inv), U(cols), F(eps), U(rows));
 
-    public override void RmsNormBackward(Storage dy, Storage y, Storage inv, Storage dx, int rows, int cols) =>
+    public override void RmsNormBackwardKernel(Storage dy, Storage y, Storage inv, Storage dx, int rows, int cols) =>
         LaunchRows(K("rms_norm_backward_f32"), rows, P(dy), P(y), P(inv), P(dx), U(cols), U(rows));
 
-    public override void Rope(Storage x, Storage y, Storage cos, Storage sin, Storage positions, int rows, int heads, int steps, int dim, int half, bool interleaved, float sign)
+    public override void RopeKernel(Storage x, Storage y, Storage cos, Storage sin, Storage positions, int rows, int heads, int steps, int dim, int half, bool interleaved, float sign)
     {
         int n = rows * half;
         Launch1D(K("rope_f32"), n, P(x), P(y), P(cos), P(sin), P(positions), U(heads), U(steps), U(dim), U(half), U(interleaved ? 1 : 0), F(sign), U(n));
     }
 
-    public override void AttentionDecode(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead,
+    public override void AttentionDecodeKernel(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead,
         int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
         if (dim > PtxKernels.DecodeMaxDim)
@@ -838,24 +838,24 @@ internal sealed unsafe partial class CudaBackend
         return [.. chunks];
     }
 
-    public override void RmsNormAffine(Storage x, Storage gain, Storage y, int rows, int cols, float eps, float offset) =>
+    public override void RmsNormAffineKernel(Storage x, Storage gain, Storage y, int rows, int cols, float eps, float offset) =>
         LaunchRows(K("rms_norm_affine_f32"), rows, P(x), P(gain), P(y), U(cols), F(eps), F(offset), U(rows));
 
-    public override void GatedActivation(Storage gate, Storage up, Storage y, int n, int kind) =>
+    public override void GatedActivationKernel(Storage gate, Storage up, Storage y, int n, int kind) =>
         Launch1D(K("gated_act_f32"), n, P(gate), P(up), P(y), U(kind), U(n));
 
-    public override void GatedActivationBackward(Storage gate, Storage up, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags) =>
+    public override void GatedActivationBackwardKernel(Storage gate, Storage up, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags) =>
         Launch1D(K("gated_act_bwd_f32"), n, P(gate), P(up), P(dy), P(dgate), P(dup), U(kind), U(flags), U(n));
 
-    public override void GatedActivationPacked(Storage gate, Storage up, Storage packedGate, Storage packedUp, Storage y, Storage packedY, int n, int kind, int flags) =>
+    public override void GatedActivationPackedKernel(Storage gate, Storage up, Storage packedGate, Storage packedUp, Storage y, Storage packedY, int n, int kind, int flags) =>
         Launch1D(K("gated_act_bf16_f32"), (n + 1) / 2, P(gate), P(up), P(packedGate), P(packedUp), P(y), P(packedY), U(kind), U(flags), U(n), U((n + 1) / 2));
 
-    public override void GatedActivationBackwardPacked(Storage packedGate, Storage packedUp, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags) =>
+    public override void GatedActivationBackwardPackedKernel(Storage packedGate, Storage packedUp, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags) =>
         Launch1D(K("gated_act_bwd_bf16_f32"), (n + 1) / 2, P(packedGate), P(packedUp), P(dy), P(dgate), P(dup), U(kind), U(flags), U(n), U((n + 1) / 2));
 
     // Windows and soft-caps run on the float32 kernels (attention_flash_f32 and its backward); the tensor-core ones
     // compute plain causal attention only.
-    public override void AttentionTiled(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage? logSumExp, int heads,
+    public override void AttentionTiledKernel(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage? logSumExp, int heads,
         int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
         if (variant.IsPlain && FlashTensorCore(dim) is { } tc)
@@ -868,7 +868,7 @@ internal sealed unsafe partial class CudaBackend
 
         if (dim > PtxKernels.FlashMaxDim)
         {
-            base.AttentionTiled(q, keys, values, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+            base.AttentionTiledKernel(q, keys, values, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
             return;
         }
 
@@ -895,7 +895,7 @@ internal sealed unsafe partial class CudaBackend
 
     private Storage? _zeroPosition;
 
-    public override bool AttentionStrided(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow,
+    public override bool AttentionStridedKernel(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow,
         Storage y, Storage? logSumExp, int batch, int kvHeads, int group, int steps, int dim, float scale)
     {
         if (!PtxKernels.FlashTensorDim(dim) || !FlashKernelsLoaded(dim))
@@ -911,7 +911,7 @@ internal sealed unsafe partial class CudaBackend
         return true;
     }
 
-    public override bool AttentionStridedBackward(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow,
+    public override bool AttentionStridedBackwardKernel(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow,
         Storage y, Storage logSumExp, Storage dOutput, Storage dq, long dqOffset, Storage dk, long dkOffset, Storage dv, long dvOffset,
         int batch, int kvHeads, int group, int steps, int dim, float scale)
     {
@@ -946,7 +946,7 @@ internal sealed unsafe partial class CudaBackend
         return true;
     }
 
-    public override void SumColumns(Storage x, long offset, int ld, Storage y, int rows, int cols)
+    public override void SumColumnsKernel(Storage x, long offset, int ld, Storage y, int rows, int cols)
     {
         const int Chunk = 64;
         Launch(K("sum_cols_strided_f32"), (uint)((cols + _shapes.BlockSize - 1) / _shapes.BlockSize), (uint)((rows + Chunk - 1) / Chunk), 1, (uint)_shapes.BlockSize, 1,
@@ -972,7 +972,7 @@ internal sealed unsafe partial class CudaBackend
         _ => ($"flash_tc_fwd_d{dim}", $"flash_tc_bwd_q_d{dim}", $"flash_tc_bwd_kv_d{dim}"),
     };
 
-    public override void AttentionTiledBackward(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput,
+    public override void AttentionTiledBackwardKernel(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput,
         Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
         int rows = heads * rowsPerHead;
@@ -1009,7 +1009,7 @@ internal sealed unsafe partial class CudaBackend
     // attention only: a window or a cap is refused (fine-tuning then pads, batches decode one by one).
     public override bool SupportsSegmentedAttention(int dim, AttentionVariant variant = default) => variant.IsPlain && FlashTensorCore(dim) is not null;
 
-    public override bool AttentionRows(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow,
+    public override bool AttentionRowsKernel(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow,
         int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
         if (!variant.IsPlain || FlashTensorCore(dim) is not { } tc)
@@ -1023,7 +1023,7 @@ internal sealed unsafe partial class CudaBackend
         return true;
     }
 
-    public override bool AttentionSegmented(Storage q, Storage keys, Storage values, Storage y, Storage? logSumExp, Storage starts, Storage ends,
+    public override bool AttentionSegmentedKernel(Storage q, Storage keys, Storage values, Storage y, Storage? logSumExp, Storage starts, Storage ends,
         int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant = default)
     {
         if (!variant.IsPlain || FlashTensorCore(dim) is not { } tc)
@@ -1037,7 +1037,7 @@ internal sealed unsafe partial class CudaBackend
         return true;
     }
 
-    public override bool AttentionSegmentedBackward(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput,
+    public override bool AttentionSegmentedBackwardKernel(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput,
         Storage dq, Storage dkeys, Storage dvalues, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale,
         AttentionVariant variant = default)
     {
@@ -1069,7 +1069,7 @@ internal sealed unsafe partial class CudaBackend
         return true;
     }
 
-    public override void AttentionInt8(Storage q, Storage keys, Storage values, Storage keyScales, Storage valueScales, Storage position,
+    public override void AttentionInt8Kernel(Storage q, Storage keys, Storage values, Storage keyScales, Storage valueScales, Storage position,
         Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, bool tiled, AttentionVariant variant = default)
     {
         int words = (dim + 3) / 4;
@@ -1092,10 +1092,10 @@ internal sealed unsafe partial class CudaBackend
             U(rowsPerHead), U(steps), U(capacity), U(dim), F(scale), U(words), U(minChunk), U(variant.Window), F(variant.Softcap), U(rows)));
     }
 
-    public override void SoftmaxCrossEntropyRows(Storage logits, Storage targets, Storage weights, Storage losses, int rows, int vocabulary, float scale) =>
+    public override void SoftmaxCrossEntropyRowsKernel(Storage logits, Storage targets, Storage weights, Storage losses, int rows, int vocabulary, float scale) =>
         LaunchRows(K("softmax_ce_rows_f32"), rows, PtxKernels.RowThreads * 4, P(logits), P(targets), P(weights), P(losses), U(vocabulary), F(scale), U(rows));
 
-    public override void AttentionBFloat16(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead,
+    public override void AttentionBFloat16Kernel(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead,
         int steps, int capacity, int dim, float scale, bool tiled, AttentionVariant variant = default)
     {
         int words = (dim + 1) / 2;
@@ -1119,28 +1119,28 @@ internal sealed unsafe partial class CudaBackend
 
     }
 
-    public override void KeyValueWriteBFloat16(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
+    public override void KeyValueWriteBFloat16Kernel(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
     {
         int words = (dim + 1) / 2, n = heads * steps * words;
         Launch1D(K("kv_write_bf16"), n, P(source), P(cache), P(position), U(steps), U(capacity), U(dim), U(words), U(n));
     }
 
-    public override void AddRmsNormAffine(Storage a, Storage b, Storage sum, Storage gain, Storage y, int rows, int cols, float eps, float offset) =>
+    public override void AddRmsNormAffineKernel(Storage a, Storage b, Storage sum, Storage gain, Storage y, int rows, int cols, float eps, float offset) =>
         LaunchRows(K("add_rms_norm_affine_f32"), rows, P(a), P(b), P(sum), P(gain), P(y), U(cols), F(eps), F(offset), U(rows));
 
-    public override void RmsNormRope(Storage x, Storage gain, Storage cos, Storage sin, Storage positions, Storage y, int rows, int cols,
+    public override void RmsNormRopeKernel(Storage x, Storage gain, Storage cos, Storage sin, Storage positions, Storage y, int rows, int cols,
         float eps, float offset, int heads, int steps, int half, bool interleaved) =>
         LaunchRows(K("rms_norm_rope_f32"), rows, P(x), P(gain), P(cos), P(sin), P(positions), P(y),
             U(cols), F(eps), F(offset), U(heads), U(steps), U(half), U(interleaved ? 1 : 0), U(rows));
 
-    public override void RmsNormRopePair(Storage x, Storage gain, Storage y, int rows1, float eps, float offset, int heads,
+    public override void RmsNormRopePairKernel(Storage x, Storage gain, Storage y, int rows1, float eps, float offset, int heads,
         Storage x2, Storage gain2, Storage y2, int rows2, float eps2, float offset2, int heads2,
         Storage cos, Storage sin, Storage positions, int cols, int steps, int half, bool interleaved) =>
         LaunchRows(K("rms_norm_rope2_f32"), rows1 + rows2, P(x), P(gain), P(cos), P(sin), P(positions), P(y), P(x2), P(gain2), P(y2),
             U(cols), F(eps), F(offset), U(heads), U(steps), U(half), U(interleaved ? 1 : 0), U(rows1), F(eps2), F(offset2), U(heads2),
             U(rows1 + rows2));
 
-    public override bool NormRopeHeads(Storage q, Storage k, Storage v, int batch, int steps, int heads, int kvHeads, int cols,
+    public override bool NormRopeHeadsKernel(Storage q, Storage k, Storage v, int batch, int steps, int heads, int kvHeads, int cols,
         Storage? gainQ, float epsQ, float offsetQ, Storage? gainK, float epsK, float offsetK, Storage? cos, Storage? sin, Storage? positions,
         int half, bool interleaved, Storage yq, Storage yk, Storage yv, Storage? position, int capacity, int stride, bool bfloat16)
     {

@@ -17,11 +17,11 @@ internal sealed partial class VulkanBackend
 
     // ------------------------------------------------------------------ layer norm
 
-    public override void LayerNormBackward(Storage x, Storage gamma, Storage dy, Storage stats, Storage? dx, Storage? dgamma, Storage? dbeta, int rows, int cols)
+    public override void LayerNormBackwardKernel(Storage x, Storage gamma, Storage dy, Storage stats, Storage? dx, Storage? dgamma, Storage? dbeta, int rows, int cols)
     {
         if (!Fit(x, gamma, dy, stats, dx ?? x, dgamma ?? x, dbeta ?? x) || !ReductionFits(rows, cols))
         {
-            base.LayerNormBackward(x, gamma, dy, stats, dx, dgamma, dbeta, rows, cols);
+            base.LayerNormBackwardKernel(x, gamma, dy, stats, dx, dgamma, dbeta, rows, cols);
             return;
         }
 
@@ -45,34 +45,34 @@ internal sealed partial class VulkanBackend
 
     // ------------------------------------------------------------------ grouped normalization
 
-    public override void NormStats(Storage x, Storage mean, Storage variance, Storage invStd, int outer, int groups, int inner, float eps)
+    public override void NormStatsKernel(Storage x, Storage mean, Storage variance, Storage invStd, int outer, int groups, int inner, float eps)
     {
         if (!Fit(x, mean, variance, invStd) || !ReductionFits(outer, groups * (long)inner))
         {
-            base.NormStats(x, mean, variance, invStd, outer, groups, inner, eps);
+            base.NormStatsKernel(x, mean, variance, invStd, outer, groups, inner, eps);
             return;
         }
 
         GroupSums(0, x, x, outer, groups, inner, mean, variance, invStd, 0, eps);
     }
 
-    public override void GroupReduce(Storage a, Storage? b, Storage sumA, Storage? sumAB, int outer, int groups, int inner)
+    public override void GroupReduceKernel(Storage a, Storage? b, Storage sumA, Storage? sumAB, int outer, int groups, int inner)
     {
         if (!Fit(a, b ?? a, sumA, sumAB ?? sumA) || !ReductionFits(outer, groups * (long)inner))
         {
-            base.GroupReduce(a, b, sumA, sumAB, outer, groups, inner);
+            base.GroupReduceKernel(a, b, sumA, sumAB, outer, groups, inner);
             return;
         }
 
         GroupSums(1, a, b ?? a, outer, groups, inner, sumA, sumAB ?? sumA, sumA, sumAB is null ? 1 : 3, 0f);
     }
 
-    public override void NormApply(Storage x, Storage mean, Storage invStd, Storage y, int outer, int groups, int inner)
+    public override void NormApplyKernel(Storage x, Storage mean, Storage invStd, Storage y, int outer, int groups, int inner)
     {
         long n = (long)outer * groups * inner;
         if (!Fit(x, mean, invStd, y) || n > int.MaxValue)
         {
-            base.NormApply(x, mean, invStd, y, outer, groups, inner);
+            base.NormApplyKernel(x, mean, invStd, y, outer, groups, inner);
             return;
         }
 
@@ -80,12 +80,12 @@ internal sealed partial class VulkanBackend
         Grid("norm_apply", n, [x, mean, invStd, y], new Push(b).I((int)n).I(groups).I(inner).Bytes);
     }
 
-    public override void NormBackward(Storage dxhat, Storage xhat, Storage sum1, Storage sum2, Storage invStd, Storage dx, int outer, int groups, int inner)
+    public override void NormBackwardKernel(Storage dxhat, Storage xhat, Storage sum1, Storage sum2, Storage invStd, Storage dx, int outer, int groups, int inner)
     {
         long n = (long)outer * groups * inner;
         if (!Fit(dxhat, xhat, sum1, sum2, invStd, dx) || n > int.MaxValue)
         {
-            base.NormBackward(dxhat, xhat, sum1, sum2, invStd, dx, outer, groups, inner);
+            base.NormBackwardKernel(dxhat, xhat, sum1, sum2, invStd, dx, outer, groups, inner);
             return;
         }
 
@@ -93,11 +93,11 @@ internal sealed partial class VulkanBackend
         Grid("norm_backward", n, [dxhat, xhat, sum1, sum2, invStd, dx], new Push(b).I((int)n).I(groups).I(inner).F(outer * inner).Bytes);
     }
 
-    public override void GroupScaleShift(Storage x, Storage? scale, Storage? shift, Storage y, int n, int groups, int inner, bool accumulate)
+    public override void GroupScaleShiftKernel(Storage x, Storage? scale, Storage? shift, Storage y, int n, int groups, int inner, bool accumulate)
     {
         if (!Fit(x, scale ?? x, shift ?? x, y))
         {
-            base.GroupScaleShift(x, scale, shift, y, n, groups, inner, accumulate);
+            base.GroupScaleShiftKernel(x, scale, shift, y, n, groups, inner, accumulate);
             return;
         }
 
@@ -108,11 +108,11 @@ internal sealed partial class VulkanBackend
 
     // ------------------------------------------------------------------ column sums and products with a bias
 
-    public override void SumColumns(Storage x, long offset, int ld, Storage y, int rows, int cols)
+    public override void SumColumnsKernel(Storage x, long offset, int ld, Storage y, int rows, int cols)
     {
         if (!Fit(x, y) || offset > int.MaxValue || !ReductionFits(rows, cols))
         {
-            base.SumColumns(x, offset, ld, y, rows, cols);
+            base.SumColumnsKernel(x, offset, ld, y, rows, cols);
             return;
         }
 
@@ -120,7 +120,7 @@ internal sealed partial class VulkanBackend
     }
 
     // c = a·b + bias: the bias rows written first, then the product (the measured float32 kernel) added to them (beta 1).
-    public override bool MatMulBias(Storage a, Storage b, Storage bias, Storage c, int m, int n, int k)
+    public override bool MatMulBiasKernel(Storage a, Storage b, Storage bias, Storage c, int m, int n, int k)
     {
         if (!Fit(a, b, bias, c) || (long)m * n > int.MaxValue)
         {
@@ -279,12 +279,12 @@ internal sealed partial class VulkanBackend
 
     // ------------------------------------------------------------------ optimizers
 
-    public override void AdamStep8Bit(Storage p, Storage g, Storage m, Storage v, Storage absMax, Storage map, int n, float lr, float beta1, float beta2, float eps,
+    public override void AdamStep8BitKernel(Storage p, Storage g, Storage m, Storage v, Storage absMax, Storage map, int n, float lr, float beta1, float beta2, float eps,
         float gradientScale, float decay)
     {
         if (!Fit(p, g, m, v, absMax, map))
         {
-            base.AdamStep8Bit(p, g, m, v, absMax, map, n, lr, beta1, beta2, eps, gradientScale, decay);
+            base.AdamStep8BitKernel(p, g, m, v, absMax, map, n, lr, beta1, beta2, eps, gradientScale, decay);
             return;
         }
 
@@ -323,14 +323,14 @@ internal sealed partial class VulkanBackend
     // The global norm in two passes: each tensor's sum of squares over up to a width of workgroups (each taking at least a
     // width of elements per invocation) into its partials, then one workgroup adds every partial in order and writes the
     // clipping factor; then one AdamW pass per tensor reads the factor (and zeroes the gradients when asked).
-    public override bool FusedAdamW(ReadOnlySpan<(Storage P, Storage G, Storage M, Storage V, int N)> tensors, ref IDisposable? cache, float maxNorm,
+    public override bool FusedAdamWKernel(ReadOnlySpan<(Storage P, Storage G, Storage M, Storage V, int N)> tensors, ref IDisposable? cache, float maxNorm,
         float lr, float decay, float beta1, float beta2, float eps, bool zeroGradients)
     {
         foreach (var (p, g, m, v, _) in tensors)
         {
             if (!Fit(p, g, m, v))
             {
-                return base.FusedAdamW(tensors, ref cache, maxNorm, lr, decay, beta1, beta2, eps, zeroGradients);
+                return base.FusedAdamWKernel(tensors, ref cache, maxNorm, lr, decay, beta1, beta2, eps, zeroGradients);
             }
         }
 
@@ -403,13 +403,13 @@ internal sealed partial class VulkanBackend
 
     // Two passes (VulkanKernels.Training.cs): a workgroup per query row adds its dq and writes delta = dOutput · output
     // to a temporary; then a workgroup per key position adds its dk and dv. Every sum runs in a fixed order.
-    public override void AttentionTiledBackward(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput,
+    public override void AttentionTiledBackwardKernel(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput,
         Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
         long rows = (long)heads * rowsPerHead;
         if (dim > VulkanKernels.AttentionMaxDim || rows > int.MaxValue || !Fit(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues))
         {
-            base.AttentionTiledBackward(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+            base.AttentionTiledBackwardKernel(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
             return;
         }
 

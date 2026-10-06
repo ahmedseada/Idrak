@@ -11,7 +11,7 @@ scanned only as a user of `Idrak`'s internals.
 
 | Assembly | Interfaces | Abstract classes | Registries | Total | Outside `Idrak.Abstraction.*` |
 |---|---|---|---|---|---|
-| `Idrak.Abstraction` | 3 | 3 | 1 | 7 | 0 |
+| `Idrak.Abstraction` | 3 | 3 | 2 | 8 | 0 |
 | `Idrak` | 24 | 10 | 9 | 42 | 42 |
 | `Idrak.LanguageModels` | 6 | 2 | 7 | 15 | 15 |
 | `Idrak.Datasets` | 4 | 0 | 3 | 7 | 7 |
@@ -33,12 +33,13 @@ proposed namespace (phases 1 to 3 settle it).
 | Type | Kind | Visibility | Mentions | Implementations | Registered | Target |
 |---|---|---|---|---|---|---|
 | `Idrak.Abstraction.Devices.Backend` | abstract class | internal | Storage | CpuBackend, CudaBackend, HipBackend, VulkanBackend |  | `Idrak.Abstraction.Devices` |
-| `Idrak.Abstraction.Devices.Cpu.CpuBackend.IRangeKernel` | interface | internal | — | CpuBackend.AbsBackwardKernel, CpuBackend.AbsKernel, CpuBackend.AdamKernel, CpuBackend.AddKernel, CpuBackend.AffineKernel, CpuBackend.AxpyKernel, +29 |  | `Idrak.Abstraction.Operations` |
+| `Idrak.Abstraction.Devices.Cpu.CpuBackend.IRangeKernel` | interface | internal | — | CpuBackend.AbsBackwardLoop, CpuBackend.AbsLoop, CpuBackend.AdamLoop, CpuBackend.AddLoop, CpuBackend.AffineLoop, CpuBackend.AxpyLoop, +29 |  | `Idrak.Abstraction.Operations` |
 | `Idrak.Abstraction.Devices.DeviceProvider` | abstract class | internal | Backend | HipProvider, LibraryDevices.CudaProvider, VulkanProvider |  | `Idrak.Abstraction.Devices` |
 | `Idrak.Abstraction.Devices.DeviceProviders` | registry | internal | — |  | — | `Idrak.Abstraction.Devices` |
 | `Idrak.Abstraction.Devices.IHostStaging` | interface | internal | Storage | CudaBackend.HostStaging |  | `Idrak.Abstraction.Devices` |
 | `Idrak.Abstraction.Devices.IMemoryOffload` | interface | internal | Storage | CudaBackend |  | `Idrak.Abstraction.Devices` |
 | `Idrak.Abstraction.Devices.Storage` | abstract class | internal | Backend | CpuStorage, CudaStorage, HipStorage, VulkanBackend.VulkanStorage |  | `Idrak.Abstraction.Devices` |
+| `Idrak.Abstraction.Operations.Kernels` | registry | internal | Backend |  | — | `Idrak.Abstraction.Operations` |
 
 ### Idrak
 
@@ -129,8 +130,9 @@ proposed namespace (phases 1 to 3 settle it).
 
 ## The device contract (`Backend`)
 
-`Idrak.Abstraction.Devices.Backend` (internal): 10 abstract and 124 virtual methods, 4 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `HipBackend`, `VulkanBackend`. Plan 9 turns
-the methods into operation descriptors with kernels per device; the CPU device becomes every device's host fallback.
+`Idrak.Abstraction.Devices.Backend` (internal): 10 abstract and 124 virtual methods, 5 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `HipBackend`, `VulkanBackend`. Each
+operation (109, `Ops`) is a `NameKernel` method, the device's own kernel; `Backend.Name(...)` runs the kernel registered
+for the device in `Kernels` instead, where there is one (plan 9). The rest is device plumbing: memory, copies, graphs, profiling.
 
 | Device | Methods overridden |
 |---|---|
@@ -142,139 +144,139 @@ the methods into operation descriptors with kernels per device; the CPU device b
 | Operation | Kind | Cpu | Cuda | Hip | Vulkan |
 |---|---|---|---|---|---|
 | `AbortCapture(0)` | virtual |  | ✓ |  | ✓ |
-| `AdamStep(9)` | virtual | ✓ | ✓ |  | ✓ |
-| `AdamStep8Bit(13)` | virtual | ✓ | ✓ |  | ✓ |
-| `AddBroadcastScalar(4)` | virtual | ✓ | ✓ |  | ✓ |
-| `AddDropout(6)` | virtual |  | ✓ |  |  |
-| `AddRmsNormAffine(9)` | virtual | ✓ | ✓ |  | ✓ |
-| `AddRowVector(5)` | virtual | ✓ | ✓ | ✓ | ✓ |
-| `Affine(5)` | virtual | ✓ | ✓ | ✓ | ✓ |
+| `AdamStep8BitKernel(13)` | virtual | ✓ | ✓ |  | ✓ |
+| `AdamStepKernel(9)` | virtual | ✓ | ✓ |  | ✓ |
+| `AddBroadcastScalarKernel(4)` | virtual | ✓ | ✓ |  | ✓ |
+| `AddDropoutKernel(6)` | virtual |  | ✓ |  |  |
+| `AddRmsNormAffineKernel(9)` | virtual | ✓ | ✓ |  | ✓ |
+| `AddRowVectorKernel(5)` | virtual | ✓ | ✓ | ✓ | ✓ |
+| `AffineKernel(5)` | virtual | ✓ | ✓ | ✓ | ✓ |
 | `Allocate(2)` | abstract | ✓ | ✓ | ✓ | ✓ |
-| `ArgMax(4)` | virtual | ✓ | ✓ |  | ✓ |
+| `ArgMaxKernel(4)` | virtual | ✓ | ✓ |  | ✓ |
 | `Attach(2)` | abstract | ✓ | ✓ | ✓ | ✓ |
-| `AttentionBFloat16(13)` | virtual | ✓ | ✓ |  | ✓ |
-| `AttentionContextInt8(8)` | virtual | ✓ | ✓ |  |  |
-| `AttentionDecode(12)` | virtual | ✓ | ✓ |  | ✓ |
-| `AttentionInt8(15)` | virtual | ✓ | ✓ |  | ✓ |
-| `AttentionRows(14)` | virtual | ✓ | ✓ |  |  |
-| `AttentionScoresInt8(8)` | virtual | ✓ | ✓ |  |  |
-| `AttentionSegmented(14)` | virtual | ✓ | ✓ |  |  |
-| `AttentionSegmentedBackward(18)` | virtual | ✓ | ✓ |  |  |
-| `AttentionStrided(16)` | virtual |  | ✓ |  |  |
-| `AttentionStridedBackward(23)` | virtual |  | ✓ |  |  |
-| `AttentionTiled(13)` | virtual | ✓ | ✓ |  | ✓ |
-| `AttentionTiledBackward(16)` | virtual | ✓ | ✓ |  | ✓ |
-| `Axpy(4)` | virtual | ✓ | ✓ | ✓ | ✓ |
-| `AxpyAt(4)` | virtual | ✓ | ✓ |  | ✓ |
-| `BFloat16Dequantize(4)` | virtual | ✓ | ✓ |  | ✓ |
-| `BFloat16MatMul(6)` | virtual | ✓ | ✓ |  | ✓ |
-| `BFloat16TransposedMatMul(10)` | virtual |  | ✓ |  |  |
-| `BatchedMatMul(10)` | virtual | ✓ | ✓ |  | ✓ |
+| `AttentionBFloat16Kernel(13)` | virtual | ✓ | ✓ |  | ✓ |
+| `AttentionContextInt8Kernel(8)` | virtual | ✓ | ✓ |  |  |
+| `AttentionDecodeKernel(12)` | virtual | ✓ | ✓ |  | ✓ |
+| `AttentionInt8Kernel(15)` | virtual | ✓ | ✓ |  | ✓ |
+| `AttentionRowsKernel(14)` | virtual | ✓ | ✓ |  |  |
+| `AttentionScoresInt8Kernel(8)` | virtual | ✓ | ✓ |  |  |
+| `AttentionSegmentedBackwardKernel(18)` | virtual | ✓ | ✓ |  |  |
+| `AttentionSegmentedKernel(14)` | virtual | ✓ | ✓ |  |  |
+| `AttentionStridedBackwardKernel(23)` | virtual |  | ✓ |  |  |
+| `AttentionStridedKernel(16)` | virtual |  | ✓ |  |  |
+| `AttentionTiledBackwardKernel(16)` | virtual | ✓ | ✓ |  | ✓ |
+| `AttentionTiledKernel(13)` | virtual | ✓ | ✓ |  | ✓ |
+| `AxpyAtKernel(4)` | virtual | ✓ | ✓ |  | ✓ |
+| `AxpyKernel(4)` | virtual | ✓ | ✓ | ✓ | ✓ |
+| `BFloat16DequantizeKernel(4)` | virtual | ✓ | ✓ |  | ✓ |
+| `BFloat16MatMulKernel(6)` | virtual | ✓ | ✓ |  | ✓ |
+| `BFloat16TransposedMatMulKernel(10)` | virtual |  | ✓ |  |  |
+| `BatchedMatMulKernel(10)` | virtual | ✓ | ✓ |  | ✓ |
 | `BeginCapture(0)` | virtual |  | ✓ |  | ✓ |
-| `BiasGelu(5)` | virtual | ✓ | ✓ |  | ✓ |
-| `Binary(5)` | virtual | ✓ | ✓ | ✓ | ✓ |
-| `BroadcastAxis(6)` | virtual | ✓ | ✓ |  | ✓ |
-| `Clamp(5)` | virtual | ✓ |  |  | ✓ |
-| `ClampBackward(6)` | virtual | ✓ |  |  | ✓ |
-| `ClassMatch(6)` | virtual | ✓ | ✓ |  |  |
-| `ClipFactor(3)` | virtual | ✓ | ✓ |  | ✓ |
-| `Col2Im(3)` | virtual | ✓ | ✓ |  | ✓ |
+| `BiasGeluKernel(5)` | virtual | ✓ | ✓ |  | ✓ |
+| `BinaryKernel(5)` | virtual | ✓ | ✓ | ✓ | ✓ |
+| `BroadcastAxisKernel(6)` | virtual | ✓ | ✓ |  | ✓ |
+| `ClampBackwardKernel(6)` | virtual | ✓ |  |  | ✓ |
+| `ClampKernel(5)` | virtual | ✓ |  |  | ✓ |
+| `ClassMatchKernel(6)` | virtual | ✓ | ✓ |  |  |
+| `ClipFactorKernel(3)` | virtual | ✓ | ✓ |  | ✓ |
+| `Col2ImKernel(3)` | virtual | ✓ | ✓ |  | ✓ |
 | `Copy(3)` | virtual | ✓ | ✓ | ✓ | ✓ |
 | `Copy2D(9)` | virtual | ✓ | ✓ | ✓ | ✓ |
 | `CreateHostStaging(2)` | virtual |  | ✓ |  |  |
-| `DecoderMask(4)` | virtual | ✓ | ✓ |  | ✓ |
+| `DecoderMaskKernel(4)` | virtual | ✓ | ✓ |  | ✓ |
 | `DestroyGraph(2)` | virtual |  | ✓ |  | ✓ |
 | `Detach(1)` | abstract | ✓ | ✓ | ✓ | ✓ |
 | `Download(2)` | abstract | ✓ | ✓ | ✓ | ✓ |
 | `DownloadRange(3)` | abstract | ✓ | ✓ | ✓ | ✓ |
-| `Dropout(5)` | virtual | ✓ | ✓ |  | ✓ |
-| `DropoutBackward(5)` | virtual | ✓ | ✓ |  | ✓ |
+| `DropoutBackwardKernel(5)` | virtual | ✓ | ✓ |  | ✓ |
+| `DropoutKernel(5)` | virtual | ✓ | ✓ |  | ✓ |
 | `EndCapture(0)` | virtual |  | ✓ |  | ✓ |
-| `ExtremumBackward(7)` | virtual | ✓ |  |  | ✓ |
-| `Fill(3)` | virtual | ✓ | ✓ | ✓ | ✓ |
-| `Float8MatMul(8)` | virtual |  | ✓ |  |  |
+| `ExtremumBackwardKernel(7)` | virtual | ✓ |  |  | ✓ |
+| `FillKernel(3)` | virtual | ✓ | ✓ | ✓ | ✓ |
+| `Float8MatMulKernel(8)` | virtual |  | ✓ |  |  |
 | `Float8PaddedK(1)` | virtual |  | ✓ |  |  |
-| `Float8QuantizeWeight(5)` | virtual |  | ✓ |  |  |
-| `FusedAdamW(9)` | virtual | ✓ | ✓ |  | ✓ |
-| `GatedActivation(5)` | virtual | ✓ | ✓ |  | ✓ |
-| `GatedActivationBackward(8)` | virtual | ✓ | ✓ |  | ✓ |
-| `GatedActivationBackwardPacked(8)` | virtual | ✓ | ✓ |  |  |
-| `GatedActivationPacked(9)` | virtual | ✓ | ✓ |  |  |
-| `Gather(6)` | virtual | ✓ | ✓ |  | ✓ |
-| `GatherBFloat16(6)` | virtual | ✓ | ✓ |  | ✓ |
-| `GemmStrided(19)` | virtual |  | ✓ |  |  |
+| `Float8QuantizeWeightKernel(5)` | virtual |  | ✓ |  |  |
+| `FusedAdamWKernel(9)` | virtual | ✓ | ✓ |  | ✓ |
+| `GatedActivationBackwardKernel(8)` | virtual | ✓ | ✓ |  | ✓ |
+| `GatedActivationBackwardPackedKernel(8)` | virtual | ✓ | ✓ |  |  |
+| `GatedActivationKernel(5)` | virtual | ✓ | ✓ |  | ✓ |
+| `GatedActivationPackedKernel(9)` | virtual | ✓ | ✓ |  |  |
+| `GatherBFloat16Kernel(6)` | virtual | ✓ | ✓ |  | ✓ |
+| `GatherKernel(6)` | virtual | ✓ | ✓ |  | ✓ |
+| `GemmStridedKernel(19)` | virtual |  | ✓ |  |  |
 | `GetMemoryUsage(0)` | abstract | ✓ | ✓ | ✓ | ✓ |
-| `GroupReduce(7)` | virtual | ✓ | ✓ |  | ✓ |
-| `GroupScaleShift(8)` | virtual | ✓ | ✓ |  | ✓ |
-| `HistoryPush(5)` | virtual | ✓ | ✓ |  | ✓ |
-| `Im2Col(3)` | virtual | ✓ | ✓ |  | ✓ |
-| `Int4Dequantize(5)` | virtual | ✓ | ✓ |  | ✓ |
-| `Int4MatMul(7)` | virtual | ✓ | ✓ |  | ✓ |
-| `Int8Dequantize(5)` | virtual | ✓ | ✓ |  | ✓ |
-| `Int8MatMul(7)` | virtual | ✓ | ✓ | ✓ | ✓ |
-| `InvSqrt(4)` | virtual | ✓ | ✓ |  | ✓ |
-| `KeyValueWrite(7)` | virtual | ✓ | ✓ |  | ✓ |
-| `KeyValueWriteBFloat16(7)` | virtual | ✓ | ✓ |  | ✓ |
-| `KeyValueWriteInt8(8)` | virtual | ✓ | ✓ |  | ✓ |
-| `LayerNormBackward(9)` | virtual | ✓ | ✓ |  | ✓ |
-| `LayerNormFused(7)` | virtual | ✓ | ✓ |  | ✓ |
-| `LayerNormTrain(8)` | virtual | ✓ | ✓ |  | ✓ |
-| `MatMulBias(7)` | virtual |  | ✓ |  | ✓ |
-| `MatMulLowRank(11)` | virtual |  | ✓ |  |  |
-| `MatMulMany(4)` | virtual |  | ✓ |  |  |
-| `MaxPool(4)` | virtual | ✓ | ✓ |  | ✓ |
-| `MaxPoolBackward(4)` | virtual | ✓ | ✓ |  |  |
-| `MaxPoolBackward(4)` | virtual |  |  |  | ✓ |
-| `MulAdd(4)` | virtual | ✓ | ✓ | ✓ | ✓ |
-| `NormApply(7)` | virtual | ✓ | ✓ |  | ✓ |
-| `NormBackward(9)` | virtual | ✓ | ✓ |  | ✓ |
-| `NormRopeHeads(26)` | virtual |  | ✓ |  | ✓ |
-| `NormStats(8)` | virtual | ✓ | ✓ |  | ✓ |
-| `OneHot(4)` | virtual | ✓ | ✓ |  | ✓ |
-| `PackBFloat16(3)` | virtual | ✓ | ✓ |  | ✓ |
-| `PackedMatMulAddRmsNorm(14)` | virtual |  | ✓ |  | ✓ |
-| `PackedMatMulGated(10)` | virtual |  | ✓ |  | ✓ |
-| `PackedMatMulGatedPair(7)` | virtual |  | ✓ |  | ✓ |
-| `PackedMatMulLarge(8)` | virtual |  | ✓ |  | ✓ |
-| `PackedMatMulLowRank(6)` | virtual |  | ✓ |  |  |
-| `PackedMatMulMany(5)` | virtual |  | ✓ |  | ✓ |
-| `PenalizeRows(13)` | virtual | ✓ | ✓ |  | ✓ |
-| `Permute(5)` | virtual | ✓ | ✓ |  | ✓ |
-| `Pow(4)` | virtual | ✓ |  |  | ✓ |
-| `PowBackward(5)` | virtual | ✓ |  |  | ✓ |
+| `GroupReduceKernel(7)` | virtual | ✓ | ✓ |  | ✓ |
+| `GroupScaleShiftKernel(8)` | virtual | ✓ | ✓ |  | ✓ |
+| `HistoryPushKernel(5)` | virtual | ✓ | ✓ |  | ✓ |
+| `Im2ColKernel(3)` | virtual | ✓ | ✓ |  | ✓ |
+| `Int4DequantizeKernel(5)` | virtual | ✓ | ✓ |  | ✓ |
+| `Int4MatMulKernel(7)` | virtual | ✓ | ✓ |  | ✓ |
+| `Int8DequantizeKernel(5)` | virtual | ✓ | ✓ |  | ✓ |
+| `Int8MatMulKernel(7)` | virtual | ✓ | ✓ | ✓ | ✓ |
+| `InvSqrtKernel(4)` | virtual | ✓ | ✓ |  | ✓ |
+| `KeyValueWriteBFloat16Kernel(7)` | virtual | ✓ | ✓ |  | ✓ |
+| `KeyValueWriteInt8Kernel(8)` | virtual | ✓ | ✓ |  | ✓ |
+| `KeyValueWriteKernel(7)` | virtual | ✓ | ✓ |  | ✓ |
+| `LayerNormBackwardKernel(9)` | virtual | ✓ | ✓ |  | ✓ |
+| `LayerNormFusedKernel(7)` | virtual | ✓ | ✓ |  | ✓ |
+| `LayerNormTrainKernel(8)` | virtual | ✓ | ✓ |  | ✓ |
+| `MatMulBiasKernel(7)` | virtual |  | ✓ |  | ✓ |
+| `MatMulLowRankKernel(11)` | virtual |  | ✓ |  |  |
+| `MatMulManyKernel(4)` | virtual |  | ✓ |  |  |
+| `MaxPoolBackwardKernel(4)` | virtual | ✓ | ✓ |  |  |
+| `MaxPoolBackwardKernel(4)` | virtual |  |  |  | ✓ |
+| `MaxPoolKernel(4)` | virtual | ✓ | ✓ |  | ✓ |
+| `MulAddKernel(4)` | virtual | ✓ | ✓ | ✓ | ✓ |
+| `NormApplyKernel(7)` | virtual | ✓ | ✓ |  | ✓ |
+| `NormBackwardKernel(9)` | virtual | ✓ | ✓ |  | ✓ |
+| `NormRopeHeadsKernel(26)` | virtual |  | ✓ |  | ✓ |
+| `NormStatsKernel(8)` | virtual | ✓ | ✓ |  | ✓ |
+| `OneHotKernel(4)` | virtual | ✓ | ✓ |  | ✓ |
+| `PackBFloat16Kernel(3)` | virtual | ✓ | ✓ |  | ✓ |
+| `PackedMatMulAddRmsNormKernel(14)` | virtual |  | ✓ |  | ✓ |
+| `PackedMatMulGatedKernel(10)` | virtual |  | ✓ |  | ✓ |
+| `PackedMatMulGatedPairKernel(7)` | virtual |  | ✓ |  | ✓ |
+| `PackedMatMulLargeKernel(8)` | virtual |  | ✓ |  | ✓ |
+| `PackedMatMulLowRankKernel(6)` | virtual |  | ✓ |  |  |
+| `PackedMatMulManyKernel(5)` | virtual |  | ✓ |  | ✓ |
+| `PenalizeRowsKernel(13)` | virtual | ✓ | ✓ |  | ✓ |
+| `PermuteKernel(5)` | virtual | ✓ | ✓ |  | ✓ |
+| `PowBackwardKernel(5)` | virtual | ✓ |  |  | ✓ |
+| `PowKernel(4)` | virtual | ✓ |  |  | ✓ |
 | `PrefersPackedMatMul(8)` | virtual |  | ✓ |  |  |
 | `ReleaseCachedMemory(0)` | abstract | ✓ | ✓ | ✓ | ✓ |
 | `ReplayGraph(1)` | virtual |  | ✓ |  | ✓ |
 | `Return(1)` | abstract | ✓ | ✓ | ✓ | ✓ |
 | `ReuseQuantizedOperands(0)` | virtual |  | ✓ |  |  |
-| `RmsNorm(6)` | virtual | ✓ | ✓ | ✓ | ✓ |
-| `RmsNormAffine(7)` | virtual | ✓ | ✓ | ✓ | ✓ |
-| `RmsNormBackward(6)` | virtual | ✓ | ✓ |  | ✓ |
-| `RmsNormRope(14)` | virtual | ✓ | ✓ |  | ✓ |
-| `RmsNormRopePair(21)` | virtual |  | ✓ |  | ✓ |
-| `Rope(12)` | virtual | ✓ | ✓ |  | ✓ |
-| `SampleRows(13)` | virtual | ✓ | ✓ |  | ✓ |
-| `ScaleMaskSoftmax(7)` | virtual | ✓ | ✓ |  | ✓ |
-| `ScatterAdd(6)` | virtual | ✓ | ✓ |  | ✓ |
-| `SgdStep(6)` | virtual | ✓ | ✓ |  | ✓ |
-| `Softmax(5)` | virtual | ✓ | ✓ |  | ✓ |
-| `SoftmaxBackward(6)` | virtual | ✓ | ✓ |  | ✓ |
-| `SoftmaxCrossEntropyRows(7)` | virtual | ✓ | ✓ |  | ✓ |
+| `RmsNormAffineKernel(7)` | virtual | ✓ | ✓ | ✓ | ✓ |
+| `RmsNormBackwardKernel(6)` | virtual | ✓ | ✓ |  | ✓ |
+| `RmsNormKernel(6)` | virtual | ✓ | ✓ | ✓ | ✓ |
+| `RmsNormRopeKernel(14)` | virtual | ✓ | ✓ |  | ✓ |
+| `RmsNormRopePairKernel(21)` | virtual |  | ✓ |  | ✓ |
+| `RopeKernel(12)` | virtual | ✓ | ✓ |  | ✓ |
+| `SampleRowsKernel(13)` | virtual | ✓ | ✓ |  | ✓ |
+| `ScaleMaskSoftmaxKernel(7)` | virtual | ✓ | ✓ |  | ✓ |
+| `ScatterAddKernel(6)` | virtual | ✓ | ✓ |  | ✓ |
+| `SgdStepKernel(6)` | virtual | ✓ | ✓ |  | ✓ |
+| `SoftmaxBackwardKernel(6)` | virtual | ✓ | ✓ |  | ✓ |
+| `SoftmaxCrossEntropyRowsKernel(7)` | virtual | ✓ | ✓ |  | ✓ |
+| `SoftmaxKernel(5)` | virtual | ✓ | ✓ |  | ✓ |
 | `StartProfile(0)` | virtual |  | ✓ |  |  |
 | `StopProfile(0)` | virtual |  | ✓ |  |  |
-| `Sum(4)` | virtual | ✓ | ✓ |  | ✓ |
-| `SumAxis(7)` | virtual | ✓ | ✓ |  | ✓ |
-| `SumColumns(6)` | virtual | ✓ | ✓ |  | ✓ |
-| `SumRows(4)` | virtual | ✓ | ✓ |  | ✓ |
-| `SumSquares(3)` | virtual | ✓ | ✓ |  | ✓ |
+| `SumAxisKernel(7)` | virtual | ✓ | ✓ |  | ✓ |
+| `SumColumnsKernel(6)` | virtual | ✓ | ✓ |  | ✓ |
+| `SumKernel(4)` | virtual | ✓ | ✓ |  | ✓ |
+| `SumRowsKernel(4)` | virtual | ✓ | ✓ |  | ✓ |
+| `SumSquaresKernel(3)` | virtual | ✓ | ✓ |  | ✓ |
 | `SupportsSegmentedAttention(2)` | virtual | ✓ | ✓ |  |  |
 | `Synchronize(0)` | abstract | ✓ | ✓ | ✓ | ✓ |
 | `TensorCoresUnavailable(0)` | virtual | ✓ | ✓ |  | ✓ |
-| `Unary(4)` | virtual | ✓ | ✓ | ✓ | ✓ |
-| `UnaryBackward(6)` | virtual | ✓ | ✓ |  | ✓ |
+| `UnaryBackwardKernel(6)` | virtual | ✓ | ✓ |  | ✓ |
+| `UnaryKernel(4)` | virtual | ✓ | ✓ | ✓ | ✓ |
 | `Upload(2)` | abstract | ✓ | ✓ | ✓ | ✓ |
-| `Where(5)` | virtual | ✓ |  |  | ✓ |
-| `WhereBackward(5)` | virtual | ✓ |  |  | ✓ |
+| `WhereBackwardKernel(5)` | virtual | ✓ |  |  | ✓ |
+| `WhereKernel(5)` | virtual | ✓ |  |  | ✓ |
 
 
 ## Internals of `Idrak.Abstraction` other assemblies use

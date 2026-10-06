@@ -8,11 +8,11 @@ namespace Idrak.Backends.Vulkan;
 // device work: the host waits for the device when it reads the sampled tokens, not on every token.
 internal sealed partial class VulkanBackend
 {
-    public override void HistoryPush(Storage ids, Storage history, Storage length, int rows, int capacity)
+    public override void HistoryPushKernel(Storage ids, Storage history, Storage length, int rows, int capacity)
     {
         if (!Fit(ids, history, length))
         {
-            base.HistoryPush(ids, history, length, rows, capacity);
+            base.HistoryPushKernel(ids, history, length, rows, capacity);
             return;
         }
 
@@ -20,12 +20,12 @@ internal sealed partial class VulkanBackend
         Grid("history_push", rows, [ids, history, length], new Push(b).I(rows).I(capacity).Bytes);
     }
 
-    public override void PenalizeRows(Storage logits, Storage work, Storage history, Storage length, int rows, int vocabulary,
+    public override void PenalizeRowsKernel(Storage logits, Storage work, Storage history, Storage length, int rows, int vocabulary,
         int rowStride, int rowOffset, int capacity, int lastN, float repeat, float presence, float frequency)
     {
         if (!Fit(logits, work, history, length))
         {
-            base.PenalizeRows(logits, work, history, length, rows, vocabulary, rowStride, rowOffset, capacity, lastN, repeat, presence, frequency);
+            base.PenalizeRowsKernel(logits, work, history, length, rows, vocabulary, rowStride, rowOffset, capacity, lastN, repeat, presence, frequency);
             return;
         }
 
@@ -44,12 +44,12 @@ internal sealed partial class VulkanBackend
     // sampler's cut-offs read a few thousand slots instead of the whole row once per k.
     private const int SlotVocabulary = 2 * VulkanKernels.SliceLength;
 
-    public override void SampleRows(Storage logits, Storage ids, Storage stats, Storage step, int rows, int vocabulary,
+    public override void SampleRowsKernel(Storage logits, Storage ids, Storage stats, Storage step, int rows, int vocabulary,
         int rowStride, int rowOffset, float temperature, int topK, float topP, float minP, uint seed)
     {
         if (!Fit(logits, ids, stats, step))
         {
-            base.SampleRows(logits, ids, stats, step, rows, vocabulary, rowStride, rowOffset, temperature, topK, topP, minP, seed);
+            base.SampleRowsKernel(logits, ids, stats, step, rows, vocabulary, rowStride, rowOffset, temperature, topK, topP, minP, seed);
             return;
         }
 
@@ -89,12 +89,12 @@ internal sealed partial class VulkanBackend
         }
     }
 
-    public override void RmsNormRope(Storage x, Storage gain, Storage cos, Storage sin, Storage positions, Storage y, int rows, int cols,
+    public override void RmsNormRopeKernel(Storage x, Storage gain, Storage cos, Storage sin, Storage positions, Storage y, int rows, int cols,
         float eps, float offset, int heads, int steps, int half, bool interleaved)
     {
         if (!Fit(x, gain, cos, sin, positions, y))
         {
-            base.RmsNormRope(x, gain, cos, sin, positions, y, rows, cols, eps, offset, heads, steps, half, interleaved);
+            base.RmsNormRopeKernel(x, gain, cos, sin, positions, y, rows, cols, eps, offset, heads, steps, half, interleaved);
             return;
         }
 
@@ -103,13 +103,13 @@ internal sealed partial class VulkanBackend
             new Push(b).I(rows).I(cols).F(eps).F(offset).I(heads).I(steps).I(half).B(interleaved).Bytes);
     }
 
-    public override void RmsNormRopePair(Storage x, Storage gain, Storage y, int rows1, float eps, float offset, int heads,
+    public override void RmsNormRopePairKernel(Storage x, Storage gain, Storage y, int rows1, float eps, float offset, int heads,
         Storage x2, Storage gain2, Storage y2, int rows2, float eps2, float offset2, int heads2,
         Storage cos, Storage sin, Storage positions, int cols, int steps, int half, bool interleaved)
     {
         if (!Fit(x, gain, y, x2, gain2, y2, cos, sin, positions))
         {
-            base.RmsNormRopePair(x, gain, y, rows1, eps, offset, heads, x2, gain2, y2, rows2, eps2, offset2, heads2, cos, sin, positions, cols, steps, half, interleaved);
+            base.RmsNormRopePairKernel(x, gain, y, rows1, eps, offset, heads, x2, gain2, y2, rows2, eps2, offset2, heads2, cos, sin, positions, cols, steps, half, interleaved);
             return;
         }
 
