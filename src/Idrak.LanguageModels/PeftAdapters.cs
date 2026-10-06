@@ -168,7 +168,7 @@ internal sealed class AdapterMerge : IDisposable
 
         var down = _reader.Read(a);                                           // [r, inputs]
         int rank = down.Length / inputs;
-        var up = Idrak.HostParallel.Transpose(_reader.Read(b), outputs, rank); // [r, outputs]
+        var up = Idrak.Abstraction.Devices.HostParallel.Transpose(_reader.Read(b), outputs, rank); // [r, outputs]
         float scale = _config.Scale;
         Parallel.For(0, inputs, i =>
         {

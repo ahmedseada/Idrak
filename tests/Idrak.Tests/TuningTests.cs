@@ -589,14 +589,14 @@ internal static partial class Tests
 
         try
         {
-            Check(Idrak.Backends.PowerSource.Linux(Path.Combine(root, "missing")) == "ac", "no report: mains");
+            Check(Idrak.Abstraction.Devices.PowerSource.Linux(Path.Combine(root, "missing")) == "ac", "no report: mains");
             Supply("BAT0", "Battery", "status", "Discharging");
-            Check(Idrak.Backends.PowerSource.Linux(root) == "battery", "a discharging battery, no supply online: battery");
+            Check(Idrak.Abstraction.Devices.PowerSource.Linux(root) == "battery", "a discharging battery, no supply online: battery");
             Supply("AC", "Mains", "online", "1");
-            Check(Idrak.Backends.PowerSource.Linux(root) == "ac", "mains online: mains");
+            Check(Idrak.Abstraction.Devices.PowerSource.Linux(root) == "ac", "mains online: mains");
             File.WriteAllText(Path.Combine(root, "AC", "online"), "0\n");
             Supply("ucsi", "USB_C", "online", "1");
-            Check(Idrak.Backends.PowerSource.Linux(root) == "ac", "USB-C supply online: mains");
+            Check(Idrak.Abstraction.Devices.PowerSource.Linux(root) == "ac", "USB-C supply online: mains");
         }
         finally
         {
@@ -608,9 +608,9 @@ internal static partial class Tests
         try
         {
             Environment.SetEnvironmentVariable("IDRAK_POWER_SOURCE", "ac");
-            string ac = Idrak.Backends.Cpu.CpuTuning.CacheKey(4);
+            string ac = Idrak.Abstraction.Devices.Cpu.CpuTuning.CacheKey(4);
             Environment.SetEnvironmentVariable("IDRAK_POWER_SOURCE", "battery");
-            string battery = Idrak.Backends.Cpu.CpuTuning.CacheKey(4);
+            string battery = Idrak.Abstraction.Devices.Cpu.CpuTuning.CacheKey(4);
             Check(ac != battery && ac.EndsWith("power ac", StringComparison.Ordinal) && battery.EndsWith("power battery", StringComparison.Ordinal),
                 $"CPU cache keys per power source ({ac} / {battery})");
         }

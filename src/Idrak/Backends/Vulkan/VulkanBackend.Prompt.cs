@@ -131,7 +131,7 @@ internal sealed partial class VulkanBackend
 
     // ------------------------------------------------------------------ packed products for many rows
 
-    public override bool PackedMatMulLarge(Layers.PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k)
+    public override bool PackedMatMulLarge(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k)
     {
         var f = (VulkanKernels.PackedFormat)(int)format;
         if (m < 1 || n < 1 || k < 1 || f != VulkanKernels.PackedFormat.BFloat16 && scales is null || !FitPacked(x, packed, scales, y))

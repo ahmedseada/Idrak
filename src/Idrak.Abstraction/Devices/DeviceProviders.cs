@@ -1,11 +1,9 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using Idrak.Backends.Cuda;
-using Idrak.Backends.Hip;
-using Idrak.Backends.Vulkan;
+using System.Diagnostics.CodeAnalysis;
 
-namespace Idrak.Backends;
+namespace Idrak.Abstraction.Devices;
 
 /// <summary>
 /// One kind of device beyond the CPU (CUDA, Vulkan, HIP, …): how many there are, and the backend that drives each. Devices
@@ -54,10 +52,38 @@ internal abstract class DeviceProvider
     public virtual Guid? DeviceUuid(int ordinal) => null;
 }
 
-/// <summary>The device kinds beyond the CPU: CUDA first, then Vulkan, then HIP.</summary>
+/// <summary>
+/// The device kinds beyond the CPU. The GPU devices that ship with the library (CUDA, then Vulkan, then HIP) live in the
+/// Idrak assembly, which registers them; they are registered first, before any other provider, as soon as the registry is
+/// first used, so <see cref="Device.Available"/> lists them even when no type of Idrak has been touched yet.
+/// </summary>
 internal static class DeviceProviders
 {
-    private static readonly List<DeviceProvider> Registry = [new CudaProvider(), new VulkanProvider(), new HipProvider()];
+    private static readonly List<DeviceProvider> Registry = [];
+
+    static DeviceProviders() => RegisterLibraryDevices();
+
+    // Runs the registration of the Idrak assembly's GPU devices when the application ships that assembly; an application
+    // that references Idrak.Abstraction alone has the CPU and whatever it registers itself.
+    [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Backends.LibraryDevices", "Idrak")]
+    private static void RegisterLibraryDevices()
+    {
+        Type? devices;
+        try
+        {
+            devices = Type.GetType("Idrak.Backends.LibraryDevices, Idrak", throwOnError: false);
+        }
+        catch (FileLoadException)
+        {
+            return;
+        }
+
+        if (devices?.GetMethod("Providers", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)?.Invoke(null, null)
+            is IEnumerable<DeviceProvider> providers)
+        {
+            Registry.AddRange(providers);
+        }
+    }
 
     /// <summary>The registered providers, in registration order.</summary>
     public static IReadOnlyList<DeviceProvider> All
@@ -105,26 +131,5 @@ internal static class DeviceProviders
         {
             return Registry.Find(p => p.Kind.Equals(kind, StringComparison.OrdinalIgnoreCase));
         }
-    }
-
-    private sealed class CudaProvider : DeviceProvider
-    {
-        public override string Kind => "cuda";
-
-        public override string Display => "CUDA";
-
-        public override DeviceType Type => DeviceType.Cuda;
-
-        public override int Count => CudaBackend.DeviceCount;
-
-        public override string? UnavailableReason => CudaBackend.UnavailableReason;
-
-        public override Backend Create(int ordinal) => CudaBackend.Get(ordinal);
-
-        public override bool IsStarted(int ordinal) => CudaBackend.IsInitialized(ordinal);
-
-        public override int? DefaultRank(int ordinal) => ordinal == 0 ? 100 : 99;   // the first GPU, as before
-
-        public override Guid? DeviceUuid(int ordinal) => CudaBackend.DeviceUuid(ordinal);
     }
 }

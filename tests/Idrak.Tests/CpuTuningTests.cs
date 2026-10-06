@@ -3,7 +3,7 @@
 
 using System.Numerics;
 using Idrak;
-using Idrak.Backends.Cpu;
+using Idrak.Abstraction.Devices.Cpu;
 using Idrak.Layers;
 
 // The CPU's tiling, blocking and threading choices come from what the machine reports (cores, vector width and

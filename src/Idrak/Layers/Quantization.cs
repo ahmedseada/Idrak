@@ -19,19 +19,6 @@ public enum WeightFormat
     BFloat16,
 }
 
-/// <summary>The packed formats a <see cref="Linear"/> layer's weights can be held in (see <see cref="PackedWeight"/>).</summary>
-public enum PackedFormat
-{
-    /// <summary>A signed byte per weight with one scale per column (<see cref="Int8Weight"/>).</summary>
-    Int8,
-
-    /// <summary>A signed nibble per weight with one scale per group of 32 rows of a column (<see cref="Int4Weight"/>).</summary>
-    Int4,
-
-    /// <summary>bfloat16 values (<see cref="BFloat16Weight"/>).</summary>
-    BFloat16,
-}
-
 /// <summary>
 /// Packs float weights [rows, columns] (host values, row-major) into a <see cref="PackedWeight"/> on
 /// <paramref name="device"/>; registered under a format name with <see cref="PackedWeight.Register"/>.
@@ -343,7 +330,7 @@ public sealed class Int8Weight : PackedWeight
         // Column maxima per chunk of rows (all cores), then combined.
         var scales = new float[columns];
         var gate = new Lock();
-        HostParallel.For(rows, Math.Max(1, Backends.Cpu.CpuTuning.ParallelElements / Math.Max(1, columns)), (first, last) =>
+        HostParallel.For(rows, Math.Max(1, Abstraction.Devices.Cpu.CpuTuning.ParallelElements / Math.Max(1, columns)), (first, last) =>
         {
             var local = new float[columns];
             for (int r = first; r < last; r++)
@@ -368,7 +355,7 @@ public sealed class Int8Weight : PackedWeight
         }
 
         var bytes = new sbyte[rows * stride];
-        HostParallel.For(rows, Math.Max(1, Backends.Cpu.CpuTuning.ParallelElements / Math.Max(1, columns)), (first, last) =>
+        HostParallel.For(rows, Math.Max(1, Abstraction.Devices.Cpu.CpuTuning.ParallelElements / Math.Max(1, columns)), (first, last) =>
         {
             for (int r = first; r < last; r++)
             {
@@ -514,7 +501,7 @@ public sealed class Int4Weight : PackedWeight
         int words = (columns + 7) / 8, groups = (rows + GroupSize - 1) / GroupSize;
         var packed = new uint[rows * words];
         var scales = new float[groups * words * 8];
-        HostParallel.For(groups, Math.Max(1, 2 * Backends.Cpu.CpuTuning.ParallelElements / GroupSize / Math.Max(1, columns)), (first, last) =>
+        HostParallel.For(groups, Math.Max(1, 2 * Abstraction.Devices.Cpu.CpuTuning.ParallelElements / GroupSize / Math.Max(1, columns)), (first, last) =>
         {
             Span<float> w = stackalloc float[GroupSize];
             Span<sbyte> q = stackalloc sbyte[GroupSize];
@@ -704,7 +691,7 @@ public sealed class BFloat16Weight : PackedWeight
     {
         int stride = (columns + 1) / 2 * 2;
         var halves = new ushort[rows * stride];
-        HostParallel.For(rows, Math.Max(1, Backends.Cpu.CpuTuning.ParallelElements / Math.Max(1, columns)), (first, last) =>
+        HostParallel.For(rows, Math.Max(1, Abstraction.Devices.Cpu.CpuTuning.ParallelElements / Math.Max(1, columns)), (first, last) =>
         {
             for (int r = first; r < last; r++)
             {
@@ -720,16 +707,7 @@ public sealed class BFloat16Weight : PackedWeight
     }
 
     /// <summary>A value's bfloat16 bits (round to nearest, ties to even; NaN stays NaN).</summary>
-    internal static ushort Round(float value)
-    {
-        uint bits = BitConverter.SingleToUInt32Bits(value);
-        if (float.IsNaN(value))
-        {
-            return (ushort)((bits >> 16) | 0x40);
-        }
-
-        return (ushort)((bits + 0x7FFFu + ((bits >> 16) & 1u)) >> 16);
-    }
+    internal static ushort Round(float value) => BFloat16Bits.Round(value);
 
     /// <summary>The float weights, [rows, columns], on the same device.</summary>
     public override Tensor Dequantize()

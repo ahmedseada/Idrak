@@ -8,7 +8,7 @@ using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
 
-namespace Idrak.Backends.Cpu;
+namespace Idrak.Abstraction.Devices.Cpu;
 
 /// <summary>
 /// Single-precision GEMM: C = op(A) * op(B) + beta * C, all row-major. With hardware FMA the product runs in tiles of a

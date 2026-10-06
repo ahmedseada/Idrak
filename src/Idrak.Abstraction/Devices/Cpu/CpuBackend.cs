@@ -5,7 +5,7 @@ using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
-namespace Idrak.Backends.Cpu;
+namespace Idrak.Abstraction.Devices.Cpu;
 
 internal sealed class CpuStorage(CpuBackend backend, float[] data, int length) : Storage(backend, length)
 {
@@ -428,7 +428,7 @@ internal sealed partial class CpuBackend : Backend
         float gradientScale, float decay)
     {
         float[] ps = D(p), gs = D(g), ms = D(m), vs = D(v), scales = D(absMax), codes = D(map);
-        const int B = Optimizers.AdamW8Bit.BlockSize;
+        const int B = EightBitMoments.BlockSize;
         int blocks = (n + B - 1) / B;
         Parallel.For(0, blocks, ComputeResources.ParallelOptions, block =>
         {
@@ -453,8 +453,8 @@ internal sealed partial class CpuBackend : Backend
 
             for (int i = start; i < end; i++)
             {
-                mb[i] = Optimizers.AdamW8Bit.Nearest(signedMap, mMax > 0f ? mNew[i - start] / mMax : 0f);
-                vb[i] = Optimizers.AdamW8Bit.Nearest(unsignedMap, vMax > 0f ? vNew[i - start] / vMax : 0f);
+                mb[i] = EightBitMoments.Nearest(signedMap, mMax > 0f ? mNew[i - start] / mMax : 0f);
+                vb[i] = EightBitMoments.Nearest(unsignedMap, vMax > 0f ? vNew[i - start] / vMax : 0f);
             }
 
             scales[block] = mMax;

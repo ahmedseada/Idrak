@@ -5,6 +5,12 @@
     <IsPackable>false</IsPackable>
   </PropertyGroup>
 
+  <!-- The device layer the tests reach (internal to Idrak.Abstraction, which lets this assembly see it). -->
+  <ItemGroup>
+    <Using Include="Idrak.Abstraction.Devices" />
+    <Using Include="Idrak.Abstraction.Devices.Cpu" />
+  </ItemGroup>
+
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>

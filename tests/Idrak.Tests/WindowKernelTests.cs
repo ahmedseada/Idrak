@@ -341,7 +341,7 @@ internal static partial class Tests
             VulkanBackend.TiledAttentionKernel = null;
         }
 
-        static Backend Cpu() => Idrak.Backends.Cpu.CpuBackend.Instance;
+        static Backend Cpu() => Idrak.Abstraction.Devices.Cpu.CpuBackend.Instance;
 
         // Runs op on the CPU and copies outputs (index, array) back into the given arrays.
         static void RunCpu(Backend b, float[][] inputs, Action<Storage[]> op, (int Index, float[] Into)[] outputs)

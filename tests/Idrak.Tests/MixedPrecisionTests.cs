@@ -248,7 +248,7 @@ internal static partial class Tests
             using var act = Tensor.Zeros([M * N], device);
             using var pre = Tensor.Zeros([M * N], device);
             Check(backend.GemmStrided(ta_.Storage, 0, K, false, tb_.Storage, 0, N, false, act.Storage, 0, N, M, N, K, 0f, tbias.Storage,
-                Idrak.Backends.GemmEpilogue.Gelu, pre.Storage), "GELU epilogue runs");
+                Idrak.Abstraction.Devices.GemmEpilogue.Gelu, pre.Storage), "GELU epilogue runs");
             var acts = act.ToArray();
             var pres = pre.ToArray();
             // The gradient variant multiplies by a transposed weight (dPre = g · Wᵀ): b stored [n, k].
@@ -265,7 +265,7 @@ internal static partial class Tests
             using var saved = Tensor.From(pre0, [pre0.Length], device);
             using var grad = Tensor.Zeros([M * N], device);
             Check(backend.GemmStrided(ta_.Storage, 0, K, false, tbt.Storage, 0, K, true, grad.Storage, 0, N, M, N, K, 0f, null,
-                Idrak.Backends.GemmEpilogue.GeluGradient, saved.Storage), "GELU-gradient epilogue runs");
+                Idrak.Abstraction.Devices.GemmEpilogue.GeluGradient, saved.Storage), "GELU-gradient epilogue runs");
             var grads = grad.ToArray();
             for (int i = 0; i < M; i++)
             {
@@ -391,7 +391,7 @@ internal static partial class Tests
                         using var tb_ = Tensor.From(b, [b.Length], device);
                         using var tc_ = Tensor.From(c0, [c0.Length], device);
                         using var tbias = Tensor.From(bias, [n], device);
-                        backend.Gemm8(fp8, P(ta_), ta ? m : k, ta, P(tb_), tb ? k : n, tb, P(tc_), n, m, n, k, 0.5f, P(tbias), Idrak.Backends.GemmEpilogue.None, 0UL);
+                        backend.Gemm8(fp8, P(ta_), ta ? m : k, ta, P(tb_), tb ? k : n, tb, P(tc_), n, m, n, k, 0.5f, P(tbias), Idrak.Abstraction.Devices.GemmEpilogue.None, 0UL);
                         var got = tc_.ToArray();
                         var want = new float[m * n];
                         for (int i = 0; i < m; i++)
@@ -1349,10 +1349,10 @@ internal static partial class Tests
                 string Tflops(double ms) => double.IsNaN(ms) ? $"{"n/a",14}" : $"{flops / (ms * 1e9),7:F1} TFLOPS";
                 double bf16 = Time(() => backend.GemmStrided(a.Storage, 0, ta ? m : k, ta, b.Storage, 0, tb ? k : n, tb, c.Storage, 0, n, m, n, k, 0f), 10);
                 double fp8 = backend.EightBitReady(fp8: true)
-                    ? Time(() => backend.Gemm8(true, P(a), ta ? m : k, ta, P(b), tb ? k : n, tb, P(c), n, m, n, k, 0f, 0UL, Idrak.Backends.GemmEpilogue.None, 0UL), 10)
+                    ? Time(() => backend.Gemm8(true, P(a), ta ? m : k, ta, P(b), tb ? k : n, tb, P(c), n, m, n, k, 0f, 0UL, Idrak.Abstraction.Devices.GemmEpilogue.None, 0UL), 10)
                     : double.NaN;
                 double int8 = backend.EightBitReady(fp8: false)
-                    ? Time(() => backend.Gemm8(false, P(a), ta ? m : k, ta, P(b), tb ? k : n, tb, P(c), n, m, n, k, 0f, 0UL, Idrak.Backends.GemmEpilogue.None, 0UL), 10)
+                    ? Time(() => backend.Gemm8(false, P(a), ta ? m : k, ta, P(b), tb ? k : n, tb, P(c), n, m, n, k, 0f, 0UL, Idrak.Abstraction.Devices.GemmEpilogue.None, 0UL), 10)
                     : double.NaN;
                 Console.WriteLine($"{$"{m}x{n}x{k}",-20} {(ta ? "t" : "n") + (tb ? "t" : "n"),6} {Tflops(bf16),14} {Tflops(fp8),14} {Tflops(int8),14}");
             }

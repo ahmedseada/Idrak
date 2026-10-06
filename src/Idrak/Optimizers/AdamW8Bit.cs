@@ -13,7 +13,7 @@ namespace Idrak.Optimizers;
 public sealed class AdamW8Bit : Optimizer
 {
     /// <summary>Elements per quantization block (one scale per moment per block).</summary>
-    public const int BlockSize = 256;
+    public const int BlockSize = EightBitMoments.BlockSize;
 
     private readonly Tensor?[] _m, _v, _scales;
     private Tensor? _map;
@@ -136,24 +136,7 @@ public sealed class AdamW8Bit : Optimizer
     }
 
     /// <summary>The index of the code in the sorted <paramref name="map"/> nearest to <paramref name="x"/> (as the GPU kernel finds it).</summary>
-    public static byte Nearest(ReadOnlySpan<float> map, float x)
-    {
-        int lo = 0;
-        for (int step = 128; step > 0; step >>= 1)
-        {
-            if (map[lo + step] <= x)
-            {
-                lo += step;
-            }
-        }
-
-        if (lo < 255 && map[lo + 1] - x < x - map[lo])
-        {
-            lo++;
-        }
-
-        return (byte)lo;
-    }
+    public static byte Nearest(ReadOnlySpan<float> map, float x) => EightBitMoments.Nearest(map, x);
 
     /// <inheritdoc />
     public override void Dispose()

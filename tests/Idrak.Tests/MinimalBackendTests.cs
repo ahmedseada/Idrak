@@ -3,7 +3,7 @@
 
 using Idrak;
 using Idrak.Backends;
-using Idrak.Backends.Cpu;
+using Idrak.Abstraction.Devices.Cpu;
 using Idrak.Generation;
 using Idrak.Layers;
 

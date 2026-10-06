@@ -192,7 +192,7 @@ public abstract class Optimizer : IDisposable
     protected static Tensor CreateState(ReadOnlySpan<int> shape, Device device)
     {
         var state = Tensor.PersistentZeros(shape, device);
-        Offloading.MarkCold(state.Storage, Backends.OffloadPriority.OptimizerState);
+        Offloading.MarkCold(state.Storage, Abstraction.Devices.OffloadPriority.OptimizerState);
         return state;
     }
 

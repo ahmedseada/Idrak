@@ -640,7 +640,7 @@ public static class GgufModel
                 {
                     int n = Math.Min(chunkRows, rows - r0), first = r0;
                     _file.ReadRows(gguf, start + r0, chunk.AsSpan(0, n * columns), raw);
-                    Idrak.HostParallel.For(columns, Math.Max(1, (1 << 14) / n), (c0, c1) =>
+                    Idrak.Abstraction.Devices.HostParallel.For(columns, Math.Max(1, (1 << 14) / n), (c0, c1) =>
                     {
                         const int Tile = 64;
                         for (int t0 = 0; t0 < n; t0 += Tile)

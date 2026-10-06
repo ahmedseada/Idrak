@@ -192,7 +192,7 @@ internal static partial class Tests
         }
 
         // Same words on a second build (deterministic generation).
-        Check(VulkanKernels.Unary(Idrak.Backends.UnaryOp.Gelu).Words.SequenceEqual(VulkanKernels.Get("unary_gelu").Words), "lookup by op");
+        Check(VulkanKernels.Unary(Idrak.Abstraction.Devices.UnaryOp.Gelu).Words.SequenceEqual(VulkanKernels.Get("unary_gelu").Words), "lookup by op");
 
         ValidateWithSpirvVal(kernels.Select(e => (e.Kernel, $"{e.Kernel.Name}_w{e.Width}{(e.Subgroups ? "_subgroups" : "")}.spv")).ToList());
     }

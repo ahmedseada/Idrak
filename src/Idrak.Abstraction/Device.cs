@@ -2,11 +2,10 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Collections.Concurrent;
-using Idrak.Backends;
-using Idrak.Backends.Cpu;
-using Idrak.Backends.Cuda;
+using Idrak.Abstraction.Devices;
+using Idrak.Abstraction.Devices.Cpu;
 
-namespace Idrak;
+namespace Idrak.Abstraction;
 
 /// <summary>The kind of hardware a <see cref="Device"/> runs on.</summary>
 public enum DeviceType
@@ -59,10 +58,10 @@ public sealed class Device
     }
 
     /// <summary>True when an NVIDIA driver is installed and at least one CUDA GPU was found.</summary>
-    public static bool IsCudaAvailable => CudaBackend.DeviceCount > 0;
+    public static bool IsCudaAvailable => CudaDeviceCount > 0;
 
     /// <summary>The number of CUDA GPUs the driver reports (0 when there is no driver).</summary>
-    public static int CudaDeviceCount => CudaBackend.DeviceCount;
+    public static int CudaDeviceCount => DeviceProviders.Find("cuda")?.Count ?? 0;
 
     /// <summary>Returns the CUDA GPU with the given ordinal.</summary>
     /// <exception cref="InvalidOperationException">CUDA is not available or the ordinal is out of range.</exception>

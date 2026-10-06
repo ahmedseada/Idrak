@@ -4,7 +4,7 @@
 using System.Buffers;
 using System.Runtime.InteropServices;
 
-namespace Idrak.Backends.Cpu;
+namespace Idrak.Abstraction.Devices.Cpu;
 
 // Fused inference kernels and incremental-decoding primitives (KV cache, masks, on-device sampling).
 internal sealed partial class CpuBackend
@@ -232,7 +232,7 @@ internal sealed partial class CpuBackend
                 row.Clear();
                 for (int d = 0; d < dim; d++)
                 {
-                    row[d] = Layers.BFloat16Weight.Round(sv[(h * steps + t) * dim + d]);
+                    row[d] = BFloat16Bits.Round(sv[(h * steps + t) * dim + d]);
                 }
             }
         }

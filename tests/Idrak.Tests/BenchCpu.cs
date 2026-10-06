@@ -79,7 +79,7 @@ internal static partial class Tests
             }
         }
 
-        Console.WriteLine(Idrak.Backends.Cpu.CpuTuning.Describe());
+        Console.WriteLine(Idrak.Abstraction.Devices.Cpu.CpuTuning.Describe());
         using (Autograd.NoGrad())
         {
             foreach (var (m, n, k, transB) in new[]

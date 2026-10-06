@@ -7,6 +7,12 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
 
+  <!-- Every project here references Idrak.Abstraction (directly or through Idrak); packages get the same global using
+       from src/Idrak.Abstraction/buildTransitive. -->
+  <ItemGroup>
+    <Using Include="Idrak.Abstraction" />
+  </ItemGroup>
+
   <!-- NuGet: every project under src/ is a package (samples and tests set IsPackable to false). The release workflow
        sets Version from the tag (v0.1.0 -> 0.1.0); any other pack is a prerelease with the time in it
        (0.1.0-dev.yyMMddHHmm, UTC), so a prerelease tool update always installs the latest local pack. -->

@@ -1,9 +1,9 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using Idrak.Backends.Cpu;
+using Idrak.Abstraction.Devices.Cpu;
 
-namespace Idrak.Backends;
+namespace Idrak.Abstraction.Devices;
 
 internal enum UnaryOp
 {
@@ -97,7 +97,7 @@ internal abstract class Storage(Backend backend, int length)
     }
 
     /// <summary>
-    /// Counts the public in-place writes into the storage (<see cref="Tensor.CopyFrom(ReadOnlySpan{float})"/> and the
+    /// Counts the public in-place writes into the storage (<c>Tensor.CopyFrom(ReadOnlySpan&lt;float&gt;)</c> and the
     /// others): a backward step whose operation read the storage before such a write refuses to run on the changed values.
     /// </summary>
     public int Version;
@@ -372,7 +372,7 @@ internal abstract class Backend
     /// y = x · w for many rows (prompts) with packed weights w (in <paramref name="format"/>), expanding w as it is read instead of into a float copy. Returns false when the
     /// device has no such kernel or the shape is too small for it (callers then expand w first).
     /// </summary>
-    public virtual bool PackedMatMulLarge(Layers.PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k) => false;
+    public virtual bool PackedMatMulLarge(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k) => false;
 
     /// <summary>
     /// True when <see cref="PackedMatMulLarge"/> is faster than the few-rows kernels for this shape although the rows are
@@ -380,13 +380,13 @@ internal abstract class Backend
     /// real operands, so a device can measure both on itself; it may write <paramref name="y"/>, which the caller's product
     /// then writes again.
     /// </summary>
-    public virtual bool PrefersPackedMatMul(Layers.PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k) => false;
+    public virtual bool PrefersPackedMatMul(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k) => false;
 
     /// <summary>
     /// y = (act(gate) · up) · w for few rows with packed weights w (in <paramref name="format"/>; activation 0 = SiLU, 1 = GELU tanh): the gated feed-forward's down projection
     /// without a separate activation pass. Returns false when the device has no fused version.
     /// </summary>
-    public virtual bool PackedMatMulGated(Layers.PackedFormat format, int activation, Storage gate, Storage up, Storage packed, Storage? scales, Storage y,
+    public virtual bool PackedMatMulGated(PackedFormat format, int activation, Storage gate, Storage up, Storage packed, Storage? scales, Storage y,
         int m, int n, int k) => false;
 
     /// <summary>
@@ -394,7 +394,7 @@ internal abstract class Backend
     /// sum = residual + y and normalized = its RMS normalization · (gain + offset) per row (a residual addition and the
     /// next normalization) in the same pass. Returns false when the device has no fused version.
     /// </summary>
-    public virtual bool PackedMatMulAddRmsNorm(Layers.PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k,
+    public virtual bool PackedMatMulAddRmsNorm(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k,
         Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset) => false;
 
     /// <summary>
@@ -403,7 +403,7 @@ internal abstract class Backend
     /// <see cref="BFloat16MatMul"/>, which has no scales). Returns false when the device has no single-pass version (callers then
     /// run the products one by one).
     /// </summary>
-    public virtual bool PackedMatMulMany(Layers.PackedFormat format, Storage x, int m, int k,
+    public virtual bool PackedMatMulMany(PackedFormat format, Storage x, int m, int k,
         ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products) => false;
 
     /// <summary>
@@ -411,7 +411,7 @@ internal abstract class Backend
     /// also writing hidden = act(gate) · up (activation 0 = SiLU, 1 = GELU tanh, 2 = ReLU) in the same pass. Returns
     /// false when the device has no fused version.
     /// </summary>
-    public virtual bool PackedMatMulGatedPair(Layers.PackedFormat format, int activation, Storage x, int m, int k,
+    public virtual bool PackedMatMulGatedPair(PackedFormat format, int activation, Storage x, int m, int k,
         ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products, Storage hidden) => false;
 
     /// <summary>
@@ -444,7 +444,7 @@ internal abstract class Backend
     public virtual bool MatMulLowRank(Storage a, Storage b, Storage c, int m, int n, int k, bool transB, float beta, Storage u, Storage v, int rank) => false;
 
     /// <summary>
-    /// c = beta·c + a · Wᵀ (+ u · vᵀ) with W a bfloat16 weight [n, k] as <see cref="Layers.BFloat16Weight"/> packs it (two
+    /// c = beta·c + a · Wᵀ (+ u · vᵀ) with W a bfloat16 weight [n, k] as <c>Layers.BFloat16Weight</c> packs it (two
     /// values per word along k), read as stored: the input gradient through a frozen bfloat16 layer (and its adapter's
     /// dt · Aᵀ with u = dt [m, rank], v = A [n, rank]) without expanding the weight to float. u null: no low-rank term.
     /// False when the device has no such kernel (callers then expand the weight).
@@ -474,7 +474,7 @@ internal abstract class Backend
     /// each with a low-rank term: y_j = x · w_j + u_j · v_j for u_j [m, rank] and v_j [rank, n_j], rank ≤ 32, in one pass.
     /// Returns false when the device has no such pass.
     /// </summary>
-    public virtual bool PackedMatMulLowRank(Layers.PackedFormat format, Storage x, int m, int k,
+    public virtual bool PackedMatMulLowRank(PackedFormat format, Storage x, int m, int k,
         ReadOnlySpan<(Storage Packed, Storage? Scales, Storage Output, int Columns, Storage U, Storage V)> products, int rank) => false;
 
     /// <summary>
@@ -727,9 +727,9 @@ internal abstract class Backend
     }
 
     /// <summary>
-    /// <see cref="AdamStep"/> with 8-bit moments (see <see cref="Optimizers.AdamW8Bit"/>): m and v hold one byte per element
+    /// <see cref="AdamStep"/> with 8-bit moments (see <c>Optimizers.AdamW8Bit</c>): m and v hold one byte per element
     /// (n bytes, packed four per float), codes into <paramref name="map"/> (256 signed values for m, then 256 unsigned for
-    /// v, both in [-1, 1]) scaled per block of <see cref="Optimizers.AdamW8Bit.BlockSize"/> elements by
+    /// v, both in [-1, 1]) scaled per block of <see cref="EightBitMoments.BlockSize"/> elements by
     /// <paramref name="absMax"/> (the blocks' m scales, then their v scales). The moments are decoded, updated, and
     /// encoded again to the nearest code with new block scales.
     /// </summary>
@@ -1128,7 +1128,7 @@ internal abstract class Backend
         return CpuBackend.Instance.AttentionRows(h[q], h[keys], h[values], h[position], h[y], h[starts], heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
     }
 
-    /// <summary>Whether <see cref="AttentionSegmented"/> and its gradient run for this head size (with the current <see cref="MixedPrecision"/>).</summary>
+    /// <summary>Whether <see cref="AttentionSegmented"/> and its gradient run for this head size (with the current <c>MixedPrecision</c>).</summary>
     public virtual bool SupportsSegmentedAttention(int dim, AttentionVariant variant = default) => CpuBackend.Instance.SupportsSegmentedAttention(dim, variant);
 
     /// <summary>The gradient of <see cref="AttentionSegmented"/> (as <see cref="AttentionTiledBackward"/>); false when unsupported.</summary>

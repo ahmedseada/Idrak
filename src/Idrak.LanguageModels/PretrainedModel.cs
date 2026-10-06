@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Text.Json.Nodes;
+using Idrak.Abstraction.Devices;
 using Idrak.Generation;
 using Idrak.Layers;
 
@@ -144,7 +145,7 @@ public sealed class PretrainedModel : IDisposable
         tokenizer?.PadVocabulary(spec.Vocabulary);
         var template = JinjaChatTemplate.Load(folder, tokenizer);
         return new PretrainedModel(folder, config, spec, network, tokenizer, template, notes, maxPositions, architecture,
-            options.Device ?? Idrak.Device.Default);
+            options.Device ?? Idrak.Abstraction.Device.Default);
     }
 
     /// <summary>A text generator for the model (int8 KV cache with <paramref name="cacheFormat"/>).</summary>

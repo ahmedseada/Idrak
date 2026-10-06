@@ -24,7 +24,7 @@ using Idrak.Layers;
 using Idrak.Optimizers;
 using Idrak.Training;
 
-Idrak.Backends.DeviceProviders.Register(new Tests.MinimalProvider());   // only by name: IDRAK_DEVICES=cpu,minimal
+Idrak.Abstraction.Devices.DeviceProviders.Register(new Tests.MinimalProvider());   // only by name: IDRAK_DEVICES=cpu,minimal
 
 if (args is ["--list-devices"])
 {
@@ -213,7 +213,7 @@ internal static partial class Tests
         for (int i = 0; i < N; i++)
         {
             // The vectorized kernels must reproduce the scalar reference hash exactly.
-            Check((y[i] != 0f) == Idrak.Backends.DropoutMask.Keep(99, (uint)i, 0.25f), $"dropout mask differs from the reference at {i}");
+            Check((y[i] != 0f) == Idrak.Abstraction.Devices.DropoutMask.Keep(99, (uint)i, 0.25f), $"dropout mask differs from the reference at {i}");
         }
 
         var layer = new Dropout(0.5f);

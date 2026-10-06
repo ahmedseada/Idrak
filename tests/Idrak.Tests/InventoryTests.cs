@@ -24,10 +24,15 @@ internal static partial class Tests
 
     // The library packages (the CLI is an application: its own helpers are outside the rule).
     private static readonly string[] LibraryAssemblyNames =
-        ["Idrak", "Idrak.LanguageModels", "Idrak.Datasets", "Idrak.Onnx", "Idrak.Onnx.Runtime", "Idrak.AspNetCore", "Idrak.Mcp"];
+        ["Idrak.Abstraction", "Idrak", "Idrak.LanguageModels", "Idrak.Datasets", "Idrak.Onnx", "Idrak.Onnx.Runtime", "Idrak.AspNetCore", "Idrak.Mcp"];
 
-    // The assemblies Idrak lets see its internals, other than the tests: what phase 2 must turn into public contract.
-    private static readonly string[] FriendAssemblyNames = ["Idrak.Onnx", "Idrak.LanguageModels", "Idrak.Cli"];
+    // Each assembly whose internals others see, with those others (the tests aside): what phases 2 and 4 must turn into
+    // public contract. Idrak.Abstraction's list must be empty after phase 4.
+    private static readonly (string Target, string[] Users)[] FriendAssemblies =
+    [
+        ("Idrak.Abstraction", ["Idrak", "Idrak.LanguageModels", "Idrak.Onnx", "Idrak.Cli"]),
+        ("Idrak", ["Idrak.Onnx", "Idrak.LanguageModels", "Idrak.Cli"]),
+    ];
 
     private const string InventoryPath = "plans/10-abstraction-inventory.md", AllowListPath = "tests/Idrak.Tests/data/abstraction-allow-list.txt";
 
@@ -215,7 +220,7 @@ internal static partial class Tests
                 }
             }
 
-            if (t.Assembly == typeof(Tensor).Assembly && CoreTypes.Contains(t.Name) && t != type)
+            if (t.Assembly.GetName().Name is "Idrak" or "Idrak.Abstraction" && CoreTypes.Contains(t.Name) && t != type)
             {
                 seen.Add(t.Name);
             }
@@ -295,7 +300,7 @@ internal static partial class Tests
         string area = name switch
         {
             "Tensor" or "TensorScope" => "",
-            "CpuBackend.IRangeKernel" or "Backend" => "Operations",
+            "CpuBackend.IRangeKernel" => "Operations",
             "GraphOps" or "Autograd" or "DifferentiableFunction" => "Autograd",
             "IScaler" or "DistillationTeacher" or "TeacherDistributions" => "Training",
             "IWeightSource" or "WeightCodec" or "CheckpointFormats" or "ICheckpointFormat" or "ModelSources" or "IModelSource" or "ITensorStore"
@@ -303,7 +308,7 @@ internal static partial class Tests
             "PackedWeight" or "KeyValueLayout" or "KeyValueLayouts" or "RopeScalings" or "ITokenSampler" => "Generation",
             _ => ns switch
             {
-                "Idrak.Backends" or "Idrak.Backends.Cuda" or "Idrak.Backends.Vulkan" or "Idrak.Backends.Hip" or "Idrak.Backends.Cpu" => "Devices",
+                "Idrak.Backends" or "Idrak.Backends.Cuda" or "Idrak.Backends.Vulkan" or "Idrak.Backends.Hip" => "Devices",
                 "Idrak.Layers" => "Modules",
                 "Idrak.Optimizers" or "Idrak.Training" => "Training",
                 "Idrak.Data" or "Idrak.Datasets" => "Data",
@@ -383,29 +388,33 @@ internal static partial class Tests
         BackendOperations(Line);
 
         Line();
-        Line("## Internals of `Idrak` other assemblies use");
-        Line();
-        Line("What each assembly `Idrak` names in `InternalsVisibleTo` (the tests aside) references among `Idrak`'s non-public");
-        Line("types and members, read from its metadata. Phase 2 makes each one public contract, or justifies it line by line.");
-        foreach (string friend in FriendAssemblyNames)
+        foreach (var (target, users) in FriendAssemblies)
         {
             Line();
-            Line($"### {friend}");
+            Line($"## Internals of `{target}` other assemblies use");
             Line();
-            var used = InternalsUsed(Assembly.Load(friend), typeof(Tensor).Assembly);
-            if (used.Count == 0)
+            Line($"What each assembly `{target}` names in `InternalsVisibleTo` (the tests aside) references among its non-public types");
+            Line("and members, read from that assembly's metadata. Phases 2 and 4 make each one public contract, or justify it line by line.");
+            foreach (string user in users)
             {
-                Line("None.");
-                continue;
-            }
+                Line();
+                Line($"### {user}");
+                Line();
+                var used = InternalsUsed(Assembly.Load(user), Assembly.Load(target));
+                if (used.Count == 0)
+                {
+                    Line("None.");
+                    continue;
+                }
 
-            Line($"{used.Values.Sum(v => v.Count)} members on {used.Count} types.");
-            Line();
-            Line("| Type | Internal members used |");
-            Line("|---|---|");
-            foreach (var (type, members) in used)
-            {
-                Line($"| `{Cell(type)}` | {Cell(string.Join(", ", members))} |");
+                Line($"{used.Values.Sum(v => v.Count)} members on {used.Count} types.");
+                Line();
+                Line("| Type | Internal members used |");
+                Line("|---|---|");
+                foreach (var (type, members) in used)
+                {
+                    Line($"| `{Cell(type)}` | {Cell(string.Join(", ", members))} |");
+                }
             }
         }
 
@@ -414,9 +423,8 @@ internal static partial class Tests
 
     private static void BackendOperations(Action<string> line)
     {
-        var idrak = typeof(Tensor).Assembly;
-        var backend = idrak.GetType("Idrak.Backends.Backend", throwOnError: true)!;
-        var devices = idrak.GetTypes().Where(t => !t.IsAbstract && backend.IsAssignableFrom(t) && !Generated(t)).OrderBy(t => t.Name, StringComparer.Ordinal).ToList();
+        var backend = typeof(Device).Assembly.GetType("Idrak.Abstraction.Devices.Backend", throwOnError: true)!;
+        var devices = new[] { typeof(Device).Assembly, typeof(Tensor).Assembly }.SelectMany(a => a.GetTypes()).Where(t => !t.IsAbstract && backend.IsAssignableFrom(t) && !Generated(t)).OrderBy(t => t.Name, StringComparer.Ordinal).ToList();
         var operations = backend.GetMethods(AllDeclared).Where(m => (m.IsAbstract || m.IsVirtual && !m.IsFinal) && m.GetBaseDefinition() == m && !m.IsSpecialName)
             .OrderBy(m => m.Name, StringComparer.Ordinal).ThenBy(m => m.GetParameters().Length).ToList();
         var properties = backend.GetProperties(AllDeclared).Where(p => p.GetMethod is { } g && (g.IsAbstract || g.IsVirtual)).OrderBy(p => p.Name, StringComparer.Ordinal).ToList();
@@ -434,7 +442,7 @@ internal static partial class Tests
             return false;
         }
 
-        line($"`Idrak.Backends.Backend` ({Visibility(backend)}): {operations.Count(m => m.IsAbstract)} abstract and {operations.Count(m => !m.IsAbstract)} virtual "
+        line($"`Idrak.Abstraction.Devices.Backend` ({Visibility(backend)}): {operations.Count(m => m.IsAbstract)} abstract and {operations.Count(m => !m.IsAbstract)} virtual "
              + $"methods, {properties.Count} abstract or virtual properties. Devices: {string.Join(", ", devices.Select(d => $"`{d.Name}`"))}. Plan 9 turns");
         line("the methods into operation descriptors with kernels per device; the CPU device becomes every device's host fallback.");
         line("");

@@ -53,6 +53,7 @@ tool. `IDRAK_DISABLE_CUDA=1` (and `_VULKAN`, `_HIP`) turns a backend off.
 | Package | What it gives you |
 |---------|-------------------|
 | `Idrak` (core) | Tensors and autograd, layers, training, vision, generation, chat and tools, retrieval, the inference engine, telemetry, every backend |
+| `Idrak.Abstraction` | The contracts Idrak is built on, each with its default implementation: so far `Device`, `ComputeResources` and the CPU device (preview; brought along by `Idrak`; see [plan 10](plans/10-abstraction.md)) |
 | `Idrak.LanguageModels` | Hugging Face and GGUF models, tokenizers, the models' own Jinja chat templates, LoRA / QLoRA fine-tuning, evaluation |
 | `Idrak.Datasets` | JSON Lines, JSON, CSV, text, code and Parquet files (also compressed or archived); Hugging Face, GitHub, Kaggle, Zenodo and URL sources |
 | `Idrak.AspNetCore` | `AddIdrak()`, `MapPredictor`, `MapGenerate` (JSON and streaming), `MapChatApi` (the local chat API) and `MapCompletionsApi` (`/v1`) |

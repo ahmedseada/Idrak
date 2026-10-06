@@ -1,12 +1,5 @@
 # Plan 10: abstractions still declared outside Idrak.Abstraction.*. This list may only shrink: declare new
 # interfaces, abstract classes and registries under Idrak.Abstraction.* (tests/Idrak.Tests/InventoryTests.cs).
-Idrak.Backends.Backend
-Idrak.Backends.Cpu.CpuBackend.IRangeKernel
-Idrak.Backends.DeviceProvider
-Idrak.Backends.DeviceProviders
-Idrak.Backends.IHostStaging
-Idrak.Backends.IMemoryOffload
-Idrak.Backends.Storage
 Idrak.Data.IBatchSource
 Idrak.Data.IImageCodec
 Idrak.Data.ISampleReader

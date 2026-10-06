@@ -6,7 +6,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 
-namespace Idrak.Backends.Cpu;
+namespace Idrak.Abstraction.Devices.Cpu;
 
 // Few-row bfloat16 products with the rows' sums in registers. The weights are read in chunks of k rows
 // (CpuTuning.KChunk: half a cache line of each input row's values); within a chunk, each panel of columns (two vectors

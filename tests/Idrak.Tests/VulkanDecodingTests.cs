@@ -29,7 +29,7 @@ internal static partial class Tests
             return;
         }
 
-        var cpu = Idrak.Backends.Cpu.CpuBackend.Instance;
+        var cpu = Idrak.Abstraction.Devices.Cpu.CpuBackend.Instance;
         var random = new Random(17);
         const int Rows = 3, Steps = 4, Positions = 2;
         foreach (int vocabulary in new[] { 50, 1000, 10_000 })              // one invocation per row, a workgroup, two stages

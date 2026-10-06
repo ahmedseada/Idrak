@@ -522,7 +522,7 @@ internal static partial class Tests
                 sum += e[j];
             }
 
-            float target = Idrak.Backends.CounterRandom.Uniform(seed, stepNumber, (uint)r) * sum;
+            float target = Idrak.Abstraction.Devices.CounterRandom.Uniform(seed, stepNumber, (uint)r) * sum;
             int chosen = -1;
             float cumulative = 0f;
             for (int j = 0; j < vocabulary; j++)

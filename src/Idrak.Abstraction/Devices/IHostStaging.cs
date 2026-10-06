@@ -1,12 +1,12 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-namespace Idrak.Backends;
+namespace Idrak.Abstraction.Devices;
 
 /// <summary>
 /// Pinned system-memory buffers ("slots") that a GPU backend copies to and from in the background, queued after the
 /// work already issued, so the host can compute on one slot while others are in flight (used by
-/// <see cref="Optimizers.HostOptimizer"/>). A device without it (the CPU) returns null from
+/// <c>Idrak.Optimizers.HostOptimizer</c>). A device without it (the CPU) returns null from
 /// <see cref="Backend.CreateHostStaging"/> and callers copy synchronously.
 /// </summary>
 internal interface IHostStaging : IDisposable

@@ -697,7 +697,7 @@ public sealed class FeedForward : Module
 
             var (gate, up, kind) = (projected[0], projected[1], (int)Activation);
             bool recompute = ActivationMemory.RecomputeFeedForward && Autograd.IsEnabled;
-            Backends.Storage? packedHidden = null;
+            Abstraction.Devices.Storage? packedHidden = null;
             if (ActivationMemory.BFloat16 && Autograd.IsEnabled
                 && Tensor.GatedActivationCompressed(gate, up, kind, packOutput: !recompute, out packedHidden) is { } compressed)
             {

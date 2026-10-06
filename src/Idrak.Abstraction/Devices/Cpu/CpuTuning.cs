@@ -8,7 +8,7 @@ using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.Arm;
 using System.Runtime.Intrinsics.X86;
 
-namespace Idrak.Backends.Cpu;
+namespace Idrak.Abstraction.Devices.Cpu;
 
 /// <summary>Which register-tiled float32 product kernel the CPU runs (chosen by the instruction sets it reports).</summary>
 internal enum TiledKernel : byte

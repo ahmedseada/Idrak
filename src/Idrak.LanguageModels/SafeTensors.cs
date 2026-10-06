@@ -53,7 +53,7 @@ public interface ITensorStore : IDisposable
     float[] ReadTransposed(string name)
     {
         var shape = ShapeOf(name);
-        return Idrak.HostParallel.Transpose(Read(name), shape[0], shape[1]);
+        return Idrak.Abstraction.Devices.HostParallel.Transpose(Read(name), shape[0], shape[1]);
     }
 }
 
@@ -169,7 +169,7 @@ public sealed class SafeTensorsReader : IDisposable, ITensorStore
 
         if (!BitConverter.IsLittleEndian)
         {
-            return Idrak.HostParallel.Transpose(Read(name), info.Shape[0], info.Shape[1]);
+            return Idrak.Abstraction.Devices.HostParallel.Transpose(Read(name), info.Shape[0], info.Shape[1]);
         }
 
         // Chunks of stored rows are read through one pooled buffer and scattered, widened, into the transposed result.
@@ -185,7 +185,7 @@ public sealed class SafeTensorsReader : IDisposable, ITensorStore
                 int n = Math.Min(chunkRows, rows - r0), first = r0;
                 ReadAt(handle, buffer.AsSpan(0, n * columns * width), info.Offset + (long)r0 * columns * width);
                 var type = info.Type;
-                Idrak.HostParallel.For(columns, Math.Max(1, (1 << 14) / n), (c0, c1) =>
+                Idrak.Abstraction.Devices.HostParallel.For(columns, Math.Max(1, (1 << 14) / n), (c0, c1) =>
                 {
                     const int Tile = 64;
                     for (int t0 = 0; t0 < n; t0 += Tile)
@@ -319,7 +319,7 @@ public sealed class SafeTensorsReader : IDisposable, ITensorStore
 
                 break;
             case SafeTensorType.F16:
-                Idrak.HostParallel.For(count, 1 << 16, (first, last) =>
+                Idrak.Abstraction.Devices.HostParallel.For(count, 1 << 16, (first, last) =>
                 {
                     for (int i = first; i < last; i++)
                     {
@@ -329,7 +329,7 @@ public sealed class SafeTensorsReader : IDisposable, ITensorStore
                 break;
             default:
                 // bfloat16 is the top half of a float32.
-                Idrak.HostParallel.For(count, 1 << 16, (first, last) =>
+                Idrak.Abstraction.Devices.HostParallel.For(count, 1 << 16, (first, last) =>
                 {
                     var halves = MemoryMarshal.Cast<byte, ushort>(bytes.AsSpan(first * 2, (last - first) * 2));
                     var bits = MemoryMarshal.Cast<float, uint>(values.AsSpan(offset + first, last - first));
@@ -429,7 +429,7 @@ public static class SafeTensorsWriter
                 for (int first = 0; first < values.Length; first += ChunkValues)
                 {
                     int n = Math.Min(ChunkValues, values.Length - first), start = first;
-                    Idrak.HostParallel.For(n, 1 << 16, (lo, hi) => Encode(values, start + lo, bytes, lo, hi - lo, type));
+                    Idrak.Abstraction.Devices.HostParallel.For(n, 1 << 16, (lo, hi) => Encode(values, start + lo, bytes, lo, hi - lo, type));
                     stream.Write(bytes, 0, n * size);
                 }
             }
