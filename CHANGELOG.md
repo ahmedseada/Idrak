@@ -19,6 +19,10 @@
   | `Idrak.Layers.PackedFormat` | `Idrak.Abstraction.PackedFormat` |
   | `Idrak.Backends.GemmEpilogue` | `Idrak.Abstraction.Devices.GemmEpilogue` |
 
+- Internal: every device operation goes through one dispatcher (plan 9, phase 1). A kernel registered for an
+  operation on a kind of device runs instead of the device's own; a device with none registered reads one more field
+  per operation. The kernel table stays internal until the public device API (plan 10, phase 4).
+
 ## 0.3.1 (2026-10-05)
 
 Fixes found by moving the MultiLanguageOcr sample onto `Idrak.Vision` and by running the tests on a laptop with an

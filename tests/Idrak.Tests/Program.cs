@@ -11,6 +11,7 @@
 //   … -- --bench-vulkan [sections]                                               time every Vulkan device (or those IDRAK_DEVICES names): dispatches, copies, products, attention, decoders
 //   … -- --bench-text                                                            time the text paths (tokenizer, chat template, parsing, chunking, BM25)
 //   … -- --bench-window                                                          time windowed and soft-capped attention, kernels against the composed path (IDRAK_DEVICES, default every GPU)
+//   … -- --bench-dispatch                                                        time a million tiny operations through the dispatcher and straight to the CPU's kernel
 //   … -- --bench-offload                                                         time training steps with weights or optimizer state in system memory
 //   IDRAK_FILTER=retrieval dotnet run --project tests/Idrak.Tests   only tests whose name contains the text
 //   IDRAK_TIMEOUT=60 …    a test still running after this many seconds (default 300) is reported as HANG and the run stops
@@ -64,6 +65,11 @@ if (args is ["--bench-window"])
 if (args is ["--bench-offload"])
 {
     return Tests.BenchOffload();
+}
+
+if (args is ["--bench-dispatch"])
+{
+    return Tests.BenchDispatch();
 }
 
 if (args is ["--bench-fp8"])
@@ -168,7 +174,7 @@ return failed == 0 ? 0 : 1;
 
 internal static partial class Tests
 {
-    public static (string Name, Action<Device> Run)[] All => [.. InventoryGroup, .. Basic, .. Advanced, .. TensorOpsGroup, .. Decoding, .. Generation, .. Simplified, .. Callbacks, .. AspNetCore, .. Retrieval, .. Onnx, .. Quantization, .. Decoder, .. Pretrained, .. ChatTemplates, .. FineTuning, .. MixedPrecisionGroup, .. CodingToolsGroup, .. DatasetsGroup, .. GgufGroup, .. NamingGroup, .. StreamingText, .. OffloadingGroup, .. TuningGroup, .. CpuTuningGroup, .. AbstractionGroup, .. OpPluginGroup, .. PackedPluginGroup, .. ModelPluginGroup, .. DatasetPluginGroup, .. MinimalBackendGroup, .. KeyValuePluginGroup, .. OutsidePluginGroup, .. VulkanGroup, .. VulkanRuntimeGroup, .. SpirvGroup, .. VulkanCnnGroup, .. VulkanPromptGroup, .. VulkanMatrixGroup, .. VulkanTrainingGroup, .. VulkanFusedGroup, .. VulkanLimitsGroup, .. VulkanGraphGroup, .. HipGroup, .. ModelFamilyGroup, .. MixtureOfExpertsGroup, .. VulkanMixedMatrixGroup, .. CliRunGroup, .. CliDeveloperGroup, .. CliServeGroup, .. CliModelsGroup, .. CliDesignGroup, .. CliMeasureGroup, .. CliRetrievalGroup, .. CliTrainDataGroup, .. CliHealthGroup, .. CliPolishGroup, .. DataLoaderGroup, .. WindowKernelGroup, .. DistillationGroup, .. CliArabicGroup, .. VisionGroup];
+    public static (string Name, Action<Device> Run)[] All => [.. InventoryGroup, .. Basic, .. Advanced, .. TensorOpsGroup, .. Decoding, .. Generation, .. Simplified, .. Callbacks, .. AspNetCore, .. Retrieval, .. Onnx, .. Quantization, .. Decoder, .. Pretrained, .. ChatTemplates, .. FineTuning, .. MixedPrecisionGroup, .. CodingToolsGroup, .. DatasetsGroup, .. GgufGroup, .. NamingGroup, .. StreamingText, .. OffloadingGroup, .. TuningGroup, .. CpuTuningGroup, .. AbstractionGroup, .. OperationGroup, .. OpPluginGroup, .. PackedPluginGroup, .. ModelPluginGroup, .. DatasetPluginGroup, .. MinimalBackendGroup, .. KeyValuePluginGroup, .. OutsidePluginGroup, .. VulkanGroup, .. VulkanRuntimeGroup, .. SpirvGroup, .. VulkanCnnGroup, .. VulkanPromptGroup, .. VulkanMatrixGroup, .. VulkanTrainingGroup, .. VulkanFusedGroup, .. VulkanLimitsGroup, .. VulkanGraphGroup, .. HipGroup, .. ModelFamilyGroup, .. MixtureOfExpertsGroup, .. VulkanMixedMatrixGroup, .. CliRunGroup, .. CliDeveloperGroup, .. CliServeGroup, .. CliModelsGroup, .. CliDesignGroup, .. CliMeasureGroup, .. CliRetrievalGroup, .. CliTrainDataGroup, .. CliHealthGroup, .. CliPolishGroup, .. DataLoaderGroup, .. WindowKernelGroup, .. DistillationGroup, .. CliArabicGroup, .. VisionGroup];
 
     private static readonly (string Name, Action<Device> Run)[] Basic =
     [

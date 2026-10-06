@@ -7,11 +7,11 @@ namespace Idrak.Backends.Vulkan;
 // powers, clamping, selection by a mask and the gradient of element-wise extremes.
 internal sealed partial class VulkanBackend
 {
-    public override void Pow(Storage x, Storage y, int n, float exponent)
+    public override void PowKernel(Storage x, Storage y, int n, float exponent)
     {
         if (!Fit(x, y))
         {
-            base.Pow(x, y, n, exponent);
+            base.PowKernel(x, y, n, exponent);
             return;
         }
 
@@ -20,7 +20,7 @@ internal sealed partial class VulkanBackend
         Grid("pow", n, [x, y], new Push(b).I(n).F(exponent).F(negative).F(atZero).Bytes);
     }
 
-    public override void PowBackward(Storage x, Storage dy, Storage dx, int n, float exponent)
+    public override void PowBackwardKernel(Storage x, Storage dy, Storage dx, int n, float exponent)
     {
         if (exponent == 0f)
         {
@@ -29,7 +29,7 @@ internal sealed partial class VulkanBackend
 
         if (!Fit(x, dy, dx))
         {
-            base.PowBackward(x, dy, dx, n, exponent);
+            base.PowBackwardKernel(x, dy, dx, n, exponent);
             return;
         }
 
@@ -46,11 +46,11 @@ internal sealed partial class VulkanBackend
         return (negative, atZero);
     }
 
-    public override void Clamp(Storage x, Storage y, int n, float min, float max)
+    public override void ClampKernel(Storage x, Storage y, int n, float min, float max)
     {
         if (!Fit(x, y))
         {
-            base.Clamp(x, y, n, min, max);
+            base.ClampKernel(x, y, n, min, max);
             return;
         }
 
@@ -58,11 +58,11 @@ internal sealed partial class VulkanBackend
         Grid("clamp", n, [x, y], new Push(b).I(n).F(min).F(max).Bytes);
     }
 
-    public override void ClampBackward(Storage x, Storage dy, Storage dx, int n, float min, float max)
+    public override void ClampBackwardKernel(Storage x, Storage dy, Storage dx, int n, float min, float max)
     {
         if (!Fit(x, dy, dx))
         {
-            base.ClampBackward(x, dy, dx, n, min, max);
+            base.ClampBackwardKernel(x, dy, dx, n, min, max);
             return;
         }
 
@@ -70,11 +70,11 @@ internal sealed partial class VulkanBackend
         Grid("clamp_backward", n, [x, dy, dx], new Push(b).I(n).F(min).F(max).Bytes);
     }
 
-    public override void Where(Storage condition, Storage a, Storage b, Storage y, int n)
+    public override void WhereKernel(Storage condition, Storage a, Storage b, Storage y, int n)
     {
         if (!Fit(condition, a, b, y))
         {
-            base.Where(condition, a, b, y, n);
+            base.WhereKernel(condition, a, b, y, n);
             return;
         }
 
@@ -82,11 +82,11 @@ internal sealed partial class VulkanBackend
         Grid("where", n, [condition, a, b, y], new Push(p).I(n).Bytes);
     }
 
-    public override void WhereBackward(Storage condition, Storage dy, Storage? da, Storage? db, int n)
+    public override void WhereBackwardKernel(Storage condition, Storage dy, Storage? da, Storage? db, int n)
     {
         if (!Fit(condition, dy, da ?? dy, db ?? dy))
         {
-            base.WhereBackward(condition, dy, da, db, n);
+            base.WhereBackwardKernel(condition, dy, da, db, n);
             return;
         }
 
@@ -95,11 +95,11 @@ internal sealed partial class VulkanBackend
         Grid("where_backward", n, [condition, dy, da ?? dy, db ?? dy], new Push(p).I(n).I(flags).Bytes);
     }
 
-    public override void ExtremumBackward(BinaryOp op, Storage a, Storage b, Storage dy, Storage? da, Storage? db, int n)
+    public override void ExtremumBackwardKernel(BinaryOp op, Storage a, Storage b, Storage dy, Storage? da, Storage? db, int n)
     {
         if (!Fit(a, b, dy, da ?? dy, db ?? dy))
         {
-            base.ExtremumBackward(op, a, b, dy, da, db, n);
+            base.ExtremumBackwardKernel(op, a, b, dy, da, db, n);
             return;
         }
 

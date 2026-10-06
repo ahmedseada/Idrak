@@ -20,12 +20,18 @@ internal sealed class HostCall : IDisposable
     private readonly Backend _device;
     private readonly List<(Storage Device, Storage Host, float[] Before)> _mirrors = [];
 
-    /// <summary>Starts a fallback of the operation <paramref name="operation"/> (the calling method's name by default).</summary>
+    /// <summary>
+    /// Starts a fallback of the operation <paramref name="operation"/> (by default the calling method's name, the
+    /// device's own kernel <c>NameKernel</c>, counted as the operation's name).
+    /// </summary>
     public HostCall(Backend device, [CallerMemberName] string operation = "")
     {
         _device = device;
         Interlocked.Increment(ref device.HostCalls);
-        device.HostCallsByOperation?.AddOrUpdate(operation, 1, static (_, n) => n + 1);
+        if (device.HostCallsByOperation is { } byOperation)
+        {
+            byOperation.AddOrUpdate(operation.EndsWith("Kernel", StringComparison.Ordinal) ? operation[..^"Kernel".Length] : operation, 1, static (_, n) => n + 1);
+        }
     }
 
     /// <summary>The CPU mirror of <paramref name="storage"/>, holding its values.</summary>

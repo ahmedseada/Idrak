@@ -136,8 +136,37 @@ internal abstract class Storage(Backend backend, int length)
 /// <see cref="MulAdd"/>, <see cref="SumRows"/> and <see cref="AddBroadcastScalar"/>
 /// accumulate into their output (+=) so gradients from several paths add up.
 /// </summary>
-internal abstract class Backend
+internal abstract partial class Backend
 {
+    // The kernels registered for this device by operation index, null when there are none (every call then runs the
+    // device's own kernel after one field read), or an empty array when they must be resolved again (Kernels changed).
+    private Delegate?[]? _kernels = Operations.Kernels.Unresolved();
+
+    /// <summary>Starts a device; <see cref="Operations.Kernels"/> tells it when the kernels registered for it change.</summary>
+    protected Backend() => Operations.Kernels.Track(this);
+
+    /// <summary>The kind of device this drives ("cpu", "cuda", "vulkan", …): the kernels registered for it run here.</summary>
+    public abstract string Kind { get; }
+
+    /// <summary>Marks the registered kernels as changed: the next call to an operation resolves them again.</summary>
+    internal void KernelsChanged() => Volatile.Write(ref _kernels, Operations.Kernels.Unresolved());
+
+    // The kernel registered for an operation on this device, or null for the device's own.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    private Delegate? Kernel(int operation)
+    {
+        var kernels = _kernels;
+        return kernels is null ? null : kernels.Length != 0 ? kernels[operation] : ResolveKernels(kernels)[operation];
+    }
+
+    // Resolves the slots; stores them unless Kernels changed meanwhile (then the next call resolves again).
+    private Delegate?[] ResolveKernels(Delegate?[] unresolved)
+    {
+        var slots = Operations.Kernels.Resolve(this);
+        Interlocked.CompareExchange(ref _kernels, Array.TrueForAll(slots, k => k is null) ? null : slots, unresolved);
+        return slots;
+    }
+
     /// <summary>Operations this device has run through the host fallback (<see cref="HostCall"/>), for tests and diagnostics.</summary>
     internal long HostCalls;
 
@@ -220,7 +249,7 @@ internal abstract class Backend
     /// <summary>Copies destination.Length floats starting at element <paramref name="offset"/>.</summary>
     public abstract void DownloadRange(Storage source, int offset, Span<float> destination);
 
-    public virtual void Fill(Storage y, int n, float value)
+    public virtual void FillKernel(Storage y, int n, float value)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.Fill(h[y], n, value);
@@ -233,21 +262,21 @@ internal abstract class Backend
     }
 
     /// <summary>y = op(x).</summary>
-    public virtual void Unary(UnaryOp op, Storage x, Storage y, int n)
+    public virtual void UnaryKernel(UnaryOp op, Storage x, Storage y, int n)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.Unary(op, h[x], h[y], n);
     }
 
     /// <summary>dx += dy * op'(x), where y = op(x) is passed in for ops whose derivative is cheaper from y.</summary>
-    public virtual void UnaryBackward(UnaryOp op, Storage x, Storage y, Storage dy, Storage dx, int n)
+    public virtual void UnaryBackwardKernel(UnaryOp op, Storage x, Storage y, Storage dy, Storage dx, int n)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.UnaryBackward(op, h[x], h[y], h[dy], h[dx], n);
     }
 
     /// <summary>c = a op b, element-wise.</summary>
-    public virtual void Binary(BinaryOp op, Storage a, Storage b, Storage c, int n)
+    public virtual void BinaryKernel(BinaryOp op, Storage a, Storage b, Storage c, int n)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.Binary(op, h[a], h[b], h[c], n);
@@ -257,105 +286,105 @@ internal abstract class Backend
     /// dx += dy where a wins (<see cref="BinaryOp.Maximum"/>: a ≥ b; <see cref="BinaryOp.Minimum"/>: a ≤ b), db += dy
     /// elsewhere: the backward step of c = max(a, b) or min(a, b). A null gradient is skipped.
     /// </summary>
-    public virtual void ExtremumBackward(BinaryOp op, Storage a, Storage b, Storage dy, Storage? da, Storage? db, int n)
+    public virtual void ExtremumBackwardKernel(BinaryOp op, Storage a, Storage b, Storage dy, Storage? da, Storage? db, int n)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.ExtremumBackward(op, h[a], h[b], h[dy], h.Maybe(da), h.Maybe(db), n);
     }
 
     /// <summary>y = x^exponent, element-wise.</summary>
-    public virtual void Pow(Storage x, Storage y, int n, float exponent)
+    public virtual void PowKernel(Storage x, Storage y, int n, float exponent)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.Pow(h[x], h[y], n, exponent);
     }
 
     /// <summary>dx += dy · exponent · x^(exponent - 1).</summary>
-    public virtual void PowBackward(Storage x, Storage dy, Storage dx, int n, float exponent)
+    public virtual void PowBackwardKernel(Storage x, Storage dy, Storage dx, int n, float exponent)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.PowBackward(h[x], h[dy], h[dx], n, exponent);
     }
 
     /// <summary>y = x limited to [min, max] (either may be infinite).</summary>
-    public virtual void Clamp(Storage x, Storage y, int n, float min, float max)
+    public virtual void ClampKernel(Storage x, Storage y, int n, float min, float max)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.Clamp(h[x], h[y], n, min, max);
     }
 
     /// <summary>dx += dy where min ≤ x ≤ max.</summary>
-    public virtual void ClampBackward(Storage x, Storage dy, Storage dx, int n, float min, float max)
+    public virtual void ClampBackwardKernel(Storage x, Storage dy, Storage dx, int n, float min, float max)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.ClampBackward(h[x], h[dy], h[dx], n, min, max);
     }
 
     /// <summary>y = condition ≠ 0 ? a : b, element-wise.</summary>
-    public virtual void Where(Storage condition, Storage a, Storage b, Storage y, int n)
+    public virtual void WhereKernel(Storage condition, Storage a, Storage b, Storage y, int n)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.Where(h[condition], h[a], h[b], h[y], n);
     }
 
     /// <summary>da += dy where condition ≠ 0, db += dy elsewhere (a null gradient is skipped).</summary>
-    public virtual void WhereBackward(Storage condition, Storage dy, Storage? da, Storage? db, int n)
+    public virtual void WhereBackwardKernel(Storage condition, Storage dy, Storage? da, Storage? db, int n)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.WhereBackward(h[condition], h[dy], h.Maybe(da), h.Maybe(db), n);
     }
 
     /// <summary>y = alpha * x + beta.</summary>
-    public virtual void Affine(Storage x, Storage y, int n, float alpha, float beta)
+    public virtual void AffineKernel(Storage x, Storage y, int n, float alpha, float beta)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.Affine(h[x], h[y], n, alpha, beta);
     }
 
     /// <summary>y += alpha * x.</summary>
-    public virtual void Axpy(Storage x, Storage y, int n, float alpha)
+    public virtual void AxpyKernel(Storage x, Storage y, int n, float alpha)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.Axpy(h[x], h[y], n, alpha);
     }
 
     /// <summary>c += a * b, element-wise.</summary>
-    public virtual void MulAdd(Storage a, Storage b, Storage c, int n)
+    public virtual void MulAddKernel(Storage a, Storage b, Storage c, int n)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.MulAdd(h[a], h[b], h[c], n);
     }
 
     /// <summary>c[r, j] = a[r, j] + v[j].</summary>
-    public virtual void AddRowVector(Storage a, Storage v, Storage c, int rows, int cols)
+    public virtual void AddRowVectorKernel(Storage a, Storage v, Storage c, int rows, int cols)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.AddRowVector(h[a], h[v], h[c], rows, cols);
     }
 
     /// <summary>y[j] += sum over r of x[r, j].</summary>
-    public virtual void SumRows(Storage x, Storage y, int rows, int cols)
+    public virtual void SumRowsKernel(Storage x, Storage y, int rows, int cols)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.SumRows(h[x], h[y], rows, cols);
     }
 
     /// <summary>result[0] = scale * sum(x).</summary>
-    public virtual void Sum(Storage x, Storage result, int n, float scale)
+    public virtual void SumKernel(Storage x, Storage result, int n, float scale)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.Sum(h[x], h[result], n, scale);
     }
 
     /// <summary>y[offset] += alpha * x[0] (used to accumulate scalar losses without leaving the device).</summary>
-    public virtual void AxpyAt(Storage x, Storage y, int offset, float alpha)
+    public virtual void AxpyAtKernel(Storage x, Storage y, int offset, float alpha)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.AxpyAt(h[x], h[y], offset, alpha);
     }
 
     /// <summary>y[i] += scale * s[0].</summary>
-    public virtual void AddBroadcastScalar(Storage s, Storage y, int n, float scale)
+    public virtual void AddBroadcastScalarKernel(Storage s, Storage y, int n, float scale)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.AddBroadcastScalar(h[s], h[y], n, scale);
@@ -372,7 +401,7 @@ internal abstract class Backend
     /// y = x · w for many rows (prompts) with packed weights w (in <paramref name="format"/>), expanding w as it is read instead of into a float copy. Returns false when the
     /// device has no such kernel or the shape is too small for it (callers then expand w first).
     /// </summary>
-    public virtual bool PackedMatMulLarge(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k) => false;
+    public virtual bool PackedMatMulLargeKernel(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k) => false;
 
     /// <summary>
     /// True when <see cref="PackedMatMulLarge"/> is faster than the few-rows kernels for this shape although the rows are
@@ -386,7 +415,7 @@ internal abstract class Backend
     /// y = (act(gate) · up) · w for few rows with packed weights w (in <paramref name="format"/>; activation 0 = SiLU, 1 = GELU tanh): the gated feed-forward's down projection
     /// without a separate activation pass. Returns false when the device has no fused version.
     /// </summary>
-    public virtual bool PackedMatMulGated(PackedFormat format, int activation, Storage gate, Storage up, Storage packed, Storage? scales, Storage y,
+    public virtual bool PackedMatMulGatedKernel(PackedFormat format, int activation, Storage gate, Storage up, Storage packed, Storage? scales, Storage y,
         int m, int n, int k) => false;
 
     /// <summary>
@@ -394,7 +423,7 @@ internal abstract class Backend
     /// sum = residual + y and normalized = its RMS normalization · (gain + offset) per row (a residual addition and the
     /// next normalization) in the same pass. Returns false when the device has no fused version.
     /// </summary>
-    public virtual bool PackedMatMulAddRmsNorm(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k,
+    public virtual bool PackedMatMulAddRmsNormKernel(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k,
         Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset) => false;
 
     /// <summary>
@@ -403,7 +432,7 @@ internal abstract class Backend
     /// <see cref="BFloat16MatMul"/>, which has no scales). Returns false when the device has no single-pass version (callers then
     /// run the products one by one).
     /// </summary>
-    public virtual bool PackedMatMulMany(PackedFormat format, Storage x, int m, int k,
+    public virtual bool PackedMatMulManyKernel(PackedFormat format, Storage x, int m, int k,
         ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products) => false;
 
     /// <summary>
@@ -411,14 +440,14 @@ internal abstract class Backend
     /// also writing hidden = act(gate) · up (activation 0 = SiLU, 1 = GELU tanh, 2 = ReLU) in the same pass. Returns
     /// false when the device has no fused version.
     /// </summary>
-    public virtual bool PackedMatMulGatedPair(PackedFormat format, int activation, Storage x, int m, int k,
+    public virtual bool PackedMatMulGatedPairKernel(PackedFormat format, int activation, Storage x, int m, int k,
         ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products, Storage hidden) => false;
 
     /// <summary>
     /// Several products sharing one input: y_j = a · w_j (+ bias_j) for a [m, k] and w_j [k, n_j] (the query, key and
     /// value projections, say). The default computes them one by one; devices may do them in one pass.
     /// </summary>
-    public virtual void MatMulMany(Storage a, int m, int k, ReadOnlySpan<(Storage Weight, Storage? Bias, Storage Output, int Columns)> products)
+    public virtual void MatMulManyKernel(Storage a, int m, int k, ReadOnlySpan<(Storage Weight, Storage? Bias, Storage Output, int Columns)> products)
     {
         foreach (var (weight, bias, output, columns) in products)
         {
@@ -434,14 +463,14 @@ internal abstract class Backend
     /// c = a·b + bias (bias [n] added to every row) in one pass, for a [m, k] and b [k, n] as stored. Returns false when
     /// the device has no such pass for these sizes (callers then multiply and add the bias separately).
     /// </summary>
-    public virtual bool MatMulBias(Storage a, Storage b, Storage bias, Storage c, int m, int n, int k) => false;
+    public virtual bool MatMulBiasKernel(Storage a, Storage b, Storage bias, Storage c, int m, int n, int k) => false;
 
     /// <summary>
     /// c = beta·c + a·op(b) + u·op(v) in one product (a LoRA adapter's term as one more k step): a [m, k], b [k, n]
     /// (transposed: [n, k]), u [m, rank], v [rank, n] (with <paramref name="transB"/>: [n, rank]), rank ≤ 32, all rows
     /// contiguous. Returns false when the device has no such pass (callers then compute the two products separately).
     /// </summary>
-    public virtual bool MatMulLowRank(Storage a, Storage b, Storage c, int m, int n, int k, bool transB, float beta, Storage u, Storage v, int rank) => false;
+    public virtual bool MatMulLowRankKernel(Storage a, Storage b, Storage c, int m, int n, int k, bool transB, float beta, Storage u, Storage v, int rank) => false;
 
     /// <summary>
     /// c = beta·c + a · Wᵀ (+ u · vᵀ) with W a bfloat16 weight [n, k] as <c>Layers.BFloat16Weight</c> packs it (two
@@ -449,7 +478,7 @@ internal abstract class Backend
     /// dt · Aᵀ with u = dt [m, rank], v = A [n, rank]) without expanding the weight to float. u null: no low-rank term.
     /// False when the device has no such kernel (callers then expand the weight).
     /// </summary>
-    public virtual bool BFloat16TransposedMatMul(Storage a, Storage packed, Storage c, int m, int n, int k, float beta, Storage? u, Storage? v, int rank) => false;
+    public virtual bool BFloat16TransposedMatMulKernel(Storage a, Storage packed, Storage c, int m, int n, int k, float beta, Storage? u, Storage? v, int rank) => false;
 
     /// <summary>
     /// k rounded up for <see cref="Float8QuantizeWeight"/>'s values (0 when the device has no FP8 products): the values
@@ -461,20 +490,20 @@ internal abstract class Backend
     /// Quantizes a frozen weight w [k, n] (float32) once for <see cref="Float8MatMul"/>: FP8 (e4m3) values, k-major per
     /// column ([n, paddedK] bytes), and one scale per column [n]. Returns false when unsupported.
     /// </summary>
-    public virtual bool Float8QuantizeWeight(Storage w, int k, int n, Storage values, Storage scales) => false;
+    public virtual bool Float8QuantizeWeightKernel(Storage w, int k, int n, Storage values, Storage scales) => false;
 
     /// <summary>
     /// y = beta·y + x · w on FP8 tensor cores for x [m, k] (quantized per row as it is read, one scale each) and a weight
     /// quantized by <see cref="Float8QuantizeWeight"/>. Returns false when unsupported.
     /// </summary>
-    public virtual bool Float8MatMul(Storage x, int m, int k, Storage values, Storage scales, int n, Storage y, float beta) => false;
+    public virtual bool Float8MatMulKernel(Storage x, int m, int k, Storage values, Storage scales, int n, Storage y, float beta) => false;
 
     /// <summary>
     /// Products of one input x [m, k] through 1-3 packed layers (in <paramref name="format"/>),
     /// each with a low-rank term: y_j = x · w_j + u_j · v_j for u_j [m, rank] and v_j [rank, n_j], rank ≤ 32, in one pass.
     /// Returns false when the device has no such pass.
     /// </summary>
-    public virtual bool PackedMatMulLowRank(PackedFormat format, Storage x, int m, int k,
+    public virtual bool PackedMatMulLowRankKernel(PackedFormat format, Storage x, int m, int k,
         ReadOnlySpan<(Storage Packed, Storage? Scales, Storage Output, int Columns, Storage U, Storage V)> products, int rank) => false;
 
     /// <summary>
@@ -485,7 +514,7 @@ internal abstract class Backend
     /// pre-activations into it (same layout as c); <see cref="GemmEpilogue.GeluGradient"/> multiplies the product by
     /// gelu'(aux). Returns false when the device has no tensor cores (callers use the composed operations).
     /// </summary>
-    public virtual bool GemmStrided(Storage a, long aOffset, int lda, bool transA, Storage b, long bOffset, int ldb, bool transB,
+    public virtual bool GemmStridedKernel(Storage a, long aOffset, int lda, bool transA, Storage b, long bOffset, int ldb, bool transB,
         Storage c, long cOffset, int ldc, int m, int n, int k, float beta, Storage? bias = null, GemmEpilogue epilogue = GemmEpilogue.None,
         Storage? aux = null, long auxOffset = 0) => false;
 
@@ -496,19 +525,19 @@ internal abstract class Backend
     /// backward pass. Returns false when the device has no such kernels (callers rearrange the heads and use
     /// <see cref="AttentionTiled"/>).
     /// </summary>
-    public virtual bool AttentionStrided(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow,
+    public virtual bool AttentionStridedKernel(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow,
         Storage y, Storage? logSumExp, int batch, int kvHeads, int group, int steps, int dim, float scale) => false;
 
     /// <summary>
     /// Gradients of <see cref="AttentionStrided"/>: adds to dq, dk, dv laid out as q, k, v (same row strides, their own
     /// offsets) given y, the log-sum-exp and dOutput (y's layout).
     /// </summary>
-    public virtual bool AttentionStridedBackward(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow,
+    public virtual bool AttentionStridedBackwardKernel(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow,
         Storage y, Storage logSumExp, Storage dOutput, Storage dq, long dqOffset, Storage dk, long dkOffset, Storage dv, long dvOffset,
         int batch, int kvHeads, int group, int steps, int dim, float scale) => false;
 
     /// <summary>y[j] += Σ_r x[offset + r·ld + j] for j &lt; cols (column sums of a strided block; the bias gradient of a slice).</summary>
-    public virtual void SumColumns(Storage x, long offset, int ld, Storage y, int rows, int cols)
+    public virtual void SumColumnsKernel(Storage x, long offset, int ld, Storage y, int rows, int cols)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.SumColumns(h[x], offset, ld, h[y], rows, cols);
@@ -522,21 +551,21 @@ internal abstract class Backend
     public virtual IDisposable? ReuseQuantizedOperands() => null;
 
     /// <summary>output = residual + dropout(x) (the mask of <see cref="Dropout"/> with <paramref name="seed"/>).</summary>
-    public virtual void AddDropout(Storage residual, Storage x, Storage output, int n, float p, uint seed)
+    public virtual void AddDropoutKernel(Storage residual, Storage x, Storage output, int n, float p, uint seed)
     {
         Dropout(x, output, n, p, seed);
         Axpy(residual, output, n, 1f);
     }
 
     /// <summary><see cref="MatMul"/> for <paramref name="batch"/> independent, contiguous matrix triples.</summary>
-    public virtual void BatchedMatMul(Storage a, Storage b, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
+    public virtual void BatchedMatMulKernel(Storage a, Storage b, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.BatchedMatMul(h[a], h[b], h[c], batch, m, n, k, transA, transB, beta);
     }
 
     /// <summary>Row-wise softmax (or log-softmax) over the last dimension: y[r, :] = softmax(x[r, :]).</summary>
-    public virtual void Softmax(Storage x, Storage y, int rows, int cols, bool log)
+    public virtual void SoftmaxKernel(Storage x, Storage y, int rows, int cols, bool log)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.Softmax(h[x], h[y], rows, cols, log);
@@ -545,14 +574,14 @@ internal abstract class Backend
     /// <summary>
     /// Softmax: dx += y * (dy - Σ dy·y). Log-softmax: dx += dy - exp(y) * Σ dy. Sums are per row; y is the forward output.
     /// </summary>
-    public virtual void SoftmaxBackward(Storage y, Storage dy, Storage dx, int rows, int cols, bool log)
+    public virtual void SoftmaxBackwardKernel(Storage y, Storage dy, Storage dx, int rows, int cols, bool log)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.SoftmaxBackward(h[y], h[dy], h[dx], rows, cols, log);
     }
 
     /// <summary>y[r] = index of the largest element of row r.</summary>
-    public virtual void ArgMax(Storage x, Storage y, int rows, int cols)
+    public virtual void ArgMaxKernel(Storage x, Storage y, int rows, int cols)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.ArgMax(h[x], h[y], rows, cols);
@@ -562,7 +591,7 @@ internal abstract class Backend
     /// y[r] = 1 when the prediction in row r is right, else 0. For one column: (p ≥ threshold) == (t ≥ 0.5);
     /// otherwise argmax(p) == argmax(t).
     /// </summary>
-    public virtual void ClassMatch(Storage predictions, Storage targets, Storage y, int rows, int cols, float threshold)
+    public virtual void ClassMatchKernel(Storage predictions, Storage targets, Storage y, int rows, int cols, float threshold)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.ClassMatch(h[predictions], h[targets], h[y], rows, cols, threshold);
@@ -572,21 +601,21 @@ internal abstract class Backend
     // elements x[o, g, i]. BatchNorm uses groups = channels; LayerNorm uses outer = 1, groups = rows, inner = features.
 
     /// <summary>Per-group mean, (biased) variance and 1 / sqrt(variance + eps).</summary>
-    public virtual void NormStats(Storage x, Storage mean, Storage variance, Storage invStd, int outer, int groups, int inner, float eps)
+    public virtual void NormStatsKernel(Storage x, Storage mean, Storage variance, Storage invStd, int outer, int groups, int inner, float eps)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.NormStats(h[x], h[mean], h[variance], h[invStd], outer, groups, inner, eps);
     }
 
     /// <summary>y = (x - mean[g]) * invStd[g].</summary>
-    public virtual void NormApply(Storage x, Storage mean, Storage invStd, Storage y, int outer, int groups, int inner)
+    public virtual void NormApplyKernel(Storage x, Storage mean, Storage invStd, Storage y, int outer, int groups, int inner)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.NormApply(h[x], h[mean], h[invStd], h[y], outer, groups, inner);
     }
 
     /// <summary>dx += invStd[g] / M * (M * dxhat - sum1[g] - xhat * sum2[g]).</summary>
-    public virtual void NormBackward(Storage dxhat, Storage xhat, Storage sum1, Storage sum2, Storage invStd, Storage dx, int outer, int groups, int inner)
+    public virtual void NormBackwardKernel(Storage dxhat, Storage xhat, Storage sum1, Storage sum2, Storage invStd, Storage dx, int outer, int groups, int inner)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.NormBackward(h[dxhat], h[xhat], h[sum1], h[sum2], h[invStd], h[dx], outer, groups, inner);
@@ -595,77 +624,77 @@ internal abstract class Backend
     /// <summary>
     /// y (+)= x * scale[g] + shift[g] with g = (i / inner) % groups; a null scale means 1, a null shift means 0.
     /// </summary>
-    public virtual void GroupScaleShift(Storage x, Storage? scale, Storage? shift, Storage y, int n, int groups, int inner, bool accumulate)
+    public virtual void GroupScaleShiftKernel(Storage x, Storage? scale, Storage? shift, Storage y, int n, int groups, int inner, bool accumulate)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.GroupScaleShift(h[x], h.Maybe(scale), h.Maybe(shift), h[y], n, groups, inner, accumulate);
     }
 
     /// <summary>sumA[g] += Σ a; sumAB[g] += Σ a·b over each group (see NormStats for the layout). b/sumAB may be null.</summary>
-    public virtual void GroupReduce(Storage a, Storage? b, Storage sumA, Storage? sumAB, int outer, int groups, int inner)
+    public virtual void GroupReduceKernel(Storage a, Storage? b, Storage sumA, Storage? sumAB, int outer, int groups, int inner)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.GroupReduce(h[a], h.Maybe(b), h[sumA], h.Maybe(sumAB), outer, groups, inner);
     }
 
     /// <summary>y = 1 / sqrt(x + eps).</summary>
-    public virtual void InvSqrt(Storage x, Storage y, int n, float eps)
+    public virtual void InvSqrtKernel(Storage x, Storage y, int n, float eps)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.InvSqrt(h[x], h[y], n, eps);
     }
 
     /// <summary>Embedding lookup: y[i, :] = table[indices[i], :] for count indices of width dim.</summary>
-    public virtual void Gather(Storage table, Storage indices, Storage y, int count, int dim, int vocabulary)
+    public virtual void GatherKernel(Storage table, Storage indices, Storage y, int count, int dim, int vocabulary)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.Gather(h[table], h[indices], h[y], count, dim, vocabulary);
     }
 
     /// <summary><see cref="Gather"/> from a bfloat16 table packed as in <see cref="BFloat16MatMul"/> ([vocabulary, dim]).</summary>
-    public virtual void GatherBFloat16(Storage packed, Storage indices, Storage y, int count, int dim, int vocabulary)
+    public virtual void GatherBFloat16Kernel(Storage packed, Storage indices, Storage y, int count, int dim, int vocabulary)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.GatherBFloat16(h[packed], h[indices], h[y], count, dim, vocabulary);
     }
 
     /// <summary>One-hot rows: y[i, :] = 0 except y[i, indices[i]] = 1, for count indices over classes columns.</summary>
-    public virtual void OneHot(Storage indices, Storage y, int count, int classes)
+    public virtual void OneHotKernel(Storage indices, Storage y, int count, int classes)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.OneHot(h[indices], h[y], count, classes);
     }
 
     /// <summary>dtable[indices[i], :] += dy[i, :].</summary>
-    public virtual void ScatterAdd(Storage dy, Storage indices, Storage dtable, int count, int dim, int vocabulary)
+    public virtual void ScatterAddKernel(Storage dy, Storage indices, Storage dtable, int count, int dim, int vocabulary)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.ScatterAdd(h[dy], h[indices], h[dtable], count, dim, vocabulary);
     }
 
     /// <summary>Unfolds image patches: cols[(n, oh, ow), (c, kh, kw)] = x[n, c, oh*sh - ph + kh, ow*sw - pw + kw] (0 outside).</summary>
-    public virtual void Im2Col(Storage x, Storage cols, in ConvGeometry g)
+    public virtual void Im2ColKernel(Storage x, Storage cols, in ConvGeometry g)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.Im2Col(h[x], h[cols], in g);
     }
 
     /// <summary>The adjoint of <see cref="Im2Col"/>: dx += fold(dcols).</summary>
-    public virtual void Col2Im(Storage dcols, Storage dx, in ConvGeometry g)
+    public virtual void Col2ImKernel(Storage dcols, Storage dx, in ConvGeometry g)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.Col2Im(h[dcols], h[dx], in g);
     }
 
     /// <summary>Max pooling; argmax receives the flat input index of each maximum (as raw int bits).</summary>
-    public virtual void MaxPool(Storage x, Storage y, Storage argmax, in ConvGeometry g)
+    public virtual void MaxPoolKernel(Storage x, Storage y, Storage argmax, in ConvGeometry g)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.MaxPool(h[x], h[y], h[argmax], in g);
     }
 
     /// <summary>dx[argmax[i]] += dy[i].</summary>
-    public virtual void MaxPoolBackward(Storage dy, Storage argmax, Storage dx, int count)
+    public virtual void MaxPoolBackwardKernel(Storage dy, Storage argmax, Storage dx, int count)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.MaxPoolBackward(h[dy], h[argmax], h[dx], count);
@@ -675,14 +704,14 @@ internal abstract class Backend
     /// dx[argmax[i]] += dy[i] for the windows of <paramref name="g"/> (count = N * C * OH * OW): the same as the overload
     /// taking a count; a device that adds the gradients by gathering over the windows needs the geometry.
     /// </summary>
-    public virtual void MaxPoolBackward(Storage dy, Storage argmax, Storage dx, in ConvGeometry g) =>
+    public virtual void MaxPoolBackwardKernel(Storage dy, Storage argmax, Storage dx, in ConvGeometry g) =>
         MaxPoolBackward(dy, argmax, dx, g.N * g.C * g.OH * g.OW);
 
     /// <summary>
     /// y (+)= x permuted: output element at coordinates (c0..c[r-1]) of <paramref name="outShape"/> comes from
     /// input offset Σ c_k * inStrides[k] (the input strides already reordered by the permutation). Rank ≤ 6.
     /// </summary>
-    public virtual void Permute(Storage x, Storage y, ReadOnlySpan<int> outShape, ReadOnlySpan<int> inStrides, bool accumulate)
+    public virtual void PermuteKernel(Storage x, Storage y, ReadOnlySpan<int> outShape, ReadOnlySpan<int> inStrides, bool accumulate)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.Permute(h[x], h[y], outShape, inStrides, accumulate);
@@ -699,28 +728,28 @@ internal abstract class Backend
     }
 
     /// <summary>y[o, i] (+)= scale * Σ_d x[o, d, i] for a [outer, dim, inner] view.</summary>
-    public virtual void SumAxis(Storage x, Storage y, int outer, int dim, int inner, float scale, bool accumulate)
+    public virtual void SumAxisKernel(Storage x, Storage y, int outer, int dim, int inner, float scale, bool accumulate)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.SumAxis(h[x], h[y], outer, dim, inner, scale, accumulate);
     }
 
     /// <summary>dx[o, d, i] += scale * dy[o, i] (the gradient of <see cref="SumAxis"/>).</summary>
-    public virtual void BroadcastAxis(Storage dy, Storage dx, int outer, int dim, int inner, float scale)
+    public virtual void BroadcastAxisKernel(Storage dy, Storage dx, int outer, int dim, int inner, float scale)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.BroadcastAxis(h[dy], h[dx], outer, dim, inner, scale);
     }
 
     /// <summary>SGD with optional momentum: v = momentum * v + g; p -= lr * v (v is null when momentum is 0).</summary>
-    public virtual void SgdStep(Storage p, Storage g, Storage? v, int n, float lr, float momentum)
+    public virtual void SgdStepKernel(Storage p, Storage g, Storage? v, int n, float lr, float momentum)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.SgdStep(h[p], h[g], h.Maybe(v), n, lr, momentum);
     }
 
     /// <summary>Adam: m, v moments updated in place; p -= lr * m / (sqrt(v) + eps). lr is already bias-corrected.</summary>
-    public virtual void AdamStep(Storage p, Storage g, Storage m, Storage v, int n, float lr, float beta1, float beta2, float eps)
+    public virtual void AdamStepKernel(Storage p, Storage g, Storage m, Storage v, int n, float lr, float beta1, float beta2, float eps)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.AdamStep(h[p], h[g], h[m], h[v], n, lr, beta1, beta2, eps);
@@ -735,7 +764,7 @@ internal abstract class Backend
     /// </summary>
     /// <remarks>The gradient is multiplied by <paramref name="gradientScale"/> as it is read (gradient clipping) and the
     /// parameter by <paramref name="decay"/> before the update (decoupled weight decay, 1 - lr·λ).</remarks>
-    public virtual void AdamStep8Bit(Storage p, Storage g, Storage m, Storage v, Storage absMax, Storage map, int n, float lr, float beta1, float beta2, float eps,
+    public virtual void AdamStep8BitKernel(Storage p, Storage g, Storage m, Storage v, Storage absMax, Storage map, int n, float lr, float beta1, float beta2, float eps,
         float gradientScale, float decay)
     {
         using var h = new HostCall(this);
@@ -743,7 +772,7 @@ internal abstract class Backend
     }
 
     /// <summary>total[0] += Σ x² over <paramref name="n"/> elements (a gradient norm without temporary tensors).</summary>
-    public virtual void SumSquares(Storage x, Storage total, int n)
+    public virtual void SumSquaresKernel(Storage x, Storage total, int n)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.SumSquares(h[x], h[total], n);
@@ -756,7 +785,7 @@ internal abstract class Backend
     /// <paramref name="cache"/> keeps the device tables between calls (dispose it when done). False when the device has no
     /// such pass.
     /// </summary>
-    public virtual bool FusedAdamW(ReadOnlySpan<(Storage P, Storage G, Storage M, Storage V, int N)> tensors, ref IDisposable? cache, float maxNorm,
+    public virtual bool FusedAdamWKernel(ReadOnlySpan<(Storage P, Storage G, Storage M, Storage V, int N)> tensors, ref IDisposable? cache, float maxNorm,
         float lr, float decay, float beta1, float beta2, float eps, bool zeroGradients)
     {
         using var h = new HostCall(this);
@@ -775,21 +804,21 @@ internal abstract class Backend
     /// factor[0] = min(1, maxNorm / √sumSquares[0]) (1 when the sum is 0): the gradient-clipping factor computed where the
     /// gradients are, so clipping needs no host read of the norm.
     /// </summary>
-    public virtual void ClipFactor(Storage sumSquares, Storage factor, float maxNorm)
+    public virtual void ClipFactorKernel(Storage sumSquares, Storage factor, float maxNorm)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.ClipFactor(h[sumSquares], h[factor], maxNorm);
     }
 
     /// <summary>Inverted dropout: y = keep(i) ? x / (1 - p) : 0, where keep(i) comes from <see cref="DropoutMask"/>.</summary>
-    public virtual void Dropout(Storage x, Storage y, int n, float p, uint seed)
+    public virtual void DropoutKernel(Storage x, Storage y, int n, float p, uint seed)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.Dropout(h[x], h[y], n, p, seed);
     }
 
     /// <summary>dx += keep(i) ? dy / (1 - p) : 0, regenerating the same mask from the seed.</summary>
-    public virtual void DropoutBackward(Storage dy, Storage dx, int n, float p, uint seed)
+    public virtual void DropoutBackwardKernel(Storage dy, Storage dx, int n, float p, uint seed)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.DropoutBackward(h[dy], h[dx], n, p, seed);
@@ -800,21 +829,21 @@ internal abstract class Backend
     // ---------------------------------------------------------------- fused inference kernels
 
     /// <summary>y[r, :] = softmax(scale * x[r, :] + mask[r % maskRows, :]) (mask optional).</summary>
-    public virtual void ScaleMaskSoftmax(Storage x, Storage? mask, Storage y, int rows, int cols, int maskRows, float scale)
+    public virtual void ScaleMaskSoftmaxKernel(Storage x, Storage? mask, Storage y, int rows, int cols, int maskRows, float scale)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.ScaleMaskSoftmax(h[x], h.Maybe(mask), h[y], rows, cols, maskRows, scale);
     }
 
     /// <summary>y[r, :] = (x[r, :] - mean) / sqrt(var + eps) * gamma + beta over the last dimension.</summary>
-    public virtual void LayerNormFused(Storage x, Storage gamma, Storage beta, Storage y, int rows, int cols, float eps)
+    public virtual void LayerNormFusedKernel(Storage x, Storage gamma, Storage beta, Storage y, int rows, int cols, float eps)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.LayerNormFused(h[x], h[gamma], h[beta], h[y], rows, cols, eps);
     }
 
     /// <summary><see cref="LayerNormFused"/> that also stores each row's mean (stats[r]) and 1 / sqrt(var + eps) (stats[rows + r]).</summary>
-    public virtual void LayerNormTrain(Storage x, Storage gamma, Storage beta, Storage y, Storage stats, int rows, int cols, float eps)
+    public virtual void LayerNormTrainKernel(Storage x, Storage gamma, Storage beta, Storage y, Storage stats, int rows, int cols, float eps)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.LayerNormTrain(h[x], h[gamma], h[beta], h[y], h[stats], rows, cols, eps);
@@ -823,14 +852,14 @@ internal abstract class Backend
     /// <summary>
     /// Gradients of <see cref="LayerNormTrain"/> given dy: adds to dx (when given), dgamma += Σ_r dy ∘ x̂ and dbeta += Σ_r dy.
     /// </summary>
-    public virtual void LayerNormBackward(Storage x, Storage gamma, Storage dy, Storage stats, Storage? dx, Storage? dgamma, Storage? dbeta, int rows, int cols)
+    public virtual void LayerNormBackwardKernel(Storage x, Storage gamma, Storage dy, Storage stats, Storage? dx, Storage? dgamma, Storage? dbeta, int rows, int cols)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.LayerNormBackward(h[x], h[gamma], h[dy], h[stats], h.Maybe(dx), h.Maybe(dgamma), h.Maybe(dbeta), rows, cols);
     }
 
     /// <summary>y[i] = gelu(x[i] + bias[i % cols]).</summary>
-    public virtual void BiasGelu(Storage x, Storage bias, Storage y, int n, int cols)
+    public virtual void BiasGeluKernel(Storage x, Storage bias, Storage y, int n, int cols)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.BiasGelu(h[x], h[bias], h[y], n, cols);
@@ -840,7 +869,7 @@ internal abstract class Backend
     /// y[m, n] = x[m, k] · w, where w[k, j] = q[k, j] · scales[j] and q holds signed bytes packed four per 32-bit element
     /// along each row (rows padded to ceil(n / 4) elements). Suited to few rows (token-by-token decoding).
     /// </summary>
-    public virtual void Int8MatMul(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
+    public virtual void Int8MatMulKernel(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.Int8MatMul(h[x], h[q], h[scales], h[y], m, n, k);
@@ -850,14 +879,14 @@ internal abstract class Backend
     /// y[m, n] = x[m, k] · w[k, n] with w stored as bfloat16 pairs packed into 32-bit words along each row (word c of
     /// row r holds columns 2c in its low half and 2c + 1 in its high half; rows have ⌈n / 2⌉ words).
     /// </summary>
-    public virtual void BFloat16MatMul(Storage x, Storage packed, Storage y, int m, int n, int k)
+    public virtual void BFloat16MatMulKernel(Storage x, Storage packed, Storage y, int m, int n, int k)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.BFloat16MatMul(h[x], h[packed], h[y], m, n, k);
     }
 
     /// <summary>w[k, n] = the float32 values of bfloat16 weights packed as in <see cref="BFloat16MatMul"/>.</summary>
-    public virtual void BFloat16Dequantize(Storage packed, Storage w, int k, int n)
+    public virtual void BFloat16DequantizeKernel(Storage packed, Storage w, int k, int n)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.BFloat16Dequantize(h[packed], h[w], k, n);
@@ -867,14 +896,14 @@ internal abstract class Backend
     /// Rounds x [n] to bfloat16 (to nearest, ties to even), two values per word as <see cref="BFloat16Dequantize"/> reads
     /// them back with k = 1: packed holds (n + 1) / 2 words.
     /// </summary>
-    public virtual void PackBFloat16(Storage x, Storage packed, int n)
+    public virtual void PackBFloat16Kernel(Storage x, Storage packed, int n)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.PackBFloat16(h[x], h[packed], n);
     }
 
     /// <summary>w[k, n] = q[k, n] · scales[n] (see <see cref="Int8MatMul"/> for the packing).</summary>
-    public virtual void Int8Dequantize(Storage q, Storage scales, Storage w, int k, int n)
+    public virtual void Int8DequantizeKernel(Storage q, Storage scales, Storage w, int k, int n)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.Int8Dequantize(h[q], h[scales], h[w], k, n);
@@ -885,14 +914,14 @@ internal abstract class Backend
     /// eight per 32-bit word along each row (nibble c of word w is column 8w + c; rows have ⌈n / 8⌉ words) and scales has
     /// one row of 8·⌈n / 8⌉ values per group of 32 weight rows.
     /// </summary>
-    public virtual void Int4MatMul(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
+    public virtual void Int4MatMulKernel(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.Int4MatMul(h[x], h[q], h[scales], h[y], m, n, k);
     }
 
     /// <summary>w[k, n] = the float values of 4-bit weights packed as in <see cref="Int4MatMul"/>.</summary>
-    public virtual void Int4Dequantize(Storage q, Storage scales, Storage w, int k, int n)
+    public virtual void Int4DequantizeKernel(Storage q, Storage scales, Storage w, int k, int n)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.Int4Dequantize(h[q], h[scales], h[w], k, n);
@@ -902,14 +931,14 @@ internal abstract class Backend
     // elements, with one scale per row in scales[head, position].
 
     /// <summary>y = x · inv per row, inv[r] = 1 / sqrt(mean(x[r]²) + eps) (stored for the backward pass).</summary>
-    public virtual void RmsNorm(Storage x, Storage y, Storage inv, int rows, int cols, float eps)
+    public virtual void RmsNormKernel(Storage x, Storage y, Storage inv, int rows, int cols, float eps)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.RmsNorm(h[x], h[y], h[inv], rows, cols, eps);
     }
 
     /// <summary>dx += inv[r] · (dy - y · mean(dy · y)) per row, where y is the normalized forward output.</summary>
-    public virtual void RmsNormBackward(Storage dy, Storage y, Storage inv, Storage dx, int rows, int cols)
+    public virtual void RmsNormBackwardKernel(Storage dy, Storage y, Storage inv, Storage dx, int rows, int cols)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.RmsNormBackward(h[dy], h[y], h[inv], h[dx], rows, cols);
@@ -920,21 +949,21 @@ internal abstract class Backend
     /// step t rotates by the angle whose cos/sin are cos/sin[positions[t], p]. Pairs are (2p, 2p+1) when interleaved,
     /// else (p, p + half). sign = -1 rotates backwards (the gradient).
     /// </summary>
-    public virtual void Rope(Storage x, Storage y, Storage cos, Storage sin, Storage positions, int rows, int heads, int steps, int dim, int half, bool interleaved, float sign)
+    public virtual void RopeKernel(Storage x, Storage y, Storage cos, Storage sin, Storage positions, int rows, int heads, int steps, int dim, int half, bool interleaved, float sign)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.Rope(h[x], h[y], h[cos], h[sin], h[positions], rows, heads, steps, dim, half, interleaved, sign);
     }
 
     /// <summary>y = x · inv · (gain[c] + offset) per row with inv = 1 / sqrt(mean(x²) + eps): normalization and gain in one pass (inference).</summary>
-    public virtual void RmsNormAffine(Storage x, Storage gain, Storage y, int rows, int cols, float eps, float offset)
+    public virtual void RmsNormAffineKernel(Storage x, Storage gain, Storage y, int rows, int cols, float eps, float offset)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.RmsNormAffine(h[x], h[gain], h[y], rows, cols, eps, offset);
     }
 
     /// <summary>sum = a + b and y = RMS-normalized sum · (gain[c] + offset) per row, in one pass (inference).</summary>
-    public virtual void AddRmsNormAffine(Storage a, Storage b, Storage sum, Storage gain, Storage y, int rows, int cols, float eps, float offset)
+    public virtual void AddRmsNormAffineKernel(Storage a, Storage b, Storage sum, Storage gain, Storage y, int rows, int cols, float eps, float offset)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.AddRmsNormAffine(h[a], h[b], h[sum], h[gain], h[y], rows, cols, eps, offset);
@@ -944,7 +973,7 @@ internal abstract class Backend
     /// RMS normalization with gain of each row (a head's vector), then the rotary embedding as <see cref="Rope"/> with
     /// sign 1 (rows are batch·steps·heads; dimensions beyond 2·half are only normalized). Inference.
     /// </summary>
-    public virtual void RmsNormRope(Storage x, Storage gain, Storage cos, Storage sin, Storage positions, Storage y, int rows, int cols,
+    public virtual void RmsNormRopeKernel(Storage x, Storage gain, Storage cos, Storage sin, Storage positions, Storage y, int rows, int cols,
         float eps, float offset, int heads, int steps, int half, bool interleaved)
     {
         using var h = new HostCall(this);
@@ -955,7 +984,7 @@ internal abstract class Backend
     /// <see cref="RmsNormRope"/> for two tensors sharing the positions and rotary tables (queries and keys): rows1 rows
     /// of x (heads per step: heads) and rows2 of x2 (heads2). Devices may do both in one pass.
     /// </summary>
-    public virtual void RmsNormRopePair(Storage x, Storage gain, Storage y, int rows1, float eps, float offset, int heads,
+    public virtual void RmsNormRopePairKernel(Storage x, Storage gain, Storage y, int rows1, float eps, float offset, int heads,
         Storage x2, Storage gain2, Storage y2, int rows2, float eps2, float offset2, int heads2,
         Storage cos, Storage sin, Storage positions, int cols, int steps, int half, bool interleaved)
     {
@@ -971,7 +1000,7 @@ internal abstract class Backend
     /// at row position[0] + s (a cache; row s when <paramref name="position"/> is null), as floats or bfloat16 pairs.
     /// Returns false when the device has no such kernel (callers then run the steps one by one).
     /// </summary>
-    public virtual bool NormRopeHeads(Storage q, Storage k, Storage v, int batch, int steps, int heads, int kvHeads, int cols,
+    public virtual bool NormRopeHeadsKernel(Storage q, Storage k, Storage v, int batch, int steps, int heads, int kvHeads, int cols,
         Storage? gainQ, float epsQ, float offsetQ, Storage? gainK, float epsK, float offsetK, Storage? cos, Storage? sin, Storage? positions,
         int half, bool interleaved, Storage yq, Storage yk, Storage yv, Storage? position, int capacity, int stride, bool bfloat16) => false;
 
@@ -980,21 +1009,21 @@ internal abstract class Backend
     /// weight w_r (0 masks the row): losses[r] = w_r · (logsumexp(x_r) - x_r[t_r]); the logits are overwritten with their
     /// gradient scale · w_r · (softmax(x_r) - onehot(t_r)). Targets and weights are float arrays of rows.
     /// </summary>
-    public virtual void SoftmaxCrossEntropyRows(Storage logits, Storage targets, Storage weights, Storage losses, int rows, int vocabulary, float scale)
+    public virtual void SoftmaxCrossEntropyRowsKernel(Storage logits, Storage targets, Storage weights, Storage losses, int rows, int vocabulary, float scale)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.SoftmaxCrossEntropyRows(h[logits], h[targets], h[weights], h[losses], rows, vocabulary, scale);
     }
 
     /// <summary>y = act(gate) · up element-wise; kind 0 = SiLU, 1 = GELU (tanh approximation), 2 = ReLU.</summary>
-    public virtual void GatedActivation(Storage gate, Storage up, Storage y, int n, int kind)
+    public virtual void GatedActivationKernel(Storage gate, Storage up, Storage y, int n, int kind)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.GatedActivation(h[gate], h[up], h[y], n, kind);
     }
 
     /// <summary>dgate += dy · up · act'(gate) when flags has bit 0, dup += dy · act(gate) when it has bit 1; bits 2 and 3 write dgate and dup (= instead of +=).</summary>
-    public virtual void GatedActivationBackward(Storage gate, Storage up, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags)
+    public virtual void GatedActivationBackwardKernel(Storage gate, Storage up, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.GatedActivationBackward(h[gate], h[up], h[dy], h[dgate], h[dup], n, kind, flags);
@@ -1006,35 +1035,35 @@ internal abstract class Backend
     /// bit 0 (else from <paramref name="gate"/> and <paramref name="up"/>); y written when it has bit 2, gate and up packed
     /// when it has bit 1, y packed when it has bit 3. Storages a flag does not use may be any storage.
     /// </summary>
-    public virtual void GatedActivationPacked(Storage gate, Storage up, Storage packedGate, Storage packedUp, Storage y, Storage packedY, int n, int kind, int flags)
+    public virtual void GatedActivationPackedKernel(Storage gate, Storage up, Storage packedGate, Storage packedUp, Storage y, Storage packedY, int n, int kind, int flags)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.GatedActivationPacked(h[gate], h[up], h[packedGate], h[packedUp], h[y], h[packedY], n, kind, flags);
     }
 
     /// <summary><see cref="GatedActivationBackward"/> reading gate and up as bfloat16 words.</summary>
-    public virtual void GatedActivationBackwardPacked(Storage packedGate, Storage packedUp, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags)
+    public virtual void GatedActivationBackwardPackedKernel(Storage packedGate, Storage packedUp, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.GatedActivationBackwardPacked(h[packedGate], h[packedUp], h[dy], h[dgate], h[dup], n, kind, flags);
     }
 
     /// <summary>Quantizes source [heads·steps, dim] into the int8 cache at positions position[0] + step.</summary>
-    public virtual void KeyValueWriteInt8(Storage source, Storage cache, Storage scales, Storage position, int heads, int steps, int capacity, int dim)
+    public virtual void KeyValueWriteInt8Kernel(Storage source, Storage cache, Storage scales, Storage position, int heads, int steps, int capacity, int dim)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.KeyValueWriteInt8(h[source], h[cache], h[scales], h[position], heads, steps, capacity, dim);
     }
 
     /// <summary>y[r, t, c] = scales[r, c] · Σ_d q[r, t, d] · keys[r, c, d] for every cached position c.</summary>
-    public virtual void AttentionScoresInt8(Storage q, Storage cache, Storage scales, Storage y, int rows, int steps, int capacity, int dim)
+    public virtual void AttentionScoresInt8Kernel(Storage q, Storage cache, Storage scales, Storage y, int rows, int steps, int capacity, int dim)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.AttentionScoresInt8(h[q], h[cache], h[scales], h[y], rows, steps, capacity, dim);
     }
 
     /// <summary>y[r, t, d] = Σ_c weights[r, t, c] · scales[r, c] · values[r, c, d].</summary>
-    public virtual void AttentionContextInt8(Storage weights, Storage cache, Storage scales, Storage y, int rows, int steps, int capacity, int dim)
+    public virtual void AttentionContextInt8Kernel(Storage weights, Storage cache, Storage scales, Storage y, int rows, int steps, int capacity, int dim)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.AttentionContextInt8(h[weights], h[cache], h[scales], h[y], rows, steps, capacity, dim);
@@ -1048,7 +1077,7 @@ internal abstract class Backend
     /// <paramref name="variant"/>, each row starts at its window's first position and its scores are soft-capped (every
     /// attention method below takes one; the default is plain causal attention).
     /// </summary>
-    public virtual void AttentionDecode(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead,
+    public virtual void AttentionDecodeKernel(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead,
         int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
         using var h = new HostCall(this);
@@ -1060,7 +1089,7 @@ internal abstract class Backend
     /// values [heads, capacity, ⌈dim / 4⌉ words] of packed bytes with one scale per cached row (keyScales, valueScales
     /// [heads, capacity]).
     /// </summary>
-    public virtual void AttentionInt8(Storage q, Storage keys, Storage values, Storage keyScales, Storage valueScales, Storage position,
+    public virtual void AttentionInt8Kernel(Storage q, Storage keys, Storage values, Storage keyScales, Storage valueScales, Storage position,
         Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, bool tiled, AttentionVariant variant = default)
     {
         using var h = new HostCall(this);
@@ -1071,7 +1100,7 @@ internal abstract class Backend
     /// <see cref="AttentionDecode"/> (tiled: <paramref name="tiled"/>) over a bfloat16 cache: keys and values
     /// [heads, capacity, ⌈dim / 2⌉ words], dimension d in the low (even d) or high (odd d) half of word d / 2.
     /// </summary>
-    public virtual void AttentionBFloat16(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead,
+    public virtual void AttentionBFloat16Kernel(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead,
         int steps, int capacity, int dim, float scale, bool tiled, AttentionVariant variant = default)
     {
         using var h = new HostCall(this);
@@ -1079,7 +1108,7 @@ internal abstract class Backend
     }
 
     /// <summary><see cref="KeyValueWrite"/> into a bfloat16 cache (values rounded to nearest, ties to even).</summary>
-    public virtual void KeyValueWriteBFloat16(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
+    public virtual void KeyValueWriteBFloat16Kernel(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.KeyValueWriteBFloat16(h[source], h[cache], h[position], heads, steps, capacity, dim);
@@ -1090,7 +1119,7 @@ internal abstract class Backend
     /// and dOutput, adds to dq [heads, rowsPerHead, dim] and dkeys, dvalues [heads, capacity, dim]. The attention weights
     /// are recomputed, never stored.
     /// </summary>
-    public virtual void AttentionTiledBackward(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput,
+    public virtual void AttentionTiledBackwardKernel(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput,
         Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
         using var h = new HostCall(this);
@@ -1109,7 +1138,7 @@ internal abstract class Backend
     /// is the packed row; starts and ends hold, per position of each packed row, where its sequence begins and stops
     /// (exclusive), as floats. Writes the log-sum-exp when given. Returns false when the device has no such pass.
     /// </summary>
-    public virtual bool AttentionSegmented(Storage q, Storage keys, Storage values, Storage y, Storage? logSumExp, Storage starts, Storage ends,
+    public virtual bool AttentionSegmentedKernel(Storage q, Storage keys, Storage values, Storage y, Storage? logSumExp, Storage starts, Storage ends,
         int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant = default)
     {
         using var h = new HostCall(this);
@@ -1121,7 +1150,7 @@ internal abstract class Backend
     /// sees cached positions c with starts[(h / headsPerRow)·steps + i % steps] ≤ c ≤ position[0] + i % steps (a row with
     /// none, padding, gets zeros). Returns false when the device has no such pass.
     /// </summary>
-    public virtual bool AttentionRows(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow,
+    public virtual bool AttentionRowsKernel(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow,
         int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
         using var h = new HostCall(this);
@@ -1132,7 +1161,7 @@ internal abstract class Backend
     public virtual bool SupportsSegmentedAttention(int dim, AttentionVariant variant = default) => CpuBackend.Instance.SupportsSegmentedAttention(dim, variant);
 
     /// <summary>The gradient of <see cref="AttentionSegmented"/> (as <see cref="AttentionTiledBackward"/>); false when unsupported.</summary>
-    public virtual bool AttentionSegmentedBackward(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput,
+    public virtual bool AttentionSegmentedBackwardKernel(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput,
         Storage dq, Storage dkeys, Storage dvalues, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale,
         AttentionVariant variant = default)
     {
@@ -1145,7 +1174,7 @@ internal abstract class Backend
     /// Attention over a cache for many query rows, writing each row's log-sum-exp when <paramref name="logSumExp"/> is
     /// set (training). The default runs <see cref="AttentionDecode"/> for inference and the host fallback for training.
     /// </summary>
-    public virtual void AttentionTiled(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage? logSumExp, int heads,
+    public virtual void AttentionTiledKernel(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage? logSumExp, int heads,
         int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
         if (logSumExp is null)
@@ -1161,14 +1190,14 @@ internal abstract class Backend
     // ---------------------------------------------------------------- incremental decoding (positions live on the device)
 
     /// <summary>mask[i, j] = j ≤ position + i ? 0 : -1e9 for a [rows, capacity] mask; position is read from device memory.</summary>
-    public virtual void DecoderMask(Storage position, Storage mask, int rows, int capacity)
+    public virtual void DecoderMaskKernel(Storage position, Storage mask, int rows, int capacity)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.DecoderMask(h[position], h[mask], rows, capacity);
     }
 
     /// <summary>cache[bh, position + t, :] = source[bh, t, :] for [heads, steps, dim] → [heads, capacity, dim].</summary>
-    public virtual void KeyValueWrite(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
+    public virtual void KeyValueWriteKernel(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.KeyValueWrite(h[source], h[cache], h[position], heads, steps, capacity, dim);
@@ -1182,7 +1211,7 @@ internal abstract class Backend
     /// id, probability, entropy (bits), then the top-5 (id, probability) pairs. The step number is read from device
     /// memory. Row r's logits start at element r * rowStride + rowOffset.
     /// </summary>
-    public virtual void SampleRows(Storage logits, Storage ids, Storage stats, Storage step, int rows, int vocabulary,
+    public virtual void SampleRowsKernel(Storage logits, Storage ids, Storage stats, Storage step, int rows, int vocabulary,
         int rowStride, int rowOffset, float temperature, int topK, float topP, float minP, uint seed)
     {
         using var h = new HostCall(this);
@@ -1195,7 +1224,7 @@ internal abstract class Backend
     /// memory). Each distinct token in the window is penalized once: repeat (x &gt; 0 ? x / repeat : x * repeat), then
     /// x -= presence + frequency * (occurrences in the window).
     /// </summary>
-    public virtual void PenalizeRows(Storage logits, Storage work, Storage history, Storage length, int rows, int vocabulary,
+    public virtual void PenalizeRowsKernel(Storage logits, Storage work, Storage history, Storage length, int rows, int vocabulary,
         int rowStride, int rowOffset, int capacity, int lastN, float repeat, float presence, float frequency)
     {
         using var h = new HostCall(this);
@@ -1203,7 +1232,7 @@ internal abstract class Backend
     }
 
     /// <summary>history[r, length % capacity] = ids[r] for every row (length read from device memory, not advanced).</summary>
-    public virtual void HistoryPush(Storage ids, Storage history, Storage length, int rows, int capacity)
+    public virtual void HistoryPushKernel(Storage ids, Storage history, Storage length, int rows, int capacity)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.HistoryPush(h[ids], h[history], h[length], rows, capacity);

@@ -322,6 +322,8 @@ internal sealed unsafe partial class CudaBackend : Backend
 
     public static string UnavailableReason => Probe.Value.Reason;
 
+    public override string Kind => "cuda";
+
     public override string Name { get; }
 
     public static CudaBackend Get(int ordinal) => Instances[ordinal].Value;
@@ -743,7 +745,7 @@ internal sealed unsafe partial class CudaBackend : Backend
         }
     }
 
-    public override void Fill(Storage y, int n, float value) => Launch1D(_fill, n, P(y), F(value), U(n));
+    public override void FillKernel(Storage y, int n, float value) => Launch1D(_fill, n, P(y), F(value), U(n));
 
     public override void Copy(Storage x, Storage y, int n)
     {
@@ -752,7 +754,7 @@ internal sealed unsafe partial class CudaBackend : Backend
         Check(cuMemcpyDtoDAsync(P(y), P(x), (nuint)n * sizeof(float), _stream), nameof(cuMemcpyDtoDAsync));
     }
 
-    public override void Unary(UnaryOp op, Storage x, Storage y, int n)
+    public override void UnaryKernel(UnaryOp op, Storage x, Storage y, int n)
     {
         IntPtr fn = op switch
         {
@@ -768,14 +770,14 @@ internal sealed unsafe partial class CudaBackend : Backend
         };
         if (fn == IntPtr.Zero)
         {
-            base.Unary(op, x, y, n);                                         // no kernel yet: the host fallback
+            base.UnaryKernel(op, x, y, n);                                         // no kernel yet: the host fallback
             return;
         }
 
         Launch1D(fn, n, P(x), P(y), U(n));
     }
 
-    public override void UnaryBackward(UnaryOp op, Storage x, Storage y, Storage dy, Storage dx, int n)
+    public override void UnaryBackwardKernel(UnaryOp op, Storage x, Storage y, Storage dy, Storage dx, int n)
     {
         IntPtr fn = op switch
         {
@@ -791,14 +793,14 @@ internal sealed unsafe partial class CudaBackend : Backend
         };
         if (fn == IntPtr.Zero)
         {
-            base.UnaryBackward(op, x, y, dy, dx, n);
+            base.UnaryBackwardKernel(op, x, y, dy, dx, n);
             return;
         }
 
         Launch1D(fn, n, P(x), P(y), P(dy), P(dx), U(n));
     }
 
-    public override void Binary(BinaryOp op, Storage a, Storage b, Storage c, int n)
+    public override void BinaryKernel(BinaryOp op, Storage a, Storage b, Storage c, int n)
     {
         IntPtr fn = op switch
         {
@@ -809,31 +811,31 @@ internal sealed unsafe partial class CudaBackend : Backend
         };
         if (fn == IntPtr.Zero)
         {
-            base.Binary(op, a, b, c, n);
+            base.BinaryKernel(op, a, b, c, n);
             return;
         }
 
         Launch1D(fn, n, P(a), P(b), P(c), U(n));
     }
 
-    public override void Affine(Storage x, Storage y, int n, float alpha, float beta) => Launch1D(_affine, n, P(x), P(y), F(alpha), F(beta), U(n));
+    public override void AffineKernel(Storage x, Storage y, int n, float alpha, float beta) => Launch1D(_affine, n, P(x), P(y), F(alpha), F(beta), U(n));
 
-    public override void PackBFloat16(Storage x, Storage packed, int n) =>
+    public override void PackBFloat16Kernel(Storage x, Storage packed, int n) =>
         Launch1D(_packBFloat16, (n + 1) / 2, P(x), P(packed), U(n), U((n + 1) / 2));
 
-    public override void ClipFactor(Storage sumSquares, Storage factor, float maxNorm) => Launch1D(_clipFactor, 1, P(sumSquares), P(factor), F(maxNorm), U(1));
+    public override void ClipFactorKernel(Storage sumSquares, Storage factor, float maxNorm) => Launch1D(_clipFactor, 1, P(sumSquares), P(factor), F(maxNorm), U(1));
 
-    public override void Axpy(Storage x, Storage y, int n, float alpha) => Launch1D(_axpy, n, P(x), P(y), F(alpha), U(n));
+    public override void AxpyKernel(Storage x, Storage y, int n, float alpha) => Launch1D(_axpy, n, P(x), P(y), F(alpha), U(n));
 
-    public override void MulAdd(Storage a, Storage b, Storage c, int n) => Launch1D(_mulAdd, n, P(a), P(b), P(c), U(n));
+    public override void MulAddKernel(Storage a, Storage b, Storage c, int n) => Launch1D(_mulAdd, n, P(a), P(b), P(c), U(n));
 
-    public override void AddRowVector(Storage a, Storage v, Storage c, int rows, int cols)
+    public override void AddRowVectorKernel(Storage a, Storage v, Storage c, int rows, int cols)
     {
         int n = rows * cols;
         Launch1D(_addRowVec, n, P(a), P(v), P(c), U(cols), U(n));
     }
 
-    public override void SumRows(Storage x, Storage y, int rows, int cols)
+    public override void SumRowsKernel(Storage x, Storage y, int rows, int cols)
     {
         if (rows >= 256)
         {
@@ -844,7 +846,7 @@ internal sealed unsafe partial class CudaBackend : Backend
         Launch1D(_sumRows, cols, P(x), P(y), U(rows), U(cols));
     }
 
-    public override void Sum(Storage x, Storage result, int n, float scale)
+    public override void SumKernel(Storage x, Storage result, int n, float scale)
     {
         MakeCurrent();
         using (UseStream())
@@ -862,16 +864,16 @@ internal sealed unsafe partial class CudaBackend : Backend
         Launch(_sum, blocks, 1, (uint)_shapes.BlockSize, 1, P(x), P(result), U(n), F(scale));
     }
 
-    public override void AxpyAt(Storage x, Storage y, int offset, float alpha) =>
+    public override void AxpyAtKernel(Storage x, Storage y, int offset, float alpha) =>
         Launch1D(_addScalar, 1, P(x), P(y) + (ulong)offset * sizeof(float), F(alpha), U(1));
 
-    public override void AddBroadcastScalar(Storage s, Storage y, int n, float scale) => Launch1D(_addScalar, n, P(s), P(y), F(scale), U(n));
+    public override void AddBroadcastScalarKernel(Storage s, Storage y, int n, float scale) => Launch1D(_addScalar, n, P(s), P(y), F(scale), U(n));
 
-    public override void MatMulMany(Storage a, int m, int k, ReadOnlySpan<(Storage Weight, Storage? Bias, Storage Output, int Columns)> products)
+    public override void MatMulManyKernel(Storage a, int m, int k, ReadOnlySpan<(Storage Weight, Storage? Bias, Storage Output, int Columns)> products)
     {
         if (products.Length is 0 or > 3 || m > PtxKernels.GemvRows)
         {
-            base.MatMulMany(a, m, k, products);
+            base.MatMulManyKernel(a, m, k, products);
             return;
         }
 
@@ -895,7 +897,7 @@ internal sealed unsafe partial class CudaBackend : Backend
         Launch(K("gemv_multi_f32"), (uint)((widest + 31) / 32), (uint)products.Length, 1, PtxKernels.GemvThreads, 1, args);
     }
 
-    public override void BatchedMatMul(Storage a, Storage b, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
+    public override void BatchedMatMulKernel(Storage a, Storage b, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
     {
         if (m == 0 || n == 0 || batch == 0)
         {
@@ -1067,7 +1069,7 @@ internal sealed unsafe partial class CudaBackend : Backend
         Launch(K("transpose_f32"), (uint)((cols + 31) / 32), (uint)((rows + 31) / 32), (uint)batch, 32, 8,
             P(x), P(y), U(rows), U(cols), (ulong)rows * (ulong)cols, (ulong)rows * (ulong)cols);
 
-    public override bool MatMulBias(Storage a, Storage b, Storage bias, Storage c, int m, int n, int k)
+    public override bool MatMulBiasKernel(Storage a, Storage b, Storage bias, Storage c, int m, int n, int k)
     {
         if (m < 64 || n < 64 || k < 32 || !MixedPrecision.UsesTensorCores || TensorCoreKernels() is not { } tensorCore)
         {
@@ -1092,7 +1094,7 @@ internal sealed unsafe partial class CudaBackend : Backend
         return true;
     }
 
-    public override bool MatMulLowRank(Storage a, Storage b, Storage c, int m, int n, int k, bool transB, float beta, Storage u, Storage v, int rank)
+    public override bool MatMulLowRankKernel(Storage a, Storage b, Storage c, int m, int n, int k, bool transB, float beta, Storage u, Storage v, int rank)
     {
         if (m == 0 || n == 0 || k < 16 || rank is < 1 or > 32 || !MixedPrecision.UsesTensorCores || MixedPrecision.Current == MatMulPrecision.Float8
             || TensorCoreKernels() is not { } tensorCore || !tensorCore.TryGetValue(transB ? "gemm_tc_nt_lr_f32" : "gemm_tc_nn_lr_f32", out var function))
@@ -1115,7 +1117,7 @@ internal sealed unsafe partial class CudaBackend : Backend
         return true;
     }
 
-    public override bool BFloat16TransposedMatMul(Storage a, Storage packed, Storage c, int m, int n, int k, float beta, Storage? u, Storage? v, int rank)
+    public override bool BFloat16TransposedMatMulKernel(Storage a, Storage packed, Storage c, int m, int n, int k, float beta, Storage? u, Storage? v, int rank)
     {
         if (m == 0 || n == 0 || k < 16 || u is not null && rank is < 1 or > 32 || !MixedPrecision.UsesTensorCores
             || MixedPrecision.Current == MatMulPrecision.Float8 || TensorCoreKernels() is not { } tensorCore
@@ -1139,7 +1141,7 @@ internal sealed unsafe partial class CudaBackend : Backend
         return true;
     }
 
-    public override bool GemmStrided(Storage a, long aOffset, int lda, bool transA, Storage b, long bOffset, int ldb, bool transB,
+    public override bool GemmStridedKernel(Storage a, long aOffset, int lda, bool transA, Storage b, long bOffset, int ldb, bool transB,
         Storage c, long cOffset, int ldc, int m, int n, int k, float beta, Storage? bias = null, GemmEpilogue epilogue = GemmEpilogue.None,
         Storage? aux = null, long auxOffset = 0)
     {
@@ -1290,7 +1292,7 @@ internal sealed unsafe partial class CudaBackend : Backend
 
     public override int Float8PaddedK(int k) => EightBitReady(fp8: true) ? PtxKernels.EightBitPaddedK(k) : 0;
 
-    public override bool Float8QuantizeWeight(Storage w, int k, int n, Storage values, Storage scales)
+    public override bool Float8QuantizeWeightKernel(Storage w, int k, int n, Storage values, Storage scales)
     {
         if (!EightBitReady(fp8: true))
         {
@@ -1312,7 +1314,7 @@ internal sealed unsafe partial class CudaBackend : Backend
         return true;
     }
 
-    public override bool Float8MatMul(Storage x, int m, int k, Storage values, Storage scales, int n, Storage y, float beta)
+    public override bool Float8MatMulKernel(Storage x, int m, int k, Storage values, Storage scales, int n, Storage y, float beta)
     {
         if (m == 0 || n == 0 || !EightBitReady(fp8: true))
         {
@@ -1528,7 +1530,7 @@ internal sealed unsafe partial class CudaBackend : Backend
         QuantizeOperand(fp8, P(x), ld, byRows: false, output, scale, rows, k, PtxKernels.EightBitPaddedK(k));
     }
 
-    public override void SgdStep(Storage p, Storage g, Storage? v, int n, float lr, float momentum)
+    public override void SgdStepKernel(Storage p, Storage g, Storage? v, int n, float lr, float momentum)
     {
         if (v is null)
         {
@@ -1540,10 +1542,10 @@ internal sealed unsafe partial class CudaBackend : Backend
         }
     }
 
-    public override void AdamStep(Storage p, Storage g, Storage m, Storage v, int n, float lr, float beta1, float beta2, float eps) =>
+    public override void AdamStepKernel(Storage p, Storage g, Storage m, Storage v, int n, float lr, float beta1, float beta2, float eps) =>
         Launch1D(_adam, n, P(p), P(g), P(m), P(v), F(lr), F(beta1), F(beta2), F(1f - beta1), F(1f - beta2), F(eps), U(n));
 
-    public override void AdamStep8Bit(Storage p, Storage g, Storage m, Storage v, Storage absMax, Storage map, int n, float lr, float beta1, float beta2, float eps,
+    public override void AdamStep8BitKernel(Storage p, Storage g, Storage m, Storage v, Storage absMax, Storage map, int n, float lr, float beta1, float beta2, float eps,
         float gradientScale, float decay)
     {
         int blocks = (n + Optimizers.AdamW8Bit.BlockSize - 1) / Optimizers.AdamW8Bit.BlockSize;
@@ -1574,7 +1576,7 @@ internal sealed unsafe partial class CudaBackend : Backend
         }
     }
 
-    public override bool FusedAdamW(ReadOnlySpan<(Storage P, Storage G, Storage M, Storage V, int N)> tensors, ref IDisposable? cache, float maxNorm,
+    public override bool FusedAdamWKernel(ReadOnlySpan<(Storage P, Storage G, Storage M, Storage V, int N)> tensors, ref IDisposable? cache, float maxNorm,
         float lr, float decay, float beta1, float beta2, float eps, bool zeroGradients)
     {
         if (tensors.Length == 0 || !_kernels.TryGetValue("multi_adamw_f32", out var adam) || !_kernels.TryGetValue("multi_sumsq_f32", out var sumSquares))
@@ -1661,7 +1663,7 @@ internal sealed unsafe partial class CudaBackend : Backend
         return true;
     }
 
-    public override void SumSquares(Storage x, Storage total, int n)
+    public override void SumSquaresKernel(Storage x, Storage total, int n)
     {
         if (n > 0)
         {
@@ -1670,13 +1672,13 @@ internal sealed unsafe partial class CudaBackend : Backend
         }
     }
 
-    public override void Dropout(Storage x, Storage y, int n, float p, uint seed) =>
+    public override void DropoutKernel(Storage x, Storage y, int n, float p, uint seed) =>
         Launch1D(_dropout, n, P(x), P(y), F(p), F(1f / (1f - p)), seed, 0UL, U(n));
 
-    public override void AddDropout(Storage residual, Storage x, Storage output, int n, float p, uint seed) =>
+    public override void AddDropoutKernel(Storage residual, Storage x, Storage output, int n, float p, uint seed) =>
         Launch1D(K("add_dropout_f32"), n, P(residual), P(x), P(output), F(p), F(1f / (1f - p)), seed, U(n));
 
-    public override void DropoutBackward(Storage dy, Storage dx, int n, float p, uint seed) =>
+    public override void DropoutBackwardKernel(Storage dy, Storage dx, int n, float p, uint seed) =>
         Launch1D(_dropout, n, P(dy), P(dx), F(p), F(1f / (1f - p)), seed, 1UL, U(n));
 
     public override void Synchronize()

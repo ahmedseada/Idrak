@@ -13,7 +13,7 @@ internal sealed partial class CpuBackend
     // Fewest columns per parallel work item: eight vectors (CpuTuning.MinColumns), a multiple of the int8 kernel's byte vectors.
     private static int Int8MinBlock => CpuTuning.ColumnBlock;
 
-    public override void Int8MatMul(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
+    public override void Int8MatMulKernel(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
     {
         float[] xv = D(x), sv = D(scales), yv = D(y);
         int stride = (n + 3) / 4 * 4;                                  // bytes per weight row
@@ -51,7 +51,7 @@ internal sealed partial class CpuBackend
         });
     }
 
-    public override void Int4MatMul(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
+    public override void Int4MatMulKernel(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
     {
         if (m > CpuTuning.FewRows)                                       // the CPU's few-row limit (BackendCapabilities.FewRows)
         {
@@ -103,7 +103,7 @@ internal sealed partial class CpuBackend
         });
     }
 
-    public override void Int4Dequantize(Storage q, Storage scales, Storage w, int k, int n)
+    public override void Int4DequantizeKernel(Storage q, Storage scales, Storage w, int k, int n)
     {
         float[] wv = D(w);
         For(k, (long)k * n, (first, last) =>
@@ -148,7 +148,7 @@ internal sealed partial class CpuBackend
         }
     }
 
-    public override void BFloat16MatMul(Storage x, Storage packed, Storage y, int m, int n, int k)
+    public override void BFloat16MatMulKernel(Storage x, Storage packed, Storage y, int m, int n, int k)
     {
         if (m > CpuTuning.FewRows)                                       // the CPU's few-row limit (BackendCapabilities.FewRows)
         {
@@ -234,7 +234,7 @@ internal sealed partial class CpuBackend
         });
     }
 
-    public override void BFloat16Dequantize(Storage packed, Storage w, int k, int n)
+    public override void BFloat16DequantizeKernel(Storage packed, Storage w, int k, int n)
     {
         float[] wv = D(w);
         int stride = (n + 1) / 2 * 2;
@@ -269,7 +269,7 @@ internal sealed partial class CpuBackend
         }
     }
 
-    public override void Int8Dequantize(Storage q, Storage scales, Storage w, int k, int n)
+    public override void Int8DequantizeKernel(Storage q, Storage scales, Storage w, int k, int n)
     {
         float[] sv = D(scales), wv = D(w);
         int stride = (n + 3) / 4 * 4;
@@ -288,7 +288,7 @@ internal sealed partial class CpuBackend
         });
     }
 
-    public override void KeyValueWriteInt8(Storage source, Storage cache, Storage scales, Storage position, int heads, int steps, int capacity, int dim)
+    public override void KeyValueWriteInt8Kernel(Storage source, Storage cache, Storage scales, Storage position, int heads, int steps, int capacity, int dim)
     {
         float[] src = D(source), sv = D(scales);
         var bytes = MemoryMarshal.Cast<float, sbyte>(D(cache).AsSpan());
@@ -314,13 +314,13 @@ internal sealed partial class CpuBackend
         }
     }
 
-    public override void AttentionDecode(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead,
+    public override void AttentionDecodeKernel(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead,
         int steps, int capacity, int dim, float scale, AttentionVariant variant = default) =>
         AttentionTiled(q, keys, values, position, y, null, heads, rowsPerHead, steps, capacity, dim, scale, variant);
 
     // The reference for every attention kernel: each row's positions from its window's start (0 without a window) up to
     // its causal limit, the scaled scores soft-capped when a cap is set, then the softmax and the weighted values.
-    public override void AttentionTiled(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage? logSumExp, int heads,
+    public override void AttentionTiledKernel(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage? logSumExp, int heads,
         int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
         float[] qv = D(q), kv = D(keys), vv = D(values), yv = D(y);
@@ -362,7 +362,7 @@ internal sealed partial class CpuBackend
         });
     }
 
-    public override void AttentionTiledBackward(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput,
+    public override void AttentionTiledBackwardKernel(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput,
         Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
         float[] qv = D(q), kv = D(keys), vv = D(values), ov = D(output), lv = D(logSumExp), gv = D(dOutput);
@@ -395,7 +395,7 @@ internal sealed partial class CpuBackend
 
     public override bool SupportsSegmentedAttention(int dim, AttentionVariant variant = default) => true;
 
-    public override bool AttentionRows(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow,
+    public override bool AttentionRowsKernel(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow,
         int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
         float[] qv = D(q), kv = D(keys), vv = D(values), yv = D(y), sv = D(starts);
@@ -436,7 +436,7 @@ internal sealed partial class CpuBackend
         return true;
     }
 
-    public override bool AttentionSegmented(Storage q, Storage keys, Storage values, Storage y, Storage? logSumExp, Storage starts, Storage ends,
+    public override bool AttentionSegmentedKernel(Storage q, Storage keys, Storage values, Storage y, Storage? logSumExp, Storage starts, Storage ends,
         int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant = default)
     {
         float[] qv = D(q), kv = D(keys), vv = D(values), yv = D(y), sv = D(starts);
@@ -477,7 +477,7 @@ internal sealed partial class CpuBackend
         return true;
     }
 
-    public override bool AttentionSegmentedBackward(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput,
+    public override bool AttentionSegmentedBackwardKernel(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput,
         Storage dq, Storage dkeys, Storage dvalues, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale,
         AttentionVariant variant = default)
     {
@@ -510,7 +510,7 @@ internal sealed partial class CpuBackend
         return true;
     }
 
-    public override void AttentionInt8(Storage q, Storage keys, Storage values, Storage keyScales, Storage valueScales, Storage position,
+    public override void AttentionInt8Kernel(Storage q, Storage keys, Storage values, Storage keyScales, Storage valueScales, Storage position,
         Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, bool tiled, AttentionVariant variant = default)
     {
         float[] qv = D(q), ks = D(keyScales), vs = D(valueScales), yv = D(y);
@@ -549,7 +549,7 @@ internal sealed partial class CpuBackend
         });
     }
 
-    public override void AttentionScoresInt8(Storage q, Storage cache, Storage scales, Storage y, int rows, int steps, int capacity, int dim)
+    public override void AttentionScoresInt8Kernel(Storage q, Storage cache, Storage scales, Storage y, int rows, int steps, int capacity, int dim)
     {
         float[] qv = D(q), sv = D(scales), yv = D(y);
         int stride = (dim + 3) / 4 * 4;
@@ -572,7 +572,7 @@ internal sealed partial class CpuBackend
         });
     }
 
-    public override void AttentionContextInt8(Storage weights, Storage cache, Storage scales, Storage y, int rows, int steps, int capacity, int dim)
+    public override void AttentionContextInt8Kernel(Storage weights, Storage cache, Storage scales, Storage y, int rows, int steps, int capacity, int dim)
     {
         float[] wv = D(weights), sv = D(scales), yv = D(y);
         int stride = (dim + 3) / 4 * 4;
@@ -598,7 +598,7 @@ internal sealed partial class CpuBackend
         });
     }
 
-    public override void AddRmsNormAffine(Storage a, Storage b, Storage sum, Storage gain, Storage y, int rows, int cols, float eps, float offset)
+    public override void AddRmsNormAffineKernel(Storage a, Storage b, Storage sum, Storage gain, Storage y, int rows, int cols, float eps, float offset)
     {
         float[] av = D(a), bv = D(b), sv = D(sum);
         For(rows * cols, (long)rows * cols, (first, last) =>
@@ -611,7 +611,7 @@ internal sealed partial class CpuBackend
         RmsNormAffine(sum, gain, y, rows, cols, eps, offset);
     }
 
-    public override void RmsNormRope(Storage x, Storage gain, Storage cos, Storage sin, Storage positions, Storage y, int rows, int cols,
+    public override void RmsNormRopeKernel(Storage x, Storage gain, Storage cos, Storage sin, Storage positions, Storage y, int rows, int cols,
         float eps, float offset, int heads, int steps, int half, bool interleaved)
     {
         var normalized = Allocate(rows * cols, zeroed: false);
@@ -627,7 +627,7 @@ internal sealed partial class CpuBackend
         }
     }
 
-    public override void RmsNormAffine(Storage x, Storage gain, Storage y, int rows, int cols, float eps, float offset)
+    public override void RmsNormAffineKernel(Storage x, Storage gain, Storage y, int rows, int cols, float eps, float offset)
     {
         float[] xv = D(x), gv = D(gain), yv = D(y);
         For(rows, (long)rows * cols * 2, (first, last) =>
@@ -674,7 +674,7 @@ internal sealed partial class CpuBackend
         }
     }
 
-    public override void GatedActivation(Storage gate, Storage up, Storage y, int n, int kind)
+    public override void GatedActivationKernel(Storage gate, Storage up, Storage y, int n, int kind)
     {
         float[] gv = D(gate), uv = D(up), yv = D(y);
         For(n, (long)n * 8, (first, last) =>
@@ -683,7 +683,7 @@ internal sealed partial class CpuBackend
         });
     }
 
-    public override void GatedActivationBackward(Storage gate, Storage up, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags)
+    public override void GatedActivationBackwardKernel(Storage gate, Storage up, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags)
     {
         float[] gv = D(gate), uv = D(up), dv = D(dy), dg = D(dgate), du = D(dup);
         For(n, (long)n * 8, (first, last) =>
@@ -704,7 +704,7 @@ internal sealed partial class CpuBackend
         });
     }
 
-    public override void GatedActivationPacked(Storage gate, Storage up, Storage packedGate, Storage packedUp, Storage y, Storage packedY, int n, int kind, int flags)
+    public override void GatedActivationPackedKernel(Storage gate, Storage up, Storage packedGate, Storage packedUp, Storage y, Storage packedY, int n, int kind, int flags)
     {
         Storage? g = null, u = null, t = null;
         try
@@ -738,7 +738,7 @@ internal sealed partial class CpuBackend
         }
     }
 
-    public override void GatedActivationBackwardPacked(Storage packedGate, Storage packedUp, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags)
+    public override void GatedActivationBackwardPackedKernel(Storage packedGate, Storage packedUp, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags)
     {
         Storage g = Allocate(n, false), u = Allocate(n, false);
         try
@@ -754,7 +754,7 @@ internal sealed partial class CpuBackend
         }
     }
 
-    public override void RmsNorm(Storage x, Storage y, Storage inv, int rows, int cols, float eps)
+    public override void RmsNormKernel(Storage x, Storage y, Storage inv, int rows, int cols, float eps)
     {
         float[] xv = D(x), yv = D(y), iv = D(inv);
         For(rows, (long)rows * cols * 2, (first, last) =>
@@ -779,7 +779,7 @@ internal sealed partial class CpuBackend
         });
     }
 
-    public override void RmsNormBackward(Storage dy, Storage y, Storage inv, Storage dx, int rows, int cols)
+    public override void RmsNormBackwardKernel(Storage dy, Storage y, Storage inv, Storage dx, int rows, int cols)
     {
         float[] gv = D(dy), yv = D(y), iv = D(inv), dv = D(dx);
         For(rows, (long)rows * cols * 3, (first, last) =>
@@ -802,7 +802,7 @@ internal sealed partial class CpuBackend
         });
     }
 
-    public override void Rope(Storage x, Storage y, Storage cos, Storage sin, Storage positions, int rows, int heads, int steps, int dim, int half, bool interleaved, float sign)
+    public override void RopeKernel(Storage x, Storage y, Storage cos, Storage sin, Storage positions, int rows, int heads, int steps, int dim, int half, bool interleaved, float sign)
     {
         float[] xv = D(x), yv = D(y), cv = D(cos), sv = D(sin), pv = D(positions);
         For(rows, (long)rows * half * 4, (first, last) =>

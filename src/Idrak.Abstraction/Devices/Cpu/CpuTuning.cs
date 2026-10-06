@@ -517,14 +517,14 @@ internal static class CpuTuning
                 for (int r = 0; r < repeats; r++)
                 {
                     int o = r % windows * n;
-                    new CpuBackend.AxpyKernel(x, y, 1f).Execute(o, o + n);
+                    new CpuBackend.AxpyLoop(x, y, 1f).Execute(o, o + n);
                 }
             }, () =>
             {
                 for (int r = 0; r < repeats; r++)
                 {
                     int o = r % windows * n;
-                    var kernel = new CpuBackend.AxpyKernel(x, y, 1f);
+                    var kernel = new CpuBackend.AxpyLoop(x, y, 1f);
                     Parallel.For(0, chunks, options, c => kernel.Execute(o + c * size, o + Math.Min(n, (c + 1) * size)));
                 }
             }, out double parallel);

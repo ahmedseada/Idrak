@@ -46,6 +46,8 @@ internal sealed partial class CpuBackend : Backend
         Profiling = false,
     };
 
+    public override string Kind => "cpu";
+
     public override string Name => $"CPU ({Environment.ProcessorCount} threads, {System.Numerics.Vector<float>.Count}-wide SIMD)";
 
     public override string? TensorCoresUnavailable() => "the CPU computes matrix products in float32";
@@ -119,95 +121,95 @@ internal sealed partial class CpuBackend : Backend
 
     public override void Download(Storage source, Span<float> destination) => D(source).AsSpan(0, destination.Length).CopyTo(destination);
 
-    public override void Fill(Storage y, int n, float value) => D(y).AsSpan(0, n).Fill(value);
+    public override void FillKernel(Storage y, int n, float value) => D(y).AsSpan(0, n).Fill(value);
 
     public override void Copy(Storage x, Storage y, int n) => D(x).AsSpan(0, n).CopyTo(D(y));
 
-    public override void Unary(UnaryOp op, Storage x, Storage y, int n)
+    public override void UnaryKernel(UnaryOp op, Storage x, Storage y, int n)
     {
         switch (op)
         {
-            case UnaryOp.Sigmoid: Run(new SigmoidKernel(D(x), D(y)), n); break;
-            case UnaryOp.Tanh: Run(new TanhKernel(D(x), D(y)), n); break;
-            case UnaryOp.Relu: Run(new ReluKernel(D(x), D(y)), n); break;
-            case UnaryOp.Square: Run(new SquareKernel(D(x), D(y)), n); break;
-            case UnaryOp.Abs: Run(new AbsKernel(D(x), D(y)), n); break;
-            case UnaryOp.Exp: Run(new ExpKernel(D(x), D(y)), n); break;
-            case UnaryOp.Log: Run(new LogKernel(D(x), D(y)), n); break;
-            case UnaryOp.Gelu: Run(new GeluKernel(D(x), D(y)), n); break;
-            case UnaryOp.Sqrt or UnaryOp.Sin or UnaryOp.Cos or UnaryOp.Silu or UnaryOp.Sign: Run(new MathKernel(op, D(x), D(y)), n); break;
+            case UnaryOp.Sigmoid: Run(new SigmoidLoop(D(x), D(y)), n); break;
+            case UnaryOp.Tanh: Run(new TanhLoop(D(x), D(y)), n); break;
+            case UnaryOp.Relu: Run(new ReluLoop(D(x), D(y)), n); break;
+            case UnaryOp.Square: Run(new SquareLoop(D(x), D(y)), n); break;
+            case UnaryOp.Abs: Run(new AbsLoop(D(x), D(y)), n); break;
+            case UnaryOp.Exp: Run(new ExpLoop(D(x), D(y)), n); break;
+            case UnaryOp.Log: Run(new LogLoop(D(x), D(y)), n); break;
+            case UnaryOp.Gelu: Run(new GeluLoop(D(x), D(y)), n); break;
+            case UnaryOp.Sqrt or UnaryOp.Sin or UnaryOp.Cos or UnaryOp.Silu or UnaryOp.Sign: Run(new MathLoop(op, D(x), D(y)), n); break;
             default: throw new ArgumentOutOfRangeException(nameof(op));
         }
     }
 
-    public override void UnaryBackward(UnaryOp op, Storage x, Storage y, Storage dy, Storage dx, int n)
+    public override void UnaryBackwardKernel(UnaryOp op, Storage x, Storage y, Storage dy, Storage dx, int n)
     {
         switch (op)
         {
-            case UnaryOp.Sigmoid: Run(new SigmoidBackwardKernel(D(y), D(dy), D(dx)), n); break;
-            case UnaryOp.Tanh: Run(new TanhBackwardKernel(D(y), D(dy), D(dx)), n); break;
-            case UnaryOp.Relu: Run(new ReluBackwardKernel(D(x), D(dy), D(dx)), n); break;
-            case UnaryOp.Square: Run(new SquareBackwardKernel(D(x), D(dy), D(dx)), n); break;
-            case UnaryOp.Abs: Run(new AbsBackwardKernel(D(x), D(dy), D(dx)), n); break;
-            case UnaryOp.Exp: Run(new MulAddKernel(D(dy), D(y), D(dx)), n); break;
-            case UnaryOp.Log: Run(new LogBackwardKernel(D(x), D(dy), D(dx)), n); break;
-            case UnaryOp.Gelu: Run(new GeluBackwardKernel(D(x), D(dy), D(dx)), n); break;
-            case UnaryOp.Sqrt or UnaryOp.Sin or UnaryOp.Cos or UnaryOp.Silu or UnaryOp.Sign: Run(new MathBackwardKernel(op, D(x), D(y), D(dy), D(dx)), n); break;
+            case UnaryOp.Sigmoid: Run(new SigmoidBackwardLoop(D(y), D(dy), D(dx)), n); break;
+            case UnaryOp.Tanh: Run(new TanhBackwardLoop(D(y), D(dy), D(dx)), n); break;
+            case UnaryOp.Relu: Run(new ReluBackwardLoop(D(x), D(dy), D(dx)), n); break;
+            case UnaryOp.Square: Run(new SquareBackwardLoop(D(x), D(dy), D(dx)), n); break;
+            case UnaryOp.Abs: Run(new AbsBackwardLoop(D(x), D(dy), D(dx)), n); break;
+            case UnaryOp.Exp: Run(new MulAddLoop(D(dy), D(y), D(dx)), n); break;
+            case UnaryOp.Log: Run(new LogBackwardLoop(D(x), D(dy), D(dx)), n); break;
+            case UnaryOp.Gelu: Run(new GeluBackwardLoop(D(x), D(dy), D(dx)), n); break;
+            case UnaryOp.Sqrt or UnaryOp.Sin or UnaryOp.Cos or UnaryOp.Silu or UnaryOp.Sign: Run(new MathBackwardLoop(op, D(x), D(y), D(dy), D(dx)), n); break;
             default: throw new ArgumentOutOfRangeException(nameof(op));
         }
     }
 
-    public override void Binary(BinaryOp op, Storage a, Storage b, Storage c, int n)
+    public override void BinaryKernel(BinaryOp op, Storage a, Storage b, Storage c, int n)
     {
         switch (op)
         {
-            case BinaryOp.Add: Run(new AddKernel(D(a), D(b), D(c)), n); break;
-            case BinaryOp.Sub: Run(new SubKernel(D(a), D(b), D(c)), n); break;
-            case BinaryOp.Mul: Run(new MulKernel(D(a), D(b), D(c)), n); break;
-            case BinaryOp.Maximum or BinaryOp.Minimum: Run(new ExtremumKernel(op == BinaryOp.Minimum, D(a), D(b), D(c)), n); break;
+            case BinaryOp.Add: Run(new AddLoop(D(a), D(b), D(c)), n); break;
+            case BinaryOp.Sub: Run(new SubLoop(D(a), D(b), D(c)), n); break;
+            case BinaryOp.Mul: Run(new MulLoop(D(a), D(b), D(c)), n); break;
+            case BinaryOp.Maximum or BinaryOp.Minimum: Run(new ExtremumLoop(op == BinaryOp.Minimum, D(a), D(b), D(c)), n); break;
             default: throw new ArgumentOutOfRangeException(nameof(op));
         }
     }
 
-    public override void Affine(Storage x, Storage y, int n, float alpha, float beta) => Run(new AffineKernel(D(x), D(y), alpha, beta), n);
+    public override void AffineKernel(Storage x, Storage y, int n, float alpha, float beta) => Run(new AffineLoop(D(x), D(y), alpha, beta), n);
 
-    public override void Axpy(Storage x, Storage y, int n, float alpha) => Run(new AxpyKernel(D(x), D(y), alpha), n);
+    public override void AxpyKernel(Storage x, Storage y, int n, float alpha) => Run(new AxpyLoop(D(x), D(y), alpha), n);
 
-    public override void MulAdd(Storage a, Storage b, Storage c, int n) => Run(new MulAddKernel(D(a), D(b), D(c)), n);
+    public override void MulAddKernel(Storage a, Storage b, Storage c, int n) => Run(new MulAddLoop(D(a), D(b), D(c)), n);
 
-    public override void AddRowVector(Storage a, Storage v, Storage c, int rows, int cols)
+    public override void AddRowVectorKernel(Storage a, Storage v, Storage c, int rows, int cols)
     {
         float[] av = D(a), vv = D(v), cv = D(c);
         var bias = vv.AsSpan(0, cols);
         for (int r = 0; r < rows; r++)
         {
             int o = r * cols;
-            AddKernel.Apply(av.AsSpan(o, cols), bias, cv.AsSpan(o, cols));
+            AddLoop.Apply(av.AsSpan(o, cols), bias, cv.AsSpan(o, cols));
         }
     }
 
-    public override void SumRows(Storage x, Storage y, int rows, int cols)
+    public override void SumRowsKernel(Storage x, Storage y, int rows, int cols)
     {
         float[] xv = D(x);
         var acc = D(y).AsSpan(0, cols);
         for (int r = 0; r < rows; r++)
         {
-            AddKernel.Apply(acc, xv.AsSpan(r * cols, cols), acc);
+            AddLoop.Apply(acc, xv.AsSpan(r * cols, cols), acc);
         }
     }
 
     // y[j] += Σ_r x[offset + r·ld + j]. The base method's fallback calls this one, so the CPU must implement it.
-    public override void SumColumns(Storage x, long offset, int ld, Storage y, int rows, int cols)
+    public override void SumColumnsKernel(Storage x, long offset, int ld, Storage y, int rows, int cols)
     {
         float[] xv = D(x);
         var acc = D(y).AsSpan(0, cols);
         for (int r = 0; r < rows; r++)
         {
-            AddKernel.Apply(acc, xv.AsSpan((int)(offset + (long)r * ld), cols), acc);
+            AddLoop.Apply(acc, xv.AsSpan((int)(offset + (long)r * ld), cols), acc);
         }
     }
 
-    public override void Sum(Storage x, Storage result, int n, float scale)
+    public override void SumKernel(Storage x, Storage result, int n, float scale)
     {
         float[] xv = D(x);
         double total;
@@ -246,31 +248,31 @@ internal sealed partial class CpuBackend : Backend
         D(result)[0] = (float)(total * scale);
     }
 
-    public override void AxpyAt(Storage x, Storage y, int offset, float alpha) => D(y)[offset] += alpha * D(x)[0];
+    public override void AxpyAtKernel(Storage x, Storage y, int offset, float alpha) => D(y)[offset] += alpha * D(x)[0];
 
-    public override void AddBroadcastScalar(Storage s, Storage y, int n, float scale)
+    public override void AddBroadcastScalarKernel(Storage s, Storage y, int n, float scale)
     {
         float value = D(s)[0] * scale;
-        Run(new AffineKernel(D(y), D(y), 1f, value), n);
+        Run(new AffineLoop(D(y), D(y), 1f, value), n);
     }
 
 
-    public override void SgdStep(Storage p, Storage g, Storage? v, int n, float lr, float momentum)
+    public override void SgdStepKernel(Storage p, Storage g, Storage? v, int n, float lr, float momentum)
     {
         if (v is null)
         {
-            Run(new AxpyKernel(D(g), D(p), -lr), n);
+            Run(new AxpyLoop(D(g), D(p), -lr), n);
         }
         else
         {
-            Run(new SgdMomentumKernel(D(p), D(g), D(v), lr, momentum), n);
+            Run(new SgdMomentumLoop(D(p), D(g), D(v), lr, momentum), n);
         }
     }
 
-    public override void AdamStep(Storage p, Storage g, Storage m, Storage v, int n, float lr, float beta1, float beta2, float eps) =>
-        Run(new AdamKernel(D(p), D(g), D(m), D(v), lr, beta1, beta2, eps), n);
+    public override void AdamStepKernel(Storage p, Storage g, Storage m, Storage v, int n, float lr, float beta1, float beta2, float eps) =>
+        Run(new AdamLoop(D(p), D(g), D(m), D(v), lr, beta1, beta2, eps), n);
 
-    public override bool FusedAdamW(ReadOnlySpan<(Storage P, Storage G, Storage M, Storage V, int N)> tensors, ref IDisposable? cache, float maxNorm,
+    public override bool FusedAdamWKernel(ReadOnlySpan<(Storage P, Storage G, Storage M, Storage V, int N)> tensors, ref IDisposable? cache, float maxNorm,
         float lr, float decay, float beta1, float beta2, float eps, bool zeroGradients)
     {
         float factor = 1f;
@@ -396,7 +398,7 @@ internal sealed partial class CpuBackend : Backend
         return sum;
     }
 
-    public override void PackBFloat16(Storage x, Storage packed, int n)
+    public override void PackBFloat16Kernel(Storage x, Storage packed, int n)
     {
         float[] values = D(x), words = D(packed);
         var bits = System.Runtime.InteropServices.MemoryMarshal.Cast<float, uint>(words.AsSpan());
@@ -413,18 +415,18 @@ internal sealed partial class CpuBackend : Backend
         }
     }
 
-    public override void ClipFactor(Storage sumSquares, Storage factor, float maxNorm)
+    public override void ClipFactorKernel(Storage sumSquares, Storage factor, float maxNorm)
     {
         float sum = D(sumSquares)[0];
         D(factor)[0] = sum > 0f ? MathF.Min(1f, maxNorm / MathF.Sqrt(sum)) : 1f;
     }
 
-    public override void SumSquares(Storage x, Storage total, int n)
+    public override void SumSquaresKernel(Storage x, Storage total, int n)
     {
         D(total)[0] += (float)SumSquaresParallel(D(x), n);
     }
 
-    public override void AdamStep8Bit(Storage p, Storage g, Storage m, Storage v, Storage absMax, Storage map, int n, float lr, float beta1, float beta2, float eps,
+    public override void AdamStep8BitKernel(Storage p, Storage g, Storage m, Storage v, Storage absMax, Storage map, int n, float lr, float beta1, float beta2, float eps,
         float gradientScale, float decay)
     {
         float[] ps = D(p), gs = D(g), ms = D(m), vs = D(v), scales = D(absMax), codes = D(map);
@@ -462,9 +464,9 @@ internal sealed partial class CpuBackend : Backend
         });
     }
 
-    public override void Dropout(Storage x, Storage y, int n, float p, uint seed) => Run(new DropoutKernel(D(x), D(y), p, seed, accumulate: false), n);
+    public override void DropoutKernel(Storage x, Storage y, int n, float p, uint seed) => Run(new DropoutLoop(D(x), D(y), p, seed, accumulate: false), n);
 
-    public override void DropoutBackward(Storage dy, Storage dx, int n, float p, uint seed) => Run(new DropoutKernel(D(dy), D(dx), p, seed, accumulate: true), n);
+    public override void DropoutBackwardKernel(Storage dy, Storage dx, int n, float p, uint seed) => Run(new DropoutLoop(D(dy), D(dx), p, seed, accumulate: true), n);
 
     public override void Synchronize()
     {
@@ -532,7 +534,7 @@ internal sealed partial class CpuBackend : Backend
 
     // Each kernel processes [start, end): a SIMD main loop over Vector<float> lanes, then a scalar tail.
 
-    private readonly struct SigmoidKernel(float[] x, float[] y) : IRangeKernel
+    private readonly struct SigmoidLoop(float[] x, float[] y) : IRangeKernel
     {
         public void Execute(int start, int end)
         {
@@ -553,7 +555,7 @@ internal sealed partial class CpuBackend : Backend
         }
     }
 
-    private readonly struct TanhKernel(float[] x, float[] y) : IRangeKernel
+    private readonly struct TanhLoop(float[] x, float[] y) : IRangeKernel
     {
         public void Execute(int start, int end)
         {
@@ -576,7 +578,7 @@ internal sealed partial class CpuBackend : Backend
         }
     }
 
-    private readonly struct ReluKernel(float[] x, float[] y) : IRangeKernel
+    private readonly struct ReluLoop(float[] x, float[] y) : IRangeKernel
     {
         public void Execute(int start, int end)
         {
@@ -596,12 +598,12 @@ internal sealed partial class CpuBackend : Backend
         }
     }
 
-    private readonly struct SquareKernel(float[] x, float[] y) : IRangeKernel
+    private readonly struct SquareLoop(float[] x, float[] y) : IRangeKernel
     {
-        public void Execute(int start, int end) => MulKernel.Apply(x.AsSpan(start, end - start), x.AsSpan(start, end - start), y.AsSpan(start, end - start));
+        public void Execute(int start, int end) => MulLoop.Apply(x.AsSpan(start, end - start), x.AsSpan(start, end - start), y.AsSpan(start, end - start));
     }
 
-    private readonly struct AbsKernel(float[] x, float[] y) : IRangeKernel
+    private readonly struct AbsLoop(float[] x, float[] y) : IRangeKernel
     {
         public void Execute(int start, int end)
         {
@@ -621,7 +623,7 @@ internal sealed partial class CpuBackend : Backend
         }
     }
 
-    private readonly struct DropoutKernel(float[] x, float[] y, float p, uint seed, bool accumulate) : IRangeKernel
+    private readonly struct DropoutLoop(float[] x, float[] y, float p, uint seed, bool accumulate) : IRangeKernel
     {
         public void Execute(int start, int end)
         {
@@ -667,7 +669,7 @@ internal sealed partial class CpuBackend : Backend
         }
     }
 
-    private readonly struct AbsBackwardKernel(float[] x, float[] dy, float[] dx) : IRangeKernel
+    private readonly struct AbsBackwardLoop(float[] x, float[] dy, float[] dx) : IRangeKernel
     {
         public void Execute(int start, int end)
         {
@@ -691,7 +693,7 @@ internal sealed partial class CpuBackend : Backend
         }
     }
 
-    private readonly struct SigmoidBackwardKernel(float[] y, float[] dy, float[] dx) : IRangeKernel
+    private readonly struct SigmoidBackwardLoop(float[] y, float[] dy, float[] dx) : IRangeKernel
     {
         public void Execute(int start, int end)
         {
@@ -714,7 +716,7 @@ internal sealed partial class CpuBackend : Backend
         }
     }
 
-    private readonly struct TanhBackwardKernel(float[] y, float[] dy, float[] dx) : IRangeKernel
+    private readonly struct TanhBackwardLoop(float[] y, float[] dy, float[] dx) : IRangeKernel
     {
         public void Execute(int start, int end)
         {
@@ -737,7 +739,7 @@ internal sealed partial class CpuBackend : Backend
         }
     }
 
-    private readonly struct ReluBackwardKernel(float[] x, float[] dy, float[] dx) : IRangeKernel
+    private readonly struct ReluBackwardLoop(float[] x, float[] dy, float[] dx) : IRangeKernel
     {
         public void Execute(int start, int end)
         {
@@ -762,7 +764,7 @@ internal sealed partial class CpuBackend : Backend
         }
     }
 
-    private readonly struct SquareBackwardKernel(float[] x, float[] dy, float[] dx) : IRangeKernel
+    private readonly struct SquareBackwardLoop(float[] x, float[] dy, float[] dx) : IRangeKernel
     {
         public void Execute(int start, int end)
         {
@@ -785,7 +787,7 @@ internal sealed partial class CpuBackend : Backend
         }
     }
 
-    private readonly struct AddKernel(float[] a, float[] b, float[] c) : IRangeKernel
+    private readonly struct AddLoop(float[] a, float[] b, float[] c) : IRangeKernel
     {
         public void Execute(int start, int end) => Apply(a.AsSpan(start, end - start), b.AsSpan(start, end - start), c.AsSpan(start, end - start));
 
@@ -806,7 +808,7 @@ internal sealed partial class CpuBackend : Backend
         }
     }
 
-    private readonly struct SubKernel(float[] a, float[] b, float[] c) : IRangeKernel
+    private readonly struct SubLoop(float[] a, float[] b, float[] c) : IRangeKernel
     {
         public void Execute(int start, int end)
         {
@@ -828,7 +830,7 @@ internal sealed partial class CpuBackend : Backend
         }
     }
 
-    private readonly struct MulKernel(float[] a, float[] b, float[] c) : IRangeKernel
+    private readonly struct MulLoop(float[] a, float[] b, float[] c) : IRangeKernel
     {
         public void Execute(int start, int end) => Apply(a.AsSpan(start, end - start), b.AsSpan(start, end - start), c.AsSpan(start, end - start));
 
@@ -849,7 +851,7 @@ internal sealed partial class CpuBackend : Backend
         }
     }
 
-    private readonly struct AffineKernel(float[] x, float[] y, float alpha, float beta) : IRangeKernel
+    private readonly struct AffineLoop(float[] x, float[] y, float alpha, float beta) : IRangeKernel
     {
         public void Execute(int start, int end)
         {
@@ -871,7 +873,7 @@ internal sealed partial class CpuBackend : Backend
         }
     }
 
-    internal readonly struct AxpyKernel(float[] x, float[] y, float alpha) : IRangeKernel
+    internal readonly struct AxpyLoop(float[] x, float[] y, float alpha) : IRangeKernel
     {
         public void Execute(int start, int end)
         {
@@ -892,7 +894,7 @@ internal sealed partial class CpuBackend : Backend
         }
     }
 
-    internal readonly struct MulAddKernel(float[] a, float[] b, float[] c) : IRangeKernel
+    internal readonly struct MulAddLoop(float[] a, float[] b, float[] c) : IRangeKernel
     {
         public void Execute(int start, int end)
         {
@@ -914,7 +916,7 @@ internal sealed partial class CpuBackend : Backend
         }
     }
 
-    private readonly struct SgdMomentumKernel(float[] p, float[] g, float[] v, float lr, float momentum) : IRangeKernel
+    private readonly struct SgdMomentumLoop(float[] p, float[] g, float[] v, float lr, float momentum) : IRangeKernel
     {
         public void Execute(int start, int end)
         {
@@ -942,7 +944,7 @@ internal sealed partial class CpuBackend : Backend
         }
     }
 
-    private readonly struct AdamKernel(float[] p, float[] g, float[] m, float[] v, float lr, float beta1, float beta2, float eps) : IRangeKernel
+    private readonly struct AdamLoop(float[] p, float[] g, float[] m, float[] v, float lr, float beta1, float beta2, float eps) : IRangeKernel
     {
         public void Execute(int start, int end)
         {

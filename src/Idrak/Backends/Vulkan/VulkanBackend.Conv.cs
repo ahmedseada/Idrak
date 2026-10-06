@@ -8,12 +8,12 @@ namespace Idrak.Backends.Vulkan;
 // the device binds, more elements than a 32-bit index reaches) goes to the host fallback.
 internal sealed partial class VulkanBackend
 {
-    public override void Im2Col(Storage x, Storage cols, in ConvGeometry g)
+    public override void Im2ColKernel(Storage x, Storage cols, in ConvGeometry g)
     {
         long n = (long)g.Positions * g.PatchSize;
         if (n > int.MaxValue || !Fit(x, cols))
         {
-            base.Im2Col(x, cols, in g);
+            base.Im2ColKernel(x, cols, in g);
             return;
         }
 
@@ -21,11 +21,11 @@ internal sealed partial class VulkanBackend
         Grid("im2col", n, [x, cols], PushGeometry(b, g));
     }
 
-    public override void Col2Im(Storage dcols, Storage dx, in ConvGeometry g)
+    public override void Col2ImKernel(Storage dcols, Storage dx, in ConvGeometry g)
     {
         if ((long)g.Positions * g.PatchSize > int.MaxValue || !Fit(dcols, dx))
         {
-            base.Col2Im(dcols, dx, in g);
+            base.Col2ImKernel(dcols, dx, in g);
             return;
         }
 
@@ -33,11 +33,11 @@ internal sealed partial class VulkanBackend
         Grid("col2im", (long)g.N * g.C * g.H * g.W, [dcols, dx], PushGeometry(b, g));
     }
 
-    public override void MaxPool(Storage x, Storage y, Storage argmax, in ConvGeometry g)
+    public override void MaxPoolKernel(Storage x, Storage y, Storage argmax, in ConvGeometry g)
     {
         if ((long)g.N * g.C * g.H * g.W > int.MaxValue || !Fit(x, y, argmax))
         {
-            base.MaxPool(x, y, argmax, in g);
+            base.MaxPoolKernel(x, y, argmax, in g);
             return;
         }
 
@@ -47,11 +47,11 @@ internal sealed partial class VulkanBackend
 
     // The overload without the geometry stays on the host: gathering over the windows needs it, and scattering would add
     // overlapping windows' gradients in no fixed order. Tensor.MaxPool passes the geometry.
-    public override void MaxPoolBackward(Storage dy, Storage argmax, Storage dx, in ConvGeometry g)
+    public override void MaxPoolBackwardKernel(Storage dy, Storage argmax, Storage dx, in ConvGeometry g)
     {
         if ((long)g.N * g.C * g.H * g.W > int.MaxValue || !Fit(dy, argmax, dx))
         {
-            base.MaxPoolBackward(dy, argmax, dx, in g);
+            base.MaxPoolBackwardKernel(dy, argmax, dx, in g);
             return;
         }
 

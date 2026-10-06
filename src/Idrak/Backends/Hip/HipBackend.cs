@@ -67,6 +67,8 @@ internal sealed unsafe partial class HipBackend : Backend
     /// <summary>What device <paramref name="ordinal"/> reports, read without starting its backend.</summary>
     internal static HipDeviceLimits Limits(int ordinal) => Probe.Value.Devices[ordinal].Limits;
 
+    public override string Kind => "hip";
+
     public override string Name { get; }
 
     /// <summary>What this device reports (tests and diagnostics).</summary>
@@ -304,7 +306,7 @@ internal sealed unsafe partial class HipBackend : Backend
         }
     }
 
-    public override void Fill(Storage y, int n, float value)
+    public override void FillKernel(Storage y, int n, float value)
     {
         if (n > 0)
         {

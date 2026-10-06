@@ -232,11 +232,11 @@ internal sealed partial class VulkanBackend
 
     // ------------------------------------------------------------------ element-wise
 
-    public override void Fill(Storage y, int n, float value)
+    public override void FillKernel(Storage y, int n, float value)
     {
         if (!Fit(y))
         {
-            base.Fill(y, n, value);
+            base.FillKernel(y, n, value);
             return;
         }
 
@@ -256,11 +256,11 @@ internal sealed partial class VulkanBackend
         Grid("copy", n, [x, y], new Push(b).I(n).Bytes);
     }
 
-    public override void Unary(UnaryOp op, Storage x, Storage y, int n)
+    public override void UnaryKernel(UnaryOp op, Storage x, Storage y, int n)
     {
         if (!Fit(x, y))
         {
-            base.Unary(op, x, y, n);
+            base.UnaryKernel(op, x, y, n);
             return;
         }
 
@@ -268,11 +268,11 @@ internal sealed partial class VulkanBackend
         Grid(UnaryNames[(int)op], n, [x, y], new Push(b).I(n).Bytes);
     }
 
-    public override void UnaryBackward(UnaryOp op, Storage x, Storage y, Storage dy, Storage dx, int n)
+    public override void UnaryBackwardKernel(UnaryOp op, Storage x, Storage y, Storage dy, Storage dx, int n)
     {
         if (!Fit(x, y, dy, dx))
         {
-            base.UnaryBackward(op, x, y, dy, dx, n);
+            base.UnaryBackwardKernel(op, x, y, dy, dx, n);
             return;
         }
 
@@ -280,11 +280,11 @@ internal sealed partial class VulkanBackend
         Grid(UnaryBackwardNames[(int)op], n, [x, y, dy, dx], new Push(b).I(n).Bytes);
     }
 
-    public override void Binary(BinaryOp op, Storage a, Storage b, Storage c, int n)
+    public override void BinaryKernel(BinaryOp op, Storage a, Storage b, Storage c, int n)
     {
         if (!Fit(a, b, c))
         {
-            base.Binary(op, a, b, c, n);
+            base.BinaryKernel(op, a, b, c, n);
             return;
         }
 
@@ -292,11 +292,11 @@ internal sealed partial class VulkanBackend
         Grid(BinaryNames[(int)op], n, [a, b, c], new Push(p).I(n).Bytes);
     }
 
-    public override void Affine(Storage x, Storage y, int n, float alpha, float beta)
+    public override void AffineKernel(Storage x, Storage y, int n, float alpha, float beta)
     {
         if (!Fit(x, y))
         {
-            base.Affine(x, y, n, alpha, beta);
+            base.AffineKernel(x, y, n, alpha, beta);
             return;
         }
 
@@ -304,11 +304,11 @@ internal sealed partial class VulkanBackend
         Grid("affine", n, [x, y], new Push(b).I(n).F(alpha).F(beta).Bytes);
     }
 
-    public override void Axpy(Storage x, Storage y, int n, float alpha)
+    public override void AxpyKernel(Storage x, Storage y, int n, float alpha)
     {
         if (!Fit(x, y))
         {
-            base.Axpy(x, y, n, alpha);
+            base.AxpyKernel(x, y, n, alpha);
             return;
         }
 
@@ -316,11 +316,11 @@ internal sealed partial class VulkanBackend
         Grid("axpy", n, [x, y], new Push(b).I(n).F(alpha).Bytes);
     }
 
-    public override void MulAdd(Storage a, Storage b, Storage c, int n)
+    public override void MulAddKernel(Storage a, Storage b, Storage c, int n)
     {
         if (!Fit(a, b, c))
         {
-            base.MulAdd(a, b, c, n);
+            base.MulAddKernel(a, b, c, n);
             return;
         }
 
@@ -328,11 +328,11 @@ internal sealed partial class VulkanBackend
         Grid("mul_add", n, [a, b, c], new Push(p).I(n).Bytes);
     }
 
-    public override void AddRowVector(Storage a, Storage v, Storage c, int rows, int cols)
+    public override void AddRowVectorKernel(Storage a, Storage v, Storage c, int rows, int cols)
     {
         if (!Fit(a, v, c))
         {
-            base.AddRowVector(a, v, c, rows, cols);
+            base.AddRowVectorKernel(a, v, c, rows, cols);
             return;
         }
 
@@ -340,11 +340,11 @@ internal sealed partial class VulkanBackend
         Grid("add_row_vector", (long)rows * cols, [a, v, c], new Push(b).I(rows * cols).I(cols).Bytes);
     }
 
-    public override void SumRows(Storage x, Storage y, int rows, int cols)
+    public override void SumRowsKernel(Storage x, Storage y, int rows, int cols)
     {
         if (!Fit(x, y))
         {
-            base.SumRows(x, y, rows, cols);
+            base.SumRowsKernel(x, y, rows, cols);
             return;
         }
 
@@ -352,11 +352,11 @@ internal sealed partial class VulkanBackend
         Grid("sum_rows", cols, [x, y], new Push(b).I(rows).I(cols).Bytes);
     }
 
-    public override void Sum(Storage x, Storage result, int n, float scale)
+    public override void SumKernel(Storage x, Storage result, int n, float scale)
     {
         if (!Fit(x, result))
         {
-            base.Sum(x, result, n, scale);
+            base.SumKernel(x, result, n, scale);
             return;
         }
 
@@ -364,11 +364,11 @@ internal sealed partial class VulkanBackend
         Run("sum", 1, 1, 1, [x, result], new Push(b).I(n).F(scale).Bytes);
     }
 
-    public override void SumSquares(Storage x, Storage total, int n)
+    public override void SumSquaresKernel(Storage x, Storage total, int n)
     {
         if (!Fit(x, total))
         {
-            base.SumSquares(x, total, n);
+            base.SumSquaresKernel(x, total, n);
             return;
         }
 
@@ -376,11 +376,11 @@ internal sealed partial class VulkanBackend
         Run("sum_squares", 1, 1, 1, [x, total], new Push(b).I(n).Bytes);
     }
 
-    public override void AxpyAt(Storage x, Storage y, int offset, float alpha)
+    public override void AxpyAtKernel(Storage x, Storage y, int offset, float alpha)
     {
         if (!Fit(x, y))
         {
-            base.AxpyAt(x, y, offset, alpha);
+            base.AxpyAtKernel(x, y, offset, alpha);
             return;
         }
 
@@ -388,11 +388,11 @@ internal sealed partial class VulkanBackend
         Run("axpy_at", 1, 1, 1, [x, y], new Push(b).I(offset).F(alpha).Bytes);
     }
 
-    public override void AddBroadcastScalar(Storage s, Storage y, int n, float scale)
+    public override void AddBroadcastScalarKernel(Storage s, Storage y, int n, float scale)
     {
         if (!Fit(s, y))
         {
-            base.AddBroadcastScalar(s, y, n, scale);
+            base.AddBroadcastScalarKernel(s, y, n, scale);
             return;
         }
 
@@ -400,11 +400,11 @@ internal sealed partial class VulkanBackend
         Grid("add_broadcast_scalar", n, [s, y], new Push(b).I(n).F(scale).Bytes);
     }
 
-    public override void InvSqrt(Storage x, Storage y, int n, float eps)
+    public override void InvSqrtKernel(Storage x, Storage y, int n, float eps)
     {
         if (!Fit(x, y))
         {
-            base.InvSqrt(x, y, n, eps);
+            base.InvSqrtKernel(x, y, n, eps);
             return;
         }
 
@@ -412,11 +412,11 @@ internal sealed partial class VulkanBackend
         Grid("inv_sqrt", n, [x, y], new Push(b).I(n).F(eps).Bytes);
     }
 
-    public override void BiasGelu(Storage x, Storage bias, Storage y, int n, int cols)
+    public override void BiasGeluKernel(Storage x, Storage bias, Storage y, int n, int cols)
     {
         if (!Fit(x, bias, y))
         {
-            base.BiasGelu(x, bias, y, n, cols);
+            base.BiasGeluKernel(x, bias, y, n, cols);
             return;
         }
 
@@ -424,11 +424,11 @@ internal sealed partial class VulkanBackend
         Grid("bias_gelu", n, [x, bias, y], new Push(b).I(n).I(cols).Bytes);
     }
 
-    public override void GatedActivation(Storage gate, Storage up, Storage y, int n, int kind)
+    public override void GatedActivationKernel(Storage gate, Storage up, Storage y, int n, int kind)
     {
         if (!Fit(gate, up, y))
         {
-            base.GatedActivation(gate, up, y, n, kind);
+            base.GatedActivationKernel(gate, up, y, n, kind);
             return;
         }
 
@@ -436,11 +436,11 @@ internal sealed partial class VulkanBackend
         Grid("gated_activation", n, [gate, up, y], new Push(b).I(n).I(kind).Bytes);
     }
 
-    public override void GatedActivationBackward(Storage gate, Storage up, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags)
+    public override void GatedActivationBackwardKernel(Storage gate, Storage up, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags)
     {
         if (!Fit(gate, up, dy, dgate, dup))
         {
-            base.GatedActivationBackward(gate, up, dy, dgate, dup, n, kind, flags);
+            base.GatedActivationBackwardKernel(gate, up, dy, dgate, dup, n, kind, flags);
             return;
         }
 
@@ -448,7 +448,7 @@ internal sealed partial class VulkanBackend
         Grid("gated_activation_backward", n, [gate, up, dy, dgate, dup], new Push(b).I(n).I(kind).I(flags).Bytes);
     }
 
-    public override void SgdStep(Storage p, Storage g, Storage? v, int n, float lr, float momentum)
+    public override void SgdStepKernel(Storage p, Storage g, Storage? v, int n, float lr, float momentum)
     {
         if (v is null)
         {
@@ -458,7 +458,7 @@ internal sealed partial class VulkanBackend
 
         if (!Fit(p, g, v))
         {
-            base.SgdStep(p, g, v, n, lr, momentum);
+            base.SgdStepKernel(p, g, v, n, lr, momentum);
             return;
         }
 
@@ -466,11 +466,11 @@ internal sealed partial class VulkanBackend
         Grid("sgd_momentum", n, [p, g, v], new Push(b).I(n).F(lr).F(momentum).Bytes);
     }
 
-    public override void AdamStep(Storage p, Storage g, Storage m, Storage v, int n, float lr, float beta1, float beta2, float eps)
+    public override void AdamStepKernel(Storage p, Storage g, Storage m, Storage v, int n, float lr, float beta1, float beta2, float eps)
     {
         if (!Fit(p, g, m, v))
         {
-            base.AdamStep(p, g, m, v, n, lr, beta1, beta2, eps);
+            base.AdamStepKernel(p, g, m, v, n, lr, beta1, beta2, eps);
             return;
         }
 
@@ -478,11 +478,11 @@ internal sealed partial class VulkanBackend
         Grid("adam", n, [p, g, m, v], new Push(b).I(n).F(lr).F(beta1).F(beta2).F(eps).Bytes);
     }
 
-    public override void Dropout(Storage x, Storage y, int n, float p, uint seed)
+    public override void DropoutKernel(Storage x, Storage y, int n, float p, uint seed)
     {
         if (!Fit(x, y))
         {
-            base.Dropout(x, y, n, p, seed);
+            base.DropoutKernel(x, y, n, p, seed);
             return;
         }
 
@@ -490,11 +490,11 @@ internal sealed partial class VulkanBackend
         Grid("dropout", n, [x, y], new Push(b).I(n).F(p).F(1f / (1f - p)).U(seed).Bytes);
     }
 
-    public override void DropoutBackward(Storage dy, Storage dx, int n, float p, uint seed)
+    public override void DropoutBackwardKernel(Storage dy, Storage dx, int n, float p, uint seed)
     {
         if (!Fit(dy, dx))
         {
-            base.DropoutBackward(dy, dx, n, p, seed);
+            base.DropoutBackwardKernel(dy, dx, n, p, seed);
             return;
         }
 
@@ -502,11 +502,11 @@ internal sealed partial class VulkanBackend
         Grid("dropout_backward", n, [dy, dx], new Push(b).I(n).F(p).F(1f / (1f - p)).U(seed).Bytes);
     }
 
-    public override void ClipFactor(Storage sumSquares, Storage factor, float maxNorm)
+    public override void ClipFactorKernel(Storage sumSquares, Storage factor, float maxNorm)
     {
         if (!Fit(sumSquares, factor))
         {
-            base.ClipFactor(sumSquares, factor, maxNorm);
+            base.ClipFactorKernel(sumSquares, factor, maxNorm);
             return;
         }
 
@@ -516,11 +516,11 @@ internal sealed partial class VulkanBackend
 
     // ------------------------------------------------------------------ rows
 
-    public override void Softmax(Storage x, Storage y, int rows, int cols, bool log)
+    public override void SoftmaxKernel(Storage x, Storage y, int rows, int cols, bool log)
     {
         if (!Fit(x, y))
         {
-            base.Softmax(x, y, rows, cols, log);
+            base.SoftmaxKernel(x, y, rows, cols, log);
             return;
         }
 
@@ -528,11 +528,11 @@ internal sealed partial class VulkanBackend
         Rows("softmax", rows, cols, [x, y], new Push(b).I(rows).I(cols).B(log).Bytes);
     }
 
-    public override void SoftmaxBackward(Storage y, Storage dy, Storage dx, int rows, int cols, bool log)
+    public override void SoftmaxBackwardKernel(Storage y, Storage dy, Storage dx, int rows, int cols, bool log)
     {
         if (!Fit(y, dy, dx))
         {
-            base.SoftmaxBackward(y, dy, dx, rows, cols, log);
+            base.SoftmaxBackwardKernel(y, dy, dx, rows, cols, log);
             return;
         }
 
@@ -540,11 +540,11 @@ internal sealed partial class VulkanBackend
         Rows("softmax_backward", rows, cols, [y, dy, dx], new Push(b).I(rows).I(cols).B(log).Bytes);
     }
 
-    public override void ScaleMaskSoftmax(Storage x, Storage? mask, Storage y, int rows, int cols, int maskRows, float scale)
+    public override void ScaleMaskSoftmaxKernel(Storage x, Storage? mask, Storage y, int rows, int cols, int maskRows, float scale)
     {
         if (!Fit(x, mask ?? x, y))
         {
-            base.ScaleMaskSoftmax(x, mask, y, rows, cols, maskRows, scale);
+            base.ScaleMaskSoftmaxKernel(x, mask, y, rows, cols, maskRows, scale);
             return;
         }
 
@@ -552,11 +552,11 @@ internal sealed partial class VulkanBackend
         Rows("scale_mask_softmax", rows, cols, [x, mask ?? x, y], new Push(b).I(rows).I(cols).I(maskRows).F(scale).B(mask is not null).Bytes);
     }
 
-    public override void RmsNorm(Storage x, Storage y, Storage inv, int rows, int cols, float eps)
+    public override void RmsNormKernel(Storage x, Storage y, Storage inv, int rows, int cols, float eps)
     {
         if (!Fit(x, y, inv))
         {
-            base.RmsNorm(x, y, inv, rows, cols, eps);
+            base.RmsNormKernel(x, y, inv, rows, cols, eps);
             return;
         }
 
@@ -564,11 +564,11 @@ internal sealed partial class VulkanBackend
         Rows("rms_norm", rows, cols, [x, y, inv], new Push(b).I(rows).I(cols).F(eps).Bytes);
     }
 
-    public override void RmsNormBackward(Storage dy, Storage y, Storage inv, Storage dx, int rows, int cols)
+    public override void RmsNormBackwardKernel(Storage dy, Storage y, Storage inv, Storage dx, int rows, int cols)
     {
         if (!Fit(dy, y, inv, dx))
         {
-            base.RmsNormBackward(dy, y, inv, dx, rows, cols);
+            base.RmsNormBackwardKernel(dy, y, inv, dx, rows, cols);
             return;
         }
 
@@ -576,11 +576,11 @@ internal sealed partial class VulkanBackend
         Rows("rms_norm_backward", rows, cols, [dy, y, inv, dx], new Push(b).I(rows).I(cols).Bytes);
     }
 
-    public override void RmsNormAffine(Storage x, Storage gain, Storage y, int rows, int cols, float eps, float offset)
+    public override void RmsNormAffineKernel(Storage x, Storage gain, Storage y, int rows, int cols, float eps, float offset)
     {
         if (!Fit(x, gain, y))
         {
-            base.RmsNormAffine(x, gain, y, rows, cols, eps, offset);
+            base.RmsNormAffineKernel(x, gain, y, rows, cols, eps, offset);
             return;
         }
 
@@ -588,11 +588,11 @@ internal sealed partial class VulkanBackend
         Rows("rms_norm_affine", rows, cols, [x, gain, y], new Push(b).I(rows).I(cols).F(eps).F(offset).Bytes);
     }
 
-    public override void AddRmsNormAffine(Storage a, Storage b, Storage sum, Storage gain, Storage y, int rows, int cols, float eps, float offset)
+    public override void AddRmsNormAffineKernel(Storage a, Storage b, Storage sum, Storage gain, Storage y, int rows, int cols, float eps, float offset)
     {
         if (!Fit(a, b, sum, gain, y))
         {
-            base.AddRmsNormAffine(a, b, sum, gain, y, rows, cols, eps, offset);
+            base.AddRmsNormAffineKernel(a, b, sum, gain, y, rows, cols, eps, offset);
             return;
         }
 
@@ -600,11 +600,11 @@ internal sealed partial class VulkanBackend
         Rows("add_rms_norm_affine", rows, cols, [a, b, sum, gain, y], new Push(p).I(rows).I(cols).F(eps).F(offset).Bytes);
     }
 
-    public override void LayerNormFused(Storage x, Storage gamma, Storage beta, Storage y, int rows, int cols, float eps)
+    public override void LayerNormFusedKernel(Storage x, Storage gamma, Storage beta, Storage y, int rows, int cols, float eps)
     {
         if (!Fit(x, gamma, beta, y))
         {
-            base.LayerNormFused(x, gamma, beta, y, rows, cols, eps);
+            base.LayerNormFusedKernel(x, gamma, beta, y, rows, cols, eps);
             return;
         }
 
@@ -612,11 +612,11 @@ internal sealed partial class VulkanBackend
         Rows("layer_norm", rows, cols, [x, gamma, beta, y], new Push(b).I(rows).I(cols).F(eps).Bytes);
     }
 
-    public override void LayerNormTrain(Storage x, Storage gamma, Storage beta, Storage y, Storage stats, int rows, int cols, float eps)
+    public override void LayerNormTrainKernel(Storage x, Storage gamma, Storage beta, Storage y, Storage stats, int rows, int cols, float eps)
     {
         if (!Fit(x, gamma, beta, y, stats))
         {
-            base.LayerNormTrain(x, gamma, beta, y, stats, rows, cols, eps);
+            base.LayerNormTrainKernel(x, gamma, beta, y, stats, rows, cols, eps);
             return;
         }
 
@@ -624,11 +624,11 @@ internal sealed partial class VulkanBackend
         Rows("layer_norm_train", rows, cols, [x, gamma, beta, y, stats], new Push(b).I(rows).I(cols).F(eps).Bytes);
     }
 
-    public override void ArgMax(Storage x, Storage y, int rows, int cols)
+    public override void ArgMaxKernel(Storage x, Storage y, int rows, int cols)
     {
         if (!Fit(x, y))
         {
-            base.ArgMax(x, y, rows, cols);
+            base.ArgMaxKernel(x, y, rows, cols);
             return;
         }
 
@@ -636,11 +636,11 @@ internal sealed partial class VulkanBackend
         Rows("arg_max", rows, cols, [x, y], new Push(b).I(rows).I(cols).Bytes);
     }
 
-    public override void SoftmaxCrossEntropyRows(Storage logits, Storage targets, Storage weights, Storage losses, int rows, int vocabulary, float scale)
+    public override void SoftmaxCrossEntropyRowsKernel(Storage logits, Storage targets, Storage weights, Storage losses, int rows, int vocabulary, float scale)
     {
         if (!Fit(logits, targets, weights, losses))
         {
-            base.SoftmaxCrossEntropyRows(logits, targets, weights, losses, rows, vocabulary, scale);
+            base.SoftmaxCrossEntropyRowsKernel(logits, targets, weights, losses, rows, vocabulary, scale);
             return;
         }
 
@@ -663,12 +663,12 @@ internal sealed partial class VulkanBackend
             new Push(b).I(srcOffset).I(srcStride).I(dstOffset).I(dstStride).I(rows).I(cols).B(accumulate).Bytes);
     }
 
-    public override void Permute(Storage x, Storage y, ReadOnlySpan<int> outShape, ReadOnlySpan<int> inStrides, bool accumulate)
+    public override void PermuteKernel(Storage x, Storage y, ReadOnlySpan<int> outShape, ReadOnlySpan<int> inStrides, bool accumulate)
     {
         const int Rank = VulkanKernels.PermuteRank;
         if (outShape.Length > Rank || !Fit(x, y))
         {
-            base.Permute(x, y, outShape, inStrides, accumulate);
+            base.PermuteKernel(x, y, outShape, inStrides, accumulate);
             return;
         }
 
@@ -692,11 +692,11 @@ internal sealed partial class VulkanBackend
         Grid("permute", total, [x, y], push.B(accumulate).Bytes);
     }
 
-    public override void SumAxis(Storage x, Storage y, int outer, int dim, int inner, float scale, bool accumulate)
+    public override void SumAxisKernel(Storage x, Storage y, int outer, int dim, int inner, float scale, bool accumulate)
     {
         if (!Fit(x, y))
         {
-            base.SumAxis(x, y, outer, dim, inner, scale, accumulate);
+            base.SumAxisKernel(x, y, outer, dim, inner, scale, accumulate);
             return;
         }
 
@@ -704,11 +704,11 @@ internal sealed partial class VulkanBackend
         Grid("sum_axis", (long)outer * inner, [x, y], new Push(b).I(outer).I(dim).I(inner).F(scale).B(accumulate).Bytes);
     }
 
-    public override void BroadcastAxis(Storage dy, Storage dx, int outer, int dim, int inner, float scale)
+    public override void BroadcastAxisKernel(Storage dy, Storage dx, int outer, int dim, int inner, float scale)
     {
         if (!Fit(dy, dx))
         {
-            base.BroadcastAxis(dy, dx, outer, dim, inner, scale);
+            base.BroadcastAxisKernel(dy, dx, outer, dim, inner, scale);
             return;
         }
 
@@ -716,11 +716,11 @@ internal sealed partial class VulkanBackend
         Grid("broadcast_axis", (long)outer * dim * inner, [dy, dx], new Push(b).I(outer).I(dim).I(inner).F(scale).Bytes);
     }
 
-    public override void OneHot(Storage indices, Storage y, int count, int classes)
+    public override void OneHotKernel(Storage indices, Storage y, int count, int classes)
     {
         if (!Fit(indices, y))
         {
-            base.OneHot(indices, y, count, classes);
+            base.OneHotKernel(indices, y, count, classes);
             return;
         }
 
@@ -728,11 +728,11 @@ internal sealed partial class VulkanBackend
         Grid("one_hot", (long)count * classes, [indices, y], new Push(b).I(count).I(classes).Bytes);
     }
 
-    public override void ScatterAdd(Storage dy, Storage indices, Storage dtable, int count, int dim, int vocabulary)
+    public override void ScatterAddKernel(Storage dy, Storage indices, Storage dtable, int count, int dim, int vocabulary)
     {
         if (!Fit(dy, indices, dtable))
         {
-            base.ScatterAdd(dy, indices, dtable, count, dim, vocabulary);
+            base.ScatterAddKernel(dy, indices, dtable, count, dim, vocabulary);
             return;
         }
 
@@ -764,11 +764,11 @@ internal sealed partial class VulkanBackend
 
     private const int MatSmall = 0, MatTiled = 1, MatBlocked = 2, MatCoop = 3, MatMixed = 4;
 
-    public override void BatchedMatMul(Storage a, Storage b, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
+    public override void BatchedMatMulKernel(Storage a, Storage b, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
     {
         if (!Fit(a, b, c))
         {
-            base.BatchedMatMul(a, b, c, batch, m, n, k, transA, transB, beta);
+            base.BatchedMatMulKernel(a, b, c, batch, m, n, k, transA, transB, beta);
             return;
         }
 
@@ -901,27 +901,27 @@ internal sealed partial class VulkanBackend
         RunAt(variant == MatBlocked ? "batched_matmul" : "batched_matmul_tile", width, (uint)((n + edge - 1) / edge), (uint)((m + edge - 1) / edge), gz, [a, b, c], push);
     }
 
-    public override void Int8MatMul(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
+    public override void Int8MatMulKernel(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
     {
         if (!Fit(x, scales, y) || !PackedProduct(VulkanKernels.PackedFormat.Int8, x, q, scales, y, m, n, k))
         {
-            base.Int8MatMul(x, q, scales, y, m, n, k);
+            base.Int8MatMulKernel(x, q, scales, y, m, n, k);
         }
     }
 
-    public override void Int4MatMul(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
+    public override void Int4MatMulKernel(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
     {
         if (!Fit(x, y) || !PackedRows(VulkanKernels.PackedFormat.Int4, x, q, scales, y, m, n, k))
         {
-            base.Int4MatMul(x, q, scales, y, m, n, k);
+            base.Int4MatMulKernel(x, q, scales, y, m, n, k);
         }
     }
 
-    public override void BFloat16MatMul(Storage x, Storage packed, Storage y, int m, int n, int k)
+    public override void BFloat16MatMulKernel(Storage x, Storage packed, Storage y, int m, int n, int k)
     {
         if (!Fit(x, y) || !PackedRows(VulkanKernels.PackedFormat.BFloat16, x, packed, null, y, m, n, k))
         {
-            base.BFloat16MatMul(x, packed, y, m, n, k);
+            base.BFloat16MatMulKernel(x, packed, y, m, n, k);
         }
     }
 
@@ -1105,13 +1105,13 @@ internal sealed partial class VulkanBackend
         }
     }
 
-    public override void Int8Dequantize(Storage q, Storage scales, Storage w, int k, int n)
+    public override void Int8DequantizeKernel(Storage q, Storage scales, Storage w, int k, int n)
     {
         if (!Fit(q, scales, w))
         {
             if (!DequantizeWindows(VulkanKernels.PackedFormat.Int8, q, scales, w, k, n))
             {
-                base.Int8Dequantize(q, scales, w, k, n);
+                base.Int8DequantizeKernel(q, scales, w, k, n);
             }
 
             return;
@@ -1121,13 +1121,13 @@ internal sealed partial class VulkanBackend
         Grid("int8_dequantize", (long)k * n, [q, scales, w], new Push(b).I(k).I(n).Bytes);
     }
 
-    public override void Int4Dequantize(Storage q, Storage scales, Storage w, int k, int n)
+    public override void Int4DequantizeKernel(Storage q, Storage scales, Storage w, int k, int n)
     {
         if (!Fit(q, scales, w))
         {
             if (!DequantizeWindows(VulkanKernels.PackedFormat.Int4, q, scales, w, k, n))
             {
-                base.Int4Dequantize(q, scales, w, k, n);
+                base.Int4DequantizeKernel(q, scales, w, k, n);
             }
 
             return;
@@ -1137,13 +1137,13 @@ internal sealed partial class VulkanBackend
         Grid("int4_dequantize", (long)k * n, [q, scales, w], new Push(b).I(k).I(n).Bytes);
     }
 
-    public override void BFloat16Dequantize(Storage packed, Storage w, int k, int n)
+    public override void BFloat16DequantizeKernel(Storage packed, Storage w, int k, int n)
     {
         if (!Fit(packed, w))
         {
             if (!DequantizeWindows(VulkanKernels.PackedFormat.BFloat16, packed, null, w, k, n))
             {
-                base.BFloat16Dequantize(packed, w, k, n);
+                base.BFloat16DequantizeKernel(packed, w, k, n);
             }
 
             return;
@@ -1153,11 +1153,11 @@ internal sealed partial class VulkanBackend
         Grid("bf16_dequantize", (long)k * n, [packed, w], new Push(b).I(k).I(n).Bytes);
     }
 
-    public override void PackBFloat16(Storage x, Storage packed, int n)
+    public override void PackBFloat16Kernel(Storage x, Storage packed, int n)
     {
         if (!Fit(x, packed))
         {
-            base.PackBFloat16(x, packed, n);
+            base.PackBFloat16Kernel(x, packed, n);
             return;
         }
 
@@ -1167,11 +1167,11 @@ internal sealed partial class VulkanBackend
 
     // ------------------------------------------------------------------ language models
 
-    public override void Rope(Storage x, Storage y, Storage cos, Storage sin, Storage positions, int rows, int heads, int steps, int dim, int half, bool interleaved, float sign)
+    public override void RopeKernel(Storage x, Storage y, Storage cos, Storage sin, Storage positions, int rows, int heads, int steps, int dim, int half, bool interleaved, float sign)
     {
         if (!Fit(x, y, cos, sin, positions))
         {
-            base.Rope(x, y, cos, sin, positions, rows, heads, steps, dim, half, interleaved, sign);
+            base.RopeKernel(x, y, cos, sin, positions, rows, heads, steps, dim, half, interleaved, sign);
             return;
         }
 
@@ -1181,13 +1181,13 @@ internal sealed partial class VulkanBackend
     }
 
     // Indices outside the table are clamped into it (the CPU throws; CUDA clamps too).
-    public override void Gather(Storage table, Storage indices, Storage y, int count, int dim, int vocabulary)
+    public override void GatherKernel(Storage table, Storage indices, Storage y, int count, int dim, int vocabulary)
     {
         if (!Fit(table, indices, y))
         {
             if (!GatherWindows("gather", table, indices, y, count, dim, vocabulary, dim))
             {
-                base.Gather(table, indices, y, count, dim, vocabulary);
+                base.GatherKernel(table, indices, y, count, dim, vocabulary);
             }
 
             return;
@@ -1197,13 +1197,13 @@ internal sealed partial class VulkanBackend
         Grid("gather", (long)count * dim, [table, indices, y], new Push(b).I(count).I(dim).I(vocabulary).I(0).I(vocabulary).Bytes);
     }
 
-    public override void GatherBFloat16(Storage packed, Storage indices, Storage y, int count, int dim, int vocabulary)
+    public override void GatherBFloat16Kernel(Storage packed, Storage indices, Storage y, int count, int dim, int vocabulary)
     {
         if (!Fit(packed, indices, y))
         {
             if (!GatherWindows("gather_bf16", packed, indices, y, count, dim, vocabulary, (dim + 1) / 2))
             {
-                base.GatherBFloat16(packed, indices, y, count, dim, vocabulary);
+                base.GatherBFloat16Kernel(packed, indices, y, count, dim, vocabulary);
             }
 
             return;
@@ -1213,11 +1213,11 @@ internal sealed partial class VulkanBackend
         Grid("gather_bf16", (long)count * dim, [packed, indices, y], new Push(b).I(count).I(dim).I(vocabulary).I(0).I(vocabulary).Bytes);
     }
 
-    public override void KeyValueWrite(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
+    public override void KeyValueWriteKernel(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
     {
         if (!Fit(source, cache, position))
         {
-            base.KeyValueWrite(source, cache, position, heads, steps, capacity, dim);
+            base.KeyValueWriteKernel(source, cache, position, heads, steps, capacity, dim);
             return;
         }
 
@@ -1225,11 +1225,11 @@ internal sealed partial class VulkanBackend
         Grid("key_value_write", (long)heads * steps * dim, [source, cache, position], new Push(b).I(heads).I(steps).I(capacity).I(dim).Bytes);
     }
 
-    public override void KeyValueWriteBFloat16(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
+    public override void KeyValueWriteBFloat16Kernel(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
     {
         if (!Fit(source, cache, position))
         {
-            base.KeyValueWriteBFloat16(source, cache, position, heads, steps, capacity, dim);
+            base.KeyValueWriteBFloat16Kernel(source, cache, position, heads, steps, capacity, dim);
             return;
         }
 
@@ -1238,11 +1238,11 @@ internal sealed partial class VulkanBackend
             new Push(b).I(heads).I(steps).I(capacity).I(dim).Bytes);
     }
 
-    public override void KeyValueWriteInt8(Storage source, Storage cache, Storage scales, Storage position, int heads, int steps, int capacity, int dim)
+    public override void KeyValueWriteInt8Kernel(Storage source, Storage cache, Storage scales, Storage position, int heads, int steps, int capacity, int dim)
     {
         if (!Fit(source, cache, scales, position))
         {
-            base.KeyValueWriteInt8(source, cache, scales, position, heads, steps, capacity, dim);
+            base.KeyValueWriteInt8Kernel(source, cache, scales, position, heads, steps, capacity, dim);
             return;
         }
 
@@ -1250,11 +1250,11 @@ internal sealed partial class VulkanBackend
         Grid("key_value_write_int8", (long)heads * steps, [source, cache, scales, position], new Push(b).I(heads).I(steps).I(capacity).I(dim).Bytes);
     }
 
-    public override void DecoderMask(Storage position, Storage mask, int rows, int capacity)
+    public override void DecoderMaskKernel(Storage position, Storage mask, int rows, int capacity)
     {
         if (!Fit(position, mask))
         {
-            base.DecoderMask(position, mask, rows, capacity);
+            base.DecoderMaskKernel(position, mask, rows, capacity);
             return;
         }
 
@@ -1262,12 +1262,12 @@ internal sealed partial class VulkanBackend
         Grid("decoder_mask", (long)rows * capacity, [position, mask], new Push(b).I(rows).I(capacity).Bytes);
     }
 
-    public override void AttentionDecode(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead,
+    public override void AttentionDecodeKernel(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead,
         int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
         if (dim > VulkanKernels.AttentionMaxDim || !Fit(q, keys, values, position, y))
         {
-            base.AttentionDecode(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+            base.AttentionDecodeKernel(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, variant);
             return;
         }
 
@@ -1275,12 +1275,12 @@ internal sealed partial class VulkanBackend
         Attend("attention_decode", 0, storages, heads, rowsPerHead, steps, capacity, dim, scale, variant);
     }
 
-    public override void AttentionBFloat16(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead,
+    public override void AttentionBFloat16Kernel(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead,
         int steps, int capacity, int dim, float scale, bool tiled, AttentionVariant variant = default)
     {
         if (dim > VulkanKernels.AttentionMaxDim || !Fit(q, keys, values, position, y))
         {
-            base.AttentionBFloat16(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
+            base.AttentionBFloat16Kernel(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
             return;
         }
 
@@ -1288,12 +1288,12 @@ internal sealed partial class VulkanBackend
         Attend("attention_bf16", 1, storages, heads, rowsPerHead, steps, capacity, dim, scale, variant);
     }
 
-    public override void AttentionInt8(Storage q, Storage keys, Storage values, Storage keyScales, Storage valueScales, Storage position,
+    public override void AttentionInt8Kernel(Storage q, Storage keys, Storage values, Storage keyScales, Storage valueScales, Storage position,
         Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, bool tiled, AttentionVariant variant = default)
     {
         if (dim > VulkanKernels.AttentionMaxDim || !Fit(q, keys, values, keyScales, valueScales, position, y))
         {
-            base.AttentionInt8(q, keys, values, keyScales, valueScales, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
+            base.AttentionInt8Kernel(q, keys, values, keyScales, valueScales, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
             return;
         }
 

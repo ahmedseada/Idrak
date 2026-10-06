@@ -12,7 +12,7 @@ internal sealed partial class CpuBackend
     public override void DownloadRange(Storage source, int offset, Span<float> destination) =>
         D(source).AsSpan(offset, destination.Length).CopyTo(destination);
 
-    public override void ScaleMaskSoftmax(Storage x, Storage? mask, Storage y, int rows, int cols, int maskRows, float scale)
+    public override void ScaleMaskSoftmaxKernel(Storage x, Storage? mask, Storage y, int rows, int cols, int maskRows, float scale)
     {
         float[] xv = D(x), yv = D(y);
         float[]? mv = mask is null ? null : D(mask);
@@ -35,7 +35,7 @@ internal sealed partial class CpuBackend
         });
     }
 
-    public override void LayerNormTrain(Storage x, Storage gamma, Storage beta, Storage y, Storage stats, int rows, int cols, float eps)
+    public override void LayerNormTrainKernel(Storage x, Storage gamma, Storage beta, Storage y, Storage stats, int rows, int cols, float eps)
     {
         LayerNormFused(x, gamma, beta, y, rows, cols, eps);
         float[] xv = D(x), sv = D(stats);
@@ -63,7 +63,7 @@ internal sealed partial class CpuBackend
         });
     }
 
-    public override void LayerNormBackward(Storage x, Storage gamma, Storage dy, Storage stats, Storage? dx, Storage? dgamma, Storage? dbeta, int rows, int cols)
+    public override void LayerNormBackwardKernel(Storage x, Storage gamma, Storage dy, Storage stats, Storage? dx, Storage? dgamma, Storage? dbeta, int rows, int cols)
     {
         float[] xv = D(x), gv = D(gamma), dyv = D(dy), sv = D(stats);
         float[]? dxv = dx is null ? null : D(dx);
@@ -121,7 +121,7 @@ internal sealed partial class CpuBackend
         }
     }
 
-    public override void LayerNormFused(Storage x, Storage gamma, Storage beta, Storage y, int rows, int cols, float eps)
+    public override void LayerNormFusedKernel(Storage x, Storage gamma, Storage beta, Storage y, int rows, int cols, float eps)
     {
         float[] xv = D(x), gv = D(gamma), bv = D(beta), yv = D(y);
         For(rows, (long)rows * cols * 4, (start, end) =>
@@ -152,7 +152,7 @@ internal sealed partial class CpuBackend
         });
     }
 
-    public override void BiasGelu(Storage x, Storage bias, Storage y, int n, int cols)
+    public override void BiasGeluKernel(Storage x, Storage bias, Storage y, int n, int cols)
     {
         float[] xv = D(x), bv = D(bias), yv = D(y);
         For(n / cols, n * 8L, (start, end) =>
@@ -169,7 +169,7 @@ internal sealed partial class CpuBackend
         });
     }
 
-    public override void DecoderMask(Storage position, Storage mask, int rows, int capacity)
+    public override void DecoderMaskKernel(Storage position, Storage mask, int rows, int capacity)
     {
         int pos = (int)D(position)[0];
         float[] mv = D(mask);
@@ -182,7 +182,7 @@ internal sealed partial class CpuBackend
         }
     }
 
-    public override void KeyValueWrite(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
+    public override void KeyValueWriteKernel(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
     {
         int pos = (int)D(position)[0];
         float[] sv = D(source), cv = D(cache);
@@ -192,7 +192,7 @@ internal sealed partial class CpuBackend
         }
     }
 
-    public override void SoftmaxCrossEntropyRows(Storage logits, Storage targets, Storage weights, Storage losses, int rows, int vocabulary, float scale)
+    public override void SoftmaxCrossEntropyRowsKernel(Storage logits, Storage targets, Storage weights, Storage losses, int rows, int vocabulary, float scale)
     {
         float[] xv = D(logits), tv = D(targets), wv = D(weights), lv = D(losses);
         For(rows, (long)rows * vocabulary * 4, (first, last) =>
@@ -219,7 +219,7 @@ internal sealed partial class CpuBackend
         });
     }
 
-    public override void KeyValueWriteBFloat16(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
+    public override void KeyValueWriteBFloat16Kernel(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
     {
         int pos = (int)D(position)[0], stride = (dim + 1) / 2 * 2;
         float[] sv = D(source);
@@ -238,7 +238,7 @@ internal sealed partial class CpuBackend
         }
     }
 
-    public override void AttentionBFloat16(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead,
+    public override void AttentionBFloat16Kernel(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead,
         int steps, int capacity, int dim, float scale, bool tiled, AttentionVariant variant = default)
     {
         // Straight from the bfloat16 cache: each cached key and value row is widened into a small buffer as it is used,
@@ -281,7 +281,7 @@ internal sealed partial class CpuBackend
         });
     }
 
-    public override void SampleRows(Storage logits, Storage ids, Storage stats, Storage step, int rows, int vocabulary,
+    public override void SampleRowsKernel(Storage logits, Storage ids, Storage stats, Storage step, int rows, int vocabulary,
         int rowStride, int rowOffset, float temperature, int topK, float topP, float minP, uint seed)
     {
         float[] lv = D(logits), iv = D(ids), sv = D(stats);
@@ -477,7 +477,7 @@ internal sealed partial class CpuBackend
         }
     }
 
-    public override void PenalizeRows(Storage logits, Storage work, Storage history, Storage length, int rows, int vocabulary,
+    public override void PenalizeRowsKernel(Storage logits, Storage work, Storage history, Storage length, int rows, int vocabulary,
         int rowStride, int rowOffset, int capacity, int lastN, float repeat, float presence, float frequency)
     {
         float[] lv = D(logits), wv = D(work), hv = D(history);
@@ -514,7 +514,7 @@ internal sealed partial class CpuBackend
         }
     }
 
-    public override void HistoryPush(Storage ids, Storage history, Storage length, int rows, int capacity)
+    public override void HistoryPushKernel(Storage ids, Storage history, Storage length, int rows, int capacity)
     {
         float[] iv = D(ids), hv = D(history);
         uint len = (uint)D(length)[0];
