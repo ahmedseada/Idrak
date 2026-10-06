@@ -303,7 +303,7 @@ public sealed class InferenceEngineBuilder
         Func<PredictorBuilder<float[], float[]>, PredictorBuilder<TIn, TOut>> configure) =>
         AddPredictor(name, configure(PredictorBuilder<float[], float[]>.Template()), reloadable: false, () => model, ownsModel: false);
 
-    /// <summary>A predictor built by <paramref name="network"/> with weights from <paramref name="weightsPath"/> (<see cref="Module.Save(string)"/>).</summary>
+    /// <summary>A predictor built by <paramref name="network"/> with weights from <paramref name="weightsPath"/> (<see cref="Idrak.ModuleFiles.Save(Module, string)"/>).</summary>
     public InferenceEngineBuilder Predictor<TIn, TOut>(string name, NetworkBuilder network, string weightsPath,
         Func<PredictorBuilder<float[], float[]>, PredictorBuilder<TIn, TOut>> configure)
     {

@@ -20,6 +20,7 @@ internal static partial class Tests
     [
         ("abstraction inventory: plans/10-abstraction-inventory.md matches the library (IDRAK_UPDATE_INVENTORY=1 rewrites it)", InventoryCurrent),
         ("abstraction inventory: every interface, abstract class and registry outside Idrak.Abstraction.* is on the allow list, and the list names nothing that moved or is gone", AbstractionNamespaces),
+        ("abstraction inventory: every internal of Idrak.Abstraction or Idrak another library assembly uses is justified in the list, and the list names nothing no longer used", InternalsJustified),
     ];
 
     // The library packages (the CLI is an application: its own helpers are outside the rule).
@@ -34,7 +35,8 @@ internal static partial class Tests
         ("Idrak", ["Idrak.Onnx", "Idrak.LanguageModels", "Idrak.Cli"]),
     ];
 
-    private const string InventoryPath = "plans/10-abstraction-inventory.md", AllowListPath = "tests/Idrak.Tests/data/abstraction-allow-list.txt";
+    private const string InventoryPath = "plans/10-abstraction-inventory.md", AllowListPath = "tests/Idrak.Tests/data/abstraction-allow-list.txt",
+        JustifiedPath = "tests/Idrak.Tests/data/internals-justified.txt";
 
     private const BindingFlags AllDeclared = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
 
@@ -111,6 +113,40 @@ internal static partial class Tests
 
         Check(added.Count == 0, $"declared outside Idrak.Abstraction.* (plan 10): {string.Join(", ", added)}");
         Check(gone.Count == 0, $"{AllowListPath} names abstractions that moved or are gone; remove them: {string.Join(", ", gone)}");
+    }
+
+    // Plan 10, phase 2's bar: every internal another library assembly uses is listed with why (Idrak's use of
+    // Idrak.Abstraction is phase 4's); the list only shrinks.
+    private static void InternalsJustified(Device device)
+    {
+        _ = device;
+        if (!FirstRun(nameof(InternalsJustified)))
+        {
+            return;
+        }
+
+        var used = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var (target, users) in FriendAssemblies)
+        {
+            foreach (string user in users.Where(u => !(target == "Idrak.Abstraction" && u == "Idrak")))
+            {
+                foreach (var (type, members) in InternalsUsed(Assembly.Load(user), Assembly.Load(target)))
+                {
+                    used.UnionWith(members.Select(m => $"{user} | {type} | {m}"));
+                }
+            }
+        }
+
+        var listed = File.ReadLines(Path.Combine(RepositoryRoot(), JustifiedPath))
+            .Where(l => l.Length > 0 && !l.StartsWith('#'))
+            .Select(l => l.Split(" | ", 4))
+            .ToList();
+        Check(listed.All(f => f.Length == 4 && f[3].Trim().Length > 0), $"{JustifiedPath}: every line is user | type | member | why");
+        var justified = listed.Select(f => string.Join(" | ", f.Take(3))).ToHashSet(StringComparer.Ordinal);
+        var missing = used.Except(justified).Order(StringComparer.Ordinal).ToList();
+        var stale = justified.Except(used).Order(StringComparer.Ordinal).ToList();
+        Check(missing.Count == 0, $"internals used without a reason in {JustifiedPath} (make them public contract, or add a line): {string.Join("; ", missing)}");
+        Check(stale.Count == 0, $"{JustifiedPath} lists internals no longer used; remove: {string.Join("; ", stale)}");
     }
 
     private static bool InAbstractionNamespace(Type type) =>

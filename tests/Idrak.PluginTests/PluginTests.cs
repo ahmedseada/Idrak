@@ -202,7 +202,7 @@ public static class PluginTests
     }
 
     // Full-batch training; the first and the last loss.
-    private static (float First, float Last) Train(Idrak.Layers.Module model, Idrak.Optimizers.Optimizer optimizer, Tensor x, Tensor y, int steps)
+    private static (float First, float Last) Train(Idrak.Abstraction.Module model, Idrak.Optimizers.Optimizer optimizer, Tensor x, Tensor y, int steps)
     {
         float first = 0f, last = 0f;
         for (int step = 0; step < steps; step++)

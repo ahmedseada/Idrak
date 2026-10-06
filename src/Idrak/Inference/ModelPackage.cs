@@ -15,7 +15,7 @@ namespace Idrak.Inference;
 
 /// <summary>
 /// One file holding everything a model needs: a standard .zip whose entries use the library's existing formats
-/// (weights as written by <see cref="Module.Save(Stream)"/>, scalers as written by <see cref="StandardScaler.Save(TextWriter)"/>,
+/// (weights as written by <see cref="Idrak.ModuleFiles.Save(Module, Stream)"/>, scalers as written by <see cref="StandardScaler.Save(TextWriter)"/>,
 /// tokenizers as JSON) plus a manifest. Only what you add goes in.
 /// </summary>
 /// <example>
@@ -49,7 +49,7 @@ public static class ModelPackage
 /// <summary>The kind of an entry in a model package.</summary>
 public enum PackageEntryKind
 {
-    /// <summary>All parameters and buffers of a module (<see cref="Module.Save(Stream)"/>).</summary>
+    /// <summary>All parameters and buffers of a module (<see cref="Idrak.ModuleFiles.Save(Module, Stream)"/>).</summary>
     Weights,
 
     /// <summary>Only trainable parameters (<see cref="ModuleExtensions.SaveTrainable(Module, Stream)"/>).</summary>
@@ -88,7 +88,7 @@ public sealed class ModelPackageWriter
     /// <summary>The entries added so far.</summary>
     public IReadOnlyList<PackageEntry> Entries => [.. _entries.Select(e => e.Entry)];
 
-    /// <summary>The model's weights under the name "model" (<see cref="Module.Save(Stream)"/>; written at <see cref="Save"/>).</summary>
+    /// <summary>The model's weights under the name "model" (<see cref="Idrak.ModuleFiles.Save(Module, Stream)"/>; written at <see cref="Save"/>).</summary>
     public ModelPackageWriter Weights(Module model) => Weights(ModelPackage.DefaultModelName, model);
 
     /// <summary>A module's weights under <paramref name="name"/>.</summary>
@@ -239,7 +239,7 @@ public sealed class ModelPackageReader : IDisposable
     /// <summary>Whether an entry of <paramref name="kind"/> named <paramref name="name"/> exists.</summary>
     public bool Contains(PackageEntryKind kind, string name) => Entries.Contains(new PackageEntry(kind, name));
 
-    /// <summary>Loads the weights named "model" into <paramref name="model"/> (<see cref="Module.Load(Stream)"/>; the architecture must match).</summary>
+    /// <summary>Loads the weights named "model" into <paramref name="model"/> (<see cref="Idrak.ModuleFiles.Load(Module, Stream)"/>; the architecture must match).</summary>
     public void LoadWeights(Module model) => LoadWeights(model, ModelPackage.DefaultModelName);
 
     /// <summary>Loads the weights named <paramref name="name"/> into <paramref name="model"/>.</summary>

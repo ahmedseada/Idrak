@@ -6,7 +6,7 @@ using Idrak.Backends;
 
 namespace Idrak.Layers;
 
-/// <summary>How <see cref="Module.Save(string, WeightFormat)"/> stores floating-point values in a weights file.</summary>
+/// <summary>How <see cref="Idrak.ModuleFiles.Save(Module, string, WeightFormat)"/> stores floating-point values in a weights file.</summary>
 public enum WeightFormat
 {
     /// <summary>32-bit floats: exact (4 bytes per value).</summary>
@@ -81,7 +81,7 @@ public abstract class PackedWeight : IDisposable
 
     /// <summary>
     /// The tensors holding the weights (packed words, scales): the layer lists them as its <see cref="Module.Buffers"/>, so
-    /// <see cref="Module.Save(string)"/> writes them exactly as they are (and <see cref="Module.Load(string)"/> reads them
+    /// <see cref="Idrak.ModuleFiles.Save(Module, string)"/> writes them exactly as they are (and <see cref="Idrak.ModuleFiles.Load(Module, string)"/> reads them
     /// back into a model holding the same format), and offloading treats them as frozen weights.
     /// </summary>
     public abstract IEnumerable<Tensor> Buffers();
@@ -312,7 +312,7 @@ public sealed class Int8Weight : PackedWeight
 
     /// <summary>
     /// Packed bytes and scales for [rows, columns] allocated on <paramref name="device"/> without computing anything, for
-    /// loading stored values into (<see cref="Module.Load(string)"/>).
+    /// loading stored values into (<see cref="Idrak.ModuleFiles.Load(Module, string)"/>).
     /// </summary>
     internal static Int8Weight Empty(int rows, int columns, Device device)
     {
@@ -485,7 +485,7 @@ public sealed class Int4Weight : PackedWeight
 
     /// <summary>
     /// Nibbles and scales for [rows, columns] allocated on <paramref name="device"/> without computing anything, for
-    /// loading stored values into (<see cref="Module.Load(string)"/>).
+    /// loading stored values into (<see cref="Idrak.ModuleFiles.Load(Module, string)"/>).
     /// </summary>
     internal static Int4Weight Empty(int rows, int columns, Device device)
     {
@@ -679,7 +679,7 @@ public sealed class BFloat16Weight : PackedWeight
 
     /// <summary>
     /// Room for bfloat16 values [rows, columns] on <paramref name="device"/>, allocated without computing anything, for
-    /// loading stored values into (<see cref="Module.Load(string)"/>).
+    /// loading stored values into (<see cref="Idrak.ModuleFiles.Load(Module, string)"/>).
     /// </summary>
     internal static BFloat16Weight Empty(int rows, int columns, Device device)
     {
