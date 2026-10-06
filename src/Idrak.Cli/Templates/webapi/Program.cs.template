@@ -6,6 +6,7 @@
 //   curl localhost:5090/status
 
 using Idrak;
+using Idrak.Abstraction;
 using Idrak.AspNetCore;
 using Idrak.Inference;
 using Idrak.Layers;

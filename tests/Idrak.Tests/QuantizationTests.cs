@@ -217,7 +217,7 @@ internal static partial class Tests
                     convert(down);
                     foreach (int activation in new[] { 0, 1 })
                     {
-                        var fused = Tensor.MatMulPackedGated(gate, up, activation, down);
+                        var fused = TensorLayerPaths.MatMulPackedGated(gate, up, activation, down);
                         Check(fused is not null || device.Type != DeviceType.Cuda || down.Int4 is null, "fused gated product on CUDA (int4)");
                         if (fused is not null)
                         {
@@ -281,10 +281,10 @@ internal static partial class Tests
 
         var q = Random(Rows * Steps * Dim);
         using var tq = Tensor.From(q, [Rows, Steps, Dim], device);
-        var scores = Tensor.AttentionScoresInt8(tq, cache).ToArray();
+        var scores = TensorLayerPaths.AttentionScoresInt8(tq, cache).ToArray();
         var weights = Random(Rows * Steps * Capacity);
         using var tw = Tensor.From(weights, [Rows, Steps, Capacity], device);
-        var context = Tensor.AttentionContextInt8(tw, cache).ToArray();
+        var context = TensorLayerPaths.AttentionContextInt8(tw, cache).ToArray();
         var wantScores = new float[Rows * Steps * Capacity];
         var wantContext = new float[Rows * Steps * Dim];
         for (int row = 0; row < Rows; row++)

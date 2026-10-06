@@ -133,7 +133,7 @@ internal sealed partial class NewCommand : Command
     /// <summary>The version the package references ask for: the tool's own, or every prerelease of it for a local build.</summary>
     internal static string PackageVersion()
     {
-        var assembly = typeof(Tensor).Assembly;
+        var assembly = typeof(Idrak.Layers.Sequential).Assembly;   // the Idrak package
         string version = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? assembly.GetName().Version?.ToString(3) ?? "0.1.0";
         version = version.Split('+')[0];
         int dash = version.IndexOf('-', StringComparison.Ordinal);

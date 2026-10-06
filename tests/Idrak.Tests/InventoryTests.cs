@@ -424,7 +424,7 @@ internal static partial class Tests
     private static void BackendOperations(Action<string> line)
     {
         var backend = typeof(Device).Assembly.GetType("Idrak.Abstraction.Devices.Backend", throwOnError: true)!;
-        var devices = new[] { typeof(Device).Assembly, typeof(Tensor).Assembly }.SelectMany(a => a.GetTypes()).Where(t => !t.IsAbstract && backend.IsAssignableFrom(t) && !Generated(t)).OrderBy(t => t.Name, StringComparer.Ordinal).ToList();
+        var devices = new[] { typeof(Device).Assembly, typeof(Idrak.Layers.Sequential).Assembly }.SelectMany(a => a.GetTypes()).Where(t => !t.IsAbstract && backend.IsAssignableFrom(t) && !Generated(t)).OrderBy(t => t.Name, StringComparer.Ordinal).ToList();
         var operations = backend.GetMethods(AllDeclared).Where(m => (m.IsAbstract || m.IsVirtual && !m.IsFinal) && m.GetBaseDefinition() == m && !m.IsSpecialName)
             .OrderBy(m => m.Name, StringComparer.Ordinal).ThenBy(m => m.GetParameters().Length).ToList();
         var properties = backend.GetProperties(AllDeclared).Where(p => p.GetMethod is { } g && (g.IsAbstract || g.IsVirtual)).OrderBy(p => p.Name, StringComparer.Ordinal).ToList();

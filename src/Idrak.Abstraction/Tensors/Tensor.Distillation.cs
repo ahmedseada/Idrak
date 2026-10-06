@@ -1,9 +1,9 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using Idrak.Diagnostics;
+using Idrak.Abstraction.Diagnostics;
 
-namespace Idrak;
+namespace Idrak.Abstraction;
 
 // Knowledge distillation over the trained rows of a language model: the student's softened distribution against a
 // teacher's, the output head run a chunk of rows at a time.
@@ -78,7 +78,7 @@ public sealed partial class Tensor
             }
         }
 
-        long start = Telemetry.Start(TelemetryLevel.Operations);
+        long start = OperationTelemetry.Start();
         var (device, backend) = (hidden.Device, hidden.Backend);
         bool record = weights is not null && WillRecord(hidden);
         var values = new float[count];

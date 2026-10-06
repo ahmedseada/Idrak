@@ -1,9 +1,9 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using Idrak.Backends;
+using Idrak.Abstraction.Devices;
 
-namespace Idrak;
+namespace Idrak.Abstraction;
 
 /// <summary>
 /// A recorded sequence of device work that can be replayed with a single launch. On CUDA this is a CUDA Graph:

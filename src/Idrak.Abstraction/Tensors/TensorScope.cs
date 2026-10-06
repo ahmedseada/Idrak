@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-namespace Idrak;
+namespace Idrak.Abstraction;
 
 /// <summary>
 /// Disposes every tensor created on the current thread while the scope is active, so a training

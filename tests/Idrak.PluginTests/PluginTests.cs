@@ -42,8 +42,8 @@ public static class PluginTests
     {
         // Idrak names its friends (the first-party packages and tests); this assembly is not one of them.
         string self = typeof(PluginTests).Assembly.GetName().Name!;
-        Check(typeof(Tensor).Assembly.GetCustomAttributes<InternalsVisibleToAttribute>().Any(), "Idrak lists its friend assemblies");
-        foreach (var assembly in new[] { typeof(Device).Assembly, typeof(Tensor).Assembly, typeof(OnnxImport).Assembly })
+        Check(typeof(Sequential).Assembly.GetCustomAttributes<InternalsVisibleToAttribute>().Any(), "Idrak lists its friend assemblies");
+        foreach (var assembly in new[] { typeof(Device).Assembly, typeof(Sequential).Assembly, typeof(OnnxImport).Assembly })
         {
             var friends = assembly.GetCustomAttributes<InternalsVisibleToAttribute>().Select(a => a.AssemblyName).ToArray();
             Check(!friends.Contains(self), $"{assembly.GetName().Name} friends: {string.Join(", ", friends)}");

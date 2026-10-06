@@ -18,6 +18,12 @@
   | `Idrak.ComputeResources`, `Idrak.MemoryUsage`, `Idrak.ResourceLimitExceededException` | the same names under `Idrak.Abstraction` |
   | `Idrak.Layers.PackedFormat` | `Idrak.Abstraction.PackedFormat` |
   | `Idrak.Backends.GemmEpilogue` | `Idrak.Abstraction.Devices.GemmEpilogue` |
+  | `Idrak.Tensor`, `Idrak.TensorScope`, `Idrak.Autograd`, `Idrak.DifferentiableFunction` | the same names under `Idrak.Abstraction` |
+  | `Idrak.ActivationMemory`, `Idrak.MixedPrecision`, `Idrak.MatMulPrecision`, `Idrak.ComputeGraph` | the same names under `Idrak.Abstraction` |
+
+  A file that also imports another `Tensor` (ONNX Runtime's `Microsoft.ML.OnnxRuntime.Tensors`, or
+  `System.Numerics.Tensors`) now sees two: `Idrak.Tensor` used to win as a member of an enclosing namespace. Add
+  `using Tensor = Idrak.Abstraction.Tensor;`.
 
 - Internal: every device operation goes through one dispatcher (plan 9, phase 1). A kernel registered for an
   operation on a kind of device runs instead of the device's own; a device with none registered reads one more field

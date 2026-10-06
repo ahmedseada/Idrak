@@ -11,7 +11,7 @@ scanned only as a user of `Idrak`'s internals.
 
 | Assembly | Interfaces | Abstract classes | Registries | Total | Outside `Idrak.Abstraction.*` |
 |---|---|---|---|---|---|
-| `Idrak.Abstraction` | 3 | 3 | 2 | 8 | 0 |
+| `Idrak.Abstraction` | 4 | 3 | 2 | 9 | 0 |
 | `Idrak` | 24 | 10 | 9 | 42 | 42 |
 | `Idrak.LanguageModels` | 6 | 2 | 7 | 15 | 15 |
 | `Idrak.Datasets` | 4 | 0 | 3 | 7 | 7 |
@@ -36,6 +36,7 @@ proposed namespace (phases 1 to 3 settle it).
 | `Idrak.Abstraction.Devices.Cpu.CpuBackend.IRangeKernel` | interface | internal | — | CpuBackend.AbsBackwardLoop, CpuBackend.AbsLoop, CpuBackend.AdamLoop, CpuBackend.AddLoop, CpuBackend.AffineLoop, CpuBackend.AxpyLoop, +29 |  | `Idrak.Abstraction.Operations` |
 | `Idrak.Abstraction.Devices.DeviceProvider` | abstract class | internal | Backend | HipProvider, LibraryDevices.CudaProvider, VulkanProvider |  | `Idrak.Abstraction.Devices` |
 | `Idrak.Abstraction.Devices.DeviceProviders` | registry | internal | — |  | — | `Idrak.Abstraction.Devices` |
+| `Idrak.Abstraction.Devices.IBackwardStaging` | interface | internal | — | Offloading.BackwardStaging |  | `Idrak.Abstraction.Devices` |
 | `Idrak.Abstraction.Devices.IHostStaging` | interface | internal | Storage | CudaBackend.HostStaging |  | `Idrak.Abstraction.Devices` |
 | `Idrak.Abstraction.Devices.IMemoryOffload` | interface | internal | Storage | CudaBackend |  | `Idrak.Abstraction.Devices` |
 | `Idrak.Abstraction.Devices.Storage` | abstract class | internal | Backend | CpuStorage, CudaStorage, HipStorage, VulkanBackend.VulkanStorage |  | `Idrak.Abstraction.Devices` |
@@ -286,10 +287,13 @@ and members, read from that assembly's metadata. Phases 2 and 4 make each one pu
 
 ### Idrak
 
-28 members on 22 types.
+89 members on 32 types.
 
 | Type | Internal members used |
 |---|---|
+| `Idrak.Abstraction.ActivationMemory` | Compress(), Release() |
+| `Idrak.Abstraction.CompressAfter` | (the type) |
+| `Idrak.Abstraction.ComputeGraph` | IsCapturing |
 | `Idrak.Abstraction.ComputeResources` | AllowParallel, ParallelOptions |
 | `Idrak.Abstraction.Device` | Backend |
 | `Idrak.Abstraction.Devices.AttentionVariant` | (the type) |
@@ -304,29 +308,43 @@ and members, read from that assembly's metadata. Phases 2 and 4 make each one pu
 | `Idrak.Abstraction.Devices.DeviceProviders` | (the type) |
 | `Idrak.Abstraction.Devices.EightBitMoments` | (the type) |
 | `Idrak.Abstraction.Devices.HostParallel` | (the type) |
+| `Idrak.Abstraction.Devices.IBackwardStaging` | (the type) |
 | `Idrak.Abstraction.Devices.IHostStaging` | (the type) |
 | `Idrak.Abstraction.Devices.IMemoryOffload` | (the type) |
 | `Idrak.Abstraction.Devices.MemoryAccountant` | (the type) |
 | `Idrak.Abstraction.Devices.OffloadPriority` | (the type) |
 | `Idrak.Abstraction.Devices.PackedFormats` | (the type) |
 | `Idrak.Abstraction.Devices.PowerSource` | (the type) |
-| `Idrak.Abstraction.Devices.Storage` | (the type), Packed, RecomputedFor, Released |
+| `Idrak.Abstraction.Devices.Storage` | (the type) |
+| `Idrak.Abstraction.Devices.TensorOffloading` | (the type) |
 | `Idrak.Abstraction.Devices.UnaryOp` | (the type) |
+| `Idrak.Abstraction.Diagnostics.OperationTelemetry` | (the type) |
+| `Idrak.Abstraction.MemoryMarshalHelpers` | (the type) |
+| `Idrak.Abstraction.MixedPrecision` | UsesTensorCores |
+| `Idrak.Abstraction.Tensor` | AddDropout(), AddGradient(), AddInPlace(), AddLowRank(), AddRmsNormAffine(), AttentionRows(), AttentionTiled(), Backend, BiasGelu(), CausalAttention(), CausalAttentionPacked(), DecoderMask(), EmbeddingLookup(), Empty(), Evict(), EvictToPacked(), FillInPlace(), FormatShape(), GatedActivation(), GatedActivationCompressed(), GradStorage(), GradientTarget(), GroupAffine(), Im2Col(), IsDisposed, LayerNormFused(), LayerNormTrain(), Load(), MatMulBias(), MatMulMany(), MatchRate(), MaxPool(), Normalize(), NormalizeWith(), RecomputeGatedActivation(), Record(), ReleaseGrad(), RmsNormAffine(), RmsNormRopePair(), RmsNormalize(), Rope(), ScaleMaskSoftmax(), StageGroup, Storage, ThrowIfDisposed(), TokenCrossEntropy(), TokenCrossEntropyRows(), TokenLogProbabilities(), Traced(), WillRecord(), WriteKeyValues(), WriteKeyValuesBFloat16(), WriteKeyValuesInt8(), _shape |
+| `Idrak.Abstraction.TensorScope` | Owns() |
 
 ### Idrak.LanguageModels
 
-4 members on 4 types.
+13 members on 7 types.
 
 | Type | Internal members used |
 |---|---|
+| `Idrak.Abstraction.ActivationMemory` | Release() |
 | `Idrak.Abstraction.Device` | Backend |
 | `Idrak.Abstraction.Devices.Backend` | (the type) |
 | `Idrak.Abstraction.Devices.HostParallel` | (the type) |
 | `Idrak.Abstraction.Devices.Storage` | (the type) |
+| `Idrak.Abstraction.Tensor` | FormatShape(), GatherRows(), Load(), Storage, TokenCrossEntropyRows(), TokenDivergenceRows(), TokenDivergences() |
+| `Idrak.Abstraction.TensorScope` | Untrack() |
 
 ### Idrak.Onnx
 
-None.
+1 members on 1 types.
+
+| Type | Internal members used |
+|---|---|
+| `Idrak.Abstraction.Tensor` | Load() |
 
 ### Idrak.Cli
 
@@ -339,7 +357,7 @@ and members, read from that assembly's metadata. Phases 2 and 4 make each one pu
 
 ### Idrak.Onnx
 
-11 members on 6 types.
+10 members on 5 types.
 
 | Type | Internal members used |
 |---|---|
@@ -348,19 +366,15 @@ and members, read from that assembly's metadata. Phases 2 and 4 make each one pu
 | `Idrak.Layers.GraphOps` | IsKnown() |
 | `Idrak.Layers.Linear` | WeightValues() |
 | `Idrak.Layers.Module` | WeightsDevice |
-| `Idrak.Tensor` | Load() |
 
 ### Idrak.LanguageModels
 
-13 members on 5 types.
+4 members on 2 types.
 
 | Type | Internal members used |
 |---|---|
-| `Idrak.ActivationMemory` | Release() |
 | `Idrak.Layers.Linear` | AttachFloat8(), DetachFloat8(), Packed |
 | `Idrak.Layers.PackedSequences` | Suspend() |
-| `Idrak.Tensor` | FormatShape(), GatherRows(), Load(), Storage, TokenCrossEntropyRows(), TokenDivergenceRows(), TokenDivergences() |
-| `Idrak.TensorScope` | Untrack() |
 
 ### Idrak.Cli
 

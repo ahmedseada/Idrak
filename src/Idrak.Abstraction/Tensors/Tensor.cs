@@ -4,10 +4,10 @@
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Text;
-using Idrak.Backends;
-using Idrak.Diagnostics;
+using Idrak.Abstraction.Devices;
+using Idrak.Abstraction.Diagnostics;
 
-namespace Idrak;
+namespace Idrak.Abstraction;
 
 /// <summary>
 /// An n-dimensional array of 32-bit floats stored on a <see cref="Idrak.Abstraction.Device"/>, with automatic
@@ -23,7 +23,7 @@ namespace Idrak;
 /// </example>
 public sealed partial class Tensor : IDisposable
 {
-    private readonly int[] _shape;
+    internal readonly int[] _shape;
     private Tensor[]? _parents;
     private Action<Tensor>? _backward;
     private string? _operation;
@@ -72,7 +72,7 @@ public sealed partial class Tensor : IDisposable
 
             if (field != value && Storage is { } storage && storage.Backend.Offload is not null)
             {
-                Offloading.TrainableChanged(this, value);                 // frozen weights move to system memory first
+                TensorOffloading.TrainableChanged?.Invoke(this, value);                 // frozen weights move to system memory first
             }
 
             field = value;
@@ -565,7 +565,7 @@ public sealed partial class Tensor : IDisposable
     private void BackwardNodes(List<Storage> reads, List<Storage> held)
     {
         var order = TopologicalOrder();
-        using var staging = Offloading.ForBackward(Device, order);     // null unless weights are offloaded
+        using var staging = TensorOffloading.ForBackward?.Invoke(Device, order);     // null unless weights are offloaded
         for (int index = 0; index < order.Count; index++)
         {
             var node = order[index];
@@ -576,7 +576,7 @@ public sealed partial class Tensor : IDisposable
 
             staging?.Before(index);
 
-            long start = Telemetry.Start(TelemetryLevel.Operations);
+            long start = OperationTelemetry.Start();
 
             // Recomputed (or unpacked) activations this step reads: given memory for it, and kept while the following steps
             // read them too (the projections of one input, one after another), then released again.
@@ -603,7 +603,7 @@ public sealed partial class Tensor : IDisposable
 
             if (start != 0)
             {
-                Telemetry.Operation(node._operation ?? "?", node, start, backward: true);
+                OperationTelemetry.Operation(node._operation ?? "?", node, start, backward: true);
             }
 
             // Intermediate results do not keep their gradient or graph (like PyTorch without retain_graph).
@@ -700,11 +700,11 @@ public sealed partial class Tensor : IDisposable
     }
 
     /// <summary>Records how to back-propagate into this freshly computed tensor. Callers check <see cref="WillRecord(Tensor)"/> first.</summary>
-    private void Record(string operation, Action<Tensor> backward, params Tensor[] inputs)
+    internal void Record(string operation, Action<Tensor> backward, params Tensor[] inputs)
     {
         RequiresGrad = true; // must precede _backward: the setter only accepts leaves
         _operation = operation;
-        _stage = Offloading.Current;
+        _stage = TensorOffloading.Current;
         _parents = inputs;
         _backward = backward;
         _versions = VersionSum(this, inputs);
@@ -739,20 +739,20 @@ public sealed partial class Tensor : IDisposable
 
     /// <summary>Publishes an operation event when <paramref name="start"/> is non-zero (operations telemetry on).</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static Tensor Traced(string operation, Tensor output, long start)
+    internal static Tensor Traced(string operation, Tensor output, long start)
     {
         if (start != 0)
         {
-            Telemetry.Operation(operation, output, start, backward: false);
+            OperationTelemetry.Operation(operation, output, start, backward: false);
         }
 
         return output;
     }
 
     /// <summary>True when an operation on these inputs will be recorded, so callers can skip building closures.</summary>
-    private static bool WillRecord(Tensor a) => a.RequiresGrad && Autograd.IsEnabled;
+    internal static bool WillRecord(Tensor a) => a.RequiresGrad && Autograd.IsEnabled;
 
-    private static bool WillRecord(Tensor a, Tensor b) => (a.RequiresGrad || b.RequiresGrad) && Autograd.IsEnabled;}
+    internal static bool WillRecord(Tensor a, Tensor b) => (a.RequiresGrad || b.RequiresGrad) && Autograd.IsEnabled;}
 
 internal static class MemoryMarshalHelpers
 {

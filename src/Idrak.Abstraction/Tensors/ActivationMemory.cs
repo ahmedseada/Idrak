@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-namespace Idrak;
+namespace Idrak.Abstraction;
 
 /// <summary>
 /// How training keeps activations in the decoder layers. Results that no backward step reads (projections before their

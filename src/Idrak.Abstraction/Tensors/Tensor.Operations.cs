@@ -1,10 +1,10 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using Idrak.Backends;
-using Idrak.Diagnostics;
+using Idrak.Abstraction.Devices;
+using Idrak.Abstraction.Diagnostics;
 
-namespace Idrak;
+namespace Idrak.Abstraction;
 
 public sealed partial class Tensor
 {
@@ -72,7 +72,7 @@ public sealed partial class Tensor
             throw new ArgumentOutOfRangeException(nameof(p), p, "Dropout probability must be in [0, 1).");
         }
 
-        long start = Telemetry.Start(TelemetryLevel.Operations);
+        long start = OperationTelemetry.Start();
         var y = Empty(_shape, Device);
         Backend.Dropout(Storage, y.Storage, Size, p, seed);
         if (WillRecord(this))
@@ -90,7 +90,7 @@ public sealed partial class Tensor
         residual.ThrowIfDisposed();
         x.ThrowIfDisposed();
         CheckSameShape(residual, x);
-        long start = Telemetry.Start(TelemetryLevel.Operations);
+        long start = OperationTelemetry.Start();
         var y = Empty(x._shape, x.Device);
         x.Backend.AddDropout(residual.Storage, x.Storage, y.Storage, x.Size, p, seed);
         if (WillRecord(residual, x))
@@ -159,7 +159,7 @@ public sealed partial class Tensor
     private Tensor Unary(UnaryOp op)
     {
         ThrowIfDisposed();
-        long start = Telemetry.Start(TelemetryLevel.Operations);
+        long start = OperationTelemetry.Start();
         var y = Empty(_shape, Device);
         Backend.Unary(op, Storage, y.Storage, Size);
         if (WillRecord(this))
@@ -175,7 +175,7 @@ public sealed partial class Tensor
     private Tensor Affine(float alpha, float beta)
     {
         ThrowIfDisposed();
-        long start = Telemetry.Start(TelemetryLevel.Operations);
+        long start = OperationTelemetry.Start();
         var y = Empty(_shape, Device);
         Backend.Affine(Storage, y.Storage, Size, alpha, beta);
         if (WillRecord(this))
@@ -190,7 +190,7 @@ public sealed partial class Tensor
     private Tensor Reduce(float scale)
     {
         ThrowIfDisposed();
-        long start = Telemetry.Start(TelemetryLevel.Operations);
+        long start = OperationTelemetry.Start();
         var y = Empty([], Device);
         Backend.Sum(Storage, y.Storage, Size, scale);
         if (WillRecord(this))
@@ -214,7 +214,7 @@ public sealed partial class Tensor
         }
 
         CheckSameDevice(a, b);
-        long start = Telemetry.Start(TelemetryLevel.Operations);
+        long start = OperationTelemetry.Start();
         int cols = b.Size;
         int rows = cols == 0 ? 0 : a.Size / cols;
         var c = Empty(a._shape, a.Device);
@@ -244,7 +244,7 @@ public sealed partial class Tensor
         b.ThrowIfDisposed();
         CheckSameDevice(a, b);
         CheckSameShape(a, b);
-        long start = Telemetry.Start(TelemetryLevel.Operations);
+        long start = OperationTelemetry.Start();
         var c = Empty(a._shape, a.Device);
         a.Backend.Binary(op, a.Storage, b.Storage, c.Storage, a.Size);
         if (WillRecord(a, b))

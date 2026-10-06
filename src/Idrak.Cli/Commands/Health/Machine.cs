@@ -27,7 +27,7 @@ internal static class Machine
     /// <summary>The Idrak libraries the tool runs with, by assembly name.</summary>
     public static IReadOnlyList<(string Name, string Version)> Libraries() =>
     [
-        .. new[] { typeof(Tensor).Assembly, typeof(LanguageModels.PretrainedModel).Assembly, typeof(Datasets.Downloader).Assembly }
+        .. new[] { typeof(Idrak.Layers.Sequential).Assembly, typeof(Tensor).Assembly, typeof(LanguageModels.PretrainedModel).Assembly, typeof(Datasets.Downloader).Assembly }
             .Concat(AppDomain.CurrentDomain.GetAssemblies().Where(a => a.GetName().Name?.StartsWith("Idrak.", StringComparison.Ordinal) == true
                 && a != typeof(Machine).Assembly && !a.IsDynamic))
             .DistinctBy(a => a.GetName().Name)
