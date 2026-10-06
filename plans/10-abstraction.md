@@ -15,6 +15,9 @@ each, so that:
   can be built that way, item 12c is done for real, not just declared;
 - **every abstraction has one address**: every interface, abstract base, plug-in point and registry, in every library
   package, is declared in the `Idrak.Abstraction` namespace (or one under it) and nowhere else;
+- **apps can fix the library without waiting for a release**: an app overrides any contract with its own
+  implementation, the library default stays as the fallback, and a proven app implementation moves into the library
+  (see "The override loop");
 - **users change little**: `dotnet add package Idrak` still brings everything; code that names a moved contract adds
   one `using Idrak.Abstraction...` line (see "Namespaces").
 
@@ -130,6 +133,104 @@ Heavy implementations (GGUF reading, Parquet, the GPU kernels) stay in their pac
    within 2%. `main` receives the work once, after phase 4, and ships it as 0.4.0; fixes to `main` in between are
    merged into `abstraction` so it never falls behind.
 
+## The override loop (apps fix the library without waiting for a release)
+
+**The problem.** When an app hits a weak spot in the library today, the fix goes: change Idrak, publish to NuGet,
+update the app, check. That is slow, and the app cannot ship until the release does. The goal is the opposite order:
+the app ships its own implementation of the contract now, the library keeps running its default everywhere else, and
+the app's version moves into the library only once it has proved itself.
+
+```
+ library default ──► app overrides one contract ──► guarded / shadow run in the app ──► conformance + stress kit green
+        ▲                                                                                        │
+        └──── app removes its override ◄── NuGet release (bumped) ◄── implementation moves into the library
+```
+
+### What exists already (measured on main, release 0.3.1)
+
+- Most registries already let an app replace a built-in: `RopeScalings.Register` says "registers (or replaces)", and
+  `PackedWeight.Register`, `NetworkOps.Register`, `ToolCallFormats.Register` work the same way.
+- Some plug points are delegates on the object instead: `TextGenerator.CreateSampler` (default `TokenSampler.Create`).
+- `tests/Idrak.PluginTests` proves an outside assembly can write an optimizer, an operation, a packed format and a KV
+  layout on the public API, and the runner in `tests/Idrak.Tests` runs them on every device.
+
+### What is missing
+
+| # | Gap | Today | After |
+|---|---|---|---|
+| 1 | **Replacing loses the default** | `Register` overwrites the built-in; `Unregister` of a built-in name leaves nothing | every slot keeps its library default; the app's registration *shadows* it; `Unregister` brings the default back |
+| 2 | **No single way to override** | registries by name, delegates on objects, internal virtual hooks, closed switches | one shape for every contract (the slot below); phase 3 moves each registry onto it |
+| 3 | **No fallback** | an app implementation that throws breaks the call | per slot, a failure policy: throw, or fall back to the default and report it |
+| 4 | **No side-by-side check** | the app cannot see whether its version agrees with the library's on real traffic | a shadow mode runs both on a sample of calls and records differences and timings |
+| 5 | **No stress kit for apps** | the contract tests live inside `tests/Idrak.Tests` | `Idrak.Abstraction.Testing` runs the contract tests and stress runs against *any* implementation, from the app's own test project |
+| 6 | **No way to know an override is obsolete** | after a NuGet update the app cannot tell the library now ships the same fix | each implementation carries an id and a version; a startup report lists overrides and newer library versions |
+
+### The slot: one shape for every contract
+
+Every contract gets a slot (a registry entry or a named property) holding three layers, resolved in this order:
+
+1. **Per call**: an implementation passed explicitly (an option, a constructor argument), as today.
+2. **App**: what the app registered (`Slots.Use<ITokenSampler>(...)`, or `RopeScalings.Register("yarn", ...)` for named
+   registries). Registered at startup, before the first use.
+3. **Library default**: the implementation the library ships. Never removed; always reachable by name
+   (`Defaults.Get<ITokenSampler>()`) so an app's implementation can *wrap* it (fix one case, delegate the rest).
+
+Each implementation declares `Id` (for example `idrak.sampler.top-p`), `Version` and `Origin` (library or app). The
+exact API is settled in phase 1 with the device providers; named registries keep their current methods and gain
+`Default(name)`, `Origin(name)` and an `Unregister` that restores the default.
+
+### Failure policy (per slot)
+
+| Policy | What happens when the app's implementation throws | When to use |
+|---|---|---|
+| `Throw` (default) | the error reaches the caller, as today | tests, development: failures must be loud |
+| `FallBack` | the call is retried on the library default; the failure goes to telemetry with the slot, id and exception | production, once the override is trusted enough to ship but not trusted alone |
+| `Shadow` | the library default answers; the app's version runs on a sample of calls (rate set per slot) and its output, time and memory are compared and recorded | before switching: real traffic as a stress test, with no risk to answers |
+
+⚠️ Limits, stated up front:
+
+- Fallback works at **call boundaries only**. A stateful implementation (a KV layout half-way through a sequence, a
+  sampler holding penalty history, a device kernel inside a captured CUDA graph) cannot switch mid-way; for those the
+  fallback happens when the object is **created** (creation fails → default object), and `Shadow` compares whole runs.
+- Shadow mode on device operations doubles the work on sampled calls; it is for staging and benchmarks, not for every
+  production request.
+- "Agrees with the default" needs a comparison per contract (exact for tokenizers and parsers, a tolerance for
+  floating-point outputs, the same top-1 text for samplers). The testing kit owns these comparisons, so shadow mode
+  and the conformance tests use the same ones.
+
+### The testing kit as the app's stress harness
+
+`Idrak.Abstraction.Testing` (phase 5) is what the app references in its own test project:
+
+- **Conformance**: `Conformance.Check<ITokenizer>(myTokenizer)` runs every contract test the library runs on its own
+  default (round trips, shapes, gradients against finite differences, thread safety where the contract promises it).
+- **Stress**: `Stress.Run(slot, budget)` drives the implementation with generated inputs (sizes, empty and huge inputs,
+  odd Unicode, many threads, long sessions) on every device present, comparing against the library default with the
+  kit's comparison, and writes a report (failures, slowest cases, memory).
+- **Regression capture**: a failing shadow sample or stress case is saved as a small reproducible case file; the kit
+  replays saved cases, so the case that made the app write its override becomes a test the library inherits.
+
+### Promotion: from the app into the library
+
+An app implementation moves into the library when all of these hold:
+
+1. it passes the conformance kit and the stress run on CPU, CUDA and Vulkan (lavapipe at least);
+2. it ran in `Shadow` or `FallBack` in at least one app with no unexplained differences (the telemetry shows it);
+3. the decoding and training benchmarks stay within 2% where it is on a hot path;
+4. its saved regression cases come with it into `tests/`.
+
+Then: the library adds it as a **named alternative** with a new `Version` (patch or minor release); it becomes the
+**default** only in a later minor release, with a changelog line. The app updates the package, the startup report says
+"your override `idrak.sampler.top-p` v1 is older than the library's v2", the app deletes its override, and its tests
+keep passing on the library's version. A new app starts from the defaults and gets every promoted fix for free.
+
+### Faster than NuGet while working on the library itself
+
+For fixes that belong in the library from the start: a `IdrakFromSource` property in the app's
+`Directory.Build.props` switches the `PackageReference` to `ProjectReference`s on a local clone, so a library change
+is tested in the app on the next build, with no publish. A local NuGet feed (`dotnet pack` into a folder) checks the
+packaged form before the real release.
+
 ## Phases
 
 | # | Phase | Done when |
@@ -141,6 +242,8 @@ Heavy implementations (GGUF reading, Parquet, the GPU kernels) stay in their pac
 | 4 | **Devices on the public API (item 12c).** Remove the last `InternalsVisibleTo` from `Idrak.Abstraction` to `Idrak`; the CUDA, Vulkan and HIP code in `Idrak` builds against the public surface alone | `Idrak.Abstraction` grants no internals; every device passes; `dotnet add package Idrak` behaves as before |
 | 5 | **A device from outside.** A plain-loop reference device in `tests/Idrak.PluginTests`, written against the public API only, passes the conformance kit | the kit (`Idrak.Abstraction.Testing`) runs it green |
 | 6 | **Kernels for plug-ins.** `Autograd.Function`, `GraphOps`, `PackedWeight` and `KeyValueLayout` implementations register device kernels | a plug-in packed format and KV layout run their own device kernel |
+| 6b | **Slots and failure policies.** Every slot keeps its default under an app's registration; `Unregister` restores it; `Throw`, `FallBack` and `Shadow` per slot, with fallback at creation for stateful contracts; the startup report of overrides | a test app overrides a sampler, a tokenizer part and a RoPE scaling: each one throws once and falls back under `FallBack`, and is compared on sampled calls under `Shadow` |
+| 6c | **The kit as the app's stress harness.** `Conformance.Check`, `Stress.Run` and saved regression cases, usable from an app's test project on the NuGet package alone | a sample app (in `samples/`) overrides one contract and runs the kit green from its own tests |
 | 7 | **The surface is guarded.** A checked-in dump of the public API of Abstraction, compared by a test on every build; a changelog section per change; versioned separately from the rest if needed | an accidental public change fails the build; the namespace test's allow list is empty |
 
 ## What changes for whom
@@ -177,3 +280,10 @@ Heavy implementations (GGUF reading, Parquet, the GPU kernels) stay in their pac
 6. **A separate package from the start**, not a namespace inside `Idrak` first: the contracts move into the
    `Idrak.Abstraction` assembly and namespace together, so the compiler (not only a test) keeps the GPU devices on the
    public API. The cost is the up-front work on `Tensor`'s internals (phase 2).
+
+## Open (the override loop)
+
+1. Default failure policy in production: `Throw` everywhere (proposed: loud by default, `FallBack` opted into per
+   slot) or `FallBack` everywhere.
+2. Shadow sampling: a rate per slot (proposed, default 1%) or a global rate.
+3. Where shadow and fallback reports go: the existing telemetry only (proposed), or also a file the kit can replay.

@@ -68,7 +68,7 @@ What the `architecture` branch cannot do today, with an example of each. "High" 
 
 [10-abstraction.md](10-abstraction.md): `Idrak.Abstraction`, one package with every contract and its default
 implementation (the CPU device included), the public device API (item 12c) and plan 9's dispatcher; the CUDA, Vulkan
-and HIP devices stay in `Idrak` but are built only on that public API. [9-operations.md](9-operations.md) (operations as data) is part of it. Planned, not started.
+and HIP devices stay in `Idrak` but are built only on that public API. [9-operations.md](9-operations.md) (operations as data) is part of it. It also plans the override loop: an app overrides any contract while the library default stays as its fallback, checks its version with a shadow mode and the conformance and stress kit, and a proven implementation moves into the library. Planned, not started.
 
 ## Future improvements (measured)
 
