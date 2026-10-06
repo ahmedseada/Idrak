@@ -210,19 +210,42 @@ exact API is settled in phase 1 with the device providers; named registries keep
 - **Regression capture**: a failing shadow sample or stress case is saved as a small reproducible case file; the kit
   replays saved cases, so the case that made the app write its override becomes a test the library inherits.
 
-### Promotion: from the app into the library
+### Promotion: the app's solution, generalized, becomes the library default
 
-An app implementation moves into the library when all of these hold:
+The app's implementation is **not** copied into the library. It is the proof that a better solution exists; what moves
+is that solution made general. An app's override usually leans on things only that app knows (its vocabulary, its one
+model family, its device, its input sizes, its constants); the library default cannot.
 
-1. it passes the conformance kit and the stress run on CPU, CUDA and Vulkan (lavapipe at least);
-2. it ran in `Shadow` or `FallBack` in at least one app with no unexplained differences (the telemetry shows it);
-3. the decoding and training benchmarks stay within 2% where it is on a hot path;
-4. its saved regression cases come with it into `tests/`.
+**1. The app proves the idea.** Its override passes the conformance kit and runs in `Shadow` or `FallBack` on real
+traffic with no unexplained differences (the telemetry shows it). Its failing cases are saved by the kit.
 
-Then: the library adds it as a **named alternative** with a new `Version` (patch or minor release); it becomes the
-**default** only in a later minor release, with a changelog line. The app updates the package, the startup report says
-"your override `idrak.sampler.top-p` v1 is older than the library's v2", the app deletes its override, and its tests
-keep passing on the library's version. A new app starts from the defaults and gets every promoted fix for free.
+**2. The idea is generalized in the library.** A new implementation is written in the library from the app's one:
+
+- every app-specific constant becomes a parameter, a measurement or a capability read from the device (rule 4: no
+  card, model or app is named);
+- it runs on every device (CPU reference first, then the device kernels, or the host fallback where none exists yet);
+- it handles every input the contract allows, not only the inputs the app sends;
+- when the better solution needs something the contract does not give (more context, another hook, a different
+  shape), **the contract changes**: a new member with a default body when possible, otherwise a deliberate public API
+  change under phase 7's rules, in the same release.
+
+**3. The general version is checked against the app's.** Before any release, on the library's source
+(`IdrakFromSource`, below):
+
+- the kit's conformance and stress runs pass on CPU, CUDA and Vulkan (lavapipe at least);
+- the app's saved cases pass, and they move into `tests/` with it;
+- the app itself drops its override, runs on the general version and stays as good: the same comparisons in `Shadow`,
+  against its own old override this time;
+- the decoding and training benchmarks stay within 2% where it is on a hot path.
+
+**4. It replaces the default.** A minor release ships it as the slot's default with a new `Version` and a changelog
+line saying what changed and which app case motivated it. The previous default stays selectable by name for one more
+minor release (`Defaults.Get<ITokenSampler>("idrak.sampler.top-p", version: 1)`), so an app that sees a regression
+after updating has a one-line way back while it reports it.
+
+**5. The app updates and deletes its override.** The startup report says "your override of `idrak.sampler.top-p` is
+older than the library default v2". Every other app gets the better default on its next update; a new app starts from
+it.
 
 ### Faster than NuGet while working on the library itself
 
@@ -244,6 +267,7 @@ packaged form before the real release.
 | 6 | **Kernels for plug-ins.** `Autograd.Function`, `GraphOps`, `PackedWeight` and `KeyValueLayout` implementations register device kernels | a plug-in packed format and KV layout run their own device kernel |
 | 6b | **Slots and failure policies.** Every slot keeps its default under an app's registration; `Unregister` restores it; `Throw`, `FallBack` and `Shadow` per slot, with fallback at creation for stateful contracts; the startup report of overrides | a test app overrides a sampler, a tokenizer part and a RoPE scaling: each one throws once and falls back under `FallBack`, and is compared on sampled calls under `Shadow` |
 | 6c | **The kit as the app's stress harness.** `Conformance.Check`, `Stress.Run` and saved regression cases, usable from an app's test project on the NuGet package alone | a sample app (in `samples/`) overrides one contract and runs the kit green from its own tests |
+| 6d | **One promotion end to end.** A sample app's override is generalized in the library (steps 2 to 5 of "Promotion"), becomes the default, the old default stays selectable by version, and the app deletes its override | the sample app passes on the new default with no override; the previous default is still reachable by version |
 | 7 | **The surface is guarded.** A checked-in dump of the public API of Abstraction, compared by a test on every build; a changelog section per change; versioned separately from the rest if needed | an accidental public change fails the build; the namespace test's allow list is empty |
 
 ## What changes for whom
