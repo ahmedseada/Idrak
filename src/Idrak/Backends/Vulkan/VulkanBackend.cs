@@ -3,7 +3,7 @@
 
 using System.Runtime.InteropServices;
 using System.Text;
-using Idrak.Backends.Cpu;
+using Idrak.Abstraction.Devices.Cpu;
 using static Idrak.Backends.Vulkan.VulkanDriver;
 
 namespace Idrak.Backends.Vulkan;

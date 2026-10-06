@@ -3,7 +3,7 @@
 
 using Idrak;
 using Idrak.Backends;
-using Idrak.Backends.Cpu;
+using Idrak.Abstraction.Devices.Cpu;
 using Idrak.Backends.Vulkan;
 
 // The Vulkan kernels shaped by the device: every workgroup width a device may be given, the products split over k, the

@@ -119,7 +119,7 @@ public sealed partial class Tensor
         var pre = record ? Empty([m, f], x.Device, track: false) : null;
         var y = Empty(x._shape, x.Device);
         if (!backend.GemmStrided(x.Storage, 0, d, false, wu.Storage, 0, f, false, act.Storage, 0, f, m, f, d, 0f, bu?.Storage,
-                Backends.GemmEpilogue.Gelu, pre?.Storage)
+                Abstraction.Devices.GemmEpilogue.Gelu, pre?.Storage)
             || !backend.GemmStrided(act.Storage, 0, f, false, wd.Storage, 0, d, false, y.Storage, 0, d, m, d, f, 0f, bd?.Storage))
         {
             act.Dispose();
@@ -149,7 +149,7 @@ public sealed partial class Tensor
             // dPre = (g · Wdᵀ) ∘ gelu'(pre), in the product's epilogue.
             using var dPre = Empty([m, f], x.Device, track: false);
             backend.GemmStrided(g.Storage, 0, d, false, wd.Storage, 0, d, true, dPre.Storage, 0, f, m, f, d, 0f, null,
-                Backends.GemmEpilogue.GeluGradient, pre!.Storage);
+                Abstraction.Devices.GemmEpilogue.GeluGradient, pre!.Storage);
             if (bu is { RequiresGrad: true })
             {
                 backend.SumRows(dPre.Storage, bu.GradStorage(), m, f);

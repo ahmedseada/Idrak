@@ -10,7 +10,7 @@ using Idrak.Diagnostics;
 namespace Idrak;
 
 /// <summary>
-/// An n-dimensional array of 32-bit floats stored on a <see cref="Idrak.Device"/>, with automatic
+/// An n-dimensional array of 32-bit floats stored on a <see cref="Idrak.Abstraction.Device"/>, with automatic
 /// differentiation. Tensors own device memory: dispose them (or create them inside a
 /// <see cref="TensorScope"/>) to recycle it promptly, especially on the GPU.
 /// </summary>

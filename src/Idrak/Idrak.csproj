@@ -12,6 +12,15 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Idrak.Abstraction\Idrak.Abstraction.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Idrak.Abstraction.Devices" />
+    <Using Include="Idrak.Abstraction.Devices.Cpu" />
+  </ItemGroup>
+
+  <ItemGroup>
     <InternalsVisibleTo Include="Idrak.Tests" />
     <InternalsVisibleTo Include="Idrak.Onnx" />
     <InternalsVisibleTo Include="Idrak.LanguageModels" />

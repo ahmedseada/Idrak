@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Idrak.Abstraction</RootNamespace>
+    <AssemblyName>Idrak.Abstraction</AssemblyName>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <IsAotCompatible>true</IsAotCompatible>
+    <Optimize>true</Optimize>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <PackageId>Idrak.Abstraction</PackageId>
+    <Description>The contracts Idrak is built on, each with its default implementation: devices and the CPU device (the host fallback of every other device). Reference it to write a plug-in without the GPU code; the Idrak package brings it along.</Description>
+  </PropertyGroup>
+
+  <!-- Plan 10: the library's own assemblies see these internals while the contracts move (phases 1 to 3); phase 4
+       removes every one, so the GPU devices in Idrak are built on the public surface alone. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Idrak" />
+    <InternalsVisibleTo Include="Idrak.LanguageModels" />
+    <InternalsVisibleTo Include="Idrak.Onnx" />
+    <InternalsVisibleTo Include="Idrak.Cli" />
+    <InternalsVisibleTo Include="Idrak.Tests" />
+  </ItemGroup>
+
+  <!-- Projects with implicit usings get `using Idrak.Abstraction;`, so code naming Device or Tensor compiles unchanged. -->
+  <ItemGroup>
+    <None Include="buildTransitive/Idrak.Abstraction.props" Pack="true" PackagePath="buildTransitive/" />
+  </ItemGroup>
+
+</Project>

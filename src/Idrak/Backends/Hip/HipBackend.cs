@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using Idrak.Backends.Cpu;
+using Idrak.Abstraction.Devices.Cpu;
 using static Idrak.Backends.Hip.HipRuntime;
 
 namespace Idrak.Backends.Hip;

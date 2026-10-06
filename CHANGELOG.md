@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased (0.4.0, branch `abstraction`)
+
+`Idrak.Abstraction`, the package that will hold every contract of the library with its default implementation
+(plan 10). This first step moves the device layer into it; nothing behaves differently.
+
+- New package `Idrak.Abstraction`: `Device`, `DeviceType`, `ComputeResources` and the CPU device (also every other
+  device's host fallback). `dotnet add package Idrak` brings it along. The GPU devices (CUDA, Vulkan, HIP) stay in
+  `Idrak`; `Device.Available` lists them as before, even when no other type of Idrak has been used yet.
+- Projects with implicit usings (the default for new projects) get `global using Idrak.Abstraction;` from the package,
+  so they compile unchanged. Projects without implicit usings add `using Idrak.Abstraction;`.
+- Moved types (source and binary change: rebuild plug-ins compiled against 0.3.x):
+
+  | Was | Now |
+  |---|---|
+  | `Idrak.Device`, `Idrak.DeviceType` | `Idrak.Abstraction.Device`, `Idrak.Abstraction.DeviceType` |
+  | `Idrak.ComputeResources`, `Idrak.MemoryUsage`, `Idrak.ResourceLimitExceededException` | the same names under `Idrak.Abstraction` |
+  | `Idrak.Layers.PackedFormat` | `Idrak.Abstraction.PackedFormat` |
+  | `Idrak.Backends.GemmEpilogue` | `Idrak.Abstraction.Devices.GemmEpilogue` |
+
 ## 0.3.1 (2026-10-05)
 
 Fixes found by moving the MultiLanguageOcr sample onto `Idrak.Vision` and by running the tests on a laptop with an

@@ -1821,7 +1821,7 @@ public static class FineTuner
         private readonly Tensor _tokens, _rows, _targets, _weights, _loss;
         private readonly PackedSequences _packing;
         private IntPtr _executable, _graph;
-        private List<Idrak.Backends.Storage> _owned = [];
+        private List<Idrak.Abstraction.Devices.Storage> _owned = [];
 
         private TrainingGraph(PretrainedModel model, Batch batch, IReadOnlyList<TrainingSequence> train, int lossRows)
         {

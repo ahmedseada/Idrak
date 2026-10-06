@@ -4,7 +4,7 @@
 using System.Collections.Concurrent;
 using Idrak;
 using Idrak.Backends;
-using Idrak.Backends.Cpu;
+using Idrak.Abstraction.Devices.Cpu;
 using Idrak.Backends.Vulkan;
 using Idrak.Layers;
 

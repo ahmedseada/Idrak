@@ -4,6 +4,7 @@
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using Idrak;
+using Idrak.Abstraction;
 using Idrak.Layers;
 using Idrak.Optimizers;
 using __NAMESPACE__;

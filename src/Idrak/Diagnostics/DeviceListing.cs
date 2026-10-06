@@ -3,7 +3,7 @@
 
 using System.Numerics;
 using Idrak.Backends;
-using Idrak.Backends.Cpu;
+using Idrak.Abstraction.Devices.Cpu;
 using Idrak.Backends.Cuda;
 using Idrak.Backends.Hip;
 using Idrak.Backends.Vulkan;
@@ -35,10 +35,10 @@ public sealed record DeviceInfo
     /// <summary>The device's own name, with its driver where the backend adds it; "" when it could not start.</summary>
     public required string Name { get; init; }
 
-    /// <summary>Whether <see cref="Idrak.Device.Available"/> (and so a plain test run) lists it; false: reached by name only.</summary>
+    /// <summary>Whether <see cref="Idrak.Abstraction.Device.Available"/> (and so a plain test run) lists it; false: reached by name only.</summary>
     public bool Listed { get; init; }
 
-    /// <summary>Whether it is <see cref="Idrak.Device.Default"/>.</summary>
+    /// <summary>Whether it is <see cref="Idrak.Abstraction.Device.Default"/>.</summary>
     public bool IsDefault { get; init; }
 
     /// <summary>Why it is not listed or not chosen by default, when the backend says.</summary>

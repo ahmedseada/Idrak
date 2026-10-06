@@ -5,7 +5,7 @@ using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
-namespace Idrak.Backends.Cpu;
+namespace Idrak.Abstraction.Devices.Cpu;
 
 // Kernels for classification, normalization, embeddings, convolution, pooling and N-D shape operations.
 internal sealed partial class CpuBackend

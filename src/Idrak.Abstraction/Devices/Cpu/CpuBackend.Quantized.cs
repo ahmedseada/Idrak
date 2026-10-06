@@ -5,7 +5,7 @@ using System.Buffers;
 using System.Numerics;
 using System.Runtime.InteropServices;
 
-namespace Idrak.Backends.Cpu;
+namespace Idrak.Abstraction.Devices.Cpu;
 
 // Int8 weight-only quantization: signed bytes packed four per float element along each weight row.
 internal sealed partial class CpuBackend

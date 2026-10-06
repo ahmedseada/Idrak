@@ -3,6 +3,7 @@
 //   dotnet run -- vulkan:0     on another device (cpu, cuda:0, vulkan:0, hip:0; `idrak devices` lists them)
 
 using Idrak;
+using Idrak.Abstraction;
 using Idrak.Inference;
 using Idrak.Layers;
 using Idrak.Optimizers;

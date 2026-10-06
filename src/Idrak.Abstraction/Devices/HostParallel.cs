@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-namespace Idrak;
+namespace Idrak.Abstraction.Devices;
 
 /// <summary>Parallel loops over host arrays for model loading and weight conversion (large arrays, on all cores).</summary>
 internal static class HostParallel
@@ -19,10 +19,10 @@ internal static class HostParallel
         Parallel.For(0, chunks, ComputeResources.ParallelOptions, c => body((int)((long)count * c / chunks), (int)((long)count * (c + 1) / chunks)));
     }
 
-    /// <summary>The transpose of a row-major [rows, columns] matrix, in L1-sized tiles (Backends.Cpu.CpuTuning.TransposeTile) on all cores.</summary>
+    /// <summary>The transpose of a row-major [rows, columns] matrix, in L1-sized tiles (Cpu.CpuTuning.TransposeTile) on all cores.</summary>
     public static float[] Transpose(float[] values, int rows, int columns)
     {
-        int Tile = Backends.Cpu.CpuTuning.TransposeSide;
+        int Tile = Cpu.CpuTuning.TransposeSide;
         var result = new float[values.Length];
         int tileRows = (rows + Tile - 1) / Tile;
         For(tileRows, 1, (first, last) =>

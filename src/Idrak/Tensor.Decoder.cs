@@ -45,7 +45,7 @@ public sealed partial class Tensor
         long start = Telemetry.Start(TelemetryLevel.Operations);
         int k = input._shape[^1], m = input.Size / k;
         var outputs = new Tensor[weights.Count];
-        var products = new (Backends.Storage, Backends.Storage?, Backends.Storage, int)[weights.Count];
+        var products = new (Abstraction.Devices.Storage, Abstraction.Devices.Storage?, Abstraction.Devices.Storage, int)[weights.Count];
         for (int j = 0; j < weights.Count; j++)
         {
             int n = weights[j]._shape[1];
@@ -404,7 +404,7 @@ public sealed partial class Tensor
     /// training: each output's gradient flows to the input (dx += g · Wᵀ with the weight expanded to float32). Null when
     /// the device has no such pass.
     /// </summary>
-    internal static Tensor[]? MatMulPackedManyRecorded(Tensor input, Layers.PackedFormat format, IReadOnlyList<Layers.Linear> layers)
+    internal static Tensor[]? MatMulPackedManyRecorded(Tensor input, PackedFormat format, IReadOnlyList<Layers.Linear> layers)
     {
         Tensor[]? outputs;
         using (Autograd.NoGrad())
@@ -762,13 +762,13 @@ public sealed partial class Tensor
     /// The layers' packed products of one input in one device pass (few rows, not recorded), or null when the device has
     /// no single-pass version.
     /// </summary>
-    internal static Tensor[]? MatMulPackedMany(Tensor input, Layers.PackedFormat format, IReadOnlyList<Layers.Linear> layers)
+    internal static Tensor[]? MatMulPackedMany(Tensor input, PackedFormat format, IReadOnlyList<Layers.Linear> layers)
     {
         input.ThrowIfDisposed();
         long start = Telemetry.Start(TelemetryLevel.Operations);
         int k = input._shape[^1], m = input.Size / k;
         var outputs = new Tensor[layers.Count];
-        var products = new (Backends.Storage, Backends.Storage?, Backends.Storage?, Backends.Storage, int)[layers.Count];
+        var products = new (Abstraction.Devices.Storage, Abstraction.Devices.Storage?, Abstraction.Devices.Storage?, Abstraction.Devices.Storage, int)[layers.Count];
         for (int j = 0; j < layers.Count; j++)
         {
             var layer = layers[j];

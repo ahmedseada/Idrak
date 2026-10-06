@@ -3,9 +3,9 @@
 
 using System.Buffers;
 using System.Runtime.CompilerServices;
-using Idrak.Backends.Cpu;
+using Idrak.Abstraction.Devices.Cpu;
 
-namespace Idrak.Backends;
+namespace Idrak.Abstraction.Devices;
 
 /// <summary>
 /// Runs one operation of a device that has no kernel of its own for it on the CPU (the default of every

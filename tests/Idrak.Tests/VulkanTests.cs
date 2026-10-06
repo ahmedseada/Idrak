@@ -431,7 +431,7 @@ internal static partial class Tests
         }
     });
 
-    private static Storage CpuStorage(int n) => Idrak.Backends.Cpu.CpuBackend.Instance.Allocate(n, zeroed: true);
+    private static Storage CpuStorage(int n) => Idrak.Abstraction.Devices.Cpu.CpuBackend.Instance.Allocate(n, zeroed: true);
 
     private static bool Throws<T>(Action action) where T : Exception
     {
@@ -471,7 +471,7 @@ internal static partial class Tests
             QueueAxpb(backend, b, b, y, N, 1f);                            // y = 2b
             using (var host = new HostCall(backend))
             {
-                Idrak.Backends.Cpu.CpuBackend.Instance.Copy(host[y], host[a], N);  // a = y, through the host
+                Idrak.Abstraction.Devices.Cpu.CpuBackend.Instance.Copy(host[y], host[a], N);  // a = y, through the host
             }
 
             QueueAxpb(backend, a, b, y, N, 1f);                            // y = 3b
@@ -509,7 +509,7 @@ internal static partial class Tests
             return;
         }
 
-        var cpu = Idrak.Backends.Cpu.CpuBackend.Instance;
+        var cpu = Idrak.Abstraction.Devices.Cpu.CpuBackend.Instance;
         var random = new Random(9);
         float[] R(int n, float lo = -2f, float hi = 2f) => [.. Enumerable.Range(0, n).Select(_ => lo + (hi - lo) * random.NextSingle())];
         float[] Bits(int n) => [.. Enumerable.Range(0, n).Select(_ => BitConverter.Int32BitsToSingle((random.Next() ^ (random.Next() << 16)) & ~(1 << 30)))];   // random bytes, never NaN

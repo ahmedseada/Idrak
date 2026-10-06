@@ -3,7 +3,7 @@
 
 using System.Runtime.InteropServices;
 
-namespace Idrak.Backends;
+namespace Idrak.Abstraction.Devices;
 
 /// <summary>
 /// Whether the machine runs on mains power or on its battery, as the operating system reports it. Laptops clock their

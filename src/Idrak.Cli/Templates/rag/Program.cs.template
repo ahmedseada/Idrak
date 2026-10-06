@@ -7,6 +7,7 @@
 // Put your own .txt and .md files in docs/.
 
 using Idrak;
+using Idrak.Abstraction;
 using Idrak.LanguageModels;
 using Idrak.Retrieval;
 

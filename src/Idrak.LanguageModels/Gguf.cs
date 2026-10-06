@@ -329,7 +329,7 @@ public sealed class GgufFile : IDisposable
             switch (type)
             {
                 case 1:
-                    Idrak.HostParallel.For(values.Length, 1 << 16, (first, last) =>
+                    Idrak.Abstraction.Devices.HostParallel.For(values.Length, 1 << 16, (first, last) =>
                     {
                         var from = new ReadOnlySpan<byte>((byte*)source + 2L * first, 2 * (last - first));
                         var to = new Span<float>((float*)target + first, last - first);
@@ -340,7 +340,7 @@ public sealed class GgufFile : IDisposable
                     });
                     return;
                 case 30:
-                    Idrak.HostParallel.For(values.Length, 1 << 16, (first, last) =>
+                    Idrak.Abstraction.Devices.HostParallel.For(values.Length, 1 << 16, (first, last) =>
                     {
                         var from = new ReadOnlySpan<byte>((byte*)source + 2L * first, 2 * (last - first));
                         var to = new Span<float>((float*)target + first, last - first);

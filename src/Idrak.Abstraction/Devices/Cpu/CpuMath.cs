@@ -6,7 +6,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 
-namespace Idrak.Backends.Cpu;
+namespace Idrak.Abstraction.Devices.Cpu;
 
 // Vectorized row operations shared by the CPU kernels: the widest vectors the machine runs well (512-bit where
 // accelerated, else Vector<float>), with scalar tails.

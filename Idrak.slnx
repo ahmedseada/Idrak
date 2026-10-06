@@ -19,6 +19,7 @@
     <Project Path="samples/Idrak.Samples.Xor/Idrak.Samples.Xor.csproj" />
   </Folder>
   <Folder Name="/src/">
+    <Project Path="src/Idrak.Abstraction/Idrak.Abstraction.csproj" />
     <Project Path="src/Idrak.AspNetCore/Idrak.AspNetCore.csproj" />
     <Project Path="src/Idrak.Mcp/Idrak.Mcp.csproj" />
     <Project Path="src/Idrak.Onnx.Runtime/Idrak.Onnx.Runtime.csproj" />

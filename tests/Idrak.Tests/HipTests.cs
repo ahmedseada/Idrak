@@ -4,7 +4,7 @@
 using System.Text.RegularExpressions;
 using Idrak;
 using Idrak.Backends;
-using Idrak.Backends.Cpu;
+using Idrak.Abstraction.Devices.Cpu;
 using Idrak.Backends.Hip;
 
 // The HIP backend (ROCm on Linux, the HIP SDK on Windows): found at run time or absent without harm, its devices named
