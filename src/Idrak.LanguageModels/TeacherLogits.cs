@@ -8,7 +8,7 @@ namespace Idrak.LanguageModels;
 /// <summary>
 /// Writes a teacher logits file: for each training sequence, the teacher's k largest logits (and their token ids) at
 /// each trained position, read back by <see cref="TeacherLogitsFile"/> and trained on with
-/// <see cref="DistillationTeacher.FromFile"/>. Six bytes per kept token (a 32-bit id and the logit as a 16-bit float,
+/// <see cref="DistillationTeachers.FromFile"/>. Six bytes per kept token (a 32-bit id and the logit as a 16-bit float,
 /// relative to the position's largest), so k = 16 costs about 100 bytes per trained token. Sequences are found again by
 /// their content (tokens and trained positions), so the student must encode the data exactly as when the file was written
 /// (same data, chat template, maximum length and system prompt).

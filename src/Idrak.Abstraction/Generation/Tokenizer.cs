@@ -20,6 +20,13 @@ public interface ITokenizer
 
     /// <summary>The text of a sequence of token ids given as a span (tokenizers may decode it without copying the ids).</summary>
     string Decode(ReadOnlySpan<int> ids) => Decode((IEnumerable<int>)ids.ToArray());
+
+    /// <summary>
+    /// The vocabulary entry of <paramref name="id"/> as the tokenizer stores it ("" past the end), for comparing
+    /// vocabularies (two models share one when every id is the same entry). A byte-level BPE tokenizer returns the entry
+    /// itself (which may be part of a character); by default, the id's decoded text.
+    /// </summary>
+    string TokenOf(int id) => (uint)id < (uint)VocabularySize ? Decode([id]) : "";
 }
 
 /// <summary>

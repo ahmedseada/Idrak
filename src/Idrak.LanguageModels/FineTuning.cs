@@ -155,44 +155,6 @@ public sealed record ChatTranscript(IReadOnlyList<ChatMessage> Messages, IReadOn
 }
 
 /// <summary>
-/// One tokenized training sequence: its token ids and, for each token, whether the model learns to produce it (the
-/// assistant's turns: reasoning, text, tool calls and the end-of-turn marker; not the system, user or tool messages).
-/// </summary>
-public sealed record TrainingSequence(int[] Tokens, bool[] Trained)
-{
-    private (bool[]? Of, int Count) _trained;
-
-    /// <summary>Tokens the loss is computed on (a token is predicted from the ones before it, so the first never is).</summary>
-    public int TrainedTokens
-    {
-        get
-        {
-            // Counted once per Trained array (batching asks for it many times per step).
-            var cached = _trained;
-            if (!ReferenceEquals(cached.Of, Trained))
-            {
-                int count = 0;
-                for (int i = 1; i < Trained.Length; i++)
-                {
-                    count += Trained[i] ? 1 : 0;
-                }
-
-                _trained = cached = (Trained, count);
-            }
-
-            return cached.Count;
-        }
-    }
-
-    /// <summary>Equal when both hold the same token and trained arrays (the cached count is not compared).</summary>
-    public bool Equals(TrainingSequence? other) =>
-        other is not null && ReferenceEquals(Tokens, other.Tokens) && ReferenceEquals(Trained, other.Trained);
-
-    /// <inheritdoc />
-    public override int GetHashCode() => HashCode.Combine(Tokens, Trained);
-}
-
-/// <summary>
 /// Turns transcripts into <see cref="TrainingSequence"/>s with a model's own chat template, so the fine-tuning data has
 /// exactly the layout the model sees when it is used (tool definitions, tool-call syntax, reasoning blocks). The
 /// assistant's turns are found from the template itself: the text its generation prompt adds (the assistant header)
@@ -689,8 +651,8 @@ public sealed record FineTuningOptions
     public FineTuningLoss? Loss { get; init; }
 
     /// <summary>
-    /// The teacher for knowledge distillation (<see cref="DistillationTeacher.FromModel"/> or
-    /// <see cref="DistillationTeacher.FromFile"/>), whose distributions a loss reads through
+    /// The teacher for knowledge distillation (<see cref="DistillationTeachers.FromModel"/> or
+    /// <see cref="DistillationTeachers.FromFile"/>), whose distributions a loss reads through
     /// <see cref="FineTuningLossInput.TeacherDivergence"/> (see <see cref="FineTuningLosses.Distillation"/>). It must share the
     /// student's vocabulary (<see cref="DistillationTeacher.Check"/>, which training runs first). Null: no teacher. Not
     /// disposed by training.
@@ -872,7 +834,7 @@ public static class FineTuner
     // teacher is checked against the model first.
     private static CustomLoss? Custom(PretrainedModel model, FineTuningOptions options, bool pairs)
     {
-        options.Teacher?.Check(model);
+        options.Teacher?.Check(model.Tokenizer ?? throw new InvalidOperationException("The student has no tokenizer: its vocabulary cannot be compared with the teacher's."));
         var loss = options.Loss ?? (options.Teacher is not null ? FineTuningLosses.Distillation() : null);
         return loss is null ? null : new CustomLoss(loss, pairs, options.Teacher);
     }

@@ -1199,7 +1199,7 @@ public sealed class BpeTokenizer : ITokenizer
         {
             case null:
                 return;
-            case JsonObject n when TokenizerComponents.Normalizer((string?)n["type"]) is { } create:
+            case JsonObject n when TokenizerComponents.FindNormalizer((string?)n["type"]) is { } create:
                 _normalizerSteps = null;                                          // a registered type: the string pipeline runs
                 _normalizers.Add(create(n).Normalize);
                 return;
@@ -1263,7 +1263,7 @@ public sealed class BpeTokenizer : ITokenizer
         }
 
         string type = (string)p["type"]!;
-        if (TokenizerComponents.PreTokenizer(type) is { } create)
+        if (TokenizerComponents.FindPreTokenizer(type) is { } create)
         {
             var custom = create(p);
             _splits = null;                                                       // a registered type: the string pipeline runs
@@ -1442,7 +1442,7 @@ public sealed class BpeTokenizer : ITokenizer
         }
 
         string type = (string)d["type"]!;
-        if (TokenizerComponents.Decoder(type) is { } create)
+        if (TokenizerComponents.FindDecoder(type) is { } create)
         {
             // A registered type: named so that no built-in stage (or the fused decoding) takes it for one of its own.
             var custom = create(d);
