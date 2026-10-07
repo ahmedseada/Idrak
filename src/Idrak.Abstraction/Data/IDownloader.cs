@@ -4,7 +4,7 @@
 namespace Idrak.Abstraction.Data;
 
 /// <summary>
-/// Fetches remote files into a local cache and calls web APIs, for dataset and model sources. Idrak.Datasets implements
+/// Fetches remote files into a local cache and calls web APIs, for dataset and model sources. Idrak.Data implements
 /// it (<c>Downloader</c>: resumed and retried downloads into <c>IDRAK_CACHE</c>); an application can pass its own (a
 /// mirror, an authenticated proxy, an offline cache) wherever a source takes one.
 /// </summary>

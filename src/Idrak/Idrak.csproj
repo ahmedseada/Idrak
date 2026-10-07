@@ -8,7 +8,7 @@
     <Optimize>true</Optimize>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <PackageId>Idrak</PackageId>
-    <Description>Self-contained neural network library for .NET: tensors, autograd, layers and optimizers with a SIMD CPU backend and a CUDA backend that talks to the NVIDIA driver directly. No TensorFlow, no native dependencies.</Description>
+    <Description>Self-contained neural network library for .NET: tensors, autograd, layers and optimizers with a SIMD CPU backend and a CUDA backend that talks to the NVIDIA driver directly; ONNX export and import. No TensorFlow, no native dependencies.</Description>
   </PropertyGroup>
 
   <ItemGroup>
@@ -22,7 +22,6 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Idrak.Tests" />
-    <InternalsVisibleTo Include="Idrak.Onnx" />
     <InternalsVisibleTo Include="Idrak.Nlp" />
     <!-- idrak kernels dump writes the generated kernel sources (PTX, SPIR-V, HIP). -->
     <InternalsVisibleTo Include="Idrak.Cli" />

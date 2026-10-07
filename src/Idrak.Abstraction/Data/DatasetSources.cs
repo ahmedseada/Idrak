@@ -7,7 +7,7 @@ namespace Idrak.Abstraction.Data;
 
 /// <summary>
 /// The rows a <see cref="IDatasetSource"/> opened (JSON objects, column name → value), read lazily: each enumeration reads
-/// the source again. <c>Dataset</c> (Idrak.Datasets) implements it and wraps any other implementation, so the filters,
+/// the source again. <c>DatasetRows</c> (Idrak.Data) implements it and wraps any other implementation, so the filters,
 /// mixes and splits apply to rows from every source.
 /// </summary>
 public interface IDatasetRows : IEnumerable<JsonObject>
@@ -45,7 +45,7 @@ public interface IDatasetSource
 }
 
 /// <summary>
-/// The sources a <see cref="DatasetSpec"/> opens, tried in order. Idrak.Datasets registers Hugging Face (<c>hf:</c>), GitHub
+/// The sources a <see cref="DatasetSpec"/> opens, tried in order. Idrak.Data registers Hugging Face (<c>hf:</c>), GitHub
 /// (<c>github:</c>), Kaggle (<c>kaggle:</c>), Zenodo (<c>zenodo:</c>), http(s) URLs, then local folders and files. Add others
 /// with <see cref="Register"/>: a new source is tried before the ones already registered.
 /// </summary>
@@ -53,7 +53,7 @@ public static class DatasetSources
 {
     private static readonly List<IDatasetSource> Registry = [];
 
-    // The built-ins of the first-party assemblies (Idrak.Datasets) are registered before the first use.
+    // The built-ins of the first-party assemblies (Idrak.Data) are registered before the first use.
     static DatasetSources() => LibraryDefaults.Ensure();
 
     /// <summary>

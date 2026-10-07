@@ -18,7 +18,7 @@ public delegate string OnnxImportTranslator(OnnxImportContext context);
 /// steps (with the weights to load into the layers they create), add graph operations, add notes, and report what
 /// cannot be imported. The same translator serves a chain of layers and a graph (<see cref="IsGraph"/>): in a graph,
 /// the steps it adds become a layer node and <see cref="AddGraphOp"/> adds an operation node. The importer
-/// (<c>OnnxImport</c> in Idrak.Onnx) implements it.
+/// (<c>OnnxImport</c> in Idrak) implements it.
 /// </summary>
 public abstract class OnnxImportContext
 {
@@ -94,8 +94,8 @@ public abstract class OnnxImportContext
 }
 
 /// <summary>
-/// The ONNX operators the importer (<c>OnnxImport</c> in Idrak.Onnx) turns into Idrak layers one node at a time, by
-/// operator type. Idrak.Onnx registers the built-in ones (Relu, Conv, BatchNormalization, Reshape, ...); add or replace
+/// The ONNX operators the importer (<c>OnnxImport</c> in Idrak) turns into Idrak layers one node at a time, by
+/// operator type. Idrak registers the built-in ones (Relu, Conv, BatchNormalization, Reshape, ...); add or replace
 /// one with <see cref="Register"/>. Patterns of several nodes (Linear, GELU, attention, transformer layers, LSTM and
 /// GRU) are matched before a node is looked up. A model that is not a chain of layers is imported as a graph: there the
 /// built-in operators become graph operations (<see cref="GraphOps"/>), and a translator you registered (a new operator
@@ -106,7 +106,7 @@ public static class OnnxImportOps
 {
     private static readonly Dictionary<string, OnnxImportTranslator> Registry = new(StringComparer.Ordinal);
 
-    // The built-ins of the first-party assemblies (Idrak.Onnx) are registered before the first use.
+    // The built-ins of the first-party assemblies (Idrak) are registered before the first use.
     static OnnxImportOps() => LibraryDefaults.Ensure();
 
     /// <summary>Registers (or replaces) how to import nodes of the operator type <paramref name="opType"/>.</summary>

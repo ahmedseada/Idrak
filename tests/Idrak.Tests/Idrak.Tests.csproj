@@ -20,7 +20,8 @@
     <ProjectReference Include="..\..\src\Idrak.AspNetCore\Idrak.AspNetCore.csproj" />
     <ProjectReference Include="..\..\src\Idrak.Mcp\Idrak.Mcp.csproj" />
     <ProjectReference Include="..\..\src\Idrak.Onnx.Runtime\Idrak.Onnx.Runtime.csproj" />
-    <ProjectReference Include="..\..\src\Idrak.Datasets\Idrak.Datasets.csproj" />
+    <ProjectReference Include="..\..\src\Idrak.Data\Idrak.Data.csproj" />
+    <ProjectReference Include="..\..\src\Idrak.Vision\Idrak.Vision.csproj" />
     <ProjectReference Include="..\..\src\Idrak.Nlp\Idrak.Nlp.csproj" />
     <ProjectReference Include="..\..\src\Idrak.Cli\Idrak.Cli.csproj" />
     <ProjectReference Include="..\Idrak.PluginTests\Idrak.PluginTests.csproj" />

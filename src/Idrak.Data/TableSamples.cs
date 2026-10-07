@@ -4,10 +4,8 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using Idrak.Data;
-using TensorData = Idrak.Data.Dataset;
 
-namespace Idrak.Datasets;
+namespace Idrak.Data;
 
 /// <summary>
 /// Columns of data files (JSON Lines, JSON, CSV, TSV, Parquet, compressed or in archives: whatever
@@ -32,12 +30,12 @@ public static class TableSamples
     /// <param name="targets">The target columns, in order (one column with <paramref name="classes"/>).</param>
     /// <param name="classes">The class names of a single target column, in label order; null for numeric targets.</param>
     /// <param name="options">How the file is read (format, CSV types); null for the defaults.</param>
-    public static TensorData Load(string path, IReadOnlyList<string> features, IReadOnlyList<string> targets,
+    public static Dataset Load(string path, IReadOnlyList<string> features, IReadOnlyList<string> targets,
         IReadOnlyList<string>? classes = null, ReadOptions? options = null) =>
         FromRows(DataFiles.Read(path, options ?? ReadOptions.Default), features, targets, classes, path);
 
-    /// <summary>The columns of rows already read (from <see cref="DataFiles"/>, a <see cref="Dataset"/> or your own code) as an in-memory dataset.</summary>
-    public static TensorData FromRows(IEnumerable<JsonObject> rows, IReadOnlyList<string> features, IReadOnlyList<string> targets,
+    /// <summary>The columns of rows already read (from <see cref="DataFiles"/>, a <see cref="DatasetRows"/> or your own code) as an in-memory dataset.</summary>
+    public static Dataset FromRows(IEnumerable<JsonObject> rows, IReadOnlyList<string> features, IReadOnlyList<string> targets,
         IReadOnlyList<string>? classes = null) =>
         FromRows(rows, features, targets, classes, "rows");
 
@@ -78,7 +76,7 @@ public static class TableSamples
         return FromRows(rows, features, targets, options.TryGetValue("classes", out var c) ? List(c) : null, path);
     };
 
-    private static TensorData FromRows(IEnumerable<JsonObject> rows, IReadOnlyList<string> features, IReadOnlyList<string> targets, IReadOnlyList<string>? classes, string source)
+    private static Dataset FromRows(IEnumerable<JsonObject> rows, IReadOnlyList<string> features, IReadOnlyList<string> targets, IReadOnlyList<string>? classes, string source)
     {
         Layout? layout = null;
         var x = new List<float>();
@@ -101,7 +99,7 @@ public static class TableSamples
             throw new InvalidDataException($"{source} has no rows.");
         }
 
-        return TensorData.FromFlat([.. x], [.. y], count, layout.FeatureNames, layout.TargetNames);
+        return Dataset.FromFlat([.. x], [.. y], count, layout.FeatureNames, layout.TargetNames);
     }
 
     // The values each column gives (from the first row) and how a row becomes features and targets.

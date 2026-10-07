@@ -7,11 +7,9 @@ using System.Text;
 using System.Text.Json.Nodes;
 using Idrak;
 using Idrak.Data;
-using Idrak.Datasets;
 using Idrak.Layers;
 using Idrak.Optimizers;
 using Idrak.Training;
-using TensorData = Idrak.Data.Dataset;
 
 // Sample sources, batch sources and the built-in loaders: each trains to the same weights as an in-memory Dataset of
 // the same samples, and the image codecs decode what independent encoders here write.
@@ -32,7 +30,7 @@ internal static partial class Tests
     ];
 
     // A source that only forwards to a dataset, so the loader cannot take any Dataset shortcut.
-    private sealed class Forwarding(TensorData data) : ISampleSource
+    private sealed class Forwarding(Dataset data) : ISampleSource
     {
         public int Count => data.Count;
 
@@ -44,7 +42,7 @@ internal static partial class Tests
     }
 
     // The samples of a dataset in order, as a stream.
-    private sealed class DatasetStream(TensorData data) : ISampleStream
+    private sealed class DatasetStream(Dataset data) : ISampleStream
     {
         public IReadOnlyList<int> FeatureShape => data.FeatureShape;
 
@@ -58,7 +56,7 @@ internal static partial class Tests
             return new Reader(data);
         }
 
-        private sealed class Reader(TensorData data) : ISampleReader
+        private sealed class Reader(Dataset data) : ISampleReader
         {
             private int _next;
 
@@ -79,7 +77,7 @@ internal static partial class Tests
         }
     }
 
-    private static TensorData RandomData(int count, int features, int targets, int seed)
+    private static Dataset RandomData(int count, int features, int targets, int seed)
     {
         var random = new Random(seed);
         var x = new float[count * features];
@@ -94,7 +92,7 @@ internal static partial class Tests
             y[i] = random.NextSingle();
         }
 
-        return TensorData.FromFlat(x, y, count, [.. Enumerable.Range(0, features).Select(i => $"x{i}")], [.. Enumerable.Range(0, targets).Select(i => $"y{i}")]);
+        return Dataset.FromFlat(x, y, count, [.. Enumerable.Range(0, features).Select(i => $"x{i}")], [.. Enumerable.Range(0, targets).Select(i => $"y{i}")]);
     }
 
     // Every batch of an epoch, as (features, targets, size) on the host.
@@ -134,7 +132,7 @@ internal static partial class Tests
         return [.. model.Parameters().SelectMany(p => p.ToArray())];
     }
 
-    private static void SameTraining(ISampleSource source, TensorData memory, Device device, string what, IReadOnlyList<ISampleTransform>? transforms = null, int batch = 8)
+    private static void SameTraining(ISampleSource source, Dataset memory, Device device, string what, IReadOnlyList<ISampleTransform>? transforms = null, int batch = 8)
     {
         int inputs = memory.FeatureCount, outputs = memory.TargetCount;
         var fromSource = TrainedWeights(new DataLoader(source, batch, shuffle: true, device: device, seed: 11) { Transforms = transforms ?? [] }, inputs, outputs, device);
@@ -212,9 +210,9 @@ internal static partial class Tests
         Check(joined.Count == 3, "concatenation count");
         AssertClose([.. data.GetFeatures(1), .. data.GetFeatures(2), .. data.GetFeatures(3)], joined.ToDataset().Features.ToArray(), 0, "concatenation across empty parts");
         Throws<ArgumentException>(() => source.Concat(RandomData(2, 4, 1, 1)), "sources of different shapes");
-        var named = TensorData.FromSource(joined, ["a", "b", "c"], ["t"]);
+        var named = Dataset.FromSource(joined, ["a", "b", "c"], ["t"]);
         Check(named.FeatureNames.SequenceEqual(["a", "b", "c"]) && named.TargetNames.SequenceEqual(["t"]), "names given to FromSource");
-        Check(ReferenceEquals(TensorData.FromSource(data), data), "FromSource of a dataset is the dataset");
+        Check(ReferenceEquals(Dataset.FromSource(data), data), "FromSource of a dataset is the dataset");
     }
 
     private static void LoaderCsv(Device device)
@@ -234,7 +232,7 @@ internal static partial class Tests
 
             File.WriteAllText(path, text.ToString(), new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
             var options = new CsvOptions { TargetColumns = ["price"], IgnoreColumns = ["id"] };
-            var loaded = TensorData.LoadCsv(path, options);
+            var loaded = Dataset.LoadCsv(path, options);
             using var csv = CsvSource.Open(path, options);
             Check(csv.Count == 120 && loaded.Count == 120, $"rows: {csv.Count} streamed, {loaded.Count} loaded");
             Check(csv.FeatureNames.SequenceEqual(loaded.FeatureNames) && csv.TargetNames.SequenceEqual(loaded.TargetNames), "column names");
@@ -681,7 +679,7 @@ internal static partial class Tests
             AssertClose([.. bytes.Select(b => b / 255f)], x, 1e-6f, "a PGM image's pixels");
             AssertClose([0, 1, 0], y, 0, "its class");
 
-            var memory = TensorData.FromSource(images, targetNames: images.Classes);
+            var memory = Dataset.FromSource(images, targetNames: images.Classes);
             Check(memory.TargetNames.SequenceEqual(images.Classes) && memory.FeatureShape.SequenceEqual([1, 8, 8]), "the in-memory copy");
             ISampleTransform[] transforms = [new RandomFlip(), new RandomShift(1), new RandomRotation(10), new GaussianNoise(0.02f)];
             SameTraining(images, memory, device, "image folder source with transforms", transforms);
@@ -694,7 +692,7 @@ internal static partial class Tests
 
             // Unlabelled images, as predict reads them.
             var unlabelled = new ImageFolderSource(images.Files.Take(5).ToList(), 1, 8, 8);
-            Check(unlabelled.TargetShape.SequenceEqual([0]) && unlabelled.Labels is null && TensorData.FromSource(unlabelled).Count == 5, "unlabelled images");
+            Check(unlabelled.TargetShape.SequenceEqual([0]) && unlabelled.Labels is null && Dataset.FromSource(unlabelled).Count == 5, "unlabelled images");
             Throws<DirectoryNotFoundException>(() => _ = new ImageFolderSource(Path.Combine(folder, "nowhere"), 1, 8, 8), "a missing folder");
         }
         finally
@@ -810,7 +808,7 @@ internal static partial class Tests
                 }
 
                 string[] names = [.. Enumerable.Range(0, T).Select(i => $"t{i}")];
-                var memory = TensorData.FromFlat([.. x], [.. y], windows.Count, names, names);
+                var memory = Dataset.FromFlat([.. x], [.. y], windows.Count, names, names);
                 AssertClose(memory.Features.ToArray(), windows.ToDataset().Features.ToArray(), 0, "the windows' tokens");
                 AssertClose(memory.Targets.ToArray(), windows.ToDataset().Targets.ToArray(), 0, "the next tokens");
                 SameTraining(windows, memory, device, "token windows");
@@ -855,7 +853,7 @@ internal static partial class Tests
                     }
                 }
 
-                var memory = TensorData.FromClassLabels(features, [.. labels.Select(l => (int)l)], 3).WithFeatureShape(2, 3);
+                var memory = Dataset.FromClassLabels(features, [.. labels.Select(l => (int)l)], 3).WithFeatureShape(2, 3);
                 AssertClose(memory.Features.ToArray(), classes.ToDataset().Features.ToArray(), 0, ".npy features");
                 AssertClose(memory.Targets.ToArray(), classes.ToDataset().Targets.ToArray(), 0, ".npy one-hot classes");
                 SameTraining(classes, memory, device, ".npy arrays");
@@ -956,7 +954,7 @@ internal static partial class Tests
             {
                 int n = int.Parse(options["count"], System.Globalization.CultureInfo.InvariantCulture);
                 float[] x = [.. Enumerable.Range(0, n).Select(i => (float)i)];
-                return TensorData.FromFlat(x, [.. x.Select(v => v * v)], n, ["x"], ["y"]);
+                return Dataset.FromFlat(x, [.. x.Select(v => v * v)], n, ["x"], ["y"]);
             });
             var squares = SampleSources.Open("squares", "", new Dictionary<string, string> { ["count"] = "5" });
             Check(squares.Count == 5 && squares.ToDataset().GetTargets(4)[0] == 16 && SampleSources.Names.Contains("Squares"), "a registered source");

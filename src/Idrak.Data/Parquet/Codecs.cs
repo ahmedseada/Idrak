@@ -4,7 +4,7 @@
 using System.Buffers.Binary;
 using System.IO.Compression;
 
-namespace Idrak.Datasets.Parquet;
+namespace Idrak.Data.Parquet;
 
 /// <summary>The built-in decompressors of Parquet pages (Snappy, Gzip, Brotli and LZ4 raw), registered in <see cref="ParquetCodecs"/>.</summary>
 internal static class Codecs

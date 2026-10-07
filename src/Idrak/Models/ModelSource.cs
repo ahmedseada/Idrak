@@ -6,7 +6,7 @@ namespace Idrak.Models;
 /// <summary>
 /// Where a model comes from: a local folder, a GGUF file, a model of the local model store ("store:qwen3:8b", see
 /// <see cref="LocalStoreModel"/>), or a Hugging Face model id such as "Qwen/Qwen3-0.6B". Idrak registers the folder,
-/// store and .gguf sources of <see cref="ModelSources"/>; Idrak.Datasets, which downloads from the Hub, registers the
+/// store and .gguf sources of <see cref="ModelSources"/>; Idrak.Data, which downloads from the Hub, registers the
 /// Hugging Face one (<c>HuggingFaceModels</c>).
 /// </summary>
 public static class ModelSource
@@ -60,12 +60,12 @@ public static class ModelSource
     /// <summary>
     /// The local folder of <paramref name="model"/>: the folder itself, a .gguf file's prepared folder, or what another
     /// source registered with <see cref="ModelSources"/> makes of it (a Hugging Face id found in a cache or downloaded,
-    /// with Idrak.Datasets). With <paramref name="download"/> false, only the caches are searched.
+    /// with Idrak.Data). With <paramref name="download"/> false, only the caches are searched.
     /// </summary>
     public static string Resolve(string model, string revision = "main", string? token = null, IDownloader? downloader = null, bool download = true) =>
         ModelSources.For(model)?.Resolve(model, Options(revision, token, downloader, download))
         ?? throw new DirectoryNotFoundException(IsModelId(model) && !ModelSources.Names.Contains("huggingface")
-            ? $"'{model}' reads as a Hugging Face model id, but no source resolves those; reference Idrak.Datasets, which adds it."
+            ? $"'{model}' reads as a Hugging Face model id, but no source resolves those; reference Idrak.Data, which adds it."
             : $"'{model}' is neither a folder nor a Hugging Face model id (owner/name).");
 
     /// <summary>The options <see cref="Resolve"/> passes to a source: the revision, token, downloader and download switch.</summary>

@@ -1,4 +1,4 @@
-"""GGUF test fixtures for Idrak.LanguageModels (needs: pip install gguf numpy).
+"""GGUF test fixtures for Idrak (model loading) (needs: pip install gguf numpy).
 
     python tools/gguf/make_fixtures.py tests/Idrak.Tests/data/gguf
 

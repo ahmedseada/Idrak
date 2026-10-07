@@ -626,7 +626,7 @@ internal static partial class Tests
                 web.Bytes($"{hf}/org/tiny/resolve/{commit}/{name}", File.ReadAllBytes(Path.Combine(source, name!)), requireToken: "hf_model");
             }
 
-            var downloader = new Idrak.Datasets.Downloader(new HttpClient(web), cache) { Attempts = 1 };
+            var downloader = new Idrak.Data.Downloader(new HttpClient(web), cache) { Attempts = 1 };
             string folder = ModelSource.DownloadAsync("org/tiny", token: "hf_model", downloader: downloader).GetAwaiter().GetResult();
             Check(folder == Path.Combine(cache, "huggingface", "models", "org", "tiny", commit[..12]), $"model folder {folder}");
             Check(Directory.GetFiles(folder).Select(Path.GetFileName).Order().SequenceEqual(served.Order()), "only the files the library reads");
@@ -640,7 +640,7 @@ internal static partial class Tests
             }
 
             // Without a network, the downloaded copy is used.
-            var offline = new Idrak.Datasets.Downloader(new HttpClient(new Unreachable()), cache) { Attempts = 1 };
+            var offline = new Idrak.Data.Downloader(new HttpClient(new Unreachable()), cache) { Attempts = 1 };
             Check(ModelSource.Resolve("org/tiny", downloader: offline) == folder, "offline: the cached copy");
             Check(ModelSource.IsModelId("Qwen/Qwen3-0.6B") && !ModelSource.IsModelId(source) && !ModelSource.IsModelId("a/b/c"), "ids and folders");
         }

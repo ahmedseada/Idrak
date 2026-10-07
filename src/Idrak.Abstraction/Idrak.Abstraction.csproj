@@ -16,7 +16,6 @@
   <ItemGroup>
     <InternalsVisibleTo Include="Idrak" />
     <InternalsVisibleTo Include="Idrak.Nlp" />
-    <InternalsVisibleTo Include="Idrak.Onnx" />
     <InternalsVisibleTo Include="Idrak.Cli" />
     <InternalsVisibleTo Include="Idrak.Tests" />
   </ItemGroup>

@@ -1,6 +1,6 @@
 # Idrak.Onnx.Runtime
 
-Runs ONNX models (exported by Idrak.Onnx or any other tool) with ONNX Runtime as Idrak modules, so they work with predictors, the inference engine and the ASP.NET Core endpoints.
+Runs ONNX models (exported by Idrak or any other tool) with ONNX Runtime as Idrak modules, so they work with predictors, the inference engine and the ASP.NET Core endpoints.
 
 ## Install
 

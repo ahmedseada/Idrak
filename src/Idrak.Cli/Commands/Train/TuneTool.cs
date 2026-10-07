@@ -6,7 +6,7 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
-using Idrak.Datasets;
+using Idrak.Data;
 using Idrak.Diagnostics;
 using Idrak.Generation;
 using Idrak.Layers;
@@ -898,7 +898,7 @@ internal sealed class TuneTool(ToolConsole console)
     }
 
     // Rows tokenized into training sequences, with a count of what was read, shortened and skipped.
-    private List<TrainingSequence> ReadSequences(ChatTranscriptEncoder encoder, Dataset rows, string what)
+    private List<TrainingSequence> ReadSequences(ChatTranscriptEncoder encoder, DatasetRows rows, string what)
     {
         var watch = Stopwatch.StartNew();
         var sequences = new List<TrainingSequence>();
@@ -935,7 +935,7 @@ internal sealed class TuneTool(ToolConsole console)
     }
 
     // Preference rows (prompt, chosen, rejected) tokenized into pairs that train only the answers.
-    private List<PreferencePair> ReadPairs(ChatTranscriptEncoder encoder, Dataset rows, string what)
+    private List<PreferencePair> ReadPairs(ChatTranscriptEncoder encoder, DatasetRows rows, string what)
     {
         var watch = Stopwatch.StartNew();
         var pairs = new List<PreferencePair>();

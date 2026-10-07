@@ -8,14 +8,14 @@ namespace Idrak.Abstraction.Formats;
 /// <summary>
 /// Translates one module into ONNX nodes: <paramref name="input"/> is the module's input value, <paramref name="outputShape"/>
 /// the shape it produces (measured by running the module, -1 for the batch dimension). Returns the output value.
-/// Register it for every export with <see cref="OnnxExportOps.Register{T}"/>, or for one export (<c>OnnxExporter.Module</c> in Idrak.Onnx).
+/// Register it for every export with <see cref="OnnxExportOps.Register{T}"/>, or for one export (<c>OnnxExporter.Module</c> in Idrak).
 /// </summary>
 public delegate OnnxValue OnnxTranslator<in T>(OnnxGraph graph, T module, OnnxValue input, IReadOnlyList<int> outputShape) where T : Module;
 
 /// <summary>
 /// Translates one operation node of a graph module (<see cref="GraphNode"/>, <see cref="GraphOps"/>) into ONNX nodes and
 /// returns the output value. Register it with <see cref="OnnxExportOps.RegisterGraphOp"/> (or for one export,
-/// <c>OnnxExporter.GraphOp</c> in Idrak.Onnx) under the operation's name.
+/// <c>OnnxExporter.GraphOp</c> in Idrak) under the operation's name.
 /// </summary>
 public delegate OnnxValue OnnxGraphOpTranslator(OnnxGraphOpContext context);
 
@@ -71,12 +71,12 @@ public sealed class OnnxGraphOpContext
 }
 
 /// <summary>
-/// How modules, lambdas and graph operations are written to ONNX, for every export. Idrak.Onnx registers the built-in
+/// How modules, lambdas and graph operations are written to ONNX, for every export. Idrak registers the built-in
 /// layers (Linear, Conv2d, BatchNorm, LSTM, Sequential, GraphModule, ...), the builder's lambdas (MeanOverTime,
 /// FirstStep, LastStep, Reshape) and every built-in graph operation (<see cref="GraphOps"/>); add or replace one with
 /// <see cref="Register{T}"/>, <see cref="RegisterLambda"/> or <see cref="RegisterGraphOp"/>. A module uses the translator
 /// registered for its own type or its nearest registered base type (<see cref="Find"/>). Translators given to one
-/// exporter (<c>OnnxExporter.Module</c>, <c>Lambda</c> and <c>GraphOp</c> in Idrak.Onnx) take precedence over these.
+/// exporter (<c>OnnxExporter.Module</c>, <c>Lambda</c> and <c>GraphOp</c> in Idrak) take precedence over these.
 /// </summary>
 public static class OnnxExportOps
 {
@@ -84,7 +84,7 @@ public static class OnnxExportOps
     private static readonly Dictionary<string, OnnxTranslator<Module>> Lambdas = new(StringComparer.Ordinal);
     private static readonly Dictionary<string, OnnxGraphOpTranslator> GraphOpTranslators = new(StringComparer.Ordinal);
 
-    // The built-ins of the first-party assemblies (Idrak.Onnx) are registered before the first use.
+    // The built-ins of the first-party assemblies (Idrak) are registered before the first use.
     static OnnxExportOps() => LibraryDefaults.Ensure();
 
     /// <summary>Registers (or replaces) how modules of type <typeparamref name="T"/> (and types derived from it without their own translator) are exported.</summary>
