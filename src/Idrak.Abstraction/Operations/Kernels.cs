@@ -14,10 +14,13 @@ namespace Idrak.Abstraction.Operations;
 /// the kernel registered last whose requirement holds, else the device's own (<c>Backend.NameKernel</c>, whose default
 /// body is the host fallback, a composition of other operations, or none). <see cref="Chain"/> tells which one each
 /// operation runs on a device, <see cref="Trace"/> counts the calls, and <see cref="HostCalls"/> the host fallbacks.
+/// Operations a plug-in declares (<see cref="PluginOperations"/>) take kernels the same way: a packed weight format, a
+/// key/value cache layout, a graph operation or an <see cref="Autograd.Function"/> gets a fast path on a device instead
+/// of its default kernel.
 /// </summary>
 /// <remarks>
 /// Each device resolves its slots on its first call and again after a registration changes; a device with nothing
-/// registered for it and no trace pays one field read per call.
+/// registered for it and no trace pays one field read per call (a plug-in operation, one array read).
 /// </remarks>
 public static class Kernels
 {
@@ -60,7 +63,17 @@ public static class Kernels
     }
 
     /// <summary>
-    /// Which kernel each operation runs on <paramref name="backend"/> now, in <see cref="Ops.All"/> order: a registered
+    /// Registers <paramref name="kernel"/> for the plug-in operation <paramref name="operation"/> on devices of
+    /// <paramref name="deviceKind"/>, as <see cref="Register(Operation, string, Delegate, Func{Backend, bool})"/> does
+    /// (the kernel's type checked by the compiler): <see cref="PluginOperation{TKernel}.KernelFor"/> returns it there
+    /// instead of the operation's default kernel wherever <paramref name="requirement"/> holds.
+    /// </summary>
+    public static IDisposable Register<TKernel>(PluginOperation<TKernel> operation, string deviceKind, TKernel kernel, Func<Backend, bool>? requirement = null)
+        where TKernel : Delegate => Register((Operation)operation, deviceKind, kernel, requirement);
+
+    /// <summary>
+    /// Which kernel each operation runs on <paramref name="backend"/> now, in <see cref="Operation.Index"/> order (the
+    /// library's operations, <see cref="Ops.All"/>, then the plug-ins', <see cref="PluginOperations.All"/>): a registered
     /// one, the device's own, the composed default, the host fallback, or none.
     /// </summary>
     public static IReadOnlyList<KernelChoice> Chain(Backend backend)
@@ -73,11 +86,22 @@ public static class Kernels
             Overrides[backend.GetType()] = own;
         }
 
-        var chain = new KernelChoice[Ops.All.Count];
+        var plugins = ResolvePlugins(backend, out var pluginRegistered);
+        var chain = new KernelChoice[Ops.All.Count + plugins.Length];
         foreach (var operation in Ops.All)
         {
             var source = registered[operation.Index] is not null ? KernelSource.Registered
                 : own[operation.Index] ? KernelSource.Device
+                : operation.Fallback;
+            chain[operation.Index] = new KernelChoice(operation, source);
+        }
+
+        var declared = PluginOperations.All;
+        for (int slot = 0; slot < plugins.Length; slot++)
+        {
+            var operation = declared[slot];
+            var source = pluginRegistered[slot] ? KernelSource.Registered
+                : operation.Fallback == KernelSource.Host && OnHost(backend) ? KernelSource.Device
                 : operation.Fallback;
             chain[operation.Index] = new KernelChoice(operation, source);
         }
@@ -178,7 +202,7 @@ public static class Kernels
 
         foreach (var r in registrations)
         {
-            if (r.DeviceKind.Equals(backend.Kind, StringComparison.OrdinalIgnoreCase) && (r.Requirement is null || r.Requirement(backend)))
+            if (!r.Operation.IsPlugin && r.DeviceKind.Equals(backend.Kind, StringComparison.OrdinalIgnoreCase) && (r.Requirement is null || r.Requirement(backend)))
             {
                 slots[r.Operation.Index] = r.Kernel;   // in registration order: the last that applies wins
             }
@@ -186,6 +210,47 @@ public static class Kernels
 
         return slots;
     }
+
+    /// <summary>
+    /// The kernel each plug-in operation runs on <paramref name="backend"/>, by its place in <see cref="PluginOperations.All"/>:
+    /// the one registered last whose requirement holds, else its default kernel, or null where that default is the host
+    /// fallback of a device that is not the host (the call then counts it). <paramref name="registered"/> tells which
+    /// came from a registration.
+    /// </summary>
+    internal static Delegate?[] ResolvePlugins(Backend backend, out bool[] registered)
+    {
+        var operations = PluginOperations.All;
+        var slots = new Delegate?[operations.Count];
+        registered = new bool[operations.Count];
+        bool host = OnHost(backend);
+        for (int slot = 0; slot < slots.Length; slot++)
+        {
+            var operation = operations[slot];
+            slots[slot] = operation.Fallback == KernelSource.Host && !host ? null : operation.Default;
+        }
+
+        Registration[] registrations;
+        lock (Registry)
+        {
+            registrations = [.. Registry];
+        }
+
+        foreach (var r in registrations)
+        {
+            int slot = r.Operation.Index - OperationIndex.Count;
+            if (slot >= 0 && slot < slots.Length && r.DeviceKind.Equals(backend.Kind, StringComparison.OrdinalIgnoreCase)
+                && (r.Requirement is null || r.Requirement(backend)))
+            {
+                slots[slot] = r.Kernel;              // in registration order: the last that applies wins
+                registered[slot] = true;
+            }
+        }
+
+        return slots;
+    }
+
+    // Whether the device runs on the host already (the CPU device): a plug-in's host default is its own kernel there.
+    private static bool OnHost(Backend backend) => backend is Devices.Cpu.CpuBackend;
 
     // Every device resolves its slots again on its next call.
     private static void Changed()
@@ -273,6 +338,7 @@ public readonly record struct KernelChoice(Operation Operation, KernelSource Sou
 public sealed class KernelTrace : IDisposable
 {
     private readonly long[] _calls = new long[Ops.All.Count];
+    private readonly ConcurrentDictionary<int, long> _pluginCalls = new();
     private readonly ConcurrentDictionary<string, long> _hostCalls = new(StringComparer.Ordinal);
 
     internal KernelTrace(Backend backend) => Backend = backend;
@@ -280,8 +346,15 @@ public sealed class KernelTrace : IDisposable
     /// <summary>The device traced.</summary>
     public Backend Backend { get; }
 
-    /// <summary>The calls of <paramref name="operation"/> through the dispatcher (<c>Backend.Name(...)</c>) so far.</summary>
-    public long Calls(Operation operation) => Interlocked.Read(ref _calls[operation.Index]);
+    /// <summary>
+    /// The calls of <paramref name="operation"/> through the dispatcher so far: <c>Backend.Name(...)</c> for the library's
+    /// operations, <see cref="PluginOperation{TKernel}.KernelFor"/> for a plug-in's.
+    /// </summary>
+    public long Calls(Operation operation)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        return operation.IsPlugin ? _pluginCalls.GetValueOrDefault(operation.Index) : Interlocked.Read(ref _calls[operation.Index]);
+    }
 
     /// <summary>The host fallbacks so far.</summary>
     public long HostCalls => _hostCalls.Values.Sum();
@@ -295,7 +368,17 @@ public sealed class KernelTrace : IDisposable
     /// <summary>Stops counting; the counts stay readable.</summary>
     public void Dispose() => Kernels.EndTrace(this);
 
-    internal void Called(int operation) => Interlocked.Increment(ref _calls[operation]);
+    internal void Called(int operation)
+    {
+        if (operation < _calls.Length)
+        {
+            Interlocked.Increment(ref _calls[operation]);
+        }
+        else
+        {
+            _pluginCalls.AddOrUpdate(operation, 1, static (_, n) => n + 1);
+        }
+    }
 
     internal void HostCalled(string operation) => _hostCalls.AddOrUpdate(operation, 1, static (_, n) => n + 1);
 }

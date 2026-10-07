@@ -215,13 +215,14 @@ internal static partial class Tests
     {
         string name = device.ToString();
         var json = DevJson("kernels", "-d", name, "-j");
-        var operations = json["operations"]!.AsArray().Select(o => (Name: (string)o!["name"]!, Kernel: (string)o!["kernel"]!, Fallback: (string)o!["fallback"]!)).ToList();
+        var operations = json["operations"]!.AsArray().Select(o => (Name: (string)o!["name"]!, Kernel: (string)o!["kernel"]!, Fallback: (string)o!["fallback"]!, Plugin: (bool)o!["plugin"]!)).ToList();
         var counts = json["counts"]!.AsObject();
-        Check((string?)json["device"] == name && (string?)json["kind"] == device.Backend.Kind && operations.Count == Ops.All.Count
-              && counts.Sum(c => (int)c.Value!) == Ops.All.Count, $"every operation once: {operations.Count} of {Ops.All.Count}");
+        int all = Ops.All.Count + PluginOperations.All.Count;
+        Check((string?)json["device"] == name && (string?)json["kind"] == device.Backend.Kind && operations.Count == all
+              && counts.Sum(c => (int)c.Value!) == all, $"every operation once: {operations.Count} of {all}");
         var chain = Kernels.Chain(device.Backend);
         Check(operations.Select((o, i) => o.Name == chain[i].Operation.Name && o.Kernel == chain[i].Source.ToString().ToLowerInvariant()
-                                         && o.Fallback == chain[i].Operation.Fallback.ToString().ToLowerInvariant()).All(x => x), "the dispatcher's chain");
+                                         && o.Fallback == chain[i].Operation.Fallback.ToString().ToLowerInvariant() && o.Plugin == chain[i].Operation.IsPlugin).All(x => x), "the dispatcher's chain");
         Check(operations.Single(o => o.Name == "MatMulMany").Fallback == "composed" && operations.Single(o => o.Name == "Softmax").Fallback == "host"
               && operations.Single(o => o.Name == "GemmStrided").Fallback == "none", "fallbacks");
         if (device.Type == DeviceType.Cpu)
@@ -241,6 +242,19 @@ internal static partial class Tests
         }
 
         Check(DevJson("kernels", "-d", name, "--source", "registered", "-j")["operations"]!.AsArray().Count == 0, "removed again");
+
+        // The kernels of the outside plug-ins (tests/Idrak.PluginTests): "plug-in" rows, registered on the CPU and Vulkan.
+        using (Idrak.PluginTests.PluginKernels.Install())
+        {
+            var rows = DevJson("kernels", "-d", name, "-j")["operations"]!.AsArray()
+                .Where(o => (bool)o!["plugin"]!).ToDictionary(o => (string)o!["name"]!, o => (string)o!["kernel"]!);
+            bool own = device.Backend.Kind is "cpu" or "vulkan";
+            Check(rows.GetValueOrDefault("Outside.UnpackPairs") == (own ? "registered" : "host") && rows.GetValueOrDefault("Outside.ScaleRows") == (own ? "registered" : "composed")
+                  && rows.GetValueOrDefault("Outside.Softplus") == (device.Type == DeviceType.Cpu ? "registered" : "composed"), $"plug-in rows: {string.Join(", ", rows)}");
+            var (code, output, _) = DevRun("kernels", "-d", name, "--source", "registered");
+            Check(code == 0 && output.Split('\n').Any(l => l.StartsWith("Outside.ScaleRows ", StringComparison.Ordinal) && l.TrimEnd().EndsWith("plug-in", StringComparison.Ordinal)) == own,
+                $"text listing:\n{output}");
+        }
         Check(DevRun("kernels", "-d", name, "--source", "gpu").Code == 2 && DevRun("kernels", "-d", name, "--source", "1").Code == 2
               && DevRun("kernels", "Softmax").Code == 2, "an unknown source or an argument exits with 2");
     }
