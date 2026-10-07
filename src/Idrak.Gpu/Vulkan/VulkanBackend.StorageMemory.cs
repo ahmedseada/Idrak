@@ -293,6 +293,7 @@ internal sealed unsafe partial class VulkanBackend
     private List<StorageTiming> MeasureStorage()
     {
         const int Length = 1 << 20, Rounds = 5, Runs = 8;          // 4 MiB storages
+        using var quiet = DeviceException.Handled();                // a candidate that fails is left out
         var data = new float[Length];
         for (int i = 0; i < Length; i++)
         {

@@ -7,10 +7,18 @@
 #nullable enable
 
 using System.Runtime.CompilerServices;
+using Idrak.Abstraction.Devices.Cpu;
 using Idrak.Abstraction.Operations;
 
 namespace Idrak.Abstraction.Devices;
 
+// Name(...) runs the kernel registered for the device, else its own NameKernel. With RetryOnHost on, the device's own
+// kernel of an operation whose default is the host fallback runs under a HostRetry: a DeviceException is reported
+// with the operation and the call runs again through NameOnHost, a copy of NameKernel's default body. Composed
+// operations need no retry of their own (their parts retry one by one), and operations with no fallback throw.
+// A registered kernel is not retried: it is an app's or a plug-in's choice for this device (it may handle some cases
+// itself and pass others to the device's kernel or elsewhere), so the dispatcher can't tell which host computation
+// matches it or whether its error came from the device at all; its errors reach the caller.
 public abstract partial class Backend
 {
     /// <summary>y[i] = value for i &lt; n.</summary>
@@ -34,11 +42,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.Fill) is OperationKernels.Fill kernel)
         {
             kernel(this, y, n, value);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            FillKernel(y, n, value);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.Fill);
+        try
         {
             FillKernel(y, n, value);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            FillOnHost(y, n, value);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of Fill (the default body of FillKernel), for RetryOnHost.
+    private void FillOnHost(Storage y, int n, float value)
+    {
+        using var h = new HostCall(this, "Fill");
+        CpuBackend.Instance.Fill(h[y], n, value);
     }
 
     /// <summary>y = op(x).</summary>
@@ -62,11 +95,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.Unary) is OperationKernels.Unary kernel)
         {
             kernel(this, op, x, y, n);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            UnaryKernel(op, x, y, n);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.Unary);
+        try
         {
             UnaryKernel(op, x, y, n);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            UnaryOnHost(op, x, y, n);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of Unary (the default body of UnaryKernel), for RetryOnHost.
+    private void UnaryOnHost(UnaryOp op, Storage x, Storage y, int n)
+    {
+        using var h = new HostCall(this, "Unary");
+        CpuBackend.Instance.Unary(op, h[x], h[y], n);
     }
 
     /// <summary>dx += dy * op'(x), where y = op(x) is passed in for ops whose derivative is cheaper from y.</summary>
@@ -90,11 +148,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.UnaryBackward) is OperationKernels.UnaryBackward kernel)
         {
             kernel(this, op, x, y, dy, dx, n);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            UnaryBackwardKernel(op, x, y, dy, dx, n);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.UnaryBackward);
+        try
         {
             UnaryBackwardKernel(op, x, y, dy, dx, n);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            UnaryBackwardOnHost(op, x, y, dy, dx, n);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of UnaryBackward (the default body of UnaryBackwardKernel), for RetryOnHost.
+    private void UnaryBackwardOnHost(UnaryOp op, Storage x, Storage y, Storage dy, Storage dx, int n)
+    {
+        using var h = new HostCall(this, "UnaryBackward");
+        CpuBackend.Instance.UnaryBackward(op, h[x], h[y], h[dy], h[dx], n);
     }
 
     /// <summary>c = a op b, element-wise.</summary>
@@ -118,11 +201,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.Binary) is OperationKernels.Binary kernel)
         {
             kernel(this, op, a, b, c, n);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            BinaryKernel(op, a, b, c, n);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.Binary);
+        try
         {
             BinaryKernel(op, a, b, c, n);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            BinaryOnHost(op, a, b, c, n);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of Binary (the default body of BinaryKernel), for RetryOnHost.
+    private void BinaryOnHost(BinaryOp op, Storage a, Storage b, Storage c, int n)
+    {
+        using var h = new HostCall(this, "Binary");
+        CpuBackend.Instance.Binary(op, h[a], h[b], h[c], n);
     }
 
     /// <summary>
@@ -149,11 +257,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.ExtremumBackward) is OperationKernels.ExtremumBackward kernel)
         {
             kernel(this, op, a, b, dy, da, db, n);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            ExtremumBackwardKernel(op, a, b, dy, da, db, n);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.ExtremumBackward);
+        try
         {
             ExtremumBackwardKernel(op, a, b, dy, da, db, n);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            ExtremumBackwardOnHost(op, a, b, dy, da, db, n);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of ExtremumBackward (the default body of ExtremumBackwardKernel), for RetryOnHost.
+    private void ExtremumBackwardOnHost(BinaryOp op, Storage a, Storage b, Storage dy, Storage? da, Storage? db, int n)
+    {
+        using var h = new HostCall(this, "ExtremumBackward");
+        CpuBackend.Instance.ExtremumBackward(op, h[a], h[b], h[dy], h.Maybe(da), h.Maybe(db), n);
     }
 
     /// <summary>y = x^exponent, element-wise.</summary>
@@ -177,11 +310,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.Pow) is OperationKernels.Pow kernel)
         {
             kernel(this, x, y, n, exponent);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            PowKernel(x, y, n, exponent);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.Pow);
+        try
         {
             PowKernel(x, y, n, exponent);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            PowOnHost(x, y, n, exponent);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of Pow (the default body of PowKernel), for RetryOnHost.
+    private void PowOnHost(Storage x, Storage y, int n, float exponent)
+    {
+        using var h = new HostCall(this, "Pow");
+        CpuBackend.Instance.Pow(h[x], h[y], n, exponent);
     }
 
     /// <summary>dx += dy · exponent · x^(exponent - 1).</summary>
@@ -205,11 +363,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.PowBackward) is OperationKernels.PowBackward kernel)
         {
             kernel(this, x, dy, dx, n, exponent);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            PowBackwardKernel(x, dy, dx, n, exponent);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.PowBackward);
+        try
         {
             PowBackwardKernel(x, dy, dx, n, exponent);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            PowBackwardOnHost(x, dy, dx, n, exponent);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of PowBackward (the default body of PowBackwardKernel), for RetryOnHost.
+    private void PowBackwardOnHost(Storage x, Storage dy, Storage dx, int n, float exponent)
+    {
+        using var h = new HostCall(this, "PowBackward");
+        CpuBackend.Instance.PowBackward(h[x], h[dy], h[dx], n, exponent);
     }
 
     /// <summary>y = x limited to [min, max] (either may be infinite).</summary>
@@ -233,11 +416,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.Clamp) is OperationKernels.Clamp kernel)
         {
             kernel(this, x, y, n, min, max);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            ClampKernel(x, y, n, min, max);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.Clamp);
+        try
         {
             ClampKernel(x, y, n, min, max);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            ClampOnHost(x, y, n, min, max);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of Clamp (the default body of ClampKernel), for RetryOnHost.
+    private void ClampOnHost(Storage x, Storage y, int n, float min, float max)
+    {
+        using var h = new HostCall(this, "Clamp");
+        CpuBackend.Instance.Clamp(h[x], h[y], n, min, max);
     }
 
     /// <summary>dx += dy where min ≤ x ≤ max.</summary>
@@ -261,11 +469,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.ClampBackward) is OperationKernels.ClampBackward kernel)
         {
             kernel(this, x, dy, dx, n, min, max);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            ClampBackwardKernel(x, dy, dx, n, min, max);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.ClampBackward);
+        try
         {
             ClampBackwardKernel(x, dy, dx, n, min, max);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            ClampBackwardOnHost(x, dy, dx, n, min, max);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of ClampBackward (the default body of ClampBackwardKernel), for RetryOnHost.
+    private void ClampBackwardOnHost(Storage x, Storage dy, Storage dx, int n, float min, float max)
+    {
+        using var h = new HostCall(this, "ClampBackward");
+        CpuBackend.Instance.ClampBackward(h[x], h[dy], h[dx], n, min, max);
     }
 
     /// <summary>y = condition ≠ 0 ? a : b, element-wise.</summary>
@@ -289,11 +522,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.Where) is OperationKernels.Where kernel)
         {
             kernel(this, condition, a, b, y, n);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            WhereKernel(condition, a, b, y, n);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.Where);
+        try
         {
             WhereKernel(condition, a, b, y, n);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            WhereOnHost(condition, a, b, y, n);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of Where (the default body of WhereKernel), for RetryOnHost.
+    private void WhereOnHost(Storage condition, Storage a, Storage b, Storage y, int n)
+    {
+        using var h = new HostCall(this, "Where");
+        CpuBackend.Instance.Where(h[condition], h[a], h[b], h[y], n);
     }
 
     /// <summary>da += dy where condition ≠ 0, db += dy elsewhere (a null gradient is skipped).</summary>
@@ -317,11 +575,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.WhereBackward) is OperationKernels.WhereBackward kernel)
         {
             kernel(this, condition, dy, da, db, n);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            WhereBackwardKernel(condition, dy, da, db, n);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.WhereBackward);
+        try
         {
             WhereBackwardKernel(condition, dy, da, db, n);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            WhereBackwardOnHost(condition, dy, da, db, n);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of WhereBackward (the default body of WhereBackwardKernel), for RetryOnHost.
+    private void WhereBackwardOnHost(Storage condition, Storage dy, Storage? da, Storage? db, int n)
+    {
+        using var h = new HostCall(this, "WhereBackward");
+        CpuBackend.Instance.WhereBackward(h[condition], h[dy], h.Maybe(da), h.Maybe(db), n);
     }
 
     /// <summary>y = alpha * x + beta.</summary>
@@ -345,11 +628,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.Affine) is OperationKernels.Affine kernel)
         {
             kernel(this, x, y, n, alpha, beta);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            AffineKernel(x, y, n, alpha, beta);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.Affine);
+        try
         {
             AffineKernel(x, y, n, alpha, beta);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            AffineOnHost(x, y, n, alpha, beta);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of Affine (the default body of AffineKernel), for RetryOnHost.
+    private void AffineOnHost(Storage x, Storage y, int n, float alpha, float beta)
+    {
+        using var h = new HostCall(this, "Affine");
+        CpuBackend.Instance.Affine(h[x], h[y], n, alpha, beta);
     }
 
     /// <summary>y += alpha * x.</summary>
@@ -373,11 +681,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.Axpy) is OperationKernels.Axpy kernel)
         {
             kernel(this, x, y, n, alpha);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            AxpyKernel(x, y, n, alpha);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.Axpy);
+        try
         {
             AxpyKernel(x, y, n, alpha);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            AxpyOnHost(x, y, n, alpha);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of Axpy (the default body of AxpyKernel), for RetryOnHost.
+    private void AxpyOnHost(Storage x, Storage y, int n, float alpha)
+    {
+        using var h = new HostCall(this, "Axpy");
+        CpuBackend.Instance.Axpy(h[x], h[y], n, alpha);
     }
 
     /// <summary>c += a * b, element-wise.</summary>
@@ -401,11 +734,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.MulAdd) is OperationKernels.MulAdd kernel)
         {
             kernel(this, a, b, c, n);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            MulAddKernel(a, b, c, n);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.MulAdd);
+        try
         {
             MulAddKernel(a, b, c, n);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            MulAddOnHost(a, b, c, n);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of MulAdd (the default body of MulAddKernel), for RetryOnHost.
+    private void MulAddOnHost(Storage a, Storage b, Storage c, int n)
+    {
+        using var h = new HostCall(this, "MulAdd");
+        CpuBackend.Instance.MulAdd(h[a], h[b], h[c], n);
     }
 
     /// <summary>c[r, j] = a[r, j] + v[j].</summary>
@@ -429,11 +787,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.AddRowVector) is OperationKernels.AddRowVector kernel)
         {
             kernel(this, a, v, c, rows, cols);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            AddRowVectorKernel(a, v, c, rows, cols);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.AddRowVector);
+        try
         {
             AddRowVectorKernel(a, v, c, rows, cols);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            AddRowVectorOnHost(a, v, c, rows, cols);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of AddRowVector (the default body of AddRowVectorKernel), for RetryOnHost.
+    private void AddRowVectorOnHost(Storage a, Storage v, Storage c, int rows, int cols)
+    {
+        using var h = new HostCall(this, "AddRowVector");
+        CpuBackend.Instance.AddRowVector(h[a], h[v], h[c], rows, cols);
     }
 
     /// <summary>y[j] += sum over r of x[r, j].</summary>
@@ -457,11 +840,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.SumRows) is OperationKernels.SumRows kernel)
         {
             kernel(this, x, y, rows, cols);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            SumRowsKernel(x, y, rows, cols);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.SumRows);
+        try
         {
             SumRowsKernel(x, y, rows, cols);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            SumRowsOnHost(x, y, rows, cols);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of SumRows (the default body of SumRowsKernel), for RetryOnHost.
+    private void SumRowsOnHost(Storage x, Storage y, int rows, int cols)
+    {
+        using var h = new HostCall(this, "SumRows");
+        CpuBackend.Instance.SumRows(h[x], h[y], rows, cols);
     }
 
     /// <summary>result[0] = scale * sum(x).</summary>
@@ -485,11 +893,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.Sum) is OperationKernels.Sum kernel)
         {
             kernel(this, x, result, n, scale);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            SumKernel(x, result, n, scale);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.Sum);
+        try
         {
             SumKernel(x, result, n, scale);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            SumOnHost(x, result, n, scale);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of Sum (the default body of SumKernel), for RetryOnHost.
+    private void SumOnHost(Storage x, Storage result, int n, float scale)
+    {
+        using var h = new HostCall(this, "Sum");
+        CpuBackend.Instance.Sum(h[x], h[result], n, scale);
     }
 
     /// <summary>y[offset] += alpha * x[0] (used to accumulate scalar losses without leaving the device).</summary>
@@ -513,11 +946,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.AxpyAt) is OperationKernels.AxpyAt kernel)
         {
             kernel(this, x, y, offset, alpha);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            AxpyAtKernel(x, y, offset, alpha);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.AxpyAt);
+        try
         {
             AxpyAtKernel(x, y, offset, alpha);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            AxpyAtOnHost(x, y, offset, alpha);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of AxpyAt (the default body of AxpyAtKernel), for RetryOnHost.
+    private void AxpyAtOnHost(Storage x, Storage y, int offset, float alpha)
+    {
+        using var h = new HostCall(this, "AxpyAt");
+        CpuBackend.Instance.AxpyAt(h[x], h[y], offset, alpha);
     }
 
     /// <summary>y[i] += scale * s[0].</summary>
@@ -541,11 +999,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.AddBroadcastScalar) is OperationKernels.AddBroadcastScalar kernel)
         {
             kernel(this, s, y, n, scale);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            AddBroadcastScalarKernel(s, y, n, scale);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.AddBroadcastScalar);
+        try
         {
             AddBroadcastScalarKernel(s, y, n, scale);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            AddBroadcastScalarOnHost(s, y, n, scale);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of AddBroadcastScalar (the default body of AddBroadcastScalarKernel), for RetryOnHost.
+    private void AddBroadcastScalarOnHost(Storage s, Storage y, int n, float scale)
+    {
+        using var h = new HostCall(this, "AddBroadcastScalar");
+        CpuBackend.Instance.AddBroadcastScalar(h[s], h[y], n, scale);
     }
 
     /// <summary>
@@ -853,11 +1336,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.SumColumns) is OperationKernels.SumColumns kernel)
         {
             kernel(this, x, offset, ld, y, rows, cols);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            SumColumnsKernel(x, offset, ld, y, rows, cols);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.SumColumns);
+        try
         {
             SumColumnsKernel(x, offset, ld, y, rows, cols);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            SumColumnsOnHost(x, offset, ld, y, rows, cols);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of SumColumns (the default body of SumColumnsKernel), for RetryOnHost.
+    private void SumColumnsOnHost(Storage x, long offset, int ld, Storage y, int rows, int cols)
+    {
+        using var h = new HostCall(this, "SumColumns");
+        CpuBackend.Instance.SumColumns(h[x], offset, ld, h[y], rows, cols);
     }
 
     /// <summary>output = residual + dropout(x) (the mask of <see cref="Dropout"/> with <paramref name="seed"/>).</summary>
@@ -909,11 +1417,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.BatchedMatMul) is OperationKernels.BatchedMatMul kernel)
         {
             kernel(this, a, b, c, batch, m, n, k, transA, transB, beta);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            BatchedMatMulKernel(a, b, c, batch, m, n, k, transA, transB, beta);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.BatchedMatMul);
+        try
         {
             BatchedMatMulKernel(a, b, c, batch, m, n, k, transA, transB, beta);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            BatchedMatMulOnHost(a, b, c, batch, m, n, k, transA, transB, beta);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of BatchedMatMul (the default body of BatchedMatMulKernel), for RetryOnHost.
+    private void BatchedMatMulOnHost(Storage a, Storage b, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
+    {
+        using var h = new HostCall(this, "BatchedMatMul");
+        CpuBackend.Instance.BatchedMatMul(h[a], h[b], h[c], batch, m, n, k, transA, transB, beta);
     }
 
     /// <summary>Row-wise softmax (or log-softmax) over the last dimension: y[r, :] = softmax(x[r, :]).</summary>
@@ -937,11 +1470,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.Softmax) is OperationKernels.Softmax kernel)
         {
             kernel(this, x, y, rows, cols, log);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            SoftmaxKernel(x, y, rows, cols, log);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.Softmax);
+        try
         {
             SoftmaxKernel(x, y, rows, cols, log);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            SoftmaxOnHost(x, y, rows, cols, log);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of Softmax (the default body of SoftmaxKernel), for RetryOnHost.
+    private void SoftmaxOnHost(Storage x, Storage y, int rows, int cols, bool log)
+    {
+        using var h = new HostCall(this, "Softmax");
+        CpuBackend.Instance.Softmax(h[x], h[y], rows, cols, log);
     }
 
     /// <summary>
@@ -967,11 +1525,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.SoftmaxBackward) is OperationKernels.SoftmaxBackward kernel)
         {
             kernel(this, y, dy, dx, rows, cols, log);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            SoftmaxBackwardKernel(y, dy, dx, rows, cols, log);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.SoftmaxBackward);
+        try
         {
             SoftmaxBackwardKernel(y, dy, dx, rows, cols, log);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            SoftmaxBackwardOnHost(y, dy, dx, rows, cols, log);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of SoftmaxBackward (the default body of SoftmaxBackwardKernel), for RetryOnHost.
+    private void SoftmaxBackwardOnHost(Storage y, Storage dy, Storage dx, int rows, int cols, bool log)
+    {
+        using var h = new HostCall(this, "SoftmaxBackward");
+        CpuBackend.Instance.SoftmaxBackward(h[y], h[dy], h[dx], rows, cols, log);
     }
 
     /// <summary>y[r] = index of the largest element of row r.</summary>
@@ -995,11 +1578,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.ArgMax) is OperationKernels.ArgMax kernel)
         {
             kernel(this, x, y, rows, cols);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            ArgMaxKernel(x, y, rows, cols);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.ArgMax);
+        try
         {
             ArgMaxKernel(x, y, rows, cols);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            ArgMaxOnHost(x, y, rows, cols);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of ArgMax (the default body of ArgMaxKernel), for RetryOnHost.
+    private void ArgMaxOnHost(Storage x, Storage y, int rows, int cols)
+    {
+        using var h = new HostCall(this, "ArgMax");
+        CpuBackend.Instance.ArgMax(h[x], h[y], rows, cols);
     }
 
     /// <summary>
@@ -1026,11 +1634,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.ClassMatch) is OperationKernels.ClassMatch kernel)
         {
             kernel(this, predictions, targets, y, rows, cols, threshold);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            ClassMatchKernel(predictions, targets, y, rows, cols, threshold);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.ClassMatch);
+        try
         {
             ClassMatchKernel(predictions, targets, y, rows, cols, threshold);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            ClassMatchOnHost(predictions, targets, y, rows, cols, threshold);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of ClassMatch (the default body of ClassMatchKernel), for RetryOnHost.
+    private void ClassMatchOnHost(Storage predictions, Storage targets, Storage y, int rows, int cols, float threshold)
+    {
+        using var h = new HostCall(this, "ClassMatch");
+        CpuBackend.Instance.ClassMatch(h[predictions], h[targets], h[y], rows, cols, threshold);
     }
 
     /// <summary>Per-group mean, (biased) variance and 1 / sqrt(variance + eps).</summary>
@@ -1054,11 +1687,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.NormStats) is OperationKernels.NormStats kernel)
         {
             kernel(this, x, mean, variance, invStd, outer, groups, inner, eps);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            NormStatsKernel(x, mean, variance, invStd, outer, groups, inner, eps);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.NormStats);
+        try
         {
             NormStatsKernel(x, mean, variance, invStd, outer, groups, inner, eps);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            NormStatsOnHost(x, mean, variance, invStd, outer, groups, inner, eps);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of NormStats (the default body of NormStatsKernel), for RetryOnHost.
+    private void NormStatsOnHost(Storage x, Storage mean, Storage variance, Storage invStd, int outer, int groups, int inner, float eps)
+    {
+        using var h = new HostCall(this, "NormStats");
+        CpuBackend.Instance.NormStats(h[x], h[mean], h[variance], h[invStd], outer, groups, inner, eps);
     }
 
     /// <summary>y = (x - mean[g]) * invStd[g].</summary>
@@ -1082,11 +1740,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.NormApply) is OperationKernels.NormApply kernel)
         {
             kernel(this, x, mean, invStd, y, outer, groups, inner);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            NormApplyKernel(x, mean, invStd, y, outer, groups, inner);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.NormApply);
+        try
         {
             NormApplyKernel(x, mean, invStd, y, outer, groups, inner);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            NormApplyOnHost(x, mean, invStd, y, outer, groups, inner);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of NormApply (the default body of NormApplyKernel), for RetryOnHost.
+    private void NormApplyOnHost(Storage x, Storage mean, Storage invStd, Storage y, int outer, int groups, int inner)
+    {
+        using var h = new HostCall(this, "NormApply");
+        CpuBackend.Instance.NormApply(h[x], h[mean], h[invStd], h[y], outer, groups, inner);
     }
 
     /// <summary>dx += invStd[g] / M * (M * dxhat - sum1[g] - xhat * sum2[g]).</summary>
@@ -1110,11 +1793,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.NormBackward) is OperationKernels.NormBackward kernel)
         {
             kernel(this, dxhat, xhat, sum1, sum2, invStd, dx, outer, groups, inner);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            NormBackwardKernel(dxhat, xhat, sum1, sum2, invStd, dx, outer, groups, inner);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.NormBackward);
+        try
         {
             NormBackwardKernel(dxhat, xhat, sum1, sum2, invStd, dx, outer, groups, inner);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            NormBackwardOnHost(dxhat, xhat, sum1, sum2, invStd, dx, outer, groups, inner);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of NormBackward (the default body of NormBackwardKernel), for RetryOnHost.
+    private void NormBackwardOnHost(Storage dxhat, Storage xhat, Storage sum1, Storage sum2, Storage invStd, Storage dx, int outer, int groups, int inner)
+    {
+        using var h = new HostCall(this, "NormBackward");
+        CpuBackend.Instance.NormBackward(h[dxhat], h[xhat], h[sum1], h[sum2], h[invStd], h[dx], outer, groups, inner);
     }
 
     /// <summary>
@@ -1140,11 +1848,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.GroupScaleShift) is OperationKernels.GroupScaleShift kernel)
         {
             kernel(this, x, scale, shift, y, n, groups, inner, accumulate);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            GroupScaleShiftKernel(x, scale, shift, y, n, groups, inner, accumulate);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.GroupScaleShift);
+        try
         {
             GroupScaleShiftKernel(x, scale, shift, y, n, groups, inner, accumulate);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            GroupScaleShiftOnHost(x, scale, shift, y, n, groups, inner, accumulate);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of GroupScaleShift (the default body of GroupScaleShiftKernel), for RetryOnHost.
+    private void GroupScaleShiftOnHost(Storage x, Storage? scale, Storage? shift, Storage y, int n, int groups, int inner, bool accumulate)
+    {
+        using var h = new HostCall(this, "GroupScaleShift");
+        CpuBackend.Instance.GroupScaleShift(h[x], h.Maybe(scale), h.Maybe(shift), h[y], n, groups, inner, accumulate);
     }
 
     /// <summary>sumA[g] += Σ a; sumAB[g] += Σ a·b over each group (see NormStats for the layout). b/sumAB may be null.</summary>
@@ -1168,11 +1901,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.GroupReduce) is OperationKernels.GroupReduce kernel)
         {
             kernel(this, a, b, sumA, sumAB, outer, groups, inner);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            GroupReduceKernel(a, b, sumA, sumAB, outer, groups, inner);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.GroupReduce);
+        try
         {
             GroupReduceKernel(a, b, sumA, sumAB, outer, groups, inner);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            GroupReduceOnHost(a, b, sumA, sumAB, outer, groups, inner);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of GroupReduce (the default body of GroupReduceKernel), for RetryOnHost.
+    private void GroupReduceOnHost(Storage a, Storage? b, Storage sumA, Storage? sumAB, int outer, int groups, int inner)
+    {
+        using var h = new HostCall(this, "GroupReduce");
+        CpuBackend.Instance.GroupReduce(h[a], h.Maybe(b), h[sumA], h.Maybe(sumAB), outer, groups, inner);
     }
 
     /// <summary>y = 1 / sqrt(x + eps).</summary>
@@ -1196,11 +1954,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.InvSqrt) is OperationKernels.InvSqrt kernel)
         {
             kernel(this, x, y, n, eps);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            InvSqrtKernel(x, y, n, eps);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.InvSqrt);
+        try
         {
             InvSqrtKernel(x, y, n, eps);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            InvSqrtOnHost(x, y, n, eps);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of InvSqrt (the default body of InvSqrtKernel), for RetryOnHost.
+    private void InvSqrtOnHost(Storage x, Storage y, int n, float eps)
+    {
+        using var h = new HostCall(this, "InvSqrt");
+        CpuBackend.Instance.InvSqrt(h[x], h[y], n, eps);
     }
 
     /// <summary>Embedding lookup: y[i, :] = table[indices[i], :] for count indices of width dim.</summary>
@@ -1224,11 +2007,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.Gather) is OperationKernels.Gather kernel)
         {
             kernel(this, table, indices, y, count, dim, vocabulary);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            GatherKernel(table, indices, y, count, dim, vocabulary);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.Gather);
+        try
         {
             GatherKernel(table, indices, y, count, dim, vocabulary);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            GatherOnHost(table, indices, y, count, dim, vocabulary);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of Gather (the default body of GatherKernel), for RetryOnHost.
+    private void GatherOnHost(Storage table, Storage indices, Storage y, int count, int dim, int vocabulary)
+    {
+        using var h = new HostCall(this, "Gather");
+        CpuBackend.Instance.Gather(h[table], h[indices], h[y], count, dim, vocabulary);
     }
 
     /// <summary><see cref="Gather"/> from a bfloat16 table packed as in <see cref="BFloat16MatMul"/> ([vocabulary, dim]).</summary>
@@ -1252,11 +2060,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.GatherBFloat16) is OperationKernels.GatherBFloat16 kernel)
         {
             kernel(this, packed, indices, y, count, dim, vocabulary);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            GatherBFloat16Kernel(packed, indices, y, count, dim, vocabulary);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.GatherBFloat16);
+        try
         {
             GatherBFloat16Kernel(packed, indices, y, count, dim, vocabulary);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            GatherBFloat16OnHost(packed, indices, y, count, dim, vocabulary);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of GatherBFloat16 (the default body of GatherBFloat16Kernel), for RetryOnHost.
+    private void GatherBFloat16OnHost(Storage packed, Storage indices, Storage y, int count, int dim, int vocabulary)
+    {
+        using var h = new HostCall(this, "GatherBFloat16");
+        CpuBackend.Instance.GatherBFloat16(h[packed], h[indices], h[y], count, dim, vocabulary);
     }
 
     /// <summary>One-hot rows: y[i, :] = 0 except y[i, indices[i]] = 1, for count indices over classes columns.</summary>
@@ -1280,11 +2113,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.OneHot) is OperationKernels.OneHot kernel)
         {
             kernel(this, indices, y, count, classes);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            OneHotKernel(indices, y, count, classes);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.OneHot);
+        try
         {
             OneHotKernel(indices, y, count, classes);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            OneHotOnHost(indices, y, count, classes);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of OneHot (the default body of OneHotKernel), for RetryOnHost.
+    private void OneHotOnHost(Storage indices, Storage y, int count, int classes)
+    {
+        using var h = new HostCall(this, "OneHot");
+        CpuBackend.Instance.OneHot(h[indices], h[y], count, classes);
     }
 
     /// <summary>dtable[indices[i], :] += dy[i, :].</summary>
@@ -1308,11 +2166,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.ScatterAdd) is OperationKernels.ScatterAdd kernel)
         {
             kernel(this, dy, indices, dtable, count, dim, vocabulary);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            ScatterAddKernel(dy, indices, dtable, count, dim, vocabulary);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.ScatterAdd);
+        try
         {
             ScatterAddKernel(dy, indices, dtable, count, dim, vocabulary);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            ScatterAddOnHost(dy, indices, dtable, count, dim, vocabulary);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of ScatterAdd (the default body of ScatterAddKernel), for RetryOnHost.
+    private void ScatterAddOnHost(Storage dy, Storage indices, Storage dtable, int count, int dim, int vocabulary)
+    {
+        using var h = new HostCall(this, "ScatterAdd");
+        CpuBackend.Instance.ScatterAdd(h[dy], h[indices], h[dtable], count, dim, vocabulary);
     }
 
     /// <summary>Unfolds image patches: cols[(n, oh, ow), (c, kh, kw)] = x[n, c, oh*sh - ph + kh, ow*sw - pw + kw] (0 outside).</summary>
@@ -1336,11 +2219,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.Im2Col) is OperationKernels.Im2Col kernel)
         {
             kernel(this, x, cols, in g);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            Im2ColKernel(x, cols, in g);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.Im2Col);
+        try
         {
             Im2ColKernel(x, cols, in g);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            Im2ColOnHost(x, cols, in g);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of Im2Col (the default body of Im2ColKernel), for RetryOnHost.
+    private void Im2ColOnHost(Storage x, Storage cols, in ConvGeometry g)
+    {
+        using var h = new HostCall(this, "Im2Col");
+        CpuBackend.Instance.Im2Col(h[x], h[cols], in g);
     }
 
     /// <summary>The adjoint of <see cref="Im2Col"/>: dx += fold(dcols).</summary>
@@ -1364,11 +2272,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.Col2Im) is OperationKernels.Col2Im kernel)
         {
             kernel(this, dcols, dx, in g);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            Col2ImKernel(dcols, dx, in g);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.Col2Im);
+        try
         {
             Col2ImKernel(dcols, dx, in g);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            Col2ImOnHost(dcols, dx, in g);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of Col2Im (the default body of Col2ImKernel), for RetryOnHost.
+    private void Col2ImOnHost(Storage dcols, Storage dx, in ConvGeometry g)
+    {
+        using var h = new HostCall(this, "Col2Im");
+        CpuBackend.Instance.Col2Im(h[dcols], h[dx], in g);
     }
 
     /// <summary>Max pooling; argmax receives the flat input index of each maximum (as raw int bits).</summary>
@@ -1392,11 +2325,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.MaxPool) is OperationKernels.MaxPool kernel)
         {
             kernel(this, x, y, argmax, in g);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            MaxPoolKernel(x, y, argmax, in g);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.MaxPool);
+        try
         {
             MaxPoolKernel(x, y, argmax, in g);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            MaxPoolOnHost(x, y, argmax, in g);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of MaxPool (the default body of MaxPoolKernel), for RetryOnHost.
+    private void MaxPoolOnHost(Storage x, Storage y, Storage argmax, in ConvGeometry g)
+    {
+        using var h = new HostCall(this, "MaxPool");
+        CpuBackend.Instance.MaxPool(h[x], h[y], h[argmax], in g);
     }
 
     /// <summary>dx[argmax[i]] += dy[i].</summary>
@@ -1420,11 +2378,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.MaxPoolBackward) is OperationKernels.MaxPoolBackward kernel)
         {
             kernel(this, dy, argmax, dx, count);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            MaxPoolBackwardKernel(dy, argmax, dx, count);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.MaxPoolBackward);
+        try
         {
             MaxPoolBackwardKernel(dy, argmax, dx, count);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            MaxPoolBackwardOnHost(dy, argmax, dx, count);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of MaxPoolBackward (the default body of MaxPoolBackwardKernel), for RetryOnHost.
+    private void MaxPoolBackwardOnHost(Storage dy, Storage argmax, Storage dx, int count)
+    {
+        using var h = new HostCall(this, "MaxPoolBackward");
+        CpuBackend.Instance.MaxPoolBackward(h[dy], h[argmax], h[dx], count);
     }
 
     /// <summary>
@@ -1482,11 +2465,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.Permute) is OperationKernels.Permute kernel)
         {
             kernel(this, x, y, outShape, inStrides, accumulate);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            PermuteKernel(x, y, outShape, inStrides, accumulate);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.Permute);
+        try
         {
             PermuteKernel(x, y, outShape, inStrides, accumulate);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            PermuteOnHost(x, y, outShape, inStrides, accumulate);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of Permute (the default body of PermuteKernel), for RetryOnHost.
+    private void PermuteOnHost(Storage x, Storage y, ReadOnlySpan<int> outShape, ReadOnlySpan<int> inStrides, bool accumulate)
+    {
+        using var h = new HostCall(this, "Permute");
+        CpuBackend.Instance.Permute(h[x], h[y], outShape, inStrides, accumulate);
     }
 
     /// <summary>y[o, i] (+)= scale * Σ_d x[o, d, i] for a [outer, dim, inner] view.</summary>
@@ -1510,11 +2518,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.SumAxis) is OperationKernels.SumAxis kernel)
         {
             kernel(this, x, y, outer, dim, inner, scale, accumulate);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            SumAxisKernel(x, y, outer, dim, inner, scale, accumulate);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.SumAxis);
+        try
         {
             SumAxisKernel(x, y, outer, dim, inner, scale, accumulate);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            SumAxisOnHost(x, y, outer, dim, inner, scale, accumulate);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of SumAxis (the default body of SumAxisKernel), for RetryOnHost.
+    private void SumAxisOnHost(Storage x, Storage y, int outer, int dim, int inner, float scale, bool accumulate)
+    {
+        using var h = new HostCall(this, "SumAxis");
+        CpuBackend.Instance.SumAxis(h[x], h[y], outer, dim, inner, scale, accumulate);
     }
 
     /// <summary>dx[o, d, i] += scale * dy[o, i] (the gradient of <see cref="SumAxis"/>).</summary>
@@ -1538,11 +2571,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.BroadcastAxis) is OperationKernels.BroadcastAxis kernel)
         {
             kernel(this, dy, dx, outer, dim, inner, scale);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            BroadcastAxisKernel(dy, dx, outer, dim, inner, scale);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.BroadcastAxis);
+        try
         {
             BroadcastAxisKernel(dy, dx, outer, dim, inner, scale);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            BroadcastAxisOnHost(dy, dx, outer, dim, inner, scale);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of BroadcastAxis (the default body of BroadcastAxisKernel), for RetryOnHost.
+    private void BroadcastAxisOnHost(Storage dy, Storage dx, int outer, int dim, int inner, float scale)
+    {
+        using var h = new HostCall(this, "BroadcastAxis");
+        CpuBackend.Instance.BroadcastAxis(h[dy], h[dx], outer, dim, inner, scale);
     }
 
     /// <summary>SGD with optional momentum: v = momentum * v + g; p -= lr * v (v is null when momentum is 0).</summary>
@@ -1566,11 +2624,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.SgdStep) is OperationKernels.SgdStep kernel)
         {
             kernel(this, p, g, v, n, lr, momentum);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            SgdStepKernel(p, g, v, n, lr, momentum);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.SgdStep);
+        try
         {
             SgdStepKernel(p, g, v, n, lr, momentum);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            SgdStepOnHost(p, g, v, n, lr, momentum);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of SgdStep (the default body of SgdStepKernel), for RetryOnHost.
+    private void SgdStepOnHost(Storage p, Storage g, Storage? v, int n, float lr, float momentum)
+    {
+        using var h = new HostCall(this, "SgdStep");
+        CpuBackend.Instance.SgdStep(h[p], h[g], h.Maybe(v), n, lr, momentum);
     }
 
     /// <summary>Adam: m, v moments updated in place; p -= lr * m / (sqrt(v) + eps). lr is already bias-corrected.</summary>
@@ -1594,11 +2677,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.AdamStep) is OperationKernels.AdamStep kernel)
         {
             kernel(this, p, g, m, v, n, lr, beta1, beta2, eps);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            AdamStepKernel(p, g, m, v, n, lr, beta1, beta2, eps);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.AdamStep);
+        try
         {
             AdamStepKernel(p, g, m, v, n, lr, beta1, beta2, eps);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            AdamStepOnHost(p, g, m, v, n, lr, beta1, beta2, eps);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of AdamStep (the default body of AdamStepKernel), for RetryOnHost.
+    private void AdamStepOnHost(Storage p, Storage g, Storage m, Storage v, int n, float lr, float beta1, float beta2, float eps)
+    {
+        using var h = new HostCall(this, "AdamStep");
+        CpuBackend.Instance.AdamStep(h[p], h[g], h[m], h[v], n, lr, beta1, beta2, eps);
     }
 
     /// <summary>
@@ -1629,11 +2737,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.AdamStep8Bit) is OperationKernels.AdamStep8Bit kernel)
         {
             kernel(this, p, g, m, v, absMax, map, n, lr, beta1, beta2, eps, gradientScale, decay);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            AdamStep8BitKernel(p, g, m, v, absMax, map, n, lr, beta1, beta2, eps, gradientScale, decay);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.AdamStep8Bit);
+        try
         {
             AdamStep8BitKernel(p, g, m, v, absMax, map, n, lr, beta1, beta2, eps, gradientScale, decay);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            AdamStep8BitOnHost(p, g, m, v, absMax, map, n, lr, beta1, beta2, eps, gradientScale, decay);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of AdamStep8Bit (the default body of AdamStep8BitKernel), for RetryOnHost.
+    private void AdamStep8BitOnHost(Storage p, Storage g, Storage m, Storage v, Storage absMax, Storage map, int n, float lr, float beta1, float beta2, float eps, float gradientScale, float decay)
+    {
+        using var h = new HostCall(this, "AdamStep8Bit");
+        CpuBackend.Instance.AdamStep8Bit(h[p], h[g], h[m], h[v], h[absMax], h[map], n, lr, beta1, beta2, eps, gradientScale, decay);
     }
 
     /// <summary>total[0] += Σ x² over <paramref name="n"/> elements (a gradient norm without temporary tensors).</summary>
@@ -1657,11 +2790,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.SumSquares) is OperationKernels.SumSquares kernel)
         {
             kernel(this, x, total, n);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            SumSquaresKernel(x, total, n);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.SumSquares);
+        try
         {
             SumSquaresKernel(x, total, n);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            SumSquaresOnHost(x, total, n);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of SumSquares (the default body of SumSquaresKernel), for RetryOnHost.
+    private void SumSquaresOnHost(Storage x, Storage total, int n)
+    {
+        using var h = new HostCall(this, "SumSquares");
+        CpuBackend.Instance.SumSquares(h[x], h[total], n);
     }
 
     /// <summary>
@@ -1681,7 +2839,45 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private bool FusedAdamWRegistered(ReadOnlySpan<(Storage P, Storage G, Storage M, Storage V, int N)> tensors, ref IDisposable? cache, float maxNorm, float lr, float decay, float beta1, float beta2, float eps, bool zeroGradients)
     {
-        return Kernel(OperationIndex.FusedAdamW) is OperationKernels.FusedAdamW kernel ? kernel(this, tensors, ref cache, maxNorm, lr, decay, beta1, beta2, eps, zeroGradients) : FusedAdamWKernel(tensors, ref cache, maxNorm, lr, decay, beta1, beta2, eps, zeroGradients);
+        if (Kernel(OperationIndex.FusedAdamW) is OperationKernels.FusedAdamW kernel)
+        {
+            return kernel(this, tensors, ref cache, maxNorm, lr, decay, beta1, beta2, eps, zeroGradients);
+        }
+
+        if (!RetryOnHost)
+        {
+            return FusedAdamWKernel(tensors, ref cache, maxNorm, lr, decay, beta1, beta2, eps, zeroGradients);
+        }
+
+        var retry = new HostRetry(Ops.FusedAdamW);
+        try
+        {
+            return FusedAdamWKernel(tensors, ref cache, maxNorm, lr, decay, beta1, beta2, eps, zeroGradients);
+        }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            return FusedAdamWOnHost(tensors, ref cache, maxNorm, lr, decay, beta1, beta2, eps, zeroGradients);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of FusedAdamW (the default body of FusedAdamWKernel), for RetryOnHost.
+    private bool FusedAdamWOnHost(ReadOnlySpan<(Storage P, Storage G, Storage M, Storage V, int N)> tensors, ref IDisposable? cache, float maxNorm, float lr, float decay, float beta1, float beta2, float eps, bool zeroGradients)
+    {
+        using var h = new HostCall(this, "FusedAdamW");
+        var mirrors = new (Storage P, Storage G, Storage M, Storage V, int N)[tensors.Length];
+        for (int i = 0; i < tensors.Length; i++)
+        {
+            var (p, g, m, v, n) = tensors[i];
+            mirrors[i] = (h[p], h[g], h[m], h[v], n);
+        }
+
+        IDisposable? none = null;                                          // the CPU keeps no tables
+        return CpuBackend.Instance.FusedAdamW(mirrors, ref none, maxNorm, lr, decay, beta1, beta2, eps, zeroGradients);
     }
 
     /// <summary>
@@ -1708,11 +2904,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.ClipFactor) is OperationKernels.ClipFactor kernel)
         {
             kernel(this, sumSquares, factor, maxNorm);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            ClipFactorKernel(sumSquares, factor, maxNorm);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.ClipFactor);
+        try
         {
             ClipFactorKernel(sumSquares, factor, maxNorm);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            ClipFactorOnHost(sumSquares, factor, maxNorm);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of ClipFactor (the default body of ClipFactorKernel), for RetryOnHost.
+    private void ClipFactorOnHost(Storage sumSquares, Storage factor, float maxNorm)
+    {
+        using var h = new HostCall(this, "ClipFactor");
+        CpuBackend.Instance.ClipFactor(h[sumSquares], h[factor], maxNorm);
     }
 
     /// <summary>Inverted dropout: y = keep(i) ? x / (1 - p) : 0, where keep(i) comes from <see cref="DropoutMask"/>.</summary>
@@ -1736,11 +2957,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.Dropout) is OperationKernels.Dropout kernel)
         {
             kernel(this, x, y, n, p, seed);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            DropoutKernel(x, y, n, p, seed);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.Dropout);
+        try
         {
             DropoutKernel(x, y, n, p, seed);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            DropoutOnHost(x, y, n, p, seed);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of Dropout (the default body of DropoutKernel), for RetryOnHost.
+    private void DropoutOnHost(Storage x, Storage y, int n, float p, uint seed)
+    {
+        using var h = new HostCall(this, "Dropout");
+        CpuBackend.Instance.Dropout(h[x], h[y], n, p, seed);
     }
 
     /// <summary>dx += keep(i) ? dy / (1 - p) : 0, regenerating the same mask from the seed.</summary>
@@ -1764,11 +3010,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.DropoutBackward) is OperationKernels.DropoutBackward kernel)
         {
             kernel(this, dy, dx, n, p, seed);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            DropoutBackwardKernel(dy, dx, n, p, seed);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.DropoutBackward);
+        try
         {
             DropoutBackwardKernel(dy, dx, n, p, seed);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            DropoutBackwardOnHost(dy, dx, n, p, seed);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of DropoutBackward (the default body of DropoutBackwardKernel), for RetryOnHost.
+    private void DropoutBackwardOnHost(Storage dy, Storage dx, int n, float p, uint seed)
+    {
+        using var h = new HostCall(this, "DropoutBackward");
+        CpuBackend.Instance.DropoutBackward(h[dy], h[dx], n, p, seed);
     }
 
     /// <summary>y[r, :] = softmax(scale * x[r, :] + mask[r % maskRows, :]) (mask optional).</summary>
@@ -1792,11 +3063,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.ScaleMaskSoftmax) is OperationKernels.ScaleMaskSoftmax kernel)
         {
             kernel(this, x, mask, y, rows, cols, maskRows, scale);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            ScaleMaskSoftmaxKernel(x, mask, y, rows, cols, maskRows, scale);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.ScaleMaskSoftmax);
+        try
         {
             ScaleMaskSoftmaxKernel(x, mask, y, rows, cols, maskRows, scale);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            ScaleMaskSoftmaxOnHost(x, mask, y, rows, cols, maskRows, scale);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of ScaleMaskSoftmax (the default body of ScaleMaskSoftmaxKernel), for RetryOnHost.
+    private void ScaleMaskSoftmaxOnHost(Storage x, Storage? mask, Storage y, int rows, int cols, int maskRows, float scale)
+    {
+        using var h = new HostCall(this, "ScaleMaskSoftmax");
+        CpuBackend.Instance.ScaleMaskSoftmax(h[x], h.Maybe(mask), h[y], rows, cols, maskRows, scale);
     }
 
     /// <summary>y[r, :] = (x[r, :] - mean) / sqrt(var + eps) * gamma + beta over the last dimension.</summary>
@@ -1820,11 +3116,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.LayerNormFused) is OperationKernels.LayerNormFused kernel)
         {
             kernel(this, x, gamma, beta, y, rows, cols, eps);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            LayerNormFusedKernel(x, gamma, beta, y, rows, cols, eps);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.LayerNormFused);
+        try
         {
             LayerNormFusedKernel(x, gamma, beta, y, rows, cols, eps);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            LayerNormFusedOnHost(x, gamma, beta, y, rows, cols, eps);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of LayerNormFused (the default body of LayerNormFusedKernel), for RetryOnHost.
+    private void LayerNormFusedOnHost(Storage x, Storage gamma, Storage beta, Storage y, int rows, int cols, float eps)
+    {
+        using var h = new HostCall(this, "LayerNormFused");
+        CpuBackend.Instance.LayerNormFused(h[x], h[gamma], h[beta], h[y], rows, cols, eps);
     }
 
     /// <summary><see cref="LayerNormFused"/> that also stores each row's mean (stats[r]) and 1 / sqrt(var + eps) (stats[rows + r]).</summary>
@@ -1848,11 +3169,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.LayerNormTrain) is OperationKernels.LayerNormTrain kernel)
         {
             kernel(this, x, gamma, beta, y, stats, rows, cols, eps);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            LayerNormTrainKernel(x, gamma, beta, y, stats, rows, cols, eps);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.LayerNormTrain);
+        try
         {
             LayerNormTrainKernel(x, gamma, beta, y, stats, rows, cols, eps);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            LayerNormTrainOnHost(x, gamma, beta, y, stats, rows, cols, eps);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of LayerNormTrain (the default body of LayerNormTrainKernel), for RetryOnHost.
+    private void LayerNormTrainOnHost(Storage x, Storage gamma, Storage beta, Storage y, Storage stats, int rows, int cols, float eps)
+    {
+        using var h = new HostCall(this, "LayerNormTrain");
+        CpuBackend.Instance.LayerNormTrain(h[x], h[gamma], h[beta], h[y], h[stats], rows, cols, eps);
     }
 
     /// <summary>
@@ -1878,11 +3224,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.LayerNormBackward) is OperationKernels.LayerNormBackward kernel)
         {
             kernel(this, x, gamma, dy, stats, dx, dgamma, dbeta, rows, cols);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            LayerNormBackwardKernel(x, gamma, dy, stats, dx, dgamma, dbeta, rows, cols);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.LayerNormBackward);
+        try
         {
             LayerNormBackwardKernel(x, gamma, dy, stats, dx, dgamma, dbeta, rows, cols);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            LayerNormBackwardOnHost(x, gamma, dy, stats, dx, dgamma, dbeta, rows, cols);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of LayerNormBackward (the default body of LayerNormBackwardKernel), for RetryOnHost.
+    private void LayerNormBackwardOnHost(Storage x, Storage gamma, Storage dy, Storage stats, Storage? dx, Storage? dgamma, Storage? dbeta, int rows, int cols)
+    {
+        using var h = new HostCall(this, "LayerNormBackward");
+        CpuBackend.Instance.LayerNormBackward(h[x], h[gamma], h[dy], h[stats], h.Maybe(dx), h.Maybe(dgamma), h.Maybe(dbeta), rows, cols);
     }
 
     /// <summary>y[i] = gelu(x[i] + bias[i % cols]).</summary>
@@ -1906,11 +3277,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.BiasGelu) is OperationKernels.BiasGelu kernel)
         {
             kernel(this, x, bias, y, n, cols);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            BiasGeluKernel(x, bias, y, n, cols);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.BiasGelu);
+        try
         {
             BiasGeluKernel(x, bias, y, n, cols);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            BiasGeluOnHost(x, bias, y, n, cols);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of BiasGelu (the default body of BiasGeluKernel), for RetryOnHost.
+    private void BiasGeluOnHost(Storage x, Storage bias, Storage y, int n, int cols)
+    {
+        using var h = new HostCall(this, "BiasGelu");
+        CpuBackend.Instance.BiasGelu(h[x], h[bias], h[y], n, cols);
     }
 
     /// <summary>
@@ -1937,11 +3333,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.Int8MatMul) is OperationKernels.Int8MatMul kernel)
         {
             kernel(this, x, q, scales, y, m, n, k);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            Int8MatMulKernel(x, q, scales, y, m, n, k);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.Int8MatMul);
+        try
         {
             Int8MatMulKernel(x, q, scales, y, m, n, k);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            Int8MatMulOnHost(x, q, scales, y, m, n, k);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of Int8MatMul (the default body of Int8MatMulKernel), for RetryOnHost.
+    private void Int8MatMulOnHost(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
+    {
+        using var h = new HostCall(this, "Int8MatMul");
+        CpuBackend.Instance.Int8MatMul(h[x], h[q], h[scales], h[y], m, n, k);
     }
 
     /// <summary>
@@ -1968,11 +3389,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.BFloat16MatMul) is OperationKernels.BFloat16MatMul kernel)
         {
             kernel(this, x, packed, y, m, n, k);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            BFloat16MatMulKernel(x, packed, y, m, n, k);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.BFloat16MatMul);
+        try
         {
             BFloat16MatMulKernel(x, packed, y, m, n, k);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            BFloat16MatMulOnHost(x, packed, y, m, n, k);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of BFloat16MatMul (the default body of BFloat16MatMulKernel), for RetryOnHost.
+    private void BFloat16MatMulOnHost(Storage x, Storage packed, Storage y, int m, int n, int k)
+    {
+        using var h = new HostCall(this, "BFloat16MatMul");
+        CpuBackend.Instance.BFloat16MatMul(h[x], h[packed], h[y], m, n, k);
     }
 
     /// <summary>w[k, n] = the float32 values of bfloat16 weights packed as in <see cref="BFloat16MatMul"/>.</summary>
@@ -1996,11 +3442,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.BFloat16Dequantize) is OperationKernels.BFloat16Dequantize kernel)
         {
             kernel(this, packed, w, k, n);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            BFloat16DequantizeKernel(packed, w, k, n);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.BFloat16Dequantize);
+        try
         {
             BFloat16DequantizeKernel(packed, w, k, n);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            BFloat16DequantizeOnHost(packed, w, k, n);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of BFloat16Dequantize (the default body of BFloat16DequantizeKernel), for RetryOnHost.
+    private void BFloat16DequantizeOnHost(Storage packed, Storage w, int k, int n)
+    {
+        using var h = new HostCall(this, "BFloat16Dequantize");
+        CpuBackend.Instance.BFloat16Dequantize(h[packed], h[w], k, n);
     }
 
     /// <summary>
@@ -2027,11 +3498,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.PackBFloat16) is OperationKernels.PackBFloat16 kernel)
         {
             kernel(this, x, packed, n);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            PackBFloat16Kernel(x, packed, n);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.PackBFloat16);
+        try
         {
             PackBFloat16Kernel(x, packed, n);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            PackBFloat16OnHost(x, packed, n);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of PackBFloat16 (the default body of PackBFloat16Kernel), for RetryOnHost.
+    private void PackBFloat16OnHost(Storage x, Storage packed, int n)
+    {
+        using var h = new HostCall(this, "PackBFloat16");
+        CpuBackend.Instance.PackBFloat16(h[x], h[packed], n);
     }
 
     /// <summary>w[k, n] = q[k, n] · scales[n] (see <see cref="Int8MatMul"/> for the packing).</summary>
@@ -2055,11 +3551,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.Int8Dequantize) is OperationKernels.Int8Dequantize kernel)
         {
             kernel(this, q, scales, w, k, n);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            Int8DequantizeKernel(q, scales, w, k, n);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.Int8Dequantize);
+        try
         {
             Int8DequantizeKernel(q, scales, w, k, n);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            Int8DequantizeOnHost(q, scales, w, k, n);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of Int8Dequantize (the default body of Int8DequantizeKernel), for RetryOnHost.
+    private void Int8DequantizeOnHost(Storage q, Storage scales, Storage w, int k, int n)
+    {
+        using var h = new HostCall(this, "Int8Dequantize");
+        CpuBackend.Instance.Int8Dequantize(h[q], h[scales], h[w], k, n);
     }
 
     /// <summary>
@@ -2087,11 +3608,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.Int4MatMul) is OperationKernels.Int4MatMul kernel)
         {
             kernel(this, x, q, scales, y, m, n, k);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            Int4MatMulKernel(x, q, scales, y, m, n, k);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.Int4MatMul);
+        try
         {
             Int4MatMulKernel(x, q, scales, y, m, n, k);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            Int4MatMulOnHost(x, q, scales, y, m, n, k);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of Int4MatMul (the default body of Int4MatMulKernel), for RetryOnHost.
+    private void Int4MatMulOnHost(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
+    {
+        using var h = new HostCall(this, "Int4MatMul");
+        CpuBackend.Instance.Int4MatMul(h[x], h[q], h[scales], h[y], m, n, k);
     }
 
     /// <summary>w[k, n] = the float values of 4-bit weights packed as in <see cref="Int4MatMul"/>.</summary>
@@ -2115,11 +3661,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.Int4Dequantize) is OperationKernels.Int4Dequantize kernel)
         {
             kernel(this, q, scales, w, k, n);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            Int4DequantizeKernel(q, scales, w, k, n);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.Int4Dequantize);
+        try
         {
             Int4DequantizeKernel(q, scales, w, k, n);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            Int4DequantizeOnHost(q, scales, w, k, n);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of Int4Dequantize (the default body of Int4DequantizeKernel), for RetryOnHost.
+    private void Int4DequantizeOnHost(Storage q, Storage scales, Storage w, int k, int n)
+    {
+        using var h = new HostCall(this, "Int4Dequantize");
+        CpuBackend.Instance.Int4Dequantize(h[q], h[scales], h[w], k, n);
     }
 
     /// <summary>y = x · inv per row, inv[r] = 1 / sqrt(mean(x[r]²) + eps) (stored for the backward pass).</summary>
@@ -2143,11 +3714,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.RmsNorm) is OperationKernels.RmsNorm kernel)
         {
             kernel(this, x, y, inv, rows, cols, eps);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            RmsNormKernel(x, y, inv, rows, cols, eps);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.RmsNorm);
+        try
         {
             RmsNormKernel(x, y, inv, rows, cols, eps);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            RmsNormOnHost(x, y, inv, rows, cols, eps);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of RmsNorm (the default body of RmsNormKernel), for RetryOnHost.
+    private void RmsNormOnHost(Storage x, Storage y, Storage inv, int rows, int cols, float eps)
+    {
+        using var h = new HostCall(this, "RmsNorm");
+        CpuBackend.Instance.RmsNorm(h[x], h[y], h[inv], rows, cols, eps);
     }
 
     /// <summary>dx += inv[r] · (dy - y · mean(dy · y)) per row, where y is the normalized forward output.</summary>
@@ -2171,11 +3767,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.RmsNormBackward) is OperationKernels.RmsNormBackward kernel)
         {
             kernel(this, dy, y, inv, dx, rows, cols);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            RmsNormBackwardKernel(dy, y, inv, dx, rows, cols);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.RmsNormBackward);
+        try
         {
             RmsNormBackwardKernel(dy, y, inv, dx, rows, cols);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            RmsNormBackwardOnHost(dy, y, inv, dx, rows, cols);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of RmsNormBackward (the default body of RmsNormBackwardKernel), for RetryOnHost.
+    private void RmsNormBackwardOnHost(Storage dy, Storage y, Storage inv, Storage dx, int rows, int cols)
+    {
+        using var h = new HostCall(this, "RmsNormBackward");
+        CpuBackend.Instance.RmsNormBackward(h[dy], h[y], h[inv], h[dx], rows, cols);
     }
 
     /// <summary>
@@ -2203,11 +3824,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.Rope) is OperationKernels.Rope kernel)
         {
             kernel(this, x, y, cos, sin, positions, rows, heads, steps, dim, half, interleaved, sign);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            RopeKernel(x, y, cos, sin, positions, rows, heads, steps, dim, half, interleaved, sign);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.Rope);
+        try
         {
             RopeKernel(x, y, cos, sin, positions, rows, heads, steps, dim, half, interleaved, sign);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            RopeOnHost(x, y, cos, sin, positions, rows, heads, steps, dim, half, interleaved, sign);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of Rope (the default body of RopeKernel), for RetryOnHost.
+    private void RopeOnHost(Storage x, Storage y, Storage cos, Storage sin, Storage positions, int rows, int heads, int steps, int dim, int half, bool interleaved, float sign)
+    {
+        using var h = new HostCall(this, "Rope");
+        CpuBackend.Instance.Rope(h[x], h[y], h[cos], h[sin], h[positions], rows, heads, steps, dim, half, interleaved, sign);
     }
 
     /// <summary>y = x · inv · (gain[c] + offset) per row with inv = 1 / sqrt(mean(x²) + eps): normalization and gain in one pass (inference).</summary>
@@ -2231,11 +3877,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.RmsNormAffine) is OperationKernels.RmsNormAffine kernel)
         {
             kernel(this, x, gain, y, rows, cols, eps, offset);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            RmsNormAffineKernel(x, gain, y, rows, cols, eps, offset);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.RmsNormAffine);
+        try
         {
             RmsNormAffineKernel(x, gain, y, rows, cols, eps, offset);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            RmsNormAffineOnHost(x, gain, y, rows, cols, eps, offset);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of RmsNormAffine (the default body of RmsNormAffineKernel), for RetryOnHost.
+    private void RmsNormAffineOnHost(Storage x, Storage gain, Storage y, int rows, int cols, float eps, float offset)
+    {
+        using var h = new HostCall(this, "RmsNormAffine");
+        CpuBackend.Instance.RmsNormAffine(h[x], h[gain], h[y], rows, cols, eps, offset);
     }
 
     /// <summary>sum = a + b and y = RMS-normalized sum · (gain[c] + offset) per row, in one pass (inference).</summary>
@@ -2259,11 +3930,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.AddRmsNormAffine) is OperationKernels.AddRmsNormAffine kernel)
         {
             kernel(this, a, b, sum, gain, y, rows, cols, eps, offset);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            AddRmsNormAffineKernel(a, b, sum, gain, y, rows, cols, eps, offset);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.AddRmsNormAffine);
+        try
         {
             AddRmsNormAffineKernel(a, b, sum, gain, y, rows, cols, eps, offset);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            AddRmsNormAffineOnHost(a, b, sum, gain, y, rows, cols, eps, offset);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of AddRmsNormAffine (the default body of AddRmsNormAffineKernel), for RetryOnHost.
+    private void AddRmsNormAffineOnHost(Storage a, Storage b, Storage sum, Storage gain, Storage y, int rows, int cols, float eps, float offset)
+    {
+        using var h = new HostCall(this, "AddRmsNormAffine");
+        CpuBackend.Instance.AddRmsNormAffine(h[a], h[b], h[sum], h[gain], h[y], rows, cols, eps, offset);
     }
 
     /// <summary>
@@ -2290,11 +3986,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.RmsNormRope) is OperationKernels.RmsNormRope kernel)
         {
             kernel(this, x, gain, cos, sin, positions, y, rows, cols, eps, offset, heads, steps, half, interleaved);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            RmsNormRopeKernel(x, gain, cos, sin, positions, y, rows, cols, eps, offset, heads, steps, half, interleaved);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.RmsNormRope);
+        try
         {
             RmsNormRopeKernel(x, gain, cos, sin, positions, y, rows, cols, eps, offset, heads, steps, half, interleaved);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            RmsNormRopeOnHost(x, gain, cos, sin, positions, y, rows, cols, eps, offset, heads, steps, half, interleaved);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of RmsNormRope (the default body of RmsNormRopeKernel), for RetryOnHost.
+    private void RmsNormRopeOnHost(Storage x, Storage gain, Storage cos, Storage sin, Storage positions, Storage y, int rows, int cols, float eps, float offset, int heads, int steps, int half, bool interleaved)
+    {
+        using var h = new HostCall(this, "RmsNormRope");
+        CpuBackend.Instance.RmsNormRope(h[x], h[gain], h[cos], h[sin], h[positions], h[y], rows, cols, eps, offset, heads, steps, half, interleaved);
     }
 
     /// <summary>
@@ -2374,11 +4095,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.SoftmaxCrossEntropyRows) is OperationKernels.SoftmaxCrossEntropyRows kernel)
         {
             kernel(this, logits, targets, weights, losses, rows, vocabulary, scale);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            SoftmaxCrossEntropyRowsKernel(logits, targets, weights, losses, rows, vocabulary, scale);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.SoftmaxCrossEntropyRows);
+        try
         {
             SoftmaxCrossEntropyRowsKernel(logits, targets, weights, losses, rows, vocabulary, scale);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            SoftmaxCrossEntropyRowsOnHost(logits, targets, weights, losses, rows, vocabulary, scale);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of SoftmaxCrossEntropyRows (the default body of SoftmaxCrossEntropyRowsKernel), for RetryOnHost.
+    private void SoftmaxCrossEntropyRowsOnHost(Storage logits, Storage targets, Storage weights, Storage losses, int rows, int vocabulary, float scale)
+    {
+        using var h = new HostCall(this, "SoftmaxCrossEntropyRows");
+        CpuBackend.Instance.SoftmaxCrossEntropyRows(h[logits], h[targets], h[weights], h[losses], rows, vocabulary, scale);
     }
 
     /// <summary>y = act(gate) · up element-wise; kind 0 = SiLU, 1 = GELU (tanh approximation), 2 = ReLU.</summary>
@@ -2402,11 +4148,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.GatedActivation) is OperationKernels.GatedActivation kernel)
         {
             kernel(this, gate, up, y, n, kind);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            GatedActivationKernel(gate, up, y, n, kind);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.GatedActivation);
+        try
         {
             GatedActivationKernel(gate, up, y, n, kind);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            GatedActivationOnHost(gate, up, y, n, kind);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of GatedActivation (the default body of GatedActivationKernel), for RetryOnHost.
+    private void GatedActivationOnHost(Storage gate, Storage up, Storage y, int n, int kind)
+    {
+        using var h = new HostCall(this, "GatedActivation");
+        CpuBackend.Instance.GatedActivation(h[gate], h[up], h[y], n, kind);
     }
 
     /// <summary>dgate += dy · up · act'(gate) when flags has bit 0, dup += dy · act(gate) when it has bit 1; bits 2 and 3 write dgate and dup (= instead of +=).</summary>
@@ -2430,11 +4201,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.GatedActivationBackward) is OperationKernels.GatedActivationBackward kernel)
         {
             kernel(this, gate, up, dy, dgate, dup, n, kind, flags);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            GatedActivationBackwardKernel(gate, up, dy, dgate, dup, n, kind, flags);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.GatedActivationBackward);
+        try
         {
             GatedActivationBackwardKernel(gate, up, dy, dgate, dup, n, kind, flags);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            GatedActivationBackwardOnHost(gate, up, dy, dgate, dup, n, kind, flags);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of GatedActivationBackward (the default body of GatedActivationBackwardKernel), for RetryOnHost.
+    private void GatedActivationBackwardOnHost(Storage gate, Storage up, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags)
+    {
+        using var h = new HostCall(this, "GatedActivationBackward");
+        CpuBackend.Instance.GatedActivationBackward(h[gate], h[up], h[dy], h[dgate], h[dup], n, kind, flags);
     }
 
     /// <summary>
@@ -2463,11 +4259,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.GatedActivationPacked) is OperationKernels.GatedActivationPacked kernel)
         {
             kernel(this, gate, up, packedGate, packedUp, y, packedY, n, kind, flags);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            GatedActivationPackedKernel(gate, up, packedGate, packedUp, y, packedY, n, kind, flags);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.GatedActivationPacked);
+        try
         {
             GatedActivationPackedKernel(gate, up, packedGate, packedUp, y, packedY, n, kind, flags);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            GatedActivationPackedOnHost(gate, up, packedGate, packedUp, y, packedY, n, kind, flags);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of GatedActivationPacked (the default body of GatedActivationPackedKernel), for RetryOnHost.
+    private void GatedActivationPackedOnHost(Storage gate, Storage up, Storage packedGate, Storage packedUp, Storage y, Storage packedY, int n, int kind, int flags)
+    {
+        using var h = new HostCall(this, "GatedActivationPacked");
+        CpuBackend.Instance.GatedActivationPacked(h[gate], h[up], h[packedGate], h[packedUp], h[y], h[packedY], n, kind, flags);
     }
 
     /// <summary><see cref="GatedActivationBackward"/> reading gate and up as bfloat16 words.</summary>
@@ -2491,11 +4312,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.GatedActivationBackwardPacked) is OperationKernels.GatedActivationBackwardPacked kernel)
         {
             kernel(this, packedGate, packedUp, dy, dgate, dup, n, kind, flags);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            GatedActivationBackwardPackedKernel(packedGate, packedUp, dy, dgate, dup, n, kind, flags);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.GatedActivationBackwardPacked);
+        try
         {
             GatedActivationBackwardPackedKernel(packedGate, packedUp, dy, dgate, dup, n, kind, flags);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            GatedActivationBackwardPackedOnHost(packedGate, packedUp, dy, dgate, dup, n, kind, flags);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of GatedActivationBackwardPacked (the default body of GatedActivationBackwardPackedKernel), for RetryOnHost.
+    private void GatedActivationBackwardPackedOnHost(Storage packedGate, Storage packedUp, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags)
+    {
+        using var h = new HostCall(this, "GatedActivationBackwardPacked");
+        CpuBackend.Instance.GatedActivationBackwardPacked(h[packedGate], h[packedUp], h[dy], h[dgate], h[dup], n, kind, flags);
     }
 
     /// <summary>Quantizes source [heads·steps, dim] into the int8 cache at positions position[0] + step.</summary>
@@ -2519,11 +4365,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.KeyValueWriteInt8) is OperationKernels.KeyValueWriteInt8 kernel)
         {
             kernel(this, source, cache, scales, position, heads, steps, capacity, dim);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            KeyValueWriteInt8Kernel(source, cache, scales, position, heads, steps, capacity, dim);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.KeyValueWriteInt8);
+        try
         {
             KeyValueWriteInt8Kernel(source, cache, scales, position, heads, steps, capacity, dim);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            KeyValueWriteInt8OnHost(source, cache, scales, position, heads, steps, capacity, dim);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of KeyValueWriteInt8 (the default body of KeyValueWriteInt8Kernel), for RetryOnHost.
+    private void KeyValueWriteInt8OnHost(Storage source, Storage cache, Storage scales, Storage position, int heads, int steps, int capacity, int dim)
+    {
+        using var h = new HostCall(this, "KeyValueWriteInt8");
+        CpuBackend.Instance.KeyValueWriteInt8(h[source], h[cache], h[scales], h[position], heads, steps, capacity, dim);
     }
 
     /// <summary>y[r, t, c] = scales[r, c] · Σ_d q[r, t, d] · keys[r, c, d] for every cached position c.</summary>
@@ -2547,11 +4418,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.AttentionScoresInt8) is OperationKernels.AttentionScoresInt8 kernel)
         {
             kernel(this, q, cache, scales, y, rows, steps, capacity, dim);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            AttentionScoresInt8Kernel(q, cache, scales, y, rows, steps, capacity, dim);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.AttentionScoresInt8);
+        try
         {
             AttentionScoresInt8Kernel(q, cache, scales, y, rows, steps, capacity, dim);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            AttentionScoresInt8OnHost(q, cache, scales, y, rows, steps, capacity, dim);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of AttentionScoresInt8 (the default body of AttentionScoresInt8Kernel), for RetryOnHost.
+    private void AttentionScoresInt8OnHost(Storage q, Storage cache, Storage scales, Storage y, int rows, int steps, int capacity, int dim)
+    {
+        using var h = new HostCall(this, "AttentionScoresInt8");
+        CpuBackend.Instance.AttentionScoresInt8(h[q], h[cache], h[scales], h[y], rows, steps, capacity, dim);
     }
 
     /// <summary>y[r, t, d] = Σ_c weights[r, t, c] · scales[r, c] · values[r, c, d].</summary>
@@ -2575,11 +4471,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.AttentionContextInt8) is OperationKernels.AttentionContextInt8 kernel)
         {
             kernel(this, weights, cache, scales, y, rows, steps, capacity, dim);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            AttentionContextInt8Kernel(weights, cache, scales, y, rows, steps, capacity, dim);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.AttentionContextInt8);
+        try
         {
             AttentionContextInt8Kernel(weights, cache, scales, y, rows, steps, capacity, dim);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            AttentionContextInt8OnHost(weights, cache, scales, y, rows, steps, capacity, dim);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of AttentionContextInt8 (the default body of AttentionContextInt8Kernel), for RetryOnHost.
+    private void AttentionContextInt8OnHost(Storage weights, Storage cache, Storage scales, Storage y, int rows, int steps, int capacity, int dim)
+    {
+        using var h = new HostCall(this, "AttentionContextInt8");
+        CpuBackend.Instance.AttentionContextInt8(h[weights], h[cache], h[scales], h[y], rows, steps, capacity, dim);
     }
 
     /// <summary>
@@ -2610,11 +4531,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.AttentionDecode) is OperationKernels.AttentionDecode kernel)
         {
             kernel(this, q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            AttentionDecodeKernel(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.AttentionDecode);
+        try
         {
             AttentionDecodeKernel(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, variant);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            AttentionDecodeOnHost(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of AttentionDecode (the default body of AttentionDecodeKernel), for RetryOnHost.
+    private void AttentionDecodeOnHost(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
+    {
+        using var h = new HostCall(this, "AttentionDecode");
+        CpuBackend.Instance.AttentionDecode(h[q], h[keys], h[values], h[position], h[y], heads, rowsPerHead, steps, capacity, dim, scale, variant);
     }
 
     /// <summary>
@@ -2642,11 +4588,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.AttentionInt8) is OperationKernels.AttentionInt8 kernel)
         {
             kernel(this, q, keys, values, keyScales, valueScales, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            AttentionInt8Kernel(q, keys, values, keyScales, valueScales, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.AttentionInt8);
+        try
         {
             AttentionInt8Kernel(q, keys, values, keyScales, valueScales, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            AttentionInt8OnHost(q, keys, values, keyScales, valueScales, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of AttentionInt8 (the default body of AttentionInt8Kernel), for RetryOnHost.
+    private void AttentionInt8OnHost(Storage q, Storage keys, Storage values, Storage keyScales, Storage valueScales, Storage position, Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, bool tiled, AttentionVariant variant)
+    {
+        using var h = new HostCall(this, "AttentionInt8");
+        CpuBackend.Instance.AttentionInt8(h[q], h[keys], h[values], h[keyScales], h[valueScales], h[position], h[y], heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
     }
 
     /// <summary>
@@ -2673,11 +4644,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.AttentionBFloat16) is OperationKernels.AttentionBFloat16 kernel)
         {
             kernel(this, q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            AttentionBFloat16Kernel(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.AttentionBFloat16);
+        try
         {
             AttentionBFloat16Kernel(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            AttentionBFloat16OnHost(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of AttentionBFloat16 (the default body of AttentionBFloat16Kernel), for RetryOnHost.
+    private void AttentionBFloat16OnHost(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, bool tiled, AttentionVariant variant)
+    {
+        using var h = new HostCall(this, "AttentionBFloat16");
+        CpuBackend.Instance.AttentionBFloat16(h[q], h[keys], h[values], h[position], h[y], heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
     }
 
     /// <summary><see cref="KeyValueWrite"/> into a bfloat16 cache (values rounded to nearest, ties to even).</summary>
@@ -2701,11 +4697,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.KeyValueWriteBFloat16) is OperationKernels.KeyValueWriteBFloat16 kernel)
         {
             kernel(this, source, cache, position, heads, steps, capacity, dim);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            KeyValueWriteBFloat16Kernel(source, cache, position, heads, steps, capacity, dim);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.KeyValueWriteBFloat16);
+        try
         {
             KeyValueWriteBFloat16Kernel(source, cache, position, heads, steps, capacity, dim);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            KeyValueWriteBFloat16OnHost(source, cache, position, heads, steps, capacity, dim);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of KeyValueWriteBFloat16 (the default body of KeyValueWriteBFloat16Kernel), for RetryOnHost.
+    private void KeyValueWriteBFloat16OnHost(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
+    {
+        using var h = new HostCall(this, "KeyValueWriteBFloat16");
+        CpuBackend.Instance.KeyValueWriteBFloat16(h[source], h[cache], h[position], heads, steps, capacity, dim);
     }
 
     /// <summary>
@@ -2733,11 +4754,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.AttentionTiledBackward) is OperationKernels.AttentionTiledBackward kernel)
         {
             kernel(this, q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            AttentionTiledBackwardKernel(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.AttentionTiledBackward);
+        try
         {
             AttentionTiledBackwardKernel(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            AttentionTiledBackwardOnHost(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of AttentionTiledBackward (the default body of AttentionTiledBackwardKernel), for RetryOnHost.
+    private void AttentionTiledBackwardOnHost(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
+    {
+        using var h = new HostCall(this, "AttentionTiledBackward");
+        CpuBackend.Instance.AttentionTiledBackward(h[q], h[keys], h[values], h[output], h[logSumExp], h[dOutput], h[dq], h[dkeys], h[dvalues], heads, rowsPerHead, steps, capacity, dim, scale, variant);
     }
 
     /// <summary>
@@ -2757,7 +4803,37 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private bool AttentionSegmentedRegistered(Storage q, Storage keys, Storage values, Storage y, Storage? logSumExp, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant)
     {
-        return Kernel(OperationIndex.AttentionSegmented) is OperationKernels.AttentionSegmented kernel ? kernel(this, q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant) : AttentionSegmentedKernel(q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
+        if (Kernel(OperationIndex.AttentionSegmented) is OperationKernels.AttentionSegmented kernel)
+        {
+            return kernel(this, q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
+        }
+
+        if (!RetryOnHost)
+        {
+            return AttentionSegmentedKernel(q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
+        }
+
+        var retry = new HostRetry(Ops.AttentionSegmented);
+        try
+        {
+            return AttentionSegmentedKernel(q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
+        }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            return AttentionSegmentedOnHost(q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of AttentionSegmented (the default body of AttentionSegmentedKernel), for RetryOnHost.
+    private bool AttentionSegmentedOnHost(Storage q, Storage keys, Storage values, Storage y, Storage? logSumExp, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant)
+    {
+        using var h = new HostCall(this, "AttentionSegmented");
+        return CpuBackend.Instance.AttentionSegmented(h[q], h[keys], h[values], h[y], h.Maybe(logSumExp), h[starts], h[ends], heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
     }
 
     /// <summary>
@@ -2775,7 +4851,37 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private bool AttentionRowsRegistered(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
     {
-        return Kernel(OperationIndex.AttentionRows) is OperationKernels.AttentionRows kernel ? kernel(this, q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant) : AttentionRowsKernel(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
+        if (Kernel(OperationIndex.AttentionRows) is OperationKernels.AttentionRows kernel)
+        {
+            return kernel(this, q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+
+        if (!RetryOnHost)
+        {
+            return AttentionRowsKernel(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+
+        var retry = new HostRetry(Ops.AttentionRows);
+        try
+        {
+            return AttentionRowsKernel(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            return AttentionRowsOnHost(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of AttentionRows (the default body of AttentionRowsKernel), for RetryOnHost.
+    private bool AttentionRowsOnHost(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
+    {
+        using var h = new HostCall(this, "AttentionRows");
+        return CpuBackend.Instance.AttentionRows(h[q], h[keys], h[values], h[position], h[y], h[starts], heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
     }
 
     /// <summary>The gradient of <see cref="AttentionSegmented"/> (as <see cref="AttentionTiledBackward"/>); false when unsupported.</summary>
@@ -2789,7 +4895,38 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private bool AttentionSegmentedBackwardRegistered(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant)
     {
-        return Kernel(OperationIndex.AttentionSegmentedBackward) is OperationKernels.AttentionSegmentedBackward kernel ? kernel(this, q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant) : AttentionSegmentedBackwardKernel(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
+        if (Kernel(OperationIndex.AttentionSegmentedBackward) is OperationKernels.AttentionSegmentedBackward kernel)
+        {
+            return kernel(this, q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
+        }
+
+        if (!RetryOnHost)
+        {
+            return AttentionSegmentedBackwardKernel(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
+        }
+
+        var retry = new HostRetry(Ops.AttentionSegmentedBackward);
+        try
+        {
+            return AttentionSegmentedBackwardKernel(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
+        }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            return AttentionSegmentedBackwardOnHost(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of AttentionSegmentedBackward (the default body of AttentionSegmentedBackwardKernel), for RetryOnHost.
+    private bool AttentionSegmentedBackwardOnHost(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant)
+    {
+        using var h = new HostCall(this, "AttentionSegmentedBackward");
+        return CpuBackend.Instance.AttentionSegmentedBackward(h[q], h[keys], h[values], h[output], h[logSumExp], h[dOutput], h[dq], h[dkeys], h[dvalues],
+            h[starts], h[ends], heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
     }
 
     /// <summary>
@@ -2818,11 +4955,42 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.AttentionTiled) is OperationKernels.AttentionTiled kernel)
         {
             kernel(this, q, keys, values, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            AttentionTiledKernel(q, keys, values, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.AttentionTiled);
+        try
         {
             AttentionTiledKernel(q, keys, values, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            AttentionTiledOnHost(q, keys, values, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of AttentionTiled (the default body of AttentionTiledKernel), for RetryOnHost.
+    private void AttentionTiledOnHost(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage? logSumExp, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
+    {
+        if (logSumExp is null)
+        {
+            AttentionDecode(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+            return;
+        }
+
+        using var h = new HostCall(this, "AttentionTiled");
+        CpuBackend.Instance.AttentionTiled(h[q], h[keys], h[values], h[position], h[y], h[logSumExp], heads, rowsPerHead, steps, capacity, dim, scale, variant);
     }
 
     /// <summary>mask[i, j] = j ≤ position + i ? 0 : -1e9 for a [rows, capacity] mask; position is read from device memory.</summary>
@@ -2846,11 +5014,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.DecoderMask) is OperationKernels.DecoderMask kernel)
         {
             kernel(this, position, mask, rows, capacity);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            DecoderMaskKernel(position, mask, rows, capacity);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.DecoderMask);
+        try
         {
             DecoderMaskKernel(position, mask, rows, capacity);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            DecoderMaskOnHost(position, mask, rows, capacity);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of DecoderMask (the default body of DecoderMaskKernel), for RetryOnHost.
+    private void DecoderMaskOnHost(Storage position, Storage mask, int rows, int capacity)
+    {
+        using var h = new HostCall(this, "DecoderMask");
+        CpuBackend.Instance.DecoderMask(h[position], h[mask], rows, capacity);
     }
 
     /// <summary>cache[bh, position + t, :] = source[bh, t, :] for [heads, steps, dim] → [heads, capacity, dim].</summary>
@@ -2874,11 +5067,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.KeyValueWrite) is OperationKernels.KeyValueWrite kernel)
         {
             kernel(this, source, cache, position, heads, steps, capacity, dim);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            KeyValueWriteKernel(source, cache, position, heads, steps, capacity, dim);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.KeyValueWrite);
+        try
         {
             KeyValueWriteKernel(source, cache, position, heads, steps, capacity, dim);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            KeyValueWriteOnHost(source, cache, position, heads, steps, capacity, dim);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of KeyValueWrite (the default body of KeyValueWriteKernel), for RetryOnHost.
+    private void KeyValueWriteOnHost(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
+    {
+        using var h = new HostCall(this, "KeyValueWrite");
+        CpuBackend.Instance.KeyValueWrite(h[source], h[cache], h[position], heads, steps, capacity, dim);
     }
 
     /// <summary>
@@ -2909,11 +5127,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.SampleRows) is OperationKernels.SampleRows kernel)
         {
             kernel(this, logits, ids, stats, step, rows, vocabulary, rowStride, rowOffset, temperature, topK, topP, minP, seed);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            SampleRowsKernel(logits, ids, stats, step, rows, vocabulary, rowStride, rowOffset, temperature, topK, topP, minP, seed);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.SampleRows);
+        try
         {
             SampleRowsKernel(logits, ids, stats, step, rows, vocabulary, rowStride, rowOffset, temperature, topK, topP, minP, seed);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            SampleRowsOnHost(logits, ids, stats, step, rows, vocabulary, rowStride, rowOffset, temperature, topK, topP, minP, seed);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of SampleRows (the default body of SampleRowsKernel), for RetryOnHost.
+    private void SampleRowsOnHost(Storage logits, Storage ids, Storage stats, Storage step, int rows, int vocabulary, int rowStride, int rowOffset, float temperature, int topK, float topP, float minP, uint seed)
+    {
+        using var h = new HostCall(this, "SampleRows");
+        CpuBackend.Instance.SampleRows(h[logits], h[ids], h[stats], h[step], rows, vocabulary, rowStride, rowOffset, temperature, topK, topP, minP, seed);
     }
 
     /// <summary>
@@ -2942,11 +5185,36 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.PenalizeRows) is OperationKernels.PenalizeRows kernel)
         {
             kernel(this, logits, work, history, length, rows, vocabulary, rowStride, rowOffset, capacity, lastN, repeat, presence, frequency);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            PenalizeRowsKernel(logits, work, history, length, rows, vocabulary, rowStride, rowOffset, capacity, lastN, repeat, presence, frequency);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.PenalizeRows);
+        try
         {
             PenalizeRowsKernel(logits, work, history, length, rows, vocabulary, rowStride, rowOffset, capacity, lastN, repeat, presence, frequency);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            PenalizeRowsOnHost(logits, work, history, length, rows, vocabulary, rowStride, rowOffset, capacity, lastN, repeat, presence, frequency);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of PenalizeRows (the default body of PenalizeRowsKernel), for RetryOnHost.
+    private void PenalizeRowsOnHost(Storage logits, Storage work, Storage history, Storage length, int rows, int vocabulary, int rowStride, int rowOffset, int capacity, int lastN, float repeat, float presence, float frequency)
+    {
+        using var h = new HostCall(this, "PenalizeRows");
+        CpuBackend.Instance.PenalizeRows(h[logits], h[work], h[history], h[length], rows, vocabulary, rowStride, rowOffset, capacity, lastN, repeat, presence, frequency);
     }
 
     /// <summary>history[r, length % capacity] = ids[r] for every row (length read from device memory, not advanced).</summary>
@@ -2970,10 +5238,35 @@ public abstract partial class Backend
         if (Kernel(OperationIndex.HistoryPush) is OperationKernels.HistoryPush kernel)
         {
             kernel(this, ids, history, length, rows, capacity);
+            return;
         }
-        else
+
+        if (!RetryOnHost)
+        {
+            HistoryPushKernel(ids, history, length, rows, capacity);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.HistoryPush);
+        try
         {
             HistoryPushKernel(ids, history, length, rows, capacity);
         }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            HistoryPushOnHost(ids, history, length, rows, capacity);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of HistoryPush (the default body of HistoryPushKernel), for RetryOnHost.
+    private void HistoryPushOnHost(Storage ids, Storage history, Storage length, int rows, int capacity)
+    {
+        using var h = new HostCall(this, "HistoryPush");
+        CpuBackend.Instance.HistoryPush(h[ids], h[history], h[length], rows, capacity);
     }
 }

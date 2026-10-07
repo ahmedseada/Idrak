@@ -18,6 +18,8 @@ jobs:
       - run: dotnet run -c Release --no-build --project tests/Idrak.Tests
         env:
           IDRAK_DEVICES: cpu
+      # An app's own tests of its override, with the testing kit (samples/Idrak.Samples.Override).
+      - run: dotnet run -c Release --no-build --project samples/Idrak.Samples.Override.Tests
       - name: Pack (every project under src/)
         run: for p in src/*/*.csproj; do dotnet pack "$p" -c Release --no-build -o artifacts; done
       - uses: actions/upload-artifact@v4
