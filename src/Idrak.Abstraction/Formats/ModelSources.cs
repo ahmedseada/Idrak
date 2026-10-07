@@ -16,7 +16,7 @@ public sealed record ModelSourceOptions
     public bool Download { get; init; } = true;
 
     /// <summary>
-    /// What fetches, caches and logs for the source (null: the shared one, Idrak.Datasets' <c>Downloader.Shared</c>); pass
+    /// What fetches, caches and logs for the source (null: the shared one, Idrak.Data's <c>Downloader.Shared</c>); pass
     /// your own for a mirror, an authenticated proxy or an offline cache.
     /// </summary>
     public IDownloader? Downloader { get; init; }

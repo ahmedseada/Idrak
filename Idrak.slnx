@@ -23,8 +23,8 @@
     <Project Path="src/Idrak.AspNetCore/Idrak.AspNetCore.csproj" />
     <Project Path="src/Idrak.Mcp/Idrak.Mcp.csproj" />
     <Project Path="src/Idrak.Onnx.Runtime/Idrak.Onnx.Runtime.csproj" />
-    <Project Path="src/Idrak.Onnx/Idrak.Onnx.csproj" />
-    <Project Path="src/Idrak.Datasets/Idrak.Datasets.csproj" />
+    <Project Path="src/Idrak.Data/Idrak.Data.csproj" />
+    <Project Path="src/Idrak.Vision/Idrak.Vision.csproj" />
     <Project Path="src/Idrak.Cli/Idrak.Cli.csproj" />
     <Project Path="src/Idrak.LanguageModels/Idrak.LanguageModels.csproj" />
     <Project Path="src/Idrak/Idrak.csproj" />
