@@ -45,9 +45,9 @@ lavapipe (Mesa's software Vulkan driver) here, and on CUDA plus `--bench-gemv` o
    against the plain path: required subgroup sizes (VK_EXT_subgroup_size_control), cooperative matrices
    (VK_KHR_cooperative_matrix) for prompt-sized products — both need the runtime to enable them at device and pipeline
    creation.
-6. **Public backend API**: `Backend`, `Storage`, `DeviceProvider` and `HostCall` public, for backends in their own
-   packages. Parked until a different backend family exists: the HIP backend (the third family, [plan 8](8-hip.md))
-   lists what it found awkward in the internal contract.
+6. ✅ **Public backend API** (done by [plan 10](10-abstraction.md), phase 4): `Backend`, `Storage`, `DeviceProvider`
+   and `HostCall` are public in `Idrak.Abstraction`, and the CUDA, Vulkan and HIP devices are built on that surface
+   alone, in their own package `Idrak.Gpu` (`src/Idrak.Gpu/Cuda`, `Vulkan`, `Hip`), which the `Idrak` package brings.
 
 ## The Vulkan contract (runtime ↔ generated kernels)
 

@@ -1,12 +1,11 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using Idrak.Backends.Vulkan;
-using Idrak.Backends;
+using Idrak;
 using Idrak.Generation;
+using Idrak.Gpu.Vulkan;
 using Idrak.Layers;
 using Idrak.Models.Abstractions;
-using Idrak;
 
 // Sliding windows and soft-capped scores in the attention kernels (AttentionVariant): every kernel against a direct
 // reference written out here, the Vulkan kernels against the CPU at every width with no host fallback, and decoders

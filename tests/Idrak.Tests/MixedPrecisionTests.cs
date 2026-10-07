@@ -1,12 +1,12 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using Idrak.Backends.Cuda;
-using Idrak.Backends.Vulkan;
+using Idrak;
+using Idrak.Gpu.Cuda;
+using Idrak.Gpu.Vulkan;
 using Idrak.Layers;
 using Idrak.Models.Abstractions;
 using Idrak.Optimizers;
-using Idrak;
 
 internal static partial class Tests
 {
@@ -1371,7 +1371,7 @@ internal static partial class Tests
         return 0;
     }
 
-    private static ulong P(Tensor t) => ((Idrak.Backends.Cuda.CudaStorage)t.Storage).Pointer;
+    private static ulong P(Tensor t) => ((Idrak.Gpu.Cuda.CudaStorage)t.Storage).Pointer;
 
     private static float RoundBFloat16(float x)
     {

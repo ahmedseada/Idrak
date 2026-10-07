@@ -2,11 +2,10 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Diagnostics;
-using Idrak.Backends;
+using Idrak;
 using Idrak.Generation;
 using Idrak.Layers;
 using Idrak.Models.Abstractions;
-using Idrak;
 
 // dotnet run -c Release --project tests/Idrak.Tests -- --bench-window
 // Sliding windows and soft-caps on every device IDRAK_DEVICES names (default: every GPU found, else the CPU): decoding

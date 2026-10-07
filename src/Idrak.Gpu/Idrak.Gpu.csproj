@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Idrak.Gpu</RootNamespace>
+    <AssemblyName>Idrak.Gpu</AssemblyName>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <IsAotCompatible>true</IsAotCompatible>
+    <Optimize>true</Optimize>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <PackageId>Idrak.Gpu</PackageId>
+    <Description>The GPU devices of Idrak: CUDA (talks to the NVIDIA driver directly, PTX generated at run time), Vulkan (SPIR-V generated at run time) and HIP (AMD ROCm, compiled at run time with hipRTC). Built on the public device API of Idrak.Abstraction alone, with no native files of its own: it loads the GPU driver installed on the machine. The Idrak package brings it along.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Idrak.Abstraction\Idrak.Abstraction.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Idrak.Abstraction.Devices" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Idrak.Tests" />
+    <!-- idrak kernels dump writes the generated kernel sources (PTX, SPIR-V, HIP). -->
+    <InternalsVisibleTo Include="Idrak.Cli" />
+  </ItemGroup>
+
+</Project>

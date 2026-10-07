@@ -10,7 +10,7 @@ and Vulkan, which makes it the input the public backend API (plan 7, phase 6) wa
 
 | Part | What | Where |
 |---|---|---|
-| Runtime | libamdhip64.so (ROCm, Linux) or amdhip64_N.dll (HIP SDK or graphics driver, Windows), loaded at run time; every entry point resolved by name into a function pointer (required ones missing: a reason, no devices; optional ones: null). Also looked for under `HIP_PATH`, `ROCM_PATH` and `/opt/rocm/lib` | `Backends/Hip/HipRuntime.cs` |
+| Runtime | libamdhip64.so (ROCm, Linux) or amdhip64_N.dll (HIP SDK or graphics driver, Windows), loaded at run time; every entry point resolved by name into a function pointer (required ones missing: a reason, no devices; optional ones: null). Also looked for under `HIP_PATH`, `ROCM_PATH` and `/opt/rocm/lib` | `Idrak.Gpu/Hip/HipRuntime.cs` |
 | Devices | `DeviceType.Hip`, devices `hip:0`, `hip:1`, … from `hipGetDeviceCount`; name, memory, compute units, wavefront width, threads per block, shared memory (LDS) per block, grid limits, L2, PCI address and UUID as reported; the compiler target (gcnArchName, with its feature flags) read from the device properties | `HipDeviceLimits.cs` |
 | Policy | Listed (a plain test run includes HIP devices), never `Device.Default` unless `IDRAK_HIP_DEFAULT=1` (then after CUDA, before Vulkan; discrete before integrated, as reported); `IDRAK_DISABLE_HIP=1` hides them | `HipProvider` in `HipBackend.cs` |
 | Backend | The minimum backend: a caching allocator (exact sizes, a reserve of 1/16 of memory as on CUDA), uploads and downloads, device-to-device copies, fills (`hipMemsetD32Async`), strided copies (`hipMemcpy2DAsync`), all on one stream; every other operation through the host fallbacks | `HipBackend.cs` |
@@ -32,7 +32,7 @@ through the host fallback, correct and slow: each call copies its operands to th
   shared memory for the scratch, non-zero grids): a runtime that numbers its attributes differently turns the kernels
   off instead of launching them with wrong sizes.
 - The target string is passed to the compiler and used in cache keys, never in a decision; a test forbids vendor ids,
-  card names and GPU target literals in the code of `src/Idrak/Backends/Hip`, as for Vulkan.
+  card names and GPU target literals in the code of `src/Idrak.Gpu/Hip`, as for Vulkan.
 
 ### How it was checked (no AMD GPU here)
 

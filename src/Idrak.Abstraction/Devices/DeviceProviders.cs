@@ -52,14 +52,14 @@ public abstract class DeviceProvider
 
 /// <summary>
 /// The device kinds beyond the CPU. The GPU devices that ship with the library (CUDA, then Vulkan, then HIP) live in the
-/// Idrak assembly, which registers them; they are registered first, before any other provider, as soon as the registry is
-/// first used, so <see cref="Device.Available"/> lists them even when no type of Idrak has been touched yet.
+/// Idrak.Gpu assembly, which registers them; they are registered first, before any other provider, as soon as the
+/// registry is first used, so <see cref="Device.Available"/> lists them even when no type of Idrak has been touched yet.
 /// </summary>
 public static class DeviceProviders
 {
     private static readonly List<DeviceProvider> Registry = [];
 
-    static DeviceProviders() => LibraryDefaults.Ensure(typeof(DeviceProviders));   // Idrak's GPU devices, first
+    static DeviceProviders() => LibraryDefaults.Ensure(typeof(DeviceProviders));   // Idrak.Gpu's devices, first
 
     /// <summary>The registered providers, in registration order.</summary>
     public static IReadOnlyList<DeviceProvider> All

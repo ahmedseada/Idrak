@@ -2,11 +2,10 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Collections.Concurrent;
-using Idrak.Backends.Vulkan;
-using Idrak.Backends;
+using Idrak;
+using Idrak.Gpu.Vulkan;
 using Idrak.Layers;
 using Idrak.Models.Abstractions;
-using Idrak;
 
 // The fused decoding kernels on Vulkan (BackendCapabilities.FusedKernels): each fused operation against the unfused steps
 // it replaces on the same device and against the CPU, without host fallback and with the same bits run after run; and
