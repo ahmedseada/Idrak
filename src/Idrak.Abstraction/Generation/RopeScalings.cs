@@ -187,12 +187,12 @@ public static class RopeScalings
 
     private static string? Compare(RopeScalingResult library, RopeScalingResult other)
     {
-        if (Comparisons.Numbers(library.Frequencies, other.Frequencies) is { } frequencies)
+        if (Comparisons.Difference(library.Frequencies, other.Frequencies, 1e-9) is { } frequencies)
         {
             return "frequencies: " + frequencies;
         }
 
-        if (Comparisons.Numbers([library.AttentionFactor], [other.AttentionFactor]) is not null)
+        if (Comparisons.Difference([library.AttentionFactor], [other.AttentionFactor], 1e-9) is not null)
         {
             return $"attention factor {library.AttentionFactor} != {other.AttentionFactor}";
         }
@@ -204,7 +204,7 @@ public static class RopeScalings
 
         foreach (int position in (int[])[0, 1 << 16])
         {
-            if (library.FrequenciesAt is { } at && Comparisons.Numbers(at(position), other.FrequenciesAt!(position)) is { } moved)
+            if (library.FrequenciesAt is { } at && Comparisons.Difference(at(position), other.FrequenciesAt!(position), 1e-9) is { } moved)
             {
                 return $"frequencies at position {position}: {moved}";
             }

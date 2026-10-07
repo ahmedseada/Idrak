@@ -16,7 +16,7 @@ its README lists it.
 | Area | What is there |
 |------|---------------|
 | Root (`Idrak.Abstraction`) | `Device`, `DeviceType`, `ComputeResources`, `Tensor`, `TensorScope`, autograd, `Module`; the CPU device (SIMD, multi-threaded), which is also every other device's host fallback |
-| Device API (`Idrak.Abstraction.Devices`) | `Backend` (memory, copies and a `NameKernel` per operation), `Storage`, `BackendCapabilities`, `DeviceProvider` and `DeviceProviders` (where a new kind of device registers), `IMemoryOffload`, `IHostStaging`, `IBackwardStaging` |
+| Device API (`Idrak.Abstraction.Devices`) | `Backend` (memory, copies and a `NameKernel` per operation; `RetryOnHost`, off by default, runs an operation whose kernel fails on the CPU instead), `Storage`, `BackendCapabilities`, `DeviceProvider` and `DeviceProviders` (where a new kind of device registers), `DeviceException` (the base of every GPU error, reported to telemetry when raised), `IMemoryOffload`, `IHostStaging`, `IBackwardStaging` |
 | Operations (`Idrak.Abstraction.Operations`) | `Ops` (a descriptor per operation), `Kernels.Register` (a kernel for an operation on a kind of device), `Kernels.Chain` (which kernel each operation runs on a device), `Kernels.Trace` (calls and host fallbacks) |
 | Modules (`Idrak.Abstraction.Modules`) | `ILinearAdapter` with LoRA and DoRA, `ILinearLayer` |
 | Training (`Idrak.Abstraction.Training`) | `Optimizer` with SGD, Adam and AdamW; `LearningRateScheduler` with the step, exponential, cosine and lambda schedules |
@@ -26,7 +26,7 @@ its README lists it.
 | Generation: tools | `Tool`, `[Tool]`, `ToolResult`, `IToolRegistry` and its default `ToolRegistry` (validation, allow rules, approvals, a timeout); `IToolChatModel` (a chat model that carries tools) and `ChatTools.WithTools` (runs a chat model's tool calls on the server) |
 | Retrieval (`Idrak.Abstraction.Retrieval`) | `IEmbedder` |
 | Serving (`Idrak.Abstraction.Serving`) | the engine's model kinds (`EngineModel<TCopy>`, `IEngineHost`, `IEngineLease`, `IEngineBatcher`), `IPredictor<TIn, TOut>`, `IModelCatalog` (named models reached through their contracts; the inference engine implements it), `KeepAlive` (parses "30m", "1h30m", 0, -1) |
-| Diagnostics (`Idrak.Abstraction.Diagnostics`) | `ITelemetryHook` and the telemetry events |
+| Diagnostics (`Idrak.Abstraction.Diagnostics`) | `Telemetry`, `ITelemetryHook`, `TelemetryLevel` and the telemetry events (`DeviceFailed` among them: a GPU error, or an operation retried on the CPU, with a hint naming `IDRAK_RETRY_ON_HOST` while the retry is off); `ConsoleLogger` and `JsonLinesLogger` always include device failures |
 
 The GPU devices (CUDA, Vulkan, HIP) ship in the `Idrak.Gpu` package (which `Idrak` brings) and are built on this
 public device API alone; when an application includes it, `Device.Available` lists them, even before any other type of
@@ -50,6 +50,11 @@ OperationKernels.Softmax mine = (backend, x, y, rows, cols, log) =>
 };
 using var registration = Kernels.Register(Ops.Softmax, "vulkan", mine, requirement: b => b.Capabilities.FusedKernels);
 ```
+
+To check a device or an override of a contract (a token sampler, a tokenizer, a RoPE scaling) against the default
+implementation, stress it and keep its failing cases, use the testing kit,
+[Idrak.Abstraction.Testing](https://www.nuget.org/packages/Idrak.Abstraction.Testing), from your test project:
+`Conformance.Check(Device.Get("mydevice")).ThrowIfFailed();`.
 
 Projects with implicit usings get `using Idrak.Abstraction;` from this package, so code written for Idrak 0.3 compiles
 unchanged.

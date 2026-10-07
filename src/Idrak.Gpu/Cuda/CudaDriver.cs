@@ -6,8 +6,8 @@ using System.Runtime.InteropServices;
 
 namespace Idrak.Gpu.Cuda;
 
-/// <summary>Thrown when a CUDA driver call fails.</summary>
-public sealed class CudaException(string message) : Exception(message);
+/// <summary>Thrown when a CUDA driver call or kernel fails (a <see cref="DeviceException"/>: reported to telemetry).</summary>
+public sealed class CudaException(string message) : DeviceException("cuda", message);
 
 /// <summary>
 /// Bindings to the CUDA driver API. The driver ships with the NVIDIA display driver

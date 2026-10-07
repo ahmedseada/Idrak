@@ -123,7 +123,7 @@ public static class TokenSamplers
             {
                 var chosen = library.Ids.ToArray();
                 var other = app.Ids.ToArray();
-                if (Comparisons.Numbers(chosen, other, 0) is { } difference)
+                if (Comparisons.Difference(chosen, other, 0f) is { } difference)
                 {
                     _differed++;
                     _first ??= $"step {_steps}: {difference}";

@@ -137,7 +137,7 @@ public static class GgufTypes
                         try
                         {
                             app.Dequantize(raw, other);
-                            run.Done(Comparisons.Numbers(values, other));
+                            run.Done(Comparisons.Difference(values, other, 1e-5f));
                         }
                         catch (Exception e) when (e is not OperationCanceledException)
                         {

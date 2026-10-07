@@ -27,7 +27,7 @@ internal static partial class Tests
     ];
 
     // The overridden slots, with what the tests registered over them.
-    private const string Lowercase = "Lowercase", Linear = "linear";
+    private const string LowercaseType = "Lowercase", LinearType = "linear";
 
     // Records the override loop's telemetry.
     private sealed class OverrideRecorder : ITelemetryHook
@@ -95,7 +95,7 @@ internal static partial class Tests
     private static JsonObject LowercaseTokenizer() => new()
     {
         ["added_tokens"] = new JsonArray(),
-        ["normalizer"] = new JsonObject { ["type"] = Lowercase },
+        ["normalizer"] = new JsonObject { ["type"] = LowercaseType },
         ["model"] = new JsonObject
         {
             ["type"] = "BPE",
@@ -116,22 +116,22 @@ internal static partial class Tests
     private static void RemoveOverrides()
     {
         TokenSamplers.Unregister(TokenSamplers.DefaultName);
-        TokenizerComponents.UnregisterNormalizer(Lowercase);
-        RopeScalings.Unregister(Linear);
+        TokenizerComponents.UnregisterNormalizer(LowercaseType);
+        RopeScalings.Unregister(LinearType);
         TokenSamplers.SetPolicy(TokenSamplers.DefaultName, SlotPolicy.FallBack);
-        TokenizerComponents.SetNormalizerPolicy(Lowercase, SlotPolicy.FallBack);
-        RopeScalings.SetPolicy(Linear, SlotPolicy.FallBack);
+        TokenizerComponents.SetNormalizerPolicy(LowercaseType, SlotPolicy.FallBack);
+        RopeScalings.SetPolicy(LinearType, SlotPolicy.FallBack);
     }
 
     private static void OverrideLoopLibraryDefaults(Device device)
     {
         _ = device;
         const string library = Overrides.Library;
-        Check(RopeScalings.Origin(Linear) == library && TokenSamplers.Origin(TokenSamplers.DefaultName) == library
-              && TokenizerComponents.NormalizerOrigin(Lowercase) == library && TokenizerComponents.PreTokenizerOrigin("ByteLevel") == library
+        Check(RopeScalings.Origin(LinearType) == library && TokenSamplers.Origin(TokenSamplers.DefaultName) == library
+              && TokenizerComponents.NormalizerOrigin(LowercaseType) == library && TokenizerComponents.PreTokenizerOrigin("ByteLevel") == library
               && TokenizerComponents.DecoderOrigin("ByteFallback") == library, "the slots of the acceptance test start at the library's");
         // Built-ins registered on first use, from Abstraction, core, Gpu, Data and Nlp.
-        Check(ToolCallFormats.Origin("json") == library && ChatTemplates.Origin("jinja") == library && PackedWeight.Origin("int4") == library
+        Check(Idrak.Abstraction.Generation.ToolCallFormats.Origin("json") == library && Idrak.Abstraction.Generation.ChatTemplates.Origin("jinja") == library && PackedWeight.Origin("int4") == library
               && KeyValueLayouts.Origin("int8") == library && ModelSources.Origin("huggingface") == library && ModelSources.Origin("folder") == library
               && DeviceProviders.Origin("vulkan") == library && DeviceProviders.Origin("minimal") == "Idrak.Tests", "Abstraction's registries");
         Check(CheckpointFormats.Origin("gguf") == library && GgufTypes.Origin(8) == library && GgufArchitectures.Origin("llama") == library
@@ -144,7 +144,7 @@ internal static partial class Tests
         var origins = Overrides.Report().Select(o => o.Origin).ToHashSet();
         Check(!origins.Overlaps(["Idrak", "Idrak.Abstraction", "Idrak.Gpu", "Idrak.Data", "Idrak.Nlp", "Idrak.Vision"]),
             $"no library assembly is reported as overriding: {string.Join(", ", origins)}");
-        Check(RopeScalings.Get(Linear) == RopeScalings.Default(Linear), "with only its default, a slot hands it out as it is");
+        Check(RopeScalings.Get(LinearType) == RopeScalings.Default(LinearType), "with only its default, a slot hands it out as it is");
     }
 
     private static void OverrideLoopFallBack(Device device)
@@ -165,7 +165,7 @@ internal static partial class Tests
 
             // The tokenizer part: its making fails once, then a call fails once; the built-in answers both times.
             int making = 1, calls = 0;
-            TokenizerComponents.RegisterNormalizer(Lowercase, _ =>
+            TokenizerComponents.RegisterNormalizer(LowercaseType, _ =>
             {
                 if (making-- > 0)
                 {
@@ -181,22 +181,22 @@ internal static partial class Tests
 
             // The RoPE scaling: the first call throws, the second is the app's own.
             int ropeCalls = 0;
-            var linear = RopeScalings.Default(Linear)!;
-            RopeScalings.Register(Linear, input => ropeCalls++ == 0 ? throw new ArithmeticException("the app's scaling broke") : linear(input));
+            var linear = RopeScalings.Default(LinearType)!;
+            RopeScalings.Register(LinearType, input => ropeCalls++ == 0 ? throw new ArithmeticException("the app's scaling broke") : linear(input));
             var expected = new RopeSettings(10000f).Frequencies(8).Select(f => f / 2).ToArray();
-            Check(Comparisons.Numbers(LinearRope().Frequencies(8), expected) is null && ropeCalls == 1, "the failing call fell back to the library's scaling");
-            Check(Comparisons.Numbers(LinearRope().Frequencies(8), expected) is null && ropeCalls == 2, "the next call is the app's");
+            Check(Comparisons.Difference(expected, LinearRope().Frequencies(8), 1e-9) is null && ropeCalls == 1, "the failing call fell back to the library's scaling");
+            Check(Comparisons.Difference(expected, LinearRope().Frequencies(8), 1e-9) is null && ropeCalls == 2, "the next call is the app's");
 
             var fellBack = recorder.FellBack.Select(e => (e.Registry, e.Slot, e.Exception.GetType())).ToList();
             Check(fellBack.SequenceEqual([
                 ("TokenSamplers", "default", typeof(InvalidOperationException)),
-                ("TokenizerComponents.Normalizers", Lowercase, typeof(InvalidDataException)),
-                ("TokenizerComponents.Normalizers", Lowercase, typeof(FormatException)),
-                ("RopeScalings", Linear, typeof(ArithmeticException))]), $"one telemetry event per fallback: {string.Join("; ", fellBack)}");
+                ("TokenizerComponents.Normalizers", LowercaseType, typeof(InvalidDataException)),
+                ("TokenizerComponents.Normalizers", LowercaseType, typeof(FormatException)),
+                ("RopeScalings", LinearType, typeof(ArithmeticException))]), $"one telemetry event per fallback: {string.Join("; ", fellBack)}");
             Check(recorder.FellBack.All(e => e.Origin == "Idrak.Tests" && e.Implementation.StartsWith("Tests", StringComparison.Ordinal)),
                 $"events name the app's implementation: {string.Join(", ", recorder.FellBack.Select(e => e.Implementation))}");
             var report = Overrides.Report();
-            Check(report.Single(o => o.Registry == "RopeScalings" && o.Name == Linear).FallBacks == 1
+            Check(report.Single(o => o.Registry == "RopeScalings" && o.Name == LinearType).FallBacks == 1
                   && report.Single(o => o.Registry == "TokenizerComponents.Normalizers").FallBacks == 2, "the report counts the fallbacks");
         }
         finally
@@ -213,33 +213,33 @@ internal static partial class Tests
         {
             // Every call compared (a rate of 1 keeps the test deterministic); the library answers each time.
             TokenSamplers.SetPolicy(TokenSamplers.DefaultName, SlotPolicy.Shadow, shadowRate: 1);
-            TokenizerComponents.SetNormalizerPolicy(Lowercase, SlotPolicy.Shadow, shadowRate: 1);
-            RopeScalings.SetPolicy(Linear, SlotPolicy.Shadow, shadowRate: 1);
+            TokenizerComponents.SetNormalizerPolicy(LowercaseType, SlotPolicy.Shadow, shadowRate: 1);
+            RopeScalings.SetPolicy(LinearType, SlotPolicy.Shadow, shadowRate: 1);
             var builtIn = TokenSamplers.Default(TokenSamplers.DefaultName)!;
             TokenSamplers.Register(TokenSamplers.DefaultName, request => new NegatingSampler(builtIn(request)));
-            TokenizerComponents.RegisterNormalizer(Lowercase, _ => new FunctionNormalizer(s => s));        // forgets to lower the case
-            var linear = RopeScalings.Default(Linear)!;
-            RopeScalings.Register(Linear, input => linear(input with { Parameters = new JsonObject { ["factor"] = 4 } }));   // twice the factor
+            TokenizerComponents.RegisterNormalizer(LowercaseType, _ => new FunctionNormalizer(s => s));        // forgets to lower the case
+            var linear = RopeScalings.Default(LinearType)!;
+            RopeScalings.Register(LinearType, input => linear(input with { Parameters = new JsonObject { ["factor"] = 4 } }));   // twice the factor
 
             Check(Choose(TokenSamplers.Create, device) == 1, "the library's sampler chooses");
             Check(BpeTokenizer.FromJson(LowercaseTokenizer()).Encode("AB").SequenceEqual([4]), "the built-in normalizer answers");
             var expected = new RopeSettings(10000f).Frequencies(8).Select(f => f / 2).ToArray();
-            Check(Comparisons.Numbers(LinearRope().Frequencies(8), expected) is null, "the library's scaling answers");
+            Check(Comparisons.Difference(expected, LinearRope().Frequencies(8), 1e-9) is null, "the library's scaling answers");
 
             var compared = recorder.Compared.ToDictionary(e => e.Registry);
             Check(compared.Count == 3 && compared.Values.All(e => !e.Agreed && e.Origin == "Idrak.Tests" && e.OverrideTime > TimeSpan.Zero && e.LibraryTime > TimeSpan.Zero),
                 $"one comparison per slot, each differing: {string.Join("; ", recorder.Compared.Select(e => $"{e.Registry}: {e.Difference}"))}");
             Check(compared["TokenSamplers"].Difference!.Contains("1 of 1 steps", StringComparison.Ordinal)
-                  && compared["TokenizerComponents.Normalizers"].Difference == "\"ab\" != \"AB\""
-                  && compared["RopeScalings"].Difference!.StartsWith("frequencies: value 0", StringComparison.Ordinal),
+                  && compared["TokenizerComponents.Normalizers"].Difference == "\"AB\", expected \"ab\""
+                  && compared["RopeScalings"].Difference!.StartsWith("frequencies: element 0", StringComparison.Ordinal),
                 "each difference says what differed");
             Check(recorder.FellBack.Count == 0, "nothing fell back");
 
             // An app's version that agrees, and one that throws: in Shadow neither reaches the caller.
             recorder.Compared.Clear();
-            RopeScalings.Register(Linear, linear);
-            TokenizerComponents.RegisterNormalizer(Lowercase, _ => new FunctionNormalizer(_ => throw new InvalidOperationException("broken")));
-            Check(Comparisons.Numbers(LinearRope().Frequencies(8), expected) is null && BpeTokenizer.FromJson(LowercaseTokenizer()).Encode("AB").SequenceEqual([4]),
+            RopeScalings.Register(LinearType, linear);
+            TokenizerComponents.RegisterNormalizer(LowercaseType, _ => new FunctionNormalizer(_ => throw new InvalidOperationException("broken")));
+            Check(Comparisons.Difference(expected, LinearRope().Frequencies(8), 1e-9) is null && BpeTokenizer.FromJson(LowercaseTokenizer()).Encode("AB").SequenceEqual([4]),
                 "the library answers");
             Check(recorder.Compared.Count == 2 && recorder.Compared[0].Agreed && recorder.Compared[0].Difference is null
                   && !recorder.Compared[1].Agreed && recorder.Compared[1].Exception is InvalidOperationException,
@@ -247,7 +247,7 @@ internal static partial class Tests
 
             // A rate of 0 compares nothing.
             recorder.Compared.Clear();
-            RopeScalings.SetPolicy(Linear, SlotPolicy.Shadow, shadowRate: 0);
+            RopeScalings.SetPolicy(LinearType, SlotPolicy.Shadow, shadowRate: 0);
             _ = LinearRope().Frequencies(8);
             Check(recorder.Compared.Count == 0, "a rate of 0 compares no call");
         }
@@ -262,11 +262,11 @@ internal static partial class Tests
         try
         {
             TokenSamplers.SetPolicy(TokenSamplers.DefaultName, SlotPolicy.Throw);
-            TokenizerComponents.SetNormalizerPolicy(Lowercase, SlotPolicy.Throw);
-            RopeScalings.SetPolicy(Linear, SlotPolicy.Throw);
+            TokenizerComponents.SetNormalizerPolicy(LowercaseType, SlotPolicy.Throw);
+            RopeScalings.SetPolicy(LinearType, SlotPolicy.Throw);
             TokenSamplers.Register(TokenSamplers.DefaultName, _ => throw new InvalidOperationException("sampler"));
-            TokenizerComponents.RegisterNormalizer(Lowercase, _ => throw new InvalidDataException("normalizer"));
-            RopeScalings.Register(Linear, _ => throw new ArithmeticException("scaling"));
+            TokenizerComponents.RegisterNormalizer(LowercaseType, _ => throw new InvalidDataException("normalizer"));
+            RopeScalings.Register(LinearType, _ => throw new ArithmeticException("scaling"));
             Check(Throws<InvalidOperationException>(() => Choose(TokenSamplers.Create, device)), "the sampler's failure reaches the caller");
             Check(Throws<InvalidDataException>(() => BpeTokenizer.FromJson(LowercaseTokenizer())), "the normalizer's failure reaches the caller");
             Check(Throws<ArithmeticException>(() => LinearRope().Frequencies(8)), "the scaling's failure reaches the caller");
@@ -274,43 +274,30 @@ internal static partial class Tests
             // The report: each override, what it replaces, where it comes from and its policy; an added name too.
             RopeScalings.Register("test-added", input => new RopeScalingResult(input.Frequencies));
             var report = Overrides.Report();
-            var rope = report.Single(o => o.Registry == "RopeScalings" && o.Name == Linear);
+            var rope = report.Single(o => o.Registry == "RopeScalings" && o.Name == LinearType);
             Check(rope is { ReplacesDefault: true, Guarded: true, Policy: SlotPolicy.Throw, Origin: "Idrak.Tests" } && rope.PolicyText == "throw"
                   && rope.ToString().Contains("RopeScalings/linear", StringComparison.Ordinal), $"the scaling's row: {rope}");
             Check(report.Single(o => o.Registry == "RopeScalings" && o.Name == "test-added") is { ReplacesDefault: false, PolicyText: "none (no library default)" },
                 "a name only the app registered is listed as added");
-            Check(report.Any(o => o.Registry == "TokenSamplers" && o.Name == "default") && report.Any(o => o.Registry == "TokenizerComponents.Normalizers" && o.Name == Lowercase),
+            Check(report.Any(o => o.Registry == "TokenSamplers" && o.Name == "default") && report.Any(o => o.Registry == "TokenizerComponents.Normalizers" && o.Name == LowercaseType),
                 "the sampler and the normalizer are listed");
             Check(RopeScalings.Unregister("test-added") && !RopeScalings.Contains("test-added"), "an added name is removed");
 
             // Unregister brings each default back (and only once); Default is the library's all along.
-            Check(TokenSamplers.Unregister(TokenSamplers.DefaultName) && TokenizerComponents.UnregisterNormalizer(Lowercase) && RopeScalings.Unregister(Linear),
+            Check(TokenSamplers.Unregister(TokenSamplers.DefaultName) && TokenizerComponents.UnregisterNormalizer(LowercaseType) && RopeScalings.Unregister(LinearType),
                 "the overrides are removed");
-            Check(!TokenSamplers.Unregister(TokenSamplers.DefaultName) && !RopeScalings.Unregister(Linear), "a library default is never removed");
-            Check(TokenSamplers.Origin(TokenSamplers.DefaultName) == Overrides.Library && RopeScalings.Get(Linear) == RopeScalings.Default(Linear)
-                  && TokenizerComponents.FindNormalizer(Lowercase) is null && TokenizerComponents.NormalizerOrigin(Lowercase) == Overrides.Library,
+            Check(!TokenSamplers.Unregister(TokenSamplers.DefaultName) && !RopeScalings.Unregister(LinearType), "a library default is never removed");
+            Check(TokenSamplers.Origin(TokenSamplers.DefaultName) == Overrides.Library && RopeScalings.Get(LinearType) == RopeScalings.Default(LinearType)
+                  && TokenizerComponents.FindNormalizer(LowercaseType) is null && TokenizerComponents.NormalizerOrigin(LowercaseType) == Overrides.Library,
                 "each slot is the library's again");
             Check(Choose(TokenSamplers.Create, device) == 1 && BpeTokenizer.FromJson(LowercaseTokenizer()).Encode("AB").SequenceEqual([4])
-                  && Comparisons.Numbers(LinearRope().Frequencies(8), [.. new RopeSettings(10000f).Frequencies(8).Select(f => f / 2)]) is null,
+                  && Comparisons.Difference([.. new RopeSettings(10000f).Frequencies(8).Select(f => f / 2)], LinearRope().Frequencies(8), 1e-9) is null,
                 "and answers as before, under the Throw policy it kept");
             Check(!Overrides.Report().Any(o => o.Registry is "RopeScalings" or "TokenSamplers" or "TokenizerComponents.Normalizers"), "the report is empty for them");
         }
         finally
         {
             RemoveOverrides();
-        }
-    }
-
-    private static bool Throws<T>(Action action) where T : Exception
-    {
-        try
-        {
-            action();
-            return false;
-        }
-        catch (T)
-        {
-            return true;
         }
     }
 

@@ -180,6 +180,18 @@ public enum EngineEventKind
 public readonly record struct EngineEvent(EngineEventKind Kind, string Model, TimeSpan Duration, TimeSpan QueueWait, int BatchSize, string? Reason);
 
 /// <summary>
+/// Published when a device fails (<c>Devices.DeviceException</c>), to the hooks listening at
+/// <c>TelemetryLevel.Devices</c>: once when the error is raised, or once by the dispatcher when it retried the operation
+/// on the CPU (<c>Backend.RetryOnHost</c>).
+/// </summary>
+/// <param name="Device">The kind of device that failed ("cuda", "vulkan", "hip", …).</param>
+/// <param name="Operation">The operation whose kernel failed (as <c>Operation.Name</c>), or null when not known.</param>
+/// <param name="Message">What failed.</param>
+/// <param name="RetriedOnHost">True when the operation ran again on the CPU and the caller got its result.</param>
+/// <param name="Hint">How to turn the retry on, when it is off for the device; null otherwise.</param>
+public readonly record struct DeviceFailed(string Device, string? Operation, string Message, bool RetriedOnHost, string? Hint);
+
+/// <summary>
 /// Published when an app's implementation of a slot threw and the call was retried on the library default
 /// (<see cref="SlotPolicy.FallBack"/>), when <c>TelemetryLevel.Overrides</c> is enabled.
 /// </summary>

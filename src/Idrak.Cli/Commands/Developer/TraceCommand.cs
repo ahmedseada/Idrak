@@ -23,13 +23,14 @@ internal sealed class TraceCommand : Command
         ["inference"] = TelemetryLevel.Inference,
         ["tools"] = TelemetryLevel.Tools,
         ["engine"] = TelemetryLevel.Engine,
+        ["devices"] = TelemetryLevel.Devices,
         ["overrides"] = TelemetryLevel.Overrides,
         ["all"] = TelemetryLevel.All,
     };
 
     /// <summary>What is traced without <c>--levels</c>: everything but the per-operation events and gradient norms.</summary>
     public const TelemetryLevel DefaultLevels = TelemetryLevel.Training | TelemetryLevel.Batches | TelemetryLevel.Layers
-        | TelemetryLevel.Inference | TelemetryLevel.Tools | TelemetryLevel.Engine | TelemetryLevel.Overrides;
+        | TelemetryLevel.Inference | TelemetryLevel.Tools | TelemetryLevel.Engine | TelemetryLevel.Devices | TelemetryLevel.Overrides;
 
     public override string Name => "trace";
 
@@ -40,12 +41,13 @@ internal sealed class TraceCommand : Command
         "Runs COMMAND (any idrak command) with Idrak's telemetry subscribed: training epochs and batches, every layer's\n" +
         "forward pass, inference calls, tool calls, engine events and an app's overrides falling back, printed as they\n" +
         "happen (to the error output with --json), or written to FILE.jsonl with --out. Put '--' before COMMAND when it has\n" +
-        "options of its own; the common\n" +
-        "options given before it (--device, --json, --quiet, --verbose, --plugin, --config, --cache) are passed on to it.\n\n" +
+        "options of its own; the common options given before it (--device, --json, --quiet, --verbose, --plugin, --config,\n" +
+        "--cache) are passed on to it.\n\n" +
         "Options:\n" +
         "  -o, --out FILE      write the events as JSON Lines to FILE instead of printing them\n" +
         "      --levels LIST   what to trace, separated by commas: training, batches, gradients, layers, operations\n" +
         "                      (every tensor operation and kernel, very verbose), inference, tools, engine,\n" +
+        "                      devices (GPU failures and operations retried on the CPU),\n" +
         "                      overrides (an app's implementation falling back or compared in shadow), all\n" +
         "                      (default: all but operations and gradients)\n" +
         "      --sync          synchronize the device before each timing (true GPU times, slower)\n\n" +
@@ -168,7 +170,7 @@ internal sealed class TraceCommand : Command
     {
         private readonly Dictionary<string, int> _counts = new()
         {
-            ["training"] = 0, ["epochs"] = 0, ["batches"] = 0, ["layers"] = 0, ["operations"] = 0, ["inference"] = 0, ["tools"] = 0, ["engine"] = 0,
+            ["training"] = 0, ["epochs"] = 0, ["batches"] = 0, ["layers"] = 0, ["operations"] = 0, ["inference"] = 0, ["tools"] = 0, ["engine"] = 0, ["devices"] = 0,
         };
 
         public TelemetryLevel Levels { get; } = levels;
@@ -199,6 +201,8 @@ internal sealed class TraceCommand : Command
         public void OnToolCall(in ToolCallCompleted e) => Add("tools");
 
         public void OnEngine(in EngineEvent e) => Add("engine");
+
+        public void OnDeviceFailed(in DeviceFailed e) => Add("devices");
 
         private void Add(string kind)
         {
