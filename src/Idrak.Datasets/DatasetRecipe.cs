@@ -1,156 +1,77 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.Globalization;
 using System.Text.Json.Nodes;
 
 namespace Idrak.Datasets;
 
-/// <summary>
-/// One source of a <see cref="DatasetRecipe"/>, written as a string with options after '?' or as a JSON object:
-/// <list type="bullet">
-/// <item><c>hf:HuggingFaceH4/ultrachat_200k?split=train_sft</c> (options config, split, files, max_files, revision)</item>
-/// <item><c>github:owner/repo[@ref]</c> (a repository's files as documents, files=src/**/*.cs to narrow them; files=data/*.jsonl reads
-/// data files instead; release=latest|tag with asset=*.csv reads release assets)</item>
-/// <item><c>kaggle:owner/dataset</c> (files), <c>zenodo:123456</c> (files)</item>
-/// <item><c>https://host/data.jsonl.gz</c>, or a local file or folder (files)</item>
-/// <item>any source added with <see cref="DatasetSources.Register"/></item>
-/// </list>
-/// Options for any source: take, skip, weight, text (lines | paragraphs | document), documents (every file one row),
-/// columns (a,b,…), format (a <see cref="DataFileFormats"/> name), json_property, and the chat
-/// mapping system, user, assistant (templates over columns such as <c>user={question}</c>).
-/// </summary>
-public sealed class DatasetSpec
+/// <summary>What Idrak.Datasets does with a <see cref="DatasetSpec"/> (Idrak.Abstraction): open it, download it, map it to chat.</summary>
+public static class DatasetSpecExtensions
 {
-    private DatasetSpec(string source, Dictionary<string, string> options)
+    extension(DatasetSpec spec)
     {
-        Source = source;
-        Options = options;
-    }
-
-    /// <summary>The source, without options.</summary>
-    public string Source { get; }
-
-    /// <summary>The options (lower-case names).</summary>
-    public IReadOnlyDictionary<string, string> Options { get; }
-
-    /// <summary>The source's weight in a mix (default 1).</summary>
-    public double Weight => Double("weight") ?? 1;
-
-    /// <summary>Reads <c>source?name=value&amp;name=value</c>.</summary>
-    public static DatasetSpec Parse(string text)
-    {
-        var options = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        int question = text.IndexOf('?', StringComparison.Ordinal);
-        bool isUrl = text.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || text.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
-        string source = text;
-        if (question > 0)
+        /// <summary>The rows of this source, with take / skip / columns applied (not yet normalized to chat or text).</summary>
+        public Dataset Open(IDownloader? downloader = null)
         {
-            // A URL keeps its own query unless the part after '?' holds only options this class knows.
-            var pairs = text[(question + 1)..].Split('&', StringSplitOptions.RemoveEmptyEntries).Select(p => p.Split('=', 2)).ToList();
-            if (!isUrl || pairs.All(p => Known.Contains(p[0])))
+            var data = spec.OpenSource(downloader);
+            if (spec.GetInt64("skip") is { } skip)
             {
-                source = text[..question];
-                foreach (var pair in pairs)
+                data = data.Skip(skip);
+            }
+
+            if (spec.GetInt64("take") is { } take)
+            {
+                data = data.Take(take);
+            }
+
+            if (spec.Get("columns") is { } columns)
+            {
+                data = data.SelectColumns([.. columns.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)]);
+            }
+
+            return data;
+        }
+
+        /// <summary>Downloads the source's files into the cache (without reading rows) and returns their local paths.</summary>
+        public IReadOnlyList<string> Download(IDownloader? downloader = null) => spec.OpenSource(downloader).Download();
+
+        /// <summary>The chat mapping given by the user / assistant / system options, or null to detect the layout.</summary>
+        public ChatMapping? Mapping => spec.Get("user") is { } user
+            ? new ChatMapping { User = user, Assistant = spec.Get("assistant") ?? throw new ArgumentException($"{spec.Source}: user= needs assistant= too."), System = spec.Get("system") }
+            : null;
+
+        private Dataset OpenSource(IDownloader? downloader)
+        {
+            var opener = DatasetSources.Find(spec.Source);
+            foreach (var key in spec.Options.Keys.Where(k => !DatasetSpec.CommonOptions.Contains(k, StringComparer.OrdinalIgnoreCase)
+                                                             && opener?.Options.Contains(k, StringComparer.OrdinalIgnoreCase) != true))
+            {
+                throw new ArgumentException($"{spec.Source}: unknown option '{key}'. Known: {string.Join(", ", DatasetSpec.CommonOptions.Concat(opener?.Options ?? []).Order())}.");
+            }
+
+            var read = new ReadOptions
+            {
+                Text = spec.Get("text")?.ToLowerInvariant() switch
                 {
-                    options[pair[0]] = pair.Length > 1 ? Uri.UnescapeDataString(pair[1].Replace('+', ' ')) : "true";
-                }
-            }
-        }
+                    null or "lines" => TextRows.Lines,
+                    "paragraphs" => TextRows.Paragraphs,
+                    "document" or "documents" => TextRows.Document,
+                    var other => throw new ArgumentException($"{spec.Source}: text={other}: use lines, paragraphs or document."),
+                },
 
-        return new DatasetSpec(source.Trim(), options);
+                // A built-in format by its DataFormat name, or any registered one by its name.
+                Format = spec.Get("format") is { } format && Enum.TryParse<DataFormat>(format, ignoreCase: true, out var builtIn) ? builtIn : null,
+                FileFormat = spec.Get("format") is { } named && !Enum.TryParse<DataFormat>(named, ignoreCase: true, out _) ? DataFileFormats.Get(named) : null,
+                JsonProperty = spec.Get("json_property"),
+                Documents = spec.Flag("documents"),
+            };
+
+            // The registered sources, in order (see DatasetSources): hf:, github:, kaggle:, zenodo:, http(s)://, folders, files.
+            var rows = opener?.Open(spec, read, downloader)
+                ?? throw new FileNotFoundException($"'{spec.Source}' is not a file, a folder or a known source (hf:, github:, kaggle:, zenodo:, http(s)://).");
+            return Dataset.From(rows);
+        }
     }
-
-    /// <summary>Reads a JSON object: {"source": "...", "split": "...", "weight": 2, ...}.</summary>
-    public static DatasetSpec FromJson(JsonObject json)
-    {
-        var options = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var (key, value) in json)
-        {
-            if (key != "source" && value is not null)
-            {
-                options[key] = value is JsonValue v && v.TryGetValue<string>(out var s) ? s : value.ToJsonString();
-            }
-        }
-
-        return new DatasetSpec((string?)json["source"] ?? throw new InvalidDataException("A recipe source needs \"source\"."), options);
-    }
-
-    private static readonly HashSet<string> Known = new(["config", "split", "files", "max_files", "revision", "ref", "release", "asset", "take", "skip", "weight",
-        "text", "columns", "system", "user", "assistant", "format", "json_property", "documents"], StringComparer.OrdinalIgnoreCase);
-
-    /// <summary>The rows of this source, with take / skip / columns applied (not yet normalized to chat or text).</summary>
-    public Dataset Open(Downloader? downloader = null)
-    {
-        var data = OpenSource(downloader);
-        if (Long("skip") is { } skip)
-        {
-            data = data.Skip(skip);
-        }
-
-        if (Long("take") is { } take)
-        {
-            data = data.Take(take);
-        }
-
-        if (String("columns") is { } columns)
-        {
-            data = data.SelectColumns([.. columns.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)]);
-        }
-
-        return data;
-    }
-
-    /// <summary>Downloads the source's files into the cache (without reading rows) and returns their local paths.</summary>
-    public IReadOnlyList<string> Download(Downloader? downloader = null) => OpenSource(downloader).Download();
-
-    private Dataset OpenSource(Downloader? downloader)
-    {
-        var opener = DatasetSources.Find(Source);
-        foreach (var key in Options.Keys.Where(k => !Known.Contains(k) && opener?.Options.Contains(k, StringComparer.OrdinalIgnoreCase) != true))
-        {
-            throw new ArgumentException($"{Source}: unknown option '{key}'. Known: {string.Join(", ", Known.Concat(opener?.Options ?? []).Order())}.");
-        }
-
-        var read = new ReadOptions
-        {
-            Text = String("text")?.ToLowerInvariant() switch
-            {
-                null or "lines" => TextRows.Lines,
-                "paragraphs" => TextRows.Paragraphs,
-                "document" or "documents" => TextRows.Document,
-                var other => throw new ArgumentException($"{Source}: text={other}: use lines, paragraphs or document."),
-            },
-
-            // A built-in format by its DataFormat name, or any registered one by its name.
-            Format = String("format") is { } format && Enum.TryParse<DataFormat>(format, ignoreCase: true, out var builtIn) ? builtIn : null,
-            FileFormat = String("format") is { } named && !Enum.TryParse<DataFormat>(named, ignoreCase: true, out _) ? DataFileFormats.Get(named) : null,
-            JsonProperty = String("json_property"),
-            Documents = Flag("documents"),
-        };
-
-        // The registered sources, in order (see DatasetSources): hf:, github:, kaggle:, zenodo:, http(s)://, folders, files.
-        return opener?.Open(this, read, downloader)
-            ?? throw new FileNotFoundException($"'{Source}' is not a file, a folder or a known source (hf:, github:, kaggle:, zenodo:, http(s)://).");
-    }
-
-    /// <summary>The chat mapping given by the user / assistant / system options, or null to detect the layout.</summary>
-    public ChatMapping? Mapping => String("user") is { } user
-        ? new ChatMapping { User = user, Assistant = String("assistant") ?? throw new ArgumentException($"{Source}: user= needs assistant= too."), System = String("system") }
-        : null;
-
-    /// <inheritdoc />
-    public override string ToString() => Options.Count == 0 ? Source : $"{Source}?{string.Join('&', Options.Select(p => $"{p.Key}={p.Value}"))}";
-
-    internal string? String(string name) => Options.TryGetValue(name, out var v) ? v : null;
-
-    internal bool Flag(string name) => String(name) is { } v && v is "true" or "1" or "yes";
-
-    internal long? Long(string name) => String(name) is { } v ? long.Parse(v, CultureInfo.InvariantCulture) : null;
-
-    internal int? Int(string name) => String(name) is { } v ? int.Parse(v, CultureInfo.InvariantCulture) : null;
-
-    internal double? Double(string name) => String(name) is { } v ? double.Parse(v, CultureInfo.InvariantCulture) : null;
 }
 
 /// <summary>
@@ -265,13 +186,13 @@ public sealed record DatasetRecipe
     /// The training rows and, with <see cref="EvaluationFraction"/> &gt; 0, the evaluation rows: conversations
     /// ({"messages", "tools"}) and / or texts ({"text"}), as <see cref="ChatRows"/> normalizes them.
     /// </summary>
-    public (Dataset Train, Dataset? Evaluation) Build(Downloader? downloader = null) => Build(downloader, null);
+    public (Dataset Train, Dataset? Evaluation) Build(IDownloader? downloader = null) => Build(downloader, null);
 
     /// <summary>
-    /// <see cref="Build(Downloader?)"/>, with <paramref name="counts"/> filled as the rows are read: how many the
+    /// <see cref="Build(IDownloader?)"/>, with <paramref name="counts"/> filled as the rows are read: how many the
     /// sources gave, and how many the length limits and the deduplication dropped (for the last pass over the rows).
     /// </summary>
-    public (Dataset Train, Dataset? Evaluation) Build(Downloader? downloader, RecipeCounts? counts)
+    public (Dataset Train, Dataset? Evaluation) Build(IDownloader? downloader, RecipeCounts? counts)
     {
         if (Sources.Count == 0)
         {
@@ -358,7 +279,7 @@ public sealed record DatasetRecipe
     private static long Length(JsonArray? messages) => messages?.Sum(m => (long)(((string?)m?["content"])?.Length ?? 0)) ?? 0;
 }
 
-/// <summary>What one pass over a <see cref="DatasetRecipe"/>'s rows read and dropped (see <see cref="DatasetRecipe.Build(Downloader?, RecipeCounts?)"/>).</summary>
+/// <summary>What one pass over a <see cref="DatasetRecipe"/>'s rows read and dropped (see <see cref="DatasetRecipe.Build(IDownloader?, RecipeCounts?)"/>).</summary>
 public sealed class RecipeCounts
 {
     /// <summary>Rows the sources gave (conversations and texts).</summary>

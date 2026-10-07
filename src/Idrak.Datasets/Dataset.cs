@@ -28,7 +28,7 @@ public enum MixStop
 /// Create one with <see cref="FromFile"/>, <see cref="FromFolder"/>, <see cref="FromUrl"/> or
 /// the Hugging Face, GitHub, Kaggle and Zenodo sources.
 /// </summary>
-public sealed class Dataset : IEnumerable<JsonObject>
+public sealed class Dataset : IDatasetRows
 {
     private readonly Func<IEnumerable<JsonObject>> _rows;
 
@@ -51,6 +51,16 @@ public sealed class Dataset : IEnumerable<JsonObject>
     /// </summary>
     public IReadOnlyList<string> Download() =>
         Files?.Invoke() ?? throw new InvalidOperationException($"{Name} is derived from another dataset; download its source instead.");
+
+    /// <summary>
+    /// <paramref name="rows"/> as a dataset: itself when it is one, else a dataset reading it (whose <see cref="Download"/>
+    /// is the rows' own), for rows a source of your own opened (<see cref="IDatasetSource"/>).
+    /// </summary>
+    public static Dataset From(IDatasetRows rows)
+    {
+        ArgumentNullException.ThrowIfNull(rows);
+        return rows as Dataset ?? new Dataset(() => rows, rows.Name) { Files = rows.Download };
+    }
 
     /// <summary>Rows kept in memory.</summary>
     public static Dataset FromRows(IEnumerable<JsonObject> rows, string name = "rows")
@@ -106,7 +116,7 @@ public sealed class Dataset : IEnumerable<JsonObject>
     }
 
     /// <summary>A file downloaded from <paramref name="url"/> (once: it is cached, see <see cref="Downloader"/>).</summary>
-    public static Dataset FromUrl(string url, ReadOptions? options = null, Downloader? downloader = null, IReadOnlyDictionary<string, string>? headers = null)
+    public static Dataset FromUrl(string url, ReadOptions? options = null, IDownloader? downloader = null, IReadOnlyDictionary<string, string>? headers = null)
     {
         _ = new Uri(url);                                           // a bad URL fails here, not on first use
         string Fetch() => (downloader ?? Downloader.Shared).Download(url, headers);

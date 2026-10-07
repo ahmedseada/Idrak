@@ -12,90 +12,6 @@ using System.Text.RegularExpressions;
 
 namespace Idrak.Datasets;
 
-/// <summary>File formats <see cref="Dataset"/> reads.</summary>
-public enum DataFormat
-{
-    /// <summary>One JSON object per line (.jsonl, .ndjson).</summary>
-    JsonLines,
-
-    /// <summary>A JSON document (.json): an array of objects, an object holding such an array, or columns of equal length.</summary>
-    Json,
-
-    /// <summary>Comma-separated values with a header row (.csv).</summary>
-    Csv,
-
-    /// <summary>Tab-separated values with a header row (.tsv).</summary>
-    Tsv,
-
-    /// <summary>Apache Parquet (.parquet), the format of most Hugging Face datasets.</summary>
-    Parquet,
-
-    /// <summary>Plain text (.txt, .md): see <see cref="ReadOptions.Text"/>.</summary>
-    Text,
-
-    /// <summary>A source file, as one row {"text", "path", "language"}.</summary>
-    Code,
-}
-
-/// <summary>How text files become rows.</summary>
-public enum TextRows
-{
-    /// <summary>Each non-empty line is a row {"text"} (as Hugging Face's text loader).</summary>
-    Lines,
-
-    /// <summary>Each block of text between blank lines is a row.</summary>
-    Paragraphs,
-
-    /// <summary>The whole file is one row {"text", "path"}.</summary>
-    Document,
-}
-
-/// <summary>How <see cref="Dataset"/> reads files.</summary>
-public sealed record ReadOptions
-{
-    /// <summary>The defaults.</summary>
-    public static ReadOptions Default { get; } = new();
-
-    /// <summary>The format, instead of choosing it by extension.</summary>
-    public DataFormat? Format { get; init; }
-
-    /// <summary>
-    /// The format as an <see cref="IDataFileFormat"/> (for example one added with <see cref="DataFileFormats.Register"/>),
-    /// instead of choosing it by extension; takes precedence over <see cref="Format"/>.
-    /// </summary>
-    public IDataFileFormat? FileFormat { get; init; }
-
-    /// <summary>Text files: a row per line (default), paragraph or file.</summary>
-    public TextRows Text { get; init; } = TextRows.Lines;
-
-    /// <summary>CSV / TSV: turn numbers and true/false into JSON numbers and booleans, empty cells into null.</summary>
-    public bool InferTypes { get; init; } = true;
-
-    /// <summary>JSON documents: the property holding the rows (default: the only array of objects, if there is one).</summary>
-    public string? JsonProperty { get; init; }
-
-    /// <summary>Only files (and archive entries) whose path matches this glob, e.g. <c>*.cs</c> or <c>data/train-*.parquet</c>.</summary>
-    public string? Pattern { get; init; }
-
-    /// <summary>Add a "_file" column with the path each row came from.</summary>
-    public bool IncludeFile { get; init; }
-
-    /// <summary>Also read source code files (as <see cref="DataFormat.Code"/>) in folders and archives.</summary>
-    public bool IncludeCode { get; init; }
-
-    /// <summary>
-    /// Every text file (data files such as .json and .csv included) is one row {"text", "path", "language"}: a repository
-    /// or folder read as documents rather than as data. Implies <see cref="IncludeCode"/>.
-    /// </summary>
-    public bool Documents { get; init; }
-
-    /// <summary>Largest source or text file read as one document, in bytes (larger ones, often generated, are skipped).</summary>
-    public long MaxDocumentBytes { get; init; } = 1 << 20;
-
-    /// <summary>The folder paths are shown relative to (set by <see cref="Dataset.FromFolder"/>).</summary>
-    public string? Root { get; init; }
-}
-
 /// <summary>Reads data files into rows.</summary>
 public static class DataFiles
 {
@@ -157,7 +73,32 @@ public static class DataFiles
 
     // Documents: every format but Parquet is read as source code (one row per file).
     private static IDataFileFormat? DocumentFormat(IDataFileFormat? format, ReadOptions options) =>
-        options.Documents && format is not null && !DataFileFormats.Is(format, DataFormat.Parquet) ? DataFileFormats.Get(nameof(DataFormat.Code)) : format;
+        options.Documents && format is not null && !Is(format, DataFormat.Parquet) ? DataFileFormats.Get(nameof(DataFormat.Code)) : format;
+
+    // Whether the format has the name of a built-in (it may be a replacement registered under that name).
+    private static bool Is(IDataFileFormat format, DataFormat builtIn) =>
+        string.Equals(format.Name, builtIn.ToString(), StringComparison.OrdinalIgnoreCase);
+
+    // The built-in formats, registered in DataFileFormats by LibraryRegistrations (once, before it is first used).
+    internal static void RegisterAll()
+    {
+        DataFileFormats.Register(new BuiltIn(nameof(DataFormat.JsonLines), [".jsonl", ".ndjson"], (open, path, _) => JsonLines(open, path)));
+        DataFileFormats.Register(new BuiltIn(nameof(DataFormat.Json), [".json"], Json));
+        DataFileFormats.Register(new BuiltIn(nameof(DataFormat.Csv), [".csv"], (open, _, options) => Delimited(open, ',', options)));
+        DataFileFormats.Register(new BuiltIn(nameof(DataFormat.Tsv), [".tsv"], (open, _, options) => Delimited(open, '\t', options)));
+        DataFileFormats.Register(new BuiltIn(nameof(DataFormat.Parquet), [".parquet"], (open, _, _) => ParquetRows(open)));
+        DataFileFormats.Register(new BuiltIn(nameof(DataFormat.Text), [".txt", ".text", ".md", ".markdown", ".rst"], Text));
+        DataFileFormats.Register(new BuiltIn(nameof(DataFormat.Code), [.. CodeLanguages.Keys], Code));
+    }
+
+    private sealed class BuiltIn(string name, string[] extensions, Func<Func<Stream>, string, ReadOptions, IEnumerable<JsonObject>> read) : IDataFileFormat
+    {
+        public string Name => name;
+
+        public IReadOnlyCollection<string> Extensions => extensions;
+
+        public IEnumerable<JsonObject> Read(Func<Stream> open, string path, ReadOptions options) => read(open, path, options);
+    }
 
     internal static IEnumerable<string> InFolder(string root, string? pattern, ReadOptions options)
     {
@@ -236,7 +177,7 @@ public static class DataFiles
             }
 
             var format = DocumentFormat(DataFileFormats.Find(name, options.IncludeCode || options.Documents), options);
-            return format is not null && !(options.Documents && DataFileFormats.Is(format, DataFormat.Parquet));
+            return format is not null && !(options.Documents && Is(format, DataFormat.Parquet));
         }
 
         if (path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
