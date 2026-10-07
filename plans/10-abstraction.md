@@ -299,7 +299,7 @@ packaged form before the real release.
 | 5 | **A device from outside.** A plain-loop reference device in `tests/Idrak.PluginTests`, written against the public API only, passes the conformance kit | the kit (`Idrak.Abstraction.Testing`) runs it green |
 | 5 (as built) | Wave 3: `ReferenceDevice` in tests/Idrak.PluginTests (own `Backend`, `Storage`, `DeviceProvider`; 8 plain-loop kernels, host fallbacks for the rest), on the public API only, passes `Conformance.Check` and a stress run | CPU and lavapipe 452 of 452 |
 | 6 | **Kernels for plug-ins.** `Autograd.Function`, `GraphOps`, `PackedWeight` and `KeyValueLayout` implementations register device kernels | a plug-in packed format and KV layout run their own device kernel |
-| 6 (as built) | Wave 3: plug-in operations are descriptors (`PluginOperation<TKernel>`, registry `PluginOperations` in Abstraction), indexed after the built-ins, resolved once per device into a slot array; an implementation calls `op.KernelFor(backend)`, so no hooks were added to `PackedWeight`, `KeyValueLayout`, `GraphOps` or `Autograd`. Vulkan: public `VulkanKernel.Dispatch` for a plug-in's own SPIR-V. The plug-in tests' packed format and KV layout run their CPU and Vulkan SPIR-V kernels; their `Autograd.Function` and graph op run CPU kernels. Not done: a hook for plug-in PTX or HIP C (CUDA and HIP run the plug-in's default); host retry for plug-in kernels; the built-in formats' fused paths still read built-in formats only | CPU and lavapipe 461 of 461 |
+| 6 (as built) | Wave 3: plug-in operations are descriptors (`PluginOperation<TKernel>`, registry `PluginOperations` in Abstraction), indexed after the built-ins, resolved once per device into a slot array; an implementation calls `op.KernelFor(backend)`, so no hooks were added to `PackedWeight`, `KeyValueLayout`, `GraphOps` or `Autograd`. Vulkan: public `VulkanKernel.Dispatch` for a plug-in's own SPIR-V (CUDA PTX and HIP C++: `CudaKernel`, `HipKernel`, added in wave 4). The plug-in tests' packed format and KV layout run their CPU and Vulkan SPIR-V kernels; their `Autograd.Function` and graph op run CPU kernels. Not done: host retry for plug-in kernels; the built-in formats' fused paths still read built-in formats only | CPU and lavapipe 461 of 461 |
 | 6b | **Slots and failure policies.** Every slot keeps its default under an app's registration; `Unregister` restores it; `Throw`, `FallBack` and `Shadow` per slot, with fallback at creation for stateful contracts; the startup report of overrides | a test app overrides a sampler, a tokenizer part and a RoPE scaling: each one throws once and falls back under `FallBack`, and is compared on sampled calls under `Shadow` |
 | 6b (as built) | Wave 3: `SlotTable<TKey, TValue>` holds every registry's entries (the library default and the app's registration over it; no lock on lookups; a slot with only its default is handed out unwrapped), with a `SlotGuard` applied once per registration. `Throw` by default with an `OverrideFailed` hint (`SetPolicy(..., FallBack/Shadow)`, `IDRAK_OVERRIDE_POLICY`); `FallBack` and `Shadow` (1%) opt-in; stateful contracts fall back at creation; origin from the calling assembly; `Overrides.Report()` and `idrak overrides`. No policy for KV layouts, devices, network steps, ONNX translators, data file formats and the GGUF and family tables. Not built: a `Version` per default and the "your override is older than the default" note (moved to W4.1); typed `Defaults.Get<T>()` | CPU and lavapipe 469 of 469 |
 | 6c | **The kit as the app's stress harness.** `Conformance.Check`, `Stress.Run` and saved regression cases, usable from an app's test project on the NuGet package alone | a sample app (in `samples/`) overrides one contract and runs the kit green from its own tests |
@@ -322,7 +322,25 @@ src/); the Override sample builds from the clone and, with `-p:IdrakFromPackages
 feed (both pass its tests). W4.3: see the changelog for each item and its reason. W4.4: `api/*.txt` from reflection
 (nullability through `NullabilityInfoContext`; `T?` on an unconstrained type parameter is not shown, the metadata does
 not tell it apart). W4.5: no retry for operations without a device kernel; the double accumulation documented; the
-Float8 and `AttentionStrided` references and the PTX/HIP plug-in hook wait for a CUDA machine (recorded).
+Float8 and `AttentionStrided` references wait for a CUDA machine (recorded). The PTX/HIP plug-in hook was built
+afterwards (W4.5, deferred item; below).
+
+**W4.5, deferred item: plug-ins' own CUDA and HIP kernels (2026-10-07).** `Idrak.Gpu` gains `CudaKernel`
+(`Idrak.Gpu.Cuda`: PTX text and an `.entry` name) and `HipKernel` (`Idrak.Gpu.Hip`: HIP C++ source and an
+`extern "C" __global__` name), the counterparts of `VulkanKernel`: `Launch(backend, gridX, gridY, gridZ, blockX, blockY,
+blockZ, arguments, sharedBytes = 0)` with `KernelArgument`s (`Idrak.Gpu`: storages, `int`, `uint`, `float`, `long`,
+implicit; `Pointer(storage, offset)`) checked against the parameters read from the PTX or the source. A device loads a
+text once (CUDA: driver JIT, a module per PTX text; HIP: hipRTC per source and options, the code object kept in the HIP
+kernel cache) and looks each entry up once; launches go on the device's stream (CUDA through the stream gate, so graph
+capture and ordering hold; profiled under the kernel's name); errors are `CudaException`/`HipException`.
+`HipKernel.UnavailableReason(backend)` is the registration requirement that keeps a machine without hipRTC on the
+default kernel. The plug-in tests' packed format and KV layout register a PTX and a HIP C++ kernel ("cuda", "hip"),
+so their per-device tests cover CUDA and HIP when present. **Checked here** (no NVIDIA or AMD GPU): the PTX assembles
+with ptxas 12.9 for sm_50, sm_75 and sm_120 (a test does it when `IDRAK_PTXAS`, PATH or `CUDA_PATH` has ptxas, and
+skips otherwise); the HIP C++ passes clang 18's HIP front end (`-x hip --cuda-device-only`, with stub declarations, by
+hand); the parameter reading and argument checks run on every device; CPU and lavapipe pass. **Needs a CUDA and an AMD
+run**: the kernels launching and agreeing with the CPU (the "outside plug-in kernels" tests, `Conformance.Check`), a
+plug-in kernel inside a recorded CUDA graph, hipRTC compiling the source and the cache reading it back.
 
 **W4.6 and W4.7 (2026-10-07).** Docs: the root README (Layout, the override loop's versions, building an app against a
 clone), the package READMEs of Abstraction, Nlp and the kit, the 0.4.0 changelog read through (rows a later move

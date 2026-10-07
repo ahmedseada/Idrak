@@ -38,7 +38,14 @@ operation runs, and `idrak kernels dump` writes the generated kernel sources.
 A plug-in can ship Vulkan kernels of its own: `VulkanKernel` (`Idrak.Gpu.Vulkan`) takes SPIR-V 1.3 words (compiled
 from GLSL with glslc, say; storage buffers at set 0, binding i the i-th storage, scalars in one push-constant block) and
 `VulkanKernel.Dispatch(backend, groupsX, groupsY, groupsZ, storages, pushConstants)` queues it on a Vulkan device, from
-a kernel the plug-in registers for the "vulkan" kind with `Kernels.Register`.
+a kernel the plug-in registers for the "vulkan" kind with `Kernels.Register`. The same for CUDA and HIP:
+`CudaKernel` (`Idrak.Gpu.Cuda`) takes PTX text and an `.entry` name, `HipKernel` (`Idrak.Gpu.Hip`) HIP C++ source
+and an `extern "C" __global__` function name; `Launch(backend, gridX, gridY, gridZ, blockX, blockY, blockZ, arguments)`
+queues it on the device's stream, the arguments being storages, `int`, `float` and `long` values (`KernelArgument`)
+checked against the parameters the PTX or the source declares. Each device compiles a text once (the PTX by the
+driver, the HIP source by hipRTC, its code object kept in the HIP kernel cache) and keeps the module; driver and
+compiler errors raise `CudaException` and `HipException`. Register a HIP kernel with the requirement
+`b => HipKernel.UnavailableReason(b) is null`, so a machine without hipRTC runs the operation's default kernel.
 
 ## Documentation
 

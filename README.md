@@ -1360,7 +1360,7 @@ package's own `.Abstractions`).
 | Adapters on linear layers (LoRA and DoRA built in) | implement `ILinearAdapter`, set `Linear.Adapter` | `Idrak.Abstraction` |
 | Fine-tuning optimizers, learning-rate schedules and losses | `FineTuningOptions.Optimizer`, `Scheduler` and `Loss` (a `FineTuningLoss` delegate) | `Idrak.Nlp` |
 | Device kernels for the library's operations, per kind of device | `Kernels.Register(Ops.Name, kind, kernel, requirement)` | `Idrak.Abstraction` |
-| Operations of a plug-in (a packed format's, a cache layout's, a graph operation's or a function's own kernel), with a default and a kernel per kind of device | `PluginOperations.Register<TKernel>(name, defaultKernel, fallback)`, then `Kernels.Register(operation, kind, kernel)`; on Vulkan, `VulkanKernel` dispatches SPIR-V of one's own | `Idrak.Abstraction` (`VulkanKernel`: `Idrak.Gpu`) |
+| Operations of a plug-in (a packed format's, a cache layout's, a graph operation's or a function's own kernel), with a default and a kernel per kind of device | `PluginOperations.Register<TKernel>(name, defaultKernel, fallback)`, then `Kernels.Register(operation, kind, kernel)`; `VulkanKernel` dispatches SPIR-V of one's own, `CudaKernel` PTX, `HipKernel` HIP C++ | `Idrak.Abstraction` (`VulkanKernel`, `CudaKernel`, `HipKernel`: `Idrak.Gpu`) |
 
 Chat templates are read from each model's own Jinja template (`tokenizer_config.json` or GGUF metadata), and the
 tool-call format is read off that template, so a new model family needs no code for either: `JinjaChatTemplate`
@@ -1399,11 +1399,26 @@ public override Tensor Dequantize()
 }
 ```
 
+On CUDA and HIP the same operation takes PTX text or HIP C++ source of one's own (`CudaKernel`, `HipKernel`; each
+device compiles a text once and keeps the module), launched with storages and scalars checked against the parameters
+the PTX or the source declares:
+
+```csharp
+static readonly CudaKernel UnpackPtx = new(ptxText, "my_unpack");                  // .entry my_unpack(.u64 .ptr, .u64 .ptr, .u32)
+static readonly HipKernel UnpackHip = new(hipSource, "my_unpack");                 // extern "C" __global__ void my_unpack(...)
+
+Kernels.Register(UnpackOp, "cuda", (b, packed, values, n) =>
+    UnpackPtx.Launch(b, (uint)Math.Clamp((n + 255) / 256, 1, 65535), 1, 1, 256, 1, 1, [packed, values, n]));
+Kernels.Register(UnpackOp, "hip", (b, packed, values, n) =>
+    UnpackHip.Launch(b, (uint)Math.Clamp((n + 255) / 256, 1, 65535), 1, 1, 256, 1, 1, [packed, values, n]),
+    b => HipKernel.UnavailableReason(b) is null);                                  // no hipRTC: the default kernel
+```
+
 Each registry has a test that plugs in an implementation of its own next to the built-ins. `tests/Idrak.PluginTests`, an assembly without
 internal access to Idrak, writes plug-ins with the public API alone (a Lion optimizer, a custom operation registered as
 a network step and an ONNX import operator, a packed weight format, a KV cache format, a sample source and a batch
-source, and device kernels for the format, the cache layout, a graph operation and a function: CPU loops and, on
-Vulkan, SPIR-V of its own); the test runner runs them as
+source, and device kernels for the format, the cache layout, a graph operation and a function: CPU loops and, for the format and
+the layout, SPIR-V, PTX and HIP C++ of its own); the test runner runs them as
 the "outside plug-in" group (`IDRAK_FILTER="outside plug-in" dotnet run -c Release --project tests/Idrak.Tests`).
 It also holds a device written outside the library (`ReferenceDevice`: plain loops for a few operations, the host
 fallback for the rest), checked with the testing kit.

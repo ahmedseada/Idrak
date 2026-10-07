@@ -119,7 +119,7 @@ internal static unsafe class HipRtc
     /// Compiles <paramref name="source"/> with <paramref name="options"/> into a code object; throws a
     /// <see cref="HipException"/> with the compiler's log when it fails.
     /// </summary>
-    public static byte[] Compile(string source, string name, IReadOnlyList<string> options)
+    public static byte[] Compile(string source, string name, IReadOnlyList<string> options, string what = "the Idrak kernels")
     {
         if (UnavailableReason.Length > 0)
         {
@@ -150,7 +150,7 @@ internal static unsafe class HipRtc
                 int result = hiprtcCompileProgram(program, optionBytes.Length, optionPointers);
                 if (result != 0)
                 {
-                    throw new HipException($"hipRTC could not compile the Idrak kernels ({Describe(result)}): {Log(program)}");
+                    throw new HipException($"hipRTC could not compile {what} ({Describe(result)}): {Log(program)}");
                 }
 
                 nuint size;
