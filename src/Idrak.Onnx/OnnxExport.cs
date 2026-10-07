@@ -1,65 +1,9 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.Text.Json.Nodes;
 using Idrak.Layers;
 
 namespace Idrak.Onnx;
-
-/// <summary>
-/// Translates one module into ONNX nodes: <paramref name="input"/> is the module's input value, <paramref name="outputShape"/>
-/// the shape it produces (measured by running the module, -1 for the batch dimension). Returns the output value.
-/// Register it for every export with <see cref="OnnxExportOps.Register{T}"/>, or for one with <see cref="OnnxExporter.Module{T}"/>.
-/// </summary>
-public delegate OnnxValue OnnxTranslator<in T>(OnnxGraph graph, T module, OnnxValue input, IReadOnlyList<int> outputShape) where T : Module;
-
-/// <summary>
-/// Translates one operation node of a <see cref="GraphModule"/> into ONNX nodes and returns the output value. Register it
-/// with <see cref="OnnxExportOps.RegisterGraphOp"/> (or <see cref="OnnxExporter.GraphOp"/>) under the operation's name.
-/// </summary>
-public delegate OnnxValue OnnxGraphOpTranslator(OnnxGraphOpContext context);
-
-/// <summary>The graph node being exported, its input values and its measured output shape, for an <see cref="OnnxGraphOpTranslator"/>.</summary>
-public sealed class OnnxGraphOpContext
-{
-    private readonly Func<int, long[]?> _integers;
-
-    internal OnnxGraphOpContext(OnnxGraph graph, GraphNode node, IReadOnlyList<OnnxValue?> inputs, IReadOnlyList<int>? outputShape, Func<int, long[]?> integers)
-    {
-        Graph = graph;
-        Node = node;
-        Inputs = inputs;
-        OutputShape = outputShape;
-        _integers = integers;
-    }
-
-    /// <summary>The ONNX graph to add nodes to.</summary>
-    public OnnxGraph Graph { get; }
-
-    /// <summary>The graph node: its operation, inputs, output and attributes.</summary>
-    public GraphNode Node { get; }
-
-    /// <summary>The node's inputs as ONNX values (null for an omitted optional input).</summary>
-    public IReadOnlyList<OnnxValue?> Inputs { get; }
-
-    /// <summary>The shape of the node's output (-1 for the batch dimension), or null when it is an integer value (a shape, axes or indices).</summary>
-    public IReadOnlyList<int>? OutputShape { get; }
-
-    /// <summary>The integer values of input <paramref name="index"/> (a constant, or a shape computed for the export's sample), or null for a tensor.</summary>
-    public long[]? Integers(int index) => _integers(index);
-
-    /// <summary>The integer attribute <paramref name="name"/>, or null when the node does not set it.</summary>
-    public long? Int(string name) => Node.Attributes?[name] is JsonValue v ? (long)v : null;
-
-    /// <summary>The number attribute <paramref name="name"/>, or null when the node does not set it.</summary>
-    public float? Float(string name) => Node.Attributes?[name] is JsonValue v ? (float)v : null;
-
-    /// <summary>The integer list attribute <paramref name="name"/>, or null.</summary>
-    public long[]? Ints(string name) => Node.Attributes?[name] is JsonArray a ? [.. a.Select(v => (long)v!)] : null;
-
-    /// <summary>Adds the ONNX node <paramref name="op"/> on <see cref="Inputs"/> with <see cref="OutputShape"/>.</summary>
-    public OnnxValue Operator(string op, params OnnxAttribute[] attributes) => Graph.Node(op, Inputs, OutputShape, attributes);
-}
 
 /// <summary>Exports Idrak networks to ONNX. Start with <see cref="For"/>, or use <see cref="ExportOnnx"/>.</summary>
 public static class OnnxExport
@@ -88,168 +32,6 @@ public static class OnnxExport
     /// <summary>Reshapes each sample to the measured output shape.</summary>
     public static OnnxValue Reshape(OnnxGraph graph, Module module, OnnxValue input, IReadOnlyList<int> outputShape) =>
         graph.Node("Reshape", [input, graph.Ints("shape", [-1, .. outputShape.Skip(1).Select(d => (long)d)])], outputShape);
-}
-
-/// <summary>
-/// How modules, lambdas and graph operations are written to ONNX, for every export. The built-in layers are registered
-/// here (Linear, Conv2d, BatchNorm, LSTM, Sequential, GraphModule, ...), as are the builder's lambdas (MeanOverTime,
-/// FirstStep, LastStep, Reshape) and every <see cref="GraphModule"/> operation; add or replace one with
-/// <see cref="Register{T}"/>, <see cref="RegisterLambda"/> or <see cref="RegisterGraphOp"/>. A module uses the translator
-/// registered for its own type or its nearest registered base type. Translators given to one exporter
-/// (<see cref="OnnxExporter.Module{T}"/>, <see cref="OnnxExporter.Lambda"/>, <see cref="OnnxExporter.GraphOp"/>) take
-/// precedence over these.
-/// </summary>
-public static class OnnxExportOps
-{
-    private static readonly Dictionary<Type, (Delegate Original, OnnxTranslator<Module> Translate)> Modules = [];
-    private static readonly Dictionary<string, OnnxTranslator<Module>> Lambdas = new(StringComparer.Ordinal);
-    private static readonly Dictionary<string, OnnxGraphOpTranslator> GraphOps = new(StringComparer.Ordinal);
-
-    static OnnxExportOps() => OnnxBuiltIns.Register();
-
-    /// <summary>Registers (or replaces) how modules of type <typeparamref name="T"/> (and types derived from it without their own translator) are exported.</summary>
-    public static void Register<T>(OnnxTranslator<T> translate) where T : Module
-    {
-        ArgumentNullException.ThrowIfNull(translate);
-        lock (Modules)
-        {
-            Modules[typeof(T)] = (translate, (g, m, x, s) => translate(g, (T)m, x, s));
-        }
-    }
-
-    /// <summary>Removes the translator of modules of type <typeparamref name="T"/>; returns whether one was registered.</summary>
-    public static bool Unregister<T>() where T : Module
-    {
-        lock (Modules)
-        {
-            return Modules.Remove(typeof(T));
-        }
-    }
-
-    /// <summary>The module types with a registered translator.</summary>
-    public static IReadOnlyCollection<Type> Types
-    {
-        get
-        {
-            lock (Modules)
-            {
-                return [.. Modules.Keys];
-            }
-        }
-    }
-
-    /// <summary>The translator registered for modules of exactly the type <typeparamref name="T"/>.</summary>
-    public static OnnxTranslator<T> Get<T>() where T : Module
-    {
-        lock (Modules)
-        {
-            return Modules.TryGetValue(typeof(T), out var entry) ? (OnnxTranslator<T>)entry.Original
-                : throw new NotSupportedException($"No ONNX export translator for {typeof(T).Name} is registered ({TypeNames()}); add it with OnnxExportOps.Register<{typeof(T).Name}>.");
-        }
-    }
-
-    /// <summary>Registers (or replaces) how the lambdas named <paramref name="name"/> (their <c>ToString()</c>) are exported.</summary>
-    public static void RegisterLambda(string name, OnnxTranslator<Module> translate)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(name);
-        ArgumentNullException.ThrowIfNull(translate);
-        lock (Lambdas)
-        {
-            Lambdas[name] = translate;
-        }
-    }
-
-    /// <summary>Removes the lambda translator <paramref name="name"/>; returns whether it was registered.</summary>
-    public static bool UnregisterLambda(string name)
-    {
-        lock (Lambdas)
-        {
-            return Lambdas.Remove(name);
-        }
-    }
-
-    /// <summary>The lambda names with a registered translator.</summary>
-    public static IReadOnlyCollection<string> LambdaNames
-    {
-        get
-        {
-            lock (Lambdas)
-            {
-                return [.. Lambdas.Keys];
-            }
-        }
-    }
-
-    /// <summary>Registers (or replaces) how <see cref="GraphModule"/> nodes running the operation <paramref name="op"/> are exported.</summary>
-    public static void RegisterGraphOp(string op, OnnxGraphOpTranslator translate)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(op);
-        ArgumentNullException.ThrowIfNull(translate);
-        lock (GraphOps)
-        {
-            GraphOps[op] = translate;
-        }
-    }
-
-    /// <summary>Removes the graph operation translator <paramref name="op"/>; returns whether it was registered.</summary>
-    public static bool UnregisterGraphOp(string op)
-    {
-        lock (GraphOps)
-        {
-            return GraphOps.Remove(op);
-        }
-    }
-
-    /// <summary>The graph operations with a registered translator.</summary>
-    public static IReadOnlyCollection<string> GraphOpNames
-    {
-        get
-        {
-            lock (GraphOps)
-            {
-                return [.. GraphOps.Keys];
-            }
-        }
-    }
-
-    /// <summary>The translator registered for the graph operation <paramref name="op"/>.</summary>
-    public static OnnxGraphOpTranslator GetGraphOp(string op) => TryGetGraphOp(op)
-        ?? throw new NotSupportedException($"No ONNX export translator for the graph operation '{op}' is registered ({string.Join(", ", GraphOpNames)}); add it with OnnxExportOps.RegisterGraphOp.");
-
-    internal static string TypeNames() => string.Join(", ", Types.Select(t => t.Name).Order());
-
-    // The translator of the module's type or its nearest registered base type.
-    internal static OnnxTranslator<Module>? TryGet(Type type)
-    {
-        lock (Modules)
-        {
-            for (Type? t = type; t is not null && t != typeof(object); t = t.BaseType)
-            {
-                if (Modules.TryGetValue(t, out var entry))
-                {
-                    return entry.Translate;
-                }
-            }
-
-            return null;
-        }
-    }
-
-    internal static OnnxTranslator<Module>? TryGetLambda(string name)
-    {
-        lock (Lambdas)
-        {
-            return Lambdas.TryGetValue(name, out var translate) ? translate : null;
-        }
-    }
-
-    internal static OnnxGraphOpTranslator? TryGetGraphOp(string op)
-    {
-        lock (GraphOps)
-        {
-            return GraphOps.TryGetValue(op, out var translate) ? translate : null;
-        }
-    }
 }
 
 /// <summary>
@@ -333,7 +115,7 @@ public sealed class OnnxExporter
     public byte[] ToBytes()
     {
         var sampleShape = _sampleShape ?? throw new InvalidOperationException("Call Input(sampleShape) with the shape of one input sample.");
-        var graph = new OnnxGraph { Exporter = this };
+        var graph = new OnnxGraphWriter(this);
         bool wasTraining = _model.IsTraining;
         _model.Eval();
         try
@@ -365,7 +147,7 @@ public sealed class OnnxExporter
         return Translate(graph, module, x, shape) with { Shape = shape };
     }
 
-    internal OnnxGraphOpTranslator? FindGraphOp(string op) => _graphOps.TryGetValue(op, out var translate) ? translate : OnnxExportOps.TryGetGraphOp(op);
+    internal OnnxGraphOpTranslator? FindGraphOp(string op) => _graphOps.TryGetValue(op, out var translate) ? translate : OnnxExportOps.FindGraphOp(op);
 
     private OnnxValue Translate(OnnxGraph g, Module module, OnnxValue x, int[] shape)
     {
@@ -382,8 +164,8 @@ public sealed class OnnxExporter
             return forLambda(g, lambda, x, shape);
         }
 
-        var registered = OnnxExportOps.TryGet(module.GetType()) ?? throw new NotSupportedException(
-            $"{module.GetType().Name} ({module.DisplayName}) cannot be exported (registered: {OnnxExportOps.TypeNames()}): "
+        var registered = OnnxExportOps.Find(module.GetType()) ?? throw new NotSupportedException(
+            $"{module.GetType().Name} ({module.DisplayName}) cannot be exported (registered: {string.Join(", ", OnnxExportOps.Types.Select(t => t.Name).Order())}): "
             + $"register a translator with OnnxExportOps.Register<{module.GetType().Name}>(...) or the exporter's Module<{module.GetType().Name}>(...).");
         return registered(g, module, x, shape);
     }

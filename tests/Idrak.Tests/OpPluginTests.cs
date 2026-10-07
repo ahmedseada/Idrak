@@ -126,7 +126,7 @@ internal static partial class Tests
                 float factor = a.Float("factor");
                 return b.Lambda(x => x * factor, "Scale", [.. b.CurrentShape]);
             });
-            OnnxImportOps.Register("Scale", c => c.Add(b => b.Op("scale", new JsonObject { ["factor"] = c.Float("factor", 1f) })));
+            OnnxImportOps.Register("Scale", c => c.Add("scale", new JsonObject { ["factor"] = c.Float("factor", 1f) }));
             var input = RandomInput(device, new Random(32), 6, 4);
             using var expected = model.Predict(input);
             string path = Path.Combine(Path.GetTempPath(), $"ns-{Guid.NewGuid():N}.ikm");
@@ -154,7 +154,7 @@ internal static partial class Tests
             }
 
             // Replacing a built-in operator: Relu imported as Tanh.
-            OnnxImportOps.Register("Relu", c => c.Add(b => b.Tanh()));
+            OnnxImportOps.Register("Relu", c => c.Add("tanh"));
             using var small = Network.Input(3).OnDevice(device).Seed(33).Linear(2).ReLU().Build();
             using (var replaced = OnnxImport.Load(OnnxExport.For(small).Input(3).ToBytes(), device))
             {

@@ -125,7 +125,7 @@ public static class PluginTests
 
         // A network step of its own, trained with Lion.
         NetworkOps.Register(SoftplusStepName, (b, a) => b.Lambda(t => Softplus.Apply(t), "Softplus", [.. b.CurrentShape]));
-        OnnxImportOps.Register(SoftplusOperator, c => c.Add(b => b.Op(SoftplusStepName)));
+        OnnxImportOps.Register(SoftplusOperator, c => c.Add(SoftplusStepName));
         try
         {
             var random = new Random(5);
