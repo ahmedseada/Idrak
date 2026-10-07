@@ -20,6 +20,8 @@ audience first.
 Plug-in points that are still closed, and the dataset loader abstraction: [plug-in.md](plug-in.md).
 Decisions and hardware checks waiting for the maintainer: [open-questions.md](open-questions.md).
 One command-line tool for everything (`idrak doctor`, `chat`, `serve`, `bench`, ...): [idrak-cli.md](idrak-cli.md).
+Images into language models, Gemma 3 first (to run Arabic document OCR models such as
+`bakrianoo/arabic-legal-documents-ocr-1.0`; planned, after plan 10's wave 4): [11-vision-language.md](11-vision-language.md).
 
 ## Not supported yet
 
