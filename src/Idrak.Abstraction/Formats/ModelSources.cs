@@ -57,7 +57,7 @@ public static class ModelSources
 
     /// <summary>
     /// Registers <paramref name="source"/>: it takes the place of the source of the same name (the library's stays behind
-    /// it as its fallback, see <see cref="SetPolicy"/>), or is asked before every source registered so far.
+    /// it, see <see cref="SetPolicy"/>), or is asked before every source registered so far.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void Register(IModelSource source)
@@ -86,8 +86,8 @@ public static class ModelSources
     public static string? Origin(string name) => Table.Origin(name);
 
     /// <summary>
-    /// What happens when the app's source <paramref name="name"/> fails (<see cref="SlotPolicy.FallBack"/> to the library's
-    /// unless set). Under <see cref="SlotPolicy.Shadow"/> only <see cref="IModelSource.CanResolve"/> is compared: resolving
+    /// What happens when the app's source <paramref name="name"/> fails (<see cref="SlotPolicy.Throw"/> unless set: the error reaches the caller;
+    /// <see cref="SlotPolicy.FallBack"/> retries on the library's). Under <see cref="SlotPolicy.Shadow"/> only <see cref="IModelSource.CanResolve"/> is compared: resolving
     /// fetches files, which is not done twice.
     /// </summary>
     public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Table.SetPolicy(name, policy, shadowRate);

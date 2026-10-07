@@ -44,8 +44,8 @@ public enum TelemetryLevel
     Devices = 1 << 8,
 
     /// <summary>
-    /// The override loop (<see cref="Abstraction.Overrides"/>): every call of an app's implementation that fell back to
-    /// the library default, and every call compared under <see cref="SlotPolicy.Shadow"/>.
+    /// The override loop (<see cref="Abstraction.Overrides"/>): every failure of an app's implementation (reaching the
+    /// caller with a hint, or answered by the library default), and every call compared under <see cref="SlotPolicy.Shadow"/>.
     /// </summary>
     Overrides = 1 << 9,
 
@@ -113,8 +113,8 @@ public interface ITelemetryHook
     {
     }
 
-    /// <summary>An app's implementation of a slot threw and the call fell back to the library default (<see cref="TelemetryLevel.Overrides"/>).</summary>
-    void OnOverrideFellBack(in OverrideFellBack e)
+    /// <summary>An app's implementation of a slot threw: the error reached the caller, or the library default answered (<see cref="TelemetryLevel.Overrides"/>).</summary>
+    void OnOverrideFailed(in OverrideFailed e)
     {
     }
 
@@ -291,13 +291,13 @@ public static class Telemetry
         }
     }
 
-    internal static void OverrideFellBack(in OverrideFellBack e)
+    internal static void OverrideFailed(in OverrideFailed e)
     {
         foreach (var h in s_hooks)
         {
             if ((h.Levels & TelemetryLevel.Overrides) != 0)
             {
-                h.OnOverrideFellBack(in e);
+                h.OnOverrideFailed(in e);
             }
         }
     }

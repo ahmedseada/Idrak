@@ -34,7 +34,7 @@ public static class LayerTypes
     /// Registers the layer type <paramref name="type"/> for modules of type <typeparamref name="T"/>:
     /// <paramref name="describe"/> returns the layer's settings as JSON (the "type" key is added), <paramref name="create"/>
     /// makes a new layer on the given device from that JSON. Under a built-in name it overrides the library's, which stays
-    /// behind it as its fallback (see <see cref="SetPolicy"/>) until <see cref="Unregister"/>.
+    /// behind it (see <see cref="SetPolicy"/>) until <see cref="Unregister"/>.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void Register<T>(string type, Func<T, JsonObject> describe, Func<JsonObject, Device, T> create) where T : Module
@@ -58,8 +58,8 @@ public static class LayerTypes
     public static bool HasDefault(string type) => Registry.HasDefault(type);
 
     /// <summary>
-    /// What happens when the app's layer type <paramref name="type"/> fails (<see cref="SlotPolicy.FallBack"/> to the
-    /// library's unless set): describing falls back per call, creating when the layer is made.
+    /// What happens when the app's layer type <paramref name="type"/> fails (<see cref="SlotPolicy.Throw"/> unless set:
+    /// the error reaches the caller; <see cref="SlotPolicy.FallBack"/> retries on the library's): describing falls back per call, creating when the layer is made.
     /// </summary>
     public static void SetPolicy(string type, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Registry.SetPolicy(type, policy, shadowRate);
 

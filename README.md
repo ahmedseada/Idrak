@@ -1397,33 +1397,39 @@ Each overridden slot has a failure policy:
 
 | Policy | What happens | When |
 |---|---|---|
-| `SlotPolicy.FallBack` (the default) | the app's version answers; when it throws, the call is retried on the library default and the failure goes to telemetry (registry, name, implementation, exception) | everywhere: an override never takes a call down that the library could have answered |
-| `SlotPolicy.Throw` | the app's failure reaches the caller | tests and development |
-| `SlotPolicy.Shadow` | the library default answers; on a sample of the calls (1% unless set) the app's version runs too, and the outputs, times and allocations are compared and reported | before switching: real traffic as a test, with no risk to the answers |
+| `SlotPolicy.Throw` (the default) | the app's version answers and its failure reaches the caller; the failure also goes to telemetry (`OverrideFailed`: registry, name, implementation, exception) with a hint naming the other policies and the exact call to switch them on for that slot | everywhere until the app chooses: a failure is never hidden |
+| `SlotPolicy.FallBack` | the app's version answers; when it throws, the call is retried on the library default, and the failure is reported | opted into per slot: an override that should never take a call down the library could have answered |
+| `SlotPolicy.Shadow` | the library default answers; on a sample of the calls (1% unless set) the app's version runs too, and the outputs, times and allocations are compared and reported | opted into per slot, before switching: real traffic as a test, with no risk to the answers |
+
+A policy is set in code with the registry's `SetPolicy(name, policy, shadowRate)` (`TokenizerComponents` has one per
+kind: `SetNormalizerPolicy`, ...), or without code with `IDRAK_OVERRIDE_POLICY`: `fallback`, `shadow` or `shadow:0.05`
+for every slot, and/or `Registry/name=policy` for one (`RopeScalings/yarn=fallback`), separated by commas; code wins. The
+same shape as a GPU failure: an error reaches the caller and its report says how to turn on the retry.
 
 ```csharp
 RopeScalings.Register("yarn", input => MyYarn(input, RopeScalings.Default("yarn")!));    // the app's, over the library's
 RopeScalings.SetPolicy("yarn", SlotPolicy.Shadow, shadowRate: 0.05);                     // the library answers, 5% compared
+TokenSamplers.SetPolicy("default", SlotPolicy.FallBack);                                  // a failure: the library's answers
 TokenSamplers.Register("default", request => new MySampler(request));                    // every generation's sampler
 TokenizerComponents.RegisterNormalizer("NFC", spec => new MyNfc(spec));                  // a tokenizer part
 
-using var log = Telemetry.Subscribe(new ConsoleLogger(TelemetryLevel.Overrides));        // fallbacks and comparisons
+using var log = Telemetry.Subscribe(new ConsoleLogger(TelemetryLevel.Overrides));        // failures and comparisons
 foreach (var o in Overrides.Report()) Console.WriteLine(o);                              // at startup: what the app overrides
 // RopeScalings/yarn: MyApp.Program (MyApp), replaces the library default, policy shadow 5%
 ```
 
-Fallback happens at call boundaries only. A contract that keeps state falls back when it is made, not half-way: a
+Fallback (when a slot opts into it) happens at call boundaries only. A contract that keeps state falls back when it is made, not half-way: a
 sampler (through a generation), a tool-call parser (through a reply), packed weights, an opened sample source; for
 those, `Shadow` compares the whole run (a shadowed sampler sees the same logits as the library's and the tokens each
 chose are compared when the generation ends). Calls that change something outside (resolving a model, opening a
-dataset, preparing a checkpoint) fall back but are not run twice in `Shadow`. A few registries cannot fall back at all
-and use the app's entry as it is: KV cache layouts (a cache keeps its layout through a sequence), devices (a device never
+dataset, preparing a checkpoint) fall back but are not run twice in `Shadow`. A few registries have no policy: their
+failures reach the caller unreported, and the app's entry is used as it is: KV cache layouts (a cache keeps its layout through a sequence), devices (a device never
 falls back to another), network steps and ONNX translators (they change a builder or a graph as they run), data file
 formats (rows are read lazily), and the description-only GGUF and model-family tables. A slot never falls back between
 devices: GPU failures follow `Backend.RetryOnHost` instead.
 
 `Overrides.Report()` lists every entry an app registered, with what it replaces, its origin, its policy and the
-fallbacks and comparisons so far; `idrak overrides -P MyPlugin.dll` prints it for a plug-in, and
+failures, fallbacks and comparisons so far; `idrak overrides -P MyPlugin.dll` prints it for a plug-in, and
 `idrak trace --levels overrides -- COMMAND` shows the events as they happen. The comparisons (`Comparisons`, in
 `Idrak.Abstraction`) are the ones the testing kit's conformance checks use.
 
@@ -1451,7 +1457,7 @@ using var c = Telemetry.Subscribe(file);
 | `Operations` | `OperationCompleted` | every tensor op, forward and backward (∇), shape, device, time |
 | `Inference` | `InferenceCompleted` | model, samples, shapes, device, latency, samples/s |
 | `Devices` | `DeviceFailed` | a GPU error (device kind, message) or an operation retried on the CPU; while the retry is off, a hint on turning it on. `ConsoleLogger` and `JsonLinesLogger` always include it |
-| `Overrides` | `OverrideFellBack`, `OverrideCompared` | an app's override that threw and was answered by the library default (registry, name, implementation, origin, exception); a `Shadow` comparison (whether they agreed, the difference, both times and allocations). `ConsoleLogger` and `JsonLinesLogger` always include it |
+| `Overrides` | `OverrideFailed`, `OverrideCompared` | an app's override that threw (registry, name, implementation, origin, exception; whether the library default answered, else a hint on switching on `FallBack` or `Shadow` for the slot); a `Shadow` comparison (whether they agreed, the difference, both times and allocations). `ConsoleLogger` and `JsonLinesLogger` always include it |
 
 **Custom hooks.** Implement `ITelemetryHook`, set `Levels`, and override only the methods you need.
 The other methods default to no-ops. Events are `readonly record struct`s passed by `in`, so they

@@ -41,10 +41,11 @@ public interface ITokenizerDecoder
 /// one encodes (or decodes) through the general string pipeline instead of its fast paths.
 /// <para>
 /// Registering a built-in name overrides the built-in, which stays behind it as the library default
-/// (<see cref="DefaultNormalizer"/>, …) until the app unregisters it. Under <see cref="SlotPolicy.FallBack"/> (the
-/// default; see <see cref="SetNormalizerPolicy"/>, …) a component that fails to be made is replaced by the built-in when
-/// the tokenizer is read, and a call that throws is answered by the built-in; under <see cref="SlotPolicy.Shadow"/> the
-/// built-in answers and the app's component is compared with it on a sample of calls.
+/// (<see cref="DefaultNormalizer"/>, …) until the app unregisters it. A failure of the app's component reaches the caller
+/// and is reported (<see cref="SlotPolicy.Throw"/>, the default); under <see cref="SlotPolicy.FallBack"/> (see
+/// <see cref="SetNormalizerPolicy"/>, …) a component that fails to be made is replaced by the built-in when the tokenizer
+/// is read, and a call that throws is answered by the built-in; under <see cref="SlotPolicy.Shadow"/> the built-in answers
+/// and the app's component is compared with it on a sample of calls.
 /// </para>
 /// </summary>
 public static class TokenizerComponents
@@ -66,8 +67,9 @@ public static class TokenizerComponents
         spec => new Decoder(BpeTokenizer.DecoderStage(spec)),
         (slot, app, library) => new GuardedDecoder(slot, app, library));
 
-    // A table of the built-in types. An app's factory is guarded when it is made (a failure gives the built-in) and its
-    // component on each call (wrap).
+    // A table of the built-in types ("TokenizerComponents.Normalizers": its policy is set by SetNormalizerPolicy). An app's
+    // factory is guarded when it is made (a failure falls back to the built-in, under FallBack) and its component on each
+    // call (wrap).
     private static SlotTable<string, Func<JsonObject, T>> BuiltIn<T>(string registry, string[] types, Func<JsonObject, T> library,
         Func<Slot, T, Later<T>, T> wrap) where T : class
     {
@@ -78,11 +80,11 @@ public static class TokenizerComponents
             {
                 return wrap(slot, app(spec), builtIn);
             }
-            catch (Exception e) when (slot.Policy == SlotPolicy.Shadow ? ShadowFailed(slot, e) : slot.FallsBack(e))
+            catch (Exception e) when (slot.Policy == SlotPolicy.Shadow ? ShadowFailed(slot, e) : slot.Failed(e))
             {
                 return builtIn.Value;
             }
-        }, StringComparer.Ordinal);
+        }, StringComparer.Ordinal, setPolicy: "TokenizerComponents.Set" + registry[(registry.IndexOf('.') + 1)..^1] + "Policy");
         foreach (string type in types)
         {
             table.RegisterDefault(type, library);
@@ -164,15 +166,15 @@ public static class TokenizerComponents
     /// <summary>Who registered the decoder type <paramref name="type"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
     public static string? DecoderOrigin(string type) => Decoders.Origin(type);
 
-    /// <summary>What happens when the app's normalizer type <paramref name="type"/> fails (<see cref="SlotPolicy.FallBack"/> to the built-in unless set).</summary>
+    /// <summary>What happens when the app's normalizer type <paramref name="type"/> fails (<see cref="SlotPolicy.Throw"/> unless set: the error reaches the caller; <see cref="SlotPolicy.FallBack"/> retries on the built-in).</summary>
     public static void SetNormalizerPolicy(string type, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) =>
         Normalizers.SetPolicy(type, policy, shadowRate);
 
-    /// <summary>What happens when the app's pre-tokenizer type <paramref name="type"/> fails (<see cref="SlotPolicy.FallBack"/> to the built-in unless set).</summary>
+    /// <summary>What happens when the app's pre-tokenizer type <paramref name="type"/> fails (<see cref="SlotPolicy.Throw"/> unless set: the error reaches the caller; <see cref="SlotPolicy.FallBack"/> retries on the built-in).</summary>
     public static void SetPreTokenizerPolicy(string type, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) =>
         PreTokenizers.SetPolicy(type, policy, shadowRate);
 
-    /// <summary>What happens when the app's decoder type <paramref name="type"/> fails (<see cref="SlotPolicy.FallBack"/> to the built-in unless set).</summary>
+    /// <summary>What happens when the app's decoder type <paramref name="type"/> fails (<see cref="SlotPolicy.Throw"/> unless set: the error reaches the caller; <see cref="SlotPolicy.FallBack"/> retries on the built-in).</summary>
     public static void SetDecoderPolicy(string type, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) =>
         Decoders.SetPolicy(type, policy, shadowRate);
 

@@ -91,7 +91,7 @@ public static class ImageCodecs
     /// <summary>Who registered the codec <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
     public static string? Origin(string name) => Registry.Origin(name);
 
-    /// <summary>What happens when the app's codec <paramref name="name"/> fails (<see cref="SlotPolicy.FallBack"/> to the library's unless set).</summary>
+    /// <summary>What happens when the app's codec <paramref name="name"/> fails (<see cref="SlotPolicy.Throw"/> unless set: the error reaches the caller; <see cref="SlotPolicy.FallBack"/> retries on the library's).</summary>
     public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Registry.SetPolicy(name, policy, shadowRate);
 
     /// <summary>Whether a registered codec lists the extension of <paramref name="path"/>.</summary>
@@ -188,7 +188,7 @@ public static class ImageCodecs
             {
                 return app.ReadInfo(header);
             }
-            catch (Exception e) when (slot.FallsBack(e))
+            catch (Exception e) when (slot.Failed(e))
             {
                 return library.ReadInfo(header);
             }
@@ -222,7 +222,7 @@ public static class ImageCodecs
             {
                 return app.Decode(file);
             }
-            catch (Exception e) when (slot.FallsBack(e))
+            catch (Exception e) when (slot.Failed(e))
             {
                 return library.Decode(file);
             }

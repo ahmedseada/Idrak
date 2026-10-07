@@ -20,9 +20,11 @@ internal static partial class Tests
     private static readonly (string Name, Action<Device> Run)[] OverrideLoopGroup =
     [
         ("override loop: the library's built-ins are the slots' defaults in every registry, not overrides", OverrideLoopLibraryDefaults),
-        ("override loop: an app's sampler, tokenizer part and RoPE scaling each throw once and fall back to the default (FallBack, the default policy), reported to telemetry", OverrideLoopFallBack),
+        ("override loop: under the default policy (Throw) an app's sampler, tokenizer part and RoPE scaling that throw reach the caller, reported with a hint naming FallBack, Shadow and IDRAK_OVERRIDE_POLICY", OverrideLoopDefaultThrows),
+        ("override loop: under FallBack (opted into per slot) an app's sampler, tokenizer part and RoPE scaling each throw once and fall back to the default, reported to telemetry", OverrideLoopFallBack),
         ("override loop: under Shadow the default answers and the app's sampler, tokenizer part and RoPE scaling are compared (outputs, times, allocations)", OverrideLoopShadow),
-        ("override loop: under Throw the app's failure reaches the caller; Unregister restores the default; the report lists overrides with origin and policy", OverrideLoopThrowAndReport),
+        ("override loop: under an explicit Throw the app's failure reaches the caller; Unregister restores the default; the report lists overrides with origin and policy", OverrideLoopThrowAndReport),
+        ("override loop: IDRAK_OVERRIDE_POLICY gives slots their first policy: one for every slot, or Registry/name=policy entries", OverrideLoopPolicyVariable),
         ("override loop: a slot table keeps the default under an app's entry, keeps order, hands the default out as it is, and cannot set a policy without a guard", OverrideLoopSlotTable),
     ];
 
@@ -32,17 +34,17 @@ internal static partial class Tests
     // Records the override loop's telemetry.
     private sealed class OverrideRecorder : ITelemetryHook
     {
-        public List<OverrideFellBack> FellBack { get; } = [];
+        public List<OverrideFailed> Failed { get; } = [];
 
         public List<OverrideCompared> Compared { get; } = [];
 
         public TelemetryLevel Levels => TelemetryLevel.Overrides;
 
-        public void OnOverrideFellBack(in OverrideFellBack e)
+        public void OnOverrideFailed(in OverrideFailed e)
         {
-            lock (FellBack)
+            lock (Failed)
             {
-                FellBack.Add(e);
+                Failed.Add(e);
             }
         }
 
@@ -118,9 +120,9 @@ internal static partial class Tests
         TokenSamplers.Unregister(TokenSamplers.DefaultName);
         TokenizerComponents.UnregisterNormalizer(LowercaseType);
         RopeScalings.Unregister(LinearType);
-        TokenSamplers.SetPolicy(TokenSamplers.DefaultName, SlotPolicy.FallBack);
-        TokenizerComponents.SetNormalizerPolicy(LowercaseType, SlotPolicy.FallBack);
-        RopeScalings.SetPolicy(LinearType, SlotPolicy.FallBack);
+        TokenSamplers.SetPolicy(TokenSamplers.DefaultName, SlotPolicy.Throw);
+        TokenizerComponents.SetNormalizerPolicy(LowercaseType, SlotPolicy.Throw);
+        RopeScalings.SetPolicy(LinearType, SlotPolicy.Throw);
     }
 
     private static void OverrideLoopLibraryDefaults(Device device)
@@ -147,12 +149,59 @@ internal static partial class Tests
         Check(RopeScalings.Get(LinearType) == RopeScalings.Default(LinearType), "with only its default, a slot hands it out as it is");
     }
 
+    private static void OverrideLoopDefaultThrows(Device device)
+    {
+        var recorder = new OverrideRecorder();
+        using var subscription = Telemetry.Subscribe(recorder);
+        try
+        {
+            Check(TokenSamplers.Default(TokenSamplers.DefaultName) is not null && RopeScalings.Default(LinearType) is not null
+                  && Overrides.Report().All(o => o.Policy == SlotPolicy.Throw || o.Registry is not ("RopeScalings" or "TokenSamplers")), "Throw is the default policy");
+            TokenSamplers.Register(TokenSamplers.DefaultName, _ => throw new InvalidOperationException("the app's sampler broke"));
+            TokenizerComponents.RegisterNormalizer(LowercaseType, _ => new FunctionNormalizer(_ => throw new FormatException("the app's normalizer broke")));
+            RopeScalings.Register(LinearType, _ => throw new ArithmeticException("the app's scaling broke"));
+            Check(Throws<InvalidOperationException>(() => Choose(TokenSamplers.Create, device)), "the sampler's failure reaches the caller");
+            var tokenizer = BpeTokenizer.FromJson(LowercaseTokenizer());
+            Check(Throws<FormatException>(() => tokenizer.Encode("AB")), "the normalizer's failure reaches the caller");
+            Check(Throws<ArithmeticException>(() => LinearRope().Frequencies(8)), "the scaling's failure reaches the caller");
+
+            var failed = recorder.Failed.Select(e => (e.Registry, e.Slot, e.Exception.GetType(), e.FellBack)).ToList();
+            Check(failed.SequenceEqual([
+                ("TokenSamplers", "default", typeof(InvalidOperationException), false),
+                ("TokenizerComponents.Normalizers", LowercaseType, typeof(FormatException), false),
+                ("RopeScalings", LinearType, typeof(ArithmeticException), false)]), $"one event per failure: {string.Join("; ", failed)}");
+            var hints = recorder.Failed.Select(e => e.Hint ?? "").ToList();
+            Check(hints[0].Contains("TokenSamplers.SetPolicy(\"default\", SlotPolicy.FallBack)", StringComparison.Ordinal)
+                  && hints[1].Contains("TokenizerComponents.SetNormalizerPolicy(\"Lowercase\", SlotPolicy.FallBack)", StringComparison.Ordinal)
+                  && hints[2].Contains("RopeScalings.SetPolicy(\"linear\", SlotPolicy.Shadow, shadowRate: 0.01)", StringComparison.Ordinal)
+                  && hints[2].Contains("IDRAK_OVERRIDE_POLICY=RopeScalings/linear=fallback", StringComparison.Ordinal),
+                $"each event carries the hint: {hints[2]}");
+            var printed = new StringWriter();
+            using (Telemetry.Subscribe(new ConsoleLogger(TelemetryLevel.Training, output: printed)))
+            {
+                _ = Throws<ArithmeticException>(() => LinearRope().Frequencies(8));
+            }
+
+            Check(printed.ToString().Contains("the error reached the caller", StringComparison.Ordinal)
+                  && printed.ToString().Contains("IDRAK_OVERRIDE_POLICY", StringComparison.Ordinal), $"a console logger prints it with the hint: {printed}");
+            Check(Overrides.Report().Single(o => o.Registry == "RopeScalings" && o.Name == LinearType) is { Failures: 2, FallBacks: 0, PolicyText: "throw" },
+                "the report counts the failures");
+        }
+        finally
+        {
+            RemoveOverrides();
+        }
+    }
+
     private static void OverrideLoopFallBack(Device device)
     {
         var recorder = new OverrideRecorder();
         using var subscription = Telemetry.Subscribe(recorder);
         try
         {
+            TokenSamplers.SetPolicy(TokenSamplers.DefaultName, SlotPolicy.FallBack);
+            TokenizerComponents.SetNormalizerPolicy(LowercaseType, SlotPolicy.FallBack);
+            RopeScalings.SetPolicy(LinearType, SlotPolicy.FallBack);
             // The sampler: made by the app, which breaks the first time; the library's is kept to wrap.
             var builtIn = TokenSamplers.Default(TokenSamplers.DefaultName)!;
             int failures = 1;
@@ -187,16 +236,16 @@ internal static partial class Tests
             Check(Comparisons.Difference(expected, LinearRope().Frequencies(8), 1e-9) is null && ropeCalls == 1, "the failing call fell back to the library's scaling");
             Check(Comparisons.Difference(expected, LinearRope().Frequencies(8), 1e-9) is null && ropeCalls == 2, "the next call is the app's");
 
-            var fellBack = recorder.FellBack.Select(e => (e.Registry, e.Slot, e.Exception.GetType())).ToList();
+            var fellBack = recorder.Failed.Where(e => e.FellBack && e.Hint is null).Select(e => (e.Registry, e.Slot, e.Exception.GetType())).ToList();
             Check(fellBack.SequenceEqual([
                 ("TokenSamplers", "default", typeof(InvalidOperationException)),
                 ("TokenizerComponents.Normalizers", LowercaseType, typeof(InvalidDataException)),
                 ("TokenizerComponents.Normalizers", LowercaseType, typeof(FormatException)),
                 ("RopeScalings", LinearType, typeof(ArithmeticException))]), $"one telemetry event per fallback: {string.Join("; ", fellBack)}");
-            Check(recorder.FellBack.All(e => e.Origin == "Idrak.Tests" && e.Implementation.StartsWith("Tests", StringComparison.Ordinal)),
-                $"events name the app's implementation: {string.Join(", ", recorder.FellBack.Select(e => e.Implementation))}");
+            Check(recorder.Failed.Count == 4 && recorder.Failed.All(e => e.Origin == "Idrak.Tests" && e.Implementation.StartsWith("Tests", StringComparison.Ordinal)),
+                $"events name the app's implementation: {string.Join(", ", recorder.Failed.Select(e => e.Implementation))}");
             var report = Overrides.Report();
-            Check(report.Single(o => o.Registry == "RopeScalings" && o.Name == LinearType).FallBacks == 1
+            Check(report.Single(o => o.Registry == "RopeScalings" && o.Name == LinearType) is { FallBacks: 1, Failures: 1, PolicyText: "fall back" }
                   && report.Single(o => o.Registry == "TokenizerComponents.Normalizers").FallBacks == 2, "the report counts the fallbacks");
         }
         finally
@@ -233,7 +282,7 @@ internal static partial class Tests
                   && compared["TokenizerComponents.Normalizers"].Difference == "\"AB\", expected \"ab\""
                   && compared["RopeScalings"].Difference!.StartsWith("frequencies: element 0", StringComparison.Ordinal),
                 "each difference says what differed");
-            Check(recorder.FellBack.Count == 0, "nothing fell back");
+            Check(recorder.Failed.Count == 0, "nothing failed in front of the caller");
 
             // An app's version that agrees, and one that throws: in Shadow neither reaches the caller.
             recorder.Compared.Clear();
@@ -308,6 +357,20 @@ internal static partial class Tests
         }
     }
 
+    private static void OverrideLoopPolicyVariable(Device device)
+    {
+        _ = device;
+        var defaults = (SlotPolicy.Throw, Slot.DefaultShadowRate);
+        Check(Overrides.PolicyFrom(null, "RopeScalings", "yarn") == defaults && Overrides.PolicyFrom("", "RopeScalings", "yarn") == defaults,
+            "not set: Throw");
+        Check(Overrides.PolicyFrom("fallback", "RopeScalings", "yarn") == (SlotPolicy.FallBack, Slot.DefaultShadowRate)
+              && Overrides.PolicyFrom("Shadow:0.25", "GraphOps", "relu") == (SlotPolicy.Shadow, 0.25), "a policy for every slot, with a rate");
+        Check(Overrides.PolicyFrom("shadow, ropescalings/YARN=fallback", "RopeScalings", "yarn") == (SlotPolicy.FallBack, Slot.DefaultShadowRate)
+              && Overrides.PolicyFrom("shadow, RopeScalings/yarn=fallback", "RopeScalings", "linear") == (SlotPolicy.Shadow, Slot.DefaultShadowRate),
+            "a slot's own entry wins over the policy for every slot (names ignore case)");
+        Check(Overrides.PolicyFrom("sometimes, RopeScalings/yarn=shadow:2", "RopeScalings", "yarn") == defaults, "entries it cannot read are ignored");
+    }
+
     private static void OverrideLoopSlotTable(Device device)
     {
         _ = device;
@@ -321,10 +384,11 @@ internal static partial class Tests
         });
         Check(table.Keys.SequenceEqual(["a", "b"]) && table.Origin("A") == Overrides.Library && ReferenceEquals(table.Find("a"), Twice),
             "library registrations are defaults, newest first, handed out as they are");
+        table.SetPolicy("b", SlotPolicy.FallBack);
         table.Register("b", Broken);
         table.Register("c", Thrice);
         Check(table.Keys.SequenceEqual(["c", "a", "b"]) && table.Find("b")!(5) == 10 && table.Find("c")!(5) == 15 && table.Origin("b") == "Idrak.Tests",
-            "the app's entry takes the default's place and falls back to it; a new name goes first");
+            "the app's entry takes the default's place and falls back to it (FallBack); a new name goes first");
         Check(table.Report().Select(o => (o.Name, o.ReplacesDefault)).SequenceEqual([("c", false), ("b", true)]) && ReferenceEquals(table.Default("b"), Twice),
             "the table's report and default");
         Check(table.Unregister("b") && table.Unregister("c") && !table.Unregister("a") && table.Keys.SequenceEqual(["a", "b"]) && ReferenceEquals(table.Find("b"), Twice),

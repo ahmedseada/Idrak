@@ -8,8 +8,8 @@ The plug-in points only this package uses are in `Idrak.Data.Abstractions` (add 
 `DataFileFormats` and `IDataFileFormat` (file formats), `DatasetSources` and `IDatasetSource` (with `DatasetSpec`,
 `ReadOptions`, `IDatasetRows`), `ParquetCodecs` and `IParquetCodec`, `ITextNormalizer`. The registries register the
 built-ins themselves, as the library defaults of their slots: an app's registration under a built-in name overrides it
-and `Unregister` brings it back. A Parquet codec or a dataset source an app overrides falls back to the library's when it
-throws (`SetPolicy` chooses `Throw` or `Shadow`); a file format is used as registered (its rows are read lazily). Shared
+and `Unregister` brings it back. A Parquet codec or a dataset source an app overrides throws to the caller when it fails,
+reported with a hint (`SetPolicy` opts it into `FallBack` to the library's, or `Shadow`); a file format is used as registered (its rows are read lazily). Shared
 contracts (sample sources, `IDownloader`, model sources) are in Idrak.Abstraction.
 
 ## Install

@@ -11,7 +11,7 @@ namespace Idrak.Abstraction.Diagnostics;
 /// <summary>Writes human-readable progress to the console (or any <see cref="TextWriter"/>).</summary>
 /// <param name="levels">
 /// What to print. <see cref="TelemetryLevel.Training"/> gives one line per epoch. Device failures
-/// (<see cref="TelemetryLevel.Devices"/>) and an app's overrides falling back or compared (<see cref="TelemetryLevel.Overrides"/>)
+/// (<see cref="TelemetryLevel.Devices"/>) and an app's overrides failing or compared (<see cref="TelemetryLevel.Overrides"/>)
 /// are always printed, unless <paramref name="levels"/> is <see cref="TelemetryLevel.None"/>.
 /// </param>
 /// <param name="epochInterval">Print every n-th epoch (the first and last are always printed; "*" marks a new best).</param>
@@ -121,8 +121,9 @@ public sealed class ConsoleLogger(TelemetryLevel levels = TelemetryLevel.Trainin
             + (e.RetriedOnHost ? " (retried on the CPU)" : "") + (e.Hint is { } hint ? Environment.NewLine + "  " + hint : ""));
 
     /// <inheritdoc />
-    public void OnOverrideFellBack(in OverrideFellBack e) =>
-        _out.WriteLine($"Override {e.Registry}/{e.Slot} ({e.Implementation}, {e.Origin}) threw {e.Exception.GetType().Name}: {e.Exception.Message}; the library default answered");
+    public void OnOverrideFailed(in OverrideFailed e) =>
+        _out.WriteLine($"Override {e.Registry}/{e.Slot} ({e.Implementation}, {e.Origin}) threw {e.Exception.GetType().Name}: {e.Exception.Message}; "
+            + (e.FellBack ? "the library default answered" : "the error reached the caller") + (e.Hint is { } hint ? Environment.NewLine + "  " + hint : ""));
 
     /// <inheritdoc />
     public void OnOverrideCompared(in OverrideCompared e) =>
@@ -290,7 +291,7 @@ public sealed class ChannelTelemetry : ITelemetryHook
     public void OnDeviceFailed(in DeviceFailed e) => Write(e);
 
     /// <inheritdoc />
-    public void OnOverrideFellBack(in OverrideFellBack e) => Write(e);
+    public void OnOverrideFailed(in OverrideFailed e) => Write(e);
 
     /// <inheritdoc />
     public void OnOverrideCompared(in OverrideCompared e) => Write(e);
@@ -307,7 +308,7 @@ public sealed class JsonLinesLogger : ITelemetryHook, IDisposable, IAsyncDisposa
 
     /// <summary>
     /// Starts logging to <paramref name="path"/> (overwritten if it exists). Device failures
-    /// (<see cref="TelemetryLevel.Devices"/>) and an app's overrides falling back or compared
+    /// (<see cref="TelemetryLevel.Devices"/>) and an app's overrides failing or compared
     /// (<see cref="TelemetryLevel.Overrides"/>) are always logged, unless <paramref name="levels"/> is <see cref="TelemetryLevel.None"/>.
     /// </summary>
     public JsonLinesLogger(string path, TelemetryLevel levels = TelemetryLevel.Training | TelemetryLevel.Batches | TelemetryLevel.Inference)
@@ -351,7 +352,7 @@ public sealed class JsonLinesLogger : ITelemetryHook, IDisposable, IAsyncDisposa
     public void OnDeviceFailed(in DeviceFailed e) => _channel.OnDeviceFailed(in e);
 
     /// <inheritdoc />
-    public void OnOverrideFellBack(in OverrideFellBack e) => _channel.OnOverrideFellBack(in e);
+    public void OnOverrideFailed(in OverrideFailed e) => _channel.OnOverrideFailed(in e);
 
     /// <inheritdoc />
     public void OnOverrideCompared(in OverrideCompared e) => _channel.OnOverrideCompared(in e);
@@ -505,14 +506,16 @@ public static class TelemetryJson
                 w.WriteBoolean("retried_on_host", e.RetriedOnHost);
                 if (e.Hint is { } hint) w.WriteString("hint", hint);
                 break;
-            case OverrideFellBack e:
-                w.WriteString("event", "override_fell_back");
+            case OverrideFailed e:
+                w.WriteString("event", "override_failed");
                 w.WriteString("registry", e.Registry);
                 w.WriteString("slot", e.Slot);
                 w.WriteString("implementation", e.Implementation);
                 w.WriteString("origin", e.Origin);
                 w.WriteString("error", e.Exception.GetType().FullName);
                 w.WriteString("message", e.Exception.Message);
+                w.WriteBoolean("fell_back", e.FellBack);
+                if (e.Hint is { } overrideHint) w.WriteString("hint", overrideHint);
                 break;
             case OverrideCompared e:
                 w.WriteString("event", "override_compared");

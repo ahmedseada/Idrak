@@ -231,7 +231,7 @@ public abstract class PackedWeight : IDisposable
         {
             return app(values, rows, columns, device);
         }
-        catch (Exception e) when (slot.FallsBack(e))
+        catch (Exception e) when (slot.Failed(e))
         {
             return library(values, rows, columns, device);
         }
@@ -240,7 +240,7 @@ public abstract class PackedWeight : IDisposable
     /// <summary>
     /// Registers how to pack weights in the format <paramref name="format"/> (names ignore case), so options and tools can
     /// choose it by name. "int8", "int4" and "bfloat16" are registered; under one of their names the app's factory
-    /// overrides the library's, which stays behind it as its fallback (see <see cref="SetPolicy"/>). The overload of
+    /// overrides the library's, which stays behind it (see <see cref="SetPolicy"/>). The overload of
     /// <see cref="FromValues(PackedFormat, ReadOnlySpan{float}, int, int, Device)"/> taking a <see cref="PackedFormat"/>
     /// always makes the built-in weights.
     /// </summary>
@@ -273,8 +273,8 @@ public abstract class PackedWeight : IDisposable
     public static string? Origin(string format) => Registry.Origin(format);
 
     /// <summary>
-    /// What happens when the app's factory <paramref name="format"/> fails to pack (<see cref="SlotPolicy.FallBack"/> to the
-    /// library's unless set). Packed weights are made once, so the fallback is at packing; their products do not fall back.
+    /// What happens when the app's factory <paramref name="format"/> fails to pack (<see cref="SlotPolicy.Throw"/> unless set:
+    /// the error reaches the caller; <see cref="SlotPolicy.FallBack"/> retries on the library's). Packed weights are made once, so the fallback is at packing; their products do not fall back.
     /// </summary>
     public static void SetPolicy(string format, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Registry.SetPolicy(format, policy, shadowRate);
 

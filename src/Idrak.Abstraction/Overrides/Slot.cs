@@ -10,17 +10,22 @@ namespace Idrak.Abstraction;
 public enum SlotPolicy
 {
     /// <summary>
-    /// The default: the app's implementation answers; when it throws, the call is retried on the library default and
-    /// the failure goes to telemetry (<see cref="TelemetryLevel.Overrides"/>).
+    /// The default: the app's implementation answers and its failures reach the caller. Each failure also goes to
+    /// telemetry (<see cref="OverrideFailed"/>, <see cref="TelemetryLevel.Overrides"/>) with a hint naming the other
+    /// policies and how to switch them on for the slot.
     /// </summary>
-    FallBack,
-
-    /// <summary>The app's implementation answers and its failures reach the caller (tests and development).</summary>
     Throw,
 
     /// <summary>
-    /// The library default answers; on a sample of calls (<see cref="Slot.ShadowRate"/>) the app's implementation runs
-    /// too, and the two outputs, times and allocations are compared and reported to telemetry.
+    /// The app's implementation answers; when it throws, the call is retried on the library default and the failure goes
+    /// to telemetry. Opted into per slot.
+    /// </summary>
+    FallBack,
+
+    /// <summary>
+    /// The library default answers; on a sample of calls (<see cref="Slot.ShadowRate"/>, 1% unless set) the app's
+    /// implementation runs too, and the two outputs, times and allocations are compared and reported to telemetry. Opted
+    /// into per slot.
     /// </summary>
     Shadow,
 }
@@ -44,13 +49,17 @@ public sealed class Slot
 
     private sealed record Settings(SlotPolicy Policy, double ShadowRate);
 
-    private volatile Settings _settings = new(SlotPolicy.FallBack, DefaultShadowRate);
-    private long _fallBacks, _compared, _differed;
+    private readonly string _policyCall;
+    private volatile Settings _settings;
+    private long _failures, _fallBacks, _compared, _differed;
 
-    internal Slot(string registry, string name)
+    internal Slot(string registry, string name, string policyCall)
     {
         Registry = registry;
         Name = name;
+        _policyCall = policyCall;
+        var (policy, rate) = Overrides.PolicyFrom(Environment.GetEnvironmentVariable(Overrides.PolicyVariable), registry, name);
+        _settings = new(policy, rate);
     }
 
     /// <summary>The registry, for example "RopeScalings".</summary>
@@ -65,13 +74,16 @@ public sealed class Slot
     /// <summary>The assembly the app's implementation comes from.</summary>
     public string Origin { get; internal set; } = Overrides.Library;
 
-    /// <summary>The policy (<see cref="SlotPolicy.FallBack"/> unless set).</summary>
+    /// <summary>The policy: <see cref="SlotPolicy.Throw"/> unless set (by the registry's <c>SetPolicy</c>, or <c>IDRAK_OVERRIDE_POLICY</c>).</summary>
     public SlotPolicy Policy => _settings.Policy;
 
     /// <summary>The share of calls a <see cref="SlotPolicy.Shadow"/> slot compares, from 0 to 1.</summary>
     public double ShadowRate => _settings.ShadowRate;
 
-    /// <summary>Calls that fell back to the library default since the app registered.</summary>
+    /// <summary>Calls of the app's implementation that threw since the app registered (whether or not they fell back).</summary>
+    public long Failures => Interlocked.Read(ref _failures);
+
+    /// <summary>Of those, the calls that fell back to the library default (<see cref="SlotPolicy.FallBack"/>).</summary>
     public long FallBacks => Interlocked.Read(ref _fallBacks);
 
     /// <summary>Calls compared in <see cref="SlotPolicy.Shadow"/>.</summary>
@@ -95,11 +107,12 @@ public sealed class Slot
         _settings = new(policy, shadowRate);
     }
 
-    internal void Reset() => (_fallBacks, _compared, _differed) = (0, 0, 0);
+    internal void Reset() => (_failures, _fallBacks, _compared, _differed) = (0, 0, 0, 0);
 
     /// <summary>
-    /// One call under the policy: <paramref name="app"/> answers (<see cref="SlotPolicy.Throw"/>), or answers and falls back
-    /// to <paramref name="library"/> when it throws (<see cref="SlotPolicy.FallBack"/>), or <paramref name="library"/>
+    /// One call under the policy: <paramref name="app"/> answers and its failure, reported, reaches the caller
+    /// (<see cref="SlotPolicy.Throw"/>), or answers and falls back to <paramref name="library"/> when it throws
+    /// (<see cref="SlotPolicy.FallBack"/>), or <paramref name="library"/>
     /// answers and, on sampled calls, <paramref name="app"/> runs too and <paramref name="compare"/> says how they differ
     /// (<see cref="SlotPolicy.Shadow"/>; with no comparison only failures, times and allocations are reported).
     /// </summary>
@@ -120,7 +133,7 @@ public sealed class Slot
             {
                 return app();
             }
-            catch (Exception e) when (FallsBack(e))
+            catch (Exception e) when (Failed(e))
             {
                 return library();
             }
@@ -146,27 +159,43 @@ public sealed class Slot
     }
 
     /// <summary>
-    /// For a guard that catches failures itself (<c>catch (Exception e) when (slot.FallsBack(e))</c>): under
-    /// <see cref="SlotPolicy.FallBack"/>, reports <paramref name="error"/> to telemetry and returns true (the guard then
-    /// calls the library default); otherwise returns false and the error goes on to the caller. A cancellation never
+    /// For a guard that catches failures itself (<c>catch (Exception e) when (slot.Failed(e))</c>): reports
+    /// <paramref name="error"/> of the app's implementation to telemetry, and returns true when the policy is
+    /// <see cref="SlotPolicy.FallBack"/> (the guard then calls the library default); otherwise false, and the error goes
+    /// on to the caller, reported with a <see cref="Hint"/>. A cancellation is not a failure: never reported, never
     /// falls back.
     /// </summary>
-    public bool FallsBack(Exception error)
+    public bool Failed(Exception error)
     {
         ArgumentNullException.ThrowIfNull(error);
-        if (Policy != SlotPolicy.FallBack || error is OperationCanceledException)
+        if (error is OperationCanceledException)
         {
             return false;
         }
 
-        Interlocked.Increment(ref _fallBacks);
-        if (Telemetry.IsEnabled(TelemetryLevel.Overrides))
+        bool fallBack = Policy == SlotPolicy.FallBack;
+        Interlocked.Increment(ref _failures);
+        if (fallBack)
         {
-            Telemetry.OverrideFellBack(new OverrideFellBack(Registry, Name, Implementation, Origin, error));
+            Interlocked.Increment(ref _fallBacks);
         }
 
-        return true;
+        if (Telemetry.IsEnabled(TelemetryLevel.Overrides))
+        {
+            Telemetry.OverrideFailed(new OverrideFailed(Registry, Name, Implementation, Origin, error, fallBack, fallBack ? null : Hint));
+        }
+
+        return fallBack;
     }
+
+    /// <summary>
+    /// What an <see cref="OverrideFailed"/> event says while the failure reaches the caller: the other policies and how
+    /// to switch them on for this slot, in code and with <c>IDRAK_OVERRIDE_POLICY</c>.
+    /// </summary>
+    public string Hint =>
+        $"To answer such calls with the library default instead, call {_policyCall}SlotPolicy.FallBack); to let the library "
+        + $"default answer and compare the override on 1% of the calls, {_policyCall}SlotPolicy.Shadow, shadowRate: 0.01). "
+        + $"Or set {Overrides.PolicyVariable}={Registry}/{Name}=fallback (or shadow, shadow:0.05; a policy alone applies to every slot).";
 
     /// <summary>
     /// For a guard under <see cref="SlotPolicy.Shadow"/>: a run that times the library default from now, when this call

@@ -192,15 +192,18 @@ public readonly record struct EngineEvent(EngineEventKind Kind, string Model, Ti
 public readonly record struct DeviceFailed(string Device, string? Operation, string Message, bool RetriedOnHost, string? Hint);
 
 /// <summary>
-/// Published when an app's implementation of a slot threw and the call was retried on the library default
-/// (<see cref="SlotPolicy.FallBack"/>), when <c>TelemetryLevel.Overrides</c> is enabled.
+/// Published when an app's implementation of a slot threw, when <c>TelemetryLevel.Overrides</c> is enabled: under
+/// <see cref="SlotPolicy.Throw"/> (the default) the error went on to the caller, under <see cref="SlotPolicy.FallBack"/>
+/// the call was answered by the library default.
 /// </summary>
 /// <param name="Registry">The registry, for example "RopeScalings".</param>
 /// <param name="Slot">The entry's name in it.</param>
 /// <param name="Implementation">The app's implementation that failed.</param>
-/// <param name="Origin">The assembly it comes from.</param>
+/// <param name="Origin">The assembly that registered it.</param>
 /// <param name="Exception">What it threw.</param>
-public readonly record struct OverrideFellBack(string Registry, string Slot, string Implementation, string Origin, Exception Exception);
+/// <param name="FellBack">True when the library default answered the call; false when the error reached the caller.</param>
+/// <param name="Hint">While the error reaches the caller, how to switch on <see cref="SlotPolicy.FallBack"/> or <see cref="SlotPolicy.Shadow"/> for the slot (in code and with <c>IDRAK_OVERRIDE_POLICY</c>); null otherwise.</param>
+public readonly record struct OverrideFailed(string Registry, string Slot, string Implementation, string Origin, Exception Exception, bool FellBack, string? Hint);
 
 /// <summary>
 /// Published when a call of a <see cref="SlotPolicy.Shadow"/> slot ran both the library default (which answered) and the

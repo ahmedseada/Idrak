@@ -14,8 +14,8 @@ namespace Idrak.Abstraction;
 /// without removing it. <see cref="Unregister"/> removes the app's registration, which brings the default back; a
 /// library default is never removed.</item>
 /// <item>While an app's registration shadows a default, lookups get it guarded by the registry's
-/// <see cref="SlotGuard{TValue}"/> under the slot's <see cref="SlotPolicy"/> (<see cref="SlotPolicy.FallBack"/> unless
-/// set). A slot with only its default hands the default out as it is: overriding nothing costs nothing.</item>
+/// <see cref="SlotGuard{TValue}"/> under the slot's <see cref="SlotPolicy"/> (<see cref="SlotPolicy.Throw"/>, reported,
+/// unless set). A slot with only its default hands the default out as it is: overriding nothing costs nothing.</item>
 /// <item>A registry with no guard (its entries are used across calls, such as a key/value cache layout through a
 /// sequence, or change what they are given as they run) hands the app's registration out as it is; its policy cannot be
 /// set.</item>
@@ -61,6 +61,7 @@ public sealed class SlotTable<TKey, TValue> where TKey : notnull
     private readonly SlotGuard<TValue>? _guard;
     private readonly bool _newestFirst;
     private readonly string _unguarded;
+    private readonly string _setPolicy;
     private volatile State _state;
 
     /// <summary>An empty table for the registry <paramref name="registry"/>.</summary>
@@ -69,7 +70,12 @@ public sealed class SlotTable<TKey, TValue> where TKey : notnull
     /// <param name="comparer">How names compare (the default comparer when null).</param>
     /// <param name="newestFirst">New names go first instead of last (registries that ask their entries in order, the newest first).</param>
     /// <param name="unguarded">Why the entries have no guard, for messages and the report (registries without one).</param>
-    public SlotTable(string registry, SlotGuard<TValue>? guard = null, IEqualityComparer<TKey>? comparer = null, bool newestFirst = false, string? unguarded = null)
+    /// <param name="setPolicy">
+    /// The method that sets an entry's policy, as failure hints name it (<c>"Registry.SetPolicy"</c> when null): the
+    /// registry's own method, which takes the entry's name, the policy and the shadow rate.
+    /// </param>
+    public SlotTable(string registry, SlotGuard<TValue>? guard = null, IEqualityComparer<TKey>? comparer = null, bool newestFirst = false, string? unguarded = null,
+        string? setPolicy = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(registry);
         Registry = registry;
@@ -78,6 +84,7 @@ public sealed class SlotTable<TKey, TValue> where TKey : notnull
         _slots = new(_comparer);
         _newestFirst = newestFirst;
         _unguarded = unguarded ?? "its entries have no call boundary to fall back at";
+        _setPolicy = setPolicy ?? registry + ".SetPolicy";
         _state = new(new(_comparer), []);
         Overrides.Track(Report);
     }
@@ -188,7 +195,7 @@ public sealed class SlotTable<TKey, TValue> where TKey : notnull
     public string? Origin(TKey key) =>
         _state.Map.TryGetValue(key, out var entry) ? entry.HasApp ? entry.Slot.Origin : Overrides.Library : null;
 
-    /// <summary>The policy of <paramref name="key"/>'s slot (<see cref="SlotPolicy.FallBack"/> unless set).</summary>
+    /// <summary>The policy of <paramref name="key"/>'s slot (<see cref="SlotPolicy.Throw"/> unless set).</summary>
     public SlotPolicy Policy(TKey key) => SlotOf(key).Policy;
 
     /// <summary>
@@ -217,7 +224,8 @@ public sealed class SlotTable<TKey, TValue> where TKey : notnull
         {
             if (!_slots.TryGetValue(key, out var slot))
             {
-                _slots[key] = slot = new Slot(Registry, Convert.ToString(key, System.Globalization.CultureInfo.InvariantCulture) ?? "");
+                string name = Convert.ToString(key, System.Globalization.CultureInfo.InvariantCulture) ?? "";
+                _slots[key] = slot = new Slot(Registry, name, $"{_setPolicy}({(key is string ? $"\"{name}\"" : name)}, ");
             }
 
             return slot;
@@ -227,7 +235,7 @@ public sealed class SlotTable<TKey, TValue> where TKey : notnull
     /// <summary>Every app registration in the table, in order: what it replaces, its origin and policy (see <see cref="Overrides.Report"/>).</summary>
     public IReadOnlyList<SlotOverride> Report() =>
         [.. _state.Ordered.Where(e => e.HasApp).Select(e => new SlotOverride(Registry, e.Slot.Name, e.Slot.Implementation, e.Slot.Origin,
-            e.HasLibrary, Guarded, e.Slot.Policy, e.Slot.ShadowRate, e.Slot.FallBacks, e.Slot.Compared, e.Slot.Differed))];
+            e.HasLibrary, Guarded, e.Slot.Policy, e.Slot.ShadowRate, e.Slot.Failures, e.Slot.FallBacks, e.Slot.Compared, e.Slot.Differed))];
 
     // Replaces the entry of `key` with make(old) (null: removed), under the lock, and publishes a new state.
     private void Update(TKey key, Func<Entry, Entry?> make, Action<Slot>? touch)

@@ -78,7 +78,7 @@ public static class GgufTypes
 
     /// <summary>
     /// Registers the ggml type with id <paramref name="id"/>; under a built-in id it overrides the library's type, which
-    /// stays behind it as its fallback (see <see cref="SetPolicy"/>) until <see cref="Unregister"/>.
+    /// stays behind it (see <see cref="SetPolicy"/>) until <see cref="Unregister"/>.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void Register(int id, GgufType type)
@@ -112,8 +112,8 @@ public static class GgufTypes
     public static string? Origin(int id) => Registry.Origin(id);
 
     /// <summary>
-    /// What happens when the app's dequantizer of type <paramref name="id"/> fails (<see cref="SlotPolicy.FallBack"/> to the
-    /// library's unless set). It falls back per call, when the app's type has the library's block sizes.
+    /// What happens when the app's dequantizer of type <paramref name="id"/> fails (<see cref="SlotPolicy.Throw"/> unless set:
+    /// the error reaches the caller; <see cref="SlotPolicy.FallBack"/> retries on the library's). It falls back per call, when the app's type has the library's block sizes.
     /// </summary>
     public static void SetPolicy(int id, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Registry.SetPolicy(id, policy, shadowRate);
 
@@ -152,7 +152,7 @@ public static class GgufTypes
                 {
                     app.Dequantize(raw, values);
                 }
-                catch (Exception e) when (slot.FallsBack(e))
+                catch (Exception e) when (slot.Failed(e))
                 {
                     library.Dequantize(raw, values);
                 }

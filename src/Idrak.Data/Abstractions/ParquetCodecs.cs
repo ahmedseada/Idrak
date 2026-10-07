@@ -35,7 +35,7 @@ public static class ParquetCodecs
 
     /// <summary>
     /// Registers the codec for its <see cref="IParquetCodec.Id"/>; for a built-in id it overrides the library's, which
-    /// stays behind it as its fallback (see <see cref="SetPolicy"/>) until <see cref="Unregister"/>.
+    /// stays behind it (see <see cref="SetPolicy"/>) until <see cref="Unregister"/>.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void Register(IParquetCodec codec)
@@ -59,7 +59,7 @@ public static class ParquetCodecs
     /// <summary>Who registered the codec for <paramref name="id"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
     public static string? Origin(int id) => Registry.Origin(id);
 
-    /// <summary>What happens when the app's codec for <paramref name="id"/> fails (<see cref="SlotPolicy.FallBack"/> to the library's unless set).</summary>
+    /// <summary>What happens when the app's codec for <paramref name="id"/> fails (<see cref="SlotPolicy.Throw"/> unless set: the error reaches the caller; <see cref="SlotPolicy.FallBack"/> retries on the library's).</summary>
     public static void SetPolicy(int id, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Registry.SetPolicy(id, policy, shadowRate);
 
     /// <summary>The codec registered for the Parquet codec id <paramref name="id"/>.</summary>
@@ -111,7 +111,7 @@ public static class ParquetCodecs
             {
                 return app.Decompress(input, uncompressedSize);
             }
-            catch (Exception e) when (slot.FallsBack(e))
+            catch (Exception e) when (slot.Failed(e))
             {
                 return library.Decompress(input, uncompressedSize);
             }
