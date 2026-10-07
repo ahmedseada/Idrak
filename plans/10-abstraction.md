@@ -1,10 +1,10 @@
 # Plan 10: Idrak.Abstraction (every contract, its default implementation, and the public device API)
 
-**Status:** phases 0 to 2 done (CPU and an RTX 5070 Ti: 880 of 880; CUDA decoding unchanged), phases 3a and 3b (training,
-data and generation contracts) done on the CPU (branch `abstraction`, 2026-10-07). Phase 3c (the rest of Idrak's
-contracts) done on the CPU. Open: `EngineModel` and `NetworkOps`; then the contracts of LanguageModels, Datasets and
-Onnx. It contains plan 9
-(operations as data) and plan 7's item 12c (devices from outside the library).
+**Status (2026-10-07, branch `abstraction`):** phases 0 to 6 and 6c done on the CPU and on Vulkan (lavapipe), with
+the regrouping into the target package layout (waves 1 to 3). Phase 6b (slots and failure policies) is being built.
+Wave 4 below (6d, phase 7, docs, the final checks) is planned and not started. CUDA, HIP and a real Vulkan GPU have
+not run any of waves 1 to 4 yet. It contains plan 9 (operations as data) and plan 7's item 12c (devices from outside
+the library).
 
 ## Goal
 
@@ -202,8 +202,8 @@ exact API is settled in phase 1 with the device providers; named registries keep
 
 | Policy | What happens when the app's implementation throws | When to use |
 |---|---|---|
-| `Throw` | the error reaches the caller, as today | tests and development, opted into per slot (the kit's checks use it): failures must be loud |
-| `FallBack` (default, decision 12) | the call is retried on the library default; the failure goes to telemetry with the slot, id and exception | everywhere unless a slot opts out: an app's override never takes a call down that the library could have answered |
+| `Throw` (default, decision 12) | the error reaches the caller, as today; telemetry reports it with a hint naming `FallBack` and `Shadow` and how to switch them on for that slot | everywhere unless a slot opts in to another policy: failures are loud, and the user learns the options |
+| `FallBack` | the call is retried on the library default; the failure goes to telemetry with the slot, id and exception | opted into per slot, once the override is trusted enough to ship but not trusted alone |
 | `Shadow` | the library default answers; the app's version runs on a sample of calls (rate set per slot) and its output, time and memory are compared and recorded | before switching: real traffic as a stress test, with no risk to answers |
 
 ⚠️ Limits, stated up front:
@@ -306,6 +306,41 @@ packaged form before the real release.
 | 6d | **One promotion end to end.** A sample app's override is generalized in the library (steps 2 to 5 of "Promotion"), becomes the default, the old default stays selectable by version, and the app deletes its override | the sample app passes on the new default with no override; the previous default is still reachable by version |
 | 7 | **The surface is guarded.** A checked-in dump of the public API of **every library package** (Abstraction, core, Gpu, Data, Nlp, Vision, Diffusion and Audio when they exist, and the bridges), compared by a test on every build; an intended change updates the dump in the same commit (decided 2026-10-07); a changelog section per change | an accidental public change fails the build; the namespace test's allow list is empty |
 
+## Wave 4: the last steps (planned 2026-10-07, not started)
+
+Starts when 6b (slots and failure policies, `Throw` by default with a hint naming `FallBack` and `Shadow`) is merged and
+the full suite passes on the CPU and on Vulkan. Each step ends on `abstraction` with the full suite green on both.
+
+| # | Step | What | Done when |
+|---|---|---|---|
+| W4.1 | **6d, one promotion: non-finite logits** | The kit found that the library's `TokenSampler` throws on NaN logits (the CPU's `SampleRowsKernel` indexes out of range); the `Idrak.Samples.Override` app works around it with its own `SanitizingSampler`. Generalize that fix (steps 2 to 5 of "Promotion"): one documented rule for NaN and ±∞ logits (NaN never sampled, +∞ wins, a row with nothing finite gives a clear error) in `TokenSampler` and every `SampleRows` kernel (CPU, CUDA, Vulkan, HIP); the kit's `TokenSamplerSuite` gains the non-finite cases and the app's saved case moves into `tests/`. The new default gets a version through 6b's slots; the previous one stays selectable by version (`Default(name, version)`), and the startup report says when an app's override is older than the default. The app deletes `SanitizingSampler` and its tests pass on the default | the Override sample passes with no override; the previous default is reachable by version; the non-finite cases pass on CPU and Vulkan |
+| W4.2 | **`IdrakFromSource`** | The switch "Faster than NuGet" describes: a property in an app's `Directory.Build.props` that turns its `PackageReference`s into `ProjectReference`s on a local clone (a `buildTransitive` or `Directory.Build.targets` snippet, documented), used by the Override sample | the sample builds both ways |
+| W4.3 | **API review before freezing** | Settle the shapes flagged while waves 2 and 3 made things public, then freeze: gated activations take an enum instead of `int kind`; `PackedWeight`'s message members (`FloatMethod`, `Description`, `ShortName`) leave the public surface or get a reason; `TrainerContext` and `TrainingHistory` setters; a narrower "write an operation" surface instead of ~50 public `Tensor` members, if it can be done without slowing anything; non-contract types with one user left in Abstraction (`PackedFormats`, `KeepAlive`, `ChatTools`, `Sgd`/`Adam`) moved or justified | each item changed or recorded with its reason in the changelog |
+| W4.4 | **Phase 7, the API guard** | A checked-in dump of the public API of every library package (Abstraction, Abstraction.Testing, Gpu, Idrak, Data, Nlp, Vision, Mcp, AspNetCore, Onnx.Runtime) under `api/`, generated by a test from the assemblies' metadata (types, members, signatures, nullability, attributes that matter); the test fails on any difference; `IDRAK_UPDATE_API=1` rewrites the dumps for an intended change, which goes in the same commit with a changelog line | an accidental public change fails the build; the dumps are in the repo |
+| W4.5 | **Loose ends found in waves 2 and 3** | Document (or prevent) the host retry's double accumulation when a kernel wrote part of a `+=` output before failing, and skip the retry wrapper for operations a device has no kernel of its own for; conformance references for the Float8 operations and `AttentionStrided`; a public hook for plug-in PTX and HIP kernels (or a recorded decision to wait); the root README's stale Layout entries; `plans/idrak-cli.md` (trace levels, `idrak kernels`, `idrak overrides`) | each fixed or recorded as a decision |
+| W4.6 | **Docs pass** | The root README (package table, install lines, Layout, the plug-in and registry tables' Package column, the override loop, GPU failures), every package README (its contracts, its registries, an example), the Abstraction README (shared contracts only), the CHANGELOG's 0.4.0 section read end to end, plans/README.md, and this plan's status | a reader can find where every contract lives and how to override it |
+| W4.7 | **Final checks and the version** | `VersionPrefix` 0.3.1 → 0.4.0; full suite on CPU and Vulkan; `dotnet pack` of every package into a local feed; fresh console apps on the local feed: `Idrak` alone (every device listed), `Idrak.Gpu` with `Idrak.Abstraction` alone, an app overriding a slot with the kit in its tests; every sample builds; CLI smoke (`doctor`, `devices`, `kernels`, `overrides`, `serve --mcp`) | all green; the checklist below handed over |
+
+**Order and agents.** W4.1 and W4.2 together (the sample uses both); W4.3 and W4.5 in parallel with them (disjoint
+files); W4.4 after W4.1 to W4.5, since it freezes the surface they change; W4.6 and W4.7 last.
+
+**On the author's machines after W4.7** (CUDA on the RTX 5070 Ti and one other card, HIP on an AMD card if available, a
+real Vulkan GPU):
+
+```bash
+IDRAK_DEVICES=cuda dotnet run -c Release --project tests/Idrak.Tests         # the whole suite, kit conformance included
+IDRAK_DEVICES=vulkan dotnet run -c Release --project tests/Idrak.Tests
+IDRAK_DEVICES=hip dotnet run -c Release --project tests/Idrak.Tests
+idrak devices && idrak doctor                                                 # memory, SMs, driver through Backend.Hardware
+idrak kernels -d cuda:0                                                       # own, composed, host, plug-in rows
+idrak bench ...                                                               # decoding within 2% of 0.3.1
+idrak chat <model> --offload / --cpu-optimizer                                # offloading hooks after the Gpu split
+IDRAK_RETRY_ON_HOST=cuda idrak ...                                           # a forced failure shows the hint, then the retry
+```
+
+What to look for: kernels that only CUDA has (`MatMulLowRank`, `BFloat16TransposedMatMul`, `PackedMatMulLowRank`,
+`GemmStrided` without an epilogue) agreeing with the kit's references; graph capture; the 2% decoding gate.
+
 ## What changes for whom
 
 | Who | Before | After |
@@ -381,21 +416,15 @@ Diffusion, Audio; the bridges depend on contracts (and their third-party package
    lives changes.
 11. **GPUs come with `Idrak`** (2026-10-07): the `Idrak` package depends on `Idrak.Gpu`, so `dotnet add package Idrak`
    brings the CUDA, Vulkan and HIP devices as before; `Idrak.Gpu` also works alone on `Idrak.Abstraction`.
-12. **`FallBack` is the default failure policy** (2026-10-07): when an app's implementation throws, the call is
-   retried on the library default and the failure is reported to telemetry; a slot opts into `Throw` (tests,
-   development) or `Shadow`. Shadow samples 1% of calls per slot by default; reports go to telemetry.
-13. **No device fallback on errors by default** (2026-10-07): `FallBack` is between an app's implementation and the
-   library's default of the same contract, never between devices. A GPU kernel that fails throws a `DeviceException`
-   (CUDA, Vulkan and HIP errors derive from it), which reports a `DeviceFailed` telemetry event when raised; while the
-   retry is off the event's hint names the switch. Opt-in: `Backend.RetryOnHost` (first value from
-   `IDRAK_RETRY_ON_HOST`: `1`/`all` or a list of kinds) retries the device's own kernel of host-fallback operations
-   through a generated copy of the host fallback, reported and counted as a host call. Registered kernels, operations
-   without a fallback, and errors reported after an operation returned are not retried. The dispatcher's host
-   fallback, for operations a device has no kernel for, is unchanged and visible in `idrak kernels`.
+12. **`Throw` is the default failure policy** (2026-10-07, corrected the same day: "no fallback is the default"): when
+   an app's implementation throws, the error reaches the caller, and telemetry reports it with a hint that names
+   `FallBack` (retry on the library default) and `Shadow` and how to switch them on for that slot. Both are opted into
+   per slot. Shadow samples 1% of calls per slot by default; reports go to telemetry. The same shape as GPU failures
+   (decision 13): loud by default, the way out named in the report.
 
 ## Decided (the override loop, 2026-10-07)
 
-1. Default failure policy: **`FallBack` everywhere** (decision 12); `Throw` is opted into per slot (tests,
-   development, the kit).
+1. Default failure policy: **`Throw` everywhere** (decision 12): the error reaches the caller and telemetry reports
+   it with a hint naming `FallBack` and `Shadow` and how to switch them on; both are opted into per slot.
 2. Shadow sampling: a rate per slot, default 1%.
 3. Shadow and fallback reports go to the existing telemetry.
