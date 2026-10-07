@@ -57,7 +57,7 @@ tool. `IDRAK_DISABLE_CUDA=1` (and `_VULKAN`, `_HIP`) turns a backend off.
 | `Idrak.LanguageModels` | Hugging Face and GGUF models, tokenizers, the models' own Jinja chat templates, LoRA / QLoRA fine-tuning, evaluation |
 | `Idrak.Datasets` | JSON Lines, JSON, CSV, text, code and Parquet files (also compressed or archived); Hugging Face, GitHub, Kaggle, Zenodo and URL sources |
 | `Idrak.AspNetCore` | `AddIdrak()`, `MapPredictor`, `MapGenerate` (JSON and streaming), `MapChatApi` (the local chat API) and `MapCompletionsApi` (`/v1`) |
-| `Idrak.Mcp` | Tools of Model Context Protocol servers, and serving tools over MCP |
+| `Idrak.Mcp` | Tools of Model Context Protocol servers, and serving tools and the engine's models (generate, chat, embed) over MCP; depends on `Idrak.Abstraction` only |
 | `Idrak.Onnx` | Export to `.onnx` (opset 17) and import `.onnx` into layers |
 | `Idrak.Onnx.Runtime` | Run `.onnx` models with ONNX Runtime as Idrak modules |
 | `idrak` (CLI, package `Idrak.Cli`) | One tool for the whole library: `doctor`, `devices`, `chat`, `run`, `serve`, `pull`, `list`, `bench`, `tune`, `train`, `data`, `rag`, `suggest` and more (see "idrak: the command-line tool") |
@@ -254,7 +254,7 @@ src/Idrak.Datasets/                 optional package, no dependencies: JSON Line
                                     files (also compressed and archived); Hugging Face, GitHub, Kaggle, Zenodo and URL
                                     sources with a download cache; rows into conversations; recipes
 src/Idrak.AspNetCore/               optional package: AddIdrak(), MapPredictor, MapGenerate, MapChatApi, MapIdrakStatus
-src/Idrak.Mcp/                      optional package: tools of Model Context Protocol servers, and serving tools over MCP
+src/Idrak.Mcp/                      optional package: tools of Model Context Protocol servers, and serving tools and models over MCP
 src/Idrak.Onnx/                     optional package, no dependencies: export networks to .onnx (opset 17), import .onnx into layers
 src/Idrak.Onnx.Runtime/             optional package: run .onnx models with ONNX Runtime as Idrak modules
 src/Idrak.Cli/                      idrak: the command-line tool (commands under Commands/ in ten groups, shared helpers
@@ -913,7 +913,9 @@ var reply = await conversation.SendAsync("What is the latest Idrak version?");  
 ```
 
 Arguments are validated against each tool's schema before the tool runs; mistakes go back to the model as
-an error it can correct. `FakeChatModel.Script(...)` replays scripted replies for testing tool code, and
+an error it can correct. The tool contracts (`Tool`, `IToolRegistry`, `ToolResult`) live in `Idrak.Abstraction`, so an
+application may supply its own registry; `chatModel.WithTools(tools, maxToolRounds)` runs any chat model's tool calls on
+the server without a conversation. `FakeChatModel.Script(...)` replays scripted replies for testing tool code, and
 `TextGenerator.StreamAsync` / `ChatGenerator.StreamAsync` stream with `await foreach`.
 
 ### ASP.NET Core: the optional `Idrak.AspNetCore` package
@@ -925,7 +927,7 @@ builder.Services.AddIdrak()
 
 app.MapPredictor<House, float>("/predict/house-price", "house-price");      // POST a House (or /batch an array)
 app.MapGenerate("/api/generate", "my-gpt");                                 // JSON, or server-sent events with "stream": true
-app.MapChatApi("/api", "my-gpt", o => o.Tools(ToolExecution.Client));    // or ToolExecution.Server with maxRounds
+app.MapChatApi("/api", "my-gpt", o => o.Tools(ToolExecution.Client));    // or ToolExecution.Server with maxRounds (and tools)
 app.MapIdrakStatus("/status");
 ```
 
@@ -1044,10 +1046,13 @@ var tools = ToolRegistry.Create()
     .Build();                                                                // use in a Conversation, the engine or MapChatApi
 
 options.ToolCollection = [.. McpTools.ServerTools(registry)];                // or serve a registry to MCP clients
+options.ToolCollection = [.. McpTools.ServerTools(engine)];                  // or the engine's models: generate, chat, embed
 ```
 
-`ConnectHttpAsync(uri)` and `ConnectAsync(transport)` connect to other servers. The package depends on
-`ModelContextProtocol.Core`; the core library stays dependency-free.
+`ConnectHttpAsync(uri)` and `ConnectAsync(transport)` connect to other servers. `McpTools.ModelTools(engine)` gives the
+model tools as Idrak tools, to serve together with others; `idrak serve MODEL --mcp [--tools TOOLS.dll]` does that from
+the command line. The package depends on `Idrak.Abstraction` and `ModelContextProtocol.Core` only; the core library
+stays dependency-free.
 
 ### Quantization: int8 weights, half-precision files
 
