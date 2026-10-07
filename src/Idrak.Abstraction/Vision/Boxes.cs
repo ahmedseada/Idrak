@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-namespace Idrak.Vision;
+namespace Idrak.Abstraction.Vision;
 
 /// <summary>A rectangle of whole pixels: its left column, top row, width and height.</summary>
 public readonly record struct PixelBox(int X, int Y, int Width, int Height)
@@ -135,4 +135,14 @@ public static class NonMaxSuppression
 
         return kept;
     }
+}
+
+/// <summary>
+/// Proposes the regions of an image to classify. <c>ComponentProposer</c> takes its connected regions;
+/// implement it for other layouts (text lines split into characters, a grid of form fields, a detector's boxes).
+/// </summary>
+public interface IRegionProposer
+{
+    /// <summary>The regions of <paramref name="image"/>, in the order they should be reported.</summary>
+    IReadOnlyList<PixelBox> Propose(ForegroundImage image);
 }

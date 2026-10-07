@@ -576,7 +576,7 @@ public sealed partial class Tensor : IDisposable
 
             staging?.Before(index);
 
-            long start = OperationTelemetry.Start();
+            long start = Telemetry.Start(TelemetryLevel.Operations);
 
             // Recomputed (or unpacked) activations this step reads: given memory for it, and kept while the following steps
             // read them too (the projections of one input, one after another), then released again.
@@ -603,7 +603,7 @@ public sealed partial class Tensor : IDisposable
 
             if (start != 0)
             {
-                OperationTelemetry.Operation(node._operation ?? "?", node, start, backward: true);
+                Telemetry.Operation(node._operation ?? "?", node, start, backward: true);
             }
 
             // Intermediate results do not keep their gradient or graph (like PyTorch without retain_graph).
@@ -743,7 +743,7 @@ public sealed partial class Tensor : IDisposable
     {
         if (start != 0)
         {
-            OperationTelemetry.Operation(operation, output, start, backward: false);
+            Telemetry.Operation(operation, output, start, backward: false);
         }
 
         return output;

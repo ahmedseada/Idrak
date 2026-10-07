@@ -866,9 +866,9 @@ internal abstract class EngineModel : IAsyncDisposable
 
     protected void Publish(EngineEventKind kind, TimeSpan duration, TimeSpan wait, int batch, string? reason)
     {
-        if (Options.PublishTelemetry && Idrak.Diagnostics.Telemetry.IsEnabled(TelemetryLevel.Engine))
+        if (Options.PublishTelemetry && Idrak.Abstraction.Diagnostics.Telemetry.IsEnabled(TelemetryLevel.Engine))
         {
-            Idrak.Diagnostics.Telemetry.Engine(new EngineEvent(kind, Name, duration, wait, batch, reason));
+            Idrak.Abstraction.Diagnostics.Telemetry.Engine(new EngineEvent(kind, Name, duration, wait, batch, reason));
         }
     }
 

@@ -7,13 +7,6 @@ using System.Text.Json.Nodes;
 
 namespace Idrak.Retrieval;
 
-/// <summary>A chunk found by a search.</summary>
-/// <param name="Chunk">The chunk.</param>
-/// <param name="Score">Its score in the final order: BM25, vector similarity, fused score or re-ranker score.</param>
-/// <param name="KeywordRank">Its position (1 = best) in the keyword results, or null if keywords were not searched or did not find it.</param>
-/// <param name="VectorRank">Its position (1 = best) in the vector results, or null if vectors were not searched or did not find it.</param>
-public sealed record RetrievedChunk(Chunk Chunk, double Score, int? KeywordRank, int? VectorRank);
-
 /// <summary>
 /// Searchable chunks: keyword search (<see cref="Bm25Index"/>), vector search (<see cref="TextEncoder"/> +
 /// <see cref="VectorIndex"/>, or any <see cref="IEmbedder"/> with any <see cref="IVectorStore"/>), or both merged with

@@ -18,7 +18,7 @@ public sealed partial class Tensor
     {
         int batch = packed._shape[0], steps = packed._shape[1], width = packed._shape[2], group = heads / kvHeads;
         long kOffset = (long)heads * dim, vOffset = (long)(heads + kvHeads) * dim;
-        long start = OperationTelemetry.Start();
+        long start = Telemetry.Start(TelemetryLevel.Operations);
         var y = Empty([batch, steps, heads * dim], packed.Device);
         bool record = Autograd.IsEnabled && packed.RequiresGrad;
         var lse = record ? Empty([batch * kvHeads * group * steps], packed.Device, track: false) : null;

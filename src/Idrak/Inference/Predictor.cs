@@ -7,18 +7,6 @@ using Idrak.Layers;
 
 namespace Idrak.Inference;
 
-/// <summary>A prediction service: one input in, one answer out (also batched and asynchronous).</summary>
-/// <typeparam name="TIn">The input type (for example a record describing a house).</typeparam>
-/// <typeparam name="TOut">The answer type (for example a price, or a <see cref="ClassPrediction"/>).</typeparam>
-public interface IPredictor<TIn, TOut>
-{
-    /// <summary>Predicts one input.</summary>
-    ValueTask<TOut> PredictAsync(TIn input, CancellationToken cancellationToken = default);
-
-    /// <summary>Predicts several inputs as one batch.</summary>
-    ValueTask<IReadOnlyList<TOut>> PredictAsync(IReadOnlyList<TIn> inputs, CancellationToken cancellationToken = default);
-}
-
 /// <summary>The score of one class.</summary>
 public sealed record ClassScore(string Class, float Score);
 

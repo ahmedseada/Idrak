@@ -8,16 +8,6 @@ using Idrak.Layers;
 
 namespace Idrak.Vision;
 
-/// <summary>
-/// Proposes the regions of an image to classify. <see cref="ComponentProposer"/> takes its connected regions;
-/// implement it for other layouts (text lines split into characters, a grid of form fields, a detector's boxes).
-/// </summary>
-public interface IRegionProposer
-{
-    /// <summary>The regions of <paramref name="image"/>, in the order they should be reported.</summary>
-    IReadOnlyList<PixelBox> Propose(ForegroundImage image);
-}
-
 /// <summary>Proposes each connected region of the foreground of at least <paramref name="minArea"/> pixels (raster order).</summary>
 public sealed class ComponentProposer(Connectivity connectivity = Connectivity.Eight, int minArea = 6) : IRegionProposer
 {
@@ -139,7 +129,7 @@ public sealed class RegionClassifier : IDisposable
     public IReadOnlyList<string> Classes => _classes;
 
     /// <summary>The foreground of an image, with this classifier's polarity and threshold settings.</summary>
-    public ForegroundImage Foreground(ImageData image) => Vision.Foreground.Extract(image, _settings.ImagePolarity, _settings.ForegroundThreshold);
+    public ForegroundImage Foreground(ImageData image) => Abstraction.Vision.Foreground.Extract(image, _settings.ImagePolarity, _settings.ForegroundThreshold);
 
     /// <summary>Classifies the regions <paramref name="proposer"/> finds in <paramref name="image"/> (default: its connected regions).</summary>
     public RegionPredictions Classify(ImageData image, IRegionProposer? proposer = null)

@@ -72,7 +72,7 @@ public sealed partial class Tensor
             return x.MatMul(w) + bias;
         }
 
-        long start = OperationTelemetry.Start();
+        long start = Telemetry.Start(TelemetryLevel.Operations);
         var y = Empty([.. x._shape[..^1], n], x.Device);
         if (!x.Backend.MatMulBias(x.Storage, w.Storage, bias.Storage, y.Storage, m, n, k))
         {
@@ -115,7 +115,7 @@ public sealed partial class Tensor
             throw new ArgumentException($"MatMul inner dimensions differ: {FormatShape(a._shape)}{(transA ? "ᵀ" : "")} × {FormatShape(b._shape)}{(transB ? "ᵀ" : "")}.");
         }
 
-        long start = OperationTelemetry.Start();
+        long start = Telemetry.Start(TelemetryLevel.Operations);
         var c = Empty(a.Rank == 3 ? [batch, m, n] : [m, n], a.Device);
         a.Backend.BatchedMatMul(a.Storage, b.Storage, c.Storage, batch, m, n, k, transA, transB, 0f);
         if (WillRecord(a, b))
@@ -165,7 +165,7 @@ public sealed partial class Tensor
         ThrowIfDisposed();
         RequireRank(1, log ? "LogSoftmax" : "Softmax");
         int cols = _shape[^1], rows = cols == 0 ? 0 : Size / cols;
-        long start = OperationTelemetry.Start();
+        long start = Telemetry.Start(TelemetryLevel.Operations);
         var y = Empty(_shape, Device);
         Backend.Softmax(Storage, y.Storage, rows, cols, log);
         string name = log ? "log_softmax" : "softmax";
@@ -233,7 +233,7 @@ public sealed partial class Tensor
         var (outer, size, inner) = Split(dim);
         float scale = mean && size > 0 ? 1f / size : 1f;
         int[] shape = keepDim ? [.. _shape[..dim], 1, .. _shape[(dim + 1)..]] : [.. _shape[..dim], .. _shape[(dim + 1)..]];
-        long start = OperationTelemetry.Start();
+        long start = Telemetry.Start(TelemetryLevel.Operations);
         var y = Empty(shape, Device);
         Backend.SumAxis(Storage, y.Storage, outer, size, inner, scale, accumulate: false);
         if (WillRecord(this))
@@ -291,7 +291,7 @@ public sealed partial class Tensor
         }
 
         int[] inStrides = [.. perm.Select(p => strides[p])];
-        long start = OperationTelemetry.Start();
+        long start = Telemetry.Start(TelemetryLevel.Operations);
         var y = Empty(outShape, Device);
         Backend.Permute(Storage, y.Storage, outShape, inStrides, accumulate: false);
         if (WillRecord(this))
@@ -339,7 +339,7 @@ public sealed partial class Tensor
         var (outer, size, inner) = Split(dim);
         int[] shape = [.. _shape];
         shape[dim] = length;
-        long t0 = OperationTelemetry.Start();
+        long t0 = Telemetry.Start(TelemetryLevel.Operations);
         var y = Empty(shape, Device);
         Backend.Copy2D(Storage, start * inner, size * inner, y.Storage, 0, length * inner, outer, length * inner, accumulate: false);
         if (WillRecord(this))
@@ -377,7 +377,7 @@ public sealed partial class Tensor
         var (outer, _, inner) = first.Split(dim);
         int[] shape = [.. first._shape];
         shape[dim] = total;
-        long start = OperationTelemetry.Start();
+        long start = Telemetry.Start(TelemetryLevel.Operations);
         var y = Empty(shape, first.Device);
         int offset = 0;
         var offsets = new int[tensors.Count];
@@ -437,7 +437,7 @@ public sealed partial class Tensor
     internal Tensor Normalize(int outer, int groups, int inner, float eps, out Tensor mean, out Tensor variance)
     {
         ThrowIfDisposed();
-        long start = OperationTelemetry.Start();
+        long start = Telemetry.Start(TelemetryLevel.Operations);
         mean = Empty([groups], Device);
         variance = Empty([groups], Device);
         var invStd = Empty([groups], Device, track: false);
@@ -483,7 +483,7 @@ public sealed partial class Tensor
     internal Tensor GroupAffine(Tensor? scale, Tensor? shift, int groups, int inner)
     {
         ThrowIfDisposed();
-        long start = OperationTelemetry.Start();
+        long start = Telemetry.Start(TelemetryLevel.Operations);
         var y = Empty(_shape, Device);
         Backend.GroupScaleShift(Storage, scale?.Storage, shift?.Storage, y.Storage, Size, groups, inner, accumulate: false);
         var x = this;
@@ -520,7 +520,7 @@ public sealed partial class Tensor
         indices.ThrowIfDisposed();
         CheckSameDevice(this, indices);
         int vocabulary = _shape[0], dim = _shape[1];
-        long start = OperationTelemetry.Start();
+        long start = Telemetry.Start(TelemetryLevel.Operations);
         var y = Empty([.. indices._shape, dim], Device);
         Backend.Gather(Storage, indices.Storage, y.Storage, indices.Size, dim, vocabulary);
         if (WillRecord(this))
@@ -537,7 +537,7 @@ public sealed partial class Tensor
     {
         ThrowIfDisposed();
         var g0 = geometry;
-        long start = OperationTelemetry.Start();
+        long start = Telemetry.Start(TelemetryLevel.Operations);
         var y = Empty([g0.Positions, g0.PatchSize], Device);
         Backend.Im2Col(Storage, y.Storage, g0);
         if (WillRecord(this))
@@ -554,7 +554,7 @@ public sealed partial class Tensor
     {
         ThrowIfDisposed();
         var g0 = geometry;
-        long start = OperationTelemetry.Start();
+        long start = Telemetry.Start(TelemetryLevel.Operations);
         var y = Empty([g0.N, g0.C, g0.OH, g0.OW], Device);
         var argmax = Empty([y.Size], Device, track: false);
         Backend.MaxPool(Storage, y.Storage, argmax.Storage, g0);

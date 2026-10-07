@@ -11,8 +11,8 @@ scanned only as a user of `Idrak`'s internals.
 
 | Assembly | Interfaces | Abstract classes | Registries | Total | Outside `Idrak.Abstraction.*` |
 |---|---|---|---|---|---|
-| `Idrak.Abstraction` | 18 | 10 | 8 | 35 | 0 |
-| `Idrak` | 11 | 3 | 3 | 17 | 17 |
+| `Idrak.Abstraction` | 29 | 12 | 8 | 48 | 0 |
+| `Idrak` | 0 | 1 | 3 | 4 | 4 |
 | `Idrak.LanguageModels` | 6 | 2 | 7 | 15 | 15 |
 | `Idrak.Datasets` | 4 | 0 | 3 | 7 | 7 |
 | `Idrak.Onnx` | 0 | 0 | 3 | 3 | 3 |
@@ -48,6 +48,9 @@ proposed namespace (phases 1 to 3 settle it).
 | `Idrak.Abstraction.Devices.IHostStaging` | interface | internal | Storage | CudaBackend.HostStaging |  | `Idrak.Abstraction.Devices` |
 | `Idrak.Abstraction.Devices.IMemoryOffload` | interface | internal | Storage | CudaBackend |  | `Idrak.Abstraction.Devices` |
 | `Idrak.Abstraction.Devices.Storage` | abstract class | internal | Backend | CpuStorage, CudaStorage, HipStorage, VulkanBackend.VulkanStorage |  | `Idrak.Abstraction.Devices` |
+| `Idrak.Abstraction.Diagnostics.ITelemetryHook` | interface | public | — | ChannelTelemetry, ConsoleLogger, JsonLinesLogger, MetricsRecorder |  | `Idrak.Abstraction.Diagnostics` |
+| `Idrak.Abstraction.Formats.IWeightSource` | interface | public | — | CheckpointWeights |  | `Idrak.Abstraction.Formats` |
+| `Idrak.Abstraction.Formats.WeightCodec` | abstract class | internal | — | WeightCodec.BFloat16Codec, WeightCodec.Float16Codec, WeightCodec.Float32Codec |  | `Idrak.Abstraction.Formats` |
 | `Idrak.Abstraction.Generation.ChatTemplate` | abstract class | public | — | ChatMLTemplate, JinjaChatTemplate |  | `Idrak.Abstraction.Generation` |
 | `Idrak.Abstraction.Generation.ICachedModule` | interface | public | Tensor | CausalSelfAttention, DecoderBlock, MultiHeadAttention, PositionEmbedding, PositionalEncoding, Sequential, +1 |  | `Idrak.Abstraction.Generation` |
 | `Idrak.Abstraction.Generation.IChatModel` | interface | public | — | ChatGenerator, FakeChatModel, GenerativeModel.EngineChat |  | `Idrak.Abstraction.Generation` |
@@ -61,34 +64,31 @@ proposed namespace (phases 1 to 3 settle it).
 | `Idrak.Abstraction.Generation.RopeScalings` | registry | public | — |  | dynamic, linear, llama3, yarn | `Idrak.Abstraction.Generation` |
 | `Idrak.Abstraction.Generation.ToolCallFormats` | registry | public | — |  | deepseek, harmony, json, mistral, pythonic, qwen3-coder | `Idrak.Abstraction.Generation` |
 | `Idrak.Abstraction.Module` | abstract class | public | Device, Tensor | BatchNorm, CausalSelfAttention, ChannelNormalize, Conv2d, DecoderBlock, Dropout, +25 |  | `Idrak.Abstraction` |
-| `Idrak.Abstraction.Modules.ILayerTelemetry` | interface | internal | Module, Tensor | Telemetry.LayerTelemetry |  | `Idrak.Abstraction.Modules` |
+| `Idrak.Abstraction.Modules.ILinearAdapter` | interface | public | Tensor | DoraAdapter, LoraAdapter |  | `Idrak.Abstraction.Modules` |
+| `Idrak.Abstraction.Modules.ILinearLayer` | interface | public | Tensor | Linear |  | `Idrak.Abstraction.Modules` |
+| `Idrak.Abstraction.Modules.RecurrentModule` | abstract class | public | Device, Module, Tensor | GRU, LSTM |  | `Idrak.Abstraction.Modules` |
 | `Idrak.Abstraction.Operations.Kernels` | registry | internal | Backend |  | — | `Idrak.Abstraction.Operations` |
+| `Idrak.Abstraction.Retrieval.IEmbedder` | interface | public | — | TextEncoder |  | `Idrak.Abstraction.Retrieval` |
+| `Idrak.Abstraction.Retrieval.IReranker` | interface | public | — | CrossEncoder |  | `Idrak.Abstraction.Retrieval` |
+| `Idrak.Abstraction.Retrieval.IRetriever` | interface | public | — | RetrievalIndex |  | `Idrak.Abstraction.Retrieval` |
+| `Idrak.Abstraction.Retrieval.IVectorStore` | interface | public | — | InMemoryVectorStore |  | `Idrak.Abstraction.Retrieval` |
+| `Idrak.Abstraction.Serving.IPredictor<TIn, TOut>` | interface | public | — | IdrakBuilder.EnginePredictor<TIn, TOut>, Predictor<TIn, TOut>, PredictorModel<TIn, TOut> |  | `Idrak.Abstraction.Serving` |
 | `Idrak.Abstraction.Training.IScaler` | interface | public | — | MinMaxScaler, StandardScaler |  | `Idrak.Abstraction.Training` |
 | `Idrak.Abstraction.Training.ITrainerCallback` | interface | public | — | Checkpoint, CsvLog, EarlyStopping |  | `Idrak.Abstraction.Training` |
 | `Idrak.Abstraction.Training.LearningRateScheduler` | abstract class | public | — | CosineAnnealing, ExponentialDecay, LambdaSchedule, StepDecay |  | `Idrak.Abstraction.Training` |
 | `Idrak.Abstraction.Training.Optimizer` | abstract class | public | Device, Tensor | Adam, AdamW, AdamW8Bit, GroupedOptimizer, HostOptimizer, Sgd |  | `Idrak.Abstraction.Training` |
+| `Idrak.Abstraction.Vision.IObjectDetector` | interface | public | — | ModelDetector |  | `Idrak.Abstraction.Vision` |
+| `Idrak.Abstraction.Vision.IRegionProposer` | interface | public | — | ComponentProposer |  | `Idrak.Abstraction.Vision` |
+| `Idrak.Abstraction.Vision.ISegmenter` | interface | public | — | ModelSegmenter |  | `Idrak.Abstraction.Vision` |
 
 ### Idrak
 
 | Type | Kind | Visibility | Mentions | Implementations | Registered | Target |
 |---|---|---|---|---|---|---|
-| `Idrak.Diagnostics.ITelemetryHook` | interface | public | — | ChannelTelemetry, ConsoleLogger, JsonLinesLogger, MetricsRecorder |  | `Idrak.Abstraction.Diagnostics` |
 | `Idrak.Inference.EngineModel` | abstract class | internal | — | GenerativeModel, PredictorModel<TIn, TOut> |  | `Idrak.Abstraction.Serving` |
-| `Idrak.Inference.IPredictor<TIn, TOut>` | interface | public | — | IdrakBuilder.EnginePredictor<TIn, TOut>, Predictor<TIn, TOut>, PredictorModel<TIn, TOut> |  | `Idrak.Abstraction.Serving` |
 | `Idrak.Layers.GraphOps` | registry | public | — |  | abs, add, cast, clip, concat, div, elu, exp, +28 | `Idrak.Abstraction.Autograd` |
-| `Idrak.Layers.ILinearAdapter` | interface | public | Tensor | DoraAdapter, LoraAdapter |  | `Idrak.Abstraction.Modules` |
-| `Idrak.Layers.IWeightSource` | interface | public | — | CheckpointWeights |  | `Idrak.Abstraction.Formats` |
 | `Idrak.Layers.LayerTypes` | registry | public | Device, Module |  | attention, batchnorm, conv2d, dropout, embedding, flatten, gelu, globalavgpool2d, +12 | `Idrak.Abstraction.Modules` |
 | `Idrak.Layers.NetworkOps` | registry | public | — |  | attention, batchnorm, conv2d, dropout, embedding, firstStep, flatten, gelu, +16 | `Idrak.Abstraction.Modules` |
-| `Idrak.Layers.RecurrentModule` | abstract class | public | Device, Module, Tensor | GRU, LSTM |  | `Idrak.Abstraction.Modules` |
-| `Idrak.Layers.WeightCodec` | abstract class | internal | — | WeightCodec.BFloat16Codec, WeightCodec.Float16Codec, WeightCodec.Float32Codec |  | `Idrak.Abstraction.Formats` |
-| `Idrak.Retrieval.IEmbedder` | interface | public | — | TextEncoder |  | `Idrak.Abstraction.Retrieval` |
-| `Idrak.Retrieval.IReranker` | interface | public | — | CrossEncoder |  | `Idrak.Abstraction.Retrieval` |
-| `Idrak.Retrieval.IRetriever` | interface | public | — | RetrievalIndex |  | `Idrak.Abstraction.Retrieval` |
-| `Idrak.Retrieval.IVectorStore` | interface | public | — | InMemoryVectorStore |  | `Idrak.Abstraction.Retrieval` |
-| `Idrak.Vision.IObjectDetector` | interface | public | — | ModelDetector |  | `Idrak.Abstraction.Vision` |
-| `Idrak.Vision.IRegionProposer` | interface | public | — | ComponentProposer |  | `Idrak.Abstraction.Vision` |
-| `Idrak.Vision.ISegmenter` | interface | public | — | ModelSegmenter |  | `Idrak.Abstraction.Vision` |
 
 ### Idrak.LanguageModels
 
@@ -288,7 +288,7 @@ and members, read from that assembly's metadata. Phases 2 and 4 make each one pu
 
 ### Idrak
 
-122 members on 43 types.
+130 members on 46 types.
 
 | Type | Internal members used |
 |---|---|
@@ -317,7 +317,8 @@ and members, read from that assembly's metadata. Phases 2 and 4 make each one pu
 | `Idrak.Abstraction.Devices.Storage` | (the type) |
 | `Idrak.Abstraction.Devices.TensorOffloading` | (the type) |
 | `Idrak.Abstraction.Devices.UnaryOp` | (the type) |
-| `Idrak.Abstraction.Diagnostics.OperationTelemetry` | (the type) |
+| `Idrak.Abstraction.Diagnostics.Telemetry` | BatchCompleted(), Engine(), EpochCompleted(), Start(), ToolCall(), TrainingCompleted(), TrainingStarted() |
+| `Idrak.Abstraction.Formats.WeightCodec` | (the type) |
 | `Idrak.Abstraction.Generation.BFloat16Weight` | Empty(), Packed |
 | `Idrak.Abstraction.Generation.DecodingContext` | CacheFor(), TokenPositions, TokenStarts |
 | `Idrak.Abstraction.Generation.Int4Weight` | Empty(), Packed, Scales |
@@ -329,12 +330,14 @@ and members, read from that assembly's metadata. Phases 2 and 4 make each one pu
 | `Idrak.Abstraction.MemoryMarshalHelpers` | (the type) |
 | `Idrak.Abstraction.MixedPrecision` | UsesTensorCores |
 | `Idrak.Abstraction.Module` | WeightsDevice |
-| `Idrak.Abstraction.Modules.ILayerTelemetry` | (the type) |
+| `Idrak.Abstraction.Modules.DoraAdapter` | SquaredNorms() |
 | `Idrak.Abstraction.Modules.ModuleHooks` | (the type) |
-| `Idrak.Abstraction.Tensor` | AddDropout(), AddGradient(), AddLowRank(), AddRmsNormAffine(), AttentionRows(), Backend, BiasGelu(), CausalAttention(), CausalAttentionPacked(), DecoderMask(), EmbeddingLookup(), Empty(), Evict(), EvictToPacked(), FormatShape(), GatedActivation(), GatedActivationCompressed(), GradStorage(), GradientTarget(), GroupAffine(), Im2Col(), IsDisposed, LayerNormFused(), LayerNormTrain(), Load(), MatMulBias(), MatMulFrozenTransposed(), MatMulMany(), MatchRate(), MaxPool(), Normalize(), NormalizeWith(), RecomputeGatedActivation(), Record(), ReleaseGrad(), RmsNormAffine(), RmsNormRopePair(), RmsNormalize(), Rope(), ScaleMaskSoftmax(), StageGroup, Storage, ThrowIfDisposed(), TokenCrossEntropy(), TokenCrossEntropyRows(), TokenLogProbabilities(), Traced(), WillRecord(), WriteKeyValues(), _shape |
+| `Idrak.Abstraction.Modules.RecurrentModule` | Step() |
+| `Idrak.Abstraction.Tensor` | AddDropout(), AddGradient(), AddRmsNormAffine(), AttentionRows(), Backend, BiasGelu(), CausalAttention(), CausalAttentionPacked(), DecoderMask(), EmbeddingLookup(), Empty(), Evict(), EvictToPacked(), FormatShape(), GatedActivation(), GatedActivationCompressed(), GradStorage(), GradientTarget(), GroupAffine(), Im2Col(), IsDisposed, LayerNormFused(), LayerNormTrain(), Load(), MatMulBias(), MatMulFrozenTransposed(), MatMulMany(), MatchRate(), MaxPool(), Normalize(), NormalizeWith(), RecomputeGatedActivation(), Record(), ReleaseGrad(), RmsNormAffine(), RmsNormRopePair(), RmsNormalize(), Rope(), ScaleMaskSoftmax(), StageGroup, Storage, ThrowIfDisposed(), TokenCrossEntropy(), TokenCrossEntropyRows(), TokenLogProbabilities(), Traced(), WillRecord(), WriteKeyValues(), _shape |
 | `Idrak.Abstraction.TensorScope` | Owns() |
 | `Idrak.Abstraction.Training.TrainerContext` | Epoch, Step, constructor |
 | `Idrak.Abstraction.Training.TrainingHistory` | BestEpoch, BestLoss, EpochList, StoppedEarly |
+| `Idrak.Abstraction.Vision.ForegroundImage` | Data |
 
 ### Idrak.LanguageModels
 

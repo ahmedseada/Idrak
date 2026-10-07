@@ -26,7 +26,7 @@ public sealed partial class Tensor
     {
         ThrowIfDisposed();
         int cols = _shape[^1], rows = Size / cols;
-        long start = OperationTelemetry.Start();
+        long start = Telemetry.Start(TelemetryLevel.Operations);
         var y = Empty(_shape, Device);
         Backend.ScaleMaskSoftmax(Storage, mask?.Storage, y.Storage, rows, cols, mask is null ? 1 : mask.Size / cols, scale);
         return Traced("scale_mask_softmax", y, start);
@@ -37,7 +37,7 @@ public sealed partial class Tensor
     {
         ThrowIfDisposed();
         int cols = _shape[^1];
-        long start = OperationTelemetry.Start();
+        long start = Telemetry.Start(TelemetryLevel.Operations);
         var y = Empty(_shape, Device);
         Backend.LayerNormFused(Storage, gamma.Storage, beta.Storage, y.Storage, Size / cols, cols, eps);
         return Traced("layernorm_fused", y, start);
@@ -48,7 +48,7 @@ public sealed partial class Tensor
     {
         ThrowIfDisposed();
         int cols = _shape[^1], rows = Size / cols;
-        long start = OperationTelemetry.Start();
+        long start = Telemetry.Start(TelemetryLevel.Operations);
         var y = Empty(_shape, Device);
         var stats = Empty([2 * rows], Device, track: false);                 // kept for the backward pass, which frees it
         Backend.LayerNormTrain(Storage, gamma.Storage, beta.Storage, y.Storage, stats.Storage, rows, cols, eps);
@@ -75,7 +75,7 @@ public sealed partial class Tensor
     internal Tensor BiasGelu(Tensor bias)
     {
         ThrowIfDisposed();
-        long start = OperationTelemetry.Start();
+        long start = Telemetry.Start(TelemetryLevel.Operations);
         var y = Empty(_shape, Device);
         Backend.BiasGelu(Storage, bias.Storage, y.Storage, Size, bias.Size);
         return Traced("bias_gelu", y, start);
@@ -109,7 +109,7 @@ public sealed partial class Tensor
     /// </summary>
     internal static Tensor AttentionTiled(Tensor q, Tensor keys, Tensor values, Tensor position, int steps, float scale, AttentionVariant variant = default)
     {
-        long start = OperationTelemetry.Start();
+        long start = Telemetry.Start(TelemetryLevel.Operations);
         int heads = q._shape[0], rowsPerHead = q._shape[1], dim = q._shape[2];
         var y = Empty([heads, rowsPerHead, dim], q.Device);
         q.Backend.AttentionTiled(q.Storage, keys.Storage, values.Storage, position.Storage, y.Storage, null, heads, rowsPerHead, steps,
@@ -125,7 +125,7 @@ public sealed partial class Tensor
     /// </summary>
     internal static Tensor CausalAttention(Tensor q, Tensor keys, Tensor values, Tensor zero, int steps, float scale, AttentionVariant variant = default)
     {
-        long start = OperationTelemetry.Start();
+        long start = Telemetry.Start(TelemetryLevel.Operations);
         int heads = q._shape[0], rowsPerHead = q._shape[1], dim = q._shape[2], capacity = keys._shape[1];
         var y = Empty([heads, rowsPerHead, dim], q.Device);
         bool record = Autograd.IsEnabled && (q.RequiresGrad || keys.RequiresGrad || values.RequiresGrad);
@@ -157,7 +157,7 @@ public sealed partial class Tensor
     internal static Tensor? AttentionRows(Tensor q, Tensor keys, Tensor values, Tensor position, int steps, float scale, Tensor starts, int headsPerRow,
         AttentionVariant variant = default)
     {
-        long start = OperationTelemetry.Start();
+        long start = Telemetry.Start(TelemetryLevel.Operations);
         int heads = q._shape[0], rowsPerHead = q._shape[1], dim = q._shape[2];
         var y = Empty([heads, rowsPerHead, dim], q.Device);
         if (!q.Backend.AttentionRows(q.Storage, keys.Storage, values.Storage, position.Storage, y.Storage, starts.Storage, heads, headsPerRow, rowsPerHead,
