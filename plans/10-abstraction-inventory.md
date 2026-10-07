@@ -11,7 +11,7 @@ scanned only as a user of `Idrak`'s internals.
 
 | Assembly | Interfaces | Abstract classes | Registries | Total | Outside `Idrak.Abstraction.*` |
 |---|---|---|---|---|---|
-| `Idrak.Abstraction` | 46 | 17 | 23 | 85 | 0 |
+| `Idrak.Abstraction` | 49 | 17 | 23 | 88 | 0 |
 | `Idrak` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.LanguageModels` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Data` | 0 | 0 | 0 | 0 | 0 |
@@ -74,7 +74,7 @@ proposed namespace (phases 1 to 3 settle it).
 | `Idrak.Abstraction.Generation.ChatTemplate` | abstract class | public | — | ChatMLTemplate, JinjaChatTemplate |  | `Idrak.Abstraction.Generation` |
 | `Idrak.Abstraction.Generation.GgufPreTokenizers` | registry | public | — |  | deepseek-r1-qwen, default, falcon3, gpt-2, gpt2, hunyuan, llama-bpe, llama-v3, +7 | `Idrak.Abstraction.Generation` |
 | `Idrak.Abstraction.Generation.ICachedModule` | interface | public | Tensor | CausalSelfAttention, DecoderBlock, MultiHeadAttention, PositionEmbedding, PositionalEncoding, Sequential, +1 |  | `Idrak.Abstraction.Generation` |
-| `Idrak.Abstraction.Generation.IChatModel` | interface | public | — | ChatEngineModel, ChatGenerator, FakeChatModel |  | `Idrak.Abstraction.Generation` |
+| `Idrak.Abstraction.Generation.IChatModel` | interface | public | — | ChatEngineModel, ChatGenerator, ChatTools.ToolRunningChatModel, FakeChatModel |  | `Idrak.Abstraction.Generation` |
 | `Idrak.Abstraction.Generation.IPreTokenizer` | interface | public | — | — |  | `Idrak.Abstraction.Generation` |
 | `Idrak.Abstraction.Generation.ITextModel` | interface | public | — | ChatEngineModel, TextEngineModel, TextGenerator |  | `Idrak.Abstraction.Generation` |
 | `Idrak.Abstraction.Generation.ITokenSampler` | interface | public | Tensor | TokenSampler |  | `Idrak.Abstraction.Generation` |
@@ -82,6 +82,8 @@ proposed namespace (phases 1 to 3 settle it).
 | `Idrak.Abstraction.Generation.ITokenizerDecoder` | interface | public | — | — |  | `Idrak.Abstraction.Generation` |
 | `Idrak.Abstraction.Generation.ITokenizerNormalizer` | interface | public | — | — |  | `Idrak.Abstraction.Generation` |
 | `Idrak.Abstraction.Generation.IToolCallParser` | interface | public | — | DeepSeekToolCallParser, HarmonyToolCallParser, JsonToolCallParser, MistralToolCallParser, PythonicToolCallParser, Qwen3CoderToolCallParser |  | `Idrak.Abstraction.Generation` |
+| `Idrak.Abstraction.Generation.IToolChatModel` | interface | public | — | ChatEngineModel |  | `Idrak.Abstraction.Generation` |
+| `Idrak.Abstraction.Generation.IToolRegistry` | interface | public | — | ToolRegistry |  | `Idrak.Abstraction.Generation` |
 | `Idrak.Abstraction.Generation.KeyValueLayout` | abstract class | public | Tensor | KeyValueLayouts.BFloat16Layout, KeyValueLayouts.Float32Layout, KeyValueLayouts.Int8Layout |  | `Idrak.Abstraction.Generation` |
 | `Idrak.Abstraction.Generation.KeyValueLayouts` | registry | public | — |  | bfloat16, float32, int8 | `Idrak.Abstraction.Generation` |
 | `Idrak.Abstraction.Generation.MarkedToolCallParser` | abstract class | internal | — | DeepSeekToolCallParser, JsonToolCallParser, MistralToolCallParser, PythonicToolCallParser, Qwen3CoderToolCallParser |  | `Idrak.Abstraction.Generation` |
@@ -107,6 +109,7 @@ proposed namespace (phases 1 to 3 settle it).
 | `Idrak.Abstraction.Serving.IEngineBatcher<TIn, TOut>` | interface | public | — | MicroBatcher<TIn, TOut> |  | `Idrak.Abstraction.Serving` |
 | `Idrak.Abstraction.Serving.IEngineHost<TCopy>` | interface | public | — | HostedModel.Host<TCopy> |  | `Idrak.Abstraction.Serving` |
 | `Idrak.Abstraction.Serving.IEngineLease<TCopy>` | interface | public | — | HostedModel.Lease<TCopy> |  | `Idrak.Abstraction.Serving` |
+| `Idrak.Abstraction.Serving.IModelCatalog` | interface | public | — | InferenceEngine |  | `Idrak.Abstraction.Serving` |
 | `Idrak.Abstraction.Serving.IPredictor<TIn, TOut>` | interface | public | — | IdrakBuilder.EnginePredictor<TIn, TOut>, Predictor<TIn, TOut>, PredictorModel<TIn, TOut> |  | `Idrak.Abstraction.Serving` |
 | `Idrak.Abstraction.Training.DistillationTeacher` | abstract class | public | — | ModelTeacher, StoredTeacher |  | `Idrak.Abstraction.Training` |
 | `Idrak.Abstraction.Training.IScaler` | interface | public | — | MinMaxScaler, StandardScaler |  | `Idrak.Abstraction.Training` |
@@ -276,7 +279,7 @@ and members, read from that assembly's metadata. Phases 2 and 4 make each one pu
 
 ### Idrak
 
-133 members on 48 types.
+132 members on 48 types.
 
 | Type | Internal members used |
 |---|---|
@@ -305,7 +308,7 @@ and members, read from that assembly's metadata. Phases 2 and 4 make each one pu
 | `Idrak.Abstraction.Devices.Storage` | (the type) |
 | `Idrak.Abstraction.Devices.TensorOffloading` | (the type) |
 | `Idrak.Abstraction.Devices.UnaryOp` | (the type) |
-| `Idrak.Abstraction.Diagnostics.Telemetry` | BatchCompleted(), Engine(), EpochCompleted(), Start(), ToolCall(), TrainingCompleted(), TrainingStarted() |
+| `Idrak.Abstraction.Diagnostics.Telemetry` | BatchCompleted(), Engine(), EpochCompleted(), Start(), TrainingCompleted(), TrainingStarted() |
 | `Idrak.Abstraction.Formats.WeightCodec` | (the type) |
 | `Idrak.Abstraction.Generation.BFloat16Weight` | Empty(), Packed |
 | `Idrak.Abstraction.Generation.DecodingContext` | CacheFor(), TokenPositions, TokenStarts |
