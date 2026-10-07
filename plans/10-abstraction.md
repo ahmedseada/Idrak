@@ -124,9 +124,8 @@ Idrak.Abstraction        no dependencies, no native code; namespace Idrak.Abstra
   package)                contract test per interface (tokenizer round trip, KV layout, packed format, ...)
 
 Idrak                     layers, network builder, trainer, generation, chat, retrieval, inference engine,
-                          telemetry, and the GPU devices in Backends/Cuda, Backends/Vulkan, Backends/Hip, each
-                          built only on the public surface of Idrak.Abstraction; references Abstraction, so
-                          installing Idrak still gives everything
+                          telemetry (first sketch; see "Target package layout" for where these ended up: the GPU
+                          devices are in Idrak.Gpu, built only on the public surface of Idrak.Abstraction)
 
 Idrak.LanguageModels, Idrak.Datasets, Idrak.Onnx, ...
                           keep their implementations (GGUF, safetensors, Parquet, ONNX); their contracts move
@@ -292,6 +291,7 @@ packaged form before the real release.
 | 8a (as built) | **Regrouping, part 1** (wave 2). `Idrak.Datasets` becomes `Idrak.Data` (its row dataset is `DatasetRows`, apart from core's `Dataset`); `Idrak.Onnx` folds into core (src/Idrak/Onnx, namespace kept); new `Idrak.Vision` from core's region classification and content framing, on the public API alone. `ModelDetector` and `ModelSegmenter` follow into Vision (decided 2026-10-07); `DetectionDecoder`, `Foreground`, components, NMS, masks and their metrics stay in Abstraction as small defaults | done on the CPU (441 of 441) |
 | 8b (as built) | **Tool contracts and the bridges** (wave 2). `Tool`, `ToolResult`, `ToolRegistry` (default of the new `IToolRegistry`) in `Abstraction.Generation`; `IToolChatModel` and `ChatTools.WithTools` for server-side tools on any chat model; `IModelCatalog` (`Serving`), implemented by the engine. `Idrak.Mcp` depends on Abstraction and the MCP SDK only and serves the engine's models as `generate`, `chat`, `embed` (`idrak serve --mcp`); `Idrak.AspNetCore` uses only the engine and the contracts. Later: `transcribe`, `image`; `Conversation`'s tool loop on top of `WithTools` | done on the CPU (445 of 445) |
 | 8d (as built) | **Regrouping, part 2** (wave 2). `Idrak.LanguageModels` retired. Core holds model loading (`Idrak.Models`: `PretrainedModel`, safetensors, GGUF, `BpeTokenizer`, PEFT folders, the folder, store and .gguf sources); Data registers the Hugging Face model source. New `Idrak.Nlp`: generation, chat, Jinja, fine-tuning, distillation, evaluation, RAG, the coding agent, and the text and chat model kinds. The cut is made by the `ChatTemplates` registry (Nlp registers `"jinja"`) and extension members (`CreateGenerator`, `CreateChat`, `TextGenerator`). New justified Nlp internals (decoding, `Offloading`) wait for phases 3 and 4 | done on the CPU (445 of 445) |
+| 8e (as built) | **Idrak.Gpu** (wave 3, decision 11). CUDA, Vulkan and HIP with all their kernels move to `Idrak.Gpu` (namespaces `Idrak.Gpu.Cuda`, `.Vulkan`, `.Hip`), which references only `Idrak.Abstraction`; the compiler now enforces rule 2. `Idrak` references it for packaging only (no core code names a GPU type; a test checks it). Two links cut: the 8-bit Adam block size (`EightBitMoments.BlockSize`) and the device listing, which reads the new `Backend.Hardware` (`BackendHardware`) | CPU 448 of 448, lavapipe 448 of 448; `dotnet add package Idrak` lists the same devices; CUDA and HIP compile, need a real GPU run |
 | 8c | **Contracts with their users** (decision 10). The inventory counts the library packages using each contract; contracts with one user move from `Idrak.Abstraction` to that package's `.Abstractions` namespace, with their registries and small defaults; the test enforces it both ways | the test passes with no exceptions list; every package README lists its own contracts |
 | 4 | **Devices on the public API (item 12c).** Remove the last `InternalsVisibleTo` from `Idrak.Abstraction` to `Idrak`; the CUDA, Vulkan and HIP code in `Idrak` builds against the public surface alone | `Idrak.Abstraction` grants no internals; every device passes; `dotnet add package Idrak` behaves as before |
 | 4 (as built) | Wave 2: `Idrak.Abstraction` grants internals to `Idrak.Tests` only (the inventory test fails otherwise). Public: `Backend` with its kernels, `Storage`, `DeviceProvider(s)`, capabilities, memory and offload contracts, `Tensor.Storage`/`Backend`, the operations (`Ops`, `Kernels.Register`, `Chain`, `Trace`, `HostCalls`), and the ~50 `Tensor` members and packed-weight, KV-layout and decoding members other packages used. A device written outside the library (fresh console app on the local packages) registers and runs. Left for review: `int kind` for gated activations, public `PackedWeight` message members, `TrainerContext`/`TrainingHistory` setters, a narrower "write an operation" surface | CPU 448 of 448, lavapipe 448 of 448; CUDA, HIP, a real Vulkan GPU and the decoding gate still to run |
@@ -350,8 +350,8 @@ Diffusion, Audio; the bridges depend on contracts (and their third-party package
 
 1. Package name: **`Idrak.Abstraction`**.
 2. The CPU device is **inside `Idrak.Abstraction`**, as the default implementation and every device's host fallback.
-3. The GPU devices **stay in the `Idrak` assembly** (Backends/Cuda, Backends/Vulkan, Backends/Hip), built only on
-   the public API of `Idrak.Abstraction`; no separate device packages for now.
+3. (Reversed by decisions 8 and 11; done in wave 3.) The GPU devices **stay in the `Idrak` assembly** (Backends/Cuda,
+   Backends/Vulkan, Backends/Hip), built only on the public API of `Idrak.Abstraction`; no separate device packages for now.
 4. The contracts of `Idrak.LanguageModels`, `Idrak.Datasets` and `Idrak.Onnx` **move into `Idrak.Abstraction`** too:
    all contracts in one place; the satellites keep their implementations.
 5. (Amended by decision 10.) **Every abstraction lives under the `Idrak.Abstraction` namespace**: every interface, abstract base, plug-in point
