@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using Idrak.Abstraction.Devices;
+using Idrak.Abstraction.Operations;
 using Idrak.Abstraction.Testing.Devices;
 
 namespace Idrak.Abstraction.Testing;
@@ -38,6 +39,56 @@ public static class Conformance
     {
         ArgumentNullException.ThrowIfNull(backend);
         return DeviceConformance.Check(backend, $"{backend.Kind} ({backend.Name})", options ?? new DeviceCheckOptions());
+    }
+
+    /// <summary>
+    /// Checks the kernel a plug-in operation runs on <paramref name="device"/> (<see cref="PluginOperation{TKernel}.KernelFor"/>:
+    /// a kernel registered for its kind, or the default) against the operation's default kernel on the CPU, on
+    /// <paramref name="cases"/> cases. <paramref name="run"/> makes one case from its seed on the backend it is given
+    /// (uploads the inputs, calls the kernel with that backend, downloads the outputs) and returns the outputs; they must
+    /// agree within <paramref name="tolerance"/> (<see cref="Comparisons.Close(float, float, float)"/>).
+    /// </summary>
+    /// <example>
+    /// <code>
+    /// Conformance.Check(MyOps.ScaleRows, Device.Get("vulkan:0"), (backend, kernel, seed) =&gt;
+    /// {
+    ///     // inputs from new Random(seed), uploaded to backend; kernel(backend, ...); the outputs downloaded
+    /// }).ThrowIfFailed();
+    /// </code>
+    /// </example>
+    public static ConformanceReport Check<TKernel>(PluginOperation<TKernel> operation, Device device, Func<Backend, TKernel, int, float[]> run, int cases = 8, float tolerance = 1e-5f)
+        where TKernel : Delegate
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        ArgumentNullException.ThrowIfNull(device);
+        ArgumentNullException.ThrowIfNull(run);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(cases);
+        var backend = device.Backend;
+        var source = Kernels.Chain(backend)[operation.Index].Source;
+        var failures = new List<ConformanceFailure>();
+        for (int seed = 0; seed < cases; seed++)
+        {
+            string? difference;
+            try
+            {
+                var expected = run(Device.Cpu.Backend, operation.DefaultKernel, seed);
+                var actual = run(backend, operation.KernelFor(backend), seed);
+                difference = Comparisons.Difference(expected, actual, tolerance);
+            }
+            catch (Exception e) when (e is not OutOfMemoryException)
+            {
+                difference = $"{e.GetType().Name}: {e.Message}";
+            }
+
+            if (difference is not null)
+            {
+                failures.Add(new ConformanceFailure(operation.Name, $"seed {seed}", difference));
+            }
+        }
+
+        var entry = new CheckEntry(operation.Name, failures.Count == 0 ? CheckStatus.Passed : CheckStatus.Failed,
+            $"the {source.ToString().ToLowerInvariant()} kernel against the default on the CPU, {cases} cases");
+        return new ConformanceReport($"{operation.Name} on {device} ({device.Name})", [entry], failures, cases);
     }
 
     /// <summary>Runs a contract's suite (fixed cases, then random ones) on an implementation.</summary>

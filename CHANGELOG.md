@@ -172,6 +172,16 @@
   `Regression.Save`/`Replay` for cases that once failed. Idrak's own per-device checks run through it.
 - A plain-loop device written outside the library (`tests/Idrak.PluginTests`) passes the kit, and the
   `Idrak.Samples.Override` sample checks an app's own token sampler with the kit from its own tests.
+- Plug-ins can give their own operations device kernels (plan 10 phase 6, plan 9 phase 5):
+  `PluginOperations.Register<TKernel>(name, defaultKernel, fallback)` declares an operation with a default kernel that
+  runs everywhere, `Kernels.Register(op, kind, kernel)` adds a faster one for a kind of device, and `op.KernelFor(backend)`
+  picks it (about 2 ns over a direct call). Plug-in operations show in `Kernels.Chain`, `Kernels.Trace` and
+  `idrak kernels` (a "Declared by" column, `plugin` in the JSON). `Operation` is no longer sealed (its constructor stays
+  internal) and has `IsPlugin`. `VulkanKernel` (Idrak.Gpu) is public with `Dispatch(backend, …)`, so a plug-in can ship
+  its own SPIR-V. The kit checks a plug-in kernel against its default with
+  `Conformance.Check(PluginOperation<TKernel>, device, run)`.
+- Fixed: the CPU's `NormStats` computes the variance in two passes; `E[x²] − mean²` cancelled for one-element groups
+  and for large values with a small spread (found by the conformance kit).
 - `RopeScalings.Default(type)`: the library's own method for a scaling type, even when an app registered its own.
 - New command `idrak kernels [-d DEVICE] [--source KIND] [-j]`: per operation, the kernel a device runs and what runs
   without its own (plan 9, phase 2).
