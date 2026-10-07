@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
 
 namespace Idrak.Data.Abstractions;
@@ -29,64 +30,40 @@ public interface IDataFileFormat
 public static class DataFileFormats
 {
     // In registration order; a later format takes the extensions it shares with earlier ones.
-    private static readonly List<IDataFileFormat> Registry = [];
+    private static readonly SlotTable<string, IDataFileFormat> Registry = new(nameof(DataFileFormats), comparer: StringComparer.OrdinalIgnoreCase,
+        unguarded: "rows are read lazily, so a failure comes half-way through a file, after rows were handed out");
 
-    private static Dictionary<string, IDataFileFormat> byExtension = ByExtension();
+    // The formats by extension, from the registry's current formats.
+    private static (IReadOnlyList<IDataFileFormat> Source, Dictionary<string, IDataFileFormat> Map) byExtension = ([], []);
 
-    static DataFileFormats() => DataFiles.RegisterAll();   // the built-in formats, on first use
+    static DataFileFormats() => Overrides.AsLibraryDefaults(DataFiles.RegisterAll);   // the built-in formats, on first use
 
-    /// <summary>Registers <paramref name="format"/>, replacing a format of the same name (names ignore case).</summary>
+    /// <summary>
+    /// Registers <paramref name="format"/> (names ignore case); under a built-in name it overrides the library's format
+    /// until <see cref="Unregister"/>. Rows are read lazily, so a format does not fall back to the library's when it fails.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void Register(IDataFileFormat format)
     {
         ArgumentNullException.ThrowIfNull(format);
-        lock (Registry)
-        {
-            int index = Registry.FindIndex(f => string.Equals(f.Name, format.Name, StringComparison.OrdinalIgnoreCase));
-            if (index >= 0)
-            {
-                Registry[index] = format;
-            }
-            else
-            {
-                Registry.Add(format);
-            }
-
-            byExtension = ByExtension();
-        }
+        Registry.Register(format.Name, format, System.Reflection.Assembly.GetCallingAssembly());
     }
 
-    /// <summary>Removes the format registered as <paramref name="name"/> (ignoring case); returns whether there was one.</summary>
-    public static bool Unregister(string name)
-    {
-        lock (Registry)
-        {
-            bool removed = Registry.RemoveAll(f => string.Equals(f.Name, name, StringComparison.OrdinalIgnoreCase)) > 0;
-            byExtension = ByExtension();
-            return removed;
-        }
-    }
+    /// <summary>Removes the app's format <paramref name="name"/> (a built-in name gets the library's back); false when the app registered none.</summary>
+    public static bool Unregister(string name) => Registry.Unregister(name);
 
     /// <summary>The registered format names, in registration order.</summary>
-    public static IReadOnlyCollection<string> Names
-    {
-        get
-        {
-            lock (Registry)
-            {
-                return [.. Registry.Select(f => f.Name)];
-            }
-        }
-    }
+    public static IReadOnlyCollection<string> Names => Registry.Keys;
 
     /// <summary>The format registered as <paramref name="name"/> (ignoring case).</summary>
-    public static IDataFileFormat Get(string name)
-    {
-        lock (Registry)
-        {
-            return Registry.Find(f => string.Equals(f.Name, name, StringComparison.OrdinalIgnoreCase))
-                ?? throw new NotSupportedException($"No data file format '{name}' is registered ({string.Join(", ", Registry.Select(f => f.Name))}); add it with DataFileFormats.Register.");
-        }
-    }
+    public static IDataFileFormat Get(string name) => Registry.Find(name)
+        ?? throw new NotSupportedException($"No data file format '{name}' is registered ({string.Join(", ", Names)}); add it with DataFileFormats.Register.");
+
+    /// <summary>The library's format <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
+    public static IDataFileFormat? Default(string name) => Registry.Default(name);
+
+    /// <summary>Who registered the format <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
+    public static string? Origin(string name) => Registry.Origin(name);
 
     /// <summary>
     /// The format of <paramref name="path"/> by its extension (.gz stripped), or null for an unknown one. Source code
@@ -96,10 +73,7 @@ public static class DataFileFormats
     {
         string name = path.EndsWith(".gz", StringComparison.OrdinalIgnoreCase) ? path[..^3] : path;
         string extension = Path.GetExtension(name);
-        lock (Registry)
-        {
-            return byExtension.TryGetValue(extension, out var format) && (includeCode || !Is(format, DataFormat.Code)) ? format : null;
-        }
+        return ByExtension().TryGetValue(extension, out var format) && (includeCode || !Is(format, DataFormat.Code)) ? format : null;
     }
 
     // Whether the format has the name of a built-in (it may be a replacement registered under that name).
@@ -108,8 +82,15 @@ public static class DataFileFormats
 
     private static Dictionary<string, IDataFileFormat> ByExtension()
     {
+        var formats = Registry.Values;
+        var cache = byExtension;
+        if (ReferenceEquals(cache.Source, formats))
+        {
+            return cache.Map;
+        }
+
         var map = new Dictionary<string, IDataFileFormat>(StringComparer.OrdinalIgnoreCase);
-        foreach (var format in Registry)
+        foreach (var format in formats)
         {
             foreach (var extension in format.Extensions)
             {
@@ -117,6 +98,7 @@ public static class DataFileFormats
             }
         }
 
+        byExtension = (formats, map);
         return map;
     }
 }

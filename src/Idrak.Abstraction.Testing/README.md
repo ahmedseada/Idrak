@@ -47,7 +47,7 @@ Conformance.Check(Drive(MySampler.Create), new TokenSamplerSuite(Drive(TokenSamp
 ```
 
 Fixed cases come first, then random ones (`DeviceCheckOptions.RandomRuns`, `ContractCheckOptions.RandomCases`, a seed).
-Tolerances are per operation (`DeviceCheckOptions.Tolerances`); the comparisons themselves are public (`Comparisons`).
+Tolerances are per operation (`DeviceCheckOptions.Tolerances`); the comparisons themselves are public (`Comparisons`, in Idrak.Abstraction, which the override loop's shadow mode uses too).
 
 ### A contract of your own
 

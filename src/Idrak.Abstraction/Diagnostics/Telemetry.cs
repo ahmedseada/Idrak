@@ -43,8 +43,14 @@ public enum TelemetryLevel
     /// </summary>
     Devices = 1 << 8,
 
+    /// <summary>
+    /// The override loop (<see cref="Abstraction.Overrides"/>): every failure of an app's implementation (reaching the
+    /// caller with a hint, or answered by the library default), and every call compared under <see cref="SlotPolicy.Shadow"/>.
+    /// </summary>
+    Overrides = 1 << 9,
+
     /// <summary>Everything.</summary>
-    All = Training | Batches | Gradients | Layers | Operations | Inference | Tools | Engine | Devices,
+    All = Training | Batches | Gradients | Layers | Operations | Inference | Tools | Engine | Devices | Overrides,
 }
 
 /// <summary>
@@ -104,6 +110,16 @@ public interface ITelemetryHook
 
     /// <summary>A device failed, or an operation was retried on the CPU after its kernel failed (<see cref="TelemetryLevel.Devices"/>).</summary>
     void OnDeviceFailed(in DeviceFailed e)
+    {
+    }
+
+    /// <summary>An app's implementation of a slot threw: the error reached the caller, or the library default answered (<see cref="TelemetryLevel.Overrides"/>).</summary>
+    void OnOverrideFailed(in OverrideFailed e)
+    {
+    }
+
+    /// <summary>A call of a <see cref="SlotPolicy.Shadow"/> slot ran both implementations and compared them (<see cref="TelemetryLevel.Overrides"/>).</summary>
+    void OnOverrideCompared(in OverrideCompared e)
     {
     }
 }
@@ -271,6 +287,28 @@ public static class Telemetry
             if ((h.Levels & TelemetryLevel.Devices) != 0)
             {
                 h.OnDeviceFailed(in e);
+            }
+        }
+    }
+
+    internal static void OverrideFailed(in OverrideFailed e)
+    {
+        foreach (var h in s_hooks)
+        {
+            if ((h.Levels & TelemetryLevel.Overrides) != 0)
+            {
+                h.OnOverrideFailed(in e);
+            }
+        }
+    }
+
+    internal static void OverrideCompared(in OverrideCompared e)
+    {
+        foreach (var h in s_hooks)
+        {
+            if ((h.Levels & TelemetryLevel.Overrides) != 0)
+            {
+                h.OnOverrideCompared(in e);
             }
         }
     }

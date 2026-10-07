@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
 using Idrak.Layers.Abstractions;
 
@@ -64,51 +65,35 @@ public sealed record PretrainedBuildContext(JsonObject Config, DecoderSpec Spec,
 /// </summary>
 public static class PretrainedArchitectures
 {
-    private static readonly Dictionary<string, PretrainedArchitecture> Registry = new(StringComparer.Ordinal);
+    private static readonly SlotTable<string, PretrainedArchitecture> Registry = new(nameof(PretrainedArchitectures), comparer: StringComparer.Ordinal,
+        unguarded: "a family's functions (spec, tensor names, build) must agree with one another, so the app's and the library's cannot be mixed");
 
-    static PretrainedArchitectures() => LibraryModelFormats.RegisterPretrainedArchitectures();   // the built-in families, on first use
+    static PretrainedArchitectures() => Overrides.AsLibraryDefaults(LibraryModelFormats.RegisterPretrainedArchitectures);   // the built-in families, on first use
 
-    /// <summary>Registers (or replaces) how to read the architecture <paramref name="name"/>.</summary>
+    /// <summary>Registers how to read the architecture <paramref name="name"/>; under a built-in name it overrides the library's until <see cref="Unregister"/>.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void Register(string name, PretrainedArchitecture architecture)
     {
         ArgumentException.ThrowIfNullOrEmpty(name);
         ArgumentNullException.ThrowIfNull(architecture);
-        lock (Registry)
-        {
-            Registry[name] = architecture;
-        }
+        Registry.Register(name, architecture, System.Reflection.Assembly.GetCallingAssembly(), architecture.Spec);
     }
 
-    /// <summary>Removes the architecture <paramref name="name"/>; returns whether it was registered.</summary>
-    public static bool Unregister(string name)
-    {
-        lock (Registry)
-        {
-            return Registry.Remove(name);
-        }
-    }
+    /// <summary>Removes the app's architecture <paramref name="name"/> (a built-in name gets the library's back); false when the app registered none.</summary>
+    public static bool Unregister(string name) => Registry.Unregister(name);
 
     /// <summary>The registered architecture names.</summary>
-    public static IReadOnlyCollection<string> Names
-    {
-        get
-        {
-            lock (Registry)
-            {
-                return [.. Registry.Keys];
-            }
-        }
-    }
+    public static IReadOnlyCollection<string> Names => Registry.Keys;
 
     /// <summary>The architecture registered as <paramref name="name"/>.</summary>
-    public static PretrainedArchitecture Get(string name)
-    {
-        lock (Registry)
-        {
-            return Registry.TryGetValue(name, out var architecture) ? architecture
-                : throw new NotSupportedException($"No architecture '{name}' is registered ({string.Join(", ", Registry.Keys)}); add it with PretrainedArchitectures.Register.");
-        }
-    }
+    public static PretrainedArchitecture Get(string name) => Registry.Find(name)
+        ?? throw new NotSupportedException($"No architecture '{name}' is registered ({string.Join(", ", Registry.Keys)}); add it with PretrainedArchitectures.Register.");
+
+    /// <summary>The library's architecture <paramref name="name"/>, whatever an app registered over it (for an app's family to build on); null when the library has none.</summary>
+    public static PretrainedArchitecture? Default(string name) => Registry.Default(name);
+
+    /// <summary>Who registered the architecture <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
+    public static string? Origin(string name) => Registry.Origin(name);
 }
 
 /// <summary>Settings for building a <see cref="DecoderSpec"/> into a network (Idrak's <c>DecoderBuilder.Build</c>).</summary>

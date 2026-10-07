@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Runtime.CompilerServices;
 using Idrak.Abstraction.Devices;
 
 namespace Idrak.Abstraction.Generation;
@@ -139,12 +140,19 @@ public static class KeyValueLayouts
     // The built-ins, indexed by their format.
     private static readonly KeyValueLayout[] BuiltIn = [new Float32Layout(), new Int8Layout(), new BFloat16Layout()];
 
-    private static readonly Dictionary<string, KeyValueLayout> Registry = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly SlotTable<string, KeyValueLayout> Registry = Layouts();
+
+    private static SlotTable<string, KeyValueLayout> Layouts()
     {
-        ["float32"] = BuiltIn[0],
-        ["int8"] = BuiltIn[1],
-        ["bfloat16"] = BuiltIn[2],
-    };
+        var table = new SlotTable<string, KeyValueLayout>(nameof(KeyValueLayouts), comparer: StringComparer.OrdinalIgnoreCase,
+            unguarded: "a layout holds a cache's rows through a whole sequence, so it cannot change half-way");
+        foreach (var layout in BuiltIn)
+        {
+            table.RegisterDefault(layout.Name, layout);
+        }
+
+        return table;
+    }
 
     /// <summary>The built-in layout storing <paramref name="format"/>.</summary>
     public static KeyValueLayout For(KeyValueFormat format) =>
@@ -152,51 +160,36 @@ public static class KeyValueLayouts
             : throw new ArgumentException($"{format} is not a built-in format; pass the KeyValueLayout itself (or its name to KeyValueLayouts.Get).", nameof(format));
 
     /// <summary>
-    /// Registers (or replaces) the format <paramref name="name"/> (names ignore case). Choosing a built-in
-    /// <see cref="KeyValueFormat"/> always uses the built-in layout, whatever is registered under its name.
+    /// Registers the format <paramref name="name"/> (names ignore case); under a built-in name it overrides the library's
+    /// layout until <see cref="Unregister"/>. A cache keeps the layout it was made with through its sequence, so a layout
+    /// does not fall back to the library's when it fails. Choosing a built-in <see cref="KeyValueFormat"/> always uses the
+    /// built-in layout, whatever is registered under its name.
     /// </summary>
     /// <param name="name">The name to choose the format by.</param>
     /// <param name="layout">How the format stores and attends.</param>
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void Register(string name, KeyValueLayout layout)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         ArgumentNullException.ThrowIfNull(layout);
-        lock (Registry)
-        {
-            Registry[name] = layout;
-        }
+        Registry.Register(name, layout, System.Reflection.Assembly.GetCallingAssembly());
     }
+
+    /// <summary>Removes the app's format <paramref name="name"/> (a built-in name gets the library's back); false when the app registered none.</summary>
+    public static bool Unregister(string name) => Registry.Unregister(name);
 
     /// <summary>The registered format names.</summary>
-    public static IReadOnlyCollection<string> Names
-    {
-        get
-        {
-            lock (Registry)
-            {
-                return [.. Registry.Keys];
-            }
-        }
-    }
+    public static IReadOnlyCollection<string> Names => Registry.Keys;
 
     /// <summary>The layout registered as <paramref name="name"/> (any case).</summary>
-    public static KeyValueLayout Get(string name)
-    {
-        lock (Registry)
-        {
-            return Registry.TryGetValue(name, out var layout) ? layout
-                : throw new NotSupportedException($"No key/value cache format '{name}' is registered ({string.Join(", ", Registry.Keys)}); add it with KeyValueLayouts.Register.");
-        }
-    }
+    public static KeyValueLayout Get(string name) => Registry.Find(name)
+        ?? throw new NotSupportedException($"No key/value cache format '{name}' is registered ({string.Join(", ", Registry.Keys)}); add it with KeyValueLayouts.Register.");
 
-    // Removes a name (tests restore the registry with it).
-    internal static void Unregister(string name)
-    {
-        lock (Registry)
-        {
-            Registry.Remove(name);
-        }
-    }
+    /// <summary>The library's layout <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
+    public static KeyValueLayout? Default(string name) => Registry.Default(name);
+
+    /// <summary>Who registered the layout <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
+    public static string? Origin(string name) => Registry.Origin(name);
 
     private sealed class Float32Layout : KeyValueLayout
     {

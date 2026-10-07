@@ -1226,19 +1226,39 @@ public sealed class BpeTokenizer : ITokenizer
                     _normalizerSteps = null;
                 }
 
-                _normalizers.Add(type switch
-                {
-                    "NFC" => s => s.Normalize(NormalizationForm.FormC),
-                    "NFKC" => s => s.Normalize(NormalizationForm.FormKC),
-                    "NFD" => s => s.Normalize(NormalizationForm.FormD),
-                    "NFKD" => s => s.Normalize(NormalizationForm.FormKD),
-                    "Prepend" => s => (string)n["prepend"]! + s,
-                    "Replace" => Replacer(n),
-                    "Lowercase" => s => s.ToLowerInvariant(),
-                    _ => throw new NotSupportedException($"Tokenizer normalizer '{type}' is not supported; add it with TokenizerComponents.RegisterNormalizer."),
-                });
+                _normalizers.Add(NormalizerStep(n));
                 return;
         }
+    }
+
+    // A built-in normalizer type as a function; a sequence runs its normalizers in turn (registered ones too). Also the
+    // library default of the type in TokenizerComponents, which an app's normalizer falls back to.
+    internal static Func<string, string> NormalizerStep(JsonObject n)
+    {
+        string type = (string)n["type"]!;
+        return type switch
+        {
+            "Sequence" => Chain([.. n["normalizers"]!.AsArray().OfType<JsonObject>().Select(inner =>
+                TokenizerComponents.FindNormalizer((string?)inner["type"]) is { } create ? create(inner).Normalize : NormalizerStep(inner))]),
+            "NFC" => s => s.Normalize(NormalizationForm.FormC),
+            "NFKC" => s => s.Normalize(NormalizationForm.FormKC),
+            "NFD" => s => s.Normalize(NormalizationForm.FormD),
+            "NFKD" => s => s.Normalize(NormalizationForm.FormKD),
+            "Prepend" => s => (string)n["prepend"]! + s,
+            "Replace" => Replacer(n),
+            "Lowercase" => s => s.ToLowerInvariant(),
+            _ => throw new NotSupportedException($"Tokenizer normalizer '{type}' is not supported; add it with TokenizerComponents.RegisterNormalizer."),
+        };
+
+        static Func<string, string> Chain(Func<string, string>[] steps) => s =>
+        {
+            foreach (var step in steps)
+            {
+                s = step(s);
+            }
+
+            return s;
+        };
     }
 
     private static Func<string, string> Replacer(JsonObject n)
@@ -1265,9 +1285,8 @@ public sealed class BpeTokenizer : ITokenizer
         string type = (string)p["type"]!;
         if (TokenizerComponents.FindPreTokenizer(type) is { } create)
         {
-            var custom = create(p);
+            _preTokenizers.Add(Stage(create(p)));
             _splits = null;                                                       // a registered type: the string pipeline runs
-            _preTokenizers.Add((pieces, atStart) => custom.PreTokenize(pieces, atStart) is var result && result is List<string> list ? list : [.. result]);
             return false;
         }
 
@@ -1282,9 +1301,7 @@ public sealed class BpeTokenizer : ITokenizer
 
                 return byteLevel;
             case "Split":
-                var pattern = p["pattern"]!["Regex"] is { } r ? new Regex((string)r!, Fast) : new Regex(Regex.Escape((string)p["pattern"]!["String"]!), Fast);
-                string behavior = (string?)p["behavior"] ?? "Isolated";
-                bool invert = (bool?)p["invert"] ?? false;
+                var (pattern, behavior, invert) = SplitSettings(p);
                 _preTokenizers.Add((pieces, atStart) => SplitPieces(pieces, pattern, behavior, invert));
                 _splits?.Add((pattern, behavior, invert));
                 return false;
@@ -1301,91 +1318,147 @@ public sealed class BpeTokenizer : ITokenizer
                 }
 
                 _prefixByteLevel = prefix ? (true, useRegex ? gpt2 : null) : null;
-                _preTokenizers.Add((pieces, atStart) =>
-                {
-                    var result = new List<string>(pieces.Count);
-                    foreach (var text in pieces)
-                    {
-                        string piece = prefix && !text.StartsWith(' ') ? " " + text : text;
-                        if (!useRegex)
-                        {
-                            result.Add(ToByteChars(piece));
-                            continue;
-                        }
-
-                        foreach (var m in gpt2.EnumerateMatches(piece))
-                        {
-                            result.Add(ToByteChars(piece.AsSpan(m.Index, m.Length)));
-                        }
-                    }
-
-                    return result;
-                });
+                _preTokenizers.Add(ByteLevelStage(prefix, useRegex, gpt2));
                 return true;
             case "Metaspace":
-                string replacement = (string?)p["replacement"] ?? "▁";
-                string scheme = (string?)p["prepend_scheme"] ?? (((bool?)p["add_prefix_space"] ?? true) ? "always" : "never");
-                bool split = (bool?)p["split"] ?? true;
+                var (replacement, scheme, split) = MetaspaceSettings(p);
                 _splits = null;
                 _metaspace = (replacement, scheme, split);
-                _preTokenizers.Add((pieces, atStart) =>
-                {
-                    var result = new List<string>();
-                    for (int i = 0; i < pieces.Count; i++)
-                    {
-                        string s = pieces[i].Replace(" ", replacement, StringComparison.Ordinal);
-                        if ((scheme == "always" || scheme == "first" && i == 0 && atStart) && !s.StartsWith(replacement, StringComparison.Ordinal))
-                        {
-                            s = replacement + s;
-                        }
-
-                        if (!split)
-                        {
-                            result.Add(s);
-                            continue;
-                        }
-
-                        int start = 0;
-                        for (int j = 1; j <= s.Length; j++)
-                        {
-                            if (j == s.Length || s.AsSpan(j).StartsWith(replacement, StringComparison.Ordinal))
-                            {
-                                result.Add(s[start..j]);
-                                start = j;
-                            }
-                        }
-                    }
-
-                    return result;
-                });
+                _preTokenizers.Add(MetaspaceStage(replacement, scheme, split));
                 return false;
             case "Digits":
-                bool individual = (bool?)p["individual_digits"] ?? false;
-                var digits = new Regex(individual ? @"\p{Nd}" : @"\p{Nd}+", Fast);
+                var digits = DigitsPattern(p);
                 _preTokenizers.Add((pieces, atStart) => SplitPieces(pieces, digits, "Isolated", false));
                 _splits?.Add((digits, "Isolated", false));
                 return false;
             case "Whitespace":
-                var words = new Regex(@"\w+|[^\w\s]+", Fast);
-                _preTokenizers.Add((pieces, atStart) =>
-                {
-                    var result = new List<string>(pieces.Count);
-                    foreach (var piece in pieces)
-                    {
-                        foreach (var m in words.EnumerateMatches(piece))
-                        {
-                            result.Add(piece.Substring(m.Index, m.Length));
-                        }
-                    }
-
-                    return result;
-                });
+                var words = new Regex(WordsPattern, Fast);
+                _preTokenizers.Add(WhitespaceStage(words));
                 _splits?.Add((words, "Removed", true));                           // keeps the matches only
                 return false;
             default:
                 throw new NotSupportedException($"Tokenizer pre-tokenizer '{type}' is not supported; add it with TokenizerComponents.RegisterPreTokenizer.");
         }
     }
+
+    // A registered pre-tokenizer as a stage of the string pipeline.
+    private static Func<List<string>, bool, List<string>> Stage(IPreTokenizer part) =>
+        (pieces, atStart) => part.PreTokenize(pieces, atStart) is var result && result is List<string> list ? list : [.. result];
+
+    // A built-in pre-tokenizer type as a stage of the string pipeline; a sequence runs its pre-tokenizers in turn
+    // (registered ones too). Also the library default of the type in TokenizerComponents, which an app's falls back to.
+    internal static Func<List<string>, bool, List<string>> PreTokenizerStage(JsonObject p)
+    {
+        string type = (string)p["type"]!;
+        switch (type)
+        {
+            case "Sequence":
+                Func<List<string>, bool, List<string>>[] stages = [.. p["pretokenizers"]!.AsArray().OfType<JsonObject>().Select(inner =>
+                    TokenizerComponents.FindPreTokenizer((string?)inner["type"]) is { } create ? Stage(create(inner)) : PreTokenizerStage(inner))];
+                return (pieces, atStart) =>
+                {
+                    foreach (var stage in stages)
+                    {
+                        pieces = stage(pieces, atStart);
+                    }
+
+                    return pieces;
+                };
+            case "Split":
+                var (pattern, behavior, invert) = SplitSettings(p);
+                return (pieces, atStart) => SplitPieces(pieces, pattern, behavior, invert);
+            case "ByteLevel":
+                return ByteLevelStage((bool?)p["add_prefix_space"] ?? false, (bool?)p["use_regex"] ?? true, new Regex(Gpt2Pattern, Fast));
+            case "Metaspace":
+                var (replacement, scheme, split) = MetaspaceSettings(p);
+                return MetaspaceStage(replacement, scheme, split);
+            case "Digits":
+                var digits = DigitsPattern(p);
+                return (pieces, atStart) => SplitPieces(pieces, digits, "Isolated", false);
+            case "Whitespace":
+                return WhitespaceStage(new Regex(WordsPattern, Fast));
+            default:
+                throw new NotSupportedException($"Tokenizer pre-tokenizer '{type}' is not supported; add it with TokenizerComponents.RegisterPreTokenizer.");
+        }
+    }
+
+    private const string WordsPattern = @"\w+|[^\w\s]+";
+
+    private static (Regex Pattern, string Behavior, bool Invert) SplitSettings(JsonObject p) =>
+        (p["pattern"]!["Regex"] is { } r ? new Regex((string)r!, Fast) : new Regex(Regex.Escape((string)p["pattern"]!["String"]!), Fast),
+         (string?)p["behavior"] ?? "Isolated", (bool?)p["invert"] ?? false);
+
+    private static (string Replacement, string Scheme, bool Split) MetaspaceSettings(JsonObject p) =>
+        ((string?)p["replacement"] ?? "▁", (string?)p["prepend_scheme"] ?? (((bool?)p["add_prefix_space"] ?? true) ? "always" : "never"),
+         (bool?)p["split"] ?? true);
+
+    private static Regex DigitsPattern(JsonObject p) => new(((bool?)p["individual_digits"] ?? false) ? @"\p{Nd}" : @"\p{Nd}+", Fast);
+
+    private static Func<List<string>, bool, List<string>> ByteLevelStage(bool prefix, bool useRegex, Regex gpt2) => (pieces, atStart) =>
+    {
+        var result = new List<string>(pieces.Count);
+        foreach (var text in pieces)
+        {
+            string piece = prefix && !text.StartsWith(' ') ? " " + text : text;
+            if (!useRegex)
+            {
+                result.Add(ToByteChars(piece));
+                continue;
+            }
+
+            foreach (var m in gpt2.EnumerateMatches(piece))
+            {
+                result.Add(ToByteChars(piece.AsSpan(m.Index, m.Length)));
+            }
+        }
+
+        return result;
+    };
+
+    private static Func<List<string>, bool, List<string>> MetaspaceStage(string replacement, string scheme, bool split) => (pieces, atStart) =>
+    {
+        var result = new List<string>();
+        for (int i = 0; i < pieces.Count; i++)
+        {
+            string s = pieces[i].Replace(" ", replacement, StringComparison.Ordinal);
+            if ((scheme == "always" || scheme == "first" && i == 0 && atStart) && !s.StartsWith(replacement, StringComparison.Ordinal))
+            {
+                s = replacement + s;
+            }
+
+            if (!split)
+            {
+                result.Add(s);
+                continue;
+            }
+
+            int start = 0;
+            for (int j = 1; j <= s.Length; j++)
+            {
+                if (j == s.Length || s.AsSpan(j).StartsWith(replacement, StringComparison.Ordinal))
+                {
+                    result.Add(s[start..j]);
+                    start = j;
+                }
+            }
+        }
+
+        return result;
+    };
+
+    private static Func<List<string>, bool, List<string>> WhitespaceStage(Regex words) => (pieces, atStart) =>
+    {
+        var result = new List<string>(pieces.Count);
+        foreach (var piece in pieces)
+        {
+            foreach (var m in words.EnumerateMatches(piece))
+            {
+                result.Add(piece.Substring(m.Index, m.Length));
+            }
+        }
+
+        return result;
+    };
 
     // A split stage on pieces of the string pipeline: SplitRange on each piece, then the ranges copied out.
     private static List<string> SplitPieces(List<string> pieces, Regex pattern, string behavior, bool invert)
@@ -1445,8 +1518,7 @@ public sealed class BpeTokenizer : ITokenizer
         if (TokenizerComponents.FindDecoder(type) is { } create)
         {
             // A registered type: named so that no built-in stage (or the fused decoding) takes it for one of its own.
-            var custom = create(d);
-            _decoders.Add(("Registered:" + type, tokens => custom.Decode(tokens) is var result && result is List<string> list ? list : [.. result], null));
+            _decoders.Add(("Registered:" + type, Stage(create(d)), null));
             return;
         }
 
@@ -1465,89 +1537,149 @@ public sealed class BpeTokenizer : ITokenizer
                 var replace = Replacer(d);
                 _decoders.Add((type, tokens => [.. tokens.Select(replace)], replace));
                 break;
-            case "ByteFallback":
-                _decoders.Add((type, tokens =>
+            default:
+                _decoders.Add((type, DecoderStage(d), null));                    // ByteFallback, Fuse, Strip, Metaspace
+                break;
+        }
+    }
+
+    // A registered decoder as a stage.
+    private static Func<List<string>, List<string>> Stage(ITokenizerDecoder part) =>
+        tokens => part.Decode(tokens) is var result && result is List<string> list ? list : [.. result];
+
+    // A built-in decoder type as a stage; a sequence runs its decoders in turn (registered ones too). Also the library
+    // default of the type in TokenizerComponents, which an app's decoder falls back to; there ByteLevel turns the byte
+    // characters back into text (a byte-level tokenizer does it in Decode, from its table of token bytes).
+    internal static Func<List<string>, List<string>> DecoderStage(JsonObject d)
+    {
+        string type = (string)d["type"]!;
+        switch (type)
+        {
+            case "Sequence":
+                Func<List<string>, List<string>>[] stages = [.. d["decoders"]!.AsArray().OfType<JsonObject>().Select(inner =>
+                    TokenizerComponents.FindDecoder((string?)inner["type"]) is { } create ? Stage(create(inner)) : DecoderStage(inner))];
+                return tokens =>
                 {
-                    var result = new List<string>();
-                    var bytes = new List<byte>();
-                    void Flush()
+                    foreach (var stage in stages)
                     {
-                        if (bytes.Count > 0)
-                        {
-                            // As the tokenizers library: bytes that are not valid UTF-8 become one U+FFFD each.
-                            try
-                            {
-                                result.Add(StrictUtf8.GetString(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(bytes)));
-                            }
-                            catch (DecoderFallbackException)
-                            {
-                                result.Add(new string('\uFFFD', bytes.Count));
-                            }
-
-                            bytes.Clear();
-                        }
+                        tokens = stage(tokens);
                     }
 
-                    foreach (var token in tokens)
-                    {
-                        if (IsByteToken(token))
-                        {
-                            bytes.Add(char.IsAsciiHexDigit(token[3]) && char.IsAsciiHexDigit(token[4])
-                                ? byte.Parse(token.AsSpan(3, 2), System.Globalization.NumberStyles.AllowHexSpecifier)
-                                : Convert.ToByte(token[3..5], 16));
-                        }
-                        else
-                        {
-                            Flush();
-                            result.Add(token);
-                        }
-                    }
-
-                    Flush();
-                    return result;
-                }, null));
-                break;
+                    return tokens;
+                };
+            case "ByteLevel":
+                return tokens => [ByteLevelText(tokens)];
+            case "Replace":
+                var replace = Replacer(d);
+                return tokens => [.. tokens.Select(replace)];
+            case "ByteFallback":
+                return ByteFallback;
             case "Fuse":
-                _decoders.Add((type, tokens => [string.Concat(tokens)], null));
-                break;
+                return tokens => [string.Concat(tokens)];
             case "Strip":
                 string content = (string)d["content"]!;
                 int start = (int?)d["start"] ?? 0, stop = (int?)d["stop"] ?? 0;
-                _decoders.Add((type, tokens =>
-                {
-                    if (tokens.Count == 0)
-                    {
-                        return tokens;
-                    }
-
-                    string first = tokens[0];
-                    for (int i = 0; i < start && first.StartsWith(content, StringComparison.Ordinal); i++)
-                    {
-                        first = first[content.Length..];
-                    }
-
-                    tokens[0] = first;
-                    string last = tokens[^1];
-                    for (int i = 0; i < stop && last.EndsWith(content, StringComparison.Ordinal); i++)
-                    {
-                        last = last[..^content.Length];
-                    }
-
-                    tokens[^1] = last;
-                    return tokens;
-                }, null));
-                break;
+                return tokens => Strip(tokens, content, start, stop);
             case "Metaspace":
                 string replacement = (string?)d["replacement"] ?? "▁";
-                _decoders.Add((type, tokens =>
+                return tokens =>
                 {
                     var text = string.Concat(tokens).Replace(replacement, " ", StringComparison.Ordinal);
                     return [text.StartsWith(' ') ? text[1..] : text];
-                }, null));
-                break;
+                };
             default:
                 throw new NotSupportedException($"Tokenizer decoder '{type}' is not supported; add it with TokenizerComponents.RegisterDecoder.");
         }
+    }
+
+    // Tokens of byte characters (the GPT-2 byte map) as the UTF-8 text of their bytes; other characters as they are.
+    private static string ByteLevelText(List<string> tokens)
+    {
+        var bytes = new List<byte>();
+        Span<byte> utf8 = stackalloc byte[4];
+        foreach (var token in tokens)
+        {
+            foreach (char c in token)
+            {
+                if (CharToByte.TryGetValue(c, out byte b))
+                {
+                    bytes.Add(b);
+                }
+                else
+                {
+                    int n = Encoding.UTF8.GetBytes([c], utf8);
+                    bytes.AddRange(utf8[..n]);
+                }
+            }
+        }
+
+        return Encoding.UTF8.GetString(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(bytes));
+    }
+
+    // Byte tokens (<0xNN>) in a row become their UTF-8 text.
+    private static List<string> ByteFallback(List<string> tokens)
+    {
+        var result = new List<string>();
+        var bytes = new List<byte>();
+        void Flush()
+        {
+            if (bytes.Count > 0)
+            {
+                // As the tokenizers library: bytes that are not valid UTF-8 become one U+FFFD each.
+                try
+                {
+                    result.Add(StrictUtf8.GetString(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(bytes)));
+                }
+                catch (DecoderFallbackException)
+                {
+                    result.Add(new string('�', bytes.Count));
+                }
+
+                bytes.Clear();
+            }
+        }
+
+        foreach (var token in tokens)
+        {
+            if (IsByteToken(token))
+            {
+                bytes.Add(char.IsAsciiHexDigit(token[3]) && char.IsAsciiHexDigit(token[4])
+                    ? byte.Parse(token.AsSpan(3, 2), System.Globalization.NumberStyles.AllowHexSpecifier)
+                    : Convert.ToByte(token[3..5], 16));
+            }
+            else
+            {
+                Flush();
+                result.Add(token);
+            }
+        }
+
+        Flush();
+        return result;
+    }
+
+    private static List<string> Strip(List<string> tokens, string content, int start, int stop)
+    {
+        if (tokens.Count == 0)
+        {
+            return tokens;
+        }
+
+        string first = tokens[0];
+        for (int i = 0; i < start && first.StartsWith(content, StringComparison.Ordinal); i++)
+        {
+            first = first[content.Length..];
+        }
+
+        tokens[0] = first;
+        string last = tokens[^1];
+        for (int i = 0; i < stop && last.EndsWith(content, StringComparison.Ordinal); i++)
+        {
+            last = last[..^content.Length];
+        }
+
+        tokens[^1] = last;
+        return tokens;
     }
 
     private static (string, string) Split(string merge)

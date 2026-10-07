@@ -14,7 +14,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 | `Idrak.Abstraction` | 25 | 11 | 9 | 44 | 0 |
 | `Idrak` | 12 | 4 | 13 | 29 | 0 |
 | `Idrak.Gpu` | 0 | 0 | 0 | 0 | 0 |
-| `Idrak.Nlp` | 4 | 2 | 0 | 6 | 0 |
+| `Idrak.Nlp` | 4 | 2 | 1 | 7 | 0 |
 | `Idrak.Data` | 5 | 0 | 3 | 8 | 0 |
 | `Idrak.Vision` | 3 | 0 | 0 | 3 | 0 |
 | `Idrak.Onnx.Runtime` | 0 | 0 | 0 | 0 | 0 |
@@ -41,16 +41,16 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Data.ISampleSource` | interface | public | — | CsvSource, Dataset, ImageFolderSource, NpySource, SampleSourceExtensions.ConcatSource, SampleSourceExtensions.SubsetSource, +1 |  | Abstraction, Data, Idrak, Vision | Abstraction |
 | `Idrak.Abstraction.Data.ISampleStream` | interface | public | — | CsvSource.Stream, TableSamples.RowStream |  | Data, Idrak | Abstraction |
 | `Idrak.Abstraction.Data.ISampleTransform` | interface | public | — | ContentFrame.ReframeTransform, GaussianNoise, RandomFlip, RandomRotation, RandomShift |  | Idrak, Vision | Abstraction |
-| `Idrak.Abstraction.Devices.Backend` | abstract class | public | Storage | CpuBackend, CudaBackend, HipBackend, VulkanBackend |  | Abstraction, AspNetCore, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
-| `Idrak.Abstraction.Devices.Cpu.CpuBackend.IRangeKernel` | interface | internal | — | CpuBackend.AbsBackwardLoop, CpuBackend.AbsLoop, CpuBackend.AdamLoop, CpuBackend.AddLoop, CpuBackend.AffineLoop, CpuBackend.AxpyLoop, +29 |  | Abstraction, AspNetCore, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
-| `Idrak.Abstraction.Devices.DeviceProvider` | abstract class | public | Backend | HipProvider, LibraryRegistrations.CudaProvider, VulkanProvider |  | Abstraction, AspNetCore, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
-| `Idrak.Abstraction.Devices.DeviceProviders` | registry | public | — |  | — | Abstraction, AspNetCore, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
-| `Idrak.Abstraction.Devices.IBackwardStaging` | interface | public | — | Offloading.BackwardStaging |  | Abstraction, AspNetCore, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
-| `Idrak.Abstraction.Devices.IHostStaging` | interface | public | Storage | CudaBackend.HostStaging |  | Abstraction, AspNetCore, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
-| `Idrak.Abstraction.Devices.IMemoryOffload` | interface | public | Storage | CudaBackend |  | Abstraction, AspNetCore, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
-| `Idrak.Abstraction.Devices.Storage` | abstract class | public | Backend | CpuStorage, CudaStorage, HipStorage, VulkanBackend.VulkanStorage |  | Abstraction, AspNetCore, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
-| `Idrak.Abstraction.Diagnostics.ITelemetryHook` | interface | public | — | ChannelTelemetry, ConsoleLogger, JsonLinesLogger, MetricsRecorder |  | Abstraction, AspNetCore, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
-| `Idrak.Abstraction.Formats.IModelSource` | interface | public | — | HuggingFaceModels.HubSource, ModelSource.DelegateModelSource |  | Abstraction, Data, Idrak | Abstraction |
+| `Idrak.Abstraction.Devices.Backend` | abstract class | public | Storage | CpuBackend, CudaBackend, HipBackend, VulkanBackend |  | Abstraction, AspNetCore, Data, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
+| `Idrak.Abstraction.Devices.Cpu.CpuBackend.IRangeKernel` | interface | internal | — | CpuBackend.AbsBackwardLoop, CpuBackend.AbsLoop, CpuBackend.AdamLoop, CpuBackend.AddLoop, CpuBackend.AffineLoop, CpuBackend.AxpyLoop, +29 |  | Abstraction, AspNetCore, Data, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
+| `Idrak.Abstraction.Devices.DeviceProvider` | abstract class | public | Backend | HipProvider, LibraryRegistrations.CudaProvider, VulkanProvider |  | Abstraction, AspNetCore, Data, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
+| `Idrak.Abstraction.Devices.DeviceProviders` | registry | public | — |  | — | Abstraction, AspNetCore, Data, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
+| `Idrak.Abstraction.Devices.IBackwardStaging` | interface | public | — | Offloading.BackwardStaging |  | Abstraction, AspNetCore, Data, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
+| `Idrak.Abstraction.Devices.IHostStaging` | interface | public | Storage | CudaBackend.HostStaging |  | Abstraction, AspNetCore, Data, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
+| `Idrak.Abstraction.Devices.IMemoryOffload` | interface | public | Storage | CudaBackend |  | Abstraction, AspNetCore, Data, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
+| `Idrak.Abstraction.Devices.Storage` | abstract class | public | Backend | CpuStorage, CudaStorage, HipStorage, VulkanBackend.VulkanStorage |  | Abstraction, AspNetCore, Data, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
+| `Idrak.Abstraction.Diagnostics.ITelemetryHook` | interface | public | — | ChannelTelemetry, ConsoleLogger, JsonLinesLogger, MetricsRecorder |  | Abstraction, AspNetCore, Data, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
+| `Idrak.Abstraction.Formats.IModelSource` | interface | public | — | HuggingFaceModels.HubSource, ModelSource.DelegateModelSource, ModelSources.GuardedSource |  | Abstraction, Data, Idrak | Abstraction |
 | `Idrak.Abstraction.Formats.ModelSources` | registry | public | — |  | folder, gguf, huggingface, store | Data, Idrak | Abstraction |
 | `Idrak.Abstraction.Generation.ChatTemplate` | abstract class | public | — | ChatMLTemplate, JinjaChatTemplate |  | Abstraction, Idrak, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.ChatTemplates` | registry | public | — |  | jinja | Idrak, Nlp | Abstraction |
@@ -60,17 +60,17 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Generation.IToolCallParser` | interface | public | — | DeepSeekToolCallParser, HarmonyToolCallParser, JsonToolCallParser, MistralToolCallParser, PythonicToolCallParser, Qwen3CoderToolCallParser |  | Abstraction, Idrak, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.IToolChatModel` | interface | public | — | ChatEngineModel |  | AspNetCore, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.IToolRegistry` | interface | public | — | ToolRegistry |  | Abstraction, AspNetCore, Mcp, Nlp | Abstraction |
-| `Idrak.Abstraction.Generation.KeyValueLayout` | abstract class | public | Tensor | KeyValueLayouts.BFloat16Layout, KeyValueLayouts.Float32Layout, KeyValueLayouts.Int8Layout |  | Abstraction, AspNetCore, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
-| `Idrak.Abstraction.Generation.KeyValueLayouts` | registry | public | — |  | bfloat16, float32, int8 | Abstraction, AspNetCore, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
+| `Idrak.Abstraction.Generation.KeyValueLayout` | abstract class | public | Tensor | KeyValueLayouts.BFloat16Layout, KeyValueLayouts.Float32Layout, KeyValueLayouts.Int8Layout |  | Abstraction, AspNetCore, Data, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
+| `Idrak.Abstraction.Generation.KeyValueLayouts` | registry | public | — |  | bfloat16, float32, int8 | Abstraction, AspNetCore, Data, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
 | `Idrak.Abstraction.Generation.MarkedToolCallParser` | abstract class | internal | — | DeepSeekToolCallParser, JsonToolCallParser, MistralToolCallParser, PythonicToolCallParser, Qwen3CoderToolCallParser |  | Abstraction, Idrak, Nlp | Abstraction |
-| `Idrak.Abstraction.Generation.PackedWeight` | abstract class, registry | public | Device, Storage, Tensor | BFloat16Weight, Int4Weight, Int8Weight | — | Abstraction, AspNetCore, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
+| `Idrak.Abstraction.Generation.PackedWeight` | abstract class, registry | public | Device, Storage, Tensor | BFloat16Weight, Int4Weight, Int8Weight | — | Abstraction, AspNetCore, Data, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
 | `Idrak.Abstraction.Generation.RopeScalings` | registry | public | — |  | dynamic, linear, llama3, yarn | Abstraction, Idrak, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.ToolCallFormats` | registry | public | — |  | deepseek, harmony, json, mistral, pythonic, qwen3-coder | Abstraction, Idrak, Nlp | Abstraction |
-| `Idrak.Abstraction.Module` | abstract class | public | Device, Tensor | BatchNorm, CausalSelfAttention, ChannelNormalize, Conv2d, DecoderBlock, Dropout, +25 |  | Abstraction, AspNetCore, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
+| `Idrak.Abstraction.Module` | abstract class | public | Device, Tensor | BatchNorm, CausalSelfAttention, ChannelNormalize, Conv2d, DecoderBlock, Dropout, +25 |  | Abstraction, AspNetCore, Data, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
 | `Idrak.Abstraction.Modules.ILinearAdapter` | interface | public | Tensor | DoraAdapter, LoraAdapter |  | Idrak, Nlp | Abstraction |
 | `Idrak.Abstraction.Modules.ILinearLayer` | interface | public | Tensor | Linear |  | Abstraction, Idrak, Nlp | Abstraction |
-| `Idrak.Abstraction.Operations.Kernels` | registry | public | Backend |  | — | Abstraction, AspNetCore, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
-| `Idrak.Abstraction.Operations.PluginOperations` | registry | public | — |  | — | Abstraction, AspNetCore, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
+| `Idrak.Abstraction.Operations.Kernels` | registry | public | Backend |  | — | Abstraction, AspNetCore, Data, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
+| `Idrak.Abstraction.Operations.PluginOperations` | registry | public | — |  | — | Abstraction, AspNetCore, Data, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
 | `Idrak.Abstraction.Retrieval.IEmbedder` | interface | public | — | TextEncoder |  | AspNetCore, Mcp, Nlp | Abstraction |
 | `Idrak.Abstraction.Serving.EngineModel<TCopy>` | abstract class | public | — | ChatEngineModel, PredictorModel<TIn, TOut>, TextEngineModel |  | AspNetCore, Idrak, Nlp | Abstraction |
 | `Idrak.Abstraction.Serving.IEngineBatcher<TIn, TOut>` | interface | public | — | MicroBatcher<TIn, TOut> |  | Abstraction, AspNetCore, Idrak, Nlp | Abstraction |
@@ -86,7 +86,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | Type | Kind | Visibility | Mentions | Implementations | Registered | Users | Belongs in |
 |---|---|---|---|---|---|---|---|
 | `Idrak.Data.Abstractions.IBatchSource` | interface | public | — | DataLoader |  | Idrak | Idrak |
-| `Idrak.Data.Abstractions.IImageCodec` | interface | public | — | BmpCodec, NetpbmCodec, PngCodec |  | Idrak | Idrak |
+| `Idrak.Data.Abstractions.IImageCodec` | interface | public | — | BmpCodec, ImageCodecs.GuardedCodec, NetpbmCodec, PngCodec |  | Idrak | Idrak |
 | `Idrak.Data.Abstractions.IScaler` | interface | public | — | MinMaxScaler, StandardScaler |  | Idrak | Idrak |
 | `Idrak.Data.Abstractions.ImageCodecs` | registry | public | — |  | bmp, netpbm, png | Idrak | Idrak |
 | `Idrak.Data.Abstractions.SampleSources` | registry | public | — |  | csv, images, npy, tokens | Idrak | Idrak |
@@ -100,11 +100,11 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Models.Abstractions.GgufArchitectures` | registry | public | — |  | llama, qwen2, qwen2moe, qwen3, qwen3moe | Idrak | Idrak |
 | `Idrak.Models.Abstractions.GgufPreTokenizers` | registry | public | — |  | deepseek-r1-qwen, default, falcon3, gpt-2, gpt2, hunyuan, llama-bpe, llama-v3, +7 | Idrak | Idrak |
 | `Idrak.Models.Abstractions.GgufTypes` | registry | public | — |  | — | Idrak | Idrak |
-| `Idrak.Models.Abstractions.ICheckpointFormat` | interface | public | — | GgufCheckpointFormat, SafeTensorsCheckpointFormat |  | Idrak | Idrak |
-| `Idrak.Models.Abstractions.IPreTokenizer` | interface | public | — | — |  | Idrak | Idrak |
+| `Idrak.Models.Abstractions.ICheckpointFormat` | interface | public | — | CheckpointFormats.GuardedFormat, GgufCheckpointFormat, SafeTensorsCheckpointFormat |  | Idrak | Idrak |
+| `Idrak.Models.Abstractions.IPreTokenizer` | interface | public | — | TokenizerComponents.GuardedPreTokenizer, TokenizerComponents.PreTokenizer |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.ITensorStore` | interface | public | — | GgufModel.GgufTensors, SafeTensorsReader |  | Idrak | Idrak |
-| `Idrak.Models.Abstractions.ITokenizerDecoder` | interface | public | — | — |  | Idrak | Idrak |
-| `Idrak.Models.Abstractions.ITokenizerNormalizer` | interface | public | — | — |  | Idrak | Idrak |
+| `Idrak.Models.Abstractions.ITokenizerDecoder` | interface | public | — | TokenizerComponents.Decoder, TokenizerComponents.GuardedDecoder |  | Idrak | Idrak |
+| `Idrak.Models.Abstractions.ITokenizerNormalizer` | interface | public | — | TokenizerComponents.GuardedNormalizer, TokenizerComponents.Normalizer |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.IWeightSource` | interface | public | — | CheckpointWeights |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.PretrainedArchitectures` | registry | public | — |  | Gemma2ForCausalLM, Gemma3ForCausalLM, GemmaForCausalLM, LlamaForCausalLM, MistralForCausalLM, MixtralForCausalLM, Qwen2ForCausalLM, Qwen2MoeForCausalLM, +2 | Idrak | Idrak |
 | `Idrak.Models.Abstractions.TokenizerComponents` | registry | public | — |  | — | Idrak | Idrak |
@@ -119,7 +119,8 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 
 | Type | Kind | Visibility | Mentions | Implementations | Registered | Users | Belongs in |
 |---|---|---|---|---|---|---|---|
-| `Idrak.Generation.Abstractions.ITokenSampler` | interface | public | Tensor | TokenSampler |  | Nlp | Nlp |
+| `Idrak.Generation.Abstractions.ITokenSampler` | interface | public | Tensor | TokenSampler, TokenSamplers.ShadowSampler |  | Nlp | Nlp |
+| `Idrak.Generation.Abstractions.TokenSamplers` | registry | public | — |  | default | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.DistillationTeacher` | abstract class | public | — | ModelTeacher, StoredTeacher |  | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.TeacherDistributions` | abstract class | public | Device, Tensor | ModelTeacher.Batch, StoredTeacher.Batch |  | Nlp | Nlp |
 | `Idrak.Retrieval.Abstractions.IReranker` | interface | public | — | CrossEncoder |  | Nlp | Nlp |
@@ -134,8 +135,8 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Data.Abstractions.DatasetSources` | registry | public | — |  | file, folder, github, hf, http, kaggle, zenodo | Data | Data |
 | `Idrak.Data.Abstractions.IDataFileFormat` | interface | public | — | DataFiles.BuiltIn |  | Data | Data |
 | `Idrak.Data.Abstractions.IDatasetRows` | interface | public | — | DatasetRows |  | Data | Data |
-| `Idrak.Data.Abstractions.IDatasetSource` | interface | public | — | LibraryDatasetSources.Local, LibraryDatasetSources.Prefixed |  | Data | Data |
-| `Idrak.Data.Abstractions.IParquetCodec` | interface | public | — | Codecs.BuiltIn |  | Data | Data |
+| `Idrak.Data.Abstractions.IDatasetSource` | interface | public | — | DatasetSources.GuardedSource, LibraryDatasetSources.Local, LibraryDatasetSources.Prefixed |  | Data | Data |
+| `Idrak.Data.Abstractions.IParquetCodec` | interface | public | — | Codecs.BuiltIn, ParquetCodecs.GuardedCodec |  | Data | Data |
 | `Idrak.Data.Abstractions.ITextNormalizer` | interface | public | — | — |  | Data | Data |
 | `Idrak.Data.Abstractions.ParquetCodecs` | registry | public | — |  | Brotli, Gzip, Lz4Raw, Snappy, Uncompressed | Data | Data |
 

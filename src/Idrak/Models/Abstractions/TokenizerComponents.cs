@@ -1,7 +1,9 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
+using Idrak.Models;
 
 namespace Idrak.Models.Abstractions;
 
@@ -32,117 +34,207 @@ public interface ITokenizerDecoder
 
 /// <summary>
 /// The normalizer, pre-tokenizer and decoder types a tokenizer.json may name ("type": "NFC", "Split", "ByteLevel", …), for
-/// the tokenizers that read tokenizer.json (Idrak's <c>BpeTokenizer</c>). The built-in types are listed too:
-/// the Hugging Face types the BPE tokenizer runs itself, on its fast paths. Register a factory for another type (it
-/// receives the component's JSON object) with <see cref="RegisterNormalizer"/>, <see cref="RegisterPreTokenizer"/> or
-/// <see cref="RegisterDecoder"/>; registering a built-in name replaces the built-in. Components are made once, when a
-/// tokenizer is read, and a tokenizer using a registered one encodes (or decodes) through the general string pipeline
-/// instead of its fast paths.
+/// the tokenizers that read tokenizer.json (Idrak's <c>BpeTokenizer</c>). The built-in types are listed too: the Hugging
+/// Face types the BPE tokenizer runs itself, on its fast paths. Register a factory for another type (it receives the
+/// component's JSON object) with <see cref="RegisterNormalizer"/>, <see cref="RegisterPreTokenizer"/> or
+/// <see cref="RegisterDecoder"/>. Components are made once, when a tokenizer is read, and a tokenizer using a registered
+/// one encodes (or decodes) through the general string pipeline instead of its fast paths.
+/// <para>
+/// Registering a built-in name overrides the built-in, which stays behind it as the library default
+/// (<see cref="DefaultNormalizer"/>, …) until the app unregisters it. A failure of the app's component reaches the caller
+/// and is reported (<see cref="SlotPolicy.Throw"/>, the default); under <see cref="SlotPolicy.FallBack"/> (see
+/// <see cref="SetNormalizerPolicy"/>, …) a component that fails to be made is replaced by the built-in when the tokenizer
+/// is read, and a call that throws is answered by the built-in; under <see cref="SlotPolicy.Shadow"/> the built-in answers
+/// and the app's component is compared with it on a sample of calls.
+/// </para>
 /// </summary>
 public static class TokenizerComponents
 {
-    // The types the BPE tokenizer runs itself.
-    private static readonly string[] BuiltInNormalizers = ["Sequence", "NFC", "NFKC", "NFD", "NFKD", "Prepend", "Replace", "Lowercase"];
-    private static readonly string[] BuiltInPreTokenizers = ["Sequence", "Split", "ByteLevel", "Metaspace", "Digits", "Whitespace"];
-    private static readonly string[] BuiltInDecoders = ["Sequence", "ByteLevel", "Replace", "ByteFallback", "Fuse", "Strip", "Metaspace"];
+    // The types the BPE tokenizer runs itself, with their library defaults as components: what an app's component of
+    // the same type falls back to or is compared with.
+    private static readonly SlotTable<string, Func<JsonObject, ITokenizerNormalizer>> Normalizers = BuiltIn<ITokenizerNormalizer>(
+        "TokenizerComponents.Normalizers", ["Sequence", "NFC", "NFKC", "NFD", "NFKD", "Prepend", "Replace", "Lowercase"],
+        spec => new Normalizer(BpeTokenizer.NormalizerStep(spec)),
+        (slot, app, library) => new GuardedNormalizer(slot, app, library));
 
-    // Every type by name; null: built into BpeTokenizer.
-    private static readonly Dictionary<string, Func<JsonObject, ITokenizerNormalizer>?> Normalizers = BuiltIn<ITokenizerNormalizer>(BuiltInNormalizers);
-    private static readonly Dictionary<string, Func<JsonObject, IPreTokenizer>?> PreTokenizers = BuiltIn<IPreTokenizer>(BuiltInPreTokenizers);
-    private static readonly Dictionary<string, Func<JsonObject, ITokenizerDecoder>?> Decoders = BuiltIn<ITokenizerDecoder>(BuiltInDecoders);
+    private static readonly SlotTable<string, Func<JsonObject, IPreTokenizer>> PreTokenizers = BuiltIn<IPreTokenizer>(
+        "TokenizerComponents.PreTokenizers", ["Sequence", "Split", "ByteLevel", "Metaspace", "Digits", "Whitespace"],
+        spec => new PreTokenizer(BpeTokenizer.PreTokenizerStage(spec)),
+        (slot, app, library) => new GuardedPreTokenizer(slot, app, library));
 
-    private static Dictionary<string, Func<JsonObject, T>?> BuiltIn<T>(string[] types) =>
-        types.ToDictionary(t => t, Func<JsonObject, T>? (_) => null, StringComparer.Ordinal);
+    private static readonly SlotTable<string, Func<JsonObject, ITokenizerDecoder>> Decoders = BuiltIn<ITokenizerDecoder>(
+        "TokenizerComponents.Decoders", ["Sequence", "ByteLevel", "Replace", "ByteFallback", "Fuse", "Strip", "Metaspace"],
+        spec => new Decoder(BpeTokenizer.DecoderStage(spec)),
+        (slot, app, library) => new GuardedDecoder(slot, app, library));
 
-    /// <summary>Registers (or replaces) the normalizer type <paramref name="type"/>, made by <paramref name="create"/> from its JSON.</summary>
-    public static void RegisterNormalizer(string type, Func<JsonObject, ITokenizerNormalizer> create) => Register(Normalizers, type, create);
+    // A table of the built-in types ("TokenizerComponents.Normalizers": its policy is set by SetNormalizerPolicy). An app's
+    // factory is guarded when it is made (a failure falls back to the built-in, under FallBack) and its component on each
+    // call (wrap).
+    private static SlotTable<string, Func<JsonObject, T>> BuiltIn<T>(string registry, string[] types, Func<JsonObject, T> library,
+        Func<Slot, T, Later<T>, T> wrap) where T : class
+    {
+        var table = new SlotTable<string, Func<JsonObject, T>>(registry, (slot, app, fallback) => spec =>
+        {
+            var builtIn = new Later<T>(() => fallback(spec));
+            try
+            {
+                return wrap(slot, app(spec), builtIn);
+            }
+            catch (Exception e) when (slot.Policy == SlotPolicy.Shadow ? ShadowFailed(slot, e) : slot.Failed(e))
+            {
+                return builtIn.Value;
+            }
+        }, StringComparer.Ordinal, setPolicy: "TokenizerComponents.Set" + registry[(registry.IndexOf('.') + 1)..^1] + "Policy");
+        foreach (string type in types)
+        {
+            table.RegisterDefault(type, library);
+        }
 
-    /// <summary>Registers (or replaces) the pre-tokenizer type <paramref name="type"/>, made by <paramref name="create"/> from its JSON.</summary>
-    public static void RegisterPreTokenizer(string type, Func<JsonObject, IPreTokenizer> create) => Register(PreTokenizers, type, create);
+        return table;
+    }
 
-    /// <summary>Registers (or replaces) the decoder type <paramref name="type"/>, made by <paramref name="create"/> from its JSON.</summary>
-    public static void RegisterDecoder(string type, Func<JsonObject, ITokenizerDecoder> create) => Register(Decoders, type, create);
+    // Under Shadow the built-in answers anyway: an app's component that cannot be made is reported, if sampled.
+    private static bool ShadowFailed(Slot slot, Exception error)
+    {
+        if (error is OperationCanceledException)
+        {
+            return false;
+        }
 
-    /// <summary>Removes the registered normalizer type <paramref name="type"/> (a built-in name gets the built-in back); false when none was registered.</summary>
-    public static bool UnregisterNormalizer(string type) => Unregister(Normalizers, BuiltInNormalizers, type);
+        slot.Shadow()?.Failed(error);
+        return true;
+    }
 
-    /// <summary>Removes the registered pre-tokenizer type <paramref name="type"/> (a built-in name gets the built-in back); false when none was registered.</summary>
-    public static bool UnregisterPreTokenizer(string type) => Unregister(PreTokenizers, BuiltInPreTokenizers, type);
+    /// <summary>Registers the normalizer type <paramref name="type"/>, made by <paramref name="create"/> from its JSON; a built-in name overrides the built-in.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
+    public static void RegisterNormalizer(string type, Func<JsonObject, ITokenizerNormalizer> create) => Register(Normalizers, type, create, System.Reflection.Assembly.GetCallingAssembly());
 
-    /// <summary>Removes the registered decoder type <paramref name="type"/> (a built-in name gets the built-in back); false when none was registered.</summary>
-    public static bool UnregisterDecoder(string type) => Unregister(Decoders, BuiltInDecoders, type);
+    /// <summary>Registers the pre-tokenizer type <paramref name="type"/>, made by <paramref name="create"/> from its JSON; a built-in name overrides the built-in.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
+    public static void RegisterPreTokenizer(string type, Func<JsonObject, IPreTokenizer> create) => Register(PreTokenizers, type, create, System.Reflection.Assembly.GetCallingAssembly());
+
+    /// <summary>Registers the decoder type <paramref name="type"/>, made by <paramref name="create"/> from its JSON; a built-in name overrides the built-in.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
+    public static void RegisterDecoder(string type, Func<JsonObject, ITokenizerDecoder> create) => Register(Decoders, type, create, System.Reflection.Assembly.GetCallingAssembly());
+
+    /// <summary>Removes the app's normalizer type <paramref name="type"/> (a built-in name gets the built-in back); false when the app registered none.</summary>
+    public static bool UnregisterNormalizer(string type) => Normalizers.Unregister(type);
+
+    /// <summary>Removes the app's pre-tokenizer type <paramref name="type"/> (a built-in name gets the built-in back); false when the app registered none.</summary>
+    public static bool UnregisterPreTokenizer(string type) => PreTokenizers.Unregister(type);
+
+    /// <summary>Removes the app's decoder type <paramref name="type"/> (a built-in name gets the built-in back); false when the app registered none.</summary>
+    public static bool UnregisterDecoder(string type) => Decoders.Unregister(type);
 
     /// <summary>The normalizer types: the built-in ones and those registered.</summary>
-    public static IReadOnlyCollection<string> NormalizerTypes => Types(Normalizers);
+    public static IReadOnlyCollection<string> NormalizerTypes => Normalizers.Keys;
 
     /// <summary>The pre-tokenizer types: the built-in ones and those registered.</summary>
-    public static IReadOnlyCollection<string> PreTokenizerTypes => Types(PreTokenizers);
+    public static IReadOnlyCollection<string> PreTokenizerTypes => PreTokenizers.Keys;
 
     /// <summary>The decoder types: the built-in ones and those registered.</summary>
-    public static IReadOnlyCollection<string> DecoderTypes => Types(Decoders);
+    public static IReadOnlyCollection<string> DecoderTypes => Decoders.Keys;
 
     /// <summary>
-    /// The factory registered for the normalizer type <paramref name="type"/>, or null for a built-in type nobody replaced
-    /// (the tokenizer runs it itself) and for an unknown one.
+    /// The factory an app registered for the normalizer type <paramref name="type"/> (guarded by its policy when it
+    /// overrides a built-in), or null for a built-in type nobody replaced (the tokenizer runs it itself) and for an
+    /// unknown one.
     /// </summary>
     public static Func<JsonObject, ITokenizerNormalizer>? FindNormalizer(string? type) => Find(Normalizers, type);
 
-    /// <summary>The factory registered for the pre-tokenizer type <paramref name="type"/>, or null (see <see cref="FindNormalizer"/>).</summary>
+    /// <summary>The factory an app registered for the pre-tokenizer type <paramref name="type"/>, or null (see <see cref="FindNormalizer"/>).</summary>
     public static Func<JsonObject, IPreTokenizer>? FindPreTokenizer(string? type) => Find(PreTokenizers, type);
 
-    /// <summary>The factory registered for the decoder type <paramref name="type"/>, or null (see <see cref="FindNormalizer"/>).</summary>
+    /// <summary>The factory an app registered for the decoder type <paramref name="type"/>, or null (see <see cref="FindNormalizer"/>).</summary>
     public static Func<JsonObject, ITokenizerDecoder>? FindDecoder(string? type) => Find(Decoders, type);
 
-    private static void Register<T>(Dictionary<string, Func<JsonObject, T>?> registry, string type, Func<JsonObject, T> create)
+    /// <summary>The built-in normalizer type <paramref name="type"/> as a component factory (for an app's normalizer to delegate to); null when it is not built in.</summary>
+    public static Func<JsonObject, ITokenizerNormalizer>? DefaultNormalizer(string type) => Normalizers.Default(type);
+
+    /// <summary>The built-in pre-tokenizer type <paramref name="type"/> as a component factory; null when it is not built in.</summary>
+    public static Func<JsonObject, IPreTokenizer>? DefaultPreTokenizer(string type) => PreTokenizers.Default(type);
+
+    /// <summary>The built-in decoder type <paramref name="type"/> as a component factory; null when it is not built in.</summary>
+    public static Func<JsonObject, ITokenizerDecoder>? DefaultDecoder(string type) => Decoders.Default(type);
+
+    /// <summary>Who registered the normalizer type <paramref name="type"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
+    public static string? NormalizerOrigin(string type) => Normalizers.Origin(type);
+
+    /// <summary>Who registered the pre-tokenizer type <paramref name="type"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
+    public static string? PreTokenizerOrigin(string type) => PreTokenizers.Origin(type);
+
+    /// <summary>Who registered the decoder type <paramref name="type"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
+    public static string? DecoderOrigin(string type) => Decoders.Origin(type);
+
+    /// <summary>What happens when the app's normalizer type <paramref name="type"/> fails (<see cref="SlotPolicy.Throw"/> unless set: the error reaches the caller; <see cref="SlotPolicy.FallBack"/> retries on the built-in).</summary>
+    public static void SetNormalizerPolicy(string type, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) =>
+        Normalizers.SetPolicy(type, policy, shadowRate);
+
+    /// <summary>What happens when the app's pre-tokenizer type <paramref name="type"/> fails (<see cref="SlotPolicy.Throw"/> unless set: the error reaches the caller; <see cref="SlotPolicy.FallBack"/> retries on the built-in).</summary>
+    public static void SetPreTokenizerPolicy(string type, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) =>
+        PreTokenizers.SetPolicy(type, policy, shadowRate);
+
+    /// <summary>What happens when the app's decoder type <paramref name="type"/> fails (<see cref="SlotPolicy.Throw"/> unless set: the error reaches the caller; <see cref="SlotPolicy.FallBack"/> retries on the built-in).</summary>
+    public static void SetDecoderPolicy(string type, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) =>
+        Decoders.SetPolicy(type, policy, shadowRate);
+
+    private static void Register<T>(SlotTable<string, Func<JsonObject, T>> table, string type, Func<JsonObject, T> create, System.Reflection.Assembly caller)
     {
         ArgumentNullException.ThrowIfNull(type);
         ArgumentNullException.ThrowIfNull(create);
-        lock (registry)
+        table.Register(type, create, caller);
+    }
+
+    private static Func<JsonObject, T>? Find<T>(SlotTable<string, Func<JsonObject, T>> table, string? type) =>
+        type is not null && table.Origin(type) is { } origin && origin != Overrides.Library ? table.Find(type) : null;
+
+    // The built-in types as components. Each call gets its own copy of the pieces or tokens: some stages change the
+    // list they are given.
+    private sealed class Normalizer(Func<string, string> step) : ITokenizerNormalizer
+    {
+        public string Normalize(string text) => step(text);
+    }
+
+    private sealed class PreTokenizer(Func<List<string>, bool, List<string>> stage) : IPreTokenizer
+    {
+        public IReadOnlyList<string> PreTokenize(IReadOnlyList<string> pieces, bool atStart) => stage([.. pieces], atStart);
+    }
+
+    private sealed class Decoder(Func<List<string>, List<string>> stage) : ITokenizerDecoder
+    {
+        public IReadOnlyList<string> Decode(IReadOnlyList<string> tokens) => stage([.. tokens]);
+    }
+
+    // An app's component overriding a built-in, guarded on each call; the app's gets its own copy of the input (taken
+    // before the built-in may change it).
+    private sealed class GuardedNormalizer(Slot slot, ITokenizerNormalizer app, Later<ITokenizerNormalizer> library) : ITokenizerNormalizer
+    {
+        public string Normalize(string text) => slot.Call(() => app.Normalize(text), () => library.Value.Normalize(text), Comparisons.Exact);
+    }
+
+    private sealed class GuardedPreTokenizer(Slot slot, IPreTokenizer app, Later<IPreTokenizer> library) : IPreTokenizer
+    {
+        public IReadOnlyList<string> PreTokenize(IReadOnlyList<string> pieces, bool atStart)
         {
-            registry[type] = create;
+            List<string> copy = [.. pieces];
+            return slot.Call(() => app.PreTokenize(copy, atStart), () => library.Value.PreTokenize(pieces, atStart), Comparisons.Sequences);
         }
     }
 
-    private static bool Unregister<T>(Dictionary<string, Func<JsonObject, T>?> registry, string[] builtIn, string type)
+    private sealed class GuardedDecoder(Slot slot, ITokenizerDecoder app, Later<ITokenizerDecoder> library) : ITokenizerDecoder
     {
-        lock (registry)
+        public IReadOnlyList<string> Decode(IReadOnlyList<string> tokens)
         {
-            if (registry.GetValueOrDefault(type) is null)
-            {
-                return false;
-            }
-
-            if (builtIn.Contains(type))
-            {
-                registry[type] = null;
-            }
-            else
-            {
-                registry.Remove(type);
-            }
-
-            return true;
+            List<string> copy = [.. tokens];
+            return slot.Call(() => app.Decode(copy), () => library.Value.Decode(tokens), Comparisons.Sequences);
         }
     }
 
-    private static IReadOnlyCollection<string> Types<T>(Dictionary<string, Func<JsonObject, T>?> registry)
+    // The built-in component, made the first time it is needed (an app's component that works never needs it).
+    private sealed class Later<T>(Func<T> make) where T : class
     {
-        lock (registry)
-        {
-            return [.. registry.Keys];
-        }
-    }
+        private T? _value;
 
-    private static Func<JsonObject, T>? Find<T>(Dictionary<string, Func<JsonObject, T>?> registry, string? type)
-    {
-        if (type is null)
-        {
-            return null;
-        }
-
-        lock (registry)
-        {
-            return registry.GetValueOrDefault(type);
-        }
+        public T Value => _value ??= make();
     }
 }

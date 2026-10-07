@@ -135,7 +135,7 @@ internal static partial class Tests
         }
         finally
         {
-            DataFileFormats.Register(csv);
+            DataFileFormats.Unregister("Csv");
             DataFileFormats.Unregister("Lines");
             Directory.Delete(folder, true);
         }
@@ -255,7 +255,8 @@ internal static partial class Tests
         try
         {
             ParquetCodecs.Register(counting);
-            Check(ParquetCodecs.Get(1) == counting, "replaced");
+            Check(ParquetCodecs.Get(1) != snappy && ParquetCodecs.Origin(1) == "Idrak.Tests" && ParquetCodecs.Default(1) == snappy,
+                "the app's codec over the library's (which stays behind it)");
             Check(Rows("snappy-v1") == before, "rows unchanged through the wrapper");
             Check(counting.Pages > 0, $"the registered codec decompressed {counting.Pages} pages");
 
@@ -272,7 +273,7 @@ internal static partial class Tests
         }
         finally
         {
-            ParquetCodecs.Register(snappy);
+            ParquetCodecs.Unregister(1);
             ParquetCodecs.Unregister(6);
         }
 

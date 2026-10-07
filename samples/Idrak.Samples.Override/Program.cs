@@ -2,8 +2,9 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 // An app that overrides one contract of the library: its own token sampler (SanitizingSampler), which fixes the one
-// case the app hit (logits that are not finite) and leaves the rest to the library's sampler. The override goes where
-// generation asks for a sampler (TextGenerator.CreateSampler); the app's own tests
+// case the app hit (logits that are not finite) and leaves the rest to the library's sampler. The override is
+// registered over the library's ("default" in TokenSamplers), which stays behind it: a failure of the app's sampler falls
+// back to it (the app opts into SlotPolicy.FallBack), and Overrides.Report() lists the override at startup. The app's own tests
 // (samples/Idrak.Samples.Override.Tests) check it with the testing kit, Idrak.Abstraction.Testing.
 //
 //   dotnet run -c Release --project samples/Idrak.Samples.Override
@@ -15,11 +16,18 @@ using Idrak.Layers;
 using Idrak.Samples.Override;
 
 var device = Device.Cpu;
+var library = TokenSamplers.Default(TokenSamplers.DefaultName)!;
+TokenSamplers.Register(TokenSamplers.DefaultName, SanitizingSampler.Create);   // every generation's sampler, from now on
+TokenSamplers.SetPolicy(TokenSamplers.DefaultName, SlotPolicy.FallBack);       // if it ever fails to be made, the library's
+foreach (var o in Overrides.Report())
+{
+    Console.WriteLine($"override: {o}");
+}
 
 // One step whose logits went wrong: token 3 is the best, but token 1 overflowed to NaN.
 float[] logits = [0.5f, float.NaN, 1f, 4f, 2f];
 var request = new SamplerRequest(device, Rows: 1, Vocabulary: logits.Length, MaxSteps: 1, HistoryCapacity: 1, new GenerationOptions { TopK = 1, Seed = 1 });
-foreach (var (name, create) in new (string, Func<SamplerRequest, ITokenSampler>)[] { ("library", TokenSampler.Create), ("app", SanitizingSampler.Create) })
+foreach (var (name, create) in new (string, Func<SamplerRequest, ITokenSampler>)[] { ("library", library), ("app", SanitizingSampler.Create) })
 {
     using var sampler = create(request);
     using var step = Tensor.From(logits, [1, logits.Length], device);
@@ -45,6 +53,6 @@ using var model = new Sequential
     new LayerNorm(16, device: device),
     new Linear(16, tokenizer.VocabularySize, device: device, random: random),
 };
-var generator = new TextGenerator(model, tokenizer, 32) { CreateSampler = SanitizingSampler.Create };
+var generator = new TextGenerator(model, tokenizer, 32);   // makes its sampler through TokenSamplers: the app's
 var text = generator.Generate("the ", new GenerationOptions { TopK = 1, NumPredict = 12, Seed = 1 }).Text;
 Console.WriteLine($"generated with the app's sampler: \"the {text}\"");

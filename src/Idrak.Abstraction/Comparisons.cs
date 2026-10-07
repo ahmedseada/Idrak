@@ -1,12 +1,14 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-namespace Idrak.Abstraction.Testing;
+namespace Idrak.Abstraction;
 
 /// <summary>
-/// The comparisons the kit makes between an implementation and the library default: floating-point values within a
-/// tolerance relative to the expected value (absolute below 1), token ids and text exactly. Each returns null when the
-/// two agree, else a message naming the first difference, so a test framework can print it as it is.
+/// How an implementation's output differs from the library default's (the expected one): floating-point values within a
+/// tolerance relative to the expected value (absolute below 1), token ids, text and other values exactly. Each returns
+/// null when the two agree, else a message naming the first difference. The conformance kit
+/// (<c>Idrak.Abstraction.Testing</c>) and <see cref="SlotPolicy.Shadow"/> compare with these, so a check in an app's
+/// tests and a comparison on its real traffic say the same thing.
 /// </summary>
 public static class Comparisons
 {
@@ -98,6 +100,47 @@ public static class Comparisons
 
         return $"text differs at character {i}: \"{Around(actual, i)}\", expected \"{Around(expected, i)}\" (lengths {actual.Length} and {expected.Length})";
     }
+
+    /// <summary>Null when the two are equal by <see cref="EqualityComparer{T}.Default"/>; else both values.</summary>
+    public static string? Exact<T>(T expected, T actual) =>
+        EqualityComparer<T>.Default.Equals(expected, actual) ? null : $"{Show(actual)}, expected {Show(expected)}";
+
+    /// <summary>Null when the lists hold equal items (<see cref="EqualityComparer{T}.Default"/>) in the same order; else the first that differs.</summary>
+    public static string? Sequences<T>(IReadOnlyList<T>? expected, IReadOnlyList<T>? actual)
+    {
+        if (expected is null || actual is null)
+        {
+            return expected is null && actual is null ? null : actual is null ? "no list, a list expected" : "a list, none expected";
+        }
+
+        for (int i = 0; i < Math.Min(expected.Count, actual.Count); i++)
+        {
+            if (!EqualityComparer<T>.Default.Equals(expected[i], actual[i]))
+            {
+                return $"item {i} is {Show(actual[i])}, expected {Show(expected[i])}";
+            }
+        }
+
+        return expected.Count == actual.Count ? null : $"{actual.Count} items, {expected.Count} expected";
+    }
+
+    /// <summary>Null when the tensors have the same shape and values within <paramref name="tolerance"/> (read back to the host).</summary>
+    public static string? Tensors(Tensor expected, Tensor actual, float tolerance = 1e-4f)
+    {
+        ArgumentNullException.ThrowIfNull(expected);
+        ArgumentNullException.ThrowIfNull(actual);
+        return expected.Shape.SequenceEqual(actual.Shape)
+            ? Difference(expected.ToArray(), actual.ToArray(), tolerance)
+            : $"shape {Tensor.FormatShape(actual.Shape)}, expected {Tensor.FormatShape(expected.Shape)}";
+    }
+
+    private static string Show<T>(T value) => value switch
+    {
+        null => "null",
+        string s => $"\"{(s.Length <= 40 ? s : s[..37] + "...")}\"",
+        IFormattable f => f.ToString(null, System.Globalization.CultureInfo.InvariantCulture),
+        _ => value.ToString() ?? "",
+    };
 
     // Up to 12 characters either side of position i, escaped.
     private static string Around(string text, int i)

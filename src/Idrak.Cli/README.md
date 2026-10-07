@@ -115,6 +115,7 @@ What works on this machine, and the tool's own settings.
 | `idrak config unset` | Removes a config value |
 | `idrak config list` | Every config value (or a profile's), and the file's path |
 | `idrak plugins list` | Everything registered: formats, families, RoPE scalings, tool-call formats, ops, devices |
+| `idrak overrides` | What the plug-ins override: each registry entry, where it comes from and its failure policy |
 | `idrak formats` | Every registered weight, KV cache, checkpoint, dataset and tool-call format |
 | `idrak completion` | Prints a shell completion script (bash, zsh, fish, pwsh) |
 | `idrak update` | Whether a newer version of the tool exists, and the command to install it |

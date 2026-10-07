@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Globalization;
+using System.Runtime.CompilerServices;
 
 namespace Idrak.Data.Abstractions;
 
@@ -38,61 +39,51 @@ public interface IBatchSource : IEnumerable<Batch>
 /// </summary>
 public static class SampleSources
 {
-    private static readonly Dictionary<string, SampleSourceFactory> Registry = new(StringComparer.OrdinalIgnoreCase);
+    // Opening a source falls back when it fails; under Shadow both open the data and agree when their sizes and shapes do.
+    private static readonly SlotTable<string, SampleSourceFactory> Registry = new(nameof(SampleSources),
+        (slot, app, library) => (path, options) => slot.Call(() => app(path, options), () => library(path, options), (a, b) => Comparisons.Exact(Shape(a), Shape(b))),
+        StringComparer.OrdinalIgnoreCase);
 
     // Idrak's built-in sources (csv, images, tokens, npy) are registered before the first use.
-    static SampleSources() => LibrarySampleSources.RegisterAll();   // the built-in sources, on first use
+    static SampleSources() => Overrides.AsLibraryDefaults(LibrarySampleSources.RegisterAll);   // the built-in sources, on first use
 
-    /// <summary>Registers (or replaces) the source <paramref name="name"/> (names ignore case).</summary>
+    /// <summary>
+    /// Registers the source <paramref name="name"/> (names ignore case); under a built-in name it overrides the library's,
+    /// which stays behind it (see <see cref="SetPolicy"/>) until <see cref="Unregister"/>.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void Register(string name, SampleSourceFactory factory)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         ArgumentNullException.ThrowIfNull(factory);
-        lock (Registry)
-        {
-            Registry[name] = factory;
-        }
+        Registry.Register(name, factory, System.Reflection.Assembly.GetCallingAssembly());
     }
 
-    /// <summary>Removes the source <paramref name="name"/>; returns whether it was registered.</summary>
-    public static bool Unregister(string name)
-    {
-        lock (Registry)
-        {
-            return Registry.Remove(name);
-        }
-    }
+    /// <summary>Removes the app's source <paramref name="name"/> (a built-in name gets the library's back); false when the app registered none.</summary>
+    public static bool Unregister(string name) => Registry.Unregister(name);
 
     /// <summary>The registered source names.</summary>
-    public static IReadOnlyCollection<string> Names
-    {
-        get
-        {
-            lock (Registry)
-            {
-                return [.. Registry.Keys];
-            }
-        }
-    }
+    public static IReadOnlyCollection<string> Names => Registry.Keys;
 
     /// <summary>Whether a source is registered as <paramref name="name"/>.</summary>
-    public static bool Contains(string name)
-    {
-        lock (Registry)
-        {
-            return Registry.ContainsKey(name);
-        }
-    }
+    public static bool Contains(string name) => Registry.Contains(name);
 
     /// <summary>The factory registered as <paramref name="name"/> (any case).</summary>
-    public static SampleSourceFactory Get(string name)
-    {
-        lock (Registry)
-        {
-            return Registry.TryGetValue(name, out var factory) ? factory
-                : throw new NotSupportedException($"No sample source '{name}' is registered ({string.Join(", ", Registry.Keys)}); add it with SampleSources.Register.");
-        }
-    }
+    public static SampleSourceFactory Get(string name) =>
+        Registry.TryGet(name, out var factory) ? factory
+            : throw new NotSupportedException($"No sample source '{name}' is registered ({string.Join(", ", Registry.Keys)}); add it with SampleSources.Register.");
+
+    /// <summary>The library's factory <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
+    public static SampleSourceFactory? Default(string name) => Registry.Default(name);
+
+    /// <summary>Who registered the source <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
+    public static string? Origin(string name) => Registry.Origin(name);
+
+    /// <summary>What happens when the app's source <paramref name="name"/> fails to open (<see cref="SlotPolicy.Throw"/> unless set: the error reaches the caller; <see cref="SlotPolicy.FallBack"/> retries on the library's).</summary>
+    public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Registry.SetPolicy(name, policy, shadowRate);
+
+    private static string Shape(ISampleSource source) =>
+        $"{source.Count} samples of [{string.Join(", ", source.FeatureShape)}] -> [{string.Join(", ", source.TargetShape)}]";
 
     /// <summary>Opens <paramref name="path"/> with the source registered as <paramref name="name"/>.</summary>
     public static ISampleSource Open(string name, string path, IReadOnlyDictionary<string, string>? options = null) =>
