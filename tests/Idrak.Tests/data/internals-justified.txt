@@ -30,7 +30,6 @@ Idrak.Onnx | Idrak.Layers.GraphModule | IntegerConstants | import replays graph 
 Idrak.Onnx | Idrak.Layers.GraphModule | IntegerValue() | import replays graph nodes on constants; moves with the ONNX operators' contracts (phase 3)
 Idrak.Onnx | Idrak.Layers.GraphModule | RunNode() | import replays graph nodes on constants; moves with the ONNX operators' contracts (phase 3)
 Idrak.Onnx | Idrak.Layers.GraphModule | Trace() | export traces a graph module's nodes; moves with the ONNX operators' contracts (phase 3)
-Idrak.Onnx | Idrak.Layers.GraphOps | IsKnown() | import asks whether a graph operation exists before mapping a node; moves with GraphOps (phase 3)
 Idrak.Cli | Idrak.Backends.Cuda.PtxKernels | (the type) | idrak kernels dump writes the generated kernel sources; the GPU devices stay internal (decision 3)
 Idrak.Cli | Idrak.Backends.Hip.HipKernels | (the type) | idrak kernels dump writes the generated kernel sources; the GPU devices stay internal (decision 3)
 Idrak.Cli | Idrak.Backends.Vulkan.SpirvKernel | (the type) | idrak kernels dump writes the generated kernel sources; the GPU devices stay internal (decision 3)

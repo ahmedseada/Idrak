@@ -11,8 +11,8 @@ scanned only as a user of `Idrak`'s internals.
 
 | Assembly | Interfaces | Abstract classes | Registries | Total | Outside `Idrak.Abstraction.*` |
 |---|---|---|---|---|---|
-| `Idrak.Abstraction` | 29 | 12 | 8 | 48 | 0 |
-| `Idrak` | 0 | 1 | 3 | 4 | 4 |
+| `Idrak.Abstraction` | 29 | 12 | 10 | 50 | 0 |
+| `Idrak` | 0 | 1 | 1 | 2 | 2 |
 | `Idrak.LanguageModels` | 6 | 2 | 7 | 15 | 15 |
 | `Idrak.Datasets` | 4 | 0 | 3 | 7 | 7 |
 | `Idrak.Onnx` | 0 | 0 | 3 | 3 | 3 |
@@ -64,8 +64,10 @@ proposed namespace (phases 1 to 3 settle it).
 | `Idrak.Abstraction.Generation.RopeScalings` | registry | public | — |  | dynamic, linear, llama3, yarn | `Idrak.Abstraction.Generation` |
 | `Idrak.Abstraction.Generation.ToolCallFormats` | registry | public | — |  | deepseek, harmony, json, mistral, pythonic, qwen3-coder | `Idrak.Abstraction.Generation` |
 | `Idrak.Abstraction.Module` | abstract class | public | Device, Tensor | BatchNorm, CausalSelfAttention, ChannelNormalize, Conv2d, DecoderBlock, Dropout, +25 |  | `Idrak.Abstraction` |
+| `Idrak.Abstraction.Modules.GraphOps` | registry | public | — |  | abs, add, cast, clip, concat, div, elu, exp, +28 | `Idrak.Abstraction.Modules` |
 | `Idrak.Abstraction.Modules.ILinearAdapter` | interface | public | Tensor | DoraAdapter, LoraAdapter |  | `Idrak.Abstraction.Modules` |
 | `Idrak.Abstraction.Modules.ILinearLayer` | interface | public | Tensor | Linear |  | `Idrak.Abstraction.Modules` |
+| `Idrak.Abstraction.Modules.LayerTypes` | registry | public | Device, Module |  | attention, batchnorm, conv2d, dropout, embedding, flatten, gelu, globalavgpool2d, +12 | `Idrak.Abstraction.Modules` |
 | `Idrak.Abstraction.Modules.RecurrentModule` | abstract class | public | Device, Module, Tensor | GRU, LSTM |  | `Idrak.Abstraction.Modules` |
 | `Idrak.Abstraction.Operations.Kernels` | registry | internal | Backend |  | — | `Idrak.Abstraction.Operations` |
 | `Idrak.Abstraction.Retrieval.IEmbedder` | interface | public | — | TextEncoder |  | `Idrak.Abstraction.Retrieval` |
@@ -86,8 +88,6 @@ proposed namespace (phases 1 to 3 settle it).
 | Type | Kind | Visibility | Mentions | Implementations | Registered | Target |
 |---|---|---|---|---|---|---|
 | `Idrak.Inference.EngineModel` | abstract class | internal | — | GenerativeModel, PredictorModel<TIn, TOut> |  | `Idrak.Abstraction.Serving` |
-| `Idrak.Layers.GraphOps` | registry | public | — |  | abs, add, cast, clip, concat, div, elu, exp, +28 | `Idrak.Abstraction.Autograd` |
-| `Idrak.Layers.LayerTypes` | registry | public | Device, Module |  | attention, batchnorm, conv2d, dropout, embedding, flatten, gelu, globalavgpool2d, +12 | `Idrak.Abstraction.Modules` |
 | `Idrak.Layers.NetworkOps` | registry | public | — |  | attention, batchnorm, conv2d, dropout, embedding, firstStep, flatten, gelu, +16 | `Idrak.Abstraction.Modules` |
 
 ### Idrak.LanguageModels
@@ -288,7 +288,7 @@ and members, read from that assembly's metadata. Phases 2 and 4 make each one pu
 
 ### Idrak
 
-130 members on 46 types.
+135 members on 50 types.
 
 | Type | Internal members used |
 |---|---|
@@ -331,6 +331,10 @@ and members, read from that assembly's metadata. Phases 2 and 4 make each one pu
 | `Idrak.Abstraction.MixedPrecision` | UsesTensorCores |
 | `Idrak.Abstraction.Module` | WeightsDevice |
 | `Idrak.Abstraction.Modules.DoraAdapter` | SquaredNorms() |
+| `Idrak.Abstraction.Modules.GraphOpContext` | constructor |
+| `Idrak.Abstraction.Modules.GraphOps` | TryGet() |
+| `Idrak.Abstraction.Modules.GraphValues` | (the type), AsIntegers() |
+| `Idrak.Abstraction.Modules.GraphValues.HostValue` | (the type) |
 | `Idrak.Abstraction.Modules.ModuleHooks` | (the type) |
 | `Idrak.Abstraction.Modules.RecurrentModule` | Step() |
 | `Idrak.Abstraction.Tensor` | AddDropout(), AddGradient(), AddRmsNormAffine(), AttentionRows(), Backend, BiasGelu(), CausalAttention(), CausalAttentionPacked(), DecoderMask(), EmbeddingLookup(), Empty(), Evict(), EvictToPacked(), FormatShape(), GatedActivation(), GatedActivationCompressed(), GradStorage(), GradientTarget(), GroupAffine(), Im2Col(), IsDisposed, LayerNormFused(), LayerNormTrain(), Load(), MatMulBias(), MatMulFrozenTransposed(), MatMulMany(), MatchRate(), MaxPool(), Normalize(), NormalizeWith(), RecomputeGatedActivation(), Record(), ReleaseGrad(), RmsNormAffine(), RmsNormRopePair(), RmsNormalize(), Rope(), ScaleMaskSoftmax(), StageGroup, Storage, ThrowIfDisposed(), TokenCrossEntropy(), TokenCrossEntropyRows(), TokenLogProbabilities(), Traced(), WillRecord(), WriteKeyValues(), _shape |
@@ -373,13 +377,12 @@ and members, read from that assembly's metadata. Phases 2 and 4 make each one pu
 
 ### Idrak.Onnx
 
-9 members on 4 types.
+8 members on 3 types.
 
 | Type | Internal members used |
 |---|---|
 | `Idrak.Layers.Embedding` | WeightValues() |
 | `Idrak.Layers.GraphModule` | AsIntegers(), Constants, IntegerConstants, IntegerValue(), RunNode(), Trace() |
-| `Idrak.Layers.GraphOps` | IsKnown() |
 | `Idrak.Layers.Linear` | WeightValues() |
 
 ### Idrak.LanguageModels

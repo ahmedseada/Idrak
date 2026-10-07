@@ -40,6 +40,7 @@
   | `Idrak.Retrieval.IEmbedder`, `IReranker`, `IRetriever`, `IVectorStore`, `Chunk`, `RetrievedChunk` | the same names under `Idrak.Abstraction.Retrieval` |
   | `Idrak.Vision`: boxes, detections, non-maximum suppression, `IObjectDetector`, `ModelDetector`, `Foreground`, `ForegroundImage`, `ConnectedComponents`, segmentation (`SegmentationMask`, metrics, `ISegmenter`, `ModelSegmenter`), `IRegionProposer` | the same names under `Idrak.Abstraction.Vision` |
   | `Idrak.Inference.IPredictor<TIn, TOut>` | `Idrak.Abstraction.Serving.IPredictor<TIn, TOut>` |
+  | `Idrak.Layers.LayerTypes`, `GraphOps`, `GraphOp`, `GraphOpContext`, `GraphNode` | the same names under `Idrak.Abstraction.Modules`; Idrak registers its layer types and graph operations on first use |
   | `Module.Save(...)`, `Module.Load(...)` | extension methods in `Idrak.ModuleFiles`: `model.Save(path)` reads the same |
 
   A file that also imports another `Tensor` (ONNX Runtime's `Microsoft.ML.OnnxRuntime.Tensors`, or
