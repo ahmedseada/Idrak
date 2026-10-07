@@ -37,9 +37,12 @@ public static class PluginTests
     /// <summary>The ONNX operator and network step softplus is exported, imported and replayed as.</summary>
     public const string SoftplusOperator = "OutsideSoftplus", SoftplusStepName = "outside-softplus";
 
-    /// <summary>softplus(x) = log(1 + e^x), with its derivative sigmoid(x) as the backward step.</summary>
+    /// <summary>
+    /// softplus(x) = log(1 + e^x), its forward step the plug-in operation <see cref="PluginKernels.SoftplusOp"/>, with its
+    /// derivative sigmoid(x) as the backward step.
+    /// </summary>
     public static DifferentiableFunction Softplus { get; } =
-        Autograd.Function("softplus", x => (x[0].Exp() + 1f).Log(), (x, y, g) => [g * x[0].Sigmoid()]);
+        Autograd.Function("softplus", x => PluginKernels.RunSoftplus(x[0]), (x, y, g) => [g * x[0].Sigmoid()]);
 
     private static void NoInternalAccess(Device device)
     {

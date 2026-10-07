@@ -59,6 +59,10 @@ lavapipe (Mesa's software Vulkan driver) here, and on CUDA plus `--bench-gemv` o
   the bindings it writes (`VulkanKernel.Writes`; `KernelBuilder` records its stores and decorates the other bindings
   `NonWritable`); a dispatch waits (a compute-to-compute barrier) only for earlier commands that wrote a storage it
   uses, or read one it writes, and otherwise may run alongside them.
+- Kernels from outside the library (plan 10, phase 6): `VulkanKernel` is public; a plug-in builds one from SPIR-V words
+  of its own and runs it with `VulkanKernel.Dispatch(backend, groupsX, groupsY, groupsZ, storages, pushConstants)` from
+  a kernel it registers for the "vulkan" kind (`Kernels.Register`, for one of the library's operations or one it
+  declared with `PluginOperations.Register`). The same contract applies; the library's own kernel builder stays internal.
 - Storage holds up to `maxStorageBufferRange` bytes (2 GiB or more on desktop drivers); larger tensors fall back.
 - Kernels are built per device: `VulkanKernels.Get(name, width, subgroups)` with the device's width and its subgroup
   arithmetic (or narrower widths and plain reductions, which tuned operations also try); every kernel declares at most

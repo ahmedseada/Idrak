@@ -17,7 +17,7 @@ its README lists it.
 |------|---------------|
 | Root (`Idrak.Abstraction`) | `Device`, `DeviceType`, `ComputeResources`, `Tensor`, `TensorScope`, autograd, `Module`; the CPU device (SIMD, multi-threaded), which is also every other device's host fallback |
 | Device API (`Idrak.Abstraction.Devices`) | `Backend` (memory, copies and a `NameKernel` per operation; `RetryOnHost`, off by default, runs an operation whose kernel fails on the CPU instead), `Storage`, `BackendCapabilities`, `DeviceProvider` and `DeviceProviders` (where a new kind of device registers), `DeviceException` (the base of every GPU error, reported to telemetry when raised), `IMemoryOffload`, `IHostStaging`, `IBackwardStaging` |
-| Operations (`Idrak.Abstraction.Operations`) | `Ops` (a descriptor per operation), `Kernels.Register` (a kernel for an operation on a kind of device), `Kernels.Chain` (which kernel each operation runs on a device), `Kernels.Trace` (calls and host fallbacks) |
+| Operations (`Idrak.Abstraction.Operations`) | `Ops` (a descriptor per operation), `PluginOperations` and `PluginOperation<TKernel>` (operations a plug-in declares, with a default kernel), `Kernels.Register` (a kernel for an operation on a kind of device), `Kernels.Chain` (which kernel each operation runs on a device), `Kernels.Trace` (calls and host fallbacks) |
 | Modules (`Idrak.Abstraction.Modules`) | `ILinearAdapter` with LoRA and DoRA, `ILinearLayer` |
 | Training (`Idrak.Abstraction.Training`) | `Optimizer` with SGD, Adam and AdamW; `LearningRateScheduler` with the step, exponential, cosine and lambda schedules |
 | Data (`Idrak.Abstraction.Data`) | `ISampleSource`, `ISampleStream`, `ISampleReader`, `ISampleTransform`, `ImageData`, `IDownloader` |
@@ -50,6 +50,29 @@ OperationKernels.Softmax mine = (backend, x, y, rows, cols, log) =>
 };
 using var registration = Kernels.Register(Ops.Softmax, "vulkan", mine, requirement: b => b.Capabilities.FusedKernels);
 ```
+
+A plug-in (a packed weight format, a key/value cache layout, a graph operation, an `Autograd.Function`) declares the
+operations it needs with a default kernel that runs on every device, and gets a fast path on the devices it registers
+kernels for. Its operations show in `Kernels.Chain` and `idrak kernels` ("plug-in" rows), and `Kernels.Trace` counts
+their calls:
+
+```csharp
+public delegate void ScaleRows(Backend backend, Storage rows, Storage scales, Storage output, int n, int width);
+
+// Declared once (a static field): its default composes the library's operations.
+static readonly PluginOperation<ScaleRows> Scale = PluginOperations.Register<ScaleRows>("MyLayout.ScaleRows",
+    (b, rows, scales, output, n, width) => b.GroupScaleShift(rows, scales, null, output, n, n / width, width, false),
+    KernelSource.Composed);
+
+// A faster kernel for one kind of device (on Vulkan: Idrak.Gpu's VulkanKernel dispatches SPIR-V words of one's own).
+Kernels.Register(Scale, "cpu", (b, rows, scales, output, n, width) => { /* loops over rows.HostMemory, ... */ });
+
+// Where the plug-in runs it (KeyValueLayout.Expand, say): the kernel for this device, cached per device.
+Scale.KernelFor(backend)(backend, rows.Storage, scales.Storage, output.Storage, rows.Size, width);
+```
+
+A default declared as `KernelSource.Host` reads its operands with `Download` and writes them back with `Upload`; off the
+CPU each call counts as a host fallback (`Kernels.HostCalls`, `KernelTrace.HostCallsByOperation`).
 
 To check a device or an override of a contract (a token sampler, a tokenizer, a RoPE scaling) against the default
 implementation, stress it and keep its failing cases, use the testing kit,
