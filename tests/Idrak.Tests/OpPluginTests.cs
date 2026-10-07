@@ -14,7 +14,7 @@ internal static partial class Tests
     private static readonly (string Name, Action<Device> Run)[] OpPluginGroup =
     [
         ("op plugins: every built-in network step and ONNX import operator is registered, and a varied network replays to the same JSON and outputs", BuiltInOpsRegistered),
-        ("op plugins: a custom network step (a lambda and a layer factory) is written to JSON, replayed and computes like the built-in layers", CustomNetworkOp),
+        ("op plugins: a custom network step (a lambda, a layer factory, a composite of registered steps) is written to JSON, replayed and computes like the built-in layers", CustomNetworkOp),
         ("op plugins: a custom ONNX operator imports through a translator onto a custom step, computes, saves and reloads; a built-in operator can be replaced", CustomOnnxImportOp),
         ("op plugins: unknown steps and operators are rejected with the registered names and how to register", UnknownOpErrors),
     ];
@@ -93,11 +93,22 @@ internal static partial class Tests
             using var replayedOutput = again.Predict(input);
             AssertClose(expected.ToArray(), actual.ToArray(), 1e-5f, "custom steps compute like the built-in layers");
             AssertClose(actual.ToArray(), replayedOutput.ToArray(), 0f, "the replayed network computes the same");
+
+            // A step made of registered steps, through the builder contract alone: the built-in steps describe their
+            // layers, so the JSON lists them and replays without the composite step.
+            NetworkOps.Register("block", (b, a) => b.Op("linear", new JsonObject { ["out"] = a.Int("width"), ["bias"] = true }).Op("relu"));
+            var composite = Network.Input(4).Seed(9).Op("block", new JsonObject { ["width"] = 3 });
+            var compositeJson = composite.ToJson();
+            Check(composite.CurrentShape.SequenceEqual([3]) && composite.Count == 2, composite.ToString());
+            Check(compositeJson["steps"]!.AsArray().Select(s => (string)s!["op"]!).SequenceEqual(["linear", "relu"]), compositeJson.ToJsonString());
+            Check(JsonNode.DeepEquals(Network.Input(4).Seed(9).Linear(3).ReLU().ToJson(), compositeJson), "the composite step writes the built-in steps");
+            Check(NetworkOps.Contains("block") && !NetworkOps.Contains("nope"), "Contains");
         }
         finally
         {
             NetworkOps.Unregister("scale");
             NetworkOps.Unregister("dense");
+            NetworkOps.Unregister("block");
         }
     }
 
