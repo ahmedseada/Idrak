@@ -125,13 +125,16 @@ public delegate RopeScalingResult RopeScalingMethod(RopeScalingInput input);
 /// </summary>
 public static class RopeScalings
 {
-    private static readonly Dictionary<string, RopeScalingMethod> Registry = new(StringComparer.OrdinalIgnoreCase)
+    // The methods the library ships, which an app's registration of the same name shadows but never changes.
+    private static readonly Dictionary<string, RopeScalingMethod> BuiltIn = new(StringComparer.OrdinalIgnoreCase)
     {
         ["linear"] = Linear,
         ["llama3"] = Llama3,
         ["yarn"] = Yarn,
         ["dynamic"] = Dynamic,
     };
+
+    private static readonly Dictionary<string, RopeScalingMethod> Registry = new(BuiltIn, StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Registers (or replaces) the scaling method <paramref name="type"/> (names ignore case).</summary>
     /// <param name="type">The name configurations use (<c>rope_scaling.rope_type</c>).</param>
@@ -175,6 +178,12 @@ public static class RopeScalings
             return Registry.ContainsKey(type);
         }
     }
+
+    /// <summary>
+    /// The method the library ships as <paramref name="type"/> (any case), whatever is registered under that name now; null
+    /// when the library has none. An app that replaces a built-in can compare with it, or wrap it.
+    /// </summary>
+    public static RopeScalingMethod? Default(string type) => BuiltIn.GetValueOrDefault(type);
 
     /// <summary>The method registered as <paramref name="type"/> (any case).</summary>
     public static RopeScalingMethod Get(string type)
