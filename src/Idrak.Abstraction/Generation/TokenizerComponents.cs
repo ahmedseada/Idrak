@@ -32,7 +32,7 @@ public interface ITokenizerDecoder
 
 /// <summary>
 /// The normalizer, pre-tokenizer and decoder types a tokenizer.json may name ("type": "NFC", "Split", "ByteLevel", …), for
-/// the tokenizers that read tokenizer.json (Idrak.LanguageModels' <c>BpeTokenizer</c>). The built-in types are listed too:
+/// the tokenizers that read tokenizer.json (Idrak's <c>BpeTokenizer</c>). The built-in types are listed too:
 /// the Hugging Face types the BPE tokenizer runs itself, on its fast paths. Register a factory for another type (it
 /// receives the component's JSON object) with <see cref="RegisterNormalizer"/>, <see cref="RegisterPreTokenizer"/> or
 /// <see cref="RegisterDecoder"/>; registering a built-in name replaces the built-in. Components are made once, when a

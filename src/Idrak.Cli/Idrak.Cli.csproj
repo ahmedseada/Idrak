@@ -18,7 +18,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Idrak\Idrak.csproj" />
-    <ProjectReference Include="..\Idrak.LanguageModels\Idrak.LanguageModels.csproj" />
+    <ProjectReference Include="..\Idrak.Nlp\Idrak.Nlp.csproj" />
     <ProjectReference Include="..\Idrak.Datasets\Idrak.Datasets.csproj" />
     <ProjectReference Include="..\Idrak.Mcp\Idrak.Mcp.csproj" />
     <ProjectReference Include="..\Idrak.Onnx\Idrak.Onnx.csproj" />

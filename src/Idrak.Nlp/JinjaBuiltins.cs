@@ -4,8 +4,9 @@
 using System.Collections;
 using System.Globalization;
 using System.Text;
+using Idrak.Models;
 
-namespace Idrak.LanguageModels;
+namespace Idrak.Nlp;
 
 public sealed partial class JinjaTemplate
 {

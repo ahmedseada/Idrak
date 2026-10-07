@@ -31,7 +31,7 @@ public sealed class GgufArchitecture
 }
 
 /// <summary>
-/// The model families GGUF files are read as, by GGUF architecture name. Idrak.LanguageModels registers llama (Llama,
+/// The model families GGUF files are read as, by GGUF architecture name. Idrak registers llama (Llama,
 /// Mistral, and Mixtral when the file has experts), qwen2, qwen3, qwen2moe and qwen3moe; add others with
 /// <see cref="Register"/>.
 /// </summary>

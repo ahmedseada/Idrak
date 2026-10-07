@@ -10,7 +10,7 @@ namespace Idrak.Training;
 /// Knowledge distillation for models trained with <see cref="Trainer"/> (classifiers, per sample): a teacher's logits
 /// are computed once and stored with the targets (<see cref="WithTeacher"/>), and <see cref="Losses.Distillation(float, float)"/>
 /// trains the student on them, alone or mixed with the labels. Language models distil per token through the
-/// fine-tuning loss hook instead (Idrak.LanguageModels: <c>FineTuningLosses.Distillation</c>).
+/// fine-tuning loss hook instead (Idrak.Nlp: <c>FineTuningLosses.Distillation</c>).
 /// </summary>
 /// <example>
 /// <code>

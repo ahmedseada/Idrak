@@ -15,7 +15,7 @@
        removes every one, so the GPU devices in Idrak are built on the public surface alone. -->
   <ItemGroup>
     <InternalsVisibleTo Include="Idrak" />
-    <InternalsVisibleTo Include="Idrak.LanguageModels" />
+    <InternalsVisibleTo Include="Idrak.Nlp" />
     <InternalsVisibleTo Include="Idrak.Onnx" />
     <InternalsVisibleTo Include="Idrak.Cli" />
     <InternalsVisibleTo Include="Idrak.Tests" />

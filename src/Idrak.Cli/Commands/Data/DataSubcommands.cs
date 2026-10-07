@@ -7,7 +7,8 @@ using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
 using Idrak.Datasets;
 using Idrak.Generation;
-using Idrak.LanguageModels;
+using Idrak.Models;
+using Idrak.Nlp;
 
 namespace Idrak.Cli.Commands.Data;
 

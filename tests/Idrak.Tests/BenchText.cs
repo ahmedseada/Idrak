@@ -6,7 +6,8 @@ using System.Text;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Idrak.Generation;
-using Idrak.LanguageModels;
+using Idrak.Models;
+using Idrak.Nlp;
 using Idrak.Retrieval;
 
 // --bench-text: the library's text paths (tokenizer, chat template, streamed output parsing, chunking, keyword search),

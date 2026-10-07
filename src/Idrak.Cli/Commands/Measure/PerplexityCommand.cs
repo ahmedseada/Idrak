@@ -103,7 +103,7 @@ internal sealed class PerplexityCommand : Command
     internal sealed record Result(double Perplexity, double MeanNll, int Scored, int Windows, double Seconds);
 
     /// <summary>Scores <paramref name="ids"/> in windows: every position predicts the next token from the window so far.</summary>
-    internal static Result Measure(LanguageModels.PretrainedModel model, IReadOnlyList<int> ids, int window, Device device, Action<int, int>? progress = null)
+    internal static Result Measure(Models.PretrainedModel model, IReadOnlyList<int> ids, int window, Device device, Action<int, int>? progress = null)
     {
         var watch = Stopwatch.StartNew();
         var network = model.Network;

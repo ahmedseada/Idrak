@@ -20,7 +20,7 @@ internal sealed partial class NewCommand : Command
     {
         ["console"] = "a console app that trains a small network, saves a model package and predicts from it",
         ["webapi"] = "a Web API serving a model package through the inference engine (Idrak.AspNetCore)",
-        ["rag"] = "retrieval over a folder of text files, answered with citations by a chat model (Idrak.LanguageModels)",
+        ["rag"] = "retrieval over a folder of text files, answered with citations by a chat model (Idrak.Nlp)",
         ["plugin"] = "a plug-in registering a packed weight format and a network step, with tests on the public API only",
     };
 

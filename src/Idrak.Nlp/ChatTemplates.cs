@@ -5,8 +5,9 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Idrak.Generation;
+using Idrak.Models;
 
-namespace Idrak.LanguageModels;
+namespace Idrak.Nlp;
 
 /// <summary>
 /// A model's own chat template: the Jinja source from its tokenizer_config.json (or chat_template.jinja), rendered the
@@ -259,7 +260,7 @@ public sealed class JinjaChatTemplate : ChatTemplate
     /// "chat_template" of tokenizer_config.json), or null when it has none. Stop sequences are the end-of-sequence token
     /// and every token listed as eos_token_id in generation_config.json or config.json.
     /// </summary>
-    public static JinjaChatTemplate? Load(string folder, BpeTokenizer? tokenizer = null)
+    public static JinjaChatTemplate? Load(string folder, ITokenizer? tokenizer = null)
     {
         var config = ReadJson(Path.Combine(folder, "tokenizer_config.json"));
         string? source = null, toolSource = null;

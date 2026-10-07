@@ -5,7 +5,8 @@ using System.Text.Json.Nodes;
 using Idrak;
 using Idrak.Datasets;
 using Idrak.Layers;
-using Idrak.LanguageModels;
+using Idrak.Models;
+using Idrak.Nlp;
 using Idrak.Optimizers;
 
 internal static partial class Tests

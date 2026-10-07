@@ -7,7 +7,8 @@ using System.Text;
 using System.Text.Json.Nodes;
 using Idrak;
 using Idrak.Generation;
-using Idrak.LanguageModels;
+using Idrak.Models;
+using Idrak.Nlp;
 
 // The language models' plug-in points: checkpoint formats, GGUF types and architectures, model sources and tokenizer
 // components, each reached through its registry with the built-ins and with one registered here (removed afterwards).

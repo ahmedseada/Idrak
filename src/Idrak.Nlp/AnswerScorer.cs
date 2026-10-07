@@ -3,8 +3,9 @@
 
 using Idrak.Generation;
 using Idrak.Layers;
+using Idrak.Models;
 
-namespace Idrak.LanguageModels;
+namespace Idrak.Nlp;
 
 /// <summary>How <see cref="AnswerScorer.Choose"/> rated the candidate answers to one prompt.</summary>
 /// <param name="Best">Index of the most likely answer.</param>
@@ -45,7 +46,7 @@ public sealed class AnswerScorer
     {
         ArgumentNullException.ThrowIfNull(model);
         _model = model;
-        Encoder = new ChatTranscriptEncoder(model.ChatTemplate ?? throw new InvalidOperationException("The model has no chat template."),
+        Encoder = new ChatTranscriptEncoder(model.JinjaTemplate ?? throw new InvalidOperationException("The model has no Jinja chat template."),
             model.Tokenizer ?? throw new InvalidOperationException("The model has no tokenizer."));
         MaxLength = Math.Max(2, Math.Min(maxLength, model.MaxPositions));
         _modules = [.. model.Network];
