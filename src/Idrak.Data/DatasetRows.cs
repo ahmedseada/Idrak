@@ -9,9 +9,9 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
-namespace Idrak.Datasets;
+namespace Idrak.Data;
 
-/// <summary>When <see cref="Dataset.Mix"/> stops.</summary>
+/// <summary>When <see cref="DatasetRows.Mix"/> stops.</summary>
 public enum MixStop
 {
     /// <summary>When the first source runs out (the proportions hold throughout).</summary>
@@ -28,12 +28,12 @@ public enum MixStop
 /// Create one with <see cref="FromFile"/>, <see cref="FromFolder"/>, <see cref="FromUrl"/> or
 /// the Hugging Face, GitHub, Kaggle and Zenodo sources.
 /// </summary>
-public sealed class Dataset : IDatasetRows
+public sealed class DatasetRows : IDatasetRows
 {
     private readonly Func<IEnumerable<JsonObject>> _rows;
 
     /// <summary>A dataset whose rows <paramref name="rows"/> produces (called again for each enumeration).</summary>
-    public Dataset(Func<IEnumerable<JsonObject>> rows, string name = "dataset")
+    public DatasetRows(Func<IEnumerable<JsonObject>> rows, string name = "dataset")
     {
         _rows = rows ?? throw new ArgumentNullException(nameof(rows));
         Name = name;
@@ -56,24 +56,24 @@ public sealed class Dataset : IDatasetRows
     /// <paramref name="rows"/> as a dataset: itself when it is one, else a dataset reading it (whose <see cref="Download"/>
     /// is the rows' own), for rows a source of your own opened (<see cref="IDatasetSource"/>).
     /// </summary>
-    public static Dataset From(IDatasetRows rows)
+    public static DatasetRows From(IDatasetRows rows)
     {
         ArgumentNullException.ThrowIfNull(rows);
-        return rows as Dataset ?? new Dataset(() => rows, rows.Name) { Files = rows.Download };
+        return rows as DatasetRows ?? new DatasetRows(() => rows, rows.Name) { Files = rows.Download };
     }
 
     /// <summary>Rows kept in memory.</summary>
-    public static Dataset FromRows(IEnumerable<JsonObject> rows, string name = "rows")
+    public static DatasetRows FromRows(IEnumerable<JsonObject> rows, string name = "rows")
     {
         var list = rows.ToList();
-        return new Dataset(() => list.Select(r => (JsonObject)r.DeepClone()), name);
+        return new DatasetRows(() => list.Select(r => (JsonObject)r.DeepClone()), name);
     }
 
     /// <summary>
     /// A file: JSON Lines, JSON, CSV, TSV, Parquet, text or source code (chosen by extension unless
     /// <see cref="ReadOptions.Format"/> is set), also inside .gz, .zip, .tar and .tar.gz.
     /// </summary>
-    public static Dataset FromFile(string path, ReadOptions? options = null)
+    public static DatasetRows FromFile(string path, ReadOptions? options = null)
     {
         string full = Path.GetFullPath(path);
         if (!File.Exists(full))
@@ -81,11 +81,11 @@ public sealed class Dataset : IDatasetRows
             throw new FileNotFoundException($"'{full}' does not exist.", full);
         }
 
-        return new Dataset(() => DataFiles.Read(full, options ?? ReadOptions.Default), Path.GetFileName(full)) { Files = () => [full] };
+        return new DatasetRows(() => DataFiles.Read(full, options ?? ReadOptions.Default), Path.GetFileName(full)) { Files = () => [full] };
     }
 
     /// <summary>Several files, one after another.</summary>
-    public static Dataset FromFiles(IEnumerable<string> paths, ReadOptions? options = null, string? name = null)
+    public static DatasetRows FromFiles(IEnumerable<string> paths, ReadOptions? options = null, string? name = null)
     {
         var list = paths.Select(Path.GetFullPath).ToList();
         foreach (var file in list.Where(f => !File.Exists(f)))
@@ -93,14 +93,14 @@ public sealed class Dataset : IDatasetRows
             throw new FileNotFoundException($"'{file}' does not exist.", file);
         }
 
-        return new Dataset(() => list.SelectMany(f => DataFiles.Read(f, options ?? ReadOptions.Default)), name ?? $"{list.Count} files") { Files = () => list };
+        return new DatasetRows(() => list.SelectMany(f => DataFiles.Read(f, options ?? ReadOptions.Default)), name ?? $"{list.Count} files") { Files = () => list };
     }
 
     /// <summary>
     /// The data files in <paramref name="folder"/> and below whose names match <paramref name="pattern"/> (default: every
     /// file of a known format), in path order. Build output and dependency folders are skipped.
     /// </summary>
-    public static Dataset FromFolder(string folder, string? pattern = null, ReadOptions? options = null)
+    public static DatasetRows FromFolder(string folder, string? pattern = null, ReadOptions? options = null)
     {
         string root = Path.GetFullPath(folder);
         if (!Directory.Exists(root))
@@ -109,55 +109,55 @@ public sealed class Dataset : IDatasetRows
         }
 
         var effective = (options ?? ReadOptions.Default) with { Root = (options ?? ReadOptions.Default).Root ?? root };
-        return new Dataset(() => DataFiles.InFolder(root, pattern, effective).SelectMany(f => DataFiles.Read(f, effective)), Path.GetFileName(root))
+        return new DatasetRows(() => DataFiles.InFolder(root, pattern, effective).SelectMany(f => DataFiles.Read(f, effective)), Path.GetFileName(root))
         {
             Files = () => [.. DataFiles.InFolder(root, pattern, effective)],
         };
     }
 
     /// <summary>A file downloaded from <paramref name="url"/> (once: it is cached, see <see cref="Downloader"/>).</summary>
-    public static Dataset FromUrl(string url, ReadOptions? options = null, IDownloader? downloader = null, IReadOnlyDictionary<string, string>? headers = null)
+    public static DatasetRows FromUrl(string url, ReadOptions? options = null, IDownloader? downloader = null, IReadOnlyDictionary<string, string>? headers = null)
     {
         _ = new Uri(url);                                           // a bad URL fails here, not on first use
         string Fetch() => (downloader ?? Downloader.Shared).Download(url, headers);
-        return new Dataset(() => DataFiles.Read(Fetch(), options ?? ReadOptions.Default), url) { Files = () => [Fetch()] };
+        return new DatasetRows(() => DataFiles.Read(Fetch(), options ?? ReadOptions.Default), url) { Files = () => [Fetch()] };
     }
 
     /// <summary>Datasets one after another.</summary>
-    public static Dataset Concat(params Dataset[] datasets) =>
+    public static DatasetRows Concat(params DatasetRows[] datasets) =>
         new(() => datasets.SelectMany(d => d), string.Join(" + ", datasets.Select(d => d.Name)));
 
     /// <summary>
     /// Interleaves datasets at random, each row drawn from a source with probability proportional to its weight (as
     /// Hugging Face's interleave_datasets): <c>Mix([(chat, 0.6), (code, 0.3), (tools, 0.1)], seed: 1)</c>.
     /// </summary>
-    public static Dataset Mix(IReadOnlyList<(Dataset Data, double Weight)> sources, int seed = 0, MixStop stop = MixStop.FirstExhausted)
+    public static DatasetRows Mix(IReadOnlyList<(DatasetRows Data, double Weight)> sources, int seed = 0, MixStop stop = MixStop.FirstExhausted)
     {
         if (sources.Count == 0 || sources.Any(s => s.Weight <= 0 || double.IsNaN(s.Weight)))
         {
             throw new ArgumentException("Mix needs at least one source, each with a positive weight.", nameof(sources));
         }
 
-        return new Dataset(() => MixRows(sources, seed, stop), string.Join(" | ", sources.Select(s => $"{s.Data.Name}×{s.Weight:G3}")));
+        return new DatasetRows(() => MixRows(sources, seed, stop), string.Join(" | ", sources.Select(s => $"{s.Data.Name}×{s.Weight:G3}")));
     }
 
     /// <summary>Each row changed by <paramref name="map"/>; rows mapped to null are dropped.</summary>
-    public Dataset Select(Func<JsonObject, JsonObject?> map) => new(() => _rows().Select(map).OfType<JsonObject>(), Name);
+    public DatasetRows Select(Func<JsonObject, JsonObject?> map) => new(() => _rows().Select(map).OfType<JsonObject>(), Name);
 
     /// <summary>The rows <paramref name="keep"/> accepts.</summary>
-    public Dataset Where(Func<JsonObject, bool> keep) => new(() => _rows().Where(keep), Name);
+    public DatasetRows Where(Func<JsonObject, bool> keep) => new(() => _rows().Where(keep), Name);
 
     /// <summary>The first <paramref name="count"/> rows.</summary>
-    public Dataset Take(long count) => new(() => TakeRows(_rows(), count), Name);
+    public DatasetRows Take(long count) => new(() => TakeRows(_rows(), count), Name);
 
     /// <summary>All rows after the first <paramref name="count"/>.</summary>
-    public Dataset Skip(long count) => new(() => SkipRows(_rows(), count), Name);
+    public DatasetRows Skip(long count) => new(() => SkipRows(_rows(), count), Name);
 
     /// <summary>
     /// Rows in random order, drawn from a buffer of <paramref name="buffer"/> rows (a full shuffle when the dataset fits in
     /// the buffer; otherwise a local one, as streaming shuffles are). The same seed gives the same order.
     /// </summary>
-    public Dataset Shuffle(int seed = 0, int buffer = 100_000) => new(() => ShuffleRows(_rows(), seed, buffer), Name);
+    public DatasetRows Shuffle(int seed = 0, int buffer = 100_000) => new(() => ShuffleRows(_rows(), seed, buffer), Name);
 
     /// <summary>
     /// Rows without repeats: two rows are the same when <paramref name="columns"/> (default: all) hold exactly the same
@@ -165,7 +165,7 @@ public sealed class Dataset : IDatasetRows
     /// spacing, letter forms) as the same, <see cref="Normalize(ITextNormalizer, string, string)"/> them into a key
     /// column first and deduplicate on that: <c>data.Normalize(rules, "text", into: "key").Deduplicate(["key", "label"])</c>.
     /// </summary>
-    public Dataset Deduplicate(IReadOnlyList<string>? columns = null) =>
+    public DatasetRows Deduplicate(IReadOnlyList<string>? columns = null) =>
         new(() => DistinctRows(_rows(), columns), Name);
 
     /// <summary>
@@ -173,7 +173,7 @@ public sealed class Dataset : IDatasetRows
     /// and missing columns are left as they are). A separate step from <see cref="Deduplicate"/> and the rest: the rules are
     /// the consumer's (<see cref="ITextNormalizer"/>).
     /// </summary>
-    public Dataset Normalize(ITextNormalizer normalizer, params string[] columns)
+    public DatasetRows Normalize(ITextNormalizer normalizer, params string[] columns)
     {
         ArgumentNullException.ThrowIfNull(normalizer);
         return Select(row =>
@@ -195,7 +195,7 @@ public sealed class Dataset : IDatasetRows
     /// or group rows by (<see cref="Deduplicate"/>, a split key) while the text itself stays as written. Rows whose
     /// column is missing or not text get no key.
     /// </summary>
-    public Dataset Normalize(ITextNormalizer normalizer, string column, string into)
+    public DatasetRows Normalize(ITextNormalizer normalizer, string column, string into)
     {
         ArgumentNullException.ThrowIfNull(normalizer);
         return Select(row =>
@@ -213,16 +213,16 @@ public sealed class Dataset : IDatasetRows
     /// Splits into training and evaluation rows by a hash of each row's content (or of <paramref name="key"/>): the same
     /// row always lands on the same side, whatever the order, and no row is held in memory.
     /// </summary>
-    public (Dataset Train, Dataset Evaluation) Split(double evaluationFraction, int seed = 0, Func<JsonObject, string>? key = null)
+    public (DatasetRows Train, DatasetRows Evaluation) Split(double evaluationFraction, int seed = 0, Func<JsonObject, string>? key = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(evaluationFraction);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(evaluationFraction, 1);
         bool Evaluation(JsonObject row) => (key is null ? Fraction(row, seed) : Fraction(key(row), seed)) < evaluationFraction;
-        return (new Dataset(() => _rows().Where(r => !Evaluation(r)), Name + " (train)"), new Dataset(() => _rows().Where(Evaluation), Name + " (evaluation)"));
+        return (new DatasetRows(() => _rows().Where(r => !Evaluation(r)), Name + " (train)"), new DatasetRows(() => _rows().Where(Evaluation), Name + " (evaluation)"));
     }
 
     /// <summary>The rows with only <paramref name="columns"/>.</summary>
-    public Dataset SelectColumns(params string[] columns) => Select(row =>
+    public DatasetRows SelectColumns(params string[] columns) => Select(row =>
     {
         var kept = new JsonObject();
         foreach (var column in columns)
@@ -238,7 +238,7 @@ public sealed class Dataset : IDatasetRows
     });
 
     /// <summary>The rows without <paramref name="columns"/>.</summary>
-    public Dataset RemoveColumns(params string[] columns) => Select(row =>
+    public DatasetRows RemoveColumns(params string[] columns) => Select(row =>
     {
         foreach (var column in columns)
         {
@@ -249,7 +249,7 @@ public sealed class Dataset : IDatasetRows
     });
 
     /// <summary>The rows with column <paramref name="from"/> renamed to <paramref name="to"/>.</summary>
-    public Dataset RenameColumn(string from, string to) => Select(row =>
+    public DatasetRows RenameColumn(string from, string to) => Select(row =>
     {
         if (row.TryGetPropertyValue(from, out var value))
         {
@@ -502,7 +502,7 @@ public sealed class Dataset : IDatasetRows
         }
     }
 
-    private static IEnumerable<JsonObject> MixRows(IReadOnlyList<(Dataset Data, double Weight)> sources, int seed, MixStop stop)
+    private static IEnumerable<JsonObject> MixRows(IReadOnlyList<(DatasetRows Data, double Weight)> sources, int seed, MixStop stop)
     {
         var random = new Random(seed);
         var enumerators = sources.Select(s => s.Data.GetEnumerator()).ToList();

@@ -3,15 +3,15 @@
 
 using System.Text.Json.Nodes;
 
-namespace Idrak.Datasets;
+namespace Idrak.Data;
 
-/// <summary>What Idrak.Datasets does with a <see cref="DatasetSpec"/> (Idrak.Abstraction): open it, download it, map it to chat.</summary>
+/// <summary>What Idrak.Data does with a <see cref="DatasetSpec"/> (Idrak.Abstraction): open it, download it, map it to chat.</summary>
 public static class DatasetSpecExtensions
 {
     extension(DatasetSpec spec)
     {
         /// <summary>The rows of this source, with take / skip / columns applied (not yet normalized to chat or text).</summary>
-        public Dataset Open(IDownloader? downloader = null)
+        public DatasetRows Open(IDownloader? downloader = null)
         {
             var data = spec.OpenSource(downloader);
             if (spec.GetInt64("skip") is { } skip)
@@ -40,7 +40,7 @@ public static class DatasetSpecExtensions
             ? new ChatMapping { User = user, Assistant = spec.Get("assistant") ?? throw new ArgumentException($"{spec.Source}: user= needs assistant= too."), System = spec.Get("system") }
             : null;
 
-        private Dataset OpenSource(IDownloader? downloader)
+        private DatasetRows OpenSource(IDownloader? downloader)
         {
             var opener = DatasetSources.Find(spec.Source);
             foreach (var key in spec.Options.Keys.Where(k => !DatasetSpec.CommonOptions.Contains(k, StringComparer.OrdinalIgnoreCase)
@@ -69,7 +69,7 @@ public static class DatasetSpecExtensions
             // The registered sources, in order (see DatasetSources): hf:, github:, kaggle:, zenodo:, http(s)://, folders, files.
             var rows = opener?.Open(spec, read, downloader)
                 ?? throw new FileNotFoundException($"'{spec.Source}' is not a file, a folder or a known source (hf:, github:, kaggle:, zenodo:, http(s)://).");
-            return Dataset.From(rows);
+            return DatasetRows.From(rows);
         }
     }
 }
@@ -110,7 +110,7 @@ public sealed record DatasetRecipe
     /// <summary>Seed of shuffling, mixing and splitting.</summary>
     public int Seed { get; init; }
 
-    /// <summary>Shuffle the rows (buffered, see <see cref="Dataset.Shuffle"/>).</summary>
+    /// <summary>Shuffle the rows (buffered, see <see cref="DatasetRows.Shuffle"/>).</summary>
     public bool Shuffle { get; init; } = true;
 
     /// <summary>Drop repeated rows.</summary>
@@ -126,7 +126,7 @@ public sealed record DatasetRecipe
     public long MaxRows { get; init; }
 
     /// <summary>
-    /// Share of rows held out for evaluation, by a hash of each row's prompt (see <see cref="Dataset.Split"/>): everything
+    /// Share of rows held out for evaluation, by a hash of each row's prompt (see <see cref="DatasetRows.Split"/>): everything
     /// but the assistant's turns, lower-cased with whitespace collapsed, or a text row's text. The same question with
     /// different answers, or differently spaced or cased, lands on one side, so the evaluation holds only unseen prompts.
     /// </summary>
@@ -186,13 +186,13 @@ public sealed record DatasetRecipe
     /// The training rows and, with <see cref="EvaluationFraction"/> &gt; 0, the evaluation rows: conversations
     /// ({"messages", "tools"}) and / or texts ({"text"}), as <see cref="ChatRows"/> normalizes them.
     /// </summary>
-    public (Dataset Train, Dataset? Evaluation) Build(IDownloader? downloader = null) => Build(downloader, null);
+    public (DatasetRows Train, DatasetRows? Evaluation) Build(IDownloader? downloader = null) => Build(downloader, null);
 
     /// <summary>
     /// <see cref="Build(IDownloader?)"/>, with <paramref name="counts"/> filled as the rows are read: how many the
     /// sources gave, and how many the length limits and the deduplication dropped (for the last pass over the rows).
     /// </summary>
-    public (Dataset Train, Dataset? Evaluation) Build(IDownloader? downloader, RecipeCounts? counts)
+    public (DatasetRows Train, DatasetRows? Evaluation) Build(IDownloader? downloader, RecipeCounts? counts)
     {
         if (Sources.Count == 0)
         {
@@ -201,11 +201,11 @@ public sealed record DatasetRecipe
 
         var parts = Sources.Select(s => (Data: ChatRows.Normalize(s.Open(downloader), Kind, s.Mapping, System), s.Weight)).ToList();
         bool mix = MixByWeight ?? Sources.Any(s => s.Options.ContainsKey("weight"));
-        var data = parts.Count == 1 ? parts[0].Data : mix ? Dataset.Mix(parts, Seed, Stop) : Dataset.Concat([.. parts.Select(p => p.Data)]);
+        var data = parts.Count == 1 ? parts[0].Data : mix ? DatasetRows.Mix(parts, Seed, Stop) : DatasetRows.Concat([.. parts.Select(p => p.Data)]);
         if (counts is not null)
         {
             var sources = data;
-            data = new Dataset(() => Count(sources, counts), sources.Name);
+            data = new DatasetRows(() => Count(sources, counts), sources.Name);
         }
 
         if (MinCharacters > 0 || MaxCharacters > 0)
@@ -252,7 +252,7 @@ public sealed record DatasetRecipe
     }
 
     // Each pass over the rows starts the counts again.
-    private static IEnumerable<JsonObject> Count(Dataset rows, RecipeCounts counts)
+    private static IEnumerable<JsonObject> Count(DatasetRows rows, RecipeCounts counts)
     {
         counts.Reset();
         foreach (var row in rows)

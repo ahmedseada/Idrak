@@ -10,7 +10,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 
-namespace Idrak.Datasets;
+namespace Idrak.Data;
 
 /// <summary>Reads data files into rows.</summary>
 public static class DataFiles

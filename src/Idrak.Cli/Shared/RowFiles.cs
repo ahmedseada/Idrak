@@ -5,7 +5,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using Idrak.Datasets;
+using Idrak.Data;
 
 namespace Idrak.Cli.Shared;
 
@@ -16,11 +16,11 @@ namespace Idrak.Cli.Shared;
 internal static class RowFiles
 {
     /// <summary>The rows of a file (its format by extension).</summary>
-    public static Dataset Read(string path)
+    public static DatasetRows Read(string path)
     {
         if (Directory.Exists(path))
         {
-            return Dataset.FromFolder(path);
+            return DatasetRows.FromFolder(path);
         }
 
         if (!File.Exists(path))
@@ -28,7 +28,7 @@ internal static class RowFiles
             throw new FileNotFoundException($"{path} not found.", path);
         }
 
-        return Dataset.FromFile(path);
+        return DatasetRows.FromFile(path);
     }
 
     /// <summary>The format's name for messages: csv, tsv, jsonl, json, parquet or the extension.</summary>
@@ -51,7 +51,7 @@ internal static class RowFiles
         switch (format)
         {
             case "jsonl":
-                return new Dataset(() => rows).WriteJsonLines(path);
+                return new DatasetRows(() => rows).WriteJsonLines(path);
             case "json":
             {
                 var array = new JsonArray([.. rows.Select(r => (JsonNode)r.DeepClone())]);

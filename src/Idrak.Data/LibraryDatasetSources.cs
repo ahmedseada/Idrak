@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-namespace Idrak.Datasets;
+namespace Idrak.Data;
 
 /// <summary>
 /// The dataset sources this assembly ships, registered in <see cref="DatasetSources"/> (Idrak.Abstraction) by
@@ -19,9 +19,9 @@ internal static class LibraryDatasetSources
             new Prefixed("kaggle", "kaggle:", (spec, rest, read, downloader) => Kaggle.Dataset(rest, spec.Get("files"), options: read, downloader: downloader)),
             new Prefixed("zenodo", "zenodo:", (spec, rest, read, downloader) => Zenodo.Record(rest, spec.Get("files"), options: read, downloader: downloader)),
             new Local("http", source => source.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || source.StartsWith("https://", StringComparison.OrdinalIgnoreCase),
-                (spec, read, downloader) => Dataset.FromUrl(spec.Source, read, downloader)),
-            new Local("folder", Directory.Exists, (spec, read, _) => Dataset.FromFolder(spec.Source, spec.Get("files"), read)),
-            new Local("file", File.Exists, (spec, read, _) => Dataset.FromFile(spec.Source, read with { Pattern = spec.Get("files") })),
+                (spec, read, downloader) => DatasetRows.FromUrl(spec.Source, read, downloader)),
+            new Local("folder", Directory.Exists, (spec, read, _) => DatasetRows.FromFolder(spec.Source, spec.Get("files"), read)),
+            new Local("file", File.Exists, (spec, read, _) => DatasetRows.FromFile(spec.Source, read with { Pattern = spec.Get("files") })),
         ];
 
         // A new source is tried before the ones registered earlier, so register from the last to the first.
@@ -32,7 +32,7 @@ internal static class LibraryDatasetSources
     }
 
     // github:owner/repo[@ref]: a repository's files as documents, data files when files= names them, or release assets.
-    private static Dataset GitHubSource(DatasetSpec spec, string repo, ReadOptions read, IDownloader? downloader)
+    private static DatasetRows GitHubSource(DatasetSpec spec, string repo, ReadOptions read, IDownloader? downloader)
     {
         string? reference = spec.Get("ref");
         int at = repo.IndexOf('@', StringComparison.Ordinal);
@@ -51,7 +51,7 @@ internal static class LibraryDatasetSources
     }
 
     // A source written as "prefix:rest" (the prefix ignores case).
-    private sealed class Prefixed(string name, string prefix, Func<DatasetSpec, string, ReadOptions, IDownloader?, Dataset> open) : IDatasetSource
+    private sealed class Prefixed(string name, string prefix, Func<DatasetSpec, string, ReadOptions, IDownloader?, DatasetRows> open) : IDatasetSource
     {
         public string Name => name;
 
@@ -61,7 +61,7 @@ internal static class LibraryDatasetSources
     }
 
     // A source recognised by a test on the whole string (a URL, a folder, a file).
-    private sealed class Local(string name, Func<string, bool> canOpen, Func<DatasetSpec, ReadOptions, IDownloader?, Dataset> open) : IDatasetSource
+    private sealed class Local(string name, Func<string, bool> canOpen, Func<DatasetSpec, ReadOptions, IDownloader?, DatasetRows> open) : IDatasetSource
     {
         public string Name => name;
 

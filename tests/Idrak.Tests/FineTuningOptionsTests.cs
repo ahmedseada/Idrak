@@ -3,7 +3,7 @@
 
 using System.Text.Json.Nodes;
 using Idrak;
-using Idrak.Datasets;
+using Idrak.Data;
 using Idrak.Layers;
 using Idrak.LanguageModels;
 using Idrak.Optimizers;

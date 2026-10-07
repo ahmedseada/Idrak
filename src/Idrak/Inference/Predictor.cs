@@ -220,6 +220,12 @@ public sealed class PredictorBuilder<TIn, TOut>
     /// <summary>The class names stored in a loaded predictor package, for <see cref="Classes"/> (null if none were stored).</summary>
     public IReadOnlyList<string>? StoredClasses => Settings.StoredClasses;
 
+    /// <summary>The model the predictor runs (for a loaded package, the one rebuilt from it); null only for the inference engine's templates.</summary>
+    public Module? Model => Settings.Model;
+
+    /// <summary>The shape of one input sample, set by <see cref="InputShape"/> or restored from a loaded package (null if neither).</summary>
+    public IReadOnlyList<int>? SampleShape => Settings.InputShape;
+
     /// <summary>Runs one prediction with <paramref name="sample"/> when the predictor is built (or loaded by the engine), so the first real call is not slow.</summary>
     public PredictorBuilder<TIn, TOut> WarmUp(TIn sample)
     {
