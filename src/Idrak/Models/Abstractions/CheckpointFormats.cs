@@ -51,7 +51,7 @@ public static class CheckpointFormats
 
     /// <summary>
     /// Registers <paramref name="format"/>: it takes the place of the format of the same name (the library's stays behind
-    /// it as its fallback, see <see cref="SetPolicy"/>), or is asked before every format registered so far.
+    /// it, see <see cref="SetPolicy"/>), or is asked before every format registered so far.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void Register(ICheckpointFormat format)
@@ -77,8 +77,8 @@ public static class CheckpointFormats
     public static string? Origin(string name) => Registry.Origin(name);
 
     /// <summary>
-    /// What happens when the app's format <paramref name="name"/> fails (<see cref="SlotPolicy.FallBack"/> to the library's
-    /// unless set): each call falls back on its own. Under <see cref="SlotPolicy.Shadow"/> only <see cref="ICheckpointFormat.CanOpen"/>
+    /// What happens when the app's format <paramref name="name"/> fails (<see cref="SlotPolicy.Throw"/> unless set: the error reaches the caller;
+    /// <see cref="SlotPolicy.FallBack"/> retries on the library's): each call falls back on its own. Under <see cref="SlotPolicy.Shadow"/> only <see cref="ICheckpointFormat.CanOpen"/>
     /// and <see cref="ICheckpointFormat.Notes"/> are compared: preparing writes files and opening holds them, which is not done twice.
     /// </summary>
     public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Registry.SetPolicy(name, policy, shadowRate);

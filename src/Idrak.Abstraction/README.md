@@ -26,7 +26,7 @@ its README lists it.
 | Generation: tools | `Tool`, `[Tool]`, `ToolResult`, `IToolRegistry` and its default `ToolRegistry` (validation, allow rules, approvals, a timeout); `IToolChatModel` (a chat model that carries tools) and `ChatTools.WithTools` (runs a chat model's tool calls on the server) |
 | Retrieval (`Idrak.Abstraction.Retrieval`) | `IEmbedder` |
 | Serving (`Idrak.Abstraction.Serving`) | the engine's model kinds (`EngineModel<TCopy>`, `IEngineHost`, `IEngineLease`, `IEngineBatcher`), `IPredictor<TIn, TOut>`, `IModelCatalog` (named models reached through their contracts; the inference engine implements it), `KeepAlive` (parses "30m", "1h30m", 0, -1) |
-| Diagnostics (`Idrak.Abstraction.Diagnostics`) | `Telemetry`, `ITelemetryHook`, `TelemetryLevel` and the telemetry events (`DeviceFailed`, `OverrideFellBack` and `OverrideCompared` among them; `DeviceFailed`: a GPU error, or an operation retried on the CPU, with a hint naming `IDRAK_RETRY_ON_HOST` while the retry is off); `ConsoleLogger` and `JsonLinesLogger` always include device failures and overrides falling back or compared |
+| Diagnostics (`Idrak.Abstraction.Diagnostics`) | `Telemetry`, `ITelemetryHook`, `TelemetryLevel` and the telemetry events (`DeviceFailed`, `OverrideFailed` and `OverrideCompared` among them; `DeviceFailed`: a GPU error, or an operation retried on the CPU, with a hint naming `IDRAK_RETRY_ON_HOST` while the retry is off); `ConsoleLogger` and `JsonLinesLogger` always include device failures and overrides failing or compared |
 | The override loop (root) | `SlotTable<TKey, TValue>` (every registry's entries, each with its library default), `Slot`, `SlotPolicy` (`FallBack`, `Throw`, `Shadow`), `SlotGuard<TValue>`, `Overrides` (`Report()`, `AsLibraryDefaults`), `Comparisons` (shared with the testing kit) |
 
 The GPU devices (CUDA, Vulkan, HIP) ship in the `Idrak.Gpu` package (which `Idrak` brings) and are built on this
@@ -85,11 +85,12 @@ implementation, stress it and keep its failing cases, use the testing kit,
 Every registry keeps its entries in a `SlotTable<TKey, TValue>`: each entry is a slot with the library default and,
 over it, what an app registered. An app's registration shadows the default without removing it, `Unregister` brings it
 back, and every registry has `Default(name)` and `Origin(name)`. While an app's entry shadows a default, the table hands
-it out guarded by the registry's `SlotGuard<TValue>` under the slot's `SlotPolicy`: `FallBack` (the default: a call
-that throws is retried on the default and reported to telemetry), `Throw`, or `Shadow` (the default answers, the app's
-runs on a share of the calls and `Comparisons` says how they differ). A slot with only its default hands it out as it
+it out guarded by the registry's `SlotGuard<TValue>` under the slot's `SlotPolicy`: `Throw` (the default: the failure
+reaches the caller and is reported with a hint naming the exact call, or `IDRAK_OVERRIDE_POLICY` setting, that switches
+the slot to the others), `FallBack` (a call that throws is retried on the default), or `Shadow` (the default answers,
+the app's runs on a share of the calls, 1% unless set, and `Comparisons` says how they differ). A slot with only its default hands it out as it
 is. The library's packages register their built-ins inside `Overrides.AsLibraryDefaults`, so they are defaults, not
-overrides; `Overrides.Report()` lists every override with its origin and policy. The events are `OverrideFellBack` and
+overrides; `Overrides.Report()` lists every override with its origin and policy. The events are `OverrideFailed` and
 `OverrideCompared` (`TelemetryLevel.Overrides`, always on in `ConsoleLogger` and `JsonLinesLogger`).
 
 A registry of one's own gets the same behavior from a table:

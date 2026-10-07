@@ -10,8 +10,9 @@ namespace Idrak.Generation.Abstractions;
 /// The token samplers generation makes, by name. <see cref="DefaultName"/> is the built-in <see cref="TokenSampler"/>
 /// (temperature, top-k, top-p, min-p and penalties, on the device), which <see cref="TextGenerator.CreateSampler"/> makes
 /// unless set. Register a sampler under <see cref="DefaultName"/> to override it for every generation: the built-in stays
-/// behind it as its fallback until <see cref="Unregister"/>. A sampler keeps state through a generation (its steps, its
-/// random stream, the history penalties look at), so it falls back when it is made, not half-way, and
+/// behind it until <see cref="Unregister"/>. A sampler keeps state through a generation (its steps, its
+/// random stream, the history penalties look at), so under <see cref="SlotPolicy.FallBack"/> it falls back when it is
+/// made, not half-way, and
 /// <see cref="SlotPolicy.Shadow"/> compares whole generations.
 /// </summary>
 public static class TokenSamplers
@@ -30,7 +31,7 @@ public static class TokenSamplers
 
     /// <summary>
     /// Registers the sampler <paramref name="name"/>, made by <paramref name="create"/> for each generation. Under
-    /// <see cref="DefaultName"/> it overrides the built-in for every generation, which stays behind it as its fallback
+    /// <see cref="DefaultName"/> it overrides the built-in for every generation, which stays behind it
     /// (see <see cref="SetPolicy"/>).
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
@@ -62,8 +63,9 @@ public static class TokenSamplers
     public static string? Origin(string name) => Registry.Origin(name);
 
     /// <summary>
-    /// What happens when the app's sampler <paramref name="name"/> fails to be made (<see cref="SlotPolicy.FallBack"/> to the
-    /// built-in unless set), or whether it only runs beside the built-in (<see cref="SlotPolicy.Shadow"/>: the built-in
+    /// What happens when the app's sampler <paramref name="name"/> fails to be made (<see cref="SlotPolicy.Throw"/> unless
+    /// set: the error reaches the caller; <see cref="SlotPolicy.FallBack"/> retries on the built-in), or whether it only
+    /// runs beside the built-in (<see cref="SlotPolicy.Shadow"/>: the built-in
     /// chooses every token; on <paramref name="shadowRate"/> of the generations the app's sampler sees the same logits, and
     /// the tokens each chose, times and allocations are reported when the generation ends).
     /// </summary>

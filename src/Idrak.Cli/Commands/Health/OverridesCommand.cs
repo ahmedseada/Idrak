@@ -18,10 +18,12 @@ internal sealed class OverridesCommand : Command
     public override string Usage => """
 
         Lists the registry entries the --plugin assemblies (and the config's "plugins") registered: the library default
-        each one replaces (or "added" for a new name), the assembly it comes from and its failure policy: "fall back"
-        (the default: a call that throws is answered by the library's default and reported), "throw", "shadow N%" (the
-        library answers, the plug-in's runs beside it on N% of the calls and is compared), or none for registries whose
-        entries cannot fall back. Telemetry of fallbacks and comparisons: idrak trace --levels overrides -- COMMAND.
+        each one replaces (or "added" for a new name), the assembly it comes from and its failure policy: "throw" (the
+        default: a call that throws fails, and the failure is reported with how to change the policy), "fall back" (a
+        call that throws is answered by the library's default), "shadow N%" (the library answers, the plug-in's runs
+        beside it on N% of the calls and is compared), or none for registries whose entries cannot fall back. Set the
+        policy in code (the registry's SetPolicy) or with IDRAK_OVERRIDE_POLICY (fallback, shadow:0.05, or
+        RopeScalings/yarn=fallback). Failures and comparisons as they happen: idrak trace --levels overrides -- COMMAND.
 
         Examples:
           idrak overrides -P ./MySampler.dll
@@ -51,6 +53,7 @@ internal sealed class OverridesCommand : Command
             ["guarded"] = o.Guarded,
             ["policy"] = o.Guarded && o.ReplacesDefault ? o.Policy.ToString() : null,
             ["shadow_rate"] = o.Guarded && o.Policy == SlotPolicy.Shadow ? o.ShadowRate : null,
+            ["failures"] = o.Failures,
             ["fallbacks"] = o.FallBacks,
             ["compared"] = o.Compared,
             ["differed"] = o.Differed,

@@ -86,7 +86,7 @@ public sealed record ToolCallProbe(string? Source, string? Call)
 /// <item>"deepseek": <c>&lt;｜tool▁calls▁begin｜&gt;&lt;｜tool▁call▁begin｜&gt;…&lt;｜tool▁sep｜&gt;…&lt;｜tool▁call▁end｜&gt;…</c> (V3 and R1 with a fenced JSON block, V3.1 with bare JSON).</item>
 /// </list>
 /// Register another with <see cref="Register"/>; registering a built-in name overrides the built-in, which stays behind
-/// it as its fallback.
+/// it until the app unregisters it.
 /// </summary>
 public static class ToolCallFormats
 {
@@ -143,7 +143,7 @@ public static class ToolCallFormats
     /// <summary>
     /// Registers the format <paramref name="name"/>: <paramref name="detect"/> says whether a template writes calls this
     /// way, <paramref name="create"/> makes one reply's parser. Under a registered name it takes that format's place (a
-    /// built-in stays behind it as its fallback, see <see cref="SetPolicy"/>); a new name is asked before every format
+    /// built-in stays behind it, see <see cref="SetPolicy"/>); a new name is asked before every format
     /// registered so far. Names are matched exactly.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
@@ -168,8 +168,8 @@ public static class ToolCallFormats
     public static IToolCallParser? Default(string name, ToolCallContext context) => Table.Default(name)?.Create(context);
 
     /// <summary>
-    /// What happens when the app's format <paramref name="name"/> fails (<see cref="SlotPolicy.FallBack"/> to the library's
-    /// unless set): detection falls back per call, a parser when it is made.
+    /// What happens when the app's format <paramref name="name"/> fails (<see cref="SlotPolicy.Throw"/> unless set: the error reaches the caller;
+    /// <see cref="SlotPolicy.FallBack"/> retries on the library's): detection falls back per call, a parser when it is made.
     /// </summary>
     public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Table.SetPolicy(name, policy, shadowRate);
 

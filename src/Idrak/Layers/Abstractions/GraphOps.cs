@@ -82,7 +82,7 @@ public static class GraphOps
 
     /// <summary>
     /// Registers the graph operation <paramref name="name"/>; under a built-in name it overrides the library's, which stays
-    /// behind it as its fallback (see <see cref="SetPolicy"/>) until <see cref="Unregister"/>.
+    /// behind it (see <see cref="SetPolicy"/>) until <see cref="Unregister"/>.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void Register(string name, GraphOp op)
@@ -116,7 +116,7 @@ public static class GraphOps
     /// <summary>Who registered the operation <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
     public static string? Origin(string name) => Registry.Origin(name);
 
-    /// <summary>What happens when the app's operation <paramref name="name"/> fails (<see cref="SlotPolicy.FallBack"/> to the library's unless set).</summary>
+    /// <summary>What happens when the app's operation <paramref name="name"/> fails (<see cref="SlotPolicy.Throw"/> unless set: the error reaches the caller; <see cref="SlotPolicy.FallBack"/> retries on the library's).</summary>
     public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Registry.SetPolicy(name, policy, shadowRate);
 
     /// <summary>Whether <paramref name="name"/> is an operation graphs can use: a structural one of GraphModule or a registered one.</summary>

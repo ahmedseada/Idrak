@@ -141,7 +141,7 @@ public static class RopeScalings
 
     /// <summary>
     /// Registers the scaling method <paramref name="type"/> (names ignore case). Under a built-in name it shadows the
-    /// library's method, which stays as its fallback (see <see cref="SetPolicy"/>) until <see cref="Unregister"/>.
+    /// library's method, which stays behind it (see <see cref="SetPolicy"/>) until <see cref="Unregister"/>.
     /// </summary>
     /// <param name="type">The name configurations use (<c>rope_scaling.rope_type</c>).</param>
     /// <param name="method">The frequencies (and attention factor) from the unscaled ones and the parameters.</param>
@@ -174,8 +174,8 @@ public static class RopeScalings
     public static string? Origin(string type) => Table.Origin(type);
 
     /// <summary>
-    /// What happens when the app's method <paramref name="type"/> fails (<see cref="SlotPolicy.FallBack"/> to the library's
-    /// unless set), or whether it only runs beside it (<see cref="SlotPolicy.Shadow"/>, on <paramref name="shadowRate"/> of the calls).
+    /// What happens when the app's method <paramref name="type"/> fails (<see cref="SlotPolicy.Throw"/> unless set: the error reaches the caller;
+    /// <see cref="SlotPolicy.FallBack"/> retries on the library's), or whether it only runs beside it (<see cref="SlotPolicy.Shadow"/>, on <paramref name="shadowRate"/> of the calls).
     /// </summary>
     public static void SetPolicy(string type, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Table.SetPolicy(type, policy, shadowRate);
 

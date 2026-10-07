@@ -59,7 +59,7 @@ public static class DatasetSources
 
     /// <summary>
     /// Registers <paramref name="source"/>. One with the name of a registered source takes its place (a built-in stays
-    /// behind it as its fallback, see <see cref="SetPolicy"/>); a new one is tried first, before the sources already registered.
+    /// behind it, see <see cref="SetPolicy"/>); a new one is tried first, before the sources already registered.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void Register(IDatasetSource source)
@@ -88,8 +88,8 @@ public static class DatasetSources
     public static string? Origin(string name) => Registry.Origin(name);
 
     /// <summary>
-    /// What happens when the app's source <paramref name="name"/> fails (<see cref="SlotPolicy.FallBack"/> to the library's
-    /// unless set). Under <see cref="SlotPolicy.Shadow"/> only <see cref="IDatasetSource.CanOpen"/> is compared: opening
+    /// What happens when the app's source <paramref name="name"/> fails (<see cref="SlotPolicy.Throw"/> unless set: the error reaches the caller;
+    /// <see cref="SlotPolicy.FallBack"/> retries on the library's). Under <see cref="SlotPolicy.Shadow"/> only <see cref="IDatasetSource.CanOpen"/> is compared: opening
     /// downloads files, which is not done twice.
     /// </summary>
     public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Registry.SetPolicy(name, policy, shadowRate);

@@ -49,7 +49,7 @@ public static class SampleSources
 
     /// <summary>
     /// Registers the source <paramref name="name"/> (names ignore case); under a built-in name it overrides the library's,
-    /// which stays behind it as its fallback (see <see cref="SetPolicy"/>) until <see cref="Unregister"/>.
+    /// which stays behind it (see <see cref="SetPolicy"/>) until <see cref="Unregister"/>.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void Register(string name, SampleSourceFactory factory)
@@ -79,7 +79,7 @@ public static class SampleSources
     /// <summary>Who registered the source <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
     public static string? Origin(string name) => Registry.Origin(name);
 
-    /// <summary>What happens when the app's source <paramref name="name"/> fails to open (<see cref="SlotPolicy.FallBack"/> to the library's unless set).</summary>
+    /// <summary>What happens when the app's source <paramref name="name"/> fails to open (<see cref="SlotPolicy.Throw"/> unless set: the error reaches the caller; <see cref="SlotPolicy.FallBack"/> retries on the library's).</summary>
     public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Registry.SetPolicy(name, policy, shadowRate);
 
     private static string Shape(ISampleSource source) =>

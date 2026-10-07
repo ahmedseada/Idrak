@@ -26,7 +26,7 @@ public static class ChatTemplates
     /// <summary>
     /// Registers the reader <paramref name="name"/>: <paramref name="load"/> reads the chat template of a model folder
     /// (given the model's tokenizer, or null), or returns null when the folder holds none it reads. Under a registered
-    /// name it takes that reader's place (the library's stays behind it as its fallback, see <see cref="SetPolicy"/>); a
+    /// name it takes that reader's place (the library's stays behind it, see <see cref="SetPolicy"/>); a
     /// new name is asked before every reader registered so far.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
@@ -49,7 +49,7 @@ public static class ChatTemplates
     /// <summary>Who registered the reader <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
     public static string? Origin(string name) => Table.Origin(name);
 
-    /// <summary>What happens when the app's reader <paramref name="name"/> fails (<see cref="SlotPolicy.FallBack"/> to the library's unless set).</summary>
+    /// <summary>What happens when the app's reader <paramref name="name"/> fails (<see cref="SlotPolicy.Throw"/> unless set: the error reaches the caller; <see cref="SlotPolicy.FallBack"/> retries on the library's).</summary>
     public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Table.SetPolicy(name, policy, shadowRate);
 
     /// <summary>

@@ -4,7 +4,7 @@
 // An app that overrides one contract of the library: its own token sampler (SanitizingSampler), which fixes the one
 // case the app hit (logits that are not finite) and leaves the rest to the library's sampler. The override is
 // registered over the library's ("default" in TokenSamplers), which stays behind it: a failure of the app's sampler falls
-// back to it (SlotPolicy.FallBack), and Overrides.Report() lists the override at startup. The app's own tests
+// back to it (the app opts into SlotPolicy.FallBack), and Overrides.Report() lists the override at startup. The app's own tests
 // (samples/Idrak.Samples.Override.Tests) check it with the testing kit, Idrak.Abstraction.Testing.
 //
 //   dotnet run -c Release --project samples/Idrak.Samples.Override
@@ -18,6 +18,7 @@ using Idrak.Samples.Override;
 var device = Device.Cpu;
 var library = TokenSamplers.Default(TokenSamplers.DefaultName)!;
 TokenSamplers.Register(TokenSamplers.DefaultName, SanitizingSampler.Create);   // every generation's sampler, from now on
+TokenSamplers.SetPolicy(TokenSamplers.DefaultName, SlotPolicy.FallBack);       // if it ever fails to be made, the library's
 foreach (var o in Overrides.Report())
 {
     Console.WriteLine($"override: {o}");
