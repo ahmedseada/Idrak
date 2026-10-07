@@ -203,8 +203,8 @@ exact API is settled in phase 1 with the device providers; named registries keep
 
 | Policy | What happens when the app's implementation throws | When to use |
 |---|---|---|
-| `Throw` (default) | the error reaches the caller, as today | tests, development: failures must be loud |
-| `FallBack` | the call is retried on the library default; the failure goes to telemetry with the slot, id and exception | production, once the override is trusted enough to ship but not trusted alone |
+| `Throw` | the error reaches the caller, as today | tests and development, opted into per slot (the kit's checks use it): failures must be loud |
+| `FallBack` (default, decision 12) | the call is retried on the library default; the failure goes to telemetry with the slot, id and exception | everywhere unless a slot opts out: an app's override never takes a call down that the library could have answered |
 | `Shadow` | the library default answers; the app's version runs on a sample of calls (rate set per slot) and its output, time and memory are compared and recorded | before switching: real traffic as a stress test, with no risk to answers |
 
 ⚠️ Limits, stated up front:
@@ -377,10 +377,13 @@ Diffusion, Audio; the bridges depend on contracts (and their third-party package
    lives changes.
 11. **GPUs come with `Idrak`** (2026-10-07): the `Idrak` package depends on `Idrak.Gpu`, so `dotnet add package Idrak`
    brings the CUDA, Vulkan and HIP devices as before; `Idrak.Gpu` also works alone on `Idrak.Abstraction`.
+12. **`FallBack` is the default failure policy** (2026-10-07): when an app's implementation throws, the call is
+   retried on the library default and the failure is reported to telemetry; a slot opts into `Throw` (tests,
+   development) or `Shadow`. Shadow samples 1% of calls per slot by default; reports go to telemetry.
 
-## Open (the override loop)
+## Decided (the override loop, 2026-10-07)
 
-1. Default failure policy in production: `Throw` everywhere (proposed: loud by default, `FallBack` opted into per
-   slot) or `FallBack` everywhere.
-2. Shadow sampling: a rate per slot (proposed, default 1%) or a global rate.
-3. Where shadow and fallback reports go: the existing telemetry only (proposed), or also a file the kit can replay.
+1. Default failure policy: **`FallBack` everywhere** (decision 12); `Throw` is opted into per slot (tests,
+   development, the kit).
+2. Shadow sampling: a rate per slot, default 1%.
+3. Shadow and fallback reports go to the existing telemetry.
