@@ -4,7 +4,7 @@
 using System.Security.Cryptography;
 using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
-using Idrak.Datasets;
+using Idrak.Data;
 using Idrak.Models;
 using Idrak.Nlp;
 

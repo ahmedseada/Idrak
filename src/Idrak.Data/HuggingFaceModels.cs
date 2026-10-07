@@ -3,7 +3,7 @@
 
 using Idrak.Models;
 
-namespace Idrak.Datasets;
+namespace Idrak.Data;
 
 /// <summary>
 /// Hugging Face models by id ("Qwen/Qwen3-0.6B"), the model source this package registers with

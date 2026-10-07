@@ -16,7 +16,7 @@ public sealed record ModelSourceOptions
     public bool Download { get; init; } = true;
 
     /// <summary>
-    /// What fetches, caches and logs for the source (null: the source's own; Idrak.Datasets' <c>Downloader.Shared</c> for the Hub); pass
+    /// What fetches, caches and logs for the source (null: the source's own; Idrak.Data's <c>Downloader.Shared</c> for the Hub); pass
     /// your own for a mirror, an authenticated proxy or an offline cache.
     /// </summary>
     public IDownloader? Downloader { get; init; }
@@ -42,7 +42,7 @@ public interface IModelSource
 
 /// <summary>
 /// The sources a model name is resolved by, in order. Idrak registers an existing folder, "store:name" (the
-/// local model store) and a .gguf file; Idrak.Datasets adds a Hugging Face id ("owner/name"). A name goes to the first source that can
+/// local model store) and a .gguf file; Idrak.Data adds a Hugging Face id ("owner/name"). A name goes to the first source that can
 /// resolve it, the most recently registered first, so a new source (for example a "myhub:" prefix) is asked before the
 /// built-in ones.
 /// </summary>

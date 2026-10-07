@@ -222,7 +222,7 @@ public sealed class NetworkBuilder : INetworkBuilder
 
     /// <summary>
     /// <c>new Layers.ChannelNormalize(mean, std)</c>: (x - mean[c]) / std[c] per channel of [C, H, W] (or feature of
-    /// [F]). Put it first so the network takes plain [0, 1] images; <see cref="Vision.ChannelStatistics"/> has ImageNet's
+    /// [F]). Put it first so the network takes plain [0, 1] images; <c>ChannelStatistics</c> (Idrak.Vision) has ImageNet's
     /// values and computes a data set's.
     /// </summary>
     public NetworkBuilder Normalize(IReadOnlyList<float> mean, IReadOnlyList<float> std)

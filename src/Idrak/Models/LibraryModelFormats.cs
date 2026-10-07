@@ -6,7 +6,7 @@ namespace Idrak.Models;
 /// <summary>
 /// The model-loading built-ins Idrak registers (from <c>LibraryRegistrations</c>): the checkpoint formats (safetensors,
 /// GGUF), the model sources (folder, local model store, .gguf file), the ggml tensor types, the GGUF families and
-/// pre-tokenizer patterns, and the pretrained model families. Idrak.Datasets adds the Hugging Face model source.
+/// pre-tokenizer patterns, and the pretrained model families. Idrak.Data adds the Hugging Face model source.
 /// </summary>
 internal static class LibraryModelFormats
 {
