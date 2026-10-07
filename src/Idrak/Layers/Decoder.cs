@@ -644,7 +644,7 @@ public sealed class FeedForward : Module
                 return Down.Bias is null ? fused : fused + Down.Bias;                        // activation read by the down projection
             }
 
-            var (gate, up, kind) = (projected[0], projected[1], (int)Activation);
+            var (gate, up, kind) = (projected[0], projected[1], Activation);
             bool recompute = ActivationMemory.RecomputeFeedForward && Autograd.IsEnabled;
             Abstraction.Devices.Storage? packedHidden = null;
             if (ActivationMemory.BFloat16 && Autograd.IsEnabled
@@ -703,7 +703,7 @@ public sealed class FeedForward : Module
         }
 
         var projected = Linear.ForwardMany(input, Gate, Up);
-        return Tensor.GatedActivation(projected[0], projected[1], (int)Activation);
+        return Tensor.GatedActivation(projected[0], projected[1], Activation);
     }
 
     private Tensor Activate(Tensor x) => Activation switch

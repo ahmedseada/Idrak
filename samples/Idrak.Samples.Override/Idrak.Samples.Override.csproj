@@ -4,9 +4,11 @@
     <OutputType>Exe</OutputType>
   </PropertyGroup>
 
+  <!-- As an app references Idrak: the packages. In this repository they come from the clone itself (IdrakFromSource,
+       set in samples/Directory.Build.props), so a change to the library is in this app on its next build. -->
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Idrak\Idrak.csproj" />
-    <ProjectReference Include="..\..\src\Idrak.Nlp\Idrak.Nlp.csproj" />
+    <PackageReference Include="Idrak" Version="$(IdrakVersion)" />
+    <PackageReference Include="Idrak.Nlp" Version="$(IdrakVersion)" />
   </ItemGroup>
 
 </Project>

@@ -74,6 +74,9 @@ public sealed class Slot
     /// <summary>The assembly the app's implementation comes from.</summary>
     public string Origin { get; internal set; } = Overrides.Library;
 
+    // The app's assembly, whose references say which release of the library it was built against.
+    internal System.Reflection.Assembly? AppAssembly { get; set; }
+
     /// <summary>The policy: <see cref="SlotPolicy.Throw"/> unless set (by the registry's <c>SetPolicy</c>, or <c>IDRAK_OVERRIDE_POLICY</c>).</summary>
     public SlotPolicy Policy => _settings.Policy;
 

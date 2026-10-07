@@ -40,7 +40,7 @@ internal static partial class PtxKernels
         sb.AppendLine(string.Join(",\n", parameters));
         sb.AppendLine(")");
         sb.AppendLine("{");
-        sb.AppendLine("    .reg .pred %p<16>;");
+        sb.AppendLine("    .reg .pred %p<17>;");
         sb.AppendLine("    .reg .f32 %f<32>;");
         sb.AppendLine("    .reg .b32 %r<32>;");
         sb.AppendLine("    .reg .b64 %rd<16>;");

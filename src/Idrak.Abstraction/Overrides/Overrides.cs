@@ -24,6 +24,29 @@ namespace Idrak.Abstraction;
 public sealed record SlotOverride(string Registry, string Name, string Implementation, string Origin, bool ReplacesDefault, bool Guarded,
     SlotPolicy Policy, double ShadowRate, long Failures, long FallBacks, long Compared, long Differed)
 {
+    /// <summary>The version of the library default it shadows (0 when there is none).</summary>
+    public int DefaultVersion { get; init; }
+
+    /// <summary>The release that made that version the default ("0.4.0"), when the library says (null for a first version).</summary>
+    public string? DefaultSince { get; init; }
+
+    /// <summary>
+    /// The release of the library package holding the default that the app's assembly was built against (from its
+    /// references), when it references that package directly; null when it cannot be told.
+    /// </summary>
+    public string? BuiltAgainst { get; init; }
+
+    /// <summary>
+    /// Whether the app's implementation was built against a release older than the one that brought the current default:
+    /// the library has improved what it overrides since, so the override may no longer be needed.
+    /// </summary>
+    public bool Outdated => DefaultSince is not null && BuiltAgainst is not null && Version.Parse(BuiltAgainst) < Version.Parse(DefaultSince);
+
+    /// <summary>The note the report adds for an outdated override, or null.</summary>
+    public string? OutdatedNote => Outdated
+        ? $"built against {BuiltAgainst}; the library default is version {DefaultVersion} since {DefaultSince}: check whether the override is still needed"
+        : null;
+
     /// <summary>What the policy means for this entry, in a few words: "fall back", "throw", "shadow 1%", or why there is none.</summary>
     public string PolicyText => !ReplacesDefault ? "none (no library default)" : !Guarded ? "none (used as it is)" : Policy switch
     {
@@ -34,7 +57,8 @@ public sealed record SlotOverride(string Registry, string Name, string Implement
 
     /// <inheritdoc />
     public override string ToString() =>
-        $"{Registry}/{Name}: {Implementation} ({Origin}), {(ReplacesDefault ? "replaces the library default" : "added")}, policy {PolicyText}";
+        $"{Registry}/{Name}: {Implementation} ({Origin}), {(ReplacesDefault ? $"replaces the library default{(DefaultVersion > 1 ? $" (version {DefaultVersion})" : "")}" : "added")}, policy {PolicyText}"
+        + (OutdatedNote is { } note ? $"; {note}" : "");
 }
 
 /// <summary>
@@ -194,4 +218,27 @@ public static class Overrides
     }
 
     private static string AssemblyName(Assembly assembly) => assembly.GetName().Name ?? "unknown";
+
+    // The assembly an implementation comes from: a delegate's method's, an object's type's; null for a name.
+    internal static Assembly? AssemblyOf(object? implementation) => implementation switch
+    {
+        null or string => null,
+        Delegate d => d.Method.Module.Assembly,
+        _ => implementation.GetType().Assembly,
+    };
+
+    // The release of `library` (an assembly name) that `app` was built against, from its references ("0.3.1"); null when
+    // the app is unknown, is the library itself, or does not reference it directly.
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "Only reads the reference list's names and versions; a trimmed reference reads as unknown (null), which the report shows as such.")]
+    internal static string? BuiltAgainst(Assembly? app, string library)
+    {
+        if (app is null || app.GetName().Name == library)
+        {
+            return null;
+        }
+
+        var reference = app.GetReferencedAssemblies().FirstOrDefault(a => a.Name == library);
+        return reference?.Version is { } v ? new Version(v.Major, v.Minor, Math.Max(v.Build, 0)).ToString() : null;
+    }
 }

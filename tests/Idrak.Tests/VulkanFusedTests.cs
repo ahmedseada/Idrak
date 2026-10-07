@@ -192,7 +192,7 @@ internal static partial class Tests
         {
             using var gv = Biased(g.MatMul(input), bg, d);
             using var uv = Biased(u.MatMul(input), bu, d);
-            using var h = Tensor.GatedActivation(gv, uv, activation);
+            using var h = Tensor.GatedActivation(gv, uv, (FeedForwardActivation)activation);
             string against = d == cpu ? "the CPU" : "the unfused steps";
             AssertClose(gv.ToArray(), fused[0], 1e-4f, $"{what}: gate against {against}");
             AssertClose(uv.ToArray(), fused[1], 1e-4f, $"{what}: up against {against}");
@@ -210,7 +210,7 @@ internal static partial class Tests
         using var y = Tensor.Zeros([m, n], device);
         var fused = RunFused(backend, () => backend.PackedMatMulGated(format, activation, gate.Storage, up.Storage, weight.PackedValues.Storage,
             weight.ScaleValues?.Storage, y.Storage, m, n, k), [y], what);
-        using (var hidden = Tensor.GatedActivation(gate, up, activation))
+        using (var hidden = Tensor.GatedActivation(gate, up, (FeedForwardActivation)activation))
         using (var product = weight.MatMul(hidden))
         {
             AssertClose(product.ToArray(), fused[0], 1e-4f, $"{what}: against the unfused steps");
@@ -219,7 +219,7 @@ internal static partial class Tests
         using var gc = Tensor.From(gs, [m, k], cpu);
         using var uc = Tensor.From(us, [m, k], cpu);
         using var wc = PackedWeight.FromValues(format, ws, k, n, cpu);
-        using var hc = Tensor.GatedActivation(gc, uc, activation);
+        using var hc = Tensor.GatedActivation(gc, uc, (FeedForwardActivation)activation);
         using var pc = wc.MatMul(hc);
         AssertClose(pc.ToArray(), fused[0], 1e-4f, $"{what}: against the CPU");
     }

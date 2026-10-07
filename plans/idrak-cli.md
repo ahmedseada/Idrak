@@ -429,6 +429,7 @@ size is unknown unless a limit is set.
 | `idrak kernels [-d DEVICE] [--source KIND]` | Which kernel each operation runs on a device: registered, its own, composed, host fallback or none (plan 9, phase 2) | 3 |
 | `idrak kernels dump [ptx\|spirv\|hip]` | The generated kernels, for debugging | 3 |
 | `idrak trace COMMAND ...` | Runs a command with telemetry printed live (layers, batches, kernels) or written to JSON Lines | 3 |
+| `idrak overrides [-P PLUGIN]` | What the plug-ins override: each registry entry, the library default it replaces (and that default's version), its origin and failure policy, and whether it was built against a release older than the default (plan 10, the override loop) | 3 |
 
 Built on the `cli-dev` branch, with these additions found while building: `new --source DIR` (project references to a
 source checkout instead of packages, for working against unreleased changes), `-o/--out` and `-f/--force` on `new`;
@@ -436,8 +437,13 @@ source checkout instead of packages, for working against unreleased changes), `-
 also compares with a reference file of another framework's outputs (`FILE.onnx.expected.json`, as
 tools/pytorch writes it, or `--expected FILE`) and takes `--batch` and `--tolerance`; `kernels dump` writes each HIP
 kernel's parameters next to the source; `trace` takes `--levels` (training, batches, gradients, layers, operations,
-inference, tools, engine) and `--sync` (true GPU timings), and with `--json` wraps the traced command's document in
-its own; `demo` and `shell` from the second pass are in this group.
+inference, tools, engine, devices, overrides, all; without it everything but operations and gradients) and `--sync`
+(true GPU timings), and with `--json` wraps the traced command's document in its own; `demo` and `shell` from the
+second pass are in this group. Added with plan 10: `kernels` lists, per operation, a registered kernel, the device's
+own, the composed default, the host fallback or none, with plug-in operations as "plug-in" rows and the host calls
+counted (`--source KIND` filters, `-j` for JSON); `overrides` (above), with the policy settable in code or with
+`IDRAK_OVERRIDE_POLICY`; GPU failures are reported with the operation and a hint, and `IDRAK_RETRY_ON_HOST` retries
+a failed kernel on the CPU.
 
 Gaps (Developers):
 
@@ -446,7 +452,7 @@ Gaps (Developers):
   reports the comparison as unavailable and still runs the round-trip and reference checks.
 - `kernels dump` writes the kernels in their default shapes (Vulkan at its widest width, cooperative-matrix products
   in 16 x 16 x 16, PTX for the default kernel shapes); the library has no public way to ask a device which variants
-  it built, so per-device dumps wait for that. The tool reads the generators through `InternalsVisibleTo` (Idrak
+  it built, so per-device dumps wait for that. The tool reads the generators through `InternalsVisibleTo` (Idrak.Gpu
   grants it to Idrak.Cli for this command only).
 - `new` refers to packages of the tool's own version; a local prerelease build asks for `VERSION-*`, which resolves
   only where such packages are published (a local feed), so `--source` is the way to use unreleased code.
@@ -627,7 +633,8 @@ refused with the reason. `--user` writes the Windows user environment too (elsew
 
 | Group | Variables |
 |---|---|
-| Devices and backends | `IDRAK_DISABLE_CUDA`, `IDRAK_DISABLE_VULKAN`, `IDRAK_DISABLE_HIP`, `IDRAK_VULKAN_DEFAULT`, `IDRAK_HIP_DEFAULT`, `IDRAK_CUDA_DEBUG`, `IDRAK_WINDOW_KERNELS`, `IDRAK_POWER_SOURCE` |
+| Devices and backends | `IDRAK_DISABLE_CUDA`, `IDRAK_DISABLE_VULKAN`, `IDRAK_DISABLE_HIP`, `IDRAK_VULKAN_DEFAULT`, `IDRAK_HIP_DEFAULT`, `IDRAK_CUDA_DEBUG`, `IDRAK_WINDOW_KERNELS`, `IDRAK_POWER_SOURCE`, `IDRAK_RETRY_ON_HOST` |
+| Overrides | `IDRAK_OVERRIDE_POLICY` (the first failure policy of the slots: `fallback`, `shadow:0.05`, `RopeScalings/yarn=fallback`) |
 | Tuning and caches | `IDRAK_CACHE`, `IDRAK_AUTOTUNE`, `IDRAK_TUNING_CACHE`, `IDRAK_TUNE_LOG`, `IDRAK_CPU_TUNING_FILE`, `IDRAK_VULKAN_TUNING_CACHE`, `IDRAK_HIP_KERNEL_CACHE` |
 | Precision and memory | `IDRAK_MATMUL`, `IDRAK_FP8_DELAYED`, `IDRAK_OFFLOAD` |
 | CPU | `IDRAK_CPU_KCHUNK`, `IDRAK_CPU_PARALLEL_ELEMENTS`, `IDRAK_CPU_PARALLEL_FLOPS` |

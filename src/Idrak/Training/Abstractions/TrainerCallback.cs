@@ -5,7 +5,7 @@ using Idrak.Abstraction.Diagnostics;
 
 namespace Idrak.Training.Abstractions;
 
-/// <summary>Per-epoch results of <c>Trainer.Fit</c>, written by the trainer (and a callback that stops early).</summary>
+/// <summary>Per-epoch results of <c>Trainer.Fit</c>, written by the trainer and the library's early stopping; read-only to callbacks.</summary>
 public sealed class TrainingHistory
 {
     private readonly List<EpochCompleted> _epochs = [];
@@ -14,16 +14,16 @@ public sealed class TrainingHistory
     public IReadOnlyList<EpochCompleted> Epochs => _epochs;
 
     /// <summary>The epoch with the best monitored loss (1-based).</summary>
-    public int BestEpoch { get; set; }
+    public int BestEpoch { get; internal set; }
 
     /// <summary>The best monitored loss (validation loss when a validation set was used).</summary>
-    public double BestLoss { get; set; } = double.PositiveInfinity;
+    public double BestLoss { get; internal set; } = double.PositiveInfinity;
 
     /// <summary>Whether early stopping ended training.</summary>
-    public bool StoppedEarly { get; set; }
+    public bool StoppedEarly { get; internal set; }
 
     /// <summary>Adds a completed epoch's summary.</summary>
-    public void Add(EpochCompleted epoch) => _epochs.Add(epoch);
+    internal void Add(EpochCompleted epoch) => _epochs.Add(epoch);
 }
 
 /// <summary>
@@ -81,7 +81,7 @@ public sealed class TrainerContext
     /// <param name="epochs">The maximum number of epochs.</param>
     /// <param name="history">The history the run writes.</param>
     /// <param name="cancellationToken">Cancels the run.</param>
-    public TrainerContext(Module model, Optimizer optimizer, int epochs, TrainingHistory history, CancellationToken cancellationToken)
+    internal TrainerContext(Module model, Optimizer optimizer, int epochs, TrainingHistory history, CancellationToken cancellationToken)
     {
         Model = model;
         Optimizer = optimizer;
@@ -97,13 +97,13 @@ public sealed class TrainerContext
     public Optimizer Optimizer { get; }
 
     /// <summary>The current 1-based epoch (0 before the first).</summary>
-    public int Epoch { get; set; }
+    public int Epoch { get; internal set; }
 
     /// <summary>The maximum number of epochs requested.</summary>
     public int Epochs { get; }
 
     /// <summary>Optimizer steps (batches) since training started.</summary>
-    public long Step { get; set; }
+    public long Step { get; internal set; }
 
     /// <summary>The epochs completed so far.</summary>
     public TrainingHistory History { get; }

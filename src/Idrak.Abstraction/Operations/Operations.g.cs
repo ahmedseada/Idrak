@@ -858,6 +858,13 @@ public static class OperationKernels
     /// stream (seed, step, row). Writes the token to ids[row] and 13 statistics to stats[(step * rows + row) * 13]:
     /// id, probability, entropy (bits), then the top-5 (id, probability) pairs. The step number is read from device
     /// memory. Row r's logits start at element r * rowStride + rowOffset.
+    /// <para>
+    /// Scores that are not finite follow one rule on every device: a NaN score is never sampled; when a row has a +∞ score
+    /// (a +∞ logit, or a finite one that overflows when divided by the temperature) it draws uniformly among its +∞
+    /// tokens, and top-k, top-p and min-p do not apply; a row with no finite score and no +∞ one has nothing to sample:
+    /// ids[row] gets 0 (so the next step's input stays valid) and its statistics record id -1, probability 0, entropy 0
+    /// and no alternatives, which the sampler reading them reports as an error.
+    /// </para>
     /// </summary>
     public delegate void SampleRows(Backend backend, Storage logits, Storage ids, Storage stats, Storage step, int rows, int vocabulary, int rowStride, int rowOffset, float temperature, int topK, float topP, float minP, uint seed);
 
@@ -1607,6 +1614,13 @@ public static partial class Ops
     /// stream (seed, step, row). Writes the token to ids[row] and 13 statistics to stats[(step * rows + row) * 13]:
     /// id, probability, entropy (bits), then the top-5 (id, probability) pairs. The step number is read from device
     /// memory. Row r's logits start at element r * rowStride + rowOffset.
+    /// <para>
+    /// Scores that are not finite follow one rule on every device: a NaN score is never sampled; when a row has a +∞ score
+    /// (a +∞ logit, or a finite one that overflows when divided by the temperature) it draws uniformly among its +∞
+    /// tokens, and top-k, top-p and min-p do not apply; a row with no finite score and no +∞ one has nothing to sample:
+    /// ids[row] gets 0 (so the next step's input stays valid) and its statistics record id -1, probability 0, entropy 0
+    /// and no alternatives, which the sampler reading them reports as an error.
+    /// </para>
     /// </summary>
     public static readonly Operation SampleRows =
         new("SampleRows", "SampleRowsKernel", "Storage,Storage,Storage,Storage,Int32,Int32,Int32,Int32,Single,Int32,Single,Single,UInt32", OperationIndex.SampleRows, typeof(OperationKernels.SampleRows), KernelSource.Host);

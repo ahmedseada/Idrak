@@ -9,7 +9,9 @@ namespace Idrak.Generation;
 /// Samples the next token for a batch of sequences on the device that holds the logits, so the chosen ids can feed
 /// the next decoding step without a round trip to the host. Randomness is counter-based (seed, step, row), so
 /// results are reproducible and identical on CPU and GPU up to floating-point rounding. Per-token statistics are
-/// written to a device buffer and read back in chunks with <see cref="Read"/>.
+/// written to a device buffer and read back in chunks with <see cref="Read"/>. Logits that are not finite follow one rule on
+/// every device: NaN is never sampled, +∞ wins (shared evenly among the +∞ tokens), and a row with neither a finite logit
+/// nor a +∞ one is reported by <see cref="Read"/>.
 /// </summary>
 public sealed class TokenSampler : ITokenSampler
 {
@@ -32,8 +34,16 @@ public sealed class TokenSampler : ITokenSampler
         };
     }
 
-    /// <summary>Always true: sampling, penalties and statistics run on the device.</summary>
-    public bool Recordable => true;
+    /// <summary>True unless <see cref="RejectNonFinite"/>: sampling, penalties and statistics run on the device.</summary>
+    public bool Recordable => !RejectNonFinite;
+
+    /// <summary>
+    /// Refuse logits that are not finite with an error before sampling, as version 1 of the default sampler did (the
+    /// sampler of Idrak 0.3 failed on them; <c>TokenSamplers.Default(TokenSamplers.DefaultName, version: 1)</c> makes one).
+    /// Reads the logits on the host every step, so a step is not recorded as a graph. Off by default: NaN logits are never
+    /// sampled and +∞ ones win.
+    /// </summary>
+    public bool RejectNonFinite { get; set; }
 
     private const int StatsPerToken = 13;
     private readonly Tensor _stats;
@@ -137,6 +147,17 @@ public sealed class TokenSampler : ITokenSampler
             throw new ArgumentException($"Expected [{Rows}, ..., {Vocabulary}] logits, got {Tensor.FormatShape(logits.Shape)}.");
         }
 
+        if (RejectNonFinite)
+        {
+            var values = logits.ToArray();
+            int bad = Array.FindIndex(values, v => !float.IsFinite(v));
+            if (bad >= 0)
+            {
+                throw new ArgumentException($"Logit {bad % vocabulary} of row {bad / (steps * vocabulary)} is {values[bad]}: this sampler (version 1) "
+                    + "refuses logits that are not finite. The default sampler (version 2) never samples NaN and lets +∞ win.", nameof(logits));
+            }
+        }
+
         var backend = logits.Backend;
         var source = logits.Storage;
         int rowStride = steps * vocabulary, rowOffset = (steps - 1) * vocabulary;
@@ -164,7 +185,11 @@ public sealed class TokenSampler : ITokenSampler
         _historyLength.FillInPlace(0f);
     }
 
-    /// <summary>Downloads the statistics of steps [<paramref name="fromStep"/>, <paramref name="toStep"/>) as [step][row] tokens (one synchronization).</summary>
+    /// <summary>
+    /// Downloads the statistics of steps [<paramref name="fromStep"/>, <paramref name="toStep"/>) as [step][row] tokens (one
+    /// synchronization).
+    /// </summary>
+    /// <exception cref="InvalidOperationException">A row had no logit to sample (all NaN or -∞; see <c>Backend.SampleRowsKernel</c>).</exception>
     public SampledToken[][] Read(int fromStep, int toStep)
     {
         int count = toStep - fromStep;
@@ -181,6 +206,13 @@ public sealed class TokenSampler : ITokenSampler
                 for (int a = 0; a < 5; a++)
                 {
                     alternatives[a] = ((int)raw[o + 3 + 2 * a], raw[o + 4 + 2 * a]);
+                }
+
+                if (raw[o] < 0)
+                {
+                    throw new InvalidOperationException($"Nothing to sample at step {fromStep + s}, row {r}: every logit was NaN or -∞, so the "
+                        + "model's output is not finite (an overflow in its weights or activations, or a bad input). NaN logits are never "
+                        + "sampled and +∞ ones win; a row needs at least one of either.");
                 }
 
                 result[s][r] = new SampledToken((int)raw[o], raw[o + 1], raw[o + 2], alternatives);

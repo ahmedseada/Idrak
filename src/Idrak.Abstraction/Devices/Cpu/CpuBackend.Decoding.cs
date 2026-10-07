@@ -297,13 +297,21 @@ internal sealed partial class CpuBackend
             float max = float.NegativeInfinity;
             foreach (float v in z)
             {
-                max = MathF.Max(max, v * invT);
+                float sc = v * invT;
+                if (sc > max)                                                // NaN is never a candidate
+                {
+                    max = sc;
+                }
             }
+
+            // Non-finite scores (Backend.SampleRowsKernel): any +∞ makes the row a uniform draw among its +∞ tokens; no
+            // finite score and no +∞ leaves nothing to sample (ids gets 0, the statistics -1).
+            bool infinite = max == float.PositiveInfinity, empty = max == float.NegativeInfinity;
 
             // Top-k: the k-th largest distinct scaled score is the cut-off (ties at the cut-off are kept); fewer than k
             // distinct scores keep everything. One pass keeping the k largest distinct scores, largest first.
             float threshold = float.NegativeInfinity;
-            if (topK > 0 && topK < vocabulary)
+            if (topK > 0 && topK < vocabulary && !infinite && !empty)
             {
                 int count = 0;
                 foreach (float v in z)
@@ -339,14 +347,14 @@ internal sealed partial class CpuBackend
             }
 
             // Min-p: keep tokens at least minP times as likely as the best: s >= max + ln(minP).
-            if (minP > 0f)
+            if (minP > 0f && !infinite && !empty)
             {
                 threshold = MathF.Max(threshold, max + MathF.Log(minP));
             }
 
             // Top-p (nucleus): the highest cut-off whose kept mass is still >= topP of the total, by bisection. Only scores at
             // or above the bisection's lower bound can count, so their weights are computed once and summed in token order.
-            if (topP > 0f && topP < 1f)
+            if (topP > 0f && topP < 1f && !infinite && !empty)
             {
                 float total = 0f, floor = MathF.Max(max - 40f, threshold);
                 candidateScores ??= ArrayPool<float>.Shared.Rent(vocabulary);
@@ -406,7 +414,7 @@ internal sealed partial class CpuBackend
             for (int j = 0; j < vocabulary; j++)
             {
                 float sc = z[j] * invT;
-                e[j] = sc >= threshold ? MathF.Exp(sc - max) : 0f;
+                e[j] = infinite ? (sc == float.PositiveInfinity ? 1f : 0f) : sc >= threshold && sc > float.NegativeInfinity ? MathF.Exp(sc - max) : 0f;
                 sum += e[j];
             }
 
@@ -455,10 +463,10 @@ internal sealed partial class CpuBackend
                 }
             }
 
-            iv[r] = chosen;
+            iv[r] = Math.Max(chosen, 0);                                     // nothing to sample: a valid id for the next step
             int o = ((int)stepNumber * rows + r) * 13;
             sv[o] = chosen;
-            sv[o + 1] = e[chosen] / sum;
+            sv[o + 1] = chosen < 0 ? 0f : e[chosen] / sum;
             sv[o + 2] = entropy;
             for (int a = 0; a < 5; a++)
             {

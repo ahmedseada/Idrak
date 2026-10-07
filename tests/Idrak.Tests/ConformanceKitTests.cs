@@ -18,7 +18,30 @@ internal static partial class Tests
         ("conformance kit: a stress run replays the operations from several threads with no failure and no memory growth; a cancelled run stops early and leaves no memory behind", DeviceStress),
         ("conformance kit: the library's token sampler, tokenizers and RoPE scalings pass their contract suites; a sampler and a scaling that differ fail them", ContractsConformant),
         ("conformance kit: contract stress runs (threads, large inputs) pass; a failing case saved to a file replays the same failure", ContractStressAndRegression),
+        ("conformance kit: the token sampler keeps its contract on the device, logits that are not finite included (NaN never sampled, +∞ wins, nothing finite reported); the Override sample's saved case passes; version 1 of the default still refuses them", SamplerOnDevice),
     ];
+
+    // Plan 10, W4.1: the non-finite rule of Backend.SampleRowsKernel on every device, through the kit's sampler suite.
+    private static void SamplerOnDevice(Device device)
+    {
+        var suite = new TokenSamplerSuite(Drive(TokenSampler.Create), device);
+        var report = Conformance.Check(Drive(TokenSampler.Create), suite, new ContractCheckOptions { RandomCases = 16 });
+        report.ThrowIfFailed();
+        foreach (string check in new[] { "greedy takes the best finite token", "NaN and -∞ logits are never sampled", "a +∞ logit wins",
+                     "the +∞ tokens share the probability", "a row with nothing finite is reported" })
+        {
+            Check(report.Entries.Any(e => e.Name == check && e.Status == CheckStatus.Passed), $"{check}:\n{report}");
+        }
+
+        string saved = Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data", "regressions");
+        var replay = Regression.Replay(saved, Drive(TokenSampler.Create), suite);
+        replay.ThrowIfFailed();
+        Check(replay.Cases >= 1, $"no saved sampler case in {saved}");
+
+        var version1 = Conformance.Check(Drive(TokenSamplers.Default(TokenSamplers.DefaultName, 1)!), suite, new ContractCheckOptions { RandomCases = 0 });
+        Check(!version1.Passed && version1.Failures.All(f => f.Check == "non-finite logits do not break sampling")
+              && version1.Failures.Any(f => f.Message.Contains("version 1", StringComparison.Ordinal)), $"version 1 refuses non-finite logits:\n{version1}");
+    }
 
     private static void DeviceConformant(Device device)
     {

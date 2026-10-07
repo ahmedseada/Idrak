@@ -7,12 +7,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Idrak.Samples.Override\Idrak.Samples.Override.csproj" />
-    <ProjectReference Include="..\..\src\Idrak.Abstraction.Testing\Idrak.Abstraction.Testing.csproj" />
-  </ItemGroup>
-
-  <!-- What once broke the app, saved by the kit (Regression.Save), replayed by the tests. -->
-  <ItemGroup>
-    <None Include="regressions\*.json" CopyToOutputDirectory="PreserveNewest" LinkBase="regressions" />
+    <PackageReference Include="Idrak.Abstraction.Testing" Version="$(IdrakVersion)" />
   </ItemGroup>
 
 </Project>

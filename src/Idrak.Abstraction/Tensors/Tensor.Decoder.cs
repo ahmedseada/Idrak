@@ -423,9 +423,10 @@ public sealed partial class Tensor
         return (yq, Traced("rms_norm_rope", yk, start));
     }
 
-    /// <summary>act(gate) · up element-wise (kind 0 = SiLU, 1 = GELU, 2 = ReLU), with its gradient: one pass either way.</summary>
-    public static Tensor GatedActivation(Tensor gate, Tensor up, int kind)
+    /// <summary>act(gate) · up element-wise (act: <paramref name="activation"/>), with its gradient: one pass either way.</summary>
+    public static Tensor GatedActivation(Tensor gate, Tensor up, Generation.FeedForwardActivation activation)
     {
+        int kind = (int)activation;
         gate.ThrowIfDisposed();
         up.ThrowIfDisposed();
         CheckSameDevice(gate, up);
@@ -442,14 +443,15 @@ public sealed partial class Tensor
     }
 
     /// <summary>
-    /// <see cref="GatedActivation(Tensor, Tensor, int)"/> for training under <see cref="ActivationMemory.CompressToBFloat16"/>:
+    /// <see cref="GatedActivation(Tensor, Tensor, Generation.FeedForwardActivation)"/> for training under <see cref="ActivationMemory.CompressToBFloat16"/>:
     /// the one kernel also writes gate and up as bfloat16 words, and evicts them to those (the backward kernel reads the
     /// words as they are, unpacking nothing), and with <paramref name="packOutput"/> writes the output's words too, for the
     /// caller to evict the output to (<see cref="EvictToPacked"/>) once its forward uses are done. Null when gate and up
     /// share memory (views of one product).
     /// </summary>
-    public static Tensor? GatedActivationCompressed(Tensor gate, Tensor up, int kind, bool packOutput, out Storage? packedOutput)
+    public static Tensor? GatedActivationCompressed(Tensor gate, Tensor up, Generation.FeedForwardActivation activation, bool packOutput, out Storage? packedOutput)
     {
+        int kind = (int)activation;
         packedOutput = null;
         gate.ThrowIfDisposed();
         up.ThrowIfDisposed();
@@ -476,8 +478,9 @@ public sealed partial class Tensor
     /// Recomputes act(gate) · up into <paramref name="y"/> for <see cref="Evict"/>: from the bfloat16 words when gate and up
     /// were evicted to them, else from their values.
     /// </summary>
-    public static void RecomputeGatedActivation(Tensor gate, Tensor up, Tensor y, int kind)
+    public static void RecomputeGatedActivation(Tensor gate, Tensor up, Tensor y, Generation.FeedForwardActivation activation)
     {
+        int kind = (int)activation;
         var (gs, us) = (gate.Storage, up.Storage);
         if (gs is { Evicted: true, Packed: { } packedGate } && us is { Evicted: true, Packed: { } packedUp })
         {

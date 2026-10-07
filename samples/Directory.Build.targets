@@ -1,0 +1,4 @@
+<Project>
+  <!-- Samples that reference Idrak as packages (as apps do) build against this clone (build/IdrakFromSource.targets). -->
+  <Import Project="$(IdrakFromSource)/build/IdrakFromSource.targets" Condition="'$(IdrakFromSource)' != ''" />
+</Project>

@@ -302,7 +302,8 @@ def generate():
     d.append("// operations need no retry of their own (their parts retry one by one), and operations with no fallback throw.")
     d.append("// A registered kernel is not retried: it is an app's or a plug-in's choice for this device (it may handle some cases")
     d.append("// itself and pass others to the device's kernel or elsewhere), so the dispatcher can't tell which host computation")
-    d.append("// matches it or whether its error came from the device at all; its errors reach the caller.")
+    d.append("// matches it or whether its error came from the device at all; its errors reach the caller. An operation the device")
+    d.append("// has no kernel of its own for already runs its host fallback: it is not retried (it would only run twice).")
     d.append("public abstract partial class Backend")
     d.append("{")
     for i, (method, op, returns, parameters, docs, default) in enumerate(named):
@@ -351,7 +352,7 @@ def generate():
                 d.append("            return;")
             d.append("        }")
             d.append("")
-            d.append("        if (!RetryOnHost)")
+            d.append(f"        if (!RetryOnHost || !OwnsKernel(OperationIndex.{op}))")
             d.append("        {")
             d.append(f"            {ret}{own};")
             if returns == "void":

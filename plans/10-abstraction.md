@@ -16,13 +16,15 @@ each, so that:
 - **the library's own GPU backends are built the way an outsider would build one**: CUDA, Vulkan and HIP stay in the
   `Idrak` assembly but see only the public surface of `Idrak.Abstraction` (it grants `Idrak` no internals). If they
   can be built that way, item 12c is done for real, not just declared;
-- **every abstraction has one address**: every interface, abstract base, plug-in point and registry, in every library
-  package, is declared in the `Idrak.Abstraction` namespace (or one under it) and nowhere else;
+- **every abstraction has one address**: every interface, abstract base, plug-in point and registry is declared under
+  `Idrak.Abstraction.*` when Abstraction or several library packages use it, else in its one user's `.Abstractions`
+  namespace (decision 10), and nowhere else;
 - **apps can fix the library without waiting for a release**: an app overrides any contract with its own
   implementation, the library default stays as the fallback, and a proven app implementation moves into the library
   (see "The override loop");
-- **the cleanest design, not compatibility** (decision 7): `dotnet add package Idrak` still brings everything, and the
-  package adds global usings for its areas, but nothing is kept for code written against older versions.
+- **the cleanest design, not compatibility** (decision 7): `dotnet add package Idrak` still brings everything, and
+  `Idrak.Abstraction` adds global usings for its areas (buildTransitive), but nothing is kept for code written against
+  older versions.
 
 ## Where things are today (measured on main, release 0.3.1)
 
@@ -94,12 +96,10 @@ change, so `[TypeForwardedTo]` alone cannot hide it.
 - App code that only builds networks, trains and generates mostly names concrete types (`Sequential`, `Trainer`,
   `ChatSession`) and does not change.
 - Code that names a contract (`Tensor`, `Module`, `ITokenSampler`, ...) adds `using Idrak.Abstraction;` or the area's
-  namespace. The `Idrak` package ships a `buildTransitive` props file adding `Idrak.Abstraction` to the global usings
-  of projects that have implicit usings on, so most projects compile unchanged (🤔 to be confirmed in phase 1 on a
-  fresh `dotnet new console`).
-- Plug-ins compiled against 0.3.x must be rebuilt. The namespace change and the new assembly land together, in one
-  minor version (0.4.0), with a migration table in the changelog, while the version is still 0.y.z. Users break
-  once, not once per phase (see rule 5).
+  namespace. `Idrak.Abstraction` ships a `buildTransitive` props file adding its namespaces to the global usings of
+  projects that have implicit usings on (checked on a fresh `dotnet new console` in W4.7).
+- Plug-ins compiled against 0.3.x must be rebuilt. Everything lands in one minor version (0.4.0); the changelog lists
+  what moved (decision 7: no shims).
 
 ## Target layout
 
@@ -138,12 +138,11 @@ Heavy implementations (GGUF reading, Parquet, the GPU kernels) stay in their pac
 
 1. **`Idrak.Abstraction` references nothing** (a test reads its metadata and fails on any reference beyond the base
    library).
-2. **The GPU devices see no internals of Abstraction.** At the end, `Idrak.Abstraction` grants `Idrak` no
-   `InternalsVisibleTo` at all (a test fails if one appears), so the CUDA, Vulkan and HIP code in `Idrak` compiles
-   against the public surface alone. Whatever they need becomes public, which is exactly the list item 12c must
-   publish. Splitting them into their own packages later is then a move of folders, not a redesign.
+2. **The GPU devices see no internals of Abstraction.** `Idrak.Abstraction` grants internals to the tests only (a
+   test fails otherwise), and the CUDA, Vulkan and HIP devices live in `Idrak.Gpu`, which references Abstraction alone,
+   so the compiler keeps them on the public surface (wave 3).
 3. **One address for every abstraction.** Every interface, abstract base, plug-in point and registry is declared
-   under `Idrak.Abstraction.*` and nowhere else, checked by the namespace test above. Concrete layers, trainers and
+   under `Idrak.Abstraction.*` or its one user's `*.Abstractions` namespace (decision 10), checked by the tests above. Concrete layers, trainers and
    engines keep their namespaces (`Idrak.Layers`, `Idrak.Generation`, ...).
 4. **Card-agnostic, as every plan.** Kernel requirements read reported capabilities and measurements; no contract
    names a vendor or a card.
@@ -307,9 +306,22 @@ packaged form before the real release.
 | 6d | **One promotion end to end.** A sample app's override is generalized in the library (steps 2 to 5 of "Promotion"), becomes the default, the old default stays selectable by version, and the app deletes its override | the sample app passes on the new default with no override; the previous default is still reachable by version |
 | 7 | **The surface is guarded.** A checked-in dump of the public API of **every library package** (Abstraction, core, Gpu, Data, Nlp, Vision, Diffusion and Audio when they exist, and the bridges), compared by a test on every build; an intended change updates the dump in the same commit (decided 2026-10-07); a changelog section per change | an accidental public change fails the build; the namespace test's allow list is empty |
 
-## Wave 4: the last steps (planned 2026-10-07, not started)
+## Wave 4: the last steps (planned 2026-10-07; W4.1 to W4.5 done the same day)
 
 Starts on the author's go (6b is merged). Each step ends on `abstraction` with the full suite green on both.
+
+**As built (W4.1 to W4.5; CPU and lavapipe 472 of 472).** W4.1: the rule in `Backend.SampleRowsKernel` (NaN never
+sampled, +∞ wins evenly, nothing finite: id 0 on the device, -1 in the statistics, an error from `TokenSampler.Read`) in
+the CPU, Vulkan (both samplers and `topk_slots`) and CUDA kernels (PTX assembled with ptxas from PyPI for sm_50, sm_75
+and sm_120; not run on a GPU); HIP takes the host fallback. `SlotTable` defaults carry a version and the release that
+made them the default; the report compares that release with the one the app's assembly references (`Outdated`). The
+sampler's version 1 is the same sampler refusing non-finite logits (`RejectNonFinite`), not the old crash. The kit's
+`TokenSamplerSuite` runs on every device. W4.2: `build/IdrakFromSource.targets` (a test keeps its package list equal to
+src/); the Override sample builds from the clone and, with `-p:IdrakFromPackages=true -p:IdrakVersion=…`, from a packed
+feed (both pass its tests). W4.3: see the changelog for each item and its reason. W4.4: `api/*.txt` from reflection
+(nullability through `NullabilityInfoContext`; `T?` on an unconstrained type parameter is not shown, the metadata does
+not tell it apart). W4.5: no retry for operations without a device kernel; the double accumulation documented; the
+Float8 and `AttentionStrided` references and the PTX/HIP plug-in hook wait for a CUDA machine (recorded).
 
 | # | Step | What | Done when |
 |---|---|---|---|
@@ -346,7 +358,7 @@ What to look for: kernels that only CUDA has (`MatMulLowRank`, `BFloat16Transpos
 | Who | Before | After |
 |---|---|---|
 | App developer | `dotnet add package Idrak` | the same; code naming a contract adds `using Idrak.Abstraction...` (automatic with implicit usings) |
-| Plug-in author | references all of `Idrak` (GPU code included); contracts spread over 15 namespaces | references `Idrak.Abstraction` (and the testing kit); every contract under `Idrak.Abstraction.*`; rebuilds once for 0.4.0 |
+| Plug-in author | references all of `Idrak` (GPU code included); contracts spread over 15 namespaces | references `Idrak.Abstraction` (and the testing kit); shared contracts under `Idrak.Abstraction.*`, a package's own under its `.Abstractions`; rebuilds once for 0.4.0 |
 | Device author | not possible (internal `Backend`) | a device on the public API (the same one CUDA, Vulkan and HIP use), checked by the conformance kit |
 | Library maintainers | one large `Idrak` assembly with shared internals | clear layers; the GPU devices prove the public API is enough |
 
@@ -358,7 +370,7 @@ What to look for: kernels that only CUDA has (`MatMulLowRank`, `BFloat16Transpos
 | Internals that do not belong in a public contract | phase 2 lists each one; the fix is a narrower public member or a contract method, never `InternalsVisibleTo` from Abstraction to `Idrak` |
 | Graph capture (CUDA, Vulkan) depends on call order | the same kernels run in the same order; the graph tests run every phase |
 | The public API freezes too early | marked preview through 0.y.z; phase 7 makes every change deliberate |
-| The namespace change breaks users' code | one minor version (0.4.0), a migration table, the transitive global using; done while the version is 0.y.z |
+| The namespace change breaks users' code | one minor version (0.4.0), the changelog's list of moves, the transitive global usings; done while the version is 0.y.z (decision 7: no shims) |
 | The move is large (400+ files) | eight separate merges; phase 1 lands without touching any backend's kernels |
 
 ## Target package layout (decided 2026-10-07)

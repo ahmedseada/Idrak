@@ -25,8 +25,17 @@ public static class TokenSamplers
     private static SlotTable<string, Func<SamplerRequest, ITokenSampler>> BuiltIn()
     {
         var table = new SlotTable<string, Func<SamplerRequest, ITokenSampler>>(nameof(TokenSamplers), Guard, StringComparer.Ordinal);
-        table.RegisterDefault(DefaultName, TokenSampler.Create);
+        table.RegisterDefault(DefaultName, Version1, version: 1);
+        table.RegisterDefault(DefaultName, TokenSampler.Create, version: 2, since: "0.4.0");
         return table;
+    }
+
+    // Version 1 of the default (Idrak 0.3): the same sampler, failing on logits that are not finite.
+    private static ITokenSampler Version1(SamplerRequest request)
+    {
+        var sampler = (TokenSampler)TokenSampler.Create(request);
+        sampler.RejectNonFinite = true;
+        return sampler;
     }
 
     /// <summary>
@@ -58,6 +67,17 @@ public static class TokenSamplers
 
     /// <summary>The library's sampler <paramref name="name"/>, whatever an app registered over it (for an app's sampler to delegate to); null when the library has none.</summary>
     public static Func<SamplerRequest, ITokenSampler>? Default(string name) => Registry.Default(name);
+
+    /// <summary>
+    /// Version <paramref name="version"/> of the library's sampler <paramref name="name"/>; null when there is none. The
+    /// default sampler has two: 1, which fails on logits that are not finite (Idrak 0.3), and 2, the default since 0.4.0,
+    /// which never samples NaN and lets +∞ win. Register an older version over the default to get its behavior back:
+    /// <c>TokenSamplers.Register(TokenSamplers.DefaultName, TokenSamplers.Default(TokenSamplers.DefaultName, 1)!)</c>.
+    /// </summary>
+    public static Func<SamplerRequest, ITokenSampler>? Default(string name, int version) => Registry.Default(name, version);
+
+    /// <summary>The version of the library's sampler <paramref name="name"/> (0 when the library has none).</summary>
+    public static int DefaultVersion(string name) => Registry.DefaultVersion(name);
 
     /// <summary>Who registered the sampler <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
     public static string? Origin(string name) => Registry.Origin(name);

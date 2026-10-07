@@ -222,7 +222,7 @@ internal static partial class Tests
                         Check(fused is not null || device.Type != DeviceType.Cuda || down.Int4 is null, "fused gated product on CUDA (int4)");
                         if (fused is not null)
                         {
-                            var reference = down.Forward(Tensor.GatedActivation(gate, up, activation));
+                            var reference = down.Forward(Tensor.GatedActivation(gate, up, (FeedForwardActivation)activation));
                             AssertClose(reference.ToArray(), fused.ToArray(), 2e-3f * MathF.Sqrt(2048), $"{down} gated {activation}, m {m}");
                         }
                     }
