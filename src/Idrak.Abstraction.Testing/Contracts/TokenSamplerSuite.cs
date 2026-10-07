@@ -12,7 +12,7 @@ namespace Idrak.Abstraction.Testing;
 /// <list type="bullet">
 /// <item>the sampler has the request's rows and vocabulary, and its ids are [rows] tokens in [0, vocabulary);</item>
 /// <item>greedy settings (top-k 1) choose the library's tokens, penalties included;</item>
-/// <item>without penalties, every sampled token is one the settings allow (among the top k, inside the top-p nucleus,
+/// <item>without penalties, every sampled token is one the settings allow (among the k largest distinct scores, inside the top-p nucleus,
 /// at least min-p as likely as the best);</item>
 /// <item><see cref="ITokenSampler.Reset"/> with the same history samples the same tokens again;</item>
 /// <item><see cref="ITokenSampler.Read"/> reports, per step and row, the token sampled with a probability in [0, 1];</item>
@@ -165,20 +165,23 @@ public sealed class TokenSamplerSuite(Device? device = null) : ContractSuite<Fun
                 }
 
                 double mine = p[id] / sum, above = 0, best = 1 / sum;
-                int higher = 0;
+                // Top-k keeps the k largest distinct scores (ties at the cut-off kept): count distinct likelier scores.
+                var higherScores = new HashSet<float>();
                 for (int i = 0; i < vocabulary; i++)
                 {
                     if (p[i] / sum > mine * (1 + 1e-4))
                     {
-                        higher++;
+                        higherScores.Add(row[i]);
                         above += p[i] / sum;
                     }
                 }
 
+                int higher = higherScores.Count;
+
                 string where = $"step {s}, row {r}: token {id} (probability {mine:G4})";
                 if (options.TopK > 0 && higher >= options.TopK)
                 {
-                    return $"{where} is not among the top {options.TopK} ({higher} tokens are more likely)";
+                    return $"{where} is not among the top {options.TopK} ({higher} distinct scores are higher)";
                 }
 
                 if (options.TopP < 1f && above >= options.TopP + 1e-4)

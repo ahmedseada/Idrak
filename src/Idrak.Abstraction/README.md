@@ -40,6 +40,11 @@ OperationKernels.Softmax mine = (backend, x, y, rows, cols, log) =>
 using var registration = Kernels.Register(Ops.Softmax, "vulkan", mine, requirement: b => b.Capabilities.FusedKernels);
 ```
 
+To check a device or an override of a contract (a token sampler, a tokenizer, a RoPE scaling) against the default
+implementation, stress it and keep its failing cases, use the testing kit,
+[Idrak.Abstraction.Testing](https://www.nuget.org/packages/Idrak.Abstraction.Testing), from your test project:
+`Conformance.Check(Device.Get("mydevice")).ThrowIfFailed();`.
+
 Projects with implicit usings get `using Idrak.Abstraction;` from this package, so code written for Idrak 0.3 compiles
 unchanged.
 
