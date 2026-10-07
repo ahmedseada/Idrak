@@ -3,7 +3,6 @@
 
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Idrak.Generation;
 using Idrak.Inference;
 using Idrak.Layers;
 
@@ -64,28 +63,13 @@ public sealed class IdrakBuilder
         return RegisterPredictor<TIn, TOut>(name);
     }
 
-    /// <summary>A text model from a package with a tokenizer.</summary>
-    public IdrakBuilder AddTextModel(string name, string packagePath, string tokenizer, Func<GenerativeModelBuilder, GenerativeModelBuilder>? configure = null) =>
-        Step((_, engine) => engine.TextModel(name, packagePath, tokenizer, configure));
-
-    /// <summary>A text model made by <paramref name="load"/>; <paramref name="configure"/> may use services.</summary>
-    public IdrakBuilder AddTextModel(string name, Func<IServiceProvider, TextGenerator> load,
-        Func<IServiceProvider, GenerativeModelBuilder, GenerativeModelBuilder>? configure = null) =>
-        Step((services, engine) => engine.TextModel(name, () => load(services), configure is null ? null : b => configure(services, b)));
-
-    /// <summary>A chat model from a package with a tokenizer.</summary>
-    public IdrakBuilder AddChatModel(string name, string packagePath, string tokenizer, Func<GenerativeModelBuilder, GenerativeModelBuilder>? configure = null) =>
-        Step((_, engine) => engine.ChatModel(name, packagePath, tokenizer, configure));
-
-    /// <summary>A chat model from a package; <paramref name="configure"/> may use services (for example to build its tools).</summary>
-    public IdrakBuilder AddChatModel(string name, string packagePath, string tokenizer,
-        Func<IServiceProvider, GenerativeModelBuilder, GenerativeModelBuilder> configure) =>
-        Step((services, engine) => engine.ChatModel(name, packagePath, tokenizer, b => configure(services, b)));
-
-    /// <summary>A chat model whose text generator is made by <paramref name="load"/>; <paramref name="configure"/> may use services.</summary>
-    public IdrakBuilder AddChatModel(string name, Func<IServiceProvider, TextGenerator> load,
-        Func<IServiceProvider, GenerativeModelBuilder, GenerativeModelBuilder>? configure = null) =>
-        Step((services, engine) => engine.ChatModel(name, () => load(services), configure is null ? null : b => configure(services, b)));
+    /// <summary>
+    /// A model of any kind (<see cref="InferenceEngineBuilder.Add{TCopy}"/>), made by <paramref name="create"/> when the
+    /// host starts, with services.
+    /// </summary>
+    public IdrakBuilder Add<TCopy>(string name, Func<IServiceProvider, EngineModel<TCopy>> create)
+        where TCopy : class =>
+        Step((services, engine) => engine.Add(name, create(services)));
 
     /// <summary><see cref="InferenceEngineBuilder.LoadOnFirstUse"/>: the app starts without loading models.</summary>
     public IdrakBuilder LoadOnFirstUse() => Step((_, engine) => engine.LoadOnFirstUse());
@@ -93,7 +77,10 @@ public sealed class IdrakBuilder
     /// <summary><see cref="InferenceEngineBuilder.Telemetry"/>.</summary>
     public IdrakBuilder Telemetry() => Step((_, engine) => engine.Telemetry());
 
-    /// <summary>Any other engine setting.</summary>
+    /// <summary>
+    /// Any other engine setting, or models added with the builder's own methods and those of domain packages (for
+    /// example <c>engine.ChatModel(...)</c>), with services.
+    /// </summary>
     public IdrakBuilder Configure(Action<IServiceProvider, InferenceEngineBuilder> configure) => Step(configure);
 
     internal InferenceEngineBuilder CreateEngine(IServiceProvider services)

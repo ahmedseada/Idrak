@@ -24,7 +24,7 @@ internal static partial class Tests
 {
     private static readonly (string Name, Action<Device> Run)[] AspNetCore =
     [
-        ("aspnetcore: MapPredictor, MapGenerate (JSON and SSE), MapChatApi, status, DI predictor, errors", d => { if (d == Device.Cpu) AspNetCoreEndpoints(d); }),
+        ("aspnetcore: MapPredictor, MapGenerate (JSON and SSE), MapChatApi, status, DI predictor, a model kind of one's own, errors", d => { if (d == Device.Cpu) AspNetCoreEndpoints(d); }),
     ];
 
     private sealed record Row(float A, float B, float C);
@@ -44,9 +44,10 @@ internal static partial class Tests
         builder.WebHost.UseUrls("http://127.0.0.1:0");
         builder.Services.AddIdrak()
             .AddPredictor<Row, float>("rows", package, p => p.Input<Row>(r => [r.A, r.B, r.C]).Output(v => v[0]))
-            .AddChatModel("chat", _ => { var (m, t) = TinyLanguageModel(device); return new TextGenerator(m, t, 32); },
-                (_, c) => c.KeepAlive(TimeSpan.FromMinutes(1)))
-            .AddTextModel("text", _ => { var (m, t) = TinyLanguageModel(device); return new TextGenerator(m, t, 32); });
+            .Configure((_, engine) => engine
+                .ChatModel("chat", () => { var (m, t) = TinyLanguageModel(device); return new TextGenerator(m, t, 32); }, c => c.KeepAlive(TimeSpan.FromMinutes(1)))
+                .TextModel("text", () => { var (m, t) = TinyLanguageModel(device); return new TextGenerator(m, t, 32); }))
+            .Add("echo", _ => new EchoModel(new EngineHosting()));
         var app = builder.Build();
         app.MapPredictor<Row, float>("/predict/rows", "rows");
         app.MapGenerate("/generate", "text");
@@ -93,7 +94,9 @@ internal static partial class Tests
             Check((string?)JsonNode.Parse(http.GetStringAsync("/api/version").Result)!["version"] == "test-1", "version");
             Check((string?)JsonNode.Parse(http.GetStringAsync("/api/tags").Result)!["models"]![0]!["details"]!["family"] == "chat", "tags");
             var status = JsonNode.Parse(http.GetStringAsync("/status").Result)!;
-            Check(status["models"]!.AsArray().Count == 3 && status["devices"]!.AsArray().Count >= 1, "status");
+            Check(status["models"]!.AsArray().Count == 4 && status["devices"]!.AsArray().Count >= 1, "status");
+            Check(status["models"]!.AsArray().Select(m => (string?)m!["kind"]).Order().SequenceEqual(["chat", "echo", "predictor", "text"]), "each model's kind in the status");
+            Check(app.Services.GetRequiredService<InferenceEngine>().Model<EchoModel>("echo").SayAsync("hi").Result == "1:hi", "a kind of one's own added with services");
 
 
             bool threw = false;

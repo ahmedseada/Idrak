@@ -115,12 +115,12 @@ public static class IdrakEndpointExtensions
             {
                 return await Respond(async () =>
                 {
-                    var (text, reason, stats) = await engine.GenerateAsync(name, request.Prompt, options, token);
+                    var (text, reason, stats) = await engine.Model<ITextModel>(name).GenerateAsync(request.Prompt, options, token);
                     return Results.Ok(new { text, done_reason = reason, stats = Stats(stats) });
                 });
             }
 
-            var stream = engine.StreamAsync(name, request.Prompt, options, token).GetAsyncEnumerator(token);
+            var stream = engine.Model<ITextModel>(name).StreamAsync(request.Prompt, options, token).GetAsyncEnumerator(token);
             var first = await Guard(async () => await stream.MoveNextAsync() ? null : Error(500, "no output"));
             if (first is not null)
             {
@@ -195,7 +195,7 @@ public static class IdrakEndpointExtensions
                 models = new[]
                 {
                     new ChatApiModelTag(served, served, DateTimeOffset.UtcNow, d.Parameters * sizeof(float),
-                        new ChatApiModelDetails("idrak", d.Kind.ToString().ToLowerInvariant(), FormatCount(d.Parameters), d.ContextLength ?? 0)),
+                        new ChatApiModelDetails("idrak", d.Kind, FormatCount(d.Parameters), d.ContextLength ?? 0)),
                 },
             });
         }).WithName($"ChatTags-{name}");
@@ -229,7 +229,7 @@ public static class IdrakEndpointExtensions
             {
                 models = engine.Models.Select(m => new
                 {
-                    name = m.Name, kind = m.Kind.ToString(), loaded = m.Loaded, instances = m.Instances, running = m.Running,
+                    name = m.Name, kind = m.Kind, loaded = m.Loaded, instances = m.Instances, running = m.Running,
                     queued = m.Queued, expires_at = m.ExpiresAt, stats = engine.Stats(m.Name),
                 }),
                 devices = devices.Select(d =>
@@ -273,7 +273,7 @@ public static class IdrakEndpointExtensions
                 return Error(500, $"Server-side tool execution is on, but the chat model '{name}' has no tools (GenerativeModelBuilder.Tools).");
             }
 
-            var conversation = Conversation.For(engine.ChatModel(name)).Messages(chat.Messages).Think(chat.Think)
+            var conversation = Conversation.For(engine.Model<IChatModel>(name)).Messages(chat.Messages).Think(chat.Think)
                 .Tools(tools).MaxToolRounds(settings.Rounds!.Value);
             if (chat.Options is { } options)
             {
@@ -284,7 +284,7 @@ public static class IdrakEndpointExtensions
         }
         else
         {
-            lines = ClientLines(engine.StreamChatAsync(name, chat, token), served, stream, clock).GetAsyncEnumerator(token);
+            lines = ClientLines(engine.Model<IChatModel>(name).StreamAsync(chat, token), served, stream, clock).GetAsyncEnumerator(token);
         }
 
         // Read the first line before answering, so a full queue, a timeout or a load failure gets a proper status code.
