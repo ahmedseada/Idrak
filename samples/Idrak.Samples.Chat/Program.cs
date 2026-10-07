@@ -88,7 +88,7 @@ var cacheFormat = kv8 ? KeyValueFormat.Int8 : kv16 ? KeyValueFormat.BFloat16 : K
 
 // A model folder, or a Hugging Face model id (owner/name): found in a cache or downloaded (with progress) on first use.
 static string ResolveModel(string model) =>
-    ModelSource.Resolve(model, downloader: new Idrak.Datasets.ConsoleStatus().CreateDownloader());
+    ModelSource.Resolve(model, downloader: new Idrak.Data.ConsoleStatus().CreateDownloader());
 
 // The sampling chat uses (Qwen3's recommended settings for thinking mode).
 GenerationOptions ChatSampling() => new() { Temperature = 0.6f, TopK = 20, TopP = 0.95f, RepeatPenalty = 1f, NumCtx = context };

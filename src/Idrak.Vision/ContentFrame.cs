@@ -28,7 +28,7 @@ public static class ContentFrame
             throw new ArgumentOutOfRangeException(nameof(box), $"{box} is not inside the {image.Width} x {image.Height} image.");
         }
 
-        Frame(image.Data, image.Width, image.Threshold, box, destination, size, border);
+        Frame(image.Values, image.Width, image.Threshold, box, destination, size, border);
     }
 
     /// <summary>

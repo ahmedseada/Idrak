@@ -4,7 +4,7 @@
 using System.Diagnostics;
 using System.Text.Json.Nodes;
 
-namespace Idrak.Datasets;
+namespace Idrak.Data;
 
 /// <summary>
 /// Console output for dataset work: log lines, and one status line redrawn in place as a progress bar (downloads with

@@ -5,7 +5,7 @@ using System.Text;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 
-namespace Idrak.Datasets;
+namespace Idrak.Data;
 
 /// <summary>A file in a remote repository.</summary>
 /// <param name="Path">Its path in the repository.</param>
@@ -15,7 +15,7 @@ public sealed record RepoFile(string Path, long Size);
 // A dataset over files a source resolves and downloads once (on first use), then reads from the cache.
 internal static class RemoteFiles
 {
-    public static Dataset Over(string name, Func<IReadOnlyList<string>> resolve, ReadOptions? options, Func<JsonObject, JsonObject>? post = null,
+    public static DatasetRows Over(string name, Func<IReadOnlyList<string>> resolve, ReadOptions? options, Func<JsonObject, JsonObject>? post = null,
         IDownloader? downloader = null)
     {
         var files = new Lazy<IReadOnlyList<string>>(() =>
@@ -25,7 +25,7 @@ internal static class RemoteFiles
             downloader?.Log?.Invoke($"{name}: {list.Count} file{(list.Count == 1 ? "" : "s")} ready ({Downloader.Size(list.Sum(f => new FileInfo(f).Length))})");
             return list;
         }, LazyThreadSafetyMode.ExecutionAndPublication);
-        return new Dataset(() =>
+        return new DatasetRows(() =>
         {
             var rows = files.Value.SelectMany((f, i) =>
             {
@@ -151,7 +151,7 @@ public static class HuggingFace
     /// otherwise the Parquet copy the Hub makes of every dataset. <paramref name="files"/> (a glob such as
     /// "data/train-*.parquet") picks files directly; <paramref name="maxFiles"/> reads only the first files of a large dataset.
     /// </summary>
-    public static Dataset Dataset(string repo, string? config = null, string split = "train", string? files = null, string revision = "main",
+    public static DatasetRows Dataset(string repo, string? config = null, string split = "train", string? files = null, string revision = "main",
         string? token = null, int? maxFiles = null, ReadOptions? options = null, IDownloader? downloader = null)
     {
         var d = downloader ?? Downloader.Shared;
@@ -316,7 +316,7 @@ public static class GitHub
     /// per text file (source code, docs and data files alike): {"text", "path", "language", "repo"}. Dependency and build folders, binary files and files over
     /// <see cref="ReadOptions.MaxDocumentBytes"/> are skipped; <paramref name="pattern"/> (e.g. "src/**/*.cs") narrows the files.
     /// </summary>
-    public static Dataset Repository(string repo, string? reference = null, string? pattern = null, string? token = null, IDownloader? downloader = null)
+    public static DatasetRows Repository(string repo, string? reference = null, string? pattern = null, string? token = null, IDownloader? downloader = null)
     {
         var d = downloader ?? Downloader.Shared;
         var options = new ReadOptions { Documents = true, Text = TextRows.Document, Pattern = pattern is null ? null : pattern.Contains('/') ? "*/" + pattern : pattern };
@@ -346,14 +346,14 @@ public static class GitHub
     }
 
     /// <summary>The data files of a repository matching <paramref name="pattern"/> (e.g. "data/*.jsonl"), read as data.</summary>
-    public static Dataset Files(string repo, string pattern, string? reference = null, string? token = null, ReadOptions? options = null, IDownloader? downloader = null)
+    public static DatasetRows Files(string repo, string pattern, string? reference = null, string? token = null, ReadOptions? options = null, IDownloader? downloader = null)
     {
         var d = downloader ?? Downloader.Shared;
         return RemoteFiles.Over($"github:{repo}/{pattern}", () => ResolveFilesAsync(repo, pattern, reference, token, d).GetAwaiter().GetResult(), options, downloader: d);
     }
 
     /// <summary>The assets of a release (<paramref name="tag"/>, or the latest) whose names match <paramref name="assetPattern"/>.</summary>
-    public static Dataset Release(string repo, string assetPattern, string? tag = null, string? token = null, ReadOptions? options = null, IDownloader? downloader = null)
+    public static DatasetRows Release(string repo, string assetPattern, string? tag = null, string? token = null, ReadOptions? options = null, IDownloader? downloader = null)
     {
         var d = downloader ?? Downloader.Shared;
         return RemoteFiles.Over($"github:{repo} release {tag ?? "latest"}", () => ResolveReleaseAsync(repo, assetPattern, tag, token, d).GetAwaiter().GetResult(), options, downloader: d);
@@ -412,7 +412,7 @@ public static class GitHub
 public static class Kaggle
 {
     /// <summary>A Kaggle dataset ("owner/dataset"); <paramref name="pattern"/> picks files inside it (e.g. "*.csv").</summary>
-    public static Dataset Dataset(string dataset, string? pattern = null, int? version = null, ReadOptions? options = null, IDownloader? downloader = null)
+    public static DatasetRows Dataset(string dataset, string? pattern = null, int? version = null, ReadOptions? options = null, IDownloader? downloader = null)
     {
         var d = downloader ?? Downloader.Shared;
         string url = $"https://www.kaggle.com/api/v1/datasets/download/{dataset}{(version is null ? "" : $"?datasetVersionNumber={version}")}";
@@ -449,7 +449,7 @@ public static class Kaggle
 public static class Zenodo
 {
     /// <summary>The files of record <paramref name="record"/> (its number) matching <paramref name="pattern"/>.</summary>
-    public static Dataset Record(string record, string? pattern = null, string? token = null, ReadOptions? options = null, IDownloader? downloader = null)
+    public static DatasetRows Record(string record, string? pattern = null, string? token = null, ReadOptions? options = null, IDownloader? downloader = null)
     {
         var d = downloader ?? Downloader.Shared;
         return RemoteFiles.Over($"zenodo:{record}", () => ResolveAsync(record, pattern, token, d).GetAwaiter().GetResult(), options, downloader: d);

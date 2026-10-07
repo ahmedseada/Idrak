@@ -76,7 +76,7 @@ public static class GgufModel
             $"{FormatVersion}|{path}|{info.Length}|{info.LastWriteTimeUtc.Ticks}")))[..12];
         string name = Path.GetFileNameWithoutExtension(path);
         name = name.StartsWith("sha256-", StringComparison.Ordinal) ? name[..Math.Min(name.Length, 19)] : name;   // blobs of the local model store
-        string folder = Path.Combine(cacheRoot ?? Idrak.Datasets.Downloader.DefaultCacheRoot, "gguf", $"{name}-{fingerprint}");
+        string folder = Path.Combine(cacheRoot ?? Idrak.Data.Downloader.DefaultCacheRoot, "gguf", $"{name}-{fingerprint}");
         if (IsPrepared(folder))
         {
             return folder;

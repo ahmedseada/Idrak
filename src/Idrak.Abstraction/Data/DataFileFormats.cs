@@ -6,7 +6,7 @@ using System.Text.Json.Nodes;
 namespace Idrak.Abstraction.Data;
 
 /// <summary>
-/// A kind of data file a dataset reads (<c>Dataset</c> and <c>DataFiles</c> in Idrak.Datasets): its name, the extensions it is chosen by and how its rows are read.
+/// A kind of data file a dataset reads (<c>DatasetRows</c> and <c>DataFiles</c> in Idrak.Data): its name, the extensions it is chosen by and how its rows are read.
 /// Register new ones with <see cref="DataFileFormats.Register"/>.
 /// </summary>
 public interface IDataFileFormat
@@ -22,7 +22,7 @@ public interface IDataFileFormat
 }
 
 /// <summary>
-/// The data file formats datasets read (<c>DataFiles</c> in Idrak.Datasets), by name and by extension. Idrak.Datasets
+/// The data file formats datasets read (<c>DataFiles</c> in Idrak.Data), by name and by extension. Idrak.Data
 /// registers JSON Lines, JSON, CSV, TSV, Parquet, text and source code (named as <see cref="DataFormat"/>); add others,
 /// or replace these, with <see cref="Register"/>.
 /// </summary>
@@ -33,7 +33,7 @@ public static class DataFileFormats
 
     private static Dictionary<string, IDataFileFormat> byExtension = ByExtension();
 
-    // The built-ins of the first-party assemblies (Idrak.Datasets) are registered before the first use.
+    // The built-ins of the first-party assemblies (Idrak.Data) are registered before the first use.
     static DataFileFormats() => LibraryDefaults.Ensure();
 
     /// <summary>Registers <paramref name="format"/>, replacing a format of the same name (names ignore case).</summary>
