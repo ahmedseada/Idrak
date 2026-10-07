@@ -4,8 +4,9 @@
 using System.Text;
 using Idrak.Generation;
 using Idrak.Layers;
+using Idrak.Models;
 
-namespace Idrak.LanguageModels;
+namespace Idrak.Nlp;
 
 /// <summary>
 /// The built-in teachers of knowledge distillation (<see cref="DistillationTeacher"/>, Idrak.Abstraction) for

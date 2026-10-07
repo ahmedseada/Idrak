@@ -5,9 +5,8 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
-using Idrak.Generation;
 
-namespace Idrak.LanguageModels;
+namespace Idrak.Models;
 
 /// <summary>
 /// A byte-pair-encoding tokenizer read from a Hugging Face <c>tokenizer.json</c>: byte-level BPE (GPT-2, Llama 3, Qwen,
@@ -288,7 +287,7 @@ public sealed class BpeTokenizer : ITokenizer
     /// Appends the ids of <paramref name="text"/>[<paramref name="start"/>..<paramref name="start"/> + <paramref name="length"/>]
     /// to <paramref name="ids"/>: the ids <see cref="Encode"/> gives for that substring, without copying it.
     /// </summary>
-    internal void EncodeRange(string text, int start, int length, List<int> ids)
+    public void EncodeRange(string text, int start, int length, List<int> ids)
     {
         if (text.AsSpan(start, length).ContainsAnyInRange('\uD800', '\uDFFF'))
         {

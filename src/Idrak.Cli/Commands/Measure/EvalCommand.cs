@@ -4,7 +4,7 @@
 using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
 using Idrak.Layers;
-using Idrak.LanguageModels;
+using Idrak.Nlp;
 
 namespace Idrak.Cli.Commands.Measure;
 
@@ -37,11 +37,11 @@ internal sealed class EvalCommand : Command
         "  idrak eval org/model test-set.jsonl --limit 100 --no-think\n" +
         "  idrak eval ./tuned held-out.jsonl --metric exact -o answers.jsonl -j";
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. Models.ValueOptions, "--metric", "--max-tokens", "--batch", "--limit", "--out"];
+    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, "--metric", "--max-tokens", "--batch", "--limit", "--out"];
 
     public override IReadOnlyCollection<string> Flags => ["--think", "--no-think"];
 
-    public override IReadOnlyDictionary<string, string> ShortForms { get; } = new Dictionary<string, string>(Models.ShortForms) { ["-o"] = "--out" };
+    public override IReadOnlyDictionary<string, string> ShortForms { get; } = new Dictionary<string, string>(ModelChoices.ShortForms) { ["-o"] = "--out" };
 
     public override int Run(CommandContext context)
     {
@@ -79,8 +79,8 @@ internal sealed class EvalCommand : Command
         }
 
         var rows = ReadRows(set).Take(limit).ToList();
-        var choice = Models.Choose(context, modelName);
-        using var model = Models.Load(context, choice);
+        var choice = ModelChoices.Choose(context, modelName);
+        using var model = ModelChoices.Load(context, choice);
         var chat = model.CreateChat(KeyValueLayouts.Get(choice.Kv ?? "float32"), model.MaxPositions);
         int done = 0;
         EvaluationReport report;

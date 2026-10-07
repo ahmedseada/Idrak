@@ -1,20 +1,19 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-namespace Idrak.LanguageModels;
+namespace Idrak.Models;
 
 /// <summary>
-/// What this assembly adds to the registries of Idrak.Abstraction, which cannot name it: the checkpoint formats
-/// (safetensors, GGUF), the model sources (folder, local model store, .gguf file, Hugging Face id), the ggml tensor types,
-/// the GGUF families and pre-tokenizer patterns, and the pretrained model families. <c>LibraryDefaults.Ensure</c> (in
-/// Idrak.Abstraction) calls <see cref="RegisterAll"/> once, before any of those registries is first used.
+/// The model-loading built-ins Idrak registers (from <c>LibraryRegistrations</c>): the checkpoint formats (safetensors,
+/// GGUF), the model sources (folder, local model store, .gguf file), the ggml tensor types, the GGUF families and
+/// pre-tokenizer patterns, and the pretrained model families. Idrak.Data adds the Hugging Face model source.
 /// </summary>
-internal static class LibraryRegistrations
+internal static class LibraryModelFormats
 {
-    private static void RegisterAll()
+    public static void RegisterAll()
     {
         // Both registries ask the most recently registered first: registered in reverse, they are asked GGUF (whose prepared
-        // folders are model folders too) before safetensors, and folder, store, gguf, then a Hugging Face id.
+        // folders are model folders too) before safetensors, and folder, store, then gguf.
         CheckpointFormats.Register(new SafeTensorsCheckpointFormat());
         CheckpointFormats.Register(new GgufCheckpointFormat());
         foreach (var source in Enumerable.Reverse(ModelSource.BuiltIn))

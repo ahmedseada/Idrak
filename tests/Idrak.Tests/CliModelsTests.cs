@@ -7,7 +7,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
 using Idrak;
-using Idrak.LanguageModels;
+using Idrak.Models;
 
 // The idrak model commands (pull, list, rm, show, search, alias, memory, quantize, merge, inspect, verify, convert, diff,
 // families), run in-process through CommandLine.Run with captured output. No network: the hub is a local HTTP server

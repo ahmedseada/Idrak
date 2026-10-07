@@ -4,7 +4,7 @@
 namespace Idrak.Abstraction.Formats;
 
 /// <summary>
-/// A way pretrained weights are stored. Loading a pretrained model (Idrak.LanguageModels' <c>PretrainedModel.Load</c>) asks
+/// A way pretrained weights are stored. Loading a pretrained model (Idrak's <c>PretrainedModel.Load</c>) asks
 /// the registered formats (see <see cref="CheckpointFormats"/>) which one reads the path it is given; that one turns the
 /// path into a folder in the Hugging Face layout (config.json, tokenizer files, chat template) and opens the weights under
 /// Hugging Face names, which the architecture (<see cref="PretrainedArchitecture.TensorName"/>) then maps to Idrak's.
@@ -34,7 +34,7 @@ public interface ICheckpointFormat
 }
 
 /// <summary>
-/// The checkpoint formats pretrained models are loaded from. Idrak.LanguageModels registers GGUF (a .gguf file, or the
+/// The checkpoint formats pretrained models are loaded from. Idrak registers GGUF (a .gguf file, or the
 /// folder it prepared for one) and safetensors (a model folder); add others with <see cref="Register"/>. A path is read by
 /// the first format that can open it, the most recently registered first, so a new format can claim paths a built-in one
 /// would also take.

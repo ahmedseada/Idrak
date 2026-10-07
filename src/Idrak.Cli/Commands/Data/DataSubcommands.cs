@@ -7,7 +7,8 @@ using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
 using Idrak.Data;
 using Idrak.Generation;
-using Idrak.LanguageModels;
+using Idrak.Models;
+using Idrak.Nlp;
 
 namespace Idrak.Cli.Commands.Data;
 
@@ -275,8 +276,8 @@ internal sealed class DataStatsCommand : Command
         {
             if (context.Option("--model") is { } name)
             {
-                var choice = Models.Choose(context, name);
-                string resolved = Models.Resolve(context, choice.Model);
+                var choice = ModelChoices.Choose(context, name);
+                string resolved = ModelChoices.Resolve(context, choice.Model);
                 if (Directory.Exists(resolved) && File.Exists(Path.Combine(resolved, "tokenizer.json")))
                 {
                     var bpe = BpeTokenizer.Load(resolved);
@@ -285,8 +286,8 @@ internal sealed class DataStatsCommand : Command
                 }
                 else
                 {
-                    loaded = Models.Load(context, choice);
-                    (tokenizer, template) = (loaded.Tokenizer, loaded.ChatTemplate);
+                    loaded = ModelChoices.Load(context, choice);
+                    (tokenizer, template) = (loaded.Tokenizer, loaded.JinjaTemplate);
                     contextLength ??= loaded.MaxPositions;
                 }
 

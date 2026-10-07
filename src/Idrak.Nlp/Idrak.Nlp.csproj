@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Idrak.Nlp</RootNamespace>
+    <AssemblyName>Idrak.Nlp</AssemblyName>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IsAotCompatible>true</IsAotCompatible>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <PackageId>Idrak.Nlp</PackageId>
+    <Description>Natural language processing for Idrak (no dependencies beyond Idrak and Idrak.Data): text generation and chat with tools, the models' own Jinja chat templates, an inference engine's text and chat models, LLM fine-tuning (LoRA, QLoRA, DoRA, distillation) and evaluation, retrieval and RAG, and a coding agent.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Idrak.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Idrak\Idrak.csproj" />
+    <ProjectReference Include="..\Idrak.Data\Idrak.Data.csproj" />
+  </ItemGroup>
+
+</Project>

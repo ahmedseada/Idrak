@@ -9,8 +9,9 @@ using Idrak.Diagnostics;
 using Idrak.Generation;
 using Idrak.Layers;
 using Idrak.Optimizers;
+using Idrak.Models;
 
-namespace Idrak.LanguageModels;
+namespace Idrak.Nlp;
 
 /// <summary>
 /// One conversation to fine-tune on: messages (system, user, assistant with optional reasoning and tool calls, tool

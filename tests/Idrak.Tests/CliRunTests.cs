@@ -206,7 +206,7 @@ internal static partial class Tests
         var json = JsonOf(text, "complete --json");
         Check(code == 0 && (int)json["generated_tokens"]! == 4 && (string?)json["prompt"] == "Once upon", $"complete: {text}");
 
-        var tokenizer = Idrak.LanguageModels.BpeTokenizer.Load(CliModel);
+        var tokenizer = Idrak.Models.BpeTokenizer.Load(CliModel);
         (code, text, _) = RunIdrakOn(device, null, "tokenize", CliModel, "hello world", "--count");
         Check(code == 0 && text.Trim() == tokenizer.Encode("hello world").Count.ToString(), $"tokenize --count: {text}");
         (code, text, _) = RunIdrakOn(device, null, "tokenize", CliModel, "hello world", "-j");

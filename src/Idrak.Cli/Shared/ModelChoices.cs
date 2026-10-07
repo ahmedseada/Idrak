@@ -2,7 +2,8 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Diagnostics;
-using Idrak.LanguageModels;
+using Idrak.Models;
+using Idrak.Nlp;
 
 namespace Idrak.Cli.Shared;
 
@@ -12,7 +13,7 @@ namespace Idrak.Cli.Shared;
 /// weight format (<c>--weights</c>, <c>-w</c>), the KV cache format (<c>--kv</c>, <c>-k</c>), the context length and
 /// an adapter folder.
 /// </summary>
-internal static class Models
+internal static class ModelChoices
 {
     /// <summary>The options a command that loads a language model accepts.</summary>
     public static readonly string[] ValueOptions = ["--weights", "--kv", "--context", "--adapter"];

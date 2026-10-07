@@ -83,13 +83,13 @@ internal sealed class RagIndexCommand : Command
         var builder = RetrievalIndex.Create().Documents(documents, sentences ? ChunkUnit.Sentences : ChunkUnit.Words, size, overlap).Bm25();
         Recorder? recorder = null;
         RagIndexFile.EmbeddingInfo? embedding = null;
-        Idrak.LanguageModels.PretrainedModel? model = null;
+        Idrak.Models.PretrainedModel? model = null;
         try
         {
             if (context.Option("--model") is { } modelName)
             {
-                var choice = Models.Choose(context, modelName);
-                model = Models.Load(context, choice);
+                var choice = ModelChoices.Choose(context, modelName);
+                model = ModelChoices.Load(context, choice);
                 recorder = new Recorder(new ModelEmbedder(model, maxTokens), context);
                 builder.Embeddings(recorder, batchSize: 32).Fusion(60, 50);
                 embedding = new RagIndexFile.EmbeddingInfo(choice.Model, choice.Weights, maxTokens, model.Spec.Dim);

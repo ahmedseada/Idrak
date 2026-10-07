@@ -2,7 +2,6 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Text.Json.Nodes;
-using Idrak.LanguageModels;
 using Idrak.Layers;
 
 namespace Idrak.Cli.Commands;

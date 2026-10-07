@@ -10,7 +10,7 @@
 
   <ItemGroup>
     __REF(Idrak)__
-    __REF(Idrak.LanguageModels)__
+    __REF(Idrak.Nlp)__
   </ItemGroup>
 
   <ItemGroup>

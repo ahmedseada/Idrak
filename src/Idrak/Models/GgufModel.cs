@@ -6,7 +6,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
-namespace Idrak.LanguageModels;
+namespace Idrak.Models;
 
 // The GGUF families and pre-tokenizer patterns this assembly knows, registered by LibraryRegistrations in GgufArchitectures
 // and GgufPreTokenizers (Idrak.Abstraction).
@@ -76,7 +76,9 @@ public static class GgufModel
             $"{FormatVersion}|{path}|{info.Length}|{info.LastWriteTimeUtc.Ticks}")))[..12];
         string name = Path.GetFileNameWithoutExtension(path);
         name = name.StartsWith("sha256-", StringComparison.Ordinal) ? name[..Math.Min(name.Length, 19)] : name;   // blobs of the local model store
-        string folder = Path.Combine(cacheRoot ?? Idrak.Data.Downloader.DefaultCacheRoot, "gguf", $"{name}-{fingerprint}");
+        cacheRoot ??= Environment.GetEnvironmentVariable("IDRAK_CACHE")                                 // the downloads' cache root
+                      ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".cache", "idrak");
+        string folder = Path.Combine(cacheRoot, "gguf", $"{name}-{fingerprint}");
         if (IsPrepared(folder))
         {
             return folder;

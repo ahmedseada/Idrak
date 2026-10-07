@@ -7,6 +7,7 @@
   <ItemGroup>
     <Compile Include="..\Shared\Gpt\*.cs" LinkBase="Shared\Gpt" />
     <ProjectReference Include="..\..\src\Idrak\Idrak.csproj" />
+    <ProjectReference Include="..\..\src\Idrak.Nlp\Idrak.Nlp.csproj" />
     <ProjectReference Include="..\..\src\Idrak.AspNetCore\Idrak.AspNetCore.csproj" />
   </ItemGroup>
 

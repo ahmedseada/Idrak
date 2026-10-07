@@ -5,18 +5,19 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
 using Idrak.Generation;
-using Idrak.LanguageModels;
+using Idrak.Models;
+using Idrak.Nlp;
 
 namespace Idrak.Cli.Commands.Run;
 
 /// <summary>A model loaded for chat: the model, the choice it came from, its chat generator, context window and tools.</summary>
-internal sealed class LoadedChat(PretrainedModel model, Models.ModelChoice choice, ChatGenerator chat, int context, IReadOnlyList<Tool> tools) : IDisposable
+internal sealed class LoadedChat(PretrainedModel model, ModelChoices.ModelChoice choice, ChatGenerator chat, int context, IReadOnlyList<Tool> tools) : IDisposable
 {
     private readonly List<Idrak.Mcp.McpToolSource> _servers = [];
 
     public PretrainedModel Model { get; } = model;
 
-    public Models.ModelChoice Choice { get; } = choice;
+    public ModelChoices.ModelChoice Choice { get; } = choice;
 
     public ChatGenerator Chat { get; } = chat;
 
@@ -28,7 +29,7 @@ internal sealed class LoadedChat(PretrainedModel model, Models.ModelChoice choic
     public ToolRegistry? Registry { get; } = ToolAssemblies.Registry(tools);
 
     /// <summary>Loads the model named <paramref name="name"/> (alias, id, folder or file) with the command's options.</summary>
-    public static LoadedChat Load(CommandContext context, string name, GenerationSettings settings, Models.ModelChoice? choice = null)
+    public static LoadedChat Load(CommandContext context, string name, GenerationSettings settings, ModelChoices.ModelChoice? choice = null)
     {
         var tools = ToolAssemblies.Load(settings.ToolAssemblies).ToList();
         var servers = new List<Idrak.Mcp.McpToolSource>();
@@ -44,11 +45,11 @@ internal sealed class LoadedChat(PretrainedModel model, Models.ModelChoice choic
                 context.Detail($"MCP server {source.ServerName ?? server}: {tools.Count} tools in all");
             }
 
-            choice ??= Models.Choose(context, name);
-            var model = Models.Load(context, choice);
+            choice ??= ModelChoices.Choose(context, name);
+            var model = ModelChoices.Load(context, choice);
             try
             {
-                var loaded = new LoadedChat(model, choice, Models.CreateChat(model, choice), Models.ContextLength(choice, model), tools);
+                var loaded = new LoadedChat(model, choice, ModelChoices.CreateChat(model, choice), ModelChoices.ContextLength(choice, model), tools);
                 loaded._servers.AddRange(servers);
                 return loaded;
             }

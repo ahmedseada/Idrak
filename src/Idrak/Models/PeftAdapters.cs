@@ -3,7 +3,7 @@
 
 using System.Text.Json.Nodes;
 
-namespace Idrak.LanguageModels;
+namespace Idrak.Models;
 
 /// <summary>
 /// A PEFT adapter folder's adapter_config.json, checked: only LoRA adapters (peft_type LORA) are read, and options that

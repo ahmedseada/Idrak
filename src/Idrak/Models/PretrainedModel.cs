@@ -3,10 +3,9 @@
 
 using System.Text.Json.Nodes;
 using Idrak.Abstraction.Devices;
-using Idrak.Generation;
 using Idrak.Layers;
 
-namespace Idrak.LanguageModels;
+namespace Idrak.Models;
 
 /// <summary>Settings for <see cref="PretrainedModel.Load"/>.</summary>
 public sealed record PretrainedOptions
@@ -47,12 +46,12 @@ public sealed record PretrainedOptions
 /// <summary>
 /// A pretrained decoder-only language model read from a folder in the Hugging Face layout (config.json, safetensors
 /// weights, tokenizer.json, tokenizer_config.json): the <see cref="Network"/> built from its <see cref="Spec"/>, its
-/// <see cref="Tokenizer"/> and <see cref="ChatTemplate"/>. The network is an ordinary Idrak model: generate with
-/// <see cref="CreateGenerator(KeyValueFormat, int?)"/>, chat with <see cref="CreateChat(KeyValueFormat, int?)"/>, fine-tune with LoRA, quantize, save as a package.
+/// <see cref="Tokenizer"/> and <see cref="ChatTemplate"/>. The network is an ordinary Idrak model: generate and chat with
+/// it (Idrak.Nlp's <c>CreateGenerator</c> and <c>CreateChat</c>), fine-tune it with LoRA, quantize it, save it as a package.
 /// </summary>
 public sealed class PretrainedModel : IDisposable
 {
-    private PretrainedModel(string folder, JsonObject config, DecoderSpec spec, Sequential network, ITokenizer? tokenizer, JinjaChatTemplate? template,
+    private PretrainedModel(string folder, JsonObject config, DecoderSpec spec, Sequential network, ITokenizer? tokenizer, ChatTemplate? template,
         IReadOnlyList<string> notes, int maxPositions, PretrainedArchitecture architecture, Device device)
     {
         Architecture = architecture;
@@ -82,8 +81,11 @@ public sealed class PretrainedModel : IDisposable
     /// <summary>The tokenizer (from tokenizer.json), or null when the folder has none.</summary>
     public ITokenizer? Tokenizer { get; }
 
-    /// <summary>The chat template (from tokenizer_config.json), or null when the model has none.</summary>
-    public JinjaChatTemplate? ChatTemplate { get; }
+    /// <summary>
+    /// The model's own chat template (from tokenizer_config.json, read by a reader registered with
+    /// <see cref="ChatTemplates"/>: Idrak.Nlp's Jinja templates), or null when the model has none or no reader reads it.
+    /// </summary>
+    public ChatTemplate? ChatTemplate { get; }
 
     /// <summary>Anything approximated while reading the model (see <see cref="PretrainedFamilies.CommonSpec"/>).</summary>
     public IReadOnlyList<string> Notes { get; }
@@ -148,35 +150,10 @@ public sealed class PretrainedModel : IDisposable
 
         var tokenizer = File.Exists(Path.Combine(folder, "tokenizer.json")) ? BpeTokenizer.Load(folder) : null;
         tokenizer?.PadVocabulary(spec.Vocabulary);
-        var template = JinjaChatTemplate.Load(folder, tokenizer);
+        var template = ChatTemplates.Load(folder, tokenizer);
         return new PretrainedModel(folder, config, spec, network, tokenizer, template, notes, maxPositions, architecture,
             options.Device ?? Idrak.Abstraction.Device.Default);
     }
-
-    /// <summary>A text generator for the model (int8 KV cache with <paramref name="cacheFormat"/>).</summary>
-    public TextGenerator CreateGenerator(KeyValueFormat cacheFormat = KeyValueFormat.Float32, int? contextLength = null)
-    {
-        Network.Eval();
-        return new TextGenerator(Network, Tokenizer ?? throw new InvalidOperationException("The model has no tokenizer."),
-            Math.Min(contextLength ?? MaxPositions, MaxPositions)) { CacheFormat = cacheFormat };
-    }
-
-    /// <summary>A text generator for the model whose KV cache is stored by <paramref name="cacheLayout"/> (see <see cref="KeyValueLayouts"/>).</summary>
-    public TextGenerator CreateGenerator(KeyValueLayout cacheLayout, int? contextLength = null)
-    {
-        ArgumentNullException.ThrowIfNull(cacheLayout);
-        Network.Eval();
-        return new TextGenerator(Network, Tokenizer ?? throw new InvalidOperationException("The model has no tokenizer."),
-            Math.Min(contextLength ?? MaxPositions, MaxPositions)) { CacheLayout = cacheLayout };
-    }
-
-    /// <summary>A chat model using the model's own chat template (and its tool-call format).</summary>
-    public ChatGenerator CreateChat(KeyValueFormat cacheFormat = KeyValueFormat.Float32, int? contextLength = null) =>
-        new(CreateGenerator(cacheFormat, contextLength), ChatTemplate ?? throw new InvalidOperationException("The model has no chat template."));
-
-    /// <summary>A chat model using the model's own chat template, its KV cache stored by <paramref name="cacheLayout"/>.</summary>
-    public ChatGenerator CreateChat(KeyValueLayout cacheLayout, int? contextLength = null) =>
-        new(CreateGenerator(cacheLayout, contextLength), ChatTemplate ?? throw new InvalidOperationException("The model has no chat template."));
 
     /// <summary>
     /// Adds LoRA adapters (rank <paramref name="rank"/>, scale alpha / rank), or DoRA adapters with <paramref name="dora"/>

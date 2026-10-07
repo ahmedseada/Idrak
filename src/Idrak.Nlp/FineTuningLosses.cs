@@ -2,8 +2,9 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using Idrak.Optimizers;
+using Idrak.Models;
 
-namespace Idrak.LanguageModels;
+namespace Idrak.Nlp;
 
 /// <summary>
 /// A fine-tuning loss (<see cref="FineTuningOptions.Loss"/>): the loss of one batch from the log-probabilities of its

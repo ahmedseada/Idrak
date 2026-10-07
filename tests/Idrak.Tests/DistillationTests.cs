@@ -5,7 +5,8 @@ using System.Text.Json.Nodes;
 using Idrak;
 using Idrak.Data;
 using Idrak.Layers;
-using Idrak.LanguageModels;
+using Idrak.Models;
+using Idrak.Nlp;
 using Idrak.Optimizers;
 using Idrak.Training;
 
@@ -549,7 +550,7 @@ internal static partial class Tests
             var rows = TeacherData.Generate(teacher.CreateChat(), prompts, new TeacherDataOptions { MaxNewTokens = 6, KeepCutOff = true, BatchSize = 2 }).ToList();
             Check(rows.Count == 3 && rows.All(r => (string?)r["messages"]!.AsArray()[^1]!["role"] == "assistant"), $"teacher rows: {string.Join("\n", rows.Select(r => r.ToJsonString()))}");
             Check(TeacherData.Generate(teacher.CreateChat(), prompts, new TeacherDataOptions { MaxNewTokens = 2 }).All(r => false), "answers cut off are left out unless kept");
-            var encoder = new ChatTranscriptEncoder(student.ChatTemplate!, student.Tokenizer!);
+            var encoder = new ChatTranscriptEncoder(student.JinjaTemplate!, student.Tokenizer!);
             var encoded = rows.SelectMany(r => encoder.EncodeRow(r, 200)).ToList();
             Check(encoded.Count == 3 && encoded.All(s => s.TrainedTokens > 0), "the teacher's answers encode for the student");
             var losses = FineTuner.Train(student, encoded, encoded, new FineTuningOptions { Rank = 4, Alpha = 8, Epochs = 2, LearningRate = 1e-2f, EvaluateEvery = 1 });

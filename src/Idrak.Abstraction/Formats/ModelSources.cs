@@ -3,7 +3,7 @@
 
 namespace Idrak.Abstraction.Formats;
 
-/// <summary>Settings a model source receives with the name it resolves (Idrak.LanguageModels' <c>ModelSource.Resolve</c> passes them).</summary>
+/// <summary>Settings a model source receives with the name it resolves (Idrak's <c>ModelSource.Resolve</c> passes them).</summary>
 public sealed record ModelSourceOptions
 {
     /// <summary>The revision (branch, tag or commit) of a hub model.</summary>
@@ -16,14 +16,14 @@ public sealed record ModelSourceOptions
     public bool Download { get; init; } = true;
 
     /// <summary>
-    /// What fetches, caches and logs for the source (null: the shared one, Idrak.Data's <c>Downloader.Shared</c>); pass
+    /// What fetches, caches and logs for the source (null: the source's own; Idrak.Data's <c>Downloader.Shared</c> for the Hub); pass
     /// your own for a mirror, an authenticated proxy or an offline cache.
     /// </summary>
     public IDownloader? Downloader { get; init; }
 }
 
 /// <summary>
-/// A kind of model name ("store:qwen3:8b", "owner/name", a folder …) that loading a model resolves (Idrak.LanguageModels'
+/// A kind of model name ("store:qwen3:8b", "owner/name", a folder …) that loading a model resolves (Idrak's
 /// <c>ModelSource.Resolve</c> asks the registered sources): it says which names are its own and turns one into a local
 /// folder (or a path a checkpoint format reads, such as a .gguf file's prepared folder). Register new ones with
 /// <see cref="ModelSources.Register"/>.
@@ -41,8 +41,8 @@ public interface IModelSource
 }
 
 /// <summary>
-/// The sources a model name is resolved by, in order. Idrak.LanguageModels registers an existing folder, "store:name" (the
-/// local model store), a .gguf file, then a Hugging Face id ("owner/name"). A name goes to the first source that can
+/// The sources a model name is resolved by, in order. Idrak registers an existing folder, "store:name" (the
+/// local model store) and a .gguf file; Idrak.Data adds a Hugging Face id ("owner/name"). A name goes to the first source that can
 /// resolve it, the most recently registered first, so a new source (for example a "myhub:" prefix) is asked before the
 /// built-in ones.
 /// </summary>

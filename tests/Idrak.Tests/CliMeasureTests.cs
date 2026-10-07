@@ -4,7 +4,8 @@
 using System.Text.Json.Nodes;
 using Idrak;
 using Idrak.Generation;
-using Idrak.LanguageModels;
+using Idrak.Models;
+using Idrak.Nlp;
 
 // The idrak tool's Measure and Retrieval groups (bench, eval, perplexity, profile, check, tuning show, rag ...), run
 // in-process through CommandLine.Run on the tiny fixture model and texts made here; speeds are not checked, only the
@@ -271,7 +272,7 @@ internal static partial class Tests
                         ["messages"] = new JsonArray(new JsonObject { ["role"] = "user", ["content"] = "hi there" }),
                         ["tools"] = new JsonArray(),
                         ["add_generation_prompt"] = true,
-                        ["rendered"] = model.ChatTemplate!.Render(messages, [], null, true),
+                        ["rendered"] = model.JinjaTemplate!.Render(messages, [], null, true),
                     }),
                     ["runs"] = new JsonArray(new JsonObject
                     {

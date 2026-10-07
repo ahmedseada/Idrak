@@ -21,12 +21,13 @@ using Idrak.Cli.Shared;
 using Idrak.Generation;
 using Idrak.Inference;
 using Idrak.Layers;
-using Idrak.LanguageModels;
+using Idrak.Models;
+using Idrak.Nlp;
 
 namespace Idrak.Cli.Commands.Serve;
 
 /// <summary>One model of a server: the name clients use, what was asked for, and what is read at startup (the template).</summary>
-internal sealed record ServedModel(string Name, string Source, Models.ModelChoice Choice, string Path, string Folder, ChatTemplate? Template, JsonObject? Config);
+internal sealed record ServedModel(string Name, string Source, ModelChoices.ModelChoice Choice, string Path, string Folder, ChatTemplate? Template, JsonObject? Config);
 
 /// <summary>The server's settings from the command line.</summary>
 internal sealed record ServeSettings(string Host, int Port, string? ApiKey, IReadOnlyList<string> Cors, int MaxConcurrency, TimeSpan? KeepAlive, string KeepAliveText)
@@ -197,13 +198,13 @@ internal sealed class ServeHost
                 throw new UsageException($"Two models are served as '{name}'; name one with NAME=MODEL.");
             }
 
-            var choice = Models.Choose(context, source);
+            var choice = ModelChoices.Choose(context, source);
             if (choice.Kv is { } kv)
             {
                 _ = KeyValueLayouts.Get(kv);                    // an unknown format fails now, not on the first request
             }
 
-            string path = Models.Resolve(context, choice.Model);
+            string path = ModelChoices.Resolve(context, choice.Model);
             string folder = CheckpointFormats.For(path).Prepare(path);
             var tokenizer = File.Exists(System.IO.Path.Combine(folder, "tokenizer.json")) ? BpeTokenizer.Load(folder) : null;
             var template = JinjaChatTemplate.Load(folder, tokenizer);
@@ -409,7 +410,7 @@ internal sealed class ServeHost
         var device = _context.Device;
         long before = ComputeResources.GetMemoryUsage(device).InUse;
         var watch = Stopwatch.StartNew();
-        var pretrained = Models.Load(_context, model.Choice with { Model = model.Path });
+        var pretrained = ModelChoices.Load(_context, model.Choice with { Model = model.Path });
         var generator = model.Choice.Kv is { } kv ? pretrained.CreateGenerator(KeyValueLayouts.Get(kv), model.Choice.Context)
             : pretrained.CreateGenerator(contextLength: model.Choice.Context);
         _memory[model.Name] = Math.Max(0, ComputeResources.GetMemoryUsage(device).InUse - before);

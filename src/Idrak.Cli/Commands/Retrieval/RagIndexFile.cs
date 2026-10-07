@@ -4,7 +4,7 @@
 using System.IO.Compression;
 using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
-using Idrak.LanguageModels;
+using Idrak.Models;
 using Idrak.Retrieval;
 
 namespace Idrak.Cli.Commands.Retrieval;
@@ -179,7 +179,7 @@ internal static class RagIndexFile
 
         var embedding = new EmbeddingInfo((string)e["model"]!, (string?)e["weights"], (int?)e["max_tokens"] ?? 512, (int?)e["dimensions"] ?? vectors.Dimensions);
         bool reuse = loaded is { } l && l.Model == embedding.Model && l.Weights == embedding.Weights;
-        var model = reuse ? loaded!.Value.Instance : Models.Load(context, new Models.ModelChoice(embedding.Model, embedding.Weights, null, null, null));
+        var model = reuse ? loaded!.Value.Instance : ModelChoices.Load(context, new ModelChoices.ModelChoice(embedding.Model, embedding.Weights, null, null, null));
         var store = new InMemoryVectorStore(vectors.Dimensions, VectorMetric.Cosine);
         store.UpsertAsync([.. Enumerable.Range(0, vectors.Count).Select(i => new VectorRecord(i.ToString(System.Globalization.CultureInfo.InvariantCulture), vectors[i]))])
             .AsTask().GetAwaiter().GetResult();
