@@ -10,7 +10,8 @@ using Idrak.Data;
 using Idrak.Diagnostics;
 using Idrak.Generation;
 using Idrak.Layers;
-using Idrak.LanguageModels;
+using Idrak.Models;
+using Idrak.Nlp;
 
 namespace Idrak.Cli.Commands.Train;
 
@@ -380,7 +381,7 @@ internal sealed class TuneTool(ToolConsole console)
                 {
                     using var model = Load(merge: true);
                     _out.WriteLine(model.Spec.ToJson());
-                    _out.WriteLine(model.ChatTemplate is { } t ? $"chat template: {t.Source.Length} characters, stops [{string.Join(", ", t.StopSequences)}]" : "no chat template");
+                    _out.WriteLine(model.JinjaTemplate is { } t ? $"chat template: {t.Source.Length} characters, stops [{string.Join(", ", t.StopSequences)}]" : "no chat template");
                     return 0;
                 }
             }
@@ -404,7 +405,7 @@ internal sealed class TuneTool(ToolConsole console)
             tuning = tuning with { MaxLength = model.MaxPositions - 1 };
         }
 
-        var encoder = new ChatTranscriptEncoder(model.ChatTemplate ?? throw new InvalidOperationException("The model has no chat template."),
+        var encoder = new ChatTranscriptEncoder(model.JinjaTemplate ?? throw new InvalidOperationException("The model has no chat template."),
             model.Tokenizer ?? throw new InvalidOperationException("The model has no tokenizer."));
         var recipe = Recipe(positional.Skip(2).ToList(), forTraining: true);
         var counts = new RecipeCounts();
@@ -593,7 +594,7 @@ internal sealed class TuneTool(ToolConsole console)
             string name = run is null ? "base model" : $"adapter {Path.GetFileName(Path.TrimEndingDirectorySeparator(run))}";
             _out.WriteLine($"\n{name}:");
             using var model = Load(merge: true);
-            var encoder = new ChatTranscriptEncoder(model.ChatTemplate ?? throw new InvalidOperationException("The model has no chat template."), model.Tokenizer!);
+            var encoder = new ChatTranscriptEncoder(model.JinjaTemplate ?? throw new InvalidOperationException("The model has no chat template."), model.Tokenizer!);
             var sequences = rows.SelectMany(r => encoder.EncodeRow((JsonObject)r.DeepClone(), Math.Min(tuning.MaxLength, model.MaxPositions - 1))).ToList();
             double loss = sequences.Count > 0 ? FineTuner.Evaluate(model, sequences, tuning.BatchTokens) : double.NaN;
             var chat = model.CreateChat(cacheLayout, context);

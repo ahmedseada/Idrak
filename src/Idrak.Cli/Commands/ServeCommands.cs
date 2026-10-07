@@ -93,11 +93,11 @@ internal sealed class ServeCommand : Command
           idrak serve qwen --mcp --tools ./MyTools.dll  # an MCP client's configuration starts it this way
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. ServeHost.ValueOptions, .. Models.ValueOptions, "--tools"];
+    public override IReadOnlyCollection<string> ValueOptions => [.. ServeHost.ValueOptions, .. ModelChoices.ValueOptions, "--tools"];
 
     public override IReadOnlyCollection<string> Flags => [.. ServeHost.Flags, "--mcp"];
 
-    public override IReadOnlyDictionary<string, string> ShortForms => ServeHost.ShortForms.Concat(Models.ShortForms).ToDictionary();
+    public override IReadOnlyDictionary<string, string> ShortForms => ServeHost.ShortForms.Concat(ModelChoices.ShortForms).ToDictionary();
 
     public override int Run(CommandContext context)
     {
@@ -135,11 +135,11 @@ internal sealed class UiCommand : Command
           idrak ui qwen -p 8080 --no-browser
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. ServeHost.ValueOptions, .. Models.ValueOptions];
+    public override IReadOnlyCollection<string> ValueOptions => [.. ServeHost.ValueOptions, .. ModelChoices.ValueOptions];
 
     public override IReadOnlyCollection<string> Flags => [.. ServeHost.Flags, "--no-browser"];
 
-    public override IReadOnlyDictionary<string, string> ShortForms => ServeHost.ShortForms.Concat(Models.ShortForms).ToDictionary();
+    public override IReadOnlyDictionary<string, string> ShortForms => ServeHost.ShortForms.Concat(ModelChoices.ShortForms).ToDictionary();
 
     public override int Run(CommandContext context)
     {

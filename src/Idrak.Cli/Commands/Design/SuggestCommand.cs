@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
 using Idrak.Generation;
+using Idrak.Nlp;
 
 namespace Idrak.Cli.Commands.Design;
 
@@ -51,7 +52,7 @@ internal sealed class SuggestCommand : Command
         "not searched); a GPU's memory is known only through a configured limit (the library does not report it).";
 
     public override IReadOnlyCollection<string> ValueOptions =>
-        ["--target", "--text", "--task", "--budget", "--max-params", "--search", "--base", "--out", "--assist", .. Models.ValueOptions.Where(o => o != "--adapter")];
+        ["--target", "--text", "--task", "--budget", "--max-params", "--search", "--base", "--out", "--assist", .. ModelChoices.ValueOptions.Where(o => o != "--adapter")];
 
     public override IReadOnlyCollection<string> Flags => ["--explain"];
 
@@ -88,7 +89,7 @@ internal sealed class SuggestCommand : Command
         }
 
         string outDir = Path.GetFullPath(context.Option("--out") ?? ".");
-        var baseModel = context.Option("--base") is { } b ? BaseModelInfo.Inspect(context, Models.Choose(context, b).Model) : null;
+        var baseModel = context.Option("--base") is { } b ? BaseModelInfo.Inspect(context, ModelChoices.Choose(context, b).Model) : null;
         var profile = DataProfile.Read(data, context.Option("--target"), task);
         if (task == "image" && profile.Kind != DataKind.Images)
         {
@@ -271,8 +272,8 @@ internal sealed class SuggestCommand : Command
     // A local chat model puts the choices into plain words; its answer is printed, the files stay as the rules made them.
     private static string Assist(CommandContext context, string name, DesignPlan design)
     {
-        var choice = Models.Choose(context, name);
-        using var model = Models.Load(context, choice);
+        var choice = ModelChoices.Choose(context, name);
+        using var model = ModelChoices.Load(context, choice);
         var chat = model.CreateChat(contextLength: choice.Context ?? 4096);
         var facts = new StringBuilder();
         foreach (var (label, text) in design.Lines.Where(l => l.Label is not ("Wrote" or "Next")))

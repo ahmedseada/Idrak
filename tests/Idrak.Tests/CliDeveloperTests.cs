@@ -89,7 +89,7 @@ internal static partial class Tests
                 string project = File.ReadAllText(Path.Combine(target, files.First(f => f.EndsWith(".csproj", StringComparison.Ordinal) && !f.Contains("Tests", StringComparison.Ordinal))));
                 Check(project.Contains($"<PackageReference Include=\"Idrak\" Version=\"{NewCommand.PackageVersion()}\" />", StringComparison.Ordinal), $"{kind}: the Idrak package\n{project}");
                 Check(kind != "webapi" || project.Contains("Include=\"Idrak.AspNetCore\"", StringComparison.Ordinal), "webapi: the ASP.NET Core package");
-                Check(kind != "rag" || project.Contains("Include=\"Idrak.LanguageModels\"", StringComparison.Ordinal), "rag: the language-model package");
+                Check(kind != "rag" || project.Contains("Include=\"Idrak.Nlp\"", StringComparison.Ordinal), "rag: the language package");
             }
 
             Check(File.ReadAllText(Path.Combine(folder, "plugin", "src", "My-plugin", "RoundedWeight.cs")).Contains("FormatName = \"my-plugin\"", StringComparison.Ordinal)

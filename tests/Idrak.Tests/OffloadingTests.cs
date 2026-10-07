@@ -5,7 +5,6 @@ using Idrak;
 using Idrak.Backends;
 using Idrak.Backends.Cuda;
 using Idrak.Layers;
-using Idrak.LanguageModels;
 using Idrak.Optimizers;
 
 // Offloading to system memory (IMemoryOffload): the CPU optimizer step, moving tensors, staging layers' weights, cold

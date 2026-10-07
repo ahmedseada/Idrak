@@ -6,7 +6,8 @@ using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
 using Idrak.Generation;
 using Idrak.Layers;
-using Idrak.LanguageModels;
+using Idrak.Models;
+using Idrak.Nlp;
 
 namespace Idrak.Cli.Commands.Measure;
 
@@ -36,9 +37,9 @@ internal sealed class CheckCommand : Command
         "  idrak check org/model --reference reference.json\n" +
         "  idrak check ./tuned --reference ref.json -d vulkan:0 -j";
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. Models.ValueOptions, "--reference"];
+    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, "--reference"];
 
-    public override IReadOnlyDictionary<string, string> ShortForms => Models.ShortForms;
+    public override IReadOnlyDictionary<string, string> ShortForms => ModelChoices.ShortForms;
 
     public override int Run(CommandContext context)
     {
@@ -50,7 +51,7 @@ internal sealed class CheckCommand : Command
         }
 
         var reference = JsonNode.Parse(File.ReadAllText(referencePath)) as JsonObject ?? throw new InvalidDataException($"{referencePath} is not a JSON object.");
-        var choice = Models.Choose(context, modelName);
+        var choice = ModelChoices.Choose(context, modelName);
         if (choice.Adapter is null && (string?)reference["adapter"] is { } adapter)
         {
             choice = choice with { Adapter = adapter };
@@ -61,7 +62,7 @@ internal sealed class CheckCommand : Command
         MixedPrecision.Default = MatMulPrecision.Float32;
         try
         {
-            using var model = Models.Load(context, choice);
+            using var model = ModelChoices.Load(context, choice);
             return Check(context, model, choice, reference);
         }
         finally
@@ -70,7 +71,7 @@ internal sealed class CheckCommand : Command
         }
     }
 
-    private static int Check(CommandContext context, PretrainedModel model, Models.ModelChoice choice, JsonObject reference)
+    private static int Check(CommandContext context, PretrainedModel model, ModelChoices.ModelChoice choice, JsonObject reference)
     {
         var device = context.Device;
         var tokenizer = model.Tokenizer ?? throw new InvalidOperationException($"{choice.Model} has no tokenizer (tokenizer.json).");
@@ -121,7 +122,7 @@ internal sealed class CheckCommand : Command
             string actual;
             try
             {
-                actual = model.ChatTemplate?.Render(messages, chatTools, think, generationPrompt) ?? "ERROR: no chat template";
+                actual = model.JinjaTemplate?.Render(messages, chatTools, think, generationPrompt) ?? "ERROR: no chat template";
             }
             catch (InvalidOperationException ex)
             {

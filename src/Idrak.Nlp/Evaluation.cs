@@ -7,7 +7,7 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Idrak.Generation;
 
-namespace Idrak.LanguageModels;
+namespace Idrak.Nlp;
 
 /// <summary>How a generated answer is compared with the reference answer.</summary>
 public enum AnswerMetric

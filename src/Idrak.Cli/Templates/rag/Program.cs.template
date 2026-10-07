@@ -8,7 +8,8 @@
 
 using Idrak;
 using Idrak.Abstraction;
-using Idrak.LanguageModels;
+using Idrak.Models;
+using Idrak.Nlp;
 using Idrak.Retrieval;
 
 string question = args.Length > 0 ? args[0] : "How do I reset the device?";

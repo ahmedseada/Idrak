@@ -94,9 +94,9 @@ internal sealed class TuneCommand : Command
             throw new UsageException(command == "download" ? "download needs one or more model ids." : $"{command} needs a model (MODEL or -b, --base MODEL).");
         }
 
-        var choice = Models.Choose(context, model);
+        var choice = ModelChoices.Choose(context, model);
         var args = new List<string> { command, choice.Model };
-        args.AddRange(command == "download" ? data.Select(id => Models.Choose(context, id).Model) : data);
+        args.AddRange(command == "download" ? data.Select(id => ModelChoices.Choose(context, id).Model) : data);
 
         // Options: the command line's, else the tune.json's.
         string? weights = context.Option("--weights") ?? choice.Weights ?? Text(settings, "weights");
@@ -291,7 +291,7 @@ internal sealed class TuneInitCommand : Command
         string name = Path.GetFileName(Path.TrimEndingDirectorySeparator(model.Replace(':', '-'))).ToLowerInvariant();
         string adapters = context.Option("--adapter-out") ?? $"adapters/{(name.Length > 0 ? name : "model")}";
         string? device = context.Option("--device") ?? context.Config.Get("device");
-        var defaults = new Idrak.LanguageModels.FineTuningOptions();
+        var defaults = new Idrak.Nlp.FineTuningOptions();
         string Json(string text) => JsonValue.Create(text).ToJsonString(CommandContext.JsonOutput);
         string Number(double value) => value.ToString("R", CultureInfo.InvariantCulture);
         string text = $$"""

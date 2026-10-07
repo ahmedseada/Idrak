@@ -26,7 +26,7 @@ internal static partial class Tests
             .Where(n => n is not ("Idrak.Tests" or "Idrak.PluginTests"))
             .Select(n => System.Reflection.Assembly.Load(n!))
             .ToList();
-        Check(assemblies.Any(a => a.GetName().Name == "Idrak.AspNetCore") && assemblies.Any(a => a.GetName().Name == "Idrak.LanguageModels"),
+        Check(assemblies.Any(a => a.GetName().Name == "Idrak.AspNetCore") && assemblies.Any(a => a.GetName().Name == "Idrak.Nlp"),
             $"assemblies scanned: {string.Join(", ", assemblies.Select(a => a.GetName().Name))}");
 
         static bool Obsolete(System.Reflection.MemberInfo member) => member.IsDefined(typeof(ObsoleteAttribute), inherit: false);

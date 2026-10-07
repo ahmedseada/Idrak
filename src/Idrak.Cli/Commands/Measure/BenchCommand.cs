@@ -7,7 +7,7 @@ using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
 using Idrak.Generation;
 using Idrak.Layers;
-using Idrak.LanguageModels;
+using Idrak.Nlp;
 
 namespace Idrak.Cli.Commands.Measure;
 
@@ -56,12 +56,12 @@ internal sealed class BenchCommand : Command
         "  idrak b mymodel --matrix -w int8,int4 -d vulkan:0";
 
     public override IReadOnlyCollection<string> ValueOptions =>
-        [.. Models.ValueOptions, "--prompt-tokens", "--tokens", "--kernels", "--repeat", "--save", "--compare", "--devices"];
+        [.. ModelChoices.ValueOptions, "--prompt-tokens", "--tokens", "--kernels", "--repeat", "--save", "--compare", "--devices"];
 
     public override IReadOnlyCollection<string> Flags => ["--small", "--matrix"];
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } =
-        new Dictionary<string, string>(Models.ShortForms) { ["-n"] = "--repeat" };
+        new Dictionary<string, string>(ModelChoices.ShortForms) { ["-n"] = "--repeat" };
 
     /// <summary>One benchmark run: a device, and with a model its weight and KV formats (null: as stored, float32).</summary>
     private sealed record BenchRun(Device Device, string? Weights, string? Kv)
@@ -224,7 +224,7 @@ internal sealed class BenchCommand : Command
     // Loads the model on the run's device, then times the prompt and the generation (median of the runs) and reads the device's memory.
     private static List<BenchResult> BenchModel(CommandContext context, string name, BenchRun run, JsonObject document)
     {
-        var choice = Models.Choose(context, name);
+        var choice = ModelChoices.Choose(context, name);
         if (context.Flag("--matrix"))
         {
             choice = choice with { Weights = run.Weights is "float32" or "f32" ? null : run.Weights, Kv = run.Kv };
@@ -234,7 +234,7 @@ internal sealed class BenchCommand : Command
         int tokens = Positive(context, "--tokens", 128);
         var device = run.Device;
         long before = ComputeResources.GetMemoryUsage(device).InUse;
-        using var model = Models.Load(context, choice, device);
+        using var model = ModelChoices.Load(context, choice, device);
         long weights = Math.Max(0, ComputeResources.GetMemoryUsage(device).InUse - before);
         var tokenizer = model.Tokenizer ?? throw new InvalidOperationException($"{choice.Model} has no tokenizer (tokenizer.json), so no prompt can be made for it.");
         int promptTokens = Math.Min(Positive(context, "--prompt-tokens", 512), Math.Max(1, model.MaxPositions - tokens - 1));

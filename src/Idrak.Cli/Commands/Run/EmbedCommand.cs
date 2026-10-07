@@ -5,7 +5,6 @@ using System.Text;
 using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
 using Idrak.Layers;
-using Idrak.LanguageModels;
 using Idrak.Retrieval;
 
 namespace Idrak.Cli.Commands.Run;
@@ -43,12 +42,12 @@ internal sealed class EmbedCommand : Command
         prefixes); mean pooling of the hidden states is what this command does.
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. Models.ValueOptions.Where(o => o != "--kv"), "--input", "--out", "--max-length", "--batch-size"];   // no KV cache
+    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions.Where(o => o != "--kv"), "--input", "--out", "--max-length", "--batch-size"];   // no KV cache
 
     public override IReadOnlyCollection<string> Flags => ["--whole"];
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } = new Dictionary<string, string>(
-        Models.ShortForms.Where(p => p.Key != "-k").Append(KeyValuePair.Create("-i", "--input")).Append(KeyValuePair.Create("-o", "--out")));
+        ModelChoices.ShortForms.Where(p => p.Key != "-k").Append(KeyValuePair.Create("-i", "--input")).Append(KeyValuePair.Create("-o", "--out")));
 
     public override int Run(CommandContext context)
     {
@@ -83,8 +82,8 @@ internal sealed class EmbedCommand : Command
         }
 
         int batchSize = context.IntOption("--batch-size", 32);
-        var choice = Models.Choose(context, name);
-        using var model = Models.Load(context, choice);
+        var choice = ModelChoices.Choose(context, name);
+        using var model = ModelChoices.Load(context, choice);
         var tokenizer = model.Tokenizer ?? throw new InvalidOperationException($"{name} has no tokenizer.json.");
         int maxLength = Math.Min(context.IntOption("--max-length", 512), model.MaxPositions);
         if (maxLength < 1 || batchSize < 1)

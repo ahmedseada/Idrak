@@ -4,8 +4,9 @@
 using System.Text.Json.Nodes;
 using Idrak.Data;
 using Idrak.Generation;
+using Idrak.Models;
 
-namespace Idrak.LanguageModels;
+namespace Idrak.Nlp;
 
 /// <summary>Settings for <see cref="TeacherData.Generate"/>.</summary>
 public sealed record TeacherDataOptions

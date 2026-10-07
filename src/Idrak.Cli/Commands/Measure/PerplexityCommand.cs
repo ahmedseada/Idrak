@@ -4,6 +4,7 @@
 using System.Diagnostics;
 using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
+using Idrak.Models;
 
 namespace Idrak.Cli.Commands.Measure;
 
@@ -30,9 +31,9 @@ internal sealed class PerplexityCommand : Command
         "  idrak perplexity org/model wiki.txt\n" +
         "  idrak perplexity org/model wiki.txt -w int4 -j";
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. Models.ValueOptions.Where(o => o != "--kv"), "--window", "--max-tokens"];   // scored without a KV cache
+    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions.Where(o => o != "--kv"), "--window", "--max-tokens"];   // scored without a KV cache
 
-    public override IReadOnlyDictionary<string, string> ShortForms { get; } = Models.ShortForms.Where(p => p.Key != "-k").ToDictionary();
+    public override IReadOnlyDictionary<string, string> ShortForms { get; } = ModelChoices.ShortForms.Where(p => p.Key != "-k").ToDictionary();
 
     public override int Run(CommandContext context)
     {
@@ -53,8 +54,8 @@ internal sealed class PerplexityCommand : Command
             throw new UsageException("--kv does not apply: perplexity reads whole windows without a key/value cache.");
         }
 
-        var choice = Models.Choose(context, modelName);
-        using var model = Models.Load(context, choice);
+        var choice = ModelChoices.Choose(context, modelName);
+        using var model = ModelChoices.Load(context, choice);
         var tokenizer = model.Tokenizer ?? throw new InvalidOperationException($"{choice.Model} has no tokenizer (tokenizer.json).");
         int window = context.IntOption("--window", Math.Min(model.MaxPositions, 1024));
         if (window < 2 || window > model.MaxPositions)
@@ -103,7 +104,7 @@ internal sealed class PerplexityCommand : Command
     internal sealed record Result(double Perplexity, double MeanNll, int Scored, int Windows, double Seconds);
 
     /// <summary>Scores <paramref name="ids"/> in windows: every position predicts the next token from the window so far.</summary>
-    internal static Result Measure(LanguageModels.PretrainedModel model, IReadOnlyList<int> ids, int window, Device device, Action<int, int>? progress = null)
+    internal static Result Measure(PretrainedModel model, IReadOnlyList<int> ids, int window, Device device, Action<int, int>? progress = null)
     {
         var watch = Stopwatch.StartNew();
         var network = model.Network;

@@ -3,8 +3,9 @@
 
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Idrak.Models;
 
-namespace Idrak.LanguageModels;
+namespace Idrak.Nlp;
 
 /// <summary>
 /// How an adapter folder was made, written next to the adapter (<see cref="FileName"/>): the base model it was tuned from,

@@ -3,7 +3,6 @@
 
 using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
-using Idrak.LanguageModels;
 
 namespace Idrak.Cli.Commands;
 
@@ -50,7 +49,7 @@ internal sealed class QuantizeCommand : Command
     public override int Run(CommandContext context)
     {
         string name = context.Argument(0, "MODEL");
-        string format = context.Option("--weights") ?? Shared.Models.Choose(context, name).Weights
+        string format = context.Option("--weights") ?? Shared.ModelChoices.Choose(context, name).Weights
             ?? throw new UsageException("Missing -w FORMAT (int8, int4, bf16 or a registered packed format).");
         _ = MemoryCommand.BytesPerValue(format);                                  // an unknown format is a usage error before loading
         string? output = context.Option("--out");
@@ -72,14 +71,14 @@ internal sealed class QuantizeCommand : Command
         long floatBytes;
         double floatPerplexity;
         int[] tokens;
-        using (var reference = Shared.Models.Load(context, new Shared.Models.ModelChoice(local.Folder, null, null, null, null)))
+        using (var reference = Shared.ModelChoices.Load(context, new Shared.ModelChoices.ModelChoice(local.Folder, null, null, null, null)))
         {
             tokens = ModelWork.CheckTokens(context, reference, limit);
             floatBytes = ModelWork.Bytes(reference.Network);
             floatPerplexity = ModelWork.Perplexity(reference, tokens);
         }
 
-        using var packed = Shared.Models.Load(context, new Shared.Models.ModelChoice(local.Folder, format, null, null, null));
+        using var packed = Shared.ModelChoices.Load(context, new Shared.ModelChoices.ModelChoice(local.Folder, format, null, null, null));
         long packedBytes = ModelWork.Bytes(packed.Network);
         double packedPerplexity = ModelWork.Perplexity(packed, tokens);
         double change = (packedPerplexity / floatPerplexity - 1) * 100;

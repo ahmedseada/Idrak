@@ -4,7 +4,8 @@
 using System.Text.Json.Nodes;
 using Idrak;
 using Idrak.Generation;
-using Idrak.LanguageModels;
+using Idrak.Models;
+using Idrak.Nlp;
 
 // Chat templates: the Jinja interpreter and model templates, checked against outputs of Python's jinja2 rendered the way
 // Hugging Face's apply_chat_template renders them (trim_blocks, lstrip_blocks, tojson as json.dumps).

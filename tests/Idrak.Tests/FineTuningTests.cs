@@ -5,7 +5,8 @@ using System.Text.Json.Nodes;
 using Idrak;
 using Idrak.Generation;
 using Idrak.Layers;
-using Idrak.LanguageModels;
+using Idrak.Models;
+using Idrak.Nlp;
 
 internal static partial class Tests
 {
@@ -626,7 +627,7 @@ internal static partial class Tests
             }
 
             var downloader = new Idrak.Data.Downloader(new HttpClient(web), cache) { Attempts = 1 };
-            string folder = ModelSource.DownloadAsync("org/tiny", token: "hf_model", downloader: downloader).GetAwaiter().GetResult();
+            string folder = Idrak.Data.HuggingFaceModels.DownloadAsync("org/tiny", token: "hf_model", downloader: downloader).GetAwaiter().GetResult();
             Check(folder == Path.Combine(cache, "huggingface", "models", "org", "tiny", commit[..12]), $"model folder {folder}");
             Check(Directory.GetFiles(folder).Select(Path.GetFileName).Order().SequenceEqual(served.Order()), "only the files the library reads");
 
@@ -779,7 +780,7 @@ internal static partial class Tests
                 new ChatMessage("assistant", "retrieve")], []);
             string Trained(TrainingSequence s) => tokenizer.Decode(s.Tokens.Where((_, i) => s.Trained[i]));
 
-            var encoder = new ChatTranscriptEncoder(model.ChatTemplate!, tokenizer);
+            var encoder = new ChatTranscriptEncoder(model.JinjaTemplate!, tokenizer);
             var whole = encoder.Encode(transcript, 2000)!;
             Check(whole.Tokens.Length > 200, $"the conversation is long ({whole.Tokens.Length} tokens)");
             var fitted = encoder.Encode(transcript, 120);
@@ -805,7 +806,7 @@ internal static partial class Tests
                       && p.First.Trained.SequenceEqual(p.Second.Trained)), $"row {i}: the same sequences as encoded alone");
             }
 
-            var cutting = new ChatTranscriptEncoder(model.ChatTemplate!, tokenizer) { ShortenToFit = false };
+            var cutting = new ChatTranscriptEncoder(model.JinjaTemplate!, tokenizer) { ShortenToFit = false };
             Check(cutting.Encode(transcript, 120) is null, "without shortening, cutting the end leaves no answer to train");
         }
         finally
@@ -839,7 +840,7 @@ internal static partial class Tests
                 "transcripts parse (tools, string arguments, tool_call_id, reasoning, content parts, ShareGPT)");
 
             using var model = PretrainedModel.Load(folder, new PretrainedOptions { Device = device });
-            var encoder = new ChatTranscriptEncoder(model.ChatTemplate!, model.Tokenizer!);
+            var encoder = new ChatTranscriptEncoder(model.JinjaTemplate!, model.Tokenizer!);
             Check(encoder.AssistantHeader == "<|im_start|>assistant\n" && encoder.AssistantEnd == "<|im_end|>",
                 $"assistant markers '{encoder.AssistantHeader}' / '{encoder.AssistantEnd}'");
             var sequences = transcripts.Select(t => encoder.Encode(t, 1000)!).ToList();
