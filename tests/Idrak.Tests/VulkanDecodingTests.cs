@@ -3,8 +3,10 @@
 
 using System.Collections.Concurrent;
 using Idrak;
+using Idrak.Generation;
 using Idrak.Gpu.Vulkan;
 using Idrak.Layers;
+using Idrak.Models.Abstractions;
 
 // Decoding on Vulkan: every step on the device (no host fallback, so no wait for the device between tokens), the sampler
 // kernels against the CPU's, and the runtime's barriers (only between dependent commands).

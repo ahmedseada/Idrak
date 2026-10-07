@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Idrak.Data;
+using Idrak.Data.Abstractions;
 using TensorData = Idrak.Data.Dataset;
 
 namespace Idrak.Cli.Shared;

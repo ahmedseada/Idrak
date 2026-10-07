@@ -5,7 +5,7 @@
     <AssemblyName>Idrak.AspNetCore</AssemblyName>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <PackageId>Idrak.AspNetCore</PackageId>
-    <Description>ASP.NET Core integration for Idrak: registers an InferenceEngine in dependency injection and maps prediction, generation, chat (the local chat API and the OpenAI-style /v1 API) and status endpoints.</Description>
+    <Description>Serve Idrak models over HTTP from an ASP.NET Core app: predictions, text generation, chat and an OpenAI-compatible /v1 API (chat completions, embeddings), as thin endpoints over the inference engine. AddIdrak() registers the engine; MapPredictor, MapGenerate, MapChatApi, MapCompletionsApi and MapIdrakStatus map the endpoints.</Description>
   </PropertyGroup>
 
   <ItemGroup>

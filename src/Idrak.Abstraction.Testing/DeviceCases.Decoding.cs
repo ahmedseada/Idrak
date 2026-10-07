@@ -397,21 +397,30 @@ public static partial class DeviceCases
 
     // ------------------------------------------------------------------ sampling and autograd
 
+    // The sampler's operations as a generation step runs them: penalties from the token history, a draw per row (from
+    // the last of several positions too), and the history extended.
     private static void Sampling(DeviceCaseContext c)
     {
-        int rows = c.Size(1, 4), vocabulary = c.Size(2, 1000), steps = c.Size(1, 4);
+        var b = c.Backend;
+        int rows = c.Size(1, 4), vocabulary = c.Size(2, 1000), steps = c.Size(1, 4), positions = c.Random.Next(1, 3), capacity = 32;
+        Storage history = Indices(c, rows * capacity, vocabulary), length = c.Storage([c.Random.Next(0, 40)]);
+        Storage ids = c.Zeros(rows), stats = c.Zeros(steps * rows * 13);
         foreach (var (topK, topP, minP, penalties) in new[] { (1, 1f, 0f, false), (0, 0.9f, 0f, true), (40, 1f, 0.05f, false), (5, 0.5f, 0f, true) })
         {
-            using var sampler = new TokenSampler(c.Device, rows, vocabulary, steps, 32)
-            {
-                Temperature = 0.8f, TopK = topK, TopP = topP, MinP = minP, Seed = (uint)c.Random.Next(),
-                RepeatPenalty = penalties ? 1.3f : 1f, PresencePenalty = penalties ? 0.4f : 0f, FrequencyPenalty = penalties ? 0.2f : 0f, RepeatLastN = 16,
-            };
-            sampler.SetHistory([.. Enumerable.Range(0, c.Random.Next(0, 40)).Select(_ => c.Random.Next(vocabulary))]);
+            uint seed = (uint)c.Random.Next();
             for (int s = 0; s < steps; s++)
             {
-                using var logits = Tensor.From(c.Values(rows * vocabulary, 5f), [rows, vocabulary], c.Device);
-                sampler.Sample(logits);
+                Storage source = Random(c, rows * positions * vocabulary, 5f), step = c.Storage([s]);
+                int rowStride = positions * vocabulary, rowOffset = (positions - 1) * vocabulary;
+                if (penalties)
+                {
+                    var work = c.Zeros(rows * vocabulary);
+                    b.PenalizeRows(source, work, history, length, rows, vocabulary, rowStride, rowOffset, capacity, 16, 1.3f, 0.4f, 0.2f);
+                    (source, rowStride, rowOffset) = (work, vocabulary, 0);
+                }
+
+                b.SampleRows(source, ids, stats, step, rows, vocabulary, rowStride, rowOffset, 0.8f, topK, topP, minP, seed);
+                b.HistoryPush(ids, history, length, rows, capacity);
             }
         }
     }

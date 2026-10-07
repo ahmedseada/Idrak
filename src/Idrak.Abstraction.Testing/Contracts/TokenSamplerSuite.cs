@@ -6,26 +6,89 @@ using System.Text.Json.Nodes;
 
 namespace Idrak.Abstraction.Testing;
 
+/// <summary>What a sampler check asks a token sampler for: where it runs, its shape and its settings (as a generation's request carries them).</summary>
+/// <param name="Device">Where the logits live.</param>
+/// <param name="Rows">Sequences sampled per step.</param>
+/// <param name="Vocabulary">Vocabulary size.</param>
+/// <param name="Steps">Steps whose statistics are kept.</param>
+/// <param name="HistoryCapacity">Recent tokens per row the penalties may look at.</param>
+/// <param name="Temperature">Softmax temperature.</param>
+/// <param name="TopK">Sample among the k most likely tokens (0: all).</param>
+/// <param name="TopP">Nucleus sampling (1: off).</param>
+/// <param name="MinP">Drop tokens less than this fraction as likely as the best (0: off).</param>
+/// <param name="RepeatPenalty">Repetition penalty (1: off).</param>
+/// <param name="RepeatLastN">Recent tokens the penalties look at.</param>
+/// <param name="PresencePenalty">Subtracted from every token in the window.</param>
+/// <param name="FrequencyPenalty">Subtracted once per occurrence in the window.</param>
+/// <param name="Seed">The random seed.</param>
+public sealed record SamplerSettings(Device Device, int Rows, int Vocabulary, int Steps, int HistoryCapacity, float Temperature, int TopK, float TopP,
+    float MinP, float RepeatPenalty, int RepeatLastN, float PresencePenalty, float FrequencyPenalty, int Seed);
+
+/// <summary>One sampled token's statistics, as a sampler reports them.</summary>
+/// <param name="Id">The token.</param>
+/// <param name="Probability">Its probability.</param>
+/// <param name="Entropy">The entropy of the distribution sampled from, in bits.</param>
+public readonly record struct SampledStatistics(int Id, float Probability, float Entropy);
+
 /// <summary>
-/// The checks of a token sampler, given as the factory a generation calls (<c>TokenSampler.Create</c> is the library's),
-/// against the library's <see cref="TokenSampler"/> on the same requests, logits and history:
+/// A token sampler as the sampler checks drive it. The token-sampler contract lives with the package that uses it
+/// (<c>ITokenSampler</c> in Idrak.Nlp) and this kit depends on Idrak.Abstraction alone, so a test wraps the sampler it
+/// checks, and the library's one it compares with, in these few delegates.
+/// </summary>
+/// <param name="rows">Sequences sampled per step.</param>
+/// <param name="vocabulary">Vocabulary size.</param>
+/// <param name="setHistory">Sets the recent tokens of every row (<c>SetHistory</c>).</param>
+/// <param name="sample">Samples one step from [rows, vocabulary] logits and returns the ids, [rows].</param>
+/// <param name="reset">Restarts from step 0 (<c>Reset</c>).</param>
+/// <param name="read">The statistics of steps [from, to) as [step][row] (<c>Read</c>).</param>
+/// <param name="owner">Disposed with this (the sampler itself), or null.</param>
+public sealed class SamplerUnderTest(int rows, int vocabulary, Action<IReadOnlyList<int>> setHistory, Func<Tensor, float[]> sample, Action reset,
+    Func<int, int, SampledStatistics[][]> read, IDisposable? owner = null) : IDisposable
+{
+    /// <summary>Sequences sampled per step.</summary>
+    public int Rows { get; } = rows;
+
+    /// <summary>Vocabulary size.</summary>
+    public int Vocabulary { get; } = vocabulary;
+
+    /// <summary>Sets the recent tokens of every row.</summary>
+    public void SetHistory(IReadOnlyList<int> tokens) => setHistory(tokens);
+
+    /// <summary>Samples one step; returns the ids, [rows].</summary>
+    public float[] Sample(Tensor logits) => sample(logits);
+
+    /// <summary>Restarts from step 0.</summary>
+    public void Reset() => reset();
+
+    /// <summary>The statistics of steps [<paramref name="from"/>, <paramref name="to"/>).</summary>
+    public SampledStatistics[][] Read(int from, int to) => read(from, to);
+
+    /// <summary>Disposes the sampler.</summary>
+    public void Dispose() => owner?.Dispose();
+}
+
+/// <summary>
+/// The checks of a token sampler against a reference sampler (the library's <c>TokenSampler</c>), both wrapped as
+/// <see cref="SamplerUnderTest"/>, on the same settings, logits and history:
 /// <list type="bullet">
-/// <item>the sampler has the request's rows and vocabulary, and its ids are [rows] tokens in [0, vocabulary);</item>
-/// <item>greedy settings (top-k 1) choose the library's tokens, penalties included;</item>
-/// <item>without penalties, every sampled token is one the settings allow (among the k largest distinct scores, inside the top-p nucleus,
-/// at least min-p as likely as the best);</item>
-/// <item><see cref="ITokenSampler.Reset"/> with the same history samples the same tokens again;</item>
-/// <item><see cref="ITokenSampler.Read"/> reports, per step and row, the token sampled with a probability in [0, 1];</item>
-/// <item>with <see cref="Exact"/>, the very tokens and probabilities of the library's sampler (same seed).</item>
+/// <item>the sampler has the asked rows and vocabulary, and its ids are [rows] tokens in [0, vocabulary);</item>
+/// <item>greedy settings (top-k 1) choose the reference's tokens, penalties included;</item>
+/// <item>without penalties, every sampled token is one the settings allow (among the k largest distinct scores, inside
+/// the top-p nucleus, at least min-p as likely as the best);</item>
+/// <item>a reset with the same history samples the same tokens again;</item>
+/// <item>the statistics report, per step and row, the token sampled with a probability in [0, 1];</item>
+/// <item>with <see cref="Exact"/>, the very tokens and probabilities of the reference (same seed).</item>
 /// </list>
 /// </summary>
+/// <param name="reference">Makes the reference sampler for a case's settings.</param>
 /// <param name="device">Where the logits and the samplers live (the CPU when null).</param>
-public sealed class TokenSamplerSuite(Device? device = null) : ContractSuite<Func<SamplerRequest, ITokenSampler>>
+public sealed class TokenSamplerSuite(Func<SamplerSettings, SamplerUnderTest> reference, Device? device = null)
+    : ContractSuite<Func<SamplerSettings, SamplerUnderTest>>
 {
     /// <summary>Where the logits and the samplers live.</summary>
     public override Device Device { get; } = device ?? Device.Cpu;
 
-    /// <summary>Whether every token must be the library sampler's (the same random stream), not only the greedy ones.</summary>
+    /// <summary>Whether every token must be the reference's (the same random stream), not only the greedy ones.</summary>
     public bool Exact { get; init; }
 
     /// <inheritdoc />
@@ -59,26 +122,21 @@ public sealed class TokenSamplerSuite(Device? device = null) : ContractSuite<Fun
     }
 
     /// <inheritdoc />
-    public override void Run(Func<SamplerRequest, ITokenSampler> implementation, ContractCase @case, CaseChecks checks)
+    public override void Run(Func<SamplerSettings, SamplerUnderTest> implementation, ContractCase @case, CaseChecks checks)
     {
         ArgumentNullException.ThrowIfNull(implementation);
         ArgumentNullException.ThrowIfNull(@case);
         ArgumentNullException.ThrowIfNull(checks);
         var d = @case.Data;
         int rows = (int)d["rows"]!, vocabulary = (int)d["vocabulary"]!, steps = (int)d["steps"]!;
-        var options = new GenerationOptions
-        {
-            Temperature = (float)d["temperature"]!, TopK = (int)d["topK"]!, TopP = (float)d["topP"]!, MinP = (float)d["minP"]!,
-            RepeatPenalty = (float)d["repeatPenalty"]!, RepeatLastN = (int)d["repeatLastN"]!, PresencePenalty = (float)d["presencePenalty"]!,
-            FrequencyPenalty = (float)d["frequencyPenalty"]!, Seed = (int)d["seed"]!,
-        };
+        var settings = new SamplerSettings(Device, rows, vocabulary, steps, 64, (float)d["temperature"]!, (int)d["topK"]!, (float)d["topP"]!,
+            (float)d["minP"]!, (float)d["repeatPenalty"]!, (int)d["repeatLastN"]!, (float)d["presencePenalty"]!, (float)d["frequencyPenalty"]!, (int)d["seed"]!);
         int[] history = [.. d["history"]!.AsArray().Select(n => (int)n!)];
         float[] logits = MemoryMarshal.Cast<byte, float>(Convert.FromBase64String((string)d["logits"]!)).ToArray();
-        var request = new SamplerRequest(Device, rows, vocabulary, steps, 64, options);
 
-        using var mine = implementation(request);
-        using var library = TokenSampler.Create(request);
-        checks.Check("the request's rows and vocabulary", mine.Rows == rows && mine.Vocabulary == vocabulary,
+        using var mine = implementation(settings);
+        using var library = reference(settings);
+        checks.Check("the asked rows and vocabulary", mine.Rows == rows && mine.Vocabulary == vocabulary,
             $"{mine.Rows} rows and {mine.Vocabulary} tokens, {rows} and {vocabulary} asked for");
         var ids = Sample(mine, history, logits, rows, vocabulary, steps, checks);
         var expected = Sample(library, history, logits, rows, vocabulary, steps, null);
@@ -87,10 +145,10 @@ public sealed class TokenSamplerSuite(Device? device = null) : ContractSuite<Fun
         int outside = flat.FindIndex(id => id < 0 || id >= vocabulary);
         checks.Check("ids in range", outside < 0, outside < 0 ? "" : $"token {flat[outside]} at step {outside / rows}, row {outside % rows}");
 
-        bool penalties = options.RepeatPenalty != 1f || options.PresencePenalty != 0f || options.FrequencyPenalty != 0f;
-        if (options.TopK == 1 || Exact)
+        bool penalties = settings.RepeatPenalty != 1f || settings.PresencePenalty != 0f || settings.FrequencyPenalty != 0f;
+        if (settings.TopK == 1 || Exact)
         {
-            checks.Compare(options.TopK == 1 ? "greedy tokens are the library's" : "the library's tokens", Comparisons.Difference(expected.SelectMany(s => s).ToList(), flat));
+            checks.Compare(settings.TopK == 1 ? "greedy tokens are the reference's" : "the reference's tokens", Comparisons.Difference(expected.SelectMany(s => s).ToList(), flat));
         }
         else if (penalties)
         {
@@ -98,7 +156,7 @@ public sealed class TokenSamplerSuite(Device? device = null) : ContractSuite<Fun
         }
         else
         {
-            checks.Compare("tokens the settings allow", Allowed(logits, ids, rows, vocabulary, options));
+            checks.Compare("tokens the settings allow", Allowed(logits, ids, rows, vocabulary, settings));
         }
 
         mine.Reset();
@@ -114,22 +172,21 @@ public sealed class TokenSamplerSuite(Device? device = null) : ContractSuite<Fun
         checks.Compare("statistics of the tokens sampled", problem);
         if (Exact)
         {
-            var reference = library.Read(0, steps);
-            checks.Compare("the library's probabilities", Comparisons.Difference(
-                [.. reference.SelectMany(s => s).Select(t => t.Probability)], [.. statistics.SelectMany(s => s).Select(t => t.Probability)], 1e-4f));
+            var expectedStatistics = library.Read(0, steps);
+            checks.Compare("the reference's probabilities", Comparisons.Difference(
+                [.. expectedStatistics.SelectMany(s => s).Select(t => t.Probability)], [.. statistics.SelectMany(s => s).Select(t => t.Probability)], 1e-4f));
         }
     }
 
     // The ids sampled at each step (after the history is set), [steps][rows].
-    private int[][] Sample(ITokenSampler sampler, int[] history, float[] logits, int rows, int vocabulary, int steps, CaseChecks? checks)
+    private int[][] Sample(SamplerUnderTest sampler, int[] history, float[] logits, int rows, int vocabulary, int steps, CaseChecks? checks)
     {
         sampler.SetHistory(history);
         var ids = new int[steps][];
         for (int s = 0; s < steps; s++)
         {
             using var step = Tensor.From(logits.AsSpan(s * rows * vocabulary, rows * vocabulary), [rows, vocabulary], Device);
-            sampler.Sample(step);
-            var values = sampler.Ids.ToArray();
+            var values = sampler.Sample(step);
             checks?.Check("ids are [rows]", values.Length == rows, $"{values.Length} ids for {rows} rows");
             ids[s] = [.. values.Take(rows).Select(v => (int)v)];
         }
@@ -139,7 +196,7 @@ public sealed class TokenSamplerSuite(Device? device = null) : ContractSuite<Fun
 
     // Null when every sampled token is among the top k, in the top-p nucleus and at least min-p as likely as the best
     // token (each with a little slack for rounding); else the first that is not.
-    private static string? Allowed(float[] logits, int[][] ids, int rows, int vocabulary, GenerationOptions options)
+    private static string? Allowed(float[] logits, int[][] ids, int rows, int vocabulary, SamplerSettings settings)
     {
         for (int s = 0; s < ids.Length; s++)
         {
@@ -161,7 +218,7 @@ public sealed class TokenSamplerSuite(Device? device = null) : ContractSuite<Fun
                 var p = new double[vocabulary];
                 for (int i = 0; i < vocabulary; i++)
                 {
-                    sum += p[i] = Math.Exp((row[i] - max) / options.Temperature);
+                    sum += p[i] = Math.Exp((row[i] - max) / settings.Temperature);
                 }
 
                 double mine = p[id] / sum, above = 0, best = 1 / sum;
@@ -179,19 +236,19 @@ public sealed class TokenSamplerSuite(Device? device = null) : ContractSuite<Fun
                 int higher = higherScores.Count;
 
                 string where = $"step {s}, row {r}: token {id} (probability {mine:G4})";
-                if (options.TopK > 0 && higher >= options.TopK)
+                if (settings.TopK > 0 && higher >= settings.TopK)
                 {
-                    return $"{where} is not among the top {options.TopK} ({higher} distinct scores are higher)";
+                    return $"{where} is not among the top {settings.TopK} ({higher} distinct scores are higher)";
                 }
 
-                if (options.TopP < 1f && above >= options.TopP + 1e-4)
+                if (settings.TopP < 1f && above >= settings.TopP + 1e-4)
                 {
-                    return $"{where} is outside the top-p {options.TopP} nucleus (the likelier tokens hold {above:G4})";
+                    return $"{where} is outside the top-p {settings.TopP} nucleus (the likelier tokens hold {above:G4})";
                 }
 
-                if (options.MinP > 0f && mine < options.MinP * best * (1 - 1e-4))
+                if (settings.MinP > 0f && mine < settings.MinP * best * (1 - 1e-4))
                 {
-                    return $"{where} is below min-p {options.MinP} of the best token's {best:G4}";
+                    return $"{where} is below min-p {settings.MinP} of the best token's {best:G4}";
                 }
             }
         }

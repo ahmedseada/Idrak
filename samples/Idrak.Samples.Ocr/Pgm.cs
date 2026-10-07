@@ -3,6 +3,7 @@
 
 using System.Text;
 using Idrak.Data;
+using Idrak.Data.Abstractions;
 
 namespace Idrak.Samples.Ocr;
 

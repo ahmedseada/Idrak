@@ -4,6 +4,8 @@
 using System.Text.Json.Nodes;
 using Idrak.Abstraction.Operations;
 using Idrak.Abstraction.Testing;
+using Idrak.Generation;
+using Idrak.Generation.Abstractions;
 
 // Plan 10, phases 5 and 6c: the testing kit (Idrak.Abstraction.Testing) is the one source of the per-device operation
 // checks. The device check runs on every device of the run; the contract checks, stress runs and saved cases once.
@@ -107,14 +109,16 @@ internal static partial class Tests
             return;
         }
 
-        var sampler = Conformance.Check(TokenSampler.Create);
+        var samplers = new TokenSamplerSuite(Drive(TokenSampler.Create));
+        var sampler = Conformance.Check(Drive(TokenSampler.Create), samplers);
         sampler.ThrowIfFailed();
-        Check(sampler.Entries.Any(e => e.Name == "greedy tokens are the library's" && e.Status == CheckStatus.Passed)
+        Check(sampler.Entries.Any(e => e.Name == "greedy tokens are the reference's" && e.Status == CheckStatus.Passed)
               && sampler.Entries.Any(e => e.Name == "tokens the settings allow" && e.Status == CheckStatus.Passed), sampler.ToString());
+        Conformance.Check(Drive(TokenSampler.Create), new TokenSamplerSuite(Drive(TokenSampler.Create)) { Exact = true }).ThrowIfFailed();
 
         // A sampler that ignores the settings and always takes the last token fails the allowed-tokens and greedy checks.
-        var last = Conformance.Check(request => new LastTokenSampler(request), new ContractCheckOptions { RandomCases = 4 });
-        Check(!last.Passed && last.Failures.Any(f => f.Check == "greedy tokens are the library's"), last.ToString());
+        var last = Conformance.Check(Drive(request => new LastTokenSampler(request)), samplers, new ContractCheckOptions { RandomCases = 4 });
+        Check(!last.Passed && last.Failures.Any(f => f.Check == "greedy tokens are the reference's"), last.ToString());
 
         Conformance.Check(new CharTokenizer("abcdefghijklmnopqrstuvwxyz ,.!?"), new CharTokenizer("abcdefghijklmnopqrstuvwxyz ,.!?")).ThrowIfFailed();
         var words = WordTokenizer.FromTexts(["hello world, the model is learning.", "the data and the token"], ["<unk>", "<s>"]);
@@ -144,7 +148,7 @@ internal static partial class Tests
 
         var options = new StressOptions { Iterations = 60, Threads = 4 };
         Stress.Run(new CharTokenizer("abcdefghijklmnopqrstuvwxyz "), new TokenizerSuite(), options).ThrowIfFailed();
-        Stress.Run<Func<SamplerRequest, ITokenSampler>>(TokenSampler.Create, new TokenSamplerSuite(), options with { Iterations = 30 }).ThrowIfFailed();
+        Stress.Run(Drive(TokenSampler.Create), new TokenSamplerSuite(Drive(TokenSampler.Create)), options with { Iterations = 30 }).ThrowIfFailed();
         Stress.Run(RopeScalings.Get("dynamic"), new RopeScalingSuite("dynamic"), options).ThrowIfFailed();
 
         // A scaling of an app's own type, checked with its parameters; a broken one's failing case saved and replayed.
@@ -168,6 +172,21 @@ internal static partial class Tests
             Directory.Delete(folder, recursive: true);
         }
     }
+
+    // An ITokenSampler factory (the token-sampler contract of Idrak.Nlp) as the kit's sampler checks drive it.
+    internal static Func<SamplerSettings, SamplerUnderTest> Drive(Func<SamplerRequest, ITokenSampler> create) => settings =>
+    {
+        var sampler = create(new SamplerRequest(settings.Device, settings.Rows, settings.Vocabulary, settings.Steps, settings.HistoryCapacity, new GenerationOptions
+        {
+            Temperature = settings.Temperature, TopK = settings.TopK, TopP = settings.TopP, MinP = settings.MinP, RepeatPenalty = settings.RepeatPenalty,
+            RepeatLastN = settings.RepeatLastN, PresencePenalty = settings.PresencePenalty, FrequencyPenalty = settings.FrequencyPenalty, Seed = settings.Seed,
+        }));
+        return new SamplerUnderTest(sampler.Rows, sampler.Vocabulary, sampler.SetHistory, logits =>
+        {
+            sampler.Sample(logits);
+            return sampler.Ids.ToArray();
+        }, sampler.Reset, (from, to) => [.. sampler.Read(from, to).Select(step => step.Select(t => new SampledStatistics(t.Id, t.Probability, t.Entropy)).ToArray())], sampler);
+    };
 
     // Takes the last token of the vocabulary every time.
     private sealed class LastTokenSampler(SamplerRequest request) : ITokenSampler

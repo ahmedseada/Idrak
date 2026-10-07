@@ -8,6 +8,7 @@ using Idrak.Diagnostics;
 using Idrak.Layers;
 using Idrak.Optimizers;
 using Idrak.Training;
+using Idrak.Training.Abstractions;
 
 // Trainer callbacks: when they run, stopping and cancelling, and the built-in EarlyStopping, Checkpoint and CsvLog.
 internal static partial class Tests

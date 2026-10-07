@@ -31,6 +31,20 @@ alone.
 | Telemetry | Hooks that cost nothing when unused: console, CSV metrics, JSON Lines |
 | Extending | More than twenty registries: samplers, KV cache layouts, packed weight formats, builder steps, graph operations, RoPE scalings, tool-call formats, data sources, image codecs, optimizers, differentiable operations |
 
+## Contracts of this package
+
+The plug-in points only this package uses live here, each under the `.Abstractions` namespace beside its
+implementations (the shared ones are in [Idrak.Abstraction](https://www.nuget.org/packages/Idrak.Abstraction)). Code
+that names them adds the `using` line. The registries register their built-ins themselves, on first use.
+
+| Namespace | Contracts |
+|-----------|-----------|
+| `Idrak.Layers.Abstractions` | `LayerTypes`, `GraphOps` (with `GraphOp`, `GraphOpContext`, `GraphNode`), `NetworkOps` and `INetworkBuilder` (network-builder steps), `ICachedModule` (layers that decode with a KV cache), `RecurrentModule` |
+| `Idrak.Models.Abstractions` | `CheckpointFormats` and `ICheckpointFormat`, `ITensorStore`, `IWeightSource`, `WeightCodec` and `WeightFormat`, `GgufTypes`, `GgufArchitectures`, `GgufPreTokenizers`, `PretrainedArchitectures` (with `PretrainedBuildContext`, `DecoderBuildOptions`), `TokenizerComponents` (`ITokenizerNormalizer`, `IPreTokenizer`, `ITokenizerDecoder`) |
+| `Idrak.Onnx.Abstractions` | `OnnxImportOps` and `OnnxImportContext`, `OnnxExportOps` and `OnnxGraph` (with `OnnxValue`, `OnnxAttribute`) |
+| `Idrak.Data.Abstractions` | `SampleSources`, `IBatchSource` and `Batch`, `ImageCodecs` and `IImageCodec` (PNG, BMP and Netpbm built in), `IScaler` |
+| `Idrak.Training.Abstractions` | `ITrainerCallback`, `TrainerContext`, `TrainingHistory` |
+
 ## Backends
 
 The CPU device is in `Idrak.Abstraction`; the CUDA, Vulkan and HIP devices are in `Idrak.Gpu`. This package brings
@@ -65,6 +79,7 @@ using Idrak.Data;
 using Idrak.Layers;
 using Idrak.Optimizers;
 using Idrak.Training;
+using Idrak.Training.Abstractions;
 
 var data = Dataset.LoadCsv("houses.csv", new CsvOptions { TargetColumns = ["price"], IgnoreColumns = ["id"] });
 var (train, test) = data.Split(0.8, seed: 1);
@@ -99,6 +114,7 @@ using Idrak.Inference;
 using Idrak.Layers;
 using Idrak.Optimizers;
 using Idrak.Training;
+using Idrak.Training.Abstractions;
 
 var data = Dataset.LoadCsv("houses.csv", new CsvOptions { TargetColumns = ["price"], IgnoreColumns = ["id"] });
 var split = data.Split(0.8, seed: 1).StandardizeFeatures().StandardizeTargets();   // scalers fitted on the training part
