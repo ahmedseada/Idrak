@@ -5,8 +5,6 @@ using Idrak.Data;
 using Idrak.Generation;
 using Idrak.Diagnostics;
 using Idrak.Layers;
-using Idrak.Models;
-using Idrak.Nlp;
 using Idrak.Onnx;
 
 namespace Idrak.Cli.Commands.Health;

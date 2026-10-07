@@ -34,7 +34,7 @@ internal static class PullTarget
 /// <summary>Hugging Face hub calls the model commands share (pull, search, verify), through the library's <see cref="Downloader"/>.</summary>
 internal static class Hub
 {
-    // The files ModelSource.DownloadAsync takes of a transformers model (kept the same, so a pull is what loading reads).
+    // The files HuggingFaceModels.DownloadAsync takes of a transformers model (kept the same, so a pull is what loading reads).
     private static readonly string[] Wanted = ["config.json", "generation_config.json", "tokenizer.json", "tokenizer_config.json", "special_tokens_map.json",
         "added_tokens.json", "chat_template.jinja", "chat_template.json", "model.safetensors.index.json"];
 

@@ -44,12 +44,12 @@ internal sealed class RunCommand : Command
         required properties and their types) instead of guaranteeing it while generating.
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. Models.ValueOptions, .. GenerationSettings.ValueOptions, "--input", "--schema", "--mcp"];
+    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, .. GenerationSettings.ValueOptions, "--input", "--schema", "--mcp"];
 
     public override IReadOnlyCollection<string> Flags => GenerationSettings.Flags;
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } =
-        new Dictionary<string, string>(Models.ShortForms.Concat(GenerationSettings.ShortForms).Append(KeyValuePair.Create("-i", "--input")));
+        new Dictionary<string, string>(ModelChoices.ShortForms.Concat(GenerationSettings.ShortForms).Append(KeyValuePair.Create("-i", "--input")));
 
     public override int Run(CommandContext context)
     {

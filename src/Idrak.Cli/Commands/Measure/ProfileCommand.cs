@@ -35,9 +35,9 @@ internal sealed class ProfileCommand : Command
         "  idrak profile org/model -d vulkan:0 -w int8\n" +
         "  idrak profile mymodel --prompt-tokens 1000 -j";
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. Models.ValueOptions, "--prompt-tokens", "--top"];
+    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, "--prompt-tokens", "--top"];
 
-    public override IReadOnlyDictionary<string, string> ShortForms => Models.ShortForms;
+    public override IReadOnlyDictionary<string, string> ShortForms => ModelChoices.ShortForms;
 
     public override int Run(CommandContext context)
     {
@@ -54,8 +54,8 @@ internal sealed class ProfileCommand : Command
             throw new UsageException("--top and --prompt-tokens need numbers above 0.");
         }
 
-        var choice = Models.Choose(context, modelName);
-        using var model = Models.Load(context, choice);
+        var choice = ModelChoices.Choose(context, modelName);
+        using var model = ModelChoices.Load(context, choice);
         var device = context.Device;
         promptTokens = Math.Max(1, Math.Min(promptTokens, model.MaxPositions - 5));
         var network = model.Network;

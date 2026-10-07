@@ -1,11 +1,13 @@
-# Idrak.LanguageModels
+# Idrak.Nlp
 
-Language models for Idrak (no dependencies): load Llama, Qwen, Mistral, Gemma (1, 2 and 3) and mixture-of-experts (Mixtral, Qwen2-MoE, Qwen3-MoE) models by Hugging Face id, folder or GGUF file (safetensors and quantized GGUF weights, an extensible architecture registry), with their own BPE tokenizers and chat templates; chat with them, fine-tune them (LoRA, DoRA, QLoRA, DPO / ORPO / SimPO, distillation from a teacher model) and score their answers.
+Natural language processing for Idrak (no dependencies beyond Idrak and Idrak.Data): generate text and chat with tools, using each model's own Jinja chat template; host text and chat models in the inference engine; fine-tune language models (LoRA, DoRA, QLoRA, DPO / ORPO / SimPO, distillation from a teacher model), evaluate them and score their answers; search documents (BM25, vectors, rerankers) and answer from them with citations (RAG); run a coding agent with file and shell tools.
+
+Loading the models themselves (Llama, Qwen, Mistral, Gemma and mixture-of-experts models by Hugging Face id, folder or GGUF file, with their BPE tokenizers) is in the core package, `Idrak` (`Idrak.Models`); this package adds `CreateGenerator` and `CreateChat` to a loaded `PretrainedModel`.
 
 ## Install
 
 ```bash
-dotnet add package Idrak.LanguageModels
+dotnet add package Idrak.Nlp
 ```
 
 This is a library (for your code). The command-line tool `idrak` chats with, serves, fine-tunes, evaluates and exports models with no code needed (`idrak chat`, `idrak serve`, `idrak tune`); it is a separate package:

@@ -126,7 +126,7 @@ switch (positional[0])
     {
         using var model = Load(positional[1]);
         Console.WriteLine(model.Spec.ToJson());
-        Console.WriteLine(model.ChatTemplate is { } t ? $"chat template: {t.Source.Length} characters, stops [{string.Join(", ", t.StopSequences)}]" : "no chat template");
+        Console.WriteLine(model.JinjaTemplate is { } t ? $"chat template: {t.Source.Length} characters, stops [{string.Join(", ", t.StopSequences)}]" : "no chat template");
         return 0;
     }
 
@@ -318,7 +318,7 @@ int Check(string referencePath)
         string actual;
         try
         {
-            actual = model.ChatTemplate?.Render(messages, chatTools, think, generationPrompt) ?? "ERROR: no chat template";
+            actual = model.JinjaTemplate?.Render(messages, chatTools, think, generationPrompt) ?? "ERROR: no chat template";
         }
         catch (InvalidOperationException ex)
         {

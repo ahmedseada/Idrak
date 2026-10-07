@@ -24,9 +24,8 @@ alone.
 | Layers | Linear, Conv2d, pooling, BatchNorm, LayerNorm, Embedding, LSTM, GRU, multi-head attention, transformer layers, mixture of experts; graph modules with skip connections and branches |
 | Training | `Trainer` and `TrainingRun`, losses, metrics, early stopping, SGD, Adam, AdamW (fused on the GPU), 8-bit Adam, schedules, gradient clipping, memory offloading |
 | Data | In-memory datasets and lazy sources (streamed CSV, image folders, memory-mapped token files and .npy arrays), views, image augmentation, PNG / BMP / PGM / PPM decoding |
-| Generation | Streaming text generation, batches, sampling, float32 / int8 / bfloat16 KV caches, chat with reasoning and tool calls, a coding agent |
-| Inference | Predictors, model packages (`.ikm`), an inference engine with batching and keep-alive |
-| Retrieval | Chunking, BM25, vector and hybrid search, re-ranking, a RAG pipeline that cites passages |
+| Pretrained models | Llama, Qwen, Mistral, Gemma and mixture-of-experts models by Hugging Face id, folder or GGUF file: safetensors and quantized GGUF weights, BPE tokenizers, LoRA and DoRA adapters in the PEFT layout (`Idrak.Models`) |
+| Inference | Predictors, model packages (`.ikm`), an inference engine with batching and keep-alive (text and chat models are added by `Idrak.Nlp`) |
 | Vision | Channel normalization layer; per-pixel loss for segmentation (region classification and content framing are in `Idrak.Vision`) |
 | ONNX | Export to `.onnx` (opset 17) that ONNX Runtime, TensorRT, OpenVINO, DirectML and other runtimes can run; import of `.onnx` files into layers or graph modules; no dependencies (the protobuf is read and written here) |
 | Telemetry | Hooks that cost nothing when unused: console, CSV metrics, JSON Lines |
@@ -126,14 +125,15 @@ has one with 2,500 rows).
 
 ## Language models
 
-The companion package `Idrak.LanguageModels` loads Llama, Qwen, Mistral, Gemma and mixture-of-experts models from
-Hugging Face or GGUF files, with their own tokenizers and chat templates, and fine-tunes them (LoRA, DoRA, QLoRA,
-preference losses, distillation):
+This package loads Llama, Qwen, Mistral, Gemma and mixture-of-experts models from Hugging Face folders or GGUF files,
+with their own tokenizers (`PretrainedModel`). The companion package `Idrak.Nlp` generates and chats with them (using
+each model's own chat template), fine-tunes them (LoRA, DoRA, QLoRA, preference losses, distillation) and answers from
+documents (RAG); Hugging Face ids are downloaded by `Idrak.Data`, which it brings along:
 
 ```csharp
 using Idrak;
-using Idrak.Generation;
-using Idrak.LanguageModels;
+using Idrak.Models;
+using Idrak.Nlp;
 
 using var model = PretrainedModel.Load(ModelSource.Resolve("Qwen/Qwen3-0.6B"), new PretrainedOptions { Device = Device.Default, Int8 = true });
 var chat = model.CreateChat();
@@ -145,7 +145,7 @@ Console.WriteLine(reply.Message!.Content);
 
 | Package | What it adds |
 |---------|--------------|
-| `Idrak.LanguageModels` | Hugging Face and GGUF language models, tokenizers, chat templates, fine-tuning, evaluation |
+| `Idrak.Nlp` | Text generation and chat with tools, Jinja chat templates, the engine's text and chat models, LLM fine-tuning and evaluation, retrieval and RAG, a coding agent |
 | `Idrak.Data` | JSON Lines, JSON, CSV, text and Parquet files; Hugging Face, GitHub, Kaggle, Zenodo and URL sources |
 | `Idrak.Vision` | Region classification in batches, content framing for classifiers of single objects, image statistics |
 | `Idrak.AspNetCore` | Prediction, generation, a local chat API and an OpenAI-style `/v1` API in ASP.NET Core |

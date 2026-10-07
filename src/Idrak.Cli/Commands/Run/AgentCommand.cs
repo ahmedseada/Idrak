@@ -40,12 +40,12 @@ internal sealed class AgentCommand : Command
           idrak agent qwen -y --context 16384
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. Models.ValueOptions, .. GenerationSettings.ValueOptions, "--workspace", "--rounds"];
+    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, .. GenerationSettings.ValueOptions, "--workspace", "--rounds"];
 
     public override IReadOnlyCollection<string> Flags => [.. GenerationSettings.Flags, "--yes", "--read-only"];
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } =
-        new Dictionary<string, string>(Models.ShortForms.Concat(GenerationSettings.ShortForms).Append(KeyValuePair.Create("-y", "--yes")));
+        new Dictionary<string, string>(ModelChoices.ShortForms.Concat(GenerationSettings.ShortForms).Append(KeyValuePair.Create("-y", "--yes")));
 
     public override int Run(CommandContext context)
     {

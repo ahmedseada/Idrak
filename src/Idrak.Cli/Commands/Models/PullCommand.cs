@@ -5,7 +5,6 @@ using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
 using Idrak.Data;
 using Idrak.Models;
-using Idrak.Nlp;
 
 namespace Idrak.Cli.Commands;
 
@@ -57,7 +56,7 @@ internal sealed class PullCommand : Command
             throw new UsageException($"pull takes one model; '{context.Positional[1]}' is extra.");
         }
 
-        string model = Shared.Models.Choose(context, name).Model;
+        string model = Shared.ModelChoices.Choose(context, name).Model;
         bool dryRun = Terminal.DryRun(context), force = context.Flag("--force");
         if (Directory.Exists(model) || File.Exists(model))
         {
@@ -172,7 +171,7 @@ internal sealed class PullCommand : Command
         if (!gguf)
         {
             // The library's own download, so a pull fetches exactly what loading reads, into the folder loading looks in.
-            folder = await ModelSource.DownloadAsync(repo, commit, token, downloader).ConfigureAwait(false);
+            folder = await HuggingFaceModels.DownloadAsync(repo, commit, token, downloader).ConfigureAwait(false);
         }
         else
         {

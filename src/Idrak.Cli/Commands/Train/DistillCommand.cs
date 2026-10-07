@@ -150,7 +150,7 @@ internal sealed class DistillCommand : Command
 
         string mode = generate ? "generate" : precompute is not null ? "precompute" : stored ? "stored logits" : "logits";
         Device? teacherDevice = context.Option("--teacher-device") is { } deviceName ? ParseDevice(deviceName) : null;
-        var teacherChoice = new Models.ModelChoice(teacher, context.Option("--teacher-weights"), null, null, null);
+        var teacherChoice = new ModelChoices.ModelChoice(teacher, context.Option("--teacher-weights"), null, null, null);
         if (teacherChoice.Weights?.ToLowerInvariant() is not (null or "int8" or "int4" or "bf16" or "bfloat16"))
         {
             throw new UsageException($"--teacher-weights {teacherChoice.Weights}: use int8, int4 or bf16.");
@@ -175,7 +175,7 @@ internal sealed class DistillCommand : Command
             trainingData = [rows];
         }
 
-        var choice = Models.Choose(context, student);
+        var choice = ModelChoices.Choose(context, student);
         List<string> args = ["train", choice.Model, .. trainingData, "--out", output ?? Path.GetDirectoryName(Path.GetFullPath(precompute!))!];
         if ((context.Option("--weights") ?? choice.Weights) is { } weights)
         {
@@ -233,7 +233,7 @@ internal sealed class DistillCommand : Command
             {
                 if (!stored)
                 {
-                    teacherModel = Models.Load(context, teacherChoice, teacherDevice ?? tool.Device);
+                    teacherModel = ModelChoices.Load(context, teacherChoice, teacherDevice ?? tool.Device);
                     console.Out.WriteLine($"teacher {teacher} on {teacherModel.Device}: {teacherModel.Spec.ParameterCount / 1e6:F0}M parameters, vocabulary {teacherModel.Spec.Vocabulary}");
                 }
 
@@ -315,7 +315,7 @@ internal sealed class DistillCommand : Command
     }
 
     // The teacher's answers to the data's prompts, written as chat rows to `path`; returns how many.
-    private static int Generate(CommandContext context, ToolConsole console, Models.ModelChoice choice, Device device, IReadOnlyList<string> data, string path)
+    private static int Generate(CommandContext context, ToolConsole console, ModelChoices.ModelChoice choice, Device device, IReadOnlyList<string> data, string path)
     {
         int maxNew = context.IntOption("--max-new", 512), batchSize = context.IntOption("--batch-size", 8);
         if (maxNew < 1 || batchSize < 1)
@@ -344,15 +344,15 @@ internal sealed class DistillCommand : Command
             }
         }
 
-        using var teacher = Models.Load(context, choice, device);
-        var chat = Models.CreateChat(teacher, choice);
+        using var teacher = ModelChoices.Load(context, choice, device);
+        var chat = ModelChoices.CreateChat(teacher, choice);
         var options = new TeacherDataOptions
         {
             Reasoning = context.Flag("--reasoning"),
             KeepCutOff = context.Flag("--keep-cut-off"),
             MaxNewTokens = maxNew,
             BatchSize = batchSize,
-            Context = Math.Min(Models.DefaultContext, teacher.MaxPositions),
+            Context = Math.Min(ModelChoices.DefaultContext, teacher.MaxPositions),
             System = context.Option("--system"),
             Seed = context.Seed,
         };

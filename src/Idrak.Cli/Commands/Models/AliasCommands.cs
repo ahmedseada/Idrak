@@ -8,7 +8,7 @@ namespace Idrak.Cli.Commands;
 /// <summary>
 /// <c>idrak alias set NAME MODEL [-w F] [-k F]</c>: a short name for a model and its settings, kept in the config's
 /// "aliases" object ({"qwen": {"model": "Qwen/Qwen3-0.6B", "weights": "int8", "kv": "int8"}}) that every model argument
-/// reads (Shared/Models.cs).
+/// reads (Shared/ModelChoices.cs).
 /// </summary>
 internal sealed class AliasSetCommand : Command
 {
@@ -36,7 +36,7 @@ internal sealed class AliasSetCommand : Command
 
     public override IReadOnlyCollection<string> ValueOptions => ["--weights", "--kv"];
 
-    public override IReadOnlyDictionary<string, string> ShortForms => Shared.Models.ShortForms;
+    public override IReadOnlyDictionary<string, string> ShortForms => Shared.ModelChoices.ShortForms;
 
     public override int Run(CommandContext context)
     {

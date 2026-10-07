@@ -16,7 +16,7 @@ internal static partial class Tests
 {
     private static readonly (string Name, Action<Device> Run)[] ModelPluginGroup =
     [
-        ("plugins: the built-in checkpoint formats, GGUF types and architectures, model sources and tokenizer components are in their registries", BuiltInModelPlugins),
+        ("plugins: the built-in checkpoint formats, GGUF types and architectures, model sources, chat-template readers and tokenizer components are in their registries", BuiltInModelPlugins),
         ("plugins: a registered checkpoint format (weights in a JSON file) loads a model whose loss matches the safetensors copy", CustomCheckpointFormat),
         ("plugins: a registered GGUF type dequantizes (whole tensors and blocks), and a registered GGUF architecture name loads like llama", CustomGgufTypeAndArchitecture),
         ("plugins: GGUF pre-tokenizers by name: the built-ins (llama3, qwen2, tekken, gpt2 families) are registered; an unregistered name uses Llama 3's rule with a note; a registered name gives its pattern and the original tokens", CustomGgufPreTokenizer),
@@ -47,7 +47,22 @@ internal static partial class Tests
             "Q8_0 and Q6_K blocks; names of types not registered");
         Check(GgufArchitectures.Names.ToHashSet().SetEquals(["llama", "qwen2", "qwen3", "qwen2moe", "qwen3moe"]) && GgufArchitectures.Get("llama") is { InterleavedQueryKeys: true, WithExperts: "MixtralForCausalLM" }
               && GgufArchitectures.Get("qwen3") is { HuggingFace: "Qwen3ForCausalLM", InterleavedQueryKeys: false }, "GGUF architectures");
-        Check(ModelSources.Names.SequenceEqual(["folder", "store", "gguf", "huggingface"]), $"sources: {string.Join(", ", ModelSources.Names)}");
+        // Idrak.Data registers the Hugging Face source after Idrak's own, so it is asked first; it leaves them their names.
+        Check(ModelSources.Names.SequenceEqual(["huggingface", "folder", "store", "gguf"]), $"sources: {string.Join(", ", ModelSources.Names)}");
+        Check(ModelSources.For("store:user/model:q8")?.Name == "store" && ModelSources.For("Qwen/Qwen3-0.6B")?.Name == "huggingface",
+            "a store name with an owner is the store's, an owner/name id the Hub's");
+        Check(Idrak.Abstraction.Generation.ChatTemplates.Names.SequenceEqual(["jinja"]), $"chat-template readers: {string.Join(", ", Idrak.Abstraction.Generation.ChatTemplates.Names)}");
+        string missing = Path.Combine(Path.GetTempPath(), "idrak-no-model-" + Guid.NewGuid().ToString("N"));
+        Idrak.Abstraction.Generation.ChatTemplates.Register("test-chatml", (folder, _) => folder == missing ? new ChatMLTemplate() : null);
+        try
+        {
+            Check(Idrak.Abstraction.Generation.ChatTemplates.Load(missing) is ChatMLTemplate && Idrak.Abstraction.Generation.ChatTemplates.Load(missing + "-other") is null,
+                "a registered chat-template reader is asked first; a folder no reader reads has no template");
+        }
+        finally
+        {
+            Idrak.Abstraction.Generation.ChatTemplates.Unregister("test-chatml");
+        }
         Check(ModelSources.For(folder)?.Name == "folder" && ModelSources.For(gguf)?.Name == "gguf" && ModelSources.For("store:x")?.Name == "store"
               && ModelSources.For("Qwen/Qwen3-0.6B")?.Name == "huggingface" && ModelSources.For("no such thing") is null, "sources claim their names");
         Check(TokenizerComponents.NormalizerTypes.Contains("NFC") && TokenizerComponents.PreTokenizerTypes.Contains("ByteLevel")

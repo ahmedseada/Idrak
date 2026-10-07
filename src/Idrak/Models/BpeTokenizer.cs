@@ -287,7 +287,7 @@ public sealed class BpeTokenizer : ITokenizer
     /// Appends the ids of <paramref name="text"/>[<paramref name="start"/>..<paramref name="start"/> + <paramref name="length"/>]
     /// to <paramref name="ids"/>: the ids <see cref="Encode"/> gives for that substring, without copying it.
     /// </summary>
-    internal void EncodeRange(string text, int start, int length, List<int> ids)
+    public void EncodeRange(string text, int start, int length, List<int> ids)
     {
         if (text.AsSpan(start, length).ContainsAnyInRange('\uD800', '\uDFFF'))
         {
