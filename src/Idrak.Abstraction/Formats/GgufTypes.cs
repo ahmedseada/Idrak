@@ -69,7 +69,7 @@ public static class GgufTypes
 {
     private static readonly Dictionary<int, GgufType> Registry = [];
 
-    static GgufTypes() => LibraryDefaults.Ensure();
+    static GgufTypes() => LibraryDefaults.Ensure(typeof(GgufTypes));
 
     /// <summary>Registers (or replaces) the ggml type with id <paramref name="id"/>.</summary>
     public static void Register(int id, GgufType type)

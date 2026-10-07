@@ -12,13 +12,16 @@ namespace Idrak.Onnx;
 /// </summary>
 internal static class OnnxBuiltIns
 {
-    public static void RegisterAll()
+    public static void RegisterImports()
     {
         foreach (var (op, translate) in Importer.BuiltInOps)
         {
             OnnxImportOps.Register(op, translate);
         }
+    }
 
+    public static void RegisterExports()
+    {
         OnnxExportOps.Register<Layers.Linear>((g, linear, x, shape) => Linear(g, linear, x, shape));
         OnnxExportOps.Register<ReLU>((g, _, x, shape) => g.Node("Relu", [x], shape));
         OnnxExportOps.Register<Tanh>((g, _, x, shape) => g.Node("Tanh", [x], shape));

@@ -20,7 +20,7 @@ public static class LayerTypes
     private static readonly Dictionary<Type, Entry> ByType = [];
 
     // Idrak's layers (linear, conv2d, attention, ..., sequential) are registered before the first use.
-    static LayerTypes() => LibraryDefaults.Ensure();
+    static LayerTypes() => LibraryDefaults.Ensure(typeof(LayerTypes));
 
     /// <summary>
     /// Registers (or replaces) the layer type <paramref name="type"/> for modules of type <typeparamref name="T"/>:

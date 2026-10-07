@@ -15,7 +15,7 @@ public static class ChatTemplates
 
     private static readonly List<Entry> Registry = [];
 
-    static ChatTemplates() => LibraryDefaults.Ensure();
+    static ChatTemplates() => LibraryDefaults.Ensure(typeof(ChatTemplates));
 
     /// <summary>
     /// Registers the reader <paramref name="name"/>: <paramref name="load"/> reads the chat template of a model folder

@@ -30,7 +30,7 @@ public static class ParquetCodecs
     private static readonly Dictionary<int, IParquetCodec> Registry = [];
 
     // The built-ins of the first-party assemblies (Idrak.Data) are registered before the first use.
-    static ParquetCodecs() => LibraryDefaults.Ensure();
+    static ParquetCodecs() => LibraryDefaults.Ensure(typeof(ParquetCodecs));
 
     /// <summary>Registers (or replaces) the codec for its <see cref="IParquetCodec.Id"/>.</summary>
     public static void Register(IParquetCodec codec)

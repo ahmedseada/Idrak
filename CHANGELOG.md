@@ -91,8 +91,9 @@
     the Jinja-only API.
   - `PretrainedModel.CreateGenerator`/`CreateChat` and `ModelPackageReader.TextGenerator` are extensions in Idrak.Nlp
     (`using Idrak.Nlp;` / `using Idrak.Inference;`). `BpeTokenizer.EncodeRange` is public.
-  - Core registers the model formats itself, so an app on core alone pays for them at first use (tens of
-    milliseconds, mostly JIT).
+- Built-ins are registered per registry, when that registry is first used, instead of all at once on the first use of
+  any registry: training a network no longer builds the GGUF tables, model formats or ONNX translators (about 30 to 40
+  ms less at startup on a CPU). A first-party assembly's `LibraryRegistrations` has `RegisterFor(Type registry)`.
 - Tools are contracts, and the bridges speak only to contracts:
   - `Tool`, `[Tool]`, `ToolResult`, `ToolRegistry` and its builder move from `Idrak.Generation` to
     `Idrak.Abstraction.Generation`. `ToolRegistry` is the default of the new `IToolRegistry`, and the builders,

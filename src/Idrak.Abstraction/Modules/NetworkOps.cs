@@ -65,7 +65,7 @@ public static class NetworkOps
     private static readonly Dictionary<string, NetworkOp> Registry = new(StringComparer.Ordinal);
 
     // Idrak's steps (one per builder layer: linear, relu, conv2d, transformer, ...) are registered before the first use.
-    static NetworkOps() => LibraryDefaults.Ensure();
+    static NetworkOps() => LibraryDefaults.Ensure(typeof(NetworkOps));
 
     /// <summary>Registers (or replaces) the network step <paramref name="name"/>.</summary>
     public static void Register(string name, NetworkOp op)

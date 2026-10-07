@@ -110,7 +110,7 @@ public static class SampleSources
     private static readonly Dictionary<string, SampleSourceFactory> Registry = new(StringComparer.OrdinalIgnoreCase);
 
     // Idrak's built-in sources (csv, images, tokens, npy) are registered before the first use.
-    static SampleSources() => LibraryDefaults.Ensure();
+    static SampleSources() => LibraryDefaults.Ensure(typeof(SampleSources));
 
     /// <summary>Registers (or replaces) the source <paramref name="name"/> (names ignore case).</summary>
     public static void Register(string name, SampleSourceFactory factory)

@@ -39,7 +39,7 @@ public static class GgufArchitectures
 {
     private static readonly Dictionary<string, GgufArchitecture> Registry = new(StringComparer.Ordinal);
 
-    static GgufArchitectures() => LibraryDefaults.Ensure();
+    static GgufArchitectures() => LibraryDefaults.Ensure(typeof(GgufArchitectures));
 
     /// <summary>Registers (or replaces) how to read the GGUF architecture <paramref name="name"/>.</summary>
     public static void Register(string name, GgufArchitecture architecture)
