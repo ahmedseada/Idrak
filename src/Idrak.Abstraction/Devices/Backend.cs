@@ -232,6 +232,9 @@ public abstract partial class Backend
     // Operations this device has run through the host fallback (HostCall), read through Kernels.HostCalls.
     private long _hostCalls;
 
+    // RetryOnHost: 1 on, 0 off, -1 not read yet from IDRAK_RETRY_ON_HOST (read on first use, when Kind is safe to call).
+    private int _retryOnHost = -1;
+
     /// <summary>Starts a device; <see cref="Kernels"/> tells it when the kernels registered for it change.</summary>
     protected Backend() => Operations.Kernels.Track(this);
 
@@ -249,6 +252,105 @@ public abstract partial class Backend
         {
             Volatile.Write(ref _trace, value);
             KernelsChanged();
+        }
+    }
+
+    /// <summary>
+    /// Whether an operation whose kernel on this device fails (throws a <see cref="DeviceException"/>) runs again on the
+    /// CPU, through the host fallback, instead of throwing. Off by default (plan 10, decision 13: a silent retry would hide
+    /// driver bugs and change speed by orders of magnitude); its first value comes from the environment variable
+    /// <c>IDRAK_RETRY_ON_HOST</c>: <c>1</c> or <c>all</c> turns it on for every device but the CPU, a list of kinds
+    /// (<c>cuda,vulkan</c>) for those kinds.
+    /// </summary>
+    /// <remarks>
+    /// Each retry is reported to telemetry (<see cref="DeviceFailed"/>, <see cref="DeviceFailed.RetriedOnHost"/>) and
+    /// counted as a host call (<see cref="Operations.Kernels.HostCalls"/>). Only operations whose default is the host
+    /// fallback are retried: a composed operation retries its parts one by one, an operation with no fallback throws, and
+    /// so does a kernel registered with <see cref="Operations.Kernels.Register"/>. An error the GPU reports after the
+    /// operation returned (found at a later synchronize or copy) can't be retried. While it is on, calls leave the
+    /// inlined fast path, as under a trace.
+    /// </remarks>
+    public bool RetryOnHost
+    {
+        get
+        {
+            int retry = Volatile.Read(ref _retryOnHost);
+            if (retry < 0)
+            {
+                retry = RetryOnHostFrom(Environment.GetEnvironmentVariable("IDRAK_RETRY_ON_HOST"), Kind) ? 1 : 0;
+                retry = Interlocked.CompareExchange(ref _retryOnHost, retry, -1) is var before and >= 0 ? before : retry;
+            }
+
+            return retry == 1;
+        }
+
+        set
+        {
+            Volatile.Write(ref _retryOnHost, value ? 1 : 0);
+            KernelsChanged();
+        }
+    }
+
+    /// <summary>
+    /// Whether <c>IDRAK_RETRY_ON_HOST</c> set to <paramref name="setting"/> turns the retry on for a device of
+    /// <paramref name="kind"/>: <c>1</c>, <c>true</c> or <c>all</c> for every kind but "cpu", or a comma list of kinds
+    /// (any case); not set, empty, <c>0</c> or <c>false</c>: off.
+    /// </summary>
+    internal static bool RetryOnHostFrom(string? setting, string kind)
+    {
+        if (string.IsNullOrWhiteSpace(setting))
+        {
+            return false;
+        }
+
+        foreach (string item in setting.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (item is "1" || item.Equals("all", StringComparison.OrdinalIgnoreCase) || item.Equals("true", StringComparison.OrdinalIgnoreCase))
+            {
+                return !kind.Equals("cpu", StringComparison.OrdinalIgnoreCase);
+            }
+
+            if (item.Equals(kind, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // The dispatcher's retry of one call (Backend.NameRegistered, for an operation whose default is the host fallback):
+    // while the device's kernel runs, a DeviceException does not report itself; Failed reports it once, with the
+    // operation, before the call runs again on the host (NameOnHost), where errors report themselves again. A mutable
+    // struct, so a plain local (not a `using` one, which would be read-only).
+    private struct HostRetry
+    {
+        private readonly Operation _operation;
+        private bool _ended;
+
+        public HostRetry(Operation operation)
+        {
+            _operation = operation;
+            DeviceException.EnterRetry();
+        }
+
+        // The device's kernel threw: ends the quiet part and reports the retry.
+        public void Failed(DeviceException failure)
+        {
+            End();
+            if (Telemetry.IsEnabled(TelemetryLevel.Devices))
+            {
+                Telemetry.DeviceFailed(new DeviceFailed(failure.Device, _operation.Name, failure.Message, RetriedOnHost: true, Hint: null));
+            }
+        }
+
+        public void End()
+        {
+            if (!_ended)
+            {
+                _ended = true;
+                DeviceException.LeaveRetry();
+            }
         }
     }
 
@@ -273,11 +375,11 @@ public abstract partial class Backend
     }
 
     // Resolves the slots; stores them unless Kernels changed meanwhile (then the next call resolves again). With nothing
-    // registered and no trace the slots are dropped, so calls take the fast path again.
+    // registered, no trace and no retry on the host the slots are dropped, so calls take the fast path again.
     private Delegate?[] ResolveKernels(Delegate?[] unresolved)
     {
         var slots = Operations.Kernels.Resolve(this);
-        bool direct = Array.TrueForAll(slots, k => k is null) && Volatile.Read(ref _trace) is null;
+        bool direct = Array.TrueForAll(slots, k => k is null) && Volatile.Read(ref _trace) is null && !RetryOnHost;
         Interlocked.CompareExchange(ref _kernels, direct ? null : slots, unresolved);
         return slots;
     }
