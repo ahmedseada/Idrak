@@ -10,23 +10,42 @@ namespace Idrak;
 /// its layer types, graph operations and network-builder steps, its ONNX import operators and export translators, the hooks
 /// tensors and modules reach its layers through, and what loading a pretrained model asks (checkpoint formats, model
 /// sources, GGUF types and families, pretrained families). <c>LibraryDefaults.Ensure</c> (in Idrak.Abstraction) calls
-/// <see cref="RegisterAll"/> once, before any of those registries is first used.
+/// <see cref="RegisterFor"/> once per registry, before that registry is first used, so an application pays only for the
+/// registries it uses.
 /// </summary>
 internal static class LibraryRegistrations
 {
-    private static void RegisterAll()
+    private static readonly Dictionary<Type, Action> ByRegistry = new()
+    {
+        [typeof(DeviceProviders)] = RegisterDevices,
+        [typeof(SampleSources)] = Data.LibrarySampleSources.RegisterAll,
+        [typeof(LayerTypes)] = Layers.LibraryLayerTypes.RegisterAll,
+        [typeof(GraphOps)] = Layers.LibraryGraphOps.RegisterAll,
+        [typeof(NetworkOps)] = Layers.LibraryNetworkOps.RegisterAll,
+        [typeof(OnnxImportOps)] = Onnx.OnnxBuiltIns.RegisterImports,
+        [typeof(OnnxExportOps)] = Onnx.OnnxBuiltIns.RegisterExports,
+        [typeof(CheckpointFormats)] = Models.LibraryModelFormats.RegisterCheckpointFormats,
+        [typeof(ModelSources)] = Models.LibraryModelFormats.RegisterModelSources,
+        [typeof(GgufTypes)] = Models.LibraryModelFormats.RegisterGgufTypes,
+        [typeof(GgufArchitectures)] = Models.LibraryModelFormats.RegisterGgufArchitectures,
+        [typeof(GgufPreTokenizers)] = Models.LibraryModelFormats.RegisterGgufPreTokenizers,
+        [typeof(PretrainedArchitectures)] = Models.LibraryModelFormats.RegisterPretrainedArchitectures,
+    };
+
+    private static void RegisterFor(Type registry)
+    {
+        if (ByRegistry.TryGetValue(registry, out var register))
+        {
+            register();
+        }
+    }
+
+    private static void RegisterDevices()
     {
         Offloading.ConnectTensors();   // the devices below are the ones that offload weights
         foreach (var provider in LibraryDevices.Providers())
         {
             DeviceProviders.Register(provider);
         }
-
-        Data.LibrarySampleSources.RegisterAll();
-        Layers.LibraryLayerTypes.RegisterAll();
-        Layers.LibraryGraphOps.RegisterAll();
-        Layers.LibraryNetworkOps.RegisterAll();
-        Onnx.OnnxBuiltIns.RegisterAll();
-        Models.LibraryModelFormats.RegisterAll();
     }
 }

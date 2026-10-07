@@ -34,7 +34,7 @@ public static class DataFileFormats
     private static Dictionary<string, IDataFileFormat> byExtension = ByExtension();
 
     // The built-ins of the first-party assemblies (Idrak.Data) are registered before the first use.
-    static DataFileFormats() => LibraryDefaults.Ensure();
+    static DataFileFormats() => LibraryDefaults.Ensure(typeof(DataFileFormats));
 
     /// <summary>Registers <paramref name="format"/>, replacing a format of the same name (names ignore case).</summary>
     public static void Register(IDataFileFormat format)

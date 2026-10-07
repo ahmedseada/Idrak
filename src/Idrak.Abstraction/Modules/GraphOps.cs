@@ -74,7 +74,7 @@ public static class GraphOps
     private static readonly Dictionary<string, GraphOp> Registry = new(StringComparer.Ordinal);
 
     // Idrak's operations (the element-wise and tensor operations ONNX names) are registered before the first use.
-    static GraphOps() => LibraryDefaults.Ensure();
+    static GraphOps() => LibraryDefaults.Ensure(typeof(GraphOps));
 
     /// <summary>Registers (or replaces) the graph operation <paramref name="name"/>.</summary>
     public static void Register(string name, GraphOp op)

@@ -65,7 +65,7 @@ public static class PretrainedArchitectures
 {
     private static readonly Dictionary<string, PretrainedArchitecture> Registry = new(StringComparer.Ordinal);
 
-    static PretrainedArchitectures() => LibraryDefaults.Ensure();
+    static PretrainedArchitectures() => LibraryDefaults.Ensure(typeof(PretrainedArchitectures));
 
     /// <summary>Registers (or replaces) how to read the architecture <paramref name="name"/>.</summary>
     public static void Register(string name, PretrainedArchitecture architecture)

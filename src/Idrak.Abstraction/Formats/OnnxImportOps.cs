@@ -107,7 +107,7 @@ public static class OnnxImportOps
     private static readonly Dictionary<string, OnnxImportTranslator> Registry = new(StringComparer.Ordinal);
 
     // The built-ins of the first-party assemblies (Idrak) are registered before the first use.
-    static OnnxImportOps() => LibraryDefaults.Ensure();
+    static OnnxImportOps() => LibraryDefaults.Ensure(typeof(OnnxImportOps));
 
     /// <summary>Registers (or replaces) how to import nodes of the operator type <paramref name="opType"/>.</summary>
     public static void Register(string opType, OnnxImportTranslator translate)

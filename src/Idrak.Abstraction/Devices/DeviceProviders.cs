@@ -59,7 +59,7 @@ internal static class DeviceProviders
 {
     private static readonly List<DeviceProvider> Registry = [];
 
-    static DeviceProviders() => LibraryDefaults.Ensure();   // Idrak's GPU devices, first
+    static DeviceProviders() => LibraryDefaults.Ensure(typeof(DeviceProviders));   // Idrak's GPU devices, first
 
     /// <summary>The registered providers, in registration order.</summary>
     public static IReadOnlyList<DeviceProvider> All

@@ -44,7 +44,7 @@ public static class CheckpointFormats
     // In the order they are asked.
     private static readonly List<ICheckpointFormat> Registry = [];
 
-    static CheckpointFormats() => LibraryDefaults.Ensure();
+    static CheckpointFormats() => LibraryDefaults.Ensure(typeof(CheckpointFormats));
 
     /// <summary>
     /// Registers <paramref name="format"/>: it replaces the format of the same name (in its place), or is asked before

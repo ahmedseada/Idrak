@@ -14,7 +14,7 @@ public static class GgufPreTokenizers
 {
     private static readonly Dictionary<string, string?> Registry = new(StringComparer.Ordinal);
 
-    static GgufPreTokenizers() => LibraryDefaults.Ensure();
+    static GgufPreTokenizers() => LibraryDefaults.Ensure(typeof(GgufPreTokenizers));
 
     /// <summary>
     /// Registers (or replaces) the split pattern of the pre-tokenizer named <paramref name="name"/> in GGUF files; null

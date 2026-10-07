@@ -51,7 +51,7 @@ public static class TokenizerComponents
     private static readonly Dictionary<string, Func<JsonObject, IPreTokenizer>?> PreTokenizers = BuiltIn<IPreTokenizer>(BuiltInPreTokenizers);
     private static readonly Dictionary<string, Func<JsonObject, ITokenizerDecoder>?> Decoders = BuiltIn<ITokenizerDecoder>(BuiltInDecoders);
 
-    static TokenizerComponents() => LibraryDefaults.Ensure();   // components a first-party assembly adds are registered before the first lookup
+    static TokenizerComponents() => LibraryDefaults.Ensure(typeof(TokenizerComponents));   // components a first-party assembly adds are registered before the first lookup
 
     private static Dictionary<string, Func<JsonObject, T>?> BuiltIn<T>(string[] types) =>
         types.ToDictionary(t => t, Func<JsonObject, T>? (_) => null, StringComparer.Ordinal);

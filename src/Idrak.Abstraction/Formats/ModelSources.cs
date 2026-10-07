@@ -50,7 +50,7 @@ public static class ModelSources
 {
     private static readonly List<IModelSource> Registry = [];
 
-    static ModelSources() => LibraryDefaults.Ensure();
+    static ModelSources() => LibraryDefaults.Ensure(typeof(ModelSources));
 
     /// <summary>
     /// Registers <paramref name="source"/>: it replaces the source of the same name (in its place), or is asked before
