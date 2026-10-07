@@ -1099,7 +1099,8 @@ ReduceMean, Clip, Pow, Sqrt, Neg, LeakyRelu, Elu, HardSigmoid, HardSwish, Max, M
 PyTorch's flatten, computed for any batch size). So ResNet-style models with skip connections and branches import
 too, and export again: `OnnxExport.For(graph)` writes a `GraphModule` node by node, so import, export and import
 round-trip. Operators of your own are registered once and used by both kinds of import: `OnnxImportOps.Register`
-with builder steps (a layer node in a graph) or `context.AddGraphOp` (a `GraphOps` operation node). Translators for
+with network steps by name (`context.Add("linear", arguments)`, any step registered in `NetworkOps`; a layer node in a
+graph) or `context.AddGraphOp` (a `GraphOps` operation node). Translators for
 export are registered for every export in `OnnxExportOps` (modules by type, lambdas by name, graph operations by
 name); those given to one exporter take precedence. Erf (except inside GELU), ConvTranspose and other operators
 without an Idrak tensor operation are not imported, and graphs have one input and one output. Exact GELU becomes the tanh approximation and is listed in

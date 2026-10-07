@@ -198,13 +198,13 @@ internal sealed class Importer(OnnxModel model, Device device, int[]? sampleShap
 
         var node = users[0];
         Consume(node);
-        var translate = OnnxImportOps.TryGet(node.Op) ?? throw UnknownOperator(node);
-        return translate(new OnnxImportContext(this, node, x));
+        var translate = OnnxImportOps.Find(node.Op) ?? throw UnknownOperator(node);
+        return translate(new ImportContext(this, node, x));
     }
 
     // The single-node operators, registered in OnnxImportOps (a translator returns the value the chain continues from).
     // A graph uses its own primitives for these (they build chains), unless a translator of your own replaces one.
-    internal static readonly IReadOnlyDictionary<string, OnnxImportTranslator> BuiltInOps = new Dictionary<string, OnnxImportTranslator>
+    internal static readonly IReadOnlyDictionary<string, OnnxImportTranslator> BuiltInOps = new Dictionary<string, Func<ImportContext, string>>
     {
         ["Identity"] = c => c.Output,
         ["Dropout"] = c => c.Output,
@@ -258,7 +258,7 @@ internal sealed class Importer(OnnxModel model, Device device, int[]? sampleShap
 
             return c.Add(b => b.Reshape([.. shape[1..].Select(d => (int)d)]));
         },
-    };
+    }.ToDictionary(p => p.Key, p => (OnnxImportTranslator)(c => p.Value((ImportContext)c)), StringComparer.Ordinal);
 
     private string GlobalAveragePool(OnnxNode node)
     {
@@ -392,7 +392,7 @@ internal sealed class Importer(OnnxModel model, Device device, int[]? sampleShap
                 }
 
                 Consume(node);
-                var translate = OnnxImportOps.TryGet(node.Op);
+                var translate = OnnxImportOps.Find(node.Op);
                 bool primitive = Primitives.ContainsKey(node.Op) && node.Domain is "" or "ai.onnx";
                 bool replaced = translate is not null && !(BuiltInOps.TryGetValue(node.Op, out var builtIn) && builtIn == translate);
                 if (replaced && x is not null)
@@ -452,7 +452,7 @@ internal sealed class Importer(OnnxModel model, Device device, int[]? sampleShap
     private void Translate(OnnxNode node, string x, OnnxImportTranslator translate)
     {
         CheckExtraOutputs(node);
-        var context = new OnnxImportContext(this, node, x, graph: true);
+        var context = new ImportContext(this, node, x, graph: true);
         translate(context);
         if (!_graphNodes.Any(n => n.Output == node.Outputs[0]))
         {

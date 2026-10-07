@@ -9,6 +9,18 @@ namespace Idrak.Datasets.Parquet;
 /// <summary>The built-in decompressors of Parquet pages (Snappy, Gzip, Brotli and LZ4 raw), registered in <see cref="ParquetCodecs"/>.</summary>
 internal static class Codecs
 {
+    private delegate byte[] Decompressor(ReadOnlySpan<byte> input, int uncompressedSize);
+
+    // Called by LibraryRegistrations (once, before ParquetCodecs is first used).
+    public static void RegisterAll()
+    {
+        ParquetCodecs.Register(new BuiltIn(0, "Uncompressed", (input, _) => input.ToArray()));
+        ParquetCodecs.Register(new BuiltIn(1, "Snappy", Snappy));
+        ParquetCodecs.Register(new BuiltIn(2, "Gzip", Gzip));
+        ParquetCodecs.Register(new BuiltIn(4, "Brotli", Brotli));
+        ParquetCodecs.Register(new BuiltIn(7, "Lz4Raw", Lz4Block));
+    }
+
     public static byte[] Gzip(ReadOnlySpan<byte> input, int uncompressedSize)
     {
         using var gzip = new GZipStream(new MemoryStream(input.ToArray()), CompressionMode.Decompress);
@@ -171,5 +183,14 @@ internal static class Codecs
         }
 
         return output;
+    }
+
+    private sealed class BuiltIn(int id, string name, Decompressor decompress) : IParquetCodec
+    {
+        public int Id => id;
+
+        public string Name => name;
+
+        public byte[] Decompress(ReadOnlySpan<byte> input, int uncompressedSize) => decompress(input, uncompressedSize);
     }
 }

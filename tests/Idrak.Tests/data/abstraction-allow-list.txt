@@ -1,12 +1,5 @@
 # Plan 10: abstractions still declared outside Idrak.Abstraction.*. This list may only shrink: declare new
 # interfaces, abstract classes and registries under Idrak.Abstraction.* (tests/Idrak.Tests/InventoryTests.cs).
-Idrak.Datasets.DataFileFormats
-Idrak.Datasets.DatasetSources
-Idrak.Datasets.IDataFileFormat
-Idrak.Datasets.IDatasetSource
-Idrak.Datasets.IParquetCodec
-Idrak.Datasets.ITextNormalizer
-Idrak.Datasets.ParquetCodecs
 Idrak.Inference.EngineModel
 Idrak.LanguageModels.CheckpointFormats
 Idrak.LanguageModels.DistillationTeacher
@@ -23,6 +16,3 @@ Idrak.LanguageModels.ModelSources
 Idrak.LanguageModels.PretrainedArchitectures
 Idrak.LanguageModels.TeacherDistributions
 Idrak.LanguageModels.TokenizerComponents
-Idrak.Onnx.OnnxBuiltIns
-Idrak.Onnx.OnnxExportOps
-Idrak.Onnx.OnnxImportOps

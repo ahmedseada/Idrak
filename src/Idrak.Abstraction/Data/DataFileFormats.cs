@@ -3,10 +3,10 @@
 
 using System.Text.Json.Nodes;
 
-namespace Idrak.Datasets;
+namespace Idrak.Abstraction.Data;
 
 /// <summary>
-/// A kind of data file <see cref="Dataset"/> reads: its name, the extensions it is chosen by and how its rows are read.
+/// A kind of data file a dataset reads (<c>Dataset</c> and <c>DataFiles</c> in Idrak.Datasets): its name, the extensions it is chosen by and how its rows are read.
 /// Register new ones with <see cref="DataFileFormats.Register"/>.
 /// </summary>
 public interface IDataFileFormat
@@ -22,25 +22,19 @@ public interface IDataFileFormat
 }
 
 /// <summary>
-/// The data file formats <see cref="DataFiles"/> knows, by name and by extension. JSON Lines, JSON, CSV, TSV, Parquet,
-/// text and source code are registered (named as <see cref="DataFormat"/>); add others, or replace these, with
-/// <see cref="Register"/>.
+/// The data file formats datasets read (<c>DataFiles</c> in Idrak.Datasets), by name and by extension. Idrak.Datasets
+/// registers JSON Lines, JSON, CSV, TSV, Parquet, text and source code (named as <see cref="DataFormat"/>); add others,
+/// or replace these, with <see cref="Register"/>.
 /// </summary>
 public static class DataFileFormats
 {
     // In registration order; a later format takes the extensions it shares with earlier ones.
-    private static readonly List<IDataFileFormat> Registry =
-    [
-        new BuiltIn(nameof(DataFormat.JsonLines), [".jsonl", ".ndjson"], (open, path, _) => DataFiles.JsonLines(open, path)),
-        new BuiltIn(nameof(DataFormat.Json), [".json"], DataFiles.Json),
-        new BuiltIn(nameof(DataFormat.Csv), [".csv"], (open, _, options) => DataFiles.Delimited(open, ',', options)),
-        new BuiltIn(nameof(DataFormat.Tsv), [".tsv"], (open, _, options) => DataFiles.Delimited(open, '\t', options)),
-        new BuiltIn(nameof(DataFormat.Parquet), [".parquet"], (open, _, _) => DataFiles.ParquetRows(open)),
-        new BuiltIn(nameof(DataFormat.Text), [".txt", ".text", ".md", ".markdown", ".rst"], DataFiles.Text),
-        new BuiltIn(nameof(DataFormat.Code), [.. DataFiles.CodeLanguages.Keys], DataFiles.Code),
-    ];
+    private static readonly List<IDataFileFormat> Registry = [];
 
     private static Dictionary<string, IDataFileFormat> byExtension = ByExtension();
+
+    // The built-ins of the first-party assemblies (Idrak.Datasets) are registered before the first use.
+    static DataFileFormats() => LibraryDefaults.Ensure();
 
     /// <summary>Registers <paramref name="format"/>, replacing a format of the same name (names ignore case).</summary>
     public static void Register(IDataFileFormat format)
@@ -110,7 +104,7 @@ public static class DataFileFormats
     }
 
     // Whether the format has the name of a built-in (it may be a replacement registered under that name).
-    internal static bool Is(IDataFileFormat format, DataFormat builtIn) =>
+    private static bool Is(IDataFileFormat format, DataFormat builtIn) =>
         string.Equals(format.Name, builtIn.ToString(), StringComparison.OrdinalIgnoreCase);
 
     private static Dictionary<string, IDataFileFormat> ByExtension()
@@ -125,14 +119,5 @@ public static class DataFileFormats
         }
 
         return map;
-    }
-
-    private sealed class BuiltIn(string name, string[] extensions, Func<Func<Stream>, string, ReadOptions, IEnumerable<JsonObject>> read) : IDataFileFormat
-    {
-        public string Name => name;
-
-        public IReadOnlyCollection<string> Extensions => extensions;
-
-        public IEnumerable<JsonObject> Read(Func<Stream> open, string path, ReadOptions options) => read(open, path, options);
     }
 }

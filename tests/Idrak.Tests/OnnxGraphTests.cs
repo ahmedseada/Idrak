@@ -192,7 +192,7 @@ internal static partial class Tests
                 float factor = a.Float("factor");
                 return b.Lambda(v => v * factor, "Scale", [.. b.CurrentShape]);
             });
-            OnnxImportOps.Register("Scale", c => c.Add(b => b.Op("scale", new JsonObject { ["factor"] = c.Float("factor", 1f) })));
+            OnnxImportOps.Register("Scale", c => c.Add("scale", new JsonObject { ["factor"] = c.Float("factor", 1f) }));
 
             using var imported = OnnxImport.Load(bytes, device);
             var graph = (GraphModule)imported.Model;

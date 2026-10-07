@@ -1,9 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using Idrak.Datasets.Parquet;
-
-namespace Idrak.Datasets;
+namespace Idrak.Abstraction.Data;
 
 /// <summary>
 /// Decompression of the pages of Parquet column chunks compressed with one codec, by its id in the Parquet format
@@ -23,22 +21,16 @@ public interface IParquetCodec
 }
 
 /// <summary>
-/// The compression codecs <see cref="ParquetFile"/> reads, by Parquet codec id. Uncompressed, Snappy, Gzip, Brotli and
-/// LZ4 (raw) are registered; add others (Zstandard, for example), or replace these, with <see cref="Register"/>.
-/// The codec is looked up once per column chunk, so a registration applies to chunks read after it.
+/// The compression codecs the Parquet reader (<c>ParquetFile</c> in Idrak.Datasets) reads, by Parquet codec id. Idrak.Datasets
+/// registers uncompressed, Snappy, Gzip, Brotli and LZ4 (raw); add others (Zstandard, for example), or replace these, with
+/// <see cref="Register"/>. The codec is looked up once per column chunk, so a registration applies to chunks read after it.
 /// </summary>
 public static class ParquetCodecs
 {
-    private static readonly Dictionary<int, IParquetCodec> Registry = new()
-    {
-        [0] = new BuiltIn(0, "Uncompressed", (input, _) => input.ToArray()),
-        [1] = new BuiltIn(1, "Snappy", Codecs.Snappy),
-        [2] = new BuiltIn(2, "Gzip", Codecs.Gzip),
-        [4] = new BuiltIn(4, "Brotli", Codecs.Brotli),
-        [7] = new BuiltIn(7, "Lz4Raw", Codecs.Lz4Block),
-    };
+    private static readonly Dictionary<int, IParquetCodec> Registry = [];
 
-    private delegate byte[] Decompressor(ReadOnlySpan<byte> input, int uncompressedSize);
+    // The built-ins of the first-party assemblies (Idrak.Datasets) are registered before the first use.
+    static ParquetCodecs() => LibraryDefaults.Ensure();
 
     /// <summary>Registers (or replaces) the codec for its <see cref="IParquetCodec.Id"/>.</summary>
     public static void Register(IParquetCodec codec)
@@ -99,14 +91,5 @@ public static class ParquetCodecs
                   + "Add a codec with ParquetCodecs.Register."
                 : $"Parquet compression codec {id} is not supported ({known}); add it with ParquetCodecs.Register.");
         }
-    }
-
-    private sealed class BuiltIn(int id, string name, Decompressor decompress) : IParquetCodec
-    {
-        public int Id => id;
-
-        public string Name => name;
-
-        public byte[] Decompress(ReadOnlySpan<byte> input, int uncompressedSize) => decompress(input, uncompressedSize);
     }
 }

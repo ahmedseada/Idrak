@@ -11,11 +11,11 @@ scanned only as a user of `Idrak`'s internals.
 
 | Assembly | Interfaces | Abstract classes | Registries | Total | Outside `Idrak.Abstraction.*` |
 |---|---|---|---|---|---|
-| `Idrak.Abstraction` | 30 | 12 | 11 | 52 | 0 |
+| `Idrak.Abstraction` | 36 | 14 | 16 | 65 | 0 |
 | `Idrak` | 0 | 1 | 0 | 1 | 1 |
 | `Idrak.LanguageModels` | 6 | 2 | 7 | 15 | 15 |
-| `Idrak.Datasets` | 4 | 0 | 3 | 7 | 7 |
-| `Idrak.Onnx` | 0 | 0 | 3 | 3 | 3 |
+| `Idrak.Datasets` | 0 | 0 | 0 | 0 | 0 |
+| `Idrak.Onnx` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Onnx.Runtime` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.AspNetCore` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Mcp` | 0 | 0 | 0 | 0 | 0 |
@@ -32,13 +32,22 @@ proposed namespace (phases 1 to 3 settle it).
 
 | Type | Kind | Visibility | Mentions | Implementations | Registered | Target |
 |---|---|---|---|---|---|---|
+| `Idrak.Abstraction.Data.DataFileFormats` | registry | public | — |  | Code, Csv, Json, JsonLines, Parquet, Text, Tsv | `Idrak.Abstraction.Data` |
+| `Idrak.Abstraction.Data.DatasetSources` | registry | public | — |  | file, folder, github, hf, http, kaggle, zenodo | `Idrak.Abstraction.Data` |
 | `Idrak.Abstraction.Data.IBatchSource` | interface | public | — | DataLoader |  | `Idrak.Abstraction.Data` |
+| `Idrak.Abstraction.Data.IDataFileFormat` | interface | public | — | DataFiles.BuiltIn |  | `Idrak.Abstraction.Data` |
+| `Idrak.Abstraction.Data.IDatasetRows` | interface | public | — | Dataset |  | `Idrak.Abstraction.Data` |
+| `Idrak.Abstraction.Data.IDatasetSource` | interface | public | — | LibraryDatasetSources.Local, LibraryDatasetSources.Prefixed |  | `Idrak.Abstraction.Data` |
+| `Idrak.Abstraction.Data.IDownloader` | interface | public | — | Downloader |  | `Idrak.Abstraction.Data` |
 | `Idrak.Abstraction.Data.IImageCodec` | interface | public | — | BmpCodec, NetpbmCodec, PngCodec |  | `Idrak.Abstraction.Data` |
+| `Idrak.Abstraction.Data.IParquetCodec` | interface | public | — | Codecs.BuiltIn |  | `Idrak.Abstraction.Data` |
 | `Idrak.Abstraction.Data.ISampleReader` | interface | public | — | CsvSource.Reader, TableSamples.Reader |  | `Idrak.Abstraction.Data` |
 | `Idrak.Abstraction.Data.ISampleSource` | interface | public | — | CsvSource, Dataset, ImageFolderSource, NpySource, SampleSourceExtensions.ConcatSource, SampleSourceExtensions.SubsetSource, +1 |  | `Idrak.Abstraction.Data` |
 | `Idrak.Abstraction.Data.ISampleStream` | interface | public | — | CsvSource.Stream, TableSamples.RowStream |  | `Idrak.Abstraction.Data` |
 | `Idrak.Abstraction.Data.ISampleTransform` | interface | public | — | ContentFrame.ReframeTransform, GaussianNoise, RandomFlip, RandomRotation, RandomShift |  | `Idrak.Abstraction.Data` |
+| `Idrak.Abstraction.Data.ITextNormalizer` | interface | public | — | — |  | `Idrak.Abstraction.Data` |
 | `Idrak.Abstraction.Data.ImageCodecs` | registry | public | — |  | bmp, netpbm, png | `Idrak.Abstraction.Data` |
+| `Idrak.Abstraction.Data.ParquetCodecs` | registry | public | — |  | Brotli, Gzip, Lz4Raw, Snappy, Uncompressed | `Idrak.Abstraction.Data` |
 | `Idrak.Abstraction.Data.SampleSources` | registry | public | — |  | csv, images, npy, tokens | `Idrak.Abstraction.Data` |
 | `Idrak.Abstraction.Devices.Backend` | abstract class | internal | Storage | CpuBackend, CudaBackend, HipBackend, VulkanBackend |  | `Idrak.Abstraction.Devices` |
 | `Idrak.Abstraction.Devices.Cpu.CpuBackend.IRangeKernel` | interface | internal | — | CpuBackend.AbsBackwardLoop, CpuBackend.AbsLoop, CpuBackend.AdamLoop, CpuBackend.AddLoop, CpuBackend.AffineLoop, CpuBackend.AxpyLoop, +29 |  | `Idrak.Abstraction.Operations` |
@@ -50,6 +59,10 @@ proposed namespace (phases 1 to 3 settle it).
 | `Idrak.Abstraction.Devices.Storage` | abstract class | internal | Backend | CpuStorage, CudaStorage, HipStorage, VulkanBackend.VulkanStorage |  | `Idrak.Abstraction.Devices` |
 | `Idrak.Abstraction.Diagnostics.ITelemetryHook` | interface | public | — | ChannelTelemetry, ConsoleLogger, JsonLinesLogger, MetricsRecorder |  | `Idrak.Abstraction.Diagnostics` |
 | `Idrak.Abstraction.Formats.IWeightSource` | interface | public | — | CheckpointWeights |  | `Idrak.Abstraction.Formats` |
+| `Idrak.Abstraction.Formats.OnnxExportOps` | registry | public | Module |  | — | `Idrak.Abstraction.Formats` |
+| `Idrak.Abstraction.Formats.OnnxGraph` | abstract class | public | Module | OnnxGraphWriter |  | `Idrak.Abstraction.Formats` |
+| `Idrak.Abstraction.Formats.OnnxImportContext` | abstract class | public | Module | ImportContext |  | `Idrak.Abstraction.Formats` |
+| `Idrak.Abstraction.Formats.OnnxImportOps` | registry | public | — |  | Add, BatchNormalization, Cast, Conv, Dropout, Flatten, Gather, GlobalAveragePool, +9 | `Idrak.Abstraction.Formats` |
 | `Idrak.Abstraction.Formats.WeightCodec` | abstract class | internal | — | WeightCodec.BFloat16Codec, WeightCodec.Float16Codec, WeightCodec.Float32Codec |  | `Idrak.Abstraction.Formats` |
 | `Idrak.Abstraction.Generation.ChatTemplate` | abstract class | public | — | ChatMLTemplate, JinjaChatTemplate |  | `Idrak.Abstraction.Generation` |
 | `Idrak.Abstraction.Generation.ICachedModule` | interface | public | Tensor | CausalSelfAttention, DecoderBlock, MultiHeadAttention, PositionEmbedding, PositionalEncoding, Sequential, +1 |  | `Idrak.Abstraction.Generation` |
@@ -110,26 +123,6 @@ proposed namespace (phases 1 to 3 settle it).
 | `Idrak.LanguageModels.PretrainedArchitectures` | registry | public | — |  | Gemma2ForCausalLM, Gemma3ForCausalLM, GemmaForCausalLM, LlamaForCausalLM, MistralForCausalLM, MixtralForCausalLM, Qwen2ForCausalLM, Qwen2MoeForCausalLM, +2 | `Idrak.Abstraction.Generation` |
 | `Idrak.LanguageModels.TeacherDistributions` | abstract class | internal | Device, Tensor | ModelTeacher.Batch, StoredTeacher.Batch |  | `Idrak.Abstraction.Training` |
 | `Idrak.LanguageModels.TokenizerComponents` | registry | public | — |  | — | `Idrak.Abstraction.Generation` |
-
-### Idrak.Datasets
-
-| Type | Kind | Visibility | Mentions | Implementations | Registered | Target |
-|---|---|---|---|---|---|---|
-| `Idrak.Datasets.DataFileFormats` | registry | public | — |  | Code, Csv, Json, JsonLines, Parquet, Text, Tsv | `Idrak.Abstraction.Data` |
-| `Idrak.Datasets.DatasetSources` | registry | public | — |  | file, folder, github, hf, http, kaggle, zenodo | `Idrak.Abstraction.Data` |
-| `Idrak.Datasets.IDataFileFormat` | interface | public | — | DataFileFormats.BuiltIn |  | `Idrak.Abstraction.Data` |
-| `Idrak.Datasets.IDatasetSource` | interface | public | — | DatasetSources.Local, DatasetSources.Prefixed |  | `Idrak.Abstraction.Data` |
-| `Idrak.Datasets.IParquetCodec` | interface | public | — | ParquetCodecs.BuiltIn |  | `Idrak.Abstraction.Data` |
-| `Idrak.Datasets.ITextNormalizer` | interface | public | — | — |  | `Idrak.Abstraction.Data` |
-| `Idrak.Datasets.ParquetCodecs` | registry | public | — |  | Brotli, Gzip, Lz4Raw, Snappy, Uncompressed | `Idrak.Abstraction.Data` |
-
-### Idrak.Onnx
-
-| Type | Kind | Visibility | Mentions | Implementations | Registered | Target |
-|---|---|---|---|---|---|---|
-| `Idrak.Onnx.OnnxBuiltIns` | registry | internal | Tensor |  | — | `Idrak.Abstraction.Formats` |
-| `Idrak.Onnx.OnnxExportOps` | registry | public | Module |  | — | `Idrak.Abstraction.Formats` |
-| `Idrak.Onnx.OnnxImportOps` | registry | public | — |  | Add, BatchNormalization, Cast, Conv, Dropout, Flatten, Gather, GlobalAveragePool, +9 | `Idrak.Abstraction.Formats` |
 
 ## The device contract (`Backend`)
 
