@@ -11,8 +11,8 @@ scanned only as a user of `Idrak`'s internals.
 
 | Assembly | Interfaces | Abstract classes | Registries | Total | Outside `Idrak.Abstraction.*` |
 |---|---|---|---|---|---|
-| `Idrak.Abstraction` | 29 | 12 | 10 | 50 | 0 |
-| `Idrak` | 0 | 1 | 1 | 2 | 2 |
+| `Idrak.Abstraction` | 30 | 12 | 11 | 52 | 0 |
+| `Idrak` | 0 | 1 | 0 | 1 | 1 |
 | `Idrak.LanguageModels` | 6 | 2 | 7 | 15 | 15 |
 | `Idrak.Datasets` | 4 | 0 | 3 | 7 | 7 |
 | `Idrak.Onnx` | 0 | 0 | 3 | 3 | 3 |
@@ -67,7 +67,9 @@ proposed namespace (phases 1 to 3 settle it).
 | `Idrak.Abstraction.Modules.GraphOps` | registry | public | — |  | abs, add, cast, clip, concat, div, elu, exp, +28 | `Idrak.Abstraction.Modules` |
 | `Idrak.Abstraction.Modules.ILinearAdapter` | interface | public | Tensor | DoraAdapter, LoraAdapter |  | `Idrak.Abstraction.Modules` |
 | `Idrak.Abstraction.Modules.ILinearLayer` | interface | public | Tensor | Linear |  | `Idrak.Abstraction.Modules` |
+| `Idrak.Abstraction.Modules.INetworkBuilder` | interface | public | Device, Module, Tensor | NetworkBuilder |  | `Idrak.Abstraction.Modules` |
 | `Idrak.Abstraction.Modules.LayerTypes` | registry | public | Device, Module |  | attention, batchnorm, conv2d, dropout, embedding, flatten, gelu, globalavgpool2d, +12 | `Idrak.Abstraction.Modules` |
+| `Idrak.Abstraction.Modules.NetworkOps` | registry | public | — |  | attention, batchnorm, conv2d, dropout, embedding, firstStep, flatten, gelu, +16 | `Idrak.Abstraction.Modules` |
 | `Idrak.Abstraction.Modules.RecurrentModule` | abstract class | public | Device, Module, Tensor | GRU, LSTM |  | `Idrak.Abstraction.Modules` |
 | `Idrak.Abstraction.Operations.Kernels` | registry | internal | Backend |  | — | `Idrak.Abstraction.Operations` |
 | `Idrak.Abstraction.Retrieval.IEmbedder` | interface | public | — | TextEncoder |  | `Idrak.Abstraction.Retrieval` |
@@ -88,7 +90,6 @@ proposed namespace (phases 1 to 3 settle it).
 | Type | Kind | Visibility | Mentions | Implementations | Registered | Target |
 |---|---|---|---|---|---|---|
 | `Idrak.Inference.EngineModel` | abstract class | internal | — | GenerativeModel, PredictorModel<TIn, TOut> |  | `Idrak.Abstraction.Serving` |
-| `Idrak.Layers.NetworkOps` | registry | public | — |  | attention, batchnorm, conv2d, dropout, embedding, firstStep, flatten, gelu, +16 | `Idrak.Abstraction.Modules` |
 
 ### Idrak.LanguageModels
 

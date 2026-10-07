@@ -3,21 +3,26 @@
 
 using System.Text.Json.Nodes;
 
-namespace Idrak.Layers;
+namespace Idrak.Abstraction.Modules;
 
 /// <summary>
 /// Adds the layers of one network step to <paramref name="builder"/>, reading the step's arguments from
 /// <paramref name="arguments"/>, and returns the builder. Register it with <see cref="NetworkOps.Register"/>.
 /// </summary>
-public delegate NetworkBuilder NetworkOp(NetworkBuilder builder, NetworkOpArguments arguments);
+public delegate INetworkBuilder NetworkOp(INetworkBuilder builder, NetworkOpArguments arguments);
 
 /// <summary>
-/// The arguments of one network step: the JSON object <see cref="NetworkBuilder.ToJson"/> writes for it
-/// (<c>{"op": "linear", "out": 10, "bias": true}</c>), read with the typed helpers.
+/// The arguments of one network step: the JSON object the network builder writes for it (<c>NetworkBuilder.ToJson</c>:
+/// <c>{"op": "linear", "out": 10, "bias": true}</c>), read with the typed helpers.
 /// </summary>
 public sealed class NetworkOpArguments
 {
-    internal NetworkOpArguments(JsonObject step) => Json = step;
+    /// <summary>The arguments in <paramref name="step"/>, the step's JSON object with its "op".</summary>
+    public NetworkOpArguments(JsonObject step)
+    {
+        ArgumentNullException.ThrowIfNull(step);
+        Json = step;
+    }
 
     /// <summary>The step's name ("op").</summary>
     public string Op => (string)Json["op"]!;
@@ -50,40 +55,17 @@ public sealed class NetworkOpArguments
 }
 
 /// <summary>
-/// The network steps <see cref="Network.FromJson"/> and <see cref="NetworkBuilder.Op"/> know, by the "op" name
-/// <see cref="NetworkBuilder.ToJson"/> writes. Every builder layer is registered ("linear", "relu", "conv2d",
-/// "transformer", ...); add your own with <see cref="Register"/>, so a builder using them can still be written to JSON,
-/// saved in a model package and read back.
+/// The network steps <c>Network.FromJson</c> and <see cref="INetworkBuilder.Op"/> know, by the "op" name the network
+/// builder writes (<c>NetworkBuilder.ToJson</c>). Idrak registers one step per builder layer ("linear", "relu",
+/// "conv2d", "transformer", ...); add your own with <see cref="Register"/>, so a builder using them can still be written
+/// to JSON, saved in a model package and read back. A step sees the builder through <see cref="INetworkBuilder"/>.
 /// </summary>
 public static class NetworkOps
 {
-    private static readonly Dictionary<string, NetworkOp> Registry = new(StringComparer.Ordinal)
-    {
-        ["linear"] = (b, a) => b.Linear(a.Int("out"), a.Bool("bias")),
-        ["relu"] = (b, _) => b.ReLU(),
-        ["tanh"] = (b, _) => b.Tanh(),
-        ["sigmoid"] = (b, _) => b.Sigmoid(),
-        ["gelu"] = (b, _) => b.GELU(),
-        ["softmax"] = (b, _) => b.Softmax(),
-        ["dropout"] = (b, a) => b.Dropout(a.Float("p")),
-        ["batchnorm"] = (b, a) => b.BatchNorm(a.Float("momentum"), a.Float("epsilon")),
-        ["layernorm"] = (b, a) => b.LayerNorm(a.Float("epsilon")),
-        ["normalize"] = (b, a) => b.Normalize(a.Floats("mean"), a.Floats("std")),
-        ["conv2d"] = (b, a) => b.Conv2d(a.Int("out"), a.Int("kernel"), a.Int("stride"), a.Int("padding"), a.Bool("bias")),
-        ["maxpool2d"] = (b, a) => b.MaxPool2d(a.Int("kernel"), a.OptionalInt("stride"), a.Int("padding")),
-        ["globalavgpool2d"] = (b, _) => b.GlobalAveragePool2d(),
-        ["flatten"] = (b, _) => b.Flatten(),
-        ["embedding"] = (b, a) => b.Embedding(a.Int("vocabulary"), a.Int("dim")),
-        ["positional"] = (b, a) => b.PositionalEncoding(a.OptionalInt("maxLength")),
-        ["transformer"] = (b, a) => b.TransformerEncoderLayer(a.Int("heads"), a.OptionalInt("ffDim"), a.Float("dropout"), a.Bool("causal")),
-        ["attention"] = (b, a) => b.MultiHeadAttention(a.Int("heads"), a.Bool("causal"), a.Float("dropout")),
-        ["lstm"] = (b, a) => b.LSTM(a.Int("hidden"), a.Bool("returnSequences")),
-        ["gru"] = (b, a) => b.GRU(a.Int("hidden"), a.Bool("returnSequences")),
-        ["meanOverTime"] = (b, _) => b.MeanOverTime(),
-        ["lastStep"] = (b, _) => b.LastStep(),
-        ["firstStep"] = (b, _) => b.FirstStep(),
-        ["reshape"] = (b, a) => b.Reshape(a.Ints("shape")),
-    };
+    private static readonly Dictionary<string, NetworkOp> Registry = new(StringComparer.Ordinal);
+
+    // Idrak's steps (one per builder layer: linear, relu, conv2d, transformer, ...) are registered before the first use.
+    static NetworkOps() => LibraryDefaults.Ensure();
 
     /// <summary>Registers (or replaces) the network step <paramref name="name"/>.</summary>
     public static void Register(string name, NetworkOp op)
@@ -118,14 +100,25 @@ public static class NetworkOps
     }
 
     /// <summary>The step registered as <paramref name="name"/>.</summary>
-    public static NetworkOp Get(string name) =>
-        TryGet(name) ?? throw new NotSupportedException($"No network step '{name}' is registered ({string.Join(", ", Names)}); add it with NetworkOps.Register.");
-
-    internal static NetworkOp? TryGet(string name)
+    public static NetworkOp Get(string name)
     {
         lock (Registry)
         {
-            return Registry.TryGetValue(name, out var op) ? op : null;
+            if (Registry.TryGetValue(name, out var op))
+            {
+                return op;
+            }
+        }
+
+        throw new NotSupportedException($"No network step '{name}' is registered ({string.Join(", ", Names)}); add it with NetworkOps.Register.");
+    }
+
+    /// <summary>Whether a step is registered as <paramref name="name"/>.</summary>
+    public static bool Contains(string name)
+    {
+        lock (Registry)
+        {
+            return Registry.ContainsKey(name);
         }
     }
 }

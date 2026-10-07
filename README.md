@@ -106,7 +106,7 @@ points"):
 | Token sampling | `ITokenSampler` through `TextGenerator.CreateSampler` | `Idrak` |
 | KV cache formats | `KeyValueLayouts` | `Idrak` |
 | Packed weight formats | `PackedWeight` | `Idrak` |
-| Network builder steps | `NetworkOps` | `Idrak` |
+| Network builder steps | `NetworkOps` (steps see `INetworkBuilder`) | `Idrak` |
 | Graph operations and graph layer types | `GraphOps`, `LayerTypes` | `Idrak` |
 | RoPE scaling methods | `RopeScalings` | `Idrak` |
 | Telemetry listeners | `Telemetry.Subscribe` | `Idrak` |
@@ -1265,7 +1265,7 @@ the registered names and how to register.
 | Differentiable operations (own forward and backward) | `Autograd.Function(name, forward, backward)` | `Idrak` |
 | KV cache formats (float32, int8, bfloat16 built in) | `KeyValueLayouts.Register(name, KeyValueLayout)` | `Idrak` |
 | Packed weight formats (int8, int4, bfloat16 built in) | `PackedWeight.Register(name, PackedWeightFactory)` | `Idrak` |
-| Network builder steps (JSON round trip) | `NetworkOps.Register(name, NetworkOp)` | `Idrak` |
+| Network builder steps (JSON round trip) | `NetworkOps.Register(name, NetworkOp)`; a step gets an `INetworkBuilder` (`CurrentShape`, `Lambda`, `Add`, `Op`) | `Idrak` |
 | Tool-call formats (json, pythonic, qwen3-coder, mistral, harmony, deepseek built in) | `ToolCallFormats.Register(name, detect, create)`; or override `ChatTemplate.CreateToolCallParser` | `Idrak` |
 | ONNX import operators (chains and graphs) | `OnnxImportOps.Register(opType, OnnxImportTranslator)` | `Idrak.Onnx` |
 | ONNX export of modules, lambdas and graph operations | `OnnxExportOps.Register<T>(OnnxTranslator<T>)`, `RegisterLambda(name, ...)`, `RegisterGraphOp(op, OnnxGraphOpTranslator)` | `Idrak.Onnx` |
