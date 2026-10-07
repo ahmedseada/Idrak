@@ -2,8 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using Idrak;
-using Idrak.Backends;
-using Idrak.Backends.Vulkan;
+using Idrak.Gpu.Vulkan;
 using Idrak.Layers;
 
 // Sliding windows and soft-capped scores in the attention kernels (AttentionVariant): every kernel against a direct

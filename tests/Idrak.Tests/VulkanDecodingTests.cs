@@ -3,8 +3,7 @@
 
 using System.Collections.Concurrent;
 using Idrak;
-using Idrak.Backends;
-using Idrak.Backends.Vulkan;
+using Idrak.Gpu.Vulkan;
 using Idrak.Layers;
 
 // Decoding on Vulkan: every step on the device (no host fallback, so no wait for the device between tokens), the sampler

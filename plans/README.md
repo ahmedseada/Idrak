@@ -131,7 +131,7 @@ tuned with `--bench-gemm` / `--bench-gemv` on one RTX 5070 Ti (compute 12.0, 70 
 
 ### Status of each rule
 
-Every constant, threshold and heuristic in `src/Idrak/Backends/Cuda` that decides a kernel, split, tile, row cut-over,
+Every constant, threshold and heuristic in `src/Idrak.Gpu/Cuda` that decides a kernel, split, tile, row cut-over,
 block size or buffer size, classified: **(a)** a hardware/ISA limit or fixed by the kernel's own design (fine, reason
 given), **(b)** measured on the device or relative to what it reports (fine), **(c)** violates the rule (fixed here, or
 left open with the reason).
@@ -226,13 +226,13 @@ each to be measured against today's path on a GPU that has it (not added here: t
 
 ## Shared work before any new backend
 
-The backend design is device-neutral in one place (`src/Idrak/Backends/Backend.cs`) and NVIDIA-specific in others. These steps come first, because both the AMD
+The backend design is device-neutral in one place (`src/Idrak.Abstraction/Devices/Backend.cs`) and NVIDIA-specific in others. These steps come first, because both the AMD
 and the Intel plans need them.
 
 1. **A device-neutral capability query.** `MixedPrecision.TensorCoresUnavailable` casts to `CudaBackend`, and several
    callers check `PtxKernels` constants (`GemvRows`, `DecodeMaxDim`, `FlashMaxDim`). Replace them with a
    `Backend.Capabilities` record (matrix units and their number formats, subgroup size, shared memory per block,
-   compute units, the few-rows limit, attention head-size limits). Done when no code outside `Backends/Cuda` names
+   compute units, the few-rows limit, attention head-size limits). Done when no code outside `Idrak.Gpu/Cuda` names
    `CudaBackend` or `PtxKernels`.
 2. **`DeviceType` beyond `Cpu` and `Cuda`.** Add the new kinds, `Device.Default` choosing the best device present, and
    an `IDRAK_DEVICES` / `IDRAK_DISABLE_*` switch per backend (the test runner already runs every test on every device).

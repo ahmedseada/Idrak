@@ -3,9 +3,8 @@
 
 using System.Collections.Concurrent;
 using Idrak;
-using Idrak.Backends;
 using Idrak.Abstraction.Devices.Cpu;
-using Idrak.Backends.Vulkan;
+using Idrak.Gpu.Vulkan;
 using Idrak.Layers;
 
 // Limits some devices report low and features some report: storages larger than one binding (maxStorageBufferRange,

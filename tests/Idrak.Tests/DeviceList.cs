@@ -2,8 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using Idrak;
-using Idrak.Backends;
-using Idrak.Backends.Vulkan;
+using Idrak.Gpu.Vulkan;
 
 // --list-devices: every device the library can run on (the CPU, each CUDA and Vulkan GPU, test backends), whether a
 // plain test run includes it, and how to run the tests on one of them.

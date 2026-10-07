@@ -3,7 +3,7 @@
 
 using System.Diagnostics;
 using Idrak;
-using Idrak.Backends.Vulkan;
+using Idrak.Gpu.Vulkan;
 
 // The generated SPIR-V kernels: each builds, keeps the Vulkan contract (bindings, push constants ≤ 128 bytes), and passes
 // the Khronos validator (spirv-val --target-env vulkan1.1) when it is installed. No Vulkan device is needed. The

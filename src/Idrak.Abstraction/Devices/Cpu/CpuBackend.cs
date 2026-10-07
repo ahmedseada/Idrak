@@ -53,6 +53,14 @@ internal sealed partial class CpuBackend : Backend
 
     public override string Name => $"CPU ({Environment.ProcessorCount} threads, {System.Numerics.Vector<float>.Count}-wide SIMD)";
 
+    public override BackendHardware Hardware => new()
+    {
+        MemoryBytes = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes,
+        HardwareKind = "cpu",
+        ComputeUnits = Environment.ProcessorCount,
+        SubgroupSize = Vector<float>.Count,
+    };
+
     public override string? TensorCoresUnavailable() => "the CPU computes matrix products in float32";
 
     public override Storage Allocate(int length, bool zeroed)
