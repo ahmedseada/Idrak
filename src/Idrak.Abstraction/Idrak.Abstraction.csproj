@@ -11,12 +11,9 @@
     <Description>The contracts Idrak is built on, each with its default implementation: devices and the CPU device (the host fallback of every other device). Reference it to write a plug-in without the GPU code; the Idrak package brings it along.</Description>
   </PropertyGroup>
 
-  <!-- Plan 10: the library's own assemblies see these internals while the contracts move (phases 1 to 3); phase 4
-       removes every one, so the GPU devices in Idrak are built on the public surface alone. -->
+  <!-- Plan 10, phase 4: no library assembly sees these internals (the GPU devices in Idrak are built on the public
+       surface alone); only the tests do. -->
   <ItemGroup>
-    <InternalsVisibleTo Include="Idrak" />
-    <InternalsVisibleTo Include="Idrak.Nlp" />
-    <InternalsVisibleTo Include="Idrak.Cli" />
     <InternalsVisibleTo Include="Idrak.Tests" />
   </ItemGroup>
 

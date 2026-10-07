@@ -49,14 +49,14 @@ proposed namespace (phases 1 to 3 settle it).
 | `Idrak.Abstraction.Data.ImageCodecs` | registry | public | — |  | bmp, netpbm, png | `Idrak.Abstraction.Data` |
 | `Idrak.Abstraction.Data.ParquetCodecs` | registry | public | — |  | Brotli, Gzip, Lz4Raw, Snappy, Uncompressed | `Idrak.Abstraction.Data` |
 | `Idrak.Abstraction.Data.SampleSources` | registry | public | — |  | csv, images, npy, tokens | `Idrak.Abstraction.Data` |
-| `Idrak.Abstraction.Devices.Backend` | abstract class | internal | Storage | CpuBackend, CudaBackend, HipBackend, VulkanBackend |  | `Idrak.Abstraction.Devices` |
+| `Idrak.Abstraction.Devices.Backend` | abstract class | public | Storage | CpuBackend, CudaBackend, HipBackend, VulkanBackend |  | `Idrak.Abstraction.Devices` |
 | `Idrak.Abstraction.Devices.Cpu.CpuBackend.IRangeKernel` | interface | internal | — | CpuBackend.AbsBackwardLoop, CpuBackend.AbsLoop, CpuBackend.AdamLoop, CpuBackend.AddLoop, CpuBackend.AffineLoop, CpuBackend.AxpyLoop, +29 |  | `Idrak.Abstraction.Operations` |
-| `Idrak.Abstraction.Devices.DeviceProvider` | abstract class | internal | Backend | HipProvider, LibraryDevices.CudaProvider, VulkanProvider |  | `Idrak.Abstraction.Devices` |
-| `Idrak.Abstraction.Devices.DeviceProviders` | registry | internal | — |  | — | `Idrak.Abstraction.Devices` |
-| `Idrak.Abstraction.Devices.IBackwardStaging` | interface | internal | — | Offloading.BackwardStaging |  | `Idrak.Abstraction.Devices` |
-| `Idrak.Abstraction.Devices.IHostStaging` | interface | internal | Storage | CudaBackend.HostStaging |  | `Idrak.Abstraction.Devices` |
-| `Idrak.Abstraction.Devices.IMemoryOffload` | interface | internal | Storage | CudaBackend |  | `Idrak.Abstraction.Devices` |
-| `Idrak.Abstraction.Devices.Storage` | abstract class | internal | Backend | CpuStorage, CudaStorage, HipStorage, VulkanBackend.VulkanStorage |  | `Idrak.Abstraction.Devices` |
+| `Idrak.Abstraction.Devices.DeviceProvider` | abstract class | public | Backend | HipProvider, LibraryDevices.CudaProvider, VulkanProvider |  | `Idrak.Abstraction.Devices` |
+| `Idrak.Abstraction.Devices.DeviceProviders` | registry | public | — |  | — | `Idrak.Abstraction.Devices` |
+| `Idrak.Abstraction.Devices.IBackwardStaging` | interface | public | — | Offloading.BackwardStaging |  | `Idrak.Abstraction.Devices` |
+| `Idrak.Abstraction.Devices.IHostStaging` | interface | public | Storage | CudaBackend.HostStaging |  | `Idrak.Abstraction.Devices` |
+| `Idrak.Abstraction.Devices.IMemoryOffload` | interface | public | Storage | CudaBackend |  | `Idrak.Abstraction.Devices` |
+| `Idrak.Abstraction.Devices.Storage` | abstract class | public | Backend | CpuStorage, CudaStorage, HipStorage, VulkanBackend.VulkanStorage |  | `Idrak.Abstraction.Devices` |
 | `Idrak.Abstraction.Diagnostics.ITelemetryHook` | interface | public | — | ChannelTelemetry, ConsoleLogger, JsonLinesLogger, MetricsRecorder |  | `Idrak.Abstraction.Diagnostics` |
 | `Idrak.Abstraction.Formats.CheckpointFormats` | registry | public | — |  | gguf, safetensors | `Idrak.Abstraction.Formats` |
 | `Idrak.Abstraction.Formats.GgufArchitectures` | registry | public | — |  | llama, qwen2, qwen2moe, qwen3, qwen3moe | `Idrak.Abstraction.Formats` |
@@ -70,7 +70,7 @@ proposed namespace (phases 1 to 3 settle it).
 | `Idrak.Abstraction.Formats.OnnxGraph` | abstract class | public | Module | OnnxGraphWriter |  | `Idrak.Abstraction.Formats` |
 | `Idrak.Abstraction.Formats.OnnxImportContext` | abstract class | public | Module | ImportContext |  | `Idrak.Abstraction.Formats` |
 | `Idrak.Abstraction.Formats.OnnxImportOps` | registry | public | — |  | Add, BatchNormalization, Cast, Conv, Dropout, Flatten, Gather, GlobalAveragePool, +9 | `Idrak.Abstraction.Formats` |
-| `Idrak.Abstraction.Formats.WeightCodec` | abstract class | internal | — | WeightCodec.BFloat16Codec, WeightCodec.Float16Codec, WeightCodec.Float32Codec |  | `Idrak.Abstraction.Formats` |
+| `Idrak.Abstraction.Formats.WeightCodec` | abstract class | public | — | WeightCodec.BFloat16Codec, WeightCodec.Float16Codec, WeightCodec.Float32Codec |  | `Idrak.Abstraction.Formats` |
 | `Idrak.Abstraction.Generation.ChatTemplate` | abstract class | public | — | ChatMLTemplate, JinjaChatTemplate |  | `Idrak.Abstraction.Generation` |
 | `Idrak.Abstraction.Generation.ChatTemplates` | registry | public | — |  | jinja | `Idrak.Abstraction.Generation` |
 | `Idrak.Abstraction.Generation.GgufPreTokenizers` | registry | public | — |  | deepseek-r1-qwen, default, falcon3, gpt-2, gpt2, hunyuan, llama-bpe, llama-v3, +7 | `Idrak.Abstraction.Generation` |
@@ -101,7 +101,7 @@ proposed namespace (phases 1 to 3 settle it).
 | `Idrak.Abstraction.Modules.LayerTypes` | registry | public | Device, Module |  | attention, batchnorm, conv2d, dropout, embedding, flatten, gelu, globalavgpool2d, +12 | `Idrak.Abstraction.Modules` |
 | `Idrak.Abstraction.Modules.NetworkOps` | registry | public | — |  | attention, batchnorm, conv2d, dropout, embedding, firstStep, flatten, gelu, +16 | `Idrak.Abstraction.Modules` |
 | `Idrak.Abstraction.Modules.RecurrentModule` | abstract class | public | Device, Module, Tensor | GRU, LSTM |  | `Idrak.Abstraction.Modules` |
-| `Idrak.Abstraction.Operations.Kernels` | registry | internal | Backend |  | — | `Idrak.Abstraction.Operations` |
+| `Idrak.Abstraction.Operations.Kernels` | registry | public | Backend |  | — | `Idrak.Abstraction.Operations` |
 | `Idrak.Abstraction.Retrieval.IEmbedder` | interface | public | — | TextEncoder |  | `Idrak.Abstraction.Retrieval` |
 | `Idrak.Abstraction.Retrieval.IReranker` | interface | public | — | CrossEncoder |  | `Idrak.Abstraction.Retrieval` |
 | `Idrak.Abstraction.Retrieval.IRetriever` | interface | public | — | RetrievalIndex |  | `Idrak.Abstraction.Retrieval` |
@@ -124,7 +124,7 @@ proposed namespace (phases 1 to 3 settle it).
 
 ## The device contract (`Backend`)
 
-`Idrak.Abstraction.Devices.Backend` (internal): 10 abstract and 124 virtual methods, 5 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `HipBackend`, `VulkanBackend`. Each
+`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 124 virtual methods, 5 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `HipBackend`, `VulkanBackend`. Each
 operation (109, `Ops`) is a `NameKernel` method, the device's own kernel; `Backend.Name(...)` runs the kernel registered
 for the device in `Kernels` instead, where there is one (plan 9). The rest is device plumbing: memory, copies, graphs, profiling.
 
@@ -273,84 +273,6 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `WhereKernel(5)` | virtual | ✓ |  |  | ✓ |
 
 
-## Internals of `Idrak.Abstraction` other assemblies use
-
-What each assembly `Idrak.Abstraction` names in `InternalsVisibleTo` (the tests aside) references among its non-public types
-and members, read from that assembly's metadata. Phases 2 and 4 make each one public contract, or justify it line by line.
-
-### Idrak
-
-130 members on 46 types.
-
-| Type | Internal members used |
-|---|---|
-| `Idrak.Abstraction.ActivationMemory` | Compress(), Release() |
-| `Idrak.Abstraction.CompressAfter` | (the type) |
-| `Idrak.Abstraction.ComputeGraph` | IsCapturing |
-| `Idrak.Abstraction.ComputeResources` | AllowParallel, ParallelOptions |
-| `Idrak.Abstraction.Device` | Backend |
-| `Idrak.Abstraction.Devices.AttentionVariant` | (the type) |
-| `Idrak.Abstraction.Devices.Backend` | (the type) |
-| `Idrak.Abstraction.Devices.BackendCapabilities` | (the type) |
-| `Idrak.Abstraction.Devices.BinaryOp` | (the type) |
-| `Idrak.Abstraction.Devices.ConvGeometry` | (the type) |
-| `Idrak.Abstraction.Devices.Cpu.CpuBackend` | (the type), D() |
-| `Idrak.Abstraction.Devices.DeviceProvider` | (the type) |
-| `Idrak.Abstraction.Devices.DeviceProviders` | (the type) |
-| `Idrak.Abstraction.Devices.EightBitMoments` | (the type) |
-| `Idrak.Abstraction.Devices.HostParallel` | (the type) |
-| `Idrak.Abstraction.Devices.IBackwardStaging` | (the type) |
-| `Idrak.Abstraction.Devices.IHostStaging` | (the type) |
-| `Idrak.Abstraction.Devices.IMemoryOffload` | (the type) |
-| `Idrak.Abstraction.Devices.MemoryAccountant` | (the type) |
-| `Idrak.Abstraction.Devices.OffloadPriority` | (the type) |
-| `Idrak.Abstraction.Devices.PackedFormats` | (the type) |
-| `Idrak.Abstraction.Devices.PowerSource` | (the type) |
-| `Idrak.Abstraction.Devices.Storage` | (the type) |
-| `Idrak.Abstraction.Devices.TensorOffloading` | (the type) |
-| `Idrak.Abstraction.Devices.UnaryOp` | (the type) |
-| `Idrak.Abstraction.Diagnostics.Telemetry` | BatchCompleted(), Engine(), EpochCompleted(), Start(), TrainingCompleted(), TrainingStarted() |
-| `Idrak.Abstraction.Formats.WeightCodec` | (the type) |
-| `Idrak.Abstraction.Generation.BFloat16Weight` | Empty(), Packed |
-| `Idrak.Abstraction.Generation.DecodingContext` | CacheFor(), TokenPositions, TokenStarts |
-| `Idrak.Abstraction.Generation.Int4Weight` | Empty(), Packed, Scales |
-| `Idrak.Abstraction.Generation.Int8Weight` | Empty(), Packed, Scales |
-| `Idrak.Abstraction.Generation.KeyValueLayout` | AttendVariant(), FusedWrite, HalfWords, RowStarts |
-| `Idrak.Abstraction.Generation.PackedWeight` | ActivationInDownProjection, DequantizeInto(), Description, Factory(), Float8Copy, FloatMethod, LowRankProducts, MoveWeights(), Pack(), PackedValues, ScaleValues, ShortName, TransposedProduct() |
-| `Idrak.Abstraction.MemoryMarshalHelpers` | (the type) |
-| `Idrak.Abstraction.MixedPrecision` | UsesTensorCores |
-| `Idrak.Abstraction.Modules.DoraAdapter` | SquaredNorms() |
-| `Idrak.Abstraction.Modules.GraphOpContext` | constructor |
-| `Idrak.Abstraction.Modules.GraphOps` | TryGet() |
-| `Idrak.Abstraction.Modules.GraphValues` | (the type), AsIntegers() |
-| `Idrak.Abstraction.Modules.GraphValues.HostValue` | (the type) |
-| `Idrak.Abstraction.Modules.ModuleHooks` | (the type) |
-| `Idrak.Abstraction.Modules.RecurrentModule` | Step() |
-| `Idrak.Abstraction.Tensor` | AddDropout(), AddGradient(), AddRmsNormAffine(), AttentionRows(), Backend, BiasGelu(), CausalAttention(), CausalAttentionPacked(), DecoderMask(), EmbeddingLookup(), Empty(), Evict(), EvictToPacked(), FormatShape(), GatedActivation(), GatedActivationCompressed(), GradStorage(), GradientTarget(), GroupAffine(), Im2Col(), IsDisposed, LayerNormFused(), LayerNormTrain(), Load(), MatMulBias(), MatMulFrozenTransposed(), MatMulMany(), MatchRate(), MaxPool(), Normalize(), NormalizeWith(), RecomputeGatedActivation(), Record(), ReleaseGrad(), RmsNormAffine(), RmsNormRopePair(), RmsNormalize(), Rope(), ScaleMaskSoftmax(), StageGroup, Storage, ThrowIfDisposed(), TokenCrossEntropy(), TokenCrossEntropyRows(), TokenLogProbabilities(), Traced(), WillRecord(), WriteKeyValues(), _shape |
-| `Idrak.Abstraction.TensorScope` | Owns() |
-| `Idrak.Abstraction.Training.TrainerContext` | Epoch, Step, constructor |
-| `Idrak.Abstraction.Training.TrainingHistory` | BestEpoch, BestLoss, EpochList, StoppedEarly |
-
-### Idrak.Nlp
-
-15 members on 9 types.
-
-| Type | Internal members used |
-|---|---|
-| `Idrak.Abstraction.ActivationMemory` | Release() |
-| `Idrak.Abstraction.Device` | Backend |
-| `Idrak.Abstraction.Devices.Backend` | (the type) |
-| `Idrak.Abstraction.Devices.Storage` | (the type) |
-| `Idrak.Abstraction.Generation.KeyValueLayout` | RowStarts |
-| `Idrak.Abstraction.Generation.WordTokenizer` | SplitSpans() |
-| `Idrak.Abstraction.Generation.WordTokenizer.Units` | (the type) |
-| `Idrak.Abstraction.Tensor` | FormatShape(), GatherRows(), Load(), Storage, TokenCrossEntropyRows(), TokenDivergenceRows(), TokenDivergences() |
-| `Idrak.Abstraction.TensorScope` | Untrack() |
-
-### Idrak.Cli
-
-None.
-
 ## Internals of `Idrak` other assemblies use
 
 What each assembly `Idrak` names in `InternalsVisibleTo` (the tests aside) references among its non-public types
@@ -358,14 +280,13 @@ and members, read from that assembly's metadata. Phases 2 and 4 make each one pu
 
 ### Idrak.Nlp
 
-5 members on 4 types.
+4 members on 3 types.
 
 | Type | Internal members used |
 |---|---|
 | `Idrak.Layers.CausalSelfAttention` | SupportsSegmented() |
 | `Idrak.Layers.Linear` | AttachFloat8(), DetachFloat8() |
 | `Idrak.Layers.PackedSequences` | Suspend() |
-| `Idrak.Offloading` | (the type) |
 
 ### Idrak.Cli
 

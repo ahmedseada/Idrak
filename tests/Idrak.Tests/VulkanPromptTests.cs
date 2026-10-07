@@ -79,7 +79,8 @@ internal static partial class Tests
         var expected = RunOn(CpuBackend.Instance, inputs, outputs, op);
         var operations = new ConcurrentDictionary<string, long>();
         var kernels = new ConcurrentDictionary<string, long>();
-        (backend.HostCallsByOperation, backend.DispatchesByKernel) = (operations, kernels);
+        CountHostCalls(backend, operations);
+        backend.DispatchesByKernel = kernels;
         float[][] actual;
         try
         {
@@ -87,7 +88,8 @@ internal static partial class Tests
         }
         finally
         {
-            (backend.HostCallsByOperation, backend.DispatchesByKernel) = (null, null);
+            CountHostCalls(backend, null);
+            backend.DispatchesByKernel = null;
         }
 
         Check(operations.IsEmpty, $"{what}: host fallback for {string.Join(", ", operations.Keys)}");
@@ -268,14 +270,14 @@ internal static partial class Tests
                     using var noGrad = Autograd.NoGrad();
                     using var context = new DecodingContext(d, 1, 32, KeyValueFormat.Float32);
                     using var prompt = Tensor.From([.. ids.Select(i => (float)i)], [1, ids.Length], d);
-                    d.Backend.HostCallsByOperation = counts;
+                    CountHostCalls(d.Backend, counts);
                     try
                     {
                         return model.ForwardCached(prompt, context).ToArray();
                     }
                     finally
                     {
-                        d.Backend.HostCallsByOperation = null;
+                        CountHostCalls(d.Backend, null);
                     }
                 }
 

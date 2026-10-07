@@ -21,7 +21,7 @@ internal static class Offloading
     {
         TensorOffloading.TrainableChanged = TrainableChanged;
         TensorOffloading.ForBackward = ForBackward;
-        Idrak.Abstraction.Modules.ModuleHooks.EnterForward = EnterForward;
+        TensorOffloading.EnterForward = EnterForward;
     }
 
     // Module.Forward's hook: a scope only when the layer was entered (boxed then; nothing is allocated otherwise).
@@ -29,7 +29,7 @@ internal static class Offloading
 
     // The layer whose forward runs on this thread (tagged on the autograd nodes it records, for the backward pass), and
     // the layer staged before it (to learn which layer follows which).
-    // A layer (Module) or layers computed in one fused pass (LayerGroup). Kept in TensorOffloading.Current, where the
+    // A layer (Module) or layers computed in one fused pass (LayerGroup). Kept in TensorOffloading.CurrentLayer, where the
     // tensors (in Idrak.Abstraction) read it.
 
     [ThreadStatic]
@@ -72,7 +72,7 @@ internal static class Offloading
     internal static bool StageWeights = true;
 
     /// <summary>The layer (or fused layers) whose forward runs on this thread while weights are offloaded (null otherwise).</summary>
-    public static object? Current => TensorOffloading.Current;
+    public static object? Current => TensorOffloading.CurrentLayer;
 
     private static bool Active(IMemoryOffload offload) => TensorOffloading.Active(offload);
 
@@ -117,8 +117,8 @@ internal static class Offloading
             return default;                                                // no weights (activations, dropout): not a step in the order
         }
 
-        var previous = TensorOffloading.Current;
-        TensorOffloading.Current = layer;
+        var previous = TensorOffloading.CurrentLayer;
+        TensorOffloading.CurrentLayer = layer;
         if (t_previous is { } before && !ReferenceEquals(before, layer))
         {
             NextLayer.AddOrUpdate(before, layer);
@@ -150,7 +150,7 @@ internal static class Offloading
             token?.Dispose();
             if (entered)
             {
-                TensorOffloading.Current = previous;
+                TensorOffloading.CurrentLayer = previous;
             }
         }
     }
@@ -227,11 +227,11 @@ internal static class Offloading
     public static void StepBoundary(Device device) => TensorOffloading.StepBoundary(device);
 
     /// <summary>
-    /// Stages each layer's offloaded weights during the backward pass, in the order its nodes run (nodes are tagged with
-    /// the layer whose forward recorded them), and copies the next layer's in the background. Null when nothing is
+    /// Stages each layer's offloaded weights during the backward pass, in the order its nodes run (<paramref name="layers"/>:
+    /// the layer whose forward recorded each node), and copies the next layer's in the background. Null when nothing is
     /// offloaded on <paramref name="device"/>.
     /// </summary>
-    public static BackwardStaging? ForBackward(Device device, List<Tensor> order)
+    public static BackwardStaging? ForBackward(Device device, IReadOnlyList<object?> layers)
     {
         if (device.Backend.Offload is not { OffloadedCount: > 0 } offload || !StageWeights)
         {
@@ -239,9 +239,9 @@ internal static class Offloading
         }
 
         var groups = new List<(int Index, object Layer)>();
-        for (int i = 0; i < order.Count; i++)
+        for (int i = 0; i < layers.Count; i++)
         {
-            if (order[i].StageGroup is { } layer && (groups.Count == 0 || !ReferenceEquals(groups[^1].Layer, layer)))
+            if (layers[i] is { } layer && (groups.Count == 0 || !ReferenceEquals(groups[^1].Layer, layer)))
             {
                 groups.Add((i, layer));
             }

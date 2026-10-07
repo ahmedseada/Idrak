@@ -9,7 +9,7 @@ namespace Idrak.Abstraction;
 // Operations of decoder-only language model layers.
 public sealed partial class Tensor
 {    /// <summary>x / sqrt(mean(x²) + eps) over the last dimension (RMS normalization without a gain).</summary>
-    internal Tensor RmsNormalize(float eps)
+    public Tensor RmsNormalize(float eps)
     {
         ThrowIfDisposed();
         long start = Telemetry.Start(TelemetryLevel.Operations);
@@ -38,7 +38,7 @@ public sealed partial class Tensor
     /// input · weights[j] (+ biases[j]) for every j in one pass over the input (inference: not recorded). The input is
     /// [..., k]; each weight is [k, n_j]; results are [..., n_j].
     /// </summary>
-    internal static Tensor[] MatMulMany(Tensor input, IReadOnlyList<Tensor> weights, IReadOnlyList<Tensor?> biases)
+    public static Tensor[] MatMulMany(Tensor input, IReadOnlyList<Tensor> weights, IReadOnlyList<Tensor?> biases)
     {
         input.ThrowIfDisposed();
         long start = Telemetry.Start(TelemetryLevel.Operations);
@@ -70,7 +70,7 @@ public sealed partial class Tensor
     /// <paramref name="hidden"/>; parameters inside the head (adapters) receive theirs during this call, so back-propagate
     /// the loss unscaled (scale through <paramref name="normalizer"/> instead).
     /// </summary>
-    internal static Tensor TokenCrossEntropy(Tensor hidden, Func<Tensor, Tensor> head, Tensor targets, Tensor weights, float normalizer, int chunkRows)
+    public static Tensor TokenCrossEntropy(Tensor hidden, Func<Tensor, Tensor> head, Tensor targets, Tensor weights, float normalizer, int chunkRows)
     {
         hidden.ThrowIfDisposed();
         if (hidden.Rank != 2 || targets.Size != hidden._shape[0] || weights.Size != hidden._shape[0])
@@ -212,7 +212,7 @@ public sealed partial class Tensor
     /// and their gradients are scattered back. <paramref name="targets"/> and <paramref name="weights"/> hold one value
     /// per listed row. Rows left out have zero loss and zero gradient, as they would with weight 0.
     /// </summary>
-    internal static Tensor TokenCrossEntropyRows(Tensor hidden, Func<Tensor, Tensor> head, int[] rows, float[] targets, float[] weights, float normalizer, int chunkRows)
+    public static Tensor TokenCrossEntropyRows(Tensor hidden, Func<Tensor, Tensor> head, int[] rows, float[] targets, float[] weights, float normalizer, int chunkRows)
     {
         if (targets.Length != rows.Length || weights.Length != rows.Length)
         {
@@ -230,7 +230,7 @@ public sealed partial class Tensor
     /// dim], computed on the device (the head and a fused log-softmax over <paramref name="chunkRows"/> rows at a time):
     /// only the listed values come back, not the [rows, vocabulary] logits. Not recorded.
     /// </summary>
-    internal static float[] TokenLogProbabilities(Tensor hidden, Func<Tensor, Tensor> head, int[] rows, int[] targets, int chunkRows)
+    public static float[] TokenLogProbabilities(Tensor hidden, Func<Tensor, Tensor> head, int[] rows, int[] targets, int chunkRows)
     {
         hidden.ThrowIfDisposed();
         if (hidden.Rank != 2 || targets.Length != rows.Length)
@@ -297,7 +297,7 @@ public sealed partial class Tensor
     /// targets and weights already on the device ([count] floats each; a row with weight 0 adds nothing): no host data, so
     /// the pass can be recorded as a graph and replayed with new values in those tensors.
     /// </summary>
-    internal static Tensor TokenCrossEntropyRows(Tensor hidden, Func<Tensor, Tensor> head, Tensor rows, Tensor targets, Tensor weights, float normalizer, int chunkRows)
+    public static Tensor TokenCrossEntropyRows(Tensor hidden, Func<Tensor, Tensor> head, Tensor rows, Tensor targets, Tensor weights, float normalizer, int chunkRows)
     {
         hidden.ThrowIfDisposed();
         if (hidden.Rank != 2 || targets.Size != rows.Size || weights.Size != rows.Size)
@@ -367,7 +367,7 @@ public sealed partial class Tensor
     }
 
     /// <summary>x / sqrt(mean(x²) + eps) · (gain + offset) over the last dimension in one pass (inference: not recorded).</summary>
-    internal Tensor RmsNormAffine(Tensor gain, float eps, float offset)
+    public Tensor RmsNormAffine(Tensor gain, float eps, float offset)
     {
         ThrowIfDisposed();
         long start = Telemetry.Start(TelemetryLevel.Operations);
@@ -378,7 +378,7 @@ public sealed partial class Tensor
     }
 
     /// <summary>a + b (a residual addition) and its RMS normalization with gain, in one pass (inference: not recorded).</summary>
-    internal static (Tensor Sum, Tensor Normalized) AddRmsNormAffine(Tensor a, Tensor b, Tensor gain, float eps, float offset)
+    public static (Tensor Sum, Tensor Normalized) AddRmsNormAffine(Tensor a, Tensor b, Tensor gain, float eps, float offset)
     {
         a.ThrowIfDisposed();
         b.ThrowIfDisposed();
@@ -407,7 +407,7 @@ public sealed partial class Tensor
     }
 
     /// <summary><see cref="RmsNormRope"/> of the queries and the keys (same positions and tables) in one pass where the device can.</summary>
-    internal static (Tensor Q, Tensor K) RmsNormRopePair(Tensor q, Tensor gainQ, float epsQ, float offsetQ, Tensor k, Tensor gainK, float epsK,
+    public static (Tensor Q, Tensor K) RmsNormRopePair(Tensor q, Tensor gainQ, float epsQ, float offsetQ, Tensor k, Tensor gainK, float epsK,
         float offsetK, Tensor cos, Tensor sin, Tensor positions, int half, bool interleaved)
     {
         q.ThrowIfDisposed();
@@ -424,7 +424,7 @@ public sealed partial class Tensor
     }
 
     /// <summary>act(gate) · up element-wise (kind 0 = SiLU, 1 = GELU, 2 = ReLU), with its gradient: one pass either way.</summary>
-    internal static Tensor GatedActivation(Tensor gate, Tensor up, int kind)
+    public static Tensor GatedActivation(Tensor gate, Tensor up, int kind)
     {
         gate.ThrowIfDisposed();
         up.ThrowIfDisposed();
@@ -448,7 +448,7 @@ public sealed partial class Tensor
     /// caller to evict the output to (<see cref="EvictToPacked"/>) once its forward uses are done. Null when gate and up
     /// share memory (views of one product).
     /// </summary>
-    internal static Tensor? GatedActivationCompressed(Tensor gate, Tensor up, int kind, bool packOutput, out Storage? packedOutput)
+    public static Tensor? GatedActivationCompressed(Tensor gate, Tensor up, int kind, bool packOutput, out Storage? packedOutput)
     {
         packedOutput = null;
         gate.ThrowIfDisposed();
@@ -476,7 +476,7 @@ public sealed partial class Tensor
     /// Recomputes act(gate) · up into <paramref name="y"/> for <see cref="Evict"/>: from the bfloat16 words when gate and up
     /// were evicted to them, else from their values.
     /// </summary>
-    internal static void RecomputeGatedActivation(Tensor gate, Tensor up, Tensor y, int kind)
+    public static void RecomputeGatedActivation(Tensor gate, Tensor up, Tensor y, int kind)
     {
         var (gs, us) = (gate.Storage, up.Storage);
         if (gs is { Evicted: true, Packed: { } packedGate } && us is { Evicted: true, Packed: { } packedUp })
@@ -517,7 +517,7 @@ public sealed partial class Tensor
     /// Rotary position embedding of this [batch, steps, heads, dim] tensor: pair p of each head's vector at step t
     /// rotates by the angle with cos/sin[positions[t], p] ([positions, half] tables). Dimensions beyond 2·half pass through.
     /// </summary>
-    internal Tensor Rope(Tensor cos, Tensor sin, Tensor positions, int half, bool interleaved)
+    public Tensor Rope(Tensor cos, Tensor sin, Tensor positions, int half, bool interleaved)
     {
         ThrowIfDisposed();
         if (Rank != 4)

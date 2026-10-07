@@ -3,7 +3,6 @@
 
 using System.Runtime.InteropServices;
 using System.Text;
-using Idrak.Abstraction.Devices.Cpu;
 using static Idrak.Backends.Vulkan.VulkanDriver;
 
 namespace Idrak.Backends.Vulkan;
@@ -264,10 +263,10 @@ internal sealed unsafe partial class VulkanBackend : Backend
 
     public override string Name { get; }
 
-    public override BackendCapabilities Capabilities { get; } = CpuBackend.Instance.Capabilities with
+    public override BackendCapabilities Capabilities { get; } = Device.Cpu.Backend.Capabilities with
     {
-        DecodeAttentionHeadDim = Math.Min(CpuBackend.Instance.Capabilities.DecodeAttentionHeadDim, VulkanKernels.AttentionMaxDim),
-        TiledAttentionHeadDim = Math.Min(CpuBackend.Instance.Capabilities.TiledAttentionHeadDim, VulkanKernels.AttentionMaxDim),
+        DecodeAttentionHeadDim = Math.Min(Device.Cpu.Backend.Capabilities.DecodeAttentionHeadDim, VulkanKernels.AttentionMaxDim),
+        TiledAttentionHeadDim = Math.Min(Device.Cpu.Backend.Capabilities.TiledAttentionHeadDim, VulkanKernels.AttentionMaxDim),
         MatrixUnits = false,
         MatrixUnitAttentionHeadDim = static _ => false,
         FusedKernels = true,                                             // VulkanBackend.Fused.cs
@@ -662,9 +661,9 @@ internal sealed unsafe partial class VulkanBackend : Backend
         }
     }
 
-    private protected override void Detach(Storage storage) => ((VulkanStorage)storage).Block = null;
+    protected override void Detach(Storage storage) => ((VulkanStorage)storage).Block = null;
 
-    private protected override void Attach(Storage storage, Storage fresh) =>
+    protected override void Attach(Storage storage, Storage fresh) =>
         ((VulkanStorage)storage).Block = ((VulkanStorage)fresh).Block;     // the fresh storage object is dropped, its block kept
 
     public override MemoryUsage GetMemoryUsage() => _memory.Usage;

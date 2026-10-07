@@ -20,18 +20,17 @@ internal static partial class Tests
     [
         ("abstraction inventory: plans/10-abstraction-inventory.md matches the library (IDRAK_UPDATE_INVENTORY=1 rewrites it)", InventoryCurrent),
         ("abstraction inventory: every interface, abstract class and registry outside Idrak.Abstraction.* is on the allow list, and the list names nothing that moved or is gone", AbstractionNamespaces),
-        ("abstraction inventory: every internal of Idrak.Abstraction or Idrak another library assembly uses is justified in the list, and the list names nothing no longer used", InternalsJustified),
+        ("abstraction inventory: Idrak.Abstraction grants its internals to the tests only; every internal of Idrak another library assembly uses is justified in the list, and the list names nothing no longer used", InternalsJustified),
     ];
 
     // The library packages (the CLI is an application: its own helpers are outside the rule).
     private static readonly string[] LibraryAssemblyNames =
         ["Idrak.Abstraction", "Idrak", "Idrak.Nlp", "Idrak.Data", "Idrak.Vision", "Idrak.Onnx.Runtime", "Idrak.AspNetCore", "Idrak.Mcp"];
 
-    // Each assembly whose internals others see, with those others (the tests aside): what phases 2 and 4 must turn into
-    // public contract. Idrak.Abstraction's list must be empty after phase 4.
+    // Each assembly whose internals others see, with those others (the tests aside): what must turn into public contract
+    // or be justified. Idrak.Abstraction is not one since phase 4: it grants no library assembly its internals.
     private static readonly (string Target, string[] Users)[] FriendAssemblies =
     [
-        ("Idrak.Abstraction", ["Idrak", "Idrak.Nlp", "Idrak.Cli"]),
         ("Idrak", ["Idrak.Nlp", "Idrak.Cli"]),
     ];
 
@@ -125,10 +124,14 @@ internal static partial class Tests
             return;
         }
 
+        // Plan 10, phase 4: the GPU devices in Idrak, and every other library assembly, see Idrak.Abstraction's public surface only.
+        var friends = typeof(Device).Assembly.GetCustomAttributes<InternalsVisibleToAttribute>().Select(a => a.AssemblyName).Order(StringComparer.Ordinal).ToList();
+        Check(friends.SequenceEqual(["Idrak.Tests"]), $"Idrak.Abstraction grants its internals to {string.Join(", ", friends)}; only Idrak.Tests may see them");
+
         var used = new HashSet<string>(StringComparer.Ordinal);
         foreach (var (target, users) in FriendAssemblies)
         {
-            foreach (string user in users.Where(u => !(target == "Idrak.Abstraction" && u == "Idrak")))
+            foreach (string user in users)
             {
                 foreach (var (type, members) in InternalsUsed(Assembly.Load(user), Assembly.Load(target)))
                 {

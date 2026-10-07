@@ -72,7 +72,7 @@ public static class MixedPrecision
     public static string? TensorCoresUnavailable(Device device) => device.Backend.TensorCoresUnavailable();
 
     /// <summary>True when matrix products run on tensor cores (any precision other than float32).</summary>
-    internal static bool UsesTensorCores => Current != MatMulPrecision.Float32;
+    public static bool UsesTensorCores => Current != MatMulPrecision.Float32;
 
     /// <summary>Uses <see cref="MatMulPrecision.BFloat16"/> on this thread until the returned scope is disposed.</summary>
     public static Scope BFloat16() => Use(MatMulPrecision.BFloat16);

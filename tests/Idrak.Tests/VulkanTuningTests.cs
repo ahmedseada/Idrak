@@ -152,9 +152,9 @@ internal static partial class Tests
         void Case(string what, float[][] inputs, int output, Action<Backend, Storage[]> op, int repeats, float tolerance = 1e-5f)
         {
             var expected = Run(cpu, inputs, output, op);
-            long fallbacks = backend.HostCalls;
+            long fallbacks = Idrak.Abstraction.Operations.Kernels.HostCalls(backend);
             var actual = Run(backend, inputs, output, op);
-            Check(backend.HostCalls == fallbacks, $"{label}: {what} took the host fallback");
+            Check(Idrak.Abstraction.Operations.Kernels.HostCalls(backend) == fallbacks, $"{label}: {what} took the host fallback");
             float scale = Math.Max(1f, expected.Max(MathF.Abs));
             for (int i = 0; i < expected.Length; i++)
             {

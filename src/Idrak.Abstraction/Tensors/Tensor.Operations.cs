@@ -85,7 +85,7 @@ public sealed partial class Tensor
     }
 
     /// <summary>residual + x.Dropout(p, seed) in one pass (a residual connection with dropout on its branch).</summary>
-    internal static Tensor AddDropout(Tensor residual, Tensor x, float p, uint seed)
+    public static Tensor AddDropout(Tensor residual, Tensor x, float p, uint seed)
     {
         residual.ThrowIfDisposed();
         x.ThrowIfDisposed();

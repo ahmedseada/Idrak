@@ -8,7 +8,7 @@ namespace Idrak.Abstraction.Devices;
 /// come from the registered providers (<see cref="DeviceProviders"/>), so a new kind of hardware is a provider and a
 /// <see cref="Backend"/>, with no change to <see cref="Device"/> or the layers.
 /// </summary>
-internal abstract class DeviceProvider
+public abstract class DeviceProvider
 {
     /// <summary>The name in device names ("cuda" in "cuda:1").</summary>
     public abstract string Kind { get; }
@@ -55,7 +55,7 @@ internal abstract class DeviceProvider
 /// Idrak assembly, which registers them; they are registered first, before any other provider, as soon as the registry is
 /// first used, so <see cref="Device.Available"/> lists them even when no type of Idrak has been touched yet.
 /// </summary>
-internal static class DeviceProviders
+public static class DeviceProviders
 {
     private static readonly List<DeviceProvider> Registry = [];
 

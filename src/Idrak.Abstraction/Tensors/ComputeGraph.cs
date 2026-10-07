@@ -42,7 +42,7 @@ public sealed class ComputeGraph : IDisposable
     private static int t_capturing;
 
     /// <summary>Whether work on this thread is being recorded into a graph (its buffers must outlive the recording).</summary>
-    internal static bool IsCapturing => t_capturing > 0;
+    public static bool IsCapturing => t_capturing > 0;
 
     /// <summary>True when replays use a real device graph; false when they re-run the step (CPU, or recording failed).</summary>
     public bool IsRecorded => _executable != IntPtr.Zero;

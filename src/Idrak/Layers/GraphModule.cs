@@ -84,7 +84,7 @@ public sealed class GraphModule : Module
     public override IEnumerable<Tensor> Buffers() => base.Buffers().Concat(_constantNames.Select(n => _constants[n]));
 
     /// <inheritdoc />
-    protected internal override void MoveTo(Device device)
+    protected override void MoveTo(Device device)
     {
         base.MoveTo(device);
         foreach (var name in _constantNames)

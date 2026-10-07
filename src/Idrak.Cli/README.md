@@ -472,6 +472,7 @@ Project templates, the library's tests, ONNX, the generated kernels and telemetr
 | `idrak onnx import` | Imports an ONNX model into Idrak layers and saves a model package (.ikm) |
 | `idrak onnx export` | Exports a model package (.ikm) or a network JSON to ONNX |
 | `idrak onnx check` | Checks an ONNX model: Idrak's import against a round trip and against ONNX Runtime |
+| `idrak kernels` | Which kernel each operation runs on a device: registered, its own, composed, host fallback or none |
 | `idrak kernels dump` | Writes the generated GPU kernels (PTX, SPIR-V, HIP source) for debugging |
 | `idrak trace` | Runs an idrak command with telemetry printed live or written to JSON Lines |
 | `idrak demo` | Trains a small built-in sample in seconds on the device, with the speed |

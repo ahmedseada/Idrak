@@ -4,7 +4,7 @@
 namespace Idrak.Abstraction.Devices;
 
 /// <summary>Parallel loops over host arrays for model loading and weight conversion (large arrays, on all cores).</summary>
-internal static class HostParallel
+public static class HostParallel
 {
     /// <summary>Runs <paramref name="body"/>(first, last) over [0, <paramref name="count"/>) in chunks of at least <paramref name="grain"/>.</summary>
     public static void For(int count, int grain, Action<int, int> body)

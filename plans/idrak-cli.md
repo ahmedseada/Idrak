@@ -426,6 +426,7 @@ size is unknown unless a limit is set.
 | `idrak new console\|webapi\|rag\|plugin NAME` | Project templates; the plug-in starter registers a format and has a test that runs it without internal access | 2 |
 | `idrak test [--filter TEXT] [--device NAME]` | Runs the library's test runner from a source checkout (the commands the README and installation guides give) | 3 |
 | `idrak onnx import/export/check` | ONNX conversions with an output check against ONNX Runtime when installed | 3 |
+| `idrak kernels [-d DEVICE] [--source KIND]` | Which kernel each operation runs on a device: registered, its own, composed, host fallback or none (plan 9, phase 2) | 3 |
 | `idrak kernels dump [ptx\|spirv\|hip]` | The generated kernels, for debugging | 3 |
 | `idrak trace COMMAND ...` | Runs a command with telemetry printed live (layers, batches, kernels) or written to JSON Lines | 3 |
 

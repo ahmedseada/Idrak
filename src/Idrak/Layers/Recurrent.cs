@@ -23,7 +23,8 @@ public sealed class LSTM(int inputSize, int hiddenSize, bool returnSequences = f
         return bias;
     }
 
-    private protected override IEnumerable<Tensor> Run(Tensor projected, int batch, int steps)
+    /// <inheritdoc />
+    protected override IEnumerable<Tensor> Run(Tensor projected, int batch, int steps)
     {
         int h = HiddenSize;
         var hidden = Tensor.Zeros([batch, h], projected.Device);
@@ -57,7 +58,8 @@ public sealed class LSTM(int inputSize, int hiddenSize, bool returnSequences = f
 public sealed class GRU(int inputSize, int hiddenSize, bool returnSequences = false, Device? device = null, Random? random = null)
     : RecurrentModule(inputSize, hiddenSize, 3, returnSequences, device, random)
 {
-    private protected override IEnumerable<Tensor> Run(Tensor projected, int batch, int steps)
+    /// <inheritdoc />
+    protected override IEnumerable<Tensor> Run(Tensor projected, int batch, int steps)
     {
         int h = HiddenSize;
         var hidden = Tensor.Zeros([batch, h], projected.Device);

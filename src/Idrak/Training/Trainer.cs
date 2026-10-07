@@ -270,7 +270,7 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
             var summary = new EpochCompleted(epoch, epochs, trainLoss, trainMetrics, validationResult?.Loss, validationResult?.Metrics,
                 Optimizer.LearningRate, epochTime.Elapsed, samples / Math.Max(epochTime.Elapsed.TotalSeconds, 1e-9),
                 ComputeResources.GetMemoryUsage(device), isBest);
-            history.EpochList.Add(summary);
+            history.Add(summary);
             if (Telemetry.IsEnabled(TelemetryLevel.Training))
             {
                 Telemetry.EpochCompleted(summary);
