@@ -6,6 +6,7 @@ using Idrak;
 using Idrak.Abstraction.Devices.Cpu;
 using Idrak.Gpu.Vulkan;
 using Idrak.Layers;
+using Idrak.Models.Abstractions;
 
 // Limits some devices report low and features some report: storages larger than one binding (maxStorageBufferRange,
 // 128 MiB on some devices) bound in windows, forced on any device with a small binding range; the loader's file name per

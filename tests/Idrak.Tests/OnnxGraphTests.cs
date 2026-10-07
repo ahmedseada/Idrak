@@ -5,7 +5,9 @@ using System.Text.Json.Nodes;
 using Idrak;
 using Idrak.Inference;
 using Idrak.Layers;
+using Idrak.Layers.Abstractions;
 using Idrak.Onnx;
+using Idrak.Onnx.Abstractions;
 using Idrak.Onnx.Runtime;
 
 // ONNX export registry, graph export (import → export → import), graph operations and layer types of your own.

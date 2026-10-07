@@ -94,6 +94,28 @@
 - Built-ins are registered per registry, when that registry is first used, instead of all at once on the first use of
   any registry: training a network no longer builds the GGUF tables, model formats or ONNX translators (about 30 to 40
   ms less at startup on a CPU). A first-party assembly's `LibraryRegistrations` has `RegisterFor(Type registry)`.
+- Contracts live with their users (plan 10, decision 10). A contract only one package uses moved from
+  `Idrak.Abstraction` to that package, under a `.Abstractions` namespace; these are not global usings, so code naming
+  one adds the `using`:
+  - `Idrak`: `Idrak.Layers.Abstractions` (`LayerTypes`, `GraphOps`, `NetworkOps`, `INetworkBuilder`, `ICachedModule`,
+    `RecurrentModule`), `Idrak.Models.Abstractions` (checkpoint formats, tensor stores, weight codecs and formats, GGUF
+    types, families and pre-tokenizers, pretrained architectures, tokenizer components), `Idrak.Onnx.Abstractions` (the
+    ONNX import and export registries and translators), `Idrak.Data.Abstractions` (`SampleSources`, `IBatchSource`,
+    `Batch`, `ImageCodecs`, `IImageCodec`, `ImageInfo`, `IScaler`; the PNG, BMP and Netpbm codecs are in `Idrak.Data`),
+    `Idrak.Training.Abstractions` (`ITrainerCallback`, `TrainerContext`, `TrainingHistory`).
+  - `Idrak.Data`: `Idrak.Data.Abstractions` (file formats, dataset sources, `IDatasetRows`, `DatasetSpec`,
+    `ReadOptions`, Parquet codecs, text normalizers).
+  - `Idrak.Nlp`: `Idrak.Generation.Abstractions` (`ITokenSampler`, `SamplerRequest`, `SampledToken`; `TokenSampler` is
+    in `Idrak.Generation`), `Idrak.Retrieval.Abstractions` (vector stores, retrievers, rerankers, chunks),
+    `Idrak.Nlp.Abstractions` (distillation teachers, `TrainingSequence`).
+  - `Idrak.Vision`: `Idrak.Vision.Abstractions` (detectors, segmenters, region proposers, boxes, detections, masks); the
+    foreground, components, suppression and segmentation metrics are in `Idrak.Vision`. `Idrak.Abstraction.Vision` is
+    gone.
+  - Shared contracts stay in `Idrak.Abstraction`: tensors, modules, devices, tokenizers, chat, tools, serving,
+    `IEmbedder`, model sources, sample sources and streams, `IDownloader`, adapters, optimizers, KV layouts, packed
+    weights, RoPE scalings, tool-call formats.
+  - Registries in the package that owns their built-ins register them on first use themselves.
+  - `Tensor.AddInPlace(float)` and `Tensor.FillInPlace(float)` are public.
 - Tools are contracts, and the bridges speak only to contracts:
   - `Tool`, `[Tool]`, `ToolResult`, `ToolRegistry` and its builder move from `Idrak.Generation` to
     `Idrak.Abstraction.Generation`. `ToolRegistry` is the default of the new `IToolRegistry`, and the builders,

@@ -5,6 +5,7 @@ using System.Buffers;
 using Idrak.Data;
 using Idrak.Inference;
 using Idrak.Layers;
+using Idrak.Vision.Abstractions;
 
 namespace Idrak.Vision;
 
@@ -129,7 +130,7 @@ public sealed class RegionClassifier : IDisposable
     public IReadOnlyList<string> Classes => _classes;
 
     /// <summary>The foreground of an image, with this classifier's polarity and threshold settings.</summary>
-    public ForegroundImage Foreground(ImageData image) => Abstraction.Vision.Foreground.Extract(image, _settings.ImagePolarity, _settings.ForegroundThreshold);
+    public ForegroundImage Foreground(ImageData image) => Vision.Foreground.Extract(image, _settings.ImagePolarity, _settings.ForegroundThreshold);
 
     /// <summary>Classifies the regions <paramref name="proposer"/> finds in <paramref name="image"/> (default: its connected regions).</summary>
     public RegionPredictions Classify(ImageData image, IRegionProposer? proposer = null)

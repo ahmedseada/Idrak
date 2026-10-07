@@ -18,7 +18,6 @@ a readable `ToString()`, `ThrowIfFailed()`), so xunit, NUnit, MSTest or a plain 
 using Idrak.Abstraction.Testing;
 
 Conformance.Check(Device.Get("mydevice")).ThrowIfFailed();          // a device, operation by operation
-Conformance.Check(MySampler.Create).ThrowIfFailed();                 // a token sampler factory (TextGenerator.CreateSampler)
 Conformance.Check(myTokenizer, reference: libraryTokenizer).ThrowIfFailed();
 Conformance.CheckRopeScaling("yarn", MyYarn).ThrowIfFailed();        // against the library's own "yarn"
 ```
@@ -26,9 +25,25 @@ Conformance.CheckRopeScaling("yarn", MyYarn).ThrowIfFailed();        // against 
 | Check | What it compares |
 |---|---|
 | Devices (`Check(Device)`, `Check(Backend)`) | The built-in cases (`DeviceCases.All`: element-wise, products, norms, rotary positions, convolution, layout, optimizer steps, packed weights and their fused products, gated activations, key/value caches, every attention kernel, sampling, autograd) run on the CPU with every operation call recorded; each call then runs on your device through its dispatcher (`Backend.Name(...)`: a registered kernel, the device's own, a composition, or the host fallback) on copies of the same values, and everything it writes must agree with the CPU within the operation's tolerance. Operations the CPU has no single kernel for (the fused products) are compared with their composition. The report has one entry per operation with the kernel that ran (`Kernels.Chain`); operations with no kernel on the device, or that no case reaches, are listed as skipped. |
-| Token samplers (`TokenSamplerSuite`) | The request's shape; ids in range; greedy tokens identical to the library's `TokenSampler`, penalties included; sampled tokens among those top-k, top-p and min-p allow; a reset reproducing the same tokens; statistics matching the tokens; with `Exact`, the library's very tokens and probabilities. |
+| Token samplers (`TokenSamplerSuite`) | The asked shape; ids in range; greedy tokens identical to the reference's (the library's `TokenSampler`), penalties included; sampled tokens among those top-k, top-p and min-p allow; a reset reproducing the same tokens; statistics matching the tokens; with `Exact`, the reference's very tokens and probabilities. |
 | Tokenizers (`TokenizerSuite`) | Ids in range; the same ids every time; decoding a span as a list; the round trip (exact, or stable); `TokenOf` past the end; with a reference, the same ids and text. Texts: empty, whitespace, accents, Arabic, Chinese, emoji, combining marks, control characters, long runs, random Unicode, and yours (`ExtraTexts`). |
 | RoPE scalings (`RopeScalingSuite`) | As many frequencies, finite and positive; the library method's frequencies and attention factor (`RopeScalings.Default`); the same per position; safe from several threads. |
+
+The token-sampler contract (`ITokenSampler`) lives in Idrak.Nlp, and this kit depends on Idrak.Abstraction alone, so
+a test passes the sampler it checks and the reference as delegates (`SamplerUnderTest`: set the history, sample a step,
+reset, read the statistics):
+
+```csharp
+static Func<SamplerSettings, SamplerUnderTest> Drive(Func<SamplerRequest, ITokenSampler> create) => settings =>
+{
+    var sampler = create(new SamplerRequest(settings.Device, settings.Rows, settings.Vocabulary, settings.Steps, settings.HistoryCapacity,
+        new GenerationOptions { Temperature = settings.Temperature, TopK = settings.TopK, /* ... */ Seed = settings.Seed }));
+    return new SamplerUnderTest(sampler.Rows, sampler.Vocabulary, sampler.SetHistory, logits => { sampler.Sample(logits); return sampler.Ids.ToArray(); },
+        sampler.Reset, (from, to) => [.. sampler.Read(from, to).Select(s => s.Select(t => new SampledStatistics(t.Id, t.Probability, t.Entropy)).ToArray())], sampler);
+};
+
+Conformance.Check(Drive(MySampler.Create), new TokenSamplerSuite(Drive(TokenSampler.Create))).ThrowIfFailed();
+```
 
 Fixed cases come first, then random ones (`DeviceCheckOptions.RandomRuns`, `ContractCheckOptions.RandomCases`, a seed).
 Tolerances are per operation (`DeviceCheckOptions.Tolerances`); the comparisons themselves are public (`Comparisons`).
@@ -66,7 +81,7 @@ number of iterations, compared as the conformance check compares; the memory in 
 var report = Conformance.Check(device);
 report.SaveFailures("regressions");                         // one small JSON file per failing case
 Regression.Replay("regressions", device).ThrowIfFailed();   // in your tests from then on
-Regression.Replay("regressions", MySampler.Create, new TokenSamplerSuite()).ThrowIfFailed();
+Regression.Replay("regressions", Drive(MySampler.Create), new TokenSamplerSuite(Drive(TokenSampler.Create))).ThrowIfFailed();
 ```
 
 A saved operation call holds the operation, its arguments and the values of its storages before and after (exact

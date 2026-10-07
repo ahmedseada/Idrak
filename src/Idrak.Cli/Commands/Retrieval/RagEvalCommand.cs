@@ -3,6 +3,7 @@
 
 using System.Text.Json.Nodes;
 using Idrak.Retrieval;
+using Idrak.Retrieval.Abstractions;
 
 namespace Idrak.Cli.Commands.Retrieval;
 

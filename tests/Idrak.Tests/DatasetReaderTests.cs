@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Idrak;
 using Idrak.Data;
+using Idrak.Data.Abstractions;
 
 // Datasets: the CSV and JSON Lines readers, which work on blocks, give what a character-at-a-time (line-at-a-time) reader gives.
 internal static partial class Tests

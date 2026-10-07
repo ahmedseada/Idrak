@@ -6,6 +6,7 @@ using System.Text.Json.Nodes;
 using Idrak;
 using Idrak.Generation;
 using Idrak.Layers;
+using Idrak.Models.Abstractions;
 
 internal static partial class Tests
 {

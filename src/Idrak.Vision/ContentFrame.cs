@@ -3,6 +3,7 @@
 
 using System.Buffers;
 using Idrak.Data;
+using Idrak.Vision.Abstractions;
 
 namespace Idrak.Vision;
 

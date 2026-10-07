@@ -3,6 +3,7 @@
 
 using System.Buffers.Binary;
 using System.IO.Compression;
+using Idrak.Data.Abstractions;
 
 namespace Idrak.Data.Parquet;
 

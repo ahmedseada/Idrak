@@ -4,6 +4,18 @@ Natural language processing for Idrak (no dependencies beyond Idrak and Idrak.Da
 
 Loading the models themselves (Llama, Qwen, Mistral, Gemma and mixture-of-experts models by Hugging Face id, folder or GGUF file, with their BPE tokenizers) is in the core package, `Idrak` (`Idrak.Models`); this package adds `CreateGenerator` and `CreateChat` to a loaded `PretrainedModel`.
 
+## Contracts
+
+The plug-in points only this package uses live beside their implementations (add the `using` line to name them):
+
+| Namespace | Contracts |
+|-----------|-----------|
+| `Idrak.Generation.Abstractions` | `ITokenSampler` (with `SamplerRequest`, `SampledToken`; `TokenSampler` in `Idrak.Generation` is the default) |
+| `Idrak.Retrieval.Abstractions` | `IVectorStore`, `IRetriever`, `IReranker` (with `Chunk`, `RetrievedChunk`, `VectorRecord`, `VectorMatch`) |
+| `Idrak.Nlp.Abstractions` | `DistillationTeacher`, `TeacherDistributions`, `TrainingSequence` |
+
+Shared contracts (tokenizers, chat templates, chat and text models, tools, `IEmbedder`) are in Idrak.Abstraction.
+
 ## Install
 
 ```bash

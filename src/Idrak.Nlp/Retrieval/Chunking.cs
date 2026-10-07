@@ -4,6 +4,7 @@
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using Idrak.Generation;
+using Idrak.Retrieval.Abstractions;
 
 namespace Idrak.Retrieval;
 

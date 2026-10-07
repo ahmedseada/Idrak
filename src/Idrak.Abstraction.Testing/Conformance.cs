@@ -50,14 +50,6 @@ public static class Conformance
     }
 
     /// <summary>
-    /// Checks a token sampler (the factory a generation calls, as <c>TokenSampler.Create</c> is) against the library's
-    /// <see cref="TokenSampler"/>: shapes, ids in range, greedy choices identical, sampled ids among the tokens the
-    /// settings allow, a restart reproducing the same ids, statistics consistent with the ids (<see cref="TokenSamplerSuite"/>).
-    /// </summary>
-    public static ConformanceReport Check(Func<SamplerRequest, ITokenSampler> sampler, ContractCheckOptions? options = null) =>
-        Check(sampler, new TokenSamplerSuite(), options);
-
-    /// <summary>
     /// Checks a tokenizer: ids in range, the same ids every time, decoding the same text from a list or a span, text
     /// stable through a round trip, and, given a <paramref name="reference"/> (the library tokenizer it replaces), the
     /// same ids and text as it (<see cref="TokenizerSuite"/>).

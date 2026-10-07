@@ -10,32 +10,38 @@
 using System.Runtime.InteropServices;
 using System.Text.Json.Nodes;
 using Idrak.Abstraction.Testing;
+using Idrak.Generation;
+using Idrak.Generation.Abstractions;
 using Idrak.Samples.Override;
 
-Func<SamplerRequest, ITokenSampler> app = SanitizingSampler.Create;
+// The token-sampler contract is Idrak.Nlp's; the kit drives a sampler through a few delegates (Drive, below), and
+// compares it with the library's TokenSampler.
+var app = Drive(SanitizingSampler.Create);
+var library = Drive(TokenSampler.Create);
+var samplers = new TokenSamplerSuite(library);
 string regressions = Path.Combine(AppContext.BaseDirectory, "regressions");
 
 (string Name, Action Run)[] tests =
 [
-    ("the app's sampler keeps the token-sampler contract (Conformance.Check)", () => Conformance.Check(app).ThrowIfFailed()),
+    ("the app's sampler keeps the token-sampler contract (Conformance.Check)", () => Conformance.Check(app, samplers).ThrowIfFailed()),
     ("it samples the library's very tokens and probabilities (it wraps the library's sampler)", () =>
-        Conformance.Check(app, new TokenSamplerSuite { Exact = true }, new ContractCheckOptions { RandomCases = 40 }).ThrowIfFailed()),
+        Conformance.Check(app, new TokenSamplerSuite(library) { Exact = true }, new ContractCheckOptions { RandomCases = 40 }).ThrowIfFailed()),
     ("a stress run: four threads, large vocabularies, no memory left behind (Stress.Run)", () =>
-        Stress.Run(app, new TokenSamplerSuite(), new StressOptions { Iterations = 80, Threads = 4 }).ThrowIfFailed()),
+        Stress.Run(app, samplers, new StressOptions { Iterations = 80, Threads = 4 }).ThrowIfFailed()),
     ("the case that made the app write it: non-finite logits break the library's sampler, not the app's", () =>
     {
         var suite = new NonFiniteLogitsSuite();
-        var library = Conformance.Check(TokenSampler.Create, suite);
-        Check(!library.Passed, $"the library's sampler should fail the app's case:\n{library}");
-        Conformance.Check(app, suite).ThrowIfFailed();
+        var failing = Conformance.Check(TokenSampler.Create, suite);
+        Check(!failing.Passed, $"the library's sampler should fail the app's case:\n{failing}");
+        Conformance.Check(SanitizingSampler.Create, suite).ThrowIfFailed();
 
         // The failing cases, saved, become the app's regression tests.
         string folder = Path.Combine(Path.GetTempPath(), $"override-cases-{Guid.NewGuid():N}");
         try
         {
-            Check(library.SaveFailures(folder).Count > 0, "failures saved");
+            Check(failing.SaveFailures(folder).Count > 0, "failures saved");
             Check(!Regression.Replay(folder, TokenSampler.Create, suite).Passed, "the saved cases fail on the library's sampler");
-            Regression.Replay(folder, app, suite).ThrowIfFailed();
+            Regression.Replay(folder, SanitizingSampler.Create, suite).ThrowIfFailed();
         }
         finally
         {
@@ -44,7 +50,7 @@ string regressions = Path.Combine(AppContext.BaseDirectory, "regressions");
     }),
     ("the cases saved in regressions/ (what once broke the app) still pass", () =>
     {
-        var replay = Regression.Replay(regressions, app, new NonFiniteLogitsSuite());
+        var replay = Regression.Replay(regressions, SanitizingSampler.Create, new NonFiniteLogitsSuite());
         replay.ThrowIfFailed();
         Check(replay.Cases > 0, "no saved case was found");
     }),
@@ -67,6 +73,21 @@ foreach (var (name, run) in tests)
 
 Console.WriteLine($"{tests.Length - failed} passed, {failed} failed");
 return failed == 0 ? 0 : 1;
+
+// An ITokenSampler factory as the kit's sampler checks drive it.
+static Func<SamplerSettings, SamplerUnderTest> Drive(Func<SamplerRequest, ITokenSampler> create) => settings =>
+{
+    var sampler = create(new SamplerRequest(settings.Device, settings.Rows, settings.Vocabulary, settings.Steps, settings.HistoryCapacity, new GenerationOptions
+    {
+        Temperature = settings.Temperature, TopK = settings.TopK, TopP = settings.TopP, MinP = settings.MinP, RepeatPenalty = settings.RepeatPenalty,
+        RepeatLastN = settings.RepeatLastN, PresencePenalty = settings.PresencePenalty, FrequencyPenalty = settings.FrequencyPenalty, Seed = settings.Seed,
+    }));
+    return new SamplerUnderTest(sampler.Rows, sampler.Vocabulary, sampler.SetHistory, logits =>
+    {
+        sampler.Sample(logits);
+        return sampler.Ids.ToArray();
+    }, sampler.Reset, (from, to) => [.. sampler.Read(from, to).Select(step => step.Select(t => new SampledStatistics(t.Id, t.Probability, t.Entropy)).ToArray())], sampler);
+};
 
 static void Check(bool condition, string message)
 {

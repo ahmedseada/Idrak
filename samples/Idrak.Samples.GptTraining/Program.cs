@@ -35,6 +35,7 @@ using Idrak;
 using Idrak.Diagnostics;
 using Idrak.Generation;
 using Idrak.Layers;
+using Idrak.Models.Abstractions;
 using Idrak.Optimizers;
 
 var options = new Dictionary<string, string>(StringComparer.Ordinal);

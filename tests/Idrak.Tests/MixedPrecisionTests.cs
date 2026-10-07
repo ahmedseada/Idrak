@@ -5,6 +5,7 @@ using Idrak;
 using Idrak.Gpu.Cuda;
 using Idrak.Gpu.Vulkan;
 using Idrak.Layers;
+using Idrak.Models.Abstractions;
 using Idrak.Optimizers;
 
 internal static partial class Tests
