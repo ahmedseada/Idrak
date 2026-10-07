@@ -2,8 +2,8 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Runtime.CompilerServices;
-using System.Text.RegularExpressions;
 using System.Text;
+using System.Text.RegularExpressions;
 using Idrak.Generation;
 using Idrak.Retrieval.Abstractions;
 

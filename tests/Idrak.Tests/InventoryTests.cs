@@ -167,13 +167,6 @@ internal static partial class Tests
             return;
         }
 
-        if (Environment.GetEnvironmentVariable("IDRAK_USAGE_DUMP") is { } dump)
-        {
-            var u = ContractUsers();
-            File.WriteAllLines(dump, u.Users.Where(p => p.Key.Assembly == typeof(Device).Assembly || p.Key.Assembly.GetName().Name != "x").OrderBy(p => p.Key.Assembly.GetName().Name).ThenBy(p => p.Key.FullName)
-                .Select(p => $"{p.Key.Assembly.GetName().Name} {p.Key.FullName} :: {string.Join(",", p.Value.Order())} <- {string.Join(",", u.Referrers[p.Key].Select(r => r.Name).Order().Take(12))}"));
-        }
-
         var misplaced = Abstractions().Select(a => Misplaced(a.Type)).OfType<string>().ToList();
         Check(misplaced.Count == 0, $"contracts that do not live with their users (decision 10): {string.Join("; ", misplaced)}");
     }

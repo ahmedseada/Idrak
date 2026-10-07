@@ -2,8 +2,8 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Text;
-using Idrak.Data.Abstractions;
 using Idrak.Data;
+using Idrak.Data.Abstractions;
 
 namespace Idrak.Samples.Ocr;
 

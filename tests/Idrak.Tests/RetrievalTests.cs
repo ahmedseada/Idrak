@@ -3,13 +3,13 @@
 
 using System.IO.Pipelines;
 using System.Text.Json.Nodes;
+using Idrak;
 using Idrak.Generation;
 using Idrak.Layers;
 using Idrak.Mcp;
 using Idrak.Optimizers;
-using Idrak.Retrieval.Abstractions;
 using Idrak.Retrieval;
-using Idrak;
+using Idrak.Retrieval.Abstractions;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 

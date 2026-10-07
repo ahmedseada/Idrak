@@ -3,8 +3,8 @@
 
 using Idrak.Layers;
 using Idrak.Models;
-using Idrak.Nlp.Abstractions;
 using Idrak.Nlp;
+using Idrak.Nlp.Abstractions;
 
 namespace Idrak.Cli.Shared;
 

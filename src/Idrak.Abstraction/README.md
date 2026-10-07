@@ -9,13 +9,24 @@ dotnet add package Idrak.Abstraction  # the contracts alone, for a plug-in
 
 ## What is in the package
 
+The contracts more than one package uses (or Abstraction itself does), each with its default. A contract only one
+package uses lives in that package, under its `.Abstractions` namespace (for example `Idrak.Vision.Abstractions`), and
+its README lists it.
+
 | Area | What is there |
 |------|---------------|
-| Devices | `Device`, `DeviceType`, `ComputeResources`; the CPU device (SIMD, multi-threaded), which is also every other device's host fallback |
-| Device API (`Idrak.Abstraction.Devices`) | `Backend` (memory, copies and a `NameKernel` per operation), `Storage`, `BackendCapabilities`, `DeviceProvider` and `DeviceProviders` (where a new kind of device registers), offloading and staging |
+| Root (`Idrak.Abstraction`) | `Device`, `DeviceType`, `ComputeResources`, `Tensor`, `TensorScope`, autograd, `Module`; the CPU device (SIMD, multi-threaded), which is also every other device's host fallback |
+| Device API (`Idrak.Abstraction.Devices`) | `Backend` (memory, copies and a `NameKernel` per operation), `Storage`, `BackendCapabilities`, `DeviceProvider` and `DeviceProviders` (where a new kind of device registers), `IMemoryOffload`, `IHostStaging`, `IBackwardStaging` |
 | Operations (`Idrak.Abstraction.Operations`) | `Ops` (a descriptor per operation), `Kernels.Register` (a kernel for an operation on a kind of device), `Kernels.Chain` (which kernel each operation runs on a device), `Kernels.Trace` (calls and host fallbacks) |
+| Modules (`Idrak.Abstraction.Modules`) | `ILinearAdapter` with LoRA and DoRA, `ILinearLayer` |
+| Training (`Idrak.Abstraction.Training`) | `Optimizer` with SGD, Adam and AdamW; `LearningRateScheduler` with the step, exponential, cosine and lambda schedules |
+| Data (`Idrak.Abstraction.Data`) | `ISampleSource`, `ISampleStream`, `ISampleReader`, `ISampleTransform`, `ImageData`, `IDownloader` |
+| Formats (`Idrak.Abstraction.Formats`) | `IModelSource` and `ModelSources` (core registers the folder, store and .gguf sources, Idrak.Data the Hugging Face one) |
+| Generation (`Idrak.Abstraction.Generation`) | `ITokenizer` (char and word tokenizers), `ChatTemplate` and `ChatTemplates`, `IChatModel`, `ITextModel`, `IToolCallParser` and `ToolCallFormats` (every built-in parser), `PackedWeight` (int8, int4, bfloat16), `KeyValueLayout` and `KeyValueLayouts`, `RopeScalings`, `DecoderSpec`, `GenerationOptions` |
 | Generation: tools | `Tool`, `[Tool]`, `ToolResult`, `IToolRegistry` and its default `ToolRegistry` (validation, allow rules, approvals, a timeout); `IToolChatModel` (a chat model that carries tools) and `ChatTools.WithTools` (runs a chat model's tool calls on the server) |
-| Serving | the engine's model kinds (`EngineModel<TCopy>`), `IPredictor<TIn, TOut>`, `IModelCatalog` (named models reached through their contracts; the inference engine implements it), `KeepAlive` (parses "30m", "1h30m", 0, -1) |
+| Retrieval (`Idrak.Abstraction.Retrieval`) | `IEmbedder` |
+| Serving (`Idrak.Abstraction.Serving`) | the engine's model kinds (`EngineModel<TCopy>`, `IEngineHost`, `IEngineLease`, `IEngineBatcher`), `IPredictor<TIn, TOut>`, `IModelCatalog` (named models reached through their contracts; the inference engine implements it), `KeepAlive` (parses "30m", "1h30m", 0, -1) |
+| Diagnostics (`Idrak.Abstraction.Diagnostics`) | `ITelemetryHook` and the telemetry events |
 
 The GPU devices (CUDA, Vulkan, HIP) ship in the `Idrak.Gpu` package (which `Idrak` brings) and are built on this
 public device API alone; when an application includes it, `Device.Available` lists them, even before any other type of
@@ -45,8 +56,8 @@ unchanged.
 
 ## Status
 
-Preview, while the version is 0.y.z: the contracts move here one area at a time (tensors and modules, then training,
-generation, data and formats), each with its default implementation. Plan:
+Preview, while the version is 0.y.z. A test counts the library packages that use each contract and keeps it here only
+while Abstraction or more than one package uses it (plan 10, decision 10). Plan:
 [plans/10-abstraction.md](https://github.com/ahmedseada/Idrak/blob/main/plans/10-abstraction.md).
 
 Licensed under the Apache License 2.0.

@@ -53,7 +53,6 @@ public static class DatasetSources
 {
     private static readonly List<IDatasetSource> Registry = [];
 
-    // The built-ins of the first-party assemblies (Idrak.Data) are registered before the first use.
     static DatasetSources() => LibraryDatasetSources.RegisterAll();   // the built-in sources, on first use
 
     /// <summary>

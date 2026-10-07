@@ -2,8 +2,8 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Diagnostics;
-using Idrak.Data.Abstractions;
 using Idrak.Data;
+using Idrak.Data.Abstractions;
 using Idrak.Diagnostics;
 using Idrak.Layers;
 using Idrak.Optimizers;
