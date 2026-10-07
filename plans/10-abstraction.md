@@ -326,10 +326,10 @@ apps combine domains without the domains knowing each other.
 | `Idrak.Audio` (planned) | audio decoding, spectrograms, speech recognition, text-to-speech, vocoders; registers transcription and speech model kinds | Idrak |
 | bridge `Idrak.Mcp` | MCP tools | Nlp, ModelContextProtocol |
 | bridge `Idrak.Onnx.Runtime` | ONNX Runtime models as modules | Idrak, Microsoft.ML.OnnxRuntime |
-| app `Idrak.Cli` | the `idrak` tool, including the HTTP endpoints of `idrak serve` (today's `Idrak.AspNetCore`, folded in) | everything |
+| bridge `Idrak.AspNetCore` | thin HTTP endpoints over the inference engine (`MapChatApi`, `MapCompletionsApi`, `MapGenerate`, `MapPredictor`), speaking only to the engine and the contracts | Idrak, ASP.NET (the shared framework) |
+| app `Idrak.Cli` | the `idrak` tool (`idrak serve` uses the bridge) | everything |
 
-Retired: `Idrak.LanguageModels`, `Idrak.Datasets` (renamed `Idrak.Data`), `Idrak.Onnx` (into core), `Idrak.AspNetCore`
-(into the CLI). Dependencies run one way: Abstraction ← Idrak ← Data ← Nlp; Abstraction ← Gpu; Idrak ← Vision,
+Retired: `Idrak.LanguageModels`, `Idrak.Datasets` (renamed `Idrak.Data`), `Idrak.Onnx` (into core). Dependencies run one way: Abstraction ← Idrak ← Data ← Nlp; Abstraction ← Gpu; Idrak ← Vision,
 Diffusion, Audio.
 
 ## Decided (2026-10-05)
@@ -351,8 +351,8 @@ Diffusion, Audio.
    changelog still records what changed. This replaces the earlier "users change little" goal and the one-release
    migration rules (rule 5's single break, the migration table).
 8. **The package layout above** is the end state (2026-10-07): domains as large packages, the inference engine in core
-   with model kinds as a public contract, the ASP.NET endpoints folded into the CLI (an application, which already
-   depends on everything), the GPU devices in one package.
+   with model kinds as a public contract, the ASP.NET endpoints kept as a thin bridge (`Idrak.AspNetCore`) over the engine and
+   the contracts, the GPU devices in one package.
 9. **Everything is a contract** (2026-10-07): every point a domain, an app or a plug-in can supply or replace is a
    public contract in `Idrak.Abstraction`, including the engine's model kinds (`EngineModel` today) and the network
    builder's steps (`NetworkOps` today), so the override loop works everywhere.
