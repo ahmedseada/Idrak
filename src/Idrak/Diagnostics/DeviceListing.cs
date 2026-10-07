@@ -3,7 +3,6 @@
 
 using System.Numerics;
 using Idrak.Backends;
-using Idrak.Abstraction.Devices.Cpu;
 using Idrak.Backends.Cuda;
 using Idrak.Backends.Hip;
 using Idrak.Backends.Vulkan;
@@ -127,7 +126,7 @@ public static class DeviceListing
         info = info with { Name = backend.Name, MatrixUnits = backend.Capabilities.MatrixUnits };
         return backend switch
         {
-            CpuBackend => info with
+            _ when backend.Kind == "cpu" => info with
             {
                 MemoryBytes = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes,
                 HardwareKind = "cpu",

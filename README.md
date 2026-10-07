@@ -53,7 +53,7 @@ tool. `IDRAK_DISABLE_CUDA=1` (and `_VULKAN`, `_HIP`) turns a backend off.
 | Package | What it gives you |
 |---------|-------------------|
 | `Idrak` (core) | Tensors and autograd, layers, training, the inference engine, pretrained models (Hugging Face and GGUF weights, BPE tokenizers, LoRA adapters), ONNX export and import, telemetry, every backend |
-| `Idrak.Abstraction` | The contracts Idrak is built on, each with its default implementation: so far `Device`, `ComputeResources` and the CPU device (preview; brought along by `Idrak`; see [plan 10](plans/10-abstraction.md)) |
+| `Idrak.Abstraction` | The contracts Idrak is built on, each with its default implementation: every contract, `Tensor` and `Module`, the CPU device, and the public device API (`Backend`, `Storage`, `DeviceProviders`, `Kernels.Register`) the GPU devices are built on (preview; brought along by `Idrak`; see [plan 10](plans/10-abstraction.md)) |
 | `Idrak.Nlp` | Text generation, chat and tools, the models' own Jinja chat templates, the engine's text and chat models, LoRA / QLoRA fine-tuning, evaluation, retrieval and RAG, a coding agent |
 | `Idrak.Data` | JSON Lines, JSON, CSV, text, code and Parquet files (also compressed or archived); Hugging Face, GitHub, Kaggle, Zenodo and URL sources |
 | `Idrak.Vision` | Region classification, content framing and image statistics, over the vision contracts of `Idrak.Abstraction` |

@@ -1,13 +1,17 @@
 """Generates the operation table (plan 9) from the device contract.
 
 Every operation of the device contract is a virtual method `NameKernel` on `Backend`
-(src/Idrak.Abstraction/Devices/Backend.cs): the device's own kernel, whose default body is the host fallback. From
-those declarations this script writes
+(src/Idrak.Abstraction/Devices/Backend.cs): the device's own kernel, whose default body is the host fallback, a
+composition of other operations, or none (it returns false). From those declarations and their documentation this
+script writes
 
-  src/Idrak.Abstraction/Operations/Operations.g.cs    a descriptor per operation, its index and its kernel delegate
+  src/Idrak.Abstraction/Operations/Operations.g.cs    a descriptor per operation (Ops), its index and its kernel
+                                                      delegate (OperationKernels), with what its default body does
   src/Idrak.Abstraction/Devices/Backend.Operations.g.cs
                                                       `Name(...)` on Backend, which runs the kernel registered for the
                                                       device (Kernels.Register) or else `NameKernel`
+
+Every `NameKernel` needs a `<summary>`: the descriptor, the delegate and `Name(...)` reuse it.
 
 Run it after adding, removing or changing an operation:
 
@@ -74,8 +78,49 @@ def argument(parameter):
     return f"{modifier} {name}" if modifier else name
 
 
+PRIMITIVES = {"int": "Int32", "float": "Single", "uint": "UInt32", "long": "Int64", "bool": "Boolean", "double": "Double",
+              "byte": "Byte", "nint": "IntPtr"}
+
+
+def clr_name(parameter):
+    """The .NET Type.Name of a parameter's type (Int32, Storage, ConvGeometry&, ReadOnlySpan`1), to find its method."""
+    words = strip_default(parameter).split()
+    byref = any(w in ("ref", "out", "in") for w in words[:-1])
+    declared = " ".join(w for w in words[:-1] if w not in ("ref", "out", "in", "params", "scoped")).rstrip("?")
+    if "<" in declared:
+        arguments = split_top(declared[declared.index("<") + 1:-1])
+        name = f"{declared[:declared.index('<')]}`{len(arguments)}"
+    else:
+        name = PRIMITIVES.get(declared, declared)
+    return name + ("&" if byref else "")
+
+
+def documentation(source, start):
+    """The `///` lines right above the declaration starting at `start`, without their indentation and slashes."""
+    lines = source[:start].split("\n")[:-1]
+    block = []
+    while lines and lines[-1].strip().startswith("///"):
+        block.insert(0, lines.pop().strip()[3:].removeprefix(" "))
+    return block
+
+
+def fallback(source, end):
+    """What the default body after the parameter list at `end` does: KernelSource.None, Host or Composed."""
+    rest = source[end:].lstrip()
+    if rest.startswith("=>"):
+        body = rest[:rest.index(";")]
+        return "None" if re.fullmatch(r"=>\s*(false|0)\s*", body) else "Composed"
+    depth, i = 0, 0
+    while True:
+        depth += {"{": 1, "}": -1}.get(rest[i], 0)
+        i += 1
+        if depth == 0 and rest[i - 1] == "}":
+            break
+    return "Host" if "new HostCall(" in rest[:i] else "Composed"
+
+
 def operations(source):
-    """(name, return type, parameter list) of every `public virtual ... NameKernel(...)` in declaration order."""
+    """(name, return type, parameter list, doc lines, fallback) of every `public virtual ... NameKernel(...)` in order."""
     found = []
     for match in re.finditer(r"^    public virtual (.+?) (\w+)Kernel\(", source, re.M):
         start = match.end()
@@ -84,61 +129,116 @@ def operations(source):
             depth += {"(": 1, ")": -1}.get(source[i], 0)
             i += 1
         parameters = " ".join(source[start:i - 1].split())
-        found.append((match.group(2), match.group(1), parameters))
+        docs = documentation(source, match.start())
+        if not any(line.startswith("<summary>") for line in docs):
+            sys.exit(f"{match.group(2)}Kernel in {BACKEND} has no <summary>: the generated descriptor needs one")
+        found.append((match.group(2), match.group(1), parameters, docs, fallback(source, i)))
     return found
 
 
+def summary(docs):
+    """The text of the `<summary>` element of a doc block, as lines."""
+    text = "\n".join(docs)
+    inner = text[text.index("<summary>") + len("<summary>"):text.index("</summary>")]
+    return [line for line in inner.strip("\n").split("\n")]
+
+
+def outside_backend(lines, members):
+    """Doc lines for a declaration outside Backend: crefs to Backend's members qualified, parameter references as code."""
+    result = []
+    for line in lines:
+        line = re.sub(r'<see cref="(\w+)"\s*/>', lambda m: f'<see cref="Backend.{m.group(1)}"/>' if m.group(1) in members else m.group(0), line)
+        result.append(line)
+    return result
+
+
+def as_code(lines):
+    """Parameter references written as code (for a declaration without those parameters)."""
+    return [re.sub(r'<paramref name="(\w+)"\s*/>', r"<c>\1</c>", line) for line in lines]
+
+
 def generate():
-    ops = operations(BACKEND.read_text())
+    source = BACKEND.read_text()
+    ops = operations(source)
     if not ops:
         sys.exit(f"no `public virtual ... NameKernel(` in {BACKEND}")
+    members = set(re.findall(r"^    public (?:abstract |virtual |override |static )*[\w<>?,\[\]() ]+? (\w+)[(\s]", source, re.M))
+    members |= {name for name, *_ in ops}
 
     # Overloads share the method name; their descriptors and delegates are numbered (MaxPoolBackward, MaxPoolBackward2).
     seen, named = {}, []
-    for name, returns, parameters in ops:
+    for name, returns, parameters, docs, default in ops:
         seen[name] = seen.get(name, 0) + 1
-        named.append((name, name if seen[name] == 1 else f"{name}{seen[name]}", returns, parameters))
+        named.append((name, name if seen[name] == 1 else f"{name}{seen[name]}", returns, parameters, docs, default))
 
     o = [HEADER, "using Idrak.Abstraction.Devices;", "", "namespace Idrak.Abstraction.Operations;", ""]
     o.append("/// <summary>The index of each operation in a device's kernel slots (see <see cref=\"Ops\"/>).</summary>")
     o.append("internal static class OperationIndex")
     o.append("{")
-    for index, (_, op, _, _) in enumerate(named):
+    for index, (_, op, *_rest) in enumerate(named):
         o.append(f"    public const int {op} = {index};")
     o.append("")
     o.append(f"    /// <summary>The number of operations.</summary>")
     o.append(f"    public const int Count = {len(named)};")
     o.append("}")
     o.append("")
-    o.append("/// <summary>The kernel delegate of each operation: the device's backend, then the operation's arguments.</summary>")
-    o.append("internal static class OperationKernels")
+    o.append("/// <summary>")
+    o.append("/// The kernel delegate of each operation (<see cref=\"Operation.KernelType\"/>): the device's backend, then the operation's")
+    o.append("/// arguments. A kernel registered with <see cref=\"Kernels.Register\"/> has its operation's type.")
+    o.append("/// </summary>")
+    o.append("public static class OperationKernels")
     o.append("{")
-    for i, (_, op, returns, parameters) in enumerate(named):
+    for i, (_, op, returns, parameters, docs, _default) in enumerate(named):
         plain = ", ".join(strip_default(p) for p in split_top(parameters))
         if i:
             o.append("")
-        o.append(f"    /// <summary>A kernel for <see cref=\"Ops.{op}\"/>.</summary>")
+        o.append("    /// <summary>")
+        o.append(f"    /// A kernel for <see cref=\"Ops.{op}\"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:")
+        o.extend(f"    /// {line}".rstrip() for line in outside_backend(summary(docs), members))
+        o.append("    /// </summary>")
         o.append(f"    public delegate {returns} {op}(Backend backend{', ' + plain if plain else ''});")
     o.append("}")
     o.append("")
-    o.append("internal static partial class Ops")
+    o.append("/// <summary>")
+    o.append("/// The operations of the device contract (plan 9), one descriptor each, in slot order. A device runs each through")
+    o.append("/// <c>Backend.Name(...)</c>; <see cref=\"Kernels.Register\"/> adds kernels for them.")
+    o.append("/// </summary>")
+    o.append("public static partial class Ops")
     o.append("{")
-    for _, op, _, _ in named:
-        o.append(f"    /// <summary>The operation {op}.</summary>")
-        o.append(f"    public static readonly Operation {op} = new(\"{op}\", OperationIndex.{op}, typeof(OperationKernels.{op}));")
+    for method, op, _returns, _parameters, docs, default in named:
+        o.append("    /// <summary>")
+        o.extend(f"    /// {line}".rstrip() for line in as_code(outside_backend(summary(docs), members)))
+        o.append("    /// </summary>")
+        signature = ",".join(clr_name(p) for p in split_top(_parameters))
+        o.append(f"    public static readonly Operation {op} =")
+        o.append(f"        new(\"{op}\", \"{method}Kernel\", \"{signature}\", OperationIndex.{op}, typeof(OperationKernels.{op}), KernelSource.{default});")
         o.append("")
-    o.append("    /// <summary>Every operation, by index.</summary>")
+    o.append("    /// <summary>Every operation, by <see cref=\"Operation.Index\"/>.</summary>")
     o.append("    public static IReadOnlyList<Operation> All { get; } =")
     o.append("    [")
-    for _, op, _, _ in named:
+    for _, op, *_rest in named:
         o.append(f"        {op},")
     o.append("    ];")
+    o.append("")
+    o.append("    /// <summary>The operation named <paramref name=\"name\"/> (as <see cref=\"Operation.Name\"/>, any case), or null.</summary>")
+    o.append("    public static Operation? Find(string name)")
+    o.append("    {")
+    o.append("        foreach (var operation in All)")
+    o.append("        {")
+    o.append("            if (operation.Name.Equals(name, StringComparison.OrdinalIgnoreCase))")
+    o.append("            {")
+    o.append("                return operation;")
+    o.append("            }")
+    o.append("        }")
+    o.append("")
+    o.append("        return null;")
+    o.append("    }")
     o.append("}")
 
     d = [HEADER, "using System.Runtime.CompilerServices;", "using Idrak.Abstraction.Operations;", "", "namespace Idrak.Abstraction.Devices;", ""]
-    d.append("internal abstract partial class Backend")
+    d.append("public abstract partial class Backend")
     d.append("{")
-    for i, (method, op, returns, parameters) in enumerate(named):
+    for i, (method, op, returns, parameters, docs, _default) in enumerate(named):
         arguments = ", ".join(argument(p) for p in split_top(parameters))
         plain = ", ".join(strip_default(p) for p in split_top(parameters))
         call = f"kernel(this{', ' + arguments if arguments else ''})"
@@ -146,9 +246,14 @@ def generate():
         registered = f"{op}Registered({arguments})"
         if i:
             d.append("")
-        # The fast path (no kernel registered for this device: one field read) is inlined into the call site; the
-        # registered path stays out of line.
-        d.append(f"    /// <summary>Runs <see cref=\"Ops.{op}\"/>: the kernel registered for this device, else the device's own.</summary>")
+        # The fast path (no kernel registered for this device and no trace: one field read) is inlined into the call
+        # site; the registered path stays out of line.
+        runs = f"Runs <see cref=\"Ops.{op}\"/>: the kernel registered for this device (<see cref=\"Kernels.Register\"/>), else <c>{method}Kernel</c>."
+        if any("</remarks>" in line for line in docs):
+            d.extend(f"    /// {line.replace('</remarks>', f'<para>{runs}</para></remarks>')}".rstrip() for line in docs)
+        else:
+            d.extend(f"    /// {line}".rstrip() for line in docs)
+            d.append(f"    /// <remarks>{runs}</remarks>")
         d.append("    [MethodImpl(MethodImplOptions.AggressiveInlining)]")
         d.append(f"    public {returns} {method}({parameters})")
         d.append("    {")

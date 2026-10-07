@@ -5,22 +5,25 @@ using Idrak.Abstraction.Diagnostics;
 
 namespace Idrak.Abstraction.Training;
 
-/// <summary>Per-epoch results of <c>Trainer.Fit</c>.</summary>
+/// <summary>Per-epoch results of <c>Trainer.Fit</c>, written by the trainer (and a callback that stops early).</summary>
 public sealed class TrainingHistory
 {
-    internal List<EpochCompleted> EpochList { get; } = [];
+    private readonly List<EpochCompleted> _epochs = [];
 
     /// <summary>One entry per completed epoch.</summary>
-    public IReadOnlyList<EpochCompleted> Epochs => EpochList;
+    public IReadOnlyList<EpochCompleted> Epochs => _epochs;
 
     /// <summary>The epoch with the best monitored loss (1-based).</summary>
-    public int BestEpoch { get; internal set; }
+    public int BestEpoch { get; set; }
 
     /// <summary>The best monitored loss (validation loss when a validation set was used).</summary>
-    public double BestLoss { get; internal set; } = double.PositiveInfinity;
+    public double BestLoss { get; set; } = double.PositiveInfinity;
 
     /// <summary>Whether early stopping ended training.</summary>
-    public bool StoppedEarly { get; internal set; }
+    public bool StoppedEarly { get; set; }
+
+    /// <summary>Adds a completed epoch's summary.</summary>
+    public void Add(EpochCompleted epoch) => _epochs.Add(epoch);
 }
 
 /// <summary>
@@ -72,7 +75,13 @@ public interface ITrainerCallback
 /// <summary>The state of a <c>Trainer.Fit</c> call, as <see cref="ITrainerCallback"/> methods see it.</summary>
 public sealed class TrainerContext
 {
-    internal TrainerContext(Module model, Optimizer optimizer, int epochs, TrainingHistory history, CancellationToken cancellationToken)
+    /// <summary>The state of a training run that is starting (a trainer creates it and advances <see cref="Epoch"/> and <see cref="Step"/>).</summary>
+    /// <param name="model">The model being trained.</param>
+    /// <param name="optimizer">The optimizer updating it.</param>
+    /// <param name="epochs">The maximum number of epochs.</param>
+    /// <param name="history">The history the run writes.</param>
+    /// <param name="cancellationToken">Cancels the run.</param>
+    public TrainerContext(Module model, Optimizer optimizer, int epochs, TrainingHistory history, CancellationToken cancellationToken)
     {
         Model = model;
         Optimizer = optimizer;
@@ -88,13 +97,13 @@ public sealed class TrainerContext
     public Optimizer Optimizer { get; }
 
     /// <summary>The current 1-based epoch (0 before the first).</summary>
-    public int Epoch { get; internal set; }
+    public int Epoch { get; set; }
 
     /// <summary>The maximum number of epochs requested.</summary>
     public int Epochs { get; }
 
     /// <summary>Optimizer steps (batches) since training started.</summary>
-    public long Step { get; internal set; }
+    public long Step { get; set; }
 
     /// <summary>The epochs completed so far.</summary>
     public TrainingHistory History { get; }

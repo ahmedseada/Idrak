@@ -1,42 +1,96 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 using Idrak.Abstraction.Devices.Cpu;
+using Idrak.Abstraction.Operations;
 
 namespace Idrak.Abstraction.Devices;
 
-internal enum UnaryOp
+/// <summary>An element-wise function of one input (<see cref="Backend.Unary"/>, <see cref="Backend.UnaryBackward"/>).</summary>
+public enum UnaryOp
 {
+    /// <summary>1 / (1 + e^-x).</summary>
     Sigmoid,
+
+    /// <summary>The hyperbolic tangent.</summary>
     Tanh,
+
+    /// <summary>max(x, 0).</summary>
     Relu,
+
+    /// <summary>x².</summary>
     Square,
+
+    /// <summary>|x|.</summary>
     Abs,
+
+    /// <summary>e^x.</summary>
     Exp,
+
+    /// <summary>The natural logarithm.</summary>
     Log,
+
+    /// <summary>GELU, tanh approximation: 0.5·x·(1 + tanh(√(2/π)·(x + 0.044715·x³))).</summary>
     Gelu,
+
+    /// <summary>√x.</summary>
     Sqrt,
+
+    /// <summary>sin x.</summary>
     Sin,
+
+    /// <summary>cos x.</summary>
     Cos,
+
+    /// <summary>x · sigmoid(x).</summary>
     Silu,
+
+    /// <summary>-1, 0 or 1 (its gradient is zero).</summary>
     Sign,
 }
 
-internal enum BinaryOp
+/// <summary>An element-wise function of two inputs (<see cref="Backend.Binary"/>, <see cref="Backend.ExtremumBackward"/>).</summary>
+public enum BinaryOp
 {
+    /// <summary>a + b.</summary>
     Add,
+
+    /// <summary>a - b.</summary>
     Sub,
+
+    /// <summary>a · b.</summary>
     Mul,
+
+    /// <summary>max(a, b).</summary>
     Maximum,
+
+    /// <summary>min(a, b).</summary>
     Minimum,
 }
 
-/// <summary>Shape parameters of a 2-D convolution or pooling window over NCHW data.</summary>
-internal readonly record struct ConvGeometry(
+/// <summary>
+/// Shape parameters of a 2-D convolution or pooling window over NCHW data (<see cref="Backend.Im2Col"/>,
+/// <see cref="Backend.MaxPool"/>).
+/// </summary>
+/// <param name="N">Images in the batch.</param>
+/// <param name="C">Channels.</param>
+/// <param name="H">Input height.</param>
+/// <param name="W">Input width.</param>
+/// <param name="KH">Window height.</param>
+/// <param name="KW">Window width.</param>
+/// <param name="SH">Vertical stride.</param>
+/// <param name="SW">Horizontal stride.</param>
+/// <param name="PH">Zero padding above and below.</param>
+/// <param name="PW">Zero padding left and right.</param>
+public readonly record struct ConvGeometry(
     int N, int C, int H, int W, int KH, int KW, int SH, int SW, int PH, int PW)
 {
+    /// <summary>Output height: (H + 2·PH - KH) / SH + 1.</summary>
     public int OH => (H + 2 * PH - KH) / SH + 1;
 
+    /// <summary>Output width: (W + 2·PW - KW) / SW + 1.</summary>
     public int OW => (W + 2 * PW - KW) / SW + 1;
 
     /// <summary>Columns of the unfolded matrix: C * KH * KW.</summary>
@@ -52,7 +106,9 @@ internal readonly record struct ConvGeometry(
 /// soft-cap on the scaled scores, cap · tanh(score / cap) before the softmax (0 for none). The default is plain causal
 /// attention, which every kernel computes exactly as before these were added.
 /// </summary>
-internal readonly record struct AttentionVariant(int Window, float Softcap)
+/// <param name="Window">Positions a query sees, its own included (0: every earlier position).</param>
+/// <param name="Softcap">The cap on the scaled scores (0: none).</param>
+public readonly record struct AttentionVariant(int Window, float Softcap)
 {
     /// <summary>Plain causal attention: no window and no cap.</summary>
     public bool IsPlain => Window <= 0 && Softcap <= 0f;
@@ -68,19 +124,28 @@ internal readonly record struct AttentionVariant(int Window, float Softcap)
 }
 
 /// <summary>
-/// A reference-counted block of device memory holding <see cref="Length"/> floats.
-/// When the last reference is released the block goes back to its backend's pool.
+/// A reference-counted block of device memory holding <see cref="Length"/> floats: what a device's kernels read and write.
+/// A device subclasses it to hold its own handle (a pointer, a buffer and offset) and creates it in
+/// <see cref="Backend.Allocate"/>; when the last reference is released the block goes back to its device
+/// (<see cref="Backend.Return"/>).
 /// </summary>
-internal abstract class Storage(Backend backend, int length)
+/// <param name="backend">The device the memory belongs to.</param>
+/// <param name="length">The number of floats.</param>
+public abstract class Storage(Backend backend, int length)
 {
     private int _refs = 1;
+    private int _version;
 
+    /// <summary>The device the memory belongs to.</summary>
     public Backend Backend { get; } = backend;
 
+    /// <summary>The number of floats.</summary>
     public int Length { get; } = length;
 
+    /// <summary>Adds a reference: the block stays until <see cref="Release"/> has been called once more than this.</summary>
     public void AddRef() => Interlocked.Increment(ref _refs);
 
+    /// <summary>Drops a reference; the last one gives the memory back to the device.</summary>
     public void Release()
     {
         if (Interlocked.Decrement(ref _refs) == 0)
@@ -100,7 +165,10 @@ internal abstract class Storage(Backend backend, int length)
     /// Counts the public in-place writes into the storage (<c>Tensor.CopyFrom(ReadOnlySpan&lt;float&gt;)</c> and the
     /// others): a backward step whose operation read the storage before such a write refuses to run on the changed values.
     /// </summary>
-    public int Version;
+    public int Version => Volatile.Read(ref _version);
+
+    // Counts one in-place write (see Version).
+    internal void Written() => Interlocked.Increment(ref _version);
 
     /// <summary>How readily the storage moves to system memory when the device fills up (see <see cref="IMemoryOffload"/>).</summary>
     public OffloadPriority OffloadPriority { get; set; }
@@ -128,21 +196,43 @@ internal abstract class Storage(Backend backend, int length)
 
     /// <summary>Whether a tensor still holds the storage (it has not been released for good).</summary>
     public bool Alive => Volatile.Read(ref _refs) > 0;
+
+    /// <summary>
+    /// The values, for a storage in memory the process reads directly (the CPU device's): the first <see cref="Length"/>
+    /// floats. Other devices copy with <see cref="Backend.Download"/> and <see cref="Backend.Upload"/>.
+    /// </summary>
+    /// <exception cref="NotSupportedException">The storage is in device memory.</exception>
+    public virtual Span<float> HostMemory => throw new NotSupportedException($"A {Backend.Kind} storage is in device memory; copy it with Download and Upload.");
 }
 
 /// <summary>
-/// The math primitives a device must provide. Every operation works on contiguous
-/// row-major float32 buffers. Methods named "...Backward", <see cref="Axpy"/>,
-/// <see cref="MulAdd"/>, <see cref="SumRows"/> and <see cref="AddBroadcastScalar"/>
-/// accumulate into their output (+=) so gradients from several paths add up.
+/// A device: its memory, copies and synchronization, what its kernels can do, and a kernel for each operation of the
+/// device contract (plan 9). Every operation is a virtual method <c>NameKernel</c> whose default body is the host
+/// fallback (the CPU runs it on copies of the operands), a composition of other operations, or "no such kernel" (it
+/// returns false and the caller takes another path); a device overrides the ones it runs itself, the most used first.
+/// Callers run an operation through <c>Name(...)</c> (<see cref="Fill"/>, <see cref="Softmax"/>, ...), which runs the
+/// kernel registered for the device's <see cref="Kind"/> in <see cref="Kernels"/> where there is one, else
+/// <c>NameKernel</c>. A device comes with a <see cref="DeviceProvider"/>, which starts it.
 /// </summary>
-internal abstract partial class Backend
+/// <remarks>
+/// Every operation works on contiguous row-major float32 buffers. Methods named "...Backward", <see cref="Axpy"/>,
+/// <see cref="MulAdd"/>, <see cref="SumRows"/> and <see cref="AddBroadcastScalar"/> accumulate into their output (+=) so
+/// gradients from several paths add up.
+/// </remarks>
+[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)]   // Kernels.Chain sees which kernels a device overrides
+public abstract partial class Backend
 {
-    // The kernels registered for this device by operation index, null when there are none (every call then runs the
-    // device's own kernel after one field read), or an empty array when they must be resolved again (Kernels changed).
+    // The kernels registered for this device by operation index, null when there are none and nothing is traced (every
+    // call then runs the device's own kernel after one field read), or an empty array when they must be resolved again.
     private Delegate?[]? _kernels = Operations.Kernels.Unresolved();
 
-    /// <summary>Starts a device; <see cref="Operations.Kernels"/> tells it when the kernels registered for it change.</summary>
+    // The trace counting this device's calls (Kernels.Trace), or null.
+    private KernelTrace? _trace;
+
+    // Operations this device has run through the host fallback (HostCall), read through Kernels.HostCalls.
+    private long _hostCalls;
+
+    /// <summary>Starts a device; <see cref="Kernels"/> tells it when the kernels registered for it change.</summary>
     protected Backend() => Operations.Kernels.Track(this);
 
     /// <summary>The kind of device this drives ("cpu", "cuda", "vulkan", …): the kernels registered for it run here.</summary>
@@ -151,28 +241,51 @@ internal abstract partial class Backend
     /// <summary>Marks the registered kernels as changed: the next call to an operation resolves them again.</summary>
     internal void KernelsChanged() => Volatile.Write(ref _kernels, Operations.Kernels.Unresolved());
 
-    // The kernel registered for an operation on this device, or null for the device's own.
-    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    /// <summary>The trace counting this device's calls, or null; setting it makes every call resolve its kernel again.</summary>
+    internal KernelTrace? Trace
+    {
+        get => Volatile.Read(ref _trace);
+        set
+        {
+            Volatile.Write(ref _trace, value);
+            KernelsChanged();
+        }
+    }
+
+    /// <summary>Operations run through the host fallback so far.</summary>
+    internal long HostCalls => Interlocked.Read(ref _hostCalls);
+
+    /// <summary>Counts one host fallback of the operation named <paramref name="operation"/>.</summary>
+    internal void HostCalled(string operation)
+    {
+        Interlocked.Increment(ref _hostCalls);
+        Volatile.Read(ref _trace)?.HostCalled(operation);
+    }
+
+    // The kernel registered for an operation on this device, or null for the device's own (off the fast path: counted
+    // when traced).
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private Delegate? Kernel(int operation)
     {
+        Volatile.Read(ref _trace)?.Called(operation);
         var kernels = _kernels;
         return kernels is null ? null : kernels.Length != 0 ? kernels[operation] : ResolveKernels(kernels)[operation];
     }
 
-    // Resolves the slots; stores them unless Kernels changed meanwhile (then the next call resolves again).
+    // Resolves the slots; stores them unless Kernels changed meanwhile (then the next call resolves again). With nothing
+    // registered and no trace the slots are dropped, so calls take the fast path again.
     private Delegate?[] ResolveKernels(Delegate?[] unresolved)
     {
         var slots = Operations.Kernels.Resolve(this);
-        Interlocked.CompareExchange(ref _kernels, Array.TrueForAll(slots, k => k is null) ? null : slots, unresolved);
+        bool direct = Array.TrueForAll(slots, k => k is null) && Volatile.Read(ref _trace) is null;
+        Interlocked.CompareExchange(ref _kernels, direct ? null : slots, unresolved);
         return slots;
     }
 
-    /// <summary>Operations this device has run through the host fallback (<see cref="HostCall"/>), for tests and diagnostics.</summary>
-    internal long HostCalls;
-
-    /// <summary>When set, counts the host fallbacks by operation name (for tests and diagnostics: which operations still lack a kernel).</summary>
-    internal System.Collections.Concurrent.ConcurrentDictionary<string, long>? HostCallsByOperation;
-
+    /// <summary>
+    /// A block of <paramref name="length"/> floats of device memory (from the device's pool where it keeps one); zeroed
+    /// when <paramref name="zeroed"/>, else holding whatever was there.
+    /// </summary>
     public abstract Storage Allocate(int length, bool zeroed);
 
     /// <summary>What this device's kernels can do (see <see cref="BackendCapabilities"/>).</summary>
@@ -198,6 +311,10 @@ internal abstract partial class Backend
     /// <summary>Pinned buffers for background copies to and from system memory, or null when the device has none (see <see cref="IHostStaging"/>).</summary>
     public virtual IHostStaging? CreateHostStaging(int slots, int slotFloats) => null;
 
+    /// <summary>
+    /// Takes back the memory of a storage whose last reference was released (<see cref="Storage.Release"/>), or that
+    /// <see cref="Evict"/> empties, to its pool or to the driver.
+    /// </summary>
     public abstract void Return(Storage storage);
 
     /// <summary>
@@ -232,29 +349,41 @@ internal abstract partial class Backend
         return true;
     }
 
-    // Points the storage at no memory (after its memory went back to the pool), or at the memory of a fresh allocation.
-    private protected abstract void Detach(Storage storage);
+    /// <summary>
+    /// Points <paramref name="storage"/> at no memory, after <see cref="Evict"/> gave its memory back with
+    /// <see cref="Return"/>; kernels given it fail until <see cref="Attach"/>.
+    /// </summary>
+    protected abstract void Detach(Storage storage);
 
-    private protected abstract void Attach(Storage storage, Storage fresh);
+    /// <summary>
+    /// Points <paramref name="storage"/> (evicted) at the memory of <paramref name="fresh"/>, a block just allocated for
+    /// it, which is not used on its own afterwards.
+    /// </summary>
+    protected abstract void Attach(Storage storage, Storage fresh);
 
+    /// <summary>The bytes in use, cached and offloaded, and the limit (<see cref="ComputeResources.GetMemoryUsage"/>).</summary>
     public abstract MemoryUsage GetMemoryUsage();
 
     /// <summary>Frees pooled blocks that no tensor is using.</summary>
     public abstract void ReleaseCachedMemory();
 
+    /// <summary>Copies <paramref name="source"/> into the first source.Length floats of <paramref name="destination"/>.</summary>
     public abstract void Upload(ReadOnlySpan<float> source, Storage destination);
 
+    /// <summary>Copies the first destination.Length floats of <paramref name="source"/> into <paramref name="destination"/>.</summary>
     public abstract void Download(Storage source, Span<float> destination);
 
     /// <summary>Copies destination.Length floats starting at element <paramref name="offset"/>.</summary>
     public abstract void DownloadRange(Storage source, int offset, Span<float> destination);
 
+    /// <summary>y[i] = value for i &lt; n.</summary>
     public virtual void FillKernel(Storage y, int n, float value)
     {
         using var h = new HostCall(this);
         CpuBackend.Instance.Fill(h[y], n, value);
     }
 
+    /// <summary>y[i] = x[i] for i &lt; n (a copy within the device).</summary>
     public virtual void Copy(Storage x, Storage y, int n)
     {
         using var h = new HostCall(this);
@@ -824,6 +953,7 @@ internal abstract partial class Backend
         CpuBackend.Instance.DropoutBackward(h[dy], h[dx], n, p, seed);
     }
 
+    /// <summary>Waits until every kernel and copy issued so far has finished.</summary>
     public abstract void Synchronize();
 
     // ---------------------------------------------------------------- fused inference kernels
@@ -1127,11 +1257,6 @@ internal abstract partial class Backend
     }
 
     /// <summary>
-    /// The same attention as <see cref="AttentionDecode"/> for many query rows at once (a prompt, a training sequence),
-    /// tiled so query rows share each key and value read; also writes each row's log-sum-exp of the scaled scores to
-    /// <paramref name="logSumExp"/> [heads, rowsPerHead] when given.
-    /// </summary>
-    /// <summary>
     /// Causal attention over packed sequences (training): as <see cref="AttentionTiled"/> with offset 0 and keys and values
     /// [heads, steps, dim], except that several sequences share each row of <paramref name="steps"/> positions, so row i of
     /// head h sees positions c with starts[b·steps + t] ≤ c ≤ t, where t = i % steps and b = h / <paramref name="headsPerRow"/>
@@ -1171,8 +1296,10 @@ internal abstract partial class Backend
     }
 
     /// <summary>
-    /// Attention over a cache for many query rows, writing each row's log-sum-exp when <paramref name="logSumExp"/> is
-    /// set (training). The default runs <see cref="AttentionDecode"/> for inference and the host fallback for training.
+    /// The same attention as <see cref="AttentionDecode"/> for many query rows at once (a prompt, a training sequence),
+    /// tiled so query rows share each key and value read; also writes each row's log-sum-exp of the scaled scores to
+    /// <paramref name="logSumExp"/> [heads, rowsPerHead] when given (training). The default runs
+    /// <see cref="AttentionDecode"/> for inference and the host fallback for training.
     /// </summary>
     public virtual void AttentionTiledKernel(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage? logSumExp, int heads,
         int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
@@ -1252,8 +1379,10 @@ internal abstract partial class Backend
     /// <summary>Stops recording after a failure, discarding the partial graph.</summary>
     public virtual List<Storage> AbortCapture() => [];
 
+    /// <summary>Runs a graph returned by <see cref="EndCapture"/> again (its storages hold the inputs of the run).</summary>
     public virtual void ReplayGraph(IntPtr executable) => throw new NotSupportedException();
 
+    /// <summary>Frees a graph returned by <see cref="EndCapture"/>.</summary>
     public virtual void DestroyGraph(IntPtr executable, IntPtr graph)
     {
     }
@@ -1294,13 +1423,19 @@ internal static class DropoutMask
     }
 }
 
-/// <summary>Thread-safe byte accounting shared by the backends' caching allocators.</summary>
-internal sealed class MemoryAccountant(Func<long?> limit, string deviceName)
+/// <summary>
+/// Thread-safe byte accounting for a device's caching allocator: the bytes in use, kept in its pool and placed in system
+/// memory, checked against a limit (<see cref="ComputeResources.GpuMemoryLimit"/>, say) before each new allocation.
+/// </summary>
+/// <param name="limit">The current limit in bytes, or null for none (read on every check, so a change applies at once).</param>
+/// <param name="deviceName">The device's name in the error raised when an allocation would exceed the limit.</param>
+public sealed class MemoryAccountant(Func<long?> limit, string deviceName)
 {
     private long _inUse;
     private long _cached;
     private long _offloaded;
 
+    /// <summary>The bytes in use, cached and offloaded, and the limit, as <see cref="Backend.GetMemoryUsage"/> reports them.</summary>
     public MemoryUsage Usage => new(Interlocked.Read(ref _inUse), Interlocked.Read(ref _cached), limit(), Interlocked.Read(ref _offloaded));
 
     /// <summary>Counts bytes placed in system memory for this device (negative when released).</summary>
@@ -1308,8 +1443,9 @@ internal sealed class MemoryAccountant(Func<long?> limit, string deviceName)
 
     /// <summary>
     /// Called before allocating <paramref name="bytes"/> of new memory. Returns true when the cache
-    /// should be released first to stay under the limit; throws when even that is not enough.
+    /// should be released first to stay under the limit.
     /// </summary>
+    /// <exception cref="ResourceLimitExceededException">Even with the cache released, the allocation would exceed the limit.</exception>
     public bool MustReleaseCacheFor(long bytes)
     {
         if (limit() is not { } max)
@@ -1328,20 +1464,24 @@ internal sealed class MemoryAccountant(Func<long?> limit, string deviceName)
         return inUse + Interlocked.Read(ref _cached) + bytes > max;
     }
 
+    /// <summary>Counts newly allocated bytes as in use.</summary>
     public void Allocated(long bytes) => Interlocked.Add(ref _inUse, bytes);
 
+    /// <summary>Moves bytes taken from the pool from cached to in use.</summary>
     public void Reused(long bytes)
     {
         Interlocked.Add(ref _cached, -bytes);
         Interlocked.Add(ref _inUse, bytes);
     }
 
+    /// <summary>Moves bytes given back to the pool from in use to cached.</summary>
     public void Returned(long bytes)
     {
         Interlocked.Add(ref _inUse, -bytes);
         Interlocked.Add(ref _cached, bytes);
     }
 
+    /// <summary>Counts cached bytes freed to the driver.</summary>
     public void Freed(long bytes) => Interlocked.Add(ref _cached, -bytes);
 }
 

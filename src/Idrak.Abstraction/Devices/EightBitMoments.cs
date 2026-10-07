@@ -7,7 +7,7 @@ namespace Idrak.Abstraction.Devices;
 /// The layout of 8-bit optimizer moments the devices update (<c>Idrak.Optimizers.AdamW8Bit</c>): a code per element
 /// into a sorted 256-entry map, scaled per block of <see cref="BlockSize"/> elements.
 /// </summary>
-internal static class EightBitMoments
+public static class EightBitMoments
 {
     /// <summary>Elements sharing one scale.</summary>
     public const int BlockSize = 256;

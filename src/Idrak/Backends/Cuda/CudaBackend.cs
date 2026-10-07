@@ -655,9 +655,9 @@ internal sealed unsafe partial class CudaBackend : Backend
 
     // Called when the last reference is released, possibly from the finalizer thread, so it only
     // touches the pool and never the driver.
-    private protected override void Detach(Storage storage) => (((CudaStorage)storage).Pointer, ((CudaStorage)storage).Home) = (0, 0);
+    protected override void Detach(Storage storage) => (((CudaStorage)storage).Pointer, ((CudaStorage)storage).Home) = (0, 0);
 
-    private protected override void Attach(Storage storage, Storage fresh)
+    protected override void Attach(Storage storage, Storage fresh)
     {
         var (s, f) = ((CudaStorage)storage, (CudaStorage)fresh);
         (s.Pointer, s.Capacity) = (f.Pointer, f.Capacity);                // the fresh storage object is dropped, its block kept

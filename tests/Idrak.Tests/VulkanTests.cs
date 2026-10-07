@@ -521,11 +521,11 @@ internal static partial class Tests
             var gpu = inputs.Select(d => { var st = backend.Allocate(d.Length, false); backend.Upload(d, st); return st; }).ToArray();
             try
             {
-                long dispatches = backend.Dispatches, fallbacks = backend.HostCalls;
+                long dispatches = backend.Dispatches, fallbacks = Idrak.Abstraction.Operations.Kernels.HostCalls(backend);
                 op(cpu, host);
                 op(backend, gpu);
                 Check(backend.Dispatches > dispatches, $"{label}: {what} dispatched no kernel");
-                Check(backend.HostCalls == fallbacks, $"{label}: {what} took the host fallback");
+                Check(Idrak.Abstraction.Operations.Kernels.HostCalls(backend) == fallbacks, $"{label}: {what} took the host fallback");
                 for (int i = 0; i < inputs.Length; i++)
                 {
                     var (expected, actual) = (new float[inputs[i].Length], new float[inputs[i].Length]);

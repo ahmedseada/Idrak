@@ -33,7 +33,7 @@ public sealed partial class RMSNorm
         }
 
         long start = Telemetry.Start(TelemetryLevel.Operations);
-        int n = q._shape[0], t = q._shape[1];
+        int n = q.Shape[0], t = q.Shape[1];
         var yq = Tensor.Empty([n * kvHeads, heads / kvHeads * t, dim], q.Device);
         Tensor? yk = null, yv = null;
         int capacity = t, stride = dim;
@@ -45,13 +45,13 @@ public sealed partial class RMSNorm
         }
         else
         {
-            capacity = cache.Keys._shape[1];
-            stride = bfloat16 ? 2 * cache.Keys._shape[2] : cache.Keys._shape[2];
+            capacity = cache.Keys.Shape[1];
+            stride = bfloat16 ? 2 * cache.Keys.Shape[2] : cache.Keys.Shape[2];
         }
 
         if (!q.Backend.NormRopeHeads(q.Storage, k.Storage, v.Storage, n, t, heads, kvHeads, dim, queryNorm?.Gain.Storage, queryNorm?.Epsilon ?? 0f,
             queryNorm?.Offset ?? 0f, keyNorm?.Gain.Storage, keyNorm?.Epsilon ?? 0f, keyNorm?.Offset ?? 0f, cos?.Storage, sin?.Storage, positions.Storage,
-            cos?._shape[1] ?? 0, interleaved, yq.Storage, (yk ?? cache!.Keys).Storage, (yv ?? cache!.Values).Storage, position?.Storage, capacity, stride,
+            cos?.Shape[1] ?? 0, interleaved, yq.Storage, (yk ?? cache!.Keys).Storage, (yv ?? cache!.Values).Storage, position?.Storage, capacity, stride,
             bfloat16))
         {
             yq.Dispose();

@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Text.Json.Nodes;
 using Idrak;
 using Idrak.Cli;
+using Idrak.Abstraction.Operations;
 using Idrak.Cli.Commands.Developer;
 using Idrak.Inference;
 using Idrak.Layers;
@@ -18,6 +19,7 @@ internal static partial class Tests
         ("cli dev: every developer command has help with examples and environment, and no shared short forms", CliDevHelp),
         ("cli dev: new writes each template with its placeholders filled; the plug-in project builds and its tests pass (on the CPU)", CliDevNew),
         ("cli dev: onnx export of a small network round-trips through onnx import; onnx check matches the round trip, ONNX Runtime and reference outputs", CliDevOnnx),
+        ("cli dev: kernels lists the kernel each operation runs on a device (registered, device, composed, host, none), as text and JSON, filtered by --source", CliDevKernelChain),
         ("cli dev: kernels dump writes non-empty PTX, SPIR-V and HIP files", CliDevKernels),
         ("cli dev: test finds the source checkout and fails clearly outside one", CliDevTest),
         ("cli dev: trace runs a command with telemetry to JSON Lines, live, and wrapped in one JSON document", CliDevTrace),
@@ -50,7 +52,7 @@ internal static partial class Tests
     private static void CliDevHelp(Device device)
     {
         _ = device;
-        foreach (string name in new[] { "new", "test", "onnx import", "onnx export", "onnx check", "kernels dump", "trace", "demo", "shell" })
+        foreach (string name in new[] { "new", "test", "onnx import", "onnx export", "onnx check", "kernels", "kernels dump", "trace", "demo", "shell" })
         {
             var (code, output, _) = DevRun([.. name.Split(' '), "--help"]);
             Check(code == 0 && output.Contains("Examples:", StringComparison.Ordinal) && output.Contains("Environment (idrak help env for all):", StringComparison.Ordinal),
@@ -207,6 +209,40 @@ internal static partial class Tests
         {
             Directory.Delete(folder, recursive: true);
         }
+    }
+
+    private static void CliDevKernelChain(Device device)
+    {
+        string name = device.ToString();
+        var json = DevJson("kernels", "-d", name, "-j");
+        var operations = json["operations"]!.AsArray().Select(o => (Name: (string)o!["name"]!, Kernel: (string)o!["kernel"]!, Fallback: (string)o!["fallback"]!)).ToList();
+        var counts = json["counts"]!.AsObject();
+        Check((string?)json["device"] == name && (string?)json["kind"] == device.Backend.Kind && operations.Count == Ops.All.Count
+              && counts.Sum(c => (int)c.Value!) == Ops.All.Count, $"every operation once: {operations.Count} of {Ops.All.Count}");
+        var chain = Kernels.Chain(device.Backend);
+        Check(operations.Select((o, i) => o.Name == chain[i].Operation.Name && o.Kernel == chain[i].Source.ToString().ToLowerInvariant()
+                                         && o.Fallback == chain[i].Operation.Fallback.ToString().ToLowerInvariant()).All(x => x), "the dispatcher's chain");
+        Check(operations.Single(o => o.Name == "MatMulMany").Fallback == "composed" && operations.Single(o => o.Name == "Softmax").Fallback == "host"
+              && operations.Single(o => o.Name == "GemmStrided").Fallback == "none", "fallbacks");
+        if (device.Type == DeviceType.Cpu)
+        {
+            Check(operations.Single(o => o.Name == "Fill").Kernel == "device" && (int)counts["host"]! == 0, "the CPU runs its own kernels");
+        }
+
+        // A kernel registered for the device's kind shows; --source keeps only the operations of one kind.
+        OperationKernels.Softmax softmax = (b, x, y, rows, cols, log) => b.SoftmaxKernel(x, y, rows, cols, log);
+        using (Kernels.Register(Ops.Softmax, device.Backend.Kind, softmax))
+        {
+            var registered = DevJson("kernels", "-d", name, "--source", "registered", "-j")["operations"]!.AsArray();
+            Check(registered.Count == 1 && (string?)registered[0]!["name"] == "Softmax" && (string?)registered[0]!["kernel"] == "registered", $"registered: {registered.ToJsonString()}");
+            var (code, output, _) = DevRun("kernels", "-d", name);
+            Check(code == 0 && output.StartsWith($"Kernels on {name} (", StringComparison.Ordinal) && output.Contains("1 registered", StringComparison.Ordinal)
+                  && output.Split('\n').Any(l => l.StartsWith("Softmax ", StringComparison.Ordinal) && l.Contains("registered", StringComparison.Ordinal)), $"text listing:\n{output}");
+        }
+
+        Check(DevJson("kernels", "-d", name, "--source", "registered", "-j")["operations"]!.AsArray().Count == 0, "removed again");
+        Check(DevRun("kernels", "-d", name, "--source", "gpu").Code == 2 && DevRun("kernels", "-d", name, "--source", "1").Code == 2
+              && DevRun("kernels", "Softmax").Code == 2, "an unknown source or an argument exits with 2");
     }
 
     private static void CliDevKernels(Device device)

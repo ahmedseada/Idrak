@@ -270,7 +270,7 @@ public sealed class PositionalEncoding : Module, ICachedModule
         input + _table.EmbeddingLookup(context.Positions ?? throw new InvalidOperationException("Call DecodingContext.BeginStep first."));
 
     /// <inheritdoc />
-    protected internal override void MoveTo(Device device) => _table = MoveTensor(_table, device);
+    protected override void MoveTo(Device device) => _table = MoveTensor(_table, device);
 
     /// <inheritdoc />
     public override void Dispose()

@@ -10,9 +10,14 @@ namespace Idrak.Abstraction.Formats;
 /// saving and loading make one call per tensor). The formats are part of the file layout (the byte after each shape), so
 /// the set is fixed; each format's encoding lives in its own codec instead of a branch per value.
 /// </summary>
-internal abstract class WeightCodec
+public abstract class WeightCodec
 {
     private static readonly WeightCodec[] Codecs = [new Float32Codec(), new Float16Codec(), new BFloat16Codec()];
+
+    // Only the codecs of the file layout's formats exist.
+    private protected WeightCodec()
+    {
+    }
 
     /// <summary>The codec of <paramref name="format"/>; a format byte no codec knows is a damaged or newer file.</summary>
     public static WeightCodec For(WeightFormat format) => (uint)format < (uint)Codecs.Length ? Codecs[(int)format]

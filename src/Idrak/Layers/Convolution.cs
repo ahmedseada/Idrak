@@ -86,7 +86,7 @@ public sealed class Conv2d : Module
     public override IEnumerable<Tensor> Parameters() => Bias is null ? [Weight] : [Weight, Bias];
 
     /// <inheritdoc />
-    protected internal override void MoveTo(Device device)
+    protected override void MoveTo(Device device)
     {
         Weight = MoveTensor(Weight, device);
         Bias = Bias is null ? null : MoveTensor(Bias, device);

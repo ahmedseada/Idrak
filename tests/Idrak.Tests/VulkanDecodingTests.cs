@@ -50,9 +50,9 @@ internal static partial class Tests
                 {
                     string what = $"{label}: sampling {vocabulary} tokens{(ties ? " (tied scores)" : "")}, temperature {temperature}, top-k {topK}, top-p {topP}, min-p {minP}";
                     var (cpuIds, cpuStats) = SampleSteps(cpu, logits, vocabulary, temperature, topK, topP, minP);
-                    long fallbacks = backend.HostCalls;
+                    long fallbacks = Idrak.Abstraction.Operations.Kernels.HostCalls(backend);
                     var (ids, stats) = SampleSteps(backend, logits, vocabulary, temperature, topK, topP, minP);
-                    Check(backend.HostCalls == fallbacks, $"{what}: took the host fallback");
+                    Check(Idrak.Abstraction.Operations.Kernels.HostCalls(backend) == fallbacks, $"{what}: took the host fallback");
                     for (int i = 0; i < stats.Length; i += 13)
                     {
                         // On a mismatch, both statistics rows and the row's largest scores, to tell a cut-off from a draw.
@@ -310,7 +310,7 @@ internal static partial class Tests
         models.Add(("multi-head attention", attention, tokenizer.VocabularySize));
         var counts = new ConcurrentDictionary<string, long>();
         var problems = new List<string>();
-        backend.HostCallsByOperation = counts;
+        CountHostCalls(backend, counts);
         try
         {
             foreach (var (name, model, vocabulary) in models)
@@ -356,7 +356,7 @@ internal static partial class Tests
         }
         finally
         {
-            backend.HostCallsByOperation = null;
+            CountHostCalls(backend, null);
             foreach (var (_, model, _) in models)
             {
                 model.Dispose();

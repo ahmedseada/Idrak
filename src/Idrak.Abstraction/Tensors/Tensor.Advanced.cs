@@ -64,7 +64,7 @@ public sealed partial class Tensor
     /// x·w + bias for x [..., k], w [k, n], bias [n]: one pass where the device has one (bfloat16 tensor cores),
     /// otherwise a product and a bias addition. Same gradients as <c>x.MatMul(w) + bias</c>.
     /// </summary>
-    internal static Tensor MatMulBias(Tensor x, Tensor w, Tensor bias)
+    public static Tensor MatMulBias(Tensor x, Tensor w, Tensor bias)
     {
         int k = x._shape[^1], n = w._shape[1], m = x.Size / Math.Max(1, k);
         if (w.Rank != 2 || w._shape[0] != k || bias.Size != n)
@@ -193,7 +193,7 @@ public sealed partial class Tensor
     /// Fraction of rows predicted correctly, as a scalar: argmax match for multi-column outputs, or
     /// (prediction ≥ threshold) == (target ≥ 0.5) for a single column.
     /// </summary>
-    internal static Tensor MatchRate(Tensor predictions, Tensor targets, float threshold)
+    public static Tensor MatchRate(Tensor predictions, Tensor targets, float threshold)
     {
         CheckSameShape(predictions, targets);
         int cols = predictions._shape[^1], rows = cols == 0 ? 0 : predictions.Size / cols;
@@ -434,7 +434,7 @@ public sealed partial class Tensor
     /// Standardizes each group of a [outer, groups, inner] view to zero mean and unit variance using batch
     /// statistics, returning the batch mean and (biased) variance for running-statistics updates.
     /// </summary>
-    internal Tensor Normalize(int outer, int groups, int inner, float eps, out Tensor mean, out Tensor variance)
+    public Tensor Normalize(int outer, int groups, int inner, float eps, out Tensor mean, out Tensor variance)
     {
         ThrowIfDisposed();
         long start = Telemetry.Start(TelemetryLevel.Operations);
@@ -465,7 +465,7 @@ public sealed partial class Tensor
     }
 
     /// <summary>Standardizes with fixed statistics (evaluation mode): (x - mean[g]) * invStd[g].</summary>
-    internal Tensor NormalizeWith(Tensor mean, Tensor invStd, int outer, int groups, int inner)
+    public Tensor NormalizeWith(Tensor mean, Tensor invStd, int outer, int groups, int inner)
     {
         ThrowIfDisposed();
         var y = Empty(_shape, Device);
@@ -480,7 +480,7 @@ public sealed partial class Tensor
     }
 
     /// <summary>y = x * scale[g] + shift[g] with g = (i / inner) % groups (per-channel or per-feature affine).</summary>
-    internal Tensor GroupAffine(Tensor? scale, Tensor? shift, int groups, int inner)
+    public Tensor GroupAffine(Tensor? scale, Tensor? shift, int groups, int inner)
     {
         ThrowIfDisposed();
         long start = Telemetry.Start(TelemetryLevel.Operations);
@@ -514,7 +514,7 @@ public sealed partial class Tensor
     }
 
     /// <summary>Embedding lookup: rows of this [vocabulary, dim] table selected by integer-valued <paramref name="indices"/>.</summary>
-    internal Tensor EmbeddingLookup(Tensor indices)
+    public Tensor EmbeddingLookup(Tensor indices)
     {
         ThrowIfDisposed();
         indices.ThrowIfDisposed();
@@ -533,7 +533,7 @@ public sealed partial class Tensor
     }
 
     /// <summary>Unfolds [N, C, H, W] into [N·OH·OW, C·KH·KW] patch rows for convolution as a matrix product.</summary>
-    internal Tensor Im2Col(in ConvGeometry geometry)
+    public Tensor Im2Col(in ConvGeometry geometry)
     {
         ThrowIfDisposed();
         var g0 = geometry;
@@ -550,7 +550,7 @@ public sealed partial class Tensor
     }
 
     /// <summary>2-D max pooling of [N, C, H, W].</summary>
-    internal Tensor MaxPool(in ConvGeometry geometry)
+    public Tensor MaxPool(in ConvGeometry geometry)
     {
         ThrowIfDisposed();
         var g0 = geometry;

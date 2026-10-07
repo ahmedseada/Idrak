@@ -10,6 +10,9 @@ namespace Idrak.Abstraction.Devices.Cpu;
 internal sealed class CpuStorage(CpuBackend backend, float[] data, int length) : Storage(backend, length)
 {
     public float[] Data = data;                                         // null while evicted (Backend.Evict)
+
+    /// <inheritdoc />
+    public override Span<float> HostMemory => Data.AsSpan(0, Length);
 }
 
 /// <summary>
@@ -84,9 +87,9 @@ internal sealed partial class CpuBackend : Backend
         return new CpuStorage(this, data, length);
     }
 
-    private protected override void Detach(Storage storage) => ((CpuStorage)storage).Data = null!;
+    protected override void Detach(Storage storage) => ((CpuStorage)storage).Data = null!;
 
-    private protected override void Attach(Storage storage, Storage fresh) => ((CpuStorage)storage).Data = ((CpuStorage)fresh).Data;
+    protected override void Attach(Storage storage, Storage fresh) => ((CpuStorage)storage).Data = ((CpuStorage)fresh).Data;
 
     public override void Return(Storage storage)
     {

@@ -171,7 +171,7 @@ public sealed partial class WordTokenizer : ITokenizer
     /// The units of <paramref name="text"/> as <see cref="Split"/> finds them, as slices of one pooled lower-cased copy
     /// (no string per unit). Enumerate it once with <c>foreach</c>, which returns the copy to the pool.
     /// </summary>
-    internal static Units SplitSpans(string text, bool lowercase = true) => new(text, lowercase);
+    public static Units SplitSpans(string text, bool lowercase = true) => new(text, lowercase);
 
     /// <inheritdoc />
     public IReadOnlyList<int> Encode(string text)
@@ -233,14 +233,14 @@ public sealed partial class WordTokenizer : ITokenizer
     [System.Text.RegularExpressions.GeneratedRegex(@"<[\w|/]+>|\w+|[^\w\s]")]
     private static partial System.Text.RegularExpressions.Regex Pattern();
 
-    /// <summary>The enumerator of <see cref="SplitSpans"/>.</summary>
-    internal ref struct Units
+    /// <summary>The units <see cref="SplitSpans"/> finds, enumerated once with <c>foreach</c> (which returns the pooled copy).</summary>
+    public ref struct Units
     {
         private readonly char[]? _rented;
         private readonly ReadOnlySpan<char> _text;
         private System.Text.RegularExpressions.Regex.ValueMatchEnumerator _matches;
 
-        public Units(string text, bool lowercase)
+        internal Units(string text, bool lowercase)
         {
             if (lowercase)
             {
@@ -256,12 +256,16 @@ public sealed partial class WordTokenizer : ITokenizer
             _matches = Pattern().EnumerateMatches(_text);
         }
 
+        /// <summary>The current unit.</summary>
         public readonly ReadOnlySpan<char> Current => _text.Slice(_matches.Current.Index, _matches.Current.Length);
 
+        /// <summary>The enumerator itself (for <c>foreach</c>).</summary>
         public readonly Units GetEnumerator() => this;
 
+        /// <summary>Moves to the next unit; false after the last.</summary>
         public bool MoveNext() => _matches.MoveNext();
 
+        /// <summary>Returns the pooled lower-cased copy.</summary>
         public readonly void Dispose()
         {
             if (_rented is not null)

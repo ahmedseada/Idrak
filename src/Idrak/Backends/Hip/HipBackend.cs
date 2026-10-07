@@ -1,7 +1,6 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using Idrak.Abstraction.Devices.Cpu;
 using static Idrak.Backends.Hip.HipRuntime;
 
 namespace Idrak.Backends.Hip;
@@ -79,7 +78,7 @@ internal sealed unsafe partial class HipBackend : Backend
 
     // Every operation without a kernel of its own takes the host fallback, which runs the CPU's code: the layers follow
     // the CPU's limits so the two agree.
-    public override BackendCapabilities Capabilities => CpuBackend.Instance.Capabilities;
+    public override BackendCapabilities Capabilities => Device.Cpu.Backend.Capabilities;
 
     /// <summary>"6.2.41134" for a runtime version 60241134 (major · 10⁷ + minor · 10⁵ + patch).</summary>
     internal static string FormatVersion(int version) => $"{version / 10_000_000}.{version / 100_000 % 100}.{version % 100_000}";
@@ -249,9 +248,9 @@ internal sealed unsafe partial class HipBackend : Backend
         _memory.Returned(bytes);
     }
 
-    private protected override void Detach(Storage storage) => ((HipStorage)storage).Pointer = 0;
+    protected override void Detach(Storage storage) => ((HipStorage)storage).Pointer = 0;
 
-    private protected override void Attach(Storage storage, Storage fresh) => ((HipStorage)storage).Pointer = ((HipStorage)fresh).Pointer;
+    protected override void Attach(Storage storage, Storage fresh) => ((HipStorage)storage).Pointer = ((HipStorage)fresh).Pointer;
 
     public override MemoryUsage GetMemoryUsage() => _memory.Usage;
 

@@ -80,7 +80,7 @@ public sealed partial class RMSNorm : Module
     public override IEnumerable<Tensor> Parameters() => [Gain];
 
     /// <inheritdoc />
-    protected internal override void MoveTo(Device device) => Gain = MoveTensor(Gain, device);
+    protected override void MoveTo(Device device) => Gain = MoveTensor(Gain, device);
 
     /// <inheritdoc />
     public override string ToString() => $"RMSNorm({Features})";
@@ -541,7 +541,7 @@ public sealed class CausalSelfAttention : Module, ICachedModule
     }
 
     /// <inheritdoc />
-    protected internal override void MoveTo(Device device)
+    protected override void MoveTo(Device device)
     {
         base.MoveTo(device);
         if (Rope is not null && _cos.Device != device)
@@ -950,7 +950,7 @@ public sealed class PositionEmbedding : Module, ICachedModule
     public override IEnumerable<Tensor> Parameters() => [Weight];
 
     /// <inheritdoc />
-    protected internal override void MoveTo(Device device) => Weight = MoveTensor(Weight, device);
+    protected override void MoveTo(Device device) => Weight = MoveTensor(Weight, device);
 
     /// <inheritdoc />
     public override void Dispose()

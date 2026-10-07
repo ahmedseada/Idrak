@@ -1,28 +1,12 @@
-# Plan 10, phase 2: the internals of Idrak.Abstraction and Idrak that the other library assemblies use, each with why it
-# is still internal. Generated uses are checked by tests/Idrak.Tests/InventoryTests.cs: a use not listed here fails, and
-# so does a line no longer used, so the list only shrinks. Idrak's own use of Idrak.Abstraction's internals (the device
-# contract the GPU devices are built on) is phase 4's and not listed.
+# Plan 10: the internals of Idrak that the other library assemblies use, each with why it is still internal.
+# Idrak.Abstraction grants no library assembly its internals since phase 4 (a test checks it), so none of its members
+# are listed. Generated uses are checked by tests/Idrak.Tests/InventoryTests.cs: a use not listed here fails, and so
+# does a line no longer used, so the list only shrinks.
 # user | type | member | why
-Idrak.Nlp | Idrak.Abstraction.Device | Backend | the device contract: fine-tuning runs fused kernels on it (QLoRA, packed products); public with the device API (phase 4)
-Idrak.Nlp | Idrak.Abstraction.Devices.Backend | (the type) | the device contract: fine-tuning runs fused kernels on it; public with the device API (phase 4)
-Idrak.Nlp | Idrak.Abstraction.Devices.Storage | (the type) | the device contract: fine-tuning passes device buffers to kernels; public with the device API (phase 4)
-Idrak.Nlp | Idrak.Abstraction.Tensor | Storage | the device contract: a tensor's device buffer for those kernels; public with the device API (phase 4)
-Idrak.Nlp | Idrak.Abstraction.Tensor | GatherRows() | language-model training operation (distillation rows); a public operation or moved to Nlp in phase 3
-Idrak.Nlp | Idrak.Abstraction.Tensor | TokenCrossEntropyRows() | language-model training operation (chunked cross entropy over chosen rows); a public operation or moved in phase 3
-Idrak.Nlp | Idrak.Abstraction.Tensor | TokenDivergenceRows() | language-model training operation (distillation loss); a public operation or moved in phase 3
-Idrak.Nlp | Idrak.Abstraction.Tensor | TokenDivergences() | language-model training operation (distillation scores); a public operation or moved in phase 3
-Idrak.Nlp | Idrak.Abstraction.ActivationMemory | Release() | frees saved activations between fine-tuning chunks; public with the memory contract or moved in phase 3
-Idrak.Nlp | Idrak.Abstraction.TensorScope | Untrack() | keeps tensors built in a scope alive past it (distillation's teacher states); public if a plug-in needs it, else stays
-Idrak.Nlp | Idrak.Abstraction.Tensor | FormatShape() | formats shapes in error messages; trivial to copy, kept shared
-Idrak.Nlp | Idrak.Abstraction.Tensor | Load() | raw upload into a freshly allocated tensor (CopyFrom checks the size and counts the write as a user's)
 Idrak.Nlp | Idrak.Layers.Linear | AttachFloat8() | FP8 weights of Linear for fine-tuning; public with packed weights' device kernels (phase 6)
 Idrak.Nlp | Idrak.Layers.Linear | DetachFloat8() | FP8 weights of Linear for fine-tuning; public with packed weights' device kernels (phase 6)
 Idrak.Nlp | Idrak.Layers.PackedSequences | Suspend() | turns packed sequences off around a fine-tuning step; moves with the decoding contracts (phase 3)
-Idrak.Nlp | Idrak.Abstraction.Generation.KeyValueLayout | RowStarts | the text generator batches rows of different lengths only on layouts that support it; public with the decoding contracts
 Idrak.Nlp | Idrak.Layers.CausalSelfAttention | SupportsSegmented() | the text generator decodes segmented batches only when every attention kernel supports them; public with the decoding contracts
-Idrak.Nlp | Idrak.Offloading | (the type) | the text generator marks step boundaries for weight offloading; public with the memory contract (phase 4)
-Idrak.Nlp | Idrak.Abstraction.Generation.WordTokenizer | SplitSpans() | BM25 keyword search splits words exactly as WordTokenizer does; a public helper if a plug-in needs it
-Idrak.Nlp | Idrak.Abstraction.Generation.WordTokenizer.Units | (the type) | the span enumerator SplitSpans returns (BM25 keyword search)
 Idrak.Cli | Idrak.Backends.Cuda.PtxKernels | (the type) | idrak kernels dump writes the generated kernel sources; the GPU devices stay internal (decision 3)
 Idrak.Cli | Idrak.Backends.Hip.HipKernels | (the type) | idrak kernels dump writes the generated kernel sources; the GPU devices stay internal (decision 3)
 Idrak.Cli | Idrak.Backends.Vulkan.SpirvKernel | (the type) | idrak kernels dump writes the generated kernel sources; the GPU devices stay internal (decision 3)

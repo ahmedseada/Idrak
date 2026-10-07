@@ -203,7 +203,7 @@ public sealed partial class Tensor
     /// direction makes a transposed copy of W (the tensor-core kernels copy transposed operands into place first).
     /// W receives no gradient.
     /// </summary>
-    internal static Tensor MatMulFrozenTransposed(Tensor input, Tensor weight, BFloat16Weight transposed)
+    public static Tensor MatMulFrozenTransposed(Tensor input, Tensor weight, BFloat16Weight transposed)
     {
         Tensor output;
         using (Autograd.NoGrad())
@@ -317,7 +317,7 @@ public sealed partial class Tensor
 
 
     /// <summary>Embedding lookup from a bfloat16 [vocabulary, dim] table (fixed: no gradient).</summary>
-    internal static Tensor EmbeddingLookup(BFloat16Weight table, Tensor indices)
+    public static Tensor EmbeddingLookup(BFloat16Weight table, Tensor indices)
     {
         indices.ThrowIfDisposed();
         if (table.Packed.Device != indices.Device)
