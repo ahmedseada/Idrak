@@ -84,7 +84,7 @@ public readonly record struct BoundingBox(float X, float Y, float Width, float H
 /// <summary>An object found in an image: its box, its class (index and name, when known) and the detector's score.</summary>
 public sealed record Detection(BoundingBox Box, int Class, float Score, string? Label = null);
 
-/// <summary>Finds objects in images. Implement it over any detection network; <see cref="ModelDetector"/> is one.</summary>
+/// <summary>Finds objects in images. Implement it over any detection network; Idrak.Vision's <c>ModelDetector</c> is one.</summary>
 public interface IObjectDetector
 {
     /// <summary>The objects in <paramref name="image"/>, in its pixel coordinates.</summary>

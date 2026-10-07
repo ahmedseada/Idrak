@@ -2,9 +2,10 @@
 
 Computer vision for Idrak (no dependencies beyond Idrak): region classification in batches (`RegionClassifier`, with
 `ComponentProposer` for the regions), content framing for classifiers of single objects (`ContentFrame`, also as a
-loader transform) and per-channel image statistics for normalization (`ChannelStatistics`). The contracts and small
-defaults it builds on (foreground extraction, connected components, boxes, non-maximum suppression, detectors and
-segmenters over any network) are in Idrak.Abstraction.
+loader transform), per-channel image statistics for normalization (`ChannelStatistics`), and detection and segmentation
+over any network (`ModelDetector` with the application's `DetectionDecoder`, `ModelSegmenter`). The contracts and small
+defaults it builds on (foreground extraction, connected components, boxes, non-maximum suppression, masks and their
+metrics) are in Idrak.Abstraction.
 
 ## Install
 

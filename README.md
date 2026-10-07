@@ -254,8 +254,9 @@ src/Idrak.Data/                     optional package, no dependencies: JSON Line
 src/Idrak.AspNetCore/               optional package: AddIdrak(), MapPredictor, MapGenerate, MapChatApi, MapIdrakStatus
 src/Idrak.Mcp/                      optional package: tools of Model Context Protocol servers, and serving tools over MCP
 src/Idrak.Vision/                   optional package, no dependencies: RegionClassifier (ComponentProposer), ContentFrame,
-                                    ChannelStatistics; the vision contracts and small defaults (Foreground, ConnectedComponents,
-                                    boxes, NonMaxSuppression, ModelDetector, segmentation) are in Idrak.Abstraction/Vision
+                                    ChannelStatistics, ModelDetector, ModelSegmenter; the vision contracts and small defaults
+                                    (Foreground, ConnectedComponents, boxes, NonMaxSuppression, masks and metrics) are in
+                                    Idrak.Abstraction/Vision
 src/Idrak.Onnx.Runtime/             optional package: run .onnx models with ONNX Runtime as Idrak modules
 src/Idrak.Cli/                      idrak: the command-line tool (commands under Commands/ in ten groups, shared helpers
                                     under Shared/: the environment table, saved variables, Arabic shaping and bidi)
@@ -937,9 +938,10 @@ chat API this way, and the HouseApi sample is a complete prediction API in about
 
 Building blocks for image networks, independent of any one application. Interfaces (`IObjectDetector`,
 `ISegmenter`, `IRegionProposer`) let an application plug in its own parts; the library's implementations run any
-network that fits. The contracts, foreground extraction, connected components, boxes, the detector and the segmenter
-are in `Idrak.Abstraction` (namespace `Idrak.Abstraction.Vision`); region classification, content framing and
-`ChannelStatistics` are in the `Idrak.Vision` package.
+network that fits. The contracts, foreground extraction, connected components, boxes, masks and their metrics are in
+`Idrak.Abstraction` (namespace `Idrak.Abstraction.Vision`); region classification, content framing,
+`ChannelStatistics` and the detector and segmenter over a network (`ModelDetector`, `ModelSegmenter`) are in the
+`Idrak.Vision` package.
 
 ```csharp
 using Idrak.Vision;

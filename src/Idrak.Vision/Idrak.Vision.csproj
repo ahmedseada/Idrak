@@ -6,7 +6,7 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <IsAotCompatible>true</IsAotCompatible>
     <PackageId>Idrak.Vision</PackageId>
-    <Description>Computer vision for Idrak (no dependencies beyond Idrak): region classification in batches, content framing for classifiers of single objects (also as a training transform) and per-channel image statistics for normalization.</Description>
+    <Description>Computer vision for Idrak (no dependencies beyond Idrak): region classification in batches, content framing for classifiers of single objects (also as a training transform), per-channel image statistics for normalization, and detection and segmentation over any network.</Description>
   </PropertyGroup>
 
   <ItemGroup>
