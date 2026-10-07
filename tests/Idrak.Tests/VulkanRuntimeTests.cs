@@ -3,8 +3,7 @@
 
 using System.Text.RegularExpressions;
 using Idrak;
-using Idrak.Backends;
-using Idrak.Backends.Vulkan;
+using Idrak.Gpu.Vulkan;
 
 // The Vulkan runtime chooses by what the device reports or what is measured on it, never by vendor or card: devices
 // another provider reaches are found by UUID, memory paths and sizes come from the reported heaps and limits, and the
@@ -18,7 +17,7 @@ internal static partial class Tests
         ("vulkan runtime: mapped memory, staging and page sizes come from the reported heaps and limits", VulkanSizesFromReport),
         ("vulkan runtime: storage memory candidates come from the reported heaps (host memory only on shared-memory devices); the cost model favors device reads", VulkanMappedByDeviceType),
         ("vulkan runtime: descriptor mode, batch size and batches in flight are measured at start, cached per device and driver, overridable", VulkanRuntimeMeasured),
-        ("vulkan runtime: no vendor ids or card names in the code of src/Idrak/Backends/Vulkan (comments may say where something was measured)", VulkanNoVendorNames),
+        ("vulkan runtime: no vendor ids or card names in the code of src/Idrak.Gpu/Vulkan (comments may say where something was measured)", VulkanNoVendorNames),
     ];
 
     // A provider whose devices report the UUIDs given.
@@ -339,7 +338,7 @@ internal static partial class Tests
     private static void VulkanNoVendorNames(Device device)
     {
         _ = device;
-        string folder = Path.Combine(RepositoryRoot(), "src", "Idrak", "Backends", "Vulkan");
+        string folder = Path.Combine(RepositoryRoot(), "src", "Idrak.Gpu", "Vulkan");
         var vendorIds = new Regex(@"0x0*(10DE|1002|1022|8086|13B5|5143|106B|1010|14E4|10005|1AE0|19E5)\b", RegexOptions.IgnoreCase);
         var names = new Regex(@"\b(NVIDIA|AMD|ATI|Intel|Radeon|GeForce|Quadro|Tesla|RTX|GTX|Arc|Iris|UHD|Adreno|Mali|Qualcomm|Apple|PowerVR|Imagination|Broadcom|MoltenVK|lavapipe|llvmpipe|SwiftShader|RADV|ANV|NVK|Mesa|Snapdragon|Exynos)\b",
             RegexOptions.IgnoreCase);

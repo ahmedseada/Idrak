@@ -8,11 +8,14 @@
     <Optimize>true</Optimize>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <PackageId>Idrak</PackageId>
-    <Description>Self-contained neural network library for .NET: tensors, autograd, layers and optimizers with a SIMD CPU backend and a CUDA backend that talks to the NVIDIA driver directly; ONNX export and import. No TensorFlow, no native dependencies.</Description>
+    <Description>Self-contained neural network library for .NET: tensors, autograd, layers and optimizers with a SIMD CPU backend, and the CUDA, Vulkan and HIP devices of Idrak.Gpu, which it brings along; ONNX export and import, the inference engine and model loading. No TensorFlow, no native dependencies.</Description>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Idrak.Abstraction\Idrak.Abstraction.csproj" />
+    <!-- No code here names the GPU devices; the reference makes the Idrak package bring them, so `dotnet add package
+         Idrak` gives the CUDA, Vulkan and HIP devices as before. -->
+    <ProjectReference Include="..\Idrak.Gpu\Idrak.Gpu.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -22,8 +25,6 @@
   <ItemGroup>
     <InternalsVisibleTo Include="Idrak.Tests" />
     <InternalsVisibleTo Include="Idrak.Nlp" />
-    <!-- idrak kernels dump writes the generated kernel sources (PTX, SPIR-V, HIP). -->
-    <InternalsVisibleTo Include="Idrak.Cli" />
   </ItemGroup>
 
 </Project>

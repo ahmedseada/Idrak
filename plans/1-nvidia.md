@@ -12,7 +12,7 @@ a choice, the device times the candidates back to back on the real inputs and ke
 
 **Problem.** 0.1.5 sends 4–8 rows through int8 weights of 32 M values or more (a vocabulary head) to the packed
 tensor-core product instead of the GEMV, when `MixedPrecision` uses tensor cores
-(`CudaBackend.PrefersPackedMatMul`, `src/Idrak/Backends/Cuda/CudaBackend.Quantized.cs`). The rule was measured on the
+(`CudaBackend.PrefersPackedMatMul`, `src/Idrak.Gpu/Cuda/CudaBackend.Quantized.cs`). The rule was measured on the
 RTX 5070 Ti, and it holds on the RTX 5050 Laptop GPU too; on the RTX 3060 Laptop GPU it makes those rows slower:
 
 | Rows, head 1024 → 151,936 | RTX 5070 Ti (70 SMs, 12.0): GEMV / packed | RTX 5050 Laptop (20 SMs, 12.0): GEMV / packed / chosen | RTX 3060 Laptop (30 SMs, 8.6): GEMV / packed / chosen |

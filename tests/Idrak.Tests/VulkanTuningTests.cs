@@ -2,9 +2,8 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using Idrak;
-using Idrak.Backends;
 using Idrak.Abstraction.Devices.Cpu;
-using Idrak.Backends.Vulkan;
+using Idrak.Gpu.Vulkan;
 
 // The Vulkan kernels shaped by the device: every workgroup width a device may be given, the products split over k, the
 // decoding attention split over the cached positions, the tiled float32 products, and the choices measured on the
