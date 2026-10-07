@@ -12,6 +12,7 @@
   <ItemGroup>
     <Using Include="Idrak.Abstraction" />
     <Using Include="Idrak.Abstraction.Data" />
+    <Using Include="Idrak.Abstraction.Diagnostics" />
     <Using Include="Idrak.Abstraction.Training" />
   </ItemGroup>
 

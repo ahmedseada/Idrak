@@ -51,7 +51,6 @@ Idrak.Retrieval.IEmbedder
 Idrak.Retrieval.IReranker
 Idrak.Retrieval.IRetriever
 Idrak.Retrieval.IVectorStore
-Idrak.Training.ITrainerCallback
 Idrak.Vision.IObjectDetector
 Idrak.Vision.IRegionProposer
 Idrak.Vision.ISegmenter
