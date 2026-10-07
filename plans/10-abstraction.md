@@ -202,8 +202,8 @@ exact API is settled in phase 1 with the device providers; named registries keep
 
 | Policy | What happens when the app's implementation throws | When to use |
 |---|---|---|
-| `Throw` | the error reaches the caller, as today | tests and development, opted into per slot (the kit's checks use it): failures must be loud |
-| `FallBack` (default, decision 12) | the call is retried on the library default; the failure goes to telemetry with the slot, id and exception | everywhere unless a slot opts out: an app's override never takes a call down that the library could have answered |
+| `Throw` (default, decision 12) | the error reaches the caller, as today; telemetry reports it with a hint naming `FallBack` and `Shadow` and how to switch them on for that slot | everywhere unless a slot opts in to another policy: failures are loud, and the user learns the options |
+| `FallBack` | the call is retried on the library default; the failure goes to telemetry with the slot, id and exception | opted into per slot, once the override is trusted enough to ship but not trusted alone |
 | `Shadow` | the library default answers; the app's version runs on a sample of calls (rate set per slot) and its output, time and memory are compared and recorded | before switching: real traffic as a stress test, with no risk to answers |
 
 ⚠️ Limits, stated up front:
@@ -381,21 +381,15 @@ Diffusion, Audio; the bridges depend on contracts (and their third-party package
    lives changes.
 11. **GPUs come with `Idrak`** (2026-10-07): the `Idrak` package depends on `Idrak.Gpu`, so `dotnet add package Idrak`
    brings the CUDA, Vulkan and HIP devices as before; `Idrak.Gpu` also works alone on `Idrak.Abstraction`.
-12. **`FallBack` is the default failure policy** (2026-10-07): when an app's implementation throws, the call is
-   retried on the library default and the failure is reported to telemetry; a slot opts into `Throw` (tests,
-   development) or `Shadow`. Shadow samples 1% of calls per slot by default; reports go to telemetry.
-13. **No device fallback on errors by default** (2026-10-07): `FallBack` is between an app's implementation and the
-   library's default of the same contract, never between devices. A GPU kernel that fails throws a `DeviceException`
-   (CUDA, Vulkan and HIP errors derive from it), which reports a `DeviceFailed` telemetry event when raised; while the
-   retry is off the event's hint names the switch. Opt-in: `Backend.RetryOnHost` (first value from
-   `IDRAK_RETRY_ON_HOST`: `1`/`all` or a list of kinds) retries the device's own kernel of host-fallback operations
-   through a generated copy of the host fallback, reported and counted as a host call. Registered kernels, operations
-   without a fallback, and errors reported after an operation returned are not retried. The dispatcher's host
-   fallback, for operations a device has no kernel for, is unchanged and visible in `idrak kernels`.
+12. **`Throw` is the default failure policy** (2026-10-07, corrected the same day: "no fallback is the default"): when
+   an app's implementation throws, the error reaches the caller, and telemetry reports it with a hint that names
+   `FallBack` (retry on the library default) and `Shadow` and how to switch them on for that slot. Both are opted into
+   per slot. Shadow samples 1% of calls per slot by default; reports go to telemetry. The same shape as GPU failures
+   (decision 13): loud by default, the way out named in the report.
 
 ## Decided (the override loop, 2026-10-07)
 
-1. Default failure policy: **`FallBack` everywhere** (decision 12); `Throw` is opted into per slot (tests,
-   development, the kit).
+1. Default failure policy: **`Throw` everywhere** (decision 12): the error reaches the caller and telemetry reports
+   it with a hint naming `FallBack` and `Shadow` and how to switch them on; both are opted into per slot.
 2. Shadow sampling: a rate per slot, default 1%.
 3. Shadow and fallback reports go to the existing telemetry.
