@@ -2,12 +2,11 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Diagnostics;
-using Idrak.Backends.Vulkan;
-using Idrak.Backends;
+using Idrak;
 using Idrak.Generation;
+using Idrak.Gpu.Vulkan;
 using Idrak.Layers;
 using Idrak.Models.Abstractions;
-using Idrak;
 
 // Recorded graphs on Vulkan (VulkanBackend.Graphs.cs): commands recorded once into command buffers and replayed by
 // executing them again, so the host records nothing per decoding step.

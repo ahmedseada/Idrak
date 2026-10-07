@@ -2,12 +2,11 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Collections.Concurrent;
+using Idrak;
 using Idrak.Abstraction.Devices.Cpu;
-using Idrak.Backends.Vulkan;
-using Idrak.Backends;
+using Idrak.Gpu.Vulkan;
 using Idrak.Layers;
 using Idrak.Models.Abstractions;
-using Idrak;
 
 // Prompt processing on Vulkan: attention over many query rows and the products through packed weights for many rows run
 // as kernels (no host fallback) and match the CPU, at the device's workgroup width and at every other width its limits

@@ -16,7 +16,7 @@ internal static partial class Tests
         ("abstractions: every KeyValueFormat has a layout that sizes its cache, and decoding through each layout matches the float32 cache (decoder and multi-head attention layers, bfloat16 expanded for the latter)", KeyValueLayoutsMatch),
         ("abstractions: every PackedFormat behind PackedWeight multiplies, expands, lists its buffers and builds layers like its own class (int8, 4-bit, bfloat16), one row and many", PackedWeightsMatch),
         ("abstractions: a custom ITokenSampler (greedy, on the host, not recordable) plugged into TextGenerator gives the built-in sampler's top-1 text, with and without the KV cache", CustomSampler),
-        ("abstractions: Idrak.Abstraction names no GPU device, and Idrak's (cuda, vulkan, hip) are registered first, in that order", LibraryDevicesFirst),
+        ("abstractions: Idrak.Abstraction and Idrak name no GPU device, Idrak.Gpu references Idrak.Abstraction alone, and its devices (cuda, vulkan, hip) are registered first, in that order", LibraryDevicesFirst),
     ];
 
     private static void LibraryDevicesFirst(Device device)
@@ -24,9 +24,14 @@ internal static partial class Tests
         _ = device;
         string[] kinds = [.. DeviceProviders.All.Select(p => p.Kind)];
         Check(kinds.Length >= 3 && kinds[..3].SequenceEqual(["cuda", "vulkan", "hip"]), $"providers: {string.Join(", ", kinds)}");
-        Check(DeviceProviders.All.Take(3).All(p => p.GetType().Assembly == typeof(Sequential).Assembly), "the GPU providers come from Idrak");
+        var gpu = System.Reflection.Assembly.Load("Idrak.Gpu");
+        Check(DeviceProviders.All.Take(3).All(p => p.GetType().Assembly == gpu), "the GPU providers come from Idrak.Gpu");
         var references = typeof(Device).Assembly.GetReferencedAssemblies().Select(a => a.Name).ToArray();
-        Check(!references.Contains("Idrak"), $"Idrak.Abstraction references: {string.Join(", ", references)}");
+        Check(!references.Any(r => r!.StartsWith("Idrak", StringComparison.Ordinal)), $"Idrak.Abstraction references: {string.Join(", ", references)}");
+        references = typeof(Sequential).Assembly.GetReferencedAssemblies().Select(a => a.Name).ToArray();
+        Check(!references.Contains("Idrak.Gpu"), $"Idrak references: {string.Join(", ", references)}");
+        references = gpu.GetReferencedAssemblies().Select(a => a.Name).Where(r => r!.StartsWith("Idrak", StringComparison.Ordinal)).ToArray();
+        Check(references.SequenceEqual(["Idrak.Abstraction"]), $"Idrak.Gpu references: {string.Join(", ", references)}");
     }
 
     // Greedy sampling on the host: downloads the logits each step (so a decoding step using it cannot be recorded).
