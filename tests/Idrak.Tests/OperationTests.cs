@@ -17,12 +17,137 @@ internal static partial class Tests
         ("operations: a registered kernel runs instead of the device's own on its device kind where its requirement holds, not elsewhere; removing it restores the device's kernel; a kernel of the wrong delegate is refused", RegisteredKernelRuns),
         ("operations: Kernels.Chain names the kernel each operation runs (registered, the device's own, composed, host fallback or none): the CPU runs its own, a device with memory and copies only falls back", ChainNamesKernels),
         ("operations: a trace counts the calls of each operation and the host fallbacks by operation, read from the dispatcher; it ends when disposed", TraceCountsCalls),
+        ("operations: a plug-in operation is declared once by name with a default kernel; it runs a kernel registered for the device's kind where its requirement holds, else its default (a host default counted as a host fallback off the CPU); Kernels.Chain and a trace show it after the library's operations", PluginOperationsDispatch),
         ("operations: a failing device kernel throws a DeviceException, reported to telemetry once (a console logger prints it) with a hint naming IDRAK_RETRY_ON_HOST and Backend.RetryOnHost", DeviceFailureReported),
         ("operations: with RetryOnHost the dispatcher runs a failing kernel again on the host: the CPU's result, one host call, one retried event; a registered kernel is not retried", DeviceFailureRetriedOnHost),
         ("operations: IDRAK_RETRY_ON_HOST is off when unset or 0, on for every device but the CPU with 1 or all, and for the kinds listed", RetryOnHostSetting),
         ("operations: a device with nothing registered, no trace and retry off keeps the inlined fast path; RetryOnHost leaves it and turning it off returns", RetryOnHostLeavesFastPath),
         ("operations: NormStats keeps its precision for one-element groups and large values with a small spread (variance from two passes)", NormStatsPrecision),
     ];
+
+    // Operations these tests declare as a plug-in would (once per process), on first use.
+    private static class TestOperations
+    {
+        public static readonly PluginOperation<OperationKernels.Fill> BenchFill =
+            PluginOperations.Register<OperationKernels.Fill>("Tests.BenchFill", static (b, y, n, value) => b.FillKernel(y, n, value), KernelSource.Composed);
+
+        public static readonly PluginOperation<OperationKernels.Fill> HostFill = PluginOperations.Register<OperationKernels.Fill>("Tests.HostFill", static (b, y, n, value) =>
+        {
+            var values = new float[n];
+            values.AsSpan().Fill(value);
+            b.Upload(values, y);
+        });
+    }
+
+    private static PluginOperation<OperationKernels.Fill> BenchFill => TestOperations.BenchFill;
+
+    private static void PluginOperationsDispatch(Device device)
+    {
+        _ = device;
+        if (!FirstRun(nameof(PluginOperationsDispatch)))
+        {
+            return;
+        }
+
+        var host = TestOperations.HostFill;
+        var composed = TestOperations.BenchFill;
+        Check(host.IsPlugin && !Ops.Fill.IsPlugin && host.Index >= Ops.All.Count && host.Fallback == KernelSource.Host && composed.Fallback == KernelSource.Composed
+              && host.KernelType == typeof(OperationKernels.Fill) && PluginOperations.All.Contains(host) && PluginOperations.TryGet("tests.hostfill") == host
+              && PluginOperations.TryGet("Softmax") is null, $"the descriptor: {host} at {host.Index}");
+
+        // Declaring: one name once (the library's included), a host, composed or none default of the kernel's own type.
+        OperationKernels.Fill nothing = static (_, _, _, _) => { };
+        foreach (var (what, declare) in new (string, Action)[]
+        {
+            ("a taken name", () => PluginOperations.Register("TESTS.HOSTFILL", nothing)),
+            ("a library operation's name", () => PluginOperations.Register("softmax", nothing)),
+            ("a registered fallback", () => PluginOperations.Register("Tests.Registered", nothing, KernelSource.Registered)),
+            ("a default of another type", () => PluginOperations.Register<Delegate>("Tests.Untyped", nothing)),
+        })
+        {
+            bool refused = false;
+            try
+            {
+                declare();
+            }
+            catch (ArgumentException)
+            {
+                refused = true;
+            }
+
+            Check(refused, $"{what} is refused");
+        }
+
+        // The chain lists every operation by index: the library's, then the plug-ins'.
+        var minimal = MinimalBackend.Instance;
+        var chain = Kernels.Chain(minimal);
+        Check(chain.Count == Ops.All.Count + PluginOperations.All.Count && chain.Select((c, i) => c.Operation.Index == i).All(x => x)
+              && chain[host.Index].Source == KernelSource.Host && chain[composed.Index].Source == KernelSource.Composed
+              && Kernels.Chain(Device.Cpu.Backend)[host.Index].Source == KernelSource.Device, "plug-in rows: host and composed defaults; a host default is the CPU's own");
+
+        var y = minimal.Allocate(4, zeroed: true);
+        try
+        {
+            float[] Values()
+            {
+                var values = new float[4];
+                minimal.Download(y, values);
+                return values;
+            }
+
+            // The default: off the CPU, a host default counts as a host fallback; a trace counts the calls.
+            long before = Kernels.HostCalls(minimal);
+            using (var trace = Kernels.Trace(minimal))
+            {
+                host.KernelFor(minimal)(minimal, y, 4, 2f);
+                host.KernelFor(minimal)(minimal, y, 4, 3f);
+                Check(Values().All(v => v == 3f) && trace.Calls(host) == 2 && trace.Calls(composed) == 0 && trace.HostCallsByOperation.GetValueOrDefault("Tests.HostFill") == 2,
+                    $"traced: {trace.Calls(host)} calls, host {string.Join(", ", trace.HostCallsByOperation.Select(h => $"{h.Key} x{h.Value}"))}");
+            }
+
+            Check(Kernels.HostCalls(minimal) - before == 2 && ReferenceEquals(host.KernelFor(minimal), host.DefaultKernel), "the host default, counted");
+            long cpuBefore = Kernels.HostCalls(Device.Cpu.Backend);
+            Check(ReferenceEquals(host.KernelFor(Device.Cpu.Backend), host.DefaultKernel) && Kernels.HostCalls(Device.Cpu.Backend) == cpuBefore, "on the CPU, not a fallback");
+
+            // A registered kernel runs on its kind where its requirement holds; removed, the default again.
+            int calls = 0;
+            OperationKernels.Fill plusOne = (b, s, n, value) =>
+            {
+                calls++;
+                host.DefaultKernel(b, s, n, value + 1f);
+            };
+
+            using (Kernels.Register(host, "MINIMAL", plusOne))
+            {
+                host.KernelFor(minimal)(minimal, y, 4, 5f);
+                Check(calls == 1 && Values().All(v => v == 6f) && Kernels.Chain(minimal)[host.Index].Source == KernelSource.Registered
+                      && Kernels.Chain(Device.Cpu.Backend)[host.Index].Source == KernelSource.Device && ReferenceEquals(host.KernelFor(Device.Cpu.Backend), host.DefaultKernel),
+                    $"registered: {calls} calls, {string.Join(", ", Values())}");
+                using (Kernels.Register(host, "minimal", nothing, requirement: _ => false))
+                {
+                    Check(ReferenceEquals(host.KernelFor(minimal), plusOne), "a requirement that does not hold");
+                }
+
+                bool refused = false;
+                try
+                {
+                    Kernels.Register((Operation)host, "minimal", (OperationKernels.Unary)((_, _, _, _, _) => { })).Dispose();
+                }
+                catch (ArgumentException)
+                {
+                    refused = true;
+                }
+
+                Check(refused, "a kernel of another delegate type is refused");
+            }
+
+            Check(ReferenceEquals(host.KernelFor(minimal), host.DefaultKernel) && Kernels.Chain(minimal)[host.Index].Source == KernelSource.Host, "removed");
+        }
+        finally
+        {
+            minimal.Return(y);
+        }
+    }
 
     // Backend's public virtual members that are not operations: memory, copies, graph capture, profiling and the
     // questions a caller asks before choosing a path (plan 9: Backend keeps these).
@@ -130,7 +255,7 @@ internal static partial class Tests
         }
 
         var cpu = Kernels.Chain(Device.Cpu.Backend);
-        Check(cpu.Count == Ops.All.Count && cpu.Select((c, i) => c.Operation.Index == i).All(x => x), "one choice per operation, in slot order");
+        Check(cpu.Count == Ops.All.Count + PluginOperations.All.Count && cpu.Select((c, i) => c.Operation.Index == i).All(x => x), "one choice per operation, in slot order");
         var notOwn = cpu.Where(c => c.Source != KernelSource.Device).ToList();
         Check(notOwn.All(c => c.Source is KernelSource.Composed or KernelSource.None) && cpu.Count(c => c.Source == KernelSource.Device) > 80,
             $"the CPU runs its own kernels (or composes, or has none): {string.Join(", ", notOwn.Select(c => $"{c.Operation} {c.Source}"))}");
@@ -290,9 +415,36 @@ internal static partial class Tests
             dispatched = Math.Min(dispatched, sw.Elapsed.TotalMilliseconds);
         }
 
+        // Through a delegate: a plug-in operation's kernel, and a kernel registered for the library's Fill.
+        double plugin = double.MaxValue, registered = double.MaxValue;
+        OperationKernels.Fill own = static (b, s, n, value) => b.FillKernel(s, n, value);
+        using (Kernels.Register(Ops.Fill, backend.Kind, own))
+        {
+            for (int round = 0; round < 40; round++)
+            {
+                var sw = Stopwatch.StartNew();
+                PluginFills(backend, y, Calls);
+                plugin = Math.Min(plugin, sw.Elapsed.TotalMilliseconds);
+                sw.Restart();
+                DispatchedFills(backend, y, Calls);
+                registered = Math.Min(registered, sw.Elapsed.TotalMilliseconds);
+            }
+        }
+
         backend.Return(y);
-        Console.WriteLine($"{Calls:N0} fills of 16 floats on the CPU (best of 40): device kernel {direct:F2} ms, through the dispatcher {dispatched:F2} ms ({(dispatched / direct - 1) * 100:+0.0;-0.0}%)");
+        Console.WriteLine($"{Calls:N0} fills of 16 floats on the CPU (best of 40): device kernel {direct:F2} ms, through the dispatcher {dispatched:F2} ms ({(dispatched / direct - 1) * 100:+0.0;-0.0}%); "
+                          + $"a registered kernel {registered:F2} ms, a plug-in operation's kernel {plugin:F2} ms");
         return 0;
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static void PluginFills(Backend backend, Storage y, int calls)
+    {
+        var fill = BenchFill;
+        for (int i = 0; i < calls; i++)
+        {
+            fill.KernelFor(backend)(backend, y, 16, i);
+        }
     }
 
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]

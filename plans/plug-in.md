@@ -33,6 +33,13 @@ device ("outside plug-in"). Still internal-only from outside: `KeyValueLayouts.U
 layouts, and loading a weights file into a plug-in packed format without rebuilding (item 22). `Tensor.Load` stays
 internal (the first-party packages keep calling it); outside code uses `CopyFrom`.
 
+Device kernels for plug-ins (plan 10, phase 6): done. A packed format, a KV layout, a graph operation or an
+`Autograd.Function` declares the operations it needs (`PluginOperations.Register`, a default kernel that runs on every
+device) and registers kernels per kind of device (`Kernels.Register`); on Vulkan a plug-in ships SPIR-V of its own
+(`VulkanKernel.Dispatch`). The plug-in tests' packed format and KV layout run their own CPU and Vulkan kernels, seen in
+`Kernels.Chain` and `idrak kernels` ("plug-in" rows). The fused paths of the built-in formats (fused projections, gate/up
+pairs, LoRA products) still read built-in formats only.
+
 ## Ranked gaps
 
 | # | Gap | Evidence | Who needs it | Suggested shape | Size | Priority |

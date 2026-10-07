@@ -11,7 +11,7 @@ namespace Idrak.Cli.Commands.Developer;
 /// <c>idrak kernels [-d DEVICE]</c>: which kernel each operation of the device contract runs on a device (plan 9, "the
 /// chain made visible"): a kernel registered for the device's kind, the device's own, the composed default, the host
 /// fallback, or none. Read from the dispatcher (<see cref="Kernels.Chain"/>), so plug-ins loaded with <c>--plugin</c>
-/// show their registered kernels.
+/// show their registered kernels and the operations they declare (<see cref="PluginOperations"/>, "plug-in" rows).
 /// </summary>
 internal sealed class KernelsCommand : Command
 {
@@ -27,7 +27,8 @@ internal sealed class KernelsCommand : Command
         "  composed    other operations on the same device\n" +
         "  host        the host fallback: the operands are copied to system memory and the CPU runs it\n" +
         "  none        no kernel: the caller takes another path (unfused products, say)\n" +
-        "The last column says what runs where a device has no kernel of its own.\n\n" +
+        "The third column says what runs where a device has no kernel of its own; the last, whether the library or a plug-in\n" +
+        "declared the operation (PluginOperations.Register: a packed format, a cache layout, a graph operation, ...).\n\n" +
         "Options:\n" +
         "  --source KIND       only the operations whose kernel is KIND (registered, device, composed, host or none)\n\n" +
         "Examples:\n" +
@@ -57,8 +58,9 @@ internal sealed class KernelsCommand : Command
         var shown = chain.Where(c => only is null || c.Source == only).ToList();
         context.Write(Messages.T("Kernels on {0} ({1}): {2}", device, backend.Name,
             string.Join(", ", Enum.GetValues<KernelSource>().Select(s => $"{chain.Count(c => c.Source == s)} {Shown((s))}"))));
-        context.Table([Messages.T("Operation"), Messages.T("Kernel"), Messages.T("Without its own")],
-            shown.Select(c => (IReadOnlyList<string>)[c.Operation.Name, Shown((c.Source)), Shown((c.Operation.Fallback))]));
+        context.Table([Messages.T("Operation"), Messages.T("Kernel"), Messages.T("Without its own"), Messages.T("Declared by")],
+            shown.Select(c => (IReadOnlyList<string>)[c.Operation.Name, Shown((c.Source)), Shown((c.Operation.Fallback)),
+                c.Operation.IsPlugin ? Messages.T("plug-in") : Messages.T("library")]));
         context.WriteJson(new JsonObject
         {
             ["device"] = device.ToString(),
@@ -70,6 +72,7 @@ internal sealed class KernelsCommand : Command
                 ["name"] = c.Operation.Name,
                 ["kernel"] = Word(c.Source),
                 ["fallback"] = Word(c.Operation.Fallback),
+                ["plugin"] = c.Operation.IsPlugin,
             })]),
         });
         return ExitCodes.Ok;

@@ -242,7 +242,11 @@ public abstract partial class Backend
     public abstract string Kind { get; }
 
     /// <summary>Marks the registered kernels as changed: the next call to an operation resolves them again.</summary>
-    internal void KernelsChanged() => Volatile.Write(ref _kernels, Operations.Kernels.Unresolved());
+    internal void KernelsChanged()
+    {
+        Volatile.Write(ref _kernels, Operations.Kernels.Unresolved());
+        PluginKernelsChanged();
+    }
 
     /// <summary>The trace counting this device's calls, or null; setting it makes every call resolve its kernel again.</summary>
     internal KernelTrace? Trace
