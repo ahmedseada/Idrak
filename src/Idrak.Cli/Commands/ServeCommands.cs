@@ -78,24 +78,38 @@ internal sealed class ServeCommand : Command
         chat API's base address, or http://127.0.0.1:7317/v1 for the OpenAI-style API), or serve on the port they
         expect with -p.
 
+        MCP:
+              --mcp                  serve over the Model Context Protocol on standard input/output instead of
+                                     HTTP: the models as the tools generate and chat (each takes a "model" argument
+                                     when several are served), until the client disconnects; status lines go to the
+                                     error output
+              --tools FILE.dll       with --mcp, also serve the [Tool] methods of an assembly (repeatable)
+
         Examples:
           idrak serve Qwen/Qwen3-0.6B
           idrak serve qwen -p 11434                      # for clients that expect the chat API on port 11434
           idrak s qwen phi -p 8080 --api-key $KEY        # two models on one port
           idrak serve tiny=./tiny.gguf -d vulkan:0 -k int8 --keep-alive 30m --cors http://localhost:3000
+          idrak serve qwen --mcp --tools ./MyTools.dll  # an MCP client's configuration starts it this way
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. ServeHost.ValueOptions, .. Models.ValueOptions];
+    public override IReadOnlyCollection<string> ValueOptions => [.. ServeHost.ValueOptions, .. Models.ValueOptions, "--tools"];
 
-    public override IReadOnlyCollection<string> Flags => ServeHost.Flags;
+    public override IReadOnlyCollection<string> Flags => [.. ServeHost.Flags, "--mcp"];
 
     public override IReadOnlyDictionary<string, string> ShortForms => ServeHost.ShortForms.Concat(Models.ShortForms).ToDictionary();
 
     public override int Run(CommandContext context)
     {
         var settings = ServeHost.ReadSettings(context);
-        var models = ServeHost.ReadModels(context, context.Positional);
-        return new ServeHost(context, settings, models).Run();
+        if (!context.Flag("--mcp"))
+        {
+            return context.Options("--tools").Count > 0 ? throw new UsageException("--tools serves tools over MCP; add --mcp.")
+                : new ServeHost(context, settings, ServeHost.ReadModels(context, context.Positional)).Run();
+        }
+
+        var tools = Shared.ToolAssemblies.Load(context.Options("--tools"));
+        return new ServeHost(context, settings, ServeHost.ReadModels(context, context.Positional)).RunMcp(tools);
     }
 }
 
