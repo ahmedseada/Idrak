@@ -1,17 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-
-namespace Idrak.Abstraction.Vision;
-
-/// <summary>
-/// Turns one image's network outputs into detections, in the network's input pixels (width x height of
-/// <see cref="ModelDetector"/>). This is the part that depends on the network (anchors, grid cells, box encoding,
-/// how scores are stored); the detector does the rest.
-/// </summary>
-/// <param name="outputs">The outputs of one image (the model's output for a batch of one, flattened).</param>
-/// <param name="outputShape">Their shape, without the batch dimension.</param>
-public delegate IEnumerable<Detection> DetectionDecoder(ReadOnlySpan<float> outputs, IReadOnlyList<int> outputShape);
+namespace Idrak.Vision;
 
 /// <summary>How <see cref="ModelDetector"/> filters its detections.</summary>
 public sealed record DetectorOptions

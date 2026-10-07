@@ -74,7 +74,9 @@
   - ONNX import and export (`Idrak.Onnx`) are part of `Idrak`. The `Idrak.Onnx` package is retired;
     `Idrak.Onnx.Runtime` depends on `Idrak` only.
   - New package `Idrak.Vision` (region classification, content framing, `ChannelStatistics`), moved out of `Idrak`. It
-    builds on the public API only.
+    builds on the public API only. `ModelDetector` with `DetectorOptions`, and `ModelSegmenter`, move to it from
+    `Idrak.Abstraction.Vision` (namespace `Idrak.Vision`); the `DetectionDecoder` delegate, the contracts, boxes, masks
+    and metrics stay in Abstraction.
   - `Module.WeightsDevice` is public. New: `PredictorBuilder.Model` and `PredictorBuilder.SampleShape`.
 
   A file that also imports another `Tensor` (ONNX Runtime's `Microsoft.ML.OnnxRuntime.Tensors`, or
