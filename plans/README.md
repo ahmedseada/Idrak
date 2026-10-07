@@ -33,7 +33,7 @@ What the `architecture` branch cannot do today, with an example of each. "High" 
 |---|---|---|
 | High | **AMD ROCm / HIP** (first slice, untested) | `hip:0` exists on the `backend/hip` branch (plan 8) but has never run on an AMD GPU; only memory, copies and a first kernel set run on the device, the rest through host fallbacks; no matrix cores (rocWMMA / MFMA), no hipGraph |
 | High | **NPUs** (Intel AI Boost, Apple Neural Engine) | no device kind for them; a model cannot run there (add-on packages `Idrak.OpenVino`, `Idrak.CoreML`: plans 4 and 5) |
-| | A backend checked from outside the library | `DeviceProviders.Register(new MyProvider())` with a `Backend` of one's own compiles (the device API is public since plan 10, phase 4, and CUDA, Vulkan and HIP are built on it alone), but no conformance kit runs the operation tests against it yet (plan 10, phase 5) |
+| | A backend checked from outside the library | done on the `abstraction` branch: a `Backend` of one's own registers with `DeviceProviders.Register` (the device API is public since plan 10, phase 4; CUDA, Vulkan and HIP in `Idrak.Gpu` are built on it alone), and `Idrak.Abstraction.Testing` checks it operation by operation (plan 10, phase 5); left: references for the CUDA-only Float8 and strided-attention kernels |
 | | Apple GPUs (Metal) | on a Mac `Device.Default` is the CPU; there is no `Device.Get("metal")` (plan 5) |
 | | One model across several devices | `model.To(Device.Cuda(0))` places the whole model on one device; it cannot be split across `cuda:0` and `vulkan:1` (plan 6) |
 
@@ -70,7 +70,8 @@ What the `architecture` branch cannot do today, with an example of each. "High" 
 
 [10-abstraction.md](10-abstraction.md): `Idrak.Abstraction`, one package with every contract and its default
 implementation (the CPU device included), the public device API (item 12c) and plan 9's dispatcher; the CUDA, Vulkan
-and HIP devices stay in `Idrak` but are built only on that public API. [9-operations.md](9-operations.md) (operations as data) is part of it. It also plans the override loop: an app overrides any contract while the library default stays as its fallback, checks its version with a shadow mode and the conformance and stress kit, and a proven implementation moves into the library. Phase 0 done (the generated inventory, [10-abstraction-inventory.md](10-abstraction-inventory.md), and the namespace test); phases 1a and 1b done (`Idrak.Abstraction` with the device layer and the CPU device; plan 9's dispatcher, internal).
+and HIP devices in `Idrak.Gpu`, built only on that public API; domains as packages (core, Data, Nlp, Vision), each
+contract with its users. [9-operations.md](9-operations.md) (operations as data) is part of it. It also builds the override loop: an app overrides any contract while the library default stays as its fallback, checks its version with a shadow mode and the conformance and stress kit, and a proven implementation moves into the library. Waves 1 to 3 done on the `abstraction` branch (CPU and Vulkan on lavapipe); wave 4 (the first promotion, `IdrakFromSource`, the API review and guard, docs, 0.4.0) in progress; CUDA, HIP and a real Vulkan GPU still to run ([10-abstraction-inventory.md](10-abstraction-inventory.md) is the generated inventory).
 
 ## Future improvements (measured)
 

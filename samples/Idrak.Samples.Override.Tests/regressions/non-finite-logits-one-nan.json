@@ -1,9 +1,0 @@
-{
-  "format": "idrak-regression-case",
-  "version": 1,
-  "kind": "non-finite-logits",
-  "name": "one NaN: the step that made the app write its sampler",
-  "data": {
-    "logits": "AAAAPwAAwH8AAIA/AACAQAAAAEA="
-  }
-}
