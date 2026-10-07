@@ -104,7 +104,7 @@ public static class CompletionsApiEndpoints
             return Error(404, $"The model '{asked}' is not served; GET /models lists the models.", "model_not_found");
         }
 
-        IChatModel model = settings.ChatModels.TryGetValue(name, out var extra) ? extra : engine!.ChatModel(name);
+        IChatModel model = settings.ChatModels.TryGetValue(name, out var extra) ? extra : engine!.Model<IChatModel>(name);
         bool stream = (bool?)body["stream"] == true;
         bool usage = (bool?)body["stream_options"]?["include_usage"] == true;
         string id = "chatcmpl-" + RandomId();
@@ -245,7 +245,7 @@ public static class CompletionsApiEndpoints
 
         var engine = Engine(http);
         string? asked = (string?)body["model"];
-        string? name = Pick(asked, engine?.Names.Where(n => engine.KindOf(n) is EngineModelKind.Text or EngineModelKind.Chat) ?? []);
+        string? name = Pick(asked, engine?.Names.Where(n => engine.TryGetModel<ITextModel>(n, out _)) ?? []);
         if (name is null)
         {
             return Error(404, settings.ChatModels.ContainsKey(asked ?? "")
@@ -257,7 +257,7 @@ public static class CompletionsApiEndpoints
         bool usage = (bool?)body["stream_options"]?["include_usage"] == true;
         string id = "cmpl-" + RandomId();
         long created = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        var chunks = engine!.StreamAsync(name, prompt, options, token).GetAsyncEnumerator(token);
+        var chunks = engine!.Model<ITextModel>(name).StreamAsync(prompt, options, token).GetAsyncEnumerator(token);
         var first = await Guard(async () => await chunks.MoveNextAsync() ? null : Error(500, "no output"));
         if (first is not null)
         {
@@ -387,7 +387,7 @@ public static class CompletionsApiEndpoints
 
     private static InferenceEngine? Engine(HttpContext http) => http.RequestServices.GetService<InferenceEngine>();
 
-    private static IEnumerable<string> ChatNames(InferenceEngine? engine) => engine?.Names.Where(n => engine.KindOf(n) == EngineModelKind.Chat) ?? [];
+    private static IEnumerable<string> ChatNames(InferenceEngine? engine) => engine?.Names.Where(n => engine.TryGetModel<IChatModel>(n, out _)) ?? [];
 
     // The served name for a request: an exact match, the name without a ":latest" tag, or the only model served.
     private static string? Pick(string? asked, IEnumerable<string> names)

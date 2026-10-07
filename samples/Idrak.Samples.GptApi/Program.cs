@@ -18,6 +18,7 @@ using Idrak.AspNetCore;
 using Idrak.Samples.Gpt;
 using Idrak.Samples.GptApi;
 using Scalar.AspNetCore;
+using static Idrak.Inference.GenerativeModels;      // engine.ChatModel (all of Idrak.Inference would bring a second ModelStatus)
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddOpenApi(options => options.AddDocumentTransformer((document, _, _) =>
@@ -30,7 +31,7 @@ builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.C
 builder.Services.AddSingleton<GptService>();
 builder.Services.AddIdrak()
     .LoadOnFirstUse()
-    .AddChatModel("chat", _ => ChatModelFile.Load(builder.Configuration), (_, c) => c.KeepAlive(TimeSpan.FromMinutes(5)));
+    .Configure((_, engine) => engine.ChatModel("chat", () => ChatModelFile.Load(builder.Configuration), c => c.KeepAlive(TimeSpan.FromMinutes(5))));
 builder.Services.AddHostedService(services => services.GetRequiredService<GptService>());
 
 var app = builder.Build();

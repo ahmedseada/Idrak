@@ -874,7 +874,7 @@ await using var engine = await InferenceEngine.Create()
     .BuildAsync();                                                     // or .LoadOnFirstUse()
 
 float p = await engine.PredictAsync<House, float>("house-price", house);
-await foreach (var chunk in engine.StreamAsync("my-gpt", "Once upon a time", options)) Console.Write(chunk.Text);
+await foreach (var chunk in engine.Model<ITextModel>("my-gpt").StreamAsync("Once upon a time", options)) Console.Write(chunk.Text);
 await foreach (var result in engine.PredictManyAsync<House, float>("house-price", millionsOfHouses, batchSize: 1024)) { … }
 var models = engine.Models;                                            // loaded state, running and queued requests, expiry
 var stats = engine.Stats("house-price");                               // requests, latency (average, p95), rows/s, batch size
@@ -882,7 +882,10 @@ var stats = engine.Stats("house-price");                               // reques
 
 Predictors run concurrently (they are thread-safe); a text or chat copy runs one generation at a time
 (it owns its KV cache). Models come from a package, a factory, a model object or a network builder
-plus a weights file.
+plus a weights file. Callers reach a model through the contract its kind implements
+(`engine.Model<IChatModel>("my-gpt")`, `engine.Predictor<House, float>("house-price")`), and any other kind of
+model plugs in the same way: derive from `EngineModel<TCopy>` (how to load, describe and unload one copy; the
+engine lends copies to requests and batches them) and add it with `.Add("name", model)`.
 
 ### Chat: conversations and tools
 
@@ -902,7 +905,7 @@ var tools = ToolRegistry.Create()
     .Timeout(TimeSpan.FromSeconds(10)).Parallel()
     .Build();
 
-var conversation = Conversation.For(chatGenerator)       // or engine.Conversation("my-gpt", c => ...)
+var conversation = Conversation.For(chatGenerator)       // or engine.Model<IChatModel>("my-gpt")
     .System("You are a helpful assistant. Cite sources as [1], [2].")
     .Think(true).Tools(tools).MaxToolRounds(5)             // MaxToolRounds is required when tools are added
     .Build();
@@ -918,7 +921,7 @@ an error it can correct. `FakeChatModel.Script(...)` replays scripted replies fo
 ```csharp
 builder.Services.AddIdrak()
     .AddPredictor<House, float>("house-price", "models/house-price.ikm", p => p.Input<House>(h => [...]).Output(v => v[0]))
-    .AddChatModel("my-gpt", "models/chat.ikm", "chars", c => c.KeepAlive(TimeSpan.FromMinutes(5)));
+    .Configure((_, engine) => engine.ChatModel("my-gpt", "models/chat.ikm", "chars", c => c.KeepAlive(TimeSpan.FromMinutes(5))));
 
 app.MapPredictor<House, float>("/predict/house-price", "house-price");      // POST a House (or /batch an array)
 app.MapGenerate("/api/generate", "my-gpt");                                 // JSON, or server-sent events with "stream": true
