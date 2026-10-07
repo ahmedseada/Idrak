@@ -308,6 +308,30 @@ packaged form before the real release.
 | The namespace change breaks users' code | one minor version (0.4.0), a migration table, the transitive global using; done while the version is 0.y.z |
 | The move is large (400+ files) | eight separate merges; phase 1 lands without touching any backend's kernels |
 
+## Target package layout (decided 2026-10-07)
+
+Large packages by domain, plus bridges only where a third-party dependency would otherwise reach every app. Every
+domain talks to the others through contracts in `Idrak.Abstraction` (decision 9), so the inference engine, the CLI and
+apps combine domains without the domains knowing each other.
+
+| Package | Holds | Depends on |
+|---|---|---|
+| `Idrak.Abstraction` | every contract (including the model-kind contract of the engine), `Tensor`, `Module`, autograd, the CPU device, small dependency-free defaults | — |
+| `Idrak.Gpu` | the CUDA, Vulkan and HIP devices and all GPU kernels (reverses decision 3; needs phase 4 first) | Abstraction |
+| `Idrak` (core) | layers, network builder, trainer, data loaders, optimizers, ONNX import and export, the **inference engine** and model packages, **model loading** (safetensors, GGUF, hub sources) and **tokenizers** (both from LanguageModels), generic LoRA attach and merge | Abstraction |
+| `Idrak.Data` | today's Datasets: file formats, Parquet, hub downloads, chat rows | Idrak |
+| `Idrak.Nlp` | generation and chat, Jinja templates, LLM fine-tuning (QLoRA, DoRA, PEFT, distillation, evaluation), retrieval and RAG, the coding agent and tools; registers the text and chat model kinds | Idrak, Data |
+| `Idrak.Vision` | region classification, content framing, model-based detection and segmentation, later OCR and detectors | Idrak |
+| `Idrak.Diffusion` (planned) | UNet, DiT, VAE, schedulers, text encoders, text-to-image pipelines; registers an image model kind | Idrak |
+| `Idrak.Audio` (planned) | audio decoding, spectrograms, speech recognition, text-to-speech, vocoders; registers transcription and speech model kinds | Idrak |
+| bridge `Idrak.Mcp` | MCP tools | Nlp, ModelContextProtocol |
+| bridge `Idrak.Onnx.Runtime` | ONNX Runtime models as modules | Idrak, Microsoft.ML.OnnxRuntime |
+| app `Idrak.Cli` | the `idrak` tool, including the HTTP endpoints of `idrak serve` (today's `Idrak.AspNetCore`, folded in) | everything |
+
+Retired: `Idrak.LanguageModels`, `Idrak.Datasets` (renamed `Idrak.Data`), `Idrak.Onnx` (into core), `Idrak.AspNetCore`
+(into the CLI). Dependencies run one way: Abstraction ← Idrak ← Data ← Nlp; Abstraction ← Gpu; Idrak ← Vision,
+Diffusion, Audio.
+
 ## Decided (2026-10-05)
 
 1. Package name: **`Idrak.Abstraction`**.
@@ -326,6 +350,12 @@ packaged form before the real release.
    design and breaks whatever it needs to; no shims, forwarders or compatibility members are kept for older code. The
    changelog still records what changed. This replaces the earlier "users change little" goal and the one-release
    migration rules (rule 5's single break, the migration table).
+8. **The package layout above** is the end state (2026-10-07): domains as large packages, the inference engine in core
+   with model kinds as a public contract, the ASP.NET endpoints folded into the CLI (an application, which already
+   depends on everything), the GPU devices in one package.
+9. **Everything is a contract** (2026-10-07): every point a domain, an app or a plug-in can supply or replace is a
+   public contract in `Idrak.Abstraction`, including the engine's model kinds (`EngineModel` today) and the network
+   builder's steps (`NetworkOps` today), so the override loop works everywhere.
 
 ## Open (the override loop)
 
