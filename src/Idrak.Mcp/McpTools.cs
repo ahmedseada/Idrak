@@ -9,18 +9,18 @@ using System.Text.Json.Nodes;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
-using Idrak.Generation;
 using McpTool = ModelContextProtocol.Protocol.Tool;
-using Tool = Idrak.Generation.Tool;
+using Tool = Idrak.Abstraction.Generation.Tool;
 
 namespace Idrak.Mcp;
 
 /// <summary>
 /// Connects to Model Context Protocol servers (<see cref="ConnectAsync"/>, <see cref="ConnectStdioAsync"/>,
-/// <see cref="ConnectHttpAsync"/>) so their tools can be added to a <see cref="ToolRegistry"/>, and serves a
-/// registry's tools to MCP clients (<see cref="ServerTools"/>).
+/// <see cref="ConnectHttpAsync"/>) so their tools can be added to a <see cref="ToolRegistry"/>, and serves tools to MCP
+/// clients: a registry's (<see cref="ServerTools(IToolRegistry)"/>) and the models of an inference engine
+/// (<see cref="ServerTools(IModelCatalog)"/>, <see cref="ModelTools"/>).
 /// </summary>
-public static class McpTools
+public static partial class McpTools
 {
     /// <summary>Connects over any MCP client transport.</summary>
     public static async Task<McpToolSource> ConnectAsync(IClientTransport transport, CancellationToken cancellationToken = default) =>
@@ -39,8 +39,11 @@ public static class McpTools
     /// Calls go through the registry, so its validation, allow rules, approvals and timeout apply; a failed call is
     /// returned with <c>isError</c> set.
     /// </summary>
-    public static IReadOnlyList<McpServerTool> ServerTools(ToolRegistry registry) =>
-        [.. registry.Definitions.Select(d => (McpServerTool)new RegistryServerTool(registry, d))];
+    public static IReadOnlyList<McpServerTool> ServerTools(IToolRegistry registry)
+    {
+        ArgumentNullException.ThrowIfNull(registry);
+        return [.. registry.Definitions.Select(d => (McpServerTool)new RegistryServerTool(registry, d))];
+    }
 
     internal static JsonObject ToJsonObject(IDictionary<string, JsonElement>? arguments)
     {
@@ -107,10 +110,10 @@ public static class McpTools
 
     private sealed class RegistryServerTool : McpServerTool
     {
-        private readonly ToolRegistry _registry;
+        private readonly IToolRegistry _registry;
         private readonly McpTool _tool;
 
-        public RegistryServerTool(ToolRegistry registry, ToolDefinition definition)
+        public RegistryServerTool(IToolRegistry registry, ToolDefinition definition)
         {
             _registry = registry;
             using var schema = JsonDocument.Parse(definition.Parameters?.ToJsonString() ?? """{"type":"object","properties":{}}""");

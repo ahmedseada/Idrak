@@ -55,7 +55,7 @@ public sealed record EngineStats(long Requests, long Rejected, long Failed, Time
 /// var reply = await engine.Model&lt;IChatModel&gt;("my-gpt").ChatAsync(request);
 /// </code>
 /// </example>
-public sealed class InferenceEngine : IAsyncDisposable
+public sealed class InferenceEngine : IModelCatalog, IAsyncDisposable
 {
     private readonly Dictionary<string, HostedModel> _models;
 
@@ -69,6 +69,9 @@ public sealed class InferenceEngine : IAsyncDisposable
 
     /// <summary>The names of the models.</summary>
     public IReadOnlyCollection<string> Names => _models.Keys;
+
+    /// <summary>The kind of <paramref name="name"/> ("predictor", "text", "chat", ...).</summary>
+    public string KindOf(string name) => Hosted(name).Kind;
 
     /// <summary>Request statistics of <paramref name="name"/>.</summary>
     public EngineStats Stats(string name) => Hosted(name).Statistics.Snapshot();

@@ -29,7 +29,7 @@ public sealed class Conversation
     private readonly GenerationOptions? _options;
     private readonly int _maxToolRounds;
 
-    internal Conversation(IChatModel model, List<ChatMessage> messages, bool? think, GenerationOptions? options, ToolRegistry? tools, int maxToolRounds)
+    internal Conversation(IChatModel model, List<ChatMessage> messages, bool? think, GenerationOptions? options, IToolRegistry? tools, int maxToolRounds)
     {
         _model = model;
         Messages = messages;
@@ -46,7 +46,7 @@ public sealed class Conversation
     public List<ChatMessage> Messages { get; }
 
     /// <summary>The tools the model may call, or null.</summary>
-    public ToolRegistry? Tools { get; }
+    public IToolRegistry? Tools { get; }
 
     /// <summary>Adds <paramref name="user"/> as a user message and returns the assistant's answer (running tools as configured).</summary>
     public async Task<ConversationReply> SendAsync(string user, CancellationToken cancellationToken = default)
@@ -134,7 +134,7 @@ public sealed class ConversationBuilder
     private readonly IChatModel _model;
     private readonly List<ChatMessage> _messages = [];
     private ToolRegistryBuilder? _toolBuilder;
-    private ToolRegistry? _tools;
+    private IToolRegistry? _tools;
     private bool? _think;
     private GenerationOptions? _options;
     private int? _maxToolRounds;
@@ -169,8 +169,8 @@ public sealed class ConversationBuilder
         return this;
     }
 
-    /// <summary>Uses a ready-made <see cref="ToolRegistry"/> (cannot be combined with <see cref="Tool(Generation.Tool)"/>).</summary>
-    public ConversationBuilder Tools(ToolRegistry tools)
+    /// <summary>Uses a ready-made registry (cannot be combined with <see cref="Tool(Abstraction.Generation.Tool)"/>).</summary>
+    public ConversationBuilder Tools(IToolRegistry tools)
     {
         _tools = tools;
         return this;
@@ -183,15 +183,15 @@ public sealed class ConversationBuilder
         return this;
     }
 
-    /// <summary>Adds a tool with an explicit schema (<see cref="Generation.Tool.Create"/>).</summary>
+    /// <summary>Adds a tool with an explicit schema (<see cref="Abstraction.Generation.Tool.Create"/>).</summary>
     public ConversationBuilder Tool(string name, string description, JsonNode parameters, Func<JsonObject, CancellationToken, Task<string>> invoke) =>
-        Tool(Generation.Tool.Create(name, description, parameters, invoke));
+        Tool(Abstraction.Generation.Tool.Create(name, description, parameters, invoke));
 
-    /// <summary>Adds a tool from a delegate (<see cref="Generation.Tool.FromDelegate"/>).</summary>
+    /// <summary>Adds a tool from a delegate (<see cref="Abstraction.Generation.Tool.FromDelegate"/>).</summary>
     [RequiresUnreferencedCode("See Tool.FromDelegate.")]
     [RequiresDynamicCode("See Tool.FromDelegate.")]
     public ConversationBuilder Tool(string name, string description, Delegate function) =>
-        Tool(Generation.Tool.FromDelegate(name, description, function));
+        Tool(Abstraction.Generation.Tool.FromDelegate(name, description, function));
 
     /// <summary>How many times tool results may be sent back to the model for one user message. Required when tools are added.</summary>
     public ConversationBuilder MaxToolRounds(int rounds)
