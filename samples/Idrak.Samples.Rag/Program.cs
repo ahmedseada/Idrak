@@ -21,6 +21,7 @@ using Idrak.Inference;
 using Idrak.Layers;
 using Idrak.Optimizers;
 using Idrak.Retrieval;
+using Idrak.Retrieval.Abstractions;
 using Idrak.Samples;
 using Idrak.Samples.Rag;
 using Idrak.Samples.ReRanker;

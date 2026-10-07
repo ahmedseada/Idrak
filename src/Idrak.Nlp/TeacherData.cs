@@ -5,6 +5,7 @@ using System.Text.Json.Nodes;
 using Idrak.Data;
 using Idrak.Generation;
 using Idrak.Models;
+using Idrak.Nlp.Abstractions;
 
 namespace Idrak.Nlp;
 

@@ -28,58 +28,13 @@ public enum FeedForwardActivation
     Relu,
 }
 
-/// <summary>Settings for building a <see cref="DecoderSpec"/> into a network (Idrak's <c>DecoderBuilder.Build</c>).</summary>
-public sealed record DecoderBuildOptions
-{
-    /// <summary>Where the layers are created (the default device when null).</summary>
-    public Device? Device { get; init; }
-
-    /// <summary>
-    /// Store every Linear layer (attention, feed-forward and output head) as int8: each weight is quantized on the host as
-    /// it is read, so a large model never exists as float32 on the device.
-    /// </summary>
-    public bool Int8 { get; init; }
-
-    /// <summary>
-    /// Store the projections as bfloat16 (half the float32 memory, values to about 3 significant digits; exact for
-    /// checkpoints stored in bfloat16). <see cref="Int8"/> takes precedence.
-    /// </summary>
-    public bool BFloat16 { get; init; }
-
-    /// <summary>
-    /// Store the projections as 4-bit weights (see <see cref="Int4Weight"/>): about 5 bits per weight, quantized on the host
-    /// as they are read. <see cref="Int8"/> takes precedence; this over <see cref="BFloat16"/>.
-    /// </summary>
-    public bool Int4 { get; init; }
-
-    /// <summary>
-    /// Store the projections in the packed format registered under this name (see <see cref="PackedWeight.FormatNames"/>:
-    /// "int8", "int4", "bfloat16", or a format of your own added with <see cref="PackedWeight.Register"/>), packed on the
-    /// host as they are read. Takes precedence over <see cref="Int8"/>, <see cref="Int4"/> and <see cref="BFloat16"/>.
-    /// </summary>
-    public string? PackedFormatName { get; init; }
-
-    /// <summary>
-    /// Standard deviation of a normal initialization of every weight matrix and embedding table (biases zero, norm gains
-    /// one), as GPT-2 and nanoGPT use (0.02). Null keeps the default (uniform Xavier weights, ±0.02 embeddings).
-    /// Ignored when building from weights.
-    /// </summary>
-    public float? InitStd { get; init; }
-
-    /// <summary>Longest sequence the model will see (the rotary tables' size); the spec's <see cref="DecoderSpec.MaxPositions"/> when null.</summary>
-    public int? MaxPositions { get; init; }
-
-    /// <summary>Seed for random initialization (when no weights are given).</summary>
-    public int Seed { get; init; }
-}
-
 /// <summary>
 /// A decoder-only language model described by its settings, so different model families are data rather than code:
 /// token embedding (optionally scaled) → <see cref="Layers"/> × decoder block (normalization, causal
 /// self-attention with grouped-query heads, rotary embeddings, feed-forward block) → final normalization → output head.
 /// Idrak's <c>DecoderBuilder.Build</c> (<c>spec.Build(weights, options)</c>) creates it with random weights or from an
-/// <see cref="IWeightSource"/>, as a network that works with text generation, the KV cache, int8 quantization and LoRA.
-/// A spec is data: model families (<see cref="PretrainedArchitectures"/>) read it from a checkpoint's configuration, and
+/// <c>IWeightSource</c>, as a network that works with text generation, the KV cache, int8 quantization and LoRA.
+/// A spec is data: model families (<c>PretrainedArchitectures</c> in Idrak) read it from a checkpoint's configuration, and
 /// model packages store it as JSON (<see cref="ToJson"/>).
 /// <para>
 /// Weight names (Idrak layout): <c>embed</c> [vocabulary, dim]; for each layer i, <c>layers.i.attn_norm</c>,

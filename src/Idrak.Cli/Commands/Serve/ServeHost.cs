@@ -8,6 +8,14 @@ using System.Net;
 using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Idrak.AspNetCore;
+using Idrak.Cli.Shared;
+using Idrak.Generation;
+using Idrak.Inference;
+using Idrak.Layers;
+using Idrak.Models;
+using Idrak.Models.Abstractions;
+using Idrak.Nlp;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
@@ -16,13 +24,6 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using Idrak.AspNetCore;
-using Idrak.Cli.Shared;
-using Idrak.Generation;
-using Idrak.Inference;
-using Idrak.Layers;
-using Idrak.Models;
-using Idrak.Nlp;
 
 namespace Idrak.Cli.Commands.Serve;
 

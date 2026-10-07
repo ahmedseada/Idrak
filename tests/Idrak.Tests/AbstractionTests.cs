@@ -3,7 +3,9 @@
 
 using Idrak;
 using Idrak.Generation;
+using Idrak.Generation.Abstractions;
 using Idrak.Layers;
+using Idrak.Models.Abstractions;
 
 // The abstractions core code goes through instead of branching on a device or a format: each is checked against more
 // than one implementation.

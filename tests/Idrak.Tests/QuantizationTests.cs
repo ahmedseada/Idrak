@@ -5,6 +5,7 @@ using Idrak;
 using Idrak.Data;
 using Idrak.Generation;
 using Idrak.Layers;
+using Idrak.Models.Abstractions;
 using Idrak.Onnx;
 using Idrak.Optimizers;
 using Idrak.Training;

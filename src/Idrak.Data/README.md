@@ -2,6 +2,13 @@
 
 Datasets for Idrak (no dependencies beyond Idrak): read JSON Lines, JSON, CSV, text and Parquet files, archives and compressed files; download and cache from URLs, Hugging Face, GitHub, Kaggle and Zenodo; filter, map, shuffle, deduplicate, split, mix and turn rows into chat transcripts for fine-tuning, or columns into training samples (`TableSamples`).
 
+## Contracts
+
+The plug-in points only this package uses are in `Idrak.Data.Abstractions` (add the `using` line to name them):
+`DataFileFormats` and `IDataFileFormat` (file formats), `DatasetSources` and `IDatasetSource` (with `DatasetSpec`,
+`ReadOptions`, `IDatasetRows`), `ParquetCodecs` and `IParquetCodec`, `ITextNormalizer`. The registries register the
+built-ins themselves. Shared contracts (sample sources, `IDownloader`, model sources) are in Idrak.Abstraction.
+
 ## Install
 
 ```bash

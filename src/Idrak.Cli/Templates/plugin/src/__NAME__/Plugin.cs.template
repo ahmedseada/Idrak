@@ -3,6 +3,7 @@ using Idrak.Abstraction;
 using Idrak.Abstraction.Generation;
 using Idrak.Abstraction.Modules;
 using Idrak.Layers;
+using Idrak.Layers.Abstractions;
 
 namespace __NAMESPACE__;
 

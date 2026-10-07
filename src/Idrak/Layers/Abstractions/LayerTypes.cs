@@ -1,0 +1,139 @@
+// Copyright (c) 2026 Ahmed Seada
+// Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
+
+using System.Text.Json.Nodes;
+
+namespace Idrak.Layers.Abstractions;
+
+/// <summary>
+/// The layer types a <c>GraphModule</c> can hold, by the "type" name its JSON writes: how to describe a layer's
+/// settings and how to create the layer again from them (its weights are loaded separately). The standard layers are
+/// registered here ("linear", "conv2d", "batchnorm", ..., and "sequential" for blocks of them); add your own with
+/// <see cref="Register{T}"/>, so a graph holding them survives <c>GraphModule.ToJson</c>,
+/// <c>GraphModule.FromJson</c> and model packages.
+/// </summary>
+public static class LayerTypes
+{
+    private sealed record Entry(string Name, Type Type, Func<Module, JsonObject> Describe, Func<JsonObject, Device, Module> Create);
+
+    private static readonly Dictionary<string, Entry> Registry = new(StringComparer.Ordinal);
+    private static readonly Dictionary<Type, Entry> ByType = [];
+
+    // Idrak's layers (linear, conv2d, attention, ..., sequential) are registered before the first use.
+    static LayerTypes() => LibraryLayerTypes.RegisterAll();   // the built-in layer types, on first use
+
+    /// <summary>
+    /// Registers (or replaces) the layer type <paramref name="type"/> for modules of type <typeparamref name="T"/>:
+    /// <paramref name="describe"/> returns the layer's settings as JSON (the "type" key is added), <paramref name="create"/>
+    /// makes a new layer on the given device from that JSON.
+    /// </summary>
+    public static void Register<T>(string type, Func<T, JsonObject> describe, Func<JsonObject, Device, T> create) where T : Module
+    {
+        ArgumentException.ThrowIfNullOrEmpty(type);
+        ArgumentNullException.ThrowIfNull(describe);
+        ArgumentNullException.ThrowIfNull(create);
+        var entry = new Entry(type, typeof(T), m => describe((T)m), (d, device) => create(d, device));
+        lock (Registry)
+        {
+            if (Registry.Remove(type, out var old))
+            {
+                ByType.Remove(old.Type);
+            }
+
+            if (ByType.Remove(typeof(T), out var other))
+            {
+                Registry.Remove(other.Name);
+            }
+
+            Registry[type] = entry;
+            ByType[typeof(T)] = entry;
+        }
+    }
+
+    /// <summary>Removes the layer type <paramref name="type"/>; returns whether it was registered.</summary>
+    public static bool Unregister(string type)
+    {
+        lock (Registry)
+        {
+            if (!Registry.Remove(type, out var entry))
+            {
+                return false;
+            }
+
+            ByType.Remove(entry.Type);
+            return true;
+        }
+    }
+
+    /// <summary>The registered layer type names.</summary>
+    public static IReadOnlyCollection<string> Names
+    {
+        get
+        {
+            lock (Registry)
+            {
+                return [.. Registry.Keys];
+            }
+        }
+    }
+
+    /// <summary>Whether <paramref name="module"/>'s type (or a base type) is registered.</summary>
+    public static bool CanDescribe(Module module) => Find(module.GetType()) is not null;
+
+    /// <summary>The layer's settings as JSON, with its "type" name first.</summary>
+    public static JsonObject Describe(Module module)
+    {
+        ArgumentNullException.ThrowIfNull(module);
+        var entry = Find(module.GetType()) ?? throw new NotSupportedException(
+            $"{module.GetType().Name} cannot be described (layer types: {string.Join(", ", Names)}); add it with LayerTypes.Register.");
+        var description = new JsonObject { ["type"] = entry.Name };
+        foreach (var (key, value) in entry.Describe(module))
+        {
+            if (key != "type")
+            {
+                description[key] = value?.DeepClone();
+            }
+        }
+
+        return description;
+    }
+
+    /// <summary>A new layer from a description written by <see cref="Describe"/>, on <paramref name="device"/> (the default device when null).</summary>
+    public static Module Create(JsonObject description, Device? device = null)
+    {
+        ArgumentNullException.ThrowIfNull(description);
+        string type = (string?)description["type"] ?? throw new InvalidDataException("The layer description has no \"type\".");
+        Entry? entry;
+        lock (Registry)
+        {
+            Registry.TryGetValue(type, out entry);
+        }
+
+        return entry is null
+            ? throw new InvalidDataException($"Unknown layer type '{type}' (registered: {string.Join(", ", Names)}); add it with LayerTypes.Register.")
+            : entry.Create(description, device ?? Device.Default);
+    }
+
+    // The entry for the type or its nearest registered base type.
+    private static Entry? Find(Type? type)
+    {
+        lock (Registry)
+        {
+            for (; type is not null && type != typeof(object); type = type.BaseType)
+            {
+                if (ByType.TryGetValue(type, out var entry))
+                {
+                    return entry;
+                }
+            }
+
+            return null;
+        }
+    }
+
+    private static int I(JsonObject d, string key) => (int)d[key]!;
+
+    private static float F(JsonObject d, string key) => (float)d[key]!;
+
+    private static bool B(JsonObject d, string key) => (bool)d[key]!;
+}

@@ -9,6 +9,7 @@ using Idrak.Inference;
 using Idrak.Layers;
 using Idrak.Optimizers;
 using Idrak.Training;
+using Idrak.Training.Abstractions;
 
 // Each simplified API must behave exactly like the code it replaces: same layers, same weights, same training results.
 internal static partial class Tests

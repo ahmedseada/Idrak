@@ -3,14 +3,15 @@
 
 using System.IO.Pipelines;
 using System.Text.Json.Nodes;
-using ModelContextProtocol.Protocol;
-using ModelContextProtocol.Server;
 using Idrak;
 using Idrak.Generation;
 using Idrak.Layers;
 using Idrak.Mcp;
 using Idrak.Optimizers;
 using Idrak.Retrieval;
+using Idrak.Retrieval.Abstractions;
+using ModelContextProtocol.Protocol;
+using ModelContextProtocol.Server;
 
 // Retrieval (chunking, BM25, vectors, hybrid fusion, re-ranking, RAG) and MCP tools.
 internal static partial class Tests
