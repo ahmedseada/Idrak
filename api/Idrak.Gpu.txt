@@ -3,8 +3,40 @@
 public sealed class Idrak.Gpu.Cuda.CudaException : Idrak.Abstraction.Devices.DeviceException
   public CudaException(string message)
 
+public sealed class Idrak.Gpu.Cuda.CudaKernel
+  public CudaKernel(string ptx, string entry, string? name = null)
+  public override string ToString()
+  public string Entry { get; }
+  public string Name { get; }
+  public string Parameters { get; }
+  public string Ptx { get; }
+  public void Launch(Idrak.Abstraction.Devices.Backend backend, uint gridX, uint gridY, uint gridZ, uint blockX, uint blockY, uint blockZ, System.ReadOnlySpan<Idrak.Gpu.KernelArgument> arguments, uint sharedBytes = 0)
+
 public sealed class Idrak.Gpu.Hip.HipException : Idrak.Abstraction.Devices.DeviceException
   public HipException(string message)
+
+public sealed class Idrak.Gpu.Hip.HipKernel
+  public HipKernel(string source, string entry, string? name = null, System.Collections.Generic.IReadOnlyList<string>? options = null)
+  public System.Collections.Generic.IReadOnlyList<string> Options { get; }
+  public override string ToString()
+  public static string? UnavailableReason(Idrak.Abstraction.Devices.Backend backend)
+  public string Entry { get; }
+  public string Name { get; }
+  public string Parameters { get; }
+  public string Source { get; }
+  public void Launch(Idrak.Abstraction.Devices.Backend backend, uint gridX, uint gridY, uint gridZ, uint blockX, uint blockY, uint blockZ, System.ReadOnlySpan<Idrak.Gpu.KernelArgument> arguments, uint sharedBytes = 0)
+
+public readonly struct Idrak.Gpu.KernelArgument
+  public override string ToString()
+  public static Idrak.Gpu.KernelArgument Float32(float value)
+  public static Idrak.Gpu.KernelArgument Int32(int value)
+  public static Idrak.Gpu.KernelArgument Int64(long value)
+  public static Idrak.Gpu.KernelArgument Pointer(Idrak.Abstraction.Devices.Storage storage, long offset = 0)
+  public static Idrak.Gpu.KernelArgument op_Implicit(Idrak.Abstraction.Devices.Storage storage)
+  public static Idrak.Gpu.KernelArgument op_Implicit(float value)
+  public static Idrak.Gpu.KernelArgument op_Implicit(int value)
+  public static Idrak.Gpu.KernelArgument op_Implicit(long value)
+  public static Idrak.Gpu.KernelArgument op_Implicit(uint value)
 
 public sealed class Idrak.Gpu.Vulkan.VulkanException : Idrak.Abstraction.Devices.DeviceException
   public VulkanException(string message)

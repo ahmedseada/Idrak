@@ -4,6 +4,8 @@
 using System.Runtime.InteropServices;
 using Idrak.Abstraction.Devices;
 using Idrak.Abstraction.Operations;
+using Idrak.Gpu.Cuda;
+using Idrak.Gpu.Hip;
 using Idrak.Gpu.Vulkan;
 using Idrak.Layers.Abstractions;
 
@@ -13,7 +15,9 @@ namespace Idrak.PluginTests;
 /// Device kernels of the plug-ins in this assembly, written as an outside package writes them: each operation is
 /// declared with <see cref="PluginOperations.Register"/> (its kernel delegate and a default kernel that runs on every
 /// device), and <see cref="Install"/> registers a kernel for the CPU and, for the packed format and the cache layout, a
-/// SPIR-V kernel for Vulkan (<see cref="PluginShaders"/>, dispatched through <see cref="VulkanKernel.Dispatch"/>). The
+/// SPIR-V kernel for Vulkan (<see cref="PluginShaders"/>, dispatched through <see cref="VulkanKernel.Dispatch"/>), a PTX
+/// kernel for CUDA (<see cref="CudaKernel.Launch"/>) and a HIP C++ kernel for HIP (<see cref="HipKernel.Launch"/>), the
+/// last two from <see cref="PluginGpuSources"/>. The
 /// packed format (<see cref="RoundedWeight"/>) unpacks its weights with <see cref="Unpack"/>, the cache layout
 /// (<see cref="ScaledLayout"/>) expands its rows with <see cref="Scale"/>, <see cref="PluginTests.Softplus"/> (an
 /// <see cref="Autograd.Function"/>) runs <see cref="SoftplusOp"/>, and the graph operation <see cref="ScaledTanhGraphOp"/>
@@ -40,6 +44,20 @@ public static class PluginKernels
 
     private static readonly VulkanKernel UnpackShader = new(PluginShaders.UnpackPairs, bindings: 2, pushConstantBytes: 4, "outside_unpack_pairs", writes: 0b10);
     private static readonly VulkanKernel ScaleShader = new(PluginShaders.ScaleRows, bindings: 3, pushConstantBytes: 8, "outside_scale_rows", writes: 0b100);
+
+    private const int Threads = 256;   // threads per block of the CUDA and HIP kernels
+
+    // Two kernels of one PTX text and one HIP source: each device loads the module once for both.
+    private static readonly CudaKernel UnpackPtx = new(PluginGpuSources.Ptx, "outside_unpack_pairs");
+    private static readonly CudaKernel ScalePtx = new(PluginGpuSources.Ptx, "outside_scale_rows");
+    private static readonly HipKernel UnpackHip = new(PluginGpuSources.Hip, "outside_unpack_pairs");
+    private static readonly HipKernel ScaleHip = new(PluginGpuSources.Hip, "outside_scale_rows");
+
+    /// <summary>The plug-in's CUDA kernels (the PTX test reads their parameters).</summary>
+    internal static IReadOnlyList<CudaKernel> CudaKernels => [UnpackPtx, ScalePtx];
+
+    /// <summary>The plug-in's HIP kernels.</summary>
+    internal static IReadOnlyList<HipKernel> HipKernels => [UnpackHip, ScaleHip];
 
     /// <summary>The packed format's unpacking; its default reads the words to the host and writes the values back.</summary>
     public static PluginOperation<UnpackPairs> Unpack { get; } = PluginOperations.Register<UnpackPairs>("Outside.UnpackPairs", HostUnpack, KernelSource.Host);
@@ -71,7 +89,8 @@ public static class PluginKernels
 
     /// <summary>
     /// Registers the plug-in's device kernels: one per operation for the CPU (loops over the storages' host memory) and
-    /// the SPIR-V kernels of the packed format and the cache layout for Vulkan. Disposing the result removes them.
+    /// the packed format's and the cache layout's kernels for Vulkan (SPIR-V), CUDA (PTX) and HIP (HIP C++, where hipRTC
+    /// is on the machine: <see cref="HipKernel.UnavailableReason"/>). Disposing the result removes them.
     /// </summary>
     public static IDisposable Install()
     {
@@ -80,6 +99,9 @@ public static class PluginKernels
             Kernels.Register(Unpack, "cpu", static (_, packed, values, n) => UnpackOnHost(packed.HostMemory, values.HostMemory, n)),
             Kernels.Register(Unpack, "vulkan", static (b, packed, values, n) =>
                 UnpackShader.Dispatch(b, Groups(n), 1, 1, [packed, values], MemoryMarshal.AsBytes<int>([n]))),
+            Kernels.Register(Unpack, "cuda", static (b, packed, values, n) => UnpackPtx.Launch(b, Blocks(n), 1, 1, Threads, 1, 1, [packed, values, n])),
+            Kernels.Register(Unpack, "hip", static (b, packed, values, n) => UnpackHip.Launch(b, Blocks(n), 1, 1, Threads, 1, 1, [packed, values, n]),
+                static b => HipKernel.UnavailableReason(b) is null),
             Kernels.Register(Scale, "cpu", static (_, rows, scales, output, n, width) =>
             {
                 Span<float> r = rows.HostMemory, s = scales.HostMemory, o = output.HostMemory;
@@ -90,6 +112,10 @@ public static class PluginKernels
             }),
             Kernels.Register(Scale, "vulkan", static (b, rows, scales, output, n, width) =>
                 ScaleShader.Dispatch(b, Groups(n), 1, 1, [rows, scales, output], MemoryMarshal.AsBytes<int>([n, width]))),
+            Kernels.Register(Scale, "cuda", static (b, rows, scales, output, n, width) =>
+                ScalePtx.Launch(b, Blocks(n), 1, 1, Threads, 1, 1, [rows, scales, output, n, width])),
+            Kernels.Register(Scale, "hip", static (b, rows, scales, output, n, width) =>
+                ScaleHip.Launch(b, Blocks(n), 1, 1, Threads, 1, 1, [rows, scales, output, n, width]), static b => HipKernel.UnavailableReason(b) is null),
             Kernels.Register(SoftplusOp, "cpu", static (_, x, y, n) =>
             {
                 Span<float> xs = x.HostMemory, ys = y.HostMemory;
@@ -147,6 +173,9 @@ public static class PluginKernels
 
     // Workgroups for n elements: one per 64, at most 65535 (the shaders loop with a grid stride past that).
     private static uint Groups(int n) => (uint)Math.Clamp((n + Width - 1) / Width, 1, 65535);
+
+    // CUDA and HIP blocks for n elements: one per 256, at most 65535 (the kernels loop with a grid stride past that).
+    private static uint Blocks(int n) => (uint)Math.Clamp((n + Threads - 1) / Threads, 1, 65535);
 
     private sealed class Handles(IDisposable[] handles) : IDisposable
     {

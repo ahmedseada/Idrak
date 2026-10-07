@@ -65,7 +65,7 @@ static readonly PluginOperation<ScaleRows> Scale = PluginOperations.Register<Sca
     (b, rows, scales, output, n, width) => b.GroupScaleShift(rows, scales, null, output, n, n / width, width, false),
     KernelSource.Composed);
 
-// A faster kernel for one kind of device (on Vulkan: Idrak.Gpu's VulkanKernel dispatches SPIR-V words of one's own).
+// A faster kernel for one kind of device (Idrak.Gpu's VulkanKernel, CudaKernel and HipKernel run SPIR-V, PTX and HIP C++ of one's own).
 Kernels.Register(Scale, "cpu", (b, rows, scales, output, n, width) => { /* loops over rows.HostMemory, ... */ });
 
 // Where the plug-in runs it (KeyValueLayout.Expand, say): the kernel for this device, cached per device.
