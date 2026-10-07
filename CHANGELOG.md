@@ -22,7 +22,6 @@
   | `Idrak.Backends.GemmEpilogue` | `Idrak.Abstraction.Devices.GemmEpilogue` |
   | `Idrak.Tensor`, `Idrak.TensorScope`, `Idrak.Autograd`, `Idrak.DifferentiableFunction` | the same names under `Idrak.Abstraction` |
   | `Idrak.ActivationMemory`, `Idrak.MixedPrecision`, `Idrak.MatMulPrecision`, `Idrak.ComputeGraph` | the same names under `Idrak.Abstraction` |
-
   | `Idrak.Layers.Module` | `Idrak.Abstraction.Module` |
   | `Idrak.Optimizers.Optimizer`, `Sgd`, `Adam`, `AdamW`, `LearningRateScheduler`, `StepDecay`, `ExponentialDecay`, `CosineAnnealing`, `LambdaSchedule` | the same names under `Idrak.Abstraction.Training` (`AdamW8Bit`, `GroupedOptimizer`, `HostOptimizer` stay in `Idrak.Optimizers`) |
   | `Idrak.Data.IScaler` | `Idrak.Abstraction.Training.IScaler` (the scalers stay in `Idrak.Data`) |
@@ -47,6 +46,26 @@
   | `DatasetSpec` internal option readers; `spec.Open()`, `Download()`, `Mapping` | public `Get`, `Flag`, `GetInt32`, `GetInt64`, `GetDouble`, `CommonOptions`; the others are extension members from Idrak.Datasets |
   | `Idrak.Onnx`: `OnnxImportOps`, `OnnxImportTranslator`, `OnnxImportContext`, `OnnxExportOps`, `OnnxTranslator<T>`, `OnnxGraphOpTranslator`, `OnnxGraphOpContext`, `OnnxGraph`, `OnnxValue`, `OnnxAttribute` | the same names under `Idrak.Abstraction.Formats`; `OnnxGraph` and `OnnxImportContext` are abstract; import translators add network steps by name (`context.Add("scale", args)`); `Find`/`FindLambda`/`FindGraphOp` are public |
   | `Module.Save(...)`, `Module.Load(...)` | extension methods in `Idrak.ModuleFiles`: `model.Save(path)` reads the same |
+  | `Idrak.LanguageModels`: `ICheckpointFormat`, `CheckpointFormats`, `ITensorStore`, `IModelSource`, `ModelSources`, `ModelSourceOptions`, `GgufType`, `GgufDequantizer`, `GgufTypes`, `GgufArchitecture`, `GgufArchitectures` | the same names under `Idrak.Abstraction.Formats`; Idrak.LanguageModels registers its formats, sources, ggml types and GGUF families |
+  | `ModelSourceOptions.Downloader` (`Downloader?`) | `IDownloader?`; `ModelSource.Options(...)` builds the options `Resolve` passes, `ModelSource.DownloaderOf(options)` reads the downloader back (the shared one when none) |
+  | `Idrak.LanguageModels`: `TokenizerComponents`, `ITokenizerNormalizer`, `IPreTokenizer`, `ITokenizerDecoder`, `GgufPreTokenizers`, `PretrainedArchitectures`, `PretrainedArchitecture`, `PretrainedBuildContext` | the same names under `Idrak.Abstraction.Generation`; the built-in families and their helpers (`LlamaStyle`, `CommonSpec`, `ExpertSpec`, `*TensorName`) are `PretrainedFamilies` |
+  | `PretrainedArchitecture.Build`: `Func<PretrainedBuildContext, Sequential>?` | `Func<PretrainedBuildContext, IEnumerable<Module>>?` (the layers in order, ending with the head) |
+  | `Idrak.Layers.DecoderSpec`, `DecoderBuildOptions`, `DecoderNorm`, `FeedForwardActivation`, `RopeSettings` | the same names under `Idrak.Abstraction.Generation`; `spec.Build(...)` is the extension `Idrak.Layers.DecoderBuilder.Build` (same call); new `spec.Describe(model)` |
+  | `Idrak.LanguageModels.DistillationTeacher`, `TrainingSequence` | the same names under `Idrak.Abstraction.Training`; a teacher is open to implementations (protected constructor, public abstract `Distributions`, public `TeacherDistributions`); `FromModel`/`FromFile` are `DistillationTeachers.FromModel`/`FromFile`; `Check` takes the student's `ITokenizer` |
+  | internal `GgufTypes.Find`, `GgufArchitectures.Find`, `TokenizerComponents.Normalizer`/`PreTokenizer`/`Decoder` | public `Find`, `FindNormalizer`, `FindPreTokenizer`, `FindDecoder` |
+  | `Idrak.Inference.EngineModel`, `EngineModelKind` | `Idrak.Abstraction.Serving.EngineModel<TCopy>` with `EngineHosting`, `IEngineHost`, `IEngineLease`, `IEngineBatcher`, `ModelDescription`; a kind is a string (`"predictor"`, `"text"`, `"chat"`); add any kind with `InferenceEngineBuilder.Add(name, model)` |
+  | `Idrak.Inference.GenerationChunk` | `Idrak.Abstraction.Generation.GenerationChunk`; new `ITextModel` (`TextGenerator` and the engine's text and chat models implement it) |
+
+- `ITokenizer.TokenOf(id)`: a vocabulary entry as stored (default: the id's decoded text).
+- The inference engine reaches models through their contracts. Breaking, with no shims:
+  - `engine.GenerateAsync`/`StreamAsync(name, ...)` → `engine.Model<ITextModel>(name).GenerateAsync`/`StreamAsync`.
+  - `engine.ChatAsync`/`StreamChatAsync`/`ChatModel(name)` → `engine.Model<IChatModel>(name)`; `TryGetModel<T>` checks what a model can do.
+  - `engine.Conversation(name, cfg)` → `Conversation.For(engine.Model<IChatModel>(name))...Build()`.
+  - `engine.ContextLengthAsync(name)` → `(await engine.DescribeAsync(name)).ContextLength`; `KindOf` → `Models[i].Kind`.
+  - The builder's `TextModel`/`ChatModel` and `engine.ToolsOf` are extension methods in `Idrak.Inference.GenerativeModels`.
+  - Idrak.AspNetCore: `AddTextModel`/`AddChatModel` are gone; use `Configure((sp, engine) => engine.ChatModel(...))` or `Add(name, sp => model)`.
+  - `/idrak/status` reports `kind` in lowercase (`"chat"`).
+  - A batcher of a disposed engine throws `ObjectDisposedException`; a builder builds once; a failed `BuildAsync` stops the batchers it started.
 
   A file that also imports another `Tensor` (ONNX Runtime's `Microsoft.ML.OnnxRuntime.Tensors`, or
   `System.Numerics.Tensors`) now sees two: `Idrak.Tensor` used to win as a member of an enclosing namespace. Add
