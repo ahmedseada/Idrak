@@ -4,7 +4,7 @@
 using System.Text.Json.Nodes;
 using Idrak;
 using Idrak.Datasets;
-using RegisteredSources = Idrak.Datasets.DatasetSources;
+using RegisteredSources = Idrak.Abstraction.Data.DatasetSources;
 
 // Dataset plug-ins: file formats, sources and Parquet codecs added from outside the library through their registries.
 internal static partial class Tests
@@ -166,7 +166,7 @@ internal static partial class Tests
 
         public bool CanOpen(string source) => source.StartsWith("test:", StringComparison.OrdinalIgnoreCase);
 
-        public Dataset Open(DatasetSpec spec, ReadOptions options, Downloader? downloader)
+        public IDatasetRows Open(DatasetSpec spec, ReadOptions options, IDownloader? downloader)
         {
             var data = Dataset.FromFile(Path.Combine(folder, spec.Source[5..]), options);
             return spec.Options.TryGetValue("shout", out var shout) && shout == "true"

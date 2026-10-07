@@ -5,11 +5,20 @@ using Idrak.Layers;
 
 namespace Idrak.Onnx;
 
-/// <summary>The built-in export translators, registered in <see cref="OnnxExportOps"/> like translators of your own.</summary>
+/// <summary>
+/// The built-in translators, registered like translators of your own by <see cref="LibraryRegistrations"/>: the export
+/// translators in <see cref="OnnxExportOps"/> (layers, the builder's lambdas, graph operations) and the import
+/// translators in <see cref="OnnxImportOps"/> (<see cref="Importer.BuiltInOps"/>).
+/// </summary>
 internal static class OnnxBuiltIns
 {
-    public static void Register()
+    public static void RegisterAll()
     {
+        foreach (var (op, translate) in Importer.BuiltInOps)
+        {
+            OnnxImportOps.Register(op, translate);
+        }
+
         OnnxExportOps.Register<Layers.Linear>((g, linear, x, shape) => Linear(g, linear, x, shape));
         OnnxExportOps.Register<ReLU>((g, _, x, shape) => g.Node("Relu", [x], shape));
         OnnxExportOps.Register<Tanh>((g, _, x, shape) => g.Node("Tanh", [x], shape));
@@ -41,7 +50,7 @@ internal static class OnnxBuiltIns
         OnnxExportOps.Register<GRU>((g, gru, x, shape) => Recurrent(g, "GRU", gru, [1, 0, 2], x, shape));            // ONNX z, r, h; ours r, z, h
         OnnxExportOps.Register<Sequential>((g, sequential, x, _) => sequential.Aggregate(x, (value, child) => g.Module(child, value)));
         OnnxExportOps.Register<GraphModule>(Graph);
-        OnnxExportOps.Register<Layers.Lambda>((g, lambda, x, shape) => (OnnxExportOps.TryGetLambda(lambda.ToString())
+        OnnxExportOps.Register<Layers.Lambda>((g, lambda, x, shape) => (OnnxExportOps.FindLambda(lambda.ToString())
             ?? throw new NotSupportedException($"The lambda '{lambda}' cannot be exported (registered: {string.Join(", ", OnnxExportOps.LambdaNames)}): "
                 + $"register a translator with OnnxExportOps.RegisterLambda(\"{lambda}\", ...) or the exporter's Lambda(\"{lambda}\", ...)."))(g, lambda, x, shape));
 
@@ -59,7 +68,7 @@ internal static class OnnxBuiltIns
     // operations by their registered translators. Shapes come from running the graph on a zero sample.
     private static OnnxValue Graph(OnnxGraph g, GraphModule graph, OnnxValue x, IReadOnlyList<int> outputShape)
     {
-        var exporter = g.Exporter ?? throw new InvalidOperationException("A graph is exported through an OnnxExporter.");
+        var exporter = (g as OnnxGraphWriter)?.Exporter ?? throw new InvalidOperationException("A graph is exported through an OnnxExporter.");
         var device = graph.Parameters().Concat(graph.Buffers()).FirstOrDefault()?.Device ?? Device.Default;
         var trace = graph.Trace(Tensor.Zeros([1, .. x.Shape!.Skip(1)], device));
         var values = new Dictionary<string, OnnxValue>(StringComparer.Ordinal) { [graph.Input] = x };

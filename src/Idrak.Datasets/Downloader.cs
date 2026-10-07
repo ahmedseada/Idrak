@@ -28,7 +28,7 @@ public sealed record DownloadProgress(string Url, long Received, long? Total, st
 /// <c>~/.cache/idrak</c>, under <c>downloads/</c>, laid out by source: huggingface/datasets/&lt;owner&gt;/&lt;name&gt;/&lt;commit&gt;/…,
 /// github/&lt;owner&gt;/&lt;repo&gt;/…, kaggle/…, zenodo/…, and urls/&lt;host&gt;/&lt;path&gt; for plain URLs.
 /// </summary>
-public sealed class Downloader
+public sealed class Downloader : IDownloader
 {
     private static readonly Lazy<Downloader> SharedInstance = new(() => new Downloader());
     private readonly HttpClient _http;
