@@ -2,7 +2,8 @@
 
 **Status (2026-10-07, branch `abstraction`):** phases 0 to 6 and 6c done on the CPU and on Vulkan (lavapipe), with
 the regrouping into the target package layout (waves 1 to 3). Phase 6b (slots and failure policies, `Throw` by default) is done on the CPU and on Vulkan.
-Wave 4 below (6d, phase 7, docs, the final checks) is planned and not started. CUDA, HIP and a real Vulkan GPU have
+Wave 4 below (6d, phase 7, docs, the final checks) is done on the CPU and on Vulkan (472 of 472 each); the version stays
+0.3.1 until the author releases. CUDA, HIP and a real Vulkan GPU have
 not run any of waves 1 to 4 yet. It contains plan 9 (operations as data) and plan 7's item 12c (devices from outside
 the library).
 
@@ -306,7 +307,7 @@ packaged form before the real release.
 | 6d | **One promotion end to end.** A sample app's override is generalized in the library (steps 2 to 5 of "Promotion"), becomes the default, the old default stays selectable by version, and the app deletes its override | the sample app passes on the new default with no override; the previous default is still reachable by version |
 | 7 | **The surface is guarded.** A checked-in dump of the public API of **every library package** (Abstraction, core, Gpu, Data, Nlp, Vision, Diffusion and Audio when they exist, and the bridges), compared by a test on every build; an intended change updates the dump in the same commit (decided 2026-10-07); a changelog section per change | an accidental public change fails the build; the namespace test's allow list is empty |
 
-## Wave 4: the last steps (planned 2026-10-07; W4.1 to W4.5 done the same day)
+## Wave 4: the last steps (planned and done 2026-10-07 on CPU and lavapipe, except the version bump)
 
 Starts on the author's go (6b is merged). Each step ends on `abstraction` with the full suite green on both.
 
@@ -322,6 +323,16 @@ feed (both pass its tests). W4.3: see the changelog for each item and its reason
 (nullability through `NullabilityInfoContext`; `T?` on an unconstrained type parameter is not shown, the metadata does
 not tell it apart). W4.5: no retry for operations without a device kernel; the double accumulation documented; the
 Float8 and `AttentionStrided` references and the PTX/HIP plug-in hook wait for a CUDA machine (recorded).
+
+**W4.6 and W4.7 (2026-10-07).** Docs: the root README (Layout, the override loop's versions, building an app against a
+clone), the package READMEs of Abstraction, Nlp and the kit, the 0.4.0 changelog read through (rows a later move
+superseded fixed or pointed to the later place), plans/README.md and plans/idrak-cli.md. Checks without the version
+bump (**the author asked to keep `VersionPrefix` at 0.3.1** for now; 0.4.0 is set at release): every package packs into a
+local feed (11 packages); a fresh `dotnet new console` with `Idrak` alone compiles `Tensor` and `Device` with no `using`
+line (the transitive global usings) and runs on the CPU and on Vulkan by name (lavapipe is a software driver, so
+`Device.Available` lists only the CPU, by design); one with `Idrak.Gpu` alone does the same; the Override sample and its
+kit tests build and pass from the feed; CLI smoke: `doctor`, `devices`, `kernels -d vulkan:0`, `overrides` (table and
+JSON), `serve MODEL --mcp` (initialize and tools/list over stdin). Left for the author's machines: the checklist below.
 
 | # | Step | What | Done when |
 |---|---|---|---|
