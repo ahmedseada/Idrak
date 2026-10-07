@@ -3,8 +3,9 @@
 
 using System.Buffers.Binary;
 using System.Runtime.InteropServices;
-using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json;
+using Idrak.Models.Abstractions;
 
 namespace Idrak.Models;
 

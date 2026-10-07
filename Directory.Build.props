@@ -18,7 +18,6 @@
     <Using Include="Idrak.Abstraction.Modules" />
     <Using Include="Idrak.Abstraction.Retrieval" />
     <Using Include="Idrak.Abstraction.Serving" />
-    <Using Include="Idrak.Abstraction.Vision" />
     <Using Include="Idrak.Abstraction.Training" />
   </ItemGroup>
 

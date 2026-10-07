@@ -4,8 +4,9 @@
 using System.Buffers.Binary;
 using System.Globalization;
 using System.Numerics;
-using System.Text;
 using System.Text.Json.Nodes;
+using System.Text;
+using Idrak.Data.Abstractions;
 using Idrak.Data.Parquet;
 
 namespace Idrak.Data;

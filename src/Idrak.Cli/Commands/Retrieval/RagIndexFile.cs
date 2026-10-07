@@ -5,6 +5,7 @@ using System.IO.Compression;
 using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
 using Idrak.Models;
+using Idrak.Retrieval.Abstractions;
 using Idrak.Retrieval;
 
 namespace Idrak.Cli.Commands.Retrieval;

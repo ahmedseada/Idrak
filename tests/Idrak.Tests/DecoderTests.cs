@@ -1,11 +1,12 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using Idrak;
 using Idrak.Generation;
 using Idrak.Inference;
 using Idrak.Layers;
+using Idrak.Models.Abstractions;
 using Idrak.Optimizers;
+using Idrak;
 
 // Decoder-only language models described by DecoderSpec, checked against a plain-loop reference implementation.
 internal static partial class Tests

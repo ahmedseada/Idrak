@@ -2,10 +2,12 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Collections.Concurrent;
-using Idrak;
-using Idrak.Backends;
 using Idrak.Backends.Vulkan;
+using Idrak.Backends;
+using Idrak.Generation;
 using Idrak.Layers;
+using Idrak.Models.Abstractions;
+using Idrak;
 
 // Decoding on Vulkan: every step on the device (no host fallback, so no wait for the device between tokens), the sampler
 // kernels against the CPU's, and the runtime's barriers (only between dependent commands).

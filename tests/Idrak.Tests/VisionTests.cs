@@ -1,13 +1,14 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using Idrak;
 using Idrak.Data;
 using Idrak.Inference;
 using Idrak.Layers;
 using Idrak.Optimizers;
 using Idrak.Training;
+using Idrak.Vision.Abstractions;
 using Idrak.Vision;
+using Idrak;
 
 // Idrak.Vision: foreground, connected regions, framing, boxes and suppression, channel normalization, segmentation,
 // region classification and model-based detection.

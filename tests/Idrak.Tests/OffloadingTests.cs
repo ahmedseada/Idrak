@@ -1,11 +1,12 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using Idrak;
-using Idrak.Backends;
 using Idrak.Backends.Cuda;
+using Idrak.Backends;
 using Idrak.Layers;
+using Idrak.Models.Abstractions;
 using Idrak.Optimizers;
+using Idrak;
 
 // Offloading to system memory (IMemoryOffload): the CPU optimizer step, moving tensors, staging layers' weights, cold
 // data first, and bringing tensors back.

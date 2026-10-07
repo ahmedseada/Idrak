@@ -1,9 +1,10 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using Idrak.Models;
-using Idrak.Nlp;
 using Idrak.Layers;
+using Idrak.Models;
+using Idrak.Nlp.Abstractions;
+using Idrak.Nlp;
 
 namespace Idrak.Cli.Shared;
 

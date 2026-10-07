@@ -4,6 +4,7 @@
 using System.Globalization;
 using System.Text.Json.Nodes;
 using Idrak.Data;
+using Idrak.Models.Abstractions;
 using Idrak.Models;
 
 namespace Idrak.Cli.Shared;

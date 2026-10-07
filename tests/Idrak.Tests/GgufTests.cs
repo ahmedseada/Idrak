@@ -1,10 +1,11 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using Idrak;
 using Idrak.Generation;
 using Idrak.Models;
+using Idrak.Nlp.Abstractions;
 using Idrak.Nlp;
+using Idrak;
 
 // GGUF: dequantization checked against the gguf package's reference, and models read from GGUF files against the same
 // models in the Hugging Face layout (tools/gguf/make_fixtures.py makes both).

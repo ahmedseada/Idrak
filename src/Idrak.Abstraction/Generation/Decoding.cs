@@ -3,16 +3,6 @@
 
 namespace Idrak.Abstraction.Generation;
 
-/// <summary>A module with an incremental (cached) forward pass for autoregressive decoding.</summary>
-public interface ICachedModule
-{
-    /// <summary>
-    /// Processes only the new positions in <paramref name="input"/> ([batch, newSteps, ...]), reading and
-    /// extending the state kept in <paramref name="context"/>. Inference only (no gradients).
-    /// </summary>
-    Tensor ForwardCached(Tensor input, DecodingContext context);
-}
-
 /// <summary>How a <see cref="KeyValueCache"/> stores keys and values.</summary>
 public enum KeyValueFormat
 {
@@ -126,7 +116,7 @@ public sealed class KeyValueCache : IDisposable
 }
 
 /// <summary>
-/// State for incremental decoding with <see cref="ICachedModule"/> layers: the number of positions already
+/// State for incremental decoding with <c>ICachedModule</c> layers: the number of positions already
 /// processed (kept in device memory, so a decoding step can be recorded once as a <see cref="ComputeGraph"/>
 /// and replayed at every position), one <see cref="KeyValueCache"/> per attention layer, and the current step's
 /// causal mask and position indices.

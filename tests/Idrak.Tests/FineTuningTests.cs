@@ -2,11 +2,13 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Text.Json.Nodes;
-using Idrak;
 using Idrak.Generation;
 using Idrak.Layers;
+using Idrak.Models.Abstractions;
 using Idrak.Models;
+using Idrak.Nlp.Abstractions;
 using Idrak.Nlp;
+using Idrak;
 
 internal static partial class Tests
 {
