@@ -58,7 +58,7 @@ tool. `IDRAK_DISABLE_CUDA=1` (and `_VULKAN`, `_HIP`) turns a backend off.
 | `Idrak.Nlp` | Text generation, chat and tools, the models' own Jinja chat templates, the engine's text and chat models, LoRA / QLoRA fine-tuning, evaluation, retrieval and RAG, a coding agent |
 | `Idrak.Data` | JSON Lines, JSON, CSV, text, code and Parquet files (also compressed or archived); Hugging Face, GitHub, Kaggle, Zenodo and URL sources |
 | `Idrak.Vision` | Region classification, content framing and image statistics, over the vision contracts of `Idrak.Abstraction` |
-| `Idrak.AspNetCore` | `AddIdrak()`, `MapPredictor`, `MapGenerate` (JSON and streaming), `MapChatApi` (the local chat API) and `MapCompletionsApi` (`/v1`) |
+| `Idrak.AspNetCore` | Serve models over HTTP from an ASP.NET Core app: `AddIdrak()`, `MapPredictor`, `MapGenerate` (JSON and streaming), `MapChatApi` (the local chat API) and `MapCompletionsApi` (OpenAI-compatible `/v1`) |
 | `Idrak.Mcp` | Tools of Model Context Protocol servers, and serving tools and the engine's models (generate, chat, embed) over MCP; depends on `Idrak.Abstraction` only |
 | `Idrak.Onnx.Runtime` | Run `.onnx` models with ONNX Runtime as Idrak modules |
 | `idrak` (CLI, package `Idrak.Cli`) | One tool for the whole library: `doctor`, `devices`, `chat`, `run`, `serve`, `pull`, `list`, `bench`, `tune`, `train`, `data`, `rag`, `suggest` and more (see "idrak: the command-line tool") |
@@ -256,7 +256,8 @@ src/Idrak.Data/                     optional package, no dependencies: JSON Line
                                     files (also compressed and archived); Hugging Face, GitHub, Kaggle, Zenodo and URL
                                     sources with a download cache; rows into conversations; recipes; Hugging Face model
                                     ids (HuggingFaceModels: found in a cache or downloaded once)
-src/Idrak.AspNetCore/               optional package: AddIdrak(), MapPredictor, MapGenerate, MapChatApi, MapIdrakStatus
+src/Idrak.AspNetCore/               optional package: serve models over HTTP (AddIdrak(), MapPredictor, MapGenerate,
+                                    MapChatApi, MapCompletionsApi for the OpenAI-compatible /v1 API, MapIdrakStatus)
 src/Idrak.Mcp/                      optional package: tools of Model Context Protocol servers, and serving tools and models over MCP
 src/Idrak.Vision/                   optional package, no dependencies: RegionClassifier (ComponentProposer), ContentFrame,
                                     ChannelStatistics, ModelDetector, ModelSegmenter; the vision contracts and small defaults
