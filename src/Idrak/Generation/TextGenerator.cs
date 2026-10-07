@@ -7,13 +7,6 @@ using Idrak.Layers;
 
 namespace Idrak.Generation;
 
-/// <summary>A piece of streamed output. The last chunk has <see cref="Done"/> set, a reason and the statistics.</summary>
-/// <param name="Text">New text since the previous chunk (may be empty).</param>
-/// <param name="Done">True for the final chunk.</param>
-/// <param name="DoneReason">"stop" (a stop sequence was produced) or "length" (the token limit was reached); null until done.</param>
-/// <param name="Stats">Statistics, on the final chunk only.</param>
-public sealed record GenerationChunk(string Text, bool Done = false, string? DoneReason = null, GenerationStats? Stats = null);
-
 /// <summary>A piece of one prompt's continuation in <see cref="TextGenerator.StreamBatch"/>.</summary>
 /// <param name="Index">The prompt's index in the batch.</param>
 /// <param name="Text">Newly generated text (empty on the final chunk).</param>
@@ -35,7 +28,7 @@ public sealed record BatchChunk(int Index, string Text, bool Done = false, strin
 ///     Console.Write(chunk.Text);
 /// </code>
 /// </example>
-public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int contextLength)
+public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int contextLength) : ITextModel
 {
     /// <summary>Upper bound on generated tokens when <see cref="GenerationOptions.NumPredict"/> is negative.</summary>
     public const int MaxTokens = 4096;

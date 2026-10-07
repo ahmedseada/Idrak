@@ -35,6 +35,7 @@ internal static partial class Tests
         ("engine: predictors from a factory and a package; batches, PredictManyAsync, micro-batching, warm-up, stats", EnginePredictors),
         ("engine: instances, queue limit, timeout, keep-alive with a manual clock, load on first use, telemetry", EngineLifecycle),
         ("engine: text generation and chat conversations through the engine", EngineGeneration),
+        ("engine: a model kind of one's own (EngineModel): lent copies, keep-alive, micro-batching, status, description, contracts, dispose", EngineOwnKind),
     ];
 
     private static void Deduplication(Device device)
@@ -799,7 +800,7 @@ internal static partial class Tests
             var stats = engine.Stats("batched");
             Check(stats.Requests >= 3 && stats.AverageBatchSize > 1 && stats.Rows == 24, $"batching stats: {stats}");
             Check(engine.Stats("factory").Requests == 5, $"factory stats {engine.Stats("factory").Requests}");
-            Check(engine.Models.All(m => m.Loaded && m.Kind == EngineModelKind.Predictor), "status");
+            Check(engine.Models.All(m => m.Loaded && m.Kind == "predictor"), "status");
 
             bool threw = false;
             try { engine.PredictAsync<string, float>("factory", "x").AsTask().Wait(); } catch (InvalidOperationException) { threw = true; }
@@ -881,13 +882,13 @@ internal static partial class Tests
             Check(loads == 0 && engine.Models.All(m => !m.Loaded), "nothing loaded before first use");
 
             // One copy busy: a second request queues, a third is rejected.
-            var first = engine.StreamAsync("one", "abc", slow).GetAsyncEnumerator();
+            var first = engine.Model<ITextModel>("one").StreamAsync("abc", slow).GetAsyncEnumerator();
             Check(first.MoveNextAsync().AsTask().Result, "first request running");
-            var second = engine.StreamAsync("one", "abc", slow).GetAsyncEnumerator();
+            var second = engine.Model<ITextModel>("one").StreamAsync("abc", slow).GetAsyncEnumerator();
             var secondStarted = second.MoveNextAsync().AsTask();
             SpinWait.SpinUntil(() => engine.Models.First(m => m.Name == "one").Queued == 1, 2000);
             bool rejected = false;
-            try { engine.GenerateAsync("one", "abc", slow).Wait(); }
+            try { engine.Model<ITextModel>("one").GenerateAsync("abc", slow).Wait(); }
             catch (AggregateException ex) when (ex.InnerException is InferenceQueueFullException) { rejected = true; }
             Check(rejected && engine.Stats("one").Rejected == 1, "queue limit");
             Check(!secondStarted.Wait(50), "second waits for the copy");
@@ -896,15 +897,15 @@ internal static partial class Tests
             second.DisposeAsync().AsTask().Wait();
 
             // Two copies: two streams at once, none queued.
-            var a = engine.StreamAsync("two", "abc", slow).GetAsyncEnumerator();
-            var b = engine.StreamAsync("two", "abc", slow).GetAsyncEnumerator();
+            var a = engine.Model<ITextModel>("two").StreamAsync("abc", slow).GetAsyncEnumerator();
+            var b = engine.Model<ITextModel>("two").StreamAsync("abc", slow).GetAsyncEnumerator();
             Check(a.MoveNextAsync().AsTask().Result && b.MoveNextAsync().AsTask().Wait(2000), "two copies run together");
             a.DisposeAsync().AsTask().Wait();
             b.DisposeAsync().AsTask().Wait();
             Check(loads == 3, $"copies loaded on first use ({loads})");
 
             // Keep-alive: unloaded after 5 idle minutes, reloaded on the next request.
-            engine.GenerateAsync("idle", "abc", new GenerationOptions { Seed = 1, NumPredict = 3 }).Wait();
+            engine.Model<ITextModel>("idle").GenerateAsync("abc", new GenerationOptions { Seed = 1, NumPredict = 3 }).Wait();
             var status = engine.Models.First(m => m.Name == "idle");
             Check(status.Loaded && status.ExpiresAt == clock.GetUtcNow() + TimeSpan.FromMinutes(5), "expiry scheduled");
             clock.Advance(TimeSpan.FromMinutes(4));
@@ -912,10 +913,10 @@ internal static partial class Tests
             clock.Advance(TimeSpan.FromMinutes(1));
             SpinWait.SpinUntil(() => !engine.Models.First(m => m.Name == "idle").Loaded, 2000);
             Check(!engine.Models.First(m => m.Name == "idle").Loaded, "unloaded after 5 minutes");
-            engine.GenerateAsync("idle", "abc", new GenerationOptions { Seed = 1, NumPredict = 3 }).Wait();
+            engine.Model<ITextModel>("idle").GenerateAsync("abc", new GenerationOptions { Seed = 1, NumPredict = 3 }).Wait();
             Check(loads == 5, $"reloaded ({loads})");
 
-            engine.GenerateAsync("each", "abc", new GenerationOptions { Seed = 1, NumPredict = 3 }).Wait();
+            engine.Model<ITextModel>("each").GenerateAsync("abc", new GenerationOptions { Seed = 1, NumPredict = 3 }).Wait();
             SpinWait.SpinUntil(() => !engine.Models.First(m => m.Name == "each").Loaded, 2000);
             Check(!engine.Models.First(m => m.Name == "each").Loaded, "keep-alive zero unloads at once");
             Check(events.Any(e => e.Kind == EngineEventKind.ModelLoaded) && events.Any(e => e.Kind == EngineEventKind.ModelUnloaded)
@@ -929,10 +930,10 @@ internal static partial class Tests
         var timed = InferenceEngine.Create().TextModel("t", Load, m => m.Timeout(TimeSpan.FromMilliseconds(30))).BuildAsync().GetAwaiter().GetResult();
         try
         {
-            var holder = timed.StreamAsync("t", "abc", slow).GetAsyncEnumerator();
+            var holder = timed.Model<ITextModel>("t").StreamAsync("abc", slow).GetAsyncEnumerator();
             holder.MoveNextAsync().AsTask().Wait();
             bool timedOut = false;
-            try { timed.GenerateAsync("t", "abc", slow).Wait(); }
+            try { timed.Model<ITextModel>("t").GenerateAsync("abc", slow).Wait(); }
             catch (AggregateException ex) when (ex.InnerException is TimeoutException) { timedOut = true; }
             Check(timedOut && timed.Stats("t").Failed == 1, "timeout while waiting for a copy");
             holder.DisposeAsync().AsTask().Wait();
@@ -961,14 +962,14 @@ internal static partial class Tests
             .BuildAsync().GetAwaiter().GetResult();
         try
         {
-            Check(engine.GenerateAsync("text", "abc", options).Result.Text == expected, "engine text = direct text");
-            var reply = engine.Conversation("chat", c => c.System("be brief").Options(options)).SendAsync("hi").Result;
+            Check(engine.Model<ITextModel>("text").GenerateAsync("abc", options).Result.Text == expected, "engine text = direct text");
+            var reply = Conversation.For(engine.Model<IChatModel>("chat")).System("be brief").Options(options).Build().SendAsync("hi").Result;
             Check(reply.Rounds == 1 && reply.Message.Role == "assistant", "conversation through the engine");
-            var chunk = engine.ChatAsync("chat", new ChatRequest([new ChatMessage("user", "hi")], Options: options)).Result;
+            var chunk = engine.Model<IChatModel>("chat").ChatAsync(new ChatRequest([new ChatMessage("user", "hi")], Options: options)).Result;
             Check(chunk.Done && chunk.Message is not null, "chat request");
-            Check(engine.ContextLengthAsync("chat").Result == 32, "context length");
+            Check(engine.DescribeAsync("chat").Result is { Kind: "chat", ContextLength: 32 }, "context length");
             bool threw = false;
-            try { engine.ChatModel("text"); } catch (InvalidOperationException) { threw = true; }
+            try { engine.Model<IChatModel>("text"); } catch (InvalidOperationException) { threw = true; }
             Check(threw, "chat on a text model is refused");
         }
         finally
@@ -976,5 +977,94 @@ internal static partial class Tests
             engine.DisposeAsync().AsTask().Wait();
             model.Dispose();
         }
+    }
+
+    // A model kind as a domain package would write one: the engine lends it copies and batches its requests.
+    private sealed class EchoModel(EngineHosting hosting, int maxBatch = 0) : EngineModel<EchoModel.Copy>("echo", hosting)
+    {
+        private int _loads;
+        private IEngineBatcher<string, string>? _batcher;
+
+        public sealed record Copy(int Id);
+
+        public List<Copy> Unloaded { get; } = [];
+
+        public List<int> Batches { get; } = [];
+
+        public bool Disposed { get; private set; }
+
+        protected override void OnAttached()
+        {
+            if (maxBatch > 0)
+            {
+                _batcher = Host.Batcher<string, string>(maxBatch, TimeSpan.FromMilliseconds(500), RunAsync);
+            }
+        }
+
+        public override Copy LoadCopy() => new(Interlocked.Increment(ref _loads));
+
+        public override void UnloadCopy(Copy copy) { lock (Unloaded) Unloaded.Add(copy); }
+
+        public override ModelDescription Describe(Copy copy) => new(Name, Kind, 0, Device.Cpu, null);
+
+        public async Task<string> SayAsync(string text, CancellationToken token = default) =>
+            _batcher is { } batcher ? await batcher.SubmitAsync(text, token) : (await RunAsync([text], token))[0];
+
+        private async Task<IReadOnlyList<string>> RunAsync(IReadOnlyList<string> texts, CancellationToken token)
+        {
+            using var lease = await Host.AcquireAsync(token);
+            lock (Batches) Batches.Add(texts.Count);
+            lease.Completed(texts.Count, texts.Sum(t => t.Length), TimeSpan.FromMilliseconds(1));
+            return [.. texts.Select(t => $"{lease.Copy.Id}:{t}")];
+        }
+
+        public override ValueTask DisposeAsync()
+        {
+            Disposed = true;
+            return base.DisposeAsync();
+        }
+    }
+
+    private static void EngineOwnKind(Device device)
+    {
+        if (device != Device.Cpu)
+        {
+            return;     // no tensors: once is enough
+        }
+
+        var exclusive = new EchoModel(new EngineHosting { Instances = 2, KeepAlive = TimeSpan.Zero });
+        var batched = new EchoModel(new EngineHosting { SharedCopies = true }, maxBatch: 4);
+        var engine = InferenceEngine.Create().Add("echo", exclusive).Add("batched", batched).LoadOnFirstUse().BuildAsync().GetAwaiter().GetResult();
+        try
+        {
+            Check(engine.Models.All(m => m.Kind == "echo" && !m.Loaded), "the kind's name in the status; nothing loaded before first use");
+            Check(engine.Model<EchoModel>("echo").SayAsync("hi").Result is "1:hi" or "2:hi", "a request on a lent copy");
+            SpinWait.SpinUntil(() => !engine.Models.First(m => m.Name == "echo").Loaded, 2000);
+            Check(exclusive.Unloaded.Count == 2, "keep-alive zero unloads both copies through UnloadCopy");
+
+            var answers = Task.WhenAll(Enumerable.Range(0, 4).Select(i => batched.SayAsync($"x{i}"))).Result;
+            Check(answers.SequenceEqual(Enumerable.Range(0, 4).Select(i => $"1:x{i}")), "batched answers in order");
+            Check(batched.Batches.Sum() == 4 && batched.Batches.Max() > 1, $"micro-batched by the engine ({string.Join(", ", batched.Batches)})");
+            var stats = engine.Stats("batched");
+            Check(stats.Rows == 8 && stats.Requests == batched.Batches.Count, $"statistics from the lease: {stats}");
+            Check(engine.DescribeAsync("batched").Result is { Name: "batched", Kind: "echo" }, "description");
+
+            bool threw = false;
+            try { engine.Model<IChatModel>("echo"); } catch (InvalidOperationException) { threw = true; }
+            Check(threw && !engine.TryGetModel<IPredictor<float[], float[]>>("echo", out _), "a kind answers only the contracts it implements");
+            threw = false;
+            try { InferenceEngine.Create().Add("again", exclusive).BuildAsync().GetAwaiter().GetResult(); } catch (InvalidOperationException) { threw = true; }
+            Check(threw, "a model object belongs to one engine");
+            threw = false;
+            try { InferenceEngine.Create().Add("fixed", new EchoModel(new EngineHosting { Reloadable = false, Instances = 2 })); }
+            catch (InvalidOperationException) { threw = true; }
+            Check(threw, "copies of a model the engine cannot reload are refused");
+        }
+        finally
+        {
+            engine.DisposeAsync().AsTask().Wait();
+        }
+
+        Check(exclusive.Disposed && batched.Disposed && batched.Unloaded.Count == 1, "the engine disposes its models and unloads their copies");
     }
 }
