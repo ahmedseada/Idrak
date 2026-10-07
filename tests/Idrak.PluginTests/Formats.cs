@@ -7,18 +7,20 @@ using Idrak.Layers;
 namespace Idrak.PluginTests;
 
 /// <summary>
-/// A packed weight format of one's own: bfloat16-rounded values held as float32 in a tensor no scope captures, multiplied
-/// through the base class's expanded product.
+/// A packed weight format of one's own: values rounded to bfloat16, two to a four-byte word (low half first) in a tensor
+/// no scope captures, multiplied through the base class's expanded product. The weights are expanded by the plug-in
+/// operation <see cref="PluginKernels.Unpack"/>: its default kernel on the host, or a device kernel registered for it
+/// (<see cref="PluginKernels.Install"/>).
 /// </summary>
 public sealed class RoundedWeight : PackedWeight
 {
     /// <summary>The name it is registered under.</summary>
     public const string FormatName = "outside-rounded";
 
-    private RoundedWeight(Tensor values) => Values = values;
+    private RoundedWeight(Tensor words, int rows, int columns) => (Words, Rows, Columns) = (words, rows, columns);
 
-    /// <summary>The rounded values, [rows, columns].</summary>
-    public Tensor Values { get; private set; }
+    /// <summary>The packed words, ⌈rows · columns / 2⌉ of them.</summary>
+    public Tensor Words { get; private set; }
 
     /// <summary>Products computed through this format.</summary>
     public int Products { get; private set; }
@@ -27,35 +29,42 @@ public sealed class RoundedWeight : PackedWeight
     public override string Name => FormatName;
 
     /// <inheritdoc />
-    public override int Rows => Values.Shape[0];
+    public override int Rows { get; }
 
     /// <inheritdoc />
-    public override int Columns => Values.Shape[1];
+    public override int Columns { get; }
 
     /// <inheritdoc />
-    public override long Bytes => 4L * Values.Size;
+    public override long Bytes => 4L * Words.Size;
 
     /// <summary>Packs <paramref name="values"/> ([rows, columns], row-major).</summary>
     public static RoundedWeight Pack(ReadOnlySpan<float> values, int rows, int columns, Device device)
     {
-        var rounded = new float[values.Length];
+        var words = new float[(values.Length + 1) / 2];
         for (int i = 0; i < values.Length; i++)
         {
             uint bits = BitConverter.SingleToUInt32Bits(values[i]);
-            rounded[i] = BitConverter.UInt32BitsToSingle(((bits + 0x7FFFu + ((bits >> 16) & 1u)) >> 16) << 16);
+            uint half = (bits + 0x7FFFu + ((bits >> 16) & 1u)) >> 16;              // to nearest, ties to even
+            words[i >> 1] = BitConverter.UInt32BitsToSingle(BitConverter.SingleToUInt32Bits(words[i >> 1]) | half << (16 * (i & 1)));
         }
 
-        return new RoundedWeight(Tensor.Persistent(rounded, [rows, columns], device));
+        return new RoundedWeight(Tensor.Persistent(words, [words.Length], device), rows, columns);
     }
 
     /// <inheritdoc />
-    public override Tensor Dequantize() => Values * 1f;
+    public override Tensor Dequantize()
+    {
+        var values = Tensor.Empty([Rows, Columns], Words.Device);
+        var backend = values.Backend;
+        PluginKernels.Unpack.KernelFor(backend)(backend, Words.Storage, values.Storage, Rows * Columns);
+        return values;
+    }
 
     /// <inheritdoc />
-    public override IEnumerable<Tensor> Buffers() => [Values];
+    public override IEnumerable<Tensor> Buffers() => [Words];
 
     /// <inheritdoc />
-    protected override void MoveTo(Device device, Func<Tensor, Device, Tensor> move) => Values = move(Values, device);
+    protected override void MoveTo(Device device, Func<Tensor, Device, Tensor> move) => Words = move(Words, device);
 
     /// <inheritdoc />
     public override Tensor MatMul(Tensor input)
@@ -65,13 +74,15 @@ public sealed class RoundedWeight : PackedWeight
     }
 
     /// <inheritdoc />
-    public override void Dispose() => Values.Dispose();
+    public override void Dispose() => Words.Dispose();
 }
 
 /// <summary>
 /// A key/value cache format of one's own: each cached row divided by its mean magnitude, which is kept as the row's
 /// scale; written with public operations and the protected <see cref="KeyValueLayout.WriteRows"/>, attended through the
-/// default composed attention.
+/// default composed attention. Its rows are expanded by the plug-in operation <see cref="PluginKernels.Scale"/>: its
+/// default kernel (composed of the library's operations), or a device kernel registered for it
+/// (<see cref="PluginKernels.Install"/>).
 /// </summary>
 public sealed class ScaledLayout : KeyValueLayout
 {
@@ -118,7 +129,9 @@ public sealed class ScaledLayout : KeyValueLayout
     public override Tensor Expand(KeyValueCache cache, bool keys)
     {
         var (rows, scales) = keys ? (cache.Keys, cache.KeyScales!) : (cache.Values, cache.ValueScales!);
-        int n = rows.Shape[0], capacity = rows.Shape[1], dim = rows.Shape[2];
-        return rows * Widen(scales.Reshape(n * capacity, 1), dim).Reshape(n, capacity, dim);
+        var expanded = Tensor.Empty(rows.Shape, rows.Device);
+        var backend = rows.Backend;
+        PluginKernels.Scale.KernelFor(backend)(backend, rows.Storage, scales.Storage, expanded.Storage, rows.Size, rows.Shape[2]);
+        return expanded;
     }
 }

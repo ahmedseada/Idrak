@@ -1322,6 +1322,8 @@ package's own `.Abstractions`).
 | Image formats (png, bmp, netpbm built in; JPEG and others as plug-ins) | `ImageCodecs.Register(IImageCodec)` | `Idrak` (`Idrak.Data.Abstractions`) |
 | Adapters on linear layers (LoRA and DoRA built in) | implement `ILinearAdapter`, set `Linear.Adapter` | `Idrak.Abstraction` |
 | Fine-tuning optimizers, learning-rate schedules and losses | `FineTuningOptions.Optimizer`, `Scheduler` and `Loss` (a `FineTuningLoss` delegate) | `Idrak.Nlp` |
+| Device kernels for the library's operations, per kind of device | `Kernels.Register(Ops.Name, kind, kernel, requirement)` | `Idrak.Abstraction` |
+| Operations of a plug-in (a packed format's, a cache layout's, a graph operation's or a function's own kernel), with a default and a kernel per kind of device | `PluginOperations.Register<TKernel>(name, defaultKernel, fallback)`, then `Kernels.Register(operation, kind, kernel)`; on Vulkan, `VulkanKernel` dispatches SPIR-V of one's own | `Idrak.Abstraction` (`VulkanKernel`: `Idrak.Gpu`) |
 
 Chat templates are read from each model's own Jinja template (`tokenizer_config.json` or GGUF metadata), and the
 tool-call format is read off that template, so a new model family needs no code for either: `JinjaChatTemplate`
@@ -1335,10 +1337,36 @@ ToolCallFormats.Register("my-format",
 var template = new JinjaChatTemplate(source, stops) { CallFormatName = "my-format" };   // or leave it to detection
 ```
 
+A plug-in format gets a fast path on a device instead of its generic one by naming the kernel it needs: an operation
+declared with a default kernel that runs everywhere, and kernels registered for the kinds of device it knows. The
+packed format below unpacks its words on the host by default and with a SPIR-V kernel of its own on Vulkan;
+`idrak kernels -d vulkan:0` lists `MyFormat.Unpack` as a "plug-in" row, "registered":
+
+```csharp
+public delegate void Unpack(Backend backend, Storage packed, Storage values, int n);
+
+static readonly PluginOperation<Unpack> UnpackOp = PluginOperations.Register<Unpack>("MyFormat.Unpack",
+    (b, packed, values, n) => { /* Download, unpack on the host, Upload */ }, KernelSource.Host);
+static readonly VulkanKernel UnpackShader = new(spirvWords, bindings: 2, pushConstantBytes: 4, "my_unpack", writes: 0b10);
+
+// Once, when the plug-in loads.
+Kernels.Register(UnpackOp, "vulkan", (b, packed, values, n) =>
+    UnpackShader.Dispatch(b, (uint)Math.Clamp((n + 63) / 64, 1, 65535), 1, 1, [packed, values], MemoryMarshal.AsBytes<int>([n])));
+
+// In the format (PackedWeight.Dequantize): the kernel for this device, resolved once per device.
+public override Tensor Dequantize()
+{
+    var values = Tensor.Empty([Rows, Columns], Device);
+    UnpackOp.KernelFor(values.Backend)(values.Backend, Words.Storage, values.Storage, Rows * Columns);
+    return values;
+}
+```
+
 Each registry has a test that plugs in an implementation of its own next to the built-ins. `tests/Idrak.PluginTests`, an assembly without
 internal access to Idrak, writes plug-ins with the public API alone (a Lion optimizer, a custom operation registered as
 a network step and an ONNX import operator, a packed weight format, a KV cache format, a sample source and a batch
-source); the test runner runs them as
+source, and device kernels for the format, the cache layout, a graph operation and a function: CPU loops and, on
+Vulkan, SPIR-V of its own); the test runner runs them as
 the "outside plug-in" group (`IDRAK_FILTER="outside plug-in" dotnet run -c Release --project tests/Idrak.Tests`).
 
 ## Telemetry: logging and tracking

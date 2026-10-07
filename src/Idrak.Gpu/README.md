@@ -35,6 +35,11 @@ devices compute and the tensors stay in device memory.
 `idrak devices` lists the devices found, `idrak doctor` what is missing, `idrak kernels -d DEVICE` which kernel each
 operation runs, and `idrak kernels dump` writes the generated kernel sources.
 
+A plug-in can ship Vulkan kernels of its own: `VulkanKernel` (`Idrak.Gpu.Vulkan`) takes SPIR-V 1.3 words (compiled
+from GLSL with glslc, say; storage buffers at set 0, binding i the i-th storage, scalars in one push-constant block) and
+`VulkanKernel.Dispatch(backend, groupsX, groupsY, groupsZ, storages, pushConstants)` queues it on a Vulkan device, from
+a kernel the plug-in registers for the "vulkan" kind with `Kernels.Register`.
+
 ## Documentation
 
 Guides, the tested devices and the results on each: https://github.com/ahmedseada/Idrak

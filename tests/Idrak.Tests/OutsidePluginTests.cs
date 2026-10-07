@@ -7,5 +7,6 @@ using Idrak;
 // other groups.
 internal static partial class Tests
 {
-    private static readonly (string Name, Action<Device> Run)[] OutsidePluginGroup = [.. Idrak.PluginTests.PluginTests.All];
+    private static readonly (string Name, Action<Device> Run)[] OutsidePluginGroup =
+        [.. Idrak.PluginTests.PluginTests.All, .. Idrak.PluginTests.KernelPluginTests.All];
 }

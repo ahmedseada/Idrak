@@ -1,16 +1,29 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak.Abstraction.Operations;
+
 namespace Idrak.Gpu.Vulkan;
 
 /// <summary>
-/// A compute kernel for <see cref="VulkanBackend.Dispatch"/>: SPIR-V 1.3 words (Vulkan 1.1), entry point "main", its local
-/// size in the module. Descriptor set 0 binding i is the i-th storage of a dispatch (a storage buffer of 32-bit words);
-/// its scalars are one push-constant block of <see cref="PushConstantBytes"/> bytes. Each backend builds the pipeline
-/// once, on the kernel's first dispatch there, and keeps it. <see cref="Writes"/> tells the runtime which bindings the
-/// kernel stores into, so it orders a dispatch after earlier ones only where they touch the same storages.
+/// A compute kernel for a Vulkan device (<see cref="Dispatch"/>): SPIR-V 1.3 words (Vulkan 1.1), entry point "main", its
+/// local size in the module. Descriptor set 0 binding i is the i-th storage of a dispatch (a storage buffer of 32-bit
+/// words); its scalars are one push-constant block of <see cref="PushConstantBytes"/> bytes. Each backend builds the
+/// pipeline once, on the kernel's first dispatch there, and keeps it. <see cref="Writes"/> tells the runtime which
+/// bindings the kernel stores into, so it orders a dispatch after earlier ones only where they touch the same storages.
+/// The library's own kernels are generated in C#; a plug-in ships the words of its own (compiled from GLSL, say) and
+/// dispatches them from a kernel it registers for the "vulkan" kind (<see cref="Kernels.Register(Operation, string, Delegate, Func{Backend, bool})"/>).
 /// </summary>
-internal sealed class VulkanKernel
+/// <example>
+/// <code>
+/// static readonly VulkanKernel Scale = new(ScaleWords, bindings: 3, pushConstantBytes: 8, "my_scale_rows", writes: 0b100);
+///
+/// Kernels.Register(MyOps.ScaleRows, "vulkan", (b, rows, scales, output, n, width) =&gt;
+///     Scale.Dispatch(b, (uint)Math.Clamp((n + 63) / 64, 1, 65535), 1, 1, [rows, scales, output],
+///         MemoryMarshal.AsBytes&lt;int&gt;([n, width])));
+/// </code>
+/// </example>
+public sealed class VulkanKernel
 {
     /// <summary>The largest push-constant block a kernel may declare (the least every Vulkan device supports).</summary>
     public const int MaxPushConstantBytes = 128;
@@ -63,6 +76,26 @@ internal sealed class VulkanKernel
 
     /// <summary>A name for messages.</summary>
     public string Name { get; }
+
+    /// <summary>
+    /// Queues the kernel on the Vulkan device <paramref name="backend"/> over groupsX × groupsY × groupsZ workgroups:
+    /// binding i is <paramref name="storages"/>[i] (storages of that device), and <paramref name="pushConstants"/> fills
+    /// the push-constant block (exactly <see cref="PushConstantBytes"/> bytes). It runs in order with the device's other
+    /// work on the same storages; reading a storage back waits for it.
+    /// </summary>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="backend"/> is not a Vulkan device, or the storages or push constants do not match the kernel.
+    /// </exception>
+    public void Dispatch(Backend backend, uint groupsX, uint groupsY, uint groupsZ, ReadOnlySpan<Storage> storages, ReadOnlySpan<byte> pushConstants)
+    {
+        ArgumentNullException.ThrowIfNull(backend);
+        if (backend is not VulkanBackend vulkan)
+        {
+            throw new ArgumentException($"Vulkan kernel '{Name}' runs on a Vulkan device, not on {backend.Name} ({backend.Kind}).", nameof(backend));
+        }
+
+        vulkan.Dispatch(this, groupsX, groupsY, groupsZ, storages, pushConstants);
+    }
 
     /// <summary>The pipeline built for it on the backend that dispatched it last (looked up without a dictionary).</summary>
     internal object? LastPipeline;
