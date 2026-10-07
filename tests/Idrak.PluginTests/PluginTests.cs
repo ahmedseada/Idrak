@@ -7,7 +7,9 @@ using System.Text.Json.Nodes;
 using Idrak;
 using Idrak.Generation;
 using Idrak.Layers;
+using Idrak.Layers.Abstractions;
 using Idrak.Onnx;
+using Idrak.Onnx.Abstractions;
 
 namespace Idrak.PluginTests;
 

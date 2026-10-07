@@ -4,6 +4,7 @@
 using Idrak;
 using Idrak.Gpu.Cuda;
 using Idrak.Layers;
+using Idrak.Models.Abstractions;
 using Idrak.Optimizers;
 
 // Offloading to system memory (IMemoryOffload): the CPU optimizer step, moving tensors, staging layers' weights, cold

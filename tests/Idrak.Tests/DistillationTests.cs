@@ -7,6 +7,7 @@ using Idrak.Data;
 using Idrak.Layers;
 using Idrak.Models;
 using Idrak.Nlp;
+using Idrak.Nlp.Abstractions;
 using Idrak.Optimizers;
 using Idrak.Training;
 

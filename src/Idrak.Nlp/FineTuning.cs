@@ -8,8 +8,9 @@ using Idrak.Data;
 using Idrak.Diagnostics;
 using Idrak.Generation;
 using Idrak.Layers;
-using Idrak.Optimizers;
 using Idrak.Models;
+using Idrak.Nlp.Abstractions;
+using Idrak.Optimizers;
 
 namespace Idrak.Nlp;
 

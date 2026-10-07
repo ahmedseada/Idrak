@@ -3,9 +3,10 @@
 
 using System.Diagnostics;
 using Idrak;
-using Idrak.Gpu.Vulkan;
 using Idrak.Generation;
+using Idrak.Gpu.Vulkan;
 using Idrak.Layers;
+using Idrak.Models.Abstractions;
 
 // Recorded graphs on Vulkan (VulkanBackend.Graphs.cs): commands recorded once into command buffers and replayed by
 // executing them again, so the host records nothing per decoding step.

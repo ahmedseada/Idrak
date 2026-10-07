@@ -2,6 +2,8 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using Idrak.Layers;
+using Idrak.Layers.Abstractions;
+using Idrak.Onnx.Abstractions;
 
 namespace Idrak.Onnx;
 

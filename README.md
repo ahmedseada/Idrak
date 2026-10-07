@@ -53,12 +53,12 @@ tool. `IDRAK_DISABLE_CUDA=1` (and `_VULKAN`, `_HIP`) turns a backend off.
 | Package | What it gives you |
 |---------|-------------------|
 | `Idrak` (core) | Tensors and autograd, layers, training, the inference engine, pretrained models (Hugging Face and GGUF weights, BPE tokenizers, LoRA adapters), ONNX export and import, telemetry; brings `Idrak.Gpu`, so every device is there |
-| `Idrak.Abstraction` | The contracts Idrak is built on, each with its default implementation: every contract, `Tensor` and `Module`, the CPU device, and the public device API (`Backend`, `Storage`, `DeviceProviders`, `Kernels.Register`) the GPU devices are built on (preview; brought along by `Idrak`; see [plan 10](plans/10-abstraction.md)) |
+| `Idrak.Abstraction` | The contracts Idrak is built on, each with its default implementation: every contract more than one package uses (a package's own contracts are in its `.Abstractions` namespace), `Tensor` and `Module`, the CPU device, and the public device API (`Backend`, `Storage`, `DeviceProviders`, `Kernels.Register`) the GPU devices are built on (preview; brought along by `Idrak`; see [plan 10](plans/10-abstraction.md)) |
 | `Idrak.Gpu` | The CUDA, Vulkan and HIP devices and all their kernels (PTX, SPIR-V and HIP source generated in C#), built on the public device API of `Idrak.Abstraction` alone; brought along by `Idrak`, or used on its own with `Idrak.Abstraction` |
 | `Idrak.Nlp` | Text generation, chat and tools, the models' own Jinja chat templates, the engine's text and chat models, LoRA / QLoRA fine-tuning, evaluation, retrieval and RAG, a coding agent |
 | `Idrak.Data` | JSON Lines, JSON, CSV, text, code and Parquet files (also compressed or archived); Hugging Face, GitHub, Kaggle, Zenodo and URL sources |
-| `Idrak.Vision` | Region classification, content framing and image statistics, over the vision contracts of `Idrak.Abstraction` |
-| `Idrak.AspNetCore` | `AddIdrak()`, `MapPredictor`, `MapGenerate` (JSON and streaming), `MapChatApi` (the local chat API) and `MapCompletionsApi` (`/v1`) |
+| `Idrak.Vision` | Region classification, content framing and image statistics, detection and segmentation over any network; the vision contracts (`Idrak.Vision.Abstractions`) |
+| `Idrak.AspNetCore` | Serve models over HTTP from an ASP.NET Core app: `AddIdrak()`, `MapPredictor`, `MapGenerate` (JSON and streaming), `MapChatApi` (the local chat API) and `MapCompletionsApi` (OpenAI-compatible `/v1`) |
 | `Idrak.Mcp` | Tools of Model Context Protocol servers, and serving tools and the engine's models (generate, chat, embed) over MCP; depends on `Idrak.Abstraction` only |
 | `Idrak.Onnx.Runtime` | Run `.onnx` models with ONNX Runtime as Idrak modules |
 | `idrak` (CLI, package `Idrak.Cli`) | One tool for the whole library: `doctor`, `devices`, `chat`, `run`, `serve`, `pull`, `list`, `bench`, `tune`, `train`, `data`, `rag`, `suggest` and more (see "idrak: the command-line tool") |
@@ -100,34 +100,36 @@ tool. `IDRAK_DISABLE_CUDA=1` (and `_VULKAN`, `_HIP`) turns a backend off.
 ### Plug-in points
 
 Each registry takes an implementation from any package, next to the built-ins (details in "Extending Idrak: plug-in
-points"):
+points"). *Package* is where the contract lives: `Idrak.Abstraction` when several packages use it, else the one package
+that does, with the `.Abstractions` namespace to add a `using` line for:
 
 | What plugs in | Registry or hook | Package |
 |---------------|------------------|---------|
-| Token sampling | `ITokenSampler` through `TextGenerator.CreateSampler` | `Idrak.Nlp` |
-| KV cache formats | `KeyValueLayouts` | `Idrak` |
-| Packed weight formats | `PackedWeight` | `Idrak` |
-| Network builder steps | `NetworkOps` (steps see `INetworkBuilder`) | `Idrak` |
-| Graph operations and graph layer types | `GraphOps`, `LayerTypes` | `Idrak` |
-| RoPE scaling methods | `RopeScalings` | `Idrak` |
-| Telemetry listeners | `Telemetry.Subscribe` | `Idrak` |
-| Tool-call formats | `ToolCallFormats` | `Idrak` |
-| ONNX import operators | `OnnxImportOps` | `Idrak` |
-| ONNX export of modules, lambdas and graph operations | `OnnxExportOps` | `Idrak` |
-| Checkpoint formats | `CheckpointFormats` | `Idrak` |
-| Model families (a spec, or a network built by the family) | `PretrainedArchitectures` | `Idrak` |
-| GGUF architectures, quantization types, pre-tokenizers | `GgufArchitectures`, `GgufTypes`, `GgufPreTokenizers` | `Idrak` |
-| Model sources | `ModelSources` | `Idrak` (Hugging Face ids: `Idrak.Data`) |
-| Chat-template readers | `ChatTemplates` | `Idrak.Nlp` (Jinja) |
-| Tokenizer normalizers, pre-tokenizers, decoders | `TokenizerComponents` | `Idrak` |
-| Dataset file formats, sources, Parquet codecs | `DataFileFormats`, `DatasetSources`, `ParquetCodecs` | `Idrak.Data` |
-| Training data: samples, streams, transforms, batches | `ISampleSource`, `ISampleStream`, `ISampleTransform`, `IBatchSource`; sources by name in `SampleSources` | `Idrak` |
-| Image formats (a JPEG decoder, for example) | `ImageCodecs` | `Idrak` |
-| Optimizers | derive from `Optimizer` | `Idrak` |
-| Differentiable operations | `Autograd.Function(name, forward, backward)` | `Idrak` |
-| Adapters on linear layers | `ILinearAdapter` (LoRA and DoRA built in) on `Linear.Adapter` | `Idrak` |
+| Token sampling | `ITokenSampler` through `TextGenerator.CreateSampler` | `Idrak.Nlp` (`Idrak.Generation.Abstractions`) |
+| KV cache formats | `KeyValueLayouts` | `Idrak.Abstraction` |
+| Packed weight formats | `PackedWeight` | `Idrak.Abstraction` |
+| Network builder steps | `NetworkOps` (steps see `INetworkBuilder`) | `Idrak` (`Idrak.Layers.Abstractions`) |
+| Graph operations and graph layer types | `GraphOps`, `LayerTypes` | `Idrak` (`Idrak.Layers.Abstractions`) |
+| RoPE scaling methods | `RopeScalings` | `Idrak.Abstraction` |
+| Telemetry listeners | `Telemetry.Subscribe` | `Idrak.Abstraction` |
+| Tool-call formats | `ToolCallFormats` | `Idrak.Abstraction` |
+| ONNX import operators | `OnnxImportOps` | `Idrak` (`Idrak.Onnx.Abstractions`) |
+| ONNX export of modules, lambdas and graph operations | `OnnxExportOps` | `Idrak` (`Idrak.Onnx.Abstractions`) |
+| Checkpoint formats | `CheckpointFormats` | `Idrak` (`Idrak.Models.Abstractions`) |
+| Model families (a spec, or a network built by the family) | `PretrainedArchitectures` | `Idrak` (`Idrak.Models.Abstractions`) |
+| GGUF architectures, quantization types, pre-tokenizers | `GgufArchitectures`, `GgufTypes`, `GgufPreTokenizers` | `Idrak` (`Idrak.Models.Abstractions`) |
+| Model sources | `ModelSources` | `Idrak.Abstraction` (folders and GGUF files: `Idrak`; Hugging Face ids: `Idrak.Data`) |
+| Chat-template readers | `ChatTemplates` | `Idrak.Abstraction` (Jinja: `Idrak.Nlp`) |
+| Tokenizer normalizers, pre-tokenizers, decoders | `TokenizerComponents` | `Idrak` (`Idrak.Models.Abstractions`) |
+| Dataset file formats, sources, Parquet codecs | `DataFileFormats`, `DatasetSources`, `ParquetCodecs` | `Idrak.Data` (`Idrak.Data.Abstractions`) |
+| Training data: samples, streams, transforms | `ISampleSource`, `ISampleStream`, `ISampleTransform` | `Idrak.Abstraction` |
+| Whole batches; sample sources by name | `IBatchSource`; `SampleSources` | `Idrak` (`Idrak.Data.Abstractions`) |
+| Image formats (a JPEG decoder, for example) | `ImageCodecs` | `Idrak` (`Idrak.Data.Abstractions`) |
+| Optimizers | derive from `Optimizer` | `Idrak.Abstraction` |
+| Differentiable operations | `Autograd.Function(name, forward, backward)` | `Idrak.Abstraction` |
+| Adapters on linear layers | `ILinearAdapter` (LoRA and DoRA built in) on `Linear.Adapter` | `Idrak.Abstraction` |
 | Fine-tuning optimizer, schedule and loss | `FineTuningOptions.Optimizer`, `Scheduler`, `Loss` | `Idrak.Nlp` |
-| Devices (backends) | the device registry, internal until the public backend API (plans/7-backends.md, item 12c) | `Idrak` |
+| Devices (backends) | `DeviceProviders` (a `DeviceProvider` creates a `Backend`); kernels per device with `Kernels.Register` | `Idrak.Abstraction` (CUDA, Vulkan, HIP: `Idrak.Gpu`) |
 
 ### Hardware
 
@@ -256,7 +258,8 @@ src/Idrak.Data/                     optional package, no dependencies: JSON Line
                                     files (also compressed and archived); Hugging Face, GitHub, Kaggle, Zenodo and URL
                                     sources with a download cache; rows into conversations; recipes; Hugging Face model
                                     ids (HuggingFaceModels: found in a cache or downloaded once)
-src/Idrak.AspNetCore/               optional package: AddIdrak(), MapPredictor, MapGenerate, MapChatApi, MapIdrakStatus
+src/Idrak.AspNetCore/               optional package: serve models over HTTP (AddIdrak(), MapPredictor, MapGenerate,
+                                    MapChatApi, MapCompletionsApi for the OpenAI-compatible /v1 API, MapIdrakStatus)
 src/Idrak.Mcp/                      optional package: tools of Model Context Protocol servers, and serving tools and models over MCP
 src/Idrak.Vision/                   optional package, no dependencies: RegionClassifier (ComponentProposer), ContentFrame,
                                     ChannelStatistics, ModelDetector, ModelSegmenter; the vision contracts and small defaults
@@ -433,6 +436,7 @@ using Idrak.Data;
 using Idrak.Layers;
 using Idrak.Optimizers;
 using Idrak.Training;
+using Idrak.Training.Abstractions;
 
 var data = Dataset.LoadCsv("houses.csv", new CsvOptions { TargetColumns = ["price"], IgnoreColumns = ["id"] });
 var (train, test) = data.Split(0.8, seed: 1);
@@ -466,6 +470,8 @@ can call `context.Stop()` to end training cleanly after the current batch or epo
 device when a callback sets `NeedsBatchLoss`, so callbacks add no synchronization by default. Three are built in:
 
 ```csharp
+using Idrak.Training.Abstractions;   // ITrainerCallback, TrainerContext, TrainingHistory
+
 var trainer = new Trainer(model, new Adam(model.Parameters(), 2e-3f), Losses.MeanSquaredError)
 {
     Metrics = { Metric.MeanAbsoluteError },
@@ -802,6 +808,8 @@ cores, growing with rows × kept rows.
 ### Training: factories for the wiring, and one settings object
 
 ```csharp
+using Idrak.Training.Abstractions;   // TrainingHistory
+
 // the trainer creates the optimizer and schedule from factories, and disposes them
 using var trainer = new Trainer(model, Losses.CrossEntropy,
     optimizer: p => new AdamW(p, 0.003f, weightDecay: 1e-4f),
@@ -945,13 +953,15 @@ chat API this way, and the HouseApi sample is a complete prediction API in about
 
 Building blocks for image networks, independent of any one application. Interfaces (`IObjectDetector`,
 `ISegmenter`, `IRegionProposer`) let an application plug in its own parts; the library's implementations run any
-network that fits. The contracts, foreground extraction, connected components, boxes, masks and their metrics are in
-`Idrak.Abstraction` (namespace `Idrak.Abstraction.Vision`); region classification, content framing,
-`ChannelStatistics` and the detector and segmenter over a network (`ModelDetector`, `ModelSegmenter`) are in the
-`Idrak.Vision` package.
+network that fits. All of it is in the `Idrak.Vision` package: the contracts and the records they speak in (boxes,
+detections, masks) in `Idrak.Vision.Abstractions`; region classification, content framing, `ChannelStatistics`,
+foreground extraction, connected components, non-maximum suppression, segmentation metrics and the detector and
+segmenter over a network (`ModelDetector`, `ModelSegmenter`) in `Idrak.Vision`.
 
 ```csharp
+using Idrak.Data.Abstractions;     // ImageCodecs
 using Idrak.Vision;
+using Idrak.Vision.Abstractions;   // Detection
 
 // Normalization inside the network: callers feed plain [0, 1] images, the package keeps the statistics.
 var network = Network.Image(3, 224, 224).Normalize(ChannelStatistics.ImageNet.Mean, ChannelStatistics.ImageNet.Std)
@@ -1066,6 +1076,8 @@ stays dependency-free.
 ### Quantization: int8 weights, half-precision files
 
 ```csharp
+using Idrak.Models.Abstractions;   // WeightFormat
+
 model.QuantizeInt8();                          // every Linear: 1 byte per weight + 1 scale per output column (¼ of the memory)
 model.QuantizeInt8(l => l.OutFeatures > 64);   // or only some layers
 model.Save("model.ikw");                       // int8 stays int8; a float model built the same way loads it (and becomes int8)
@@ -1136,6 +1148,8 @@ The core package loads the models (`PretrainedModel`, `Idrak.Models`); `Idrak.Nl
 (`CreateGenerator`, `CreateChat`, `using Idrak.Nlp;`), the models' own Jinja chat templates and fine-tuning.
 
 ```csharp
+using Idrak.Models.Abstractions;   // PretrainedArchitectures
+
 using var model = PretrainedModel.Load("Qwen3-0.6B", new PretrainedOptions { Device = Device.Cuda(), Int8 = true, MaxPositions = 8192 });
 model.Spec;                      // the DecoderSpec read from config.json (layers, heads, GQA, RoPE, q/k norm, …)
 model.Notes;                     // anything approximated (for example exact GELU computed with the tanh form)
@@ -1278,33 +1292,35 @@ per sample with the `Trainer`: `data.WithTeacher(teacher)` stores the teacher's 
 
 Formats, operators, model families and data sources plug in through registries and interfaces, without changing the
 library. The built-ins are registered the same way, so a registered name can also replace one. Unknown names fail with
-the registered names and how to register.
+the registered names and how to register. *Package* is where the contract lives (with its namespace when it is a
+package's own `.Abstractions`).
 
 | What | Register with | Package |
 |---|---|---|
-| Token sampling (temperature, top-k, penalties, ...) | `ITokenSampler`; set `TextGenerator.CreateSampler` | `Idrak.Nlp` |
-| Optimizers | derive from `Optimizer` (in-place writes: `AddScaled`, `Scale`, `CopyFrom`; state from `CreateState`) | `Idrak` |
-| Differentiable operations (own forward and backward) | `Autograd.Function(name, forward, backward)` | `Idrak` |
-| KV cache formats (float32, int8, bfloat16 built in) | `KeyValueLayouts.Register(name, KeyValueLayout)` | `Idrak` |
-| Packed weight formats (int8, int4, bfloat16 built in) | `PackedWeight.Register(name, PackedWeightFactory)` | `Idrak` |
-| Network builder steps (JSON round trip) | `NetworkOps.Register(name, NetworkOp)`; a step gets an `INetworkBuilder` (`CurrentShape`, `Lambda`, `Add`, `Op`) | `Idrak` |
-| Tool-call formats (json, pythonic, qwen3-coder, mistral, harmony, deepseek built in) | `ToolCallFormats.Register(name, detect, create)`; or override `ChatTemplate.CreateToolCallParser` | `Idrak` |
-| ONNX import operators (chains and graphs) | `OnnxImportOps.Register(opType, OnnxImportTranslator)` | `Idrak` |
-| ONNX export of modules, lambdas and graph operations | `OnnxExportOps.Register<T>(OnnxTranslator<T>)`, `RegisterLambda(name, ...)`, `RegisterGraphOp(op, OnnxGraphOpTranslator)` | `Idrak` |
-| Graph operations (`GraphModule` nodes; relu, clip, pow, ... built in) | `GraphOps.Register(name, GraphOp)` | `Idrak` |
-| Graph layer types (`GraphModule` JSON and model packages) | `LayerTypes.Register<T>(type, describe, create)` | `Idrak` |
-| RoPE scaling methods (linear, llama3, yarn, dynamic built in) | `RopeScalings.Register(type, RopeScalingMethod)` | `Idrak` |
-| Checkpoint formats (safetensors built in) | `CheckpointFormats.Register(ICheckpointFormat)` | `Idrak` |
-| Model families (Hugging Face `architectures`; a `DecoderSpec`, or a `Build` delegate for its own network) | `PretrainedArchitectures.Register(name, PretrainedArchitecture)` | `Idrak` |
-| GGUF architectures, quantization types and pre-tokenizers | `GgufArchitectures.Register(name, ...)`, `GgufTypes.Register(id, GgufType)`, `GgufPreTokenizers.Register(name, pattern)` | `Idrak` |
-| Model sources (`name:` prefixes, asked before the built-ins) | `ModelSources.Register(IModelSource)` | `Idrak` (Hugging Face ids: `Idrak.Data`) |
-| Chat-template readers (a model folder's own template; Jinja built in) | `ChatTemplates.Register(name, load)` | `Idrak.Nlp` |
-| Tokenizer normalizers, pre-tokenizers, decoders | `TokenizerComponents.RegisterNormalizer` / `RegisterPreTokenizer` / `RegisterDecoder` | `Idrak` |
-| Dataset file formats, sources, Parquet codecs | `DataFileFormats.Register`, `DatasetSources.Register`, `ParquetCodecs.Register` | `Idrak.Data` |
-| Training data (samples, streams, per-sample transforms, whole batches) | implement `ISampleSource`, `ISampleStream`, `ISampleTransform` or `IBatchSource` | `Idrak` |
-| Sample sources by name (csv, images, tokens, npy built in) | `SampleSources.Register(name, SampleSourceFactory)` | `Idrak` |
-| Image formats (png, bmp, netpbm built in; JPEG and others as plug-ins) | `ImageCodecs.Register(IImageCodec)` | `Idrak` |
-| Adapters on linear layers (LoRA and DoRA built in) | implement `ILinearAdapter`, set `Linear.Adapter` | `Idrak` |
+| Token sampling (temperature, top-k, penalties, ...) | `ITokenSampler`; set `TextGenerator.CreateSampler` | `Idrak.Nlp` (`Idrak.Generation.Abstractions`) |
+| Optimizers | derive from `Optimizer` (in-place writes: `AddScaled`, `Scale`, `CopyFrom`; state from `CreateState`) | `Idrak.Abstraction` |
+| Differentiable operations (own forward and backward) | `Autograd.Function(name, forward, backward)` | `Idrak.Abstraction` |
+| KV cache formats (float32, int8, bfloat16 built in) | `KeyValueLayouts.Register(name, KeyValueLayout)` | `Idrak.Abstraction` |
+| Packed weight formats (int8, int4, bfloat16 built in) | `PackedWeight.Register(name, PackedWeightFactory)` | `Idrak.Abstraction` |
+| Network builder steps (JSON round trip) | `NetworkOps.Register(name, NetworkOp)`; a step gets an `INetworkBuilder` (`CurrentShape`, `Lambda`, `Add`, `Op`) | `Idrak` (`Idrak.Layers.Abstractions`) |
+| Tool-call formats (json, pythonic, qwen3-coder, mistral, harmony, deepseek built in) | `ToolCallFormats.Register(name, detect, create)`; or override `ChatTemplate.CreateToolCallParser` | `Idrak.Abstraction` |
+| ONNX import operators (chains and graphs) | `OnnxImportOps.Register(opType, OnnxImportTranslator)` | `Idrak` (`Idrak.Onnx.Abstractions`) |
+| ONNX export of modules, lambdas and graph operations | `OnnxExportOps.Register<T>(OnnxTranslator<T>)`, `RegisterLambda(name, ...)`, `RegisterGraphOp(op, OnnxGraphOpTranslator)` | `Idrak` (`Idrak.Onnx.Abstractions`) |
+| Graph operations (`GraphModule` nodes; relu, clip, pow, ... built in) | `GraphOps.Register(name, GraphOp)` | `Idrak` (`Idrak.Layers.Abstractions`) |
+| Graph layer types (`GraphModule` JSON and model packages) | `LayerTypes.Register<T>(type, describe, create)` | `Idrak` (`Idrak.Layers.Abstractions`) |
+| RoPE scaling methods (linear, llama3, yarn, dynamic built in) | `RopeScalings.Register(type, RopeScalingMethod)` | `Idrak.Abstraction` |
+| Checkpoint formats (safetensors built in) | `CheckpointFormats.Register(ICheckpointFormat)` | `Idrak` (`Idrak.Models.Abstractions`) |
+| Model families (Hugging Face `architectures`; a `DecoderSpec`, or a `Build` delegate for its own network) | `PretrainedArchitectures.Register(name, PretrainedArchitecture)` | `Idrak` (`Idrak.Models.Abstractions`) |
+| GGUF architectures, quantization types and pre-tokenizers | `GgufArchitectures.Register(name, ...)`, `GgufTypes.Register(id, GgufType)`, `GgufPreTokenizers.Register(name, pattern)` | `Idrak` (`Idrak.Models.Abstractions`) |
+| Model sources (`name:` prefixes, asked before the built-ins) | `ModelSources.Register(IModelSource)` | `Idrak.Abstraction` (folders and GGUF files: `Idrak`; Hugging Face ids: `Idrak.Data`) |
+| Chat-template readers (a model folder's own template; Jinja built in) | `ChatTemplates.Register(name, load)` | `Idrak.Abstraction` (Jinja: `Idrak.Nlp`) |
+| Tokenizer normalizers, pre-tokenizers, decoders | `TokenizerComponents.RegisterNormalizer` / `RegisterPreTokenizer` / `RegisterDecoder` | `Idrak` (`Idrak.Models.Abstractions`) |
+| Dataset file formats, sources, Parquet codecs | `DataFileFormats.Register`, `DatasetSources.Register`, `ParquetCodecs.Register` | `Idrak.Data` (`Idrak.Data.Abstractions`) |
+| Training data (samples, streams, per-sample transforms) | implement `ISampleSource`, `ISampleStream` or `ISampleTransform` | `Idrak.Abstraction` |
+| Whole batches | implement `IBatchSource` | `Idrak` (`Idrak.Data.Abstractions`) |
+| Sample sources by name (csv, images, tokens, npy built in) | `SampleSources.Register(name, SampleSourceFactory)` | `Idrak` (`Idrak.Data.Abstractions`) |
+| Image formats (png, bmp, netpbm built in; JPEG and others as plug-ins) | `ImageCodecs.Register(IImageCodec)` | `Idrak` (`Idrak.Data.Abstractions`) |
+| Adapters on linear layers (LoRA and DoRA built in) | implement `ILinearAdapter`, set `Linear.Adapter` | `Idrak.Abstraction` |
 | Fine-tuning optimizers, learning-rate schedules and losses | `FineTuningOptions.Optimizer`, `Scheduler` and `Loss` (a `FineTuningLoss` delegate) | `Idrak.Nlp` |
 
 Chat templates are read from each model's own Jinja template (`tokenizer_config.json` or GGUF metadata), and the

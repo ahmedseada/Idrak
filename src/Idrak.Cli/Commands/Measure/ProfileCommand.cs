@@ -6,6 +6,7 @@ using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
 using Idrak.Diagnostics;
 using Idrak.Layers;
+using Idrak.Layers.Abstractions;
 
 namespace Idrak.Cli.Commands.Measure;
 

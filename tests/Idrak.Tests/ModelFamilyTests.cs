@@ -4,8 +4,10 @@
 using System.Text;
 using System.Text.Json.Nodes;
 using Idrak;
+using Idrak.Generation;
 using Idrak.Layers;
 using Idrak.Models;
+using Idrak.Models.Abstractions;
 
 // Model families beyond the plain decoder: RoPE scaling methods, sliding-window attention, soft-capping, families read
 // from config.json (Mistral, Qwen2, Gemma 2 and 3) and families that build their own network.

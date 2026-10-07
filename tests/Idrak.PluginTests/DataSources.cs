@@ -4,6 +4,7 @@
 using System.Collections;
 using Idrak;
 using Idrak.Data;
+using Idrak.Data.Abstractions;
 using Idrak.Layers;
 using Idrak.Optimizers;
 using Idrak.Training;

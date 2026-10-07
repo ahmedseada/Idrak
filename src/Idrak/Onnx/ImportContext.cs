@@ -3,6 +3,7 @@
 
 using System.Text.Json.Nodes;
 using Idrak.Layers;
+using Idrak.Onnx.Abstractions;
 
 namespace Idrak.Onnx;
 

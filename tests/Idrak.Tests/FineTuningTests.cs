@@ -6,7 +6,9 @@ using Idrak;
 using Idrak.Generation;
 using Idrak.Layers;
 using Idrak.Models;
+using Idrak.Models.Abstractions;
 using Idrak.Nlp;
+using Idrak.Nlp.Abstractions;
 
 internal static partial class Tests
 {

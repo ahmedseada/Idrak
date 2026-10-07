@@ -8,6 +8,7 @@ using Idrak.Layers;
 using Idrak.Optimizers;
 using Idrak.Training;
 using Idrak.Vision;
+using Idrak.Vision.Abstractions;
 
 // Idrak.Vision: foreground, connected regions, framing, boxes and suppression, channel normalization, segmentation,
 // region classification and model-based detection.

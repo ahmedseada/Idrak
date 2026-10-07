@@ -5,6 +5,7 @@ using Idrak;
 using Idrak.Generation;
 using Idrak.Inference;
 using Idrak.Layers;
+using Idrak.Models.Abstractions;
 using Idrak.Optimizers;
 
 // Decoder-only language models described by DecoderSpec, checked against a plain-loop reference implementation.
