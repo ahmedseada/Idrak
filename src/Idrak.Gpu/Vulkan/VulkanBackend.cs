@@ -352,6 +352,7 @@ internal sealed unsafe partial class VulkanBackend : Backend
             return ([], reason);
         }
 
+        using var quiet = DeviceException.Handled();                     // a failed probe is a reason the backend reports, not an error
         try
         {
             uint loaderVersion = MakeVersion(1, 0);

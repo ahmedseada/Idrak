@@ -104,23 +104,30 @@ def documentation(source, start):
     return block
 
 
-def fallback(source, end):
-    """What the default body after the parameter list at `end` does: KernelSource.None, Host or Composed."""
+def body(source, end):
+    """The default body after the parameter list at `end`: `=> ...;` or a block, as written."""
     rest = source[end:].lstrip()
     if rest.startswith("=>"):
-        body = rest[:rest.index(";")]
-        return "None" if re.fullmatch(r"=>\s*(false|0)\s*", body) else "Composed"
+        return rest[:rest.index(";") + 1]
     depth, i = 0, 0
     while True:
         depth += {"{": 1, "}": -1}.get(rest[i], 0)
         i += 1
         if depth == 0 and rest[i - 1] == "}":
             break
-    return "Host" if "new HostCall(" in rest[:i] else "Composed"
+    return rest[:i]
+
+
+def fallback(source, end):
+    """What the default body after the parameter list at `end` does: KernelSource.None, Host or Composed."""
+    text = body(source, end)
+    if text.startswith("=>"):
+        return "None" if re.fullmatch(r"=>\s*(false|0)\s*;", text) else "Composed"
+    return "Host" if "new HostCall(" in text else "Composed"
 
 
 def operations(source):
-    """(name, return type, parameter list, doc lines, fallback) of every `public virtual ... NameKernel(...)` in order."""
+    """(name, return type, parameter list, doc lines, fallback, body) of every `public virtual ... NameKernel(...)` in order."""
     found = []
     for match in re.finditer(r"^    public virtual (.+?) (\w+)Kernel\(", source, re.M):
         start = match.end()
@@ -132,7 +139,7 @@ def operations(source):
         docs = documentation(source, match.start())
         if not any(line.startswith("<summary>") for line in docs):
             sys.exit(f"{match.group(2)}Kernel in {BACKEND} has no <summary>: the generated descriptor needs one")
-        found.append((match.group(2), match.group(1), parameters, docs, fallback(source, i)))
+        found.append((match.group(2), match.group(1), parameters, docs, fallback(source, i), body(source, i)))
     return found
 
 
@@ -166,10 +173,12 @@ def generate():
     members |= {name for name, *_ in ops}
 
     # Overloads share the method name; their descriptors and delegates are numbered (MaxPoolBackward, MaxPoolBackward2).
-    seen, named = {}, []
-    for name, returns, parameters, docs, default in ops:
+    seen, named, bodies = {}, [], {}
+    for name, returns, parameters, docs, default, text in ops:
         seen[name] = seen.get(name, 0) + 1
-        named.append((name, name if seen[name] == 1 else f"{name}{seen[name]}", returns, parameters, docs, default))
+        op = name if seen[name] == 1 else f"{name}{seen[name]}"
+        named.append((name, op, returns, parameters, docs, default))
+        bodies[op] = text
 
     o = [HEADER, "using Idrak.Abstraction.Devices;", "", "namespace Idrak.Abstraction.Operations;", ""]
     o.append("/// <summary>The index of each operation in a device's kernel slots (see <see cref=\"Ops\"/>).</summary>")
@@ -235,10 +244,17 @@ def generate():
     o.append("    }")
     o.append("}")
 
-    d = [HEADER, "using System.Runtime.CompilerServices;", "using Idrak.Abstraction.Operations;", "", "namespace Idrak.Abstraction.Devices;", ""]
+    d = [HEADER, "using System.Runtime.CompilerServices;", "using Idrak.Abstraction.Devices.Cpu;", "using Idrak.Abstraction.Operations;", "", "namespace Idrak.Abstraction.Devices;", ""]
+    d.append("// Name(...) runs the kernel registered for the device, else its own NameKernel. With RetryOnHost on, the device's own")
+    d.append("// kernel of an operation whose default is the host fallback runs under a HostRetry: a DeviceException is reported")
+    d.append("// with the operation and the call runs again through NameOnHost, a copy of NameKernel's default body. Composed")
+    d.append("// operations need no retry of their own (their parts retry one by one), and operations with no fallback throw.")
+    d.append("// A registered kernel is not retried: it is an app's or a plug-in's choice for this device (it may handle some cases")
+    d.append("// itself and pass others to the device's kernel or elsewhere), so the dispatcher can't tell which host computation")
+    d.append("// matches it or whether its error came from the device at all; its errors reach the caller.")
     d.append("public abstract partial class Backend")
     d.append("{")
-    for i, (method, op, returns, parameters, docs, _default) in enumerate(named):
+    for i, (method, op, returns, parameters, docs, default) in enumerate(named):
         arguments = ", ".join(argument(p) for p in split_top(parameters))
         plain = ", ".join(strip_default(p) for p in split_top(parameters))
         call = f"kernel(this{', ' + arguments if arguments else ''})"
@@ -273,7 +289,39 @@ def generate():
         d.append("    [MethodImpl(MethodImplOptions.NoInlining)]")
         d.append(f"    private {returns} {op}Registered({plain})")
         d.append("    {")
-        if returns == "void":
+        if default == "Host":
+            # With RetryOnHost the device's own kernel runs under a HostRetry (see the comment the file starts with).
+            ret = "" if returns == "void" else "return "
+            host = f"{op}OnHost({arguments})"
+            d.append(f"        if (Kernel(OperationIndex.{op}) is OperationKernels.{op} kernel)")
+            d.append("        {")
+            d.append(f"            {ret}{call};")
+            if returns == "void":
+                d.append("            return;")
+            d.append("        }")
+            d.append("")
+            d.append("        if (!RetryOnHost)")
+            d.append("        {")
+            d.append(f"            {ret}{own};")
+            if returns == "void":
+                d.append("            return;")
+            d.append("        }")
+            d.append("")
+            d.append(f"        var retry = new HostRetry(Ops.{op});")
+            d.append("        try")
+            d.append("        {")
+            d.append(f"            {ret}{own};")
+            d.append("        }")
+            d.append("        catch (DeviceException failure)")
+            d.append("        {")
+            d.append("            retry.Failed(failure);")
+            d.append(f"            {ret}{host};")
+            d.append("        }")
+            d.append("        finally")
+            d.append("        {")
+            d.append("            retry.End();")
+            d.append("        }")
+        elif returns == "void":
             d.append(f"        if (Kernel(OperationIndex.{op}) is OperationKernels.{op} kernel)")
             d.append("        {")
             d.append(f"            {call};")
@@ -285,6 +333,14 @@ def generate():
         else:
             d.append(f"        return Kernel(OperationIndex.{op}) is OperationKernels.{op} kernel ? {call} : {own};")
         d.append("    }")
+        if default == "Host":
+            # The default body of NameKernel, not virtual: the host fallback whatever the device overrides, counted as
+            # a host call of the operation.
+            text = bodies[op].replace("new HostCall(this)", f"new HostCall(this, \"{method}\")")
+            d.append("")
+            d.append(f"    // The host fallback of {op} (the default body of {method}Kernel), for RetryOnHost.")
+            d.append(f"    private {returns} {op}OnHost({plain})")
+            d.extend(f"    {line}" if j == 0 else line.rstrip() for j, line in enumerate(text.split("\n")))
     d.append("}")
 
     OPERATIONS.parent.mkdir(parents=True, exist_ok=True)

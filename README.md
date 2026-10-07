@@ -1348,6 +1348,7 @@ using var c = Telemetry.Subscribe(file);
 | `Layers` | `LayerForward` | layer name/type, nesting depth, input and output shapes, time, train/eval mode |
 | `Operations` | `OperationCompleted` | every tensor op, forward and backward (∇), shape, device, time |
 | `Inference` | `InferenceCompleted` | model, samples, shapes, device, latency, samples/s |
+| `Devices` | `DeviceFailed` | a GPU error (device kind, message) or an operation retried on the CPU; while the retry is off, a hint on turning it on. `ConsoleLogger` and `JsonLinesLogger` always include it |
 
 **Custom hooks.** Implement `ITelemetryHook`, set `Levels`, and override only the methods you need.
 The other methods default to no-ops. Events are `readonly record struct`s passed by `in`, so they
@@ -1467,6 +1468,13 @@ Three GPU backends, in the `Idrak.Gpu` package (which `Idrak` brings), share one
 runs on any of them unchanged (`-d cuda:0`, `-d vulkan:1`, `-d hip:0`, or `Device.Parse`). Sizes and kernel choices
 come from what the device reports or from measurements on the user's device, stored per device and driver: never
 from a card's name ([plans/README.md](plans/README.md)).
+
+When a GPU kernel fails, the call throws (a `CudaException`, `VulkanException` or `HipException`, each a
+`DeviceException`) and the failure goes to telemetry (`TelemetryLevel.Devices`; a subscribed `ConsoleLogger` prints it).
+It is not retried on the CPU unless you ask: `IDRAK_RETRY_ON_HOST=1` (every GPU) or `=cuda,vulkan` (those kinds), or
+`device.Backend.RetryOnHost = true`, runs an operation whose kernel throws again through the host fallback, reports it
+and counts it in `Kernels.HostCalls`. Errors the GPU reports after an operation returned (at a later synchronize) can't
+be retried.
 
 ### CUDA (NVIDIA)
 
