@@ -6,116 +6,10 @@ using Idrak.Datasets;
 
 namespace Idrak.LanguageModels;
 
-/// <summary>Settings <see cref="ModelSource.Resolve"/> passes to an <see cref="IModelSource"/>.</summary>
-public sealed record ModelSourceOptions
-{
-    /// <summary>The revision (branch, tag or commit) of a hub model.</summary>
-    public string Revision { get; init; } = "main";
-
-    /// <summary>The access token for gated and private models (null: HF_TOKEN or the saved login).</summary>
-    public string? Token { get; init; }
-
-    /// <summary>Where downloads go and are logged (null: <see cref="Downloader.Shared"/>).</summary>
-    public Downloader? Downloader { get; init; }
-
-    /// <summary>Whether a model that is not cached may be downloaded (false: only the caches are searched).</summary>
-    public bool Download { get; init; } = true;
-}
-
-/// <summary>
-/// A kind of name <see cref="ModelSource.Resolve"/> understands ("store:qwen3:8b", "owner/name", a folder …): it says
-/// which names are its own and turns one into a local folder (or a path a checkpoint format reads, such as a .gguf file's
-/// prepared folder). Register new ones with <see cref="ModelSources.Register"/>.
-/// </summary>
-public interface IModelSource
-{
-    /// <summary>The source's name ("folder", "store", "gguf", "huggingface", …): registering another under it replaces this one.</summary>
-    string Name { get; }
-
-    /// <summary>Whether <paramref name="model"/> is a name this source resolves.</summary>
-    bool CanResolve(string model);
-
-    /// <summary>The local folder of <paramref name="model"/> (fetched or prepared as needed).</summary>
-    string Resolve(string model, ModelSourceOptions options);
-}
-
-/// <summary>
-/// The sources <see cref="ModelSource.Resolve"/> asks, in order: an existing folder, "store:name" (the local model store), a .gguf file, then
-/// a Hugging Face id ("owner/name"). A name goes to the first source that can resolve it, the most recently registered
-/// first, so a new source (for example a "myhub:" prefix) is asked before the built-in ones.
-/// </summary>
-public static class ModelSources
-{
-    private static readonly List<IModelSource> Registry = [.. ModelSource.BuiltIn];
-
-    /// <summary>
-    /// Registers <paramref name="source"/>: it replaces the source of the same name (in its place), or is asked before
-    /// every source registered so far.
-    /// </summary>
-    public static void Register(IModelSource source)
-    {
-        ArgumentNullException.ThrowIfNull(source);
-        lock (Registry)
-        {
-            int at = Registry.FindIndex(s => s.Name == source.Name);
-            if (at >= 0)
-            {
-                Registry[at] = source;
-            }
-            else
-            {
-                Registry.Insert(0, source);
-            }
-        }
-    }
-
-    /// <summary>Removes the source registered as <paramref name="name"/>; false when there is none.</summary>
-    public static bool Unregister(string name)
-    {
-        lock (Registry)
-        {
-            return Registry.RemoveAll(s => s.Name == name) > 0;
-        }
-    }
-
-    /// <summary>The registered source names, in the order they are asked.</summary>
-    public static IReadOnlyCollection<string> Names
-    {
-        get
-        {
-            lock (Registry)
-            {
-                return [.. Registry.Select(s => s.Name)];
-            }
-        }
-    }
-
-    /// <summary>The source registered as <paramref name="name"/>.</summary>
-    public static IModelSource Get(string name)
-    {
-        lock (Registry)
-        {
-            return Registry.Find(s => s.Name == name)
-                ?? throw new NotSupportedException($"No model source '{name}' is registered ({string.Join(", ", Registry.Select(s => s.Name))}); add it with ModelSources.Register.");
-        }
-    }
-
-    /// <summary>The source that resolves <paramref name="model"/>, or null when none does.</summary>
-    public static IModelSource? For(string model)
-    {
-        IModelSource[] sources;
-        lock (Registry)
-        {
-            sources = [.. Registry];
-        }
-
-        return sources.FirstOrDefault(s => s.CanResolve(model));                // asked outside the lock: sources look at the disk
-    }
-}
-
 /// <summary>
 /// Where a model comes from: a local folder, a GGUF file, a model of the local model store ("store:qwen3:8b", see
-/// <see cref="LocalStoreModel"/>), or a Hugging Face model id such as "Qwen/Qwen3-0.6B". An id is looked up in
+/// <see cref="LocalStoreModel"/>), or a Hugging Face model id such as "Qwen/Qwen3-0.6B" (the built-in sources of
+/// <see cref="ModelSources"/>, which Idrak.LanguageModels registers). An id is looked up in
 /// Hugging Face's own cache (models fetched with transformers or huggingface-cli), then in Idrak's download cache,
 /// and downloaded otherwise: only the files the library reads (config, tokenizer, chat template, generation config and
 /// the safetensors weights), into downloads/huggingface/models/&lt;owner&gt;/&lt;name&gt;/&lt;commit&gt;/. Gated and private models
@@ -178,17 +72,34 @@ public static class ModelSource
     /// With <paramref name="download"/> false, only the caches are searched.
     /// </summary>
     public static string Resolve(string model, string revision = "main", string? token = null, Downloader? downloader = null, bool download = true) =>
-        ModelSources.For(model)?.Resolve(model, new ModelSourceOptions { Revision = revision, Token = token, Downloader = downloader, Download = download })
+        ModelSources.For(model)?.Resolve(model, Options(revision, token, downloader, download))
         ?? throw new DirectoryNotFoundException($"'{model}' is neither a folder nor a Hugging Face model id (owner/name).");
 
-    // The built-in sources, in the order they are asked (see ModelSources).
+    /// <summary>
+    /// The options <see cref="Resolve"/> passes to a source: the revision, token and download switch, and
+    /// <paramref name="downloader"/> as the <see cref="Downloader"/> service (<see cref="DownloaderOf"/> reads it back).
+    /// </summary>
+    public static ModelSourceOptions Options(string revision = "main", string? token = null, Downloader? downloader = null, bool download = true) =>
+        new() { Revision = revision, Token = token, Download = download, Services = downloader is null ? null : new DownloaderService(downloader) };
+
+    /// <summary>The <see cref="Downloader"/> <paramref name="options"/> offer (see <see cref="ModelSourceOptions.Services"/>), or the shared one.</summary>
+    public static Downloader DownloaderOf(ModelSourceOptions options) =>
+        options.Services?.GetService(typeof(Downloader)) as Downloader ?? Downloader.Shared;
+
+    // A downloader offered as the one service a source may ask for.
+    private sealed class DownloaderService(Downloader downloader) : IServiceProvider
+    {
+        public object? GetService(Type serviceType) => serviceType == typeof(Downloader) ? downloader : null;
+    }
+
+    // The built-in sources, in the order they are asked (see ModelSources); LibraryRegistrations registers them.
     internal static IModelSource[] BuiltIn =>
     [
         new DelegateModelSource("folder", Directory.Exists, (model, _) => model),
         new DelegateModelSource("store", model => StorePrefix(model) > 0, (model, options) =>
         {
             string blob = LocalStoreModel(model[StorePrefix(model)..]);
-            (options.Downloader ?? Downloader.Shared).Log?.Invoke($"{model}: the local model store's file {blob}");
+            DownloaderOf(options).Log?.Invoke($"{model}: the local model store's file {blob}");
             return GgufModel.Prepare(blob);
         }),
         new DelegateModelSource("gguf", model => File.Exists(model) && model.EndsWith(".gguf", StringComparison.OrdinalIgnoreCase), (model, _) => GgufModel.Prepare(model)),
@@ -198,10 +109,10 @@ public static class ModelSource
     // A Hugging Face id: the Hugging Face cache, then Idrak's downloads (or a download).
     private static string HuggingFaceModel(string model, ModelSourceOptions options)
     {
-        var downloader = options.Downloader;
+        var downloader = DownloaderOf(options);
         if (options.Revision == "main" && HuggingFaceCache(model) is { } cached)
         {
-            (downloader ?? Downloader.Shared).Log?.Invoke($"{model}: found in the Hugging Face cache ({cached})");
+            downloader.Log?.Invoke($"{model}: found in the Hugging Face cache ({cached})");
             return cached;
         }
 

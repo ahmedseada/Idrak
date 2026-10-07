@@ -473,16 +473,16 @@ internal static partial class Tests
         }
 
         // Tensor names.
-        Check(PretrainedArchitectures.MixtralTensorName("layers.3.mlp.router.weight") == "model.layers.3.block_sparse_moe.gate.weight"
-              && PretrainedArchitectures.MixtralTensorName("layers.3.mlp.experts.5.gate.weight") == "model.layers.3.block_sparse_moe.experts.5.w1.weight"
-              && PretrainedArchitectures.MixtralTensorName("layers.3.mlp.experts.5.up.weight") == "model.layers.3.block_sparse_moe.experts.5.w3.weight"
-              && PretrainedArchitectures.MixtralTensorName("layers.3.mlp.experts.5.down.weight") == "model.layers.3.block_sparse_moe.experts.5.w2.weight"
-              && PretrainedArchitectures.MixtralTensorName("layers.3.attn.q.weight") == "model.layers.3.self_attn.q_proj.weight", "Mixtral names");
-        Check(PretrainedArchitectures.QwenMoeTensorName("layers.0.mlp.router.weight") == "model.layers.0.mlp.gate.weight"
-              && PretrainedArchitectures.QwenMoeTensorName("layers.0.mlp.experts.12.down.weight") == "model.layers.0.mlp.experts.12.down_proj.weight"
-              && PretrainedArchitectures.QwenMoeTensorName("layers.0.mlp.shared.up.weight") == "model.layers.0.mlp.shared_expert.up_proj.weight"
-              && PretrainedArchitectures.QwenMoeTensorName("layers.0.mlp.shared_gate.weight") == "model.layers.0.mlp.shared_expert_gate.weight"
-              && PretrainedArchitectures.QwenMoeTensorName("layers.1.mlp.gate.weight") == "model.layers.1.mlp.gate_proj.weight", "Qwen MoE names");
+        Check(PretrainedFamilies.MixtralTensorName("layers.3.mlp.router.weight") == "model.layers.3.block_sparse_moe.gate.weight"
+              && PretrainedFamilies.MixtralTensorName("layers.3.mlp.experts.5.gate.weight") == "model.layers.3.block_sparse_moe.experts.5.w1.weight"
+              && PretrainedFamilies.MixtralTensorName("layers.3.mlp.experts.5.up.weight") == "model.layers.3.block_sparse_moe.experts.5.w3.weight"
+              && PretrainedFamilies.MixtralTensorName("layers.3.mlp.experts.5.down.weight") == "model.layers.3.block_sparse_moe.experts.5.w2.weight"
+              && PretrainedFamilies.MixtralTensorName("layers.3.attn.q.weight") == "model.layers.3.self_attn.q_proj.weight", "Mixtral names");
+        Check(PretrainedFamilies.QwenMoeTensorName("layers.0.mlp.router.weight") == "model.layers.0.mlp.gate.weight"
+              && PretrainedFamilies.QwenMoeTensorName("layers.0.mlp.experts.12.down.weight") == "model.layers.0.mlp.experts.12.down_proj.weight"
+              && PretrainedFamilies.QwenMoeTensorName("layers.0.mlp.shared.up.weight") == "model.layers.0.mlp.shared_expert.up_proj.weight"
+              && PretrainedFamilies.QwenMoeTensorName("layers.0.mlp.shared_gate.weight") == "model.layers.0.mlp.shared_expert_gate.weight"
+              && PretrainedFamilies.QwenMoeTensorName("layers.1.mlp.gate.weight") == "model.layers.1.mlp.gate_proj.weight", "Qwen MoE names");
 
         // Checkpoints in each family's names load and match the reference.
         int[] ids = [2, 9, 14, 3, 7, 1, 20];

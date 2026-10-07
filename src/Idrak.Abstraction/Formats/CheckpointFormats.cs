@@ -1,13 +1,13 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-namespace Idrak.LanguageModels;
+namespace Idrak.Abstraction.Formats;
 
 /// <summary>
-/// A way pretrained weights are stored. <see cref="PretrainedModel.Load"/> asks the registered formats (see
-/// <see cref="CheckpointFormats"/>) which one reads the path it is given; that one turns the path into a folder in the
-/// Hugging Face layout (config.json, tokenizer files, chat template) and opens the weights under Hugging Face names,
-/// which the architecture (<see cref="PretrainedArchitecture.TensorName"/>) then maps to Idrak's.
+/// A way pretrained weights are stored. Loading a pretrained model (Idrak.LanguageModels' <c>PretrainedModel.Load</c>) asks
+/// the registered formats (see <see cref="CheckpointFormats"/>) which one reads the path it is given; that one turns the
+/// path into a folder in the Hugging Face layout (config.json, tokenizer files, chat template) and opens the weights under
+/// Hugging Face names, which the architecture (<see cref="PretrainedArchitecture.TensorName"/>) then maps to Idrak's.
 /// </summary>
 public interface ICheckpointFormat
 {
@@ -34,15 +34,17 @@ public interface ICheckpointFormat
 }
 
 /// <summary>
-/// The checkpoint formats <see cref="PretrainedModel.Load"/> reads: GGUF (a .gguf file, or the folder
-/// <see cref="GgufModel.Prepare"/> made for one) and safetensors (a model folder) are registered; add others with
-/// <see cref="Register"/>. A path is read by the first format that can open it, the most recently registered first, so
-/// a new format can claim paths a built-in one would also take.
+/// The checkpoint formats pretrained models are loaded from. Idrak.LanguageModels registers GGUF (a .gguf file, or the
+/// folder it prepared for one) and safetensors (a model folder); add others with <see cref="Register"/>. A path is read by
+/// the first format that can open it, the most recently registered first, so a new format can claim paths a built-in one
+/// would also take.
 /// </summary>
 public static class CheckpointFormats
 {
-    // In the order they are asked: GGUF's prepared folders are model folders too, so GGUF comes before safetensors.
-    private static readonly List<ICheckpointFormat> Registry = [new GgufCheckpointFormat(), new SafeTensorsCheckpointFormat()];
+    // In the order they are asked.
+    private static readonly List<ICheckpointFormat> Registry = [];
+
+    static CheckpointFormats() => LibraryDefaults.Ensure();
 
     /// <summary>
     /// Registers <paramref name="format"/>: it replaces the format of the same name (in its place), or is asked before
@@ -121,33 +123,4 @@ public static class CheckpointFormats
 
         throw new NotSupportedException($"No checkpoint format reads {path} ({string.Join(", ", formats.Select(f => f.Name))}); add one with CheckpointFormats.Register.");
     }
-}
-
-// A model folder with safetensors weights (one file, or shards named by model.safetensors.index.json).
-internal sealed class SafeTensorsCheckpointFormat : ICheckpointFormat
-{
-    public string Name => "safetensors";
-
-    public bool CanOpen(string path) => Directory.Exists(path);
-
-    public string Prepare(string path) => path;
-
-    public ITensorStore Open(string folder) => SafeTensorsReader.Open(folder);
-
-    public IEnumerable<string> Notes(string folder) => [];
-}
-
-// A .gguf file (described once by a folder in the Hugging Face layout), or that folder; the weights are read from the file.
-internal sealed class GgufCheckpointFormat : ICheckpointFormat
-{
-    public string Name => "gguf";
-
-    public bool CanOpen(string path) =>
-        File.Exists(path) && path.EndsWith(".gguf", StringComparison.OrdinalIgnoreCase) || Directory.Exists(path) && GgufModel.IsPrepared(path);
-
-    public string Prepare(string path) => File.Exists(path) ? GgufModel.Prepare(path) : path;   // config, tokenizer and template from the file's metadata
-
-    public ITensorStore Open(string folder) => GgufModel.OpenTensors(folder);
-
-    public IEnumerable<string> Notes(string folder) => [$"weights read from {GgufModel.SourceOf(folder)}", .. GgufModel.NotesOf(folder)];
 }

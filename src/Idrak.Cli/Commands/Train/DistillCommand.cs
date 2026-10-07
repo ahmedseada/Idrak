@@ -252,8 +252,8 @@ internal sealed class DistillCommand : Command
                     return null;
                 }
 
-                source = stored ? DistillationTeacher.FromFile(teacher) : DistillationTeacher.FromModel(teacherModel!, topK ?? 0, tuning.BatchTokens);
-                source.Check(model);
+                source = stored ? DistillationTeachers.FromFile(teacher) : DistillationTeachers.FromModel(teacherModel!, topK ?? 0, tuning.BatchTokens);
+                source.Check(model.Tokenizer ?? throw new InvalidOperationException("The student has no tokenizer: its vocabulary cannot be compared with the teacher's."));
                 console.Out.WriteLine($"distilling: temperature {temperature.ToString(CultureInfo.InvariantCulture)}, alpha {alpha.ToString(CultureInfo.InvariantCulture)}, "
                                       + (source.TopK > 0 ? $"the teacher's top {source.TopK} tokens per position (renormalized)" : "the teacher's full distributions"));
                 return tuning with { Teacher = source, Loss = FineTuningLosses.Distillation(temperature, alpha) };
