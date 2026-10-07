@@ -113,9 +113,27 @@
   `System.Numerics.Tensors`) now sees two: `Idrak.Tensor` used to win as a member of an enclosing namespace. Add
   `using Tensor = Idrak.Abstraction.Tensor;`.
 
-- Internal: every device operation goes through one dispatcher (plan 9, phase 1). A kernel registered for an
-  operation on a kind of device runs instead of the device's own; a device with none registered reads one more field
-  per operation. The kernel table stays internal until the public device API (plan 10, phase 4).
+- Every device operation goes through one dispatcher (plan 9, phase 1). A kernel registered for an operation on a kind
+  of device runs instead of the device's own; a device with none registered reads one more field per operation.
+- The device API is public (plan 10, phase 4): `Idrak.Abstraction` shares its internals with its tests only, and the
+  CUDA, Vulkan and HIP devices are built on its public surface alone. A device can be written outside the library.
+  - Public in `Idrak.Abstraction.Devices`: `Backend` (every `NameKernel` virtual and the generated `Name(...)` calls;
+    `Detach`/`Attach` are `protected`), `Storage` (`Version` read-only, new `HostMemory`), `DeviceProvider`,
+    `DeviceProviders`, `BackendCapabilities`, `UnaryOp`, `BinaryOp`, `ConvGeometry`, `AttentionVariant`,
+    `MemoryAccountant`, `IMemoryOffload`, `OffloadPriority`, `IHostStaging`, `IBackwardStaging`, `PowerSource`,
+    `PackedFormats`, `EightBitMoments`, `HostParallel`; `Device.Backend`, `Tensor.Storage`, `Tensor.Backend`.
+  - Public in `Idrak.Abstraction.Operations`: `Operation` (with `Fallback`), `Ops` (with `Find`), `OperationKernels`,
+    `Kernels.Register`, and new `KernelSource`, `KernelChoice`, `Kernels.Chain(backend)` (which kernel each operation
+    runs: registered, the device's own, composed, host fallback, none), `Kernels.Trace(backend)` (`KernelTrace`) and
+    `Kernels.HostCalls(backend)`. `Backend.HostCalls` and `HostCallsByOperation` are removed.
+  - The members other packages used are public with docs: about 50 `Tensor` members (fused, attention and
+    distillation operations, `Empty`, `Load`, `GatherRows`, ...), packed-weight and key/value-layout internals,
+    `DecodingContext` positions, `Telemetry` event methods, `GraphOpContext`'s constructor, `GraphOps.TryGet`, ...
+  - `ModuleHooks` is folded into the public `TensorOffloading` (`Current` → `CurrentLayer`; the hooks are properties;
+    `ForBackward` receives each backward node's layer). `Module.MoveTo` is `protected`; `RecurrentModule.Run`/`Step` are
+    `protected`. `TrainingHistory` has public setters and `Add(EpochCompleted)`; `TrainerContext` a public constructor.
+- New command `idrak kernels [-d DEVICE] [--source KIND] [-j]`: per operation, the kernel a device runs and what runs
+  without its own (plan 9, phase 2).
 
 ## 0.3.1 (2026-10-05)
 
