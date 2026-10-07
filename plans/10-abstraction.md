@@ -75,11 +75,18 @@ The exact split is settled by the phase 0 inventory; the rule is not. The invent
 ([10-abstraction-inventory.md](10-abstraction-inventory.md)) proposes a target for each type and adds four areas the
 table first lacked, now in it: `Vision`, `Retrieval`, `Serving` and `Diagnostics` (accepted 2026-10-06).
 
-**Enforced by a test** (phase 0 adds it with an allow list of today's violations; each phase shrinks the list; it
-must be empty at the end): it loads every library assembly (`Idrak`, `Idrak.LanguageModels`, `Idrak.Datasets`,
-`Idrak.Onnx`, ...) and fails on any interface, abstract class or registry declared outside `Idrak.Abstraction.*`.
-Implementations may live anywhere; contracts may not. The CLI is an application, not a library, so its own private
-helpers (for example `IToolHost`) are outside the rule.
+**Where a contract lives (decision 10, 2026-10-07).** A contract lives in `Idrak.Abstraction` when Abstraction itself
+uses it or when **more than one library package** uses it (bridges count; the CLI, samples, tests and apps do not).
+A contract only one library package uses lives in that package, in the `.Abstractions` sub-namespace of the namespace
+its implementations use (`Idrak.Vision.Abstractions`, `Idrak.Data.Abstractions`, `Idrak.Onnx.Abstractions` in core).
+When a second package starts using it, it moves to `Idrak.Abstraction`.
+
+**Enforced by a test** (phase 0 added it; its allow list is empty since wave 1): it loads every library assembly and
+fails on any interface, abstract class or registry that is neither in `Idrak.Abstraction.*` nor in a package's own
+`*.Abstractions` namespace. From phase 8c it also counts, for each contract, the library packages that use it, and
+fails when one in `Idrak.Abstraction` has a single user (move it to that package) or one in a package has several
+(move it to Abstraction). Implementations may live anywhere. The CLI is an application, not a library, so its own
+private helpers (for example `IToolHost`) are outside the rule.
 
 **What it costs users** (the one break this plan accepts, deliberately): a namespace change is a source and binary
 change, so `[TypeForwardedTo]` alone cannot hide it.
@@ -284,6 +291,7 @@ packaged form before the real release.
 | 3e (as built) | **LanguageModels contracts** (wave 1). Into `Formats`: checkpoint formats, tensor stores, model sources (`ModelSourceOptions` names an `IDownloader`), ggml types and GGUF families. Into `Generation`: tokenizer components, GGUF pre-tokenizers, pretrained families, and `DecoderSpec` with its options as data (building is Idrak's `DecoderBuilder.Build` extension; a family's build returns its layers). Into `Training`: `DistillationTeacher` (open to implementations: `TeacherDistributions` is public) and `TrainingSequence`. The built-in families, ggml dequantizers, GGUF readers, `BpeTokenizer` and downloads stay in LanguageModels (to core with model loading in wave 2). Built-ins registered by `Idrak.LanguageModels.LibraryRegistrations` | done on the CPU; allow list 16 to 0 |
 | 8a (as built) | **Regrouping, part 1** (wave 2). `Idrak.Datasets` becomes `Idrak.Data` (its row dataset is `DatasetRows`, apart from core's `Dataset`); `Idrak.Onnx` folds into core (src/Idrak/Onnx, namespace kept); new `Idrak.Vision` from core's region classification and content framing, on the public API alone. `ModelDetector` and `ModelSegmenter` follow into Vision (decided 2026-10-07); `DetectionDecoder`, `Foreground`, components, NMS, masks and their metrics stay in Abstraction as small defaults | done on the CPU (441 of 441) |
 | 8b (as built) | **Tool contracts and the bridges** (wave 2). `Tool`, `ToolResult`, `ToolRegistry` (default of the new `IToolRegistry`) in `Abstraction.Generation`; `IToolChatModel` and `ChatTools.WithTools` for server-side tools on any chat model; `IModelCatalog` (`Serving`), implemented by the engine. `Idrak.Mcp` depends on Abstraction and the MCP SDK only and serves the engine's models as `generate`, `chat`, `embed` (`idrak serve --mcp`); `Idrak.AspNetCore` uses only the engine and the contracts. Later: `transcribe`, `image`; `Conversation`'s tool loop on top of `WithTools` | done on the CPU (445 of 445) |
+| 8c | **Contracts with their users** (decision 10). The inventory counts the library packages using each contract; contracts with one user move from `Idrak.Abstraction` to that package's `.Abstractions` namespace, with their registries and small defaults; the test enforces it both ways | the test passes with no exceptions list; every package README lists its own contracts |
 | 4 | **Devices on the public API (item 12c).** Remove the last `InternalsVisibleTo` from `Idrak.Abstraction` to `Idrak`; the CUDA, Vulkan and HIP code in `Idrak` builds against the public surface alone | `Idrak.Abstraction` grants no internals; every device passes; `dotnet add package Idrak` behaves as before |
 | 5 | **A device from outside.** A plain-loop reference device in `tests/Idrak.PluginTests`, written against the public API only, passes the conformance kit | the kit (`Idrak.Abstraction.Testing`) runs it green |
 | 6 | **Kernels for plug-ins.** `Autograd.Function`, `GraphOps`, `PackedWeight` and `KeyValueLayout` implementations register device kernels | a plug-in packed format and KV layout run their own device kernel |
@@ -344,7 +352,7 @@ Diffusion, Audio; the bridges depend on contracts (and their third-party package
    the public API of `Idrak.Abstraction`; no separate device packages for now.
 4. The contracts of `Idrak.LanguageModels`, `Idrak.Datasets` and `Idrak.Onnx` **move into `Idrak.Abstraction`** too:
    all contracts in one place; the satellites keep their implementations.
-5. **Every abstraction lives under the `Idrak.Abstraction` namespace**: every interface, abstract base, plug-in point
+5. (Amended by decision 10.) **Every abstraction lives under the `Idrak.Abstraction` namespace**: every interface, abstract base, plug-in point
    and registry of every library package, with its default implementation beside it; a test enforces it. This
    replaces the earlier "namespaces stay" rule.
 6. **A separate package from the start**, not a namespace inside `Idrak` first: the contracts move into the
@@ -360,6 +368,11 @@ Diffusion, Audio; the bridges depend on contracts (and their third-party package
 9. **Everything is a contract** (2026-10-07): every point a domain, an app or a plug-in can supply or replace is a
    public contract in `Idrak.Abstraction`, including the engine's model kinds (`EngineModel` today) and the network
    builder's steps (`NetworkOps` today), so the override loop works everywhere.
+10. **A contract lives with its users** (2026-10-07): in `Idrak.Abstraction` only when Abstraction itself or more
+   than one library package (bridges included; apps, the CLI, samples and tests not) uses it; otherwise in the one
+   package that uses it, under its `.Abstractions` sub-namespace (`Idrak.Vision.Abstractions`). A test counts the users
+   and keeps each contract where the rule puts it (phase 8c). Everything is still a contract (decision 9); only where it
+   lives changes.
 
 ## Open (the override loop)
 
