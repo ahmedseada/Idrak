@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
 
 namespace Idrak.Abstraction.Generation;
@@ -111,7 +112,8 @@ public delegate RopeScalingResult RopeScalingMethod(RopeScalingInput input);
 /// <summary>
 /// The RoPE scaling methods by name (<see cref="RopeScaling.Type"/>, ignoring case), as Hugging Face's
 /// <c>rope_scaling.rope_type</c> names them: "linear", "llama3", "yarn" and "dynamic" are registered; add your own with
-/// <see cref="Register"/>, and configurations or GGUF files naming it are read with it.
+/// <see cref="Register"/>, and configurations or GGUF files naming it are read with it. A method registered under a
+/// built-in name overrides the library's, which stays behind it as the fallback (<see cref="SlotPolicy"/>).
 /// <para>
 /// The built-ins follow transformers' <c>modeling_rope_utils.py</c>: "linear" divides every frequency by <c>factor</c>;
 /// "llama3" divides frequencies whose wavelength exceeds original / <c>low_freq_factor</c> by the factor, keeps those
@@ -125,74 +127,92 @@ public delegate RopeScalingResult RopeScalingMethod(RopeScalingInput input);
 /// </summary>
 public static class RopeScalings
 {
-    // The methods the library ships, which an app's registration of the same name shadows but never changes.
-    private static readonly Dictionary<string, RopeScalingMethod> BuiltIn = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly SlotTable<string, RopeScalingMethod> Table = BuiltIn();
+
+    private static SlotTable<string, RopeScalingMethod> BuiltIn()
     {
-        ["linear"] = Linear,
-        ["llama3"] = Llama3,
-        ["yarn"] = Yarn,
-        ["dynamic"] = Dynamic,
-    };
+        var table = new SlotTable<string, RopeScalingMethod>(nameof(RopeScalings), Guard, StringComparer.OrdinalIgnoreCase);
+        table.RegisterDefault("linear", Linear);
+        table.RegisterDefault("llama3", Llama3);
+        table.RegisterDefault("yarn", Yarn);
+        table.RegisterDefault("dynamic", Dynamic);
+        return table;
+    }
 
-    private static readonly Dictionary<string, RopeScalingMethod> Registry = new(BuiltIn, StringComparer.OrdinalIgnoreCase);
-
-    /// <summary>Registers (or replaces) the scaling method <paramref name="type"/> (names ignore case).</summary>
+    /// <summary>
+    /// Registers the scaling method <paramref name="type"/> (names ignore case). Under a built-in name it shadows the
+    /// library's method, which stays behind it (see <see cref="SetPolicy"/>) until <see cref="Unregister"/>.
+    /// </summary>
     /// <param name="type">The name configurations use (<c>rope_scaling.rope_type</c>).</param>
     /// <param name="method">The frequencies (and attention factor) from the unscaled ones and the parameters.</param>
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void Register(string type, RopeScalingMethod method)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(type);
         ArgumentNullException.ThrowIfNull(method);
-        lock (Registry)
-        {
-            Registry[type] = method;
-        }
+        Table.Register(type, method, System.Reflection.Assembly.GetCallingAssembly());
     }
 
-    /// <summary>Removes the method <paramref name="type"/>; returns whether it was registered.</summary>
-    public static bool Unregister(string type)
-    {
-        lock (Registry)
-        {
-            return Registry.Remove(type);
-        }
-    }
+    /// <summary>Removes the app's method <paramref name="type"/> (a built-in name gets the library's back); false when the app registered none.</summary>
+    public static bool Unregister(string type) => Table.Unregister(type);
 
     /// <summary>The registered method names.</summary>
-    public static IReadOnlyCollection<string> Names
-    {
-        get
-        {
-            lock (Registry)
-            {
-                return [.. Registry.Keys];
-            }
-        }
-    }
+    public static IReadOnlyCollection<string> Names => Table.Keys;
 
     /// <summary>Whether a method is registered as <paramref name="type"/>.</summary>
-    public static bool Contains(string type)
-    {
-        lock (Registry)
-        {
-            return Registry.ContainsKey(type);
-        }
-    }
+    public static bool Contains(string type) => Table.Contains(type);
+
+    /// <summary>The method registered as <paramref name="type"/> (any case); an app's, guarded by its <see cref="SetPolicy">policy</see>.</summary>
+    public static RopeScalingMethod Get(string type) =>
+        Table.TryGet(type, out var method) ? method
+            : throw new NotSupportedException($"No RoPE scaling '{type}' is registered ({string.Join(", ", Table.Keys)}); add it with RopeScalings.Register.");
+
+    /// <summary>The library's method <paramref name="type"/>, whatever an app registered over it (for an app's method to delegate to); null when the library has none.</summary>
+    public static RopeScalingMethod? Default(string type) => Table.Default(type);
+
+    /// <summary>Who registered the method <paramref name="type"/> resolves to: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
+    public static string? Origin(string type) => Table.Origin(type);
 
     /// <summary>
-    /// The method the library ships as <paramref name="type"/> (any case), whatever is registered under that name now; null
-    /// when the library has none. An app that replaces a built-in can compare with it, or wrap it.
+    /// What happens when the app's method <paramref name="type"/> fails (<see cref="SlotPolicy.Throw"/> unless set: the error reaches the caller;
+    /// <see cref="SlotPolicy.FallBack"/> retries on the library's), or whether it only runs beside it (<see cref="SlotPolicy.Shadow"/>, on <paramref name="shadowRate"/> of the calls).
     /// </summary>
-    public static RopeScalingMethod? Default(string type) => BuiltIn.GetValueOrDefault(type);
+    public static void SetPolicy(string type, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Table.SetPolicy(type, policy, shadowRate);
 
-    /// <summary>The method registered as <paramref name="type"/> (any case).</summary>
-    public static RopeScalingMethod Get(string type)
+    // The app's method gets a copy of the frequencies (a method may change them in place), so the library's can still run
+    // on the originals; outputs agree when frequencies, attention factor and per-position frequencies do.
+    private static RopeScalingMethod Guard(Slot slot, RopeScalingMethod app, RopeScalingMethod library) => input =>
     {
-        lock (Registry)
+        var copy = input with { Frequencies = (double[])input.Frequencies.Clone() };
+        return slot.Call(() => app(copy), () => library(input), Compare);
+    };
+
+    private static string? Compare(RopeScalingResult library, RopeScalingResult other)
+    {
+        if (Comparisons.Difference(library.Frequencies, other.Frequencies, 1e-9) is { } frequencies)
         {
-            return Registry.TryGetValue(type, out var method) ? method
-                : throw new NotSupportedException($"No RoPE scaling '{type}' is registered ({string.Join(", ", Registry.Keys)}); add it with RopeScalings.Register.");
+            return "frequencies: " + frequencies;
         }
+
+        if (Comparisons.Difference([library.AttentionFactor], [other.AttentionFactor], 1e-9) is not null)
+        {
+            return $"attention factor {library.AttentionFactor} != {other.AttentionFactor}";
+        }
+
+        if ((library.FrequenciesAt is null) != (other.FrequenciesAt is null))
+        {
+            return library.FrequenciesAt is null ? "the override's frequencies depend on the position" : "the override's frequencies do not depend on the position";
+        }
+
+        foreach (int position in (int[])[0, 1 << 16])
+        {
+            if (library.FrequenciesAt is { } at && Comparisons.Difference(at(position), other.FrequenciesAt!(position), 1e-9) is { } moved)
+            {
+                return $"frequencies at position {position}: {moved}";
+            }
+        }
+
+        return null;
     }
 
     // transformers _compute_linear_scaling_rope_parameters: inv_freq /= factor.

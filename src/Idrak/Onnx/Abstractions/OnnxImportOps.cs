@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
 using Idrak.Layers.Abstractions;
 
@@ -105,52 +106,36 @@ public abstract class OnnxImportContext
 /// </summary>
 public static class OnnxImportOps
 {
-    private static readonly Dictionary<string, OnnxImportTranslator> Registry = new(StringComparer.Ordinal);
+    private static readonly SlotTable<string, OnnxImportTranslator> Registry = new(nameof(OnnxImportOps), comparer: StringComparer.Ordinal,
+        unguarded: "a translator adds steps to the imported network as it runs, and a half-run translator cannot be undone");
 
-    static OnnxImportOps() => OnnxBuiltIns.RegisterImports();   // the built-in translators, on first use
+    static OnnxImportOps() => Overrides.AsLibraryDefaults(OnnxBuiltIns.RegisterImports);   // the built-in translators, on first use
 
-    /// <summary>Registers (or replaces) how to import nodes of the operator type <paramref name="opType"/>.</summary>
+    /// <summary>Registers how to import nodes of the operator type <paramref name="opType"/>; under a built-in type it overrides the library's until <see cref="Unregister"/>.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void Register(string opType, OnnxImportTranslator translate)
     {
         ArgumentException.ThrowIfNullOrEmpty(opType);
         ArgumentNullException.ThrowIfNull(translate);
-        lock (Registry)
-        {
-            Registry[opType] = translate;
-        }
+        Registry.Register(opType, translate, System.Reflection.Assembly.GetCallingAssembly());
     }
 
-    /// <summary>Removes the operator type <paramref name="opType"/>; returns whether it was registered.</summary>
-    public static bool Unregister(string opType)
-    {
-        lock (Registry)
-        {
-            return Registry.Remove(opType);
-        }
-    }
+    /// <summary>Removes the app's translator of <paramref name="opType"/> (a built-in type gets the library's back); false when the app registered none.</summary>
+    public static bool Unregister(string opType) => Registry.Unregister(opType);
 
     /// <summary>The registered operator types.</summary>
-    public static IReadOnlyCollection<string> Names
-    {
-        get
-        {
-            lock (Registry)
-            {
-                return [.. Registry.Keys];
-            }
-        }
-    }
+    public static IReadOnlyCollection<string> Names => Registry.Keys;
 
     /// <summary>The translator registered for <paramref name="opType"/>.</summary>
     public static OnnxImportTranslator Get(string opType) =>
         Find(opType) ?? throw new NotSupportedException($"No ONNX import op '{opType}' is registered ({string.Join(", ", Names)}); add it with OnnxImportOps.Register.");
 
     /// <summary>The translator registered for <paramref name="opType"/>, or null.</summary>
-    public static OnnxImportTranslator? Find(string opType)
-    {
-        lock (Registry)
-        {
-            return Registry.TryGetValue(opType, out var translate) ? translate : null;
-        }
-    }
+    public static OnnxImportTranslator? Find(string opType) => Registry.Find(opType);
+
+    /// <summary>The library's translator of <paramref name="opType"/>, whatever an app registered over it (for an app's to delegate to); null when the library has none.</summary>
+    public static OnnxImportTranslator? Default(string opType) => Registry.Default(opType);
+
+    /// <summary>Who registered the translator of <paramref name="opType"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
+    public static string? Origin(string opType) => Registry.Origin(opType);
 }

@@ -155,6 +155,7 @@ internal static class EnvironmentVariables
         new("WT_SESSION", Tool, "as the terminal sets it", "Set (Windows Terminal): Arabic is shaped and reordered by the tool (--lang-render auto)", [Every]),
         new("IDRAK_UPDATE_INDEX", Tool, "the package feed", "Where idrak update reads the published versions (a URL or a local file; mirrors and tests)", ["update"]),
 
+        new("IDRAK_OVERRIDE_POLICY", Tests, "throw (an override's failure reaches the caller)", "What happens when an app's or plug-in's registration over a library default throws (until code sets a slot's policy): fallback (the library default answers), shadow or shadow:RATE (the library answers, the override is compared on RATE of the calls, 0.01 by default), throw; for every slot, and/or Registry/name=policy entries for single slots, separated by commas (RopeScalings/yarn=fallback). See idrak overrides", [Every]),
         new("IDRAK_DEVICES", Tests, "every listed device", "Devices the test runner uses, comma-separated (cpu, cuda:0, vulkan:0, ...)", ["test", "report"]),
         new("IDRAK_FILTER", Tests, "every test", "Run only tests whose names contain this text", ["test", "report"]),
         new("IDRAK_TIMEOUT", Tests, "300", "Seconds before a running test is reported as HANG and the run stops", ["test", "report"]),

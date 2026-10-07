@@ -177,7 +177,7 @@ internal static partial class Tests
         }
         finally
         {
-            OnnxImportOps.Register("Relu", relu);
+            OnnxImportOps.Unregister("Relu");
             OnnxImportOps.Unregister("Scale");
             NetworkOps.Unregister("scale");
         }

@@ -190,3 +190,35 @@ public readonly record struct EngineEvent(EngineEventKind Kind, string Model, Ti
 /// <param name="RetriedOnHost">True when the operation ran again on the CPU and the caller got its result.</param>
 /// <param name="Hint">How to turn the retry on, when it is off for the device; null otherwise.</param>
 public readonly record struct DeviceFailed(string Device, string? Operation, string Message, bool RetriedOnHost, string? Hint);
+
+/// <summary>
+/// Published when an app's implementation of a slot threw, when <c>TelemetryLevel.Overrides</c> is enabled: under
+/// <see cref="SlotPolicy.Throw"/> (the default) the error went on to the caller, under <see cref="SlotPolicy.FallBack"/>
+/// the call was answered by the library default.
+/// </summary>
+/// <param name="Registry">The registry, for example "RopeScalings".</param>
+/// <param name="Slot">The entry's name in it.</param>
+/// <param name="Implementation">The app's implementation that failed.</param>
+/// <param name="Origin">The assembly that registered it.</param>
+/// <param name="Exception">What it threw.</param>
+/// <param name="FellBack">True when the library default answered the call; false when the error reached the caller.</param>
+/// <param name="Hint">While the error reaches the caller, how to switch on <see cref="SlotPolicy.FallBack"/> or <see cref="SlotPolicy.Shadow"/> for the slot (in code and with <c>IDRAK_OVERRIDE_POLICY</c>); null otherwise.</param>
+public readonly record struct OverrideFailed(string Registry, string Slot, string Implementation, string Origin, Exception Exception, bool FellBack, string? Hint);
+
+/// <summary>
+/// Published when a call of a <see cref="SlotPolicy.Shadow"/> slot ran both the library default (which answered) and the
+/// app's implementation, when <c>TelemetryLevel.Overrides</c> is enabled.
+/// </summary>
+/// <param name="Registry">The registry, for example "RopeScalings".</param>
+/// <param name="Slot">The entry's name in it.</param>
+/// <param name="Implementation">The app's implementation.</param>
+/// <param name="Origin">The assembly it comes from.</param>
+/// <param name="Agreed">Whether the outputs agreed and the app's implementation did not throw.</param>
+/// <param name="Difference">How the outputs differ, or what the app's implementation threw; null when they agreed.</param>
+/// <param name="Exception">What the app's implementation threw, or null.</param>
+/// <param name="LibraryTime">The library default's time.</param>
+/// <param name="OverrideTime">The app's implementation's time.</param>
+/// <param name="LibraryBytes">Managed memory the library default allocated on the calling thread.</param>
+/// <param name="OverrideBytes">Managed memory the app's implementation allocated on the calling thread.</param>
+public readonly record struct OverrideCompared(string Registry, string Slot, string Implementation, string Origin, bool Agreed, string? Difference,
+    Exception? Exception, TimeSpan LibraryTime, TimeSpan OverrideTime, long LibraryBytes, long OverrideBytes);

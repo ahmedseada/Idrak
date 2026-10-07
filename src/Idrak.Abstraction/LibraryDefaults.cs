@@ -51,10 +51,13 @@ internal static class LibraryDefaults
 
             _registrations ??= Find();
             object[] arguments = [registry];
-            foreach (var register in _registrations)
+            Overrides.AsLibraryDefaults(() =>   // the built-ins are the slots' library defaults, not overrides
             {
-                register.Invoke(null, arguments);
-            }
+                foreach (var register in _registrations)
+                {
+                    register.Invoke(null, arguments);
+                }
+            });
         }
     }
 

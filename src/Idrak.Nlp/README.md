@@ -10,7 +10,7 @@ The plug-in points only this package uses live beside their implementations (add
 
 | Namespace | Contracts |
 |-----------|-----------|
-| `Idrak.Generation.Abstractions` | `ITokenSampler` (with `SamplerRequest`, `SampledToken`; `TokenSampler` in `Idrak.Generation` is the default) |
+| `Idrak.Generation.Abstractions` | `ITokenSampler` (with `SamplerRequest`, `SampledToken`) and `TokenSamplers`, whose "default" is `TokenSampler` (in `Idrak.Generation`): register a sampler under "default" to override it for every generation; under `SlotPolicy.FallBack` (opted into with `TokenSamplers.SetPolicy`) it falls back to the built-in when it cannot be made, and under `SlotPolicy.Shadow` the built-in chooses while the app's is compared over whole generations |
 | `Idrak.Retrieval.Abstractions` | `IVectorStore`, `IRetriever`, `IReranker` (with `Chunk`, `RetrievedChunk`, `VectorRecord`, `VectorMatch`) |
 | `Idrak.Nlp.Abstractions` | `DistillationTeacher`, `TeacherDistributions`, `TrainingSequence` |
 
