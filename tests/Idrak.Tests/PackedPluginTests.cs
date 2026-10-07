@@ -360,7 +360,7 @@ internal static partial class Tests
         }
         finally
         {
-            PackedWeight.Register("int8", Int8Weight.Quantize);
+            PackedWeight.Unregister("int8");
         }
 
         if (device.Type != DeviceType.Cpu)

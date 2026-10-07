@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Runtime.CompilerServices;
+
 namespace Idrak.Data.Abstractions;
 
 /// <summary>
@@ -35,10 +37,11 @@ public static class ParquetCodecs
     /// Registers the codec for its <see cref="IParquetCodec.Id"/>; for a built-in id it overrides the library's, which
     /// stays behind it as its fallback (see <see cref="SetPolicy"/>) until <see cref="Unregister"/>.
     /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void Register(IParquetCodec codec)
     {
         ArgumentNullException.ThrowIfNull(codec);
-        Registry.Register(codec.Id, codec);
+        Registry.Register(codec.Id, codec, System.Reflection.Assembly.GetCallingAssembly());
     }
 
     /// <summary>Removes the app's codec for <paramref name="id"/> (a built-in id gets the library's back); false when the app registered none.</summary>

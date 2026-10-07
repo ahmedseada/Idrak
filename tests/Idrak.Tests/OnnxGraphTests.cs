@@ -91,7 +91,7 @@ internal static partial class Tests
         }
         finally
         {
-            OnnxExportOps.Register(linear);
+            OnnxExportOps.Unregister<Linear>();
             OnnxExportOps.Unregister<Times>();
         }
 

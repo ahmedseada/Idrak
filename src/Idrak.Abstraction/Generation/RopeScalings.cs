@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
 
 namespace Idrak.Abstraction.Generation;
@@ -144,11 +145,12 @@ public static class RopeScalings
     /// </summary>
     /// <param name="type">The name configurations use (<c>rope_scaling.rope_type</c>).</param>
     /// <param name="method">The frequencies (and attention factor) from the unscaled ones and the parameters.</param>
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void Register(string type, RopeScalingMethod method)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(type);
         ArgumentNullException.ThrowIfNull(method);
-        Table.Register(type, method);
+        Table.Register(type, method, System.Reflection.Assembly.GetCallingAssembly());
     }
 
     /// <summary>Removes the app's method <paramref name="type"/> (a built-in name gets the library's back); false when the app registered none.</summary>

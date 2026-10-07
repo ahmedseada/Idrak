@@ -7,7 +7,10 @@ Datasets for Idrak (no dependencies beyond Idrak): read JSON Lines, JSON, CSV, t
 The plug-in points only this package uses are in `Idrak.Data.Abstractions` (add the `using` line to name them):
 `DataFileFormats` and `IDataFileFormat` (file formats), `DatasetSources` and `IDatasetSource` (with `DatasetSpec`,
 `ReadOptions`, `IDatasetRows`), `ParquetCodecs` and `IParquetCodec`, `ITextNormalizer`. The registries register the
-built-ins themselves. Shared contracts (sample sources, `IDownloader`, model sources) are in Idrak.Abstraction.
+built-ins themselves, as the library defaults of their slots: an app's registration under a built-in name overrides it
+and `Unregister` brings it back. A Parquet codec or a dataset source an app overrides falls back to the library's when it
+throws (`SetPolicy` chooses `Throw` or `Shadow`); a file format is used as registered (its rows are read lazily). Shared
+contracts (sample sources, `IDownloader`, model sources) are in Idrak.Abstraction.
 
 ## Install
 

@@ -100,12 +100,16 @@ public sealed class SlotTable<TKey, TValue> where TKey : notnull
     /// </summary>
     /// <param name="key">The name.</param>
     /// <param name="value">What to hand out.</param>
-    /// <param name="implementation">
-    /// Where the app's implementation is read from for reports (its type, or a delegate's method), when not
-    /// <paramref name="value"/> itself; for a registry of descriptions (data, not code), the <see cref="System.Reflection.Assembly"/>
-    /// that registered it.
+    /// <param name="registeredBy">
+    /// The assembly that registered it, its <see cref="Origin"/> (a registry passes
+    /// <see cref="System.Reflection.Assembly.GetCallingAssembly"/> from its own <c>Register</c>); when null, the assembly of
+    /// the implementation.
     /// </param>
-    public void Register(TKey key, TValue value, object? implementation = null)
+    /// <param name="implementation">
+    /// Where the app's implementation is named from for reports (its type, a delegate's method, or a name), when not
+    /// <paramref name="value"/> itself.
+    /// </param>
+    public void Register(TKey key, TValue value, System.Reflection.Assembly? registeredBy = null, object? implementation = null)
     {
         if (Overrides.RegisteringDefaults)
         {
@@ -114,9 +118,8 @@ public sealed class SlotTable<TKey, TValue> where TKey : notnull
         }
 
         ArgumentNullException.ThrowIfNull(key);
-        var (id, origin) = implementation is System.Reflection.Assembly assembly
-            ? (Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture) ?? "null", assembly.GetName().Name ?? "unknown")
-            : Overrides.Describe(implementation ?? value);
+        var (id, origin) = Overrides.Describe(implementation ?? value);
+        origin = registeredBy?.GetName().Name ?? origin;
         Update(key, old => new Entry(key, old.Slot)
         {
             HasLibrary = old.HasLibrary, Library = old.Library, HasApp = true, App = value,

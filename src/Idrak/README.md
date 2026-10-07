@@ -35,7 +35,14 @@ alone.
 
 The plug-in points only this package uses live here, each under the `.Abstractions` namespace beside its
 implementations (the shared ones are in [Idrak.Abstraction](https://www.nuget.org/packages/Idrak.Abstraction)). Code
-that names them adds the `using` line. The registries register their built-ins themselves, on first use.
+that names them adds the `using` line. The registries register their built-ins themselves, on first use, as the library
+defaults of their slots: an app's registration under a built-in name overrides it, the default stays behind it, and
+`Unregister` brings it back (`Default(name)`, `Origin(name)`). Under the default policy, `FallBack`, a call of the app's
+version that throws is answered by the library's and reported to telemetry: per call for graph operations, layer
+descriptions, image codecs, checkpoint formats and GGUF dequantizers; when the object is made for tokenizer parts,
+layers, sample sources and checkpoint stores. `SetPolicy(name, ...)` chooses `Throw` or `Shadow`. Network steps, ONNX
+translators and the GGUF and family descriptions are used as registered (they change a builder or graph as they run, or
+are data).
 
 | Namespace | Contracts |
 |-----------|-----------|

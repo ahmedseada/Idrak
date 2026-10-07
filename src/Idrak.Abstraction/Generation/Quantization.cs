@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using Idrak.Abstraction.Devices;
 
@@ -245,11 +246,12 @@ public abstract class PackedWeight : IDisposable
     /// </summary>
     /// <param name="format">The name to choose the format by.</param>
     /// <param name="factory">Packs float values in the format.</param>
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void Register(string format, PackedWeightFactory factory)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(format);
         ArgumentNullException.ThrowIfNull(factory);
-        Registry.Register(format, factory);
+        Registry.Register(format, factory, System.Reflection.Assembly.GetCallingAssembly());
     }
 
     /// <summary>Removes the app's format <paramref name="format"/> (a built-in name gets the library's back); false when the app registered none.</summary>

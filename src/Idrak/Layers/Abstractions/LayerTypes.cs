@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
 
 namespace Idrak.Layers.Abstractions;
@@ -35,12 +36,13 @@ public static class LayerTypes
     /// makes a new layer on the given device from that JSON. Under a built-in name it overrides the library's, which stays
     /// behind it as its fallback (see <see cref="SetPolicy"/>) until <see cref="Unregister"/>.
     /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void Register<T>(string type, Func<T, JsonObject> describe, Func<JsonObject, Device, T> create) where T : Module
     {
         ArgumentException.ThrowIfNullOrEmpty(type);
         ArgumentNullException.ThrowIfNull(describe);
         ArgumentNullException.ThrowIfNull(create);
-        Registry.Register(type, new Entry(type, typeof(T), m => describe((T)m), (d, device) => create(d, device)), create);
+        Registry.Register(type, new Entry(type, typeof(T), m => describe((T)m), (d, device) => create(d, device)), System.Reflection.Assembly.GetCallingAssembly(), create);
     }
 
     /// <summary>Removes the app's layer type <paramref name="type"/> (a built-in name gets the library's back); false when the app registered none.</summary>

@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
 using Idrak.Models;
 
@@ -103,13 +104,16 @@ public static class TokenizerComponents
     }
 
     /// <summary>Registers the normalizer type <paramref name="type"/>, made by <paramref name="create"/> from its JSON; a built-in name overrides the built-in.</summary>
-    public static void RegisterNormalizer(string type, Func<JsonObject, ITokenizerNormalizer> create) => Register(Normalizers, type, create);
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
+    public static void RegisterNormalizer(string type, Func<JsonObject, ITokenizerNormalizer> create) => Register(Normalizers, type, create, System.Reflection.Assembly.GetCallingAssembly());
 
     /// <summary>Registers the pre-tokenizer type <paramref name="type"/>, made by <paramref name="create"/> from its JSON; a built-in name overrides the built-in.</summary>
-    public static void RegisterPreTokenizer(string type, Func<JsonObject, IPreTokenizer> create) => Register(PreTokenizers, type, create);
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
+    public static void RegisterPreTokenizer(string type, Func<JsonObject, IPreTokenizer> create) => Register(PreTokenizers, type, create, System.Reflection.Assembly.GetCallingAssembly());
 
     /// <summary>Registers the decoder type <paramref name="type"/>, made by <paramref name="create"/> from its JSON; a built-in name overrides the built-in.</summary>
-    public static void RegisterDecoder(string type, Func<JsonObject, ITokenizerDecoder> create) => Register(Decoders, type, create);
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
+    public static void RegisterDecoder(string type, Func<JsonObject, ITokenizerDecoder> create) => Register(Decoders, type, create, System.Reflection.Assembly.GetCallingAssembly());
 
     /// <summary>Removes the app's normalizer type <paramref name="type"/> (a built-in name gets the built-in back); false when the app registered none.</summary>
     public static bool UnregisterNormalizer(string type) => Normalizers.Unregister(type);
@@ -172,11 +176,11 @@ public static class TokenizerComponents
     public static void SetDecoderPolicy(string type, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) =>
         Decoders.SetPolicy(type, policy, shadowRate);
 
-    private static void Register<T>(SlotTable<string, Func<JsonObject, T>> table, string type, Func<JsonObject, T> create)
+    private static void Register<T>(SlotTable<string, Func<JsonObject, T>> table, string type, Func<JsonObject, T> create, System.Reflection.Assembly caller)
     {
         ArgumentNullException.ThrowIfNull(type);
         ArgumentNullException.ThrowIfNull(create);
-        table.Register(type, create);
+        table.Register(type, create, caller);
     }
 
     private static Func<JsonObject, T>? Find<T>(SlotTable<string, Func<JsonObject, T>> table, string? type) =>

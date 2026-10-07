@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
 
 namespace Idrak.Layers.Abstractions;
@@ -72,11 +73,12 @@ public static class NetworkOps
     /// Registers the network step <paramref name="name"/>; under a built-in name it overrides the library's step until
     /// <see cref="Unregister"/>. A step changes the builder as it runs, so it does not fall back to the library's when it fails.
     /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void Register(string name, NetworkOp op)
     {
         ArgumentException.ThrowIfNullOrEmpty(name);
         ArgumentNullException.ThrowIfNull(op);
-        Registry.Register(name, op);
+        Registry.Register(name, op, System.Reflection.Assembly.GetCallingAssembly());
     }
 
     /// <summary>Removes the app's network step <paramref name="name"/> (a built-in name gets the library's back); false when the app registered none.</summary>

@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Runtime.CompilerServices;
+
 namespace Idrak.Abstraction.Generation;
 
 /// <summary>
@@ -144,12 +146,13 @@ public static class ToolCallFormats
     /// built-in stays behind it as its fallback, see <see cref="SetPolicy"/>); a new name is asked before every format
     /// registered so far. Names are matched exactly.
     /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void Register(string name, Func<ToolCallProbe, bool> detect, Func<ToolCallContext, IToolCallParser> create)
     {
         ArgumentException.ThrowIfNullOrEmpty(name);
         ArgumentNullException.ThrowIfNull(detect);
         ArgumentNullException.ThrowIfNull(create);
-        Table.Register(name, new Entry(name, detect, create), create);
+        Table.Register(name, new Entry(name, detect, create), System.Reflection.Assembly.GetCallingAssembly(), create);
     }
 
     /// <summary>Removes the app's format <paramref name="name"/> (a built-in name gets the library's back); false when the app registered none.</summary>

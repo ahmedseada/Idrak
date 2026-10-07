@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
 using Idrak.Layers.Abstractions;
 
@@ -111,11 +112,12 @@ public static class OnnxImportOps
     static OnnxImportOps() => Overrides.AsLibraryDefaults(OnnxBuiltIns.RegisterImports);   // the built-in translators, on first use
 
     /// <summary>Registers how to import nodes of the operator type <paramref name="opType"/>; under a built-in type it overrides the library's until <see cref="Unregister"/>.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void Register(string opType, OnnxImportTranslator translate)
     {
         ArgumentException.ThrowIfNullOrEmpty(opType);
         ArgumentNullException.ThrowIfNull(translate);
-        Registry.Register(opType, translate);
+        Registry.Register(opType, translate, System.Reflection.Assembly.GetCallingAssembly());
     }
 
     /// <summary>Removes the app's translator of <paramref name="opType"/> (a built-in type gets the library's back); false when the app registered none.</summary>

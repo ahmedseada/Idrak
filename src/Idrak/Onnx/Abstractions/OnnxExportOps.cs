@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
 using Idrak.Layers.Abstractions;
 
@@ -93,10 +94,11 @@ public static class OnnxExportOps
     /// Registers how modules of type <typeparamref name="T"/> (and types derived from it without their own translator) are
     /// exported; for a type the library translates it overrides the library's until <see cref="Unregister{T}"/>.
     /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void Register<T>(OnnxTranslator<T> translate) where T : Module
     {
         ArgumentNullException.ThrowIfNull(translate);
-        Modules.Register(typeof(T), (translate, (g, m, x, s) => translate(g, (T)m, x, s)), translate);
+        Modules.Register(typeof(T), (translate, (g, m, x, s) => translate(g, (T)m, x, s)), System.Reflection.Assembly.GetCallingAssembly(), translate);
     }
 
     /// <summary>Removes the app's translator of modules of type <typeparamref name="T"/> (the library's comes back); false when the app registered none.</summary>
@@ -117,11 +119,12 @@ public static class OnnxExportOps
     public static string? Origin<T>() where T : Module => Modules.Origin(typeof(T));
 
     /// <summary>Registers how the lambdas named <paramref name="name"/> (their <c>ToString()</c>) are exported; a built-in name overrides the library's until <see cref="UnregisterLambda"/>.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void RegisterLambda(string name, OnnxTranslator<Module> translate)
     {
         ArgumentException.ThrowIfNullOrEmpty(name);
         ArgumentNullException.ThrowIfNull(translate);
-        Lambdas.Register(name, translate);
+        Lambdas.Register(name, translate, System.Reflection.Assembly.GetCallingAssembly());
     }
 
     /// <summary>Removes the app's lambda translator <paramref name="name"/> (a built-in name gets the library's back); false when the app registered none.</summary>
@@ -137,11 +140,12 @@ public static class OnnxExportOps
     public static string? LambdaOrigin(string name) => Lambdas.Origin(name);
 
     /// <summary>Registers how graph module nodes (<see cref="GraphNode"/>) running the operation <paramref name="op"/> are exported; a built-in operation overrides the library's until <see cref="UnregisterGraphOp"/>.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void RegisterGraphOp(string op, OnnxGraphOpTranslator translate)
     {
         ArgumentException.ThrowIfNullOrEmpty(op);
         ArgumentNullException.ThrowIfNull(translate);
-        GraphOpTranslators.Register(op, translate);
+        GraphOpTranslators.Register(op, translate, System.Reflection.Assembly.GetCallingAssembly());
     }
 
     /// <summary>Removes the app's graph operation translator <paramref name="op"/> (a built-in operation gets the library's back); false when the app registered none.</summary>

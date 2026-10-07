@@ -10,7 +10,7 @@ namespace Idrak.Samples.Override;
 /// The app's own token sampler (plan 10, "The override loop"): the library's sampler, except that logits which are not
 /// finite (NaN, infinite: a model that overflows now and then) are replaced before sampling, so a bad step yields a
 /// valid token instead of an arbitrary one. It fixes that one case and leaves everything else to the library default
-/// (<see cref="TokenSampler.Create"/>), which it wraps; the app's tests check it with the testing kit.
+/// (<see cref="TokenSamplers.Default"/>), which it wraps; the app's tests check it with the testing kit.
 /// </summary>
 public sealed class SanitizingSampler : ITokenSampler
 {
@@ -22,9 +22,9 @@ public sealed class SanitizingSampler : ITokenSampler
 
     private readonly ITokenSampler _library;
 
-    private SanitizingSampler(SamplerRequest request) => _library = TokenSampler.Create(request);
+    private SanitizingSampler(SamplerRequest request) => _library = TokenSamplers.Default(TokenSamplers.DefaultName)!(request);
 
-    /// <summary>The factory a generation calls (<c>TextGenerator.CreateSampler = SanitizingSampler.Create</c>).</summary>
+    /// <summary>The factory a generation calls (<c>TokenSamplers.Register(TokenSamplers.DefaultName, SanitizingSampler.Create)</c>).</summary>
     public static ITokenSampler Create(SamplerRequest request) => new SanitizingSampler(request);
 
     /// <summary>Non-finite logits replaced so far.</summary>

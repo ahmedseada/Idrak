@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
 
 namespace Idrak.Data.Abstractions;
@@ -41,10 +42,11 @@ public static class DataFileFormats
     /// Registers <paramref name="format"/> (names ignore case); under a built-in name it overrides the library's format
     /// until <see cref="Unregister"/>. Rows are read lazily, so a format does not fall back to the library's when it fails.
     /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void Register(IDataFileFormat format)
     {
         ArgumentNullException.ThrowIfNull(format);
-        Registry.Register(format.Name, format);
+        Registry.Register(format.Name, format, System.Reflection.Assembly.GetCallingAssembly());
     }
 
     /// <summary>Removes the app's format <paramref name="name"/> (a built-in name gets the library's back); false when the app registered none.</summary>

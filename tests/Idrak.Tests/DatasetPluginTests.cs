@@ -135,7 +135,7 @@ internal static partial class Tests
         }
         finally
         {
-            DataFileFormats.Register(csv);
+            DataFileFormats.Unregister("Csv");
             DataFileFormats.Unregister("Lines");
             Directory.Delete(folder, true);
         }
