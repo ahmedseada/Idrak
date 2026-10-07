@@ -331,7 +331,7 @@ apps combine domains without the domains knowing each other.
 | Package | Holds | Depends on |
 |---|---|---|
 | `Idrak.Abstraction` | every contract more than one package uses (decision 10; including the model-kind contract of the engine), `Tensor`, `Module`, autograd, the CPU device, small dependency-free defaults | — |
-| `Idrak.Gpu` | the CUDA, Vulkan and HIP devices and all GPU kernels (reverses decision 3; needs phase 4 first) | Abstraction |
+| `Idrak.Gpu` | the CUDA, Vulkan and HIP devices and all GPU kernels (reverses decision 3; needs phase 4 first). The `Idrak` package depends on it, so `dotnet add package Idrak` brings the GPU devices as before (decided 2026-10-07) | Abstraction |
 | `Idrak` (core) | layers, network builder, trainer, data loaders, optimizers, ONNX import and export, the **inference engine** and model packages, **model loading** (safetensors, GGUF, local model sources; Data registers the Hugging Face source) and **tokenizers** (both from LanguageModels), generic LoRA attach and merge | Abstraction |
 | `Idrak.Data` | today's Datasets: file formats, Parquet, hub downloads, chat rows | Idrak |
 | `Idrak.Nlp` | generation and chat, Jinja templates, LLM fine-tuning (QLoRA, DoRA, PEFT, distillation, evaluation), retrieval and RAG, the coding agent and tools; registers the text and chat model kinds | Idrak, Data |
@@ -375,6 +375,8 @@ Diffusion, Audio; the bridges depend on contracts (and their third-party package
    package that uses it, under its `.Abstractions` sub-namespace (`Idrak.Vision.Abstractions`). A test counts the users
    and keeps each contract where the rule puts it (phase 8c). Everything is still a contract (decision 9); only where it
    lives changes.
+11. **GPUs come with `Idrak`** (2026-10-07): the `Idrak` package depends on `Idrak.Gpu`, so `dotnet add package Idrak`
+   brings the CUDA, Vulkan and HIP devices as before; `Idrak.Gpu` also works alone on `Idrak.Abstraction`.
 
 ## Open (the override loop)
 
