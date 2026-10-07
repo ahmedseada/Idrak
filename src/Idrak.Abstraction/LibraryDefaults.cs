@@ -6,9 +6,9 @@ using System.Diagnostics.CodeAnalysis;
 namespace Idrak.Abstraction;
 
 /// <summary>
-/// The built-ins that ship in the Idrak assembly but are found through registries here (its GPU devices, its sample
-/// sources, ...). Idrak.Abstraction cannot name them; every such registry calls <see cref="Ensure"/> before its first use,
-/// which has Idrak register them, first and once, when the application ships Idrak. An application that references
+/// The built-ins that ship in the first-party assemblies (Idrak, its domain packages) but are found through registries
+/// here (GPU devices, sample sources, layer types, ...). Idrak.Abstraction cannot name them; every such registry calls
+/// <see cref="Ensure"/> before its first use, which has each assembly the application ships register them, once. An application that references
 /// Idrak.Abstraction alone gets the defaults that live here and whatever it registers itself.
 /// </summary>
 internal static class LibraryDefaults
@@ -17,8 +17,25 @@ internal static class LibraryDefaults
 
     private static bool _done;
 
-    /// <summary>Has Idrak register its built-ins, unless done already (on this or another thread, which this then waits for).</summary>
+    // The first-party assemblies that register built-ins, in order (core first: the others build on it). Each may define
+    // an internal static class `<assembly>.LibraryRegistrations` with a static `RegisterAll()`; one that is missing
+    // (not shipped with the application) is skipped. Planned packages are listed so they work the day they appear.
+    private static readonly string[] Assemblies =
+        ["Idrak", "Idrak.Gpu", "Idrak.Data", "Idrak.Datasets", "Idrak.Nlp", "Idrak.LanguageModels", "Idrak.Vision", "Idrak.Onnx",
+         "Idrak.Diffusion", "Idrak.Audio"];
+
+    /// <summary>Has the first-party assemblies register their built-ins, unless done already (on this or another thread, which this then waits for).</summary>
     [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.LibraryRegistrations", "Idrak")]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Gpu.LibraryRegistrations", "Idrak.Gpu")]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Data.LibraryRegistrations", "Idrak.Data")]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Datasets.LibraryRegistrations", "Idrak.Datasets")]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Nlp.LibraryRegistrations", "Idrak.Nlp")]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.LanguageModels.LibraryRegistrations", "Idrak.LanguageModels")]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Vision.LibraryRegistrations", "Idrak.Vision")]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Onnx.LibraryRegistrations", "Idrak.Onnx")]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Diffusion.LibraryRegistrations", "Idrak.Diffusion")]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Audio.LibraryRegistrations", "Idrak.Audio")]
+    [UnconditionalSuppressMessage("Trimming", "IL2057", Justification = "The type names are the constant first-party names listed above, kept by the DynamicDependency attributes.")]
     public static void Ensure()
     {
         lock (Gate)   // re-entrant: a registration that touches another registry comes back here and returns
@@ -29,17 +46,21 @@ internal static class LibraryDefaults
             }
 
             _done = true;
-            Type? registrations;
-            try
+            foreach (string assembly in Assemblies)
             {
-                registrations = Type.GetType("Idrak.LibraryRegistrations, Idrak", throwOnError: false);
-            }
-            catch (FileLoadException)
-            {
-                return;
-            }
+                Type? registrations;
+                try
+                {
+                    registrations = Type.GetType($"{assembly}.LibraryRegistrations, {assembly}", throwOnError: false);
+                }
+                catch (Exception e) when (e is FileLoadException or FileNotFoundException or BadImageFormatException)
+                {
+                    continue;
+                }
 
-            registrations?.GetMethod("RegisterAll", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)?.Invoke(null, null);
+                registrations?.GetMethod("RegisterAll", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public)
+                    ?.Invoke(null, null);
+            }
         }
     }
 }
