@@ -337,7 +337,7 @@ internal static partial class Tests
         {
             "Tensor" or "TensorScope" => "",
             "CpuBackend.IRangeKernel" => "Operations",
-            "GraphOps" or "Autograd" or "DifferentiableFunction" => "Autograd",
+            "Autograd" or "DifferentiableFunction" => "Autograd",
             "IScaler" or "DistillationTeacher" or "TeacherDistributions" => "Training",
             "IWeightSource" or "WeightCodec" or "CheckpointFormats" or "ICheckpointFormat" or "ModelSources" or "IModelSource" or "ITensorStore"
                 or "GgufTypes" or "GgufArchitectures" => "Formats",

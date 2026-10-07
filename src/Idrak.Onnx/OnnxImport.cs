@@ -494,7 +494,7 @@ internal sealed class Importer(OnnxModel model, Device device, int[]? sampleShap
     // Graph mode of OnnxImportContext.AddGraphOp.
     internal string AddGraphOp(OnnxNode node, string op, IReadOnlyList<string> inputs, JsonObject? attributes, string output)
     {
-        if (!GraphOps.IsKnown(op))
+        if (!GraphOps.Contains(op))
         {
             throw Unsupported(node, $"the graph operation '{op}', which is not registered (registered: {string.Join(", ", GraphOps.Names)}; add it with GraphOps.Register)");
         }

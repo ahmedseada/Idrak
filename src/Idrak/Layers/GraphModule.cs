@@ -6,16 +6,6 @@ using System.Text.Json.Nodes;
 namespace Idrak.Layers;
 
 /// <summary>
-/// One step of a <see cref="GraphModule"/>: an operation on named values that produces a named value.
-/// </summary>
-/// <param name="Op">"layer" (runs <paramref name="Layer"/> on the first input) or an operation (see <see cref="GraphModule"/> and <see cref="GraphOps"/>).</param>
-/// <param name="Inputs">Names of the input values: the graph input, earlier outputs or constants.</param>
-/// <param name="Output">Name of the value produced.</param>
-/// <param name="Attributes">Settings of the operation (for example "axis" or "perm"), or null.</param>
-/// <param name="Layer">The layer run by a "layer" node.</param>
-public sealed record GraphNode(string Op, IReadOnlyList<string> Inputs, string Output, JsonObject? Attributes = null, Module? Layer = null);
-
-/// <summary>
 /// A network whose layers form a graph rather than a chain: values can be used several times (skip connections,
 /// branches) and combined. Nodes run in order; each is a layer (any type registered in <see cref="LayerTypes"/>:
 /// <see cref="Linear"/>, <see cref="Conv2d"/>, <see cref="BatchNorm"/>, … or your own) or an operation: the structural
@@ -33,7 +23,7 @@ public sealed class GraphModule : Module
     private readonly List<GraphNode> _nodes;
     private readonly List<string> _constantNames;
     private readonly Dictionary<string, Tensor> _constants;
-    private readonly Dictionary<string, HostValue> _integers;
+    private readonly Dictionary<string, GraphValues.HostValue> _integers;
 
     /// <summary>Creates the graph.</summary>
     /// <param name="input">Name of the input value.</param>
@@ -50,7 +40,7 @@ public sealed class GraphModule : Module
         var floats = constants?.ToList() ?? [];
         _constantNames = [.. floats.Select(c => c.Name)];
         _constants = floats.ToDictionary(c => c.Name, c => c.Value);
-        _integers = (integers ?? []).ToDictionary(c => c.Name, c => new HostValue(c.Values, c.Dims));
+        _integers = (integers ?? []).ToDictionary(c => c.Name, c => new GraphValues.HostValue(c.Values, c.Dims));
         var known = new HashSet<string>([input, .. _constants.Keys, .. _integers.Keys]);
         foreach (var node in _nodes)
         {
@@ -64,7 +54,7 @@ public sealed class GraphModule : Module
                 throw new ArgumentException($"Node '{node.Output}' is a layer node without a layer.");
             }
 
-            if (!GraphOps.IsKnown(node.Op))
+            if (!GraphOps.Contains(node.Op))
             {
                 throw new ArgumentException($"Node '{node.Output}' uses the unknown operation '{node.Op}' (known: {string.Join(", ", GraphOps.Names)}); add it with GraphOps.Register.");
             }
@@ -121,7 +111,7 @@ public sealed class GraphModule : Module
     protected override Tensor ForwardCore(Tensor input) =>
         Trace(input)[Output] as Tensor ?? throw new InvalidOperationException($"The output '{Output}' is an integer value, not a tensor.");
 
-    // Every value the graph computes for `input`, by name: tensors, and integers computed on the host (HostValue).
+    // Every value the graph computes for `input`, by name: tensors, and integers computed on the host (GraphValues.HostValue).
     internal Dictionary<string, object> Trace(Tensor input)
     {
         var values = new Dictionary<string, object> { [Input] = input };
@@ -161,20 +151,13 @@ public sealed class GraphModule : Module
     }
 
     // An integer value computed on the host, as the graph holds it.
-    internal static object IntegerValue(long[] values, int[] dims) => new HostValue(values, dims);
+    internal static object IntegerValue(long[] values, int[] dims) => new GraphValues.HostValue(values, dims);
 
     // A value's integers: a host value's own, or a tensor's values truncated.
-    internal static long[] AsIntegers(object value) => value switch
-    {
-        HostValue h => h.Values,
-        Tensor t => t.ToArray().Select(v => (long)v).ToArray(),
-        _ => throw new InvalidOperationException("expected integers"),
-    };
+    internal static long[] AsIntegers(object value) => GraphValues.AsIntegers(value);
 
     // ------------------------------------------------------------------ operations
 
-    /// <summary>An integer value computed on the host (a shape, axes, indices): its values and dimensions.</summary>
-    internal sealed record HostValue(long[] Values, int[] Dims);
 
     private static object Run(GraphNode node, Func<int, object> arg, int count)
     {
@@ -197,17 +180,17 @@ public sealed class GraphModule : Module
             case "concat":
                 int concatAxis = (int)Int("axis", 0);
                 var parts = Enumerable.Range(0, count).Select(arg).ToList();
-                if (parts.All(v => v is HostValue))
+                if (parts.All(v => v is GraphValues.HostValue))
                 {
-                    return new HostValue([.. parts.SelectMany(v => ((HostValue)v).Values)], [parts.Sum(v => ((HostValue)v).Values.Length)]);
+                    return new GraphValues.HostValue([.. parts.SelectMany(v => ((GraphValues.HostValue)v).Values)], [parts.Sum(v => ((GraphValues.HostValue)v).Values.Length)]);
                 }
 
                 var tensors = parts.Select(v => v as Tensor ?? throw new NotSupportedException("concatenating tensors with integer values")).ToList();
                 return Tensor.Concat(tensors, Normalize(concatAxis, tensors[0].Rank));
             case "shape":
-                var shape = arg(0) is Tensor st ? st.Shape.ToArray() : ((HostValue)arg(0)).Dims;
+                var shape = arg(0) is Tensor st ? st.Shape.ToArray() : ((GraphValues.HostValue)arg(0)).Dims;
                 int start = Normalize((int)Int("start", 0), shape.Length + 1), end = a?["end"] is JsonValue e ? Normalize((int)e, shape.Length + 1) : shape.Length;
-                return new HostValue([.. shape[start..end].Select(d => (long)d)], [end - start]);
+                return new GraphValues.HostValue([.. shape[start..end].Select(d => (long)d)], [end - start]);
             case "gather":
                 return Gather(arg(0), arg(1), (int)Int("axis", 0));
             case "slice":
@@ -226,12 +209,12 @@ public sealed class GraphModule : Module
 
     internal static object Binary(string op, object left, object right)
     {
-        if (left is HostValue hl && right is HostValue hr)
+        if (left is GraphValues.HostValue hl && right is GraphValues.HostValue hr)
         {
             long Apply(long x, long y) => op switch { "add" => x + y, "sub" => x - y, "mul" => x * y, _ => x / y };
-            return hl.Values.Length == hr.Values.Length ? new HostValue([.. hl.Values.Zip(hr.Values, Apply)], hl.Dims)
-                : hr.Values.Length == 1 ? new HostValue([.. hl.Values.Select(v => Apply(v, hr.Values[0]))], hl.Dims)
-                : new HostValue([.. hr.Values.Select(v => Apply(hl.Values[0], v))], hr.Dims);
+            return hl.Values.Length == hr.Values.Length ? new GraphValues.HostValue([.. hl.Values.Zip(hr.Values, Apply)], hl.Dims)
+                : hr.Values.Length == 1 ? new GraphValues.HostValue([.. hl.Values.Select(v => Apply(v, hr.Values[0]))], hl.Dims)
+                : new GraphValues.HostValue([.. hr.Values.Select(v => Apply(hl.Values[0], v))], hr.Dims);
         }
 
         var a = left as Tensor ?? throw new NotSupportedException("integer values with tensors");
@@ -302,14 +285,14 @@ public sealed class GraphModule : Module
     {
         var index = indices switch
         {
-            HostValue h => h,
-            Tensor t => new HostValue([.. t.ToArray().Select(v => (long)v)], t.Shape.ToArray()),
+            GraphValues.HostValue h => h,
+            Tensor t => new GraphValues.HostValue([.. t.ToArray().Select(v => (long)v)], t.Shape.ToArray()),
             _ => throw new InvalidOperationException("bad indices"),
         };
-        if (data is HostValue host)
+        if (data is GraphValues.HostValue host)
         {
             long Pick(long i) => host.Values[i < 0 ? i + host.Values.Length : i];
-            return new HostValue([.. index.Values.Select(Pick)], index.Dims);
+            return new GraphValues.HostValue([.. index.Values.Select(Pick)], index.Dims);
         }
 
         var x = (Tensor)data;
@@ -327,11 +310,11 @@ public sealed class GraphModule : Module
             throw new NotSupportedException("slices with a step other than 1");
         }
 
-        if (data is HostValue host)
+        if (data is GraphValues.HostValue host)
         {
             int n = host.Values.Length;
             int from = (int)Math.Clamp(starts[0] < 0 ? starts[0] + n : starts[0], 0, n), to = (int)Math.Clamp(ends[0] < 0 ? ends[0] + n : ends[0], 0, n);
-            return new HostValue(host.Values[from..Math.Max(from, to)], [Math.Max(0, to - from)]);
+            return new GraphValues.HostValue(host.Values[from..Math.Max(from, to)], [Math.Max(0, to - from)]);
         }
 
         var x = (Tensor)data;
@@ -351,22 +334,22 @@ public sealed class GraphModule : Module
 
     private static object Unsqueeze(object data, long[] axes)
     {
-        int[] dims = data is Tensor t ? t.Shape.ToArray() : ((HostValue)data).Dims;
+        int[] dims = data is Tensor t ? t.Shape.ToArray() : ((GraphValues.HostValue)data).Dims;
         var result = dims.ToList();
         foreach (int axis in axes.Select(v => Normalize((int)v, dims.Length + axes.Length)).Order())
         {
             result.Insert(axis, 1);
         }
 
-        return data is Tensor tensor ? tensor.Reshape([.. result]) : new HostValue(((HostValue)data).Values, [.. result]);
+        return data is Tensor tensor ? tensor.Reshape([.. result]) : new GraphValues.HostValue(((GraphValues.HostValue)data).Values, [.. result]);
     }
 
     private static object Squeeze(object data, long[]? axes)
     {
-        int[] dims = data is Tensor t ? t.Shape.ToArray() : ((HostValue)data).Dims;
+        int[] dims = data is Tensor t ? t.Shape.ToArray() : ((GraphValues.HostValue)data).Dims;
         var drop = axes?.Select(v => Normalize((int)v, dims.Length)).ToHashSet() ?? [.. Enumerable.Range(0, dims.Length).Where(i => dims[i] == 1)];
         int[] result = [.. dims.Where((d, i) => !drop.Contains(i))];
-        return data is Tensor tensor ? tensor.Reshape(result) : new HostValue(((HostValue)data).Values, result);
+        return data is Tensor tensor ? tensor.Reshape(result) : new GraphValues.HostValue(((GraphValues.HostValue)data).Values, result);
     }
 
     // ------------------------------------------------------------------ description
