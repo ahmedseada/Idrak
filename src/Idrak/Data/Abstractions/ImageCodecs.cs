@@ -204,7 +204,7 @@ public static class ImageCodecs
                     {
                         var other = app.Decode(file);
                         run.Done(Comparisons.Exact((answer.Channels, answer.Height, answer.Width), (other.Channels, other.Height, other.Width))
-                                 ?? Comparisons.Numbers(answer.Pixels, other.Pixels));
+                                 ?? Comparisons.Difference(answer.Pixels, other.Pixels, 1e-5f));
                     }
                     catch (Exception e) when (e is not OperationCanceledException)
                     {

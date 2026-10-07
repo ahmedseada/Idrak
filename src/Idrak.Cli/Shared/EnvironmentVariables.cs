@@ -76,6 +76,7 @@ internal static class EnvironmentVariables
         new("IDRAK_DISABLE_HIP", Devices, "not set", "1 or true: HIP devices are not looked for", OnDevice),
         new("IDRAK_VULKAN_DEFAULT", Devices, "not set", "1: a Vulkan GPU may be the default device (otherwise only by name until its kernels are tuned)", OnDevice),
         new("IDRAK_HIP_DEFAULT", Devices, "not set", "1: a HIP GPU may be the default device (after CUDA, before Vulkan)", OnDevice),
+        new("IDRAK_RETRY_ON_HOST", Devices, "not set (a failing GPU kernel throws)", "1 or all: an operation whose GPU kernel fails runs again on the CPU (reported to telemetry, counted as a host call); a list of kinds (cuda,vulkan,hip): only those devices. Errors found after an operation returned can't be retried", OnDevice),
         new("IDRAK_CUDA_DEBUG", Devices, "not set", "1: synchronize after every CUDA kernel and name the one that failed (slow)", OnDevice),
         new("IDRAK_WINDOW_KERNELS", Devices, "on", "0 or false: sliding-window and soft-capped attention through basic operations over the whole cache instead of the attention kernels (to compare or isolate them)", OnDevice),
         new("IDRAK_POWER_SOURCE", Devices, "as the system reports", "ac or battery: the power source tuning choices are measured and kept under", OnDevice),

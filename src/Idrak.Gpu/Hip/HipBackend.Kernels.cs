@@ -39,6 +39,7 @@ internal sealed unsafe partial class HipBackend
             if (!_kernelsTried)
             {
                 _kernelsTried = true;
+                using var quiet = DeviceException.Handled();             // kept as KernelsUnavailableReason, not reported
                 try
                 {
                     _kernels = LoadKernels();

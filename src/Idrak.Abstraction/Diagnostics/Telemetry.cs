@@ -38,13 +38,19 @@ public enum TelemetryLevel
     Engine = 1 << 7,
 
     /// <summary>
+    /// Device failures (<see cref="DeviceFailed"/>): a GPU error, and an operation retried on the CPU. Rare; the built-in
+    /// <see cref="ConsoleLogger"/> and <see cref="JsonLinesLogger"/> always include it.
+    /// </summary>
+    Devices = 1 << 8,
+
+    /// <summary>
     /// The override loop (<see cref="Abstraction.Overrides"/>): every call of an app's implementation that fell back to
     /// the library default, and every call compared under <see cref="SlotPolicy.Shadow"/>.
     /// </summary>
-    Overrides = 1 << 8,
+    Overrides = 1 << 9,
 
     /// <summary>Everything.</summary>
-    All = Training | Batches | Gradients | Layers | Operations | Inference | Tools | Engine | Overrides,
+    All = Training | Batches | Gradients | Layers | Operations | Inference | Tools | Engine | Devices | Overrides,
 }
 
 /// <summary>
@@ -99,6 +105,11 @@ public interface ITelemetryHook
 
     /// <summary>The inference engine loaded or unloaded a model, or completed or rejected a request (<see cref="TelemetryLevel.Engine"/>).</summary>
     void OnEngine(in EngineEvent e)
+    {
+    }
+
+    /// <summary>A device failed, or an operation was retried on the CPU after its kernel failed (<see cref="TelemetryLevel.Devices"/>).</summary>
+    void OnDeviceFailed(in DeviceFailed e)
     {
     }
 
@@ -264,6 +275,18 @@ public static class Telemetry
             if ((h.Levels & TelemetryLevel.Engine) != 0)
             {
                 h.OnEngine(in e);
+            }
+        }
+    }
+
+    /// <summary>Reports a device failure, to the hooks listening at <see cref="TelemetryLevel.Devices"/>.</summary>
+    public static void DeviceFailed(in DeviceFailed e)
+    {
+        foreach (var h in s_hooks)
+        {
+            if ((h.Levels & TelemetryLevel.Devices) != 0)
+            {
+                h.OnDeviceFailed(in e);
             }
         }
     }

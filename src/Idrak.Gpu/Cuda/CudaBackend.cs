@@ -190,8 +190,10 @@ internal sealed unsafe partial class CudaBackend : Backend
             return null;
         }
 
-        // Each module on its own: a driver that rejects one (a JIT compiler error) still runs the others.
+        // Each module on its own: a driver that rejects one (a JIT compiler error) still runs the others. Its error is
+        // the reason tensor cores are off (TensorCoreUnavailableReason), not a failure to report.
         MakeCurrent();
+        using var quiet = DeviceException.Handled();
         var kernels = new Dictionary<string, IntPtr>();
         var errors = new List<string>();
         foreach (var (moduleName, names, source) in PtxKernels.TensorCoreModules)
@@ -382,6 +384,7 @@ internal sealed unsafe partial class CudaBackend : Backend
             return (0, reason);
         }
 
+        using var quiet = DeviceException.Handled();                     // a failed probe is a reason the backend reports, not an error
         try
         {
             int result = cuInit(0);

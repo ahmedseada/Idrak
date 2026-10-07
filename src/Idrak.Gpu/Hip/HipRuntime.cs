@@ -5,8 +5,8 @@ using System.Runtime.InteropServices;
 
 namespace Idrak.Gpu.Hip;
 
-/// <summary>Thrown when a HIP runtime call fails.</summary>
-public sealed class HipException(string message) : Exception(message);
+/// <summary>Thrown when a HIP runtime call or kernel fails (a <see cref="DeviceException"/>: reported to telemetry).</summary>
+public sealed class HipException(string message) : DeviceException("hip", message);
 
 /// <summary>
 /// Bindings to the HIP runtime (libamdhip64.so on Linux, from ROCm; amdhip64_N.dll on Windows, from the HIP SDK or the

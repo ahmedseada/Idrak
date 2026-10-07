@@ -160,6 +160,19 @@
   `.Vulkan`, `.Hip` are `Idrak.Gpu.Cuda`, `.Vulkan`, `.Hip` (`CudaException`, `VulkanException`, `HipException`).
 - `Backend.Hardware` (`BackendHardware`: memory, compute units, lanes, kernel width, hardware kind, driver) is what a
   device reports for listings; `DeviceListing` reads it, so a device from outside the library shows these values too.
+- GPU failures are loud and reported (plan 10, decision 13). `CudaException`, `VulkanException` and `HipException`
+  derive from the new `DeviceException`, which reports a `DeviceFailed` event when raised (`TelemetryLevel.Devices`,
+  `ITelemetryHook.OnDeviceFailed`; `ConsoleLogger` and `JsonLinesLogger` always include it). While retry is off its hint
+  says how to switch it on. `Backend.RetryOnHost` (first value from `IDRAK_RETRY_ON_HOST`: `1`/`all`, or `cuda,vulkan`)
+  opts in to running an operation on the CPU when the device's kernel throws; each retry is reported and counted in
+  `Kernels.HostCalls`. Registered kernels and asynchronous GPU errors are not retried. `idrak trace --levels devices`.
+- New package `Idrak.Abstraction.Testing` (needs no test framework): `Conformance.Check(device)` runs every operation on a
+  device against the CPU through the dispatcher (one report entry per operation, naming the kernel that ran); contract
+  suites for tokenizers, RoPE scalings and token samplers, and `ContractSuite<T>` for your own; `Stress.Run`; and
+  `Regression.Save`/`Replay` for cases that once failed. Idrak's own per-device checks run through it.
+- A plain-loop device written outside the library (`tests/Idrak.PluginTests`) passes the kit, and the
+  `Idrak.Samples.Override` sample checks an app's own token sampler with the kit from its own tests.
+- `RopeScalings.Default(type)`: the library's own method for a scaling type, even when an app registered its own.
 - New command `idrak kernels [-d DEVICE] [--source KIND] [-j]`: per operation, the kernel a device runs and what runs
   without its own (plan 9, phase 2).
 

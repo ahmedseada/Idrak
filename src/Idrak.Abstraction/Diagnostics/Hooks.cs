@@ -9,7 +9,11 @@ using System.Threading.Channels;
 namespace Idrak.Abstraction.Diagnostics;
 
 /// <summary>Writes human-readable progress to the console (or any <see cref="TextWriter"/>).</summary>
-/// <param name="levels">What to print. <see cref="TelemetryLevel.Training"/> gives one line per epoch.</param>
+/// <param name="levels">
+/// What to print. <see cref="TelemetryLevel.Training"/> gives one line per epoch. Device failures
+/// (<see cref="TelemetryLevel.Devices"/>) and an app's overrides falling back or compared (<see cref="TelemetryLevel.Overrides"/>)
+/// are always printed, unless <paramref name="levels"/> is <see cref="TelemetryLevel.None"/>.
+/// </param>
 /// <param name="epochInterval">Print every n-th epoch (the first and last are always printed; "*" marks a new best).</param>
 /// <param name="batchInterval">Print every n-th batch when <see cref="TelemetryLevel.Batches"/> is on.</param>
 /// <param name="output">Destination; defaults to <see cref="Console.Out"/>.</param>
@@ -19,7 +23,7 @@ public sealed class ConsoleLogger(TelemetryLevel levels = TelemetryLevel.Trainin
     private readonly TextWriter _out = output ?? Console.Out;
 
     /// <inheritdoc />
-    public TelemetryLevel Levels { get; } = levels;
+    public TelemetryLevel Levels { get; } = levels == TelemetryLevel.None ? levels : levels | TelemetryLevel.Devices | TelemetryLevel.Overrides;
 
     /// <inheritdoc />
     public void OnTrainingStarted(in TrainingStarted e)
@@ -110,6 +114,11 @@ public sealed class ConsoleLogger(TelemetryLevel levels = TelemetryLevel.Trainin
         EngineEventKind.RequestCompleted => $"Engine: {e.Model} request in {e.Duration.TotalMilliseconds:F2} ms (queued {e.QueueWait.TotalMilliseconds:F2} ms, batch {e.BatchSize})",
         _ => $"Engine: {e.Model} request rejected: {e.Reason}",
     });
+
+    /// <inheritdoc />
+    public void OnDeviceFailed(in DeviceFailed e) =>
+        _out.WriteLine($"Device {e.Device}{(e.Operation is { } op ? " " + op : "")} failed: {e.Message}"
+            + (e.RetriedOnHost ? " (retried on the CPU)" : "") + (e.Hint is { } hint ? Environment.NewLine + "  " + hint : ""));
 
     /// <inheritdoc />
     public void OnOverrideFellBack(in OverrideFellBack e) =>
@@ -278,6 +287,9 @@ public sealed class ChannelTelemetry : ITelemetryHook
     public void OnEngine(in EngineEvent e) => Write(e);
 
     /// <inheritdoc />
+    public void OnDeviceFailed(in DeviceFailed e) => Write(e);
+
+    /// <inheritdoc />
     public void OnOverrideFellBack(in OverrideFellBack e) => Write(e);
 
     /// <inheritdoc />
@@ -293,10 +305,14 @@ public sealed class JsonLinesLogger : ITelemetryHook, IDisposable, IAsyncDisposa
     private readonly ChannelTelemetry _channel;
     private readonly Task _writer;
 
-    /// <summary>Starts logging to <paramref name="path"/> (overwritten if it exists).</summary>
+    /// <summary>
+    /// Starts logging to <paramref name="path"/> (overwritten if it exists). Device failures
+    /// (<see cref="TelemetryLevel.Devices"/>) and an app's overrides falling back or compared
+    /// (<see cref="TelemetryLevel.Overrides"/>) are always logged, unless <paramref name="levels"/> is <see cref="TelemetryLevel.None"/>.
+    /// </summary>
     public JsonLinesLogger(string path, TelemetryLevel levels = TelemetryLevel.Training | TelemetryLevel.Batches | TelemetryLevel.Inference)
     {
-        _channel = new ChannelTelemetry(levels);
+        _channel = new ChannelTelemetry(levels == TelemetryLevel.None ? levels : levels | TelemetryLevel.Devices | TelemetryLevel.Overrides);
         var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read, 1 << 16, useAsync: true);
         _writer = Task.Run(() => WriteAsync(stream));
     }
@@ -330,6 +346,9 @@ public sealed class JsonLinesLogger : ITelemetryHook, IDisposable, IAsyncDisposa
 
     /// <inheritdoc />
     public void OnEngine(in EngineEvent e) => _channel.OnEngine(in e);
+
+    /// <inheritdoc />
+    public void OnDeviceFailed(in DeviceFailed e) => _channel.OnDeviceFailed(in e);
 
     /// <inheritdoc />
     public void OnOverrideFellBack(in OverrideFellBack e) => _channel.OnOverrideFellBack(in e);
@@ -477,6 +496,14 @@ public static class TelemetryJson
                 w.WriteNumber("queue_wait_ms", e.QueueWait.TotalMilliseconds);
                 w.WriteNumber("batch_size", e.BatchSize);
                 if (e.Reason is { } reason) w.WriteString("reason", reason);
+                break;
+            case DeviceFailed e:
+                w.WriteString("event", "device_failed");
+                w.WriteString("device", e.Device);
+                if (e.Operation is { } operation) w.WriteString("operation", operation);
+                w.WriteString("message", e.Message);
+                w.WriteBoolean("retried_on_host", e.RetriedOnHost);
+                if (e.Hint is { } hint) w.WriteString("hint", hint);
                 break;
             case OverrideFellBack e:
                 w.WriteString("event", "override_fell_back");

@@ -274,6 +274,7 @@ internal sealed unsafe partial class VulkanBackend
             };
             try
             {
+                using var quiet = DeviceException.Handled();
                 _ = PipelineOf(kernel);
             }
             catch (VulkanException)
