@@ -124,11 +124,11 @@ internal static partial class Tests
         for (int kind = 0; kind < 3; kind++)
         {
             int k = kind;
-            GradCheck(device, [3, 5], x => (Tensor.GatedActivation(x, other, k) * mix).Sum(), avoidZero: k == 2);
-            GradCheck(device, [3, 5], x => (Tensor.GatedActivation(other, x, k) * mix).Sum());
+            GradCheck(device, [3, 5], x => (Tensor.GatedActivation(x, other, (FeedForwardActivation)k) * mix).Sum(), avoidZero: k == 2);
+            GradCheck(device, [3, 5], x => (Tensor.GatedActivation(other, x, (FeedForwardActivation)k) * mix).Sum());
             using var g = Tensor.From([.. Enumerable.Range(0, 15).Select(i => (i - 7) * 0.4f)], [3, 5], device);
             var separate = (k switch { 0 => g * g.Sigmoid(), 1 => g.Gelu(), _ => g.Relu() }) * other;
-            AssertClose(separate.ToArray(), Tensor.GatedActivation(g, other, k).ToArray(), 1e-5f, $"gated activation {k}");
+            AssertClose(separate.ToArray(), Tensor.GatedActivation(g, other, (FeedForwardActivation)k).ToArray(), 1e-5f, $"gated activation {k}");
         }
 
         // Fused RMS normalization with a gain (and an offset, as Gemma stores it).

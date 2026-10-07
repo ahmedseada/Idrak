@@ -178,6 +178,22 @@ dotnet tool install -g Idrak.Cli --add-source pkg --prerelease          # the id
 idrak test -d cpu                                                       # the test suite on one device
 ```
 
+**An app against this clone** (a library fix tested in the app on its next build, before any release): keep the app's
+`PackageReference`s and add [build/IdrakFromSource.targets](build/IdrakFromSource.targets), which swaps every Idrak
+package for the clone's project while `IdrakFromSource` is set:
+
+```xml
+<!-- the app's Directory.Build.props -->
+<PropertyGroup><IdrakFromSource>/path/to/Idrak</IdrakFromSource></PropertyGroup>
+<!-- the app's Directory.Build.targets -->
+<Import Project="$(IdrakFromSource)/build/IdrakFromSource.targets" Condition="'$(IdrakFromSource)' != ''" />
+```
+
+Unset it to use the packages again; to check the packaged form first, `dotnet pack -c Release -o feed` in the clone and
+restore the app with `-p:RestoreAdditionalProjectSources=/path/to/Idrak/feed`, asking for the packed version exactly (a
+local `0.4.0-dev.…` build ranks below a release of the same number on nuget.org). `samples/Idrak.Samples.Override`
+builds both ways.
+
 Step-by-step guides for Windows, Linux and WSL2, macOS and Android phones (Termux): [installation/](installation/README.md).
 
 ## idrak: the command-line tool
@@ -217,31 +233,40 @@ Licensed under the [Apache License 2.0](LICENSE) (see [NOTICE](NOTICE)) from 0.1
 ## Layout
 
 ```
-src/Idrak/
-  Tensor*.cs                        N-D tensors, operators, autograd, shape ops, number-type interop
+src/Idrak.Abstraction/              no dependencies: every contract more than one package uses, with its small default
+  Tensors/                          Tensor (operators, autograd, shape ops, decoding and distillation parts), Autograd,
+                                    TensorScope, ActivationMemory, MixedPrecision (bfloat16, FP8), ComputeGraph (graphs)
   Device.cs, ComputeResources.cs    devices; thread and memory budgets
-  Autograd.cs, TensorScope.cs       NoGrad(); deterministic disposal
-  Losses.cs                         MSE, MAE, CrossEntropy, BinaryCrossEntropy(WithLogits), token log-probabilities
-  MixedPrecision.cs, ComputeGraph.cs  tensor-core precision (bfloat16, FP8); CUDA graph capture and replay
-  Sampling.cs                       the token sampler (temperature, top-k/p, min-p, penalties)
+  Devices/                          the device contract (Backend, Storage, capabilities, providers), the CPU device (every
+                                    operation's reference and every device's host fallback), offloading and host staging
+  Operations/                       operations as data: descriptors, Kernels (register, chain, trace), plug-in operations
+  Modules/                          Module, RecurrentModule, ILinearAdapter with LoRA and DoRA
+  Training/                         Optimizer, Sgd, Adam, AdamW, learning-rate schedules
+  Generation/                       tokenizers, chat (messages, templates, IChatModel, tools), tool-call formats, packed
+                                    weights (int8, int4, bfloat16), key/value caches, RoPE scalings, DecoderSpec
+  Data/, Formats/, Retrieval/, Serving/  sample sources, downloads, model sources, IEmbedder, the engine's model kinds
+  Diagnostics/                      telemetry: the hub, events, ConsoleLogger, MetricsRecorder, JsonLinesLogger
+  Overrides/                        slots: every registry's library default and the app's registration over it, failure
+                                    policies, versions, the overrides report
+src/Idrak/                          core: layers, training, data, inference, model loading, ONNX
   Layers/                           Linear, Conv2d, MaxPool2d, GlobalAveragePool2d, Flatten,
-                                    BatchNorm, LayerNorm, Embedding, LSTM, GRU,
-                                    MultiHeadAttention, TransformerEncoderLayer, PositionalEncoding,
+                                    BatchNorm, LayerNorm, RMSNorm, Embedding, LSTM, GRU,
+                                    MultiHeadAttention, TransformerEncoderLayer, PositionalEncoding, Decoder,
                                     ReLU, Tanh, Sigmoid, GELU, Softmax, Dropout, Lambda, Sequential;
                                     Network builder, Blocks, Architectures; GraphModule (layers in a graph: skip
-                                    connections, branches); freezing, LoRA (ModuleExtensions)
-  Optimizers/                       Sgd, Adam, AdamW, GroupedOptimizer, schedulers (step, exponential, cosine + warm-up)
+                                    connections, branches); freezing (ModuleExtensions)
+  Losses.cs                         MSE, MAE, CrossEntropy, BinaryCrossEntropy(WithLogits), token log-probabilities
+  Optimizers/                       AdamW8Bit, GroupedOptimizer, HostOptimizer
   Data/                             Dataset (CSV, class labels, feature shapes), sample sources (CSV, images, tokens, .npy),
                                     views, image codecs and transforms, scalers, DataLoader, DataExtensions
-  Training/                         Trainer, TrainingRun, Metric (MAE, RMSE, Accuracy), RegressionReport
+  Training/                         Trainer, callbacks, TrainingRun, distillation from stored logits
   Inference/                        Predictor, ModelPackage (.ikm), InferenceEngine
   Models/                           pretrained models: PretrainedModel and the architecture registry (Llama, Mistral,
                                     Qwen2/3, Gemma 1/2/3, Mixtral, Qwen2-MoE, Qwen3-MoE); SafeTensors, Gguf, GgufModel
                                     (F32/F16/BF16, Q4_0–Q8_0, K-quants, IQ4); BpeTokenizer (tokenizer.json); PEFT
                                     adapters; ModelSource (folders, .gguf files, the local model store)
   Onnx/                             OnnxExport, OnnxImport (chains and graphs), the protobuf reader and writer
-  Diagnostics/                      Telemetry hub, events, ConsoleLogger, MetricsRecorder,
-                                    ChannelTelemetry, JsonLinesLogger
+  Diagnostics/                      device listing, GPU profiler
 src/Idrak.Abstraction.Testing/      the testing kit (Idrak.Abstraction only): Conformance (devices operation by operation
                                     against the CPU, and contract suites), Stress, Regression (saved failing cases)
 src/Idrak.Gpu/                      the GPU devices (Idrak.Abstraction only; the Idrak package brings it): Cuda (PTX
@@ -249,8 +274,8 @@ src/Idrak.Gpu/                      the GPU devices (Idrak.Abstraction only; the
                                     decoding, graphs, cooperative matrices), Hip (hipRTC kernels); the CPU device, the
                                     device contract and the device registry are in Idrak.Abstraction/Devices
 src/Idrak.Nlp/                      optional package (Idrak and Idrak.Data): language
-  Generation/                       TextGenerator (streaming, batches), chat, Conversation, tools (ToolRegistry),
-                                    ModelHost, CodingAgent and CodingTools
+  Generation/                       TokenSampler (temperature, top-k/p, min-p, penalties, on the device), TextGenerator
+                                    (streaming, batches), chat, Conversation, tools, ModelHost, CodingAgent and CodingTools
   Retrieval/                        chunking, BM25, TextEncoder (bi-encoder), VectorIndex, RetrievalIndex (hybrid
                                     search with rank fusion), CrossEncoder (re-ranking), Rag pipeline, search tool
   Inference/                        the engine's text and chat models (GenerativeModels)
@@ -258,17 +283,17 @@ src/Idrak.Nlp/                      optional package (Idrak and Idrak.Data): lan
   FineTuning, TuningManifest        LoRA / DoRA / QLoRA fine-tuning, preference losses, distillation (a teacher model or
                                     stored top-k logits), packing, CUDA graphs, memory fallbacks; adapters
   AnswerScorer, Evaluation          log-probabilities of given answers, answer metrics
-src/Idrak.Data/                     optional package, no dependencies: JSON Lines, JSON, CSV, text, code and Parquet
+src/Idrak.Data/                     optional package (Idrak): JSON Lines, JSON, CSV, text, code and Parquet
                                     files (also compressed and archived); Hugging Face, GitHub, Kaggle, Zenodo and URL
                                     sources with a download cache; rows into conversations; recipes; Hugging Face model
                                     ids (HuggingFaceModels: found in a cache or downloaded once)
 src/Idrak.AspNetCore/               optional package: serve models over HTTP (AddIdrak(), MapPredictor, MapGenerate,
                                     MapChatApi, MapCompletionsApi for the OpenAI-compatible /v1 API, MapIdrakStatus)
 src/Idrak.Mcp/                      optional package: tools of Model Context Protocol servers, and serving tools and models over MCP
-src/Idrak.Vision/                   optional package, no dependencies: RegionClassifier (ComponentProposer), ContentFrame,
-                                    ChannelStatistics, ModelDetector, ModelSegmenter; the vision contracts and small defaults
-                                    (Foreground, ConnectedComponents, boxes, NonMaxSuppression, masks and metrics) are in
-                                    Idrak.Abstraction/Vision
+src/Idrak.Vision/                   optional package (Idrak): RegionClassifier (ComponentProposer), ContentFrame,
+                                    ChannelStatistics, ModelDetector, ModelSegmenter, Foreground, ConnectedComponents,
+                                    NonMaxSuppression, segmentation metrics; its contracts (boxes, detection decoding,
+                                    segmentation) under Abstractions/
 src/Idrak.Onnx.Runtime/             optional package: run .onnx models with ONNX Runtime as Idrak modules
 src/Idrak.Cli/                      idrak: the command-line tool (commands under Commands/ in ten groups, shared helpers
                                     under Shared/: the environment table, saved variables, Arabic shaping and bidi)
@@ -290,15 +315,19 @@ samples/
   Idrak.Samples.OnnxImport          imports another framework's .onnx model, runs it on Idrak (CPU/CUDA), checks its outputs
   Idrak.Samples.Chat                chat with a Hugging Face or GGUF language model: info, chat, profile, and a check against transformers
   Idrak.Samples.CodingAgent         a coding agent (read, search, edit, run commands) on a language model, and a task-suite runner
-  Idrak.Samples.Override            an app that overrides one contract (its own token sampler, fixing NaN logits)
-  Idrak.Samples.Override.Tests      the app's tests: the testing kit on its override (conformance, stress, saved cases)
+  Idrak.Samples.Override            an app at the end of the override loop: its token sampler (fixing NaN logits) became
+                                    the library's default, so it deleted it; references Idrak as packages, built from
+                                    this clone (IdrakFromSource)
+  Idrak.Samples.Override.Tests      the app's tests: the testing kit on the default it relies on (conformance, stress)
   Shared/SampleOptions.cs           command-line options shared by the samples (train / predict modes)
   Shared/Gpt/                       GPT model, generation with metrics, training (console + Web API)
 tests/Idrak.Tests                   self-contained test runner: every test on the CPU and on every CUDA, Vulkan and HIP
                                     GPU present; benchmarks (--bench-cpu, --bench-vulkan, --bench-window, ...)
 tests/Idrak.PluginTests             plug-ins written outside the library (public API only), loaded by the runner, and a
                                     plain-loop device (ReferenceDevice) that passes the testing kit
-  data/                             small GGUF, safetensors and Parquet fixtures (made by the scripts in tools/)
+  data/                             small GGUF, safetensors and Parquet fixtures (made by the scripts in tools/), saved
+                                    regression cases, the internals and inventory lists the tests keep exact
+build/IdrakFromSource.targets       builds an app against a local clone instead of the packages (see Install)
 tools/
   pytorch/xor_to_onnx.py            trains XOR in PyTorch and exports it to ONNX with PyTorch's outputs, for OnnxImport
   pytorch/export_models.py          exports a PyTorch CNN or ResNet (skip connections) to ONNX with PyTorch's outputs
@@ -1432,6 +1461,17 @@ devices: GPU failures follow `Backend.RetryOnHost` instead.
 failures, fallbacks and comparisons so far; `idrak overrides -P MyPlugin.dll` prints it for a plug-in, and
 `idrak trace --levels overrides -- COMMAND` shows the events as they happen. The comparisons (`Comparisons`, in
 `Idrak.Abstraction`) are the ones the testing kit's conformance checks use.
+
+When an app's fix proves itself, the library makes it general and ships it as a new **version** of the default; the
+previous one stays reachable for a release (`Default(name, version)`), and the report says when an override was built
+against a release older than the default it shadows (`SlotOverride.Outdated`), so the app can delete it. The first one:
+the token sampler's rule for NaN and infinite logits (version 2 since 0.4.0), which `samples/Idrak.Samples.Override`
+once fixed in its own sampler and now gets from the library:
+
+```csharp
+TokenSamplers.DefaultVersion("default");                                                  // 2
+TokenSamplers.Register("default", TokenSamplers.Default("default", version: 1)!);        // 0.3's behavior back, if needed
+```
 
 ## Telemetry: logging and tracking
 

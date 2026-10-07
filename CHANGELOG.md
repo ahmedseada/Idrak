@@ -9,9 +9,10 @@
   device's host fallback). `dotnet add package Idrak` brings it along. The GPU devices (CUDA, Vulkan, HIP) stay in
   `Idrak`; `Device.Available` lists them as before, even when no other type of Idrak has been used yet.
 - Projects with implicit usings (the default for new projects) get global usings for `Idrak.Abstraction`,
-  `Idrak.Abstraction.Training`, `.Data`, `.Diagnostics`, `.Formats`, `.Generation`, `.Modules`, `.Retrieval`, `.Serving`
-  and `.Vision` from the package, so they compile unchanged. Projects
-  without implicit usings add those `using` lines.
+  `Idrak.Abstraction.Training`, `.Data`, `.Diagnostics`, `.Formats`, `.Generation`, `.Modules`, `.Retrieval` and
+  `.Serving` from the `Idrak.Abstraction` package (which `Idrak` brings), so most code naming those types compiles
+  unchanged. Projects without implicit usings add those `using` lines; a package's own `.Abstractions` namespaces are
+  never global usings.
 - Moved types (source and binary change: rebuild plug-ins compiled against 0.3.x):
 
   | Was | Now |
@@ -30,14 +31,14 @@
   | `Idrak.Training.ITrainerCallback`, `TrainerContext`, `TrainingHistory` | the same names under `Idrak.Abstraction.Training`; `TrainerContext.Trainer` is gone (use `Model`, `Optimizer`) |
   | `Idrak.Diagnostics` event records (`BatchCompleted`, `EpochCompleted`, `LayerForward`, ...) | the same names under `Idrak.Abstraction.Diagnostics` |
   | `Idrak.Generation`: tokenizers (`ITokenizer`, `CharTokenizer`, `WordTokenizer`), chat (`ChatTemplate`, `ChatMessage`, `ToolCall`, `ToolDefinition`, `IChatModel`, `ChatRequest`, `ChatChunk`, `GenerationStats`, `GenerationOptions`), tool-call parsing (`IToolCallParser`, `ToolCallFormats` and the built-in parsers) | the same names under `Idrak.Abstraction.Generation` |
-  | `Idrak.ITokenSampler`, `TokenSampler`, `SamplerRequest` | the same names under `Idrak.Abstraction.Generation` |
+  | `Idrak.ITokenSampler`, `TokenSampler`, `SamplerRequest` | `Idrak.Generation.Abstractions.ITokenSampler`, `SamplerRequest`, `Idrak.Generation.TokenSampler` (Idrak.Nlp) |
   | `Idrak.Layers`: `PackedWeight`, `Int8Weight`, `Int4Weight`, `BFloat16Weight`, `WeightFormat`, `KeyValueLayout`, `KeyValueLayouts`, `KeyValueCache`, `KeyValueFormat`, `DecodingContext`, `ICachedModule`, `RopeScaling`, `RopeScalings` | the same names under `Idrak.Abstraction.Generation` |
   | `Idrak.Layers.ILinearAdapter`, `LoraAdapter`, `DoraAdapter` | `Idrak.Abstraction.Modules`; adapters receive an `ILinearLayer` (sizes, weight values, base product), which `Linear` implements, instead of `Linear` |
   | `Idrak.Layers.RecurrentModule` | `Idrak.Abstraction.Modules.RecurrentModule` (`LSTM`, `GRU` stay in `Idrak.Layers`) |
   | `Idrak.Layers.IWeightSource` | `Idrak.Abstraction.Formats.IWeightSource` |
   | `Idrak.Diagnostics.Telemetry`, `TelemetryLevel`, `TelemetryBuilder`, `ITelemetryHook` and the built-in hooks | the same names under `Idrak.Abstraction.Diagnostics` (`GpuProfiler` and the device listing stay) |
   | `Idrak.Retrieval.IEmbedder`, `IReranker`, `IRetriever`, `IVectorStore`, `Chunk`, `RetrievedChunk` | the same names under `Idrak.Abstraction.Retrieval` |
-  | `Idrak.Vision`: boxes, detections, non-maximum suppression, `IObjectDetector`, `ModelDetector`, `Foreground`, `ForegroundImage`, `ConnectedComponents`, segmentation (`SegmentationMask`, metrics, `ISegmenter`, `ModelSegmenter`), `IRegionProposer` | the same names under `Idrak.Abstraction.Vision` |
+  | `Idrak.Vision`: boxes, detections, non-maximum suppression, `IObjectDetector`, `ModelDetector`, `Foreground`, `ForegroundImage`, `ConnectedComponents`, segmentation (`SegmentationMask`, metrics, `ISegmenter`, `ModelSegmenter`), `IRegionProposer` | still `Idrak.Vision` (now its own package), the contracts under `Idrak.Vision.Abstractions` |
   | `Idrak.Inference.IPredictor<TIn, TOut>` | `Idrak.Abstraction.Serving.IPredictor<TIn, TOut>` |
   | `Idrak.Layers.LayerTypes`, `GraphOps`, `GraphOp`, `GraphOpContext`, `GraphNode` | the same names under `Idrak.Abstraction.Modules`; Idrak registers its layer types and graph operations on first use |
   | `Idrak.Layers.NetworkOps`, `NetworkOp`, `NetworkOpArguments` | the same names under `Idrak.Abstraction.Modules`; steps receive an `INetworkBuilder` (`CurrentShape`, `Lambda`, `Add(factory, shape)`, `Op`) instead of the concrete `NetworkBuilder`; `NetworkOps.Contains` is new and `NetworkOpArguments` has a public constructor |
@@ -55,6 +56,9 @@
   | internal `GgufTypes.Find`, `GgufArchitectures.Find`, `TokenizerComponents.Normalizer`/`PreTokenizer`/`Decoder` | public `Find`, `FindNormalizer`, `FindPreTokenizer`, `FindDecoder` |
   | `Idrak.Inference.EngineModel`, `EngineModelKind` | `Idrak.Abstraction.Serving.EngineModel<TCopy>` with `EngineHosting`, `IEngineHost`, `IEngineLease`, `IEngineBatcher`, `ModelDescription`; a kind is a string (`"predictor"`, `"text"`, `"chat"`); add any kind with `InferenceEngineBuilder.Add(name, model)` |
   | `Idrak.Inference.GenerationChunk` | `Idrak.Abstraction.Generation.GenerationChunk`; new `ITextModel` (`TextGenerator` and the engine's text and chat models implement it) |
+
+  A type a row moves to `Idrak.Abstraction.*` and that only one package uses moved on to that package's `.Abstractions`
+  namespace (see "Contracts live with their users" below): that later place is the final one.
 
 - `ITokenizer.TokenOf(id)`: a vocabulary entry as stored (default: the id's decoded text).
 - The inference engine reaches models through their contracts. Breaking, with no shims:
@@ -153,7 +157,8 @@
     `DecodingContext` positions, `Telemetry` event methods, `GraphOpContext`'s constructor, `GraphOps.TryGet`, ...
   - `ModuleHooks` is folded into the public `TensorOffloading` (`Current` → `CurrentLayer`; the hooks are properties;
     `ForBackward` receives each backward node's layer). `Module.MoveTo` is `protected`; `RecurrentModule.Run`/`Step` are
-    `protected`. `TrainingHistory` has public setters and `Add(EpochCompleted)`; `TrainerContext` a public constructor.
+    `protected`. (`TrainingHistory`'s setters and `TrainerContext`'s constructor, public for a while, are internal again
+    since they live in core with `Trainer`: see wave 4.)
 - New package `Idrak.Gpu`: the CUDA, Vulkan and HIP devices and all their kernels, built on `Idrak.Abstraction` alone.
   `Idrak` depends on it, so `dotnet add package Idrak` brings every device as before; `Idrak.Gpu` with
   `Idrak.Abstraction` alone gives the devices without the rest of the library. Namespaces `Idrak.Backends.Cuda`,
@@ -171,7 +176,8 @@
   suites for tokenizers, RoPE scalings and token samplers, and `ContractSuite<T>` for your own; `Stress.Run`; and
   `Regression.Save`/`Replay` for cases that once failed. Idrak's own per-device checks run through it.
 - A plain-loop device written outside the library (`tests/Idrak.PluginTests`) passes the kit, and the
-  `Idrak.Samples.Override` sample checks an app's own token sampler with the kit from its own tests.
+  `Idrak.Samples.Override` sample checks an app's own token sampler with the kit from its own tests (until wave 4
+  made that sampler's fix the library's default).
 - Plug-ins can give their own operations device kernels (plan 10 phase 6, plan 9 phase 5):
   `PluginOperations.Register<TKernel>(name, defaultKernel, fallback)` declares an operation with a default kernel that
   runs everywhere, `Kernels.Register(op, kind, kernel)` adds a faster one for a kind of device, and `op.KernelFor(backend)`
@@ -200,6 +206,44 @@
   - New `TokenSamplers` registry (Idrak.Nlp): `"default"` is `TokenSampler.Create`, and generation makes its sampler
     through it. `TokenizerComponents.Default*` are real components for the built-in types.
   - `Comparisons` moved from the testing kit into `Idrak.Abstraction`, shared by `Shadow` and `Conformance.Check`.
+- Wave 4 (plan 10), the last steps before 0.4.0:
+  - **Non-finite logits, one rule on every device** (W4.1, the first promotion of the override loop): a NaN logit is
+    never sampled; a row with +∞ logits draws among them, evenly (top-k, top-p and min-p do not apply); a row with no
+    finite logit and no +∞ one is reported by `TokenSampler.Read` (`InvalidOperationException`), its id set to 0 so the
+    next step stays valid. Before, one NaN made the CPU sampler index out of range and the GPU ones return arbitrary
+    tokens. CPU, CUDA (PTX checked with ptxas, not yet run on a GPU) and Vulkan kernels; HIP uses the host fallback.
+    Motivated by `samples/Idrak.Samples.Override`, whose own `SanitizingSampler` proved the fix and is now deleted; its
+    saved case is in `tests/Idrak.Tests/data/regressions`.
+  - **Versions of library defaults**: `SlotTable.RegisterDefault(key, value, version, since)`, `Default(key, version)`,
+    `DefaultVersion(key)`, `DefaultVersions(key)`. `SlotOverride` gains `DefaultVersion`, `DefaultSince`, `BuiltAgainst`,
+    `Outdated` and `OutdatedNote`: the report (and `idrak overrides`, table and JSON) says when an override was built
+    against a release older than the default it shadows. The token sampler default is version 2 since 0.4.0;
+    `TokenSamplers.Default("default", 1)` is the 0.3 behavior (`TokenSampler.RejectNonFinite`: refuses non-finite
+    logits with an error), one line away for an app that wants it back. `TokenSamplers.DefaultVersion` is new.
+  - The testing kit's `TokenSamplerSuite` checks non-finite logits (fixed cases, wide rows that take the devices'
+    two-stage top-k, random NaN and -∞), and the test runner runs the sampler suite on every device.
+  - **`IdrakFromSource`** (W4.2): `build/IdrakFromSource.targets` swaps an app's Idrak `PackageReference`s for a local
+    clone's projects; `samples/Idrak.Samples.Override` references Idrak as packages and builds from the clone this way
+    (`-p:IdrakFromPackages=true` takes them from a feed instead).
+  - API review (W4.3): `Tensor.GatedActivation`, `GatedActivationCompressed` and `RecomputeGatedActivation` take a
+    `FeedForwardActivation` instead of `int kind` (the device kernels keep the integer code: it is what their push
+    constants and PTX take, and the operation table records arguments by their CLR type). `TrainingHistory`'s and
+    `TrainerContext`'s setters, `TrainingHistory.Add` and the `TrainerContext` constructor are internal (they moved to
+    core with `Trainer`, their only writer). Kept public, with their reason: `PackedWeight.Description`, `ShortName`
+    and `FloatMethod` (a plug-in format names itself in core's messages); the ~50 public `Tensor` members other
+    packages use (a narrower "write an operation" surface would add a layer on hot paths for no user yet: revisit when
+    an outside device needs less); `PackedFormats` (Abstraction, core and Gpu use it), `KeepAlive` (core, Nlp,
+    AspNetCore), `ChatTools` (Abstraction, Nlp, AspNetCore), `Sgd`/`Adam`/`AdamW` (the `Optimizer` contract's
+    defaults, beside it).
+  - Host retry (W4.5): an operation a device has no kernel of its own for is not retried (its kernel is the host
+    fallback already); `Backend.RetryOnHost` documents that a kernel failing half-way through an accumulating output
+    would add twice on the retry.
+  - Recorded to wait for a CUDA machine (W4.5): conformance references for the Float8 operations and
+    `AttentionStrided` (only CUDA has these kernels, so no reference can be checked here), and a public hook for a
+    plug-in's own PTX or HIP C kernels (CUDA and HIP run a plug-in operation's default meanwhile).
+  - **The public API is guarded** (W4.4): `api/<package>.txt` holds the public surface of every library package
+    (generated from the assemblies' metadata, nullability included); a test fails on any difference, and
+    `IDRAK_UPDATE_API=1` rewrites the files for an intended change, committed with a line here.
 - Fixed: the CPU's `NormStats` computes the variance in two passes; `E[x²] − mean²` cancelled for one-element groups
   and for large values with a small spread (found by the conformance kit).
 - `RopeScalings.Default(type)`: the library's own method for a scaling type, even when an app registered its own.

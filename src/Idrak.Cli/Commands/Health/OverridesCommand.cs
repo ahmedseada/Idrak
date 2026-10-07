@@ -24,6 +24,8 @@ internal sealed class OverridesCommand : Command
         beside it on N% of the calls and is compared), or none for registries whose entries cannot fall back. Set the
         policy in code (the registry's SetPolicy) or with IDRAK_OVERRIDE_POLICY (fallback, shadow:0.05, or
         RopeScalings/yarn=fallback). Failures and comparisons as they happen: idrak trace --levels overrides -- COMMAND.
+        A library default the library has improved shows its version ("library default v2"); an entry built against a
+        release older than that default is flagged: the library may now do what the override was written for.
 
         Examples:
           idrak overrides -P ./MySampler.dll
@@ -40,7 +42,12 @@ internal sealed class OverridesCommand : Command
         else
         {
             context.Table(["Registry", "Name", "Replaces", "Implementation", "Origin", "Policy"], report.Select(o => (IReadOnlyList<string>)
-                [o.Registry, o.Name, o.ReplacesDefault ? "library default" : "added", o.Implementation, o.Origin, o.PolicyText]));
+                [o.Registry, o.Name, !o.ReplacesDefault ? "added" : o.DefaultVersion > 1 ? $"library default v{o.DefaultVersion}" : "library default",
+                    o.Implementation, o.Origin, o.PolicyText]));
+            foreach (var o in report.Where(o => o.Outdated))
+            {
+                context.Write($"{o.Registry}/{o.Name}: {o.OutdatedNote}.");
+            }
         }
 
         context.WriteJson(new JsonArray([.. report.Select(o => (JsonNode)new JsonObject
@@ -57,6 +64,10 @@ internal sealed class OverridesCommand : Command
             ["fallbacks"] = o.FallBacks,
             ["compared"] = o.Compared,
             ["differed"] = o.Differed,
+            ["default_version"] = o.DefaultVersion,
+            ["default_since"] = o.DefaultSince,
+            ["built_against"] = o.BuiltAgainst,
+            ["outdated"] = o.Outdated,
         })]));
         return ExitCodes.Ok;
     }

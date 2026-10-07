@@ -90,7 +90,10 @@ reaches the caller and is reported with a hint naming the exact call, or `IDRAK_
 the slot to the others), `FallBack` (a call that throws is retried on the default), or `Shadow` (the default answers,
 the app's runs on a share of the calls, 1% unless set, and `Comparisons` says how they differ). A slot with only its default hands it out as it
 is. The library's packages register their built-ins inside `Overrides.AsLibraryDefaults`, so they are defaults, not
-overrides; `Overrides.Report()` lists every override with its origin and policy. The events are `OverrideFailed` and
+overrides. A default the library improves gets a higher version (`RegisterDefault(key, value, version, since)`); the
+older ones stay reachable with `Default(key, version)`. `Overrides.Report()` lists every override with its origin and
+policy, and says when one was built against a release older than the default it shadows (`SlotOverride.Outdated`). The
+events are `OverrideFailed` and
 `OverrideCompared` (`TelemetryLevel.Overrides`, always on in `ConsoleLogger` and `JsonLinesLogger`).
 
 A registry of one's own gets the same behavior from a table:

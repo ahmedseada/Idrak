@@ -18,7 +18,8 @@ namespace Idrak.Abstraction.Devices;
 // operations need no retry of their own (their parts retry one by one), and operations with no fallback throw.
 // A registered kernel is not retried: it is an app's or a plug-in's choice for this device (it may handle some cases
 // itself and pass others to the device's kernel or elsewhere), so the dispatcher can't tell which host computation
-// matches it or whether its error came from the device at all; its errors reach the caller.
+// matches it or whether its error came from the device at all; its errors reach the caller. An operation the device
+// has no kernel of its own for already runs its host fallback: it is not retried (it would only run twice).
 public abstract partial class Backend
 {
     /// <summary>y[i] = value for i &lt; n.</summary>
@@ -45,7 +46,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.Fill))
         {
             FillKernel(y, n, value);
             return;
@@ -98,7 +99,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.Unary))
         {
             UnaryKernel(op, x, y, n);
             return;
@@ -151,7 +152,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.UnaryBackward))
         {
             UnaryBackwardKernel(op, x, y, dy, dx, n);
             return;
@@ -204,7 +205,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.Binary))
         {
             BinaryKernel(op, a, b, c, n);
             return;
@@ -260,7 +261,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.ExtremumBackward))
         {
             ExtremumBackwardKernel(op, a, b, dy, da, db, n);
             return;
@@ -313,7 +314,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.Pow))
         {
             PowKernel(x, y, n, exponent);
             return;
@@ -366,7 +367,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.PowBackward))
         {
             PowBackwardKernel(x, dy, dx, n, exponent);
             return;
@@ -419,7 +420,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.Clamp))
         {
             ClampKernel(x, y, n, min, max);
             return;
@@ -472,7 +473,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.ClampBackward))
         {
             ClampBackwardKernel(x, dy, dx, n, min, max);
             return;
@@ -525,7 +526,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.Where))
         {
             WhereKernel(condition, a, b, y, n);
             return;
@@ -578,7 +579,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.WhereBackward))
         {
             WhereBackwardKernel(condition, dy, da, db, n);
             return;
@@ -631,7 +632,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.Affine))
         {
             AffineKernel(x, y, n, alpha, beta);
             return;
@@ -684,7 +685,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.Axpy))
         {
             AxpyKernel(x, y, n, alpha);
             return;
@@ -737,7 +738,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.MulAdd))
         {
             MulAddKernel(a, b, c, n);
             return;
@@ -790,7 +791,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.AddRowVector))
         {
             AddRowVectorKernel(a, v, c, rows, cols);
             return;
@@ -843,7 +844,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.SumRows))
         {
             SumRowsKernel(x, y, rows, cols);
             return;
@@ -896,7 +897,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.Sum))
         {
             SumKernel(x, result, n, scale);
             return;
@@ -949,7 +950,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.AxpyAt))
         {
             AxpyAtKernel(x, y, offset, alpha);
             return;
@@ -1002,7 +1003,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.AddBroadcastScalar))
         {
             AddBroadcastScalarKernel(s, y, n, scale);
             return;
@@ -1339,7 +1340,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.SumColumns))
         {
             SumColumnsKernel(x, offset, ld, y, rows, cols);
             return;
@@ -1420,7 +1421,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.BatchedMatMul))
         {
             BatchedMatMulKernel(a, b, c, batch, m, n, k, transA, transB, beta);
             return;
@@ -1473,7 +1474,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.Softmax))
         {
             SoftmaxKernel(x, y, rows, cols, log);
             return;
@@ -1528,7 +1529,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.SoftmaxBackward))
         {
             SoftmaxBackwardKernel(y, dy, dx, rows, cols, log);
             return;
@@ -1581,7 +1582,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.ArgMax))
         {
             ArgMaxKernel(x, y, rows, cols);
             return;
@@ -1637,7 +1638,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.ClassMatch))
         {
             ClassMatchKernel(predictions, targets, y, rows, cols, threshold);
             return;
@@ -1690,7 +1691,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.NormStats))
         {
             NormStatsKernel(x, mean, variance, invStd, outer, groups, inner, eps);
             return;
@@ -1743,7 +1744,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.NormApply))
         {
             NormApplyKernel(x, mean, invStd, y, outer, groups, inner);
             return;
@@ -1796,7 +1797,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.NormBackward))
         {
             NormBackwardKernel(dxhat, xhat, sum1, sum2, invStd, dx, outer, groups, inner);
             return;
@@ -1851,7 +1852,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.GroupScaleShift))
         {
             GroupScaleShiftKernel(x, scale, shift, y, n, groups, inner, accumulate);
             return;
@@ -1904,7 +1905,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.GroupReduce))
         {
             GroupReduceKernel(a, b, sumA, sumAB, outer, groups, inner);
             return;
@@ -1957,7 +1958,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.InvSqrt))
         {
             InvSqrtKernel(x, y, n, eps);
             return;
@@ -2010,7 +2011,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.Gather))
         {
             GatherKernel(table, indices, y, count, dim, vocabulary);
             return;
@@ -2063,7 +2064,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.GatherBFloat16))
         {
             GatherBFloat16Kernel(packed, indices, y, count, dim, vocabulary);
             return;
@@ -2116,7 +2117,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.OneHot))
         {
             OneHotKernel(indices, y, count, classes);
             return;
@@ -2169,7 +2170,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.ScatterAdd))
         {
             ScatterAddKernel(dy, indices, dtable, count, dim, vocabulary);
             return;
@@ -2222,7 +2223,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.Im2Col))
         {
             Im2ColKernel(x, cols, in g);
             return;
@@ -2275,7 +2276,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.Col2Im))
         {
             Col2ImKernel(dcols, dx, in g);
             return;
@@ -2328,7 +2329,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.MaxPool))
         {
             MaxPoolKernel(x, y, argmax, in g);
             return;
@@ -2381,7 +2382,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.MaxPoolBackward))
         {
             MaxPoolBackwardKernel(dy, argmax, dx, count);
             return;
@@ -2468,7 +2469,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.Permute))
         {
             PermuteKernel(x, y, outShape, inStrides, accumulate);
             return;
@@ -2521,7 +2522,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.SumAxis))
         {
             SumAxisKernel(x, y, outer, dim, inner, scale, accumulate);
             return;
@@ -2574,7 +2575,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.BroadcastAxis))
         {
             BroadcastAxisKernel(dy, dx, outer, dim, inner, scale);
             return;
@@ -2627,7 +2628,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.SgdStep))
         {
             SgdStepKernel(p, g, v, n, lr, momentum);
             return;
@@ -2680,7 +2681,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.AdamStep))
         {
             AdamStepKernel(p, g, m, v, n, lr, beta1, beta2, eps);
             return;
@@ -2740,7 +2741,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.AdamStep8Bit))
         {
             AdamStep8BitKernel(p, g, m, v, absMax, map, n, lr, beta1, beta2, eps, gradientScale, decay);
             return;
@@ -2793,7 +2794,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.SumSquares))
         {
             SumSquaresKernel(x, total, n);
             return;
@@ -2844,7 +2845,7 @@ public abstract partial class Backend
             return kernel(this, tensors, ref cache, maxNorm, lr, decay, beta1, beta2, eps, zeroGradients);
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.FusedAdamW))
         {
             return FusedAdamWKernel(tensors, ref cache, maxNorm, lr, decay, beta1, beta2, eps, zeroGradients);
         }
@@ -2907,7 +2908,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.ClipFactor))
         {
             ClipFactorKernel(sumSquares, factor, maxNorm);
             return;
@@ -2960,7 +2961,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.Dropout))
         {
             DropoutKernel(x, y, n, p, seed);
             return;
@@ -3013,7 +3014,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.DropoutBackward))
         {
             DropoutBackwardKernel(dy, dx, n, p, seed);
             return;
@@ -3066,7 +3067,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.ScaleMaskSoftmax))
         {
             ScaleMaskSoftmaxKernel(x, mask, y, rows, cols, maskRows, scale);
             return;
@@ -3119,7 +3120,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.LayerNormFused))
         {
             LayerNormFusedKernel(x, gamma, beta, y, rows, cols, eps);
             return;
@@ -3172,7 +3173,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.LayerNormTrain))
         {
             LayerNormTrainKernel(x, gamma, beta, y, stats, rows, cols, eps);
             return;
@@ -3227,7 +3228,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.LayerNormBackward))
         {
             LayerNormBackwardKernel(x, gamma, dy, stats, dx, dgamma, dbeta, rows, cols);
             return;
@@ -3280,7 +3281,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.BiasGelu))
         {
             BiasGeluKernel(x, bias, y, n, cols);
             return;
@@ -3336,7 +3337,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.Int8MatMul))
         {
             Int8MatMulKernel(x, q, scales, y, m, n, k);
             return;
@@ -3392,7 +3393,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.BFloat16MatMul))
         {
             BFloat16MatMulKernel(x, packed, y, m, n, k);
             return;
@@ -3445,7 +3446,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.BFloat16Dequantize))
         {
             BFloat16DequantizeKernel(packed, w, k, n);
             return;
@@ -3501,7 +3502,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.PackBFloat16))
         {
             PackBFloat16Kernel(x, packed, n);
             return;
@@ -3554,7 +3555,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.Int8Dequantize))
         {
             Int8DequantizeKernel(q, scales, w, k, n);
             return;
@@ -3611,7 +3612,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.Int4MatMul))
         {
             Int4MatMulKernel(x, q, scales, y, m, n, k);
             return;
@@ -3664,7 +3665,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.Int4Dequantize))
         {
             Int4DequantizeKernel(q, scales, w, k, n);
             return;
@@ -3717,7 +3718,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.RmsNorm))
         {
             RmsNormKernel(x, y, inv, rows, cols, eps);
             return;
@@ -3770,7 +3771,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.RmsNormBackward))
         {
             RmsNormBackwardKernel(dy, y, inv, dx, rows, cols);
             return;
@@ -3827,7 +3828,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.Rope))
         {
             RopeKernel(x, y, cos, sin, positions, rows, heads, steps, dim, half, interleaved, sign);
             return;
@@ -3880,7 +3881,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.RmsNormAffine))
         {
             RmsNormAffineKernel(x, gain, y, rows, cols, eps, offset);
             return;
@@ -3933,7 +3934,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.AddRmsNormAffine))
         {
             AddRmsNormAffineKernel(a, b, sum, gain, y, rows, cols, eps, offset);
             return;
@@ -3989,7 +3990,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.RmsNormRope))
         {
             RmsNormRopeKernel(x, gain, cos, sin, positions, y, rows, cols, eps, offset, heads, steps, half, interleaved);
             return;
@@ -4098,7 +4099,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.SoftmaxCrossEntropyRows))
         {
             SoftmaxCrossEntropyRowsKernel(logits, targets, weights, losses, rows, vocabulary, scale);
             return;
@@ -4151,7 +4152,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.GatedActivation))
         {
             GatedActivationKernel(gate, up, y, n, kind);
             return;
@@ -4204,7 +4205,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.GatedActivationBackward))
         {
             GatedActivationBackwardKernel(gate, up, dy, dgate, dup, n, kind, flags);
             return;
@@ -4262,7 +4263,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.GatedActivationPacked))
         {
             GatedActivationPackedKernel(gate, up, packedGate, packedUp, y, packedY, n, kind, flags);
             return;
@@ -4315,7 +4316,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.GatedActivationBackwardPacked))
         {
             GatedActivationBackwardPackedKernel(packedGate, packedUp, dy, dgate, dup, n, kind, flags);
             return;
@@ -4368,7 +4369,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.KeyValueWriteInt8))
         {
             KeyValueWriteInt8Kernel(source, cache, scales, position, heads, steps, capacity, dim);
             return;
@@ -4421,7 +4422,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.AttentionScoresInt8))
         {
             AttentionScoresInt8Kernel(q, cache, scales, y, rows, steps, capacity, dim);
             return;
@@ -4474,7 +4475,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.AttentionContextInt8))
         {
             AttentionContextInt8Kernel(weights, cache, scales, y, rows, steps, capacity, dim);
             return;
@@ -4534,7 +4535,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.AttentionDecode))
         {
             AttentionDecodeKernel(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, variant);
             return;
@@ -4591,7 +4592,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.AttentionInt8))
         {
             AttentionInt8Kernel(q, keys, values, keyScales, valueScales, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
             return;
@@ -4647,7 +4648,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.AttentionBFloat16))
         {
             AttentionBFloat16Kernel(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
             return;
@@ -4700,7 +4701,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.KeyValueWriteBFloat16))
         {
             KeyValueWriteBFloat16Kernel(source, cache, position, heads, steps, capacity, dim);
             return;
@@ -4757,7 +4758,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.AttentionTiledBackward))
         {
             AttentionTiledBackwardKernel(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
             return;
@@ -4808,7 +4809,7 @@ public abstract partial class Backend
             return kernel(this, q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.AttentionSegmented))
         {
             return AttentionSegmentedKernel(q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
         }
@@ -4856,7 +4857,7 @@ public abstract partial class Backend
             return kernel(this, q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.AttentionRows))
         {
             return AttentionRowsKernel(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
         }
@@ -4900,7 +4901,7 @@ public abstract partial class Backend
             return kernel(this, q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.AttentionSegmentedBackward))
         {
             return AttentionSegmentedBackwardKernel(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
         }
@@ -4958,7 +4959,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.AttentionTiled))
         {
             AttentionTiledKernel(q, keys, values, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
             return;
@@ -5017,7 +5018,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.DecoderMask))
         {
             DecoderMaskKernel(position, mask, rows, capacity);
             return;
@@ -5070,7 +5071,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.KeyValueWrite))
         {
             KeyValueWriteKernel(source, cache, position, heads, steps, capacity, dim);
             return;
@@ -5106,6 +5107,13 @@ public abstract partial class Backend
     /// stream (seed, step, row). Writes the token to ids[row] and 13 statistics to stats[(step * rows + row) * 13]:
     /// id, probability, entropy (bits), then the top-5 (id, probability) pairs. The step number is read from device
     /// memory. Row r's logits start at element r * rowStride + rowOffset.
+    /// <para>
+    /// Scores that are not finite follow one rule on every device: a NaN score is never sampled; when a row has a +∞ score
+    /// (a +∞ logit, or a finite one that overflows when divided by the temperature) it draws uniformly among its +∞
+    /// tokens, and top-k, top-p and min-p do not apply; a row with no finite score and no +∞ one has nothing to sample:
+    /// ids[row] gets 0 (so the next step's input stays valid) and its statistics record id -1, probability 0, entropy 0
+    /// and no alternatives, which the sampler reading them reports as an error.
+    /// </para>
     /// </summary>
     /// <remarks>Runs <see cref="Ops.SampleRows"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>SampleRowsKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -5130,7 +5138,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.SampleRows))
         {
             SampleRowsKernel(logits, ids, stats, step, rows, vocabulary, rowStride, rowOffset, temperature, topK, topP, minP, seed);
             return;
@@ -5188,7 +5196,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.PenalizeRows))
         {
             PenalizeRowsKernel(logits, work, history, length, rows, vocabulary, rowStride, rowOffset, capacity, lastN, repeat, presence, frequency);
             return;
@@ -5241,7 +5249,7 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetryOnHost)
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.HistoryPush))
         {
             HistoryPushKernel(ids, history, length, rows, capacity);
             return;

@@ -85,7 +85,7 @@ internal static partial class VulkanKernels
                     k.For(lane, k.Int(SliceLength), Block, i =>
                     {
                         var v = slice[i];
-                        below.V = k.Select((v < threshold.V) & (v > below.V), v, below.V);
+                        below.V = k.Select((t.Eq(0) | (v < threshold.V)) & (v > below.V), v, below.V);   // pass 0 takes +∞ too
                     });
                     var next = k.ReduceMax(scratch, below.V);
                     var found = next > float.NegativeInfinity;
@@ -205,7 +205,11 @@ internal static partial class VulkanKernels
         w.Each(rows, r =>
         {
             var source = r * rowStride + rowOffset;
-            Val Score(Val j) => logits[source + j] * invT;
+            Val Score(Val j)
+            {
+                var s = logits[source + j] * invT;
+                return k.Select(s.IsNan(), k.Float(float.NegativeInfinity), s);   // NaN is never sampled
+            }
 
             // The candidates of steps 1 to 4: the row's scores (each once), or the row's slots (each `count` times).
             var candidates = slots ? slotCount : vocabulary;
@@ -214,6 +218,10 @@ internal static partial class VulkanKernels
             Val Times(Val c) => slots ? slotCounts![slotBase + c] : k.Float(1f);
 
             var max = w.RowMax(candidates, Candidate);
+
+            // Non-finite scores (Backend.SampleRowsKernel): any +∞ makes the row a uniform draw among its +∞ tokens (the
+            // cut-offs below are then ignored); no finite score and no +∞ leaves nothing to sample.
+            var infinite = max.Eq(k.Float(float.PositiveInfinity));
             var threshold = k.Local(float.NegativeInfinity);
             k.If((topK > 0) & (topK < vocabulary), () =>
             {
@@ -261,7 +269,8 @@ internal static partial class VulkanKernels
             Val Weight(Val j)
             {
                 var s = Score(j);
-                return k.Select(s >= cutoff, k.Exp(s - max), k.Float(0f));
+                return k.Select(infinite, k.Select(s.Eq(k.Float(float.PositiveInfinity)), k.Float(1f), k.Float(0f)),
+                    k.Select((s >= cutoff) & (s > float.NegativeInfinity), k.Exp(s - max), k.Float(0f)));
             }
 
             var u = Uniform(k, seed, stepNumber, r);
@@ -298,9 +307,10 @@ internal static partial class VulkanKernels
             var o = (stepNumber.ToInt() * rows + r) * StatsPerToken;
             w.Leader(() =>
             {
-                ids[r] = token.ToFloat();
+                var drawn = token >= 0;                                  // none when nothing could be sampled
+                ids[r] = k.Select(drawn, token, k.Int(0)).ToFloat();
                 stats[o] = token.ToFloat();
-                stats[o + 1] = tokenWeight / total;
+                stats[o + 1] = k.Select(drawn, tokenWeight / total, k.Float(0f));
                 stats[o + 2] = bits;
             });
 

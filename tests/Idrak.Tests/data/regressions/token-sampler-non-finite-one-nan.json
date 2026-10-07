@@ -1,0 +1,23 @@
+{
+  "format": "idrak-regression-case",
+  "version": 1,
+  "kind": "token-sampler",
+  "name": "non-finite logits, one NaN: the step that made samples/Idrak.Samples.Override write its own sampler (plan 10, W4.1)",
+  "data": {
+    "rows": 1,
+    "vocabulary": 5,
+    "steps": 1,
+    "temperature": 1,
+    "topK": 1,
+    "topP": 1,
+    "minP": 0,
+    "repeatPenalty": 1,
+    "repeatLastN": 64,
+    "presencePenalty": 0,
+    "frequencyPenalty": 0,
+    "seed": 1,
+    "history": [],
+    "expect": "BestFinite",
+    "logits": "AAAAPwAAwH8AAIA/AACAQAAAAEA="
+  }
+}

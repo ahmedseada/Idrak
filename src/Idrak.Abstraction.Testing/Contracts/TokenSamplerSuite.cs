@@ -77,7 +77,10 @@ public sealed class SamplerUnderTest(int rows, int vocabulary, Action<IReadOnlyL
 /// the top-p nucleus, at least min-p as likely as the best);</item>
 /// <item>a reset with the same history samples the same tokens again;</item>
 /// <item>the statistics report, per step and row, the token sampled with a probability in [0, 1];</item>
-/// <item>with <see cref="Exact"/>, the very tokens and probabilities of the reference (same seed).</item>
+/// <item>with <see cref="Exact"/>, the very tokens and probabilities of the reference (same seed);</item>
+/// <item>logits that are not finite follow the library's rule (<c>Backend.SampleRowsKernel</c>): a NaN or -∞ logit is
+/// never sampled (greedy takes the best finite token), a row with +∞ logits takes one of them, with probability one over
+/// their count, and a row with nothing finite is reported as an error (by <c>Sample</c> or <c>Read</c>).</item>
 /// </list>
 /// </summary>
 /// <param name="reference">Makes the reference sampler for a case's settings.</param>
@@ -106,12 +109,34 @@ public sealed class TokenSamplerSuite(Func<SamplerSettings, SamplerUnderTest> re
         yield return Case("min-p 0.1", random, rows: 2, vocabulary: 100, steps: 4, topK: 0, minP: 0.1f);
         yield return Case("top-k 5 at temperature 1.5", random, rows: 4, vocabulary: 64, steps: 4, topK: 5, temperature: 1.5f);
         yield return Case("large logits", random, rows: 2, vocabulary: 40, steps: 3, topK: 40, scale: 50f);
+        yield return NonFinite("one NaN, greedy", [[0.5f, float.NaN, 1f, 4f, 2f]], topK: 1, NonFiniteExpectation.BestFinite);
+        yield return NonFinite("NaN first, greedy", [[float.NaN, 1f, 3f, 2f]], topK: 1, NonFiniteExpectation.BestFinite);
+        yield return NonFinite("NaN and -∞, nucleus", [[float.NegativeInfinity, 2f, float.NaN, 1f, 0.5f], [1f, float.NaN, float.NaN, 3f, float.NegativeInfinity]],
+            topK: 0, NonFiniteExpectation.Finite, topP: 0.9f);
+        yield return NonFinite("NaN with min-p and top-k", [[float.NaN, 2f, 1.5f, float.NaN, 1f, 0f]], topK: 3, NonFiniteExpectation.Finite, minP: 0.05f);
+        yield return NonFinite("+∞ wins", [[1f, float.PositiveInfinity, 3f, float.NaN, float.PositiveInfinity]], topK: 0, NonFiniteExpectation.Infinite);
+        yield return NonFinite("+∞, greedy", [[float.PositiveInfinity, 9f, float.NaN]], topK: 1, NonFiniteExpectation.Infinite);
+        yield return NonFinite("nothing finite", [[float.NaN, float.NegativeInfinity, float.NaN]], topK: 0, NonFiniteExpectation.Error);
+
+        // Wide rows, where devices sample top-k in two stages (candidates per slice first).
+        float[] wide = [.. Enumerable.Range(0, 9000).Select(i => MathF.Sin(i) * 3f)];
+        wide[123] = wide[5000] = float.NaN;
+        wide[8000] = 7f;
+        yield return NonFinite("NaN in a wide row, top-k 1", [wide], topK: 1, NonFiniteExpectation.BestFinite);
+        float[] wideInfinite = [.. wide];
+        wideInfinite[4500] = wideInfinite[8999] = float.PositiveInfinity;
+        yield return NonFinite("+∞ in a wide row, top-k 5", [wideInfinite], topK: 5, NonFiniteExpectation.Infinite);
     }
 
     /// <inheritdoc />
     public override ContractCase RandomCase(Random random, bool large)
     {
         ArgumentNullException.ThrowIfNull(random);
+        if (random.Next(4) == 0)
+        {
+            return RandomNonFinite(random, large);
+        }
+
         int[] vocabularies = large ? [2, 7, 50, 1000, 32_000, 151_936] : [2, 3, 7, 50, 257, 1000];
         bool penalties = random.Next(3) == 0;
         return Case("random", random, rows: random.Next(1, large ? 9 : 5), vocabulary: vocabularies[random.Next(vocabularies.Length)],
@@ -133,6 +158,11 @@ public sealed class TokenSamplerSuite(Func<SamplerSettings, SamplerUnderTest> re
             (float)d["minP"]!, (float)d["repeatPenalty"]!, (int)d["repeatLastN"]!, (float)d["presencePenalty"]!, (float)d["frequencyPenalty"]!, (int)d["seed"]!);
         int[] history = [.. d["history"]!.AsArray().Select(n => (int)n!)];
         float[] logits = MemoryMarshal.Cast<byte, float>(Convert.FromBase64String((string)d["logits"]!)).ToArray();
+        if (d["expect"] is { } expect)
+        {
+            RunNonFinite(implementation(settings), Enum.Parse<NonFiniteExpectation>((string)expect!), logits, rows, vocabulary, checks);
+            return;
+        }
 
         using var mine = implementation(settings);
         using var library = reference(settings);
@@ -175,6 +205,76 @@ public sealed class TokenSamplerSuite(Func<SamplerSettings, SamplerUnderTest> re
             var expectedStatistics = library.Read(0, steps);
             checks.Compare("the reference's probabilities", Comparisons.Difference(
                 [.. expectedStatistics.SelectMany(s => s).Select(t => t.Probability)], [.. statistics.SelectMany(s => s).Select(t => t.Probability)], 1e-4f));
+        }
+    }
+
+    // One step over logits that are not all finite, checked against the rule (no reference needed: the rule says the answer).
+    private void RunNonFinite(SamplerUnderTest sampler, NonFiniteExpectation expect, float[] logits, int rows, int vocabulary, CaseChecks checks)
+    {
+        using var mine = sampler;
+        int[]? ids = null;
+        SampledStatistics[][]? statistics = null;
+        Exception? error = null;
+        try
+        {
+            ids = Sample(mine, [], logits, rows, vocabulary, 1, null)[0];
+            statistics = mine.Read(0, 1);
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            error = e;
+        }
+
+        if (expect == NonFiniteExpectation.Error)
+        {
+            checks.Check("a row with nothing finite is reported", error is not null, ids is null ? "" : $"sampled token {ids[0]} and no error");
+            return;
+        }
+
+        checks.Check("non-finite logits do not break sampling", error is null, error is null ? "" : $"{error.GetType().Name}: {error.Message}");
+        if (ids is null || statistics is null)
+        {
+            return;
+        }
+
+        for (int r = 0; r < rows; r++)
+        {
+            var row = logits.AsSpan(r * vocabulary, vocabulary);
+            int id = ids[r];
+            string where = $"row {r}: token {id}";
+            if (id < 0 || id >= vocabulary)
+            {
+                checks.Check("ids in range", false, where);
+                continue;
+            }
+
+            float value = row[id];
+            switch (expect)
+            {
+                case NonFiniteExpectation.BestFinite:
+                    int best = -1;
+                    for (int i = 0; i < vocabulary; i++)
+                    {
+                        best = float.IsFinite(row[i]) && (best < 0 || row[i] > row[best]) ? i : best;
+                    }
+
+                    checks.Check("greedy takes the best finite token", id == best, $"{where} ({value}), the best finite is {best} ({row[best]})");
+                    break;
+                case NonFiniteExpectation.Finite:
+                    checks.Check("NaN and -∞ logits are never sampled", float.IsFinite(value), $"{where} has logit {value}");
+                    break;
+                default:
+                    int count = 0;
+                    foreach (float v in row)
+                    {
+                        count += float.IsPositiveInfinity(v) ? 1 : 0;
+                    }
+
+                    checks.Check("a +∞ logit wins", float.IsPositiveInfinity(value), $"{where} has logit {value}");
+                    checks.Check("the +∞ tokens share the probability", Math.Abs(statistics[0][r].Probability - 1f / count) < 1e-5f,
+                        $"{where}: probability {statistics[0][r].Probability}, 1/{count} expected");
+                    break;
+            }
         }
     }
 
@@ -254,6 +354,45 @@ public sealed class TokenSamplerSuite(Func<SamplerSettings, SamplerUnderTest> re
         }
 
         return null;
+    }
+
+    // Logits with NaN and -∞ sprinkled over each row and a finite best token in it; greedy.
+    private static ContractCase RandomNonFinite(Random random, bool large)
+    {
+        int rows = random.Next(1, 4), vocabulary = random.Next(2, large ? 5000 : 60);
+        var logits = new float[rows][];
+        for (int r = 0; r < rows; r++)
+        {
+            logits[r] = [.. Enumerable.Range(0, vocabulary).Select(_ => random.NextSingle() * 10f - 5f)];
+            for (int i = 0, bad = random.Next(1, Math.Max(2, vocabulary / 4)); i < bad; i++)
+            {
+                logits[r][random.Next(vocabulary)] = random.Next(3) == 0 ? float.NegativeInfinity : float.NaN;
+            }
+
+            logits[r][random.Next(vocabulary)] = 6f;
+        }
+
+        return NonFinite($"random NaN and -∞ ({rows} rows, {vocabulary} tokens)", logits, topK: 1, NonFiniteExpectation.BestFinite);
+    }
+
+    private static ContractCase NonFinite(string name, float[][] logits, int topK, NonFiniteExpectation expect, float topP = 1f, float minP = 0f)
+    {
+        float[] flat = [.. logits.SelectMany(row => row)];
+        return new ContractCase($"non-finite logits, {name}", new JsonObject
+        {
+            ["rows"] = logits.Length, ["vocabulary"] = logits[0].Length, ["steps"] = 1, ["temperature"] = 1f, ["topK"] = topK, ["topP"] = topP,
+            ["minP"] = minP, ["repeatPenalty"] = 1f, ["repeatLastN"] = 64, ["presencePenalty"] = 0f, ["frequencyPenalty"] = 0f, ["seed"] = 1,
+            ["history"] = new JsonArray(), ["expect"] = expect.ToString(),
+            ["logits"] = Convert.ToBase64String(MemoryMarshal.AsBytes(flat.AsSpan())),
+        });
+    }
+
+    private enum NonFiniteExpectation
+    {
+        BestFinite,
+        Finite,
+        Infinite,
+        Error,
     }
 
     private static ContractCase Case(string name, Random random, int rows, int vocabulary, int steps, int topK, float topP = 1f, float minP = 0f,

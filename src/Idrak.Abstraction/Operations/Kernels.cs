@@ -80,12 +80,7 @@ public static class Kernels
     {
         ArgumentNullException.ThrowIfNull(backend);
         var registered = Resolve(backend);
-        if (!Overrides.TryGetValue(backend.GetType(), out var own))
-        {
-            own = OwnKernels(backend.GetType());
-            Overrides[backend.GetType()] = own;
-        }
-
+        var own = OwnKernels(backend);
         var plugins = ResolvePlugins(backend, out var pluginRegistered);
         var chain = new KernelChoice[Ops.All.Count + plugins.Length];
         foreach (var operation in Ops.All)
@@ -265,6 +260,18 @@ public static class Kernels
                 }
             }
         }
+    }
+
+    // Whether the backend has a kernel of its own for the operation (its NameKernel overrides Backend's), by type, cached.
+    internal static bool[] OwnKernels(Backend backend)
+    {
+        if (!Overrides.TryGetValue(backend.GetType(), out var own))
+        {
+            own = OwnKernels(backend.GetType());
+            Overrides[backend.GetType()] = own;
+        }
+
+        return own;
     }
 
     // Which operations a backend type overrides: its NameKernel is declared below Backend.

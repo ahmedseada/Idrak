@@ -26,7 +26,45 @@ internal static partial class Tests
         ("override loop: under an explicit Throw the app's failure reaches the caller; Unregister restores the default; the report lists overrides with origin and policy", OverrideLoopThrowAndReport),
         ("override loop: IDRAK_OVERRIDE_POLICY gives slots their first policy: one for every slot, or Registry/name=policy entries", OverrideLoopPolicyVariable),
         ("override loop: a slot table keeps the default under an app's entry, keeps order, hands the default out as it is, and cannot set a policy without a guard", OverrideLoopSlotTable),
+        ("override loop: library defaults have versions; older ones stay reachable; the report says when an override was built against a release older than the default it shadows", OverrideLoopVersions),
     ];
+
+    private static void OverrideLoopVersions(Device device)
+    {
+        _ = device;
+        Check(TokenSamplers.DefaultVersion(TokenSamplers.DefaultName) == 2 && TokenSamplers.Default(TokenSamplers.DefaultName, 1) is not null
+              && TokenSamplers.Default(TokenSamplers.DefaultName, 3) is null
+              && TokenSamplers.Default(TokenSamplers.DefaultName, 2) == TokenSamplers.Default(TokenSamplers.DefaultName), "the sampler default is version 2; version 1 is kept");
+        Check(RopeScalings.Default(LinearType) is not null && Overrides.Report().All(o => o.Registry != "RopeScalings" || o.DefaultVersion >= 1), "other defaults are version 1");
+
+        // A table whose default (from Idrak.Nlp, which this assembly references) moved to version 2 in a later release.
+        Func<SamplerRequest, ITokenSampler> first = TokenSamplers.Default(TokenSamplers.DefaultName, 1)!, second = TokenSampler.Create,
+            mine = request => TokenSampler.Create(request);
+        string built = typeof(Tests).Assembly.GetReferencedAssemblies().Single(a => a.Name == "Idrak.Nlp").Version!.ToString(3);
+        foreach (var (since, outdated) in new[] { ("99.0.0", true), (built, false) })
+        {
+            var table = new SlotTable<string, Func<SamplerRequest, ITokenSampler>>("TestVersions");
+            table.RegisterDefault("s", second, version: 2, since: since);
+            table.RegisterDefault("s", first);                                     // registered in any order: the highest version is the default
+            Check(ReferenceEquals(table.Default("s"), second) && ReferenceEquals(table.Default("s", 1), first) && table.Default("s", 7) is null
+                  && table.DefaultVersions("s").SequenceEqual([1, 2]) && table.DefaultVersion("s") == 2, "versions are kept, the highest answers");
+            table.Register("s", mine);
+            var row = table.Report().Single();
+            Check(row.DefaultVersion == 2 && row.DefaultSince == since && row.BuiltAgainst == built && row.Outdated == outdated
+                  && (row.OutdatedNote?.Contains($"built against {built}", StringComparison.Ordinal) ?? !outdated)
+                  && row.ToString().Contains("version 2", StringComparison.Ordinal) == true, $"since {since}: {row}");
+            Check(table.Unregister("s") && ReferenceEquals(table.Find("s"), second) && table.DefaultVersions("s").Count == 2, "unregistering keeps every version");
+        }
+
+        try
+        {
+            new SlotTable<string, int>("TestVersions").RegisterDefault("x", 1, version: 2, since: "next");
+            Check(false, "a release that is not a number is refused");
+        }
+        catch (ArgumentException)
+        {
+        }
+    }
 
     // The overridden slots, with what the tests registered over them.
     private const string LowercaseType = "Lowercase", LinearType = "linear";

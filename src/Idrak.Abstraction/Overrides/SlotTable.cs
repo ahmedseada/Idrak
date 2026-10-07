@@ -16,6 +16,10 @@ namespace Idrak.Abstraction;
 /// <item>While an app's registration shadows a default, lookups get it guarded by the registry's
 /// <see cref="SlotGuard{TValue}"/> under the slot's <see cref="SlotPolicy"/> (<see cref="SlotPolicy.Throw"/>, reported,
 /// unless set). A slot with only its default hands the default out as it is: overriding nothing costs nothing.</item>
+/// <item>A library default has a version (1 unless the library says otherwise): when the library improves a default, it
+/// registers the new one under a higher version and the release it came with, and the previous ones stay reachable by
+/// version (<see cref="Default(TKey, int)"/>) for an app that wants the old behavior back. The report says when an app's
+/// registration was built against a release older than the default it shadows (see <see cref="SlotOverride.Outdated"/>).</item>
 /// <item>A registry with no guard (its entries are used across calls, such as a key/value cache layout through a
 /// sequence, or change what they are given as they run) hands the app's registration out as it is; its policy cannot be
 /// set.</item>
@@ -42,7 +46,12 @@ public sealed class SlotTable<TKey, TValue> where TKey : notnull
         public TValue App { get; init; } = default!;
 
         public TValue Current { get; init; } = default!;
+
+        // The library's versions of the default, lowest first; Library is the last one's value.
+        public LibraryVersion[] Versions { get; init; } = [];
     }
+
+    private sealed record LibraryVersion(int Version, TValue Value, string? Since, string Assembly);
 
     private sealed class State(Dictionary<TKey, Entry> map, Entry[] ordered)
     {
@@ -126,23 +135,44 @@ public sealed class SlotTable<TKey, TValue> where TKey : notnull
 
         ArgumentNullException.ThrowIfNull(key);
         var (id, origin) = Overrides.Describe(implementation ?? value);
+        var assembly = registeredBy ?? Overrides.AssemblyOf(implementation ?? value);
         origin = registeredBy?.GetName().Name ?? origin;
         Update(key, old => new Entry(key, old.Slot)
         {
-            HasLibrary = old.HasLibrary, Library = old.Library, HasApp = true, App = value,
+            HasLibrary = old.HasLibrary, Library = old.Library, Versions = old.Versions, HasApp = true, App = value,
         }, slot =>
         {
             slot.Implementation = id;
             slot.Origin = origin;
+            slot.AppAssembly = assembly;
             slot.Reset();
         });
     }
 
-    /// <summary>Registers <paramref name="value"/> as the library default of <paramref name="key"/> (for the library's own built-ins).</summary>
-    public void RegisterDefault(TKey key, TValue value)
+    /// <summary>
+    /// Registers <paramref name="value"/> as version <paramref name="version"/> of the library default of
+    /// <paramref name="key"/> (for the library's own built-ins). The highest version registered is the default; the others
+    /// stay reachable with <see cref="Default(TKey, int)"/>. Registering a version again replaces it.
+    /// </summary>
+    /// <param name="key">The name.</param>
+    /// <param name="value">The library's implementation.</param>
+    /// <param name="version">Its version, from 1; a better default replacing an older one takes a higher version.</param>
+    /// <param name="since">The release that made this version the default ("0.4.0"); null for the first version.</param>
+    public void RegisterDefault(TKey key, TValue value, int version = 1, string? since = null)
     {
         ArgumentNullException.ThrowIfNull(key);
-        Update(key, old => new Entry(key, old.Slot) { HasLibrary = true, Library = value, HasApp = old.HasApp, App = old.App }, null);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(version);
+        if (since is not null && !Version.TryParse(since, out _))
+        {
+            throw new ArgumentException($"'{since}' is not a release number such as 0.4.0.", nameof(since));
+        }
+
+        string assembly = Overrides.AssemblyOf(value)?.GetName().Name ?? "unknown";
+        Update(key, old =>
+        {
+            LibraryVersion[] versions = [.. old.Versions.Where(v => v.Version != version).Append(new LibraryVersion(version, value, since, assembly)).OrderBy(v => v.Version)];
+            return new Entry(key, old.Slot) { HasLibrary = true, Library = versions[^1].Value, Versions = versions, HasApp = old.HasApp, App = old.App };
+        }, null);
     }
 
     /// <summary>
@@ -158,7 +188,7 @@ public sealed class SlotTable<TKey, TValue> where TKey : notnull
                 return false;
             }
 
-            Update(key, _ => old.HasLibrary ? new Entry(old.Key, old.Slot) { HasLibrary = true, Library = old.Library } : null, null);
+            Update(key, _ => old.HasLibrary ? new Entry(old.Key, old.Slot) { HasLibrary = true, Library = old.Library, Versions = old.Versions } : null, null);
             return true;
         }
     }
@@ -187,6 +217,20 @@ public sealed class SlotTable<TKey, TValue> where TKey : notnull
 
     /// <summary>The library default of <paramref name="key"/>, whatever an app registered over it; the type's default when the library has none.</summary>
     public TValue? Default(TKey key) => _state.Map.TryGetValue(key, out var entry) && entry.HasLibrary ? entry.Library : default;
+
+    /// <summary>
+    /// Version <paramref name="version"/> of the library default of <paramref name="key"/> (an older default the library
+    /// replaced, kept for an app that wants its behavior back); the type's default when the library has no such version.
+    /// </summary>
+    public TValue? Default(TKey key, int version) =>
+        _state.Map.TryGetValue(key, out var entry) && entry.Versions.FirstOrDefault(v => v.Version == version) is { } found ? found.Value : default;
+
+    /// <summary>The version of the library default of <paramref name="key"/> (the highest registered); 0 when the library has none.</summary>
+    public int DefaultVersion(TKey key) => _state.Map.TryGetValue(key, out var entry) && entry.Versions.Length > 0 ? entry.Versions[^1].Version : 0;
+
+    /// <summary>The versions of the library default of <paramref name="key"/> that can be asked for, lowest first.</summary>
+    public IReadOnlyList<int> DefaultVersions(TKey key) =>
+        _state.Map.TryGetValue(key, out var entry) ? [.. entry.Versions.Select(v => v.Version)] : [];
 
     /// <summary>
     /// Who registered what <paramref name="key"/> hands out: <see cref="Overrides.Library"/>, or the name of the assembly
@@ -234,8 +278,17 @@ public sealed class SlotTable<TKey, TValue> where TKey : notnull
 
     /// <summary>Every app registration in the table, in order: what it replaces, its origin and policy (see <see cref="Overrides.Report"/>).</summary>
     public IReadOnlyList<SlotOverride> Report() =>
-        [.. _state.Ordered.Where(e => e.HasApp).Select(e => new SlotOverride(Registry, e.Slot.Name, e.Slot.Implementation, e.Slot.Origin,
-            e.HasLibrary, Guarded, e.Slot.Policy, e.Slot.ShadowRate, e.Slot.Failures, e.Slot.FallBacks, e.Slot.Compared, e.Slot.Differed))];
+        [.. _state.Ordered.Where(e => e.HasApp).Select(e =>
+        {
+            var current = e.Versions.Length > 0 ? e.Versions[^1] : null;
+            return new SlotOverride(Registry, e.Slot.Name, e.Slot.Implementation, e.Slot.Origin, e.HasLibrary, Guarded, e.Slot.Policy, e.Slot.ShadowRate,
+                e.Slot.Failures, e.Slot.FallBacks, e.Slot.Compared, e.Slot.Differed)
+            {
+                DefaultVersion = current?.Version ?? 0,
+                DefaultSince = current?.Since,
+                BuiltAgainst = current is null ? null : Overrides.BuiltAgainst(e.Slot.AppAssembly, current.Assembly),
+            };
+        })];
 
     // Replaces the entry of `key` with make(old) (null: removed), under the lock, and publishes a new state.
     private void Update(TKey key, Func<Entry, Entry?> make, Action<Slot>? touch)
@@ -251,7 +304,7 @@ public sealed class SlotTable<TKey, TValue> where TKey : notnull
             {
                 made = new Entry(key, slot)
                 {
-                    HasLibrary = made.HasLibrary, Library = made.Library, HasApp = made.HasApp, App = made.App,
+                    HasLibrary = made.HasLibrary, Library = made.Library, Versions = made.Versions, HasApp = made.HasApp, App = made.App,
                     Current = !made.HasApp ? made.Library : made.HasLibrary && _guard is not null ? _guard(slot, made.App, made.Library) : made.App,
                 };
             }

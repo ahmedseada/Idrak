@@ -1,11 +1,14 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-// An app that overrides one contract of the library: its own token sampler (SanitizingSampler), which fixes the one
-// case the app hit (logits that are not finite) and leaves the rest to the library's sampler. The override is
-// registered over the library's ("default" in TokenSamplers), which stays behind it: a failure of the app's sampler falls
-// back to it (the app opts into SlotPolicy.FallBack), and Overrides.Report() lists the override at startup. The app's own tests
-// (samples/Idrak.Samples.Override.Tests) check it with the testing kit, Idrak.Abstraction.Testing.
+// An app at the end of the override loop (plan 10, "Promotion"). It once shipped its own token sampler, because the
+// library's failed on logits that were not finite (a model that overflows now and then). The app's sampler proved the
+// fix with the testing kit; the library then made the fix general (one rule for NaN and ±∞ on every device) and shipped
+// it as version 2 of its default sampler. The app deleted its override: it runs on the library's default, and its tests
+// (samples/Idrak.Samples.Override.Tests) check that default with the kit. Version 1 stays reachable for one more release,
+// a one-line way back if the new default ever misbehaves for this app:
+//
+//   TokenSamplers.Register(TokenSamplers.DefaultName, TokenSamplers.Default(TokenSamplers.DefaultName, version: 1)!);
 //
 //   dotnet run -c Release --project samples/Idrak.Samples.Override
 //   dotnet run -c Release --project samples/Idrak.Samples.Override.Tests      the kit, run from the app's tests
@@ -13,36 +16,22 @@
 using Idrak.Generation;
 using Idrak.Generation.Abstractions;
 using Idrak.Layers;
-using Idrak.Samples.Override;
 
 var device = Device.Cpu;
-var library = TokenSamplers.Default(TokenSamplers.DefaultName)!;
-TokenSamplers.Register(TokenSamplers.DefaultName, SanitizingSampler.Create);   // every generation's sampler, from now on
-TokenSamplers.SetPolicy(TokenSamplers.DefaultName, SlotPolicy.FallBack);       // if it ever fails to be made, the library's
-foreach (var o in Overrides.Report())
-{
-    Console.WriteLine($"override: {o}");
-}
+Console.WriteLine($"token sampler: the library's default, version {TokenSamplers.DefaultVersion(TokenSamplers.DefaultName)}; "
+                  + $"overrides: {(Overrides.Report().Count == 0 ? "none" : string.Join(", ", Overrides.Report()))}");
 
-// One step whose logits went wrong: token 3 is the best, but token 1 overflowed to NaN.
+// The step that once made the app write its own sampler: token 3 is the best, but token 1 overflowed to NaN.
 float[] logits = [0.5f, float.NaN, 1f, 4f, 2f];
 var request = new SamplerRequest(device, Rows: 1, Vocabulary: logits.Length, MaxSteps: 1, HistoryCapacity: 1, new GenerationOptions { TopK = 1, Seed = 1 });
-foreach (var (name, create) in new (string, Func<SamplerRequest, ITokenSampler>)[] { ("library", library), ("app", SanitizingSampler.Create) })
+using (var sampler = TokenSamplers.Create(request))
+using (var step = Tensor.From(logits, [1, logits.Length], device))
 {
-    using var sampler = create(request);
-    using var step = Tensor.From(logits, [1, logits.Length], device);
-    try
-    {
-        sampler.Sample(step);
-        Console.WriteLine($"{name,-8} sampler, greedy on [{string.Join(", ", logits)}]: token {sampler.Ids.ToArray()[0]}");
-    }
-    catch (Exception ex)
-    {
-        Console.WriteLine($"{name,-8} sampler, greedy on [{string.Join(", ", logits)}]: {ex.GetType().Name} ({ex.Message})");
-    }
+    sampler.Sample(step);
+    Console.WriteLine($"greedy on [{string.Join(", ", logits)}]: token {sampler.Ids.ToArray()[0]}");
 }
 
-// The override in a generation: a small untrained character model, its text sampled by the app's sampler.
+// A generation: a small untrained character model, its text sampled by the library's default.
 var tokenizer = new CharTokenizer("abcdefghijklmnopqrstuvwxyz .");
 var random = new Random(4);
 using var model = new Sequential
@@ -53,6 +42,6 @@ using var model = new Sequential
     new LayerNorm(16, device: device),
     new Linear(16, tokenizer.VocabularySize, device: device, random: random),
 };
-var generator = new TextGenerator(model, tokenizer, 32);   // makes its sampler through TokenSamplers: the app's
+var generator = new TextGenerator(model, tokenizer, 32);
 var text = generator.Generate("the ", new GenerationOptions { TopK = 1, NumPredict = 12, Seed = 1 }).Text;
-Console.WriteLine($"generated with the app's sampler: \"the {text}\"");
+Console.WriteLine($"generated: \"the {text}\"");

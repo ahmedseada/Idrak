@@ -359,7 +359,8 @@ internal static partial class PtxKernels
     /// </summary>
     private static string SamplerBody(bool candidates)
     {
-        // Strided loop over the row's vocabulary: %r6 = index, %rd3 = address, %f2 = scaled score, %f5 = kept weight.
+        // Strided loop over the row's vocabulary: %r6 = index, %rd3 = address, %f2 = scaled score (NaN as -inf), %f5 = kept
+        // weight (with %p16, a row holding +inf: 1 for the +inf scores, 0 for the rest; see Backend.SampleRowsKernel).
         static string Kept(string label, string body) => $"""
             mov.u32 %r6, %tx;
             {label}:
@@ -369,11 +370,17 @@ internal static partial class PtxKernels
             add.u64 %rd3, %rd3, %rd2;
             ld.global.f32 %f2, [%rd3];
             mul.f32 %f2, %f2, %f31;
+            setp.nan.f32 %p4, %f2, %f2;
+            selp.f32 %f2, {NegInf}, %f2, %p4;
             setp.ge.f32 %p4, %f2, %f3;
             sub.f32 %f5, %f2, %f1;
             mul.f32 %f5, %f5, {Log2E};
             ex2.approx.ftz.f32 %f5, %f5;
             selp.f32 %f5, %f5, {Zero}, %p4;
+            setp.eq.f32 %p4, %f2, {NegInf};
+            selp.f32 %f5, {Zero}, %f5, %p4;
+            setp.eq.f32 %p4, %f2, {PosInf};
+            @%p16 selp.f32 %f5, {One}, {Zero}, %p4;
             {body}
             {label}_NEXT:
             add.u32 %r6, %r6, %nt;
@@ -391,11 +398,17 @@ internal static partial class PtxKernels
             add.u64 %rd3, %rd3, %rd2;
             ld.global.f32 %f2, [%rd3];
             mul.f32 %f2, %f2, %f31;
+            setp.nan.f32 %p4, %f2, %f2;
+            selp.f32 %f2, {NegInf}, %f2, %p4;
             setp.ge.f32 %p4, %f2, %f3;
             sub.f32 %f5, %f2, %f1;
             mul.f32 %f5, %f5, {Log2E};
             ex2.approx.ftz.f32 %f5, %f5;
             selp.f32 %f5, %f5, {Zero}, %p4;
+            setp.eq.f32 %p4, %f2, {NegInf};
+            selp.f32 %f5, {Zero}, %f5, %p4;
+            setp.eq.f32 %p4, %f2, {PosInf};
+            @%p16 selp.f32 %f5, {One}, {Zero}, %p4;
             {body}
             {label}_NEXT:
             add.u32 %r6, %r6, 1;
@@ -439,10 +452,12 @@ internal static partial class PtxKernels
             SOURCE_DONE:
             mov.f32 %f1, {NegInf};
             mov.f32 %f3, {NegInf};
+            setp.ne.u32 %p16, 0, 0;
             """);
         body.AppendLine(Kept("PMAX", "max.f32 %f1, %f1, %f2;"));
         body.AppendLine(BlockReduce("RMAX", "%f1", "max", NegInf));
         body.AppendLine($"""
+            setp.eq.f32 %p16, %f1, {PosInf};
             mov.f32 %f3, {NegInf};
             setp.eq.u32 %p2, %s_topk, 0;
             @%p2 bra THR_DONE;
@@ -621,6 +636,8 @@ internal static partial class PtxKernels
             ld.shared.b32 %r11, [%sb];
             ld.shared.f32 %f10, [%sb+4];
             bar.sync 0;
+            setp.gt.f32 %p4, %f6, 0f00000000;
+            selp.f32 %f6, %f6, 0f3F800000, %p4;
             mov.f32 %f11, 0f00000000;
             """);
         body.AppendLine(Kept("PH", """
@@ -646,7 +663,8 @@ internal static partial class PtxKernels
             @%p13 ld.global.f32 %f30, [%rd9];
             @%p13 cvt.rzi.s32.f32 %r26, %f30;
             cvt.rn.f32.s32 %f14, %r26;
-            @%p15 st.global.f32 [%a_ids], %f14;
+            max.f32 %f19, %f14, 0f00000000;
+            @%p15 st.global.f32 [%a_ids], %f19;
             @%p15 st.global.f32 [%rd5], %f14;
             div.rn.f32 %f15, %f10, %f6;
             @%p15 st.global.f32 [%rd5+4], %f15;

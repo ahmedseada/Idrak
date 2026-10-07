@@ -235,6 +235,9 @@ public abstract partial class Backend
     // RetryOnHost: 1 on, 0 off, -1 not read yet from IDRAK_RETRY_ON_HOST (read on first use, when Kind is safe to call).
     private int _retryOnHost = -1;
 
+    // Which operations this device has a kernel of its own for (by operation index), read on the first retry.
+    private bool[]? _ownKernels;
+
     /// <summary>Starts a device; <see cref="Kernels"/> tells it when the kernels registered for it change.</summary>
     protected Backend() => Operations.Kernels.Track(this);
 
@@ -270,9 +273,17 @@ public abstract partial class Backend
     /// Each retry is reported to telemetry (<see cref="DeviceFailed"/>, <see cref="DeviceFailed.RetriedOnHost"/>) and
     /// counted as a host call (<see cref="Operations.Kernels.HostCalls"/>). Only operations whose default is the host
     /// fallback are retried: a composed operation retries its parts one by one, an operation with no fallback throws, and
-    /// so does a kernel registered with <see cref="Operations.Kernels.Register"/>. An error the GPU reports after the
-    /// operation returned (found at a later synchronize or copy) can't be retried. While it is on, calls leave the
-    /// inlined fast path, as under a trace.
+    /// so does a kernel registered with <see cref="Operations.Kernels.Register"/>; an operation the device has no kernel of
+    /// its own for runs its host fallback once, as without the retry. An error the GPU reports after the operation
+    /// returned (found at a later synchronize or copy) can't be retried. While it is on, calls leave the inlined fast
+    /// path, as under a trace.
+    /// <para>
+    /// A retry runs the whole operation again on the host. An operation that adds into its output (a gradient
+    /// accumulation, a <c>+=</c> product: its kernel reads the output as well as writing it) adds twice to whatever part the
+    /// failed kernel had already written. The library's GPU kernels fail when they are launched (before writing anything)
+    /// or report the error at a later synchronization (which is not retried), so this needs a kernel that fails half-way,
+    /// such as a plug-in's; such a kernel should leave its output untouched when it throws.
+    /// </para>
     /// </remarks>
     public bool RetryOnHost
     {
@@ -294,6 +305,10 @@ public abstract partial class Backend
             KernelsChanged();
         }
     }
+
+    // Whether this device has a kernel of its own for the operation: without one its NameKernel is the host fallback
+    // already, which a retry would only run twice.
+    private bool OwnsKernel(int operation) => (_ownKernels ??= Operations.Kernels.OwnKernels(this))[operation];
 
     /// <summary>
     /// Whether <c>IDRAK_RETRY_ON_HOST</c> set to <paramref name="setting"/> turns the retry on for a device of
@@ -1446,6 +1461,13 @@ public abstract partial class Backend
     /// stream (seed, step, row). Writes the token to ids[row] and 13 statistics to stats[(step * rows + row) * 13]:
     /// id, probability, entropy (bits), then the top-5 (id, probability) pairs. The step number is read from device
     /// memory. Row r's logits start at element r * rowStride + rowOffset.
+    /// <para>
+    /// Scores that are not finite follow one rule on every device: a NaN score is never sampled; when a row has a +∞ score
+    /// (a +∞ logit, or a finite one that overflows when divided by the temperature) it draws uniformly among its +∞
+    /// tokens, and top-k, top-p and min-p do not apply; a row with no finite score and no +∞ one has nothing to sample:
+    /// ids[row] gets 0 (so the next step's input stays valid) and its statistics record id -1, probability 0, entropy 0
+    /// and no alternatives, which the sampler reading them reports as an error.
+    /// </para>
     /// </summary>
     public virtual void SampleRowsKernel(Storage logits, Storage ids, Storage stats, Storage step, int rows, int vocabulary,
         int rowStride, int rowOffset, float temperature, int topK, float topP, float minP, uint seed)

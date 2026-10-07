@@ -1,0 +1,37 @@
+<Project>
+  <!--
+    IdrakFromSource (plan 10, "Faster than NuGet"): build an app against a local clone of Idrak instead of the NuGet
+    packages, so a change to the library is tested in the app on its next build, with no publish.
+
+    In the app's Directory.Build.props:
+      <PropertyGroup>
+        <IdrakFromSource>/path/to/Idrak</IdrakFromSource>          (or: dotnet build -p:IdrakFromSource=/path/to/Idrak)
+      </PropertyGroup>
+    In the app's Directory.Build.targets (imported after the projects' own items):
+      <Import Project="$(IdrakFromSource)/build/IdrakFromSource.targets" Condition="'$(IdrakFromSource)' != ''" />
+
+    Every PackageReference to an Idrak package then becomes a ProjectReference to src/<package>/<package>.csproj in the
+    clone (before restore, so NuGet never fetches it); the app's other packages are untouched. Remove the property to go
+    back to the packages. To check the packaged form before a release instead: dotnet pack the clone into a folder and
+    add it as a source (-p:RestoreAdditionalProjectSources=/path/to/folder), with IdrakFromSource unset and the packed
+    version asked for exactly (a local prerelease ranks below a release of the same number).
+  -->
+  <PropertyGroup>
+    <_IdrakSourceRoot>$([MSBuild]::EnsureTrailingSlash('$(IdrakFromSource)'))</_IdrakSourceRoot>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(IdrakFromSource)' != ''">
+    <!-- The library's packages, as src/ names them (tests/Idrak.Tests checks the list against src/). -->
+    <_IdrakSourcePackage Include="Idrak;Idrak.Abstraction;Idrak.Abstraction.Testing;Idrak.Gpu;Idrak.Data;Idrak.Nlp;Idrak.Vision;Idrak.Mcp;Idrak.AspNetCore;Idrak.Onnx.Runtime" />
+    <!-- The app's references among them, each swapped for the clone's project. -->
+    <_IdrakNotReferenced Include="@(_IdrakSourcePackage)" Exclude="@(PackageReference)" />
+    <_IdrakReferenced Include="@(_IdrakSourcePackage)" Exclude="@(_IdrakNotReferenced)" />
+    <PackageReference Remove="@(_IdrakReferenced)" />
+    <ProjectReference Include="@(_IdrakReferenced->'$(_IdrakSourceRoot)src/%(Identity)/%(Identity).csproj')" />
+  </ItemGroup>
+
+  <Target Name="_IdrakFromSourceCheck" BeforeTargets="CollectPackageReferences;Build" Condition="'$(IdrakFromSource)' != ''">
+    <Error Condition="!Exists('$(_IdrakSourceRoot)src/Idrak/Idrak.csproj')"
+           Text="IdrakFromSource is '$(IdrakFromSource)', which is not a clone of Idrak (no src/Idrak/Idrak.csproj there)." />
+  </Target>
+</Project>
