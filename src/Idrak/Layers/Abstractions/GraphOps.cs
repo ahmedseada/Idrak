@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
 
 namespace Idrak.Layers.Abstractions;
@@ -83,6 +84,7 @@ public static class GraphOps
     /// Registers the graph operation <paramref name="name"/>; under a built-in name it overrides the library's, which stays
     /// behind it as its fallback (see <see cref="SetPolicy"/>) until <see cref="Unregister"/>.
     /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void Register(string name, GraphOp op)
     {
         ArgumentException.ThrowIfNullOrEmpty(name);
@@ -92,7 +94,7 @@ public static class GraphOps
             throw new ArgumentException($"'{name}' is a structural operation of GraphModule and cannot be replaced.", nameof(name));
         }
 
-        Registry.Register(name, op);
+        Registry.Register(name, op, System.Reflection.Assembly.GetCallingAssembly());
     }
 
     /// <summary>Removes the app's graph operation <paramref name="name"/> (a built-in name gets the library's back); false when the app registered none.</summary>

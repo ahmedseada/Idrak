@@ -104,14 +104,16 @@ public static class Overrides
         }
     }
 
-    // The implementation's name and the assembly it comes from: an object's type, or a delegate's method (its declaring
-    // type, outside the compiler's closure classes, and the method unless the compiler named it).
+    // The implementation's name and the assembly it comes from: an object's type, a delegate's method (its declaring type,
+    // outside the compiler's closure classes, and the method unless the compiler named it), or a name given as it is.
     internal static (string Implementation, string Origin) Describe(object? implementation)
     {
         switch (implementation)
         {
             case null:
                 return ("null", "unknown");
+            case string given:
+                return (given, "unknown");
             case Delegate d:
                 var method = d.Method;
                 var type = method.DeclaringType;

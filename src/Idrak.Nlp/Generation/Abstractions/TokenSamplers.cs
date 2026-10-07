@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 
 namespace Idrak.Generation.Abstractions;
 
@@ -32,11 +33,12 @@ public static class TokenSamplers
     /// <see cref="DefaultName"/> it overrides the built-in for every generation, which stays behind it as its fallback
     /// (see <see cref="SetPolicy"/>).
     /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void Register(string name, Func<SamplerRequest, ITokenSampler> create)
     {
         ArgumentException.ThrowIfNullOrEmpty(name);
         ArgumentNullException.ThrowIfNull(create);
-        Registry.Register(name, create);
+        Registry.Register(name, create, System.Reflection.Assembly.GetCallingAssembly());
     }
 
     /// <summary>Removes the app's sampler <paramref name="name"/> (<see cref="DefaultName"/> gets the built-in back); false when the app registered none.</summary>

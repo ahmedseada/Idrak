@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Runtime.CompilerServices;
 using Idrak.Abstraction.Devices;
 
 namespace Idrak.Abstraction.Generation;
@@ -166,11 +167,12 @@ public static class KeyValueLayouts
     /// </summary>
     /// <param name="name">The name to choose the format by.</param>
     /// <param name="layout">How the format stores and attends.</param>
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void Register(string name, KeyValueLayout layout)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         ArgumentNullException.ThrowIfNull(layout);
-        Registry.Register(name, layout);
+        Registry.Register(name, layout, System.Reflection.Assembly.GetCallingAssembly());
     }
 
     /// <summary>Removes the app's format <paramref name="name"/> (a built-in name gets the library's back); false when the app registered none.</summary>

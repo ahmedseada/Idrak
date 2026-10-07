@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
 
 namespace Idrak.Data.Abstractions;
@@ -60,10 +61,11 @@ public static class DatasetSources
     /// Registers <paramref name="source"/>. One with the name of a registered source takes its place (a built-in stays
     /// behind it as its fallback, see <see cref="SetPolicy"/>); a new one is tried first, before the sources already registered.
     /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void Register(IDatasetSource source)
     {
         ArgumentNullException.ThrowIfNull(source);
-        Registry.Register(source.Name, source);
+        Registry.Register(source.Name, source, System.Reflection.Assembly.GetCallingAssembly());
     }
 
     /// <summary>Removes the app's source <paramref name="name"/> (a built-in name gets the library's back); false when the app registered none.</summary>

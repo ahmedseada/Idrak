@@ -80,7 +80,7 @@ public static class GgufTypes
     /// Registers the ggml type with id <paramref name="id"/>; under a built-in id it overrides the library's type, which
     /// stays behind it as its fallback (see <see cref="SetPolicy"/>) until <see cref="Unregister"/>.
     /// </summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void Register(int id, GgufType type)
     {
         ArgumentNullException.ThrowIfNull(type);
@@ -89,7 +89,7 @@ public static class GgufTypes
             throw new ArgumentException($"{type.Name}: a block needs at least one value and one byte.", nameof(type));
         }
 
-        Registry.Register(id, type, System.Reflection.Assembly.GetCallingAssembly());
+        Registry.Register(id, type, System.Reflection.Assembly.GetCallingAssembly(), type.Name);
     }
 
     /// <summary>Removes the app's type with id <paramref name="id"/> (a built-in id gets the library's back); false when the app registered none.</summary>

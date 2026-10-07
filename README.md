@@ -1298,13 +1298,14 @@ per sample with the `Trainer`: `data.WithTeacher(teacher)` stores the teacher's 
 ## Extending Idrak: plug-in points
 
 Formats, operators, model families and data sources plug in through registries and interfaces, without changing the
-library. The built-ins are registered the same way, so a registered name can also replace one. Unknown names fail with
-the registered names and how to register. *Package* is where the contract lives (with its namespace when it is a
+library. The built-ins are registered the same way, so a registered name can also override one: the library's stays
+behind it as its fallback (see "The override loop" below). Unknown names fail with the registered names and how to
+register. *Package* is where the contract lives (with its namespace when it is a
 package's own `.Abstractions`).
 
 | What | Register with | Package |
 |---|---|---|
-| Token sampling (temperature, top-k, penalties, ...) | `ITokenSampler`; set `TextGenerator.CreateSampler` | `Idrak.Nlp` (`Idrak.Generation.Abstractions`) |
+| Token sampling (temperature, top-k, penalties, ...) | `TokenSamplers.Register("default", ...)` (an `ITokenSampler` per generation), or `TextGenerator.CreateSampler` for one generator | `Idrak.Nlp` (`Idrak.Generation.Abstractions`) |
 | Optimizers | derive from `Optimizer` (in-place writes: `AddScaled`, `Scale`, `CopyFrom`; state from `CreateState`) | `Idrak.Abstraction` |
 | Differentiable operations (own forward and backward) | `Autograd.Function(name, forward, backward)` | `Idrak.Abstraction` |
 | KV cache formats (float32, int8, bfloat16 built in) | `KeyValueLayouts.Register(name, KeyValueLayout)` | `Idrak.Abstraction` |
@@ -1356,6 +1357,48 @@ tokenizer, a RoPE scaling, or a contract of your own through a `ContractSuite<T>
 `Regression.Save` / `Replay` for the cases that once failed (see its
 [README](src/Idrak.Abstraction.Testing/README.md) and `samples/Idrak.Samples.Override`).
 
+### The override loop: an app's version over the library's
+
+An app that hits a weak spot in the library ships its own implementation now, and keeps the library's behind it. Every
+registry entry is a slot with two layers: the library default and what the app registered over it. Registering under a
+built-in name overrides the default without removing it; `Unregister` brings it back; `Default(name)` reaches it (an
+app's version can fix one case and hand the rest to it) and `Origin(name)` says who registered what a name gives
+(`"library"`, or the app's assembly). A slot nobody overrode hands its default out as it is, at no cost.
+
+Each overridden slot has a failure policy:
+
+| Policy | What happens | When |
+|---|---|---|
+| `SlotPolicy.FallBack` (the default) | the app's version answers; when it throws, the call is retried on the library default and the failure goes to telemetry (registry, name, implementation, exception) | everywhere: an override never takes a call down that the library could have answered |
+| `SlotPolicy.Throw` | the app's failure reaches the caller | tests and development |
+| `SlotPolicy.Shadow` | the library default answers; on a sample of the calls (1% unless set) the app's version runs too, and the outputs, times and allocations are compared and reported | before switching: real traffic as a test, with no risk to the answers |
+
+```csharp
+RopeScalings.Register("yarn", input => MyYarn(input, RopeScalings.Default("yarn")!));    // the app's, over the library's
+RopeScalings.SetPolicy("yarn", SlotPolicy.Shadow, shadowRate: 0.05);                     // the library answers, 5% compared
+TokenSamplers.Register("default", request => new MySampler(request));                    // every generation's sampler
+TokenizerComponents.RegisterNormalizer("NFC", spec => new MyNfc(spec));                  // a tokenizer part
+
+using var log = Telemetry.Subscribe(new ConsoleLogger(TelemetryLevel.Overrides));        // fallbacks and comparisons
+foreach (var o in Overrides.Report()) Console.WriteLine(o);                              // at startup: what the app overrides
+// RopeScalings/yarn: MyApp.Program (MyApp), replaces the library default, policy shadow 5%
+```
+
+Fallback happens at call boundaries only. A contract that keeps state falls back when it is made, not half-way: a
+sampler (through a generation), a tool-call parser (through a reply), packed weights, an opened sample source; for
+those, `Shadow` compares the whole run (a shadowed sampler sees the same logits as the library's and the tokens each
+chose are compared when the generation ends). Calls that change something outside (resolving a model, opening a
+dataset, preparing a checkpoint) fall back but are not run twice in `Shadow`. A few registries cannot fall back at all
+and use the app's entry as it is: KV cache layouts (a cache keeps its layout through a sequence), devices (a device never
+falls back to another), network steps and ONNX translators (they change a builder or a graph as they run), data file
+formats (rows are read lazily), and the description-only GGUF and model-family tables. A slot never falls back between
+devices: GPU failures follow `Backend.RetryOnHost` instead.
+
+`Overrides.Report()` lists every entry an app registered, with what it replaces, its origin, its policy and the
+fallbacks and comparisons so far; `idrak overrides -P MyPlugin.dll` prints it for a plug-in, and
+`idrak trace --levels overrides -- COMMAND` shows the events as they happen. The comparisons (`Comparisons`, in
+`Idrak.Abstraction`) are the ones the testing kit's conformance checks use.
+
 ## Telemetry: logging and tracking
 
 Every step of training and inference is published to a hub, and you choose what to listen to.
@@ -1380,6 +1423,7 @@ using var c = Telemetry.Subscribe(file);
 | `Operations` | `OperationCompleted` | every tensor op, forward and backward (∇), shape, device, time |
 | `Inference` | `InferenceCompleted` | model, samples, shapes, device, latency, samples/s |
 | `Devices` | `DeviceFailed` | a GPU error (device kind, message) or an operation retried on the CPU; while the retry is off, a hint on turning it on. `ConsoleLogger` and `JsonLinesLogger` always include it |
+| `Overrides` | `OverrideFellBack`, `OverrideCompared` | an app's override that threw and was answered by the library default (registry, name, implementation, origin, exception); a `Shadow` comparison (whether they agreed, the difference, both times and allocations). `ConsoleLogger` and `JsonLinesLogger` always include it |
 
 **Custom hooks.** Implement `ITelemetryHook`, set `Levels`, and override only the methods you need.
 The other methods default to no-ops. Events are `readonly record struct`s passed by `in`, so they

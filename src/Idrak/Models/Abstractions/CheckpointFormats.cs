@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Runtime.CompilerServices;
+
 namespace Idrak.Models.Abstractions;
 
 /// <summary>
@@ -51,10 +53,11 @@ public static class CheckpointFormats
     /// Registers <paramref name="format"/>: it takes the place of the format of the same name (the library's stays behind
     /// it as its fallback, see <see cref="SetPolicy"/>), or is asked before every format registered so far.
     /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void Register(ICheckpointFormat format)
     {
         ArgumentNullException.ThrowIfNull(format);
-        Registry.Register(format.Name, format);
+        Registry.Register(format.Name, format, System.Reflection.Assembly.GetCallingAssembly());
     }
 
     /// <summary>Removes the app's format <paramref name="name"/> (a built-in name gets the library's back); false when the app registered none.</summary>

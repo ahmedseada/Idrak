@@ -138,7 +138,7 @@ internal static partial class Tests
               && GgufPreTokenizers.Origin("qwen2") == library && PretrainedArchitectures.Origin("LlamaForCausalLM") == library
               && GraphOps.Origin("relu") == library && NetworkOps.Origin("linear") == library && LayerTypes.Origin("linear") == library
               && ImageCodecs.Origin("png") == library && SampleSources.Origin("csv") == library && OnnxImportOps.Origin("Relu") == library
-              && OnnxExportOps.GraphOpOrigin("relu") == library, "core's registries");
+              && OnnxExportOps.GraphOpOrigin("relu") == library, $"core's registries; overridden now: {string.Join(", ", Overrides.Report().Select(o => $"{o.Registry}/{o.Name}"))}");
         Check(Idrak.Data.Abstractions.ParquetCodecs.Origin(1) == library && Idrak.Data.Abstractions.DataFileFormats.Origin("Csv") == library
               && Idrak.Data.Abstractions.DatasetSources.Origin("hf") == library, "Data's registries");
         var origins = Overrides.Report().Select(o => o.Origin).ToHashSet();
@@ -281,6 +281,13 @@ internal static partial class Tests
                 "a name only the app registered is listed as added");
             Check(report.Any(o => o.Registry == "TokenSamplers" && o.Name == "default") && report.Any(o => o.Registry == "TokenizerComponents.Normalizers" && o.Name == LowercaseType),
                 "the sampler and the normalizer are listed");
+            var rows = CliJson("overrides", "-j").AsArray();
+            Check(rows.Any(r => (string?)r!["registry"] == "RopeScalings" && (string?)r["name"] == LinearType && (string?)r["policy"] == "Throw"
+                                && (string?)r["origin"] == "Idrak.Tests" && (bool?)r["replaces_default"] == true)
+                  && rows.Any(r => (string?)r!["name"] == "test-added" && r["policy"] is null), $"idrak overrides: {rows.ToJsonString()}");
+            var (exit, text, _) = Cli("overrides");
+            Check(exit == 0 && text.Contains("RopeScalings", StringComparison.Ordinal) && text.Contains("library default", StringComparison.Ordinal)
+                  && text.Contains("throw", StringComparison.Ordinal), $"idrak overrides prints a table: {text}");
             Check(RopeScalings.Unregister("test-added") && !RopeScalings.Contains("test-added"), "an added name is removed");
 
             // Unregister brings each default back (and only once); Default is the library's all along.

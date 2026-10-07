@@ -23,7 +23,7 @@ public static class GgufPreTokenizers
     /// Registers the split pattern of the pre-tokenizer named <paramref name="name"/> in GGUF files; null for GPT-2's own
     /// rule. Under a built-in name it overrides the library's pattern until <see cref="Unregister"/>.
     /// </summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void Register(string name, string? pattern)
     {
         ArgumentException.ThrowIfNullOrEmpty(name);
@@ -32,7 +32,7 @@ public static class GgufPreTokenizers
             _ = new System.Text.RegularExpressions.Regex(pattern);  // a malformed pattern fails here, not at the first encode
         }
 
-        Registry.Register(name, pattern, System.Reflection.Assembly.GetCallingAssembly());
+        Registry.Register(name, pattern, System.Reflection.Assembly.GetCallingAssembly(), pattern ?? "GPT-2's rule");
     }
 
     /// <summary>Removes the app's pre-tokenizer <paramref name="name"/> (a built-in name gets the library's back); false when the app registered none.</summary>

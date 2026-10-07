@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Runtime.CompilerServices;
+
 namespace Idrak.Abstraction.Generation;
 
 /// <summary>
@@ -27,11 +29,12 @@ public static class ChatTemplates
     /// name it takes that reader's place (the library's stays behind it as its fallback, see <see cref="SetPolicy"/>); a
     /// new name is asked before every reader registered so far.
     /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void Register(string name, Func<string, ITokenizer?, ChatTemplate?> load)
     {
         ArgumentException.ThrowIfNullOrEmpty(name);
         ArgumentNullException.ThrowIfNull(load);
-        Table.Register(name, load);
+        Table.Register(name, load, System.Reflection.Assembly.GetCallingAssembly());
     }
 
     /// <summary>Removes the app's reader <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>

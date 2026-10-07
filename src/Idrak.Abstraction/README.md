@@ -26,7 +26,8 @@ its README lists it.
 | Generation: tools | `Tool`, `[Tool]`, `ToolResult`, `IToolRegistry` and its default `ToolRegistry` (validation, allow rules, approvals, a timeout); `IToolChatModel` (a chat model that carries tools) and `ChatTools.WithTools` (runs a chat model's tool calls on the server) |
 | Retrieval (`Idrak.Abstraction.Retrieval`) | `IEmbedder` |
 | Serving (`Idrak.Abstraction.Serving`) | the engine's model kinds (`EngineModel<TCopy>`, `IEngineHost`, `IEngineLease`, `IEngineBatcher`), `IPredictor<TIn, TOut>`, `IModelCatalog` (named models reached through their contracts; the inference engine implements it), `KeepAlive` (parses "30m", "1h30m", 0, -1) |
-| Diagnostics (`Idrak.Abstraction.Diagnostics`) | `Telemetry`, `ITelemetryHook`, `TelemetryLevel` and the telemetry events (`DeviceFailed` among them: a GPU error, or an operation retried on the CPU, with a hint naming `IDRAK_RETRY_ON_HOST` while the retry is off); `ConsoleLogger` and `JsonLinesLogger` always include device failures |
+| Diagnostics (`Idrak.Abstraction.Diagnostics`) | `Telemetry`, `ITelemetryHook`, `TelemetryLevel` and the telemetry events (`DeviceFailed`, `OverrideFellBack` and `OverrideCompared` among them; `DeviceFailed`: a GPU error, or an operation retried on the CPU, with a hint naming `IDRAK_RETRY_ON_HOST` while the retry is off); `ConsoleLogger` and `JsonLinesLogger` always include device failures and overrides falling back or compared |
+| The override loop (root) | `SlotTable<TKey, TValue>` (every registry's entries, each with its library default), `Slot`, `SlotPolicy` (`FallBack`, `Throw`, `Shadow`), `SlotGuard<TValue>`, `Overrides` (`Report()`, `AsLibraryDefaults`), `Comparisons` (shared with the testing kit) |
 
 The GPU devices (CUDA, Vulkan, HIP) ship in the `Idrak.Gpu` package (which `Idrak` brings) and are built on this
 public device API alone; when an application includes it, `Device.Available` lists them, even before any other type of
@@ -55,6 +56,36 @@ To check a device or an override of a contract (a token sampler, a tokenizer, a 
 implementation, stress it and keep its failing cases, use the testing kit,
 [Idrak.Abstraction.Testing](https://www.nuget.org/packages/Idrak.Abstraction.Testing), from your test project:
 `Conformance.Check(Device.Get("mydevice")).ThrowIfFailed();`.
+
+## The override loop
+
+Every registry keeps its entries in a `SlotTable<TKey, TValue>`: each entry is a slot with the library default and,
+over it, what an app registered. An app's registration shadows the default without removing it, `Unregister` brings it
+back, and every registry has `Default(name)` and `Origin(name)`. While an app's entry shadows a default, the table hands
+it out guarded by the registry's `SlotGuard<TValue>` under the slot's `SlotPolicy`: `FallBack` (the default: a call
+that throws is retried on the default and reported to telemetry), `Throw`, or `Shadow` (the default answers, the app's
+runs on a share of the calls and `Comparisons` says how they differ). A slot with only its default hands it out as it
+is. The library's packages register their built-ins inside `Overrides.AsLibraryDefaults`, so they are defaults, not
+overrides; `Overrides.Report()` lists every override with its origin and policy. The events are `OverrideFellBack` and
+`OverrideCompared` (`TelemetryLevel.Overrides`, always on in `ConsoleLogger` and `JsonLinesLogger`).
+
+A registry of one's own gets the same behavior from a table:
+
+```csharp
+public static class Greeters
+{
+    private static readonly SlotTable<string, Func<string, string>> Table = new("Greeters",
+        guard: (slot, app, library) => name => slot.Call(() => app(name), () => library(name), Comparisons.Exact));
+
+    static Greeters() => Overrides.AsLibraryDefaults(() => Table.Register("plain", name => $"Hello, {name}"));
+
+    [MethodImpl(MethodImplOptions.NoInlining)]   // its caller is the registering assembly, the entry's Origin
+    public static void Register(string name, Func<string, string> greet) => Table.Register(name, greet, Assembly.GetCallingAssembly());
+    public static bool Unregister(string name) => Table.Unregister(name);
+    public static Func<string, string> Get(string name) => Table.Find(name) ?? throw new NotSupportedException(name);
+    public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Table.SetPolicy(name, policy, shadowRate);
+}
+```
 
 Projects with implicit usings get `using Idrak.Abstraction;` from this package, so code written for Idrak 0.3 compiles
 unchanged.

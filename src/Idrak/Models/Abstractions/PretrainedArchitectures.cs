@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
 using Idrak.Layers.Abstractions;
 
@@ -70,11 +71,12 @@ public static class PretrainedArchitectures
     static PretrainedArchitectures() => Overrides.AsLibraryDefaults(LibraryModelFormats.RegisterPretrainedArchitectures);   // the built-in families, on first use
 
     /// <summary>Registers how to read the architecture <paramref name="name"/>; under a built-in name it overrides the library's until <see cref="Unregister"/>.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void Register(string name, PretrainedArchitecture architecture)
     {
         ArgumentException.ThrowIfNullOrEmpty(name);
         ArgumentNullException.ThrowIfNull(architecture);
-        Registry.Register(name, architecture, architecture.Spec);
+        Registry.Register(name, architecture, System.Reflection.Assembly.GetCallingAssembly(), architecture.Spec);
     }
 
     /// <summary>Removes the app's architecture <paramref name="name"/> (a built-in name gets the library's back); false when the app registered none.</summary>

@@ -13,7 +13,8 @@ public readonly record struct SampledToken(int Id, float Probability, float Entr
 /// <summary>
 /// Chooses the next token of each sequence from the model's logits. <see cref="TokenSampler"/> is the built-in one
 /// (temperature, top-k, top-p, min-p and penalties, on the device); implement this to plug in another strategy
-/// (constrained or grammar-guided decoding, a custom sampling rule) through <c>Generation.TextGenerator.CreateSampler</c>.
+/// (constrained or grammar-guided decoding, a custom sampling rule), for every generation through
+/// <see cref="TokenSamplers"/> or for one generator through <c>Generation.TextGenerator.CreateSampler</c>.
 /// </summary>
 public interface ITokenSampler : IDisposable
 {

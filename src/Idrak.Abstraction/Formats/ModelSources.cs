@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Runtime.CompilerServices;
+
 namespace Idrak.Abstraction.Formats;
 
 /// <summary>Settings a model source receives with the name it resolves (Idrak's <c>ModelSource.Resolve</c> passes them).</summary>
@@ -57,10 +59,11 @@ public static class ModelSources
     /// Registers <paramref name="source"/>: it takes the place of the source of the same name (the library's stays behind
     /// it as its fallback, see <see cref="SetPolicy"/>), or is asked before every source registered so far.
     /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void Register(IModelSource source)
     {
         ArgumentNullException.ThrowIfNull(source);
-        Table.Register(source.Name, source);
+        Table.Register(source.Name, source, System.Reflection.Assembly.GetCallingAssembly());
     }
 
     /// <summary>Removes the app's source <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>

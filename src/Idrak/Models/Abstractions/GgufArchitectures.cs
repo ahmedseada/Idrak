@@ -45,11 +45,11 @@ public static class GgufArchitectures
     static GgufArchitectures() => Overrides.AsLibraryDefaults(LibraryModelFormats.RegisterGgufArchitectures);   // the built-in families, on first use
 
     /// <summary>Registers how to read the GGUF architecture <paramref name="name"/>; under a built-in name it overrides the library's until <see cref="Unregister"/>.</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void Register(string name, GgufArchitecture architecture)
     {
         ArgumentNullException.ThrowIfNull(architecture);
-        Registry.Register(name, architecture, System.Reflection.Assembly.GetCallingAssembly());
+        Registry.Register(name, architecture, System.Reflection.Assembly.GetCallingAssembly(), architecture.HuggingFace);
     }
 
     /// <summary>Removes the app's architecture <paramref name="name"/> (a built-in name gets the library's back); false when the app registered none.</summary>

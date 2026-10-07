@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Runtime.CompilerServices;
+
 namespace Idrak.Abstraction.Devices;
 
 /// <summary>
@@ -70,10 +72,11 @@ public static class DeviceProviders
     /// Registers a provider; one of a registered kind takes its place, and the library's provider of that kind comes back
     /// with <see cref="Unregister"/>. A device does not fall back to the library's provider when an app's one fails.
     /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void Register(DeviceProvider provider)
     {
         ArgumentNullException.ThrowIfNull(provider);
-        Table.Register(provider.Kind, provider);
+        Table.Register(provider.Kind, provider, System.Reflection.Assembly.GetCallingAssembly());
     }
 
     /// <summary>Removes the app's provider of <paramref name="kind"/> (the library's comes back, if it has one); false when the app registered none.</summary>

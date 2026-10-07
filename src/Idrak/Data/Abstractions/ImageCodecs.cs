@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Runtime.CompilerServices;
+
 namespace Idrak.Data.Abstractions;
 
 /// <summary>What an image file's header says.</summary>
@@ -62,11 +64,12 @@ public static class ImageCodecs
     /// Registers <paramref name="codec"/>: one of a registered name takes its place (a built-in stays behind it as its
     /// fallback, see <see cref="SetPolicy"/>), a new one is asked first.
     /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void Register(IImageCodec codec)
     {
         ArgumentNullException.ThrowIfNull(codec);
         ArgumentException.ThrowIfNullOrWhiteSpace(codec.Name);
-        Registry.Register(codec.Name, codec);
+        Registry.Register(codec.Name, codec, System.Reflection.Assembly.GetCallingAssembly());
     }
 
     /// <summary>Removes the app's codec <paramref name="name"/> (a built-in name gets the library's back); false when the app registered none.</summary>
