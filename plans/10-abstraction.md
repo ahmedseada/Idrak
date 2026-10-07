@@ -328,7 +328,7 @@ apps combine domains without the domains knowing each other.
 
 | Package | Holds | Depends on |
 |---|---|---|
-| `Idrak.Abstraction` | every contract (including the model-kind contract of the engine), `Tensor`, `Module`, autograd, the CPU device, small dependency-free defaults | — |
+| `Idrak.Abstraction` | every contract more than one package uses (decision 10; including the model-kind contract of the engine), `Tensor`, `Module`, autograd, the CPU device, small dependency-free defaults | — |
 | `Idrak.Gpu` | the CUDA, Vulkan and HIP devices and all GPU kernels (reverses decision 3; needs phase 4 first) | Abstraction |
 | `Idrak` (core) | layers, network builder, trainer, data loaders, optimizers, ONNX import and export, the **inference engine** and model packages, **model loading** (safetensors, GGUF, hub sources) and **tokenizers** (both from LanguageModels), generic LoRA attach and merge | Abstraction |
 | `Idrak.Data` | today's Datasets: file formats, Parquet, hub downloads, chat rows | Idrak |
