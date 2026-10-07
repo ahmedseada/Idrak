@@ -18,6 +18,10 @@ internal static partial class Tests
         ("operations: Kernels.Chain names the kernel each operation runs (registered, the device's own, composed, host fallback or none): the CPU runs its own, a device with memory and copies only falls back", ChainNamesKernels),
         ("operations: a trace counts the calls of each operation and the host fallbacks by operation, read from the dispatcher; it ends when disposed", TraceCountsCalls),
         ("operations: a plug-in operation is declared once by name with a default kernel; it runs a kernel registered for the device's kind where its requirement holds, else its default (a host default counted as a host fallback off the CPU); Kernels.Chain and a trace show it after the library's operations", PluginOperationsDispatch),
+        ("operations: a failing device kernel throws a DeviceException, reported to telemetry once (a console logger prints it) with a hint naming IDRAK_RETRY_ON_HOST and Backend.RetryOnHost", DeviceFailureReported),
+        ("operations: with RetryOnHost the dispatcher runs a failing kernel again on the host: the CPU's result, one host call, one retried event; a registered kernel is not retried", DeviceFailureRetriedOnHost),
+        ("operations: IDRAK_RETRY_ON_HOST is off when unset or 0, on for every device but the CPU with 1 or all, and for the kinds listed", RetryOnHostSetting),
+        ("operations: a device with nothing registered, no trace and retry off keeps the inlined fast path; RetryOnHost leaves it and turning it off returns", RetryOnHostLeavesFastPath),
     ];
 
     // Operations these tests declare as a plug-in would (once per process), on first use.

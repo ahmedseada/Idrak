@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Idrak.Abstraction.Testing</RootNamespace>
+    <AssemblyName>Idrak.Abstraction.Testing</AssemblyName>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IsAotCompatible>true</IsAotCompatible>
+    <PackageId>Idrak.Abstraction.Testing</PackageId>
+    <Description>The conformance and stress kit for Idrak's contracts: checks a device, a token sampler, a tokenizer or a RoPE scaling against the library default on fixed and random cases, stresses it (threads, long runs, odd shapes, cancellation, memory growth) and replays saved regression cases. Returns reports any test framework can assert on; built on Idrak.Abstraction only.</Description>
+  </PropertyGroup>
+
+  <!-- The public surface of Idrak.Abstraction only, as an outside device or an app's override sees it. -->
+  <ItemGroup>
+    <ProjectReference Include="..\Idrak.Abstraction\Idrak.Abstraction.csproj" />
+  </ItemGroup>
+
+</Project>

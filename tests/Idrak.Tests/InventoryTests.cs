@@ -26,7 +26,9 @@ internal static partial class Tests
         ("abstraction inventory: Idrak.Abstraction grants its internals to the tests only; every internal of Idrak or Idrak.Gpu another assembly uses is justified in the list, and the list names nothing no longer used", InternalsJustified),
     ];
 
-    // The library packages (the CLI is an application: its own helpers are outside the rule).
+    // The library packages (the CLI is an application: its own helpers are outside the rule). The testing kit,
+    // Idrak.Abstraction.Testing, is left out on purpose: it is a test tool, not a user of the contracts, and counting it
+    // would pull contracts back into Idrak.Abstraction.
     private static readonly string[] LibraryAssemblyNames =
         ["Idrak.Abstraction", "Idrak", "Idrak.Gpu", "Idrak.Nlp", "Idrak.Data", "Idrak.Vision", "Idrak.Onnx.Runtime", "Idrak.AspNetCore", "Idrak.Mcp"];
 

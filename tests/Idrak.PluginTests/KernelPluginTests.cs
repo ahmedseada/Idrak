@@ -3,7 +3,9 @@
 
 using System.Text.Json.Nodes;
 using Idrak;
+using Idrak.Abstraction.Devices;
 using Idrak.Abstraction.Operations;
+using Idrak.Abstraction.Testing;
 using Idrak.Generation;
 using Idrak.Layers;
 using Idrak.Layers.Abstractions;
@@ -25,7 +27,75 @@ public static class KernelPluginTests
         ("outside plug-in kernels: the packed format unpacks through its plug-in operation, by default and through the kernel registered for the device (CPU, Vulkan SPIR-V), to the same weights and products", PackedFormatKernel),
         ("outside plug-in kernels: the key/value cache layout expands its rows through its plug-in operation, by default and through the kernel registered for the device (CPU, Vulkan SPIR-V), and generates the float32 cache's text", CacheLayoutKernel),
         ("outside plug-in kernels: an Autograd.Function and a graph operation run their plug-in operations, by default and through the CPU kernel, with their gradients", FunctionAndGraphOpKernels),
+        ("outside plug-in kernels: the testing kit checks each plug-in kernel on the device against its default kernel on the CPU (Conformance.Check)", KitChecksKernels),
     ];
+
+    private static void KitChecksKernels(Device device)
+    {
+        using var kernels = PluginKernels.Install();
+
+        // Random values from the seed, uploaded to the backend; a fresh output; the kernel; the output read back.
+        static (Storage Storage, float[] Values) Input(Backend backend, Random random, int n)
+        {
+            var values = Enumerable.Range(0, n).Select(_ => random.NextSingle() * 4f - 2f).ToArray();
+            var storage = backend.Allocate(n, zeroed: false);
+            backend.Upload(values, storage);
+            return (storage, values);
+        }
+
+        static float[] Output(Backend backend, Storage output, int n, params Storage[] free)
+        {
+            var values = new float[n];
+            backend.Download(output, values);
+            foreach (var storage in free.Append(output))
+            {
+                backend.Return(storage);
+            }
+
+            return values;
+        }
+
+        var reports = new[]
+        {
+            Conformance.Check(PluginKernels.Unpack, device, (backend, kernel, seed) =>
+            {
+                var random = new Random(seed);
+                int n = 1 + random.Next(300);
+                var words = Enumerable.Range(0, (n + 1) / 2).Select(_ => BitConverter.UInt32BitsToSingle((uint)random.Next() & 0x7F7F7F7Fu)).ToArray();
+                var packed = backend.Allocate(words.Length, zeroed: false);
+                backend.Upload(words, packed);
+                var values = backend.Allocate(n, zeroed: true);
+                kernel(backend, packed, values, n);
+                return Output(backend, values, n, packed);
+            }, tolerance: 0f),
+            Conformance.Check(PluginKernels.Scale, device, (backend, kernel, seed) =>
+            {
+                var random = new Random(seed);
+                int width = 1 + random.Next(40), count = 1 + random.Next(20);
+                var rows = Input(backend, random, count * width);
+                var scales = Input(backend, random, count);
+                var output = backend.Allocate(count * width, zeroed: true);
+                kernel(backend, rows.Storage, scales.Storage, output, count * width, width);
+                return Output(backend, output, count * width, rows.Storage, scales.Storage);
+            }),
+            Conformance.Check(PluginKernels.SoftplusOp, device, (backend, kernel, seed) =>
+            {
+                int n = 1 + new Random(seed).Next(500);
+                var x = Input(backend, new Random(seed + 1), n);
+                var y = backend.Allocate(n, zeroed: true);
+                kernel(backend, x.Storage, y, n);
+                return Output(backend, y, n, x.Storage);
+            }),
+        };
+
+        foreach (var report in reports)
+        {
+            Check(report.Passed && report.Cases == 8, report.ToString());
+        }
+
+        bool registers = device.Backend.Kind is "cpu" or "vulkan";
+        Check(reports[0].Entries[0].Detail.StartsWith(registers ? "the registered kernel" : "the host kernel", StringComparison.Ordinal), reports[0].Entries[0].Detail);
+    }
 
     private static void PackedFormatKernel(Device device)
     {

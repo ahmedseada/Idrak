@@ -31,6 +31,7 @@ public static class PluginTests
         ("outside plug-in: a key/value cache format generates the float32 cache's greedy text", CacheFormat),
         ("outside plug-in: a sample source computed when read trains a classifier, to the weights of its in-memory copy", DataPluginTests.SourceTrains),
         ("outside plug-in: a batch source making tensors itself trains a linear model through Trainer.Fit", DataPluginTests.BatchSourceTrains),
+        ("outside plug-in: a plain-loop device on the public device API (its own backend, storage and provider) passes the conformance kit and a stress run", ReferenceDeviceConforms),
     ];
 
     /// <summary>The ONNX operator and network step softplus is exported, imported and replayed as.</summary>
@@ -225,6 +226,32 @@ public static class PluginTests
         }
 
         return (first, last);
+    }
+
+    private static void ReferenceDeviceConforms(Device device)
+    {
+        if (device.Type != DeviceType.Cpu)
+        {
+            return;                                                          // compared with the CPU once
+        }
+
+        Abstraction.Devices.DeviceProviders.Register(new ReferenceProvider());
+        try
+        {
+            var reference = Device.Get(ReferenceProvider.Name);
+            Check(reference.ToString() == "reference:0" && !Device.Available.Contains(reference), "found by name, not listed");
+            long before = ReferenceDevice.Instance.OwnCalls;
+            var report = Abstraction.Testing.Conformance.Check(reference);
+            report.ThrowIfFailed();
+            Check(ReferenceDevice.Instance.OwnCalls > before, "its own loops ran");
+            Check(report.Entries.Any(e => e.Name == "Softmax" && e.Detail.StartsWith("the device's own kernel", StringComparison.Ordinal))
+                  && report.Entries.Any(e => e.Name == "LayerNormFused" && e.Detail.StartsWith("the host fallback", StringComparison.Ordinal)), report.ToString());
+            Abstraction.Testing.Stress.Run(reference, new Abstraction.Testing.StressOptions { Iterations = 200, Threads = 2, Large = false }).ThrowIfFailed();
+        }
+        finally
+        {
+            Abstraction.Devices.DeviceProviders.Unregister(ReferenceProvider.Name);
+        }
     }
 
     private static void Check(bool condition, string message)

@@ -104,6 +104,7 @@ internal sealed unsafe partial class HipBackend : Backend
             return ([], reason);
         }
 
+        using var quiet = DeviceException.Handled();                     // a failed probe is a reason the backend reports, not an error
         try
         {
             int result = hipInit(0);
