@@ -174,14 +174,11 @@ return failed == 0 ? 0 : 1;
 
 internal static partial class Tests
 {
-    public static (string Name, Action<Device> Run)[] All => [.. InventoryGroup, .. Basic, .. Advanced, .. TensorOpsGroup, .. Decoding, .. Generation, .. Simplified, .. Callbacks, .. AspNetCore, .. Retrieval, .. Onnx, .. Quantization, .. Decoder, .. Pretrained, .. ChatTemplates, .. FineTuning, .. MixedPrecisionGroup, .. CodingToolsGroup, .. DatasetsGroup, .. GgufGroup, .. NamingGroup, .. StreamingText, .. OffloadingGroup, .. TuningGroup, .. CpuTuningGroup, .. AbstractionGroup, .. OperationGroup, .. OpPluginGroup, .. PackedPluginGroup, .. ModelPluginGroup, .. DatasetPluginGroup, .. MinimalBackendGroup, .. KeyValuePluginGroup, .. OutsidePluginGroup, .. VulkanGroup, .. VulkanRuntimeGroup, .. SpirvGroup, .. VulkanCnnGroup, .. VulkanPromptGroup, .. VulkanMatrixGroup, .. VulkanTrainingGroup, .. VulkanFusedGroup, .. VulkanLimitsGroup, .. VulkanGraphGroup, .. HipGroup, .. ModelFamilyGroup, .. MixtureOfExpertsGroup, .. VulkanMixedMatrixGroup, .. CliRunGroup, .. CliDeveloperGroup, .. CliServeGroup, .. CliModelsGroup, .. CliDesignGroup, .. CliMeasureGroup, .. CliRetrievalGroup, .. CliTrainDataGroup, .. CliHealthGroup, .. CliPolishGroup, .. DataLoaderGroup, .. WindowKernelGroup, .. DistillationGroup, .. CliArabicGroup, .. VisionGroup, .. ToolContractGroup];
+    public static (string Name, Action<Device> Run)[] All => [.. InventoryGroup, .. Basic, .. Advanced, .. TensorOpsGroup, .. Decoding, .. Generation, .. Simplified, .. Callbacks, .. AspNetCore, .. Retrieval, .. Onnx, .. Quantization, .. Decoder, .. Pretrained, .. ChatTemplates, .. FineTuning, .. MixedPrecisionGroup, .. CodingToolsGroup, .. DatasetsGroup, .. GgufGroup, .. NamingGroup, .. StreamingText, .. OffloadingGroup, .. TuningGroup, .. CpuTuningGroup, .. AbstractionGroup, .. OperationGroup, .. ConformanceKitGroup, .. OpPluginGroup, .. PackedPluginGroup, .. ModelPluginGroup, .. DatasetPluginGroup, .. MinimalBackendGroup, .. KeyValuePluginGroup, .. OutsidePluginGroup, .. VulkanGroup, .. VulkanRuntimeGroup, .. SpirvGroup, .. VulkanCnnGroup, .. VulkanPromptGroup, .. VulkanMatrixGroup, .. VulkanTrainingGroup, .. VulkanFusedGroup, .. VulkanLimitsGroup, .. VulkanGraphGroup, .. HipGroup, .. ModelFamilyGroup, .. MixtureOfExpertsGroup, .. VulkanMixedMatrixGroup, .. CliRunGroup, .. CliDeveloperGroup, .. CliServeGroup, .. CliModelsGroup, .. CliDesignGroup, .. CliMeasureGroup, .. CliRetrievalGroup, .. CliTrainDataGroup, .. CliHealthGroup, .. CliPolishGroup, .. DataLoaderGroup, .. WindowKernelGroup, .. DistillationGroup, .. CliArabicGroup, .. VisionGroup, .. ToolContractGroup];
 
     private static readonly (string Name, Action<Device> Run)[] Basic =
     [
-        ("matmul matches reference (all transposes, beta 0 and 1)", MatMulReference),
         ("matmul and Conv2d with more rows than one CUDA grid holds (row blocks, transposed A)", MatMulManyRows),
-        ("element-wise ops match reference", ElementWiseReference),
-        ("large tensors (parallel / multi-block paths)", LargeTensors),
         ("gradient: sigmoid, sum", d => GradCheck(d, [3, 4], x => x.Sigmoid().Sum())),
         ("gradient: tanh, mean", d => GradCheck(d, [5, 3], x => x.Tanh().Mean())),
         ("gradient: relu, square", d => GradCheck(d, [4, 4], x => (x.Relu() + x.Square()).Sum(), avoidZero: true)),
@@ -473,47 +470,6 @@ internal static partial class Tests
         Check(after == before, $"in-use memory grew from {before} to {after} bytes");
     }
 
-    private static void MatMulReference(Device device)
-    {
-        var random = new Random(1);
-        foreach (var (m, n, k) in new[] { (1, 1, 1), (3, 5, 2), (17, 33, 9), (64, 48, 70), (130, 67, 91), (1100, 1030, 21), (1, 700, 300), (8, 300, 77), (16, 129, 65) })
-        {
-            foreach (bool ta in new[] { false, true })
-            {
-                foreach (bool tb in new[] { false, true })
-                {
-                    foreach (float beta in new[] { 0f, 1f })
-                    {
-                        var a = RandomArray(random, m * k);
-                        var b = RandomArray(random, k * n);
-                        var c = RandomArray(random, m * n);
-                        var expected = new float[m * n];
-                        for (int i = 0; i < m; i++)
-                        {
-                            for (int j = 0; j < n; j++)
-                            {
-                                double acc = 0;
-                                for (int p = 0; p < k; p++)
-                                {
-                                    acc += (double)a[ta ? p * m + i : i * k + p] * b[tb ? j * k + p : p * n + j];
-                                }
-
-                                expected[i * n + j] = (float)(acc + beta * c[i * n + j]);
-                            }
-                        }
-
-                        var backend = device.Backend;
-                        using var ta_ = Tensor.From(a, device);
-                        using var tb_ = Tensor.From(b, device);
-                        using var tc = Tensor.From(c, device);
-                        backend.MatMul(ta_.Storage, tb_.Storage, tc.Storage, m, n, k, ta, tb, beta);
-                        AssertClose(expected, tc.ToArray(), 1e-4f, $"matmul m={m} n={n} k={k} transA={ta} transB={tb} beta={beta}");
-                    }
-                }
-            }
-        }
-    }
-
     // 1.1 million rows: more than 65,535 blocks of the 16-row tile, the grid's y limit on CUDA GPUs. A Conv2d's im2col
     // product over 10,000 MNIST images has 7.8 million (it failed with CUDA_ERROR_INVALID_VALUE).
     private static void MatMulManyRows(Device device)
@@ -571,57 +527,6 @@ internal static partial class Tests
             using var part = Tensor.From(pixels.AsSpan(start * 28 * 28, 100 * 28 * 28).ToArray(), [100, 1, 28, 28], device);
             using var partOut = conv.Predict(part);
             AssertClose(partOut.ToArray(), wholeValues.AsSpan(start * per, 100 * per).ToArray(), 1e-4f, $"Conv2d images {start}-{start + 99}");
-        }
-    }
-
-    private static void ElementWiseReference(Device device)
-    {
-        var random = new Random(2);
-        var x = RandomArray(random, 37, 4f);
-        var y = RandomArray(random, 37, 4f);
-        using var tx = Tensor.From(x, device);
-        using var ty = Tensor.From(y, device);
-        AssertClose(x.Select(v => 1f / (1f + MathF.Exp(-v))).ToArray(), tx.Sigmoid().ToArray(), 1e-5f, "sigmoid");
-        AssertClose(x.Select(MathF.Tanh).ToArray(), tx.Tanh().ToArray(), 1e-5f, "tanh");
-        AssertClose(x.Select(v => MathF.Max(v, 0)).ToArray(), tx.Relu().ToArray(), 0, "relu");
-        AssertClose(x.Select(v => v * v).ToArray(), tx.Square().ToArray(), 1e-6f, "square");
-        AssertClose(x.Zip(y, (a, b) => a + b).ToArray(), (tx + ty).ToArray(), 1e-6f, "add");
-        AssertClose(x.Zip(y, (a, b) => a - b).ToArray(), (tx - ty).ToArray(), 1e-6f, "sub");
-        AssertClose(x.Zip(y, (a, b) => a * b).ToArray(), (tx * ty).ToArray(), 1e-6f, "mul");
-        AssertClose(x.Select(v => 3f * v - 2f).ToArray(), (3f * tx - 2f).ToArray(), 1e-5f, "affine");
-        AssertClose([x.Sum()], [tx.Sum().Item()], 1e-4f, "sum");
-        AssertClose([x.Average()], [tx.Mean().Item()], 1e-5f, "mean");
-        using var saturated = Tensor.From([-100f, 100f, -1000f, 1000f], device);
-        AssertClose([0f, 1f, 0f, 1f], saturated.Sigmoid().ToArray(), 1e-6f, "sigmoid saturation");
-        AssertClose([-1f, 1f, -1f, 1f], saturated.Tanh().ToArray(), 1e-6f, "tanh saturation");
-    }
-
-    private static void LargeTensors(Device device)
-    {
-        const int N = 1_000_003;
-        var random = new Random(3);
-        var x = RandomArray(random, N);
-        using var tx = Tensor.From(x, device);
-        double expectedSum = x.Sum(v => (double)v);
-        AssertClose([(float)expectedSum], [tx.Sum().Item()], 1e-2f, "large sum");
-        var sig = tx.Sigmoid().ToArray();
-        for (int i = 0; i < N; i += 9973)
-        {
-            AssertClose([1f / (1f + MathF.Exp(-x[i]))], [sig[i]], 1e-5f, $"large sigmoid[{i}]");
-        }
-
-        using var matrix = Tensor.From(x.AsSpan(0, 1000 * 1000), [1000, 1000], device);
-        using var ones = Tensor.Ones([1000], device);
-        var rowSums = matrix.MatMul(ones.Reshape(1000, 1)).ToArray();
-        for (int r = 0; r < 1000; r += 97)
-        {
-            double expected = 0;
-            for (int c = 0; c < 1000; c++)
-            {
-                expected += x[r * 1000 + c];
-            }
-
-            AssertClose([(float)expected], [rowSums[r]], 1e-3f, $"large matmul row {r}");
         }
     }
 
