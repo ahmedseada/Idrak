@@ -321,11 +321,11 @@ internal sealed class ServeHost
         foreach (var model in Served)
         {
             var served = model;
-            idrak.AddChatModel(served.Name, _ => Load(served), (_, b) =>
+            idrak.Configure((_, engine) => engine.ChatModel(served.Name, () => Load(served), b =>
             {
                 b = b.KeepAlive(Settings.KeepAlive);
                 return served.Template is null ? b : b.Template(served.Template);
-            });
+            }));
         }
 
         var app = builder.Build();

@@ -7,7 +7,6 @@ Idrak.Datasets.IDatasetSource
 Idrak.Datasets.IParquetCodec
 Idrak.Datasets.ITextNormalizer
 Idrak.Datasets.ParquetCodecs
-Idrak.Inference.EngineModel
 Idrak.LanguageModels.CheckpointFormats
 Idrak.LanguageModels.DistillationTeacher
 Idrak.LanguageModels.GgufArchitectures

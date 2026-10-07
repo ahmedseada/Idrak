@@ -44,9 +44,9 @@ internal static partial class Tests
         builder.WebHost.UseUrls("http://127.0.0.1:0");
         builder.Services.AddIdrak()
             .AddPredictor<Row, float>("rows", package, p => p.Input<Row>(r => [r.A, r.B, r.C]).Output(v => v[0]))
-            .AddChatModel("chat", _ => { var (m, t) = TinyLanguageModel(device); return new TextGenerator(m, t, 32); },
-                (_, c) => c.KeepAlive(TimeSpan.FromMinutes(1)))
-            .AddTextModel("text", _ => { var (m, t) = TinyLanguageModel(device); return new TextGenerator(m, t, 32); });
+            .Configure((_, engine) => engine
+                .ChatModel("chat", () => { var (m, t) = TinyLanguageModel(device); return new TextGenerator(m, t, 32); }, c => c.KeepAlive(TimeSpan.FromMinutes(1)))
+                .TextModel("text", () => { var (m, t) = TinyLanguageModel(device); return new TextGenerator(m, t, 32); }));
         var app = builder.Build();
         app.MapPredictor<Row, float>("/predict/rows", "rows");
         app.MapGenerate("/generate", "text");

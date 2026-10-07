@@ -11,8 +11,8 @@ scanned only as a user of `Idrak`'s internals.
 
 | Assembly | Interfaces | Abstract classes | Registries | Total | Outside `Idrak.Abstraction.*` |
 |---|---|---|---|---|---|
-| `Idrak.Abstraction` | 29 | 12 | 10 | 50 | 0 |
-| `Idrak` | 0 | 1 | 1 | 2 | 2 |
+| `Idrak.Abstraction` | 33 | 13 | 10 | 55 | 0 |
+| `Idrak` | 0 | 0 | 1 | 1 | 1 |
 | `Idrak.LanguageModels` | 6 | 2 | 7 | 15 | 15 |
 | `Idrak.Datasets` | 4 | 0 | 3 | 7 | 7 |
 | `Idrak.Onnx` | 0 | 0 | 3 | 3 | 3 |
@@ -53,7 +53,8 @@ proposed namespace (phases 1 to 3 settle it).
 | `Idrak.Abstraction.Formats.WeightCodec` | abstract class | internal | — | WeightCodec.BFloat16Codec, WeightCodec.Float16Codec, WeightCodec.Float32Codec |  | `Idrak.Abstraction.Formats` |
 | `Idrak.Abstraction.Generation.ChatTemplate` | abstract class | public | — | ChatMLTemplate, JinjaChatTemplate |  | `Idrak.Abstraction.Generation` |
 | `Idrak.Abstraction.Generation.ICachedModule` | interface | public | Tensor | CausalSelfAttention, DecoderBlock, MultiHeadAttention, PositionEmbedding, PositionalEncoding, Sequential, +1 |  | `Idrak.Abstraction.Generation` |
-| `Idrak.Abstraction.Generation.IChatModel` | interface | public | — | ChatGenerator, FakeChatModel, GenerativeModel.EngineChat |  | `Idrak.Abstraction.Generation` |
+| `Idrak.Abstraction.Generation.IChatModel` | interface | public | — | ChatEngineModel, ChatGenerator, FakeChatModel |  | `Idrak.Abstraction.Generation` |
+| `Idrak.Abstraction.Generation.ITextModel` | interface | public | — | ChatEngineModel, TextEngineModel, TextGenerator |  | `Idrak.Abstraction.Generation` |
 | `Idrak.Abstraction.Generation.ITokenSampler` | interface | public | Tensor | TokenSampler |  | `Idrak.Abstraction.Generation` |
 | `Idrak.Abstraction.Generation.ITokenizer` | interface | public | — | BpeTokenizer, CharTokenizer, WordTokenizer |  | `Idrak.Abstraction.Generation` |
 | `Idrak.Abstraction.Generation.IToolCallParser` | interface | public | — | DeepSeekToolCallParser, HarmonyToolCallParser, JsonToolCallParser, MistralToolCallParser, PythonicToolCallParser, Qwen3CoderToolCallParser |  | `Idrak.Abstraction.Generation` |
@@ -74,6 +75,10 @@ proposed namespace (phases 1 to 3 settle it).
 | `Idrak.Abstraction.Retrieval.IReranker` | interface | public | — | CrossEncoder |  | `Idrak.Abstraction.Retrieval` |
 | `Idrak.Abstraction.Retrieval.IRetriever` | interface | public | — | RetrievalIndex |  | `Idrak.Abstraction.Retrieval` |
 | `Idrak.Abstraction.Retrieval.IVectorStore` | interface | public | — | InMemoryVectorStore |  | `Idrak.Abstraction.Retrieval` |
+| `Idrak.Abstraction.Serving.EngineModel<TCopy>` | abstract class | public | — | ChatEngineModel, PredictorModel<TIn, TOut>, TextEngineModel |  | `Idrak.Abstraction.Serving` |
+| `Idrak.Abstraction.Serving.IEngineBatcher<TIn, TOut>` | interface | public | — | MicroBatcher<TIn, TOut> |  | `Idrak.Abstraction.Serving` |
+| `Idrak.Abstraction.Serving.IEngineHost<TCopy>` | interface | public | — | HostedModel.Host<TCopy> |  | `Idrak.Abstraction.Serving` |
+| `Idrak.Abstraction.Serving.IEngineLease<TCopy>` | interface | public | — | HostedModel.Lease<TCopy> |  | `Idrak.Abstraction.Serving` |
 | `Idrak.Abstraction.Serving.IPredictor<TIn, TOut>` | interface | public | — | IdrakBuilder.EnginePredictor<TIn, TOut>, Predictor<TIn, TOut>, PredictorModel<TIn, TOut> |  | `Idrak.Abstraction.Serving` |
 | `Idrak.Abstraction.Training.IScaler` | interface | public | — | MinMaxScaler, StandardScaler |  | `Idrak.Abstraction.Training` |
 | `Idrak.Abstraction.Training.ITrainerCallback` | interface | public | — | Checkpoint, CsvLog, EarlyStopping |  | `Idrak.Abstraction.Training` |
@@ -87,7 +92,6 @@ proposed namespace (phases 1 to 3 settle it).
 
 | Type | Kind | Visibility | Mentions | Implementations | Registered | Target |
 |---|---|---|---|---|---|---|
-| `Idrak.Inference.EngineModel` | abstract class | internal | — | GenerativeModel, PredictorModel<TIn, TOut> |  | `Idrak.Abstraction.Serving` |
 | `Idrak.Layers.NetworkOps` | registry | public | — |  | attention, batchnorm, conv2d, dropout, embedding, firstStep, flatten, gelu, +16 | `Idrak.Abstraction.Modules` |
 
 ### Idrak.LanguageModels
