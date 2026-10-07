@@ -380,10 +380,12 @@ Diffusion, Audio; the bridges depend on contracts (and their third-party package
 12. **`FallBack` is the default failure policy** (2026-10-07): when an app's implementation throws, the call is
    retried on the library default and the failure is reported to telemetry; a slot opts into `Throw` (tests,
    development) or `Shadow`. Shadow samples 1% of calls per slot by default; reports go to telemetry.
-13. **No device fallback on errors** (2026-10-07): `FallBack` is between an app's implementation and the library's
-   default of the same contract, never between devices. A GPU kernel that fails throws; it is not retried on the CPU
-   (a silent retry would hide driver bugs and change speed by orders of magnitude). The dispatcher's host fallback,
-   for operations a device has no kernel for, is unchanged and visible in `idrak kernels`.
+13. **No device fallback on errors by default** (2026-10-07): `FallBack` is between an app's implementation and the
+   library's default of the same contract, never between devices. A GPU kernel that fails throws; it is not retried on
+   the CPU unless the app opts in per device (`Backend.RetryOnHost`, or `IDRAK_RETRY_ON_HOST`). Every GPU failure is
+   reported to telemetry, and while the retry is off the report says how to switch it on. Only failures raised inside
+   an operation can be retried; asynchronous GPU errors found later cannot. The dispatcher's host fallback, for
+   operations a device has no kernel for, is unchanged and visible in `idrak kernels`.
 
 ## Decided (the override loop, 2026-10-07)
 
