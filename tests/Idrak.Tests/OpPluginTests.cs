@@ -2,12 +2,12 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Text.Json.Nodes;
-using Idrak.Inference;
-using Idrak.Layers.Abstractions;
-using Idrak.Layers;
-using Idrak.Onnx.Abstractions;
-using Idrak.Onnx;
 using Idrak;
+using Idrak.Inference;
+using Idrak.Layers;
+using Idrak.Layers.Abstractions;
+using Idrak.Onnx;
+using Idrak.Onnx.Abstractions;
 
 // Registries instead of closed switches: the built-in ONNX import operators and network-builder steps go through the
 // same registration as steps and operators of your own.

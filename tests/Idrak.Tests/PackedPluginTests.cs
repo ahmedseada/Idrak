@@ -1,10 +1,10 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak;
 using Idrak.Generation;
 using Idrak.Layers;
 using Idrak.Models.Abstractions;
-using Idrak;
 
 // Packed-weight formats defined outside the library: registered by name, multiplied through PackedWeight.MatMul (the
 // expanded default or a product of their own), and never handed to the kernels for the built-in formats.

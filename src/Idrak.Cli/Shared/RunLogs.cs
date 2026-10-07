@@ -2,12 +2,12 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Globalization;
-using System.Text.Json.Nodes;
-using System.Text.Json;
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using Idrak.Diagnostics;
-using Idrak.Training.Abstractions;
 using Idrak.Training;
+using Idrak.Training.Abstractions;
 
 namespace Idrak.Cli.Shared;
 

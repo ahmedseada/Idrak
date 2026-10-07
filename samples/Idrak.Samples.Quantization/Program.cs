@@ -14,16 +14,16 @@
 //   dotnet run -c Release --project samples/Idrak.Samples.Quantization -- --part speed     (only part 2)
 
 using System.Diagnostics;
+using Idrak;
 using Idrak.Data;
 using Idrak.Diagnostics;
 using Idrak.Generation;
 using Idrak.Layers;
 using Idrak.Models.Abstractions;
 using Idrak.Optimizers;
-using Idrak.Samples.Summarizer;
 using Idrak.Samples;
+using Idrak.Samples.Summarizer;
 using Idrak.Training;
-using Idrak;
 
 if (SampleOptions.Parse(args, ("size", "GPT for the speed test: base (≈100M parameters, default) or small (≈25M)"),
     ("part", "accuracy, speed or all (default)")) is not { } options)

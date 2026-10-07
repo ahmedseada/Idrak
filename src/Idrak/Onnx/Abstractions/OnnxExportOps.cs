@@ -85,7 +85,6 @@ public static class OnnxExportOps
     private static readonly Dictionary<string, OnnxTranslator<Module>> Lambdas = new(StringComparer.Ordinal);
     private static readonly Dictionary<string, OnnxGraphOpTranslator> GraphOpTranslators = new(StringComparer.Ordinal);
 
-    // The built-ins of the first-party assemblies (Idrak) are registered before the first use.
     static OnnxExportOps() => OnnxBuiltIns.RegisterExports();   // the built-in translators, on first use
 
     /// <summary>Registers (or replaces) how modules of type <typeparamref name="T"/> (and types derived from it without their own translator) are exported.</summary>

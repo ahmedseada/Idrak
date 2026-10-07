@@ -4,8 +4,8 @@
 using System.Diagnostics;
 using System.Globalization;
 using Idrak.Diagnostics;
-using Idrak.Training.Abstractions;
 using Idrak.Training;
+using Idrak.Training.Abstractions;
 
 namespace Idrak.Cli.Shared;
 

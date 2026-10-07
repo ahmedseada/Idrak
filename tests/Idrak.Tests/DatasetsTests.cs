@@ -4,11 +4,11 @@
 using System.Formats.Tar;
 using System.IO.Compression;
 using System.Net;
-using System.Text.Json.Nodes;
 using System.Text;
-using Idrak.Data.Abstractions;
-using Idrak.Data;
+using System.Text.Json.Nodes;
 using Idrak;
+using Idrak.Data;
+using Idrak.Data.Abstractions;
 
 // Datasets: file formats (Parquet checked against pyarrow), archives, operations, the download cache.
 internal static partial class Tests

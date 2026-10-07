@@ -1,9 +1,9 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Text;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
-using System.Text;
 using Idrak.Data.Abstractions;
 
 namespace Idrak.Data;

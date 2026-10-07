@@ -2,14 +2,14 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Text.Json.Nodes;
+using Idrak;
 using Idrak.Data;
 using Idrak.Layers;
 using Idrak.Models;
-using Idrak.Nlp.Abstractions;
 using Idrak.Nlp;
+using Idrak.Nlp.Abstractions;
 using Idrak.Optimizers;
 using Idrak.Training;
-using Idrak;
 
 // The teacher pattern (knowledge distillation): the per-token divergence and its gradient, the classifier loss, the
 // fine-tuning loss against both models' full logits, stored top-k logits, the vocabulary check, teacher-written data,

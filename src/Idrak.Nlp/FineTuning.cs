@@ -2,8 +2,8 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Diagnostics;
-using System.Text.Json.Nodes;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Idrak.Data;
 using Idrak.Diagnostics;
 using Idrak.Generation;

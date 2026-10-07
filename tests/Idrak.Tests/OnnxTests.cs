@@ -1,12 +1,12 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak;
 using Idrak.Inference;
 using Idrak.Layers;
+using Idrak.Onnx;
 using Idrak.Onnx.Abstractions;
 using Idrak.Onnx.Runtime;
-using Idrak.Onnx;
-using Idrak;
 
 // ONNX export: every supported layer is exported, run by ONNX Runtime and compared with Idrak's own output.
 internal static partial class Tests

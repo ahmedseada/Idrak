@@ -2,12 +2,12 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Collections;
-using Idrak.Data.Abstractions;
+using Idrak;
 using Idrak.Data;
+using Idrak.Data.Abstractions;
 using Idrak.Layers;
 using Idrak.Optimizers;
 using Idrak.Training;
-using Idrak;
 
 namespace Idrak.PluginTests;
 
