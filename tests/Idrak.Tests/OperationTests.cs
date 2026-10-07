@@ -17,6 +17,10 @@ internal static partial class Tests
         ("operations: a registered kernel runs instead of the device's own on its device kind where its requirement holds, not elsewhere; removing it restores the device's kernel; a kernel of the wrong delegate is refused", RegisteredKernelRuns),
         ("operations: Kernels.Chain names the kernel each operation runs (registered, the device's own, composed, host fallback or none): the CPU runs its own, a device with memory and copies only falls back", ChainNamesKernels),
         ("operations: a trace counts the calls of each operation and the host fallbacks by operation, read from the dispatcher; it ends when disposed", TraceCountsCalls),
+        ("operations: a failing device kernel throws a DeviceException, reported to telemetry once (a console logger prints it) with a hint naming IDRAK_RETRY_ON_HOST and Backend.RetryOnHost", DeviceFailureReported),
+        ("operations: with RetryOnHost the dispatcher runs a failing kernel again on the host: the CPU's result, one host call, one retried event; a registered kernel is not retried", DeviceFailureRetriedOnHost),
+        ("operations: IDRAK_RETRY_ON_HOST is off when unset or 0, on for every device but the CPU with 1 or all, and for the kinds listed", RetryOnHostSetting),
+        ("operations: a device with nothing registered, no trace and retry off keeps the inlined fast path; RetryOnHost leaves it and turning it off returns", RetryOnHostLeavesFastPath),
     ];
 
     // Backend's public virtual members that are not operations: memory, copies, graph capture, profiling and the

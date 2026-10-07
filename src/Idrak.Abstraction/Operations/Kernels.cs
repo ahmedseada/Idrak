@@ -115,6 +115,32 @@ public static class Kernels
         return backend.HostCalls;
     }
 
+    /// <summary>
+    /// Whether a failure on a device of <paramref name="kind"/> would be retried on the host (for the hint of a
+    /// <see cref="DeviceFailed"/> event): <see cref="Backend.RetryOnHost"/> of a live device of that kind, or, before one
+    /// starts, <c>IDRAK_RETRY_ON_HOST</c>.
+    /// </summary>
+    internal static bool RetriesOnHost(string kind)
+    {
+        bool any = false;
+        lock (Devices)
+        {
+            foreach (var d in Devices)
+            {
+                if (d.TryGetTarget(out var backend) && backend.Kind.Equals(kind, StringComparison.OrdinalIgnoreCase))
+                {
+                    any = true;
+                    if (backend.RetryOnHost)
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return !any && Backend.RetryOnHostFrom(Environment.GetEnvironmentVariable("IDRAK_RETRY_ON_HOST"), kind);
+    }
+
     /// <summary>A fresh marker meaning "resolve again" (a new instance each time, so a resolution that raced a change is not kept).</summary>
     internal static Delegate?[] Unresolved() => new Delegate?[0];
 

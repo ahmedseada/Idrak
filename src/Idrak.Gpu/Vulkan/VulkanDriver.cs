@@ -7,8 +7,8 @@ using System.Runtime.Loader;
 
 namespace Idrak.Gpu.Vulkan;
 
-/// <summary>Thrown when a Vulkan call fails.</summary>
-public sealed class VulkanException(string message) : Exception(message);
+/// <summary>Thrown when a Vulkan call or kernel fails (a <see cref="DeviceException"/>: reported to telemetry).</summary>
+public sealed class VulkanException(string message) : DeviceException("vulkan", message);
 
 /// <summary>
 /// Bindings to the Vulkan loader (vulkan-1.dll on Windows, libvulkan.so.1 on Linux, libvulkan.so on Android), which ships with the graphics
