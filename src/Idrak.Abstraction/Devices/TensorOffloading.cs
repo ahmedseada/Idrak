@@ -4,10 +4,10 @@
 namespace Idrak.Abstraction.Devices;
 
 /// <summary>
-/// Weight offloading as tensors and modules see it (see <see cref="IMemoryOffload"/>). The library that ships the
-/// offloading devices (Idrak) stages layers' weights between device and system memory; tensors only record which layer
-/// produced them, and modules and tensors call these hooks, which that library sets when its devices register. Each hook
-/// is null until then, and costs a field read.
+/// Weight offloading as tensors and modules see it (see <see cref="IMemoryOffload"/>, which devices implement). The library
+/// that ships the layers (Idrak) stages their weights between device and system memory; tensors only record which layer
+/// produced them, and modules and tensors call these hooks, which that library sets when the device registry fills. Each
+/// hook is null until then (always, without Idrak), and costs a field read.
 /// </summary>
 public static class TensorOffloading
 {

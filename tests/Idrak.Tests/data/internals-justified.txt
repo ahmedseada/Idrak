@@ -1,4 +1,4 @@
-# Plan 10: the internals of Idrak that the other library assemblies use, each with why it is still internal.
+# Plan 10: the internals of Idrak and Idrak.Gpu that the other library assemblies use, each with why it is still internal.
 # Idrak.Abstraction grants no library assembly its internals since phase 4 (a test checks it), so none of its members
 # are listed. Generated uses are checked by tests/Idrak.Tests/InventoryTests.cs: a use not listed here fails, and so
 # does a line no longer used, so the list only shrinks.
@@ -7,11 +7,11 @@ Idrak.Nlp | Idrak.Layers.Linear | AttachFloat8() | FP8 weights of Linear for fin
 Idrak.Nlp | Idrak.Layers.Linear | DetachFloat8() | FP8 weights of Linear for fine-tuning; public with packed weights' device kernels (phase 6)
 Idrak.Nlp | Idrak.Layers.PackedSequences | Suspend() | turns packed sequences off around a fine-tuning step; moves with the decoding contracts (phase 3)
 Idrak.Nlp | Idrak.Layers.CausalSelfAttention | SupportsSegmented() | the text generator decodes segmented batches only when every attention kernel supports them; public with the decoding contracts
-Idrak.Cli | Idrak.Backends.Cuda.PtxKernels | (the type) | idrak kernels dump writes the generated kernel sources; the GPU devices stay internal (decision 3)
-Idrak.Cli | Idrak.Backends.Hip.HipKernels | (the type) | idrak kernels dump writes the generated kernel sources; the GPU devices stay internal (decision 3)
-Idrak.Cli | Idrak.Backends.Vulkan.SpirvKernel | (the type) | idrak kernels dump writes the generated kernel sources; the GPU devices stay internal (decision 3)
-Idrak.Cli | Idrak.Backends.Vulkan.VulkanKernels | (the type) | idrak kernels dump writes the generated kernel sources; the GPU devices stay internal (decision 3)
-Idrak.Cli | Idrak.Backends.Vulkan.VulkanKernels.CoopPrecision | (the type) | idrak kernels dump writes the generated kernel sources; the GPU devices stay internal (decision 3)
-Idrak.Cli | Idrak.Backends.Vulkan.VulkanKernels.CoopShape | (the type) | idrak kernels dump writes the generated kernel sources; the GPU devices stay internal (decision 3)
-Idrak.Cli | Idrak.Backends.Vulkan.VulkanKernels.CoopSpec | (the type) | idrak kernels dump writes the generated kernel sources; the GPU devices stay internal (decision 3)
-Idrak.Cli | Idrak.Backends.Vulkan.VulkanKernels.PackedFormat | (the type) | idrak kernels dump writes the generated kernel sources; the GPU devices stay internal (decision 3)
+Idrak.Cli | Idrak.Gpu.Cuda.PtxKernels | (the type) | idrak kernels dump writes the generated kernel sources; Idrak.Gpu is reached through the device API, its kernel generators are not public
+Idrak.Cli | Idrak.Gpu.Hip.HipKernels | (the type) | idrak kernels dump writes the generated kernel sources; Idrak.Gpu is reached through the device API, its kernel generators are not public
+Idrak.Cli | Idrak.Gpu.Vulkan.SpirvKernel | (the type) | idrak kernels dump writes the generated kernel sources; Idrak.Gpu is reached through the device API, its kernel generators are not public
+Idrak.Cli | Idrak.Gpu.Vulkan.VulkanKernels | (the type) | idrak kernels dump writes the generated kernel sources; Idrak.Gpu is reached through the device API, its kernel generators are not public
+Idrak.Cli | Idrak.Gpu.Vulkan.VulkanKernels.CoopPrecision | (the type) | idrak kernels dump writes the generated kernel sources; Idrak.Gpu is reached through the device API, its kernel generators are not public
+Idrak.Cli | Idrak.Gpu.Vulkan.VulkanKernels.CoopShape | (the type) | idrak kernels dump writes the generated kernel sources; Idrak.Gpu is reached through the device API, its kernel generators are not public
+Idrak.Cli | Idrak.Gpu.Vulkan.VulkanKernels.CoopSpec | (the type) | idrak kernels dump writes the generated kernel sources; Idrak.Gpu is reached through the device API, its kernel generators are not public
+Idrak.Cli | Idrak.Gpu.Vulkan.VulkanKernels.PackedFormat | (the type) | idrak kernels dump writes the generated kernel sources; Idrak.Gpu is reached through the device API, its kernel generators are not public

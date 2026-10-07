@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Idrak\Idrak.csproj" />
+    <ProjectReference Include="..\..\src\Idrak.Gpu\Idrak.Gpu.csproj" />
     <ProjectReference Include="..\..\src\Idrak.AspNetCore\Idrak.AspNetCore.csproj" />
     <ProjectReference Include="..\..\src\Idrak.Mcp\Idrak.Mcp.csproj" />
     <ProjectReference Include="..\..\src\Idrak.Onnx.Runtime\Idrak.Onnx.Runtime.csproj" />

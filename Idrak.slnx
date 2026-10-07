@@ -24,6 +24,7 @@
     <Project Path="src/Idrak.Mcp/Idrak.Mcp.csproj" />
     <Project Path="src/Idrak.Onnx.Runtime/Idrak.Onnx.Runtime.csproj" />
     <Project Path="src/Idrak.Data/Idrak.Data.csproj" />
+    <Project Path="src/Idrak.Gpu/Idrak.Gpu.csproj" />
     <Project Path="src/Idrak.Vision/Idrak.Vision.csproj" />
     <Project Path="src/Idrak.Cli/Idrak.Cli.csproj" />
     <Project Path="src/Idrak.Nlp/Idrak.Nlp.csproj" />

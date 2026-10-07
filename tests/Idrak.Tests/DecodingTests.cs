@@ -315,12 +315,12 @@ internal static partial class Tests
     private static void KernelSignatures(Device device)
     {
         _ = device;
-        var counts = Idrak.Backends.Cuda.PtxKernels.ParameterCounts;
-        string[] all = [.. Idrak.Backends.Cuda.PtxKernels.Names, .. Idrak.Backends.Cuda.PtxKernels.AdvancedNames,
-            .. Idrak.Backends.Cuda.PtxKernels.DecodingNames, .. Idrak.Backends.Cuda.PtxKernels.QuantizedNames, .. Idrak.Backends.Cuda.PtxKernels.DecoderNames, .. Idrak.Backends.Cuda.PtxKernels.RowNames];
+        var counts = Idrak.Gpu.Cuda.PtxKernels.ParameterCounts;
+        string[] all = [.. Idrak.Gpu.Cuda.PtxKernels.Names, .. Idrak.Gpu.Cuda.PtxKernels.AdvancedNames,
+            .. Idrak.Gpu.Cuda.PtxKernels.DecodingNames, .. Idrak.Gpu.Cuda.PtxKernels.QuantizedNames, .. Idrak.Gpu.Cuda.PtxKernels.DecoderNames, .. Idrak.Gpu.Cuda.PtxKernels.RowNames];
         Check(counts.Count == all.Length && all.All(k => counts.TryGetValue(k, out int n) && n > 0), $"{counts.Count} kernels parsed, {all.Length} expected");
         // Parameter names must be unique within a kernel (a duplicate makes the whole module fail to load on the GPU).
-        foreach (var entry in System.Text.RegularExpressions.Regex.Matches(Idrak.Backends.Cuda.PtxKernels.Source, @"\.entry (\w+)\(([^)]*)\)"))
+        foreach (var entry in System.Text.RegularExpressions.Regex.Matches(Idrak.Gpu.Cuda.PtxKernels.Source, @"\.entry (\w+)\(([^)]*)\)"))
         {
             var match = (System.Text.RegularExpressions.Match)entry;
             var names = System.Text.RegularExpressions.Regex.Matches(match.Groups[2].Value, @"\.param \.\w+ (\w+)").Select(m => m.Groups[1].Value).ToList();

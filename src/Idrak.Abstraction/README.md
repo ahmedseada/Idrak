@@ -17,9 +17,9 @@ dotnet add package Idrak.Abstraction  # the contracts alone, for a plug-in
 | Generation: tools | `Tool`, `[Tool]`, `ToolResult`, `IToolRegistry` and its default `ToolRegistry` (validation, allow rules, approvals, a timeout); `IToolChatModel` (a chat model that carries tools) and `ChatTools.WithTools` (runs a chat model's tool calls on the server) |
 | Serving | the engine's model kinds (`EngineModel<TCopy>`), `IPredictor<TIn, TOut>`, `IModelCatalog` (named models reached through their contracts; the inference engine implements it), `KeepAlive` (parses "30m", "1h30m", 0, -1) |
 
-The GPU devices (CUDA, Vulkan, HIP) ship in the `Idrak` package and are built on the public device API alone; when an
-application includes it, `Device.Available` lists them, even before any other type of Idrak is used. `idrak kernels -d
-DEVICE` lists which kernel each operation runs there.
+The GPU devices (CUDA, Vulkan, HIP) ship in the `Idrak.Gpu` package (which `Idrak` brings) and are built on this
+public device API alone; when an application includes it, `Device.Available` lists them, even before any other type of
+Idrak is used. `idrak kernels -d DEVICE` lists which kernel each operation runs there.
 
 A kernel of one's own for an operation, on one kind of device, wherever a requirement on the device holds:
 

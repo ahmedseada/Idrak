@@ -3,8 +3,7 @@
 
 using System.Runtime.InteropServices;
 using Idrak;
-using Idrak.Backends;
-using Idrak.Backends.Vulkan;
+using Idrak.Gpu.Vulkan;
 
 // The Vulkan runtime: devices, memory, copies and SPIR-V dispatches. Run on a Vulkan device, the checks test that device;
 // run on the CPU, they test every Vulkan device found, listed or not (lavapipe, Mesa's software driver, here). Each runs

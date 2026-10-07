@@ -20,18 +20,19 @@ internal static partial class Tests
     [
         ("abstraction inventory: plans/10-abstraction-inventory.md matches the library (IDRAK_UPDATE_INVENTORY=1 rewrites it)", InventoryCurrent),
         ("abstraction inventory: every interface, abstract class and registry outside Idrak.Abstraction.* is on the allow list, and the list names nothing that moved or is gone", AbstractionNamespaces),
-        ("abstraction inventory: Idrak.Abstraction grants its internals to the tests only; every internal of Idrak another library assembly uses is justified in the list, and the list names nothing no longer used", InternalsJustified),
+        ("abstraction inventory: Idrak.Abstraction grants its internals to the tests only; every internal of Idrak or Idrak.Gpu another assembly uses is justified in the list, and the list names nothing no longer used", InternalsJustified),
     ];
 
     // The library packages (the CLI is an application: its own helpers are outside the rule).
     private static readonly string[] LibraryAssemblyNames =
-        ["Idrak.Abstraction", "Idrak", "Idrak.Nlp", "Idrak.Data", "Idrak.Vision", "Idrak.Onnx.Runtime", "Idrak.AspNetCore", "Idrak.Mcp"];
+        ["Idrak.Abstraction", "Idrak", "Idrak.Gpu", "Idrak.Nlp", "Idrak.Data", "Idrak.Vision", "Idrak.Onnx.Runtime", "Idrak.AspNetCore", "Idrak.Mcp"];
 
     // Each assembly whose internals others see, with those others (the tests aside): what must turn into public contract
     // or be justified. Idrak.Abstraction is not one since phase 4: it grants no library assembly its internals.
     private static readonly (string Target, string[] Users)[] FriendAssemblies =
     [
-        ("Idrak", ["Idrak.Nlp", "Idrak.Cli"]),
+        ("Idrak", ["Idrak.Nlp"]),
+        ("Idrak.Gpu", ["Idrak.Cli"]),
     ];
 
     private const string InventoryPath = "plans/10-abstraction-inventory.md", AllowListPath = "tests/Idrak.Tests/data/abstraction-allow-list.txt",
@@ -347,7 +348,7 @@ internal static partial class Tests
             "PackedWeight" or "KeyValueLayout" or "KeyValueLayouts" or "RopeScalings" or "ITokenSampler" => "Generation",
             _ => ns switch
             {
-                "Idrak.Backends" or "Idrak.Backends.Cuda" or "Idrak.Backends.Vulkan" or "Idrak.Backends.Hip" => "Devices",
+                "Idrak.Gpu" or "Idrak.Gpu.Cuda" or "Idrak.Gpu.Vulkan" or "Idrak.Gpu.Hip" => "Devices",
                 "Idrak.Layers" => "Modules",
                 "Idrak.Optimizers" or "Idrak.Training" => "Training",
                 "Idrak.Data" => "Data",
@@ -383,7 +384,7 @@ internal static partial class Tests
         Line("--project tests/Idrak.Tests` rewrites it. See [10-abstraction.md](10-abstraction.md).");
         Line();
         Line($"Scanned: {string.Join(", ", LibraryAssemblyNames.Select(n => $"`{n}`"))}. The CLI (`Idrak.Cli`) is an application and is");
-        Line("scanned only as a user of `Idrak`'s internals.");
+        Line("scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.");
         Line();
 
         Line("## Summary");
@@ -463,7 +464,7 @@ internal static partial class Tests
     private static void BackendOperations(Action<string> line)
     {
         var backend = typeof(Device).Assembly.GetType("Idrak.Abstraction.Devices.Backend", throwOnError: true)!;
-        var devices = new[] { typeof(Device).Assembly, typeof(Idrak.Layers.Sequential).Assembly }.SelectMany(a => a.GetTypes()).Where(t => !t.IsAbstract && backend.IsAssignableFrom(t) && !Generated(t)).OrderBy(t => t.Name, StringComparer.Ordinal).ToList();
+        var devices = new[] { typeof(Device).Assembly, Assembly.Load("Idrak.Gpu") }.SelectMany(a => a.GetTypes()).Where(t => !t.IsAbstract && backend.IsAssignableFrom(t) && !Generated(t)).OrderBy(t => t.Name, StringComparer.Ordinal).ToList();
         var operations = backend.GetMethods(AllDeclared).Where(m => (m.IsAbstract || m.IsVirtual && !m.IsFinal) && m.GetBaseDefinition() == m && !m.IsSpecialName)
             .OrderBy(m => m.Name, StringComparer.Ordinal).ThenBy(m => m.GetParameters().Length).ToList();
         var properties = backend.GetProperties(AllDeclared).Where(p => p.GetMethod is { } g && (g.IsAbstract || g.IsVirtual)).OrderBy(p => p.Name, StringComparer.Ordinal).ToList();

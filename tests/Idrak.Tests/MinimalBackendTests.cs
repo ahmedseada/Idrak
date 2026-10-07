@@ -2,7 +2,6 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using Idrak;
-using Idrak.Backends;
 using Idrak.Abstraction.Devices.Cpu;
 using Idrak.Generation;
 using Idrak.Layers;

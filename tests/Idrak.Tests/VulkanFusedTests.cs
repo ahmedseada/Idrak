@@ -3,8 +3,7 @@
 
 using System.Collections.Concurrent;
 using Idrak;
-using Idrak.Backends;
-using Idrak.Backends.Vulkan;
+using Idrak.Gpu.Vulkan;
 using Idrak.Layers;
 
 // The fused decoding kernels on Vulkan (BackendCapabilities.FusedKernels): each fused operation against the unfused steps
