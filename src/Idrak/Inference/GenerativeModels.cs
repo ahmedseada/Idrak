@@ -46,13 +46,6 @@ public static class GenerativeModels
         Func<GenerativeModelBuilder, GenerativeModelBuilder>? configure = null) =>
         AddChat(engine, name, configure, _ => generator, reloadable: false, owns: false);
 
-    /// <summary>The tools registered with the chat model named <paramref name="name"/> (<see cref="GenerativeModelBuilder.Tools"/>), or null.</summary>
-    public static ToolRegistry? ToolsOf(this InferenceEngine engine, string name)
-    {
-        ArgumentNullException.ThrowIfNull(engine);
-        return engine.Model<ChatEngineModel>(name).Tools;
-    }
-
     private static InferenceEngineBuilder AddText(InferenceEngineBuilder engine, string name, Func<GenerativeModelBuilder, GenerativeModelBuilder>? configure,
         Func<Device?, TextGenerator> load, bool reloadable, bool owns)
     {
@@ -107,7 +100,7 @@ public sealed class GenerativeModelBuilder
     internal string? WarmUpPrompt { get; private set; }
     internal Device? TargetDevice { get; private set; }
     internal ChatTemplate? ChatTemplate { get; private set; }
-    internal ToolRegistry? ToolRegistry { get; private set; }
+    internal IToolRegistry? ToolRegistry { get; private set; }
 
     /// <summary>Loads <paramref name="count"/> copies, so that many generations run at the same time.</summary>
     public GenerativeModelBuilder Instances(int count)
@@ -161,8 +154,11 @@ public sealed class GenerativeModelBuilder
         return this;
     }
 
-    /// <summary>Chat models: tools that can be run on the server (for example by the ASP.NET Core chat endpoint with server-side execution).</summary>
-    public GenerativeModelBuilder Tools(ToolRegistry tools)
+    /// <summary>
+    /// Chat models: tools that can be run on the server (<see cref="IToolChatModel.Tools"/>; for example by the ASP.NET Core chat
+    /// endpoint with server-side execution).
+    /// </summary>
+    public GenerativeModelBuilder Tools(IToolRegistry tools)
     {
         ToolRegistry = tools;
         return this;

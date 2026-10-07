@@ -11,13 +11,13 @@ namespace Idrak.Inference;
 /// raw prompts with their text generators), one generation per copy at a time.
 /// </summary>
 internal sealed class ChatEngineModel(GenerativeModelBuilder settings, Func<Device?, TextGenerator> load, bool owns, bool reloadable)
-    : EngineModel<ChatGenerator>(KindName, settings.Hosting(reloadable)), IChatModel, ITextModel
+    : EngineModel<ChatGenerator>(KindName, settings.Hosting(reloadable)), IToolChatModel, ITextModel
 {
     /// <summary>The kind's name in the engine's status.</summary>
     public const string KindName = "chat";
 
     /// <summary>The tools registered with the model, or null.</summary>
-    public ToolRegistry? Tools => settings.ToolRegistry;
+    public IToolRegistry? Tools => settings.ToolRegistry;
 
     public override ChatGenerator LoadCopy() => new(settings.Load(load), settings.ChatTemplate);
 

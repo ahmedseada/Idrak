@@ -10,9 +10,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
-using Idrak.Generation;
 using Idrak.Inference;
-using Idrak.Retrieval;
 
 namespace Idrak.AspNetCore;
 

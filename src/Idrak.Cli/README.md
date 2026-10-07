@@ -179,7 +179,7 @@ any 404 prints the right addresses in the server's window.
 
 | Command | What it does |
 |---|---|
-| `idrak serve` (`s`) | Serve models over the chat API and the OpenAI-style API on one port |
+| `idrak serve` (`s`) | Serve models over the chat API and the OpenAI-style API on one port; with `--mcp`, over MCP (standard input/output) as the tools generate and chat, with `--tools` assemblies |
 | `idrak ui` | Serve models and open a small web chat page in the browser |
 | `idrak server ps` (`ps`) | Models of a running server: loaded or not, memory, context, last use |
 | `idrak server stop` | Stop a running server; open requests finish first |

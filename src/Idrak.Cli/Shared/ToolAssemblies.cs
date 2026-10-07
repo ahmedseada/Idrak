@@ -40,7 +40,7 @@ internal static class ToolAssemblies
 
             if (tools.Count == before)
             {
-                throw new InvalidOperationException($"{full} has no tools: mark public methods with [Tool(name, description)] (Idrak.Generation).");
+                throw new InvalidOperationException($"{full} has no tools: mark public methods with [Tool(name, description)] (Idrak.Abstraction.Generation).");
             }
         }
 
