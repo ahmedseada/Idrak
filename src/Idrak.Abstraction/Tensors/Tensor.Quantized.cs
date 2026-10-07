@@ -36,7 +36,7 @@ public sealed partial class Tensor
             throw new ArgumentException($"The int8 weight is on {weight.Packed.Device}, the input on {this.Device}.");
         }
 
-        long start = OperationTelemetry.Start();
+        long start = Telemetry.Start(TelemetryLevel.Operations);
         var flat = this.Rank == 2 ? this : this.Reshape(-1, k);
         int m = flat._shape[0];
         var y = Tensor.Empty([m, n], this.Device);
@@ -88,7 +88,7 @@ public sealed partial class Tensor
             throw new ArgumentException($"The bfloat16 weight is on {weight.Packed.Device}, the input on {this.Device}.");
         }
 
-        long start = OperationTelemetry.Start();
+        long start = Telemetry.Start(TelemetryLevel.Operations);
         var flat = this.Rank == 2 ? this : this.Reshape(-1, k);
         int m = flat._shape[0];
         var y = Tensor.Empty([m, n], this.Device);
@@ -132,7 +132,7 @@ public sealed partial class Tensor
             throw new ArgumentException($"The int4 weight is on {weight.Packed.Device}, the input on {this.Device}.");
         }
 
-        long start = OperationTelemetry.Start();
+        long start = Telemetry.Start(TelemetryLevel.Operations);
         var flat = this.Rank == 2 ? this : this.Reshape(-1, k);
         int m = flat._shape[0];
         var y = Tensor.Empty([m, n], this.Device);
@@ -173,7 +173,7 @@ public sealed partial class Tensor
             throw new NotSupportedException($"{weight.Name} weights have no product of their own (PackedWeight.MatMul), so the step is not recorded as a graph.");
         }
 
-        long start = OperationTelemetry.Start();
+        long start = Telemetry.Start(TelemetryLevel.Operations);
         var flat = this.Rank == 2 ? this : this.Reshape(-1, k);
         int m = flat._shape[0];
         var y = Tensor.Empty([m, n], this.Device);
@@ -232,7 +232,7 @@ public sealed partial class Tensor
     /// </summary>
     internal static Tensor AttentionDecode(Tensor q, KeyValueCache cache, Tensor position, int steps, float scale, AttentionVariant variant = default)
     {
-        long start = OperationTelemetry.Start();
+        long start = Telemetry.Start(TelemetryLevel.Operations);
         int heads = q._shape[0], rowsPerHead = q._shape[1], dim = q._shape[2];
         var y = Tensor.Empty([heads, rowsPerHead, dim], q.Device);
         q.Backend.AttentionDecode(q.Storage, cache.Keys.Storage, cache.Values.Storage, position.Storage, y.Storage, heads, rowsPerHead, steps,
@@ -245,7 +245,7 @@ public sealed partial class Tensor
     /// <summary>Attention of q [heads, rowsPerHead, dim] over an int8 cache filled up to <paramref name="position"/>.</summary>
     internal static Tensor AttentionInt8(Tensor q, KeyValueCache cache, Tensor position, int steps, float scale, bool tiled, AttentionVariant variant = default)
     {
-        long start = OperationTelemetry.Start();
+        long start = Telemetry.Start(TelemetryLevel.Operations);
         int heads = q._shape[0], rowsPerHead = q._shape[1], dim = q._shape[2];
         var y = Tensor.Empty([heads, rowsPerHead, dim], q.Device);
         q.Backend.AttentionInt8(q.Storage, cache.Keys.Storage, cache.Values.Storage, cache.KeyScales!.Storage, cache.ValueScales!.Storage,
@@ -258,7 +258,7 @@ public sealed partial class Tensor
     /// <summary>Attention of q [heads, rows, dim] over the filled part of a bfloat16 cache.</summary>
     internal static Tensor AttentionBFloat16(Tensor q, KeyValueCache cache, Tensor position, int steps, float scale, bool tiled, AttentionVariant variant = default)
     {
-        long start = OperationTelemetry.Start();
+        long start = Telemetry.Start(TelemetryLevel.Operations);
         int heads = q._shape[0], rowsPerHead = q._shape[1], dim = q._shape[2];
         var y = Tensor.Empty([heads, rowsPerHead, dim], q.Device);
         q.Backend.AttentionBFloat16(q.Storage, cache.Keys.Storage, cache.Values.Storage, position.Storage, y.Storage, heads, rowsPerHead, steps,
@@ -325,7 +325,7 @@ public sealed partial class Tensor
             throw new ArgumentException($"The embedding table is on {table.Packed.Device}, the ids on {indices.Device}.");
         }
 
-        long start = OperationTelemetry.Start();
+        long start = Telemetry.Start(TelemetryLevel.Operations);
         var y = Tensor.Empty([.. indices._shape, table.Columns], indices.Device);
         indices.Backend.GatherBFloat16(table.Packed.Storage, indices.Storage, y.Storage, indices.Size, table.Columns, table.Rows);
         return Tensor.Traced("embedding_bf16", y, start);

@@ -78,7 +78,7 @@ public sealed partial class Tensor
             }
         }
 
-        long start = OperationTelemetry.Start();
+        long start = Telemetry.Start(TelemetryLevel.Operations);
         var (device, backend) = (hidden.Device, hidden.Backend);
         bool record = weights is not null && WillRecord(hidden);
         var values = new float[count];

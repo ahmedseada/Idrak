@@ -3,9 +3,8 @@
 
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
-using Idrak.Layers;
 
-namespace Idrak.Diagnostics;
+namespace Idrak.Abstraction.Diagnostics;
 
 /// <summary>Which kinds of telemetry a hook wants. Sources that nobody asked for are never produced.</summary>
 [Flags]
@@ -32,10 +31,10 @@ public enum TelemetryLevel
     /// <summary>Every <see cref="Module.Predict(Tensor)"/> call: batch size, latency and throughput.</summary>
     Inference = 1 << 5,
 
-    /// <summary>Every tool call made during a chat (<see cref="Generation.ToolRegistry"/>): name, duration, outcome.</summary>
+    /// <summary>Every tool call made during a chat (<c>Generation.ToolRegistry</c>): name, duration, outcome.</summary>
     Tools = 1 << 6,
 
-    /// <summary>Inference-engine events (<see cref="Inference.InferenceEngine"/>): model loaded or unloaded, request completed or rejected.</summary>
+    /// <summary>Inference-engine events (<c>Inference.InferenceEngine</c>): model loaded or unloaded, request completed or rejected.</summary>
     Engine = 1 << 7,
 
     /// <summary>Everything.</summary>
@@ -52,7 +51,7 @@ public interface ITelemetryHook
     /// <summary>The events this hook wants. Read once, when the hook is subscribed.</summary>
     TelemetryLevel Levels { get; }
 
-    /// <summary>A <see cref="Training.Trainer"/> started fitting.</summary>
+    /// <summary>A <c>Training.Trainer</c> started fitting.</summary>
     void OnTrainingStarted(in TrainingStarted e)
     {
     }
@@ -165,9 +164,6 @@ public static class Telemetry
         }
 
         s_levels = levels;
-        Idrak.Abstraction.Diagnostics.OperationTelemetry.Completed = (levels & TelemetryLevel.Operations) != 0 ? Operation : null;
-        Idrak.Abstraction.Modules.ModuleHooks.Layers = (levels & TelemetryLevel.Layers) != 0 ? LayerTelemetry.Instance : null;
-        Idrak.Abstraction.Modules.ModuleHooks.Inference = (levels & TelemetryLevel.Inference) != 0 ? ModuleInference : null;
     }
 
     /// <summary>Returns a start timestamp when <paramref name="level"/> is enabled, otherwise 0.</summary>
@@ -289,23 +285,6 @@ public static class Telemetry
                 h.OnOperation(in e);
             }
         }
-    }
-
-    // Module.Predict's report (in Idrak.Abstraction, which cannot name InferenceCompleted).
-    private static void ModuleInference(Module module, Tensor input, Tensor output, long start) =>
-        Inference(new InferenceCompleted(module.DisplayName, input.Rank > 0 ? input.Shape[0] : 1, input.Shape.ToArray(), output.Shape.ToArray(),
-            output.Device, Stopwatch.GetElapsedTime(start)));
-
-    // Module.Forward's layer reports.
-    private sealed class LayerTelemetry : Idrak.Abstraction.Modules.ILayerTelemetry
-    {
-        public static readonly LayerTelemetry Instance = new();
-
-        public int EnterLayer() => Telemetry.EnterLayer();
-
-        public void LeaveLayer(int depth) => Telemetry.LeaveLayer(depth);
-
-        public void LayerForward(Module module, Tensor input, Tensor output, long start, int depth) => Telemetry.LayerForward(module, input, output, start, depth);
     }
 
     private sealed class Subscription(ITelemetryHook hook) : IDisposable

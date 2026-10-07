@@ -150,7 +150,7 @@ internal sealed class AdapterMerge : IDisposable
     /// <summary>
     /// Adds scale · (B·A)ᵀ to <paramref name="weight"/> ([inputs, outputs], Idrak's layout) when the adapter has
     /// lora_A [r, inputs] and lora_B [outputs, r] for the checkpoint module <paramref name="module"/>; for DoRA, then scales
-    /// each output column to its magnitude: W' = m ⊙ (W + s·A·B) / ‖W + s·A·B‖ (see <see cref="Idrak.Layers.DoraAdapter"/>).
+    /// each output column to its magnitude: W' = m ⊙ (W + s·A·B) / ‖W + s·A·B‖ (see <see cref="DoraAdapter"/>).
     /// </summary>
     public void AddTo(string module, float[] weight, int inputs, int outputs)
     {

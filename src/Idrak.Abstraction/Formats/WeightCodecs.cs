@@ -3,7 +3,7 @@
 
 using System.Buffers.Binary;
 
-namespace Idrak.Layers;
+namespace Idrak.Abstraction.Formats;
 
 /// <summary>
 /// How one <see cref="WeightFormat"/> stores float values in a weights file (little-endian, whole tensors at a time, so

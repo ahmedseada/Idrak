@@ -6,7 +6,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
 
-namespace Idrak.Diagnostics;
+namespace Idrak.Abstraction.Diagnostics;
 
 /// <summary>Writes human-readable progress to the console (or any <see cref="TextWriter"/>).</summary>
 /// <param name="levels">What to print. <see cref="TelemetryLevel.Training"/> gives one line per epoch.</param>

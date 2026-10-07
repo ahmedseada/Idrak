@@ -12,7 +12,7 @@ public sealed partial class Tensor
     internal Tensor RmsNormalize(float eps)
     {
         ThrowIfDisposed();
-        long start = OperationTelemetry.Start();
+        long start = Telemetry.Start(TelemetryLevel.Operations);
         int cols = _shape[^1], rows = Size / cols;
         var y = Empty(_shape, Device);
         var inv = Empty([rows], Device, track: false);
@@ -41,7 +41,7 @@ public sealed partial class Tensor
     internal static Tensor[] MatMulMany(Tensor input, IReadOnlyList<Tensor> weights, IReadOnlyList<Tensor?> biases)
     {
         input.ThrowIfDisposed();
-        long start = OperationTelemetry.Start();
+        long start = Telemetry.Start(TelemetryLevel.Operations);
         int k = input._shape[^1], m = input.Size / k;
         var outputs = new Tensor[weights.Count];
         var products = new (Abstraction.Devices.Storage, Abstraction.Devices.Storage?, Abstraction.Devices.Storage, int)[weights.Count];
@@ -78,7 +78,7 @@ public sealed partial class Tensor
             throw new ArgumentException($"TokenCrossEntropy needs hidden [rows, dim] with rows targets and weights, got {FormatShape(hidden._shape)}, {targets.Size} and {weights.Size}.");
         }
 
-        long start = OperationTelemetry.Start();
+        long start = Telemetry.Start(TelemetryLevel.Operations);
         int rows = hidden._shape[0], dim = hidden._shape[1];
         chunkRows = Math.Max(1, chunkRows);
         var device = hidden.Device;
@@ -140,7 +140,7 @@ public sealed partial class Tensor
             throw new ArgumentException($"AddLowRank: product {FormatShape(product._shape)}, input {FormatShape(x._shape)}, A {FormatShape(a._shape)}, B {FormatShape(b._shape)}.");
         }
 
-        long start = OperationTelemetry.Start();
+        long start = Telemetry.Start(TelemetryLevel.Operations);
         var backend = x.Backend;
         var u = Empty([m, rank], x.Device, zeroed: true);           // scale · x·A
         using (var t = Empty([m, rank], x.Device, track: false))
@@ -305,7 +305,7 @@ public sealed partial class Tensor
             throw new ArgumentException("TokenCrossEntropyRows needs hidden [rows, dim] and one target and weight per listed row.");
         }
 
-        long start = OperationTelemetry.Start();
+        long start = Telemetry.Start(TelemetryLevel.Operations);
         int total = hidden._shape[0], dim = hidden._shape[1], count = rows.Size;
         chunkRows = Math.Max(1, chunkRows);
         var device = hidden.Device;
@@ -370,7 +370,7 @@ public sealed partial class Tensor
     internal Tensor RmsNormAffine(Tensor gain, float eps, float offset)
     {
         ThrowIfDisposed();
-        long start = OperationTelemetry.Start();
+        long start = Telemetry.Start(TelemetryLevel.Operations);
         int cols = _shape[^1], rows = Size / cols;
         var y = Empty(_shape, Device);
         Backend.RmsNormAffine(Storage, gain.Storage, y.Storage, rows, cols, eps, offset);
@@ -383,7 +383,7 @@ public sealed partial class Tensor
         a.ThrowIfDisposed();
         b.ThrowIfDisposed();
         CheckSameDevice(a, b);
-        long start = OperationTelemetry.Start();
+        long start = Telemetry.Start(TelemetryLevel.Operations);
         int cols = a._shape[^1], rows = a.Size / cols;
         var sum = Empty(a._shape, a.Device);
         var y = Empty(a._shape, a.Device);
@@ -398,7 +398,7 @@ public sealed partial class Tensor
     internal Tensor RmsNormRope(Tensor gain, float eps, float offset, Tensor cos, Tensor sin, Tensor positions, int half, bool interleaved)
     {
         ThrowIfDisposed();
-        long start = OperationTelemetry.Start();
+        long start = Telemetry.Start(TelemetryLevel.Operations);
         int steps = _shape[1], heads = _shape[2], dim = _shape[3], rows = Size / dim;
         var y = Empty(_shape, Device);
         Backend.RmsNormRope(Storage, gain.Storage, cos.Storage, sin.Storage, positions.Storage, y.Storage, rows, dim, eps, offset, heads, steps,
@@ -412,7 +412,7 @@ public sealed partial class Tensor
     {
         q.ThrowIfDisposed();
         k.ThrowIfDisposed();
-        long start = OperationTelemetry.Start();
+        long start = Telemetry.Start(TelemetryLevel.Operations);
         int steps = q._shape[1], dim = q._shape[3];
         var yq = Empty(q._shape, q.Device);
         var yk = Empty(k._shape, k.Device);
@@ -434,7 +434,7 @@ public sealed partial class Tensor
             throw new ArgumentException($"Gate {FormatShape(gate._shape)} and up {FormatShape(up._shape)} differ.");
         }
 
-        long start = OperationTelemetry.Start();
+        long start = Telemetry.Start(TelemetryLevel.Operations);
         var y = Empty(gate._shape, gate.Device);
         gate.Backend.GatedActivation(gate.Storage, up.Storage, y.Storage, gate.Size, kind);
         RecordGatedActivation(gate, up, y, kind);
@@ -460,7 +460,7 @@ public sealed partial class Tensor
             return null;
         }
 
-        long start = OperationTelemetry.Start();
+        long start = Telemetry.Start(TelemetryLevel.Operations);
         var backend = gate.Backend;
         var y = Empty(gate._shape, gate.Device);
         var (packedGate, packedUp) = (backend.Allocate((n + 1) / 2, zeroed: false), backend.Allocate((n + 1) / 2, zeroed: false));
@@ -525,7 +525,7 @@ public sealed partial class Tensor
             throw new ArgumentException($"Rotary embedding expects [batch, steps, heads, dim], got {FormatShape(_shape)}.");
         }
 
-        long start = OperationTelemetry.Start();
+        long start = Telemetry.Start(TelemetryLevel.Operations);
         int steps = _shape[1], heads = _shape[2], dim = _shape[3], rows = Size / dim;
         var y = Empty(_shape, Device);
         if (2 * half < dim)

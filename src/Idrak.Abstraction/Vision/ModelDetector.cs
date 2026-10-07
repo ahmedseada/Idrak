@@ -1,10 +1,8 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using Idrak.Data;
-using Idrak.Layers;
 
-namespace Idrak.Vision;
+namespace Idrak.Abstraction.Vision;
 
 /// <summary>
 /// Turns one image's network outputs into detections, in the network's input pixels (width x height of
@@ -37,7 +35,7 @@ public sealed record DetectorOptions
 /// <summary>
 /// An <see cref="IObjectDetector"/> over any detection network: each image is resized to the network's input
 /// (channels x height x width, values in [0, 1]; put normalization in the network, see
-/// <see cref="NetworkBuilder.Normalize"/>), the network runs on its device, the <see cref="DetectionDecoder"/> reads
+/// <c>NetworkBuilder.Normalize</c>), the network runs on its device, the <see cref="DetectionDecoder"/> reads
 /// its outputs, and the boxes are scaled back to the image, clipped and filtered by non-maximum suppression.
 /// </summary>
 public sealed class ModelDetector(Module model, int channels, int height, int width, DetectionDecoder decoder, DetectorOptions? options = null, Device? device = null)

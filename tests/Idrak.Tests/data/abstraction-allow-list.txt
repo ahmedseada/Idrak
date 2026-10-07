@@ -7,9 +7,7 @@ Idrak.Datasets.IDatasetSource
 Idrak.Datasets.IParquetCodec
 Idrak.Datasets.ITextNormalizer
 Idrak.Datasets.ParquetCodecs
-Idrak.Diagnostics.ITelemetryHook
 Idrak.Inference.EngineModel
-Idrak.Inference.IPredictor<TIn, TOut>
 Idrak.LanguageModels.CheckpointFormats
 Idrak.LanguageModels.DistillationTeacher
 Idrak.LanguageModels.GgufArchitectures
@@ -26,19 +24,8 @@ Idrak.LanguageModels.PretrainedArchitectures
 Idrak.LanguageModels.TeacherDistributions
 Idrak.LanguageModels.TokenizerComponents
 Idrak.Layers.GraphOps
-Idrak.Layers.ILinearAdapter
-Idrak.Layers.IWeightSource
 Idrak.Layers.LayerTypes
 Idrak.Layers.NetworkOps
-Idrak.Layers.RecurrentModule
-Idrak.Layers.WeightCodec
 Idrak.Onnx.OnnxBuiltIns
 Idrak.Onnx.OnnxExportOps
 Idrak.Onnx.OnnxImportOps
-Idrak.Retrieval.IEmbedder
-Idrak.Retrieval.IReranker
-Idrak.Retrieval.IRetriever
-Idrak.Retrieval.IVectorStore
-Idrak.Vision.IObjectDetector
-Idrak.Vision.IRegionProposer
-Idrak.Vision.ISegmenter

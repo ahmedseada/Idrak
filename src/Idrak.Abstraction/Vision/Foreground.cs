@@ -1,9 +1,8 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using Idrak.Data;
 
-namespace Idrak.Vision;
+namespace Idrak.Abstraction.Vision;
 
 /// <summary>Which way round an image's foreground is.</summary>
 public enum Polarity
@@ -21,7 +20,7 @@ public enum Polarity
 /// <summary>
 /// An image's foreground as one value per pixel in [0, 1], high on the foreground (dark foreground is inverted), with
 /// the threshold that separates it from the background. <see cref="Foreground.Extract"/> makes one;
-/// <see cref="ConnectedComponents"/>, <see cref="ContentFrame"/> and <see cref="RegionClassifier"/> read it.
+/// <see cref="ConnectedComponents"/>, <c>ContentFrame</c> and <c>RegionClassifier</c> read it.
 /// </summary>
 public sealed class ForegroundImage
 {

@@ -10,13 +10,6 @@ namespace Idrak.Retrieval;
 /// <summary>A document to index: an id you choose (a file name, a URL, a database key) and its text.</summary>
 public sealed record Document(string Id, string Text);
 
-/// <summary>A passage of a document, the unit that is indexed and retrieved.</summary>
-/// <param name="Id">Position in the index (0, 1, 2, …).</param>
-/// <param name="DocumentId">The document it came from.</param>
-/// <param name="Position">Its number within that document (0 for the first chunk).</param>
-/// <param name="Text">The passage.</param>
-public sealed record Chunk(int Id, string DocumentId, int Position, string Text);
-
 /// <summary>What a chunk's size and overlap count.</summary>
 public enum ChunkUnit
 {

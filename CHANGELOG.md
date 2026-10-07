@@ -9,8 +9,8 @@
   device's host fallback). `dotnet add package Idrak` brings it along. The GPU devices (CUDA, Vulkan, HIP) stay in
   `Idrak`; `Device.Available` lists them as before, even when no other type of Idrak has been used yet.
 - Projects with implicit usings (the default for new projects) get global usings for `Idrak.Abstraction`,
-  `Idrak.Abstraction.Training`, `Idrak.Abstraction.Data`, `Idrak.Abstraction.Diagnostics` and `Idrak.Abstraction.Generation`
-  from the package, so they compile unchanged. Projects
+  `Idrak.Abstraction.Training`, `.Data`, `.Diagnostics`, `.Formats`, `.Generation`, `.Modules`, `.Retrieval`, `.Serving`
+  and `.Vision` from the package, so they compile unchanged. Projects
   without implicit usings add those `using` lines.
 - Moved types (source and binary change: rebuild plug-ins compiled against 0.3.x):
 
@@ -33,6 +33,13 @@
   | `Idrak.Generation`: tokenizers (`ITokenizer`, `CharTokenizer`, `WordTokenizer`), chat (`ChatTemplate`, `ChatMessage`, `ToolCall`, `ToolDefinition`, `IChatModel`, `ChatRequest`, `ChatChunk`, `GenerationStats`, `GenerationOptions`), tool-call parsing (`IToolCallParser`, `ToolCallFormats` and the built-in parsers) | the same names under `Idrak.Abstraction.Generation` |
   | `Idrak.ITokenSampler`, `TokenSampler`, `SamplerRequest` | the same names under `Idrak.Abstraction.Generation` |
   | `Idrak.Layers`: `PackedWeight`, `Int8Weight`, `Int4Weight`, `BFloat16Weight`, `WeightFormat`, `KeyValueLayout`, `KeyValueLayouts`, `KeyValueCache`, `KeyValueFormat`, `DecodingContext`, `ICachedModule`, `RopeScaling`, `RopeScalings` | the same names under `Idrak.Abstraction.Generation` |
+  | `Idrak.Layers.ILinearAdapter`, `LoraAdapter`, `DoraAdapter` | `Idrak.Abstraction.Modules`; adapters receive an `ILinearLayer` (sizes, weight values, base product), which `Linear` implements, instead of `Linear` |
+  | `Idrak.Layers.RecurrentModule` | `Idrak.Abstraction.Modules.RecurrentModule` (`LSTM`, `GRU` stay in `Idrak.Layers`) |
+  | `Idrak.Layers.IWeightSource` | `Idrak.Abstraction.Formats.IWeightSource` |
+  | `Idrak.Diagnostics.Telemetry`, `TelemetryLevel`, `TelemetryBuilder`, `ITelemetryHook` and the built-in hooks | the same names under `Idrak.Abstraction.Diagnostics` (`GpuProfiler` and the device listing stay) |
+  | `Idrak.Retrieval.IEmbedder`, `IReranker`, `IRetriever`, `IVectorStore`, `Chunk`, `RetrievedChunk` | the same names under `Idrak.Abstraction.Retrieval` |
+  | `Idrak.Vision`: boxes, detections, non-maximum suppression, `IObjectDetector`, `ModelDetector`, `Foreground`, `ForegroundImage`, `ConnectedComponents`, segmentation (`SegmentationMask`, metrics, `ISegmenter`, `ModelSegmenter`), `IRegionProposer` | the same names under `Idrak.Abstraction.Vision` |
+  | `Idrak.Inference.IPredictor<TIn, TOut>` | `Idrak.Abstraction.Serving.IPredictor<TIn, TOut>` |
   | `Module.Save(...)`, `Module.Load(...)` | extension methods in `Idrak.ModuleFiles`: `model.Save(path)` reads the same |
 
   A file that also imports another `Tensor` (ONNX Runtime's `Microsoft.ML.OnnxRuntime.Tensors`, or

@@ -15,17 +15,6 @@ public enum DecoderNorm
     Layer,
 }
 
-/// <summary>
-/// Provides weights by name for <see cref="DecoderSpec.Build"/>, in Idrak's layout (Linear weights [in, out]). The
-/// names are listed in <see cref="DecoderSpec"/>. Implementations read files (for example a pretrained-model package
-/// translating another framework's names and layouts) or anything else.
-/// </summary>
-public interface IWeightSource
-{
-    /// <summary>The values of the tensor <paramref name="name"/> with <paramref name="shape"/>, or null when the source does not have it.</summary>
-    float[]? Read(string name, IReadOnlyList<int> shape);
-}
-
 /// <summary>Settings for <see cref="DecoderSpec.Build"/>.</summary>
 public sealed record DecoderBuildOptions
 {

@@ -3,6 +3,7 @@
 
 using System.Diagnostics;
 using System.Text;
+using Idrak.Abstraction.Diagnostics;
 using Idrak.Abstraction.Modules;
 
 namespace Idrak.Abstraction;
@@ -27,19 +28,19 @@ public abstract class Module : IDisposable
 
     /// <summary>
     /// Computes the module's output for a batch of inputs, recording gradients when autograd is on.
-    /// Publishes a <c>LayerForward</c> event (Idrak.Diagnostics) when the <c>Layers</c> telemetry level is enabled.
+    /// Publishes a <see cref="LayerForward"/> event when <see cref="TelemetryLevel.Layers"/> is enabled.
     /// </summary>
     public Tensor Forward(Tensor input)
     {
         // Weights offloaded to system memory are staged on the device around the forward (Idrak's layers do it; only
         // devices that offload, and only while something is offloaded or offloading is on, return a scope).
         using var offload = input.Device.Backend.Offload is not null ? ModuleHooks.EnterForward?.Invoke(this, input) : null;
-        if (ModuleHooks.Layers is not { } layers)
+        if (!Telemetry.IsEnabled(TelemetryLevel.Layers))
         {
             return ForwardCore(input);
         }
 
-        int depth = layers.EnterLayer();
+        int depth = Telemetry.EnterLayer();
         long start = Stopwatch.GetTimestamp();
         Tensor output;
         try
@@ -48,11 +49,11 @@ public abstract class Module : IDisposable
         }
         catch
         {
-            layers.LeaveLayer(depth);
+            Telemetry.LeaveLayer(depth);
             throw;
         }
 
-        layers.LayerForward(this, input, output, start, depth);
+        Telemetry.LayerForward(this, input, output, start, depth);
         return output;
     }
 
@@ -60,14 +61,13 @@ public abstract class Module : IDisposable
     protected abstract Tensor ForwardCore(Tensor input);
 
     /// <summary>
-    /// Runs inference: evaluation mode, no gradient recording. Publishes an <c>InferenceCompleted</c>
-    /// event (Idrak.Diagnostics) when the <c>Inference</c> telemetry level is enabled.
+    /// Runs inference: evaluation mode, no gradient recording. Publishes an <see cref="InferenceCompleted"/>
+    /// event when <see cref="TelemetryLevel.Inference"/> is enabled.
     /// </summary>
     public Tensor Predict(Tensor input)
     {
         bool wasTraining = IsTraining;
-        var inference = ModuleHooks.Inference;
-        long start = inference is null ? 0 : Stopwatch.GetTimestamp();
+        long start = Telemetry.Start(TelemetryLevel.Inference);
         Eval();
         try
         {
@@ -83,10 +83,11 @@ public abstract class Module : IDisposable
                 }
             }
 
-            if (inference is not null)
+            if (start != 0)
             {
                 output.Device.Synchronize();
-                inference(this, input, output, start);
+                Telemetry.Inference(new InferenceCompleted(DisplayName, input.Rank > 0 ? input.Shape[0] : 1,
+                    input.Shape.ToArray(), output.Shape.ToArray(), output.Device, Stopwatch.GetElapsedTime(start)));
             }
 
             return output;
