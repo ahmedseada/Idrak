@@ -213,7 +213,7 @@ internal static partial class Tests
             using var cache = new KeyValueCache(heads, capacity, dim, device, KeyValueFormat.Float32);
             cache.Keys.Load(k);
             cache.Values.Load(v);
-            AssertClose(expected, TensorLayerPaths.AttentionDecode(tq, cache, position, steps, scale).ToArray(), 2e-4f, "decoding: " + name);
+            AssertClose(expected, Tensor.AttentionDecode(tq, cache, position, steps, scale).ToArray(), 2e-4f, "decoding: " + name);
 
             // Int8 cache: the new kernels read only filled positions; the previous path scores every slot and masks.
             using var cache8 = new KeyValueCache(heads, capacity, dim, device, KeyValueFormat.Int8);
@@ -221,10 +221,10 @@ internal static partial class Tests
             Tensor.WriteKeyValuesInt8(tk, cache8.Keys, cache8.KeyScales!, zero);
             Tensor.WriteKeyValuesInt8(tv, cache8.Values, cache8.ValueScales!, zero);
             using var mask = Tensor.DecoderMask(position, steps, capacity);
-            var weights = TensorLayerPaths.AttentionScoresInt8(tq, cache8).ScaleMaskSoftmax(scale, mask);
-            var previous = TensorLayerPaths.AttentionContextInt8(weights, cache8).ToArray();
-            AssertClose(previous, TensorLayerPaths.AttentionInt8(tq, cache8, position, steps, scale, tiled: false).ToArray(), 2e-4f, "int8 decoding: " + name);
-            AssertClose(previous, TensorLayerPaths.AttentionInt8(tq, cache8, position, steps, scale, tiled: true).ToArray(), 2e-4f, "int8 tiled: " + name);
+            var weights = Tensor.AttentionScoresInt8(tq, cache8).ScaleMaskSoftmax(scale, mask);
+            var previous = Tensor.AttentionContextInt8(weights, cache8).ToArray();
+            AssertClose(previous, Tensor.AttentionInt8(tq, cache8, position, steps, scale, tiled: false).ToArray(), 2e-4f, "int8 decoding: " + name);
+            AssertClose(previous, Tensor.AttentionInt8(tq, cache8, position, steps, scale, tiled: true).ToArray(), 2e-4f, "int8 tiled: " + name);
 
             // bfloat16 cache: the same as float attention over the rounded keys and values.
             float Bf(float x) => BitConverter.Int32BitsToSingle(BFloat16Weight.Round(x) << 16);
@@ -234,8 +234,8 @@ internal static partial class Tests
             using var cache16 = new KeyValueCache(heads, capacity, dim, device, KeyValueFormat.BFloat16);
             Tensor.WriteKeyValuesBFloat16(tk, cache16.Keys, zero, dim);
             Tensor.WriteKeyValuesBFloat16(tv, cache16.Values, zero, dim);
-            AssertClose(rounded, TensorLayerPaths.AttentionBFloat16(tq, cache16, position, steps, scale, tiled: false).ToArray(), 2e-4f, "bf16 decoding: " + name);
-            AssertClose(rounded, TensorLayerPaths.AttentionBFloat16(tq, cache16, position, steps, scale, tiled: true).ToArray(), 2e-4f, "bf16 tiled: " + name);
+            AssertClose(rounded, Tensor.AttentionBFloat16(tq, cache16, position, steps, scale, tiled: false).ToArray(), 2e-4f, "bf16 decoding: " + name);
+            AssertClose(rounded, Tensor.AttentionBFloat16(tq, cache16, position, steps, scale, tiled: true).ToArray(), 2e-4f, "bf16 tiled: " + name);
         }
     }
 

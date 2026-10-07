@@ -9,7 +9,8 @@
   device's host fallback). `dotnet add package Idrak` brings it along. The GPU devices (CUDA, Vulkan, HIP) stay in
   `Idrak`; `Device.Available` lists them as before, even when no other type of Idrak has been used yet.
 - Projects with implicit usings (the default for new projects) get global usings for `Idrak.Abstraction`,
-  `Idrak.Abstraction.Training`, `Idrak.Abstraction.Data` and `Idrak.Abstraction.Diagnostics` from the package, so they compile unchanged. Projects
+  `Idrak.Abstraction.Training`, `Idrak.Abstraction.Data`, `Idrak.Abstraction.Diagnostics` and `Idrak.Abstraction.Generation`
+  from the package, so they compile unchanged. Projects
   without implicit usings add those `using` lines.
 - Moved types (source and binary change: rebuild plug-ins compiled against 0.3.x):
 
@@ -29,6 +30,9 @@
   | `Idrak.Data.IImageCodec`, `ImageCodecs`, `ImageData`, `ImageInfo` | the same names under `Idrak.Abstraction.Data` |
   | `Idrak.Training.ITrainerCallback`, `TrainerContext`, `TrainingHistory` | the same names under `Idrak.Abstraction.Training`; `TrainerContext.Trainer` is gone (use `Model`, `Optimizer`) |
   | `Idrak.Diagnostics` event records (`BatchCompleted`, `EpochCompleted`, `LayerForward`, ...) | the same names under `Idrak.Abstraction.Diagnostics` |
+  | `Idrak.Generation`: tokenizers (`ITokenizer`, `CharTokenizer`, `WordTokenizer`), chat (`ChatTemplate`, `ChatMessage`, `ToolCall`, `ToolDefinition`, `IChatModel`, `ChatRequest`, `ChatChunk`, `GenerationStats`, `GenerationOptions`), tool-call parsing (`IToolCallParser`, `ToolCallFormats` and the built-in parsers) | the same names under `Idrak.Abstraction.Generation` |
+  | `Idrak.ITokenSampler`, `TokenSampler`, `SamplerRequest` | the same names under `Idrak.Abstraction.Generation` |
+  | `Idrak.Layers`: `PackedWeight`, `Int8Weight`, `Int4Weight`, `BFloat16Weight`, `WeightFormat`, `KeyValueLayout`, `KeyValueLayouts`, `KeyValueCache`, `KeyValueFormat`, `DecodingContext`, `ICachedModule`, `RopeScaling`, `RopeScalings` | the same names under `Idrak.Abstraction.Generation` |
   | `Module.Save(...)`, `Module.Load(...)` | extension methods in `Idrak.ModuleFiles`: `model.Save(path)` reads the same |
 
   A file that also imports another `Tensor` (ONNX Runtime's `Microsoft.ML.OnnxRuntime.Tensors`, or

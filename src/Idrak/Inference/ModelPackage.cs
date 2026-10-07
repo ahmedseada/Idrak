@@ -64,7 +64,7 @@ public enum PackageEntryKind
     /// <summary>A <see cref="Data.MinMaxScaler"/>.</summary>
     MinMaxScaler,
 
-    /// <summary>A <see cref="Generation.CharTokenizer"/> or <see cref="Generation.WordTokenizer"/>.</summary>
+    /// <summary>A <see cref="CharTokenizer"/> or <see cref="WordTokenizer"/>.</summary>
     Tokenizer,
 
     /// <summary>Any JSON document.</summary>
@@ -115,7 +115,7 @@ public sealed class ModelPackageWriter
         _ => throw new NotSupportedException($"{scaler.GetType().Name} cannot be stored; StandardScaler and MinMaxScaler can."),
     };
 
-    /// <summary>A <see cref="Generation.CharTokenizer"/> or <see cref="Generation.WordTokenizer"/>.</summary>
+    /// <summary>A <see cref="CharTokenizer"/> or <see cref="WordTokenizer"/>.</summary>
     public ModelPackageWriter Tokenizer(string name, ITokenizer tokenizer)
     {
         if (tokenizer is not (CharTokenizer or WordTokenizer))
@@ -352,11 +352,11 @@ public sealed class ModelPackageReader : IDisposable
         return Tokenizers.Load(stream);
     }
 
-    /// <summary>The <see cref="Generation.WordTokenizer"/> named <paramref name="name"/>.</summary>
+    /// <summary>The <see cref="WordTokenizer"/> named <paramref name="name"/>.</summary>
     public WordTokenizer WordTokenizer(string name) => Tokenizer(name) as WordTokenizer
         ?? throw new InvalidDataException($"The tokenizer '{name}' is not a WordTokenizer.");
 
-    /// <summary>The <see cref="Generation.CharTokenizer"/> named <paramref name="name"/>.</summary>
+    /// <summary>The <see cref="CharTokenizer"/> named <paramref name="name"/>.</summary>
     public CharTokenizer CharTokenizer(string name) => Tokenizer(name) as CharTokenizer
         ?? throw new InvalidDataException($"The tokenizer '{name}' is not a CharTokenizer.");
 

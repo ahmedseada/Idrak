@@ -148,18 +148,18 @@ static void Benchmark(CharGpt gpt, GenerationSettings settings)
 static void ChatDemo(CharGpt gpt)
 {
     var chat = new Idrak.Generation.ChatGenerator(new Idrak.Generation.TextGenerator(gpt.Model,
-        new Idrak.Generation.CharTokenizer(gpt.Config.Vocabulary), gpt.Config.Context));
-    var options = new Idrak.Generation.GenerationOptions { Temperature = 1f, TopK = 20, TopP = 0.95f, MinP = 0f, RepeatPenalty = 1f, NumCtx = 4096, NumPredict = 300, Seed = 7 };
-    var messages = new List<Idrak.Generation.ChatMessage>
+        new Idrak.Abstraction.Generation.CharTokenizer(gpt.Config.Vocabulary), gpt.Config.Context));
+    var options = new Idrak.Abstraction.Generation.GenerationOptions { Temperature = 1f, TopK = 20, TopP = 0.95f, MinP = 0f, RepeatPenalty = 1f, NumCtx = 4096, NumPredict = 300, Seed = 7 };
+    var messages = new List<Idrak.Abstraction.Generation.ChatMessage>
     {
         new("system", "You are a helpful assistant. Cite sources as [1], [2] when a research pack is present."),
         new("user", "What is the latest Idrak version?"),
     };
-    Idrak.Generation.ToolDefinition[] tools = [ChatCorpus.WebFetch];
+    Idrak.Abstraction.Generation.ToolDefinition[] tools = [ChatCorpus.WebFetch];
 
     void Turn(string title)
     {
-        var reply = chat.Chat(new Idrak.Generation.ChatRequest(messages, tools, Think: true, Options: options));
+        var reply = chat.Chat(new Idrak.Abstraction.Generation.ChatRequest(messages, tools, Think: true, Options: options));
         var m = reply.Message!;
         Console.WriteLine($"{title}");
         Console.WriteLine($"  thinking:   {m.Thinking}");

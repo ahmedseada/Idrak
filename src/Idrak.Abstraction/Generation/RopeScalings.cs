@@ -3,7 +3,7 @@
 
 using System.Text.Json.Nodes;
 
-namespace Idrak.Layers;
+namespace Idrak.Abstraction.Generation;
 
 /// <summary>
 /// How rotary position embeddings stretch their frequencies for contexts longer than the model was trained on: the name

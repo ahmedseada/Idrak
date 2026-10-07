@@ -19,7 +19,7 @@ namespace Idrak.Layers;
 /// }
 /// </code>
 /// </example>
-public sealed class PackedSequences : IDisposable
+public sealed partial class PackedSequences : IDisposable
 {
     [ThreadStatic]
     private static PackedSequences? t_current;

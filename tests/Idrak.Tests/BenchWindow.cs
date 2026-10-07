@@ -61,7 +61,7 @@ internal static partial class Tests
                 foreach (int length in new[] { 200, 1000, 4000 })
                 {
                     using var position = Tensor.From([length - 1f], [1], device);
-                    line.Append($"{length}: {Micros(() => TensorLayerPaths.AttentionDecode(q, cache, position, 1, 0.088f, variant).Dispose(), 10),8:F1} µs  ");
+                    line.Append($"{length}: {Micros(() => Tensor.AttentionDecode(q, cache, position, 1, 0.088f, variant).Dispose(), 10),8:F1} µs  ");
                 }
 
                 Console.WriteLine(Row($"attention decode, float32 cache, {label}", line.ToString()));

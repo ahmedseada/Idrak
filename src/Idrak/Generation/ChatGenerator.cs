@@ -3,29 +3,6 @@
 
 namespace Idrak.Generation;
 
-/// <summary>A chat request: the conversation, optional tools, reasoning mode and generation options.</summary>
-/// <param name="Messages">The conversation so far (system, user, assistant and tool messages).</param>
-/// <param name="Tools">Functions the model may call.</param>
-/// <param name="Think">true: return reasoning separately; false: suppress it; null: model default (returned separately if produced).</param>
-/// <param name="Options">Sampling and length options; the template's stop sequences are added to <see cref="GenerationOptions.Stop"/>.</param>
-public sealed record ChatRequest(IReadOnlyList<ChatMessage> Messages, IReadOnlyList<ToolDefinition>? Tools = null, bool? Think = null,
-    GenerationOptions? Options = null);
-
-/// <summary>A streamed piece of the assistant's reply; the final one carries the reason, the full message and statistics.</summary>
-/// <param name="Delta">What this piece added (content, reasoning, completed tool calls).</param>
-/// <param name="Done">True for the final piece.</param>
-/// <param name="DoneReason">"stop" or "length" on the final piece.</param>
-/// <param name="Message">The complete assistant message, on the final piece.</param>
-/// <param name="Stats">Statistics, on the final piece.</param>
-public sealed record ChatChunk(ChatDelta Delta, bool Done = false, string? DoneReason = null, ChatMessage? Message = null, GenerationStats? Stats = null);
-
-/// <summary>Anything that answers chat requests: <see cref="ChatGenerator"/>, a model hosted by the inference engine, or <see cref="FakeChatModel"/> in tests.</summary>
-public interface IChatModel
-{
-    /// <summary>Streams the reply to <paramref name="request"/>; the last chunk has <see cref="ChatChunk.Done"/> set and carries the full message.</summary>
-    IAsyncEnumerable<ChatChunk> StreamAsync(ChatRequest request, CancellationToken cancellationToken = default);
-}
-
 /// <summary>
 /// Chat on top of a <see cref="TextGenerator"/>: renders the conversation with a <see cref="ChatTemplate"/>, generates
 /// until the end-of-turn marker, and splits the output into reasoning, answer and tool calls as it streams.

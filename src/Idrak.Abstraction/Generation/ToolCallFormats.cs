@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-namespace Idrak.Generation;
+namespace Idrak.Abstraction.Generation;
 
 /// <summary>
 /// Reads the tool calls a model writes in its answer, as the answer streams. <see cref="ChatOutputParser"/> takes the

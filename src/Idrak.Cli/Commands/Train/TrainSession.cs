@@ -301,7 +301,7 @@ internal static class TrainSession
     }
 
     /// <summary>Writes a model package: the architecture, the weights, the scalers and the training metadata.</summary>
-    public static void Package(Module model, JsonObject network, IScaler? features, IScaler? targets, JsonObject? meta, string path, Idrak.Generation.ITokenizer? tokenizer = null)
+    public static void Package(Module model, JsonObject network, IScaler? features, IScaler? targets, JsonObject? meta, string path, Idrak.Abstraction.Generation.ITokenizer? tokenizer = null)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
         var writer = ModelPackage.Create(path).Architecture(ModelPackage.DefaultModelName, network).Weights(model);

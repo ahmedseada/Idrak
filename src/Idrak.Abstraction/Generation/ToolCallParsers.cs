@@ -6,7 +6,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
-namespace Idrak.Generation;
+namespace Idrak.Abstraction.Generation;
 
 /// <summary>
 /// The shape most formats share: answer text, then calls between an opening and a closing marker (the closing one may

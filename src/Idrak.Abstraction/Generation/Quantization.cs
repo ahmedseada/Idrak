@@ -2,11 +2,11 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Runtime.InteropServices;
-using Idrak.Backends;
+using Idrak.Abstraction.Devices;
 
-namespace Idrak.Layers;
+namespace Idrak.Abstraction.Generation;
 
-/// <summary>How <see cref="Idrak.ModuleFiles.Save(Module, string, WeightFormat)"/> stores floating-point values in a weights file.</summary>
+/// <summary>How <c>Idrak.ModuleFiles.Save</c> stores floating-point values in a weights file.</summary>
 public enum WeightFormat
 {
     /// <summary>32-bit floats: exact (4 bytes per value).</summary>
@@ -30,7 +30,7 @@ public enum WeightFormat
 public delegate PackedWeight PackedWeightFactory(ReadOnlySpan<float> values, int rows, int columns, Device device);
 
 /// <summary>
-/// Weights of a <see cref="Linear"/> layer held in a packed format: the built-in <see cref="Int8Weight"/>,
+/// Weights of a <c>Linear</c> layer held in a packed format: the built-in <see cref="Int8Weight"/>,
 /// <see cref="Int4Weight"/> and <see cref="BFloat16Weight"/>, or a format defined outside Idrak (NF4, FP8, …). The layer
 /// and the fused products go through this type instead of checking which format a layer holds: each format says how it
 /// multiplies, expands and moves, and which fused paths it takes.
@@ -41,7 +41,7 @@ public delegate PackedWeight PackedWeightFactory(ReadOnlySpan<float> values, int
 /// product that reads the packed form. Its <see cref="Format"/> is null: the device kernels for the built-in formats
 /// (fused projections, gate/up pairs, LoRA products, the activation read by the down projection) never see it, and every
 /// layer holding it runs <see cref="MatMul"/>. Register a factory with <see cref="Register"/> to create it by name
-/// (<see cref="FromValues(string, ReadOnlySpan{float}, int, int, Device)"/>, <see cref="DecoderBuildOptions.PackedFormatName"/>).
+/// (<see cref="FromValues(string, ReadOnlySpan{float}, int, int, Device)"/>, <c>DecoderBuildOptions.PackedFormatName</c>).
 /// </para>
 /// </summary>
 public abstract class PackedWeight : IDisposable
@@ -81,7 +81,7 @@ public abstract class PackedWeight : IDisposable
 
     /// <summary>
     /// The tensors holding the weights (packed words, scales): the layer lists them as its <see cref="Module.Buffers"/>, so
-    /// <see cref="Idrak.ModuleFiles.Save(Module, string)"/> writes them exactly as they are (and <see cref="Idrak.ModuleFiles.Load(Module, string)"/> reads them
+    /// <c>Idrak.ModuleFiles.Save</c> writes them exactly as they are (and <c>Idrak.ModuleFiles.Load</c> reads them
     /// back into a model holding the same format), and offloading treats them as frozen weights.
     /// </summary>
     public abstract IEnumerable<Tensor> Buffers();
@@ -230,9 +230,9 @@ public abstract class PackedWeight : IDisposable
 }
 
 /// <summary>
-/// The int8 weights of a quantized <see cref="Linear"/> layer: each weight is a signed byte times its output column's
+/// The int8 weights of a quantized <c>Linear</c> layer: each weight is a signed byte times its output column's
 /// scale (symmetric, per-column: scale = max |w| / 127). A quarter of the float32 memory; created by
-/// <see cref="ModuleExtensions.QuantizeInt8"/>. Inputs, outputs, biases and LoRA adapters stay float32.
+/// <c>ModuleExtensions.QuantizeInt8</c>. Inputs, outputs, biases and LoRA adapters stay float32.
 /// </summary>
 public sealed class Int8Weight : PackedWeight
 {
@@ -312,7 +312,7 @@ public sealed class Int8Weight : PackedWeight
 
     /// <summary>
     /// Packed bytes and scales for [rows, columns] allocated on <paramref name="device"/> without computing anything, for
-    /// loading stored values into (<see cref="Idrak.ModuleFiles.Load(Module, string)"/>).
+    /// loading stored values into (<c>Idrak.ModuleFiles.Load</c>).
     /// </summary>
     internal static Int8Weight Empty(int rows, int columns, Device device)
     {
@@ -402,9 +402,9 @@ public sealed class Int8Weight : PackedWeight
 }
 
 /// <summary>
-/// The 4-bit weights of a <see cref="Linear"/> layer: each group of 32 input rows of a column shares one float scale and
+/// The 4-bit weights of a <c>Linear</c> layer: each group of 32 input rows of a column shares one float scale and
 /// every weight is a signed nibble in -8..7 (the scale is searched per group for the least squared error), about
-/// 5 bits per weight; decoding reads 8× less than float32. Created by <see cref="ModuleExtensions.QuantizeInt4"/> or when
+/// 5 bits per weight; decoding reads 8× less than float32. Created by <c>ModuleExtensions.QuantizeInt4</c> or when
 /// loading with 4-bit weights; inputs, outputs, biases and LoRA adapters stay float32 (QLoRA-style fine-tuning).
 /// </summary>
 public sealed class Int4Weight : PackedWeight
@@ -485,7 +485,7 @@ public sealed class Int4Weight : PackedWeight
 
     /// <summary>
     /// Nibbles and scales for [rows, columns] allocated on <paramref name="device"/> without computing anything, for
-    /// loading stored values into (<see cref="Idrak.ModuleFiles.Load(Module, string)"/>).
+    /// loading stored values into (<c>Idrak.ModuleFiles.Load</c>).
     /// </summary>
     internal static Int4Weight Empty(int rows, int columns, Device device)
     {
@@ -604,9 +604,9 @@ public sealed class Int4Weight : PackedWeight
 }
 
 /// <summary>
-/// The bfloat16 weights of a <see cref="Linear"/> layer: each weight keeps float32's range with an 8-bit mantissa (about
+/// The bfloat16 weights of a <c>Linear</c> layer: each weight keeps float32's range with an 8-bit mantissa (about
 /// 3 significant digits), in half the memory; decoding reads half the bytes of float32. Hugging Face checkpoints are
-/// usually stored this way, so loading them as bfloat16 is exact. Created by <see cref="ModuleExtensions.ToBFloat16"/>
+/// usually stored this way, so loading them as bfloat16 is exact. Created by <c>ModuleExtensions.ToBFloat16</c>
 /// or when loading with bfloat16 weights; inputs, outputs, biases and LoRA adapters stay float32.
 /// </summary>
 public sealed class BFloat16Weight : PackedWeight
@@ -679,7 +679,7 @@ public sealed class BFloat16Weight : PackedWeight
 
     /// <summary>
     /// Room for bfloat16 values [rows, columns] on <paramref name="device"/>, allocated without computing anything, for
-    /// loading stored values into (<see cref="Idrak.ModuleFiles.Load(Module, string)"/>).
+    /// loading stored values into (<c>Idrak.ModuleFiles.Load</c>).
     /// </summary>
     internal static BFloat16Weight Empty(int rows, int columns, Device device)
     {

@@ -9,6 +9,7 @@ using Idrak;
 using Idrak.Abstraction;
 using Idrak.AspNetCore;
 using Idrak.Inference;
+using Idrak.Abstraction.Generation;
 using Idrak.Layers;
 using Idrak.Abstraction.Training;
 using Idrak.Optimizers;

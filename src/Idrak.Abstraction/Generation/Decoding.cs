@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-namespace Idrak.Layers;
+namespace Idrak.Abstraction.Generation;
 
 /// <summary>A module with an incremental (cached) forward pass for autoregressive decoding.</summary>
 public interface ICachedModule
@@ -27,7 +27,7 @@ public enum KeyValueFormat
 
     /// <summary>
     /// bfloat16 values (float32's range, about 3 significant digits): half the memory of <see cref="Float32"/> and nearly
-    /// the same results; decoder models (<see cref="DecoderSpec"/>) read the halves directly, the multi-head attention
+    /// the same results; decoder models (<c>DecoderSpec</c>) read the halves directly, the multi-head attention
     /// layer expands them to float32.
     /// </summary>
     BFloat16,
@@ -216,7 +216,7 @@ public sealed class DecodingContext : IDisposable
     public bool InStep { get; private set; }
 
     /// <summary>
-    /// When set, <see cref="Sequential.ForwardCached(Tensor, DecodingContext)"/> returns only the last new position's outputs: the layers after the
+    /// When set, <c>Sequential.ForwardCached</c> returns only the last new position's outputs: the layers after the
     /// last cached (attention) layer — final norm and output head — run on one position instead of every prompt position
     /// (sampling reads only the last one; a long prompt's full logits would be prompt × vocabulary floats).
     /// </summary>
@@ -304,7 +304,7 @@ public sealed class DecodingContext : IDisposable
 
     /// <summary>
     /// Records one decoding step (which must call <see cref="BeginStep"/>/<see cref="EndStep"/>, e.g. via
-    /// <see cref="Sequential.ForwardCached(Tensor, DecodingContext)"/>) as a <see cref="ComputeGraph"/>. Because positions, masks and cache
+    /// <c>Sequential.ForwardCached</c>) as a <see cref="ComputeGraph"/>. Because positions, masks and cache
     /// offsets are computed on the device from <see cref="Position"/>, the same graph is valid at every position. Needs a
     /// <see cref="KeyValueLayout.Recordable"/> cache format.
     /// </summary>

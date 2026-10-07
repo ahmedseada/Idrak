@@ -549,7 +549,7 @@ internal static partial class Tests
                     using (Autograd.NoGrad())
                     using (var scope = new TensorScope())
                     {
-                        var together = TensorLayerPaths.MatMulPackedMany(input, layers[0].PackedWeight!.Format!.Value, layers);
+                        var together = Linear.MatMulPackedMany(input, layers[0].PackedWeight!.Format!.Value, layers);
                         Check(together is not null, $"{format} {string.Join('+', widths)}: one launch");
                         for (int j = 0; j < layers.Length; j++)
                         {
@@ -827,10 +827,10 @@ internal static partial class Tests
         var (os, downs, heads) = (Copies(o, 2048L * 1024), Copies(down, 3072L * 1024), Copies(head, 1024L * 151936));
         var shapes = new (string Name, long Bytes, Action<int> Run, int Copies)[]
         {
-            ("q/k/v 1024 -> 2048+1024+1024", qkvBytes, i => TensorLayerPaths.MatMulPackedMany(x1024, 0, [qs[i], ks[i], vs[i]]), qs.Length),
-            ("gate/up + act 1024 -> 2x3072", gateUpBytes, i => TensorLayerPaths.MatMulPackedGatedPair(x1024, gates[i], ups[i], 0), gates.Length),
-            ("o + add + norm 2048 -> 1024", 2048L * 1024, i => TensorLayerPaths.MatMulPackedAddRmsNorm(x2048, os[i], x1024, norm), os.Length),
-            ("down + add + norm 3072 -> 1024", 3072L * 1024, i => TensorLayerPaths.MatMulPackedAddRmsNorm(x3072, downs[i], x1024, norm), downs.Length),
+            ("q/k/v 1024 -> 2048+1024+1024", qkvBytes, i => Linear.MatMulPackedMany(x1024, 0, [qs[i], ks[i], vs[i]]), qs.Length),
+            ("gate/up + act 1024 -> 2x3072", gateUpBytes, i => Linear.MatMulPackedGatedPair(x1024, gates[i], ups[i], 0), gates.Length),
+            ("o + add + norm 2048 -> 1024", 2048L * 1024, i => Linear.MatMulPackedAddRmsNorm(x2048, os[i], x1024, norm), os.Length),
+            ("down + add + norm 3072 -> 1024", 3072L * 1024, i => Linear.MatMulPackedAddRmsNorm(x3072, downs[i], x1024, norm), downs.Length),
             ("head 1024 -> 151936", 1024L * 151936, i => x1024.MatMulInt8(heads[i].Int8!), heads.Length),
         };
         int?[] splits = [null, 1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64];
@@ -937,7 +937,7 @@ internal static partial class Tests
         {
             using var position = Tensor.From([length - 1f], [1], device);
             Console.WriteLine($"{length,-32} " + string.Join(" ", attentionSplits.Select(split =>
-                $"{Timed(() => TensorLayerPaths.AttentionBFloat16(query, cache, position, 1, 0.088f, tiled: false), v => CudaBackend.DecodeSplits = v, split),9}")));
+                $"{Timed(() => Tensor.AttentionBFloat16(query, cache, position, 1, 0.088f, tiled: false), v => CudaBackend.DecodeSplits = v, split),9}")));
         }
 
         // Prompt-sized products (180 rows) through int8 weights on tensor cores, forced k splits, with 128-row tiles and with
@@ -964,7 +964,7 @@ internal static partial class Tests
                     foreach (var (name, layers) in new[] { ("q+k+v one launch (1024 -> 4096)", new[] { q, k, v }), ("gate+up one launch (1024 -> 6144)", new[] { gate, up }) })
                     {
                         Console.WriteLine($"{name,-32} " + string.Join(" ", promptSplits.Select(split =>
-                            $"{Timed(() => TensorLayerPaths.MatMulPackedMany(prompt, 0, layers), v => CudaBackend.PackedSplits = v, split),9}")));
+                            $"{Timed(() => Linear.MatMulPackedMany(prompt, 0, layers), v => CudaBackend.PackedSplits = v, split),9}")));
                         Console.WriteLine($"{"  same, separate launches",-32} {Timed(() => { foreach (var layer in layers) { prompt.MatMulInt8(layer.Int8!); } }, _ => { }, null),9}");
                     }
                 }

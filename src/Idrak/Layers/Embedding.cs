@@ -71,7 +71,7 @@ public sealed class Embedding : Module
     public BFloat16Weight? BFloat16 { get; private set; }
 
     /// <inheritdoc />
-    protected override Tensor ForwardCore(Tensor input) => BFloat16 is { } h ? TensorLayerPaths.EmbeddingLookup(h, input) : Weight.EmbeddingLookup(input);
+    protected override Tensor ForwardCore(Tensor input) => BFloat16 is { } h ? Tensor.EmbeddingLookup(h, input) : Weight.EmbeddingLookup(input);
 
     /// <inheritdoc />
     public override IEnumerable<Tensor> Parameters() => _weight is null ? [] : [_weight];
