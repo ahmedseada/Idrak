@@ -79,6 +79,20 @@
     and metrics stay in Abstraction.
   - `Module.WeightsDevice` is public. New: `PredictorBuilder.Model` and `PredictorBuilder.SampleShape`.
 
+- `Idrak.LanguageModels` is retired:
+  - Model loading moves to core under `Idrak.Models`: `PretrainedModel`, safetensors, GGUF, `BpeTokenizer`, PEFT adapter
+    folders, and the folder, store and .gguf model sources. Hugging Face model ids are resolved by Idrak.Data
+    (`Idrak.Data.HuggingFaceModels`, which replaces `ModelSource.DownloadAsync`). `ModelSource.DownloaderOf` is gone.
+  - New package `Idrak.Nlp` (depends on Idrak and Idrak.Data): generation and chat (`Idrak.Generation`), Jinja chat
+    templates, fine-tuning, distillation and evaluation (`Idrak.Nlp`), retrieval and RAG (`Idrak.Retrieval`), the coding
+    agent, and the engine's text and chat models (`Idrak.Inference`).
+  - New registry `ChatTemplates` (`Idrak.Abstraction.Generation`) reads a model folder's chat template; Idrak.Nlp
+    registers `"jinja"`. `PretrainedModel.ChatTemplate` is a `ChatTemplate`; `model.JinjaTemplate` (Idrak.Nlp) gives
+    the Jinja-only API.
+  - `PretrainedModel.CreateGenerator`/`CreateChat` and `ModelPackageReader.TextGenerator` are extensions in Idrak.Nlp
+    (`using Idrak.Nlp;` / `using Idrak.Inference;`). `BpeTokenizer.EncodeRange` is public.
+  - Core registers the model formats itself, so an app on core alone pays for them at first use (tens of
+    milliseconds, mostly JIT).
 - Tools are contracts, and the bridges speak only to contracts:
   - `Tool`, `[Tool]`, `ToolResult`, `ToolRegistry` and its builder move from `Idrak.Generation` to
     `Idrak.Abstraction.Generation`. `ToolRegistry` is the default of the new `IToolRegistry`, and the builders,
