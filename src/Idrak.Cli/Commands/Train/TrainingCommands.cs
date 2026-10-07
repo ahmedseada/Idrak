@@ -4,6 +4,7 @@
 using System.Globalization;
 using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
+using Idrak.Data.Abstractions;
 using Idrak.Data;
 using Idrak.Generation;
 using Idrak.Inference;

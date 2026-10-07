@@ -2,8 +2,9 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.IO.Compression;
-using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json;
+using Idrak.Retrieval.Abstractions;
 
 namespace Idrak.Retrieval;
 

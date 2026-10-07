@@ -13,18 +13,19 @@
 //   dotnet run -c Release --project samples/Idrak.Samples.Rag -- --predict --input "who is the mayor of <town>"
 
 using System.Diagnostics;
-using Idrak;
 using Idrak.Data;
 using Idrak.Diagnostics;
 using Idrak.Generation;
 using Idrak.Inference;
 using Idrak.Layers;
 using Idrak.Optimizers;
+using Idrak.Retrieval.Abstractions;
 using Idrak.Retrieval;
-using Idrak.Samples;
 using Idrak.Samples.Rag;
 using Idrak.Samples.ReRanker;
+using Idrak.Samples;
 using Idrak.Training;
+using Idrak;
 
 if (SampleOptions.Parse(args) is not { } options)
 {

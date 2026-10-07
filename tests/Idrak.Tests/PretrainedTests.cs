@@ -2,9 +2,10 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Text.Json.Nodes;
-using Idrak;
 using Idrak.Layers;
+using Idrak.Models.Abstractions;
 using Idrak.Models;
+using Idrak;
 
 // Pretrained models: checkpoints written here in the Hugging Face layout, read back through the architecture registry.
 internal static partial class Tests

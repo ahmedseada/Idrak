@@ -2,11 +2,12 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Collections.Concurrent;
-using Idrak;
-using Idrak.Backends;
 using Idrak.Abstraction.Devices.Cpu;
 using Idrak.Backends.Vulkan;
+using Idrak.Backends;
 using Idrak.Layers;
+using Idrak.Models.Abstractions;
+using Idrak;
 
 // Limits some devices report low and features some report: storages larger than one binding (maxStorageBufferRange,
 // 128 MiB on some devices) bound in windows, forced on any device with a small binding range; the loader's file name per

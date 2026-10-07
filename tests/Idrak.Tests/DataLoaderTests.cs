@@ -3,13 +3,14 @@
 
 using System.Buffers.Binary;
 using System.IO.Compression;
-using System.Text;
 using System.Text.Json.Nodes;
-using Idrak;
+using System.Text;
+using Idrak.Data.Abstractions;
 using Idrak.Data;
 using Idrak.Layers;
 using Idrak.Optimizers;
 using Idrak.Training;
+using Idrak;
 
 // Sample sources, batch sources and the built-in loaders: each trains to the same weights as an in-memory Dataset of
 // the same samples, and the image codecs decode what independent encoders here write.

@@ -4,6 +4,7 @@
 using System.Text.Json.Nodes;
 using Idrak.Abstraction.Devices;
 using Idrak.Layers;
+using Idrak.Models.Abstractions;
 
 namespace Idrak.Models;
 

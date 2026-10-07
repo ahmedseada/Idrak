@@ -2,9 +2,10 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Text.Json.Nodes;
-using Idrak;
+using Idrak.Data.Abstractions;
 using Idrak.Data;
-using RegisteredSources = Idrak.Abstraction.Data.DatasetSources;
+using Idrak;
+using RegisteredSources = Idrak.Data.Abstractions.DatasetSources;
 
 // Dataset plug-ins: file formats, sources and Parquet codecs added from outside the library through their registries.
 internal static partial class Tests

@@ -1,9 +1,11 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using Idrak;
+using Idrak.Generation.Abstractions;
 using Idrak.Generation;
 using Idrak.Layers;
+using Idrak.Models.Abstractions;
+using Idrak;
 
 // The abstractions core code goes through instead of branching on a device or a format: each is checked against more
 // than one implementation.

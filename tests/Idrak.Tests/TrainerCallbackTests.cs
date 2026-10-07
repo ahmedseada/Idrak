@@ -2,12 +2,13 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Globalization;
-using Idrak;
 using Idrak.Data;
 using Idrak.Diagnostics;
 using Idrak.Layers;
 using Idrak.Optimizers;
+using Idrak.Training.Abstractions;
 using Idrak.Training;
+using Idrak;
 
 // Trainer callbacks: when they run, stopping and cancelling, and the built-in EarlyStopping, Checkpoint and CsvLog.
 internal static partial class Tests
