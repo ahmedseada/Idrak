@@ -180,6 +180,26 @@
   internal) and has `IsPlugin`. `VulkanKernel` (Idrak.Gpu) is public with `Dispatch(backend, …)`, so a plug-in can ship
   its own SPIR-V. The kit checks a plug-in kernel against its default with
   `Conformance.Check(PluginOperation<TKernel>, device, run)`.
+- The override loop (plan 10, phase 6b): every registry entry keeps its library default under an app's registration.
+  - `Unregister` brings the default back (a built-in name returns false and stays); every registry has `Default(name)`
+    and `Origin(name)` (the assembly that registered it). `KeyValueLayouts.Unregister` is public and returns bool;
+    `PackedWeight.Unregister` is new.
+  - Failure policy per slot, **`Throw` by default** (decision 12): an override's failure reaches the caller and is
+    reported as `OverrideFailed` with a hint naming `SetPolicy(name, SlotPolicy.FallBack)` /
+    `SetPolicy(name, SlotPolicy.Shadow, shadowRate)` and `IDRAK_OVERRIDE_POLICY`. `FallBack` retries on the library
+    default; `Shadow` lets the default answer and compares the override on a sample of calls (1% by default) on outputs,
+    time and allocations (`OverrideCompared`). Stateful contracts fall back when the object is made; calls with side
+    effects are not run twice under `Shadow`.
+  - `IDRAK_OVERRIDE_POLICY` sets a slot's first policy (`fallback`, `shadow`, `shadow:RATE` for every slot, and/or
+    `Registry/name=policy`); code wins.
+  - No policy, by design: `KeyValueLayouts`, `DeviceProviders` (decision 13), `NetworkOps`, the ONNX translators,
+    `DataFileFormats` and the GGUF and family description tables (the app's entry is used as it is).
+  - `Overrides.Report()` and `idrak overrides` list every override with its origin and policy; `TelemetryLevel.Overrides`
+    and `idrak trace --levels overrides` show the events. New public types: `SlotTable<,>`, `Slot`, `ShadowRun`,
+    `SlotPolicy`, `SlotGuard<>`, `SlotOverride`, `Overrides`, `OverrideFailed`, `OverrideCompared`.
+  - New `TokenSamplers` registry (Idrak.Nlp): `"default"` is `TokenSampler.Create`, and generation makes its sampler
+    through it. `TokenizerComponents.Default*` are real components for the built-in types.
+  - `Comparisons` moved from the testing kit into `Idrak.Abstraction`, shared by `Shadow` and `Conformance.Check`.
 - Fixed: the CPU's `NormStats` computes the variance in two passes; `E[x²] − mean²` cancelled for one-element groups
   and for large values with a small spread (found by the conformance kit).
 - `RopeScalings.Default(type)`: the library's own method for a scaling type, even when an app registered its own.
