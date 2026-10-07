@@ -23,7 +23,6 @@ Idrak.LanguageModels.ModelSources
 Idrak.LanguageModels.PretrainedArchitectures
 Idrak.LanguageModels.TeacherDistributions
 Idrak.LanguageModels.TokenizerComponents
-Idrak.Layers.NetworkOps
 Idrak.Onnx.OnnxBuiltIns
 Idrak.Onnx.OnnxExportOps
 Idrak.Onnx.OnnxImportOps

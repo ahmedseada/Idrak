@@ -95,9 +95,10 @@ public enum Activation
 /// each layer's input size comes from the previous layer. Every method corresponds to one layer constructor; see
 /// <see cref="Network"/> for the entry points. Builders made only of layer steps can be written to JSON and replayed
 /// (<see cref="ToJson"/>, <see cref="Network.FromJson"/>); model packages use this to store the architecture. Steps of
-/// your own are registered in <see cref="NetworkOps"/> and added with <see cref="Op"/>.
+/// your own are registered in <see cref="NetworkOps"/> and added with <see cref="Op"/>; they see the builder through
+/// <see cref="INetworkBuilder"/>.
 /// </summary>
-public sealed class NetworkBuilder
+public sealed class NetworkBuilder : INetworkBuilder
 {
     internal static readonly ConditionalWeakTable<Module, JsonObject> Architectures = new();
 
@@ -466,6 +467,17 @@ public sealed class NetworkBuilder
         return this;
     }
 
+    // ------------------------------------------------------------------ what registered steps see (INetworkBuilder)
+
+    /// <inheritdoc />
+    INetworkBuilder INetworkBuilder.Lambda(Func<Tensor, Tensor> function, string name, int[] outputShape) => Lambda(function, name, outputShape);
+
+    /// <inheritdoc />
+    INetworkBuilder INetworkBuilder.Add(Func<Device?, Random?, Module> create, int[] outputShape) => Add(create, outputShape);
+
+    /// <inheritdoc />
+    INetworkBuilder INetworkBuilder.Op(string name, JsonObject? arguments) => Op(name, arguments);
+
     // ------------------------------------------------------------------ build and describe
 
     /// <summary>
@@ -548,7 +560,7 @@ public sealed class NetworkBuilder
         {
             var step = node!.AsObject();
             string op = (string)step["op"]!;
-            if (NetworkOps.TryGet(op) is null)
+            if (!NetworkOps.Contains(op))
             {
                 throw new InvalidDataException($"Unknown network step '{op}' (registered: {string.Join(", ", NetworkOps.Names)}); add it with NetworkOps.Register.");
             }
