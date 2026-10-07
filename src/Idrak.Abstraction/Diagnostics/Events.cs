@@ -178,3 +178,32 @@ public enum EngineEventKind
 /// <param name="BatchSize">Rows processed together with this request (predictor requests only; 0 otherwise).</param>
 /// <param name="Reason">Why a request was rejected, or null.</param>
 public readonly record struct EngineEvent(EngineEventKind Kind, string Model, TimeSpan Duration, TimeSpan QueueWait, int BatchSize, string? Reason);
+
+/// <summary>
+/// Published when an app's implementation of a slot threw and the call was retried on the library default
+/// (<see cref="SlotPolicy.FallBack"/>), when <c>TelemetryLevel.Overrides</c> is enabled.
+/// </summary>
+/// <param name="Registry">The registry, for example "RopeScalings".</param>
+/// <param name="Slot">The entry's name in it.</param>
+/// <param name="Implementation">The app's implementation that failed.</param>
+/// <param name="Origin">The assembly it comes from.</param>
+/// <param name="Exception">What it threw.</param>
+public readonly record struct OverrideFellBack(string Registry, string Slot, string Implementation, string Origin, Exception Exception);
+
+/// <summary>
+/// Published when a call of a <see cref="SlotPolicy.Shadow"/> slot ran both the library default (which answered) and the
+/// app's implementation, when <c>TelemetryLevel.Overrides</c> is enabled.
+/// </summary>
+/// <param name="Registry">The registry, for example "RopeScalings".</param>
+/// <param name="Slot">The entry's name in it.</param>
+/// <param name="Implementation">The app's implementation.</param>
+/// <param name="Origin">The assembly it comes from.</param>
+/// <param name="Agreed">Whether the outputs agreed and the app's implementation did not throw.</param>
+/// <param name="Difference">How the outputs differ, or what the app's implementation threw; null when they agreed.</param>
+/// <param name="Exception">What the app's implementation threw, or null.</param>
+/// <param name="LibraryTime">The library default's time.</param>
+/// <param name="OverrideTime">The app's implementation's time.</param>
+/// <param name="LibraryBytes">Managed memory the library default allocated on the calling thread.</param>
+/// <param name="OverrideBytes">Managed memory the app's implementation allocated on the calling thread.</param>
+public readonly record struct OverrideCompared(string Registry, string Slot, string Implementation, string Origin, bool Agreed, string? Difference,
+    Exception? Exception, TimeSpan LibraryTime, TimeSpan OverrideTime, long LibraryBytes, long OverrideBytes);

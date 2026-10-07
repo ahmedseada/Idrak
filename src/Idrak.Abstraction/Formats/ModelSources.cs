@@ -48,71 +48,53 @@ public interface IModelSource
 /// </summary>
 public static class ModelSources
 {
-    private static readonly List<IModelSource> Registry = [];
+    private static readonly SlotTable<string, IModelSource> Table = new(nameof(ModelSources), (slot, app, library) => new GuardedSource(slot, app, library),
+        StringComparer.Ordinal, newestFirst: true);
 
     static ModelSources() => LibraryDefaults.Ensure(typeof(ModelSources));
 
     /// <summary>
-    /// Registers <paramref name="source"/>: it replaces the source of the same name (in its place), or is asked before
-    /// every source registered so far.
+    /// Registers <paramref name="source"/>: it takes the place of the source of the same name (the library's stays behind
+    /// it as its fallback, see <see cref="SetPolicy"/>), or is asked before every source registered so far.
     /// </summary>
     public static void Register(IModelSource source)
     {
         ArgumentNullException.ThrowIfNull(source);
-        lock (Registry)
-        {
-            int at = Registry.FindIndex(s => s.Name == source.Name);
-            if (at >= 0)
-            {
-                Registry[at] = source;
-            }
-            else
-            {
-                Registry.Insert(0, source);
-            }
-        }
+        Table.Register(source.Name, source);
     }
 
-    /// <summary>Removes the source registered as <paramref name="name"/>; false when there is none.</summary>
-    public static bool Unregister(string name)
-    {
-        lock (Registry)
-        {
-            return Registry.RemoveAll(s => s.Name == name) > 0;
-        }
-    }
+    /// <summary>Removes the app's source <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
+    public static bool Unregister(string name) => Table.Unregister(name);
 
     /// <summary>The registered source names, in the order they are asked.</summary>
-    public static IReadOnlyCollection<string> Names
-    {
-        get
-        {
-            lock (Registry)
-            {
-                return [.. Registry.Select(s => s.Name)];
-            }
-        }
-    }
+    public static IReadOnlyCollection<string> Names => Table.Keys;
 
     /// <summary>The source registered as <paramref name="name"/>.</summary>
-    public static IModelSource Get(string name)
-    {
-        lock (Registry)
-        {
-            return Registry.Find(s => s.Name == name)
-                ?? throw new NotSupportedException($"No model source '{name}' is registered ({string.Join(", ", Registry.Select(s => s.Name))}); add it with ModelSources.Register.");
-        }
-    }
+    public static IModelSource Get(string name) => Table.Find(name)
+        ?? throw new NotSupportedException($"No model source '{name}' is registered ({string.Join(", ", Table.Keys)}); add it with ModelSources.Register.");
 
-    /// <summary>The source that resolves <paramref name="model"/>, or null when none does.</summary>
-    public static IModelSource? For(string model)
-    {
-        IModelSource[] sources;
-        lock (Registry)
-        {
-            sources = [.. Registry];
-        }
+    /// <summary>The first source that resolves <paramref name="model"/> (the most recently registered first), or null.</summary>
+    public static IModelSource? For(string model) => Table.Values.FirstOrDefault(s => s.CanResolve(model));   // sources look at the disk
 
-        return sources.FirstOrDefault(s => s.CanResolve(model));                // asked outside the lock: sources look at the disk
+    /// <summary>The library's source <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
+    public static IModelSource? Default(string name) => Table.Default(name);
+
+    /// <summary>Who registered the source <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
+    public static string? Origin(string name) => Table.Origin(name);
+
+    /// <summary>
+    /// What happens when the app's source <paramref name="name"/> fails (<see cref="SlotPolicy.FallBack"/> to the library's
+    /// unless set). Under <see cref="SlotPolicy.Shadow"/> only <see cref="IModelSource.CanResolve"/> is compared: resolving
+    /// fetches files, which is not done twice.
+    /// </summary>
+    public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Table.SetPolicy(name, policy, shadowRate);
+
+    private sealed class GuardedSource(Slot slot, IModelSource app, IModelSource library) : IModelSource
+    {
+        public string Name => app.Name;
+
+        public bool CanResolve(string model) => slot.Call(() => app.CanResolve(model), () => library.CanResolve(model), Comparisons.Exact);
+
+        public string Resolve(string model, ModelSourceOptions options) => slot.Call(() => app.Resolve(model, options), () => library.Resolve(model, options), effects: true);
     }
 }

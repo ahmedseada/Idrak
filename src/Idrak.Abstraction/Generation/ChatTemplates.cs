@@ -11,55 +11,43 @@ namespace Idrak.Abstraction.Generation;
 /// </summary>
 public static class ChatTemplates
 {
-    private sealed record Entry(string Name, Func<string, ITokenizer?, ChatTemplate?> Load);
-
-    private static readonly List<Entry> Registry = [];
+    private static readonly SlotTable<string, Func<string, ITokenizer?, ChatTemplate?>> Table =
+        new(nameof(ChatTemplates), Guard, StringComparer.Ordinal, newestFirst: true);
 
     static ChatTemplates() => LibraryDefaults.Ensure(typeof(ChatTemplates));
 
+    // Reading a folder is one call; templates agree when both readers find one of the same type, or both find none.
+    private static Func<string, ITokenizer?, ChatTemplate?> Guard(Slot slot, Func<string, ITokenizer?, ChatTemplate?> app, Func<string, ITokenizer?, ChatTemplate?> library) =>
+        (folder, tokenizer) => slot.Call(() => app(folder, tokenizer), () => library(folder, tokenizer),
+            (a, b) => Comparisons.Exact(a?.GetType().Name ?? "none", b?.GetType().Name ?? "none"));
+
     /// <summary>
     /// Registers the reader <paramref name="name"/>: <paramref name="load"/> reads the chat template of a model folder
-    /// (given the model's tokenizer, or null), or returns null when the folder holds none it reads. It replaces the reader
-    /// of the same name (in its place), or is asked before every reader registered so far.
+    /// (given the model's tokenizer, or null), or returns null when the folder holds none it reads. Under a registered
+    /// name it takes that reader's place (the library's stays behind it as its fallback, see <see cref="SetPolicy"/>); a
+    /// new name is asked before every reader registered so far.
     /// </summary>
     public static void Register(string name, Func<string, ITokenizer?, ChatTemplate?> load)
     {
         ArgumentException.ThrowIfNullOrEmpty(name);
         ArgumentNullException.ThrowIfNull(load);
-        lock (Registry)
-        {
-            int at = Registry.FindIndex(e => e.Name == name);
-            if (at >= 0)
-            {
-                Registry[at] = new Entry(name, load);
-            }
-            else
-            {
-                Registry.Insert(0, new Entry(name, load));
-            }
-        }
+        Table.Register(name, load);
     }
 
-    /// <summary>Removes the reader registered as <paramref name="name"/>; false when there is none.</summary>
-    public static bool Unregister(string name)
-    {
-        lock (Registry)
-        {
-            return Registry.RemoveAll(e => e.Name == name) > 0;
-        }
-    }
+    /// <summary>Removes the app's reader <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
+    public static bool Unregister(string name) => Table.Unregister(name);
 
     /// <summary>The registered reader names, in the order they are asked.</summary>
-    public static IReadOnlyCollection<string> Names
-    {
-        get
-        {
-            lock (Registry)
-            {
-                return [.. Registry.Select(e => e.Name)];
-            }
-        }
-    }
+    public static IReadOnlyCollection<string> Names => Table.Keys;
+
+    /// <summary>The library's reader <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
+    public static Func<string, ITokenizer?, ChatTemplate?>? Default(string name) => Table.Default(name);
+
+    /// <summary>Who registered the reader <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
+    public static string? Origin(string name) => Table.Origin(name);
+
+    /// <summary>What happens when the app's reader <paramref name="name"/> fails (<see cref="SlotPolicy.FallBack"/> to the library's unless set).</summary>
+    public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Table.SetPolicy(name, policy, shadowRate);
 
     /// <summary>
     /// The chat template of the model in <paramref name="folder"/>: the first one a registered reader returns (the most
@@ -68,16 +56,9 @@ public static class ChatTemplates
     public static ChatTemplate? Load(string folder, ITokenizer? tokenizer = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(folder);
-        Entry[] entries;
-        lock (Registry)
+        foreach (var load in Table.Values)
         {
-            entries = [.. Registry];
-        }
-
-        // Asked outside the lock: a reader looks at the disk.
-        foreach (var entry in entries)
-        {
-            if (entry.Load(folder, tokenizer) is { } template)
+            if (load(folder, tokenizer) is { } template)
             {
                 return template;
             }

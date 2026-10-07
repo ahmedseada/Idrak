@@ -72,12 +72,17 @@ public static class GraphOps
         "layer", "identity", "cast", "add", "sub", "mul", "div", "concat", "shape", "gather", "slice", "unsqueeze", "squeeze", "reshape",
     };
 
-    private static readonly Dictionary<string, GraphOp> Registry = new(StringComparer.Ordinal);
+    private static readonly SlotTable<string, GraphOp> Registry = new(nameof(GraphOps),
+        (slot, app, library) => context => slot.Call(() => app(context), () => library(context), (a, b) => Comparisons.Tensors(a, b)),
+        StringComparer.Ordinal);
 
     // Idrak's operations (the element-wise and tensor operations ONNX names) are registered before the first use.
-    static GraphOps() => LibraryGraphOps.RegisterAll();   // the built-in operations, on first use
+    static GraphOps() => Overrides.AsLibraryDefaults(LibraryGraphOps.RegisterAll);   // the built-in operations, on first use
 
-    /// <summary>Registers (or replaces) the graph operation <paramref name="name"/>.</summary>
+    /// <summary>
+    /// Registers the graph operation <paramref name="name"/>; under a built-in name it overrides the library's, which stays
+    /// behind it as its fallback (see <see cref="SetPolicy"/>) until <see cref="Unregister"/>.
+    /// </summary>
     public static void Register(string name, GraphOp op)
     {
         ArgumentException.ThrowIfNullOrEmpty(name);
@@ -87,45 +92,30 @@ public static class GraphOps
             throw new ArgumentException($"'{name}' is a structural operation of GraphModule and cannot be replaced.", nameof(name));
         }
 
-        lock (Registry)
-        {
-            Registry[name] = op;
-        }
+        Registry.Register(name, op);
     }
 
-    /// <summary>Removes the graph operation <paramref name="name"/>; returns whether it was registered.</summary>
-    public static bool Unregister(string name)
-    {
-        lock (Registry)
-        {
-            return Registry.Remove(name);
-        }
-    }
+    /// <summary>Removes the app's graph operation <paramref name="name"/> (a built-in name gets the library's back); false when the app registered none.</summary>
+    public static bool Unregister(string name) => Registry.Unregister(name);
 
     /// <summary>The operation names a graph node can use: the structural ones and the registered ones.</summary>
-    public static IReadOnlyCollection<string> Names
-    {
-        get
-        {
-            lock (Registry)
-            {
-                return [.. Core, .. Registry.Keys];
-            }
-        }
-    }
+    public static IReadOnlyCollection<string> Names => [.. Core, .. Registry.Keys];
 
     /// <summary>The operation registered as <paramref name="name"/>.</summary>
     public static GraphOp Get(string name) =>
         TryGet(name) ?? throw new NotSupportedException($"No graph operation '{name}' is registered ({string.Join(", ", Names)}); add it with GraphOps.Register.");
 
     /// <summary>The operation registered as <paramref name="name"/>, or null.</summary>
-    public static GraphOp? TryGet(string name)
-    {
-        lock (Registry)
-        {
-            return Registry.TryGetValue(name, out var op) ? op : null;
-        }
-    }
+    public static GraphOp? TryGet(string name) => Registry.Find(name);
+
+    /// <summary>The library's operation <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
+    public static GraphOp? Default(string name) => Registry.Default(name);
+
+    /// <summary>Who registered the operation <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
+    public static string? Origin(string name) => Registry.Origin(name);
+
+    /// <summary>What happens when the app's operation <paramref name="name"/> fails (<see cref="SlotPolicy.FallBack"/> to the library's unless set).</summary>
+    public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Registry.SetPolicy(name, policy, shadowRate);
 
     /// <summary>Whether <paramref name="name"/> is an operation graphs can use: a structural one of GraphModule or a registered one.</summary>
     public static bool Contains(string name) => Core.Contains(name) || TryGet(name) is not null;

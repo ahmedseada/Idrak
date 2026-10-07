@@ -83,7 +83,8 @@ public sealed record ToolCallProbe(string? Source, string? Call)
 /// <item>"harmony": GPT-OSS channels, calls as <c>&lt;|channel|&gt;commentary to=functions.name … &lt;|message|&gt;{…}&lt;|call|&gt;</c>, reasoning in the analysis channel.</item>
 /// <item>"deepseek": <c>&lt;｜tool▁calls▁begin｜&gt;&lt;｜tool▁call▁begin｜&gt;…&lt;｜tool▁sep｜&gt;…&lt;｜tool▁call▁end｜&gt;…</c> (V3 and R1 with a fenced JSON block, V3.1 with bare JSON).</item>
 /// </list>
-/// Register another with <see cref="Register"/>; registering a built-in name replaces the built-in.
+/// Register another with <see cref="Register"/>; registering a built-in name overrides the built-in, which stays behind
+/// it as its fallback.
 /// </summary>
 public static class ToolCallFormats
 {
@@ -108,74 +109,73 @@ public static class ToolCallFormats
     private sealed record Entry(string Name, Func<ToolCallProbe, bool> Detect, Func<ToolCallContext, IToolCallParser> Create);
 
     // In the order they are asked: the most recently registered first, "json" (which takes any template) last.
-    private static readonly List<Entry> Registry =
-    [
-        new(DeepSeek, p => p.Shows(DeepSeekToolCallParser.CallBegin), c => new DeepSeekToolCallParser(c)),
-        new(Harmony, p => p.Shows("to=functions."), _ => new HarmonyToolCallParser()),
-        new(Mistral, p => p.Shows(MistralToolCallParser.Marker), c => new MistralToolCallParser(c)),
-        new(Qwen3Coder, p => p.Call is { } call ? call.Contains("<function=" + ToolCallProbe.FunctionName + ">", StringComparison.Ordinal)
-            : p.Shows("<function=") && p.Shows("<parameter="), c => new Qwen3CoderToolCallParser(c)),
-        new(Pythonic, p => p.Call?.Contains(ToolCallProbe.FunctionName + "(" + ToolCallProbe.ArgumentName + "=", StringComparison.Ordinal) ?? false,
-            c => new PythonicToolCallParser(c)),
-        new(Json, _ => true, c => new JsonToolCallParser(c)),
-    ];
+    private static readonly SlotTable<string, Entry> Table = BuiltIn();
+
+    private static SlotTable<string, Entry> BuiltIn()
+    {
+        var table = new SlotTable<string, Entry>(nameof(ToolCallFormats), Guard, StringComparer.Ordinal, newestFirst: true);
+        Entry[] builtIn =
+        [
+            new(DeepSeek, p => p.Shows(DeepSeekToolCallParser.CallBegin), c => new DeepSeekToolCallParser(c)),
+            new(Harmony, p => p.Shows("to=functions."), _ => new HarmonyToolCallParser()),
+            new(Mistral, p => p.Shows(MistralToolCallParser.Marker), c => new MistralToolCallParser(c)),
+            new(Qwen3Coder, p => p.Call is { } call ? call.Contains("<function=" + ToolCallProbe.FunctionName + ">", StringComparison.Ordinal)
+                : p.Shows("<function=") && p.Shows("<parameter="), c => new Qwen3CoderToolCallParser(c)),
+            new(Pythonic, p => p.Call?.Contains(ToolCallProbe.FunctionName + "(" + ToolCallProbe.ArgumentName + "=", StringComparison.Ordinal) ?? false,
+                c => new PythonicToolCallParser(c)),
+            new(Json, _ => true, c => new JsonToolCallParser(c)),
+        ];
+        foreach (var entry in builtIn.Reverse())   // each goes first: the last registered is asked first
+        {
+            table.RegisterDefault(entry.Name, entry);
+        }
+
+        return table;
+    }
+
+    // Detection is one call; a parser holds one reply's state, so it falls back when it is made.
+    private static Entry Guard(Slot slot, Entry app, Entry library) => new(app.Name,
+        probe => slot.Call(() => app.Detect(probe), () => library.Detect(probe), Comparisons.Exact),
+        context => slot.Call(() => app.Create(context), () => library.Create(context)));
 
     /// <summary>
     /// Registers the format <paramref name="name"/>: <paramref name="detect"/> says whether a template writes calls this
-    /// way, <paramref name="create"/> makes one reply's parser. It replaces the format of the same name (in its place),
-    /// or is asked before every format registered so far. Names are matched exactly.
+    /// way, <paramref name="create"/> makes one reply's parser. Under a registered name it takes that format's place (a
+    /// built-in stays behind it as its fallback, see <see cref="SetPolicy"/>); a new name is asked before every format
+    /// registered so far. Names are matched exactly.
     /// </summary>
     public static void Register(string name, Func<ToolCallProbe, bool> detect, Func<ToolCallContext, IToolCallParser> create)
     {
         ArgumentException.ThrowIfNullOrEmpty(name);
         ArgumentNullException.ThrowIfNull(detect);
         ArgumentNullException.ThrowIfNull(create);
-        lock (Registry)
-        {
-            int at = Registry.FindIndex(e => e.Name == name);
-            if (at >= 0)
-            {
-                Registry[at] = new Entry(name, detect, create);
-            }
-            else
-            {
-                Registry.Insert(0, new Entry(name, detect, create));
-            }
-        }
+        Table.Register(name, new Entry(name, detect, create), create);
     }
 
-    /// <summary>Removes the format registered as <paramref name="name"/>; false when there is none.</summary>
-    public static bool Unregister(string name)
-    {
-        lock (Registry)
-        {
-            return Registry.RemoveAll(e => e.Name == name) > 0;
-        }
-    }
+    /// <summary>Removes the app's format <paramref name="name"/> (a built-in name gets the library's back); false when the app registered none.</summary>
+    public static bool Unregister(string name) => Table.Unregister(name);
 
     /// <summary>The registered format names, in the order they are asked.</summary>
-    public static IReadOnlyCollection<string> Names
-    {
-        get
-        {
-            lock (Registry)
-            {
-                return [.. Registry.Select(e => e.Name)];
-            }
-        }
-    }
+    public static IReadOnlyCollection<string> Names => Table.Keys;
+
+    /// <summary>Who registered the format <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
+    public static string? Origin(string name) => Table.Origin(name);
+
+    /// <summary>The library's parser of the format <paramref name="name"/> for one reply, whatever an app registered over it; null when the library has none.</summary>
+    public static IToolCallParser? Default(string name, ToolCallContext context) => Table.Default(name)?.Create(context);
+
+    /// <summary>
+    /// What happens when the app's format <paramref name="name"/> fails (<see cref="SlotPolicy.FallBack"/> to the library's
+    /// unless set): detection falls back per call, a parser when it is made.
+    /// </summary>
+    public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Table.SetPolicy(name, policy, shadowRate);
 
     /// <summary>One reply's parser in the format registered as <paramref name="name"/>.</summary>
     public static IToolCallParser Create(string name, ToolCallContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
-        Entry entry;
-        lock (Registry)
-        {
-            entry = Registry.Find(e => e.Name == name)
-                ?? throw new NotSupportedException($"No tool-call format '{name}' is registered ({string.Join(", ", Registry.Select(e => e.Name))}); add it with ToolCallFormats.Register.");
-        }
-
+        var entry = Table.Find(name)
+            ?? throw new NotSupportedException($"No tool-call format '{name}' is registered ({string.Join(", ", Table.Keys)}); add it with ToolCallFormats.Register.");
         return entry.Create(context);
     }
 
@@ -186,14 +186,7 @@ public static class ToolCallFormats
     public static string Detect(ToolCallProbe probe)
     {
         ArgumentNullException.ThrowIfNull(probe);
-        Entry[] entries;
-        lock (Registry)
-        {
-            entries = [.. Registry];
-        }
-
-        // Asked outside the lock: a detector is user code.
-        foreach (var entry in entries)
+        foreach (var entry in Table.Values)
         {
             if (entry.Detect(probe))
             {

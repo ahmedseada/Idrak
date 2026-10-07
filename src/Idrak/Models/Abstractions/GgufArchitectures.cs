@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Runtime.CompilerServices;
+
 namespace Idrak.Models.Abstractions;
 
 /// <summary>
@@ -37,51 +39,35 @@ public sealed class GgufArchitecture
 /// </summary>
 public static class GgufArchitectures
 {
-    private static readonly Dictionary<string, GgufArchitecture> Registry = new(StringComparer.Ordinal);
+    private static readonly SlotTable<string, GgufArchitecture> Registry = new(nameof(GgufArchitectures), comparer: StringComparer.Ordinal,
+        unguarded: "an architecture is a description read once, not a call");
 
-    static GgufArchitectures() => LibraryModelFormats.RegisterGgufArchitectures();   // the built-in families, on first use
+    static GgufArchitectures() => Overrides.AsLibraryDefaults(LibraryModelFormats.RegisterGgufArchitectures);   // the built-in families, on first use
 
-    /// <summary>Registers (or replaces) how to read the GGUF architecture <paramref name="name"/>.</summary>
+    /// <summary>Registers how to read the GGUF architecture <paramref name="name"/>; under a built-in name it overrides the library's until <see cref="Unregister"/>.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly
     public static void Register(string name, GgufArchitecture architecture)
     {
         ArgumentNullException.ThrowIfNull(architecture);
-        lock (Registry)
-        {
-            Registry[name] = architecture;
-        }
+        Registry.Register(name, architecture, System.Reflection.Assembly.GetCallingAssembly());
     }
 
-    /// <summary>Removes the architecture registered as <paramref name="name"/>; false when there is none.</summary>
-    public static bool Unregister(string name)
-    {
-        lock (Registry)
-        {
-            return Registry.Remove(name);
-        }
-    }
+    /// <summary>Removes the app's architecture <paramref name="name"/> (a built-in name gets the library's back); false when the app registered none.</summary>
+    public static bool Unregister(string name) => Registry.Unregister(name);
 
     /// <summary>The registered architecture names.</summary>
-    public static IReadOnlyCollection<string> Names
-    {
-        get
-        {
-            lock (Registry)
-            {
-                return [.. Registry.Keys];
-            }
-        }
-    }
+    public static IReadOnlyCollection<string> Names => Registry.Keys;
 
     /// <summary>The architecture registered as <paramref name="name"/>.</summary>
     public static GgufArchitecture Get(string name) => Find(name)
         ?? throw new NotSupportedException($"No GGUF architecture '{name}' is registered ({string.Join(", ", Names)}); add it with GgufArchitectures.Register.");
 
     /// <summary>The architecture registered as <paramref name="name"/>, or null when there is none.</summary>
-    public static GgufArchitecture? Find(string name)
-    {
-        lock (Registry)
-        {
-            return Registry.GetValueOrDefault(name);
-        }
-    }
+    public static GgufArchitecture? Find(string name) => Registry.Find(name);
+
+    /// <summary>The library's architecture <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
+    public static GgufArchitecture? Default(string name) => Registry.Default(name);
+
+    /// <summary>Who registered the architecture <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
+    public static string? Origin(string name) => Registry.Origin(name);
 }

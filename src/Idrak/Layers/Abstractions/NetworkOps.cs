@@ -62,63 +62,39 @@ public sealed class NetworkOpArguments
 /// </summary>
 public static class NetworkOps
 {
-    private static readonly Dictionary<string, NetworkOp> Registry = new(StringComparer.Ordinal);
+    private static readonly SlotTable<string, NetworkOp> Registry = new(nameof(NetworkOps), comparer: StringComparer.Ordinal,
+        unguarded: "a step adds layers to the builder as it runs, and a half-run step cannot be undone");
 
     // Idrak's steps (one per builder layer: linear, relu, conv2d, transformer, ...) are registered before the first use.
-    static NetworkOps() => LibraryNetworkOps.RegisterAll();   // the built-in steps, on first use
+    static NetworkOps() => Overrides.AsLibraryDefaults(LibraryNetworkOps.RegisterAll);   // the built-in steps, on first use
 
-    /// <summary>Registers (or replaces) the network step <paramref name="name"/>.</summary>
+    /// <summary>
+    /// Registers the network step <paramref name="name"/>; under a built-in name it overrides the library's step until
+    /// <see cref="Unregister"/>. A step changes the builder as it runs, so it does not fall back to the library's when it fails.
+    /// </summary>
     public static void Register(string name, NetworkOp op)
     {
         ArgumentException.ThrowIfNullOrEmpty(name);
         ArgumentNullException.ThrowIfNull(op);
-        lock (Registry)
-        {
-            Registry[name] = op;
-        }
+        Registry.Register(name, op);
     }
 
-    /// <summary>Removes the network step <paramref name="name"/>; returns whether it was registered.</summary>
-    public static bool Unregister(string name)
-    {
-        lock (Registry)
-        {
-            return Registry.Remove(name);
-        }
-    }
+    /// <summary>Removes the app's network step <paramref name="name"/> (a built-in name gets the library's back); false when the app registered none.</summary>
+    public static bool Unregister(string name) => Registry.Unregister(name);
 
     /// <summary>The registered step names.</summary>
-    public static IReadOnlyCollection<string> Names
-    {
-        get
-        {
-            lock (Registry)
-            {
-                return [.. Registry.Keys];
-            }
-        }
-    }
+    public static IReadOnlyCollection<string> Names => Registry.Keys;
 
     /// <summary>The step registered as <paramref name="name"/>.</summary>
-    public static NetworkOp Get(string name)
-    {
-        lock (Registry)
-        {
-            if (Registry.TryGetValue(name, out var op))
-            {
-                return op;
-            }
-        }
-
-        throw new NotSupportedException($"No network step '{name}' is registered ({string.Join(", ", Names)}); add it with NetworkOps.Register.");
-    }
+    public static NetworkOp Get(string name) => Registry.Find(name)
+        ?? throw new NotSupportedException($"No network step '{name}' is registered ({string.Join(", ", Names)}); add it with NetworkOps.Register.");
 
     /// <summary>Whether a step is registered as <paramref name="name"/>.</summary>
-    public static bool Contains(string name)
-    {
-        lock (Registry)
-        {
-            return Registry.ContainsKey(name);
-        }
-    }
+    public static bool Contains(string name) => Registry.Contains(name);
+
+    /// <summary>The library's step <paramref name="name"/>, whatever an app registered over it (for an app's step to delegate to); null when the library has none.</summary>
+    public static NetworkOp? Default(string name) => Registry.Default(name);
+
+    /// <summary>Who registered the step <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
+    public static string? Origin(string name) => Registry.Origin(name);
 }
