@@ -1,0 +1,416 @@
+// Copyright (c) 2026 Ahmed Seada
+// Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
+
+using static Idrak.Gpu.Cuda.CudaDriver;
+
+namespace Idrak.Gpu.Cuda;
+
+// Choices that depend on the card (how many ways to split k, which of two kernels, which tile) are measured on the card
+// in use, not set from one card's benchmarks: the first time a shape needs one, every candidate runs on the real inputs
+// and is timed with events, and the fastest is kept. Candidates write either the caller's output (which the chosen
+// kernel then writes again) or scratch memory (outputs that are added to). The formula from the device's own counts
+// (SMs, tiles) is the default: it is used while measuring is impossible (a graph is being recorded, the profiler runs,
+// no device memory for scratch) and with IDRAK_AUTOTUNE=0, and a candidate replaces it only when its median time is
+// clearly faster (TuneTiming: after a warm-up until the GPU's clocks settle, timed in pairs with the formula's choice),
+// so timing noise and a drifting clock do not move the choice. Decoding-sized products are timed with a cold L2 cache
+// (each timed run after a read of twice the L2 size the device reports), as decoding meets them: every layer's
+// weights pass through the cache between two uses of one layer, so timings of warm repeats favour other choices. Each
+// choice is measured with the kernel that then runs (a fused kernel's choice is its own, keyed by its variant, never the
+// plain kernel's of the same shape). Measured choices are kept per GPU, driver and library build in the user's cache
+// folder (TuningCache; IDRAK_TUNING_CACHE=0 turns that off), so the next start reads them instead of measuring again.
+/// <summary>Which choice a measurement is for.</summary>
+internal enum TuneOp : byte
+{
+    GemvSplits,
+    GemvMultiSplits,
+    Int8FewRows,
+    PackedSplits,
+    PackedTile,
+    PackedMultiSplits,
+    PackedLowRankSplits,
+    GatedActivation,
+    TensorSplits,
+    FloatTile,
+    DecodeSplits,
+    DecodeMinChunk,
+}
+
+/// <summary>
+/// What a measured choice is for: the operation, its kernel variant and its shape. Numbers only (no strings), so a lookup
+/// on the per-token path allocates nothing and hashes a few integers.
+/// </summary>
+internal readonly record struct TuneKey(TuneOp Op, int Variant, int A, int B, int C, int D = 0, int E = 0, int F = 0);
+
+internal sealed unsafe partial class CudaBackend
+{
+    /// <summary>Measure card-dependent choices on the device (default); off (IDRAK_AUTOTUNE=0): the formulas only.</summary>
+    internal static bool Autotune = Environment.GetEnvironmentVariable("IDRAK_AUTOTUNE") is not ("0" or "false");
+
+    /// <summary>Keep measured choices in the user's cache folder and read them at the next start (IDRAK_TUNING_CACHE=0: off).</summary>
+    internal static bool PersistTuning = TuningCache.Folder() is not null;
+
+    private readonly Dictionary<TuneKey, int> _tuned = [];
+
+    // Choices read from the cache file (null until first needed); each is used only when it is still one of the
+    // candidates the shape offers, so a file from a build with other candidates cannot pick an invalid one.
+    private Dictionary<TuneKey, int>? _persisted;
+    private (string Path, TuningIdentity Identity)? _tuningFile;
+    private (IntPtr Start, IntPtr End) _tuneEvents;
+
+    // While candidates are timed, choices they need themselves use what is already known (or the formula), so one
+    // measurement never starts another inside its timed region.
+    [ThreadStatic]
+    private static bool t_timing;
+
+    /// <summary>Choices measured on this device so far (for tests and diagnostics).</summary>
+    internal int TunedCount
+    {
+        get
+        {
+            lock (_tuned)
+            {
+                return _tuned.Count;
+            }
+        }
+    }
+
+    /// <summary>Forgets the measured choices and those read from the cache file; the file is read again when next needed (tests).</summary>
+    internal void ForgetTuning()
+    {
+        lock (_tuned)
+        {
+            _tuned.Clear();
+            _persisted = null;
+            _tuningFile = null;
+        }
+    }
+
+    /// <summary>Choices timed on the device in this process (not read from the cache file; tests and diagnostics).</summary>
+    internal int MeasuredCount { get; private set; }
+
+    /// <summary>What the cache file of this GPU belongs to (tests and diagnostics).</summary>
+    internal TuningIdentity TuningIdentity => new(
+        $"{_deviceName}; compute {_computeMajor}.{_computeMinor}; {_multiprocessors} SMs; {_totalMemory >> 20} MiB; power {PowerSource.Current}",
+        $"CUDA {_driverVersion}; {TuningCache.DriverRelease()}",
+        TuningCache.LibraryBuild(PtxKernels.SourceFor(_shapes)));
+
+    /// <summary>The cache file of this GPU, or null when the cache is off (tests and diagnostics).</summary>
+    internal string? TuningFile
+    {
+        get
+        {
+            lock (_tuned)
+            {
+                return TuningFileLocked()?.Path;
+            }
+        }
+    }
+
+    // The cache file and its identity, or null when the cache is off. Called under the _tuned lock.
+    private (string Path, TuningIdentity Identity)? TuningFileLocked()
+    {
+        if (!PersistTuning || TuningCache.Folder() is not { } folder)
+        {
+            return null;
+        }
+
+        if (_tuningFile is not { } file)
+        {
+            var identity = TuningIdentity;
+            file = (Path.Combine(folder, TuningCache.FileName(identity.Device)), identity);
+            _tuningFile = file;
+        }
+
+        return file;
+    }
+
+    // A choice read from the cache file for `key`, when it is one of `candidates`. Called under the _tuned lock.
+    private bool TryPersistedLocked(TuneKey key, ReadOnlySpan<int> candidates, out int value)
+    {
+        _persisted ??= TuningFileLocked() is { } file ? TuningCache.Load(file.Path, file.Identity) : [];
+        return _persisted.TryGetValue(key, out value) && candidates.Contains(value);
+    }
+
+    // Writes the measured choices to the cache file (keeping those other processes wrote there).
+    private void SaveTuning()
+    {
+        (string Path, TuningIdentity Identity)? file;
+        Dictionary<TuneKey, int> snapshot;
+        lock (_tuned)
+        {
+            file = TuningFileLocked();
+            snapshot = new Dictionary<TuneKey, int>(_tuned);
+        }
+
+        if (file is { } f)
+        {
+            TuningCache.Save(f.Path, f.Identity, snapshot);
+        }
+    }
+
+    // Whether `key` was measured already (callers skip preparing candidates then).
+    private bool TunedKnown(TuneKey key)
+    {
+        lock (_tuned)
+        {
+            return _tuned.ContainsKey(key);
+        }
+    }
+
+    /// <summary>Print every measurement (candidates, median time ratios to the formula's choice, the choice) to stderr (IDRAK_TUNE_LOG=1).</summary>
+    internal static bool LogTuning = Environment.GetEnvironmentVariable("IDRAK_TUNE_LOG") is "1" or "true";
+
+    // Floats read to evict the L2 cache before a cold timing: twice the size the device reports (a read through a cache
+    // that does not replace strictly the least recently used line leaves part of one cache size behind); none when the
+    // device reports no L2 size.
+    internal static long L2FlushFloats(int l2Bytes) => l2Bytes <= 0 ? 0 : 2L * l2Bytes / sizeof(float);
+
+    // Runs per timing: back-to-back runs adding up to about 0.2 ms, at most 16; cold timings (each run after a flush,
+    // timed alone) at most 4, since every run then also costs a read of twice the L2 size.
+    internal static int TimingRepeats(float onceMs, bool cold) =>
+        Math.Clamp((int)MathF.Ceiling(0.2f / Math.Max(onceMs, 1e-3f)), 1, cold ? 4 : 16);
+
+    // The fastest of `candidates` for `key`, measured once (or read from the cache file); `fallback` (the formula's
+    // choice) while it cannot be measured. `run(candidate)` runs the operation with that choice; it must leave nothing the
+    // caller relies on changed (it writes the output the caller writes again, or scratch memory). `cold`: each timed run
+    // starts with an L2 cache holding none of its operands (decoding-sized products; see L2FlushFloats).
+    // `part` and `parts`: the operation is timed as `parts` separate runs (`part(candidate, i)`, which `run` runs all of),
+    // and a candidate's time is the geometric mean of its parts' times, so each part counts alike however long it takes
+    // (decoding attention at filled lengths 64 ... capacity).
+    private int Tune(TuneKey key, ReadOnlySpan<int> candidates, int fallback, Action<int> run, bool cold = false, Action<int, int>? part = null, int parts = 0)
+    {
+        if (!Autotune)
+        {
+            return fallback;                                               // IDRAK_AUTOTUNE=0: the formulas only
+        }
+
+        lock (_tuned)
+        {
+            if (_tuned.TryGetValue(key, out int known))
+            {
+                return known;
+            }
+
+            if (candidates.Length > 1 && TryPersistedLocked(key, candidates, out int kept))
+            {
+                _tuned[key] = kept;
+                return kept;
+            }
+        }
+
+        if (candidates.Length <= 1)
+        {
+            return candidates.Length == 1 ? candidates[0] : fallback;
+        }
+
+        if (!CanMeasure)
+        {
+            return fallback;
+        }
+
+        MakeCurrent();
+        using var use = UseStream();
+        if (_tuneEvents.Start == IntPtr.Zero)
+        {
+            Check(cuEventCreate(out var start, 0), nameof(cuEventCreate));
+            Check(cuEventCreate(out var end, 0), nameof(cuEventCreate));
+            _tuneEvents = (start, end);
+        }
+
+        // A first run of each candidate outside the timing: loads its kernel and settles the choices it needs itself.
+        foreach (int candidate in candidates)
+        {
+            run(candidate);
+        }
+
+        // Cold timings: a scratch block of twice the L2 size, read by the sum kernel before each timed run (reads, so no
+        // dirty lines are left to be written back during the run). Without room for it, warm timings.
+        long flushFloats = cold ? L2FlushFloats(_limits.L2Bytes) : 0;
+        if (flushFloats > 0 && flushFloats < int.MaxValue)
+        {
+            int chosenCold = fallback;
+            var copy = candidates.ToArray();
+            if (WithScratch(flushFloats + 1, block => chosenCold = Measure(key, copy, fallback, run, block, (int)flushFloats)))
+            {
+                return chosenCold;
+            }
+        }
+
+        return Measure(key, candidates.ToArray(), fallback, run, 0, 0, part, parts);
+    }
+
+    // Times `list` (after the warm-up) and keeps the choice. `flush`: the address of `flushFloats` floats (and one more for
+    // the sum) read before each timed run, or 0 for warm timings.
+    private int Measure(TuneKey key, int[] list, int fallback, Action<int> run, ulong flush, int flushFloats, Action<int, int>? part = null, int parts = 0)
+    {
+        // Each candidate is timed as it runs in practice, several launches back to back (as many as take about 0.2 ms,
+        // at most 16): a launch timed alone misses how splits overlap with the work around them. First the candidates
+        // run in turns until the GPU's speed has settled (TuneTiming.Warm: an idle GPU, laptops above all, runs the first
+        // milliseconds at a fraction of its clocks); then each is timed in pairs with the formula's choice over
+        // TuneTiming.Rounds rounds and the medians of the pair ratios are compared (TuneTiming.Choose), so neither a clock
+        // that still changes nor one lucky or unlucky timing decides. Cold (flush != 0): each run is timed alone, after
+        // the read that empties the L2 cache.
+        var repeats = new int[list.Length];
+        var medians = LogTuning ? new float[list.Length] : null;
+        var confirmation = LogTuning ? new float[1] : null;
+        int chosen;
+        t_timing = true;
+        try
+        {
+            TuneTiming.Warm(() =>
+            {
+                Check(cuEventRecord(_tuneEvents.Start, _stream), nameof(cuEventRecord));
+                foreach (int candidate in list)
+                {
+                    run(candidate);
+                }
+
+                Check(cuEventRecord(_tuneEvents.End, _stream), nameof(cuEventRecord));
+                Check(cuEventSynchronize(_tuneEvents.End), nameof(cuEventSynchronize));
+                Check(cuEventElapsedTime(out float ms, _tuneEvents.Start, _tuneEvents.End), nameof(cuEventElapsedTime));
+                return ms;
+            });
+
+            if (part is not null && parts > 0)
+            {
+                var runs = Enumerable.Range(0, parts).Select(i => (Action<int>)(c => part(c, i))).ToArray();
+                var partRepeats = new int[list.Length, parts];
+                for (int c = 0; c < list.Length; c++)
+                {
+                    for (int i = 0; i < parts; i++)
+                    {
+                        partRepeats[c, i] = TimingRepeats(TimeRuns(list[c], 1, runs[i], flush, flushFloats), flush != 0);
+                    }
+                }
+
+                float Geometric(int c)
+                {
+                    double logs = 0;
+                    for (int i = 0; i < parts; i++)
+                    {
+                        logs += Math.Log(Math.Max(TimeRuns(list[c], partRepeats[c, i], runs[i], flush, flushFloats) / partRepeats[c, i], 1e-9f));
+                    }
+
+                    return (float)Math.Exp(logs / parts);
+                }
+
+                chosen = list[TuneTiming.Choose(list, fallback, Geometric, medians: medians, confirmation: confirmation)];
+            }
+            else
+            {
+                for (int c = 0; c < list.Length; c++)
+                {
+                    repeats[c] = TimingRepeats(TimeRuns(list[c], 1, run, flush, flushFloats), flush != 0);
+                }
+
+                chosen = list[TuneTiming.Choose(list, fallback, c => TimeRuns(list[c], repeats[c], run, flush, flushFloats) / repeats[c], medians: medians,
+                    confirmation: confirmation)];
+            }
+        }
+        finally
+        {
+            t_timing = false;
+        }
+
+        lock (_tuned)
+        {
+            _tuned[key] = chosen;
+            MeasuredCount++;
+        }
+
+        if (medians is not null)
+        {
+            Console.Error.WriteLine($"idrak tune {key.Op} {key.Variant} {key.A} {key.B} {key.C} {key.D} {key.E} {key.F} ({(flush != 0 ? "cold L2" : "warm")}{(parts > 0 ? $", geometric mean of {parts} parts" : "")}): " +
+                string.Join(", ", list.Select((c, i) => $"{c}={medians[i]:F3}")) + $" (time / formula {fallback}'s)" +
+                (float.IsNaN(confirmation![0]) ? "" : $", timed again {confirmation[0]:F3}") + $" -> {chosen}");
+        }
+
+        SaveTuning();
+        return chosen;
+    }
+
+    // Whether candidates can be timed now: not inside another measurement, not while the profiler runs or a graph is
+    // being recorded.
+    private bool CanMeasure => Autotune && !t_timing && _profile is null && _captureFree is null && Volatile.Read(ref _captureThread) == 0;
+
+    // Milliseconds of `count` runs of one candidate, measured with events on the work stream: back to back, or with
+    // `flush` (cold), each run alone after a read of `flushFloats` floats there (the read not timed).
+    private float TimeRuns(int candidate, int count, Action<int> run, ulong flush = 0, int flushFloats = 0)
+    {
+        if (flush != 0)
+        {
+            uint blocks = (uint)Math.Min((flushFloats + _shapes.BlockSize - 1) / _shapes.BlockSize, Math.Max(1, _multiprocessors) * 8);
+            float total = 0f;
+            for (int i = 0; i < count; i++)
+            {
+                Launch(_sum, blocks, 1, (uint)_shapes.BlockSize, 1, flush, flush + (ulong)flushFloats * sizeof(float), U(flushFloats), F(0f));
+                Check(cuEventRecord(_tuneEvents.Start, _stream), nameof(cuEventRecord));
+                run(candidate);
+                Check(cuEventRecord(_tuneEvents.End, _stream), nameof(cuEventRecord));
+                Check(cuEventSynchronize(_tuneEvents.End), nameof(cuEventSynchronize));
+                Check(cuEventElapsedTime(out float once, _tuneEvents.Start, _tuneEvents.End), nameof(cuEventElapsedTime));
+                total += once;
+            }
+
+            return total;
+        }
+
+        Check(cuEventRecord(_tuneEvents.Start, _stream), nameof(cuEventRecord));
+        for (int i = 0; i < count; i++)
+        {
+            run(candidate);
+        }
+
+        Check(cuEventRecord(_tuneEvents.End, _stream), nameof(cuEventRecord));
+        Check(cuEventSynchronize(_tuneEvents.End), nameof(cuEventSynchronize));
+        Check(cuEventElapsedTime(out float ms, _tuneEvents.Start, _tuneEvents.End), nameof(cuEventElapsedTime));
+        return ms;
+    }
+
+    // Split counts to try where any count works (chunks of k need no particular alignment): 1, 2, 3, 4, 6, 8, 12, ...
+    // up to `max` (the measured best on prompt-sized products was often 3 or 6).
+    internal static int[] SplitCounts(int max)
+    {
+        var values = new List<int>();
+        for (int s = 1; s <= Math.Max(1, max); s *= 2)
+        {
+            values.Add(s);
+            if (s >= 2 && s + s / 2 <= max)
+            {
+                values.Add(s + s / 2);
+            }
+        }
+
+        return [.. values];
+    }
+
+    // Runs `body` with a device scratch block of `floats` (its address), then frees it; false when there is no room (the
+    // caller then keeps the formula). Never falls back to system memory, where timings would mislead.
+    private bool WithScratch(long floats, Action<ulong> body)
+    {
+        if (floats <= 0 || floats > int.MaxValue)
+        {
+            return false;
+        }
+
+        ulong block = TryDeviceBlock((int)floats, 0, useCache: true, out int capacity);
+        if (block == 0)
+        {
+            return false;
+        }
+
+        try
+        {
+            body(block);
+        }
+        finally
+        {
+            lock (_pool)
+            {
+                ReturnDeviceBlockLocked(block, capacity);
+            }
+        }
+
+        return true;
+    }
+}
