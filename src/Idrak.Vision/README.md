@@ -3,9 +3,14 @@
 Computer vision for Idrak (no dependencies beyond Idrak): region classification in batches (`RegionClassifier`, with
 `ComponentProposer` for the regions), content framing for classifiers of single objects (`ContentFrame`, also as a
 loader transform), per-channel image statistics for normalization (`ChannelStatistics`), and detection and segmentation
-over any network (`ModelDetector` with the application's `DetectionDecoder`, `ModelSegmenter`). The contracts and small
-defaults it builds on (foreground extraction, connected components, boxes, non-maximum suppression, masks and their
-metrics) are in Idrak.Abstraction.
+over any network (`ModelDetector` with the application's `DetectionDecoder`, `ModelSegmenter`), with the small defaults
+they build on (foreground extraction, connected components, non-maximum suppression, segmentation metrics).
+
+## Contracts
+
+In `Idrak.Vision.Abstractions` (add the `using` line to name them): `IObjectDetector`, `ISegmenter`, `IRegionProposer`,
+`DetectionDecoder`, and the records they speak in (`PixelBox`, `BoundingBox`, `Detection`, `SegmentationMask`,
+`ForegroundImage`).
 
 ## Install
 
@@ -16,6 +21,7 @@ dotnet add package Idrak.Vision
 ## Example
 
 ```csharp
+using Idrak.Data.Abstractions;   // ImageCodecs
 using Idrak.Vision;
 
 // Single objects on a plain background (symbols, parts, cells, characters): regions found, framed, classified in batches.

@@ -3,9 +3,10 @@
 
 using System.Diagnostics;
 using Idrak;
-using Idrak.Gpu.Vulkan;
 using Idrak.Generation;
+using Idrak.Gpu.Vulkan;
 using Idrak.Layers;
+using Idrak.Models.Abstractions;
 
 // dotnet run -c Release --project tests/Idrak.Tests -- --bench-vulkan [dispatch|copies|matmul|gemv|attention|sampling|window|decoder …]
 

@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Idrak.Diagnostics;
 using Idrak.Training;
+using Idrak.Training.Abstractions;
 
 namespace Idrak.Cli.Shared;
 

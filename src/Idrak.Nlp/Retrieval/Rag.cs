@@ -5,6 +5,7 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using Idrak.Generation;
+using Idrak.Retrieval.Abstractions;
 
 namespace Idrak.Retrieval;
 

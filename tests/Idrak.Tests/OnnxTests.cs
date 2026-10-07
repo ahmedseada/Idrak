@@ -5,6 +5,7 @@ using Idrak;
 using Idrak.Inference;
 using Idrak.Layers;
 using Idrak.Onnx;
+using Idrak.Onnx.Abstractions;
 using Idrak.Onnx.Runtime;
 
 // ONNX export: every supported layer is exported, run by ONNX Runtime and compared with Idrak's own output.

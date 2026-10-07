@@ -178,14 +178,14 @@ public sealed partial class Tensor
     }
 
     /// <summary>Adds <paramref name="value"/> to every element in place (not recorded by autograd).</summary>
-    internal void AddInPlace(float value)
+    public void AddInPlace(float value)
     {
         ThrowIfDisposed();
         Backend.Affine(Storage, Storage, Size, 1f, value);
     }
 
     /// <summary>Sets every element in place (not recorded by autograd).</summary>
-    internal void FillInPlace(float value)
+    public void FillInPlace(float value)
     {
         ThrowIfDisposed();
         Backend.Fill(Storage, Size, value);

@@ -5,6 +5,7 @@ using System.Collections.Concurrent;
 using Idrak;
 using Idrak.Gpu.Vulkan;
 using Idrak.Layers;
+using Idrak.Models.Abstractions;
 
 // The fused decoding kernels on Vulkan (BackendCapabilities.FusedKernels): each fused operation against the unfused steps
 // it replaces on the same device and against the CPU, without host fallback and with the same bits run after run; and

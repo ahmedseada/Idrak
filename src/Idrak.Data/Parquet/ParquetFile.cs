@@ -6,6 +6,7 @@ using System.Globalization;
 using System.Numerics;
 using System.Text;
 using System.Text.Json.Nodes;
+using Idrak.Data.Abstractions;
 using Idrak.Data.Parquet;
 
 namespace Idrak.Data;

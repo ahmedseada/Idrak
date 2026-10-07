@@ -4,6 +4,8 @@
 using System.Text.Json.Nodes;
 using Idrak.Inference;
 using Idrak.Layers;
+using Idrak.Layers.Abstractions;
+using Idrak.Onnx.Abstractions;
 
 namespace Idrak.Onnx;
 

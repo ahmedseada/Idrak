@@ -4,18 +4,15 @@
 namespace Idrak.Data;
 
 /// <summary>
-/// What this assembly adds to the registries of Idrak.Abstraction, which cannot name it: its data file formats (JSON
-/// Lines, JSON, CSV, TSV, Parquet, text, source code), its dataset sources (hf, github, kaggle, zenodo, http, folder,
-/// file), its Parquet codecs and the Hugging Face model source. <c>LibraryDefaults.Ensure</c> (in Idrak.Abstraction) calls
-/// <see cref="RegisterFor"/> once per registry, before that registry is first used.
+/// What this assembly adds to the registries of Idrak.Abstraction, which cannot name it: the Hugging Face model source.
+/// <c>LibraryDefaults.Ensure</c> (in Idrak.Abstraction) calls <see cref="RegisterFor"/> once per registry, before that
+/// registry is first used. The registries that live here (data file formats, dataset sources, Parquet codecs) register
+/// their built-ins themselves.
 /// </summary>
 internal static class LibraryRegistrations
 {
     private static readonly Dictionary<Type, Action> ByRegistry = new()
     {
-        [typeof(DataFileFormats)] = DataFiles.RegisterAll,
-        [typeof(DatasetSources)] = LibraryDatasetSources.RegisterAll,
-        [typeof(ParquetCodecs)] = Parquet.Codecs.RegisterAll,
         [typeof(ModelSources)] = () => ModelSources.Register(HuggingFaceModels.Source),
     };
 

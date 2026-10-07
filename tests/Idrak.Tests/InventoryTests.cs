@@ -3,6 +3,7 @@
 
 using System.Collections.Immutable;
 using System.Reflection;
+using System.Reflection.Emit;
 using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
@@ -12,14 +13,16 @@ using Idrak;
 
 // Plan 10, phase 0: the inventory of every abstraction in the library packages (interfaces, abstract classes,
 // registries, the device contract and the internals other assemblies reach), generated from the built assemblies so it
-// cannot drift; and the rule that every abstraction is declared under Idrak.Abstraction.*, with today's violations as
-// an allow list that may only shrink.
+// cannot drift; the rule that every abstraction is declared under Idrak.Abstraction.* or a package's own *.Abstractions
+// namespace (its allow list is empty and may only shrink); and, from phase 8c, decision 10: a contract lives in
+// Idrak.Abstraction when Abstraction itself or several library packages use it, else in the one package that does.
 internal static partial class Tests
 {
     private static readonly (string Name, Action<Device> Run)[] InventoryGroup =
     [
         ("abstraction inventory: plans/10-abstraction-inventory.md matches the library (IDRAK_UPDATE_INVENTORY=1 rewrites it)", InventoryCurrent),
-        ("abstraction inventory: every interface, abstract class and registry outside Idrak.Abstraction.* is on the allow list, and the list names nothing that moved or is gone", AbstractionNamespaces),
+        ("abstraction inventory: every interface, abstract class and registry outside Idrak.Abstraction.* and the packages' own *.Abstractions is on the allow list, and the list names nothing that moved or is gone", AbstractionNamespaces),
+        ("abstraction inventory: every contract lives with its users (decision 10): in Idrak.Abstraction when Abstraction or several library packages use it, else in the one package that does", ContractsWithTheirUsers),
         ("abstraction inventory: Idrak.Abstraction grants its internals to the tests only; every internal of Idrak or Idrak.Gpu another assembly uses is justified in the list, and the list names nothing no longer used", InternalsJustified),
     ];
 
@@ -88,7 +91,7 @@ internal static partial class Tests
             return;
         }
 
-        var outside = Abstractions().Where(a => !InAbstractionNamespace(a.Type)).Select(a => Display(a.Type)).ToHashSet(StringComparer.Ordinal);
+        var outside = Abstractions().Where(a => !DeclaredWhereAllowed(a.Type)).Select(a => Display(a.Type)).ToHashSet(StringComparer.Ordinal);
         string path = Path.Combine(RepositoryRoot(), AllowListPath);
         bool exists = File.Exists(path);
         var allowed = exists
@@ -101,8 +104,8 @@ internal static partial class Tests
         if (UpdateInventory && (!exists || gone.Count > 0))
         {
             var kept = exists ? allowed.Except(gone) : outside;
-            File.WriteAllText(path, "# Plan 10: abstractions still declared outside Idrak.Abstraction.*. This list may only shrink: declare new\n"
-                                    + "# interfaces, abstract classes and registries under Idrak.Abstraction.* (tests/Idrak.Tests/InventoryTests.cs).\n"
+            File.WriteAllText(path, "# Plan 10: abstractions declared outside Idrak.Abstraction.* and the packages' own *.Abstractions namespaces. This\n"
+                                    + "# list may only shrink: declare new interfaces, abstract classes and registries there (tests/Idrak.Tests/InventoryTests.cs).\n"
                                     + string.Concat(kept.Order(StringComparer.Ordinal).Select(l => l + "\n")));
             gone = [];
             if (!exists)
@@ -111,7 +114,7 @@ internal static partial class Tests
             }
         }
 
-        Check(added.Count == 0, $"declared outside Idrak.Abstraction.* (plan 10): {string.Join(", ", added)}");
+        Check(added.Count == 0, $"declared outside Idrak.Abstraction.* (in Idrak.Abstraction) or the package's own *.Abstractions namespace (plan 10): {string.Join(", ", added)}");
         Check(gone.Count == 0, $"{AllowListPath} names abstractions that moved or are gone; remove them: {string.Join(", ", gone)}");
     }
 
@@ -151,6 +154,431 @@ internal static partial class Tests
         var stale = justified.Except(used).Order(StringComparer.Ordinal).ToList();
         Check(missing.Count == 0, $"internals used without a reason in {JustifiedPath} (make them public contract, or add a line): {string.Join("; ", missing)}");
         Check(stale.Count == 0, $"{JustifiedPath} lists internals no longer used; remove: {string.Join("; ", stale)}");
+    }
+
+    // Decision 10: a contract in Idrak.Abstraction that one library package alone uses moves to that package; one in a
+    // package that several use (or another package alone) moves to Abstraction (or to that package). Users are measured
+    // from the assemblies' metadata, see ContractUsers.
+    private static void ContractsWithTheirUsers(Device device)
+    {
+        _ = device;
+        if (!FirstRun(nameof(ContractsWithTheirUsers)))
+        {
+            return;
+        }
+
+        var misplaced = Abstractions().Select(a => Misplaced(a.Type)).OfType<string>().ToList();
+        Check(misplaced.Count == 0, $"contracts that do not live with their users (decision 10): {string.Join("; ", misplaced)}");
+    }
+
+    private const string AbstractionAssembly = "Idrak.Abstraction";
+
+    // Where a contract may be declared: under Idrak.Abstraction.* in the Abstraction assembly, and under the package's own
+    // *.Abstractions namespace in a package (never the bare Idrak.Abstractions, too close to Idrak.Abstraction).
+    private static bool DeclaredWhereAllowed(Type type)
+    {
+        string ns = type.Namespace ?? "", assembly = type.Assembly.GetName().Name!;
+        if (assembly == AbstractionAssembly)
+        {
+            return InAbstractionNamespace(type);
+        }
+
+        // The .Abstractions sub-namespace of a namespace this assembly's implementations use (Idrak.Vision.Abstractions
+        // beside Idrak.Vision, Idrak.Generation.Abstractions beside Nlp's Idrak.Generation).
+        return ns.EndsWith(".Abstractions", StringComparison.Ordinal) && ns != "Idrak.Abstractions" && !InAbstractionNamespace(type)
+               && type.Assembly.GetTypes().Any(t => t.Namespace == ns[..^".Abstractions".Length]);
+    }
+
+    // The assembly a contract belongs in by decision 10: Abstraction when Abstraction or more than one library package
+    // uses it; the one package that uses it otherwise; where it is when no library assembly does.
+    private static string BelongsIn(Type type)
+    {
+        var users = ContractUsers().Users[Outermost(type)];
+        return users.Count switch
+        {
+            0 => type.Assembly.GetName().Name!,
+            1 => users.Single(),
+            _ => AbstractionAssembly,
+        };
+    }
+
+    // Why a contract is in the wrong assembly, with where it goes; null when it is where decision 10 puts it.
+    private static string? Misplaced(Type type)
+    {
+        string assembly = type.Assembly.GetName().Name!, target = BelongsIn(type);
+        if (target == assembly)
+        {
+            return null;
+        }
+
+        string users = string.Join(", ", ContractUsers().Users[Outermost(type)].Order(StringComparer.Ordinal));
+        return target == AbstractionAssembly
+            ? $"{Display(type)} (in {assembly}) is used by {users}: move it to {AbstractionArea(type)}"
+            : $"{Display(type)} (in {assembly}) is used by {target} alone: move it to {target}, namespace {PackageNamespace(type, target)}";
+    }
+
+    // The namespace a contract takes in the one package that uses it: the .Abstractions sub-namespace of the namespace most
+    // of that package's types naming it use (through the Abstraction types that move with it when none names it directly).
+    private static string PackageNamespace(Type type, string package)
+    {
+        var referrers = ContractUsers().Referrers;
+        var seen = new HashSet<Type> { Outermost(type) };
+        var level = new List<Type> { Outermost(type) };
+        while (level.Count > 0)
+        {
+            var next = level.SelectMany(t => referrers.TryGetValue(t, out var r) ? r : []).Where(seen.Add).ToList();
+            var namespaces = next.Where(t => t.Assembly.GetName().Name == package)
+                .Select(t => t.Namespace is { } ns && ns.EndsWith(".Abstractions", StringComparison.Ordinal) ? ns[..^".Abstractions".Length] : t.Namespace ?? "")
+                .Where(ns => ns.Length > 0 && ns != "Idrak")
+                .GroupBy(ns => ns).OrderByDescending(g => g.Count()).ThenBy(g => g.Key, StringComparer.Ordinal).ToList();
+            if (namespaces.Count > 0)
+            {
+                return namespaces[0].Key + ".Abstractions";
+            }
+
+            level = [.. next.Where(t => t.Assembly.GetName().Name == AbstractionAssembly)];
+        }
+
+        return package == "Idrak" ? "Idrak.<area>.Abstractions" : package + ".Abstractions";
+    }
+
+    // The area under Idrak.Abstraction a contract moving into Abstraction takes, by the namespace of its implementations.
+    private static string AbstractionArea(Type type)
+    {
+        string ns = type.Namespace ?? "";
+        if (ns.EndsWith(".Abstractions", StringComparison.Ordinal))
+        {
+            ns = ns[..^".Abstractions".Length];
+        }
+
+        string area = ns switch
+        {
+            "Idrak.Layers" => "Modules",
+            "Idrak.Optimizers" or "Idrak.Training" => "Training",
+            "Idrak.Data" or "Idrak.Data.Parquet" => "Data",
+            "Idrak.Vision" => "Vision",
+            "Idrak.Retrieval" => "Retrieval",
+            "Idrak.Generation" or "Idrak.Nlp" => "Generation",
+            "Idrak.Models" or "Idrak.Onnx" or "Idrak.Onnx.Runtime" => "Formats",
+            "Idrak.Inference" or "Idrak.AspNetCore" or "Idrak.Mcp" => "Serving",
+            "Idrak.Diagnostics" => "Diagnostics",
+            _ when ns.StartsWith("Idrak.Gpu", StringComparison.Ordinal) => "Devices",
+            _ => "",
+        };
+        return area.Length == 0 ? AbstractionAssembly : AbstractionAssembly + "." + area;
+    }
+
+    // Which library assemblies use each type (by its outermost type: nested types belong to theirs), and which types refer
+    // to it. Another assembly uses a type when its metadata references it (the TypeReferences table, and the signatures and
+    // method bodies of its types). The defining assembly uses it when one of its other types refers to it; in
+    // Idrak.Abstraction that need is counted through the referring type: when that type has one user, its user inherits the
+    // reference (the two move together), and when it has several (or none but Abstraction), Abstraction does.
+    private sealed record Usage(Dictionary<Type, HashSet<string>> Users, Dictionary<Type, HashSet<Type>> Referrers);
+
+    private static Usage? _contractUsers;
+
+    private static Usage ContractUsers()
+    {
+        if (_contractUsers is { } done)
+        {
+            return done;
+        }
+
+        var assemblies = LibraryAssemblies();
+        var library = assemblies.ToHashSet();
+        var users = new Dictionary<Type, HashSet<string>>();
+        var referrers = new Dictionary<Type, HashSet<Type>>();
+        foreach (var unit in assemblies.SelectMany(a => a.GetTypes()).Select(Outermost).Where(t => !t.Name.StartsWith('<')))
+        {
+            users.TryAdd(unit, []);
+            referrers.TryAdd(unit, []);
+        }
+
+        foreach (var assembly in assemblies)
+        {
+            string name = assembly.GetName().Name!;
+            var (byType, referenced) = References(assembly, library);
+            foreach (var target in referenced.Where(t => t.Assembly != assembly && users.ContainsKey(t)))
+            {
+                users[target].Add(name);
+            }
+
+            foreach (var (from, targets) in byType)
+            {
+                foreach (var target in targets.Where(t => t != from && users.ContainsKey(t)))
+                {
+                    referrers[target].Add(from);
+                    if (target.Assembly != assembly)
+                    {
+                        users[target].Add(name);
+                    }
+                }
+            }
+        }
+
+        // A package uses its own type when another of its types refers to it.
+        foreach (var (target, from) in referrers.Where(p => p.Key.Assembly.GetName().Name != AbstractionAssembly))
+        {
+            if (from.Any(r => r.Assembly == target.Assembly))
+            {
+                users[target].Add(target.Assembly.GetName().Name!);
+            }
+        }
+
+        // Abstraction's own references, to a fixed point: a referring type passes on its users, and Abstraction itself when
+        // it has several (it stays in Abstraction, and so must what it names).
+        var own = referrers.Where(p => p.Key.Assembly.GetName().Name == AbstractionAssembly)
+            .Select(p => (Target: p.Key, From: p.Value.Where(r => r.Assembly == p.Key.Assembly).ToList())).ToList();
+        for (bool changed = true; changed;)
+        {
+            changed = false;
+            foreach (var (target, from) in own)
+            {
+                foreach (var r in from)
+                {
+                    int before = users[target].Count;
+                    users[target].UnionWith(users[r]);
+                    if (users[r].Count > 1)
+                    {
+                        users[target].Add(AbstractionAssembly);
+                    }
+
+                    changed |= users[target].Count != before;
+                }
+            }
+        }
+
+        return _contractUsers = new(users, referrers);
+    }
+
+    private static Type Outermost(Type type)
+    {
+        while (type.DeclaringType is { } outer)
+        {
+            type = outer;
+        }
+
+        return type;
+    }
+
+    // The operand size of every IL instruction, by its opcode value.
+    private static readonly Dictionary<short, OperandType> OperandTypes = typeof(OpCodes).GetFields(BindingFlags.Public | BindingFlags.Static)
+        .Select(f => (OpCode)f.GetValue(null)!).ToDictionary(o => o.Value, o => o.OperandType);
+
+    // What each type of `assembly` (by outermost type) refers to among the library's types, read from its metadata: base
+    // type, interfaces, generic constraints, the signatures of its fields, methods, properties and events, and the types,
+    // methods and fields its method bodies name. Also every library type in its TypeReferences table.
+    private static (Dictionary<Type, HashSet<Type>> ByType, HashSet<Type> Referenced) References(Assembly assembly, HashSet<Assembly> library)
+    {
+        using var stream = File.OpenRead(assembly.Location);
+        using var pe = new PEReader(stream);
+        var reader = pe.GetMetadataReader();
+        var module = assembly.ManifestModule;
+        var collector = new TypeCollector(reader);
+
+        Type? Resolve(EntityHandle handle)
+        {
+            try
+            {
+                var type = module.ResolveType(MetadataTokens.GetToken(handle));
+                return library.Contains(type.Assembly) ? Outermost(type) : null;
+            }
+            catch (Exception e) when (e is ArgumentException or TypeLoadException or FileNotFoundException or BadImageFormatException)
+            {
+                return null;
+            }
+        }
+
+        var referenced = reader.TypeReferences.Select(h => Resolve(h)).OfType<Type>().ToHashSet();
+        var byType = new Dictionary<Type, HashSet<Type>>();
+        foreach (var handle in reader.TypeDefinitions)
+        {
+            if (Resolve(handle) is not { } unit || unit.Name.StartsWith('<'))
+            {
+                continue;
+            }
+
+            collector.Seen.Clear();
+            var definition = reader.GetTypeDefinition(handle);
+            collector.Add(definition.BaseType);
+            foreach (var implementation in definition.GetInterfaceImplementations())
+            {
+                collector.Add(reader.GetInterfaceImplementation(implementation).Interface);
+            }
+
+            collector.AddConstraints(definition.GetGenericParameters());
+            foreach (var field in definition.GetFields())
+            {
+                reader.GetFieldDefinition(field).DecodeSignature(collector, null);
+            }
+
+            foreach (var property in definition.GetProperties())
+            {
+                reader.GetPropertyDefinition(property).DecodeSignature(collector, null);
+            }
+
+            foreach (var e in definition.GetEvents())
+            {
+                collector.Add(reader.GetEventDefinition(e).Type);
+            }
+
+            foreach (var methodHandle in definition.GetMethods())
+            {
+                var method = reader.GetMethodDefinition(methodHandle);
+                method.DecodeSignature(collector, null);
+                collector.AddConstraints(method.GetGenericParameters());
+                if (method.RelativeVirtualAddress != 0)
+                {
+                    var body = pe.GetMethodBody(method.RelativeVirtualAddress);
+                    if (!body.LocalSignature.IsNil)
+                    {
+                        reader.GetStandaloneSignature(body.LocalSignature).DecodeLocalSignature(collector, null);
+                    }
+
+                    collector.AddBody(body.GetILBytes()!);
+                }
+            }
+
+            var targets = byType.TryGetValue(unit, out var set) ? set : byType[unit] = [];
+            targets.UnionWith(collector.Seen.Select(Resolve).OfType<Type>());
+        }
+
+        return (byType, referenced);
+    }
+
+    // Records the type definitions and references a signature or a method body names (type arguments included).
+    private sealed class TypeCollector(MetadataReader reader) : ISignatureTypeProvider<int, object?>
+    {
+        public HashSet<EntityHandle> Seen { get; } = [];
+
+        public void Add(EntityHandle handle)
+        {
+            if (handle.IsNil)
+            {
+                return;
+            }
+
+            switch (handle.Kind)
+            {
+                case HandleKind.TypeDefinition or HandleKind.TypeReference:
+                    Seen.Add(handle);
+                    break;
+                case HandleKind.TypeSpecification:
+                    reader.GetTypeSpecification((TypeSpecificationHandle)handle).DecodeSignature(this, null);
+                    break;
+                case HandleKind.MethodDefinition:
+                    Seen.Add(reader.GetMethodDefinition((MethodDefinitionHandle)handle).GetDeclaringType());
+                    break;
+                case HandleKind.FieldDefinition:
+                    Seen.Add(reader.GetFieldDefinition((FieldDefinitionHandle)handle).GetDeclaringType());
+                    break;
+                case HandleKind.MemberReference:
+                    var member = reader.GetMemberReference((MemberReferenceHandle)handle);
+                    Add(member.Parent);
+                    if (member.GetKind() == MemberReferenceKind.Method)
+                    {
+                        member.DecodeMethodSignature(this, null);
+                    }
+                    else
+                    {
+                        member.DecodeFieldSignature(this, null);
+                    }
+
+                    break;
+                case HandleKind.MethodSpecification:
+                    var specification = reader.GetMethodSpecification((MethodSpecificationHandle)handle);
+                    Add(specification.Method);
+                    specification.DecodeSignature(this, null);
+                    break;
+            }
+        }
+
+        public void AddConstraints(GenericParameterHandleCollection parameters)
+        {
+            foreach (var parameter in parameters)
+            {
+                foreach (var constraint in reader.GetGenericParameter(parameter).GetConstraints())
+                {
+                    Add(reader.GetGenericParameterConstraint(constraint).Type);
+                }
+            }
+        }
+
+        // Walks the instructions and adds what each token operand names.
+        public void AddBody(byte[] il)
+        {
+            for (int i = 0; i < il.Length;)
+            {
+                short code = il[i++];
+                if (code == 0xFE)
+                {
+                    code = unchecked((short)(0xFE00 | il[i++]));
+                }
+
+                var operand = OperandTypes[code];
+                switch (operand)
+                {
+                    case OperandType.InlineField or OperandType.InlineMethod or OperandType.InlineType or OperandType.InlineTok:
+                        Add(MetadataTokens.EntityHandle(BitConverter.ToInt32(il, i)));
+                        i += 4;
+                        break;
+                    case OperandType.InlineSwitch:
+                        i += 4 + 4 * BitConverter.ToInt32(il, i);
+                        break;
+                    case OperandType.InlineNone:
+                        break;
+                    case OperandType.ShortInlineBrTarget or OperandType.ShortInlineI or OperandType.ShortInlineVar:
+                        i += 1;
+                        break;
+                    case OperandType.InlineVar:
+                        i += 2;
+                        break;
+                    case OperandType.InlineI8 or OperandType.InlineR:
+                        i += 8;
+                        break;
+                    default:   // InlineBrTarget, InlineI, InlineSig, InlineString, ShortInlineR
+                        i += 4;
+                        break;
+                }
+            }
+        }
+
+        public int GetTypeFromDefinition(MetadataReader r, TypeDefinitionHandle handle, byte rawTypeKind)
+        {
+            Seen.Add(handle);
+            return 0;
+        }
+
+        public int GetTypeFromReference(MetadataReader r, TypeReferenceHandle handle, byte rawTypeKind)
+        {
+            Seen.Add(handle);
+            return 0;
+        }
+
+        public int GetTypeFromSpecification(MetadataReader r, object? context, TypeSpecificationHandle handle, byte rawTypeKind) =>
+            reader.GetTypeSpecification(handle).DecodeSignature(this, context);
+
+        public int GetGenericInstantiation(int genericType, ImmutableArray<int> typeArguments) => 0;
+
+        public int GetPrimitiveType(PrimitiveTypeCode typeCode) => 0;
+
+        public int GetArrayType(int elementType, ArrayShape shape) => 0;
+
+        public int GetSZArrayType(int elementType) => 0;
+
+        public int GetByReferenceType(int elementType) => 0;
+
+        public int GetPointerType(int elementType) => 0;
+
+        public int GetPinnedType(int elementType) => 0;
+
+        public int GetGenericMethodParameter(object? context, int index) => 0;
+
+        public int GetGenericTypeParameter(object? context, int index) => 0;
+
+        public int GetFunctionPointerType(MethodSignature<int> signature) => 0;
+
+        public int GetModifiedType(int modifier, int unmodifiedType, bool isRequired) => 0;
     }
 
     private static bool InAbstractionNamespace(Type type) =>
@@ -333,41 +761,6 @@ internal static partial class Tests
         return list.Count == 0 ? "—" : list.Count <= 8 ? string.Join(", ", list) : string.Join(", ", list.Take(8)) + $", +{list.Count - 8}";
     }
 
-    // The area under Idrak.Abstraction a contract is proposed to move to (plan 10, "Namespaces"); phases 1 to 3 settle it.
-    private static string TargetNamespace(Type type)
-    {
-        string name = ShortName(type), ns = type.Namespace ?? "";
-        string area = name switch
-        {
-            "Tensor" or "TensorScope" => "",
-            "CpuBackend.IRangeKernel" => "Operations",
-            "Autograd" or "DifferentiableFunction" => "Autograd",
-            "IScaler" or "DistillationTeacher" or "TeacherDistributions" => "Training",
-            "IWeightSource" or "WeightCodec" or "CheckpointFormats" or "ICheckpointFormat" or "ModelSources" or "IModelSource" or "ITensorStore"
-                or "GgufTypes" or "GgufArchitectures" => "Formats",
-            "PackedWeight" or "KeyValueLayout" or "KeyValueLayouts" or "RopeScalings" or "ITokenSampler" => "Generation",
-            _ => ns switch
-            {
-                "Idrak.Gpu" or "Idrak.Gpu.Cuda" or "Idrak.Gpu.Vulkan" or "Idrak.Gpu.Hip" => "Devices",
-                "Idrak.Layers" => "Modules",
-                "Idrak.Optimizers" or "Idrak.Training" => "Training",
-                "Idrak.Data" => "Data",
-                "Idrak.Vision" => "Vision",
-                "Idrak.Retrieval" => "Retrieval",
-                "Idrak.Generation" or "Idrak.Nlp" or "Idrak.Models" => "Generation",
-                "Idrak.Onnx" or "Idrak.Onnx.Runtime" => "Formats",
-                "Idrak.Inference" or "Idrak.AspNetCore" or "Idrak.Mcp" => "Serving",
-                "Idrak.Diagnostics" => "Diagnostics",
-                _ when ns.StartsWith("Idrak.Data.", StringComparison.Ordinal) => "Data",
-                _ when ns.StartsWith("Idrak.Nlp.", StringComparison.Ordinal) => "Generation",
-                _ when ns.StartsWith("Idrak.Abstraction", StringComparison.Ordinal) => ns["Idrak.Abstraction".Length..].TrimStart('.'),
-                _ => "",
-            },
-        };
-
-        return area.Length == 0 ? "Idrak.Abstraction" : "Idrak.Abstraction." + area;
-    }
-
     private static string Inventory()
     {
         var assemblies = LibraryAssemblies();
@@ -389,13 +782,13 @@ internal static partial class Tests
 
         Line("## Summary");
         Line();
-        Line("| Assembly | Interfaces | Abstract classes | Registries | Total | Outside `Idrak.Abstraction.*` |");
+        Line("| Assembly | Interfaces | Abstract classes | Registries | Total | Misplaced (decision 10) |");
         Line("|---|---|---|---|---|---|");
         foreach (var assembly in assemblies)
         {
             var own = abstractions.Where(a => a.Type.Assembly == assembly).ToList();
             Line($"| `{assembly.GetName().Name}` | {own.Count(a => a.Kind == "interface")} | {own.Count(a => a.Kind.StartsWith("abstract", StringComparison.Ordinal))} "
-                 + $"| {own.Count(a => a.Kind.Contains("registry", StringComparison.Ordinal))} | {own.Count} | {own.Count(a => !InAbstractionNamespace(a.Type))} |");
+                 + $"| {own.Count(a => a.Kind.Contains("registry", StringComparison.Ordinal))} | {own.Count} | {own.Count(a => Misplaced(a.Type) is not null)} |");
         }
 
         Line();
@@ -405,20 +798,23 @@ internal static partial class Tests
         Line("## Abstractions");
         Line();
         Line("*Mentions*: the core types its members name (why it cannot move without them). *Implementations*: the concrete");
-        Line("types in the library packages (the default is among them). *Registered*: a registry's built-in names. *Target*: the");
-        Line("proposed namespace (phases 1 to 3 settle it).");
+        Line("types in the library packages (the default is among them). *Registered*: a registry's built-in names. *Users*: the");
+        Line("library assemblies that use it (without the `Idrak.` prefix): another assembly uses it when its metadata names it; the");
+        Line("defining one when another of its types does. In Abstraction that need counts through the referring type, which");
+        Line("passes on its own users (they move together), or Abstraction when it has several. *Belongs in*: where decision 10");
+        Line("puts it (Abstraction when Abstraction or several packages use it, else the one package that does).");
         foreach (var group in abstractions.GroupBy(a => a.Type.Assembly.GetName().Name!).OrderBy(g => Array.IndexOf(LibraryAssemblyNames, g.Key)))
         {
             Line();
             Line($"### {group.Key}");
             Line();
-            Line("| Type | Kind | Visibility | Mentions | Implementations | Registered | Target |");
-            Line("|---|---|---|---|---|---|---|");
+            Line("| Type | Kind | Visibility | Mentions | Implementations | Registered | Users | Belongs in |");
+            Line("|---|---|---|---|---|---|---|---|");
             foreach (var a in group)
             {
                 string registered = a.Kind.Contains("registry", StringComparison.Ordinal) ? RegisteredNames(a.Type) : "";
                 string implementations = a.Kind == "registry" ? "" : Implementations(a.Type, concrete);
-                Line($"| `{Cell(Display(a.Type))}` | {a.Kind} | {Visibility(a.Type)} | {Mentions(a.Type)} | {Cell(implementations)} | {Cell(registered)} | `{TargetNamespace(a.Type)}` |");
+                Line($"| `{Cell(Display(a.Type))}` | {a.Kind} | {Visibility(a.Type)} | {Mentions(a.Type)} | {Cell(implementations)} | {Cell(registered)} | {UsersCell(a.Type)} | {BelongsInCell(a.Type)} |");
             }
         }
 
@@ -459,6 +855,20 @@ internal static partial class Tests
         }
 
         return text.ToString();
+    }
+
+    private static string ShortAssembly(string name) => name == "Idrak" ? name : name["Idrak.".Length..];
+
+    private static string UsersCell(Type type)
+    {
+        var users = ContractUsers().Users[Outermost(type)];
+        return users.Count == 0 ? "—" : string.Join(", ", users.Select(ShortAssembly).Order(StringComparer.Ordinal));
+    }
+
+    private static string BelongsInCell(Type type)
+    {
+        string target = BelongsIn(type);
+        return target == type.Assembly.GetName().Name ? ShortAssembly(target) : $"**{ShortAssembly(target)}** (move)";
     }
 
     private static void BackendOperations(Action<string> line)

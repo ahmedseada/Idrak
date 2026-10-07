@@ -4,7 +4,8 @@
 using System.Text.Json.Nodes;
 using Idrak;
 using Idrak.Data;
-using RegisteredSources = Idrak.Abstraction.Data.DatasetSources;
+using Idrak.Data.Abstractions;
+using RegisteredSources = Idrak.Data.Abstractions.DatasetSources;
 
 // Dataset plug-ins: file formats, sources and Parquet codecs added from outside the library through their registries.
 internal static partial class Tests

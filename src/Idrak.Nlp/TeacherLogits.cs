@@ -3,6 +3,7 @@
 
 using System.Text;
 using Idrak.Models;
+using Idrak.Nlp.Abstractions;
 
 namespace Idrak.Nlp;
 
