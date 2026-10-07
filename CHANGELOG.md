@@ -42,6 +42,10 @@
   | `Idrak.Inference.IPredictor<TIn, TOut>` | `Idrak.Abstraction.Serving.IPredictor<TIn, TOut>` |
   | `Idrak.Layers.LayerTypes`, `GraphOps`, `GraphOp`, `GraphOpContext`, `GraphNode` | the same names under `Idrak.Abstraction.Modules`; Idrak registers its layer types and graph operations on first use |
   | `Idrak.Layers.NetworkOps`, `NetworkOp`, `NetworkOpArguments` | the same names under `Idrak.Abstraction.Modules`; steps receive an `INetworkBuilder` (`CurrentShape`, `Lambda`, `Add(factory, shape)`, `Op`) instead of the concrete `NetworkBuilder`; `NetworkOps.Contains` is new and `NetworkOpArguments` has a public constructor |
+  | `Idrak.Datasets`: `IDataFileFormat`, `DataFileFormats`, `IDatasetSource`, `DatasetSources`, `IParquetCodec`, `ParquetCodecs`, `ITextNormalizer`, `ReadOptions`, `DataFormat`, `TextRows`, `DatasetSpec` | the same names under `Idrak.Abstraction.Data`; Idrak.Datasets registers its formats, codecs and sources |
+  | `IDatasetSource.Open(DatasetSpec, ReadOptions, Downloader?) : Dataset` | `Open(DatasetSpec, ReadOptions, IDownloader?) : IDatasetRows` (new contracts; `Dataset` and `Downloader` implement them, `Dataset.From` wraps any `IDatasetRows`); every API taking `Downloader?` takes `IDownloader?` |
+  | `DatasetSpec` internal option readers; `spec.Open()`, `Download()`, `Mapping` | public `Get`, `Flag`, `GetInt32`, `GetInt64`, `GetDouble`, `CommonOptions`; the others are extension members from Idrak.Datasets |
+  | `Idrak.Onnx`: `OnnxImportOps`, `OnnxImportTranslator`, `OnnxImportContext`, `OnnxExportOps`, `OnnxTranslator<T>`, `OnnxGraphOpTranslator`, `OnnxGraphOpContext`, `OnnxGraph`, `OnnxValue`, `OnnxAttribute` | the same names under `Idrak.Abstraction.Formats`; `OnnxGraph` and `OnnxImportContext` are abstract; import translators add network steps by name (`context.Add("scale", args)`); `Find`/`FindLambda`/`FindGraphOp` are public |
   | `Module.Save(...)`, `Module.Load(...)` | extension methods in `Idrak.ModuleFiles`: `model.Save(path)` reads the same |
 
   A file that also imports another `Tensor` (ONNX Runtime's `Microsoft.ML.OnnxRuntime.Tensors`, or
