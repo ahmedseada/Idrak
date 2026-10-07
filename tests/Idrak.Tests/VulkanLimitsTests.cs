@@ -95,7 +95,7 @@ internal static partial class Tests
     private static void LargeStorageCases(VulkanBackend backend)
     {
         var cpu = CpuBackend.Instance;
-        long fallbacks = backend.HostCalls;
+        long fallbacks = Idrak.Abstraction.Operations.Kernels.HostCalls(backend);
         var made = new List<Storage>();
         Storage On(Backend b, float[] values)
         {
@@ -227,7 +227,7 @@ internal static partial class Tests
                 bf16.Packed.Dispose();
             }
 
-            Check(backend.HostCalls == fallbacks, $"{backend.HostCalls - fallbacks} host fallbacks");
+            Check(Idrak.Abstraction.Operations.Kernels.HostCalls(backend) == fallbacks, $"{Idrak.Abstraction.Operations.Kernels.HostCalls(backend) - fallbacks} host fallbacks");
         }
         finally
         {
@@ -280,7 +280,7 @@ internal static partial class Tests
                     if (step == 1)
                     {
                         counts.Clear();
-                        backend.HostCallsByOperation = counts;                // the decoding steps after the prompt
+                        CountHostCalls(backend, counts);                // the decoding steps after the prompt
                     }
 
                     using var scope = new TensorScope();
@@ -297,13 +297,13 @@ internal static partial class Tests
                     tokens = [next];
                 }
 
-                backend.HostCallsByOperation = null;
+                CountHostCalls(backend, null);
                 Check(counts.IsEmpty, $"{name} decoder: host fallbacks " + string.Join(", ", counts.Select(c => $"{c.Key} x{c.Value}")));
             }
         }
         finally
         {
-            backend.HostCallsByOperation = null;
+            CountHostCalls(backend, null);
             backend.LimitStorageRange(savedRange);
             VulkanBackend.TuningCacheFile = savedCache;
             File.Delete(cache);

@@ -85,9 +85,11 @@ public sealed partial class Tensor : IDisposable
     /// <summary>True when this tensor was created directly rather than as the output of a recorded operation.</summary>
     public bool IsLeaf => _backward is null;
 
-    internal Storage Storage { get; }
+    /// <summary>The device memory holding the values (shared by views of the same values), for code that runs kernels on it.</summary>
+    public Storage Storage { get; }
 
-    internal Backend Backend => Device.Backend;
+    /// <summary>The backend of <see cref="Device"/>, which runs kernels on <see cref="Storage"/>.</summary>
+    public Backend Backend => Device.Backend;
 
     // ---------------------------------------------------------------- creation
 
@@ -202,13 +204,18 @@ public sealed partial class Tensor : IDisposable
     }
 
     /// <summary>Overwrites this tensor's data in place with <paramref name="values"/> (same element count).</summary>
-    internal void Load(ReadOnlySpan<float> values)
+    public void Load(ReadOnlySpan<float> values)
     {
         ThrowIfDisposed();
         Backend.Upload(values, Storage);
     }
 
-    internal static Tensor Empty(ReadOnlySpan<int> shape, Device device, bool zeroed = false, bool track = true)
+    /// <summary>
+    /// A tensor of <paramref name="shape"/> on <paramref name="device"/> whose values a kernel is about to write: zeroed
+    /// when <paramref name="zeroed"/>, else holding whatever the memory held; owned by the current <see cref="TensorScope"/>
+    /// when <paramref name="track"/>.
+    /// </summary>
+    public static Tensor Empty(ReadOnlySpan<int> shape, Device device, bool zeroed = false, bool track = true)
     {
         int size = ElementCount(shape);
         return new Tensor(shape.ToArray(), device.Backend.Allocate(size, zeroed), device, track);
@@ -290,7 +297,7 @@ public sealed partial class Tensor : IDisposable
     }
 
     /// <summary>Whether <see cref="Dispose"/> has released this tensor.</summary>
-    internal bool IsDisposed => Volatile.Read(ref _disposed) != 0;
+    public bool IsDisposed => Volatile.Read(ref _disposed) != 0;
 
     /// <summary>Returns a tensor sharing this tensor's data but cut off from the autograd graph.</summary>
     public Tensor Detach()
@@ -310,7 +317,7 @@ public sealed partial class Tensor : IDisposable
     }
 
     /// <summary>Releases the gradient's memory (the next backward pass writes a fresh one without zero-filling it).</summary>
-    internal void ReleaseGrad()
+    public void ReleaseGrad()
     {
         Grad?.Dispose();
         Grad = null;
@@ -377,7 +384,8 @@ public sealed partial class Tensor : IDisposable
         return sb.ToString();
     }
 
-    internal static string FormatShape(ReadOnlySpan<int> shape) => "[" + string.Join(", ", shape.ToArray()) + "]";
+    /// <summary>A shape as messages show it: [2, 3].</summary>
+    public static string FormatShape(ReadOnlySpan<int> shape) => "[" + string.Join(", ", shape.ToArray()) + "]";
 
     /// <summary>
     /// Releases the memory of this tensor's values while it stays in the autograd graph (its gradient still flows through
@@ -399,7 +407,7 @@ public sealed partial class Tensor : IDisposable
     /// them in again when a backward step needs them (see <see cref="Backward(Tensor)"/>): activations cheaper to recompute
     /// than to keep. The recomputation must only read tensors that are still kept.
     /// </summary>
-    internal void Evict(Action<Tensor> recompute)
+    public void Evict(Action<Tensor> recompute)
     {
         if (_disposed == 0)
         {
@@ -466,7 +474,7 @@ public sealed partial class Tensor : IDisposable
     /// Releases the values, keeping <paramref name="packed"/> (their bfloat16 words, which this tensor now owns) to unpack
     /// them from when a backward step needs them, or for kernels that read the words themselves (<see cref="Storage.Packed"/>).
     /// </summary>
-    internal void EvictToPacked(Storage packed)
+    public void EvictToPacked(Storage packed)
     {
         if (_disposed != 0 || Storage.Evicted || Storage.Packed is not null)
         {
@@ -499,8 +507,9 @@ public sealed partial class Tensor : IDisposable
         }
     }
 
+    /// <summary>Throws <see cref="ObjectDisposedException"/> when the tensor was disposed.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal void ThrowIfDisposed()
+    public void ThrowIfDisposed()
     {
         if (_disposed != 0)
         {
@@ -565,7 +574,9 @@ public sealed partial class Tensor : IDisposable
     private void BackwardNodes(List<Storage> reads, List<Storage> held)
     {
         var order = TopologicalOrder();
-        using var staging = TensorOffloading.ForBackward?.Invoke(Device, order);     // null unless weights are offloaded
+        using var staging = TensorOffloading.ForBackward is { } stage && Device.Backend.Offload is { OffloadedCount: > 0 }
+            ? stage(Device, order.ConvertAll(n => n._stage))                              // the layer each node was recorded under
+            : null;
         for (int index = 0; index < order.Count; index++)
         {
             var node = order[index];
@@ -618,8 +629,6 @@ public sealed partial class Tensor : IDisposable
     // The layer (or fused layers) whose forward recorded this node while weights were offloaded (see Offloading), or null.
     private object? _stage;
 
-    internal object? StageGroup => _stage;
-
     /// <summary>Nodes reachable from this tensor that require gradients, outputs before their inputs.</summary>
     private List<Tensor> TopologicalOrder()
     {
@@ -660,7 +669,7 @@ public sealed partial class Tensor : IDisposable
     /// memory traffic). Only for the gradient of an intermediate result, which nothing writes once its backward step has
     /// run, and for one receiver per gradient (a second would share the buffer).
     /// </summary>
-    internal void AddGradient(Tensor gradient, bool adopt)
+    public void AddGradient(Tensor gradient, bool adopt)
     {
         if (adopt && Grad is null && gradient.Size == Size)
         {
@@ -685,7 +694,7 @@ public sealed partial class Tensor : IDisposable
     /// buffer that is not zeroed (<paramref name="beta"/> 0: every element must be written), later ones are added
     /// (<paramref name="beta"/> 1). Saves a zero fill and a read of the buffer for the gradient that is the first.
     /// </summary>
-    internal Storage GradientTarget(out float beta)
+    public Storage GradientTarget(out float beta)
     {
         beta = Grad is null ? 0f : 1f;
         Grad ??= Empty(_shape, Device, zeroed: false, track: false);
@@ -693,18 +702,18 @@ public sealed partial class Tensor : IDisposable
     }
 
     /// <summary>The gradient buffer, allocated (zeroed and outside any scope) on first use.</summary>
-    internal Storage GradStorage()
+    public Storage GradStorage()
     {
         Grad ??= Empty(_shape, Device, zeroed: true, track: false);
         return Grad.Storage;
     }
 
     /// <summary>Records how to back-propagate into this freshly computed tensor. Callers check <see cref="WillRecord(Tensor)"/> first.</summary>
-    internal void Record(string operation, Action<Tensor> backward, params Tensor[] inputs)
+    public void Record(string operation, Action<Tensor> backward, params Tensor[] inputs)
     {
         RequiresGrad = true; // must precede _backward: the setter only accepts leaves
         _operation = operation;
-        _stage = TensorOffloading.Current;
+        _stage = TensorOffloading.CurrentLayer;
         _parents = inputs;
         _backward = backward;
         _versions = VersionSum(this, inputs);
@@ -739,7 +748,7 @@ public sealed partial class Tensor : IDisposable
 
     /// <summary>Publishes an operation event when <paramref name="start"/> is non-zero (operations telemetry on).</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal static Tensor Traced(string operation, Tensor output, long start)
+    public static Tensor Traced(string operation, Tensor output, long start)
     {
         if (start != 0)
         {
@@ -750,9 +759,10 @@ public sealed partial class Tensor : IDisposable
     }
 
     /// <summary>True when an operation on these inputs will be recorded, so callers can skip building closures.</summary>
-    internal static bool WillRecord(Tensor a) => a.RequiresGrad && Autograd.IsEnabled;
+    public static bool WillRecord(Tensor a) => a.RequiresGrad && Autograd.IsEnabled;
 
-    internal static bool WillRecord(Tensor a, Tensor b) => (a.RequiresGrad || b.RequiresGrad) && Autograd.IsEnabled;}
+    /// <summary>True when an operation on these inputs will be recorded, so callers can skip building closures.</summary>
+    public static bool WillRecord(Tensor a, Tensor b) => (a.RequiresGrad || b.RequiresGrad) && Autograd.IsEnabled;}
 
 internal static class MemoryMarshalHelpers
 {

@@ -95,12 +95,12 @@ internal static partial class Tests
     // Runs `fused` twice (the same bits both times, no host fallback, accepted) and returns its outputs.
     private static float[][] RunFused(VulkanBackend backend, Func<bool> fused, Tensor[] outputs, string what)
     {
-        long fallbacks = backend.HostCalls;
+        long fallbacks = Idrak.Abstraction.Operations.Kernels.HostCalls(backend);
         Check(fused(), $"{what}: the fused kernel declined");
         var first = outputs.Select(o => o.ToArray()).ToArray();
         Check(fused(), $"{what}: the fused kernel declined the second time");
         var second = outputs.Select(o => o.ToArray()).ToArray();
-        Check(backend.HostCalls == fallbacks, $"{what}: took the host fallback");
+        Check(Idrak.Abstraction.Operations.Kernels.HostCalls(backend) == fallbacks, $"{what}: took the host fallback");
         for (int i = 0; i < first.Length; i++)
         {
             Check(first[i].Select(BitConverter.SingleToInt32Bits).SequenceEqual(second[i].Select(BitConverter.SingleToInt32Bits)), $"{what}: output {i} differs run after run");
@@ -531,7 +531,7 @@ internal static partial class Tests
                 using var scope = new TensorScope();
                 using var token = Tensor.From([(float)((5 + 3 * s) % vocabulary)], [1, 1], device);
                 device.Synchronize();
-                var (d0, h0) = (backend.Dispatches, backend.HostCalls);
+                var (d0, h0) = (backend.Dispatches, Idrak.Abstraction.Operations.Kernels.HostCalls(backend));
                 backend.DispatchesByKernel = measured ? kernels : null;
                 var output = model.ForwardCached(token, context);
                 device.Synchronize();
@@ -539,7 +539,7 @@ internal static partial class Tests
                 if (measured)
                 {
                     dispatches += backend.Dispatches - d0;
-                    fallbacks += backend.HostCalls - h0;
+                    fallbacks += Idrak.Abstraction.Operations.Kernels.HostCalls(backend) - h0;
                     logits.AddRange(output.ToArray());
                 }
             }

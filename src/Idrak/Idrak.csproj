@@ -17,7 +17,6 @@
 
   <ItemGroup>
     <Using Include="Idrak.Abstraction.Devices" />
-    <Using Include="Idrak.Abstraction.Devices.Cpu" />
   </ItemGroup>
 
   <ItemGroup>

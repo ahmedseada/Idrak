@@ -94,7 +94,7 @@ public sealed class BatchNorm : Module
     public override IEnumerable<Tensor> Buffers() => [RunningMean, RunningVariance];
 
     /// <inheritdoc />
-    protected internal override void MoveTo(Device device)
+    protected override void MoveTo(Device device)
     {
         Gamma = MoveTensor(Gamma, device);
         Beta = MoveTensor(Beta, device);
@@ -168,7 +168,7 @@ public sealed class ChannelNormalize : Module
     public override IEnumerable<Tensor> Buffers() => [Scale, Shift];
 
     /// <inheritdoc />
-    protected internal override void MoveTo(Device device)
+    protected override void MoveTo(Device device)
     {
         Scale = MoveTensor(Scale, device);
         Shift = MoveTensor(Shift, device);
@@ -238,7 +238,7 @@ public sealed class LayerNorm : Module
     public override IEnumerable<Tensor> Parameters() => [Gamma, Beta];
 
     /// <inheritdoc />
-    protected internal override void MoveTo(Device device)
+    protected override void MoveTo(Device device)
     {
         Gamma = MoveTensor(Gamma, device);
         Beta = MoveTensor(Beta, device);

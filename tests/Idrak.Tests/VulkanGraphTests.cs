@@ -216,7 +216,7 @@ internal static partial class Tests
             using var graph = context.CaptureStep(Step);
             Check(graph.IsRecorded, $"{format} cache: the step was not recorded: {graph.FailureReason}");
             var output = last!;                                                // the graph's output, written by each replay
-            long hostCalls = backend.HostCalls, dispatches = backend.Dispatches, replays = backend.Replays;
+            long hostCalls = Idrak.Abstraction.Operations.Kernels.HostCalls(backend), dispatches = backend.Dispatches, replays = backend.Replays;
             for (int s = 0; s < steps; s++)
             {
                 if (s == steps / 2)
@@ -228,7 +228,7 @@ internal static partial class Tests
                 logits.Add(output.ToArray());
             }
 
-            Check(backend.HostCalls == hostCalls, $"{format} cache: {backend.HostCalls - hostCalls} host fallbacks during replays");
+            Check(Idrak.Abstraction.Operations.Kernels.HostCalls(backend) == hostCalls, $"{format} cache: {Idrak.Abstraction.Operations.Kernels.HostCalls(backend) - hostCalls} host fallbacks during replays");
             Check(backend.Dispatches == dispatches, $"{format} cache: replays recorded {backend.Dispatches - dispatches} dispatches on the host");
             Check(backend.Replays - replays == steps, $"{format} cache: {backend.Replays - replays} replays, expected {steps}");
             note = $"{steps} replays";

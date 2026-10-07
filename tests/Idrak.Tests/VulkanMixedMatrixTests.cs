@@ -450,7 +450,8 @@ internal static partial class Tests
         _ = RunOn(backend, inputs, output, op);                                 // measures the shape first: the kernels recorded below are the choice
         var operations = new ConcurrentDictionary<string, long>();
         var kernels = new ConcurrentDictionary<string, long>();
-        (backend.HostCallsByOperation, backend.DispatchesByKernel) = (operations, kernels);
+        CountHostCalls(backend, operations);
+        backend.DispatchesByKernel = kernels;
         float[] actual;
         try
         {
@@ -458,7 +459,8 @@ internal static partial class Tests
         }
         finally
         {
-            (backend.HostCallsByOperation, backend.DispatchesByKernel) = (null, null);
+            CountHostCalls(backend, null);
+            backend.DispatchesByKernel = null;
         }
 
         string? mixed = kernels.Keys.FirstOrDefault(name => name.Contains("_round_", StringComparison.Ordinal));

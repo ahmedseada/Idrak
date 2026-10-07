@@ -5,7 +5,7 @@
 namespace Idrak.Abstraction.Devices;
 
 /// <summary>How each <see cref="PackedFormat"/> lays out its words, for the backends' packed kernels.</summary>
-internal static class PackedFormats
+public static class PackedFormats
 {
     /// <summary>Weights per 32-bit word: four int8, eight int4, two bfloat16.</summary>
     public static int ValuesPerWord(this PackedFormat format) => format switch

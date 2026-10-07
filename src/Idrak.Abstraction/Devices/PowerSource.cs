@@ -12,7 +12,7 @@ namespace Idrak.Abstraction.Devices;
 /// process, so the choices a process measures and saves stay under one key. A machine without a battery, or one the
 /// operating system says nothing about, counts as mains. <c>IDRAK_POWER_SOURCE=ac|battery</c> overrides it (tests).
 /// </summary>
-internal static partial class PowerSource
+public static partial class PowerSource
 {
     private static readonly Lazy<string> Reported = new(Read);
 

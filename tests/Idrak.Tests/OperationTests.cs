@@ -1,8 +1,10 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Reflection;
+using Idrak.Abstraction.Devices.Cpu;
 using Idrak.Abstraction.Operations;
 
 // Plan 9 / plan 10 phase 1b: operations as data. Every operation of the device contract goes through one dispatcher:
@@ -13,6 +15,8 @@ internal static partial class Tests
     [
         ("operations: every compute method of Backend is an operation (a virtual NameKernel, the dispatching Name with the same parameters, a descriptor with the matching kernel delegate); the rest is device plumbing (python3 tools/operations/generate.py)", OperationsMatchBackend),
         ("operations: a registered kernel runs instead of the device's own on its device kind where its requirement holds, not elsewhere; removing it restores the device's kernel; a kernel of the wrong delegate is refused", RegisteredKernelRuns),
+        ("operations: Kernels.Chain names the kernel each operation runs (registered, the device's own, composed, host fallback or none): the CPU runs its own, a device with memory and copies only falls back", ChainNamesKernels),
+        ("operations: a trace counts the calls of each operation and the host fallbacks by operation, read from the dispatcher; it ends when disposed", TraceCountsCalls),
     ];
 
     // Backend's public virtual members that are not operations: memory, copies, graph capture, profiling and the
@@ -109,6 +113,107 @@ internal static partial class Tests
         finally
         {
             backend.Return(y);
+        }
+    }
+
+    private static void ChainNamesKernels(Device device)
+    {
+        _ = device;
+        if (!FirstRun(nameof(ChainNamesKernels)))
+        {
+            return;
+        }
+
+        var cpu = Kernels.Chain(Device.Cpu.Backend);
+        Check(cpu.Count == Ops.All.Count && cpu.Select((c, i) => c.Operation.Index == i).All(x => x), "one choice per operation, in slot order");
+        var notOwn = cpu.Where(c => c.Source != KernelSource.Device).ToList();
+        Check(notOwn.All(c => c.Source is KernelSource.Composed or KernelSource.None) && cpu.Count(c => c.Source == KernelSource.Device) > 80,
+            $"the CPU runs its own kernels (or composes, or has none): {string.Join(", ", notOwn.Select(c => $"{c.Operation} {c.Source}"))}");
+        Check(cpu[Ops.Softmax.Index].Source == KernelSource.Device && Ops.Softmax.Fallback == KernelSource.Host
+              && Ops.MatMulMany.Fallback == KernelSource.Composed && Ops.GemmStrided.Fallback == KernelSource.None, "fallbacks of Softmax, MatMulMany, GemmStrided");
+
+        var minimal = MinimalBackend.Instance;
+        Check(Kernels.Chain(minimal).All(c => c.Source == c.Operation.Fallback), "a device with memory and copies only takes each operation's fallback");
+        OperationKernels.Softmax softmax = (_, x, y, rows, cols, log) => CpuBackend.Instance.Softmax(x, y, rows, cols, log);
+        using (Kernels.Register(Ops.Softmax, "minimal", softmax))
+        {
+            Check(Kernels.Chain(minimal)[Ops.Softmax.Index].Source == KernelSource.Registered
+                  && Kernels.Chain(Device.Cpu.Backend)[Ops.Softmax.Index].Source == KernelSource.Device, "a registered kernel shows on its device kind only");
+        }
+
+        Check(Kernels.Chain(minimal)[Ops.Softmax.Index].Source == KernelSource.Host, "removing it restores the fallback");
+        Check(Ops.Find("softmax") == Ops.Softmax && Ops.Find("MaxPoolBackward2") == Ops.MaxPoolBackward2 && Ops.Find("nothing") is null, "Ops.Find");
+    }
+
+    private static void TraceCountsCalls(Device device)
+    {
+        _ = device;
+        if (!FirstRun(nameof(TraceCountsCalls)))
+        {
+            return;
+        }
+
+        var minimal = MinimalBackend.Instance;
+        var y = minimal.Allocate(8, zeroed: true);
+        try
+        {
+            long before = Kernels.HostCalls(minimal);
+            using (var trace = Kernels.Trace(minimal))
+            {
+                minimal.Fill(y, 8, 1f);
+                minimal.Fill(y, 8, 2f);
+                minimal.Unary(UnaryOp.Exp, y, y, 8);
+                minimal.AddDropout(y, y, y, 8, 0f, 1);                       // composed: Dropout and Axpy, each through the host
+                Check(trace.Calls(Ops.Fill) == 2 && trace.Calls(Ops.Unary) == 1 && trace.Calls(Ops.AddDropout) == 1 && trace.Calls(Ops.Dropout) == 1
+                      && trace.Calls(Ops.Softmax) == 0, $"calls: Fill {trace.Calls(Ops.Fill)}, Unary {trace.Calls(Ops.Unary)}, Dropout {trace.Calls(Ops.Dropout)}");
+                var host = trace.HostCallsByOperation;
+                Check(host.GetValueOrDefault("Fill") == 2 && host.GetValueOrDefault("Unary") == 1 && host.GetValueOrDefault("Dropout") == 1
+                      && host.GetValueOrDefault("Axpy") == 1 && !host.ContainsKey("AddDropout") && trace.HostCalls == 5,
+                    $"host fallbacks: {string.Join(", ", host.Select(h => $"{h.Key} x{h.Value}"))}");
+                Check(Kernels.HostCalls(minimal) - before == 5, "the device's host fallbacks, read from the dispatcher");
+
+                bool refused = false;
+                try
+                {
+                    Kernels.Trace(minimal).Dispose();
+                }
+                catch (InvalidOperationException)
+                {
+                    refused = true;
+                }
+
+                Check(refused, "a second trace of one device is refused");
+            }
+
+            using var after = Kernels.Trace(minimal);
+            after.Dispose();
+            minimal.Fill(y, 8, 3f);
+            Check(after.Calls(Ops.Fill) == 0 && after.HostCalls == 0, "a disposed trace counts nothing");
+        }
+        finally
+        {
+            minimal.Return(y);
+        }
+    }
+
+    // For the tests that list a device's host fallbacks by operation: counts them into `counts` from now on (null stops and
+    // adds what the trace counted).
+    private static readonly ConcurrentDictionary<Backend, (KernelTrace Trace, ConcurrentDictionary<string, long> Counts)> HostCallCounts = new();
+
+    private static void CountHostCalls(Backend backend, ConcurrentDictionary<string, long>? counts)
+    {
+        if (HostCallCounts.TryRemove(backend, out var running))
+        {
+            running.Trace.Dispose();
+            foreach (var (operation, calls) in running.Trace.HostCallsByOperation)
+            {
+                running.Counts.AddOrUpdate(operation, calls, (_, n) => n + calls);
+            }
+        }
+
+        if (counts is not null)
+        {
+            HostCallCounts[backend] = (Kernels.Trace(backend), counts);
         }
     }
 

@@ -57,7 +57,7 @@ public static class ActivationMemory
     }
 
     /// <summary>Holds the values as bfloat16 until the backward pass reads them, while <see cref="CompressToBFloat16"/> is in effect.</summary>
-    internal static void Compress(params Tensor?[] tensors)
+    public static void Compress(params Tensor?[] tensors)
     {
         if (t_compress == 0 || !Autograd.IsEnabled)
         {
@@ -71,14 +71,14 @@ public static class ActivationMemory
     }
 
     /// <summary>Releases the values of results no backward step reads, while gradients are recorded.</summary>
-    internal static void Release(params Tensor?[] tensors) => Release([], tensors);
+    public static void Release(params Tensor?[] tensors) => Release([], tensors);
 
     /// <summary>
     /// Releases the values of <paramref name="tensors"/> except where they share memory with <paramref name="kept"/>:
     /// a view (a reshape, or a permutation that only moves dimensions of size 1) of a result still needed shares its
     /// memory, which must stay.
     /// </summary>
-    internal static void Release(ReadOnlySpan<Tensor> kept, params Tensor?[] tensors)
+    public static void Release(ReadOnlySpan<Tensor> kept, params Tensor?[] tensors)
     {
         if (!ReleaseUnused || !Autograd.IsEnabled)
         {
@@ -128,7 +128,7 @@ public static class ActivationMemory
 }
 
 /// <summary>Compresses a tensor (<see cref="ActivationMemory.CompressToBFloat16"/>) when disposed: at the end of the block that last reads it.</summary>
-internal readonly struct CompressAfter(Tensor tensor) : IDisposable
+public readonly struct CompressAfter(Tensor tensor) : IDisposable
 {
     /// <inheritdoc />
     public void Dispose() => ActivationMemory.Compress(tensor);

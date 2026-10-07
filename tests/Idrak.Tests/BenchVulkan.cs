@@ -259,9 +259,9 @@ internal static partial class Tests
                     ("bfloat16", k * n * 2.0, () => x.MatMulBFloat16(bf16).Dispose()),
                 })
                 {
-                    long fallbacks = backend.HostCalls;
+                    long fallbacks = Idrak.Abstraction.Operations.Kernels.HostCalls(backend);
                     double us = Micros(run, n > 100_000 ? 5 : 20);
-                    string note = backend.HostCalls > fallbacks ? " (host fallback: the weights exceed one binding)" : "";
+                    string note = Idrak.Abstraction.Operations.Kernels.HostCalls(backend) > fallbacks ? " (host fallback: the weights exceed one binding)" : "";
                     Console.WriteLine(Row($"{format} product 1 x {k} -> {n}", $"{us,9:F1} µs ({bytes / (us * 1e3):F1} GB/s of weights){note}"));
                 }
             }
@@ -303,9 +303,9 @@ internal static partial class Tests
                 {
                     using var sampler = new TokenSampler(device, 1, vocabulary, 1000) { Temperature = 0.7f, TopK = topK, TopP = topP, RepeatPenalty = penalty, Seed = 1 };
                     sampler.SetHistory([1, 2, 3, 2]);
-                    long fallbacks = backend.HostCalls;
+                    long fallbacks = Idrak.Abstraction.Operations.Kernels.HostCalls(backend);
                     double us = Micros(() => sampler.Sample(logits), 50);
-                    string note = backend.HostCalls > fallbacks ? " (host fallback)" : "";
+                    string note = Idrak.Abstraction.Operations.Kernels.HostCalls(backend) > fallbacks ? " (host fallback)" : "";
                     Console.WriteLine(Row($"sampling {vocabulary} tokens, {name}", $"{us,9:F1} µs{note}"));
                     sampler.Reset();
                 }
@@ -315,7 +315,7 @@ internal static partial class Tests
         // ---- sliding windows and soft-caps (BenchWindowDevice), with this device's dispatch counts
         if (Run("window"))
         {
-            BenchWindowDevice(device, () => (backend.Dispatches, backend.HostCalls));
+            BenchWindowDevice(device, () => (backend.Dispatches, Idrak.Abstraction.Operations.Kernels.HostCalls(backend)));
         }
 
         // ---- whole decoders generating text
@@ -346,11 +346,11 @@ internal static partial class Tests
             var generator = new TextGenerator(model, tokenizer, 256) { KeepCache = false };
             var run = sampling with { NumPredict = tokens };
             generator.Generate("hello", run with { NumPredict = 4 });                // warm-up: pipelines built
-            long fallbacks = backend.HostCalls, dispatches = backend.Dispatches;
+            long fallbacks = Idrak.Abstraction.Operations.Kernels.HostCalls(backend), dispatches = backend.Dispatches;
             var stats = generator.Generate("hello", run).Stats;
             double perToken = 1.0 / Math.Max(1, stats.GeneratedTokens);
             Console.WriteLine(Row($"{name}", $"{stats.TokensPerSecond:F1} tokens/s ({(backend.Dispatches - dispatches) * perToken:F0} dispatches, "
-                + $"{(backend.HostCalls - fallbacks) * perToken:F1} host fallbacks per token)"));
+                + $"{(Idrak.Abstraction.Operations.Kernels.HostCalls(backend) - fallbacks) * perToken:F1} host fallbacks per token)"));
 
             // The same generation again (choices measured by the first one are known now), and without recorded graphs
             // (every step recorded by the host), so a slow replay or a slow first use shows apart from the kernels.
@@ -363,14 +363,16 @@ internal static partial class Tests
             // One more run counting by kernel and by fallback (prompt included, so the counts are per generation).
             var kernels = new System.Collections.Concurrent.ConcurrentDictionary<string, long>();
             var operations = new System.Collections.Concurrent.ConcurrentDictionary<string, long>();
-            (backend.DispatchesByKernel, backend.HostCallsByOperation) = (kernels, operations);
+            backend.DispatchesByKernel = kernels;
+            CountHostCalls(backend, operations);
             try
             {
                 generator.Generate("hello", run);
             }
             finally
             {
-                (backend.DispatchesByKernel, backend.HostCallsByOperation) = (null, null);
+                backend.DispatchesByKernel = null;
+                CountHostCalls(backend, null);
             }
 
             Console.WriteLine(Row("  kernels per token", string.Join(", ", kernels.OrderByDescending(p => p.Value).Select(p => $"{p.Key} {p.Value * perToken:F1}"))));

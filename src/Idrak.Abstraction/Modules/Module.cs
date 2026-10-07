@@ -3,6 +3,7 @@
 
 using System.Diagnostics;
 using System.Text;
+using Idrak.Abstraction.Devices;
 using Idrak.Abstraction.Diagnostics;
 using Idrak.Abstraction.Modules;
 
@@ -34,7 +35,7 @@ public abstract class Module : IDisposable
     {
         // Weights offloaded to system memory are staged on the device around the forward (Idrak's layers do it; only
         // devices that offload, and only while something is offloaded or offloading is on, return a scope).
-        using var offload = input.Device.Backend.Offload is not null ? ModuleHooks.EnterForward?.Invoke(this, input) : null;
+        using var offload = input.Device.Backend.Offload is not null ? TensorOffloading.EnterForward?.Invoke(this, input) : null;
         if (!Telemetry.IsEnabled(TelemetryLevel.Layers))
         {
             return ForwardCore(input);
@@ -202,7 +203,7 @@ public abstract class Module : IDisposable
     }
 
     /// <summary>Moves this module's own parameters; by default forwards the call to the children.</summary>
-    protected internal virtual void MoveTo(Device device)
+    protected virtual void MoveTo(Device device)
     {
         foreach (var child in Children())
         {

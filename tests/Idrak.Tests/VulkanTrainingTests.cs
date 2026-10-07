@@ -34,11 +34,11 @@ internal static partial class Tests
         var gpu = inputs.Select(d => { var s = backend.Allocate(d.Length, false); backend.Upload(d, s); return s; }).ToArray();
         try
         {
-            long dispatches = backend.Dispatches, fallbacks = backend.HostCalls;
+            long dispatches = backend.Dispatches, fallbacks = Idrak.Abstraction.Operations.Kernels.HostCalls(backend);
             (cpuOp ?? op)(cpu, host);
             op(backend, gpu);
             Check(backend.Dispatches > dispatches, $"{what}: dispatched no kernel");
-            Check(backend.HostCalls == fallbacks, $"{what}: took the host fallback");
+            Check(Idrak.Abstraction.Operations.Kernels.HostCalls(backend) == fallbacks, $"{what}: took the host fallback");
             for (int i = 0; i < inputs.Length; i++)
             {
                 var (expected, actual) = (new float[inputs[i].Length], new float[inputs[i].Length]);
@@ -211,7 +211,7 @@ internal static partial class Tests
                 var (ps, ms, vs, scales, codes) = (Put(p), Put(new float[words]), Put(new float[words]), Put(new float[2 * blocks]), Put(map));
                 try
                 {
-                    long fallbacks = b.HostCalls;
+                    long fallbacks = Idrak.Abstraction.Operations.Kernels.HostCalls(b);
                     foreach (var g in grads)
                     {
                         var gs = Put(g);
@@ -219,7 +219,7 @@ internal static partial class Tests
                         gs.Release();
                     }
 
-                    Check(b is CpuBackend || b.HostCalls == fallbacks, "8-bit Adam took the host fallback");
+                    Check(b is CpuBackend || Idrak.Abstraction.Operations.Kernels.HostCalls(b) == fallbacks, "8-bit Adam took the host fallback");
                     var (pv, mv, vv, sv) = (new float[n], new float[words], new float[words], new float[2 * blocks]);
                     b.Download(ps, pv);
                     b.Download(ms, mv);
@@ -405,7 +405,7 @@ internal static partial class Tests
                 d.Synchronize();
                 if (fallbacks is not null)
                 {
-                    d.Backend.HostCallsByOperation = fallbacks;
+                    CountHostCalls(d.Backend, fallbacks);
                 }
 
                 try
@@ -424,12 +424,12 @@ internal static partial class Tests
                     }
 
                     d.Synchronize();
-                    d.Backend.HostCallsByOperation = null;
+                    CountHostCalls(d.Backend, null);
                     losses.Add(loss.ToArray()[0]);
                 }
                 finally
                 {
-                    d.Backend.HostCallsByOperation = null;
+                    CountHostCalls(d.Backend, null);
                 }
             }
 

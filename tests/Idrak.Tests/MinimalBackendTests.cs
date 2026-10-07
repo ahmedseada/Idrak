@@ -48,9 +48,9 @@ internal static partial class Tests
             _memory.Freed(storage.Length * 4L);                           // nothing cached
         }
 
-        private protected override void Detach(Storage storage) => ((MinimalStorage)storage).Data = null!;
+        protected override void Detach(Storage storage) => ((MinimalStorage)storage).Data = null!;
 
-        private protected override void Attach(Storage storage, Storage fresh) => ((MinimalStorage)storage).Data = ((MinimalStorage)fresh).Data;
+        protected override void Attach(Storage storage, Storage fresh) => ((MinimalStorage)storage).Data = ((MinimalStorage)fresh).Data;
 
         public override MemoryUsage GetMemoryUsage() => _memory.Usage;
 

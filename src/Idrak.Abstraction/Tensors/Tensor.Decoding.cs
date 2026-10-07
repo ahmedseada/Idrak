@@ -22,7 +22,7 @@ public sealed partial class Tensor
     }
 
     /// <summary>softmax(scale · x + mask) over the last dimension in one kernel; the mask's rows repeat over the rows of x.</summary>
-    internal Tensor ScaleMaskSoftmax(float scale, Tensor? mask)
+    public Tensor ScaleMaskSoftmax(float scale, Tensor? mask)
     {
         ThrowIfDisposed();
         int cols = _shape[^1], rows = Size / cols;
@@ -33,7 +33,7 @@ public sealed partial class Tensor
     }
 
     /// <summary>LayerNorm over the last dimension with gamma/beta, in one kernel.</summary>
-    internal Tensor LayerNormFused(Tensor gamma, Tensor beta, float eps)
+    public Tensor LayerNormFused(Tensor gamma, Tensor beta, float eps)
     {
         ThrowIfDisposed();
         int cols = _shape[^1];
@@ -44,7 +44,7 @@ public sealed partial class Tensor
     }
 
     /// <summary>LayerNorm over the last dimension for training: one forward kernel (keeping each row's mean and 1 / std) and one backward pass.</summary>
-    internal Tensor LayerNormTrain(Tensor gamma, Tensor beta, float eps)
+    public Tensor LayerNormTrain(Tensor gamma, Tensor beta, float eps)
     {
         ThrowIfDisposed();
         int cols = _shape[^1], rows = Size / cols;
@@ -72,7 +72,7 @@ public sealed partial class Tensor
     }
 
     /// <summary>gelu(x + bias) over the last dimension, in one kernel.</summary>
-    internal Tensor BiasGelu(Tensor bias)
+    public Tensor BiasGelu(Tensor bias)
     {
         ThrowIfDisposed();
         long start = Telemetry.Start(TelemetryLevel.Operations);
@@ -82,7 +82,7 @@ public sealed partial class Tensor
     }
 
     /// <summary>[rows, capacity] causal mask for queries at positions position..position+rows-1 (position read on the device).</summary>
-    internal static Tensor DecoderMask(Tensor position, int rows, int capacity, bool track = true)
+    public static Tensor DecoderMask(Tensor position, int rows, int capacity, bool track = true)
     {
         var mask = Empty([rows, capacity], position.Device, track: track);
         position.Backend.DecoderMask(position.Storage, mask.Storage, rows, capacity);
@@ -90,7 +90,7 @@ public sealed partial class Tensor
     }
 
     /// <summary>Writes [heads, steps, dim] keys or values into a [heads, capacity, dim] cache at the device-side position.</summary>
-    internal static void WriteKeyValues(Tensor source, Tensor cache, Tensor position)
+    public static void WriteKeyValues(Tensor source, Tensor cache, Tensor position)
     {
         int heads = source._shape[0], steps = source._shape[1], dim = source._shape[2];
         source.Backend.KeyValueWrite(source.Storage, cache.Storage, position.Storage, heads, steps, cache._shape[1], dim);
@@ -123,7 +123,7 @@ public sealed partial class Tensor
     /// row's log-sum-exp (FlashAttention-style). Memory grows with the sequence length, not its square. With a
     /// <paramref name="variant"/>, each row sees only its window and its scores are soft-capped, forward and backward.
     /// </summary>
-    internal static Tensor CausalAttention(Tensor q, Tensor keys, Tensor values, Tensor zero, int steps, float scale, AttentionVariant variant = default)
+    public static Tensor CausalAttention(Tensor q, Tensor keys, Tensor values, Tensor zero, int steps, float scale, AttentionVariant variant = default)
     {
         long start = Telemetry.Start(TelemetryLevel.Operations);
         int heads = q._shape[0], rowsPerHead = q._shape[1], dim = q._shape[2], capacity = keys._shape[1];
@@ -154,7 +154,7 @@ public sealed partial class Tensor
     /// <see cref="AttentionTiled"/> for rows of different lengths: head h's row i sees cached positions c with
     /// starts[(h / headsPerRow)·steps + i % steps] ≤ c ≤ position[0] + i % steps. Null when the device has no such pass.
     /// </summary>
-    internal static Tensor? AttentionRows(Tensor q, Tensor keys, Tensor values, Tensor position, int steps, float scale, Tensor starts, int headsPerRow,
+    public static Tensor? AttentionRows(Tensor q, Tensor keys, Tensor values, Tensor position, int steps, float scale, Tensor starts, int headsPerRow,
         AttentionVariant variant = default)
     {
         long start = Telemetry.Start(TelemetryLevel.Operations);

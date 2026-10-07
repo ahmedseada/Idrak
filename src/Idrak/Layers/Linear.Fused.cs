@@ -16,13 +16,13 @@ public sealed partial class Linear
     /// one rank ≤ 32, with each low-rank term computed inside its base product (one more k step of the tensor-core kernel)
     /// instead of in separate passes over the full-width output. The backward pass does the same for the input's
     /// gradient: dx = g·Wᵀ + (scale · g·Bᵀ)·Aᵀ in one product. Null (nothing computed) when the device has no fused
-    /// version; callers then run the base products and <see cref="Tensor.AddLowRank"/>. A frozen bias is added to each output in
+    /// version; callers then run the base products and <c>Tensor.AddLowRank</c>. A frozen bias is added to each output in
     /// place (a bias that trains is not: null then).
     /// </summary>
     internal static Tensor[]? LoraProducts(Tensor input, IReadOnlyList<Layers.Linear> layers, bool withBias = true)
     {
         input.ThrowIfDisposed();
-        int k = input._shape[^1], m = input.Size / Math.Max(1, k);
+        int k = input.Shape[^1], m = input.Size / Math.Max(1, k);
         if (!input.Backend.Capabilities.MatrixUnits || layers.Count is < 1 or > 3 || m < 64 || k < 32 || !MixedPrecision.UsesTensorCores
             || layers[0].Lora is not { } first || first.Rank > 32)
         {
@@ -162,7 +162,7 @@ public sealed partial class Linear
                 u.Dispose();
             }
 
-            results[j] = input.Rank == 2 ? outputs[j] : outputs[j].Reshape([.. input._shape[..^1], n]);
+            results[j] = input.Rank == 2 ? outputs[j] : outputs[j].Reshape([.. input.Shape[..^1], n]);
             Tensor.Traced("lora_fused", results[j], start);
         }
 
@@ -187,7 +187,7 @@ public sealed partial class Linear
             return outputs;
         }
 
-        int k = input._shape[^1], m = input.Size / k;
+        int k = input.Shape[^1], m = input.Size / k;
         for (int j = 0; j < outputs.Length; j++)
         {
             var layer = layers[j];
@@ -217,7 +217,7 @@ public sealed partial class Linear
         using var offload = Offloading.Enter(layer, gate);              // offloaded weights staged (else nothing)
         gate.ThrowIfDisposed();
         up.ThrowIfDisposed();
-        int k = gate._shape[^1], m = gate.Size / Math.Max(1, k);
+        int k = gate.Shape[^1], m = gate.Size / Math.Max(1, k);
         if (layer.PackedWeight is not { Format: { } format } weight || k != layer.InFeatures || up.Size != gate.Size || m > gate.Backend.Capabilities.FewRows)
         {
             return null;                                                // not packed, or a format the kernels do not read
@@ -230,7 +230,7 @@ public sealed partial class Linear
         }
 
         long start = Telemetry.Start(TelemetryLevel.Operations);
-        var y = Tensor.Empty([.. gate._shape[..^1], layer.OutFeatures], gate.Device);
+        var y = Tensor.Empty([.. gate.Shape[..^1], layer.OutFeatures], gate.Device);
         if (!gate.Backend.PackedMatMulGated(format, activation, gate.Storage, up.Storage, packed.Storage, scales?.Storage, y.Storage, m, layer.OutFeatures, k))
         {
             y.Dispose();
@@ -250,9 +250,9 @@ public sealed partial class Linear
         using var offload = Offloading.EnterMany([layer, norm], x);
         x.ThrowIfDisposed();
         residual.ThrowIfDisposed();
-        int k = x._shape[^1], m = x.Size / Math.Max(1, k), n = layer.OutFeatures;
+        int k = x.Shape[^1], m = x.Size / Math.Max(1, k), n = layer.OutFeatures;
         if (layer.PackedWeight is not { Format: { } format } weight || layer.Bias is not null || layer.Adapter is not null || k != layer.InFeatures || m > x.Backend.Capabilities.FewRows
-            || residual.Size != m * n || residual._shape[^1] != n || norm.Features != n || !x.Backend.Capabilities.FusedKernels)
+            || residual.Size != m * n || residual.Shape[^1] != n || norm.Features != n || !x.Backend.Capabilities.FusedKernels)
         {
             return null;
         }
@@ -264,9 +264,9 @@ public sealed partial class Linear
         }
 
         long start = Telemetry.Start(TelemetryLevel.Operations);
-        var y = Tensor.Empty(residual._shape, x.Device, track: false);
-        var sum = Tensor.Empty(residual._shape, x.Device);
-        var normalized = Tensor.Empty(residual._shape, x.Device);
+        var y = Tensor.Empty(residual.Shape, x.Device, track: false);
+        var sum = Tensor.Empty(residual.Shape, x.Device);
+        var normalized = Tensor.Empty(residual.Shape, x.Device);
         bool done = x.Backend.PackedMatMulAddRmsNorm(format, x.Storage, packed.Storage, scales?.Storage, y.Storage, m, n, k, residual.Storage, sum.Storage,
             norm.Gain.Storage, normalized.Storage, norm.Epsilon, norm.Offset);
         y.Dispose();                                                 // stream-ordered: freed after the kernel read it
@@ -289,7 +289,7 @@ public sealed partial class Linear
     {
         using var offload = Offloading.EnterMany([gate, up], input);
         input.ThrowIfDisposed();
-        int k = input._shape[^1], m = input.Size / Math.Max(1, k), n = gate.OutFeatures;
+        int k = input.Shape[^1], m = input.Size / Math.Max(1, k), n = gate.OutFeatures;
         if (gate.PackedWeight is not { Format: { } format } gateWeight || up.PackedWeight is not { } upWeight || upWeight.Format != format
             || m > input.Backend.Capabilities.FewRows || !input.Backend.Capabilities.FusedKernels || up.OutFeatures != n
             || gate.InFeatures != k || up.InFeatures != k || gate.Bias is not null || up.Bias is not null || gate.Adapter is not null
@@ -308,7 +308,7 @@ public sealed partial class Linear
         long start = Telemetry.Start(TelemetryLevel.Operations);
         var gateOut = Tensor.Empty([m * n], input.Device, track: false);
         var upOut = Tensor.Empty([m * n], input.Device, track: false);
-        var hidden = Tensor.Empty([.. input._shape[..^1], n], input.Device);
+        var hidden = Tensor.Empty([.. input.Shape[..^1], n], input.Device);
         bool done = input.Backend.PackedMatMulGatedPair(format, activation, input.Storage, m, k,
             [(gatePacked.Storage, gateScales?.Storage, null, gateOut.Storage, n), (upPacked.Storage, upScales?.Storage, null, upOut.Storage, n)],
             hidden.Storage);
@@ -331,7 +331,7 @@ public sealed partial class Linear
     {
         input.ThrowIfDisposed();
         long start = Telemetry.Start(TelemetryLevel.Operations);
-        int k = input._shape[^1], m = input.Size / k;
+        int k = input.Shape[^1], m = input.Size / k;
         var outputs = new Tensor[layers.Count];
         var products = new (Abstraction.Devices.Storage, Abstraction.Devices.Storage?, Abstraction.Devices.Storage?, Abstraction.Devices.Storage, int)[layers.Count];
         for (int j = 0; j < layers.Count; j++)
@@ -349,7 +349,7 @@ public sealed partial class Linear
                 return null;
             }
 
-            outputs[j] = Tensor.Empty([.. input._shape[..^1], layer.OutFeatures], input.Device);
+            outputs[j] = Tensor.Empty([.. input.Shape[..^1], layer.OutFeatures], input.Device);
             products[j] = (packed.Storage, scales?.Storage, layer.Bias?.Storage, outputs[j].Storage, layer.OutFeatures);
         }
 
@@ -378,9 +378,9 @@ public sealed partial class Linear
     /// </summary>
     internal static Tensor? ProjectPacked(Tensor x, IReadOnlyList<Layers.Linear> layers)
     {
-        int k = x._shape[^1], m = x.Size / Math.Max(1, k), width = layers.Sum(l => l.OutFeatures);
+        int k = x.Shape[^1], m = x.Size / Math.Max(1, k), width = layers.Sum(l => l.OutFeatures);
         long start = Telemetry.Start(TelemetryLevel.Operations);
-        var y = Tensor.Empty([.. x._shape[..^1], width], x.Device);
+        var y = Tensor.Empty([.. x.Shape[..^1], width], x.Device);
         var offsets = new int[layers.Count];
         using var reuse = x.Backend.ReuseQuantizedOperands();              // x is quantized once for all projections
         for (int j = 0, offset = 0; j < layers.Count; offset += layers[j].OutFeatures, j++)
@@ -434,7 +434,7 @@ public sealed partial class Linear
     /// </summary>
     internal static Tensor? FeedForwardGelu(Tensor x, Layers.Linear up, Layers.Linear down)
     {
-        int d = x._shape[^1], m = x.Size / Math.Max(1, d), f = up.OutFeatures;
+        int d = x.Shape[^1], m = x.Size / Math.Max(1, d), f = up.OutFeatures;
         Tensor wu = up.Weight, wd = down.Weight;
         Tensor? bu = up.Bias, bd = down.Bias;
         var parameters = new[] { wu, bu, wd, bd }.OfType<Tensor>().ToList();
@@ -443,7 +443,7 @@ public sealed partial class Linear
         var backend = x.Backend;
         var act = Tensor.Empty([m, f], x.Device, track: false);
         var pre = record ? Tensor.Empty([m, f], x.Device, track: false) : null;
-        var y = Tensor.Empty(x._shape, x.Device);
+        var y = Tensor.Empty(x.Shape, x.Device);
         if (!backend.GemmStrided(x.Storage, 0, d, false, wu.Storage, 0, f, false, act.Storage, 0, f, m, f, d, 0f, bu?.Storage,
                 Abstraction.Devices.GemmEpilogue.Gelu, pre?.Storage)
             || !backend.GemmStrided(act.Storage, 0, f, false, wd.Storage, 0, d, false, y.Storage, 0, d, m, d, f, 0f, bd?.Storage))

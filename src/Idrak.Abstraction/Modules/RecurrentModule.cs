@@ -67,17 +67,17 @@ public abstract class RecurrentModule : Module
     }
 
     /// <summary>Yields the hidden state after each step, given the [N, T, gates·H] input projections.</summary>
-    private protected abstract IEnumerable<Tensor> Run(Tensor projected, int batch, int steps);
+    protected abstract IEnumerable<Tensor> Run(Tensor projected, int batch, int steps);
 
     /// <summary>The projection of time step t: [N, gates·H].</summary>
-    private protected static Tensor Step(Tensor projected, int t, int batch) =>
+    protected static Tensor Step(Tensor projected, int t, int batch) =>
         projected.Narrow(1, t, 1).Reshape(batch, projected.Shape[2]);
 
     /// <inheritdoc />
     public override IEnumerable<Tensor> Parameters() => [InputWeight, HiddenWeight, Bias];
 
     /// <inheritdoc />
-    protected internal override void MoveTo(Device device)
+    protected override void MoveTo(Device device)
     {
         InputWeight = MoveTensor(InputWeight, device);
         HiddenWeight = MoveTensor(HiddenWeight, device);

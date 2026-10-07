@@ -39,7 +39,7 @@ public sealed class TensorScope : IDisposable
     internal static void Track(Tensor tensor) => t_current?._tensors.Add(tensor);
 
     /// <summary>Whether <paramref name="tensor"/> was created in this scope (and is still to be disposed by it).</summary>
-    internal bool Owns(Tensor tensor) => _tensors.FindLastIndex(t => ReferenceEquals(t, tensor)) >= 0;
+    public bool Owns(Tensor tensor) => _tensors.FindLastIndex(t => ReferenceEquals(t, tensor)) >= 0;
 
     /// <summary>Keeps <paramref name="tensor"/> alive past this scope (it moves to the enclosing scope, if any).</summary>
     public Tensor Keep(Tensor tensor)
@@ -58,7 +58,7 @@ public sealed class TensorScope : IDisposable
     /// Takes <paramref name="tensor"/> out of every scope on this thread: the caller disposes it (for tensors that outlive
     /// the scopes they happen to be made in, such as a distillation teacher's states for one training batch).
     /// </summary>
-    internal static Tensor Untrack(Tensor tensor)
+    public static Tensor Untrack(Tensor tensor)
     {
         for (var scope = t_current; scope is not null; scope = scope._parent)
         {

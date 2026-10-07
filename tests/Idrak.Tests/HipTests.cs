@@ -314,7 +314,7 @@ internal static partial class Tests
             Check(Read(hip, zeros, n).All(v => v == 2.5f), "fill");
             hip.Copy(da, zeros, n);
             AssertClose(a, Read(hip, zeros, n), 0f, "copy");
-            long before = hip.HostCalls;
+            long before = Idrak.Abstraction.Operations.Kernels.HostCalls(hip);
             var block = Keep(hip.Allocate(64 * 40, zeroed: true));
             hip.Copy2D(da, 7, 50, block, 3, 40, 30, 33, accumulate: false);
             var expected = new float[64 * 40];
@@ -324,12 +324,12 @@ internal static partial class Tests
             }
 
             AssertClose(expected, Read(hip, block, 64 * 40), 0f, "strided copy");
-            Check(hip.HostCalls == before, "memory and copies took no host fallback");
+            Check(Idrak.Abstraction.Operations.Kernels.HostCalls(hip) == before, "memory and copies took no host fallback");
 
             // The kernels against the CPU (or the host fallback, when they are unavailable: same results either way).
             bool kernels = hip.HasKernels;
             Console.WriteLine($"    {device}: kernels {(kernels ? $"{hip.KernelsOrigin}, {hip.BlockSize} threads per block" : $"unavailable ({hip.KernelsUnavailableReason})")}");
-            before = hip.HostCalls;
+            before = Idrak.Abstraction.Operations.Kernels.HostCalls(hip);
             var db = On(hip, b);
             var ca = On(cpu, a);
             var cb = On(cpu, b);
@@ -386,7 +386,7 @@ internal static partial class Tests
             cpu.Int8MatMul(On(cpu, x8), On(cpu, packed), On(cpu, scales), cy8, m, cols8, k8);
             AssertClose(Read(cpu, cy8, m * cols8), Read(hip, hy8, m * cols8), 1e-3f, "int8 product");
 
-            Check(!kernels || hip.HostCalls == before, $"with kernels, none of these took the host fallback ({hip.HostCalls - before} did)");
+            Check(!kernels || Idrak.Abstraction.Operations.Kernels.HostCalls(hip) == before, $"with kernels, none of these took the host fallback ({Idrak.Abstraction.Operations.Kernels.HostCalls(hip) - before} did)");
             hip.Synchronize();
         }
         finally

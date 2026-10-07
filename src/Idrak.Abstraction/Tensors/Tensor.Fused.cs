@@ -14,7 +14,7 @@ public sealed partial class Tensor
     /// Causal self-attention over packed projections [batch, steps, (heads + 2·kvHeads)·dim] (queries, keys, values per
     /// position; query head h uses key/value head h / (heads / kvHeads)), read in place: [batch, steps, heads·dim].
     /// </summary>
-    internal static Tensor? CausalAttentionPacked(Tensor packed, int heads, int kvHeads, int dim, float scale)
+    public static Tensor? CausalAttentionPacked(Tensor packed, int heads, int kvHeads, int dim, float scale)
     {
         int batch = packed._shape[0], steps = packed._shape[1], width = packed._shape[2], group = heads / kvHeads;
         long kOffset = (long)heads * dim, vOffset = (long)(heads + kvHeads) * dim;

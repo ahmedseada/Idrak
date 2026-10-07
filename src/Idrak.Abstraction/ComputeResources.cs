@@ -127,10 +127,11 @@ public static class ComputeResources
         return moved;
     }
 
-    internal static ParallelOptions ParallelOptions => s_parallelOptions;
+    /// <summary>The options CPU loops run <see cref="Parallel"/> with: at most <see cref="MaxCpuThreads"/> threads.</summary>
+    public static ParallelOptions ParallelOptions => s_parallelOptions;
 
     /// <summary>Whether CPU work should be split across threads at all.</summary>
-    internal static bool AllowParallel => s_parallelOptions.MaxDegreeOfParallelism > 1;
+    public static bool AllowParallel => s_parallelOptions.MaxDegreeOfParallelism > 1;
 
     /// <summary>Returns the memory accounting for <paramref name="device"/>.</summary>
     public static MemoryUsage GetMemoryUsage(Device device) => device.Backend.GetMemoryUsage();

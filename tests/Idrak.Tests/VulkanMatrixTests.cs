@@ -367,7 +367,8 @@ internal static partial class Tests
         var expected = RunMatrixOn(CpuBackend.Instance, inputs, output, op);
         var operations = new ConcurrentDictionary<string, long>();
         var kernels = new ConcurrentDictionary<string, long>();
-        (backend.HostCallsByOperation, backend.DispatchesByKernel) = (operations, kernels);
+        CountHostCalls(backend, operations);
+        backend.DispatchesByKernel = kernels;
         float[] actual;
         try
         {
@@ -375,7 +376,8 @@ internal static partial class Tests
         }
         finally
         {
-            (backend.HostCallsByOperation, backend.DispatchesByKernel) = (null, null);
+            CountHostCalls(backend, null);
+            backend.DispatchesByKernel = null;
         }
 
         bool matrixRan = kernels.Keys.Any(name => name.StartsWith("coop_", StringComparison.Ordinal));
