@@ -4,6 +4,7 @@
 using Idrak;
 using Idrak.Generation;
 using Idrak.Layers;
+using Idrak.Models.Abstractions;
 
 // Key/value cache formats defined outside the library: registered by name, written with public operations, and attended
 // through the composed fallback (expanded to float32, masked products) by decoder and multi-head attention layers.

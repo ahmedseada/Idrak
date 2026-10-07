@@ -5,6 +5,7 @@ using Idrak;
 using Idrak.Generation;
 using Idrak.Models;
 using Idrak.Nlp;
+using Idrak.Nlp.Abstractions;
 
 // GGUF: dequantization checked against the gguf package's reference, and models read from GGUF files against the same
 // models in the Hugging Face layout (tools/gguf/make_fixtures.py makes both).

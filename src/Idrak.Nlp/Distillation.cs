@@ -5,6 +5,7 @@ using System.Text;
 using Idrak.Generation;
 using Idrak.Layers;
 using Idrak.Models;
+using Idrak.Nlp.Abstractions;
 
 namespace Idrak.Nlp;
 

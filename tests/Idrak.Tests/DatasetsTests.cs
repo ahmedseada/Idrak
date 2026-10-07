@@ -8,6 +8,7 @@ using System.Text;
 using System.Text.Json.Nodes;
 using Idrak;
 using Idrak.Data;
+using Idrak.Data.Abstractions;
 
 // Datasets: file formats (Parquet checked against pyarrow), archives, operations, the download cache.
 internal static partial class Tests

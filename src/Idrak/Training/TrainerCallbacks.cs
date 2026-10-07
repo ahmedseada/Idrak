@@ -5,6 +5,7 @@ using System.Globalization;
 using Idrak.Diagnostics;
 using Idrak.Layers;
 using Idrak.Optimizers;
+using Idrak.Training.Abstractions;
 
 namespace Idrak.Training;
 

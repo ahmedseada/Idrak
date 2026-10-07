@@ -4,6 +4,7 @@
 using Idrak;
 using Idrak.Generation;
 using Idrak.Layers;
+using Idrak.Models.Abstractions;
 
 // Packed-weight formats defined outside the library: registered by name, multiplied through PackedWeight.MatMul (the
 // expanded default or a product of their own), and never handed to the kernels for the built-in formats.

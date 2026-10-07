@@ -2,10 +2,14 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using Idrak.Data;
-using Idrak.Generation;
+using Idrak.Data.Abstractions;
 using Idrak.Diagnostics;
+using Idrak.Generation;
 using Idrak.Layers;
+using Idrak.Layers.Abstractions;
+using Idrak.Models.Abstractions;
 using Idrak.Onnx;
+using Idrak.Onnx.Abstractions;
 
 namespace Idrak.Cli.Commands.Health;
 
