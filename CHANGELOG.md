@@ -9,7 +9,7 @@
   device's host fallback). `dotnet add package Idrak` brings it along. The GPU devices (CUDA, Vulkan, HIP) stay in
   `Idrak`; `Device.Available` lists them as before, even when no other type of Idrak has been used yet.
 - Projects with implicit usings (the default for new projects) get global usings for `Idrak.Abstraction`,
-  `Idrak.Abstraction.Training` and `Idrak.Abstraction.Data` from the package, so they compile unchanged. Projects
+  `Idrak.Abstraction.Training`, `Idrak.Abstraction.Data` and `Idrak.Abstraction.Diagnostics` from the package, so they compile unchanged. Projects
   without implicit usings add those `using` lines.
 - Moved types (source and binary change: rebuild plug-ins compiled against 0.3.x):
 
@@ -27,6 +27,8 @@
   | `Idrak.Data.IScaler` | `Idrak.Abstraction.Training.IScaler` (the scalers stay in `Idrak.Data`) |
   | `Idrak.Data.ISampleSource`, `ISampleStream`, `ISampleReader`, `ISampleTransform`, `IBatchSource`, `Batch`, `SampleSources`, `SampleSourceFactory` | the same names under `Idrak.Abstraction.Data` |
   | `Idrak.Data.IImageCodec`, `ImageCodecs`, `ImageData`, `ImageInfo` | the same names under `Idrak.Abstraction.Data` |
+  | `Idrak.Training.ITrainerCallback`, `TrainerContext`, `TrainingHistory` | the same names under `Idrak.Abstraction.Training`; `TrainerContext.Trainer` is gone (use `Model`, `Optimizer`) |
+  | `Idrak.Diagnostics` event records (`BatchCompleted`, `EpochCompleted`, `LayerForward`, ...) | the same names under `Idrak.Abstraction.Diagnostics` |
   | `Module.Save(...)`, `Module.Load(...)` | extension methods in `Idrak.ModuleFiles`: `model.Save(path)` reads the same |
 
   A file that also imports another `Tensor` (ONNX Runtime's `Microsoft.ML.OnnxRuntime.Tensors`, or

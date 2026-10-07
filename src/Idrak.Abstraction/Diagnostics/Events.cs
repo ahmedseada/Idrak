@@ -1,9 +1,9 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-namespace Idrak.Diagnostics;
+namespace Idrak.Abstraction.Diagnostics;
 
-/// <summary>Published once when <see cref="Training.Trainer.Fit"/> begins.</summary>
+/// <summary>Published once when <c>Training.Trainer.Fit</c> begins.</summary>
 /// <param name="Model">A layer-by-layer summary of the model.</param>
 /// <param name="Optimizer">The optimizer type, e.g. "Adam".</param>
 /// <param name="Device">Where training runs.</param>
@@ -28,7 +28,7 @@ public readonly record struct TrainingStarted(
     float LearningRate,
     int CpuThreads);
 
-/// <summary>Published after every optimizer step when <see cref="TelemetryLevel.Batches"/> is enabled.</summary>
+/// <summary>Published after every optimizer step when <c>TelemetryLevel.Batches</c> is enabled.</summary>
 /// <param name="Epoch">1-based epoch number.</param>
 /// <param name="Batch">1-based batch number within the epoch.</param>
 /// <param name="BatchesPerEpoch">Batches in the epoch (0 when the batch source does not say).</param>
@@ -36,7 +36,7 @@ public readonly record struct TrainingStarted(
 /// <param name="BatchSize">Samples in this batch.</param>
 /// <param name="Loss">The batch loss.</param>
 /// <param name="LearningRate">The learning rate used for this step.</param>
-/// <param name="GradientNorm">Global L2 norm of all gradients, when <see cref="TelemetryLevel.Gradients"/> is enabled.</param>
+/// <param name="GradientNorm">Global L2 norm of all gradients, when <c>TelemetryLevel.Gradients</c> is enabled.</param>
 /// <param name="DataTime">Time spent waiting for the data loader.</param>
 /// <param name="ComputeTime">Forward, backward and optimizer step time.</param>
 public readonly record struct BatchCompleted(
@@ -93,13 +93,13 @@ public readonly record struct TrainingCompleted(
     bool StoppedEarly,
     bool Cancelled);
 
-/// <summary>Published after each module's forward pass when <see cref="TelemetryLevel.Layers"/> is enabled.</summary>
+/// <summary>Published after each module's forward pass when <c>TelemetryLevel.Layers</c> is enabled.</summary>
 /// <param name="Layer">The module's display name.</param>
 /// <param name="LayerType">The module's type name.</param>
 /// <param name="Depth">Nesting depth: 0 for the outermost module.</param>
 /// <param name="InputShape">Shape of the input.</param>
 /// <param name="OutputShape">Shape of the output.</param>
-/// <param name="Duration">Time spent (launch time on GPU unless <see cref="Telemetry.SynchronizeForTiming"/> is set).</param>
+/// <param name="Duration">Time spent (launch time on GPU unless <c>Telemetry.SynchronizeForTiming</c> is set).</param>
 /// <param name="Device">The device the output lives on.</param>
 /// <param name="Training">Whether the module was in training mode.</param>
 public readonly record struct LayerForward(
@@ -112,13 +112,13 @@ public readonly record struct LayerForward(
     Device Device,
     bool Training);
 
-/// <summary>Published for every tensor operation when <see cref="TelemetryLevel.Operations"/> is enabled.</summary>
+/// <summary>Published for every tensor operation when <c>TelemetryLevel.Operations</c> is enabled.</summary>
 /// <param name="Operation">Operation name, e.g. "matmul".</param>
 /// <param name="Backward">True for the gradient computation of the operation.</param>
 /// <param name="Shape">Shape of the operation's output.</param>
 /// <param name="Elements">Number of output elements.</param>
 /// <param name="Device">Where it ran.</param>
-/// <param name="Duration">Time spent (launch time on GPU unless <see cref="Telemetry.SynchronizeForTiming"/> is set).</param>
+/// <param name="Duration">Time spent (launch time on GPU unless <c>Telemetry.SynchronizeForTiming</c> is set).</param>
 public readonly record struct OperationCompleted(
     string Operation,
     bool Backward,
@@ -127,7 +127,7 @@ public readonly record struct OperationCompleted(
     Device Device,
     TimeSpan Duration);
 
-/// <summary>Published after each inference call when <see cref="TelemetryLevel.Inference"/> is enabled.</summary>
+/// <summary>Published after each inference call when <c>TelemetryLevel.Inference</c> is enabled.</summary>
 /// <param name="Model">The module's display name.</param>
 /// <param name="Samples">Rows predicted.</param>
 /// <param name="InputShape">Shape of the input batch.</param>
@@ -146,7 +146,7 @@ public readonly record struct InferenceCompleted(
     public double SamplesPerSecond => Latency.TotalSeconds > 0 ? Samples / Latency.TotalSeconds : double.PositiveInfinity;
 }
 
-/// <summary>Published after each tool call when <see cref="TelemetryLevel.Tools"/> is enabled.</summary>
+/// <summary>Published after each tool call when <c>TelemetryLevel.Tools</c> is enabled.</summary>
 /// <param name="Tool">The tool's name.</param>
 /// <param name="Arguments">The arguments as JSON text.</param>
 /// <param name="Duration">Time spent in the tool.</param>
@@ -170,7 +170,7 @@ public enum EngineEventKind
     RequestRejected,
 }
 
-/// <summary>Published by the inference engine when <see cref="TelemetryLevel.Engine"/> is enabled.</summary>
+/// <summary>Published by the inference engine when <c>TelemetryLevel.Engine</c> is enabled.</summary>
 /// <param name="Kind">What happened.</param>
 /// <param name="Model">The model's name in the engine.</param>
 /// <param name="Duration">Load time, or request latency (including queue wait).</param>

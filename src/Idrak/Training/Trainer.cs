@@ -47,24 +47,6 @@ public sealed record Metric(string Name, Func<Tensor, Tensor, Tensor> BatchMean,
 /// <param name="Samples">Samples evaluated.</param>
 public sealed record EvaluationResult(double Loss, IReadOnlyDictionary<string, double> Metrics, int Samples);
 
-/// <summary>Per-epoch results of <see cref="Trainer.Fit"/>.</summary>
-public sealed class TrainingHistory
-{
-    internal List<EpochCompleted> EpochList { get; } = [];
-
-    /// <summary>One entry per completed epoch.</summary>
-    public IReadOnlyList<EpochCompleted> Epochs => EpochList;
-
-    /// <summary>The epoch with the best monitored loss (1-based).</summary>
-    public int BestEpoch { get; internal set; }
-
-    /// <summary>The best monitored loss (validation loss when a validation set was used).</summary>
-    public double BestLoss { get; internal set; } = double.PositiveInfinity;
-
-    /// <summary>Whether early stopping ended training.</summary>
-    public bool StoppedEarly { get; internal set; }
-}
-
 /// <summary>
 /// Runs the training loop: batches from a <see cref="DataLoader"/> (or any other <see cref="IBatchSource"/>), forward,
 /// loss, backward, optimizer step, metrics, validation, early stopping, and telemetry for every step. Memory for each
@@ -173,7 +155,7 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
         long step = 0;
         bool cancelled = false;
         var callbacks = Callbacks.ToArray();
-        var context = new TrainerContext(this, epochs, history, cancellationToken);
+        var context = new TrainerContext(Model, Optimizer, epochs, history, cancellationToken);
         bool batchCallbacks = callbacks.Length > 0;
         bool callbacksNeedLoss = callbacks.Any(c => c.NeedsBatchLoss);
 
