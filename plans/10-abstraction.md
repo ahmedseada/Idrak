@@ -321,7 +321,7 @@ apps combine domains without the domains knowing each other.
 | `Idrak` (core) | layers, network builder, trainer, data loaders, optimizers, ONNX import and export, the **inference engine** and model packages, **model loading** (safetensors, GGUF, hub sources) and **tokenizers** (both from LanguageModels), generic LoRA attach and merge | Abstraction |
 | `Idrak.Data` | today's Datasets: file formats, Parquet, hub downloads, chat rows | Idrak |
 | `Idrak.Nlp` | generation and chat, Jinja templates, LLM fine-tuning (QLoRA, DoRA, PEFT, distillation, evaluation), retrieval and RAG, the coding agent and tools; registers the text and chat model kinds | Idrak, Data |
-| `Idrak.Vision` | region classification, content framing, model-based detection and segmentation, later OCR and detectors | Idrak |
+| `Idrak.Vision` | region classification, content framing, model-based detection and segmentation, later OCR and detectors (decided 2026-10-07) | Idrak |
 | `Idrak.Diffusion` (planned) | UNet, DiT, VAE, schedulers, text encoders, text-to-image pipelines; registers an image model kind | Idrak |
 | `Idrak.Audio` (planned) | audio decoding, spectrograms, speech recognition, text-to-speech, vocoders; registers transcription and speech model kinds | Idrak |
 | bridge `Idrak.Mcp` | MCP tools | Nlp, ModelContextProtocol |
