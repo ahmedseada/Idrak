@@ -40,12 +40,12 @@ internal sealed class BatchCommand : Command
         """;
 
     public override IReadOnlyCollection<string> ValueOptions =>
-        [.. Models.ValueOptions, .. GenerationSettings.ValueOptions.Where(o => o != "--tools"), "--input", "--out", "--batch-size"];
+        [.. ModelChoices.ValueOptions, .. GenerationSettings.ValueOptions.Where(o => o != "--tools"), "--input", "--out", "--batch-size"];
 
     public override IReadOnlyCollection<string> Flags => GenerationSettings.Flags;
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } = new Dictionary<string, string>(
-        Models.ShortForms.Concat(GenerationSettings.ShortForms).Append(KeyValuePair.Create("-i", "--input")).Append(KeyValuePair.Create("-o", "--out")));
+        ModelChoices.ShortForms.Concat(GenerationSettings.ShortForms).Append(KeyValuePair.Create("-i", "--input")).Append(KeyValuePair.Create("-o", "--out")));
 
     public override int Run(CommandContext context)
     {

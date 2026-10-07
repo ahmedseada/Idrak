@@ -340,7 +340,7 @@ internal static partial class Tests
         try
         {
             using var model = PretrainedModel.Load(folder, new PretrainedOptions { Device = device });
-            var encoder = new ChatTranscriptEncoder(model.ChatTemplate!, model.Tokenizer!);
+            var encoder = new ChatTranscriptEncoder(model.JinjaTemplate!, model.Tokenizer!);
             var multi = JsonNode.Parse("""{"prompt": [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "hi there"}, {"role": "user", "content": "2+2?"}], "chosen": "four", "rejected": "five, I think"}""")!.AsObject();
             var encoded = encoder.EncodePreference(multi, 200);
             Check(encoded is not null, $"the multi-turn pair encodes: {ChatRows.Preference(multi)?.ToJsonString()}");

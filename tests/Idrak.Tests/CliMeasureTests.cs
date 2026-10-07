@@ -272,7 +272,7 @@ internal static partial class Tests
                         ["messages"] = new JsonArray(new JsonObject { ["role"] = "user", ["content"] = "hi there" }),
                         ["tools"] = new JsonArray(),
                         ["add_generation_prompt"] = true,
-                        ["rendered"] = model.ChatTemplate!.Render(messages, [], null, true),
+                        ["rendered"] = model.JinjaTemplate!.Render(messages, [], null, true),
                     }),
                     ["runs"] = new JsonArray(new JsonObject
                     {

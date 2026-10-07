@@ -15,8 +15,8 @@ internal sealed record ModelText(string Model, string Folder, BpeTokenizer Token
     /// <summary>Reads the tokenizer and template of the model named <paramref name="name"/> (alias, id, folder or .gguf file).</summary>
     public static ModelText Load(CommandContext context, string name)
     {
-        var choice = Models.Choose(context, name);
-        string path = Models.Resolve(context, choice.Model);
+        var choice = ModelChoices.Choose(context, name);
+        string path = ModelChoices.Resolve(context, choice.Model);
         string folder = CheckpointFormats.For(path).Prepare(path);   // a .gguf file: its tokenizer and template from the metadata
         if (!File.Exists(Path.Combine(folder, "tokenizer.json")))
         {
@@ -226,20 +226,20 @@ internal sealed class CompleteCommand : Command
         """;
 
     public override IReadOnlyCollection<string> ValueOptions =>
-        [.. Models.ValueOptions, "--temperature", "--top-k", "--top-p", "--max-tokens", "--input", "--stop"];
+        [.. ModelChoices.ValueOptions, "--temperature", "--top-k", "--top-p", "--max-tokens", "--input", "--stop"];
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } =
-        new Dictionary<string, string>(Models.ShortForms.Append(KeyValuePair.Create("-i", "--input")));
+        new Dictionary<string, string>(ModelChoices.ShortForms.Append(KeyValuePair.Create("-i", "--input")));
 
     public override int Run(CommandContext context)
     {
         string name = context.Argument(0, "MODEL (a Hugging Face id, a folder, a .gguf file or an alias)");
         string text = PromptInput.Read(context, 1, "the text");
         var settings = GenerationSettings.From(context);
-        var choice = Models.Choose(context, name);
-        using var model = Models.Load(context, choice);
-        var generator = Models.CreateGenerator(model, choice);
-        int contextLength = Models.ContextLength(choice, model);
+        var choice = ModelChoices.Choose(context, name);
+        using var model = ModelChoices.Load(context, choice);
+        var generator = ModelChoices.CreateGenerator(model, choice);
+        int contextLength = ModelChoices.ContextLength(choice, model);
         var options = settings.ToOptions(contextLength) with { Stop = context.Options("--stop") };
         var output = new System.Text.StringBuilder();
         GenerationStats? stats = null;

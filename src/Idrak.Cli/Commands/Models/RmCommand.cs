@@ -48,7 +48,7 @@ internal sealed class RmCommand : Command
         var chosen = new List<ModelCache.Entry>();
         foreach (string name in context.Positional)
         {
-            string model = context.Config.Object("aliases")?[name] is JsonObject ? Shared.Models.Choose(context, name).Model : name;
+            string model = context.Config.Object("aliases")?[name] is JsonObject ? Shared.ModelChoices.Choose(context, name).Model : name;
             var matches = ModelCache.Match(all, model);
             if (matches.Count == 0)
             {

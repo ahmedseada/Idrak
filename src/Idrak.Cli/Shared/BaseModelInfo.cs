@@ -3,7 +3,6 @@
 
 using System.Text.Json.Nodes;
 using Idrak.Models;
-using Idrak.Nlp;
 
 namespace Idrak.Cli.Shared;
 

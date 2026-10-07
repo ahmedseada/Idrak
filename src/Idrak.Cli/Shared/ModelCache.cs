@@ -5,7 +5,6 @@ using System.Globalization;
 using System.Text.Json.Nodes;
 using Idrak.Data;
 using Idrak.Models;
-using Idrak.Nlp;
 
 namespace Idrak.Cli.Shared;
 
@@ -160,7 +159,7 @@ internal static class ModelCache
     /// </summary>
     public static Local Locate(CommandContext context, string name)
     {
-        string model = Models.Choose(context, name).Model;
+        string model = ModelChoices.Choose(context, name).Model;
         return TryLocate(context, model) ?? throw new InvalidOperationException(context.Offline
             ? $"{model} is not in the cache ({context.CacheFolder}) and --offline allows no download; run 'idrak pull {model}' while online."
             : $"{model} is not in the cache ({context.CacheFolder}). Download it first: idrak pull {model}");

@@ -44,9 +44,9 @@ internal sealed class MemoryCommand : Command
         other GPUs pass --memory with the card's memory.
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. Shared.Models.ValueOptions.Where(o => o != "--adapter"), "--batch", "--memory"];
+    public override IReadOnlyCollection<string> ValueOptions => [.. Shared.ModelChoices.ValueOptions.Where(o => o != "--adapter"), "--batch", "--memory"];
 
-    public override IReadOnlyDictionary<string, string> ShortForms => Shared.Models.ShortForms;
+    public override IReadOnlyDictionary<string, string> ShortForms => Shared.ModelChoices.ShortForms;
 
     public override int Run(CommandContext context)
     {
@@ -54,7 +54,7 @@ internal sealed class MemoryCommand : Command
         var local = ModelCache.Locate(context, name);
         var facts = ModelFacts.Read(local);
         var spec = facts.Spec ?? throw new InvalidOperationException($"{name}: {facts.Problem}");
-        var alias = Shared.Models.Choose(context, name);
+        var alias = Shared.ModelChoices.Choose(context, name);
         int contextLength = context.Option("--context") is null ? spec.MaxPositions : context.IntOption("--context", 0);
         int batch = context.IntOption("--batch", 1);
         if (contextLength <= 0 || batch <= 0)

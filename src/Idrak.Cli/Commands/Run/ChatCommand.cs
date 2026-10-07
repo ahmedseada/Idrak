@@ -46,12 +46,12 @@ internal sealed class ChatCommand : Command
           idrak chat qwen --file notes.md --file todo.txt
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. Models.ValueOptions, .. GenerationSettings.ValueOptions, "--history", "--file", "--mcp"];
+    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, .. GenerationSettings.ValueOptions, "--history", "--file", "--mcp"];
 
     public override IReadOnlyCollection<string> Flags => GenerationSettings.Flags;
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } =
-        new Dictionary<string, string>(Models.ShortForms.Concat(GenerationSettings.ShortForms));
+        new Dictionary<string, string>(ModelChoices.ShortForms.Concat(GenerationSettings.ShortForms));
 
     public override int Run(CommandContext context)
     {

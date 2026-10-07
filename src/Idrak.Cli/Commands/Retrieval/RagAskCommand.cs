@@ -5,6 +5,7 @@ using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
 using Idrak.Generation;
 using Idrak.Layers;
+using Idrak.Nlp;
 using Idrak.Retrieval;
 
 namespace Idrak.Cli.Commands.Retrieval;
@@ -35,12 +36,12 @@ internal sealed class RagAskCommand : Command
         "  idrak rag ask \"What does IDRAK_CACHE change?\" --index docs.idx -m mymodel --top 6 -j";
 
     public override IReadOnlyCollection<string> ValueOptions =>
-        [.. Models.ValueOptions, "--index", "--model", "--top", "--system", "--max-tokens", "--temperature"];
+        [.. ModelChoices.ValueOptions, "--index", "--model", "--top", "--system", "--max-tokens", "--temperature"];
 
     public override IReadOnlyCollection<string> Flags => ["--think", "--no-think"];
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } =
-        new Dictionary<string, string>(Models.ShortForms) { ["-m"] = "--model", ["-s"] = "--system" };
+        new Dictionary<string, string>(ModelChoices.ShortForms) { ["-m"] = "--model", ["-s"] = "--system" };
 
     public override int Run(CommandContext context)
     {
@@ -67,10 +68,10 @@ internal sealed class RagAskCommand : Command
             throw new UsageException("Choose --think or --no-think, not both.");
         }
 
-        var choice = Models.Choose(context, modelName);
-        using var model = Models.Load(context, choice);
+        var choice = ModelChoices.Choose(context, modelName);
+        using var model = ModelChoices.Load(context, choice);
         using var opened = RagIndexFile.Open(context, path, (choice.Model, choice.Weights, model));
-        var chat = model.CreateChat(Models.CacheLayout(choice), model.MaxPositions);
+        var chat = model.CreateChat(ModelChoices.CacheLayout(choice), model.MaxPositions);
         var options = temperature == 0f
             ? new GenerationOptions { Temperature = 0f, TopK = 1, TopP = 1f, RepeatPenalty = 1f, NumPredict = maxTokens, NumCtx = model.MaxPositions }
             : new GenerationOptions { Temperature = temperature, NumPredict = maxTokens, NumCtx = model.MaxPositions, Seed = context.Seed };

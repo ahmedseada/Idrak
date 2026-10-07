@@ -4,7 +4,6 @@
 using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
 using Idrak.Models;
-using Idrak.Nlp;
 
 namespace Idrak.Cli.Commands;
 

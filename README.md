@@ -52,9 +52,9 @@ tool. `IDRAK_DISABLE_CUDA=1` (and `_VULKAN`, `_HIP`) turns a backend off.
 
 | Package | What it gives you |
 |---------|-------------------|
-| `Idrak` (core) | Tensors and autograd, layers, training, generation, chat and tools, retrieval, the inference engine, ONNX export and import, telemetry, every backend |
+| `Idrak` (core) | Tensors and autograd, layers, training, the inference engine, pretrained models (Hugging Face and GGUF weights, BPE tokenizers, LoRA adapters), ONNX export and import, telemetry, every backend |
 | `Idrak.Abstraction` | The contracts Idrak is built on, each with its default implementation: so far `Device`, `ComputeResources` and the CPU device (preview; brought along by `Idrak`; see [plan 10](plans/10-abstraction.md)) |
-| `Idrak.LanguageModels` | Hugging Face and GGUF models, tokenizers, the models' own Jinja chat templates, LoRA / QLoRA fine-tuning, evaluation |
+| `Idrak.Nlp` | Text generation, chat and tools, the models' own Jinja chat templates, the engine's text and chat models, LoRA / QLoRA fine-tuning, evaluation, retrieval and RAG, a coding agent |
 | `Idrak.Data` | JSON Lines, JSON, CSV, text, code and Parquet files (also compressed or archived); Hugging Face, GitHub, Kaggle, Zenodo and URL sources |
 | `Idrak.Vision` | Region classification, content framing and image statistics, over the vision contracts of `Idrak.Abstraction` |
 | `Idrak.AspNetCore` | `AddIdrak()`, `MapPredictor`, `MapGenerate` (JSON and streaming), `MapChatApi` (the local chat API) and `MapCompletionsApi` (`/v1`) |
@@ -103,7 +103,7 @@ points"):
 
 | What plugs in | Registry or hook | Package |
 |---------------|------------------|---------|
-| Token sampling | `ITokenSampler` through `TextGenerator.CreateSampler` | `Idrak` |
+| Token sampling | `ITokenSampler` through `TextGenerator.CreateSampler` | `Idrak.Nlp` |
 | KV cache formats | `KeyValueLayouts` | `Idrak` |
 | Packed weight formats | `PackedWeight` | `Idrak` |
 | Network builder steps | `NetworkOps` (steps see `INetworkBuilder`) | `Idrak` |
@@ -113,18 +113,19 @@ points"):
 | Tool-call formats | `ToolCallFormats` | `Idrak` |
 | ONNX import operators | `OnnxImportOps` | `Idrak` |
 | ONNX export of modules, lambdas and graph operations | `OnnxExportOps` | `Idrak` |
-| Checkpoint formats | `CheckpointFormats` | `Idrak.LanguageModels` |
-| Model families (a spec, or a network built by the family) | `PretrainedArchitectures` | `Idrak.LanguageModels` |
-| GGUF architectures, quantization types, pre-tokenizers | `GgufArchitectures`, `GgufTypes`, `GgufPreTokenizers` | `Idrak.LanguageModels` |
-| Model sources | `ModelSources` | `Idrak.LanguageModels` |
-| Tokenizer normalizers, pre-tokenizers, decoders | `TokenizerComponents` | `Idrak.LanguageModels` |
+| Checkpoint formats | `CheckpointFormats` | `Idrak` |
+| Model families (a spec, or a network built by the family) | `PretrainedArchitectures` | `Idrak` |
+| GGUF architectures, quantization types, pre-tokenizers | `GgufArchitectures`, `GgufTypes`, `GgufPreTokenizers` | `Idrak` |
+| Model sources | `ModelSources` | `Idrak` (Hugging Face ids: `Idrak.Data`) |
+| Chat-template readers | `ChatTemplates` | `Idrak.Nlp` (Jinja) |
+| Tokenizer normalizers, pre-tokenizers, decoders | `TokenizerComponents` | `Idrak` |
 | Dataset file formats, sources, Parquet codecs | `DataFileFormats`, `DatasetSources`, `ParquetCodecs` | `Idrak.Data` |
 | Training data: samples, streams, transforms, batches | `ISampleSource`, `ISampleStream`, `ISampleTransform`, `IBatchSource`; sources by name in `SampleSources` | `Idrak` |
 | Image formats (a JPEG decoder, for example) | `ImageCodecs` | `Idrak` |
 | Optimizers | derive from `Optimizer` | `Idrak` |
 | Differentiable operations | `Autograd.Function(name, forward, backward)` | `Idrak` |
 | Adapters on linear layers | `ILinearAdapter` (LoRA and DoRA built in) on `Linear.Adapter` | `Idrak` |
-| Fine-tuning optimizer, schedule and loss | `FineTuningOptions.Optimizer`, `Scheduler`, `Loss` | `Idrak.LanguageModels` |
+| Fine-tuning optimizer, schedule and loss | `FineTuningOptions.Optimizer`, `Scheduler`, `Loss` | `Idrak.Nlp` |
 | Devices (backends) | the device registry, internal until the public backend API (plans/7-backends.md, item 12c) | `Idrak` |
 
 ### Hardware
@@ -142,8 +143,8 @@ points"):
 **Libraries**: add them to a project (`dotnet add package`, run in the project's folder):
 
 ```bash
-dotnet add package Idrak                      # tensors, layers, training, generation, ONNX; every backend
-dotnet add package Idrak.LanguageModels       # Hugging Face and GGUF language models, fine-tuning
+dotnet add package Idrak                      # tensors, layers, training, pretrained models, ONNX; every backend
+dotnet add package Idrak.Nlp                  # generation, chat, fine-tuning of language models, RAG
 dotnet add package Idrak.Data                 # datasets from files, Hugging Face, GitHub, Kaggle, Zenodo, URLs
 dotnet add package Idrak.Vision               # region classification, content framing
 dotnet add package Idrak.AspNetCore           # serve models from ASP.NET Core
@@ -227,11 +228,11 @@ src/Idrak/
   Data/                             Dataset (CSV, class labels, feature shapes), sample sources (CSV, images, tokens, .npy),
                                     views, image codecs and transforms, scalers, DataLoader, DataExtensions
   Training/                         Trainer, TrainingRun, Metric (MAE, RMSE, Accuracy), RegressionReport
-  Generation/                       tokenizers, TextGenerator (streaming, batches), chat, Conversation, tools
-                                    (ToolRegistry), ModelHost, CodingAgent and CodingTools
   Inference/                        Predictor, ModelPackage (.ikm), InferenceEngine
-  Retrieval/                        chunking, BM25, TextEncoder (bi-encoder), VectorIndex, RetrievalIndex (hybrid
-                                    search with rank fusion), CrossEncoder (re-ranking), Rag pipeline, search tool
+  Models/                           pretrained models: PretrainedModel and the architecture registry (Llama, Mistral,
+                                    Qwen2/3, Gemma 1/2/3, Mixtral, Qwen2-MoE, Qwen3-MoE); SafeTensors, Gguf, GgufModel
+                                    (F32/F16/BF16, Q4_0–Q8_0, K-quants, IQ4); BpeTokenizer (tokenizer.json); PEFT
+                                    adapters; ModelSource (folders, .gguf files, the local model store)
   Onnx/                             OnnxExport, OnnxImport (chains and graphs), the protobuf reader and writer
   Diagnostics/                      Telemetry hub, events, ConsoleLogger, MetricsRecorder,
                                     ChannelTelemetry, JsonLinesLogger
@@ -239,18 +240,20 @@ src/Idrak/
                                     generated in C#), Vulkan (SPIR-V generated by SpirV/KernelBuilder; fused decoding,
                                     graphs, cooperative matrices), Hip (hipRTC kernels), the minimum backend with host
                                     fallbacks every new device starts from, and the device registry
-src/Idrak.LanguageModels/           optional package, no dependencies: language models and fine-tuning
-  PretrainedModel, Architectures    Hugging Face folders; the architecture registry (Llama, Mistral, Qwen2/3, Gemma 1/2/3,
-                                    Mixtral, Qwen2-MoE, Qwen3-MoE)
-  SafeTensors, Gguf, GgufModel      safetensors and GGUF weights (F32/F16/BF16, Q4_0–Q8_0, K-quants, IQ4)
-  BpeTokenizer, Jinja, ChatTemplates  tokenizer.json; the model's own Jinja chat template; tool-call formats
+src/Idrak.Nlp/                      optional package (Idrak and Idrak.Data): language
+  Generation/                       TextGenerator (streaming, batches), chat, Conversation, tools (ToolRegistry),
+                                    ModelHost, CodingAgent and CodingTools
+  Retrieval/                        chunking, BM25, TextEncoder (bi-encoder), VectorIndex, RetrievalIndex (hybrid
+                                    search with rank fusion), CrossEncoder (re-ranking), Rag pipeline, search tool
+  Inference/                        the engine's text and chat models (GenerativeModels)
+  Jinja, ChatTemplates              the model's own Jinja chat template; tool-call formats
   FineTuning, TuningManifest        LoRA / DoRA / QLoRA fine-tuning, preference losses, distillation (a teacher model or
                                     stored top-k logits), packing, CUDA graphs, memory fallbacks; adapters
   AnswerScorer, Evaluation          log-probabilities of given answers, answer metrics
-  ModelSource                       Hugging Face ids: found in a cache or downloaded once
 src/Idrak.Data/                     optional package, no dependencies: JSON Lines, JSON, CSV, text, code and Parquet
                                     files (also compressed and archived); Hugging Face, GitHub, Kaggle, Zenodo and URL
-                                    sources with a download cache; rows into conversations; recipes
+                                    sources with a download cache; rows into conversations; recipes; Hugging Face model
+                                    ids (HuggingFaceModels: found in a cache or downloaded once)
 src/Idrak.AspNetCore/               optional package: AddIdrak(), MapPredictor, MapGenerate, MapChatApi, MapIdrakStatus
 src/Idrak.Mcp/                      optional package: tools of Model Context Protocol servers, and serving tools over MCP
 src/Idrak.Vision/                   optional package, no dependencies: RegionClassifier (ComponentProposer), ContentFrame,
@@ -629,7 +632,7 @@ Measured on the sample GPT (341K parameters) on a 4-core CPU container
 
 On a GPU, CUDA graphs remove the per-step launch cost, and batching keeps the GPU busy.
 
-### Text generation, chat and tools (`Idrak.Generation`)
+### Text generation, chat and tools (`Idrak.Generation`, in `Idrak.Nlp`)
 
 A higher-level layer on top of the cache, sampler and graphs, with the options and conventions of common
 local LLM servers:
@@ -978,7 +981,7 @@ var score = new SegmentationMetrics(classes).Add(mask, truth).Score(); // pixel 
 On an A4 page at 300 dpi with 1,848 objects, foreground, connected components and framing take about 110 ms on a CPU
 and allocate 67 MB (the foreground and the label map).
 
-### Retrieval and RAG (`Idrak.Retrieval`)
+### Retrieval and RAG (`Idrak.Retrieval`, in `Idrak.Nlp`)
 
 These are new building blocks; the original way is writing the search, the scoring loop and the prompt by hand.
 
@@ -1118,7 +1121,10 @@ ONNX Runtime on a GPU needs its `.Gpu` (CUDA) or `.DirectML` package instead. `O
 the inference engine and the ASP.NET Core endpoints. The tests run every exported layer in ONNX Runtime and
 import it back, and both must match Idrak within 1e-4.
 
-### Pretrained models: the optional `Idrak.LanguageModels` package
+### Pretrained models (`Idrak.Models`) and the optional `Idrak.Nlp` package
+
+The core package loads the models (`PretrainedModel`, `Idrak.Models`); `Idrak.Nlp` adds generation and chat
+(`CreateGenerator`, `CreateChat`, `using Idrak.Nlp;`), the models' own Jinja chat templates and fine-tuning.
 
 ```csharp
 using var model = PretrainedModel.Load("Qwen3-0.6B", new PretrainedOptions { Device = Device.Cuda(), Int8 = true, MaxPositions = 8192 });
@@ -1128,7 +1134,7 @@ model.Notes;                     // anything approximated (for example exact GEL
 var chat = model.CreateChat(KeyValueFormat.Int8);                          // the model's own chat template and stop tokens
 var reply = chat.Chat(new ChatRequest(messages, tools, Think: false));     // reasoning and tool calls come back parsed
 
-string text = model.ChatTemplate!.Render(messages, tools, think: null, addGenerationPrompt: false);   // training text
+string text = model.JinjaTemplate!.Render(messages, tools, think: null, addGenerationPrompt: false);   // training text
 
 PretrainedArchitectures.Register("MyForCausalLM", PretrainedFamilies.LlamaStyle((config, spec, notes) => spec with { QkNorm = true }));
 PretrainedArchitectures.Register("OtherForCausalLM", new PretrainedArchitecture
@@ -1202,7 +1208,7 @@ gpt.AddLora(rank: 8, alpha: 16, targets: layer => true, freezeBase: true);   // 
 gpt.MergeLora();                                                // fold them into the weights
 ```
 
-Language models (`Idrak.LanguageModels`) train adapters with `FineTuner`; the defaults are AdamW, a warm-up and cosine
+Language models (`Idrak.Nlp`) train adapters with `FineTuner`; the defaults are AdamW, a warm-up and cosine
 decay, and the token cross-entropy of the assistant's tokens. Each can be replaced, and preference pairs train with DPO,
 ORPO or SimPO:
 
@@ -1267,7 +1273,7 @@ the registered names and how to register.
 
 | What | Register with | Package |
 |---|---|---|
-| Token sampling (temperature, top-k, penalties, ...) | `ITokenSampler`; set `TextGenerator.CreateSampler` | `Idrak` |
+| Token sampling (temperature, top-k, penalties, ...) | `ITokenSampler`; set `TextGenerator.CreateSampler` | `Idrak.Nlp` |
 | Optimizers | derive from `Optimizer` (in-place writes: `AddScaled`, `Scale`, `CopyFrom`; state from `CreateState`) | `Idrak` |
 | Differentiable operations (own forward and backward) | `Autograd.Function(name, forward, backward)` | `Idrak` |
 | KV cache formats (float32, int8, bfloat16 built in) | `KeyValueLayouts.Register(name, KeyValueLayout)` | `Idrak` |
@@ -1279,17 +1285,18 @@ the registered names and how to register.
 | Graph operations (`GraphModule` nodes; relu, clip, pow, ... built in) | `GraphOps.Register(name, GraphOp)` | `Idrak` |
 | Graph layer types (`GraphModule` JSON and model packages) | `LayerTypes.Register<T>(type, describe, create)` | `Idrak` |
 | RoPE scaling methods (linear, llama3, yarn, dynamic built in) | `RopeScalings.Register(type, RopeScalingMethod)` | `Idrak` |
-| Checkpoint formats (safetensors built in) | `CheckpointFormats.Register(ICheckpointFormat)` | `Idrak.LanguageModels` |
-| Model families (Hugging Face `architectures`; a `DecoderSpec`, or a `Build` delegate for its own network) | `PretrainedArchitectures.Register(name, PretrainedArchitecture)` | `Idrak.LanguageModels` |
-| GGUF architectures, quantization types and pre-tokenizers | `GgufArchitectures.Register(name, ...)`, `GgufTypes.Register(id, GgufType)`, `GgufPreTokenizers.Register(name, pattern)` | `Idrak.LanguageModels` |
-| Model sources (`name:` prefixes, asked before the built-ins) | `ModelSources.Register(IModelSource)` | `Idrak.LanguageModels` |
-| Tokenizer normalizers, pre-tokenizers, decoders | `TokenizerComponents.RegisterNormalizer` / `RegisterPreTokenizer` / `RegisterDecoder` | `Idrak.LanguageModels` |
+| Checkpoint formats (safetensors built in) | `CheckpointFormats.Register(ICheckpointFormat)` | `Idrak` |
+| Model families (Hugging Face `architectures`; a `DecoderSpec`, or a `Build` delegate for its own network) | `PretrainedArchitectures.Register(name, PretrainedArchitecture)` | `Idrak` |
+| GGUF architectures, quantization types and pre-tokenizers | `GgufArchitectures.Register(name, ...)`, `GgufTypes.Register(id, GgufType)`, `GgufPreTokenizers.Register(name, pattern)` | `Idrak` |
+| Model sources (`name:` prefixes, asked before the built-ins) | `ModelSources.Register(IModelSource)` | `Idrak` (Hugging Face ids: `Idrak.Data`) |
+| Chat-template readers (a model folder's own template; Jinja built in) | `ChatTemplates.Register(name, load)` | `Idrak.Nlp` |
+| Tokenizer normalizers, pre-tokenizers, decoders | `TokenizerComponents.RegisterNormalizer` / `RegisterPreTokenizer` / `RegisterDecoder` | `Idrak` |
 | Dataset file formats, sources, Parquet codecs | `DataFileFormats.Register`, `DatasetSources.Register`, `ParquetCodecs.Register` | `Idrak.Data` |
 | Training data (samples, streams, per-sample transforms, whole batches) | implement `ISampleSource`, `ISampleStream`, `ISampleTransform` or `IBatchSource` | `Idrak` |
 | Sample sources by name (csv, images, tokens, npy built in) | `SampleSources.Register(name, SampleSourceFactory)` | `Idrak` |
 | Image formats (png, bmp, netpbm built in; JPEG and others as plug-ins) | `ImageCodecs.Register(IImageCodec)` | `Idrak` |
 | Adapters on linear layers (LoRA and DoRA built in) | implement `ILinearAdapter`, set `Linear.Adapter` | `Idrak` |
-| Fine-tuning optimizers, learning-rate schedules and losses | `FineTuningOptions.Optimizer`, `Scheduler` and `Loss` (a `FineTuningLoss` delegate) | `Idrak.LanguageModels` |
+| Fine-tuning optimizers, learning-rate schedules and losses | `FineTuningOptions.Optimizer`, `Scheduler` and `Loss` (a `FineTuningLoss` delegate) | `Idrak.Nlp` |
 
 Chat templates are read from each model's own Jinja template (`tokenizer_config.json` or GGUF metadata), and the
 tool-call format is read off that template, so a new model family needs no code for either: `JinjaChatTemplate`

@@ -6,7 +6,6 @@ using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
 using Idrak.Data;
 using Idrak.Models;
-using Idrak.Nlp;
 
 namespace Idrak.Cli.Commands;
 
@@ -211,7 +210,7 @@ internal sealed class VerifyCommand : Command
     // The hub's sizes and LFS hashes against the local files (Idrak's downloads of hub models).
     private static void VerifyHub(CommandContext context, string name, ModelCache.Local local, Action<string, bool, string> add)
     {
-        string model = Shared.Models.Choose(context, name).Model;
+        string model = Shared.ModelChoices.Choose(context, name).Model;
         string repo = PullTarget.SplitFile(model)?.Repo ?? PullTarget.SplitTag(model).Repo;
         if (!ModelSource.IsModelId(repo))
         {

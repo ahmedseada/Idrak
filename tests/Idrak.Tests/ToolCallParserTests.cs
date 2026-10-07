@@ -4,7 +4,6 @@
 using System.Text.Json.Nodes;
 using Idrak;
 using Idrak.Generation;
-using Idrak.Models;
 using Idrak.Nlp;
 using Formats = Idrak.Abstraction.Generation.ToolCallFormats;
 

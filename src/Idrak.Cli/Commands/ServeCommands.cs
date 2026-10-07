@@ -85,11 +85,11 @@ internal sealed class ServeCommand : Command
           idrak serve tiny=./tiny.gguf -d vulkan:0 -k int8 --keep-alive 30m --cors http://localhost:3000
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. ServeHost.ValueOptions, .. Models.ValueOptions];
+    public override IReadOnlyCollection<string> ValueOptions => [.. ServeHost.ValueOptions, .. ModelChoices.ValueOptions];
 
     public override IReadOnlyCollection<string> Flags => ServeHost.Flags;
 
-    public override IReadOnlyDictionary<string, string> ShortForms => ServeHost.ShortForms.Concat(Models.ShortForms).ToDictionary();
+    public override IReadOnlyDictionary<string, string> ShortForms => ServeHost.ShortForms.Concat(ModelChoices.ShortForms).ToDictionary();
 
     public override int Run(CommandContext context)
     {
@@ -121,11 +121,11 @@ internal sealed class UiCommand : Command
           idrak ui qwen -p 8080 --no-browser
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. ServeHost.ValueOptions, .. Models.ValueOptions];
+    public override IReadOnlyCollection<string> ValueOptions => [.. ServeHost.ValueOptions, .. ModelChoices.ValueOptions];
 
     public override IReadOnlyCollection<string> Flags => [.. ServeHost.Flags, "--no-browser"];
 
-    public override IReadOnlyDictionary<string, string> ShortForms => ServeHost.ShortForms.Concat(Models.ShortForms).ToDictionary();
+    public override IReadOnlyDictionary<string, string> ShortForms => ServeHost.ShortForms.Concat(ModelChoices.ShortForms).ToDictionary();
 
     public override int Run(CommandContext context)
     {

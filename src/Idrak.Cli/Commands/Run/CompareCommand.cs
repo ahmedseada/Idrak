@@ -37,12 +37,12 @@ internal sealed class CompareCommand : Command
         """;
 
     public override IReadOnlyCollection<string> ValueOptions =>
-        [.. Models.ValueOptions, .. GenerationSettings.ValueOptions.Where(o => o != "--tools"), "--input", "--weights-b", "--kv-b", "--width"];
+        [.. ModelChoices.ValueOptions, .. GenerationSettings.ValueOptions.Where(o => o != "--tools"), "--input", "--weights-b", "--kv-b", "--width"];
 
     public override IReadOnlyCollection<string> Flags => GenerationSettings.Flags;
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } =
-        new Dictionary<string, string>(Models.ShortForms.Concat(GenerationSettings.ShortForms).Append(KeyValuePair.Create("-i", "--input")));
+        new Dictionary<string, string>(ModelChoices.ShortForms.Concat(GenerationSettings.ShortForms).Append(KeyValuePair.Create("-i", "--input")));
 
     public override int Run(CommandContext context)
     {
@@ -51,10 +51,10 @@ internal sealed class CompareCommand : Command
         var settings = GenerationSettings.From(context);
         settings.Seed ??= 1;                                      // the same draw for both, so differences come from the models
         int width = context.IntOption("--width", 100);
-        var choiceB = Models.Choose(context, b);
+        var choiceB = ModelChoices.Choose(context, b);
         choiceB = choiceB with { Weights = context.Option("--weights-b") ?? choiceB.Weights, Kv = context.Option("--kv-b") ?? choiceB.Kv };
         var results = new List<(string Label, ChatAnswer Answer)>();
-        foreach (var (label, name, choice) in new[] { ("A", a, Models.Choose(context, a)), ("B", b, choiceB) })
+        foreach (var (label, name, choice) in new[] { ("A", a, ModelChoices.Choose(context, a)), ("B", b, choiceB) })
         {
             using var loaded = LoadedChat.Load(context, name, settings, choice);
             var messages = new List<ChatMessage>();
