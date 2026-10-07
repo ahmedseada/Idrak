@@ -6,10 +6,9 @@ using System.Reflection;
 using System.Text.Json.Nodes;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
-using Idrak.Generation;
 using Idrak.Cli.Shared;
 using Idrak.Mcp;
-using Tool = Idrak.Generation.Tool;
+using Tool = Idrak.Abstraction.Generation.Tool;
 
 namespace Idrak.Cli.Commands.Serve;
 
@@ -23,9 +22,10 @@ internal sealed class McpServeCommand : Command
     public override string Usage => """
         TOOLS.dll [TOOLS.dll...] [options]
 
-        Loads each assembly and serves every public method marked [Tool] (Idrak.Generation.ToolAttribute) on its public
-        types (instance methods need a parameterless constructor) to an MCP client over standard input and output,
-        until the client disconnects. Status lines go to the error output, since the output carries the protocol.
+        Loads each assembly and serves every public method marked [Tool] (Idrak.Abstraction.Generation.ToolAttribute)
+        on its public types (instance methods need a parameterless constructor) to an MCP client over standard input
+        and output, until the client disconnects. Status lines go to the error output, since the output carries the
+        protocol. To serve models as MCP tools too (generate, chat): idrak serve MODEL --mcp [--tools TOOLS.dll].
 
         Options:
               --list  print the tools (name and description) and exit, without serving
@@ -73,7 +73,15 @@ internal sealed class McpServeCommand : Command
             return ExitCodes.Ok;
         }
 
-        var registry = builder.Build();
+        return Serve(context, builder.Build());
+    }
+
+    /// <summary>
+    /// Serves <paramref name="registry"/> to an MCP client over <see cref="Streams"/> until the client disconnects, or
+    /// Ctrl+C or --timeout ends the session (also used by <c>idrak serve --mcp</c>). The status line goes to the error output.
+    /// </summary>
+    public static int Serve(CommandContext context, IToolRegistry registry)
+    {
         var options = new McpServerOptions { ServerInfo = new Implementation { Name = "idrak", Version = typeof(Idrak.Layers.Sequential).Assembly.GetName().Version?.ToString() ?? "0" }, ToolCollection = [] };
         foreach (var tool in McpTools.ServerTools(registry))
         {
@@ -83,6 +91,7 @@ internal sealed class McpServeCommand : Command
         var (input, output) = Streams();
         if (!context.Quiet)
         {
+            int count = registry.Definitions.Count;
             context.Error($"Serving {count} tool{(count == 1 ? "" : "s")} over MCP on standard input/output: {string.Join(", ", registry.Definitions.Select(d => d.Name))}");
         }
 

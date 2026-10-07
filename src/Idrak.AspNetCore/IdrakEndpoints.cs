@@ -10,7 +10,6 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
-using Idrak.Generation;
 using Idrak.Inference;
 
 namespace Idrak.AspNetCore;
@@ -21,7 +20,10 @@ public enum ToolExecution
     /// <summary>The model's tool calls are returned in <c>message.tool_calls</c> and the client runs them (the API's usual behaviour).</summary>
     Client,
 
-    /// <summary>The server runs the tools registered with the chat model (<see cref="GenerativeModelBuilder.Tools"/>) and returns the final answer.</summary>
+    /// <summary>
+    /// The server runs the tools (those given to <see cref="ChatApiOptions.Tools"/>, else the chat model's own,
+    /// <see cref="IToolChatModel.Tools"/>) and returns the final answer.
+    /// </summary>
     Server,
 }
 
@@ -30,20 +32,31 @@ public sealed class ChatApiOptions
 {
     internal ToolExecution? Execution { get; private set; }
     internal int? Rounds { get; private set; }
+    internal IToolRegistry? ServerTools { get; private set; }
     internal string? Served { get; private set; }
     internal string VersionText { get; private set; } =
         typeof(InferenceEngine).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
 
-    /// <summary>Who runs tool calls; with <see cref="ToolExecution.Server"/>, <paramref name="maxRounds"/> (required) bounds the call→result rounds per request.</summary>
-    public ChatApiOptions Tools(ToolExecution execution, int? maxRounds = null)
+    /// <summary>
+    /// Who runs tool calls. With <see cref="ToolExecution.Server"/>, <paramref name="maxRounds"/> (required) bounds the
+    /// call→result rounds per request, and <paramref name="tools"/> are the tools to run (the chat model's own,
+    /// <see cref="IToolChatModel.Tools"/>, when not given).
+    /// </summary>
+    public ChatApiOptions Tools(ToolExecution execution, int? maxRounds = null, IToolRegistry? tools = null)
     {
         if (execution == ToolExecution.Server && maxRounds is null)
         {
             throw new ArgumentException("Server-side tool execution needs maxRounds.", nameof(maxRounds));
         }
 
+        if (execution == ToolExecution.Client && tools is not null)
+        {
+            throw new ArgumentException("Tools run on the server only; the client runs its own.", nameof(tools));
+        }
+
         Execution = execution;
         Rounds = maxRounds;
+        ServerTools = tools;
         return this;
     }
 
@@ -264,28 +277,19 @@ public static class IdrakEndpointExtensions
         string served = request.Model ?? settings.Served ?? name;
         bool stream = request.Stream != false;
         var clock = Stopwatch.StartNew();
-        IAsyncEnumerator<ChatApiResponse> lines;
+        var model = engine.Model<IChatModel>(name);
         if (settings.Execution == ToolExecution.Server)
         {
-            var tools = engine.ToolsOf(name);
+            var tools = settings.ServerTools ?? (model as IToolChatModel)?.Tools;
             if (tools is null)
             {
-                return Error(500, $"Server-side tool execution is on, but the chat model '{name}' has no tools (GenerativeModelBuilder.Tools).");
+                return Error(500, $"Server-side tool execution is on, but the chat model '{name}' has no tools (give them to options.Tools or to the model).");
             }
 
-            var conversation = Conversation.For(engine.Model<IChatModel>(name)).Messages(chat.Messages).Think(chat.Think)
-                .Tools(tools).MaxToolRounds(settings.Rounds!.Value);
-            if (chat.Options is { } options)
-            {
-                conversation.Options(options);
-            }
+            model = model.WithTools(tools, settings.Rounds!.Value);
+        }
 
-            lines = ServerLines(conversation.Build(), served, stream, clock, token).GetAsyncEnumerator(token);
-        }
-        else
-        {
-            lines = ClientLines(engine.Model<IChatModel>(name).StreamAsync(chat, token), served, stream, clock).GetAsyncEnumerator(token);
-        }
+        var lines = ChatLines(model.StreamAsync(chat, token), served, stream, clock).GetAsyncEnumerator(token);
 
         // Read the first line before answering, so a full queue, a timeout or a load failure gets a proper status code.
         var first = await Guard(async () => await lines.MoveNextAsync() ? null : Error(500, "no output"));
@@ -327,7 +331,7 @@ public static class IdrakEndpointExtensions
         }, "application/x-ndjson");
     }
 
-    private static async IAsyncEnumerable<ChatApiResponse> ClientLines(IAsyncEnumerable<ChatChunk> chunks, string served, bool stream, Stopwatch clock)
+    private static async IAsyncEnumerable<ChatApiResponse> ChatLines(IAsyncEnumerable<ChatChunk> chunks, string served, bool stream, Stopwatch clock)
     {
         int toolIndex = 0;
         await foreach (var chunk in chunks)
@@ -347,26 +351,6 @@ public static class IdrakEndpointExtensions
                 : new ChatApiMessage("assistant", chunk.Message!.Content, chunk.Message.Thinking, ChatApiTranslation.Calls(chunk.Message.ToolCalls ?? [], ref toolIndex));
             yield return Final(served, message, chunk.DoneReason, chunk.Stats, clock);
         }
-    }
-
-    private static async IAsyncEnumerable<ChatApiResponse> ServerLines(Conversation conversation, string served, bool stream, Stopwatch clock,
-        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken token)
-    {
-        await foreach (var delta in conversation.StreamContinueAsync(token))
-        {
-            if (stream && (delta.Content.Length > 0 || delta.Thinking.Length > 0))
-            {
-                yield return Line(served, delta.Content, delta.Thinking, null);
-            }
-        }
-
-        var reply = conversation.LastReply!;
-        int index = 0;
-        var message = stream
-            ? new ChatApiMessage("assistant", "", null, reply.ToolLimitReached ? ChatApiTranslation.Calls(reply.Message.ToolCalls ?? [], ref index) : null)
-            : new ChatApiMessage("assistant", reply.Message.Content, reply.Message.Thinking,
-                reply.ToolLimitReached ? ChatApiTranslation.Calls(reply.Message.ToolCalls ?? [], ref index) : null);
-        yield return Final(served, message, reply.DoneReason, reply.Stats, clock);
     }
 
     private static ChatApiResponse Line(string served, string content, string thinking, List<ChatApiToolCall>? calls) =>

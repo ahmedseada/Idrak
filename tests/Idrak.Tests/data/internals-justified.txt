@@ -18,7 +18,6 @@ Idrak.Nlp | Idrak.Abstraction.Tensor | Load() | raw upload into a freshly alloca
 Idrak.Nlp | Idrak.Layers.Linear | AttachFloat8() | FP8 weights of Linear for fine-tuning; public with packed weights' device kernels (phase 6)
 Idrak.Nlp | Idrak.Layers.Linear | DetachFloat8() | FP8 weights of Linear for fine-tuning; public with packed weights' device kernels (phase 6)
 Idrak.Nlp | Idrak.Layers.PackedSequences | Suspend() | turns packed sequences off around a fine-tuning step; moves with the decoding contracts (phase 3)
-Idrak.Nlp | Idrak.Abstraction.Diagnostics.Telemetry | ToolCall() | the tool registry publishes its tool-call events; moves with the tool contracts into Idrak.Abstraction
 Idrak.Nlp | Idrak.Abstraction.Generation.KeyValueLayout | RowStarts | the text generator batches rows of different lengths only on layouts that support it; public with the decoding contracts
 Idrak.Nlp | Idrak.Layers.CausalSelfAttention | SupportsSegmented() | the text generator decodes segmented batches only when every attention kernel supports them; public with the decoding contracts
 Idrak.Nlp | Idrak.Offloading | (the type) | the text generator marks step boundaries for weight offloading; public with the memory contract (phase 4)

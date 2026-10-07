@@ -74,8 +74,25 @@
   - ONNX import and export (`Idrak.Onnx`) are part of `Idrak`. The `Idrak.Onnx` package is retired;
     `Idrak.Onnx.Runtime` depends on `Idrak` only.
   - New package `Idrak.Vision` (region classification, content framing, `ChannelStatistics`), moved out of `Idrak`. It
-    builds on the public API only.
+    builds on the public API only. `ModelDetector` with `DetectorOptions`, and `ModelSegmenter`, move to it from
+    `Idrak.Abstraction.Vision` (namespace `Idrak.Vision`); the `DetectionDecoder` delegate, the contracts, boxes, masks
+    and metrics stay in Abstraction.
   - `Module.WeightsDevice` is public. New: `PredictorBuilder.Model` and `PredictorBuilder.SampleShape`.
+
+- Tools are contracts, and the bridges speak only to contracts:
+  - `Tool`, `[Tool]`, `ToolResult`, `ToolRegistry` and its builder move from `Idrak.Generation` to
+    `Idrak.Abstraction.Generation`. `ToolRegistry` is the default of the new `IToolRegistry`, and the builders,
+    `Conversation.Tools` and `McpTools.ServerTools` take the contract. `KeepAlive` moves to `Idrak.Abstraction.Serving`.
+  - New: `IToolChatModel` (a chat model with its tools; the engine's chat model is one) and `ChatTools.WithTools(model,
+    tools, maxToolRounds)`, which runs tool calls on the server for any `IChatModel`.
+  - New: `IModelCatalog` (`Idrak.Abstraction.Serving`: names, kinds, `Model<T>`, `TryGetModel<T>`), implemented by
+    `InferenceEngine` (with the new `KindOf`). `InferenceEngine.ToolsOf` is removed; use
+    `engine.Model<IToolChatModel>(name).Tools`.
+  - `Idrak.Mcp` depends on `Idrak.Abstraction` and `ModelContextProtocol.Core` only. `McpTools.ModelTools(catalog)` and
+    `McpTools.ServerTools(catalog)` serve an engine's models as the MCP tools `generate`, `chat` and `embed`.
+  - `idrak serve MODEL... --mcp [--tools TOOLS.dll]` serves models and tool assemblies over MCP on stdin/stdout.
+  - Idrak.AspNetCore: `MapChatApi` runs server-side tools through `WithTools`, and `ChatApiOptions.Tools(..., tools:)`
+    takes the tools to run (default: the model's own). The bridge needs nothing from the NLP code.
 
   A file that also imports another `Tensor` (ONNX Runtime's `Microsoft.ML.OnnxRuntime.Tensors`, or
   `System.Numerics.Tensors`) now sees two: `Idrak.Tensor` used to win as a member of an enclosing namespace. Add
