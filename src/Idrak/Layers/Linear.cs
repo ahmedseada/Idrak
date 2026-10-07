@@ -8,7 +8,7 @@ namespace Idrak.Layers;
 /// (any leading dimensions, e.g. [batch, time, features] for sequences).
 /// Weights start Xavier/Glorot-uniform and the bias starts at zero.
 /// </summary>
-public sealed class Linear : Module
+public sealed partial class Linear : Module
 {
     /// <summary>Creates the layer on <paramref name="device"/> (default: <see cref="Device.Default"/>).</summary>
     /// <param name="inFeatures">Size of each input row.</param>
@@ -55,7 +55,7 @@ public sealed class Linear : Module
 
     /// <summary>
     /// A layer around existing packed weights (int8, 4-bit, bfloat16, or a format of your own derived from
-    /// <see cref="Layers.PackedWeight"/>); the layer takes ownership.
+    /// <see cref="Abstraction.Generation.PackedWeight"/>); the layer takes ownership.
     /// </summary>
     public static Linear FromPacked(PackedWeight weight, Tensor? bias = null) => new(weight.Rows, weight.Columns, null, weight, bias);
 
@@ -156,7 +156,7 @@ public sealed class Linear : Module
             return Tensor.MatMulBias(input, _weight, Bias);                 // one pass on tensor cores
         }
 
-        if (Bias is { RequiresGrad: false } && Lora is not null && TensorLayerPaths.LoraProducts(input, [this]) is [var withBias])
+        if (Bias is { RequiresGrad: false } && Lora is not null && Linear.LoraProducts(input, [this]) is [var withBias])
         {
             return withBias;                                            // the frozen bias added inside the fused product
         }
@@ -196,13 +196,13 @@ public sealed class Linear : Module
         bool packed = format is not null && !Autograd.IsEnabled && layers.Length is > 1 and <= 3
             && (rows <= capabilities.FewRows || layers.All(l => l.Bias is null))                  // prompts: one launch
             && layers.All(l => l.Adapter is null && l.InFeatures == k && l.PackedWeight?.Format == format);
-        if (packed && TensorLayerPaths.MatMulPackedMany(input, format!.Value, layers) is { } outputs)
+        if (packed && Linear.MatMulPackedMany(input, format!.Value, layers) is { } outputs)
         {
             return outputs;
         }
 
         // Adapters on every layer (LoRA / QLoRA, training or evaluation): one pass with each low-rank term inside its product.
-        if (layers.All(l => l.Lora is not null && l.Bias is not { RequiresGrad: true }) && TensorLayerPaths.LoraProducts(input, layers) is { } lora)
+        if (layers.All(l => l.Lora is not null && l.Bias is not { RequiresGrad: true }) && Linear.LoraProducts(input, layers) is { } lora)
         {
             return lora;
         }
@@ -211,7 +211,7 @@ public sealed class Linear : Module
         // layer's adapter adds its low-rank term into its output.
         bool training = format is not null && Autograd.IsEnabled && layers.Length is > 1 and <= 3 && capabilities.FusedKernels
             && layers.All(l => l.Bias is null && l.InFeatures == k && l.PackedWeight?.Format == format);
-        if (training && TensorLayerPaths.MatMulPackedManyRecorded(input, format!.Value, layers) is { } products)
+        if (training && Linear.MatMulPackedManyRecorded(input, format!.Value, layers) is { } products)
         {
             return [.. products.Select((product, j) => layers[j].Adapter is { } a ? a.Forward(layers[j], input, product) : product)];
         }
@@ -230,7 +230,7 @@ public sealed class Linear : Module
     /// <summary>x·W, adapted by the adapter when one is attached.</summary>
     internal Tensor ProjectWithoutBias(Tensor input)
     {
-        if (Lora is not null && TensorLayerPaths.LoraProducts(input, [this], withBias: false) is [var fused])
+        if (Lora is not null && Linear.LoraProducts(input, [this], withBias: false) is [var fused])
         {
             return fused;
         }
@@ -258,7 +258,7 @@ public sealed class Linear : Module
         }
 
         _tiedTransposed ??= BFloat16Weight.FromValues(HostParallel.Transpose(table.ToArray(), OutFeatures, InFeatures), InFeatures, OutFeatures, table.Device);
-        return TensorLayerPaths.MatMulFrozenTransposed(input, table, _tiedTransposed);
+        return Tensor.MatMulFrozenTransposed(input, table, _tiedTransposed);
     }
 
     private BFloat16Weight? _tiedTransposed;

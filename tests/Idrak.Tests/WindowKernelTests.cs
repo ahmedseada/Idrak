@@ -121,22 +121,22 @@ internal static partial class Tests
                 string name = $"{heads}×{rowsPerHead} rows, steps {steps}, capacity {capacity}, dim {dim}, offset {offset}, window {variant.Window}, cap {variant.Softcap}";
                 var expected = DirectAttention(q, k, v, heads, rowsPerHead, capacity, dim, scale, variant, Causal);
                 AssertClose(expected, Tensor.AttentionTiled(tq, tk, tv, position, steps, scale, variant).ToArray(), 2e-4f, "tiled: " + name);
-                AssertClose(expected, TensorLayerPaths.AttentionDecode(tq, cache, position, steps, scale, variant).ToArray(), 2e-4f, "decoding: " + name);
+                AssertClose(expected, Tensor.AttentionDecode(tq, cache, position, steps, scale, variant).ToArray(), 2e-4f, "decoding: " + name);
                 var expected8 = DirectAttention(q, k8, v8, heads, rowsPerHead, capacity, dim, scale, variant, Causal);
-                AssertClose(expected8, TensorLayerPaths.AttentionInt8(tq, cache8, position, steps, scale, tiled: false, variant).ToArray(), 2e-4f, "int8 decoding: " + name);
-                AssertClose(expected8, TensorLayerPaths.AttentionInt8(tq, cache8, position, steps, scale, tiled: true, variant).ToArray(), 2e-4f, "int8 tiled: " + name);
+                AssertClose(expected8, Tensor.AttentionInt8(tq, cache8, position, steps, scale, tiled: false, variant).ToArray(), 2e-4f, "int8 decoding: " + name);
+                AssertClose(expected8, Tensor.AttentionInt8(tq, cache8, position, steps, scale, tiled: true, variant).ToArray(), 2e-4f, "int8 tiled: " + name);
                 var expected16 = DirectAttention(q, k16, v16, heads, rowsPerHead, capacity, dim, scale, variant, Causal);
-                AssertClose(expected16, TensorLayerPaths.AttentionBFloat16(tq, cache16, position, steps, scale, tiled: false, variant).ToArray(), 2e-4f, "bf16 decoding: " + name);
-                AssertClose(expected16, TensorLayerPaths.AttentionBFloat16(tq, cache16, position, steps, scale, tiled: true, variant).ToArray(), 2e-4f, "bf16 tiled: " + name);
+                AssertClose(expected16, Tensor.AttentionBFloat16(tq, cache16, position, steps, scale, tiled: false, variant).ToArray(), 2e-4f, "bf16 decoding: " + name);
+                AssertClose(expected16, Tensor.AttentionBFloat16(tq, cache16, position, steps, scale, tiled: true, variant).ToArray(), 2e-4f, "bf16 tiled: " + name);
             }
 
             // A window covering every key (and no cap) runs the plain kernels' arithmetic: the same bits.
             var beyond = new AttentionVariant(capacity + 5, 0f);
             Check(Tensor.AttentionTiled(tq, tk, tv, position, steps, scale, beyond).ToArray().SequenceEqual(Tensor.AttentionTiled(tq, tk, tv, position, steps, scale).ToArray()),
                 $"tiled, capacity {capacity}: a window beyond the keys changes no bit");
-            Check(TensorLayerPaths.AttentionDecode(tq, cache, position, steps, scale, beyond).ToArray().SequenceEqual(TensorLayerPaths.AttentionDecode(tq, cache, position, steps, scale).ToArray()),
+            Check(Tensor.AttentionDecode(tq, cache, position, steps, scale, beyond).ToArray().SequenceEqual(Tensor.AttentionDecode(tq, cache, position, steps, scale).ToArray()),
                 $"decoding, capacity {capacity}: a window beyond the keys changes no bit");
-            Check(TensorLayerPaths.AttentionInt8(tq, cache8, position, steps, scale, false, beyond).ToArray().SequenceEqual(TensorLayerPaths.AttentionInt8(tq, cache8, position, steps, scale, false).ToArray()),
+            Check(Tensor.AttentionInt8(tq, cache8, position, steps, scale, false, beyond).ToArray().SequenceEqual(Tensor.AttentionInt8(tq, cache8, position, steps, scale, false).ToArray()),
                 $"int8, capacity {capacity}: a window beyond the keys changes no bit");
         }
 
@@ -182,7 +182,7 @@ internal static partial class Tests
             {
                 using (Autograd.NoGrad())
                 {
-                    var y = TensorLayerPaths.CausalAttentionSegmented(tpq, tpk, tpv, packing, Kv, scale, variant);
+                    var y = PackedSequences.CausalAttentionSegmented(tpq, tpk, tpv, packing, Kv, scale, variant);
                     bool supported = device.Backend.SupportsSegmentedAttention(Dim, variant);
                     if (y is null)
                     {
@@ -233,7 +233,7 @@ internal static partial class Tests
                     using var tw = Tensor.From(ws, [H, R, E], on);
                     using var tz = Tensor.From([0f], [1], on);
                     using var packing = packed ? PackedSequences.Create(lengths, T, on) : null;
-                    var y = packed ? TensorLayerPaths.CausalAttentionSegmented(tq, tk, tv, packing!, 1, 0.3f, variant) : Tensor.CausalAttention(tq, tk, tv, tz, T, 0.3f, variant);
+                    var y = packed ? PackedSequences.CausalAttentionSegmented(tq, tk, tv, packing!, 1, 0.3f, variant) : Tensor.CausalAttention(tq, tk, tv, tz, T, 0.3f, variant);
                     if (y is null)
                     {
                         return null;

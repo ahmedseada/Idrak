@@ -133,16 +133,16 @@ internal static class Models
     /// The KV cache layout named by <c>--kv</c>: float32 (f32), int8, bfloat16 (bf16) or any registered format; float32
     /// when not given.
     /// </summary>
-    public static Idrak.Layers.KeyValueLayout CacheLayout(ModelChoice choice)
+    public static Idrak.Abstraction.Generation.KeyValueLayout CacheLayout(ModelChoice choice)
     {
         string name = choice.Kv?.ToLowerInvariant() switch { null or "f32" or "fp32" => "float32", "bf16" => "bfloat16", var other => other };
         try
         {
-            return Idrak.Layers.KeyValueLayouts.Get(name);
+            return Idrak.Abstraction.Generation.KeyValueLayouts.Get(name);
         }
         catch (NotSupportedException)
         {
-            throw new UsageException($"Unknown --kv format '{choice.Kv}'; use {string.Join(", ", Idrak.Layers.KeyValueLayouts.Names.Order(StringComparer.Ordinal))}, "
+            throw new UsageException($"Unknown --kv format '{choice.Kv}'; use {string.Join(", ", Idrak.Abstraction.Generation.KeyValueLayouts.Names.Order(StringComparer.Ordinal))}, "
                                      + "or load a plug-in that registers it (--plugin).");
         }
     }

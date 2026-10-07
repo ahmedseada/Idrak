@@ -63,7 +63,7 @@ internal static partial class Tests
             device.Backend.Upload(values, cache.Values.Storage);
             using var q = Tensor.From(query, [8, 2, 64], device);
             using var position = Tensor.From([699f], [1], device);
-            using var attention = TensorLayerPaths.AttentionDecode(q, cache, position, 1, 0.125f);
+            using var attention = Tensor.AttentionDecode(q, cache, position, 1, 0.125f);
             results.Add(attention.ToArray());
             return [.. results];
         }
@@ -670,9 +670,9 @@ internal static partial class Tests
                     using var position = Tensor.From([length - 1f], [1], device);
                     using var y = format switch
                     {
-                        KeyValueFormat.Float32 => TensorLayerPaths.AttentionDecode(q, cache, position, 1, 0.125f),
-                        KeyValueFormat.Int8 => TensorLayerPaths.AttentionInt8(q, cache, position, 1, 0.125f, tiled: false),
-                        _ => TensorLayerPaths.AttentionBFloat16(q, cache, position, 1, 0.125f, tiled: false),
+                        KeyValueFormat.Float32 => Tensor.AttentionDecode(q, cache, position, 1, 0.125f),
+                        KeyValueFormat.Int8 => Tensor.AttentionInt8(q, cache, position, 1, 0.125f, tiled: false),
+                        _ => Tensor.AttentionBFloat16(q, cache, position, 1, 0.125f, tiled: false),
                     };
                     return y.ToArray();
                 }

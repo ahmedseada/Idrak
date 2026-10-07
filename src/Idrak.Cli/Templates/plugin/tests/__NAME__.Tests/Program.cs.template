@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using Idrak;
 using Idrak.Abstraction;
+using Idrak.Abstraction.Generation;
 using Idrak.Layers;
 using Idrak.Abstraction.Training;
 using Idrak.Optimizers;

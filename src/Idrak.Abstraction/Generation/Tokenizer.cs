@@ -4,7 +4,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
-namespace Idrak.Generation;
+namespace Idrak.Abstraction.Generation;
 
 /// <summary>Turns text into token ids and back.</summary>
 public interface ITokenizer

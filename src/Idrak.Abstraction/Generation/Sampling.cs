@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-namespace Idrak;
+namespace Idrak.Abstraction.Generation;
 
 /// <summary>One sampled token with the statistics recorded by <see cref="TokenSampler"/>.</summary>
 /// <param name="Id">The chosen token id.</param>
@@ -13,7 +13,7 @@ public readonly record struct SampledToken(int Id, float Probability, float Entr
 /// <summary>
 /// Chooses the next token of each sequence from the model's logits. <see cref="TokenSampler"/> is the built-in one
 /// (temperature, top-k, top-p, min-p and penalties, on the device); implement this to plug in another strategy
-/// (constrained or grammar-guided decoding, a custom sampling rule) through <see cref="Generation.TextGenerator.CreateSampler"/>.
+/// (constrained or grammar-guided decoding, a custom sampling rule) through <c>Generation.TextGenerator.CreateSampler</c>.
 /// </summary>
 public interface ITokenSampler : IDisposable
 {

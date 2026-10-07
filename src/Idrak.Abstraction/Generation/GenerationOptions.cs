@@ -1,10 +1,10 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-namespace Idrak.Generation;
+namespace Idrak.Abstraction.Generation;
 
 /// <summary>
-/// Sampling and length settings for <see cref="TextGenerator"/>. Names and defaults follow the options of common
+/// Sampling and length settings for <c>TextGenerator</c>. Names and defaults follow the options of common
 /// local LLM servers (temperature, top_k, top_p, min_p, repeat_penalty, repeat_last_n, presence_penalty,
 /// frequency_penalty, seed, num_ctx, num_predict, stop), so requests written for them map one to one.
 /// </summary>
@@ -40,7 +40,7 @@ public sealed record GenerationOptions
     /// <summary>Context window in tokens; the model's own context length caps it.</summary>
     public int NumCtx { get; init; } = 2048;
 
-    /// <summary>Maximum tokens to generate; -1 means until a stop sequence or <see cref="TextGenerator.MaxTokens"/>.</summary>
+    /// <summary>Maximum tokens to generate; -1 means until a stop sequence or <c>TextGenerator.MaxTokens</c>.</summary>
     public int NumPredict { get; init; } = -1;
 
     /// <summary>Generation ends when the text contains any of these; the stop text itself is not returned.</summary>

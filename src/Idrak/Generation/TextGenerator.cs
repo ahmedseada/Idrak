@@ -7,20 +7,6 @@ using Idrak.Layers;
 
 namespace Idrak.Generation;
 
-/// <summary>Timing and token counts of one generation (durations as in common LLM server APIs).</summary>
-/// <param name="PromptTokens">Tokens of the (possibly truncated) prompt that were processed.</param>
-/// <param name="PromptDuration">Time to process the prompt (prefill), including the first sampled token.</param>
-/// <param name="GeneratedTokens">Tokens sampled (including any that form a stop sequence).</param>
-/// <param name="GenerationDuration">Time spent generating after the prompt.</param>
-/// <param name="TotalDuration">Wall time of the whole call.</param>
-/// <param name="ContextResets">Times the context window filled up and was re-read from its last half.</param>
-public sealed record GenerationStats(int PromptTokens, TimeSpan PromptDuration, int GeneratedTokens, TimeSpan GenerationDuration,
-    TimeSpan TotalDuration, int ContextResets)
-{
-    /// <summary>Generated tokens per second.</summary>
-    public double TokensPerSecond => GenerationDuration.TotalSeconds > 0 ? GeneratedTokens / GenerationDuration.TotalSeconds : 0;
-}
-
 /// <summary>A piece of streamed output. The last chunk has <see cref="Done"/> set, a reason and the statistics.</summary>
 /// <param name="Text">New text since the previous chunk (may be empty).</param>
 /// <param name="Done">True for the final chunk.</param>

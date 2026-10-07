@@ -52,19 +52,19 @@ internal static partial class Tests
                 {
                     Tensor.WriteKeyValues(fill, cache.Keys, zero);
                     Tensor.WriteKeyValues(fill, cache.Values, zero);
-                    run = () => TensorLayerPaths.AttentionDecode(q, cache, position, 1, 0.088f);
+                    run = () => Tensor.AttentionDecode(q, cache, position, 1, 0.088f);
                 }
                 else if (format == KeyValueFormat.Int8)
                 {
                     Tensor.WriteKeyValuesInt8(fill, cache.Keys, cache.KeyScales!, zero);
                     Tensor.WriteKeyValuesInt8(fill, cache.Values, cache.ValueScales!, zero);
-                    run = () => TensorLayerPaths.AttentionInt8(q, cache, position, 1, 0.088f, tiled: false);
+                    run = () => Tensor.AttentionInt8(q, cache, position, 1, 0.088f, tiled: false);
                 }
                 else
                 {
                     Tensor.WriteKeyValuesBFloat16(fill, cache.Keys, zero, Dim);
                     Tensor.WriteKeyValuesBFloat16(fill, cache.Values, zero, Dim);
-                    run = () => TensorLayerPaths.AttentionBFloat16(q, cache, position, 1, 0.088f, tiled: false);
+                    run = () => Tensor.AttentionBFloat16(q, cache, position, 1, 0.088f, tiled: false);
                 }
 
                 Console.WriteLine($"{$"attention, {format} cache, {Filled} positions",-44} {Time(run, 20),12}");

@@ -5,7 +5,7 @@ using System.Text.Json.Nodes;
 using Idrak;
 using Idrak.Generation;
 using Idrak.LanguageModels;
-using Formats = Idrak.Generation.ToolCallFormats;
+using Formats = Idrak.Abstraction.Generation.ToolCallFormats;
 
 // Tool-call formats: each built-in format detected from a family's published chat template (cut to the parts that
 // render tools, messages and calls), parsed from realistic output streamed in pieces split anywhere, and the parsed

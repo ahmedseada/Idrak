@@ -997,7 +997,7 @@ internal static partial class Tests
             if (cached)
             {
                 using var transposed = BFloat16Weight.FromValues([.. Enumerable.Range(0, Dim * Vocabulary).Select(i => tableValues[i % Vocabulary * Dim + i / Vocabulary])], Dim, Vocabulary, device);
-                var y = TensorLayerPaths.MatMulFrozenTransposed(x, table, transposed);
+                var y = Tensor.MatMulFrozenTransposed(x, table, transposed);
                 (y * y).Sum().Backward();
                 inputGrad = x.Grad!.ToArray();
                 return y.ToArray();
@@ -1053,7 +1053,7 @@ internal static partial class Tests
             using var scope = new TensorScope();
             var layer = new Linear(In, Out, bias: false, device: device, random: random);
             layer.Adapter = new LoraAdapter(Tensor.From(Values(In * Rank), [In, Rank], device), Tensor.From(Values(Rank * Out), [Rank, Out], device), Rank, 2f);
-            Check(TensorLayerPaths.LoraProducts(Tensor.From(Values(Steps * In), [Steps, In], device), [layer]) is null, "no fused LoRA products on this device");
+            Check(Linear.LoraProducts(Tensor.From(Values(Steps * In), [Steps, In], device), [layer]) is null, "no fused LoRA products on this device");
             return;
         }
 
@@ -1145,7 +1145,7 @@ internal static partial class Tests
                             Check(layers.All(l => l.AttachFloat8()), $"{format}: FP8 copies of the weights");
                         }
 
-                        ys = TensorLayerPaths.LoraProducts(x, layers) ?? throw new Exception($"{format} × {count}: no fused LoRA products on {device}");
+                        ys = Linear.LoraProducts(x, layers) ?? throw new Exception($"{format} × {count}: no fused LoRA products on {device}");
                         foreach (var layer in layers)
                         {
                             layer.DetachFloat8();

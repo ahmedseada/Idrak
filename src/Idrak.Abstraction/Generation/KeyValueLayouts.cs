@@ -1,9 +1,9 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using Idrak.Backends;
+using Idrak.Abstraction.Devices;
 
-namespace Idrak.Layers;
+namespace Idrak.Abstraction.Generation;
 
 /// <summary>
 /// How a <see cref="KeyValueCache"/> stores keys and values and attends over them: the attention layers write and read a
@@ -73,7 +73,7 @@ public abstract class KeyValueLayout
     /// <param name="steps">New positions in this step.</param>
     /// <param name="scale">The scale of the scores (1 / √headDim).</param>
     /// <param name="decoderKernels">
-    /// True from decoder models (<see cref="DecoderSpec"/>), whose built-in formats use the decoding and tiled attention
+    /// True from decoder models (<c>DecoderSpec</c>), whose built-in formats use the decoding and tiled attention
     /// kernels; false from the multi-head attention layer. A format of one's own may ignore it.
     /// </param>
     public virtual Tensor Attend(Tensor q, KeyValueCache cache, DecodingContext context, int steps, float scale, bool decoderKernels)
@@ -244,7 +244,7 @@ public static class KeyValueLayouts
             }
 
             return cache.HeadDim <= capabilities.DecodeAttentionHeadDim
-                ? TensorLayerPaths.AttentionDecode(q, cache, context.Position, steps, scale, variant)                        // only the filled positions
+                ? Tensor.AttentionDecode(q, cache, context.Position, steps, scale, variant)                        // only the filled positions
                 : null;
         }
     }
@@ -285,16 +285,16 @@ public static class KeyValueLayouts
         {
             if (cache.HeadDim <= q.Backend.Capabilities.DecodeAttentionHeadDim)
             {
-                return TensorLayerPaths.AttentionInt8(q, cache, context.Position, steps, scale, tiled: steps >= 8);   // only the filled positions
+                return Tensor.AttentionInt8(q, cache, context.Position, steps, scale, tiled: steps >= 8);   // only the filled positions
             }
 
-            var weights = TensorLayerPaths.AttentionScoresInt8(q, cache).ScaleMaskSoftmax(scale, context.Mask);
-            return TensorLayerPaths.AttentionContextInt8(weights, cache);
+            var weights = Tensor.AttentionScoresInt8(q, cache).ScaleMaskSoftmax(scale, context.Mask);
+            return Tensor.AttentionContextInt8(weights, cache);
         }
 
         internal override Tensor? AttendVariant(Tensor q, KeyValueCache cache, DecodingContext context, int steps, float scale, AttentionVariant variant) =>
             cache.HeadDim <= q.Backend.Capabilities.DecodeAttentionHeadDim
-                ? TensorLayerPaths.AttentionInt8(q, cache, context.Position, steps, scale, tiled: steps >= 8, variant)
+                ? Tensor.AttentionInt8(q, cache, context.Position, steps, scale, tiled: steps >= 8, variant)
                 : null;
     }
 
@@ -331,11 +331,11 @@ public static class KeyValueLayouts
         // Decoder models read the halves directly; the multi-head attention layer attends through the expanded values.
         public override Tensor Attend(Tensor q, KeyValueCache cache, DecodingContext context, int steps, float scale, bool decoderKernels) =>
             decoderKernels
-                ? TensorLayerPaths.AttentionBFloat16(q, cache, context.Position, steps, scale, tiled: steps >= 8)   // only the filled positions
+                ? Tensor.AttentionBFloat16(q, cache, context.Position, steps, scale, tiled: steps >= 8)   // only the filled positions
                 : base.Attend(q, cache, context, steps, scale, decoderKernels);
 
         internal override Tensor? AttendVariant(Tensor q, KeyValueCache cache, DecodingContext context, int steps, float scale, AttentionVariant variant) =>
-            TensorLayerPaths.AttentionBFloat16(q, cache, context.Position, steps, scale, tiled: steps >= 8, variant);
+            Tensor.AttentionBFloat16(q, cache, context.Position, steps, scale, tiled: steps >= 8, variant);
     }
 
 }

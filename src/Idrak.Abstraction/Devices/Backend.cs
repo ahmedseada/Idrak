@@ -473,7 +473,7 @@ internal abstract partial class Backend
     public virtual bool MatMulLowRankKernel(Storage a, Storage b, Storage c, int m, int n, int k, bool transB, float beta, Storage u, Storage v, int rank) => false;
 
     /// <summary>
-    /// c = beta·c + a · Wᵀ (+ u · vᵀ) with W a bfloat16 weight [n, k] as <c>Layers.BFloat16Weight</c> packs it (two
+    /// c = beta·c + a · Wᵀ (+ u · vᵀ) with W a bfloat16 weight [n, k] as <c>BFloat16Weight</c> packs it (two
     /// values per word along k), read as stored: the input gradient through a frozen bfloat16 layer (and its adapter's
     /// dt · Aᵀ with u = dt [m, rank], v = A [n, rank]) without expanding the weight to float. u null: no low-rank term.
     /// False when the device has no such kernel (callers then expand the weight).

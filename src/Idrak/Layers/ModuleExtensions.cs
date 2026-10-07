@@ -40,7 +40,7 @@ public static class ModuleExtensions
     /// recomputed then (one more forward pass of the module, far less memory: only its output is stored). Use it for the
     /// blocks of a deep model when training long sequences. Without gradient recording it is an ordinary forward pass.
     /// </summary>
-    public static Tensor ForwardCheckpointed(this Module module, Tensor input) => TensorLayerPaths.Checkpoint(module.Forward, input);
+    public static Tensor ForwardCheckpointed(this Module module, Tensor input) => Checkpointing.Checkpoint(module.Forward, input);
 
     // ------------------------------------------------------------------ saving only what changed
 

@@ -260,7 +260,7 @@ internal static partial class Tests
                     logits = all[^model.Spec.Vocabulary..];
                 }
 
-                var generator = model.CreateGenerator(global::Idrak.Layers.KeyValueFormat.Float32, model.MaxPositions);
+                var generator = model.CreateGenerator(global::Idrak.Abstraction.Generation.KeyValueFormat.Float32, model.MaxPositions);
                 var (generated, _, _) = generator.Generate(text, new GenerationOptions { TopK = 1, Temperature = 1f, RepeatPenalty = 1f, NumPredict = 6, NumCtx = model.MaxPositions, Seed = 0 });
                 reference = new JsonObject
                 {

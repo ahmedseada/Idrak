@@ -6,249 +6,11 @@ using Idrak.Diagnostics;
 using Idrak.Layers;
 using System.Numerics;
 
-namespace Idrak;
+namespace Idrak.Layers;
 
-/// <summary>
-/// Tensor operations that take layer types (packed weights, key/value caches, <c>Linear</c> and norm layers): the fused
-/// paths of the decoder layers. They stay in Idrak (static methods, and extension methods of <see cref="Tensor"/> for those
-/// called on a tensor), so Tensor itself moves to Idrak.Abstraction without the layers (plan 10, phase 2).
-/// </summary>
-internal static class TensorLayerPaths
+// Fused paths over several linear layers at once (packed products, LoRA, a projection or feed-forward in one pass).
+public sealed partial class Linear
 {
-
-    // Up to this many rows the product reads the int8 weights directly (token-by-token decoding: 4× less weight traffic);
-    // above it the weights are dequantized once and the float matrix product is used.
-    private const int Int8DirectRows = 8;
-
-
-    /// <summary>
-    /// [..., k] × <paramref name="weight"/> ([k, n], int8) → [..., n]. Gradients flow to this tensor (the int8 weights are
-    /// fixed), so layers before a quantized layer, and LoRA adapters on it, can still be trained.
-    /// </summary>
-    internal static Tensor MatMulInt8(this Tensor self, Int8Weight weight)
-    {
-        self.ThrowIfDisposed();
-        int k = weight.Rows, n = weight.Columns;
-        if (self.Rank < 2 || self._shape[^1] != k)
-        {
-            throw new ArgumentException($"MatMul with an int8 [{k}, {n}] weight needs [..., {k}], got {Tensor.FormatShape(self._shape)}.");
-        }
-
-        if (weight.Packed.Device != self.Device)
-        {
-            throw new ArgumentException($"The int8 weight is on {weight.Packed.Device}, the input on {self.Device}.");
-        }
-
-        long start = Telemetry.Start(TelemetryLevel.Operations);
-        var flat = self.Rank == 2 ? self : self.Reshape(-1, k);
-        int m = flat._shape[0];
-        var y = Tensor.Empty([m, n], self.Device);
-        if (m <= Int8DirectRows)
-        {
-            // Few rows: the direct kernels, unless the device's packed product is faster for this shape.
-            if (!(self.Backend.PrefersPackedMatMul(PackedFormat.Int8, flat.Storage, weight.Packed.Storage, weight.Scales.Storage, y.Storage, m, n, k)
-                  && self.Backend.PackedMatMulLarge(PackedFormat.Int8, flat.Storage, weight.Packed.Storage, weight.Scales.Storage, y.Storage, m, n, k)))
-            {
-                self.Backend.Int8MatMul(flat.Storage, weight.Packed.Storage, weight.Scales.Storage, y.Storage, m, n, k);
-            }
-        }
-        else if (!self.Backend.PackedMatMulLarge(PackedFormat.Int8, flat.Storage, weight.Packed.Storage, weight.Scales.Storage, y.Storage, m, n, k))
-        {
-            using var w = Dequantized(weight);
-            self.Backend.MatMul(flat.Storage, w.Storage, y.Storage, m, n, k, false, false, 0f);
-        }
-
-        if (Tensor.WillRecord(flat))
-        {
-            y.Record("matmul_int8", g =>
-            {
-                using var w = Dequantized(weight);
-                flat.Backend.BatchedMatMul(g.Storage, w.Storage, flat.GradStorage(), 1, m, k, n, false, true, 1f);   // dx += dy · wᵀ
-            }, flat);
-        }
-
-        var result = self.Rank == 2 ? y : y.Reshape([.. self._shape[..^1], n]);
-        return Tensor.Traced("matmul_int8", result, start);
-    }
-
-
-    /// <summary>
-    /// [..., k] × <paramref name="weight"/> ([k, n], bfloat16) → [..., n]. Few rows read the bfloat16 weights directly;
-    /// more expand them to float32 once. Gradients flow to this tensor (the weights are fixed).
-    /// </summary>
-    internal static Tensor MatMulBFloat16(this Tensor self, BFloat16Weight weight)
-    {
-        self.ThrowIfDisposed();
-        int k = weight.Rows, n = weight.Columns;
-        if (self.Rank < 2 || self._shape[^1] != k)
-        {
-            throw new ArgumentException($"MatMul with a bfloat16 [{k}, {n}] weight needs [..., {k}], got {Tensor.FormatShape(self._shape)}.");
-        }
-
-        if (weight.Packed.Device != self.Device)
-        {
-            throw new ArgumentException($"The bfloat16 weight is on {weight.Packed.Device}, the input on {self.Device}.");
-        }
-
-        long start = Telemetry.Start(TelemetryLevel.Operations);
-        var flat = self.Rank == 2 ? self : self.Reshape(-1, k);
-        int m = flat._shape[0];
-        var y = Tensor.Empty([m, n], self.Device);
-        self.Backend.BFloat16MatMul(flat.Storage, weight.Packed.Storage, y.Storage, m, n, k);
-        if (Tensor.WillRecord(flat))
-        {
-            y.Record("matmul_bf16", g =>
-            {
-                if (flat.Backend.BFloat16TransposedMatMul(g.Storage, weight.Packed.Storage, flat.GradStorage(), m, k, n, 1f, null, null, 0))
-                {
-                    return;                                                                        // dx += dy · wᵀ, w as stored
-                }
-
-                using var w = Tensor.Empty([k, n], weight.Packed.Device, track: false);
-                weight.Packed.Backend.BFloat16Dequantize(weight.Packed.Storage, w.Storage, k, n);
-                flat.Backend.BatchedMatMul(g.Storage, w.Storage, flat.GradStorage(), 1, m, k, n, false, true, 1f);   // dx += dy · wᵀ
-            }, flat);
-        }
-
-        var result = self.Rank == 2 ? y : y.Reshape([.. self._shape[..^1], n]);
-        return Tensor.Traced("matmul_bf16", result, start);
-    }
-
-
-    /// <summary>
-    /// [..., k] × <paramref name="weight"/> ([k, n], 4-bit) → [..., n]. Few rows read the nibbles directly; more expand
-    /// them to float32 once. Gradients flow to this tensor (the weights are fixed), so LoRA adapters on it train (QLoRA).
-    /// </summary>
-    internal static Tensor MatMulInt4(this Tensor self, Int4Weight weight)
-    {
-        self.ThrowIfDisposed();
-        int k = weight.Rows, n = weight.Columns;
-        if (self.Rank < 2 || self._shape[^1] != k)
-        {
-            throw new ArgumentException($"MatMul with an int4 [{k}, {n}] weight needs [..., {k}], got {Tensor.FormatShape(self._shape)}.");
-        }
-
-        if (weight.Packed.Device != self.Device)
-        {
-            throw new ArgumentException($"The int4 weight is on {weight.Packed.Device}, the input on {self.Device}.");
-        }
-
-        long start = Telemetry.Start(TelemetryLevel.Operations);
-        var flat = self.Rank == 2 ? self : self.Reshape(-1, k);
-        int m = flat._shape[0];
-        var y = Tensor.Empty([m, n], self.Device);
-        self.Backend.Int4MatMul(flat.Storage, weight.Packed.Storage, weight.Scales.Storage, y.Storage, m, n, k);
-        if (Tensor.WillRecord(flat))
-        {
-            y.Record("matmul_int4", g =>
-            {
-                using var w = Tensor.Empty([k, n], weight.Packed.Device, track: false);
-                weight.Packed.Backend.Int4Dequantize(weight.Packed.Storage, weight.Scales.Storage, w.Storage, k, n);
-                flat.Backend.BatchedMatMul(g.Storage, w.Storage, flat.GradStorage(), 1, m, k, n, false, true, 1f);   // dx += dy · wᵀ
-            }, flat);
-        }
-
-        var result = self.Rank == 2 ? y : y.Reshape([.. self._shape[..^1], n]);
-        return Tensor.Traced("matmul_int4", result, start);
-    }
-
-
-    /// <summary>
-    /// [..., k] × <paramref name="weight"/> ([k, n], a format without a product of its own) → [..., n]: the weights
-    /// expanded with <see cref="PackedWeight.Dequantize"/> for the product (and again for the gradient), freed after it.
-    /// Gradients flow to this tensor (the weights are fixed). Not recordable into a device graph: the expansion may read
-    /// the host, which a replay would not repeat.
-    /// </summary>
-    internal static Tensor MatMulExpanded(this Tensor self, PackedWeight weight)
-    {
-        self.ThrowIfDisposed();
-        int k = weight.Rows, n = weight.Columns;
-        if (self.Rank < 2 || self._shape[^1] != k)
-        {
-            throw new ArgumentException($"MatMul with a {weight.Name} [{k}, {n}] weight needs [..., {k}], got {Tensor.FormatShape(self._shape)}.");
-        }
-
-        if (ComputeGraph.IsCapturing)
-        {
-            throw new NotSupportedException($"{weight.Name} weights have no product of their own (PackedWeight.MatMul), so the step is not recorded as a graph.");
-        }
-
-        long start = Telemetry.Start(TelemetryLevel.Operations);
-        var flat = self.Rank == 2 ? self : self.Reshape(-1, k);
-        int m = flat._shape[0];
-        var y = Tensor.Empty([m, n], self.Device);
-        using (var w = Expanded(weight, self.Device))
-        {
-            self.Backend.MatMul(flat.Storage, w.Storage, y.Storage, m, n, k, false, false, 0f);
-        }
-
-        if (Tensor.WillRecord(flat))
-        {
-            y.Record("matmul_packed", g =>
-            {
-                using var w = Expanded(weight, flat.Device);
-                flat.Backend.BatchedMatMul(g.Storage, w.Storage, flat.GradStorage(), 1, m, k, n, false, true, 1f);   // dx += dy · wᵀ
-            }, flat);
-        }
-
-        var result = self.Rank == 2 ? y : y.Reshape([.. self._shape[..^1], n]);
-        return Tensor.Traced("matmul_packed", result, start);
-    }
-
-
-    /// <summary>
-    /// <paramref name="forward"/>(input) without storing its intermediate results (activation checkpointing): the
-    /// forward pass runs without recording, and the backward pass runs it again with recording, back-propagates through
-    /// it and frees it at once. Parameters used inside receive their gradients then. Memory drops to the checkpointed
-    /// outputs at the cost of a second forward pass. The function must be deterministic (no dropout).
-    /// </summary>
-    internal static Tensor Checkpoint(Func<Tensor, Tensor> forward, Tensor input)
-    {
-        if (!Autograd.IsEnabled)
-        {
-            return forward(input);
-        }
-
-        // Only the output survives the first pass: the module's intermediate results are freed at once.
-        Tensor output;
-        var seeds = new List<uint>();                                   // dropout masks are drawn again identically
-        using (Layers.DropoutSeeds.Record(seeds))
-        using (Autograd.NoGrad())
-        using (var pass = new TensorScope())
-        {
-            output = pass.Keep(forward(input));
-        }
-
-        if (ReferenceEquals(output, input))
-        {
-            return output;
-        }
-
-        output.Record("checkpoint", g =>
-        {
-            using var scope = new TensorScope();
-            var replay = input.Detach();
-            replay.RequiresGrad = input.RequiresGrad;
-            Tensor recomputed;
-            using (Layers.DropoutSeeds.Replay(seeds))
-            {
-                recomputed = forward(replay);
-            }
-
-            if (recomputed.RequiresGrad)
-            {
-                recomputed.Backward(g);
-            }
-
-            if (input.RequiresGrad && replay.Grad is { } grad)
-            {
-                input.AddGradient(grad, adopt: true);             // the replay dies with this scope
-            }
-        }, input);
-        return output;
-    }
-
-
     /// <summary>
     /// x · W_j + scale_j · (x·A_j)·B_j for 1-3 layers with frozen weights (float32, bfloat16 or 4-bit) and LoRA adapters of
     /// one rank ≤ 32, with each low-rank term computed inside its base product (one more k step of the tensor-core kernel)
@@ -407,7 +169,6 @@ internal static class TensorLayerPaths
         return results;
     }
 
-
     /// <summary>
     /// The frozen packed layers' products of one input in one device pass (<see cref="MatMulPackedMany"/>), recorded for
     /// training: each output's gradient flows to the input (dx += g · Wᵀ with the weight expanded to float32). Null when
@@ -447,35 +208,6 @@ internal static class TensorLayerPaths
         return outputs;
     }
 
-
-    /// <summary>
-    /// x · Wᵀ for a frozen <paramref name="weight"/> W [outputs, inputs] also kept as <paramref name="transposed"/> Wᵀ
-    /// [inputs, outputs]: the product reads Wᵀ as stored and the input's gradient (g · W) reads W as stored, so neither
-    /// direction makes a transposed copy of W (the tensor-core kernels copy transposed operands into place first).
-    /// W receives no gradient.
-    /// </summary>
-    internal static Tensor MatMulFrozenTransposed(Tensor input, Tensor weight, Layers.BFloat16Weight transposed)
-    {
-        Tensor output;
-        using (Autograd.NoGrad())
-        {
-            output = input.MatMulBFloat16(transposed);
-        }
-
-        if (Tensor.WillRecord(input))
-        {
-            int outputs = weight._shape[0], inputs = weight._shape[1];
-            output.Record("matmul_frozen", g =>
-            {
-                // dx += g · W, accumulated by the product itself (no temporary).
-                input.Backend.BatchedMatMul(g.Storage, weight.Storage, input.GradStorage(), 1, g.Size / outputs, inputs, outputs, false, false, 1f);
-            }, input);
-        }
-
-        return output;
-    }
-
-
     /// <summary>
     /// (act(gate) · up) · W for a packed layer W with few rows, the activation applied as the input is read (not recorded;
     /// no bias), or null when the layer is not packed or the device has no fused version.
@@ -507,7 +239,6 @@ internal static class TensorLayerPaths
 
         return Tensor.Traced("matmul_gated_packed", y, start);
     }
-
 
     /// <summary>
     /// residual + x · W for a packed layer W with few rows (no bias, no adapter) and the RMS normalization of that sum
@@ -548,7 +279,6 @@ internal static class TensorLayerPaths
 
         return (sum, Tensor.Traced("matmul_add_rms_norm_packed", normalized, start));
     }
-
 
     /// <summary>
     /// act(input · gate) · (input · up) for packed gate and up layers of one kind with few rows (no biases or adapters),
@@ -592,7 +322,6 @@ internal static class TensorLayerPaths
 
         return Tensor.Traced("matmul_gated_pair_packed", hidden, start);
     }
-
 
     /// <summary>
     /// The layers' packed products of one input in one device pass (few rows, not recorded), or null when the device has
@@ -641,164 +370,6 @@ internal static class TensorLayerPaths
 
         return outputs;
     }
-
-
-    /// <summary>
-    /// An attention layer's projections q [batch, steps, heads·dim], k and v [batch, steps, kvHeads·dim] in the layouts
-    /// attention reads, in one pass where the device can (inference: not recorded): each query and key head
-    /// RMS-normalized with gain (when the norms are given) and rotated (when the tables are given), queries as
-    /// [batch·kvHeads, group·steps, dim] (the heads sharing a key/value head stacked), keys and values as
-    /// [batch·kvHeads, steps, dim], or, with a cache, written into it at <paramref name="position"/> (then K and V are
-    /// null). Null when the device has no fused version.
-    /// </summary>
-    internal static (Tensor Q, Tensor? K, Tensor? V)? NormRopeHeads(Tensor q, Tensor k, Tensor v, int heads, int kvHeads, int dim,
-        Layers.RMSNorm? queryNorm, Layers.RMSNorm? keyNorm, Tensor? cos, Tensor? sin, Tensor positions, bool interleaved,
-        Layers.KeyValueCache? cache, Tensor? position)
-    {
-        q.ThrowIfDisposed();
-        k.ThrowIfDisposed();
-        v.ThrowIfDisposed();
-        if ((queryNorm is null) != (keyNorm is null) || (cos is null) != (sin is null) || (cache is null) != (position is null)
-            || cache is { Layout.FusedWrite: false } || !q.Backend.Capabilities.FusedKernels)
-        {
-            return null;
-        }
-
-        long start = Telemetry.Start(TelemetryLevel.Operations);
-        int n = q._shape[0], t = q._shape[1];
-        var yq = Tensor.Empty([n * kvHeads, heads / kvHeads * t, dim], q.Device);
-        Tensor? yk = null, yv = null;
-        int capacity = t, stride = dim;
-        bool bfloat16 = cache is { Layout.HalfWords: true };
-        if (cache is null)
-        {
-            yk = Tensor.Empty([n * kvHeads, t, dim], q.Device);
-            yv = Tensor.Empty([n * kvHeads, t, dim], q.Device);
-        }
-        else
-        {
-            capacity = cache.Keys._shape[1];
-            stride = bfloat16 ? 2 * cache.Keys._shape[2] : cache.Keys._shape[2];
-        }
-
-        if (!q.Backend.NormRopeHeads(q.Storage, k.Storage, v.Storage, n, t, heads, kvHeads, dim, queryNorm?.Gain.Storage, queryNorm?.Epsilon ?? 0f,
-            queryNorm?.Offset ?? 0f, keyNorm?.Gain.Storage, keyNorm?.Epsilon ?? 0f, keyNorm?.Offset ?? 0f, cos?.Storage, sin?.Storage, positions.Storage,
-            cos?._shape[1] ?? 0, interleaved, yq.Storage, (yk ?? cache!.Keys).Storage, (yv ?? cache!.Values).Storage, position?.Storage, capacity, stride,
-            bfloat16))
-        {
-            yq.Dispose();
-            yk?.Dispose();
-            yv?.Dispose();
-            return null;
-        }
-
-        Tensor.Traced("norm_rope_heads", yq, start);
-        return (yq, yk, yv);
-    }
-
-
-    /// <summary>
-    /// Attention of q [heads, rowsPerHead, dim] over a float cache filled up to <paramref name="position"/> (see
-    /// Backend.AttentionDecode): the softmax and the weighted values in one pass, reading only filled positions.
-    /// </summary>
-    internal static Tensor AttentionDecode(Tensor q, Layers.KeyValueCache cache, Tensor position, int steps, float scale, AttentionVariant variant = default)
-    {
-        long start = Telemetry.Start(TelemetryLevel.Operations);
-        int heads = q._shape[0], rowsPerHead = q._shape[1], dim = q._shape[2];
-        var y = Tensor.Empty([heads, rowsPerHead, dim], q.Device);
-        q.Backend.AttentionDecode(q.Storage, cache.Keys.Storage, cache.Values.Storage, position.Storage, y.Storage, heads, rowsPerHead, steps,
-            cache.Keys._shape[1], dim, scale, variant);
-        return Tensor.Traced("attention_decode", y, start);
-    }
-
-
-    /// <summary>
-    /// <see cref="Tensor.CausalAttention"/> over packed sequences: keys and values [heads, steps, dim], and each position sees
-    /// only its own sequence (<paramref name="packing"/>'s starts; head h belongs to packed row h / <paramref name="headsPerRow"/>).
-    /// Null when the device has no such pass.
-    /// </summary>
-    internal static Tensor? CausalAttentionSegmented(Tensor q, Tensor keys, Tensor values, Layers.PackedSequences packing, int headsPerRow, float scale,
-        AttentionVariant variant = default)
-    {
-        long start = Telemetry.Start(TelemetryLevel.Operations);
-        int heads = q._shape[0], rowsPerHead = q._shape[1], dim = q._shape[2], steps = keys._shape[1];
-        var y = Tensor.Empty([heads, rowsPerHead, dim], q.Device);
-        bool record = Autograd.IsEnabled && (q.RequiresGrad || keys.RequiresGrad || values.RequiresGrad);
-        var lse = record ? Tensor.Empty([heads, rowsPerHead], q.Device, track: false) : null;
-        if (!q.Backend.AttentionSegmented(q.Storage, keys.Storage, values.Storage, y.Storage, lse?.Storage, packing.Starts.Storage, packing.Ends.Storage,
-                heads, headsPerRow, rowsPerHead, steps, dim, scale, variant))
-        {
-            y.Dispose();
-            lse?.Dispose();
-            return null;
-        }
-
-        if (record)
-        {
-            y.Record("attention_packed", g =>
-            {
-                using var dq = q.RequiresGrad ? null : Tensor.Empty(q._shape, q.Device, zeroed: true, track: false);
-                using var dk = keys.RequiresGrad ? null : Tensor.Empty(keys._shape, q.Device, zeroed: true, track: false);
-                using var dv = values.RequiresGrad ? null : Tensor.Empty(values._shape, q.Device, zeroed: true, track: false);
-                if (!q.Backend.AttentionSegmentedBackward(q.Storage, keys.Storage, values.Storage, y.Storage, lse!.Storage, g.Storage,
-                        dq?.Storage ?? q.GradStorage(), dk?.Storage ?? keys.GradStorage(), dv?.Storage ?? values.GradStorage(),
-                        packing.Starts.Storage, packing.Ends.Storage, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant))
-                {
-                    throw new NotSupportedException("Packed attention's backward pass is not available on this device.");
-                }
-
-                lse.Dispose();
-            }, q, keys, values);
-        }
-
-        return Tensor.Traced("attention_packed", y, start);
-    }
-
-
-    /// <summary>Attention of q [heads, rowsPerHead, dim] over an int8 cache filled up to <paramref name="position"/>.</summary>
-    internal static Tensor AttentionInt8(Tensor q, Layers.KeyValueCache cache, Tensor position, int steps, float scale, bool tiled, AttentionVariant variant = default)
-    {
-        long start = Telemetry.Start(TelemetryLevel.Operations);
-        int heads = q._shape[0], rowsPerHead = q._shape[1], dim = q._shape[2];
-        var y = Tensor.Empty([heads, rowsPerHead, dim], q.Device);
-        q.Backend.AttentionInt8(q.Storage, cache.Keys.Storage, cache.Values.Storage, cache.KeyScales!.Storage, cache.ValueScales!.Storage,
-            position.Storage, y.Storage, heads, rowsPerHead, steps, cache.Keys._shape[1], dim, scale, tiled, variant);
-        return Tensor.Traced("attention_int8", y, start);
-    }
-
-
-    /// <summary>Attention of q [heads, rows, dim] over the filled part of a bfloat16 cache.</summary>
-    internal static Tensor AttentionBFloat16(Tensor q, Layers.KeyValueCache cache, Tensor position, int steps, float scale, bool tiled, AttentionVariant variant = default)
-    {
-        long start = Telemetry.Start(TelemetryLevel.Operations);
-        int heads = q._shape[0], rowsPerHead = q._shape[1], dim = q._shape[2];
-        var y = Tensor.Empty([heads, rowsPerHead, dim], q.Device);
-        q.Backend.AttentionBFloat16(q.Storage, cache.Keys.Storage, cache.Values.Storage, position.Storage, y.Storage, heads, rowsPerHead, steps,
-            cache.Keys._shape[1], dim, scale, tiled, variant);
-
-        return Tensor.Traced("attention_bf16", y, start);
-    }
-
-
-    /// <summary>q [rows, steps, dim] · int8 keysᵀ → [rows, steps, capacity].</summary>
-    internal static Tensor AttentionScoresInt8(Tensor q, Layers.KeyValueCache cache)
-    {
-        int rows = q._shape[0], steps = q._shape[1], capacity = cache.Keys._shape[1];
-        var y = Tensor.Empty([rows, steps, capacity], q.Device);
-        q.Backend.AttentionScoresInt8(q.Storage, cache.Keys.Storage, cache.KeyScales!.Storage, y.Storage, rows, steps, capacity, cache.HeadDim);
-        return y;
-    }
-
-
-    /// <summary>weights [rows, steps, capacity] · int8 values → [rows, steps, dim].</summary>
-    internal static Tensor AttentionContextInt8(Tensor weights, Layers.KeyValueCache cache)
-    {
-        int rows = weights._shape[0], steps = weights._shape[1], capacity = weights._shape[2];
-        var y = Tensor.Empty([rows, steps, cache.HeadDim], weights.Device);
-        weights.Backend.AttentionContextInt8(weights.Storage, cache.Values.Storage, cache.ValueScales!.Storage, y.Storage, rows, steps, capacity, cache.HeadDim);
-        return y;
-    }
-
 
     /// <summary>
     /// x [..., k] through several projections, their outputs side by side: [..., Σ outᵢ] (for attention: queries, keys and
@@ -855,7 +426,6 @@ internal static class TensorLayerPaths
 
         return Tensor.Traced("project_packed", y, start);
     }
-
 
     /// <summary>
     /// down(gelu(up(x))) (GELU tanh approximation, biases optional) with the activation applied as the up projection's
@@ -925,44 +495,5 @@ internal static class TensorLayerPaths
             pre.Dispose();
         }, [x, .. parameters]);
         return Tensor.Traced("feed_forward_gelu", y, start);
-    }
-
-
-    // The weights as float32 [rows, columns], checked: on `device`, the shape the format reports.
-    private static Tensor Expanded(PackedWeight weight, Device device)
-    {
-        var w = weight.Dequantize();
-        if (w.Device != device || w.Rank != 2 || w.Shape[0] != weight.Rows || w.Shape[1] != weight.Columns)
-        {
-            w.Dispose();
-            throw new InvalidOperationException(
-                $"{weight.Name}.Dequantize gave {Tensor.FormatShape(w.Shape)} on {w.Device}; a [{weight.Rows}, {weight.Columns}] product on {device} needs that shape there.");
-        }
-
-        return w;
-    }
-
-
-    private static Tensor Dequantized(Int8Weight weight)
-    {
-        var w = Tensor.Empty([weight.Rows, weight.Columns], weight.Packed.Device, track: false);
-        weight.Packed.Backend.Int8Dequantize(weight.Packed.Storage, weight.Scales.Storage, w.Storage, weight.Rows, weight.Columns);
-        return w;
-    }
-
-
-    /// <summary>Embedding lookup from a bfloat16 [vocabulary, dim] table (fixed: no gradient).</summary>
-    internal static Tensor EmbeddingLookup(Layers.BFloat16Weight table, Tensor indices)
-    {
-        indices.ThrowIfDisposed();
-        if (table.Packed.Device != indices.Device)
-        {
-            throw new ArgumentException($"The embedding table is on {table.Packed.Device}, the ids on {indices.Device}.");
-        }
-
-        long start = Telemetry.Start(TelemetryLevel.Operations);
-        var y = Tensor.Empty([.. indices._shape, table.Columns], indices.Device);
-        indices.Backend.GatherBFloat16(table.Packed.Storage, indices.Storage, y.Storage, indices.Size, table.Columns, table.Rows);
-        return Tensor.Traced("embedding_bf16", y, start);
     }
 }

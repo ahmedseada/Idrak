@@ -8,13 +8,6 @@ Idrak.Datasets.IParquetCodec
 Idrak.Datasets.ITextNormalizer
 Idrak.Datasets.ParquetCodecs
 Idrak.Diagnostics.ITelemetryHook
-Idrak.Generation.ChatTemplate
-Idrak.Generation.IChatModel
-Idrak.Generation.ITokenizer
-Idrak.Generation.IToolCallParser
-Idrak.Generation.MarkedToolCallParser
-Idrak.Generation.ToolCallFormats
-Idrak.ITokenSampler
 Idrak.Inference.EngineModel
 Idrak.Inference.IPredictor<TIn, TOut>
 Idrak.LanguageModels.CheckpointFormats
@@ -33,16 +26,11 @@ Idrak.LanguageModels.PretrainedArchitectures
 Idrak.LanguageModels.TeacherDistributions
 Idrak.LanguageModels.TokenizerComponents
 Idrak.Layers.GraphOps
-Idrak.Layers.ICachedModule
 Idrak.Layers.ILinearAdapter
 Idrak.Layers.IWeightSource
-Idrak.Layers.KeyValueLayout
-Idrak.Layers.KeyValueLayouts
 Idrak.Layers.LayerTypes
 Idrak.Layers.NetworkOps
-Idrak.Layers.PackedWeight
 Idrak.Layers.RecurrentModule
-Idrak.Layers.RopeScalings
 Idrak.Layers.WeightCodec
 Idrak.Onnx.OnnxBuiltIns
 Idrak.Onnx.OnnxExportOps
