@@ -3,7 +3,7 @@
 
 using System.Text;
 
-namespace Idrak.Datasets.Parquet;
+namespace Idrak.Data.Parquet;
 
 /// <summary>A Thrift struct read with the compact protocol: field id → value (bool, long, double, byte[], List, ThriftStruct).</summary>
 internal sealed class ThriftStruct

@@ -6,7 +6,7 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
-using Idrak.Datasets;
+using Idrak.Data;
 
 namespace Idrak.Cli.Commands.Data;
 
@@ -234,12 +234,12 @@ internal sealed class DataTool(ToolConsole console)
                                + (recipe.EvaluationFraction > 0 ? $", {recipe.EvaluationFraction:P1} held out for evaluation" : ""));
                 var (train, evaluation) = recipe.Build(downloads);
                 var buildWatch = Stopwatch.StartNew();
-                long written = new Dataset(() => console.Track(train, "writing")).WriteJsonLines(output!);
+                long written = new DatasetRows(() => console.Track(train, "writing")).WriteJsonLines(output!);
                 _out.WriteLine($"{written:N0} rows written to {output} ({buildWatch.Elapsed.TotalSeconds:F1} s)");
                 if (evaluation is not null)
                 {
                     string evalFile = evalOutput ?? Path.ChangeExtension(output!, null) + ".eval.jsonl";
-                    long held = new Dataset(() => console.Track(evaluation, "evaluation")).WriteJsonLines(evalFile);
+                    long held = new DatasetRows(() => console.Track(evaluation, "evaluation")).WriteJsonLines(evalFile);
                     _out.WriteLine($"{held:N0} evaluation rows written to {evalFile}");
                 }
 

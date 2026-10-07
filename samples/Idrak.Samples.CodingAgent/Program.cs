@@ -93,7 +93,7 @@ var cacheFormat = kv8 ? KeyValueFormat.Int8 : kv16 ? KeyValueFormat.BFloat16 : K
 
 // A model folder, or a Hugging Face model id (owner/name): found in a cache or downloaded (with progress) on first use.
 static string ResolveModel(string model) =>
-    ModelSource.Resolve(model, downloader: new Idrak.Datasets.ConsoleStatus().CreateDownloader());
+    ModelSource.Resolve(model, downloader: new Idrak.Data.ConsoleStatus().CreateDownloader());
 
 // npm packages of the tasks' shared projects, installed once (each run links them instead of installing).
 static async Task InstallDependencies(IEnumerable<AgentTask> tasks)

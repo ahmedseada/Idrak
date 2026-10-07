@@ -3,7 +3,7 @@
 
 namespace Idrak.Abstraction.Data;
 
-/// <summary>The built-in data file formats (registered in <see cref="DataFileFormats"/> under these names by Idrak.Datasets).</summary>
+/// <summary>The built-in data file formats (registered in <see cref="DataFileFormats"/> under these names by Idrak.Data).</summary>
 public enum DataFormat
 {
     /// <summary>One JSON object per line (.jsonl, .ndjson).</summary>
@@ -41,7 +41,7 @@ public enum TextRows
     Document,
 }
 
-/// <summary>How a dataset reads files (<c>Dataset</c> and <c>DataFiles</c> in Idrak.Datasets, and every <see cref="IDataFileFormat"/>).</summary>
+/// <summary>How a dataset reads files (<c>DatasetRows</c> and <c>DataFiles</c> in Idrak.Data, and every <see cref="IDataFileFormat"/>).</summary>
 public sealed record ReadOptions
 {
     /// <summary>The defaults.</summary>
@@ -83,6 +83,6 @@ public sealed record ReadOptions
     /// <summary>Largest source or text file read as one document, in bytes (larger ones, often generated, are skipped).</summary>
     public long MaxDocumentBytes { get; init; } = 1 << 20;
 
-    /// <summary>The folder paths are shown relative to (set by <c>Dataset.FromFolder</c>).</summary>
+    /// <summary>The folder paths are shown relative to (set by <c>DatasetRows.FromFolder</c>).</summary>
     public string? Root { get; init; }
 }

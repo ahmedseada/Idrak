@@ -22,7 +22,7 @@ public static class PluginTests
     /// <summary>The tests, by name.</summary>
     public static IReadOnlyList<(string Name, Action<Device> Run)> All { get; } =
     [
-        ("outside plug-in: Idrak and Idrak.Onnx grant this assembly no internal access", NoInternalAccess),
+        ("outside plug-in: Idrak grants this assembly no internal access", NoInternalAccess),
         ("outside plug-in: a Lion optimizer makes the reference update and trains a linear model", LionTrains),
         ("outside plug-in: softplus through Autograd.Function matches finite differences, registers as a network step, trains with Lion and imports from ONNX", SoftplusStep),
         ("outside plug-in: a packed weight format multiplies like its expanded weights, with the input's gradient", PackedFormat),
@@ -43,7 +43,7 @@ public static class PluginTests
         // Idrak names its friends (the first-party packages and tests); this assembly is not one of them.
         string self = typeof(PluginTests).Assembly.GetName().Name!;
         Check(typeof(Sequential).Assembly.GetCustomAttributes<InternalsVisibleToAttribute>().Any(), "Idrak lists its friend assemblies");
-        foreach (var assembly in new[] { typeof(Device).Assembly, typeof(Sequential).Assembly, typeof(OnnxImport).Assembly })
+        foreach (var assembly in new[] { typeof(Device).Assembly, typeof(Sequential).Assembly })
         {
             var friends = assembly.GetCustomAttributes<InternalsVisibleToAttribute>().Select(a => a.AssemblyName).ToArray();
             Check(!friends.Contains(self), $"{assembly.GetName().Name} friends: {string.Join(", ", friends)}");

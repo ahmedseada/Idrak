@@ -7,7 +7,7 @@ using System.Text.Json.Nodes;
 namespace Idrak.Abstraction.Data;
 
 /// <summary>
-/// One source of a dataset recipe (<c>DatasetRecipe</c> in Idrak.Datasets), written as a string with options after '?' or as a JSON object:
+/// One source of a dataset recipe (<c>DatasetRecipe</c> in Idrak.Data), written as a string with options after '?' or as a JSON object:
 /// <list type="bullet">
 /// <item><c>hf:HuggingFaceH4/ultrachat_200k?split=train_sft</c> (options config, split, files, max_files, revision)</item>
 /// <item><c>github:owner/repo[@ref]</c> (a repository's files as documents, files=src/**/*.cs to narrow them; files=data/*.jsonl reads
@@ -18,7 +18,7 @@ namespace Idrak.Abstraction.Data;
 /// </list>
 /// Options for any source: take, skip, weight, text (lines | paragraphs | document), documents (every file one row),
 /// columns (a,b,…), format (a <see cref="DataFileFormats"/> name), json_property, and the chat
-/// mapping system, user, assistant (templates over columns such as <c>user={question}</c>). Idrak.Datasets opens it
+/// mapping system, user, assistant (templates over columns such as <c>user={question}</c>). Idrak.Data opens it
 /// (<c>spec.Open()</c>, through the registered <see cref="DatasetSources"/>).
 /// </summary>
 public sealed class DatasetSpec

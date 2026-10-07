@@ -5,7 +5,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using Idrak.Datasets;
+using Idrak.Data;
 
 namespace Idrak.Cli.Shared;
 
@@ -200,7 +200,7 @@ internal readonly record struct ImageItem(string Path, int Class, ImageFiles.Ima
 
 /// <summary>
 /// Step 1 of <c>idrak suggest</c> (plans/idrak-cli.md, "Design a model"): reads the data and describes it. Tables come
-/// from the readers of Idrak.Datasets (CSV, TSV, JSON Lines, JSON, Parquet, also compressed or in a folder); a folder
+/// from the readers of Idrak.Data (CSV, TSV, JSON Lines, JSON, Parquet, also compressed or in a folder); a folder
 /// whose sub-folders hold images is an image set (one class per folder); rows the chat readers recognize are
 /// conversations, or preference pairs when they have chosen and rejected answers.
 /// </summary>
@@ -265,16 +265,16 @@ internal sealed class DataProfile
             return ReadImages(full, classes);
         }
 
-        Idrak.Datasets.Dataset data;
+        DatasetRows data;
         string format;
         if (Directory.Exists(full))
         {
-            data = Idrak.Datasets.Dataset.FromFolder(full);
+            data = DatasetRows.FromFolder(full);
             format = "folder";
         }
         else if (File.Exists(full))
         {
-            data = Idrak.Datasets.Dataset.FromFile(full);
+            data = DatasetRows.FromFile(full);
             format = DataFileFormats.Find(full)?.Name.ToLowerInvariant() ?? System.IO.Path.GetExtension(full).TrimStart('.');
         }
         else

@@ -400,7 +400,7 @@ downloads/urls/<host>/<path>
 
 Branches and tags are resolved to their commit first, so new commits are downloaded again rather than read stale.
 `idrak data cache` shows the size per source; `idrak data cache --clear` empties it; `download --refresh` fetches
-again. The same features are available from code in the `Idrak.Datasets` library (`Dataset`, `HuggingFace`,
+again. The same features are available from code in the `Idrak.Data` library (`DatasetRows`, `HuggingFace`,
 `GitHub`, `Kaggle`, `Zenodo`, `ChatRows`, `DatasetSpec`, `DatasetRecipe`).
 
 ### Retrieval

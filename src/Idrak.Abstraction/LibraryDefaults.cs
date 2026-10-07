@@ -21,18 +21,15 @@ internal static class LibraryDefaults
     // an internal static class `<assembly>.LibraryRegistrations` with a static `RegisterAll()`; one that is missing
     // (not shipped with the application) is skipped. Planned packages are listed so they work the day they appear.
     private static readonly string[] Assemblies =
-        ["Idrak", "Idrak.Gpu", "Idrak.Data", "Idrak.Datasets", "Idrak.Nlp", "Idrak.LanguageModels", "Idrak.Vision", "Idrak.Onnx",
-         "Idrak.Diffusion", "Idrak.Audio"];
+        ["Idrak", "Idrak.Gpu", "Idrak.Data", "Idrak.Nlp", "Idrak.LanguageModels", "Idrak.Vision", "Idrak.Diffusion", "Idrak.Audio"];
 
     /// <summary>Has the first-party assemblies register their built-ins, unless done already (on this or another thread, which this then waits for).</summary>
     [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.LibraryRegistrations", "Idrak")]
     [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Gpu.LibraryRegistrations", "Idrak.Gpu")]
     [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Data.LibraryRegistrations", "Idrak.Data")]
-    [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Datasets.LibraryRegistrations", "Idrak.Datasets")]
     [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Nlp.LibraryRegistrations", "Idrak.Nlp")]
     [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.LanguageModels.LibraryRegistrations", "Idrak.LanguageModels")]
     [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Vision.LibraryRegistrations", "Idrak.Vision")]
-    [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Onnx.LibraryRegistrations", "Idrak.Onnx")]
     [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Diffusion.LibraryRegistrations", "Idrak.Diffusion")]
     [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Audio.LibraryRegistrations", "Idrak.Audio")]
     [UnconditionalSuppressMessage("Trimming", "IL2057", Justification = "The type names are the constant first-party names listed above, kept by the DynamicDependency attributes.")]

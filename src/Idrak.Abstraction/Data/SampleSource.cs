@@ -102,7 +102,7 @@ public delegate ISampleSource SampleSourceFactory(string path, IReadOnlyDictiona
 /// (uint16, int32 or uint32).</item>
 /// <item><c>npy</c>: <c>NpySource</c>; options <c>targets</c> (a second .npy file), <c>classes</c>.</item>
 /// </list>
-/// Add your own with <see cref="Register"/> (Idrak.Datasets offers <c>TableSamples.Factory</c> for JSON Lines, Parquet
+/// Add your own with <see cref="Register"/> (Idrak.Data offers <c>TableSamples.Factory</c> for JSON Lines, Parquet
 /// and CSV columns).
 /// </summary>
 public static class SampleSources

@@ -7,7 +7,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
 
-namespace Idrak.Datasets;
+namespace Idrak.Data;
 
 /// <summary>Progress of a download.</summary>
 /// <param name="Url">What is downloaded.</param>
@@ -45,7 +45,7 @@ public sealed class Downloader : IDownloader
         CacheFolder = cacheFolder ?? Path.Combine(DefaultCacheRoot, "downloads");
     }
 
-    /// <summary>The downloader <see cref="Dataset"/> sources use unless given another.</summary>
+    /// <summary>The downloader <see cref="DatasetRows"/> sources use unless given another.</summary>
     public static Downloader Shared => SharedInstance.Value;
 
     /// <summary><c>IDRAK_CACHE</c>, or <c>~/.cache/idrak</c>.</summary>

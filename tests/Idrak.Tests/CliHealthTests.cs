@@ -494,7 +494,7 @@ internal static partial class Tests
                 Terminal.TestInput = null;
             }
 
-            Check(Idrak.Datasets.HuggingFace.Token() is "hf_abc_secret" || Environment.GetEnvironmentVariable("HF_TOKEN") is not null, "the library does not read the stored token");
+            Check(Idrak.Data.HuggingFace.Token() is "hf_abc_secret" || Environment.GetEnvironmentVariable("HF_TOKEN") is not null, "the library does not read the stored token");
             Check(Cli("logout", "hf").Exit == 2 && File.Exists(token), "logout without a terminal or --yes");
             Check(Cli("logout", "hf", "-y").Exit == 0 && !File.Exists(token), "logout hf -y");
         });
