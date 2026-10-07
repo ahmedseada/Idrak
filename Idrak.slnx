@@ -8,6 +8,8 @@
     <Project Path="samples/Idrak.Samples.HousePrices/Idrak.Samples.HousePrices.csproj" />
     <Project Path="samples/Idrak.Samples.Ocr/Idrak.Samples.Ocr.csproj" />
     <Project Path="samples/Idrak.Samples.OnnxImport/Idrak.Samples.OnnxImport.csproj" />
+    <Project Path="samples/Idrak.Samples.Override/Idrak.Samples.Override.csproj" />
+    <Project Path="samples/Idrak.Samples.Override.Tests/Idrak.Samples.Override.Tests.csproj" />
     <Project Path="samples/Idrak.Samples.Quantization/Idrak.Samples.Quantization.csproj" />
     <Project Path="samples/Idrak.Samples.Rag/Idrak.Samples.Rag.csproj" />
     <Project Path="samples/Idrak.Samples.ReRanker/Idrak.Samples.ReRanker.csproj" />
@@ -20,6 +22,7 @@
   </Folder>
   <Folder Name="/src/">
     <Project Path="src/Idrak.Abstraction/Idrak.Abstraction.csproj" />
+    <Project Path="src/Idrak.Abstraction.Testing/Idrak.Abstraction.Testing.csproj" />
     <Project Path="src/Idrak.AspNetCore/Idrak.AspNetCore.csproj" />
     <Project Path="src/Idrak.Mcp/Idrak.Mcp.csproj" />
     <Project Path="src/Idrak.Onnx.Runtime/Idrak.Onnx.Runtime.csproj" />

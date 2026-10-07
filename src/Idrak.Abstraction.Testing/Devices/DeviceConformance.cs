@@ -43,7 +43,7 @@ internal static class DeviceConformance
             int count = @case.Random ? Math.Max(1, options.RandomRuns) : 1;
             for (int run = 0; run < count; run++)
             {
-                int seed = HashCode.Combine(options.Seed, i, run) & int.MaxValue;
+                int seed = Seeds.Mix(options.Seed, i, run);
                 runs.Add((@case, seed, @case.Random ? $"{@case.Name} (seed {seed})" : @case.Name));
             }
         }

@@ -418,7 +418,7 @@ public static partial class DeviceCases
     private static void Normalization(DeviceCaseContext c)
     {
         var b = c.Backend;
-        foreach (var (outer, groups, inner) in new[] { (1, 1, 1), (2, 3, 5), (c.Size(1, 8), c.Size(1, 16), c.Size(1, 64)) })
+        foreach (var (outer, groups, inner) in new[] { (2, 1, 1), (2, 3, 5), (c.Size(2, 8), c.Size(1, 16), c.Size(1, 64)) })
         {
             int n = outer * groups * inner;
             var x = Random(c, n, 3f);

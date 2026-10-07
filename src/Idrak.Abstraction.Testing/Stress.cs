@@ -169,7 +169,7 @@ public static class Stress
         var device = suite.Device;
         var report = Loop($"{implementation.GetType().Name} ({suite.Name})", device.Backend, options, cancellation, (iteration, timings) =>
         {
-            var @case = suite.RandomCase(new Random(HashCode.Combine(options.Seed, iteration)), options.Large);
+            var @case = suite.RandomCase(new Random(Seeds.Mix(options.Seed, iteration)), options.Large);
             int before = checks.Failures.Count;
             var time = suite.RunOne(implementation, @case, checks);
             timings.Add((@case.Name, time));
@@ -192,7 +192,7 @@ public static class Stress
         int[] picks = [.. Enumerable.Range(0, Math.Min(options.IterationLimit, 1 << 20)).Select(_ => order.Next(calls.Count))];
         var report = Loop(subject, backend, options, cancellation, (iteration, timings) =>
         {
-            var call = calls[iteration < picks.Length ? picks[iteration] : (int)((uint)HashCode.Combine(options.Seed, iteration) % (uint)calls.Count)];
+            var call = calls[iteration < picks.Length ? picks[iteration] : (int)((uint)Seeds.Mix(options.Seed, iteration) % (uint)calls.Count)];
             var started = Stopwatch.GetTimestamp();
             string? problem = DeviceConformance.Run(backend, call, defaults.ToleranceFor(call.Operation), out _);
             timings.Add(($"{call.Operation} [{call.Case}]", Stopwatch.GetElapsedTime(started)));

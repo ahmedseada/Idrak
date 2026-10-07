@@ -137,8 +137,8 @@ public sealed class TokenizerSuite(ITokenizer? reference = null) : ContractSuite
     private void RunIds(ITokenizer implementation, JsonArray idsJson, int size, CaseChecks checks)
     {
         // Integers are ids (negative from the end); fractions are drawn ids, as a share of the vocabulary.
-        var ids = idsJson.Select(n => n!.GetValueKind() == System.Text.Json.JsonValueKind.Number && (double)n! is var v
-            ? v == Math.Floor(v) && Math.Abs(v) < size ? (int)(v < 0 ? size + v : v) : (int)Math.Clamp(v * size, 0, size - 1) : 0).ToArray();
+        var ids = idsJson.Select(n => double.Parse(n!.ToJsonString(), System.Globalization.CultureInfo.InvariantCulture) is var v
+            && v == Math.Floor(v) && Math.Abs(v) < size ? (int)(v < 0 ? size + v : v) : (int)Math.Clamp(v * size, 0, size - 1)).ToArray();
         string decoded = implementation.Decode(ids);
         checks.Compare("a span decodes as a list does", Comparisons.Difference(decoded, implementation.Decode(ids.AsSpan())));
         checks.Check("TokenOf is empty past the end", implementation.TokenOf(size) == "" && implementation.TokenOf(-1) == "",
