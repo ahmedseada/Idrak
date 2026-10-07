@@ -2,7 +2,6 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using Idrak.Backends;
-using Idrak.Abstraction.Devices.Cpu;
 
 namespace Idrak.Optimizers;
 
@@ -83,14 +82,14 @@ public sealed class HostOptimizer : Optimizer
             }
 
             copy.GradientTarget(out _);
-            g.Backend.Download(g.Storage, CpuBackend.D(copy.Grad!.Storage).AsSpan(0, copy.Size));
+            g.Backend.Download(g.Storage, copy.Grad!.Storage.HostMemory[..copy.Size]);
             if (release)
             {
                 p.ReleaseGrad();
             }
 
             Step(i);
-            p.Backend.Upload(CpuBackend.D(copy.Storage).AsSpan(0, copy.Size), p.Storage);
+            p.Backend.Upload(copy.Storage.HostMemory[..copy.Size], p.Storage);
         }
     }
 
@@ -134,7 +133,7 @@ public sealed class HostOptimizer : Optimizer
             int slot = j % DownSlots;                                      // pieces are issued to the slots in turn
             var (i, offset, count) = pieces[j];
             staging.Wait(slot);
-            staging.Slot(slot)[..count].CopyTo(CpuBackend.D(_copies[i].Grad!.Storage).AsSpan(offset, count));
+            staging.Slot(slot)[..count].CopyTo(_copies[i].Grad!.Storage.HostMemory.Slice(offset, count));
             Issue(slot);
             if (j + 1 < pieces.Count && pieces[j + 1].Parameter == i)
             {
@@ -147,13 +146,13 @@ public sealed class HostOptimizer : Optimizer
             }
 
             Step(i);
-            var values = CpuBackend.D(_copies[i].Storage);
+            var values = _copies[i].Storage.HostMemory;
             for (int start = 0; start < _copies[i].Size; start += SlotFloats)
             {
                 int n = Math.Min(SlotFloats, _copies[i].Size - start);
                 int target = DownSlots + up++ % UpSlots;
                 staging.Wait(target);                                      // its previous upload has read it
-                values.AsSpan(start, n).CopyTo(staging.Slot(target));
+                values.Slice(start, n).CopyTo(staging.Slot(target));
                 staging.Upload(target, Parameters[i].Storage, start, n);
             }
         }

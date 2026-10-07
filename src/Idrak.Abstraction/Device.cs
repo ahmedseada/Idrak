@@ -156,7 +156,8 @@ public sealed class Device
         }
     }
 
-    internal Backend Backend => field ??= _provider is null ? CpuBackend.Instance : _provider.Create(Ordinal);
+    /// <summary>The device's backend (the device contract: memory, copies and kernels), started on first use.</summary>
+    public Backend Backend => field ??= _provider is null ? CpuBackend.Instance : _provider.Create(Ordinal);
 
     /// <summary>Waits until all queued work on this device has finished.</summary>
     public void Synchronize() => Backend.Synchronize();

@@ -4,7 +4,7 @@
 namespace Idrak.Abstraction.Devices;
 
 /// <summary>How readily a storage moves to system memory when the device fills up (higher moves first).</summary>
-internal enum OffloadPriority : byte
+public enum OffloadPriority : byte
 {
     /// <summary>Used all the time (activations, trained weights): stays on the device while anything colder can move.</summary>
     Hot = 0,
@@ -27,7 +27,7 @@ internal enum OffloadPriority : byte
 /// it computes, <see cref="MoveToDevice"/> and <see cref="Rebalance"/> bring storages back when memory frees up, and the
 /// priorities decide which storages leave first.
 /// </remarks>
-internal interface IMemoryOffload
+public interface IMemoryOffload
 {
     /// <summary>Storages that live in system memory now (a quick test for "is there anything to stage or bring back").</summary>
     int OffloadedCount { get; }

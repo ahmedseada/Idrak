@@ -27,11 +27,7 @@ internal sealed class HostCall : IDisposable
     public HostCall(Backend device, [CallerMemberName] string operation = "")
     {
         _device = device;
-        Interlocked.Increment(ref device.HostCalls);
-        if (device.HostCallsByOperation is { } byOperation)
-        {
-            byOperation.AddOrUpdate(operation.EndsWith("Kernel", StringComparison.Ordinal) ? operation[..^"Kernel".Length] : operation, 1, static (_, n) => n + 1);
-        }
+        device.HostCalled(operation.EndsWith("Kernel", StringComparison.Ordinal) ? operation[..^"Kernel".Length] : operation);   // Kernels.HostCalls, KernelTrace
     }
 
     /// <summary>The CPU mirror of <paramref name="storage"/>, holding its values.</summary>

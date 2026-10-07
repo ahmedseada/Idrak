@@ -3,6 +3,7 @@
 
 using System.Buffers;
 using System.Diagnostics;
+using Idrak.Abstraction.Devices;
 using Idrak.Layers;
 
 namespace Idrak.Generation;
@@ -238,7 +239,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         var emitted = new int[rows];                                          // characters handed out so far
         var searched = Enumerable.Repeat("", rows).ToArray();                // the last text searched for stop sequences
         Model.Eval();
-        Offloading.StepBoundary(Device);                                       // with offloading: cold data out, or tensors back
+        TensorOffloading.StepBoundary(Device);                                     // with offloading: cold data out, or tensors back
         TimeSpan promptDuration;
         using (Autograd.NoGrad())
         using (var scope = new TensorScope())
@@ -486,7 +487,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         }
 
         Model.Eval();
-        Offloading.StepBoundary(Device);                                       // with offloading: cold data out, or tensors back
+        TensorOffloading.StepBoundary(Device);                                     // with offloading: cold data out, or tensors back
         {
             // NoGrad is entered per compute call, never held across a yield (it is thread-local state of the caller).
             var (kept, keptIds) = options.UseCache && KeepCache ? TakeCache(context) : (null, []);

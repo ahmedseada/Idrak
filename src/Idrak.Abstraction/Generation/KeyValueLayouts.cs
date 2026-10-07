@@ -111,20 +111,20 @@ public abstract class KeyValueLayout
     /// Whether the fused projection kernel (norms, rotary positions, head layout) may write keys and values straight into
     /// the cache; <see cref="HalfWords"/> tells it to write bfloat16 pairs.
     /// </summary>
-    internal virtual bool FusedWrite => false;
+    public virtual bool FusedWrite => false;
 
     /// <summary>Whether values are stored as bfloat16 pairs (two per element).</summary>
-    internal virtual bool HalfWords => false;
+    public virtual bool HalfWords => false;
 
     /// <summary>Whether rows of different lengths (per-row starts, batched prompts) can attend from this cache.</summary>
-    internal virtual bool RowStarts => false;
+    public virtual bool RowStarts => false;
 
     /// <summary>
     /// <see cref="Attend"/> for a decoder layer with a sliding window or soft-capped scores (<paramref name="variant"/>),
     /// through the format's own kernels, which start each query at its window and cap the scores; null when the format
     /// has none for this head size (the layer then attends through basic operations over every cached slot).
     /// </summary>
-    internal virtual Tensor? AttendVariant(Tensor q, KeyValueCache cache, DecodingContext context, int steps, float scale, AttentionVariant variant) => null;
+    public virtual Tensor? AttendVariant(Tensor q, KeyValueCache cache, DecodingContext context, int steps, float scale, AttentionVariant variant) => null;
 
     /// <inheritdoc />
     public override string ToString() => Name;
@@ -208,9 +208,9 @@ public static class KeyValueLayouts
 
         public override bool Recordable => true;
 
-        internal override bool FusedWrite => true;
+        public override bool FusedWrite => true;
 
-        internal override bool RowStarts => true;
+        public override bool RowStarts => true;
 
         public override void Write(Tensor keys, Tensor values, KeyValueCache cache, Tensor position)
         {
@@ -232,7 +232,7 @@ public static class KeyValueLayouts
             return weights.MatMul(cache.Values);
         }
 
-        internal override Tensor? AttendVariant(Tensor q, KeyValueCache cache, DecodingContext context, int steps, float scale, AttentionVariant variant) =>
+        public override Tensor? AttendVariant(Tensor q, KeyValueCache cache, DecodingContext context, int steps, float scale, AttentionVariant variant) =>
             Kernels(q, cache, context, steps, scale, variant);
 
         private static Tensor? Kernels(Tensor q, KeyValueCache cache, DecodingContext context, int steps, float scale, AttentionVariant variant)
@@ -292,7 +292,7 @@ public static class KeyValueLayouts
             return Tensor.AttentionContextInt8(weights, cache);
         }
 
-        internal override Tensor? AttendVariant(Tensor q, KeyValueCache cache, DecodingContext context, int steps, float scale, AttentionVariant variant) =>
+        public override Tensor? AttendVariant(Tensor q, KeyValueCache cache, DecodingContext context, int steps, float scale, AttentionVariant variant) =>
             cache.HeadDim <= q.Backend.Capabilities.DecodeAttentionHeadDim
                 ? Tensor.AttentionInt8(q, cache, context.Position, steps, scale, tiled: steps >= 8, variant)
                 : null;
@@ -308,9 +308,9 @@ public static class KeyValueLayouts
 
         public override bool Recordable => true;
 
-        internal override bool FusedWrite => true;
+        public override bool FusedWrite => true;
 
-        internal override bool HalfWords => true;
+        public override bool HalfWords => true;
 
         public override void Write(Tensor keys, Tensor values, KeyValueCache cache, Tensor position)
         {
@@ -334,7 +334,7 @@ public static class KeyValueLayouts
                 ? Tensor.AttentionBFloat16(q, cache, context.Position, steps, scale, tiled: steps >= 8)   // only the filled positions
                 : base.Attend(q, cache, context, steps, scale, decoderKernels);
 
-        internal override Tensor? AttendVariant(Tensor q, KeyValueCache cache, DecodingContext context, int steps, float scale, AttentionVariant variant) =>
+        public override Tensor? AttendVariant(Tensor q, KeyValueCache cache, DecodingContext context, int steps, float scale, AttentionVariant variant) =>
             Tensor.AttentionBFloat16(q, cache, context.Position, steps, scale, tiled: steps >= 8, variant);
     }
 

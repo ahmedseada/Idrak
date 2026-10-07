@@ -127,667 +127,1506 @@ internal static class OperationIndex
     public const int Count = 109;
 }
 
-/// <summary>The kernel delegate of each operation: the device's backend, then the operation's arguments.</summary>
-internal static class OperationKernels
+/// <summary>
+/// The kernel delegate of each operation (<see cref="Operation.KernelType"/>): the device's backend, then the operation's
+/// arguments. A kernel registered with <see cref="Kernels.Register"/> has its operation's type.
+/// </summary>
+public static class OperationKernels
 {
-    /// <summary>A kernel for <see cref="Ops.Fill"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.Fill"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// y[i] = value for i &lt; n.
+    /// </summary>
     public delegate void Fill(Backend backend, Storage y, int n, float value);
 
-    /// <summary>A kernel for <see cref="Ops.Unary"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.Unary"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// y = op(x).
+    /// </summary>
     public delegate void Unary(Backend backend, UnaryOp op, Storage x, Storage y, int n);
 
-    /// <summary>A kernel for <see cref="Ops.UnaryBackward"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.UnaryBackward"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// dx += dy * op'(x), where y = op(x) is passed in for ops whose derivative is cheaper from y.
+    /// </summary>
     public delegate void UnaryBackward(Backend backend, UnaryOp op, Storage x, Storage y, Storage dy, Storage dx, int n);
 
-    /// <summary>A kernel for <see cref="Ops.Binary"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.Binary"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// c = a op b, element-wise.
+    /// </summary>
     public delegate void Binary(Backend backend, BinaryOp op, Storage a, Storage b, Storage c, int n);
 
-    /// <summary>A kernel for <see cref="Ops.ExtremumBackward"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.ExtremumBackward"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// dx += dy where a wins (<see cref="BinaryOp.Maximum"/>: a ≥ b; <see cref="BinaryOp.Minimum"/>: a ≤ b), db += dy
+    /// elsewhere: the backward step of c = max(a, b) or min(a, b). A null gradient is skipped.
+    /// </summary>
     public delegate void ExtremumBackward(Backend backend, BinaryOp op, Storage a, Storage b, Storage dy, Storage? da, Storage? db, int n);
 
-    /// <summary>A kernel for <see cref="Ops.Pow"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.Pow"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// y = x^exponent, element-wise.
+    /// </summary>
     public delegate void Pow(Backend backend, Storage x, Storage y, int n, float exponent);
 
-    /// <summary>A kernel for <see cref="Ops.PowBackward"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.PowBackward"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// dx += dy · exponent · x^(exponent - 1).
+    /// </summary>
     public delegate void PowBackward(Backend backend, Storage x, Storage dy, Storage dx, int n, float exponent);
 
-    /// <summary>A kernel for <see cref="Ops.Clamp"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.Clamp"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// y = x limited to [min, max] (either may be infinite).
+    /// </summary>
     public delegate void Clamp(Backend backend, Storage x, Storage y, int n, float min, float max);
 
-    /// <summary>A kernel for <see cref="Ops.ClampBackward"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.ClampBackward"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// dx += dy where min ≤ x ≤ max.
+    /// </summary>
     public delegate void ClampBackward(Backend backend, Storage x, Storage dy, Storage dx, int n, float min, float max);
 
-    /// <summary>A kernel for <see cref="Ops.Where"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.Where"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// y = condition ≠ 0 ? a : b, element-wise.
+    /// </summary>
     public delegate void Where(Backend backend, Storage condition, Storage a, Storage b, Storage y, int n);
 
-    /// <summary>A kernel for <see cref="Ops.WhereBackward"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.WhereBackward"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// da += dy where condition ≠ 0, db += dy elsewhere (a null gradient is skipped).
+    /// </summary>
     public delegate void WhereBackward(Backend backend, Storage condition, Storage dy, Storage? da, Storage? db, int n);
 
-    /// <summary>A kernel for <see cref="Ops.Affine"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.Affine"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// y = alpha * x + beta.
+    /// </summary>
     public delegate void Affine(Backend backend, Storage x, Storage y, int n, float alpha, float beta);
 
-    /// <summary>A kernel for <see cref="Ops.Axpy"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.Axpy"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// y += alpha * x.
+    /// </summary>
     public delegate void Axpy(Backend backend, Storage x, Storage y, int n, float alpha);
 
-    /// <summary>A kernel for <see cref="Ops.MulAdd"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.MulAdd"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// c += a * b, element-wise.
+    /// </summary>
     public delegate void MulAdd(Backend backend, Storage a, Storage b, Storage c, int n);
 
-    /// <summary>A kernel for <see cref="Ops.AddRowVector"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.AddRowVector"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// c[r, j] = a[r, j] + v[j].
+    /// </summary>
     public delegate void AddRowVector(Backend backend, Storage a, Storage v, Storage c, int rows, int cols);
 
-    /// <summary>A kernel for <see cref="Ops.SumRows"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.SumRows"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// y[j] += sum over r of x[r, j].
+    /// </summary>
     public delegate void SumRows(Backend backend, Storage x, Storage y, int rows, int cols);
 
-    /// <summary>A kernel for <see cref="Ops.Sum"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.Sum"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// result[0] = scale * sum(x).
+    /// </summary>
     public delegate void Sum(Backend backend, Storage x, Storage result, int n, float scale);
 
-    /// <summary>A kernel for <see cref="Ops.AxpyAt"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.AxpyAt"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// y[offset] += alpha * x[0] (used to accumulate scalar losses without leaving the device).
+    /// </summary>
     public delegate void AxpyAt(Backend backend, Storage x, Storage y, int offset, float alpha);
 
-    /// <summary>A kernel for <see cref="Ops.AddBroadcastScalar"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.AddBroadcastScalar"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// y[i] += scale * s[0].
+    /// </summary>
     public delegate void AddBroadcastScalar(Backend backend, Storage s, Storage y, int n, float scale);
 
-    /// <summary>A kernel for <see cref="Ops.PackedMatMulLarge"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.PackedMatMulLarge"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// y = x · w for many rows (prompts) with packed weights w (in <paramref name="format"/>), expanding w as it is read instead of into a float copy. Returns false when the
+    /// device has no such kernel or the shape is too small for it (callers then expand w first).
+    /// </summary>
     public delegate bool PackedMatMulLarge(Backend backend, PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k);
 
-    /// <summary>A kernel for <see cref="Ops.PackedMatMulGated"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.PackedMatMulGated"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// y = (act(gate) · up) · w for few rows with packed weights w (in <paramref name="format"/>; activation 0 = SiLU, 1 = GELU tanh): the gated feed-forward's down projection
+    /// without a separate activation pass. Returns false when the device has no fused version.
+    /// </summary>
     public delegate bool PackedMatMulGated(Backend backend, PackedFormat format, int activation, Storage gate, Storage up, Storage packed, Storage? scales, Storage y, int m, int n, int k);
 
-    /// <summary>A kernel for <see cref="Ops.PackedMatMulAddRmsNorm"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.PackedMatMulAddRmsNorm"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// y = x · w for few rows with packed weights w (in <paramref name="format"/>), then
+    /// sum = residual + y and normalized = its RMS normalization · (gain + offset) per row (a residual addition and the
+    /// next normalization) in the same pass. Returns false when the device has no fused version.
+    /// </summary>
     public delegate bool PackedMatMulAddRmsNorm(Backend backend, PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k, Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset);
 
-    /// <summary>A kernel for <see cref="Ops.PackedMatMulMany"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.PackedMatMulMany"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// Several few-row products of packed weights sharing one input x [m, k]: y_j = x · w_j (+ bias_j), in <paramref name="format"/>
+    /// (int8 as in <see cref="Backend.Int8MatMul"/>, 4-bit as in <see cref="Backend.Int4MatMul"/>, bfloat16 as in
+    /// <see cref="Backend.BFloat16MatMul"/>, which has no scales). Returns false when the device has no single-pass version (callers then
+    /// run the products one by one).
+    /// </summary>
     public delegate bool PackedMatMulMany(Backend backend, PackedFormat format, Storage x, int m, int k, ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products);
 
-    /// <summary>A kernel for <see cref="Ops.PackedMatMulGatedPair"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.PackedMatMulGatedPair"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// <see cref="Backend.PackedMatMulMany"/> for a feed-forward block's gate and up projections (two products of equal widths),
+    /// also writing hidden = act(gate) · up (activation 0 = SiLU, 1 = GELU tanh, 2 = ReLU) in the same pass. Returns
+    /// false when the device has no fused version.
+    /// </summary>
     public delegate bool PackedMatMulGatedPair(Backend backend, PackedFormat format, int activation, Storage x, int m, int k, ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products, Storage hidden);
 
-    /// <summary>A kernel for <see cref="Ops.MatMulMany"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.MatMulMany"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// Several products sharing one input: y_j = a · w_j (+ bias_j) for a [m, k] and w_j [k, n_j] (the query, key and
+    /// value projections, say). The default computes them one by one; devices may do them in one pass.
+    /// </summary>
     public delegate void MatMulMany(Backend backend, Storage a, int m, int k, ReadOnlySpan<(Storage Weight, Storage? Bias, Storage Output, int Columns)> products);
 
-    /// <summary>A kernel for <see cref="Ops.MatMulBias"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.MatMulBias"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// c = a·b + bias (bias [n] added to every row) in one pass, for a [m, k] and b [k, n] as stored. Returns false when
+    /// the device has no such pass for these sizes (callers then multiply and add the bias separately).
+    /// </summary>
     public delegate bool MatMulBias(Backend backend, Storage a, Storage b, Storage bias, Storage c, int m, int n, int k);
 
-    /// <summary>A kernel for <see cref="Ops.MatMulLowRank"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.MatMulLowRank"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// c = beta·c + a·op(b) + u·op(v) in one product (a LoRA adapter's term as one more k step): a [m, k], b [k, n]
+    /// (transposed: [n, k]), u [m, rank], v [rank, n] (with <paramref name="transB"/>: [n, rank]), rank ≤ 32, all rows
+    /// contiguous. Returns false when the device has no such pass (callers then compute the two products separately).
+    /// </summary>
     public delegate bool MatMulLowRank(Backend backend, Storage a, Storage b, Storage c, int m, int n, int k, bool transB, float beta, Storage u, Storage v, int rank);
 
-    /// <summary>A kernel for <see cref="Ops.BFloat16TransposedMatMul"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.BFloat16TransposedMatMul"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// c = beta·c + a · Wᵀ (+ u · vᵀ) with W a bfloat16 weight [n, k] as <c>BFloat16Weight</c> packs it (two
+    /// values per word along k), read as stored: the input gradient through a frozen bfloat16 layer (and its adapter's
+    /// dt · Aᵀ with u = dt [m, rank], v = A [n, rank]) without expanding the weight to float. u null: no low-rank term.
+    /// False when the device has no such kernel (callers then expand the weight).
+    /// </summary>
     public delegate bool BFloat16TransposedMatMul(Backend backend, Storage a, Storage packed, Storage c, int m, int n, int k, float beta, Storage? u, Storage? v, int rank);
 
-    /// <summary>A kernel for <see cref="Ops.Float8QuantizeWeight"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.Float8QuantizeWeight"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// Quantizes a frozen weight w [k, n] (float32) once for <see cref="Backend.Float8MatMul"/>: FP8 (e4m3) values, k-major per
+    /// column ([n, paddedK] bytes), and one scale per column [n]. Returns false when unsupported.
+    /// </summary>
     public delegate bool Float8QuantizeWeight(Backend backend, Storage w, int k, int n, Storage values, Storage scales);
 
-    /// <summary>A kernel for <see cref="Ops.Float8MatMul"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.Float8MatMul"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// y = beta·y + x · w on FP8 tensor cores for x [m, k] (quantized per row as it is read, one scale each) and a weight
+    /// quantized by <see cref="Backend.Float8QuantizeWeight"/>. Returns false when unsupported.
+    /// </summary>
     public delegate bool Float8MatMul(Backend backend, Storage x, int m, int k, Storage values, Storage scales, int n, Storage y, float beta);
 
-    /// <summary>A kernel for <see cref="Ops.PackedMatMulLowRank"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.PackedMatMulLowRank"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// Products of one input x [m, k] through 1-3 packed layers (in <paramref name="format"/>),
+    /// each with a low-rank term: y_j = x · w_j + u_j · v_j for u_j [m, rank] and v_j [rank, n_j], rank ≤ 32, in one pass.
+    /// Returns false when the device has no such pass.
+    /// </summary>
     public delegate bool PackedMatMulLowRank(Backend backend, PackedFormat format, Storage x, int m, int k, ReadOnlySpan<(Storage Packed, Storage? Scales, Storage Output, int Columns, Storage U, Storage V)> products, int rank);
 
-    /// <summary>A kernel for <see cref="Ops.GemmStrided"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.GemmStrided"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// c = beta·c + op(a)·op(b) on bfloat16 tensor cores, with row strides: a [m, k] stored with <paramref name="lda"/>
+    /// floats per row (transposed: [k, m] rows), b [k, n] with <paramref name="ldb"/> (transposed: [n, k] rows), c [m, n]
+    /// with <paramref name="ldc"/>; offsets in elements. <paramref name="bias"/> [n] is added to every row (modes None and
+    /// Gelu). <see cref="GemmEpilogue.Gelu"/> writes gelu(product + bias) and, when <paramref name="aux"/> is given, the
+    /// pre-activations into it (same layout as c); <see cref="GemmEpilogue.GeluGradient"/> multiplies the product by
+    /// gelu'(aux). Returns false when the device has no tensor cores (callers use the composed operations).
+    /// </summary>
     public delegate bool GemmStrided(Backend backend, Storage a, long aOffset, int lda, bool transA, Storage b, long bOffset, int ldb, bool transB, Storage c, long cOffset, int ldc, int m, int n, int k, float beta, Storage? bias, GemmEpilogue epilogue, Storage? aux, long auxOffset);
 
-    /// <summary>A kernel for <see cref="Ops.AttentionStrided"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.AttentionStrided"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// Causal attention (positions c ≤ t) read in place from [batch, steps, *] rows: head h (= kv · group + g) of the
+    /// queries at q[qOffset + (b·steps + t)·qRow + h·dim], keys and values of kv head kv at k / v[offset + (b·steps + c)·kRow
+    /// + kv·dim]; writes y [batch, steps, heads·dim] and, when given, the log-sum-exp [batch·kvHeads, group·steps] for the
+    /// backward pass. Returns false when the device has no such kernels (callers rearrange the heads and use
+    /// <see cref="Backend.AttentionTiled"/>).
+    /// </summary>
     public delegate bool AttentionStrided(Backend backend, Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow, Storage y, Storage? logSumExp, int batch, int kvHeads, int group, int steps, int dim, float scale);
 
-    /// <summary>A kernel for <see cref="Ops.AttentionStridedBackward"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.AttentionStridedBackward"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// Gradients of <see cref="Backend.AttentionStrided"/>: adds to dq, dk, dv laid out as q, k, v (same row strides, their own
+    /// offsets) given y, the log-sum-exp and dOutput (y's layout).
+    /// </summary>
     public delegate bool AttentionStridedBackward(Backend backend, Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow, Storage y, Storage logSumExp, Storage dOutput, Storage dq, long dqOffset, Storage dk, long dkOffset, Storage dv, long dvOffset, int batch, int kvHeads, int group, int steps, int dim, float scale);
 
-    /// <summary>A kernel for <see cref="Ops.SumColumns"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.SumColumns"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// y[j] += Σ_r x[offset + r·ld + j] for j &lt; cols (column sums of a strided block; the bias gradient of a slice).
+    /// </summary>
     public delegate void SumColumns(Backend backend, Storage x, long offset, int ld, Storage y, int rows, int cols);
 
-    /// <summary>A kernel for <see cref="Ops.AddDropout"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.AddDropout"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// output = residual + dropout(x) (the mask of <see cref="Backend.Dropout"/> with <paramref name="seed"/>).
+    /// </summary>
     public delegate void AddDropout(Backend backend, Storage residual, Storage x, Storage output, int n, float p, uint seed);
 
-    /// <summary>A kernel for <see cref="Ops.BatchedMatMul"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.BatchedMatMul"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// <see cref="Backend.MatMul"/> for <paramref name="batch"/> independent, contiguous matrix triples.
+    /// </summary>
     public delegate void BatchedMatMul(Backend backend, Storage a, Storage b, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta);
 
-    /// <summary>A kernel for <see cref="Ops.Softmax"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.Softmax"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// Row-wise softmax (or log-softmax) over the last dimension: y[r, :] = softmax(x[r, :]).
+    /// </summary>
     public delegate void Softmax(Backend backend, Storage x, Storage y, int rows, int cols, bool log);
 
-    /// <summary>A kernel for <see cref="Ops.SoftmaxBackward"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.SoftmaxBackward"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// Softmax: dx += y * (dy - Σ dy·y). Log-softmax: dx += dy - exp(y) * Σ dy. Sums are per row; y is the forward output.
+    /// </summary>
     public delegate void SoftmaxBackward(Backend backend, Storage y, Storage dy, Storage dx, int rows, int cols, bool log);
 
-    /// <summary>A kernel for <see cref="Ops.ArgMax"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.ArgMax"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// y[r] = index of the largest element of row r.
+    /// </summary>
     public delegate void ArgMax(Backend backend, Storage x, Storage y, int rows, int cols);
 
-    /// <summary>A kernel for <see cref="Ops.ClassMatch"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.ClassMatch"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// y[r] = 1 when the prediction in row r is right, else 0. For one column: (p ≥ threshold) == (t ≥ 0.5);
+    /// otherwise argmax(p) == argmax(t).
+    /// </summary>
     public delegate void ClassMatch(Backend backend, Storage predictions, Storage targets, Storage y, int rows, int cols, float threshold);
 
-    /// <summary>A kernel for <see cref="Ops.NormStats"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.NormStats"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// Per-group mean, (biased) variance and 1 / sqrt(variance + eps).
+    /// </summary>
     public delegate void NormStats(Backend backend, Storage x, Storage mean, Storage variance, Storage invStd, int outer, int groups, int inner, float eps);
 
-    /// <summary>A kernel for <see cref="Ops.NormApply"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.NormApply"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// y = (x - mean[g]) * invStd[g].
+    /// </summary>
     public delegate void NormApply(Backend backend, Storage x, Storage mean, Storage invStd, Storage y, int outer, int groups, int inner);
 
-    /// <summary>A kernel for <see cref="Ops.NormBackward"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.NormBackward"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// dx += invStd[g] / M * (M * dxhat - sum1[g] - xhat * sum2[g]).
+    /// </summary>
     public delegate void NormBackward(Backend backend, Storage dxhat, Storage xhat, Storage sum1, Storage sum2, Storage invStd, Storage dx, int outer, int groups, int inner);
 
-    /// <summary>A kernel for <see cref="Ops.GroupScaleShift"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.GroupScaleShift"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// y (+)= x * scale[g] + shift[g] with g = (i / inner) % groups; a null scale means 1, a null shift means 0.
+    /// </summary>
     public delegate void GroupScaleShift(Backend backend, Storage x, Storage? scale, Storage? shift, Storage y, int n, int groups, int inner, bool accumulate);
 
-    /// <summary>A kernel for <see cref="Ops.GroupReduce"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.GroupReduce"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// sumA[g] += Σ a; sumAB[g] += Σ a·b over each group (see NormStats for the layout). b/sumAB may be null.
+    /// </summary>
     public delegate void GroupReduce(Backend backend, Storage a, Storage? b, Storage sumA, Storage? sumAB, int outer, int groups, int inner);
 
-    /// <summary>A kernel for <see cref="Ops.InvSqrt"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.InvSqrt"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// y = 1 / sqrt(x + eps).
+    /// </summary>
     public delegate void InvSqrt(Backend backend, Storage x, Storage y, int n, float eps);
 
-    /// <summary>A kernel for <see cref="Ops.Gather"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.Gather"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// Embedding lookup: y[i, :] = table[indices[i], :] for count indices of width dim.
+    /// </summary>
     public delegate void Gather(Backend backend, Storage table, Storage indices, Storage y, int count, int dim, int vocabulary);
 
-    /// <summary>A kernel for <see cref="Ops.GatherBFloat16"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.GatherBFloat16"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// <see cref="Backend.Gather"/> from a bfloat16 table packed as in <see cref="Backend.BFloat16MatMul"/> ([vocabulary, dim]).
+    /// </summary>
     public delegate void GatherBFloat16(Backend backend, Storage packed, Storage indices, Storage y, int count, int dim, int vocabulary);
 
-    /// <summary>A kernel for <see cref="Ops.OneHot"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.OneHot"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// One-hot rows: y[i, :] = 0 except y[i, indices[i]] = 1, for count indices over classes columns.
+    /// </summary>
     public delegate void OneHot(Backend backend, Storage indices, Storage y, int count, int classes);
 
-    /// <summary>A kernel for <see cref="Ops.ScatterAdd"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.ScatterAdd"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// dtable[indices[i], :] += dy[i, :].
+    /// </summary>
     public delegate void ScatterAdd(Backend backend, Storage dy, Storage indices, Storage dtable, int count, int dim, int vocabulary);
 
-    /// <summary>A kernel for <see cref="Ops.Im2Col"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.Im2Col"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// Unfolds image patches: cols[(n, oh, ow), (c, kh, kw)] = x[n, c, oh*sh - ph + kh, ow*sw - pw + kw] (0 outside).
+    /// </summary>
     public delegate void Im2Col(Backend backend, Storage x, Storage cols, in ConvGeometry g);
 
-    /// <summary>A kernel for <see cref="Ops.Col2Im"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.Col2Im"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// The adjoint of <see cref="Backend.Im2Col"/>: dx += fold(dcols).
+    /// </summary>
     public delegate void Col2Im(Backend backend, Storage dcols, Storage dx, in ConvGeometry g);
 
-    /// <summary>A kernel for <see cref="Ops.MaxPool"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.MaxPool"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// Max pooling; argmax receives the flat input index of each maximum (as raw int bits).
+    /// </summary>
     public delegate void MaxPool(Backend backend, Storage x, Storage y, Storage argmax, in ConvGeometry g);
 
-    /// <summary>A kernel for <see cref="Ops.MaxPoolBackward"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.MaxPoolBackward"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// dx[argmax[i]] += dy[i].
+    /// </summary>
     public delegate void MaxPoolBackward(Backend backend, Storage dy, Storage argmax, Storage dx, int count);
 
-    /// <summary>A kernel for <see cref="Ops.MaxPoolBackward2"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.MaxPoolBackward2"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// dx[argmax[i]] += dy[i] for the windows of <paramref name="g"/> (count = N * C * OH * OW): the same as the overload
+    /// taking a count; a device that adds the gradients by gathering over the windows needs the geometry.
+    /// </summary>
     public delegate void MaxPoolBackward2(Backend backend, Storage dy, Storage argmax, Storage dx, in ConvGeometry g);
 
-    /// <summary>A kernel for <see cref="Ops.Permute"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.Permute"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// y (+)= x permuted: output element at coordinates (c0..c[r-1]) of <paramref name="outShape"/> comes from
+    /// input offset Σ c_k * inStrides[k] (the input strides already reordered by the permutation). Rank ≤ 6.
+    /// </summary>
     public delegate void Permute(Backend backend, Storage x, Storage y, ReadOnlySpan<int> outShape, ReadOnlySpan<int> inStrides, bool accumulate);
 
-    /// <summary>A kernel for <see cref="Ops.SumAxis"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.SumAxis"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// y[o, i] (+)= scale * Σ_d x[o, d, i] for a [outer, dim, inner] view.
+    /// </summary>
     public delegate void SumAxis(Backend backend, Storage x, Storage y, int outer, int dim, int inner, float scale, bool accumulate);
 
-    /// <summary>A kernel for <see cref="Ops.BroadcastAxis"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.BroadcastAxis"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// dx[o, d, i] += scale * dy[o, i] (the gradient of <see cref="Backend.SumAxis"/>).
+    /// </summary>
     public delegate void BroadcastAxis(Backend backend, Storage dy, Storage dx, int outer, int dim, int inner, float scale);
 
-    /// <summary>A kernel for <see cref="Ops.SgdStep"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.SgdStep"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// SGD with optional momentum: v = momentum * v + g; p -= lr * v (v is null when momentum is 0).
+    /// </summary>
     public delegate void SgdStep(Backend backend, Storage p, Storage g, Storage? v, int n, float lr, float momentum);
 
-    /// <summary>A kernel for <see cref="Ops.AdamStep"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.AdamStep"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// Adam: m, v moments updated in place; p -= lr * m / (sqrt(v) + eps). lr is already bias-corrected.
+    /// </summary>
     public delegate void AdamStep(Backend backend, Storage p, Storage g, Storage m, Storage v, int n, float lr, float beta1, float beta2, float eps);
 
-    /// <summary>A kernel for <see cref="Ops.AdamStep8Bit"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.AdamStep8Bit"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// <see cref="Backend.AdamStep"/> with 8-bit moments (see <c>Optimizers.AdamW8Bit</c>): m and v hold one byte per element
+    /// (n bytes, packed four per float), codes into <paramref name="map"/> (256 signed values for m, then 256 unsigned for
+    /// v, both in [-1, 1]) scaled per block of <see cref="EightBitMoments.BlockSize"/> elements by
+    /// <paramref name="absMax"/> (the blocks' m scales, then their v scales). The moments are decoded, updated, and
+    /// encoded again to the nearest code with new block scales.
+    /// </summary>
     public delegate void AdamStep8Bit(Backend backend, Storage p, Storage g, Storage m, Storage v, Storage absMax, Storage map, int n, float lr, float beta1, float beta2, float eps, float gradientScale, float decay);
 
-    /// <summary>A kernel for <see cref="Ops.SumSquares"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.SumSquares"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// total[0] += Σ x² over <paramref name="n"/> elements (a gradient norm without temporary tensors).
+    /// </summary>
     public delegate void SumSquares(Backend backend, Storage x, Storage total, int n);
 
-    /// <summary>A kernel for <see cref="Ops.FusedAdamW"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.FusedAdamW"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// AdamW over many tensors in a few passes: the global gradient norm clipped to <paramref name="maxNorm"/> (0: no
+    /// clipping), p ← p · <paramref name="decay"/>, then Adam with the bias-corrected <paramref name="lr"/>, as
+    /// <see cref="Backend.AdamStep"/> computes it; with <paramref name="zeroGradients"/> the gradients are zeroed for the next step.
+    /// <paramref name="cache"/> keeps the device tables between calls (dispose it when done). False when the device has no
+    /// such pass.
+    /// </summary>
     public delegate bool FusedAdamW(Backend backend, ReadOnlySpan<(Storage P, Storage G, Storage M, Storage V, int N)> tensors, ref IDisposable? cache, float maxNorm, float lr, float decay, float beta1, float beta2, float eps, bool zeroGradients);
 
-    /// <summary>A kernel for <see cref="Ops.ClipFactor"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.ClipFactor"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// factor[0] = min(1, maxNorm / √sumSquares[0]) (1 when the sum is 0): the gradient-clipping factor computed where the
+    /// gradients are, so clipping needs no host read of the norm.
+    /// </summary>
     public delegate void ClipFactor(Backend backend, Storage sumSquares, Storage factor, float maxNorm);
 
-    /// <summary>A kernel for <see cref="Ops.Dropout"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.Dropout"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// Inverted dropout: y = keep(i) ? x / (1 - p) : 0, where keep(i) comes from <see cref="DropoutMask"/>.
+    /// </summary>
     public delegate void Dropout(Backend backend, Storage x, Storage y, int n, float p, uint seed);
 
-    /// <summary>A kernel for <see cref="Ops.DropoutBackward"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.DropoutBackward"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// dx += keep(i) ? dy / (1 - p) : 0, regenerating the same mask from the seed.
+    /// </summary>
     public delegate void DropoutBackward(Backend backend, Storage dy, Storage dx, int n, float p, uint seed);
 
-    /// <summary>A kernel for <see cref="Ops.ScaleMaskSoftmax"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.ScaleMaskSoftmax"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// y[r, :] = softmax(scale * x[r, :] + mask[r % maskRows, :]) (mask optional).
+    /// </summary>
     public delegate void ScaleMaskSoftmax(Backend backend, Storage x, Storage? mask, Storage y, int rows, int cols, int maskRows, float scale);
 
-    /// <summary>A kernel for <see cref="Ops.LayerNormFused"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.LayerNormFused"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// y[r, :] = (x[r, :] - mean) / sqrt(var + eps) * gamma + beta over the last dimension.
+    /// </summary>
     public delegate void LayerNormFused(Backend backend, Storage x, Storage gamma, Storage beta, Storage y, int rows, int cols, float eps);
 
-    /// <summary>A kernel for <see cref="Ops.LayerNormTrain"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.LayerNormTrain"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// <see cref="Backend.LayerNormFused"/> that also stores each row's mean (stats[r]) and 1 / sqrt(var + eps) (stats[rows + r]).
+    /// </summary>
     public delegate void LayerNormTrain(Backend backend, Storage x, Storage gamma, Storage beta, Storage y, Storage stats, int rows, int cols, float eps);
 
-    /// <summary>A kernel for <see cref="Ops.LayerNormBackward"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.LayerNormBackward"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// Gradients of <see cref="Backend.LayerNormTrain"/> given dy: adds to dx (when given), dgamma += Σ_r dy ∘ x̂ and dbeta += Σ_r dy.
+    /// </summary>
     public delegate void LayerNormBackward(Backend backend, Storage x, Storage gamma, Storage dy, Storage stats, Storage? dx, Storage? dgamma, Storage? dbeta, int rows, int cols);
 
-    /// <summary>A kernel for <see cref="Ops.BiasGelu"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.BiasGelu"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// y[i] = gelu(x[i] + bias[i % cols]).
+    /// </summary>
     public delegate void BiasGelu(Backend backend, Storage x, Storage bias, Storage y, int n, int cols);
 
-    /// <summary>A kernel for <see cref="Ops.Int8MatMul"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.Int8MatMul"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// y[m, n] = x[m, k] · w, where w[k, j] = q[k, j] · scales[j] and q holds signed bytes packed four per 32-bit element
+    /// along each row (rows padded to ceil(n / 4) elements). Suited to few rows (token-by-token decoding).
+    /// </summary>
     public delegate void Int8MatMul(Backend backend, Storage x, Storage q, Storage scales, Storage y, int m, int n, int k);
 
-    /// <summary>A kernel for <see cref="Ops.BFloat16MatMul"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.BFloat16MatMul"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// y[m, n] = x[m, k] · w[k, n] with w stored as bfloat16 pairs packed into 32-bit words along each row (word c of
+    /// row r holds columns 2c in its low half and 2c + 1 in its high half; rows have ⌈n / 2⌉ words).
+    /// </summary>
     public delegate void BFloat16MatMul(Backend backend, Storage x, Storage packed, Storage y, int m, int n, int k);
 
-    /// <summary>A kernel for <see cref="Ops.BFloat16Dequantize"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.BFloat16Dequantize"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// w[k, n] = the float32 values of bfloat16 weights packed as in <see cref="Backend.BFloat16MatMul"/>.
+    /// </summary>
     public delegate void BFloat16Dequantize(Backend backend, Storage packed, Storage w, int k, int n);
 
-    /// <summary>A kernel for <see cref="Ops.PackBFloat16"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.PackBFloat16"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// Rounds x [n] to bfloat16 (to nearest, ties to even), two values per word as <see cref="Backend.BFloat16Dequantize"/> reads
+    /// them back with k = 1: packed holds (n + 1) / 2 words.
+    /// </summary>
     public delegate void PackBFloat16(Backend backend, Storage x, Storage packed, int n);
 
-    /// <summary>A kernel for <see cref="Ops.Int8Dequantize"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.Int8Dequantize"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// w[k, n] = q[k, n] · scales[n] (see <see cref="Backend.Int8MatMul"/> for the packing).
+    /// </summary>
     public delegate void Int8Dequantize(Backend backend, Storage q, Storage scales, Storage w, int k, int n);
 
-    /// <summary>A kernel for <see cref="Ops.Int4MatMul"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.Int4MatMul"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// y[m, n] = x[m, k] · w with 4-bit weights: w[r, j] = q[r, j] · scales[r / 32, j], where q holds signed nibbles packed
+    /// eight per 32-bit word along each row (nibble c of word w is column 8w + c; rows have ⌈n / 8⌉ words) and scales has
+    /// one row of 8·⌈n / 8⌉ values per group of 32 weight rows.
+    /// </summary>
     public delegate void Int4MatMul(Backend backend, Storage x, Storage q, Storage scales, Storage y, int m, int n, int k);
 
-    /// <summary>A kernel for <see cref="Ops.Int4Dequantize"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.Int4Dequantize"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// w[k, n] = the float values of 4-bit weights packed as in <see cref="Backend.Int4MatMul"/>.
+    /// </summary>
     public delegate void Int4Dequantize(Backend backend, Storage q, Storage scales, Storage w, int k, int n);
 
-    /// <summary>A kernel for <see cref="Ops.RmsNorm"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.RmsNorm"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// y = x · inv per row, inv[r] = 1 / sqrt(mean(x[r]²) + eps) (stored for the backward pass).
+    /// </summary>
     public delegate void RmsNorm(Backend backend, Storage x, Storage y, Storage inv, int rows, int cols, float eps);
 
-    /// <summary>A kernel for <see cref="Ops.RmsNormBackward"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.RmsNormBackward"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// dx += inv[r] · (dy - y · mean(dy · y)) per row, where y is the normalized forward output.
+    /// </summary>
     public delegate void RmsNormBackward(Backend backend, Storage dy, Storage y, Storage inv, Storage dx, int rows, int cols);
 
-    /// <summary>A kernel for <see cref="Ops.Rope"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.Rope"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// Rotary position embedding of x [rows = batch·steps·heads, dim] into y (which must already hold x): pair p of a row at
+    /// step t rotates by the angle whose cos/sin are cos/sin[positions[t], p]. Pairs are (2p, 2p+1) when interleaved,
+    /// else (p, p + half). sign = -1 rotates backwards (the gradient).
+    /// </summary>
     public delegate void Rope(Backend backend, Storage x, Storage y, Storage cos, Storage sin, Storage positions, int rows, int heads, int steps, int dim, int half, bool interleaved, float sign);
 
-    /// <summary>A kernel for <see cref="Ops.RmsNormAffine"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.RmsNormAffine"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// y = x · inv · (gain[c] + offset) per row with inv = 1 / sqrt(mean(x²) + eps): normalization and gain in one pass (inference).
+    /// </summary>
     public delegate void RmsNormAffine(Backend backend, Storage x, Storage gain, Storage y, int rows, int cols, float eps, float offset);
 
-    /// <summary>A kernel for <see cref="Ops.AddRmsNormAffine"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.AddRmsNormAffine"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// sum = a + b and y = RMS-normalized sum · (gain[c] + offset) per row, in one pass (inference).
+    /// </summary>
     public delegate void AddRmsNormAffine(Backend backend, Storage a, Storage b, Storage sum, Storage gain, Storage y, int rows, int cols, float eps, float offset);
 
-    /// <summary>A kernel for <see cref="Ops.RmsNormRope"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.RmsNormRope"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// RMS normalization with gain of each row (a head's vector), then the rotary embedding as <see cref="Backend.Rope"/> with
+    /// sign 1 (rows are batch·steps·heads; dimensions beyond 2·half are only normalized). Inference.
+    /// </summary>
     public delegate void RmsNormRope(Backend backend, Storage x, Storage gain, Storage cos, Storage sin, Storage positions, Storage y, int rows, int cols, float eps, float offset, int heads, int steps, int half, bool interleaved);
 
-    /// <summary>A kernel for <see cref="Ops.RmsNormRopePair"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.RmsNormRopePair"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// <see cref="Backend.RmsNormRope"/> for two tensors sharing the positions and rotary tables (queries and keys): rows1 rows
+    /// of x (heads per step: heads) and rows2 of x2 (heads2). Devices may do both in one pass.
+    /// </summary>
     public delegate void RmsNormRopePair(Backend backend, Storage x, Storage gain, Storage y, int rows1, float eps, float offset, int heads, Storage x2, Storage gain2, Storage y2, int rows2, float eps2, float offset2, int heads2, Storage cos, Storage sin, Storage positions, int cols, int steps, int half, bool interleaved);
 
-    /// <summary>A kernel for <see cref="Ops.NormRopeHeads"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.NormRopeHeads"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// The attention layer's queries, keys and values [batch, steps, heads·cols] (its projections) put in the layouts
+    /// attention reads, in one pass (inference): query heads RMS-normalized with gain (when <paramref name="gainQ"/> is
+    /// set; keys then with <paramref name="gainK"/>) and rotated as <see cref="Backend.Rope"/> (half 0: no rotation) into
+    /// yq [batch, heads, steps, cols]; keys the same and values unchanged into yk and yv [batch, kvHeads, capacity, stride]
+    /// at row position[0] + s (a cache; row s when <paramref name="position"/> is null), as floats or bfloat16 pairs.
+    /// Returns false when the device has no such kernel (callers then run the steps one by one).
+    /// </summary>
     public delegate bool NormRopeHeads(Backend backend, Storage q, Storage k, Storage v, int batch, int steps, int heads, int kvHeads, int cols, Storage? gainQ, float epsQ, float offsetQ, Storage? gainK, float epsK, float offsetK, Storage? cos, Storage? sin, Storage? positions, int half, bool interleaved, Storage yq, Storage yk, Storage yv, Storage? position, int capacity, int stride, bool bfloat16);
 
-    /// <summary>A kernel for <see cref="Ops.SoftmaxCrossEntropyRows"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.SoftmaxCrossEntropyRows"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// Token cross-entropy for language-model training, per row r of logits [rows, vocabulary] with target class t_r and
+    /// weight w_r (0 masks the row): losses[r] = w_r · (logsumexp(x_r) - x_r[t_r]); the logits are overwritten with their
+    /// gradient scale · w_r · (softmax(x_r) - onehot(t_r)). Targets and weights are float arrays of rows.
+    /// </summary>
     public delegate void SoftmaxCrossEntropyRows(Backend backend, Storage logits, Storage targets, Storage weights, Storage losses, int rows, int vocabulary, float scale);
 
-    /// <summary>A kernel for <see cref="Ops.GatedActivation"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.GatedActivation"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// y = act(gate) · up element-wise; kind 0 = SiLU, 1 = GELU (tanh approximation), 2 = ReLU.
+    /// </summary>
     public delegate void GatedActivation(Backend backend, Storage gate, Storage up, Storage y, int n, int kind);
 
-    /// <summary>A kernel for <see cref="Ops.GatedActivationBackward"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.GatedActivationBackward"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// dgate += dy · up · act'(gate) when flags has bit 0, dup += dy · act(gate) when it has bit 1; bits 2 and 3 write dgate and dup (= instead of +=).
+    /// </summary>
     public delegate void GatedActivationBackward(Backend backend, Storage gate, Storage up, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags);
 
-    /// <summary>A kernel for <see cref="Ops.GatedActivationPacked"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.GatedActivationPacked"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// <see cref="Backend.GatedActivation"/> with bfloat16 words (two values each, low half first, as <see cref="Backend.PackBFloat16"/>
+    /// writes them): gate and up read from <paramref name="packedGate"/> and <paramref name="packedUp"/> when flags has
+    /// bit 0 (else from <paramref name="gate"/> and <paramref name="up"/>); y written when it has bit 2, gate and up packed
+    /// when it has bit 1, y packed when it has bit 3. Storages a flag does not use may be any storage.
+    /// </summary>
     public delegate void GatedActivationPacked(Backend backend, Storage gate, Storage up, Storage packedGate, Storage packedUp, Storage y, Storage packedY, int n, int kind, int flags);
 
-    /// <summary>A kernel for <see cref="Ops.GatedActivationBackwardPacked"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.GatedActivationBackwardPacked"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// <see cref="Backend.GatedActivationBackward"/> reading gate and up as bfloat16 words.
+    /// </summary>
     public delegate void GatedActivationBackwardPacked(Backend backend, Storage packedGate, Storage packedUp, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags);
 
-    /// <summary>A kernel for <see cref="Ops.KeyValueWriteInt8"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.KeyValueWriteInt8"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// Quantizes source [heads·steps, dim] into the int8 cache at positions position[0] + step.
+    /// </summary>
     public delegate void KeyValueWriteInt8(Backend backend, Storage source, Storage cache, Storage scales, Storage position, int heads, int steps, int capacity, int dim);
 
-    /// <summary>A kernel for <see cref="Ops.AttentionScoresInt8"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.AttentionScoresInt8"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// y[r, t, c] = scales[r, c] · Σ_d q[r, t, d] · keys[r, c, d] for every cached position c.
+    /// </summary>
     public delegate void AttentionScoresInt8(Backend backend, Storage q, Storage cache, Storage scales, Storage y, int rows, int steps, int capacity, int dim);
 
-    /// <summary>A kernel for <see cref="Ops.AttentionContextInt8"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.AttentionContextInt8"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// y[r, t, d] = Σ_c weights[r, t, c] · scales[r, c] · values[r, c, d].
+    /// </summary>
     public delegate void AttentionContextInt8(Backend backend, Storage weights, Storage cache, Storage scales, Storage y, int rows, int steps, int capacity, int dim);
 
-    /// <summary>A kernel for <see cref="Ops.AttentionDecode"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.AttentionDecode"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// Attention over a key/value cache filled up to the device position: for head h and row i of q [heads, rowsPerHead,
+    /// dim], y[h, i] = Σ_c softmax(scale · q[h, i] · keys[h, c]) · values[h, c] over positions c = 0 … position[0] +
+    /// (i % steps) (the causal limit of that row's step). Keys and values are [heads, capacity, dim]; unfilled
+    /// positions are never read, so the cost follows the context length rather than the capacity. With a
+    /// <paramref name="variant"/>, each row starts at its window's first position and its scores are soft-capped (every
+    /// attention method below takes one; the default is plain causal attention).
+    /// </summary>
     public delegate void AttentionDecode(Backend backend, Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant);
 
-    /// <summary>A kernel for <see cref="Ops.AttentionInt8"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.AttentionInt8"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// <see cref="Backend.AttentionDecode"/> (tiled: <paramref name="tiled"/>, for many query rows) over an int8 cache: keys and
+    /// values [heads, capacity, ⌈dim / 4⌉ words] of packed bytes with one scale per cached row (keyScales, valueScales
+    /// [heads, capacity]).
+    /// </summary>
     public delegate void AttentionInt8(Backend backend, Storage q, Storage keys, Storage values, Storage keyScales, Storage valueScales, Storage position, Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, bool tiled, AttentionVariant variant);
 
-    /// <summary>A kernel for <see cref="Ops.AttentionBFloat16"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.AttentionBFloat16"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// <see cref="Backend.AttentionDecode"/> (tiled: <paramref name="tiled"/>) over a bfloat16 cache: keys and values
+    /// [heads, capacity, ⌈dim / 2⌉ words], dimension d in the low (even d) or high (odd d) half of word d / 2.
+    /// </summary>
     public delegate void AttentionBFloat16(Backend backend, Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, bool tiled, AttentionVariant variant);
 
-    /// <summary>A kernel for <see cref="Ops.KeyValueWriteBFloat16"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.KeyValueWriteBFloat16"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// <see cref="Backend.KeyValueWrite"/> into a bfloat16 cache (values rounded to nearest, ties to even).
+    /// </summary>
     public delegate void KeyValueWriteBFloat16(Backend backend, Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim);
 
-    /// <summary>A kernel for <see cref="Ops.AttentionTiledBackward"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.AttentionTiledBackward"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// Gradient of <see cref="Backend.AttentionTiled"/> with causal offset 0 (training): given the output, each row's log-sum-exp
+    /// and dOutput, adds to dq [heads, rowsPerHead, dim] and dkeys, dvalues [heads, capacity, dim]. The attention weights
+    /// are recomputed, never stored.
+    /// </summary>
     public delegate void AttentionTiledBackward(Backend backend, Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant);
 
-    /// <summary>A kernel for <see cref="Ops.AttentionSegmented"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.AttentionSegmented"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// Causal attention over packed sequences (training): as <see cref="Backend.AttentionTiled"/> with offset 0 and keys and values
+    /// [heads, steps, dim], except that several sequences share each row of <paramref name="steps"/> positions, so row i of
+    /// head h sees positions c with starts[b·steps + t] ≤ c ≤ t, where t = i % steps and b = h / <paramref name="headsPerRow"/>
+    /// is the packed row; starts and ends hold, per position of each packed row, where its sequence begins and stops
+    /// (exclusive), as floats. Writes the log-sum-exp when given. Returns false when the device has no such pass.
+    /// </summary>
     public delegate bool AttentionSegmented(Backend backend, Storage q, Storage keys, Storage values, Storage y, Storage? logSumExp, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant);
 
-    /// <summary>A kernel for <see cref="Ops.AttentionRows"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.AttentionRows"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// <see cref="Backend.AttentionTiled"/> (no log-sum-exp) for rows of different lengths decoded together: row i of head h
+    /// sees cached positions c with starts[(h / headsPerRow)·steps + i % steps] ≤ c ≤ position[0] + i % steps (a row with
+    /// none, padding, gets zeros). Returns false when the device has no such pass.
+    /// </summary>
     public delegate bool AttentionRows(Backend backend, Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant);
 
-    /// <summary>A kernel for <see cref="Ops.AttentionSegmentedBackward"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.AttentionSegmentedBackward"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// The gradient of <see cref="Backend.AttentionSegmented"/> (as <see cref="Backend.AttentionTiledBackward"/>); false when unsupported.
+    /// </summary>
     public delegate bool AttentionSegmentedBackward(Backend backend, Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant);
 
-    /// <summary>A kernel for <see cref="Ops.AttentionTiled"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.AttentionTiled"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// The same attention as <see cref="Backend.AttentionDecode"/> for many query rows at once (a prompt, a training sequence),
+    /// tiled so query rows share each key and value read; also writes each row's log-sum-exp of the scaled scores to
+    /// <paramref name="logSumExp"/> [heads, rowsPerHead] when given (training). The default runs
+    /// <see cref="Backend.AttentionDecode"/> for inference and the host fallback for training.
+    /// </summary>
     public delegate void AttentionTiled(Backend backend, Storage q, Storage keys, Storage values, Storage position, Storage y, Storage? logSumExp, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant);
 
-    /// <summary>A kernel for <see cref="Ops.DecoderMask"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.DecoderMask"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// mask[i, j] = j ≤ position + i ? 0 : -1e9 for a [rows, capacity] mask; position is read from device memory.
+    /// </summary>
     public delegate void DecoderMask(Backend backend, Storage position, Storage mask, int rows, int capacity);
 
-    /// <summary>A kernel for <see cref="Ops.KeyValueWrite"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.KeyValueWrite"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// cache[bh, position + t, :] = source[bh, t, :] for [heads, steps, dim] → [heads, capacity, dim].
+    /// </summary>
     public delegate void KeyValueWrite(Backend backend, Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim);
 
-    /// <summary>A kernel for <see cref="Ops.SampleRows"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.SampleRows"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// Draws one token per row from softmax(logits / temperature), restricted in turn to the top-k scores (topK &gt; 0),
+    /// to the smallest set holding topP of the probability (0 &lt; topP &lt; 1; the cut-off is found by bisection on the
+    /// score) and to tokens at least minP times as likely as the best one (minP &gt; 0), using the counter-based random
+    /// stream (seed, step, row). Writes the token to ids[row] and 13 statistics to stats[(step * rows + row) * 13]:
+    /// id, probability, entropy (bits), then the top-5 (id, probability) pairs. The step number is read from device
+    /// memory. Row r's logits start at element r * rowStride + rowOffset.
+    /// </summary>
     public delegate void SampleRows(Backend backend, Storage logits, Storage ids, Storage stats, Storage step, int rows, int vocabulary, int rowStride, int rowOffset, float temperature, int topK, float topP, float minP, uint seed);
 
-    /// <summary>A kernel for <see cref="Ops.PenalizeRows"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.PenalizeRows"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// Copies each row's logits (row r at r * rowStride + rowOffset) to work[r, :] and applies repetition penalties for
+    /// the last min(length, lastN) tokens of the row's history ring history[r, pos % capacity] (length read from device
+    /// memory). Each distinct token in the window is penalized once: repeat (x &gt; 0 ? x / repeat : x * repeat), then
+    /// x -= presence + frequency * (occurrences in the window).
+    /// </summary>
     public delegate void PenalizeRows(Backend backend, Storage logits, Storage work, Storage history, Storage length, int rows, int vocabulary, int rowStride, int rowOffset, int capacity, int lastN, float repeat, float presence, float frequency);
 
-    /// <summary>A kernel for <see cref="Ops.HistoryPush"/>.</summary>
+    /// <summary>
+    /// A kernel for <see cref="Ops.HistoryPush"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// history[r, length % capacity] = ids[r] for every row (length read from device memory, not advanced).
+    /// </summary>
     public delegate void HistoryPush(Backend backend, Storage ids, Storage history, Storage length, int rows, int capacity);
 }
 
-internal static partial class Ops
+/// <summary>
+/// The operations of the device contract (plan 9), one descriptor each, in slot order. A device runs each through
+/// <c>Backend.Name(...)</c>; <see cref="Kernels.Register"/> adds kernels for them.
+/// </summary>
+public static partial class Ops
 {
-    /// <summary>The operation Fill.</summary>
-    public static readonly Operation Fill = new("Fill", OperationIndex.Fill, typeof(OperationKernels.Fill));
-
-    /// <summary>The operation Unary.</summary>
-    public static readonly Operation Unary = new("Unary", OperationIndex.Unary, typeof(OperationKernels.Unary));
-
-    /// <summary>The operation UnaryBackward.</summary>
-    public static readonly Operation UnaryBackward = new("UnaryBackward", OperationIndex.UnaryBackward, typeof(OperationKernels.UnaryBackward));
-
-    /// <summary>The operation Binary.</summary>
-    public static readonly Operation Binary = new("Binary", OperationIndex.Binary, typeof(OperationKernels.Binary));
-
-    /// <summary>The operation ExtremumBackward.</summary>
-    public static readonly Operation ExtremumBackward = new("ExtremumBackward", OperationIndex.ExtremumBackward, typeof(OperationKernels.ExtremumBackward));
-
-    /// <summary>The operation Pow.</summary>
-    public static readonly Operation Pow = new("Pow", OperationIndex.Pow, typeof(OperationKernels.Pow));
-
-    /// <summary>The operation PowBackward.</summary>
-    public static readonly Operation PowBackward = new("PowBackward", OperationIndex.PowBackward, typeof(OperationKernels.PowBackward));
-
-    /// <summary>The operation Clamp.</summary>
-    public static readonly Operation Clamp = new("Clamp", OperationIndex.Clamp, typeof(OperationKernels.Clamp));
-
-    /// <summary>The operation ClampBackward.</summary>
-    public static readonly Operation ClampBackward = new("ClampBackward", OperationIndex.ClampBackward, typeof(OperationKernels.ClampBackward));
-
-    /// <summary>The operation Where.</summary>
-    public static readonly Operation Where = new("Where", OperationIndex.Where, typeof(OperationKernels.Where));
-
-    /// <summary>The operation WhereBackward.</summary>
-    public static readonly Operation WhereBackward = new("WhereBackward", OperationIndex.WhereBackward, typeof(OperationKernels.WhereBackward));
-
-    /// <summary>The operation Affine.</summary>
-    public static readonly Operation Affine = new("Affine", OperationIndex.Affine, typeof(OperationKernels.Affine));
-
-    /// <summary>The operation Axpy.</summary>
-    public static readonly Operation Axpy = new("Axpy", OperationIndex.Axpy, typeof(OperationKernels.Axpy));
-
-    /// <summary>The operation MulAdd.</summary>
-    public static readonly Operation MulAdd = new("MulAdd", OperationIndex.MulAdd, typeof(OperationKernels.MulAdd));
-
-    /// <summary>The operation AddRowVector.</summary>
-    public static readonly Operation AddRowVector = new("AddRowVector", OperationIndex.AddRowVector, typeof(OperationKernels.AddRowVector));
-
-    /// <summary>The operation SumRows.</summary>
-    public static readonly Operation SumRows = new("SumRows", OperationIndex.SumRows, typeof(OperationKernels.SumRows));
-
-    /// <summary>The operation Sum.</summary>
-    public static readonly Operation Sum = new("Sum", OperationIndex.Sum, typeof(OperationKernels.Sum));
-
-    /// <summary>The operation AxpyAt.</summary>
-    public static readonly Operation AxpyAt = new("AxpyAt", OperationIndex.AxpyAt, typeof(OperationKernels.AxpyAt));
-
-    /// <summary>The operation AddBroadcastScalar.</summary>
-    public static readonly Operation AddBroadcastScalar = new("AddBroadcastScalar", OperationIndex.AddBroadcastScalar, typeof(OperationKernels.AddBroadcastScalar));
-
-    /// <summary>The operation PackedMatMulLarge.</summary>
-    public static readonly Operation PackedMatMulLarge = new("PackedMatMulLarge", OperationIndex.PackedMatMulLarge, typeof(OperationKernels.PackedMatMulLarge));
-
-    /// <summary>The operation PackedMatMulGated.</summary>
-    public static readonly Operation PackedMatMulGated = new("PackedMatMulGated", OperationIndex.PackedMatMulGated, typeof(OperationKernels.PackedMatMulGated));
-
-    /// <summary>The operation PackedMatMulAddRmsNorm.</summary>
-    public static readonly Operation PackedMatMulAddRmsNorm = new("PackedMatMulAddRmsNorm", OperationIndex.PackedMatMulAddRmsNorm, typeof(OperationKernels.PackedMatMulAddRmsNorm));
-
-    /// <summary>The operation PackedMatMulMany.</summary>
-    public static readonly Operation PackedMatMulMany = new("PackedMatMulMany", OperationIndex.PackedMatMulMany, typeof(OperationKernels.PackedMatMulMany));
-
-    /// <summary>The operation PackedMatMulGatedPair.</summary>
-    public static readonly Operation PackedMatMulGatedPair = new("PackedMatMulGatedPair", OperationIndex.PackedMatMulGatedPair, typeof(OperationKernels.PackedMatMulGatedPair));
-
-    /// <summary>The operation MatMulMany.</summary>
-    public static readonly Operation MatMulMany = new("MatMulMany", OperationIndex.MatMulMany, typeof(OperationKernels.MatMulMany));
-
-    /// <summary>The operation MatMulBias.</summary>
-    public static readonly Operation MatMulBias = new("MatMulBias", OperationIndex.MatMulBias, typeof(OperationKernels.MatMulBias));
-
-    /// <summary>The operation MatMulLowRank.</summary>
-    public static readonly Operation MatMulLowRank = new("MatMulLowRank", OperationIndex.MatMulLowRank, typeof(OperationKernels.MatMulLowRank));
-
-    /// <summary>The operation BFloat16TransposedMatMul.</summary>
-    public static readonly Operation BFloat16TransposedMatMul = new("BFloat16TransposedMatMul", OperationIndex.BFloat16TransposedMatMul, typeof(OperationKernels.BFloat16TransposedMatMul));
-
-    /// <summary>The operation Float8QuantizeWeight.</summary>
-    public static readonly Operation Float8QuantizeWeight = new("Float8QuantizeWeight", OperationIndex.Float8QuantizeWeight, typeof(OperationKernels.Float8QuantizeWeight));
-
-    /// <summary>The operation Float8MatMul.</summary>
-    public static readonly Operation Float8MatMul = new("Float8MatMul", OperationIndex.Float8MatMul, typeof(OperationKernels.Float8MatMul));
-
-    /// <summary>The operation PackedMatMulLowRank.</summary>
-    public static readonly Operation PackedMatMulLowRank = new("PackedMatMulLowRank", OperationIndex.PackedMatMulLowRank, typeof(OperationKernels.PackedMatMulLowRank));
-
-    /// <summary>The operation GemmStrided.</summary>
-    public static readonly Operation GemmStrided = new("GemmStrided", OperationIndex.GemmStrided, typeof(OperationKernels.GemmStrided));
-
-    /// <summary>The operation AttentionStrided.</summary>
-    public static readonly Operation AttentionStrided = new("AttentionStrided", OperationIndex.AttentionStrided, typeof(OperationKernels.AttentionStrided));
-
-    /// <summary>The operation AttentionStridedBackward.</summary>
-    public static readonly Operation AttentionStridedBackward = new("AttentionStridedBackward", OperationIndex.AttentionStridedBackward, typeof(OperationKernels.AttentionStridedBackward));
-
-    /// <summary>The operation SumColumns.</summary>
-    public static readonly Operation SumColumns = new("SumColumns", OperationIndex.SumColumns, typeof(OperationKernels.SumColumns));
-
-    /// <summary>The operation AddDropout.</summary>
-    public static readonly Operation AddDropout = new("AddDropout", OperationIndex.AddDropout, typeof(OperationKernels.AddDropout));
-
-    /// <summary>The operation BatchedMatMul.</summary>
-    public static readonly Operation BatchedMatMul = new("BatchedMatMul", OperationIndex.BatchedMatMul, typeof(OperationKernels.BatchedMatMul));
-
-    /// <summary>The operation Softmax.</summary>
-    public static readonly Operation Softmax = new("Softmax", OperationIndex.Softmax, typeof(OperationKernels.Softmax));
-
-    /// <summary>The operation SoftmaxBackward.</summary>
-    public static readonly Operation SoftmaxBackward = new("SoftmaxBackward", OperationIndex.SoftmaxBackward, typeof(OperationKernels.SoftmaxBackward));
-
-    /// <summary>The operation ArgMax.</summary>
-    public static readonly Operation ArgMax = new("ArgMax", OperationIndex.ArgMax, typeof(OperationKernels.ArgMax));
-
-    /// <summary>The operation ClassMatch.</summary>
-    public static readonly Operation ClassMatch = new("ClassMatch", OperationIndex.ClassMatch, typeof(OperationKernels.ClassMatch));
-
-    /// <summary>The operation NormStats.</summary>
-    public static readonly Operation NormStats = new("NormStats", OperationIndex.NormStats, typeof(OperationKernels.NormStats));
-
-    /// <summary>The operation NormApply.</summary>
-    public static readonly Operation NormApply = new("NormApply", OperationIndex.NormApply, typeof(OperationKernels.NormApply));
-
-    /// <summary>The operation NormBackward.</summary>
-    public static readonly Operation NormBackward = new("NormBackward", OperationIndex.NormBackward, typeof(OperationKernels.NormBackward));
-
-    /// <summary>The operation GroupScaleShift.</summary>
-    public static readonly Operation GroupScaleShift = new("GroupScaleShift", OperationIndex.GroupScaleShift, typeof(OperationKernels.GroupScaleShift));
-
-    /// <summary>The operation GroupReduce.</summary>
-    public static readonly Operation GroupReduce = new("GroupReduce", OperationIndex.GroupReduce, typeof(OperationKernels.GroupReduce));
-
-    /// <summary>The operation InvSqrt.</summary>
-    public static readonly Operation InvSqrt = new("InvSqrt", OperationIndex.InvSqrt, typeof(OperationKernels.InvSqrt));
-
-    /// <summary>The operation Gather.</summary>
-    public static readonly Operation Gather = new("Gather", OperationIndex.Gather, typeof(OperationKernels.Gather));
-
-    /// <summary>The operation GatherBFloat16.</summary>
-    public static readonly Operation GatherBFloat16 = new("GatherBFloat16", OperationIndex.GatherBFloat16, typeof(OperationKernels.GatherBFloat16));
-
-    /// <summary>The operation OneHot.</summary>
-    public static readonly Operation OneHot = new("OneHot", OperationIndex.OneHot, typeof(OperationKernels.OneHot));
-
-    /// <summary>The operation ScatterAdd.</summary>
-    public static readonly Operation ScatterAdd = new("ScatterAdd", OperationIndex.ScatterAdd, typeof(OperationKernels.ScatterAdd));
-
-    /// <summary>The operation Im2Col.</summary>
-    public static readonly Operation Im2Col = new("Im2Col", OperationIndex.Im2Col, typeof(OperationKernels.Im2Col));
-
-    /// <summary>The operation Col2Im.</summary>
-    public static readonly Operation Col2Im = new("Col2Im", OperationIndex.Col2Im, typeof(OperationKernels.Col2Im));
-
-    /// <summary>The operation MaxPool.</summary>
-    public static readonly Operation MaxPool = new("MaxPool", OperationIndex.MaxPool, typeof(OperationKernels.MaxPool));
-
-    /// <summary>The operation MaxPoolBackward.</summary>
-    public static readonly Operation MaxPoolBackward = new("MaxPoolBackward", OperationIndex.MaxPoolBackward, typeof(OperationKernels.MaxPoolBackward));
-
-    /// <summary>The operation MaxPoolBackward2.</summary>
-    public static readonly Operation MaxPoolBackward2 = new("MaxPoolBackward2", OperationIndex.MaxPoolBackward2, typeof(OperationKernels.MaxPoolBackward2));
-
-    /// <summary>The operation Permute.</summary>
-    public static readonly Operation Permute = new("Permute", OperationIndex.Permute, typeof(OperationKernels.Permute));
-
-    /// <summary>The operation SumAxis.</summary>
-    public static readonly Operation SumAxis = new("SumAxis", OperationIndex.SumAxis, typeof(OperationKernels.SumAxis));
-
-    /// <summary>The operation BroadcastAxis.</summary>
-    public static readonly Operation BroadcastAxis = new("BroadcastAxis", OperationIndex.BroadcastAxis, typeof(OperationKernels.BroadcastAxis));
-
-    /// <summary>The operation SgdStep.</summary>
-    public static readonly Operation SgdStep = new("SgdStep", OperationIndex.SgdStep, typeof(OperationKernels.SgdStep));
-
-    /// <summary>The operation AdamStep.</summary>
-    public static readonly Operation AdamStep = new("AdamStep", OperationIndex.AdamStep, typeof(OperationKernels.AdamStep));
-
-    /// <summary>The operation AdamStep8Bit.</summary>
-    public static readonly Operation AdamStep8Bit = new("AdamStep8Bit", OperationIndex.AdamStep8Bit, typeof(OperationKernels.AdamStep8Bit));
-
-    /// <summary>The operation SumSquares.</summary>
-    public static readonly Operation SumSquares = new("SumSquares", OperationIndex.SumSquares, typeof(OperationKernels.SumSquares));
-
-    /// <summary>The operation FusedAdamW.</summary>
-    public static readonly Operation FusedAdamW = new("FusedAdamW", OperationIndex.FusedAdamW, typeof(OperationKernels.FusedAdamW));
-
-    /// <summary>The operation ClipFactor.</summary>
-    public static readonly Operation ClipFactor = new("ClipFactor", OperationIndex.ClipFactor, typeof(OperationKernels.ClipFactor));
-
-    /// <summary>The operation Dropout.</summary>
-    public static readonly Operation Dropout = new("Dropout", OperationIndex.Dropout, typeof(OperationKernels.Dropout));
-
-    /// <summary>The operation DropoutBackward.</summary>
-    public static readonly Operation DropoutBackward = new("DropoutBackward", OperationIndex.DropoutBackward, typeof(OperationKernels.DropoutBackward));
-
-    /// <summary>The operation ScaleMaskSoftmax.</summary>
-    public static readonly Operation ScaleMaskSoftmax = new("ScaleMaskSoftmax", OperationIndex.ScaleMaskSoftmax, typeof(OperationKernels.ScaleMaskSoftmax));
-
-    /// <summary>The operation LayerNormFused.</summary>
-    public static readonly Operation LayerNormFused = new("LayerNormFused", OperationIndex.LayerNormFused, typeof(OperationKernels.LayerNormFused));
-
-    /// <summary>The operation LayerNormTrain.</summary>
-    public static readonly Operation LayerNormTrain = new("LayerNormTrain", OperationIndex.LayerNormTrain, typeof(OperationKernels.LayerNormTrain));
-
-    /// <summary>The operation LayerNormBackward.</summary>
-    public static readonly Operation LayerNormBackward = new("LayerNormBackward", OperationIndex.LayerNormBackward, typeof(OperationKernels.LayerNormBackward));
-
-    /// <summary>The operation BiasGelu.</summary>
-    public static readonly Operation BiasGelu = new("BiasGelu", OperationIndex.BiasGelu, typeof(OperationKernels.BiasGelu));
-
-    /// <summary>The operation Int8MatMul.</summary>
-    public static readonly Operation Int8MatMul = new("Int8MatMul", OperationIndex.Int8MatMul, typeof(OperationKernels.Int8MatMul));
-
-    /// <summary>The operation BFloat16MatMul.</summary>
-    public static readonly Operation BFloat16MatMul = new("BFloat16MatMul", OperationIndex.BFloat16MatMul, typeof(OperationKernels.BFloat16MatMul));
-
-    /// <summary>The operation BFloat16Dequantize.</summary>
-    public static readonly Operation BFloat16Dequantize = new("BFloat16Dequantize", OperationIndex.BFloat16Dequantize, typeof(OperationKernels.BFloat16Dequantize));
-
-    /// <summary>The operation PackBFloat16.</summary>
-    public static readonly Operation PackBFloat16 = new("PackBFloat16", OperationIndex.PackBFloat16, typeof(OperationKernels.PackBFloat16));
-
-    /// <summary>The operation Int8Dequantize.</summary>
-    public static readonly Operation Int8Dequantize = new("Int8Dequantize", OperationIndex.Int8Dequantize, typeof(OperationKernels.Int8Dequantize));
-
-    /// <summary>The operation Int4MatMul.</summary>
-    public static readonly Operation Int4MatMul = new("Int4MatMul", OperationIndex.Int4MatMul, typeof(OperationKernels.Int4MatMul));
-
-    /// <summary>The operation Int4Dequantize.</summary>
-    public static readonly Operation Int4Dequantize = new("Int4Dequantize", OperationIndex.Int4Dequantize, typeof(OperationKernels.Int4Dequantize));
-
-    /// <summary>The operation RmsNorm.</summary>
-    public static readonly Operation RmsNorm = new("RmsNorm", OperationIndex.RmsNorm, typeof(OperationKernels.RmsNorm));
-
-    /// <summary>The operation RmsNormBackward.</summary>
-    public static readonly Operation RmsNormBackward = new("RmsNormBackward", OperationIndex.RmsNormBackward, typeof(OperationKernels.RmsNormBackward));
-
-    /// <summary>The operation Rope.</summary>
-    public static readonly Operation Rope = new("Rope", OperationIndex.Rope, typeof(OperationKernels.Rope));
-
-    /// <summary>The operation RmsNormAffine.</summary>
-    public static readonly Operation RmsNormAffine = new("RmsNormAffine", OperationIndex.RmsNormAffine, typeof(OperationKernels.RmsNormAffine));
-
-    /// <summary>The operation AddRmsNormAffine.</summary>
-    public static readonly Operation AddRmsNormAffine = new("AddRmsNormAffine", OperationIndex.AddRmsNormAffine, typeof(OperationKernels.AddRmsNormAffine));
-
-    /// <summary>The operation RmsNormRope.</summary>
-    public static readonly Operation RmsNormRope = new("RmsNormRope", OperationIndex.RmsNormRope, typeof(OperationKernels.RmsNormRope));
-
-    /// <summary>The operation RmsNormRopePair.</summary>
-    public static readonly Operation RmsNormRopePair = new("RmsNormRopePair", OperationIndex.RmsNormRopePair, typeof(OperationKernels.RmsNormRopePair));
-
-    /// <summary>The operation NormRopeHeads.</summary>
-    public static readonly Operation NormRopeHeads = new("NormRopeHeads", OperationIndex.NormRopeHeads, typeof(OperationKernels.NormRopeHeads));
-
-    /// <summary>The operation SoftmaxCrossEntropyRows.</summary>
-    public static readonly Operation SoftmaxCrossEntropyRows = new("SoftmaxCrossEntropyRows", OperationIndex.SoftmaxCrossEntropyRows, typeof(OperationKernels.SoftmaxCrossEntropyRows));
-
-    /// <summary>The operation GatedActivation.</summary>
-    public static readonly Operation GatedActivation = new("GatedActivation", OperationIndex.GatedActivation, typeof(OperationKernels.GatedActivation));
-
-    /// <summary>The operation GatedActivationBackward.</summary>
-    public static readonly Operation GatedActivationBackward = new("GatedActivationBackward", OperationIndex.GatedActivationBackward, typeof(OperationKernels.GatedActivationBackward));
-
-    /// <summary>The operation GatedActivationPacked.</summary>
-    public static readonly Operation GatedActivationPacked = new("GatedActivationPacked", OperationIndex.GatedActivationPacked, typeof(OperationKernels.GatedActivationPacked));
-
-    /// <summary>The operation GatedActivationBackwardPacked.</summary>
-    public static readonly Operation GatedActivationBackwardPacked = new("GatedActivationBackwardPacked", OperationIndex.GatedActivationBackwardPacked, typeof(OperationKernels.GatedActivationBackwardPacked));
-
-    /// <summary>The operation KeyValueWriteInt8.</summary>
-    public static readonly Operation KeyValueWriteInt8 = new("KeyValueWriteInt8", OperationIndex.KeyValueWriteInt8, typeof(OperationKernels.KeyValueWriteInt8));
-
-    /// <summary>The operation AttentionScoresInt8.</summary>
-    public static readonly Operation AttentionScoresInt8 = new("AttentionScoresInt8", OperationIndex.AttentionScoresInt8, typeof(OperationKernels.AttentionScoresInt8));
-
-    /// <summary>The operation AttentionContextInt8.</summary>
-    public static readonly Operation AttentionContextInt8 = new("AttentionContextInt8", OperationIndex.AttentionContextInt8, typeof(OperationKernels.AttentionContextInt8));
-
-    /// <summary>The operation AttentionDecode.</summary>
-    public static readonly Operation AttentionDecode = new("AttentionDecode", OperationIndex.AttentionDecode, typeof(OperationKernels.AttentionDecode));
-
-    /// <summary>The operation AttentionInt8.</summary>
-    public static readonly Operation AttentionInt8 = new("AttentionInt8", OperationIndex.AttentionInt8, typeof(OperationKernels.AttentionInt8));
-
-    /// <summary>The operation AttentionBFloat16.</summary>
-    public static readonly Operation AttentionBFloat16 = new("AttentionBFloat16", OperationIndex.AttentionBFloat16, typeof(OperationKernels.AttentionBFloat16));
-
-    /// <summary>The operation KeyValueWriteBFloat16.</summary>
-    public static readonly Operation KeyValueWriteBFloat16 = new("KeyValueWriteBFloat16", OperationIndex.KeyValueWriteBFloat16, typeof(OperationKernels.KeyValueWriteBFloat16));
-
-    /// <summary>The operation AttentionTiledBackward.</summary>
-    public static readonly Operation AttentionTiledBackward = new("AttentionTiledBackward", OperationIndex.AttentionTiledBackward, typeof(OperationKernels.AttentionTiledBackward));
-
-    /// <summary>The operation AttentionSegmented.</summary>
-    public static readonly Operation AttentionSegmented = new("AttentionSegmented", OperationIndex.AttentionSegmented, typeof(OperationKernels.AttentionSegmented));
-
-    /// <summary>The operation AttentionRows.</summary>
-    public static readonly Operation AttentionRows = new("AttentionRows", OperationIndex.AttentionRows, typeof(OperationKernels.AttentionRows));
-
-    /// <summary>The operation AttentionSegmentedBackward.</summary>
-    public static readonly Operation AttentionSegmentedBackward = new("AttentionSegmentedBackward", OperationIndex.AttentionSegmentedBackward, typeof(OperationKernels.AttentionSegmentedBackward));
-
-    /// <summary>The operation AttentionTiled.</summary>
-    public static readonly Operation AttentionTiled = new("AttentionTiled", OperationIndex.AttentionTiled, typeof(OperationKernels.AttentionTiled));
-
-    /// <summary>The operation DecoderMask.</summary>
-    public static readonly Operation DecoderMask = new("DecoderMask", OperationIndex.DecoderMask, typeof(OperationKernels.DecoderMask));
-
-    /// <summary>The operation KeyValueWrite.</summary>
-    public static readonly Operation KeyValueWrite = new("KeyValueWrite", OperationIndex.KeyValueWrite, typeof(OperationKernels.KeyValueWrite));
-
-    /// <summary>The operation SampleRows.</summary>
-    public static readonly Operation SampleRows = new("SampleRows", OperationIndex.SampleRows, typeof(OperationKernels.SampleRows));
-
-    /// <summary>The operation PenalizeRows.</summary>
-    public static readonly Operation PenalizeRows = new("PenalizeRows", OperationIndex.PenalizeRows, typeof(OperationKernels.PenalizeRows));
-
-    /// <summary>The operation HistoryPush.</summary>
-    public static readonly Operation HistoryPush = new("HistoryPush", OperationIndex.HistoryPush, typeof(OperationKernels.HistoryPush));
-
-    /// <summary>Every operation, by index.</summary>
+    /// <summary>
+    /// y[i] = value for i &lt; n.
+    /// </summary>
+    public static readonly Operation Fill =
+        new("Fill", "FillKernel", "Storage,Int32,Single", OperationIndex.Fill, typeof(OperationKernels.Fill), KernelSource.Host);
+
+    /// <summary>
+    /// y = op(x).
+    /// </summary>
+    public static readonly Operation Unary =
+        new("Unary", "UnaryKernel", "UnaryOp,Storage,Storage,Int32", OperationIndex.Unary, typeof(OperationKernels.Unary), KernelSource.Host);
+
+    /// <summary>
+    /// dx += dy * op'(x), where y = op(x) is passed in for ops whose derivative is cheaper from y.
+    /// </summary>
+    public static readonly Operation UnaryBackward =
+        new("UnaryBackward", "UnaryBackwardKernel", "UnaryOp,Storage,Storage,Storage,Storage,Int32", OperationIndex.UnaryBackward, typeof(OperationKernels.UnaryBackward), KernelSource.Host);
+
+    /// <summary>
+    /// c = a op b, element-wise.
+    /// </summary>
+    public static readonly Operation Binary =
+        new("Binary", "BinaryKernel", "BinaryOp,Storage,Storage,Storage,Int32", OperationIndex.Binary, typeof(OperationKernels.Binary), KernelSource.Host);
+
+    /// <summary>
+    /// dx += dy where a wins (<see cref="BinaryOp.Maximum"/>: a ≥ b; <see cref="BinaryOp.Minimum"/>: a ≤ b), db += dy
+    /// elsewhere: the backward step of c = max(a, b) or min(a, b). A null gradient is skipped.
+    /// </summary>
+    public static readonly Operation ExtremumBackward =
+        new("ExtremumBackward", "ExtremumBackwardKernel", "BinaryOp,Storage,Storage,Storage,Storage,Storage,Int32", OperationIndex.ExtremumBackward, typeof(OperationKernels.ExtremumBackward), KernelSource.Host);
+
+    /// <summary>
+    /// y = x^exponent, element-wise.
+    /// </summary>
+    public static readonly Operation Pow =
+        new("Pow", "PowKernel", "Storage,Storage,Int32,Single", OperationIndex.Pow, typeof(OperationKernels.Pow), KernelSource.Host);
+
+    /// <summary>
+    /// dx += dy · exponent · x^(exponent - 1).
+    /// </summary>
+    public static readonly Operation PowBackward =
+        new("PowBackward", "PowBackwardKernel", "Storage,Storage,Storage,Int32,Single", OperationIndex.PowBackward, typeof(OperationKernels.PowBackward), KernelSource.Host);
+
+    /// <summary>
+    /// y = x limited to [min, max] (either may be infinite).
+    /// </summary>
+    public static readonly Operation Clamp =
+        new("Clamp", "ClampKernel", "Storage,Storage,Int32,Single,Single", OperationIndex.Clamp, typeof(OperationKernels.Clamp), KernelSource.Host);
+
+    /// <summary>
+    /// dx += dy where min ≤ x ≤ max.
+    /// </summary>
+    public static readonly Operation ClampBackward =
+        new("ClampBackward", "ClampBackwardKernel", "Storage,Storage,Storage,Int32,Single,Single", OperationIndex.ClampBackward, typeof(OperationKernels.ClampBackward), KernelSource.Host);
+
+    /// <summary>
+    /// y = condition ≠ 0 ? a : b, element-wise.
+    /// </summary>
+    public static readonly Operation Where =
+        new("Where", "WhereKernel", "Storage,Storage,Storage,Storage,Int32", OperationIndex.Where, typeof(OperationKernels.Where), KernelSource.Host);
+
+    /// <summary>
+    /// da += dy where condition ≠ 0, db += dy elsewhere (a null gradient is skipped).
+    /// </summary>
+    public static readonly Operation WhereBackward =
+        new("WhereBackward", "WhereBackwardKernel", "Storage,Storage,Storage,Storage,Int32", OperationIndex.WhereBackward, typeof(OperationKernels.WhereBackward), KernelSource.Host);
+
+    /// <summary>
+    /// y = alpha * x + beta.
+    /// </summary>
+    public static readonly Operation Affine =
+        new("Affine", "AffineKernel", "Storage,Storage,Int32,Single,Single", OperationIndex.Affine, typeof(OperationKernels.Affine), KernelSource.Host);
+
+    /// <summary>
+    /// y += alpha * x.
+    /// </summary>
+    public static readonly Operation Axpy =
+        new("Axpy", "AxpyKernel", "Storage,Storage,Int32,Single", OperationIndex.Axpy, typeof(OperationKernels.Axpy), KernelSource.Host);
+
+    /// <summary>
+    /// c += a * b, element-wise.
+    /// </summary>
+    public static readonly Operation MulAdd =
+        new("MulAdd", "MulAddKernel", "Storage,Storage,Storage,Int32", OperationIndex.MulAdd, typeof(OperationKernels.MulAdd), KernelSource.Host);
+
+    /// <summary>
+    /// c[r, j] = a[r, j] + v[j].
+    /// </summary>
+    public static readonly Operation AddRowVector =
+        new("AddRowVector", "AddRowVectorKernel", "Storage,Storage,Storage,Int32,Int32", OperationIndex.AddRowVector, typeof(OperationKernels.AddRowVector), KernelSource.Host);
+
+    /// <summary>
+    /// y[j] += sum over r of x[r, j].
+    /// </summary>
+    public static readonly Operation SumRows =
+        new("SumRows", "SumRowsKernel", "Storage,Storage,Int32,Int32", OperationIndex.SumRows, typeof(OperationKernels.SumRows), KernelSource.Host);
+
+    /// <summary>
+    /// result[0] = scale * sum(x).
+    /// </summary>
+    public static readonly Operation Sum =
+        new("Sum", "SumKernel", "Storage,Storage,Int32,Single", OperationIndex.Sum, typeof(OperationKernels.Sum), KernelSource.Host);
+
+    /// <summary>
+    /// y[offset] += alpha * x[0] (used to accumulate scalar losses without leaving the device).
+    /// </summary>
+    public static readonly Operation AxpyAt =
+        new("AxpyAt", "AxpyAtKernel", "Storage,Storage,Int32,Single", OperationIndex.AxpyAt, typeof(OperationKernels.AxpyAt), KernelSource.Host);
+
+    /// <summary>
+    /// y[i] += scale * s[0].
+    /// </summary>
+    public static readonly Operation AddBroadcastScalar =
+        new("AddBroadcastScalar", "AddBroadcastScalarKernel", "Storage,Storage,Int32,Single", OperationIndex.AddBroadcastScalar, typeof(OperationKernels.AddBroadcastScalar), KernelSource.Host);
+
+    /// <summary>
+    /// y = x · w for many rows (prompts) with packed weights w (in <c>format</c>), expanding w as it is read instead of into a float copy. Returns false when the
+    /// device has no such kernel or the shape is too small for it (callers then expand w first).
+    /// </summary>
+    public static readonly Operation PackedMatMulLarge =
+        new("PackedMatMulLarge", "PackedMatMulLargeKernel", "PackedFormat,Storage,Storage,Storage,Storage,Int32,Int32,Int32", OperationIndex.PackedMatMulLarge, typeof(OperationKernels.PackedMatMulLarge), KernelSource.None);
+
+    /// <summary>
+    /// y = (act(gate) · up) · w for few rows with packed weights w (in <c>format</c>; activation 0 = SiLU, 1 = GELU tanh): the gated feed-forward's down projection
+    /// without a separate activation pass. Returns false when the device has no fused version.
+    /// </summary>
+    public static readonly Operation PackedMatMulGated =
+        new("PackedMatMulGated", "PackedMatMulGatedKernel", "PackedFormat,Int32,Storage,Storage,Storage,Storage,Storage,Int32,Int32,Int32", OperationIndex.PackedMatMulGated, typeof(OperationKernels.PackedMatMulGated), KernelSource.None);
+
+    /// <summary>
+    /// y = x · w for few rows with packed weights w (in <c>format</c>), then
+    /// sum = residual + y and normalized = its RMS normalization · (gain + offset) per row (a residual addition and the
+    /// next normalization) in the same pass. Returns false when the device has no fused version.
+    /// </summary>
+    public static readonly Operation PackedMatMulAddRmsNorm =
+        new("PackedMatMulAddRmsNorm", "PackedMatMulAddRmsNormKernel", "PackedFormat,Storage,Storage,Storage,Storage,Int32,Int32,Int32,Storage,Storage,Storage,Storage,Single,Single", OperationIndex.PackedMatMulAddRmsNorm, typeof(OperationKernels.PackedMatMulAddRmsNorm), KernelSource.None);
+
+    /// <summary>
+    /// Several few-row products of packed weights sharing one input x [m, k]: y_j = x · w_j (+ bias_j), in <c>format</c>
+    /// (int8 as in <see cref="Backend.Int8MatMul"/>, 4-bit as in <see cref="Backend.Int4MatMul"/>, bfloat16 as in
+    /// <see cref="Backend.BFloat16MatMul"/>, which has no scales). Returns false when the device has no single-pass version (callers then
+    /// run the products one by one).
+    /// </summary>
+    public static readonly Operation PackedMatMulMany =
+        new("PackedMatMulMany", "PackedMatMulManyKernel", "PackedFormat,Storage,Int32,Int32,ReadOnlySpan`1", OperationIndex.PackedMatMulMany, typeof(OperationKernels.PackedMatMulMany), KernelSource.None);
+
+    /// <summary>
+    /// <see cref="Backend.PackedMatMulMany"/> for a feed-forward block's gate and up projections (two products of equal widths),
+    /// also writing hidden = act(gate) · up (activation 0 = SiLU, 1 = GELU tanh, 2 = ReLU) in the same pass. Returns
+    /// false when the device has no fused version.
+    /// </summary>
+    public static readonly Operation PackedMatMulGatedPair =
+        new("PackedMatMulGatedPair", "PackedMatMulGatedPairKernel", "PackedFormat,Int32,Storage,Int32,Int32,ReadOnlySpan`1,Storage", OperationIndex.PackedMatMulGatedPair, typeof(OperationKernels.PackedMatMulGatedPair), KernelSource.None);
+
+    /// <summary>
+    /// Several products sharing one input: y_j = a · w_j (+ bias_j) for a [m, k] and w_j [k, n_j] (the query, key and
+    /// value projections, say). The default computes them one by one; devices may do them in one pass.
+    /// </summary>
+    public static readonly Operation MatMulMany =
+        new("MatMulMany", "MatMulManyKernel", "Storage,Int32,Int32,ReadOnlySpan`1", OperationIndex.MatMulMany, typeof(OperationKernels.MatMulMany), KernelSource.Composed);
+
+    /// <summary>
+    /// c = a·b + bias (bias [n] added to every row) in one pass, for a [m, k] and b [k, n] as stored. Returns false when
+    /// the device has no such pass for these sizes (callers then multiply and add the bias separately).
+    /// </summary>
+    public static readonly Operation MatMulBias =
+        new("MatMulBias", "MatMulBiasKernel", "Storage,Storage,Storage,Storage,Int32,Int32,Int32", OperationIndex.MatMulBias, typeof(OperationKernels.MatMulBias), KernelSource.None);
+
+    /// <summary>
+    /// c = beta·c + a·op(b) + u·op(v) in one product (a LoRA adapter's term as one more k step): a [m, k], b [k, n]
+    /// (transposed: [n, k]), u [m, rank], v [rank, n] (with <c>transB</c>: [n, rank]), rank ≤ 32, all rows
+    /// contiguous. Returns false when the device has no such pass (callers then compute the two products separately).
+    /// </summary>
+    public static readonly Operation MatMulLowRank =
+        new("MatMulLowRank", "MatMulLowRankKernel", "Storage,Storage,Storage,Int32,Int32,Int32,Boolean,Single,Storage,Storage,Int32", OperationIndex.MatMulLowRank, typeof(OperationKernels.MatMulLowRank), KernelSource.None);
+
+    /// <summary>
+    /// c = beta·c + a · Wᵀ (+ u · vᵀ) with W a bfloat16 weight [n, k] as <c>BFloat16Weight</c> packs it (two
+    /// values per word along k), read as stored: the input gradient through a frozen bfloat16 layer (and its adapter's
+    /// dt · Aᵀ with u = dt [m, rank], v = A [n, rank]) without expanding the weight to float. u null: no low-rank term.
+    /// False when the device has no such kernel (callers then expand the weight).
+    /// </summary>
+    public static readonly Operation BFloat16TransposedMatMul =
+        new("BFloat16TransposedMatMul", "BFloat16TransposedMatMulKernel", "Storage,Storage,Storage,Int32,Int32,Int32,Single,Storage,Storage,Int32", OperationIndex.BFloat16TransposedMatMul, typeof(OperationKernels.BFloat16TransposedMatMul), KernelSource.None);
+
+    /// <summary>
+    /// Quantizes a frozen weight w [k, n] (float32) once for <see cref="Backend.Float8MatMul"/>: FP8 (e4m3) values, k-major per
+    /// column ([n, paddedK] bytes), and one scale per column [n]. Returns false when unsupported.
+    /// </summary>
+    public static readonly Operation Float8QuantizeWeight =
+        new("Float8QuantizeWeight", "Float8QuantizeWeightKernel", "Storage,Int32,Int32,Storage,Storage", OperationIndex.Float8QuantizeWeight, typeof(OperationKernels.Float8QuantizeWeight), KernelSource.None);
+
+    /// <summary>
+    /// y = beta·y + x · w on FP8 tensor cores for x [m, k] (quantized per row as it is read, one scale each) and a weight
+    /// quantized by <see cref="Backend.Float8QuantizeWeight"/>. Returns false when unsupported.
+    /// </summary>
+    public static readonly Operation Float8MatMul =
+        new("Float8MatMul", "Float8MatMulKernel", "Storage,Int32,Int32,Storage,Storage,Int32,Storage,Single", OperationIndex.Float8MatMul, typeof(OperationKernels.Float8MatMul), KernelSource.None);
+
+    /// <summary>
+    /// Products of one input x [m, k] through 1-3 packed layers (in <c>format</c>),
+    /// each with a low-rank term: y_j = x · w_j + u_j · v_j for u_j [m, rank] and v_j [rank, n_j], rank ≤ 32, in one pass.
+    /// Returns false when the device has no such pass.
+    /// </summary>
+    public static readonly Operation PackedMatMulLowRank =
+        new("PackedMatMulLowRank", "PackedMatMulLowRankKernel", "PackedFormat,Storage,Int32,Int32,ReadOnlySpan`1,Int32", OperationIndex.PackedMatMulLowRank, typeof(OperationKernels.PackedMatMulLowRank), KernelSource.None);
+
+    /// <summary>
+    /// c = beta·c + op(a)·op(b) on bfloat16 tensor cores, with row strides: a [m, k] stored with <c>lda</c>
+    /// floats per row (transposed: [k, m] rows), b [k, n] with <c>ldb</c> (transposed: [n, k] rows), c [m, n]
+    /// with <c>ldc</c>; offsets in elements. <c>bias</c> [n] is added to every row (modes None and
+    /// Gelu). <see cref="GemmEpilogue.Gelu"/> writes gelu(product + bias) and, when <c>aux</c> is given, the
+    /// pre-activations into it (same layout as c); <see cref="GemmEpilogue.GeluGradient"/> multiplies the product by
+    /// gelu'(aux). Returns false when the device has no tensor cores (callers use the composed operations).
+    /// </summary>
+    public static readonly Operation GemmStrided =
+        new("GemmStrided", "GemmStridedKernel", "Storage,Int64,Int32,Boolean,Storage,Int64,Int32,Boolean,Storage,Int64,Int32,Int32,Int32,Int32,Single,Storage,GemmEpilogue,Storage,Int64", OperationIndex.GemmStrided, typeof(OperationKernels.GemmStrided), KernelSource.None);
+
+    /// <summary>
+    /// Causal attention (positions c ≤ t) read in place from [batch, steps, *] rows: head h (= kv · group + g) of the
+    /// queries at q[qOffset + (b·steps + t)·qRow + h·dim], keys and values of kv head kv at k / v[offset + (b·steps + c)·kRow
+    /// + kv·dim]; writes y [batch, steps, heads·dim] and, when given, the log-sum-exp [batch·kvHeads, group·steps] for the
+    /// backward pass. Returns false when the device has no such kernels (callers rearrange the heads and use
+    /// <see cref="Backend.AttentionTiled"/>).
+    /// </summary>
+    public static readonly Operation AttentionStrided =
+        new("AttentionStrided", "AttentionStridedKernel", "Storage,Int64,Storage,Int64,Storage,Int64,Int32,Int32,Storage,Storage,Int32,Int32,Int32,Int32,Int32,Single", OperationIndex.AttentionStrided, typeof(OperationKernels.AttentionStrided), KernelSource.None);
+
+    /// <summary>
+    /// Gradients of <see cref="Backend.AttentionStrided"/>: adds to dq, dk, dv laid out as q, k, v (same row strides, their own
+    /// offsets) given y, the log-sum-exp and dOutput (y's layout).
+    /// </summary>
+    public static readonly Operation AttentionStridedBackward =
+        new("AttentionStridedBackward", "AttentionStridedBackwardKernel", "Storage,Int64,Storage,Int64,Storage,Int64,Int32,Int32,Storage,Storage,Storage,Storage,Int64,Storage,Int64,Storage,Int64,Int32,Int32,Int32,Int32,Int32,Single", OperationIndex.AttentionStridedBackward, typeof(OperationKernels.AttentionStridedBackward), KernelSource.None);
+
+    /// <summary>
+    /// y[j] += Σ_r x[offset + r·ld + j] for j &lt; cols (column sums of a strided block; the bias gradient of a slice).
+    /// </summary>
+    public static readonly Operation SumColumns =
+        new("SumColumns", "SumColumnsKernel", "Storage,Int64,Int32,Storage,Int32,Int32", OperationIndex.SumColumns, typeof(OperationKernels.SumColumns), KernelSource.Host);
+
+    /// <summary>
+    /// output = residual + dropout(x) (the mask of <see cref="Backend.Dropout"/> with <c>seed</c>).
+    /// </summary>
+    public static readonly Operation AddDropout =
+        new("AddDropout", "AddDropoutKernel", "Storage,Storage,Storage,Int32,Single,UInt32", OperationIndex.AddDropout, typeof(OperationKernels.AddDropout), KernelSource.Composed);
+
+    /// <summary>
+    /// <see cref="Backend.MatMul"/> for <c>batch</c> independent, contiguous matrix triples.
+    /// </summary>
+    public static readonly Operation BatchedMatMul =
+        new("BatchedMatMul", "BatchedMatMulKernel", "Storage,Storage,Storage,Int32,Int32,Int32,Int32,Boolean,Boolean,Single", OperationIndex.BatchedMatMul, typeof(OperationKernels.BatchedMatMul), KernelSource.Host);
+
+    /// <summary>
+    /// Row-wise softmax (or log-softmax) over the last dimension: y[r, :] = softmax(x[r, :]).
+    /// </summary>
+    public static readonly Operation Softmax =
+        new("Softmax", "SoftmaxKernel", "Storage,Storage,Int32,Int32,Boolean", OperationIndex.Softmax, typeof(OperationKernels.Softmax), KernelSource.Host);
+
+    /// <summary>
+    /// Softmax: dx += y * (dy - Σ dy·y). Log-softmax: dx += dy - exp(y) * Σ dy. Sums are per row; y is the forward output.
+    /// </summary>
+    public static readonly Operation SoftmaxBackward =
+        new("SoftmaxBackward", "SoftmaxBackwardKernel", "Storage,Storage,Storage,Int32,Int32,Boolean", OperationIndex.SoftmaxBackward, typeof(OperationKernels.SoftmaxBackward), KernelSource.Host);
+
+    /// <summary>
+    /// y[r] = index of the largest element of row r.
+    /// </summary>
+    public static readonly Operation ArgMax =
+        new("ArgMax", "ArgMaxKernel", "Storage,Storage,Int32,Int32", OperationIndex.ArgMax, typeof(OperationKernels.ArgMax), KernelSource.Host);
+
+    /// <summary>
+    /// y[r] = 1 when the prediction in row r is right, else 0. For one column: (p ≥ threshold) == (t ≥ 0.5);
+    /// otherwise argmax(p) == argmax(t).
+    /// </summary>
+    public static readonly Operation ClassMatch =
+        new("ClassMatch", "ClassMatchKernel", "Storage,Storage,Storage,Int32,Int32,Single", OperationIndex.ClassMatch, typeof(OperationKernels.ClassMatch), KernelSource.Host);
+
+    /// <summary>
+    /// Per-group mean, (biased) variance and 1 / sqrt(variance + eps).
+    /// </summary>
+    public static readonly Operation NormStats =
+        new("NormStats", "NormStatsKernel", "Storage,Storage,Storage,Storage,Int32,Int32,Int32,Single", OperationIndex.NormStats, typeof(OperationKernels.NormStats), KernelSource.Host);
+
+    /// <summary>
+    /// y = (x - mean[g]) * invStd[g].
+    /// </summary>
+    public static readonly Operation NormApply =
+        new("NormApply", "NormApplyKernel", "Storage,Storage,Storage,Storage,Int32,Int32,Int32", OperationIndex.NormApply, typeof(OperationKernels.NormApply), KernelSource.Host);
+
+    /// <summary>
+    /// dx += invStd[g] / M * (M * dxhat - sum1[g] - xhat * sum2[g]).
+    /// </summary>
+    public static readonly Operation NormBackward =
+        new("NormBackward", "NormBackwardKernel", "Storage,Storage,Storage,Storage,Storage,Storage,Int32,Int32,Int32", OperationIndex.NormBackward, typeof(OperationKernels.NormBackward), KernelSource.Host);
+
+    /// <summary>
+    /// y (+)= x * scale[g] + shift[g] with g = (i / inner) % groups; a null scale means 1, a null shift means 0.
+    /// </summary>
+    public static readonly Operation GroupScaleShift =
+        new("GroupScaleShift", "GroupScaleShiftKernel", "Storage,Storage,Storage,Storage,Int32,Int32,Int32,Boolean", OperationIndex.GroupScaleShift, typeof(OperationKernels.GroupScaleShift), KernelSource.Host);
+
+    /// <summary>
+    /// sumA[g] += Σ a; sumAB[g] += Σ a·b over each group (see NormStats for the layout). b/sumAB may be null.
+    /// </summary>
+    public static readonly Operation GroupReduce =
+        new("GroupReduce", "GroupReduceKernel", "Storage,Storage,Storage,Storage,Int32,Int32,Int32", OperationIndex.GroupReduce, typeof(OperationKernels.GroupReduce), KernelSource.Host);
+
+    /// <summary>
+    /// y = 1 / sqrt(x + eps).
+    /// </summary>
+    public static readonly Operation InvSqrt =
+        new("InvSqrt", "InvSqrtKernel", "Storage,Storage,Int32,Single", OperationIndex.InvSqrt, typeof(OperationKernels.InvSqrt), KernelSource.Host);
+
+    /// <summary>
+    /// Embedding lookup: y[i, :] = table[indices[i], :] for count indices of width dim.
+    /// </summary>
+    public static readonly Operation Gather =
+        new("Gather", "GatherKernel", "Storage,Storage,Storage,Int32,Int32,Int32", OperationIndex.Gather, typeof(OperationKernels.Gather), KernelSource.Host);
+
+    /// <summary>
+    /// <see cref="Backend.Gather"/> from a bfloat16 table packed as in <see cref="Backend.BFloat16MatMul"/> ([vocabulary, dim]).
+    /// </summary>
+    public static readonly Operation GatherBFloat16 =
+        new("GatherBFloat16", "GatherBFloat16Kernel", "Storage,Storage,Storage,Int32,Int32,Int32", OperationIndex.GatherBFloat16, typeof(OperationKernels.GatherBFloat16), KernelSource.Host);
+
+    /// <summary>
+    /// One-hot rows: y[i, :] = 0 except y[i, indices[i]] = 1, for count indices over classes columns.
+    /// </summary>
+    public static readonly Operation OneHot =
+        new("OneHot", "OneHotKernel", "Storage,Storage,Int32,Int32", OperationIndex.OneHot, typeof(OperationKernels.OneHot), KernelSource.Host);
+
+    /// <summary>
+    /// dtable[indices[i], :] += dy[i, :].
+    /// </summary>
+    public static readonly Operation ScatterAdd =
+        new("ScatterAdd", "ScatterAddKernel", "Storage,Storage,Storage,Int32,Int32,Int32", OperationIndex.ScatterAdd, typeof(OperationKernels.ScatterAdd), KernelSource.Host);
+
+    /// <summary>
+    /// Unfolds image patches: cols[(n, oh, ow), (c, kh, kw)] = x[n, c, oh*sh - ph + kh, ow*sw - pw + kw] (0 outside).
+    /// </summary>
+    public static readonly Operation Im2Col =
+        new("Im2Col", "Im2ColKernel", "Storage,Storage,ConvGeometry&", OperationIndex.Im2Col, typeof(OperationKernels.Im2Col), KernelSource.Host);
+
+    /// <summary>
+    /// The adjoint of <see cref="Backend.Im2Col"/>: dx += fold(dcols).
+    /// </summary>
+    public static readonly Operation Col2Im =
+        new("Col2Im", "Col2ImKernel", "Storage,Storage,ConvGeometry&", OperationIndex.Col2Im, typeof(OperationKernels.Col2Im), KernelSource.Host);
+
+    /// <summary>
+    /// Max pooling; argmax receives the flat input index of each maximum (as raw int bits).
+    /// </summary>
+    public static readonly Operation MaxPool =
+        new("MaxPool", "MaxPoolKernel", "Storage,Storage,Storage,ConvGeometry&", OperationIndex.MaxPool, typeof(OperationKernels.MaxPool), KernelSource.Host);
+
+    /// <summary>
+    /// dx[argmax[i]] += dy[i].
+    /// </summary>
+    public static readonly Operation MaxPoolBackward =
+        new("MaxPoolBackward", "MaxPoolBackwardKernel", "Storage,Storage,Storage,Int32", OperationIndex.MaxPoolBackward, typeof(OperationKernels.MaxPoolBackward), KernelSource.Host);
+
+    /// <summary>
+    /// dx[argmax[i]] += dy[i] for the windows of <c>g</c> (count = N * C * OH * OW): the same as the overload
+    /// taking a count; a device that adds the gradients by gathering over the windows needs the geometry.
+    /// </summary>
+    public static readonly Operation MaxPoolBackward2 =
+        new("MaxPoolBackward2", "MaxPoolBackwardKernel", "Storage,Storage,Storage,ConvGeometry&", OperationIndex.MaxPoolBackward2, typeof(OperationKernels.MaxPoolBackward2), KernelSource.Composed);
+
+    /// <summary>
+    /// y (+)= x permuted: output element at coordinates (c0..c[r-1]) of <c>outShape</c> comes from
+    /// input offset Σ c_k * inStrides[k] (the input strides already reordered by the permutation). Rank ≤ 6.
+    /// </summary>
+    public static readonly Operation Permute =
+        new("Permute", "PermuteKernel", "Storage,Storage,ReadOnlySpan`1,ReadOnlySpan`1,Boolean", OperationIndex.Permute, typeof(OperationKernels.Permute), KernelSource.Host);
+
+    /// <summary>
+    /// y[o, i] (+)= scale * Σ_d x[o, d, i] for a [outer, dim, inner] view.
+    /// </summary>
+    public static readonly Operation SumAxis =
+        new("SumAxis", "SumAxisKernel", "Storage,Storage,Int32,Int32,Int32,Single,Boolean", OperationIndex.SumAxis, typeof(OperationKernels.SumAxis), KernelSource.Host);
+
+    /// <summary>
+    /// dx[o, d, i] += scale * dy[o, i] (the gradient of <see cref="Backend.SumAxis"/>).
+    /// </summary>
+    public static readonly Operation BroadcastAxis =
+        new("BroadcastAxis", "BroadcastAxisKernel", "Storage,Storage,Int32,Int32,Int32,Single", OperationIndex.BroadcastAxis, typeof(OperationKernels.BroadcastAxis), KernelSource.Host);
+
+    /// <summary>
+    /// SGD with optional momentum: v = momentum * v + g; p -= lr * v (v is null when momentum is 0).
+    /// </summary>
+    public static readonly Operation SgdStep =
+        new("SgdStep", "SgdStepKernel", "Storage,Storage,Storage,Int32,Single,Single", OperationIndex.SgdStep, typeof(OperationKernels.SgdStep), KernelSource.Host);
+
+    /// <summary>
+    /// Adam: m, v moments updated in place; p -= lr * m / (sqrt(v) + eps). lr is already bias-corrected.
+    /// </summary>
+    public static readonly Operation AdamStep =
+        new("AdamStep", "AdamStepKernel", "Storage,Storage,Storage,Storage,Int32,Single,Single,Single,Single", OperationIndex.AdamStep, typeof(OperationKernels.AdamStep), KernelSource.Host);
+
+    /// <summary>
+    /// <see cref="Backend.AdamStep"/> with 8-bit moments (see <c>Optimizers.AdamW8Bit</c>): m and v hold one byte per element
+    /// (n bytes, packed four per float), codes into <c>map</c> (256 signed values for m, then 256 unsigned for
+    /// v, both in [-1, 1]) scaled per block of <see cref="EightBitMoments.BlockSize"/> elements by
+    /// <c>absMax</c> (the blocks' m scales, then their v scales). The moments are decoded, updated, and
+    /// encoded again to the nearest code with new block scales.
+    /// </summary>
+    public static readonly Operation AdamStep8Bit =
+        new("AdamStep8Bit", "AdamStep8BitKernel", "Storage,Storage,Storage,Storage,Storage,Storage,Int32,Single,Single,Single,Single,Single,Single", OperationIndex.AdamStep8Bit, typeof(OperationKernels.AdamStep8Bit), KernelSource.Host);
+
+    /// <summary>
+    /// total[0] += Σ x² over <c>n</c> elements (a gradient norm without temporary tensors).
+    /// </summary>
+    public static readonly Operation SumSquares =
+        new("SumSquares", "SumSquaresKernel", "Storage,Storage,Int32", OperationIndex.SumSquares, typeof(OperationKernels.SumSquares), KernelSource.Host);
+
+    /// <summary>
+    /// AdamW over many tensors in a few passes: the global gradient norm clipped to <c>maxNorm</c> (0: no
+    /// clipping), p ← p · <c>decay</c>, then Adam with the bias-corrected <c>lr</c>, as
+    /// <see cref="Backend.AdamStep"/> computes it; with <c>zeroGradients</c> the gradients are zeroed for the next step.
+    /// <c>cache</c> keeps the device tables between calls (dispose it when done). False when the device has no
+    /// such pass.
+    /// </summary>
+    public static readonly Operation FusedAdamW =
+        new("FusedAdamW", "FusedAdamWKernel", "ReadOnlySpan`1,IDisposable&,Single,Single,Single,Single,Single,Single,Boolean", OperationIndex.FusedAdamW, typeof(OperationKernels.FusedAdamW), KernelSource.Host);
+
+    /// <summary>
+    /// factor[0] = min(1, maxNorm / √sumSquares[0]) (1 when the sum is 0): the gradient-clipping factor computed where the
+    /// gradients are, so clipping needs no host read of the norm.
+    /// </summary>
+    public static readonly Operation ClipFactor =
+        new("ClipFactor", "ClipFactorKernel", "Storage,Storage,Single", OperationIndex.ClipFactor, typeof(OperationKernels.ClipFactor), KernelSource.Host);
+
+    /// <summary>
+    /// Inverted dropout: y = keep(i) ? x / (1 - p) : 0, where keep(i) comes from <see cref="DropoutMask"/>.
+    /// </summary>
+    public static readonly Operation Dropout =
+        new("Dropout", "DropoutKernel", "Storage,Storage,Int32,Single,UInt32", OperationIndex.Dropout, typeof(OperationKernels.Dropout), KernelSource.Host);
+
+    /// <summary>
+    /// dx += keep(i) ? dy / (1 - p) : 0, regenerating the same mask from the seed.
+    /// </summary>
+    public static readonly Operation DropoutBackward =
+        new("DropoutBackward", "DropoutBackwardKernel", "Storage,Storage,Int32,Single,UInt32", OperationIndex.DropoutBackward, typeof(OperationKernels.DropoutBackward), KernelSource.Host);
+
+    /// <summary>
+    /// y[r, :] = softmax(scale * x[r, :] + mask[r % maskRows, :]) (mask optional).
+    /// </summary>
+    public static readonly Operation ScaleMaskSoftmax =
+        new("ScaleMaskSoftmax", "ScaleMaskSoftmaxKernel", "Storage,Storage,Storage,Int32,Int32,Int32,Single", OperationIndex.ScaleMaskSoftmax, typeof(OperationKernels.ScaleMaskSoftmax), KernelSource.Host);
+
+    /// <summary>
+    /// y[r, :] = (x[r, :] - mean) / sqrt(var + eps) * gamma + beta over the last dimension.
+    /// </summary>
+    public static readonly Operation LayerNormFused =
+        new("LayerNormFused", "LayerNormFusedKernel", "Storage,Storage,Storage,Storage,Int32,Int32,Single", OperationIndex.LayerNormFused, typeof(OperationKernels.LayerNormFused), KernelSource.Host);
+
+    /// <summary>
+    /// <see cref="Backend.LayerNormFused"/> that also stores each row's mean (stats[r]) and 1 / sqrt(var + eps) (stats[rows + r]).
+    /// </summary>
+    public static readonly Operation LayerNormTrain =
+        new("LayerNormTrain", "LayerNormTrainKernel", "Storage,Storage,Storage,Storage,Storage,Int32,Int32,Single", OperationIndex.LayerNormTrain, typeof(OperationKernels.LayerNormTrain), KernelSource.Host);
+
+    /// <summary>
+    /// Gradients of <see cref="Backend.LayerNormTrain"/> given dy: adds to dx (when given), dgamma += Σ_r dy ∘ x̂ and dbeta += Σ_r dy.
+    /// </summary>
+    public static readonly Operation LayerNormBackward =
+        new("LayerNormBackward", "LayerNormBackwardKernel", "Storage,Storage,Storage,Storage,Storage,Storage,Storage,Int32,Int32", OperationIndex.LayerNormBackward, typeof(OperationKernels.LayerNormBackward), KernelSource.Host);
+
+    /// <summary>
+    /// y[i] = gelu(x[i] + bias[i % cols]).
+    /// </summary>
+    public static readonly Operation BiasGelu =
+        new("BiasGelu", "BiasGeluKernel", "Storage,Storage,Storage,Int32,Int32", OperationIndex.BiasGelu, typeof(OperationKernels.BiasGelu), KernelSource.Host);
+
+    /// <summary>
+    /// y[m, n] = x[m, k] · w, where w[k, j] = q[k, j] · scales[j] and q holds signed bytes packed four per 32-bit element
+    /// along each row (rows padded to ceil(n / 4) elements). Suited to few rows (token-by-token decoding).
+    /// </summary>
+    public static readonly Operation Int8MatMul =
+        new("Int8MatMul", "Int8MatMulKernel", "Storage,Storage,Storage,Storage,Int32,Int32,Int32", OperationIndex.Int8MatMul, typeof(OperationKernels.Int8MatMul), KernelSource.Host);
+
+    /// <summary>
+    /// y[m, n] = x[m, k] · w[k, n] with w stored as bfloat16 pairs packed into 32-bit words along each row (word c of
+    /// row r holds columns 2c in its low half and 2c + 1 in its high half; rows have ⌈n / 2⌉ words).
+    /// </summary>
+    public static readonly Operation BFloat16MatMul =
+        new("BFloat16MatMul", "BFloat16MatMulKernel", "Storage,Storage,Storage,Int32,Int32,Int32", OperationIndex.BFloat16MatMul, typeof(OperationKernels.BFloat16MatMul), KernelSource.Host);
+
+    /// <summary>
+    /// w[k, n] = the float32 values of bfloat16 weights packed as in <see cref="Backend.BFloat16MatMul"/>.
+    /// </summary>
+    public static readonly Operation BFloat16Dequantize =
+        new("BFloat16Dequantize", "BFloat16DequantizeKernel", "Storage,Storage,Int32,Int32", OperationIndex.BFloat16Dequantize, typeof(OperationKernels.BFloat16Dequantize), KernelSource.Host);
+
+    /// <summary>
+    /// Rounds x [n] to bfloat16 (to nearest, ties to even), two values per word as <see cref="Backend.BFloat16Dequantize"/> reads
+    /// them back with k = 1: packed holds (n + 1) / 2 words.
+    /// </summary>
+    public static readonly Operation PackBFloat16 =
+        new("PackBFloat16", "PackBFloat16Kernel", "Storage,Storage,Int32", OperationIndex.PackBFloat16, typeof(OperationKernels.PackBFloat16), KernelSource.Host);
+
+    /// <summary>
+    /// w[k, n] = q[k, n] · scales[n] (see <see cref="Backend.Int8MatMul"/> for the packing).
+    /// </summary>
+    public static readonly Operation Int8Dequantize =
+        new("Int8Dequantize", "Int8DequantizeKernel", "Storage,Storage,Storage,Int32,Int32", OperationIndex.Int8Dequantize, typeof(OperationKernels.Int8Dequantize), KernelSource.Host);
+
+    /// <summary>
+    /// y[m, n] = x[m, k] · w with 4-bit weights: w[r, j] = q[r, j] · scales[r / 32, j], where q holds signed nibbles packed
+    /// eight per 32-bit word along each row (nibble c of word w is column 8w + c; rows have ⌈n / 8⌉ words) and scales has
+    /// one row of 8·⌈n / 8⌉ values per group of 32 weight rows.
+    /// </summary>
+    public static readonly Operation Int4MatMul =
+        new("Int4MatMul", "Int4MatMulKernel", "Storage,Storage,Storage,Storage,Int32,Int32,Int32", OperationIndex.Int4MatMul, typeof(OperationKernels.Int4MatMul), KernelSource.Host);
+
+    /// <summary>
+    /// w[k, n] = the float values of 4-bit weights packed as in <see cref="Backend.Int4MatMul"/>.
+    /// </summary>
+    public static readonly Operation Int4Dequantize =
+        new("Int4Dequantize", "Int4DequantizeKernel", "Storage,Storage,Storage,Int32,Int32", OperationIndex.Int4Dequantize, typeof(OperationKernels.Int4Dequantize), KernelSource.Host);
+
+    /// <summary>
+    /// y = x · inv per row, inv[r] = 1 / sqrt(mean(x[r]²) + eps) (stored for the backward pass).
+    /// </summary>
+    public static readonly Operation RmsNorm =
+        new("RmsNorm", "RmsNormKernel", "Storage,Storage,Storage,Int32,Int32,Single", OperationIndex.RmsNorm, typeof(OperationKernels.RmsNorm), KernelSource.Host);
+
+    /// <summary>
+    /// dx += inv[r] · (dy - y · mean(dy · y)) per row, where y is the normalized forward output.
+    /// </summary>
+    public static readonly Operation RmsNormBackward =
+        new("RmsNormBackward", "RmsNormBackwardKernel", "Storage,Storage,Storage,Storage,Int32,Int32", OperationIndex.RmsNormBackward, typeof(OperationKernels.RmsNormBackward), KernelSource.Host);
+
+    /// <summary>
+    /// Rotary position embedding of x [rows = batch·steps·heads, dim] into y (which must already hold x): pair p of a row at
+    /// step t rotates by the angle whose cos/sin are cos/sin[positions[t], p]. Pairs are (2p, 2p+1) when interleaved,
+    /// else (p, p + half). sign = -1 rotates backwards (the gradient).
+    /// </summary>
+    public static readonly Operation Rope =
+        new("Rope", "RopeKernel", "Storage,Storage,Storage,Storage,Storage,Int32,Int32,Int32,Int32,Int32,Boolean,Single", OperationIndex.Rope, typeof(OperationKernels.Rope), KernelSource.Host);
+
+    /// <summary>
+    /// y = x · inv · (gain[c] + offset) per row with inv = 1 / sqrt(mean(x²) + eps): normalization and gain in one pass (inference).
+    /// </summary>
+    public static readonly Operation RmsNormAffine =
+        new("RmsNormAffine", "RmsNormAffineKernel", "Storage,Storage,Storage,Int32,Int32,Single,Single", OperationIndex.RmsNormAffine, typeof(OperationKernels.RmsNormAffine), KernelSource.Host);
+
+    /// <summary>
+    /// sum = a + b and y = RMS-normalized sum · (gain[c] + offset) per row, in one pass (inference).
+    /// </summary>
+    public static readonly Operation AddRmsNormAffine =
+        new("AddRmsNormAffine", "AddRmsNormAffineKernel", "Storage,Storage,Storage,Storage,Storage,Int32,Int32,Single,Single", OperationIndex.AddRmsNormAffine, typeof(OperationKernels.AddRmsNormAffine), KernelSource.Host);
+
+    /// <summary>
+    /// RMS normalization with gain of each row (a head's vector), then the rotary embedding as <see cref="Backend.Rope"/> with
+    /// sign 1 (rows are batch·steps·heads; dimensions beyond 2·half are only normalized). Inference.
+    /// </summary>
+    public static readonly Operation RmsNormRope =
+        new("RmsNormRope", "RmsNormRopeKernel", "Storage,Storage,Storage,Storage,Storage,Storage,Int32,Int32,Single,Single,Int32,Int32,Int32,Boolean", OperationIndex.RmsNormRope, typeof(OperationKernels.RmsNormRope), KernelSource.Host);
+
+    /// <summary>
+    /// <see cref="Backend.RmsNormRope"/> for two tensors sharing the positions and rotary tables (queries and keys): rows1 rows
+    /// of x (heads per step: heads) and rows2 of x2 (heads2). Devices may do both in one pass.
+    /// </summary>
+    public static readonly Operation RmsNormRopePair =
+        new("RmsNormRopePair", "RmsNormRopePairKernel", "Storage,Storage,Storage,Int32,Single,Single,Int32,Storage,Storage,Storage,Int32,Single,Single,Int32,Storage,Storage,Storage,Int32,Int32,Int32,Boolean", OperationIndex.RmsNormRopePair, typeof(OperationKernels.RmsNormRopePair), KernelSource.Composed);
+
+    /// <summary>
+    /// The attention layer's queries, keys and values [batch, steps, heads·cols] (its projections) put in the layouts
+    /// attention reads, in one pass (inference): query heads RMS-normalized with gain (when <c>gainQ</c> is
+    /// set; keys then with <c>gainK</c>) and rotated as <see cref="Backend.Rope"/> (half 0: no rotation) into
+    /// yq [batch, heads, steps, cols]; keys the same and values unchanged into yk and yv [batch, kvHeads, capacity, stride]
+    /// at row position[0] + s (a cache; row s when <c>position</c> is null), as floats or bfloat16 pairs.
+    /// Returns false when the device has no such kernel (callers then run the steps one by one).
+    /// </summary>
+    public static readonly Operation NormRopeHeads =
+        new("NormRopeHeads", "NormRopeHeadsKernel", "Storage,Storage,Storage,Int32,Int32,Int32,Int32,Int32,Storage,Single,Single,Storage,Single,Single,Storage,Storage,Storage,Int32,Boolean,Storage,Storage,Storage,Storage,Int32,Int32,Boolean", OperationIndex.NormRopeHeads, typeof(OperationKernels.NormRopeHeads), KernelSource.None);
+
+    /// <summary>
+    /// Token cross-entropy for language-model training, per row r of logits [rows, vocabulary] with target class t_r and
+    /// weight w_r (0 masks the row): losses[r] = w_r · (logsumexp(x_r) - x_r[t_r]); the logits are overwritten with their
+    /// gradient scale · w_r · (softmax(x_r) - onehot(t_r)). Targets and weights are float arrays of rows.
+    /// </summary>
+    public static readonly Operation SoftmaxCrossEntropyRows =
+        new("SoftmaxCrossEntropyRows", "SoftmaxCrossEntropyRowsKernel", "Storage,Storage,Storage,Storage,Int32,Int32,Single", OperationIndex.SoftmaxCrossEntropyRows, typeof(OperationKernels.SoftmaxCrossEntropyRows), KernelSource.Host);
+
+    /// <summary>
+    /// y = act(gate) · up element-wise; kind 0 = SiLU, 1 = GELU (tanh approximation), 2 = ReLU.
+    /// </summary>
+    public static readonly Operation GatedActivation =
+        new("GatedActivation", "GatedActivationKernel", "Storage,Storage,Storage,Int32,Int32", OperationIndex.GatedActivation, typeof(OperationKernels.GatedActivation), KernelSource.Host);
+
+    /// <summary>
+    /// dgate += dy · up · act'(gate) when flags has bit 0, dup += dy · act(gate) when it has bit 1; bits 2 and 3 write dgate and dup (= instead of +=).
+    /// </summary>
+    public static readonly Operation GatedActivationBackward =
+        new("GatedActivationBackward", "GatedActivationBackwardKernel", "Storage,Storage,Storage,Storage,Storage,Int32,Int32,Int32", OperationIndex.GatedActivationBackward, typeof(OperationKernels.GatedActivationBackward), KernelSource.Host);
+
+    /// <summary>
+    /// <see cref="Backend.GatedActivation"/> with bfloat16 words (two values each, low half first, as <see cref="Backend.PackBFloat16"/>
+    /// writes them): gate and up read from <c>packedGate</c> and <c>packedUp</c> when flags has
+    /// bit 0 (else from <c>gate</c> and <c>up</c>); y written when it has bit 2, gate and up packed
+    /// when it has bit 1, y packed when it has bit 3. Storages a flag does not use may be any storage.
+    /// </summary>
+    public static readonly Operation GatedActivationPacked =
+        new("GatedActivationPacked", "GatedActivationPackedKernel", "Storage,Storage,Storage,Storage,Storage,Storage,Int32,Int32,Int32", OperationIndex.GatedActivationPacked, typeof(OperationKernels.GatedActivationPacked), KernelSource.Host);
+
+    /// <summary>
+    /// <see cref="Backend.GatedActivationBackward"/> reading gate and up as bfloat16 words.
+    /// </summary>
+    public static readonly Operation GatedActivationBackwardPacked =
+        new("GatedActivationBackwardPacked", "GatedActivationBackwardPackedKernel", "Storage,Storage,Storage,Storage,Storage,Int32,Int32,Int32", OperationIndex.GatedActivationBackwardPacked, typeof(OperationKernels.GatedActivationBackwardPacked), KernelSource.Host);
+
+    /// <summary>
+    /// Quantizes source [heads·steps, dim] into the int8 cache at positions position[0] + step.
+    /// </summary>
+    public static readonly Operation KeyValueWriteInt8 =
+        new("KeyValueWriteInt8", "KeyValueWriteInt8Kernel", "Storage,Storage,Storage,Storage,Int32,Int32,Int32,Int32", OperationIndex.KeyValueWriteInt8, typeof(OperationKernels.KeyValueWriteInt8), KernelSource.Host);
+
+    /// <summary>
+    /// y[r, t, c] = scales[r, c] · Σ_d q[r, t, d] · keys[r, c, d] for every cached position c.
+    /// </summary>
+    public static readonly Operation AttentionScoresInt8 =
+        new("AttentionScoresInt8", "AttentionScoresInt8Kernel", "Storage,Storage,Storage,Storage,Int32,Int32,Int32,Int32", OperationIndex.AttentionScoresInt8, typeof(OperationKernels.AttentionScoresInt8), KernelSource.Host);
+
+    /// <summary>
+    /// y[r, t, d] = Σ_c weights[r, t, c] · scales[r, c] · values[r, c, d].
+    /// </summary>
+    public static readonly Operation AttentionContextInt8 =
+        new("AttentionContextInt8", "AttentionContextInt8Kernel", "Storage,Storage,Storage,Storage,Int32,Int32,Int32,Int32", OperationIndex.AttentionContextInt8, typeof(OperationKernels.AttentionContextInt8), KernelSource.Host);
+
+    /// <summary>
+    /// Attention over a key/value cache filled up to the device position: for head h and row i of q [heads, rowsPerHead,
+    /// dim], y[h, i] = Σ_c softmax(scale · q[h, i] · keys[h, c]) · values[h, c] over positions c = 0 … position[0] +
+    /// (i % steps) (the causal limit of that row's step). Keys and values are [heads, capacity, dim]; unfilled
+    /// positions are never read, so the cost follows the context length rather than the capacity. With a
+    /// <c>variant</c>, each row starts at its window's first position and its scores are soft-capped (every
+    /// attention method below takes one; the default is plain causal attention).
+    /// </summary>
+    public static readonly Operation AttentionDecode =
+        new("AttentionDecode", "AttentionDecodeKernel", "Storage,Storage,Storage,Storage,Storage,Int32,Int32,Int32,Int32,Int32,Single,AttentionVariant", OperationIndex.AttentionDecode, typeof(OperationKernels.AttentionDecode), KernelSource.Host);
+
+    /// <summary>
+    /// <see cref="Backend.AttentionDecode"/> (tiled: <c>tiled</c>, for many query rows) over an int8 cache: keys and
+    /// values [heads, capacity, ⌈dim / 4⌉ words] of packed bytes with one scale per cached row (keyScales, valueScales
+    /// [heads, capacity]).
+    /// </summary>
+    public static readonly Operation AttentionInt8 =
+        new("AttentionInt8", "AttentionInt8Kernel", "Storage,Storage,Storage,Storage,Storage,Storage,Storage,Int32,Int32,Int32,Int32,Int32,Single,Boolean,AttentionVariant", OperationIndex.AttentionInt8, typeof(OperationKernels.AttentionInt8), KernelSource.Host);
+
+    /// <summary>
+    /// <see cref="Backend.AttentionDecode"/> (tiled: <c>tiled</c>) over a bfloat16 cache: keys and values
+    /// [heads, capacity, ⌈dim / 2⌉ words], dimension d in the low (even d) or high (odd d) half of word d / 2.
+    /// </summary>
+    public static readonly Operation AttentionBFloat16 =
+        new("AttentionBFloat16", "AttentionBFloat16Kernel", "Storage,Storage,Storage,Storage,Storage,Int32,Int32,Int32,Int32,Int32,Single,Boolean,AttentionVariant", OperationIndex.AttentionBFloat16, typeof(OperationKernels.AttentionBFloat16), KernelSource.Host);
+
+    /// <summary>
+    /// <see cref="Backend.KeyValueWrite"/> into a bfloat16 cache (values rounded to nearest, ties to even).
+    /// </summary>
+    public static readonly Operation KeyValueWriteBFloat16 =
+        new("KeyValueWriteBFloat16", "KeyValueWriteBFloat16Kernel", "Storage,Storage,Storage,Int32,Int32,Int32,Int32", OperationIndex.KeyValueWriteBFloat16, typeof(OperationKernels.KeyValueWriteBFloat16), KernelSource.Host);
+
+    /// <summary>
+    /// Gradient of <see cref="Backend.AttentionTiled"/> with causal offset 0 (training): given the output, each row's log-sum-exp
+    /// and dOutput, adds to dq [heads, rowsPerHead, dim] and dkeys, dvalues [heads, capacity, dim]. The attention weights
+    /// are recomputed, never stored.
+    /// </summary>
+    public static readonly Operation AttentionTiledBackward =
+        new("AttentionTiledBackward", "AttentionTiledBackwardKernel", "Storage,Storage,Storage,Storage,Storage,Storage,Storage,Storage,Storage,Int32,Int32,Int32,Int32,Int32,Single,AttentionVariant", OperationIndex.AttentionTiledBackward, typeof(OperationKernels.AttentionTiledBackward), KernelSource.Host);
+
+    /// <summary>
+    /// Causal attention over packed sequences (training): as <see cref="Backend.AttentionTiled"/> with offset 0 and keys and values
+    /// [heads, steps, dim], except that several sequences share each row of <c>steps</c> positions, so row i of
+    /// head h sees positions c with starts[b·steps + t] ≤ c ≤ t, where t = i % steps and b = h / <c>headsPerRow</c>
+    /// is the packed row; starts and ends hold, per position of each packed row, where its sequence begins and stops
+    /// (exclusive), as floats. Writes the log-sum-exp when given. Returns false when the device has no such pass.
+    /// </summary>
+    public static readonly Operation AttentionSegmented =
+        new("AttentionSegmented", "AttentionSegmentedKernel", "Storage,Storage,Storage,Storage,Storage,Storage,Storage,Int32,Int32,Int32,Int32,Int32,Single,AttentionVariant", OperationIndex.AttentionSegmented, typeof(OperationKernels.AttentionSegmented), KernelSource.Host);
+
+    /// <summary>
+    /// <see cref="Backend.AttentionTiled"/> (no log-sum-exp) for rows of different lengths decoded together: row i of head h
+    /// sees cached positions c with starts[(h / headsPerRow)·steps + i % steps] ≤ c ≤ position[0] + i % steps (a row with
+    /// none, padding, gets zeros). Returns false when the device has no such pass.
+    /// </summary>
+    public static readonly Operation AttentionRows =
+        new("AttentionRows", "AttentionRowsKernel", "Storage,Storage,Storage,Storage,Storage,Storage,Int32,Int32,Int32,Int32,Int32,Int32,Single,AttentionVariant", OperationIndex.AttentionRows, typeof(OperationKernels.AttentionRows), KernelSource.Host);
+
+    /// <summary>
+    /// The gradient of <see cref="Backend.AttentionSegmented"/> (as <see cref="Backend.AttentionTiledBackward"/>); false when unsupported.
+    /// </summary>
+    public static readonly Operation AttentionSegmentedBackward =
+        new("AttentionSegmentedBackward", "AttentionSegmentedBackwardKernel", "Storage,Storage,Storage,Storage,Storage,Storage,Storage,Storage,Storage,Storage,Storage,Int32,Int32,Int32,Int32,Int32,Single,AttentionVariant", OperationIndex.AttentionSegmentedBackward, typeof(OperationKernels.AttentionSegmentedBackward), KernelSource.Host);
+
+    /// <summary>
+    /// The same attention as <see cref="Backend.AttentionDecode"/> for many query rows at once (a prompt, a training sequence),
+    /// tiled so query rows share each key and value read; also writes each row's log-sum-exp of the scaled scores to
+    /// <c>logSumExp</c> [heads, rowsPerHead] when given (training). The default runs
+    /// <see cref="Backend.AttentionDecode"/> for inference and the host fallback for training.
+    /// </summary>
+    public static readonly Operation AttentionTiled =
+        new("AttentionTiled", "AttentionTiledKernel", "Storage,Storage,Storage,Storage,Storage,Storage,Int32,Int32,Int32,Int32,Int32,Single,AttentionVariant", OperationIndex.AttentionTiled, typeof(OperationKernels.AttentionTiled), KernelSource.Host);
+
+    /// <summary>
+    /// mask[i, j] = j ≤ position + i ? 0 : -1e9 for a [rows, capacity] mask; position is read from device memory.
+    /// </summary>
+    public static readonly Operation DecoderMask =
+        new("DecoderMask", "DecoderMaskKernel", "Storage,Storage,Int32,Int32", OperationIndex.DecoderMask, typeof(OperationKernels.DecoderMask), KernelSource.Host);
+
+    /// <summary>
+    /// cache[bh, position + t, :] = source[bh, t, :] for [heads, steps, dim] → [heads, capacity, dim].
+    /// </summary>
+    public static readonly Operation KeyValueWrite =
+        new("KeyValueWrite", "KeyValueWriteKernel", "Storage,Storage,Storage,Int32,Int32,Int32,Int32", OperationIndex.KeyValueWrite, typeof(OperationKernels.KeyValueWrite), KernelSource.Host);
+
+    /// <summary>
+    /// Draws one token per row from softmax(logits / temperature), restricted in turn to the top-k scores (topK &gt; 0),
+    /// to the smallest set holding topP of the probability (0 &lt; topP &lt; 1; the cut-off is found by bisection on the
+    /// score) and to tokens at least minP times as likely as the best one (minP &gt; 0), using the counter-based random
+    /// stream (seed, step, row). Writes the token to ids[row] and 13 statistics to stats[(step * rows + row) * 13]:
+    /// id, probability, entropy (bits), then the top-5 (id, probability) pairs. The step number is read from device
+    /// memory. Row r's logits start at element r * rowStride + rowOffset.
+    /// </summary>
+    public static readonly Operation SampleRows =
+        new("SampleRows", "SampleRowsKernel", "Storage,Storage,Storage,Storage,Int32,Int32,Int32,Int32,Single,Int32,Single,Single,UInt32", OperationIndex.SampleRows, typeof(OperationKernels.SampleRows), KernelSource.Host);
+
+    /// <summary>
+    /// Copies each row's logits (row r at r * rowStride + rowOffset) to work[r, :] and applies repetition penalties for
+    /// the last min(length, lastN) tokens of the row's history ring history[r, pos % capacity] (length read from device
+    /// memory). Each distinct token in the window is penalized once: repeat (x &gt; 0 ? x / repeat : x * repeat), then
+    /// x -= presence + frequency * (occurrences in the window).
+    /// </summary>
+    public static readonly Operation PenalizeRows =
+        new("PenalizeRows", "PenalizeRowsKernel", "Storage,Storage,Storage,Storage,Int32,Int32,Int32,Int32,Int32,Int32,Single,Single,Single", OperationIndex.PenalizeRows, typeof(OperationKernels.PenalizeRows), KernelSource.Host);
+
+    /// <summary>
+    /// history[r, length % capacity] = ids[r] for every row (length read from device memory, not advanced).
+    /// </summary>
+    public static readonly Operation HistoryPush =
+        new("HistoryPush", "HistoryPushKernel", "Storage,Storage,Storage,Int32,Int32", OperationIndex.HistoryPush, typeof(OperationKernels.HistoryPush), KernelSource.Host);
+
+    /// <summary>Every operation, by <see cref="Operation.Index"/>.</summary>
     public static IReadOnlyList<Operation> All { get; } =
     [
         Fill,
@@ -900,4 +1739,18 @@ internal static partial class Ops
         PenalizeRows,
         HistoryPush,
     ];
+
+    /// <summary>The operation named <paramref name="name"/> (as <see cref="Operation.Name"/>, any case), or null.</summary>
+    public static Operation? Find(string name)
+    {
+        foreach (var operation in All)
+        {
+            if (operation.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
+            {
+                return operation;
+            }
+        }
+
+        return null;
+    }
 }

@@ -244,10 +244,10 @@ public sealed class DecodingContext : IDisposable
     }
 
     /// <summary>With <see cref="RowStarts"/>: the current step's position of each new token within its row's sequence, [batch · newSteps].</summary>
-    internal Tensor? TokenPositions { get; private set; }
+    public Tensor? TokenPositions { get; private set; }
 
     /// <summary>With <see cref="RowStarts"/>: each new token's row start, [batch · newSteps].</summary>
-    internal Tensor? TokenStarts { get; private set; }
+    public Tensor? TokenStarts { get; private set; }
 
     /// <summary>Prepares mask and positions for <paramref name="steps"/> new positions (all computed on the device).</summary>
     public void BeginStep(int steps)
@@ -372,7 +372,7 @@ public sealed class DecodingContext : IDisposable
     }
 
     /// <summary>The cache for <paramref name="owner"/> (one per attention layer), created on first use.</summary>
-    internal KeyValueCache CacheFor(object owner, int rows, int headDim)
+    public KeyValueCache CacheFor(object owner, int rows, int headDim)
     {
         if (!_caches.TryGetValue(owner, out var cache))
         {

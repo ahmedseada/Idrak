@@ -168,7 +168,7 @@ public static class Telemetry
 
     /// <summary>Returns a start timestamp when <paramref name="level"/> is enabled, otherwise 0.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal static long Start(TelemetryLevel level) => IsEnabled(level) ? Stopwatch.GetTimestamp() : 0;
+    public static long Start(TelemetryLevel level) => IsEnabled(level) ? Stopwatch.GetTimestamp() : 0;
 
     internal static TimeSpan Elapsed(long start, Device? device)
     {
@@ -180,7 +180,8 @@ public static class Telemetry
         return Stopwatch.GetElapsedTime(start);
     }
 
-    internal static void TrainingStarted(in TrainingStarted e)
+    /// <summary>Reports that a training run started, to the hooks listening at <see cref="TelemetryLevel.Training"/>.</summary>
+    public static void TrainingStarted(in TrainingStarted e)
     {
         foreach (var h in s_hooks)
         {
@@ -191,7 +192,8 @@ public static class Telemetry
         }
     }
 
-    internal static void BatchCompleted(in BatchCompleted e)
+    /// <summary>Reports a finished training batch, to the hooks listening at <see cref="TelemetryLevel.Batches"/>.</summary>
+    public static void BatchCompleted(in BatchCompleted e)
     {
         foreach (var h in s_hooks)
         {
@@ -202,7 +204,8 @@ public static class Telemetry
         }
     }
 
-    internal static void EpochCompleted(in EpochCompleted e)
+    /// <summary>Reports a finished epoch, to the hooks listening at <see cref="TelemetryLevel.Training"/>.</summary>
+    public static void EpochCompleted(in EpochCompleted e)
     {
         foreach (var h in s_hooks)
         {
@@ -213,7 +216,8 @@ public static class Telemetry
         }
     }
 
-    internal static void TrainingCompleted(in TrainingCompleted e)
+    /// <summary>Reports that a training run ended, to the hooks listening at <see cref="TelemetryLevel.Training"/>.</summary>
+    public static void TrainingCompleted(in TrainingCompleted e)
     {
         foreach (var h in s_hooks)
         {
@@ -224,7 +228,8 @@ public static class Telemetry
         }
     }
 
-    internal static void ToolCall(in ToolCallCompleted e)
+    /// <summary>Reports a finished tool call, to the hooks listening at <see cref="TelemetryLevel.Tools"/>.</summary>
+    public static void ToolCall(in ToolCallCompleted e)
     {
         foreach (var h in s_hooks)
         {
@@ -235,7 +240,8 @@ public static class Telemetry
         }
     }
 
-    internal static void Engine(in EngineEvent e)
+    /// <summary>Reports an inference-engine event, to the hooks listening at <see cref="TelemetryLevel.Engine"/>.</summary>
+    public static void Engine(in EngineEvent e)
     {
         foreach (var h in s_hooks)
         {

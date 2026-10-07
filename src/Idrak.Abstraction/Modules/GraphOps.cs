@@ -17,7 +17,8 @@ public sealed class GraphOpContext
 {
     private readonly Func<int, object> _arg;
 
-    internal GraphOpContext(GraphNode node, Func<int, object> arg)
+    /// <summary>The context of <paramref name="node"/>, whose input i is <c>arg(i)</c> (a <see cref="Tensor"/> or a <see cref="GraphValues.HostValue"/>).</summary>
+    public GraphOpContext(GraphNode node, Func<int, object> arg)
     {
         Node = node;
         _arg = arg;
@@ -117,7 +118,8 @@ public static class GraphOps
     public static GraphOp Get(string name) =>
         TryGet(name) ?? throw new NotSupportedException($"No graph operation '{name}' is registered ({string.Join(", ", Names)}); add it with GraphOps.Register.");
 
-    internal static GraphOp? TryGet(string name)
+    /// <summary>The operation registered as <paramref name="name"/>, or null.</summary>
+    public static GraphOp? TryGet(string name)
     {
         lock (Registry)
         {
@@ -139,14 +141,20 @@ public static class GraphOps
 /// <param name="Layer">The layer run by a "layer" node.</param>
 public sealed record GraphNode(string Op, IReadOnlyList<string> Inputs, string Output, JsonObject? Attributes = null, Module? Layer = null);
 
-/// <summary>Values flowing through a graph that are computed on the host rather than as tensors (shapes, axes, indices).</summary>
-internal static class GraphValues
+/// <summary>
+/// Values flowing through a graph that are computed on the host rather than as tensors (shapes, axes, indices): what an
+/// operator given a shape or indices (a reshape's target, a gather's axis) may receive instead of a tensor.
+/// </summary>
+public static class GraphValues
 {
-    /// <summary>An integer value computed on the host (a shape, axes, indices): its values and dimensions.</summary>
-    internal sealed record HostValue(long[] Values, int[] Dims);
+    /// <summary>An integer value computed on the host (a shape, axes, indices).</summary>
+    /// <param name="Values">The integers, row-major.</param>
+    /// <param name="Dims">Their shape.</param>
+    public sealed record HostValue(long[] Values, int[] Dims);
 
     /// <summary>The integers a value holds: a host value's, or a tensor's elements.</summary>
-    internal static long[] AsIntegers(object value) => value switch
+    /// <exception cref="InvalidOperationException">The value is neither.</exception>
+    public static long[] AsIntegers(object value) => value switch
     {
         HostValue h => h.Values,
         Tensor t => t.ToArray().Select(v => (long)v).ToArray(),

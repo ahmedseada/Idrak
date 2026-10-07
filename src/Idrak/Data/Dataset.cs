@@ -74,7 +74,7 @@ public sealed class Dataset : ISampleSource
         }
 
         var targets = OneHot(labels, classes);
-        return FromFlat(MemoryMarshalHelpers.Flatten(features), targets, labels.Length,
+        return FromFlat(ArrayLayout.Flatten(features), targets, labels.Length,
             DefaultNames("x", features.GetLength(1)), classNames ?? DefaultNames("class", classes));
     }
 
@@ -203,7 +203,7 @@ public sealed class Dataset : ISampleSource
         }
 
         return FromFlat(
-            MemoryMarshalHelpers.Flatten(features), MemoryMarshalHelpers.Flatten(targets), features.GetLength(0),
+            ArrayLayout.Flatten(features), ArrayLayout.Flatten(targets), features.GetLength(0),
             featureNames ?? DefaultNames("x", features.GetLength(1)), targetNames ?? DefaultNames("y", targets.GetLength(1)));
     }
 
@@ -820,10 +820,26 @@ public sealed class Dataset : ISampleSource
     private static float[,] To2D(float[] flat, int rows, int cols)
     {
         var result = new float[rows, cols];
-        MemoryMarshalHelpers.Unflatten(flat, result);
+        ArrayLayout.Unflatten(flat, result);
         return result;
     }
 
     /// <inheritdoc />
     public override string ToString() => $"Dataset({Count:N0} samples, features [{string.Join(", ", FeatureNames)}] -> targets [{string.Join(", ", TargetNames)}])";
+}
+
+// Row-major copies between two-dimensional arrays and flat ones.
+internal static class ArrayLayout
+{
+    public static float[] Flatten(float[,] values)
+    {
+        var flat = new float[values.Length];
+        System.Runtime.InteropServices.MemoryMarshal.CreateReadOnlySpan(
+            ref System.Runtime.CompilerServices.Unsafe.As<byte, float>(ref System.Runtime.InteropServices.MemoryMarshal.GetArrayDataReference(values)), values.Length).CopyTo(flat);
+        return flat;
+    }
+
+    public static void Unflatten(float[] flat, float[,] destination) =>
+        flat.AsSpan().CopyTo(System.Runtime.InteropServices.MemoryMarshal.CreateSpan(
+            ref System.Runtime.CompilerServices.Unsafe.As<byte, float>(ref System.Runtime.InteropServices.MemoryMarshal.GetArrayDataReference(destination)), destination.Length));
 }

@@ -9,7 +9,7 @@ namespace Idrak.Abstraction.Devices;
 /// <c>Idrak.Optimizers.HostOptimizer</c>). A device without it (the CPU) returns null from
 /// <see cref="Backend.CreateHostStaging"/> and callers copy synchronously.
 /// </summary>
-internal interface IHostStaging : IDisposable
+public interface IHostStaging : IDisposable
 {
     /// <summary>Floats each slot holds.</summary>
     int SlotFloats { get; }

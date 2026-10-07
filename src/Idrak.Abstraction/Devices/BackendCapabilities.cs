@@ -8,7 +8,7 @@ namespace Idrak.Abstraction.Devices;
 /// on or reading one backend's kernel constants. Each backend fills it in once; a new backend (AMD, Intel, Apple) states
 /// its own limits here and the layers follow without changes.
 /// </summary>
-internal sealed record BackendCapabilities
+public sealed record BackendCapabilities
 {
     /// <summary>
     /// Rows the few-row (decoding) products take through their row kernels; more rows go through the prompt-sized products.

@@ -31,7 +31,7 @@ What the `architecture` branch cannot do today, with an example of each. "High" 
 |---|---|---|
 | High | **AMD ROCm / HIP** (first slice, untested) | `hip:0` exists on the `backend/hip` branch (plan 8) but has never run on an AMD GPU; only memory, copies and a first kernel set run on the device, the rest through host fallbacks; no matrix cores (rocWMMA / MFMA), no hipGraph |
 | High | **NPUs** (Intel AI Boost, Apple Neural Engine) | no device kind for them; a model cannot run there (add-on packages `Idrak.OpenVino`, `Idrak.CoreML`: plans 4 and 5) |
-| | A backend added from outside the library | `DeviceProviders.Register(new MyProvider())` does not compile in an application: `Backend` and `DeviceProviders` are internal (plan 7, phase 6) |
+| | A backend checked from outside the library | `DeviceProviders.Register(new MyProvider())` with a `Backend` of one's own compiles (the device API is public since plan 10, phase 4, and CUDA, Vulkan and HIP are built on it alone), but no conformance kit runs the operation tests against it yet (plan 10, phase 5) |
 | | Apple GPUs (Metal) | on a Mac `Device.Default` is the CPU; there is no `Device.Get("metal")` (plan 5) |
 | | One model across several devices | `model.To(Device.Cuda(0))` places the whole model on one device; it cannot be split across `cuda:0` and `vulkan:1` (plan 6) |
 

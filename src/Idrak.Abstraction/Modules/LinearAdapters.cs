@@ -148,7 +148,7 @@ public sealed class DoraAdapter : ILinearAdapter, IDisposable
     }
 
     /// <summary>The squared norm of each output column of the layer's frozen weight W (computed on the host).</summary>
-    internal static float[] SquaredNorms(ILinearLayer layer)
+    public static float[] SquaredNorms(ILinearLayer layer)
     {
         var w = layer.WeightValues();
         int inputs = layer.InFeatures, outputs = layer.OutFeatures;

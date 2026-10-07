@@ -93,7 +93,7 @@ public sealed partial class Tensor
                 + "Write into a leaf tensor (a parameter, a buffer, a Clone()), or compute this one under Autograd.NoGrad().");
         }
 
-        Interlocked.Increment(ref Storage.Version);
+        Storage.Written();
     }
 
     private void CheckSameSize(Tensor other, string method)

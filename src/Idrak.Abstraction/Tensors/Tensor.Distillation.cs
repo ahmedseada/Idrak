@@ -15,7 +15,7 @@ public sealed partial class Tensor
     /// of listed rows start … start + count − 1 as [count, vocabulary] on the hidden states' device. The head runs on
     /// <paramref name="chunkRows"/> rows at a time; only one value per row leaves the device. Not recorded.
     /// </summary>
-    internal static float[] TokenDivergences(Tensor hidden, Func<Tensor, Tensor> head, int[] rows, Func<int, int, Tensor> teacher, float temperature, int chunkRows) =>
+    public static float[] TokenDivergences(Tensor hidden, Func<Tensor, Tensor> head, int[] rows, Func<int, int, Tensor> teacher, float temperature, int chunkRows) =>
         Divergences(hidden, head, rows, null, teacher, temperature, chunkRows).Values;
 
     /// <summary>
@@ -26,12 +26,12 @@ public sealed partial class Tensor
     /// rows' gradient is scattered into <paramref name="hidden"/>'s by the result's backward pass. Back-propagate the
     /// result unscaled (scale through <paramref name="weights"/>). The [rows, vocabulary] logits never exist together.
     /// </summary>
-    internal static Tensor TokenDivergenceRows(Tensor hidden, Func<Tensor, Tensor> head, int[] rows, float[] weights, Func<int, int, Tensor> teacher, float temperature,
+    public static Tensor TokenDivergenceRows(Tensor hidden, Func<Tensor, Tensor> head, int[] rows, float[] weights, Func<int, int, Tensor> teacher, float temperature,
         int chunkRows) =>
         Divergences(hidden, head, rows, weights, teacher, temperature, chunkRows).Loss!;
 
     /// <summary>The listed rows of x [rows, dim] as [count, dim], on x's device. Not recorded.</summary>
-    internal static Tensor GatherRows(Tensor x, int[] rows)
+    public static Tensor GatherRows(Tensor x, int[] rows)
     {
         x.ThrowIfDisposed();
         if (x.Rank != 2)

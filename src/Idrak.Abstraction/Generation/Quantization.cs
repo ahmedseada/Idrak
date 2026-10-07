@@ -94,8 +94,10 @@ public abstract class PackedWeight : IDisposable
     /// <param name="move">Moves one tensor.</param>
     protected abstract void MoveTo(Device device, Func<Tensor, Device, Tensor> move);
 
-    // Linear.MoveTo's way in.
-    internal void MoveWeights(Device device, Func<Tensor, Device, Tensor> move) => MoveTo(device, move);
+    /// <summary>Moves the weights to <paramref name="device"/> (what a layer holding them calls from its own <c>MoveTo</c>).</summary>
+    /// <param name="device">The destination.</param>
+    /// <param name="move">Moves one tensor: returns it on the device and releases the old one.</param>
+    public void MoveWeights(Device device, Func<Tensor, Device, Tensor> move) => MoveTo(device, move);
 
     /// <summary>
     /// input [..., <see cref="Rows"/>] · W → [..., <see cref="Columns"/>], gradients flowing to the input (the weights are
@@ -111,32 +113,51 @@ public abstract class PackedWeight : IDisposable
     /// <inheritdoc />
     public abstract void Dispose();
 
-    // The packed words, and the scales where the format has them (the storages the packed products and offloading read).
-    // Built-in formats only: every caller checks Format first.
-    internal virtual Tensor PackedValues => throw new InvalidOperationException($"{Name} weights are not a built-in format; the device kernels cannot read them.");
+    /// <summary>
+    /// The packed words the device kernels read (a built-in <see cref="Format"/> only; callers check it first).
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The weights are not in a built-in format.</exception>
+    public virtual Tensor PackedValues => throw new InvalidOperationException($"{Name} weights are not a built-in format; the device kernels cannot read them.");
 
-    internal virtual Tensor? ScaleValues => null;
+    /// <summary>The scales the device kernels read with <see cref="PackedValues"/>, or null when the format has none.</summary>
+    public virtual Tensor? ScaleValues => null;
 
-    // Writes the float weights [rows, columns] into `destination` (on the same device).
-    internal virtual void DequantizeInto(Storage destination)
+    /// <summary>Writes the float weights [rows, columns] into <paramref name="destination"/> (on the same device).</summary>
+    public virtual void DequantizeInto(Storage destination)
     {
         using var w = Dequantize();
         w.Backend.Copy(w.Storage, destination, Rows * Columns);
     }
 
-    // Whether the LoRA products read this format packed (Tensor.LoraProducts); otherwise the base product runs on its own.
-    internal virtual bool LowRankProducts => false;
+    /// <summary>Whether the fused low-rank (LoRA) products read this format packed; otherwise the base product runs on its own.</summary>
+    public virtual bool LowRankProducts => false;
 
-    // Whether an FP8 copy may be made for training products (Linear.AttachFloat8): only the fused LoRA products read one,
-    // and they take built-in formats only.
-    internal virtual bool Float8Copy => Format is not null;
+    /// <summary>
+    /// Whether an FP8 copy may be made for training products: only the fused low-rank products read one, and they take
+    /// built-in formats only.
+    /// </summary>
+    public virtual bool Float8Copy => Format is not null;
 
-    // dx (+)= g · Wᵀ (+ dt · Aᵀ) reading W as stored; false when the format or the device has no such product.
-    internal virtual bool TransposedProduct(Tensor g, Storage dx, int m, int k, int n, float beta, Storage? dt, Storage? a, int rank) => false;
+    /// <summary>
+    /// dx = beta·dx + g · Wᵀ (+ dt · Aᵀ when <paramref name="dt"/> is given) for g [m, n], reading W [k, n] as stored: the
+    /// input gradient through the frozen weights; false when the format or the device has no such product.
+    /// </summary>
+    /// <param name="g">The output gradient [m, n].</param>
+    /// <param name="dx">The input gradient [m, k].</param>
+    /// <param name="m">Rows.</param>
+    /// <param name="k">Input features.</param>
+    /// <param name="n">Output features.</param>
+    /// <param name="beta">0 to overwrite <paramref name="dx"/>, 1 to add to it.</param>
+    /// <param name="dt">The low-rank term's gradient [m, rank], or null.</param>
+    /// <param name="a">The adapter's down projection [k, rank], or null.</param>
+    /// <param name="rank">The adapter's rank.</param>
+    public virtual bool TransposedProduct(Tensor g, Storage dx, int m, int k, int n, float beta, Storage? dt, Storage? a, int rank) => false;
 
-    // Whether a gated feed-forward block applies the activation as the down projection reads its input (4-bit: eight
-    // columns per word repay that work), rather than in the gate/up product.
-    internal virtual bool ActivationInDownProjection => false;
+    /// <summary>
+    /// Whether a gated feed-forward block applies the activation as the down projection reads its input (4-bit: eight
+    /// columns per word repay that work), rather than in the gate/up product.
+    /// </summary>
+    public virtual bool ActivationInDownProjection => false;
 
     /// <summary>Packs [rows, columns] float values in <paramref name="format"/> on <paramref name="device"/>.</summary>
     public static PackedWeight FromValues(PackedFormat format, ReadOnlySpan<float> values, int rows, int columns, Device device) =>
@@ -160,8 +181,10 @@ public abstract class PackedWeight : IDisposable
     public static PackedWeight FromValues(string format, ReadOnlySpan<float> values, int rows, int columns, Device device) =>
         Pack(Factory(format), format, values, rows, columns, device);
 
-    // A registered factory's weights, checked against the shape asked for.
-    internal static PackedWeight Pack(PackedWeightFactory factory, string format, ReadOnlySpan<float> values, int rows, int columns, Device device)
+    /// <summary>The weights <paramref name="factory"/> packs, checked against the [rows, columns] shape asked for.</summary>
+    /// <exception cref="ArgumentException">The values do not fill the shape.</exception>
+    /// <exception cref="InvalidOperationException">The factory made weights of another shape.</exception>
+    public static PackedWeight Pack(PackedWeightFactory factory, string format, ReadOnlySpan<float> values, int rows, int columns, Device device)
     {
         if (values.Length != rows * columns)
         {
@@ -211,8 +234,9 @@ public abstract class PackedWeight : IDisposable
         }
     }
 
-    // The factory registered as `format`.
-    internal static PackedWeightFactory Factory(string format)
+    /// <summary>The factory registered as <paramref name="format"/>.</summary>
+    /// <exception cref="NotSupportedException">No format of that name is registered.</exception>
+    public static PackedWeightFactory Factory(string format)
     {
         lock (Registry)
         {
@@ -221,12 +245,14 @@ public abstract class PackedWeight : IDisposable
         }
     }
 
-    // For messages: "int8", "4-bit", "bfloat16"; ToString's short name; and how to get float weights back.
-    internal virtual string Description => Name;
+    /// <summary>The format in messages: "int8", "4-bit", "bfloat16".</summary>
+    public virtual string Description => Name;
 
-    internal virtual string ShortName => Name;
+    /// <summary>The format's short name, as summaries show it.</summary>
+    public virtual string ShortName => Name;
 
-    internal virtual string FloatMethod => "ToFloat32()";
+    /// <summary>How to get float weights back, as messages name it ("ToFloat32()").</summary>
+    public virtual string FloatMethod => "ToFloat32()";
 }
 
 /// <summary>
@@ -242,20 +268,26 @@ public sealed class Int8Weight : PackedWeight
     /// <inheritdoc />
     public override Device Device => Packed.Device;
 
-    internal override Tensor PackedValues => Packed;
+    /// <inheritdoc />
+    public override Tensor PackedValues => Packed;
 
-    internal override Tensor? ScaleValues => Scales;
+    /// <inheritdoc />
+    public override Tensor? ScaleValues => Scales;
 
     /// <summary>input [..., rows] · W → [..., columns], reading the bytes (few rows) or expanding them once (more).</summary>
     public override Tensor MatMul(Tensor input) => input.MatMulInt8(this);
 
-    internal override bool Float8Copy => false;
+    /// <inheritdoc />
+    public override bool Float8Copy => false;
 
-    internal override string Description => "int8";
+    /// <inheritdoc />
+    public override string Description => "int8";
 
-    internal override string ShortName => "int8";
+    /// <inheritdoc />
+    public override string ShortName => "int8";
 
-    internal override string FloatMethod => "DequantizeInt8()";
+    /// <inheritdoc />
+    public override string FloatMethod => "DequantizeInt8()";
 
     private Int8Weight(Tensor packed, Tensor scales, int rows, int columns)
         : base(PackedFormat.Int8)
@@ -276,10 +308,10 @@ public sealed class Int8Weight : PackedWeight
     public override long Bytes => 4L * (Packed.Size + Scales.Size);
 
     /// <summary>The bytes, packed four per element along each row (rows padded to a multiple of four columns).</summary>
-    internal Tensor Packed { get; private set; }
+    public Tensor Packed { get; private set; }
 
     /// <summary>One scale per column.</summary>
-    internal Tensor Scales { get; private set; }
+    public Tensor Scales { get; private set; }
 
     /// <summary>Quantizes a float weight matrix [rows, columns] (on its device).</summary>
     public static Int8Weight Quantize(Tensor weight)
@@ -314,7 +346,7 @@ public sealed class Int8Weight : PackedWeight
     /// Packed bytes and scales for [rows, columns] allocated on <paramref name="device"/> without computing anything, for
     /// loading stored values into (<c>Idrak.ModuleFiles.Load</c>).
     /// </summary>
-    internal static Int8Weight Empty(int rows, int columns, Device device)
+    public static Int8Weight Empty(int rows, int columns, Device device)
     {
         int stride = (columns + 3) / 4 * 4;
         return new Int8Weight(
@@ -381,7 +413,8 @@ public sealed class Int8Weight : PackedWeight
         return w;
     }
 
-    internal override void DequantizeInto(Storage destination) => Packed.Backend.Int8Dequantize(Packed.Storage, Scales.Storage, destination, Rows, Columns);
+    /// <inheritdoc />
+    public override void DequantizeInto(Storage destination) => Packed.Backend.Int8Dequantize(Packed.Storage, Scales.Storage, destination, Rows, Columns);
 
     /// <inheritdoc />
     protected override void MoveTo(Device device, Func<Tensor, Device, Tensor> move)
@@ -415,20 +448,26 @@ public sealed class Int4Weight : PackedWeight
     /// <inheritdoc />
     public override Device Device => Packed.Device;
 
-    internal override Tensor PackedValues => Packed;
+    /// <inheritdoc />
+    public override Tensor PackedValues => Packed;
 
-    internal override Tensor? ScaleValues => Scales;
+    /// <inheritdoc />
+    public override Tensor? ScaleValues => Scales;
 
     /// <summary>input [..., rows] · W → [..., columns], reading the nibbles.</summary>
     public override Tensor MatMul(Tensor input) => input.MatMulInt4(this);
 
-    internal override bool LowRankProducts => true;
+    /// <inheritdoc />
+    public override bool LowRankProducts => true;
 
-    internal override bool ActivationInDownProjection => true;
+    /// <inheritdoc />
+    public override bool ActivationInDownProjection => true;
 
-    internal override string Description => "4-bit";
+    /// <inheritdoc />
+    public override string Description => "4-bit";
 
-    internal override string ShortName => "int4";
+    /// <inheritdoc />
+    public override string ShortName => "int4";
 
     /// <summary>Weight rows that share one scale per column.</summary>
     public const int GroupSize = 32;
@@ -452,10 +491,10 @@ public sealed class Int4Weight : PackedWeight
     public override long Bytes => 4L * (Packed.Size + Scales.Size);
 
     /// <summary>The nibbles, eight per element along each row (nibble c of element w is column 8w + c).</summary>
-    internal Tensor Packed { get; private set; }
+    public Tensor Packed { get; private set; }
 
     /// <summary>One scale per group of <see cref="GroupSize"/> rows and column: [⌈rows / 32⌉, 8·⌈columns / 8⌉].</summary>
-    internal Tensor Scales { get; private set; }
+    public Tensor Scales { get; private set; }
 
     /// <summary>Quantizes a float weight matrix [rows, columns] (on its device).</summary>
     public static Int4Weight Quantize(Tensor weight)
@@ -487,7 +526,7 @@ public sealed class Int4Weight : PackedWeight
     /// Nibbles and scales for [rows, columns] allocated on <paramref name="device"/> without computing anything, for
     /// loading stored values into (<c>Idrak.ModuleFiles.Load</c>).
     /// </summary>
-    internal static Int4Weight Empty(int rows, int columns, Device device)
+    public static Int4Weight Empty(int rows, int columns, Device device)
     {
         int words = (columns + 7) / 8, groups = (rows + GroupSize - 1) / GroupSize;
         return new Int4Weight(
@@ -583,7 +622,8 @@ public sealed class Int4Weight : PackedWeight
         return w;
     }
 
-    internal override void DequantizeInto(Storage destination) => Packed.Backend.Int4Dequantize(Packed.Storage, Scales.Storage, destination, Rows, Columns);
+    /// <inheritdoc />
+    public override void DequantizeInto(Storage destination) => Packed.Backend.Int4Dequantize(Packed.Storage, Scales.Storage, destination, Rows, Columns);
 
     /// <inheritdoc />
     protected override void MoveTo(Device device, Func<Tensor, Device, Tensor> move)
@@ -617,19 +657,24 @@ public sealed class BFloat16Weight : PackedWeight
     /// <inheritdoc />
     public override Device Device => Packed.Device;
 
-    internal override Tensor PackedValues => Packed;
+    /// <inheritdoc />
+    public override Tensor PackedValues => Packed;
 
     /// <summary>input [..., rows] · W → [..., columns], reading the bfloat16 values.</summary>
     public override Tensor MatMul(Tensor input) => input.MatMulBFloat16(this);
 
-    internal override bool LowRankProducts => true;
+    /// <inheritdoc />
+    public override bool LowRankProducts => true;
 
-    internal override bool TransposedProduct(Tensor g, Storage dx, int m, int k, int n, float beta, Storage? dt, Storage? a, int rank) =>
+    /// <inheritdoc />
+    public override bool TransposedProduct(Tensor g, Storage dx, int m, int k, int n, float beta, Storage? dt, Storage? a, int rank) =>
         g.Backend.BFloat16TransposedMatMul(g.Storage, Packed.Storage, dx, m, k, n, beta, dt, a, rank);
 
-    internal override string Description => "bfloat16";
+    /// <inheritdoc />
+    public override string Description => "bfloat16";
 
-    internal override string ShortName => "bf16";
+    /// <inheritdoc />
+    public override string ShortName => "bf16";
 
     private BFloat16Weight(Tensor packed, int rows, int columns)
         : base(PackedFormat.BFloat16)
@@ -649,7 +694,7 @@ public sealed class BFloat16Weight : PackedWeight
     public override long Bytes => 4L * Packed.Size;
 
     /// <summary>The values, two per element along each row (rows padded to an even number of columns).</summary>
-    internal Tensor Packed { get; private set; }
+    public Tensor Packed { get; private set; }
 
     /// <summary>Rounds a float weight matrix [rows, columns] (on its device) to bfloat16.</summary>
     public static BFloat16Weight Convert(Tensor weight)
@@ -681,7 +726,7 @@ public sealed class BFloat16Weight : PackedWeight
     /// Room for bfloat16 values [rows, columns] on <paramref name="device"/>, allocated without computing anything, for
     /// loading stored values into (<c>Idrak.ModuleFiles.Load</c>).
     /// </summary>
-    internal static BFloat16Weight Empty(int rows, int columns, Device device)
+    public static BFloat16Weight Empty(int rows, int columns, Device device)
     {
         int stride = (columns + 1) / 2 * 2;
         return new BFloat16Weight(Tensor.PersistentZeros([rows * stride / 2], device), rows, columns);
@@ -717,7 +762,8 @@ public sealed class BFloat16Weight : PackedWeight
         return w;
     }
 
-    internal override void DequantizeInto(Storage destination) => Packed.Backend.BFloat16Dequantize(Packed.Storage, destination, Rows, Columns);
+    /// <inheritdoc />
+    public override void DequantizeInto(Storage destination) => Packed.Backend.BFloat16Dequantize(Packed.Storage, destination, Rows, Columns);
 
     /// <inheritdoc />
     protected override void MoveTo(Device device, Func<Tensor, Device, Tensor> move) => Packed = move(Packed, device);

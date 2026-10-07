@@ -11,9 +11,10 @@ using Idrak.Abstraction.Operations;
 
 namespace Idrak.Abstraction.Devices;
 
-internal abstract partial class Backend
+public abstract partial class Backend
 {
-    /// <summary>Runs <see cref="Ops.Fill"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>y[i] = value for i &lt; n.</summary>
+    /// <remarks>Runs <see cref="Ops.Fill"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>FillKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Fill(Storage y, int n, float value)
     {
@@ -40,7 +41,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.Unary"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>y = op(x).</summary>
+    /// <remarks>Runs <see cref="Ops.Unary"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>UnaryKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Unary(UnaryOp op, Storage x, Storage y, int n)
     {
@@ -67,7 +69,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.UnaryBackward"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>dx += dy * op'(x), where y = op(x) is passed in for ops whose derivative is cheaper from y.</summary>
+    /// <remarks>Runs <see cref="Ops.UnaryBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>UnaryBackwardKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void UnaryBackward(UnaryOp op, Storage x, Storage y, Storage dy, Storage dx, int n)
     {
@@ -94,7 +97,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.Binary"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>c = a op b, element-wise.</summary>
+    /// <remarks>Runs <see cref="Ops.Binary"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>BinaryKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Binary(BinaryOp op, Storage a, Storage b, Storage c, int n)
     {
@@ -121,7 +125,11 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.ExtremumBackward"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// dx += dy where a wins (<see cref="BinaryOp.Maximum"/>: a ≥ b; <see cref="BinaryOp.Minimum"/>: a ≤ b), db += dy
+    /// elsewhere: the backward step of c = max(a, b) or min(a, b). A null gradient is skipped.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.ExtremumBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>ExtremumBackwardKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void ExtremumBackward(BinaryOp op, Storage a, Storage b, Storage dy, Storage? da, Storage? db, int n)
     {
@@ -148,7 +156,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.Pow"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>y = x^exponent, element-wise.</summary>
+    /// <remarks>Runs <see cref="Ops.Pow"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>PowKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Pow(Storage x, Storage y, int n, float exponent)
     {
@@ -175,7 +184,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.PowBackward"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>dx += dy · exponent · x^(exponent - 1).</summary>
+    /// <remarks>Runs <see cref="Ops.PowBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>PowBackwardKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void PowBackward(Storage x, Storage dy, Storage dx, int n, float exponent)
     {
@@ -202,7 +212,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.Clamp"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>y = x limited to [min, max] (either may be infinite).</summary>
+    /// <remarks>Runs <see cref="Ops.Clamp"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>ClampKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Clamp(Storage x, Storage y, int n, float min, float max)
     {
@@ -229,7 +240,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.ClampBackward"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>dx += dy where min ≤ x ≤ max.</summary>
+    /// <remarks>Runs <see cref="Ops.ClampBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>ClampBackwardKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void ClampBackward(Storage x, Storage dy, Storage dx, int n, float min, float max)
     {
@@ -256,7 +268,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.Where"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>y = condition ≠ 0 ? a : b, element-wise.</summary>
+    /// <remarks>Runs <see cref="Ops.Where"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>WhereKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Where(Storage condition, Storage a, Storage b, Storage y, int n)
     {
@@ -283,7 +296,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.WhereBackward"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>da += dy where condition ≠ 0, db += dy elsewhere (a null gradient is skipped).</summary>
+    /// <remarks>Runs <see cref="Ops.WhereBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>WhereBackwardKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void WhereBackward(Storage condition, Storage dy, Storage? da, Storage? db, int n)
     {
@@ -310,7 +324,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.Affine"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>y = alpha * x + beta.</summary>
+    /// <remarks>Runs <see cref="Ops.Affine"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AffineKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Affine(Storage x, Storage y, int n, float alpha, float beta)
     {
@@ -337,7 +352,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.Axpy"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>y += alpha * x.</summary>
+    /// <remarks>Runs <see cref="Ops.Axpy"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AxpyKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Axpy(Storage x, Storage y, int n, float alpha)
     {
@@ -364,7 +380,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.MulAdd"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>c += a * b, element-wise.</summary>
+    /// <remarks>Runs <see cref="Ops.MulAdd"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>MulAddKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void MulAdd(Storage a, Storage b, Storage c, int n)
     {
@@ -391,7 +408,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.AddRowVector"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>c[r, j] = a[r, j] + v[j].</summary>
+    /// <remarks>Runs <see cref="Ops.AddRowVector"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AddRowVectorKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AddRowVector(Storage a, Storage v, Storage c, int rows, int cols)
     {
@@ -418,7 +436,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.SumRows"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>y[j] += sum over r of x[r, j].</summary>
+    /// <remarks>Runs <see cref="Ops.SumRows"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>SumRowsKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void SumRows(Storage x, Storage y, int rows, int cols)
     {
@@ -445,7 +464,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.Sum"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>result[0] = scale * sum(x).</summary>
+    /// <remarks>Runs <see cref="Ops.Sum"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>SumKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Sum(Storage x, Storage result, int n, float scale)
     {
@@ -472,7 +492,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.AxpyAt"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>y[offset] += alpha * x[0] (used to accumulate scalar losses without leaving the device).</summary>
+    /// <remarks>Runs <see cref="Ops.AxpyAt"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AxpyAtKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AxpyAt(Storage x, Storage y, int offset, float alpha)
     {
@@ -499,7 +520,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.AddBroadcastScalar"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>y[i] += scale * s[0].</summary>
+    /// <remarks>Runs <see cref="Ops.AddBroadcastScalar"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AddBroadcastScalarKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AddBroadcastScalar(Storage s, Storage y, int n, float scale)
     {
@@ -526,7 +548,11 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.PackedMatMulLarge"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// y = x · w for many rows (prompts) with packed weights w (in <paramref name="format"/>), expanding w as it is read instead of into a float copy. Returns false when the
+    /// device has no such kernel or the shape is too small for it (callers then expand w first).
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.PackedMatMulLarge"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>PackedMatMulLargeKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool PackedMatMulLarge(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k)
     {
@@ -539,7 +565,11 @@ internal abstract partial class Backend
         return Kernel(OperationIndex.PackedMatMulLarge) is OperationKernels.PackedMatMulLarge kernel ? kernel(this, format, x, packed, scales, y, m, n, k) : PackedMatMulLargeKernel(format, x, packed, scales, y, m, n, k);
     }
 
-    /// <summary>Runs <see cref="Ops.PackedMatMulGated"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// y = (act(gate) · up) · w for few rows with packed weights w (in <paramref name="format"/>; activation 0 = SiLU, 1 = GELU tanh): the gated feed-forward's down projection
+    /// without a separate activation pass. Returns false when the device has no fused version.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.PackedMatMulGated"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>PackedMatMulGatedKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool PackedMatMulGated(PackedFormat format, int activation, Storage gate, Storage up, Storage packed, Storage? scales, Storage y, int m, int n, int k)
     {
@@ -552,7 +582,12 @@ internal abstract partial class Backend
         return Kernel(OperationIndex.PackedMatMulGated) is OperationKernels.PackedMatMulGated kernel ? kernel(this, format, activation, gate, up, packed, scales, y, m, n, k) : PackedMatMulGatedKernel(format, activation, gate, up, packed, scales, y, m, n, k);
     }
 
-    /// <summary>Runs <see cref="Ops.PackedMatMulAddRmsNorm"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// y = x · w for few rows with packed weights w (in <paramref name="format"/>), then
+    /// sum = residual + y and normalized = its RMS normalization · (gain + offset) per row (a residual addition and the
+    /// next normalization) in the same pass. Returns false when the device has no fused version.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.PackedMatMulAddRmsNorm"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>PackedMatMulAddRmsNormKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool PackedMatMulAddRmsNorm(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k, Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset)
     {
@@ -565,7 +600,13 @@ internal abstract partial class Backend
         return Kernel(OperationIndex.PackedMatMulAddRmsNorm) is OperationKernels.PackedMatMulAddRmsNorm kernel ? kernel(this, format, x, packed, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset) : PackedMatMulAddRmsNormKernel(format, x, packed, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset);
     }
 
-    /// <summary>Runs <see cref="Ops.PackedMatMulMany"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// Several few-row products of packed weights sharing one input x [m, k]: y_j = x · w_j (+ bias_j), in <paramref name="format"/>
+    /// (int8 as in <see cref="Int8MatMul"/>, 4-bit as in <see cref="Int4MatMul"/>, bfloat16 as in
+    /// <see cref="BFloat16MatMul"/>, which has no scales). Returns false when the device has no single-pass version (callers then
+    /// run the products one by one).
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.PackedMatMulMany"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>PackedMatMulManyKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool PackedMatMulMany(PackedFormat format, Storage x, int m, int k, ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products)
     {
@@ -578,7 +619,12 @@ internal abstract partial class Backend
         return Kernel(OperationIndex.PackedMatMulMany) is OperationKernels.PackedMatMulMany kernel ? kernel(this, format, x, m, k, products) : PackedMatMulManyKernel(format, x, m, k, products);
     }
 
-    /// <summary>Runs <see cref="Ops.PackedMatMulGatedPair"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// <see cref="PackedMatMulMany"/> for a feed-forward block's gate and up projections (two products of equal widths),
+    /// also writing hidden = act(gate) · up (activation 0 = SiLU, 1 = GELU tanh, 2 = ReLU) in the same pass. Returns
+    /// false when the device has no fused version.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.PackedMatMulGatedPair"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>PackedMatMulGatedPairKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool PackedMatMulGatedPair(PackedFormat format, int activation, Storage x, int m, int k, ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products, Storage hidden)
     {
@@ -591,7 +637,11 @@ internal abstract partial class Backend
         return Kernel(OperationIndex.PackedMatMulGatedPair) is OperationKernels.PackedMatMulGatedPair kernel ? kernel(this, format, activation, x, m, k, products, hidden) : PackedMatMulGatedPairKernel(format, activation, x, m, k, products, hidden);
     }
 
-    /// <summary>Runs <see cref="Ops.MatMulMany"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// Several products sharing one input: y_j = a · w_j (+ bias_j) for a [m, k] and w_j [k, n_j] (the query, key and
+    /// value projections, say). The default computes them one by one; devices may do them in one pass.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.MatMulMany"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>MatMulManyKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void MatMulMany(Storage a, int m, int k, ReadOnlySpan<(Storage Weight, Storage? Bias, Storage Output, int Columns)> products)
     {
@@ -618,7 +668,11 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.MatMulBias"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// c = a·b + bias (bias [n] added to every row) in one pass, for a [m, k] and b [k, n] as stored. Returns false when
+    /// the device has no such pass for these sizes (callers then multiply and add the bias separately).
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.MatMulBias"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>MatMulBiasKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool MatMulBias(Storage a, Storage b, Storage bias, Storage c, int m, int n, int k)
     {
@@ -631,7 +685,12 @@ internal abstract partial class Backend
         return Kernel(OperationIndex.MatMulBias) is OperationKernels.MatMulBias kernel ? kernel(this, a, b, bias, c, m, n, k) : MatMulBiasKernel(a, b, bias, c, m, n, k);
     }
 
-    /// <summary>Runs <see cref="Ops.MatMulLowRank"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// c = beta·c + a·op(b) + u·op(v) in one product (a LoRA adapter's term as one more k step): a [m, k], b [k, n]
+    /// (transposed: [n, k]), u [m, rank], v [rank, n] (with <paramref name="transB"/>: [n, rank]), rank ≤ 32, all rows
+    /// contiguous. Returns false when the device has no such pass (callers then compute the two products separately).
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.MatMulLowRank"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>MatMulLowRankKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool MatMulLowRank(Storage a, Storage b, Storage c, int m, int n, int k, bool transB, float beta, Storage u, Storage v, int rank)
     {
@@ -644,7 +703,13 @@ internal abstract partial class Backend
         return Kernel(OperationIndex.MatMulLowRank) is OperationKernels.MatMulLowRank kernel ? kernel(this, a, b, c, m, n, k, transB, beta, u, v, rank) : MatMulLowRankKernel(a, b, c, m, n, k, transB, beta, u, v, rank);
     }
 
-    /// <summary>Runs <see cref="Ops.BFloat16TransposedMatMul"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// c = beta·c + a · Wᵀ (+ u · vᵀ) with W a bfloat16 weight [n, k] as <c>BFloat16Weight</c> packs it (two
+    /// values per word along k), read as stored: the input gradient through a frozen bfloat16 layer (and its adapter's
+    /// dt · Aᵀ with u = dt [m, rank], v = A [n, rank]) without expanding the weight to float. u null: no low-rank term.
+    /// False when the device has no such kernel (callers then expand the weight).
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.BFloat16TransposedMatMul"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>BFloat16TransposedMatMulKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool BFloat16TransposedMatMul(Storage a, Storage packed, Storage c, int m, int n, int k, float beta, Storage? u, Storage? v, int rank)
     {
@@ -657,7 +722,11 @@ internal abstract partial class Backend
         return Kernel(OperationIndex.BFloat16TransposedMatMul) is OperationKernels.BFloat16TransposedMatMul kernel ? kernel(this, a, packed, c, m, n, k, beta, u, v, rank) : BFloat16TransposedMatMulKernel(a, packed, c, m, n, k, beta, u, v, rank);
     }
 
-    /// <summary>Runs <see cref="Ops.Float8QuantizeWeight"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// Quantizes a frozen weight w [k, n] (float32) once for <see cref="Float8MatMul"/>: FP8 (e4m3) values, k-major per
+    /// column ([n, paddedK] bytes), and one scale per column [n]. Returns false when unsupported.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.Float8QuantizeWeight"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>Float8QuantizeWeightKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool Float8QuantizeWeight(Storage w, int k, int n, Storage values, Storage scales)
     {
@@ -670,7 +739,11 @@ internal abstract partial class Backend
         return Kernel(OperationIndex.Float8QuantizeWeight) is OperationKernels.Float8QuantizeWeight kernel ? kernel(this, w, k, n, values, scales) : Float8QuantizeWeightKernel(w, k, n, values, scales);
     }
 
-    /// <summary>Runs <see cref="Ops.Float8MatMul"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// y = beta·y + x · w on FP8 tensor cores for x [m, k] (quantized per row as it is read, one scale each) and a weight
+    /// quantized by <see cref="Float8QuantizeWeight"/>. Returns false when unsupported.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.Float8MatMul"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>Float8MatMulKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool Float8MatMul(Storage x, int m, int k, Storage values, Storage scales, int n, Storage y, float beta)
     {
@@ -683,7 +756,12 @@ internal abstract partial class Backend
         return Kernel(OperationIndex.Float8MatMul) is OperationKernels.Float8MatMul kernel ? kernel(this, x, m, k, values, scales, n, y, beta) : Float8MatMulKernel(x, m, k, values, scales, n, y, beta);
     }
 
-    /// <summary>Runs <see cref="Ops.PackedMatMulLowRank"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// Products of one input x [m, k] through 1-3 packed layers (in <paramref name="format"/>),
+    /// each with a low-rank term: y_j = x · w_j + u_j · v_j for u_j [m, rank] and v_j [rank, n_j], rank ≤ 32, in one pass.
+    /// Returns false when the device has no such pass.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.PackedMatMulLowRank"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>PackedMatMulLowRankKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool PackedMatMulLowRank(PackedFormat format, Storage x, int m, int k, ReadOnlySpan<(Storage Packed, Storage? Scales, Storage Output, int Columns, Storage U, Storage V)> products, int rank)
     {
@@ -696,7 +774,15 @@ internal abstract partial class Backend
         return Kernel(OperationIndex.PackedMatMulLowRank) is OperationKernels.PackedMatMulLowRank kernel ? kernel(this, format, x, m, k, products, rank) : PackedMatMulLowRankKernel(format, x, m, k, products, rank);
     }
 
-    /// <summary>Runs <see cref="Ops.GemmStrided"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// c = beta·c + op(a)·op(b) on bfloat16 tensor cores, with row strides: a [m, k] stored with <paramref name="lda"/>
+    /// floats per row (transposed: [k, m] rows), b [k, n] with <paramref name="ldb"/> (transposed: [n, k] rows), c [m, n]
+    /// with <paramref name="ldc"/>; offsets in elements. <paramref name="bias"/> [n] is added to every row (modes None and
+    /// Gelu). <see cref="GemmEpilogue.Gelu"/> writes gelu(product + bias) and, when <paramref name="aux"/> is given, the
+    /// pre-activations into it (same layout as c); <see cref="GemmEpilogue.GeluGradient"/> multiplies the product by
+    /// gelu'(aux). Returns false when the device has no tensor cores (callers use the composed operations).
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.GemmStrided"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>GemmStridedKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool GemmStrided(Storage a, long aOffset, int lda, bool transA, Storage b, long bOffset, int ldb, bool transB, Storage c, long cOffset, int ldc, int m, int n, int k, float beta, Storage? bias = null, GemmEpilogue epilogue = GemmEpilogue.None, Storage? aux = null, long auxOffset = 0)
     {
@@ -709,7 +795,14 @@ internal abstract partial class Backend
         return Kernel(OperationIndex.GemmStrided) is OperationKernels.GemmStrided kernel ? kernel(this, a, aOffset, lda, transA, b, bOffset, ldb, transB, c, cOffset, ldc, m, n, k, beta, bias, epilogue, aux, auxOffset) : GemmStridedKernel(a, aOffset, lda, transA, b, bOffset, ldb, transB, c, cOffset, ldc, m, n, k, beta, bias, epilogue, aux, auxOffset);
     }
 
-    /// <summary>Runs <see cref="Ops.AttentionStrided"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// Causal attention (positions c ≤ t) read in place from [batch, steps, *] rows: head h (= kv · group + g) of the
+    /// queries at q[qOffset + (b·steps + t)·qRow + h·dim], keys and values of kv head kv at k / v[offset + (b·steps + c)·kRow
+    /// + kv·dim]; writes y [batch, steps, heads·dim] and, when given, the log-sum-exp [batch·kvHeads, group·steps] for the
+    /// backward pass. Returns false when the device has no such kernels (callers rearrange the heads and use
+    /// <see cref="AttentionTiled"/>).
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.AttentionStrided"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AttentionStridedKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool AttentionStrided(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow, Storage y, Storage? logSumExp, int batch, int kvHeads, int group, int steps, int dim, float scale)
     {
@@ -722,7 +815,11 @@ internal abstract partial class Backend
         return Kernel(OperationIndex.AttentionStrided) is OperationKernels.AttentionStrided kernel ? kernel(this, q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, batch, kvHeads, group, steps, dim, scale) : AttentionStridedKernel(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, batch, kvHeads, group, steps, dim, scale);
     }
 
-    /// <summary>Runs <see cref="Ops.AttentionStridedBackward"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// Gradients of <see cref="AttentionStrided"/>: adds to dq, dk, dv laid out as q, k, v (same row strides, their own
+    /// offsets) given y, the log-sum-exp and dOutput (y's layout).
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.AttentionStridedBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AttentionStridedBackwardKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool AttentionStridedBackward(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow, Storage y, Storage logSumExp, Storage dOutput, Storage dq, long dqOffset, Storage dk, long dkOffset, Storage dv, long dvOffset, int batch, int kvHeads, int group, int steps, int dim, float scale)
     {
@@ -735,7 +832,8 @@ internal abstract partial class Backend
         return Kernel(OperationIndex.AttentionStridedBackward) is OperationKernels.AttentionStridedBackward kernel ? kernel(this, q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, dOutput, dq, dqOffset, dk, dkOffset, dv, dvOffset, batch, kvHeads, group, steps, dim, scale) : AttentionStridedBackwardKernel(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, dOutput, dq, dqOffset, dk, dkOffset, dv, dvOffset, batch, kvHeads, group, steps, dim, scale);
     }
 
-    /// <summary>Runs <see cref="Ops.SumColumns"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>y[j] += Σ_r x[offset + r·ld + j] for j &lt; cols (column sums of a strided block; the bias gradient of a slice).</summary>
+    /// <remarks>Runs <see cref="Ops.SumColumns"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>SumColumnsKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void SumColumns(Storage x, long offset, int ld, Storage y, int rows, int cols)
     {
@@ -762,7 +860,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.AddDropout"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>output = residual + dropout(x) (the mask of <see cref="Dropout"/> with <paramref name="seed"/>).</summary>
+    /// <remarks>Runs <see cref="Ops.AddDropout"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AddDropoutKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AddDropout(Storage residual, Storage x, Storage output, int n, float p, uint seed)
     {
@@ -789,7 +888,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.BatchedMatMul"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary><see cref="MatMul"/> for <paramref name="batch"/> independent, contiguous matrix triples.</summary>
+    /// <remarks>Runs <see cref="Ops.BatchedMatMul"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>BatchedMatMulKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void BatchedMatMul(Storage a, Storage b, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
     {
@@ -816,7 +916,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.Softmax"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>Row-wise softmax (or log-softmax) over the last dimension: y[r, :] = softmax(x[r, :]).</summary>
+    /// <remarks>Runs <see cref="Ops.Softmax"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>SoftmaxKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Softmax(Storage x, Storage y, int rows, int cols, bool log)
     {
@@ -843,7 +944,10 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.SoftmaxBackward"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// Softmax: dx += y * (dy - Σ dy·y). Log-softmax: dx += dy - exp(y) * Σ dy. Sums are per row; y is the forward output.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.SoftmaxBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>SoftmaxBackwardKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void SoftmaxBackward(Storage y, Storage dy, Storage dx, int rows, int cols, bool log)
     {
@@ -870,7 +974,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.ArgMax"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>y[r] = index of the largest element of row r.</summary>
+    /// <remarks>Runs <see cref="Ops.ArgMax"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>ArgMaxKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void ArgMax(Storage x, Storage y, int rows, int cols)
     {
@@ -897,7 +1002,11 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.ClassMatch"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// y[r] = 1 when the prediction in row r is right, else 0. For one column: (p ≥ threshold) == (t ≥ 0.5);
+    /// otherwise argmax(p) == argmax(t).
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.ClassMatch"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>ClassMatchKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void ClassMatch(Storage predictions, Storage targets, Storage y, int rows, int cols, float threshold)
     {
@@ -924,7 +1033,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.NormStats"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>Per-group mean, (biased) variance and 1 / sqrt(variance + eps).</summary>
+    /// <remarks>Runs <see cref="Ops.NormStats"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>NormStatsKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void NormStats(Storage x, Storage mean, Storage variance, Storage invStd, int outer, int groups, int inner, float eps)
     {
@@ -951,7 +1061,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.NormApply"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>y = (x - mean[g]) * invStd[g].</summary>
+    /// <remarks>Runs <see cref="Ops.NormApply"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>NormApplyKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void NormApply(Storage x, Storage mean, Storage invStd, Storage y, int outer, int groups, int inner)
     {
@@ -978,7 +1089,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.NormBackward"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>dx += invStd[g] / M * (M * dxhat - sum1[g] - xhat * sum2[g]).</summary>
+    /// <remarks>Runs <see cref="Ops.NormBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>NormBackwardKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void NormBackward(Storage dxhat, Storage xhat, Storage sum1, Storage sum2, Storage invStd, Storage dx, int outer, int groups, int inner)
     {
@@ -1005,7 +1117,10 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.GroupScaleShift"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// y (+)= x * scale[g] + shift[g] with g = (i / inner) % groups; a null scale means 1, a null shift means 0.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.GroupScaleShift"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>GroupScaleShiftKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void GroupScaleShift(Storage x, Storage? scale, Storage? shift, Storage y, int n, int groups, int inner, bool accumulate)
     {
@@ -1032,7 +1147,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.GroupReduce"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>sumA[g] += Σ a; sumAB[g] += Σ a·b over each group (see NormStats for the layout). b/sumAB may be null.</summary>
+    /// <remarks>Runs <see cref="Ops.GroupReduce"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>GroupReduceKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void GroupReduce(Storage a, Storage? b, Storage sumA, Storage? sumAB, int outer, int groups, int inner)
     {
@@ -1059,7 +1175,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.InvSqrt"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>y = 1 / sqrt(x + eps).</summary>
+    /// <remarks>Runs <see cref="Ops.InvSqrt"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>InvSqrtKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void InvSqrt(Storage x, Storage y, int n, float eps)
     {
@@ -1086,7 +1203,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.Gather"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>Embedding lookup: y[i, :] = table[indices[i], :] for count indices of width dim.</summary>
+    /// <remarks>Runs <see cref="Ops.Gather"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>GatherKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Gather(Storage table, Storage indices, Storage y, int count, int dim, int vocabulary)
     {
@@ -1113,7 +1231,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.GatherBFloat16"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary><see cref="Gather"/> from a bfloat16 table packed as in <see cref="BFloat16MatMul"/> ([vocabulary, dim]).</summary>
+    /// <remarks>Runs <see cref="Ops.GatherBFloat16"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>GatherBFloat16Kernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void GatherBFloat16(Storage packed, Storage indices, Storage y, int count, int dim, int vocabulary)
     {
@@ -1140,7 +1259,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.OneHot"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>One-hot rows: y[i, :] = 0 except y[i, indices[i]] = 1, for count indices over classes columns.</summary>
+    /// <remarks>Runs <see cref="Ops.OneHot"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>OneHotKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void OneHot(Storage indices, Storage y, int count, int classes)
     {
@@ -1167,7 +1287,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.ScatterAdd"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>dtable[indices[i], :] += dy[i, :].</summary>
+    /// <remarks>Runs <see cref="Ops.ScatterAdd"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>ScatterAddKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void ScatterAdd(Storage dy, Storage indices, Storage dtable, int count, int dim, int vocabulary)
     {
@@ -1194,7 +1315,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.Im2Col"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>Unfolds image patches: cols[(n, oh, ow), (c, kh, kw)] = x[n, c, oh*sh - ph + kh, ow*sw - pw + kw] (0 outside).</summary>
+    /// <remarks>Runs <see cref="Ops.Im2Col"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>Im2ColKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Im2Col(Storage x, Storage cols, in ConvGeometry g)
     {
@@ -1221,7 +1343,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.Col2Im"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>The adjoint of <see cref="Im2Col"/>: dx += fold(dcols).</summary>
+    /// <remarks>Runs <see cref="Ops.Col2Im"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>Col2ImKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Col2Im(Storage dcols, Storage dx, in ConvGeometry g)
     {
@@ -1248,7 +1371,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.MaxPool"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>Max pooling; argmax receives the flat input index of each maximum (as raw int bits).</summary>
+    /// <remarks>Runs <see cref="Ops.MaxPool"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>MaxPoolKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void MaxPool(Storage x, Storage y, Storage argmax, in ConvGeometry g)
     {
@@ -1275,7 +1399,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.MaxPoolBackward"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>dx[argmax[i]] += dy[i].</summary>
+    /// <remarks>Runs <see cref="Ops.MaxPoolBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>MaxPoolBackwardKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void MaxPoolBackward(Storage dy, Storage argmax, Storage dx, int count)
     {
@@ -1302,7 +1427,11 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.MaxPoolBackward2"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// dx[argmax[i]] += dy[i] for the windows of <paramref name="g"/> (count = N * C * OH * OW): the same as the overload
+    /// taking a count; a device that adds the gradients by gathering over the windows needs the geometry.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.MaxPoolBackward2"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>MaxPoolBackwardKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void MaxPoolBackward(Storage dy, Storage argmax, Storage dx, in ConvGeometry g)
     {
@@ -1329,7 +1458,11 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.Permute"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// y (+)= x permuted: output element at coordinates (c0..c[r-1]) of <paramref name="outShape"/> comes from
+    /// input offset Σ c_k * inStrides[k] (the input strides already reordered by the permutation). Rank ≤ 6.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.Permute"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>PermuteKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Permute(Storage x, Storage y, ReadOnlySpan<int> outShape, ReadOnlySpan<int> inStrides, bool accumulate)
     {
@@ -1356,7 +1489,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.SumAxis"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>y[o, i] (+)= scale * Σ_d x[o, d, i] for a [outer, dim, inner] view.</summary>
+    /// <remarks>Runs <see cref="Ops.SumAxis"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>SumAxisKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void SumAxis(Storage x, Storage y, int outer, int dim, int inner, float scale, bool accumulate)
     {
@@ -1383,7 +1517,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.BroadcastAxis"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>dx[o, d, i] += scale * dy[o, i] (the gradient of <see cref="SumAxis"/>).</summary>
+    /// <remarks>Runs <see cref="Ops.BroadcastAxis"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>BroadcastAxisKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void BroadcastAxis(Storage dy, Storage dx, int outer, int dim, int inner, float scale)
     {
@@ -1410,7 +1545,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.SgdStep"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>SGD with optional momentum: v = momentum * v + g; p -= lr * v (v is null when momentum is 0).</summary>
+    /// <remarks>Runs <see cref="Ops.SgdStep"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>SgdStepKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void SgdStep(Storage p, Storage g, Storage? v, int n, float lr, float momentum)
     {
@@ -1437,7 +1573,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.AdamStep"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>Adam: m, v moments updated in place; p -= lr * m / (sqrt(v) + eps). lr is already bias-corrected.</summary>
+    /// <remarks>Runs <see cref="Ops.AdamStep"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AdamStepKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AdamStep(Storage p, Storage g, Storage m, Storage v, int n, float lr, float beta1, float beta2, float eps)
     {
@@ -1464,7 +1601,15 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.AdamStep8Bit"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// <see cref="AdamStep"/> with 8-bit moments (see <c>Optimizers.AdamW8Bit</c>): m and v hold one byte per element
+    /// (n bytes, packed four per float), codes into <paramref name="map"/> (256 signed values for m, then 256 unsigned for
+    /// v, both in [-1, 1]) scaled per block of <see cref="EightBitMoments.BlockSize"/> elements by
+    /// <paramref name="absMax"/> (the blocks' m scales, then their v scales). The moments are decoded, updated, and
+    /// encoded again to the nearest code with new block scales.
+    /// </summary>
+    /// <remarks>The gradient is multiplied by <paramref name="gradientScale"/> as it is read (gradient clipping) and the
+    /// parameter by <paramref name="decay"/> before the update (decoupled weight decay, 1 - lr·λ).<para>Runs <see cref="Ops.AdamStep8Bit"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AdamStep8BitKernel</c>.</para></remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AdamStep8Bit(Storage p, Storage g, Storage m, Storage v, Storage absMax, Storage map, int n, float lr, float beta1, float beta2, float eps, float gradientScale, float decay)
     {
@@ -1491,7 +1636,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.SumSquares"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>total[0] += Σ x² over <paramref name="n"/> elements (a gradient norm without temporary tensors).</summary>
+    /// <remarks>Runs <see cref="Ops.SumSquares"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>SumSquaresKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void SumSquares(Storage x, Storage total, int n)
     {
@@ -1518,7 +1664,14 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.FusedAdamW"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// AdamW over many tensors in a few passes: the global gradient norm clipped to <paramref name="maxNorm"/> (0: no
+    /// clipping), p ← p · <paramref name="decay"/>, then Adam with the bias-corrected <paramref name="lr"/>, as
+    /// <see cref="AdamStep"/> computes it; with <paramref name="zeroGradients"/> the gradients are zeroed for the next step.
+    /// <paramref name="cache"/> keeps the device tables between calls (dispose it when done). False when the device has no
+    /// such pass.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.FusedAdamW"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>FusedAdamWKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool FusedAdamW(ReadOnlySpan<(Storage P, Storage G, Storage M, Storage V, int N)> tensors, ref IDisposable? cache, float maxNorm, float lr, float decay, float beta1, float beta2, float eps, bool zeroGradients)
     {
@@ -1531,7 +1684,11 @@ internal abstract partial class Backend
         return Kernel(OperationIndex.FusedAdamW) is OperationKernels.FusedAdamW kernel ? kernel(this, tensors, ref cache, maxNorm, lr, decay, beta1, beta2, eps, zeroGradients) : FusedAdamWKernel(tensors, ref cache, maxNorm, lr, decay, beta1, beta2, eps, zeroGradients);
     }
 
-    /// <summary>Runs <see cref="Ops.ClipFactor"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// factor[0] = min(1, maxNorm / √sumSquares[0]) (1 when the sum is 0): the gradient-clipping factor computed where the
+    /// gradients are, so clipping needs no host read of the norm.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.ClipFactor"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>ClipFactorKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void ClipFactor(Storage sumSquares, Storage factor, float maxNorm)
     {
@@ -1558,7 +1715,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.Dropout"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>Inverted dropout: y = keep(i) ? x / (1 - p) : 0, where keep(i) comes from <see cref="DropoutMask"/>.</summary>
+    /// <remarks>Runs <see cref="Ops.Dropout"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>DropoutKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Dropout(Storage x, Storage y, int n, float p, uint seed)
     {
@@ -1585,7 +1743,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.DropoutBackward"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>dx += keep(i) ? dy / (1 - p) : 0, regenerating the same mask from the seed.</summary>
+    /// <remarks>Runs <see cref="Ops.DropoutBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>DropoutBackwardKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void DropoutBackward(Storage dy, Storage dx, int n, float p, uint seed)
     {
@@ -1612,7 +1771,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.ScaleMaskSoftmax"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>y[r, :] = softmax(scale * x[r, :] + mask[r % maskRows, :]) (mask optional).</summary>
+    /// <remarks>Runs <see cref="Ops.ScaleMaskSoftmax"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>ScaleMaskSoftmaxKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void ScaleMaskSoftmax(Storage x, Storage? mask, Storage y, int rows, int cols, int maskRows, float scale)
     {
@@ -1639,7 +1799,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.LayerNormFused"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>y[r, :] = (x[r, :] - mean) / sqrt(var + eps) * gamma + beta over the last dimension.</summary>
+    /// <remarks>Runs <see cref="Ops.LayerNormFused"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>LayerNormFusedKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void LayerNormFused(Storage x, Storage gamma, Storage beta, Storage y, int rows, int cols, float eps)
     {
@@ -1666,7 +1827,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.LayerNormTrain"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary><see cref="LayerNormFused"/> that also stores each row's mean (stats[r]) and 1 / sqrt(var + eps) (stats[rows + r]).</summary>
+    /// <remarks>Runs <see cref="Ops.LayerNormTrain"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>LayerNormTrainKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void LayerNormTrain(Storage x, Storage gamma, Storage beta, Storage y, Storage stats, int rows, int cols, float eps)
     {
@@ -1693,7 +1855,10 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.LayerNormBackward"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// Gradients of <see cref="LayerNormTrain"/> given dy: adds to dx (when given), dgamma += Σ_r dy ∘ x̂ and dbeta += Σ_r dy.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.LayerNormBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>LayerNormBackwardKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void LayerNormBackward(Storage x, Storage gamma, Storage dy, Storage stats, Storage? dx, Storage? dgamma, Storage? dbeta, int rows, int cols)
     {
@@ -1720,7 +1885,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.BiasGelu"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>y[i] = gelu(x[i] + bias[i % cols]).</summary>
+    /// <remarks>Runs <see cref="Ops.BiasGelu"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>BiasGeluKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void BiasGelu(Storage x, Storage bias, Storage y, int n, int cols)
     {
@@ -1747,7 +1913,11 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.Int8MatMul"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// y[m, n] = x[m, k] · w, where w[k, j] = q[k, j] · scales[j] and q holds signed bytes packed four per 32-bit element
+    /// along each row (rows padded to ceil(n / 4) elements). Suited to few rows (token-by-token decoding).
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.Int8MatMul"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>Int8MatMulKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Int8MatMul(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
     {
@@ -1774,7 +1944,11 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.BFloat16MatMul"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// y[m, n] = x[m, k] · w[k, n] with w stored as bfloat16 pairs packed into 32-bit words along each row (word c of
+    /// row r holds columns 2c in its low half and 2c + 1 in its high half; rows have ⌈n / 2⌉ words).
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.BFloat16MatMul"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>BFloat16MatMulKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void BFloat16MatMul(Storage x, Storage packed, Storage y, int m, int n, int k)
     {
@@ -1801,7 +1975,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.BFloat16Dequantize"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>w[k, n] = the float32 values of bfloat16 weights packed as in <see cref="BFloat16MatMul"/>.</summary>
+    /// <remarks>Runs <see cref="Ops.BFloat16Dequantize"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>BFloat16DequantizeKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void BFloat16Dequantize(Storage packed, Storage w, int k, int n)
     {
@@ -1828,7 +2003,11 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.PackBFloat16"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// Rounds x [n] to bfloat16 (to nearest, ties to even), two values per word as <see cref="BFloat16Dequantize"/> reads
+    /// them back with k = 1: packed holds (n + 1) / 2 words.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.PackBFloat16"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>PackBFloat16Kernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void PackBFloat16(Storage x, Storage packed, int n)
     {
@@ -1855,7 +2034,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.Int8Dequantize"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>w[k, n] = q[k, n] · scales[n] (see <see cref="Int8MatMul"/> for the packing).</summary>
+    /// <remarks>Runs <see cref="Ops.Int8Dequantize"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>Int8DequantizeKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Int8Dequantize(Storage q, Storage scales, Storage w, int k, int n)
     {
@@ -1882,7 +2062,12 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.Int4MatMul"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// y[m, n] = x[m, k] · w with 4-bit weights: w[r, j] = q[r, j] · scales[r / 32, j], where q holds signed nibbles packed
+    /// eight per 32-bit word along each row (nibble c of word w is column 8w + c; rows have ⌈n / 8⌉ words) and scales has
+    /// one row of 8·⌈n / 8⌉ values per group of 32 weight rows.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.Int4MatMul"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>Int4MatMulKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Int4MatMul(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
     {
@@ -1909,7 +2094,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.Int4Dequantize"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>w[k, n] = the float values of 4-bit weights packed as in <see cref="Int4MatMul"/>.</summary>
+    /// <remarks>Runs <see cref="Ops.Int4Dequantize"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>Int4DequantizeKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Int4Dequantize(Storage q, Storage scales, Storage w, int k, int n)
     {
@@ -1936,7 +2122,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.RmsNorm"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>y = x · inv per row, inv[r] = 1 / sqrt(mean(x[r]²) + eps) (stored for the backward pass).</summary>
+    /// <remarks>Runs <see cref="Ops.RmsNorm"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>RmsNormKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void RmsNorm(Storage x, Storage y, Storage inv, int rows, int cols, float eps)
     {
@@ -1963,7 +2150,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.RmsNormBackward"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>dx += inv[r] · (dy - y · mean(dy · y)) per row, where y is the normalized forward output.</summary>
+    /// <remarks>Runs <see cref="Ops.RmsNormBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>RmsNormBackwardKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void RmsNormBackward(Storage dy, Storage y, Storage inv, Storage dx, int rows, int cols)
     {
@@ -1990,7 +2178,12 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.Rope"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// Rotary position embedding of x [rows = batch·steps·heads, dim] into y (which must already hold x): pair p of a row at
+    /// step t rotates by the angle whose cos/sin are cos/sin[positions[t], p]. Pairs are (2p, 2p+1) when interleaved,
+    /// else (p, p + half). sign = -1 rotates backwards (the gradient).
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.Rope"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>RopeKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Rope(Storage x, Storage y, Storage cos, Storage sin, Storage positions, int rows, int heads, int steps, int dim, int half, bool interleaved, float sign)
     {
@@ -2017,7 +2210,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.RmsNormAffine"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>y = x · inv · (gain[c] + offset) per row with inv = 1 / sqrt(mean(x²) + eps): normalization and gain in one pass (inference).</summary>
+    /// <remarks>Runs <see cref="Ops.RmsNormAffine"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>RmsNormAffineKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void RmsNormAffine(Storage x, Storage gain, Storage y, int rows, int cols, float eps, float offset)
     {
@@ -2044,7 +2238,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.AddRmsNormAffine"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>sum = a + b and y = RMS-normalized sum · (gain[c] + offset) per row, in one pass (inference).</summary>
+    /// <remarks>Runs <see cref="Ops.AddRmsNormAffine"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AddRmsNormAffineKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AddRmsNormAffine(Storage a, Storage b, Storage sum, Storage gain, Storage y, int rows, int cols, float eps, float offset)
     {
@@ -2071,7 +2266,11 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.RmsNormRope"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// RMS normalization with gain of each row (a head's vector), then the rotary embedding as <see cref="Rope"/> with
+    /// sign 1 (rows are batch·steps·heads; dimensions beyond 2·half are only normalized). Inference.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.RmsNormRope"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>RmsNormRopeKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void RmsNormRope(Storage x, Storage gain, Storage cos, Storage sin, Storage positions, Storage y, int rows, int cols, float eps, float offset, int heads, int steps, int half, bool interleaved)
     {
@@ -2098,7 +2297,11 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.RmsNormRopePair"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// <see cref="RmsNormRope"/> for two tensors sharing the positions and rotary tables (queries and keys): rows1 rows
+    /// of x (heads per step: heads) and rows2 of x2 (heads2). Devices may do both in one pass.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.RmsNormRopePair"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>RmsNormRopePairKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void RmsNormRopePair(Storage x, Storage gain, Storage y, int rows1, float eps, float offset, int heads, Storage x2, Storage gain2, Storage y2, int rows2, float eps2, float offset2, int heads2, Storage cos, Storage sin, Storage positions, int cols, int steps, int half, bool interleaved)
     {
@@ -2125,7 +2328,15 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.NormRopeHeads"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// The attention layer's queries, keys and values [batch, steps, heads·cols] (its projections) put in the layouts
+    /// attention reads, in one pass (inference): query heads RMS-normalized with gain (when <paramref name="gainQ"/> is
+    /// set; keys then with <paramref name="gainK"/>) and rotated as <see cref="Rope"/> (half 0: no rotation) into
+    /// yq [batch, heads, steps, cols]; keys the same and values unchanged into yk and yv [batch, kvHeads, capacity, stride]
+    /// at row position[0] + s (a cache; row s when <paramref name="position"/> is null), as floats or bfloat16 pairs.
+    /// Returns false when the device has no such kernel (callers then run the steps one by one).
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.NormRopeHeads"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>NormRopeHeadsKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool NormRopeHeads(Storage q, Storage k, Storage v, int batch, int steps, int heads, int kvHeads, int cols, Storage? gainQ, float epsQ, float offsetQ, Storage? gainK, float epsK, float offsetK, Storage? cos, Storage? sin, Storage? positions, int half, bool interleaved, Storage yq, Storage yk, Storage yv, Storage? position, int capacity, int stride, bool bfloat16)
     {
@@ -2138,7 +2349,12 @@ internal abstract partial class Backend
         return Kernel(OperationIndex.NormRopeHeads) is OperationKernels.NormRopeHeads kernel ? kernel(this, q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride, bfloat16) : NormRopeHeadsKernel(q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride, bfloat16);
     }
 
-    /// <summary>Runs <see cref="Ops.SoftmaxCrossEntropyRows"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// Token cross-entropy for language-model training, per row r of logits [rows, vocabulary] with target class t_r and
+    /// weight w_r (0 masks the row): losses[r] = w_r · (logsumexp(x_r) - x_r[t_r]); the logits are overwritten with their
+    /// gradient scale · w_r · (softmax(x_r) - onehot(t_r)). Targets and weights are float arrays of rows.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.SoftmaxCrossEntropyRows"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>SoftmaxCrossEntropyRowsKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void SoftmaxCrossEntropyRows(Storage logits, Storage targets, Storage weights, Storage losses, int rows, int vocabulary, float scale)
     {
@@ -2165,7 +2381,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.GatedActivation"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>y = act(gate) · up element-wise; kind 0 = SiLU, 1 = GELU (tanh approximation), 2 = ReLU.</summary>
+    /// <remarks>Runs <see cref="Ops.GatedActivation"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>GatedActivationKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void GatedActivation(Storage gate, Storage up, Storage y, int n, int kind)
     {
@@ -2192,7 +2409,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.GatedActivationBackward"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>dgate += dy · up · act'(gate) when flags has bit 0, dup += dy · act(gate) when it has bit 1; bits 2 and 3 write dgate and dup (= instead of +=).</summary>
+    /// <remarks>Runs <see cref="Ops.GatedActivationBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>GatedActivationBackwardKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void GatedActivationBackward(Storage gate, Storage up, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags)
     {
@@ -2219,7 +2437,13 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.GatedActivationPacked"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// <see cref="GatedActivation"/> with bfloat16 words (two values each, low half first, as <see cref="PackBFloat16"/>
+    /// writes them): gate and up read from <paramref name="packedGate"/> and <paramref name="packedUp"/> when flags has
+    /// bit 0 (else from <paramref name="gate"/> and <paramref name="up"/>); y written when it has bit 2, gate and up packed
+    /// when it has bit 1, y packed when it has bit 3. Storages a flag does not use may be any storage.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.GatedActivationPacked"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>GatedActivationPackedKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void GatedActivationPacked(Storage gate, Storage up, Storage packedGate, Storage packedUp, Storage y, Storage packedY, int n, int kind, int flags)
     {
@@ -2246,7 +2470,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.GatedActivationBackwardPacked"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary><see cref="GatedActivationBackward"/> reading gate and up as bfloat16 words.</summary>
+    /// <remarks>Runs <see cref="Ops.GatedActivationBackwardPacked"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>GatedActivationBackwardPackedKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void GatedActivationBackwardPacked(Storage packedGate, Storage packedUp, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags)
     {
@@ -2273,7 +2498,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.KeyValueWriteInt8"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>Quantizes source [heads·steps, dim] into the int8 cache at positions position[0] + step.</summary>
+    /// <remarks>Runs <see cref="Ops.KeyValueWriteInt8"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>KeyValueWriteInt8Kernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void KeyValueWriteInt8(Storage source, Storage cache, Storage scales, Storage position, int heads, int steps, int capacity, int dim)
     {
@@ -2300,7 +2526,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.AttentionScoresInt8"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>y[r, t, c] = scales[r, c] · Σ_d q[r, t, d] · keys[r, c, d] for every cached position c.</summary>
+    /// <remarks>Runs <see cref="Ops.AttentionScoresInt8"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AttentionScoresInt8Kernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AttentionScoresInt8(Storage q, Storage cache, Storage scales, Storage y, int rows, int steps, int capacity, int dim)
     {
@@ -2327,7 +2554,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.AttentionContextInt8"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>y[r, t, d] = Σ_c weights[r, t, c] · scales[r, c] · values[r, c, d].</summary>
+    /// <remarks>Runs <see cref="Ops.AttentionContextInt8"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AttentionContextInt8Kernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AttentionContextInt8(Storage weights, Storage cache, Storage scales, Storage y, int rows, int steps, int capacity, int dim)
     {
@@ -2354,7 +2582,15 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.AttentionDecode"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// Attention over a key/value cache filled up to the device position: for head h and row i of q [heads, rowsPerHead,
+    /// dim], y[h, i] = Σ_c softmax(scale · q[h, i] · keys[h, c]) · values[h, c] over positions c = 0 … position[0] +
+    /// (i % steps) (the causal limit of that row's step). Keys and values are [heads, capacity, dim]; unfilled
+    /// positions are never read, so the cost follows the context length rather than the capacity. With a
+    /// <paramref name="variant"/>, each row starts at its window's first position and its scores are soft-capped (every
+    /// attention method below takes one; the default is plain causal attention).
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.AttentionDecode"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AttentionDecodeKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AttentionDecode(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
@@ -2381,7 +2617,12 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.AttentionInt8"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// <see cref="AttentionDecode"/> (tiled: <paramref name="tiled"/>, for many query rows) over an int8 cache: keys and
+    /// values [heads, capacity, ⌈dim / 4⌉ words] of packed bytes with one scale per cached row (keyScales, valueScales
+    /// [heads, capacity]).
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.AttentionInt8"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AttentionInt8Kernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AttentionInt8(Storage q, Storage keys, Storage values, Storage keyScales, Storage valueScales, Storage position, Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, bool tiled, AttentionVariant variant = default)
     {
@@ -2408,7 +2649,11 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.AttentionBFloat16"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// <see cref="AttentionDecode"/> (tiled: <paramref name="tiled"/>) over a bfloat16 cache: keys and values
+    /// [heads, capacity, ⌈dim / 2⌉ words], dimension d in the low (even d) or high (odd d) half of word d / 2.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.AttentionBFloat16"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AttentionBFloat16Kernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AttentionBFloat16(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, bool tiled, AttentionVariant variant = default)
     {
@@ -2435,7 +2680,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.KeyValueWriteBFloat16"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary><see cref="KeyValueWrite"/> into a bfloat16 cache (values rounded to nearest, ties to even).</summary>
+    /// <remarks>Runs <see cref="Ops.KeyValueWriteBFloat16"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>KeyValueWriteBFloat16Kernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void KeyValueWriteBFloat16(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
     {
@@ -2462,7 +2708,12 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.AttentionTiledBackward"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// Gradient of <see cref="AttentionTiled"/> with causal offset 0 (training): given the output, each row's log-sum-exp
+    /// and dOutput, adds to dq [heads, rowsPerHead, dim] and dkeys, dvalues [heads, capacity, dim]. The attention weights
+    /// are recomputed, never stored.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.AttentionTiledBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AttentionTiledBackwardKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AttentionTiledBackward(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
@@ -2489,7 +2740,14 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.AttentionSegmented"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// Causal attention over packed sequences (training): as <see cref="AttentionTiled"/> with offset 0 and keys and values
+    /// [heads, steps, dim], except that several sequences share each row of <paramref name="steps"/> positions, so row i of
+    /// head h sees positions c with starts[b·steps + t] ≤ c ≤ t, where t = i % steps and b = h / <paramref name="headsPerRow"/>
+    /// is the packed row; starts and ends hold, per position of each packed row, where its sequence begins and stops
+    /// (exclusive), as floats. Writes the log-sum-exp when given. Returns false when the device has no such pass.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.AttentionSegmented"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AttentionSegmentedKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool AttentionSegmented(Storage q, Storage keys, Storage values, Storage y, Storage? logSumExp, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant = default)
     {
@@ -2502,7 +2760,12 @@ internal abstract partial class Backend
         return Kernel(OperationIndex.AttentionSegmented) is OperationKernels.AttentionSegmented kernel ? kernel(this, q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant) : AttentionSegmentedKernel(q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
     }
 
-    /// <summary>Runs <see cref="Ops.AttentionRows"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// <see cref="AttentionTiled"/> (no log-sum-exp) for rows of different lengths decoded together: row i of head h
+    /// sees cached positions c with starts[(h / headsPerRow)·steps + i % steps] ≤ c ≤ position[0] + i % steps (a row with
+    /// none, padding, gets zeros). Returns false when the device has no such pass.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.AttentionRows"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AttentionRowsKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool AttentionRows(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
@@ -2515,7 +2778,8 @@ internal abstract partial class Backend
         return Kernel(OperationIndex.AttentionRows) is OperationKernels.AttentionRows kernel ? kernel(this, q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant) : AttentionRowsKernel(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
     }
 
-    /// <summary>Runs <see cref="Ops.AttentionSegmentedBackward"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>The gradient of <see cref="AttentionSegmented"/> (as <see cref="AttentionTiledBackward"/>); false when unsupported.</summary>
+    /// <remarks>Runs <see cref="Ops.AttentionSegmentedBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AttentionSegmentedBackwardKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool AttentionSegmentedBackward(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant = default)
     {
@@ -2528,7 +2792,13 @@ internal abstract partial class Backend
         return Kernel(OperationIndex.AttentionSegmentedBackward) is OperationKernels.AttentionSegmentedBackward kernel ? kernel(this, q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant) : AttentionSegmentedBackwardKernel(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
     }
 
-    /// <summary>Runs <see cref="Ops.AttentionTiled"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// The same attention as <see cref="AttentionDecode"/> for many query rows at once (a prompt, a training sequence),
+    /// tiled so query rows share each key and value read; also writes each row's log-sum-exp of the scaled scores to
+    /// <paramref name="logSumExp"/> [heads, rowsPerHead] when given (training). The default runs
+    /// <see cref="AttentionDecode"/> for inference and the host fallback for training.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.AttentionTiled"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AttentionTiledKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AttentionTiled(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage? logSumExp, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
@@ -2555,7 +2825,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.DecoderMask"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>mask[i, j] = j ≤ position + i ? 0 : -1e9 for a [rows, capacity] mask; position is read from device memory.</summary>
+    /// <remarks>Runs <see cref="Ops.DecoderMask"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>DecoderMaskKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void DecoderMask(Storage position, Storage mask, int rows, int capacity)
     {
@@ -2582,7 +2853,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.KeyValueWrite"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>cache[bh, position + t, :] = source[bh, t, :] for [heads, steps, dim] → [heads, capacity, dim].</summary>
+    /// <remarks>Runs <see cref="Ops.KeyValueWrite"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>KeyValueWriteKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void KeyValueWrite(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
     {
@@ -2609,7 +2881,15 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.SampleRows"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// Draws one token per row from softmax(logits / temperature), restricted in turn to the top-k scores (topK &gt; 0),
+    /// to the smallest set holding topP of the probability (0 &lt; topP &lt; 1; the cut-off is found by bisection on the
+    /// score) and to tokens at least minP times as likely as the best one (minP &gt; 0), using the counter-based random
+    /// stream (seed, step, row). Writes the token to ids[row] and 13 statistics to stats[(step * rows + row) * 13]:
+    /// id, probability, entropy (bits), then the top-5 (id, probability) pairs. The step number is read from device
+    /// memory. Row r's logits start at element r * rowStride + rowOffset.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.SampleRows"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>SampleRowsKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void SampleRows(Storage logits, Storage ids, Storage stats, Storage step, int rows, int vocabulary, int rowStride, int rowOffset, float temperature, int topK, float topP, float minP, uint seed)
     {
@@ -2636,7 +2916,13 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.PenalizeRows"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>
+    /// Copies each row's logits (row r at r * rowStride + rowOffset) to work[r, :] and applies repetition penalties for
+    /// the last min(length, lastN) tokens of the row's history ring history[r, pos % capacity] (length read from device
+    /// memory). Each distinct token in the window is penalized once: repeat (x &gt; 0 ? x / repeat : x * repeat), then
+    /// x -= presence + frequency * (occurrences in the window).
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.PenalizeRows"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>PenalizeRowsKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void PenalizeRows(Storage logits, Storage work, Storage history, Storage length, int rows, int vocabulary, int rowStride, int rowOffset, int capacity, int lastN, float repeat, float presence, float frequency)
     {
@@ -2663,7 +2949,8 @@ internal abstract partial class Backend
         }
     }
 
-    /// <summary>Runs <see cref="Ops.HistoryPush"/>: the kernel registered for this device, else the device's own.</summary>
+    /// <summary>history[r, length % capacity] = ids[r] for every row (length read from device memory, not advanced).</summary>
+    /// <remarks>Runs <see cref="Ops.HistoryPush"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>HistoryPushKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void HistoryPush(Storage ids, Storage history, Storage length, int rows, int capacity)
     {
