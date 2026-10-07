@@ -347,7 +347,7 @@ internal static partial class Tests
 
             // One plain SGD step of the fine-tuner (no momentum, no clipping): the adapters move by −rate · gradient.
             using var student = PretrainedModel.Load(studentFolder, new PretrainedOptions { Device = device });
-            using var distilled = DistillationTeacher.FromModel(teacher);
+            using var distilled = DistillationTeachers.FromModel(teacher);
             var losses = new List<float>();
             FineTuner.Train(student, sequences, null, new FineTuningOptions
             {
@@ -375,7 +375,7 @@ internal static partial class Tests
             if (device.Type != DeviceType.Cpu)
             {
                 using var cpuTeacher = PretrainedModel.Load(teacherFolder, new PretrainedOptions { Device = Device.Cpu });
-                using var elsewhere = DistillationTeacher.FromModel(cpuTeacher);
+                using var elsewhere = DistillationTeachers.FromModel(cpuTeacher);
                 using var other = PretrainedModel.Load(studentFolder, new PretrainedOptions { Device = device });
                 var otherLosses = new List<float>();
                 FineTuner.Train(other, sequences, null, new FineTuningOptions
@@ -450,19 +450,19 @@ internal static partial class Tests
             }
 
             float tolerance = device.Type == DeviceType.Cpu ? 1e-3f : 1e-2f;
-            using (var stored = DistillationTeacher.FromFile(path))
+            using (var stored = DistillationTeachers.FromFile(path))
             {
                 Check(stored.TopK == K && stored.Vocabulary == teacher.Spec.Vocabulary, "the stored teacher's sizes");
                 AssertClose([(float)expected], [First(stored)], tolerance, "the stored teacher's loss against the renormalized top-k formula");
             }
 
-            using (var topK = DistillationTeacher.FromModel(teacher, topK: K))
+            using (var topK = DistillationTeachers.FromModel(teacher, topK: K))
             {
                 AssertClose([(float)expected], [First(topK)], Math.Max(tolerance, 3e-3f), "the top-k model teacher gives what its stored logits give");
             }
 
             // A sequence the file lacks, and a file cut short, are refused with their reasons.
-            using (var stored = DistillationTeacher.FromFile(path))
+            using (var stored = DistillationTeachers.FromFile(path))
             using (var model = PretrainedModel.Load(studentFolder, new PretrainedOptions { Device = device }))
             {
                 try
@@ -505,7 +505,7 @@ internal static partial class Tests
             var sequences = RandomSequences(4, 86);
             using var teacher = PretrainedModel.Load(teacherFolder, new PretrainedOptions { Device = device });
             using var student = PretrainedModel.Load(studentFolder, new PretrainedOptions { Device = device });
-            using (var source = DistillationTeacher.FromModel(teacher))
+            using (var source = DistillationTeachers.FromModel(teacher))
             {
                 try
                 {
@@ -522,9 +522,9 @@ internal static partial class Tests
             // Stored logits carry the teacher's fingerprint: refused too.
             string path = Path.Combine(folder, "teacher.topk");
             TeacherLogitsWriter.Write(path, teacher, sequences, 4);
-            using (var stored = DistillationTeacher.FromFile(path))
+            using (var stored = DistillationTeachers.FromFile(path))
             {
-                Check(Refused(() => stored.Check(student)), "stored logits of another vocabulary are refused");
+                Check(Refused(() => stored.Check(student.Tokenizer!)), "stored logits of another vocabulary are refused");
             }
 
             // The same tokenizer padded to two widths matches; the fingerprints agree.
@@ -624,7 +624,7 @@ internal static partial class Tests
             }
 
             using (var student = PretrainedModel.Load(studentFolder, new PretrainedOptions { Device = device }))
-            using (var source = DistillationTeacher.FromModel(teacher))
+            using (var source = DistillationTeachers.FromModel(teacher))
             {
                 FineTuner.Train(student, train, null, options with { Teacher = source, Loss = FineTuningLosses.Distillation(1f, 1f) });
                 distilled = Divergence(student);

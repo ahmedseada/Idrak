@@ -7,122 +7,33 @@ using Idrak.Layers;
 namespace Idrak.LanguageModels;
 
 /// <summary>
-/// How to read one family of pretrained models: its configuration (a Hugging Face <c>config.json</c>) becomes a
-/// <see cref="DecoderSpec"/>, and each of Idrak's weight names (see <see cref="DecoderSpec"/>) is found in the
-/// checkpoint. A family that does not fit <see cref="DecoderSpec"/> builds its own network with <see cref="Build"/>.
-/// Register new families with <see cref="PretrainedArchitectures.Register"/>.
+/// The model families this assembly reads (registered in <see cref="PretrainedArchitectures"/>, Idrak.Abstraction, when
+/// the registry is first used), and the pieces they are made of, for families of your own:
+/// <see cref="LlamaStyle"/> for those sharing the Llama naming, the specs read from the common configuration keys
+/// (<see cref="CommonSpec"/>, <see cref="ExpertSpec"/>) and the checkpoint names of each family.
 /// </summary>
-public sealed class PretrainedArchitecture
+public static class PretrainedFamilies
 {
-    /// <summary>
-    /// The model described by a configuration; append anything approximated to the notes. With <see cref="Build"/>, the
-    /// spec still gives the model's sizes (vocabulary, width, layers, heads, context length) to the tokenizer, generation
-    /// and tools, and is not built.
-    /// </summary>
-    public required Func<JsonObject, List<string>, DecoderSpec> Spec { get; init; }
-
-    /// <summary>
-    /// Builds the network itself instead of <see cref="DecoderSpec.Build"/>, or null (the default) to build the spec. The
-    /// network takes token ids [batch, time] and returns logits [batch, time, vocabulary]; to work with the KV cache its
-    /// attention layers implement <see cref="ICachedModule"/>, and to be fine-tuned it ends with its output head (a
-    /// <see cref="Linear"/>).
-    /// </summary>
-    public Func<PretrainedBuildContext, Sequential>? Build { get; init; }
-
-    /// <summary>The checkpoint's name for one of Idrak's weight names (null when the checkpoint does not store it).</summary>
-    public required Func<string, string?> TensorName { get; init; }
-
-    /// <summary>
-    /// Whether the checkpoint stores this weight as [out, in] (the PyTorch Linear layout), so it is transposed to
-    /// Idrak's [in, out]. By default: every projection (attention, feed-forward, head) is transposed.
-    /// </summary>
-    public Func<string, bool> Transposed { get; init; } = name =>
-        name.Contains(".attn.", StringComparison.Ordinal) && !name.Contains("_norm", StringComparison.Ordinal) && name.EndsWith(".weight", StringComparison.Ordinal)
-        || name.Contains(".mlp.", StringComparison.Ordinal) && name.EndsWith(".weight", StringComparison.Ordinal)
-        || name == "head.weight";
-}
-
-/// <summary>What <see cref="PretrainedArchitecture.Build"/> receives.</summary>
-/// <param name="Config">The model's config.json.</param>
-/// <param name="Spec">The spec <see cref="PretrainedArchitecture.Spec"/> read from it.</param>
-/// <param name="Weights">
-/// The checkpoint's tensors by Idrak's names, through <see cref="PretrainedArchitecture.TensorName"/> and
-/// <see cref="PretrainedArchitecture.Transposed"/> (with a merged adapter's updates added), as <see cref="DecoderSpec.Build"/> reads them.
-/// </param>
-/// <param name="Checkpoint">The checkpoint's tensors by their stored names, as stored.</param>
-/// <param name="Options">Device, packed weight format and context length chosen by the caller.</param>
-/// <param name="Notes">Append anything approximated (shown in <see cref="PretrainedModel.Notes"/>).</param>
-public sealed record PretrainedBuildContext(JsonObject Config, DecoderSpec Spec, IWeightSource Weights, ITensorStore Checkpoint,
-    DecoderBuildOptions Options, List<string> Notes);
-
-/// <summary>
-/// The model families <see cref="PretrainedModel.Load"/> knows, by the architecture name in <c>config.json</c>
-/// ("architectures": [...]). Llama, Mistral, Qwen2, Qwen3, Gemma, Gemma 2 and Gemma 3 (text), and the mixture-of-experts
-/// families Mixtral, Qwen2-MoE and Qwen3-MoE are registered; add others with <see cref="Register"/>, usually with
-/// <see cref="LlamaStyle"/> when they share the Llama naming.
-/// </summary>
-public static class PretrainedArchitectures
-{
-    private static readonly Dictionary<string, PretrainedArchitecture> Registry = new(StringComparer.Ordinal)
-    {
-        ["LlamaForCausalLM"] = LlamaStyle((config, spec, _) => spec),
-        ["MistralForCausalLM"] = LlamaStyle((config, spec, _) => spec),
-        ["Qwen2ForCausalLM"] = LlamaStyle((config, spec, _) => spec with { QkvBias = true }),
-        ["Qwen3ForCausalLM"] = LlamaStyle((config, spec, _) => spec with { QkNorm = true }),
-        ["GemmaForCausalLM"] = LlamaStyle((config, spec, _) => spec with
+    // Llama, Mistral, Qwen2, Qwen3, Gemma, Gemma 2 and Gemma 3 (text), and the mixture-of-experts families Mixtral,
+    // Qwen2-MoE and Qwen3-MoE.
+    internal static IEnumerable<(string Name, PretrainedArchitecture Architecture)> BuiltIns() =>
+    [
+        ("LlamaForCausalLM", LlamaStyle((config, spec, _) => spec)),
+        ("MistralForCausalLM", LlamaStyle((config, spec, _) => spec)),
+        ("Qwen2ForCausalLM", LlamaStyle((config, spec, _) => spec with { QkvBias = true })),
+        ("Qwen3ForCausalLM", LlamaStyle((config, spec, _) => spec with { QkNorm = true })),
+        ("GemmaForCausalLM", LlamaStyle((config, spec, _) => spec with
         {
             NormOffset = 1f,                                                  // Gemma scales by (1 + weight)
             EmbeddingScale = MathF.Sqrt(spec.Dim),
             TieEmbeddings = true,
-        }),
-        ["Gemma2ForCausalLM"] = new() { Spec = (config, notes) => GemmaSpec(config, CommonSpec(config, notes), version: 2), TensorName = GemmaTensorName },
-        ["Gemma3ForCausalLM"] = new() { Spec = (config, notes) => GemmaSpec(config, CommonSpec(config, notes), version: 3), TensorName = GemmaTensorName },
-        ["MixtralForCausalLM"] = new() { Spec = (config, notes) => ExpertSpec(config, notes, normalizeTopK: true), TensorName = MixtralTensorName },
-        ["Qwen2MoeForCausalLM"] = new() { Spec = (config, notes) => ExpertSpec(config, notes, normalizeTopK: false) with { QkvBias = true }, TensorName = QwenMoeTensorName },
-        ["Qwen3MoeForCausalLM"] = new() { Spec = (config, notes) => ExpertSpec(config, notes, normalizeTopK: false) with { QkNorm = true }, TensorName = QwenMoeTensorName },
-    };
-
-    /// <summary>Registers (or replaces) how to read the architecture <paramref name="name"/>.</summary>
-    public static void Register(string name, PretrainedArchitecture architecture)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(name);
-        ArgumentNullException.ThrowIfNull(architecture);
-        lock (Registry)
-        {
-            Registry[name] = architecture;
-        }
-    }
-
-    /// <summary>Removes the architecture <paramref name="name"/>; returns whether it was registered.</summary>
-    public static bool Unregister(string name)
-    {
-        lock (Registry)
-        {
-            return Registry.Remove(name);
-        }
-    }
-
-    /// <summary>The registered architecture names.</summary>
-    public static IReadOnlyCollection<string> Names
-    {
-        get
-        {
-            lock (Registry)
-            {
-                return [.. Registry.Keys];
-            }
-        }
-    }
-
-    /// <summary>The architecture registered as <paramref name="name"/>.</summary>
-    public static PretrainedArchitecture Get(string name)
-    {
-        lock (Registry)
-        {
-            return Registry.TryGetValue(name, out var architecture) ? architecture
-                : throw new NotSupportedException($"No architecture '{name}' is registered ({string.Join(", ", Registry.Keys)}); add it with PretrainedArchitectures.Register.");
-        }
-    }
+        })),
+        ("Gemma2ForCausalLM", new() { Spec = (config, notes) => GemmaSpec(config, CommonSpec(config, notes), version: 2), TensorName = GemmaTensorName }),
+        ("Gemma3ForCausalLM", new() { Spec = (config, notes) => GemmaSpec(config, CommonSpec(config, notes), version: 3), TensorName = GemmaTensorName }),
+        ("MixtralForCausalLM", new() { Spec = (config, notes) => ExpertSpec(config, notes, normalizeTopK: true), TensorName = MixtralTensorName }),
+        ("Qwen2MoeForCausalLM", new() { Spec = (config, notes) => ExpertSpec(config, notes, normalizeTopK: false) with { QkvBias = true }, TensorName = QwenMoeTensorName }),
+        ("Qwen3MoeForCausalLM", new() { Spec = (config, notes) => ExpertSpec(config, notes, normalizeTopK: false) with { QkNorm = true }, TensorName = QwenMoeTensorName }),
+    ];
 
     /// <summary>
     /// An architecture with the Llama configuration keys and weight names (model.embed_tokens, model.layers.i.self_attn.q_proj,
@@ -144,7 +55,7 @@ public static class PretrainedArchitectures
         if (c["num_local_experts"] is not null || (int?)c["num_experts"] is > 0)
         {
             throw new NotSupportedException("This configuration has experts, which this family does not read; mixture-of-experts families "
-                + "(MixtralForCausalLM, Qwen2MoeForCausalLM, Qwen3MoeForCausalLM, or one registered with PretrainedArchitectures.ExpertSpec) do.");
+                + "(MixtralForCausalLM, Qwen2MoeForCausalLM, Qwen3MoeForCausalLM, or one registered with PretrainedFamilies.ExpertSpec) do.");
         }
 
         return Common(c, notes);

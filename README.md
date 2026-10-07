@@ -1123,10 +1123,10 @@ var reply = chat.Chat(new ChatRequest(messages, tools, Think: false));     // re
 
 string text = model.ChatTemplate!.Render(messages, tools, think: null, addGenerationPrompt: false);   // training text
 
-PretrainedArchitectures.Register("MyForCausalLM", PretrainedArchitectures.LlamaStyle((config, spec, notes) => spec with { QkNorm = true }));
+PretrainedArchitectures.Register("MyForCausalLM", PretrainedFamilies.LlamaStyle((config, spec, notes) => spec with { QkNorm = true }));
 PretrainedArchitectures.Register("OtherForCausalLM", new PretrainedArchitecture
 {
-    Spec = PretrainedArchitectures.CommonSpec,                             // sizes for the tokenizer, generation and tools
+    Spec = PretrainedFamilies.CommonSpec,                             // sizes for the tokenizer, generation and tools
     TensorName = name => name,
     Build = context => MyNetwork(context.Config, context.Weights, context.Options),   // a family that is not a DecoderSpec
 });
@@ -1235,7 +1235,7 @@ a mismatch is refused with the first token that differs. Across vocabularies, di
 
 ```csharp
 using var teacher = PretrainedModel.Load(teacherFolder, new PretrainedOptions { Int4 = true, Device = Device.Parse("cuda:1") });
-using var source = DistillationTeacher.FromModel(teacher);                // or FromFile("teacher.topk")
+using var source = DistillationTeachers.FromModel(teacher);                // or FromFile("teacher.topk")
 FineTuner.Train(student, sequences, evaluation, options with
 {
     Teacher = source, Loss = FineTuningLosses.Distillation(temperature: 2f, alpha: 0.8f),

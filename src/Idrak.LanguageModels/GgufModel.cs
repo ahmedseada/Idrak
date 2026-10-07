@@ -8,175 +8,33 @@ using System.Text.Json.Nodes;
 
 namespace Idrak.LanguageModels;
 
-/// <summary>
-/// How llama.cpp stores one model family (general.architecture in the file): the Hugging Face architecture it corresponds
-/// to, and whether it interleaved the query and key rows of each head for its rotary layout. The file's settings are read
-/// from the usual keys under the family's name ({name}.embedding_length, {name}.block_count, …) and its tensors from
-/// llama.cpp's usual names (token_embd, blk.N.attn_q, …). Register new families with <see cref="GgufArchitectures.Register"/>.
-/// </summary>
-public sealed class GgufArchitecture
+// The GGUF families and pre-tokenizer patterns this assembly knows, registered by LibraryRegistrations in GgufArchitectures
+// and GgufPreTokenizers (Idrak.Abstraction).
+internal static class GgufBuiltIns
 {
-    /// <summary>The Hugging Face architecture (config.json's "architectures"), registered in <see cref="PretrainedArchitectures"/>.</summary>
-    public required string HuggingFace { get; init; }
-
-    /// <summary>Whether llama.cpp interleaved each head's query and key rows (Llama does; they are put back on load).</summary>
-    public bool InterleavedQueryKeys { get; init; }
-
-    /// <summary>
-    /// The Hugging Face architecture of this family's files with experts ({name}.expert_count above 0), when it is not
-    /// <see cref="HuggingFace"/> (llama files with experts are Mixtral); null: <see cref="HuggingFace"/>.
-    /// </summary>
-    public string? WithExperts { get; init; }
-
-    /// <summary>
-    /// Whether the family renormalizes the chosen experts' weights when the file does not say ({name}.expert_weights_norm),
-    /// as llama.cpp decides per family; null leaves it to the Hugging Face family's default.
-    /// </summary>
-    public bool? NormalizeTopK { get; init; }
-}
-
-/// <summary>
-/// The model families <see cref="GgufModel"/> reads, by GGUF architecture name: llama (Llama, Mistral, and Mixtral when the
-/// file has experts), qwen2, qwen3, qwen2moe and qwen3moe are registered; add others with <see cref="Register"/>.
-/// </summary>
-public static class GgufArchitectures
-{
-    private static readonly Dictionary<string, GgufArchitecture> Registry = new(StringComparer.Ordinal)
-    {
-        ["llama"] = new() { HuggingFace = "LlamaForCausalLM", InterleavedQueryKeys = true, WithExperts = "MixtralForCausalLM" },
-        ["qwen2"] = new() { HuggingFace = "Qwen2ForCausalLM", InterleavedQueryKeys = false },
-        ["qwen3"] = new() { HuggingFace = "Qwen3ForCausalLM", InterleavedQueryKeys = false },
-        ["qwen2moe"] = new() { HuggingFace = "Qwen2MoeForCausalLM", InterleavedQueryKeys = false, NormalizeTopK = false },
-        ["qwen3moe"] = new() { HuggingFace = "Qwen3MoeForCausalLM", InterleavedQueryKeys = false, NormalizeTopK = true },
-    };
-
-    /// <summary>Registers (or replaces) how to read the GGUF architecture <paramref name="name"/>.</summary>
-    public static void Register(string name, GgufArchitecture architecture)
-    {
-        ArgumentNullException.ThrowIfNull(architecture);
-        lock (Registry)
-        {
-            Registry[name] = architecture;
-        }
-    }
-
-    /// <summary>Removes the architecture registered as <paramref name="name"/>; false when there is none.</summary>
-    public static bool Unregister(string name)
-    {
-        lock (Registry)
-        {
-            return Registry.Remove(name);
-        }
-    }
-
-    /// <summary>The registered architecture names.</summary>
-    public static IReadOnlyCollection<string> Names
-    {
-        get
-        {
-            lock (Registry)
-            {
-                return [.. Registry.Keys];
-            }
-        }
-    }
-
-    /// <summary>The architecture registered as <paramref name="name"/>.</summary>
-    public static GgufArchitecture Get(string name) => Find(name)
-        ?? throw new NotSupportedException($"No GGUF architecture '{name}' is registered ({string.Join(", ", Names)}); add it with GgufArchitectures.Register.");
-
-    internal static GgufArchitecture? Find(string name)
-    {
-        lock (Registry)
-        {
-            return Registry.GetValueOrDefault(name);
-        }
-    }
-}
-
-/// <summary>
-/// How <see cref="GgufModel"/> splits text before byte-level BPE, by the file's <c>tokenizer.ggml.pre</c> name: a
-/// regular expression (the Hugging Face "Split" pre-tokenizer, isolated matches), or null for GPT-2's own rule. The
-/// patterns of llama.cpp's llama-vocab.cpp for the llama3, qwen2, tekken and gpt2 families are registered; add others
-/// with <see cref="Register"/>. A name nobody registered uses Llama 3's rule, and the prepared model notes it.
-/// </summary>
-public static class GgufPreTokenizers
-{
+    // llama.cpp's split patterns (llama-vocab.cpp) for the llama3, qwen2 and tekken families.
     internal const string Llama3Pattern = @"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+";
     private const string Qwen2Pattern = @"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+";
     private const string TekkenPattern = @"[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]+[\p{Ll}\p{Lm}\p{Lo}\p{M}]*|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n/]*|\s*[\r\n]+|\s+(?!\S)|\s+";
 
-    private static readonly Dictionary<string, string?> Registry = Build();
+    // llama (Llama, Mistral, and Mixtral when the file has experts), qwen2, qwen3, qwen2moe and qwen3moe.
+    internal static IEnumerable<(string Name, GgufArchitecture Architecture)> Architectures() =>
+    [
+        ("llama", new() { HuggingFace = "LlamaForCausalLM", InterleavedQueryKeys = true, WithExperts = "MixtralForCausalLM" }),
+        ("qwen2", new() { HuggingFace = "Qwen2ForCausalLM", InterleavedQueryKeys = false }),
+        ("qwen3", new() { HuggingFace = "Qwen3ForCausalLM", InterleavedQueryKeys = false }),
+        ("qwen2moe", new() { HuggingFace = "Qwen2MoeForCausalLM", InterleavedQueryKeys = false, NormalizeTopK = false }),
+        ("qwen3moe", new() { HuggingFace = "Qwen3MoeForCausalLM", InterleavedQueryKeys = false, NormalizeTopK = true }),
+    ];
 
-    private static Dictionary<string, string?> Build()
-    {
-        var registry = new Dictionary<string, string?>(StringComparer.Ordinal);
-        foreach (string name in new[] { "llama3", "llama-bpe", "llama-v3", "smaug-bpe", "falcon3", "pixtral" })
-        {
-            registry[name] = Llama3Pattern;
-        }
-
-        foreach (string name in new[] { "qwen2", "qwen35", "deepseek-r1-qwen", "megrez", "hunyuan" })
-        {
-            registry[name] = Qwen2Pattern;
-        }
-
-        registry["tekken"] = TekkenPattern;
-        foreach (string name in new[] { "gpt2", "gpt-2", "default" })
-        {
-            registry[name] = null;                                  // GPT-2's own pattern (ByteLevel with its regex)
-        }
-
-        return registry;
-    }
-
-    /// <summary>
-    /// Registers (or replaces) the split pattern of the pre-tokenizer named <paramref name="name"/> in GGUF files; null
-    /// for GPT-2's own rule.
-    /// </summary>
-    public static void Register(string name, string? pattern)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(name);
-        if (pattern is not null)
-        {
-            _ = new System.Text.RegularExpressions.Regex(pattern);  // a malformed pattern fails here, not at the first encode
-        }
-
-        lock (Registry)
-        {
-            Registry[name] = pattern;
-        }
-    }
-
-    /// <summary>Removes the pre-tokenizer registered as <paramref name="name"/>; false when there is none.</summary>
-    public static bool Unregister(string name)
-    {
-        lock (Registry)
-        {
-            return Registry.Remove(name);
-        }
-    }
-
-    /// <summary>The registered pre-tokenizer names.</summary>
-    public static IReadOnlyCollection<string> Names
-    {
-        get
-        {
-            lock (Registry)
-            {
-                return [.. Registry.Keys];
-            }
-        }
-    }
-
-    /// <summary>The pattern registered as <paramref name="name"/> (null: GPT-2's rule); false when none is registered.</summary>
-    public static bool TryGet(string name, out string? pattern)
-    {
-        lock (Registry)
-        {
-            return Registry.TryGetValue(name, out pattern);
-        }
-    }
+    // The pre-tokenizer names of llama.cpp's families and their patterns (null: GPT-2's own rule).
+    internal static IEnumerable<(string Name, string? Pattern)> PreTokenizers() =>
+    [
+        .. new[] { "llama3", "llama-bpe", "llama-v3", "smaug-bpe", "falcon3", "pixtral" }.Select(name => (name, (string?)Llama3Pattern)),
+        .. new[] { "qwen2", "qwen35", "deepseek-r1-qwen", "megrez", "hunyuan" }.Select(name => (name, (string?)Qwen2Pattern)),
+        ("tekken", TekkenPattern),
+        .. new[] { "gpt2", "gpt-2", "default" }.Select(name => (name, (string?)null)),
+    ];
 }
 
 /// <summary>
@@ -433,7 +291,7 @@ public static class GgufModel
         string pre = file.Get("tokenizer.ggml.pre", "default");
         if (!GgufPreTokenizers.TryGet(pre, out string? pattern))
         {
-            pattern = GgufPreTokenizers.Llama3Pattern;
+            pattern = GgufBuiltIns.Llama3Pattern;
             notes.Add($"pre-tokenizer '{pre}' is not registered; Llama 3's splitting rule is used (tokens may differ slightly from the original; " +
                 "register the family's pattern with GgufPreTokenizers.Register).");
         }

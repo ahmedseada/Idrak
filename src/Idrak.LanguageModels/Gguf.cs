@@ -21,144 +21,6 @@ public sealed record GgufTensorInfo(string Name, int Type, long[] Dimensions, lo
     public int[] Shape => [.. Dimensions.Reverse().Select(d => checked((int)d))];
 }
 
-/// <summary>Turns stored blocks into float32 values: <paramref name="raw"/> holds values.Length / block values whole blocks.</summary>
-/// <param name="raw">The stored bytes (at least as many blocks as <paramref name="values"/> receives).</param>
-/// <param name="values">Where the values go.</param>
-public delegate void GgufDequantizer(ReadOnlySpan<byte> raw, Span<float> values);
-
-/// <summary>
-/// A ggml tensor type: its name, its block (values and bytes) and how blocks become float32. Register new ones with
-/// <see cref="GgufTypes.Register"/>.
-/// </summary>
-public sealed class GgufType
-{
-    /// <summary>Its name (Q4_0, Q6_K, …), as in llama.cpp.</summary>
-    public required string Name { get; init; }
-
-    /// <summary>Values per block (1 for plain number types).</summary>
-    public required int BlockValues { get; init; }
-
-    /// <summary>Stored bytes per block.</summary>
-    public required int BlockBytes { get; init; }
-
-    /// <summary>
-    /// Dequantizes whole blocks (called once per tensor or per chunk of rows, with many blocks; split the work across
-    /// threads here, as <see cref="Blockwise"/> does).
-    /// </summary>
-    public required GgufDequantizer Dequantize { get; init; }
-
-    /// <summary>
-    /// A type whose blocks <paramref name="block"/> dequantizes one at a time (one block of bytes into
-    /// <paramref name="blockValues"/> values); the blocks are split across threads.
-    /// </summary>
-    public static unsafe GgufType Blockwise(string name, int blockValues, int blockBytes, GgufDequantizer block) => new()
-    {
-        Name = name,
-        BlockValues = blockValues,
-        BlockBytes = blockBytes,
-        Dequantize = (raw, values) =>
-        {
-            int blocks = values.Length / blockValues;
-            // The workers cannot capture spans: they read and write the pinned memory through pointers.
-            fixed (byte* input = raw)
-            fixed (float* output = values)
-            {
-                nint source = (nint)input, target = (nint)output;
-                Parallel.For(0, (blocks + 1023) / 1024, chunk =>
-                {
-                    int first = chunk * 1024, last = Math.Min(blocks, first + 1024);
-                    for (int b = first; b < last; b++)
-                    {
-                        block(new ReadOnlySpan<byte>((byte*)source + (long)b * blockBytes, blockBytes),
-                            new Span<float>((float*)target + (long)b * blockValues, blockValues));
-                    }
-                });
-            }
-        },
-    };
-}
-
-/// <summary>
-/// The ggml tensor types <see cref="GgufFile"/> reads, by type id: F32 (0), F16 (1), BF16 (30), Q4_0 (2), Q4_1 (3),
-/// Q5_0 (6), Q5_1 (7), Q8_0 (8), Q2_K–Q6_K (10–14), IQ4_NL (20) and IQ4_XS (23) are registered; add others with
-/// <see cref="Register"/>. A tensor's type is looked up once per read, not per block.
-/// </summary>
-public static class GgufTypes
-{
-    private static readonly Dictionary<int, GgufType> Registry = new()
-    {
-        [0] = BuiltIn(0, "F32", 1, 4),
-        [1] = BuiltIn(1, "F16", 1, 2),
-        [30] = BuiltIn(30, "BF16", 1, 2),
-        [2] = BuiltIn(2, "Q4_0", 32, 18),
-        [3] = BuiltIn(3, "Q4_1", 32, 20),
-        [6] = BuiltIn(6, "Q5_0", 32, 22),
-        [7] = BuiltIn(7, "Q5_1", 32, 24),
-        [8] = BuiltIn(8, "Q8_0", 32, 34),
-        [10] = BuiltIn(10, "Q2_K", 256, 84),
-        [11] = BuiltIn(11, "Q3_K", 256, 110),
-        [12] = BuiltIn(12, "Q4_K", 256, 144),
-        [13] = BuiltIn(13, "Q5_K", 256, 176),
-        [14] = BuiltIn(14, "Q6_K", 256, 210),
-        [20] = BuiltIn(20, "IQ4_NL", 32, 18),
-        [23] = BuiltIn(23, "IQ4_XS", 256, 136),
-    };
-
-    private static GgufType BuiltIn(int id, string name, int blockValues, int blockBytes) => new()
-    {
-        Name = name, BlockValues = blockValues, BlockBytes = blockBytes,
-        Dequantize = (raw, values) => GgufFile.DequantizeBuiltIn(id, blockValues, blockBytes, raw, values),
-    };
-
-    /// <summary>Registers (or replaces) the ggml type with id <paramref name="id"/>.</summary>
-    public static void Register(int id, GgufType type)
-    {
-        ArgumentNullException.ThrowIfNull(type);
-        if (type.BlockValues <= 0 || type.BlockBytes <= 0)
-        {
-            throw new ArgumentException($"{type.Name}: a block needs at least one value and one byte.", nameof(type));
-        }
-
-        lock (Registry)
-        {
-            Registry[id] = type;
-        }
-    }
-
-    /// <summary>Removes the type registered with id <paramref name="id"/>; false when there is none.</summary>
-    public static bool Unregister(int id)
-    {
-        lock (Registry)
-        {
-            return Registry.Remove(id);
-        }
-    }
-
-    /// <summary>The registered type ids.</summary>
-    public static IReadOnlyCollection<int> Ids
-    {
-        get
-        {
-            lock (Registry)
-            {
-                return [.. Registry.Keys.Order()];
-            }
-        }
-    }
-
-    /// <summary>The type registered with id <paramref name="id"/>.</summary>
-    public static GgufType Get(int id) => Find(id)
-        ?? throw new NotSupportedException($"No ggml type {GgufFile.TypeName(id)} is registered ({string.Join(", ", Ids.Select(GgufFile.TypeName))}); add it with GgufTypes.Register.");
-
-    internal static GgufType? Find(int id)
-    {
-        lock (Registry)
-        {
-            return Registry.GetValueOrDefault(id);
-        }
-    }
-}
-
 /// <summary>
 /// Reads GGUF files (the format of llama.cpp and of the local model store): metadata, the tensor index, and tensors dequantized to
 /// float32 from F32, F16, BF16, Q4_0, Q4_1, Q5_0, Q5_1, Q8_0, Q2_K, Q3_K, Q4_K, Q5_K, Q6_K, IQ4_NL and IQ4_XS, and any
@@ -310,7 +172,20 @@ public sealed class GgufFile : IDisposable
         info.Dequantize(raw, values);
     }
 
-    // The built-in types: one of the ids GgufTypes registers at start.
+    // The built-in types, which LibraryRegistrations registers in GgufTypes: id, name, values and bytes per block.
+    internal static IEnumerable<(int Id, GgufType Type)> BuiltInTypes() =>
+        new (int Id, string Name, int BlockValues, int BlockBytes)[]
+        {
+            (0, "F32", 1, 4), (1, "F16", 1, 2), (30, "BF16", 1, 2), (2, "Q4_0", 32, 18), (3, "Q4_1", 32, 20), (6, "Q5_0", 32, 22),
+            (7, "Q5_1", 32, 24), (8, "Q8_0", 32, 34), (10, "Q2_K", 256, 84), (11, "Q3_K", 256, 110), (12, "Q4_K", 256, 144),
+            (13, "Q5_K", 256, 176), (14, "Q6_K", 256, 210), (20, "IQ4_NL", 32, 18), (23, "IQ4_XS", 256, 136),
+        }.Select(t => (t.Id, new GgufType
+        {
+            Name = t.Name, BlockValues = t.BlockValues, BlockBytes = t.BlockBytes,
+            Dequantize = (raw, values) => DequantizeBuiltIn(t.Id, t.BlockValues, t.BlockBytes, raw, values),
+        }));
+
+    // A built-in type's blocks (see BuiltInTypes).
     internal static unsafe void DequantizeBuiltIn(int type, int blockValues, int blockBytes, ReadOnlySpan<byte> raw, Span<float> values)
     {
         int blocks = values.Length / blockValues;

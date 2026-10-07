@@ -11,9 +11,9 @@ scanned only as a user of `Idrak`'s internals.
 
 | Assembly | Interfaces | Abstract classes | Registries | Total | Outside `Idrak.Abstraction.*` |
 |---|---|---|---|---|---|
-| `Idrak.Abstraction` | 29 | 12 | 10 | 50 | 0 |
+| `Idrak.Abstraction` | 35 | 14 | 17 | 65 | 0 |
 | `Idrak` | 0 | 1 | 1 | 2 | 2 |
-| `Idrak.LanguageModels` | 6 | 2 | 7 | 15 | 15 |
+| `Idrak.LanguageModels` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Datasets` | 4 | 0 | 3 | 7 | 7 |
 | `Idrak.Onnx` | 0 | 0 | 3 | 3 | 3 |
 | `Idrak.Onnx.Runtime` | 0 | 0 | 0 | 0 | 0 |
@@ -49,19 +49,32 @@ proposed namespace (phases 1 to 3 settle it).
 | `Idrak.Abstraction.Devices.IMemoryOffload` | interface | internal | Storage | CudaBackend |  | `Idrak.Abstraction.Devices` |
 | `Idrak.Abstraction.Devices.Storage` | abstract class | internal | Backend | CpuStorage, CudaStorage, HipStorage, VulkanBackend.VulkanStorage |  | `Idrak.Abstraction.Devices` |
 | `Idrak.Abstraction.Diagnostics.ITelemetryHook` | interface | public | — | ChannelTelemetry, ConsoleLogger, JsonLinesLogger, MetricsRecorder |  | `Idrak.Abstraction.Diagnostics` |
+| `Idrak.Abstraction.Formats.CheckpointFormats` | registry | public | — |  | gguf, safetensors | `Idrak.Abstraction.Formats` |
+| `Idrak.Abstraction.Formats.GgufArchitectures` | registry | public | — |  | llama, qwen2, qwen2moe, qwen3, qwen3moe | `Idrak.Abstraction.Formats` |
+| `Idrak.Abstraction.Formats.GgufTypes` | registry | public | — |  | — | `Idrak.Abstraction.Formats` |
+| `Idrak.Abstraction.Formats.ICheckpointFormat` | interface | public | — | GgufCheckpointFormat, SafeTensorsCheckpointFormat |  | `Idrak.Abstraction.Formats` |
+| `Idrak.Abstraction.Formats.IModelSource` | interface | public | — | ModelSource.DelegateModelSource |  | `Idrak.Abstraction.Formats` |
+| `Idrak.Abstraction.Formats.ITensorStore` | interface | public | — | GgufModel.GgufTensors, SafeTensorsReader |  | `Idrak.Abstraction.Formats` |
 | `Idrak.Abstraction.Formats.IWeightSource` | interface | public | — | CheckpointWeights |  | `Idrak.Abstraction.Formats` |
+| `Idrak.Abstraction.Formats.ModelSources` | registry | public | — |  | folder, gguf, huggingface, store | `Idrak.Abstraction.Formats` |
 | `Idrak.Abstraction.Formats.WeightCodec` | abstract class | internal | — | WeightCodec.BFloat16Codec, WeightCodec.Float16Codec, WeightCodec.Float32Codec |  | `Idrak.Abstraction.Formats` |
 | `Idrak.Abstraction.Generation.ChatTemplate` | abstract class | public | — | ChatMLTemplate, JinjaChatTemplate |  | `Idrak.Abstraction.Generation` |
+| `Idrak.Abstraction.Generation.GgufPreTokenizers` | registry | public | — |  | deepseek-r1-qwen, default, falcon3, gpt-2, gpt2, hunyuan, llama-bpe, llama-v3, +7 | `Idrak.Abstraction.Generation` |
 | `Idrak.Abstraction.Generation.ICachedModule` | interface | public | Tensor | CausalSelfAttention, DecoderBlock, MultiHeadAttention, PositionEmbedding, PositionalEncoding, Sequential, +1 |  | `Idrak.Abstraction.Generation` |
 | `Idrak.Abstraction.Generation.IChatModel` | interface | public | — | ChatGenerator, FakeChatModel, GenerativeModel.EngineChat |  | `Idrak.Abstraction.Generation` |
+| `Idrak.Abstraction.Generation.IPreTokenizer` | interface | public | — | — |  | `Idrak.Abstraction.Generation` |
 | `Idrak.Abstraction.Generation.ITokenSampler` | interface | public | Tensor | TokenSampler |  | `Idrak.Abstraction.Generation` |
 | `Idrak.Abstraction.Generation.ITokenizer` | interface | public | — | BpeTokenizer, CharTokenizer, WordTokenizer |  | `Idrak.Abstraction.Generation` |
+| `Idrak.Abstraction.Generation.ITokenizerDecoder` | interface | public | — | — |  | `Idrak.Abstraction.Generation` |
+| `Idrak.Abstraction.Generation.ITokenizerNormalizer` | interface | public | — | — |  | `Idrak.Abstraction.Generation` |
 | `Idrak.Abstraction.Generation.IToolCallParser` | interface | public | — | DeepSeekToolCallParser, HarmonyToolCallParser, JsonToolCallParser, MistralToolCallParser, PythonicToolCallParser, Qwen3CoderToolCallParser |  | `Idrak.Abstraction.Generation` |
 | `Idrak.Abstraction.Generation.KeyValueLayout` | abstract class | public | Tensor | KeyValueLayouts.BFloat16Layout, KeyValueLayouts.Float32Layout, KeyValueLayouts.Int8Layout |  | `Idrak.Abstraction.Generation` |
 | `Idrak.Abstraction.Generation.KeyValueLayouts` | registry | public | — |  | bfloat16, float32, int8 | `Idrak.Abstraction.Generation` |
 | `Idrak.Abstraction.Generation.MarkedToolCallParser` | abstract class | internal | — | DeepSeekToolCallParser, JsonToolCallParser, MistralToolCallParser, PythonicToolCallParser, Qwen3CoderToolCallParser |  | `Idrak.Abstraction.Generation` |
 | `Idrak.Abstraction.Generation.PackedWeight` | abstract class, registry | public | Device, Storage, Tensor | BFloat16Weight, Int4Weight, Int8Weight | — | `Idrak.Abstraction.Generation` |
+| `Idrak.Abstraction.Generation.PretrainedArchitectures` | registry | public | — |  | Gemma2ForCausalLM, Gemma3ForCausalLM, GemmaForCausalLM, LlamaForCausalLM, MistralForCausalLM, MixtralForCausalLM, Qwen2ForCausalLM, Qwen2MoeForCausalLM, +2 | `Idrak.Abstraction.Generation` |
 | `Idrak.Abstraction.Generation.RopeScalings` | registry | public | — |  | dynamic, linear, llama3, yarn | `Idrak.Abstraction.Generation` |
+| `Idrak.Abstraction.Generation.TokenizerComponents` | registry | public | — |  | — | `Idrak.Abstraction.Generation` |
 | `Idrak.Abstraction.Generation.ToolCallFormats` | registry | public | — |  | deepseek, harmony, json, mistral, pythonic, qwen3-coder | `Idrak.Abstraction.Generation` |
 | `Idrak.Abstraction.Module` | abstract class | public | Device, Tensor | BatchNorm, CausalSelfAttention, ChannelNormalize, Conv2d, DecoderBlock, Dropout, +25 |  | `Idrak.Abstraction` |
 | `Idrak.Abstraction.Modules.GraphOps` | registry | public | — |  | abs, add, cast, clip, concat, div, elu, exp, +28 | `Idrak.Abstraction.Modules` |
@@ -75,10 +88,12 @@ proposed namespace (phases 1 to 3 settle it).
 | `Idrak.Abstraction.Retrieval.IRetriever` | interface | public | — | RetrievalIndex |  | `Idrak.Abstraction.Retrieval` |
 | `Idrak.Abstraction.Retrieval.IVectorStore` | interface | public | — | InMemoryVectorStore |  | `Idrak.Abstraction.Retrieval` |
 | `Idrak.Abstraction.Serving.IPredictor<TIn, TOut>` | interface | public | — | IdrakBuilder.EnginePredictor<TIn, TOut>, Predictor<TIn, TOut>, PredictorModel<TIn, TOut> |  | `Idrak.Abstraction.Serving` |
+| `Idrak.Abstraction.Training.DistillationTeacher` | abstract class | public | — | ModelTeacher, StoredTeacher |  | `Idrak.Abstraction.Training` |
 | `Idrak.Abstraction.Training.IScaler` | interface | public | — | MinMaxScaler, StandardScaler |  | `Idrak.Abstraction.Training` |
 | `Idrak.Abstraction.Training.ITrainerCallback` | interface | public | — | Checkpoint, CsvLog, EarlyStopping |  | `Idrak.Abstraction.Training` |
 | `Idrak.Abstraction.Training.LearningRateScheduler` | abstract class | public | — | CosineAnnealing, ExponentialDecay, LambdaSchedule, StepDecay |  | `Idrak.Abstraction.Training` |
 | `Idrak.Abstraction.Training.Optimizer` | abstract class | public | Device, Tensor | Adam, AdamW, AdamW8Bit, GroupedOptimizer, HostOptimizer, Sgd |  | `Idrak.Abstraction.Training` |
+| `Idrak.Abstraction.Training.TeacherDistributions` | abstract class | public | Device, Tensor | ModelTeacher.Batch, StoredTeacher.Batch |  | `Idrak.Abstraction.Training` |
 | `Idrak.Abstraction.Vision.IObjectDetector` | interface | public | — | ModelDetector |  | `Idrak.Abstraction.Vision` |
 | `Idrak.Abstraction.Vision.IRegionProposer` | interface | public | — | ComponentProposer |  | `Idrak.Abstraction.Vision` |
 | `Idrak.Abstraction.Vision.ISegmenter` | interface | public | — | ModelSegmenter |  | `Idrak.Abstraction.Vision` |
@@ -89,26 +104,6 @@ proposed namespace (phases 1 to 3 settle it).
 |---|---|---|---|---|---|---|
 | `Idrak.Inference.EngineModel` | abstract class | internal | — | GenerativeModel, PredictorModel<TIn, TOut> |  | `Idrak.Abstraction.Serving` |
 | `Idrak.Layers.NetworkOps` | registry | public | — |  | attention, batchnorm, conv2d, dropout, embedding, firstStep, flatten, gelu, +16 | `Idrak.Abstraction.Modules` |
-
-### Idrak.LanguageModels
-
-| Type | Kind | Visibility | Mentions | Implementations | Registered | Target |
-|---|---|---|---|---|---|---|
-| `Idrak.LanguageModels.CheckpointFormats` | registry | public | — |  | gguf, safetensors | `Idrak.Abstraction.Formats` |
-| `Idrak.LanguageModels.DistillationTeacher` | abstract class | public | — | ModelTeacher, StoredTeacher |  | `Idrak.Abstraction.Training` |
-| `Idrak.LanguageModels.GgufArchitectures` | registry | public | — |  | llama, qwen2, qwen2moe, qwen3, qwen3moe | `Idrak.Abstraction.Formats` |
-| `Idrak.LanguageModels.GgufPreTokenizers` | registry | public | — |  | deepseek-r1-qwen, default, falcon3, gpt-2, gpt2, hunyuan, llama-bpe, llama-v3, +7 | `Idrak.Abstraction.Generation` |
-| `Idrak.LanguageModels.GgufTypes` | registry | public | — |  | — | `Idrak.Abstraction.Formats` |
-| `Idrak.LanguageModels.ICheckpointFormat` | interface | public | — | GgufCheckpointFormat, SafeTensorsCheckpointFormat |  | `Idrak.Abstraction.Formats` |
-| `Idrak.LanguageModels.IModelSource` | interface | public | — | ModelSource.DelegateModelSource |  | `Idrak.Abstraction.Formats` |
-| `Idrak.LanguageModels.IPreTokenizer` | interface | public | — | — |  | `Idrak.Abstraction.Generation` |
-| `Idrak.LanguageModels.ITensorStore` | interface | public | — | GgufModel.GgufTensors, SafeTensorsReader |  | `Idrak.Abstraction.Formats` |
-| `Idrak.LanguageModels.ITokenizerDecoder` | interface | public | — | — |  | `Idrak.Abstraction.Generation` |
-| `Idrak.LanguageModels.ITokenizerNormalizer` | interface | public | — | — |  | `Idrak.Abstraction.Generation` |
-| `Idrak.LanguageModels.ModelSources` | registry | public | — |  | folder, gguf, huggingface, store | `Idrak.Abstraction.Formats` |
-| `Idrak.LanguageModels.PretrainedArchitectures` | registry | public | — |  | Gemma2ForCausalLM, Gemma3ForCausalLM, GemmaForCausalLM, LlamaForCausalLM, MistralForCausalLM, MixtralForCausalLM, Qwen2ForCausalLM, Qwen2MoeForCausalLM, +2 | `Idrak.Abstraction.Generation` |
-| `Idrak.LanguageModels.TeacherDistributions` | abstract class | internal | Device, Tensor | ModelTeacher.Batch, StoredTeacher.Batch |  | `Idrak.Abstraction.Training` |
-| `Idrak.LanguageModels.TokenizerComponents` | registry | public | — |  | — | `Idrak.Abstraction.Generation` |
 
 ### Idrak.Datasets
 

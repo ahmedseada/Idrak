@@ -164,12 +164,12 @@ internal static partial class Tests
     private static void PromptCacheReuse(Device device)
     {
         var (tiny, tokenizer) = TinyLanguageModel(device, context: 64);
-        var spec = new Idrak.Layers.DecoderSpec
+        var spec = new DecoderSpec
         {
             Vocabulary = tokenizer.VocabularySize, Dim = 16, Layers = 2, Heads = 4, KvHeads = 2, HeadDim = 6, FfDim = 24, MaxPositions = 64,
-            QkNorm = true, Rope = new Idrak.Layers.RopeSettings(500f, null, false, null),
+            QkNorm = true, Rope = new RopeSettings(500f, null, false, null),
         };
-        using var decoder = spec.Build(null, new Idrak.Layers.DecoderBuildOptions { Device = device, Seed = 3 });
+        using var decoder = spec.Build(null, new DecoderBuildOptions { Device = device, Seed = 3 });
         using var _ = tiny;
         foreach (var model in new[] { tiny, decoder })
         {
