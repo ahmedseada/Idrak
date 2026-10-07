@@ -3,8 +3,7 @@
 
 using System.Diagnostics;
 using Idrak;
-using Idrak.Backends;
-using Idrak.Backends.Vulkan;
+using Idrak.Gpu.Vulkan;
 using Idrak.Generation;
 using Idrak.Layers;
 

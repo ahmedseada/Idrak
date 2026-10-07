@@ -2,7 +2,6 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Runtime.CompilerServices;
-using Idrak.Backends;
 using Idrak.Layers;
 
 namespace Idrak;
@@ -15,8 +14,9 @@ namespace Idrak;
 /// </summary>
 internal static class Offloading
 {
-    // Tensors live in Idrak.Abstraction and reach the offloading of Idrak's layers through these hooks, set when this
-    // assembly's devices are registered (LibraryDevices): only they offload, so the hooks are in place before anything is.
+    // Tensors live in Idrak.Abstraction and reach the offloading of Idrak's layers through these hooks, set when the device
+    // registry fills (LibraryRegistrations, which runs before Idrak.Gpu's): only devices offload, so the hooks are in place
+    // before anything is.
     internal static void ConnectTensors()
     {
         TensorOffloading.TrainableChanged = TrainableChanged;

@@ -3,9 +3,8 @@
 
 using System.Collections.Concurrent;
 using Idrak;
-using Idrak.Backends;
 using Idrak.Abstraction.Devices.Cpu;
-using Idrak.Backends.Vulkan;
+using Idrak.Gpu.Vulkan;
 using Idrak.Layers;
 
 // Prompt processing on Vulkan: attention over many query rows and the products through packed weights for many rows run

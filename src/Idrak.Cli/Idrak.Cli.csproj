@@ -18,6 +18,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Idrak\Idrak.csproj" />
+    <!-- idrak kernels dump writes the GPU kernel sources. -->
+    <ProjectReference Include="..\Idrak.Gpu\Idrak.Gpu.csproj" />
     <ProjectReference Include="..\Idrak.Nlp\Idrak.Nlp.csproj" />
     <ProjectReference Include="..\Idrak.Data\Idrak.Data.csproj" />
     <ProjectReference Include="..\Idrak.Mcp\Idrak.Mcp.csproj" />

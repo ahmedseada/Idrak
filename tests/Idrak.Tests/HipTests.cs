@@ -3,9 +3,8 @@
 
 using System.Text.RegularExpressions;
 using Idrak;
-using Idrak.Backends;
 using Idrak.Abstraction.Devices.Cpu;
-using Idrak.Backends.Hip;
+using Idrak.Gpu.Hip;
 
 // The HIP backend (ROCm on Linux, the HIP SDK on Windows): found at run time or absent without harm, its devices named
 // hip:N, its kernels compiled by hipRTC for the device's architecture with a block size from the reported limits, and
@@ -20,7 +19,7 @@ internal static partial class Tests
         ("hip kernels: the source declares every kernel with the parameters launches pass; block sizes and limits come from what the device reports", HipKernelSource),
         ("hip kernels: the architecture string is read from the device properties by content; compiler options name it", HipArchitecture),
         ("hip kernel cache: the key changes with every input; a stored code object comes back; IDRAK_HIP_KERNEL_CACHE moves or disables it", HipKernelCacheKeys),
-        ("hip: no vendor ids, card names or GPU targets in the code of src/Idrak/Backends/Hip (comments may name them)", HipNoVendorNames),
+        ("hip: no vendor ids, card names or GPU targets in the code of src/Idrak.Gpu/Hip (comments may name them)", HipNoVendorNames),
         ("hip device: memory, uploads, downloads, copies, fills and the first kernels match the CPU (on HIP devices)", HipDeviceMatchesCpu),
     ];
 
@@ -234,7 +233,7 @@ internal static partial class Tests
     private static void HipNoVendorNames(Device device)
     {
         _ = device;
-        string folder = Path.Combine(RepositoryRoot(), "src", "Idrak", "Backends", "Hip");
+        string folder = Path.Combine(RepositoryRoot(), "src", "Idrak.Gpu", "Hip");
         var vendorIds = new Regex(@"0x0*(10DE|1002|1022|8086|13B5|5143|106B)\b", RegexOptions.IgnoreCase);
         var names = new Regex(@"\b(NVIDIA|AMD|ATI|Intel|Radeon|Instinct|MI\d{2,3}X?|RDNA\d?|CDNA\d?|Vega|Navi|GeForce|RTX|GTX|Arc|Iris)\b|\bgfx\d", RegexOptions.IgnoreCase);
         var found = new List<string>();
