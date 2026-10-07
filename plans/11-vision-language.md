@@ -6,7 +6,9 @@ quality scans included) and returns their contents as structured data. Its card 
 to grayscale first, and shows it running through transformers and vLLM.
 
 **First version (decided 2026-10-07): the command line only.** `idrak chat <model> --image scan.png` and a one-shot
-form. The engine's model kind, the `/v1` API, MCP and other model families come later (phase 8).
+form. **Then, once the command line is proven on the real model, images go into chat everywhere** (decided the same
+day): the engine's chat model, `MapChatApi` and the OpenAI-style `/v1` API (phase 8). MCP and other model families
+come after that (phase 9).
 
 ## What Idrak has, and what is missing
 
@@ -26,7 +28,7 @@ form. The engine's model kind, the `/v1` API, MCP and other model families come 
 
 | Part | Package | Why |
 |---|---|---|
-| `ChatMessage` with images (an image list on the message, or content parts) | `Idrak.Abstraction` (`Generation`) | used by Nlp now, and by AspNetCore (`/v1` `image_url`) and Mcp in phase 8 |
+| `ChatMessage` with images (an image list on the message, or content parts) | `Idrak.Abstraction` (`Generation`) | used by Nlp now, by AspNetCore (`/v1` `image_url`) in phase 8 and by Mcp in phase 9 |
 | SigLIP layers, the projector, `Gemma3ForConditionalGeneration` loading, the image-token mask in the decoder | `Idrak` (core: layers and `Idrak.Models`) | model loading is core's; core is their only user |
 | Image preprocessing from `preprocessor_config.json` | `Idrak` (core) | read when a model loads |
 | Generation and chat with images, the chat template's image parts | `Idrak.Nlp` | generation is Nlp's |
@@ -45,10 +47,11 @@ form. The engine's model kind, the `/v1` API, MCP and other model families come 
 | 5 | **Image tokens in the decoder.** At prefill, the soft tokens' embeddings are replaced by the image features; the mask lets each image's soft tokens see each other; decoding afterwards uses the KV cache as today (the image costs nothing more per generated token). Several images in one prompt | the tiny model's logits with an image and its 20 greedy tokens match the reference (CPU and Vulkan) |
 | 6 | **Chat with images in Nlp.** The chat template's image parts expand to the image tokens; generation takes images; an image is encoded once per conversation (kept with the conversation by content hash) | a two-turn chat about one image encodes it once and matches the reference's first turn |
 | 7 | **The command line.** `idrak chat <model> --image FILE` (repeatable; also `/image FILE` inside an interactive chat), a one-shot `idrak chat <model> --image FILE -p "..."` printing only the answer (`-j` for JSON), and `--grayscale` (or the setting stored with a pulled model) | CLI tests pass with the tiny model; on the author's RTX 5070 Ti the real model reads a sample scan and its greedy output matches transformers' for the first 100 tokens |
-| 8 | **Later, not in the first version.** An engine model kind (images and text in, text out) behind `IChatModel`; `MapCompletionsApi` accepting `image_url` parts; an MCP `ocr`/`chat` tool with images; pan-and-scan for tall pages; other families (Qwen2.5-VL); fine-tuning with images | decided per item after the first version |
+| 8 | **Images in chat, after the command line is proven** (phase 7 done on the real model). The engine hosts the model as a chat model that accepts images (`IChatModel`, saying which inputs it takes; the image is encoded once per conversation, as in phase 6); `MapChatApi` takes images in its messages; `MapCompletionsApi` (`/v1/chat/completions`) accepts OpenAI's `image_url` content parts (data URLs and, when allowed, http URLs); `idrak serve` serves it. The same preprocessing (and grayscale setting) as the command line | an OpenAI client sends a scan as an `image_url` part and gets the same answer as `idrak chat --image`; streamed and not; the aspnetcore tests cover a tiny model with an image |
+| 9 | **After that.** An MCP `chat` tool with images (and an `ocr` tool if useful); pan-and-scan for tall pages; other families (Qwen2.5-VL); fine-tuning with images | decided per item after phase 8 |
 
 **Order.** 0 first (everything is checked against it). 1 and 2 in parallel, then 3. 4 and 5 together (one family
-in the decoder). Then 6 and 7.
+in the decoder). Then 6 and 7. Phase 8 starts only when phase 7 is proven on the real model on the author's machine.
 
 ## Performance targets (author's RTX 5070 Ti, the real 4B model)
 
@@ -69,4 +72,4 @@ in the decoder). Then 6 and 7.
 
 1. Grayscale: a command-line flag (proposed `--grayscale`), a setting stored with a pulled model, or both.
 2. Content parts on `ChatMessage` (like `/v1`) or a separate image list (simpler now, a mapping later).
-3. Pan-and-scan for tall pages (Gemma 3's crops of a long document): first version or phase 8.
+3. Pan-and-scan for tall pages (Gemma 3's crops of a long document): first version or phase 9.
