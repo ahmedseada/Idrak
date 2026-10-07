@@ -160,15 +160,37 @@ internal sealed partial class CpuBackend
 
     public override void NormStatsKernel(Storage x, Storage mean, Storage variance, Storage invStd, int outer, int groups, int inner, float eps)
     {
+        // Two passes: the mean, then the sum of squares around it. E[x²] − mean² in one pass cancels when the values are
+        // large next to their spread (a one-element group lost 0.2% of 1/√eps).
+        float[] xv = D(x);
         var s1 = new double[groups];
         var s2 = new double[groups];
-        GroupMoments(D(x), null, outer, groups, inner, s1, s2);
+        GroupMoments(xv, null, outer, groups, inner, s1, s2);
         float[] mv = D(mean), vv = D(variance), sv = D(invStd);
         double m = Math.Max(outer * inner, 1);
+        For(groups, (long)groups * outer * inner * 2, (start, end) =>
+        {
+            for (int g = start; g < end; g++)
+            {
+                double mu = s1[g] / m, sum = 0;
+                for (int o = 0; o < outer; o++)
+                {
+                    int offset = (o * groups + g) * inner;
+                    for (int i = 0; i < inner; i++)
+                    {
+                        double d = xv[offset + i] - mu;
+                        sum += d * d;
+                    }
+                }
+
+                s2[g] = sum;
+            }
+        });
+
         for (int g = 0; g < groups; g++)
         {
             double mu = s1[g] / m;
-            double var = Math.Max(s2[g] / m - mu * mu, 0);
+            double var = s2[g] / m;
             mv[g] = (float)mu;
             vv[g] = (float)var;
             sv[g] = (float)(1.0 / Math.Sqrt(var + eps));
