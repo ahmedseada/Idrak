@@ -132,6 +132,12 @@
   - `ModuleHooks` is folded into the public `TensorOffloading` (`Current` → `CurrentLayer`; the hooks are properties;
     `ForBackward` receives each backward node's layer). `Module.MoveTo` is `protected`; `RecurrentModule.Run`/`Step` are
     `protected`. `TrainingHistory` has public setters and `Add(EpochCompleted)`; `TrainerContext` a public constructor.
+- New package `Idrak.Gpu`: the CUDA, Vulkan and HIP devices and all their kernels, built on `Idrak.Abstraction` alone.
+  `Idrak` depends on it, so `dotnet add package Idrak` brings every device as before; `Idrak.Gpu` with
+  `Idrak.Abstraction` alone gives the devices without the rest of the library. Namespaces `Idrak.Backends.Cuda`,
+  `.Vulkan`, `.Hip` are `Idrak.Gpu.Cuda`, `.Vulkan`, `.Hip` (`CudaException`, `VulkanException`, `HipException`).
+- `Backend.Hardware` (`BackendHardware`: memory, compute units, lanes, kernel width, hardware kind, driver) is what a
+  device reports for listings; `DeviceListing` reads it, so a device from outside the library shows these values too.
 - New command `idrak kernels [-d DEVICE] [--source KIND] [-j]`: per operation, the kernel a device runs and what runs
   without its own (plan 9, phase 2).
 
