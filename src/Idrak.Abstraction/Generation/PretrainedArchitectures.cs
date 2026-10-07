@@ -57,7 +57,7 @@ public sealed record PretrainedBuildContext(JsonObject Config, DecoderSpec Spec,
 
 /// <summary>
 /// The model families pretrained models are loaded as, by the architecture name in <c>config.json</c>
-/// ("architectures": [...]). Idrak.LanguageModels registers Llama, Mistral, Qwen2, Qwen3, Gemma, Gemma 2 and Gemma 3
+/// ("architectures": [...]). Idrak registers Llama, Mistral, Qwen2, Qwen3, Gemma, Gemma 2 and Gemma 3
 /// (text), and the mixture-of-experts families Mixtral, Qwen2-MoE and Qwen3-MoE; add others with <see cref="Register"/>
 /// (its <c>PretrainedFamilies.LlamaStyle</c> makes one for families that share the Llama naming).
 /// </summary>

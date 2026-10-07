@@ -4,7 +4,8 @@
 using System.Text.Json.Nodes;
 using Idrak;
 using Idrak.Layers;
-using Idrak.LanguageModels;
+using Idrak.Models;
+using Idrak.Nlp;
 
 // Pretrained models: checkpoints written here in the Hugging Face layout, read back through the architecture registry.
 internal static partial class Tests

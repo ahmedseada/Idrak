@@ -25,14 +25,14 @@ internal static partial class Tests
 
     // The library packages (the CLI is an application: its own helpers are outside the rule).
     private static readonly string[] LibraryAssemblyNames =
-        ["Idrak.Abstraction", "Idrak", "Idrak.LanguageModels", "Idrak.Datasets", "Idrak.Onnx", "Idrak.Onnx.Runtime", "Idrak.AspNetCore", "Idrak.Mcp"];
+        ["Idrak.Abstraction", "Idrak", "Idrak.Nlp", "Idrak.Datasets", "Idrak.Onnx", "Idrak.Onnx.Runtime", "Idrak.AspNetCore", "Idrak.Mcp"];
 
     // Each assembly whose internals others see, with those others (the tests aside): what phases 2 and 4 must turn into
     // public contract. Idrak.Abstraction's list must be empty after phase 4.
     private static readonly (string Target, string[] Users)[] FriendAssemblies =
     [
-        ("Idrak.Abstraction", ["Idrak", "Idrak.LanguageModels", "Idrak.Onnx", "Idrak.Cli"]),
-        ("Idrak", ["Idrak.Onnx", "Idrak.LanguageModels", "Idrak.Cli"]),
+        ("Idrak.Abstraction", ["Idrak", "Idrak.Nlp", "Idrak.Onnx", "Idrak.Cli"]),
+        ("Idrak", ["Idrak.Onnx", "Idrak.Nlp", "Idrak.Cli"]),
     ];
 
     private const string InventoryPath = "plans/10-abstraction-inventory.md", AllowListPath = "tests/Idrak.Tests/data/abstraction-allow-list.txt",
@@ -350,12 +350,12 @@ internal static partial class Tests
                 "Idrak.Data" or "Idrak.Datasets" => "Data",
                 "Idrak.Vision" => "Vision",
                 "Idrak.Retrieval" => "Retrieval",
-                "Idrak.Generation" or "Idrak.LanguageModels" => "Generation",
+                "Idrak.Generation" or "Idrak.Nlp" or "Idrak.Models" => "Generation",
                 "Idrak.Onnx" or "Idrak.Onnx.Runtime" => "Formats",
                 "Idrak.Inference" or "Idrak.AspNetCore" or "Idrak.Mcp" => "Serving",
                 "Idrak.Diagnostics" => "Diagnostics",
                 _ when ns.StartsWith("Idrak.Datasets.", StringComparison.Ordinal) => "Data",
-                _ when ns.StartsWith("Idrak.LanguageModels.", StringComparison.Ordinal) => "Generation",
+                _ when ns.StartsWith("Idrak.Nlp.", StringComparison.Ordinal) => "Generation",
                 _ when ns.StartsWith("Idrak.Abstraction", StringComparison.Ordinal) => ns["Idrak.Abstraction".Length..].TrimStart('.'),
                 _ => "",
             },

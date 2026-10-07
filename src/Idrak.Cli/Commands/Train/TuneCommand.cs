@@ -291,7 +291,7 @@ internal sealed class TuneInitCommand : Command
         string name = Path.GetFileName(Path.TrimEndingDirectorySeparator(model.Replace(':', '-'))).ToLowerInvariant();
         string adapters = context.Option("--adapter-out") ?? $"adapters/{(name.Length > 0 ? name : "model")}";
         string? device = context.Option("--device") ?? context.Config.Get("device");
-        var defaults = new Idrak.LanguageModels.FineTuningOptions();
+        var defaults = new Idrak.Nlp.FineTuningOptions();
         string Json(string text) => JsonValue.Create(text).ToJsonString(CommandContext.JsonOutput);
         string Number(double value) => value.ToString("R", CultureInfo.InvariantCulture);
         string text = $$"""

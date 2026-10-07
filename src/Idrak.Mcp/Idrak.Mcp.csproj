@@ -12,6 +12,8 @@
   <ItemGroup>
     <PackageReference Include="ModelContextProtocol.Core" Version="2.2.0" />
     <ProjectReference Include="..\Idrak\Idrak.csproj" />
+    <!-- The tool registry and conversations (Idrak.Generation) until they become contracts in Idrak.Abstraction. -->
+    <ProjectReference Include="..\Idrak.Nlp\Idrak.Nlp.csproj" />
   </ItemGroup>
 
 </Project>

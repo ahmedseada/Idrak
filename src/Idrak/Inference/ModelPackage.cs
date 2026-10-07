@@ -8,7 +8,6 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization.Metadata;
 using Idrak.Data;
-using Idrak.Generation;
 using Idrak.Layers;
 
 namespace Idrak.Inference;
@@ -384,33 +383,6 @@ public sealed class ModelPackageReader : IDisposable
     {
         using var reader = new StreamReader(Find(PackageEntryKind.Text, name).Open());
         return reader.ReadToEnd();
-    }
-
-    /// <summary>
-    /// A <see cref="Generation.TextGenerator"/> for a language model stored with its architecture: the network named
-    /// <paramref name="model"/> is rebuilt with its weights, the tokenizer is <paramref name="tokenizer"/>, and the
-    /// context length is the architecture's token length (<c>Network.Tokens(length)</c>).
-    /// </summary>
-    public TextGenerator TextGenerator(string tokenizer, string model = ModelPackage.DefaultModelName, Device? device = null)
-    {
-        if (DecoderSpec.IsDescription(Architecture(model)))
-        {
-            var spec = DecoderSpec.FromJson(Architecture(model));
-            var decoder = (Sequential)BuildModel(model, device);
-            decoder.Eval();
-            return new TextGenerator(decoder, Tokenizer(tokenizer), spec.MaxPositions);
-        }
-
-        var network = Network(model);
-        if (network.InputKind != InputKind.Tokens)
-        {
-            throw new InvalidOperationException($"The network '{model}' does not read tokens (it starts with {network.InputKind}).");
-        }
-
-        var tokens = Tokenizer(tokenizer);
-        var built = BuildNetwork(model, device);
-        built.Eval();
-        return new TextGenerator(built, tokens, network.InputShape[0]);
     }
 
     /// <inheritdoc />

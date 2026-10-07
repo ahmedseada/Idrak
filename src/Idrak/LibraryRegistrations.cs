@@ -7,8 +7,10 @@ namespace Idrak;
 
 /// <summary>
 /// What this assembly adds to the registries of Idrak.Abstraction, which cannot name it: its GPU devices, its sample sources,
-/// its layer types, graph operations and network-builder steps, and the hooks tensors and modules reach its layers through. <c>LibraryDefaults.Ensure</c> (in Idrak.Abstraction) calls
-/// <see cref="RegisterAll"/> once, before any of those registries is first used.
+/// its layer types, graph operations and network-builder steps, the hooks tensors and modules reach its layers through, and
+/// what loading a pretrained model asks (checkpoint formats, model sources, GGUF types and families, pretrained families).
+/// <c>LibraryDefaults.Ensure</c> (in Idrak.Abstraction) calls <see cref="RegisterAll"/> once, before any of those
+/// registries is first used.
 /// </summary>
 internal static class LibraryRegistrations
 {
@@ -24,5 +26,6 @@ internal static class LibraryRegistrations
         Layers.LibraryLayerTypes.RegisterAll();
         Layers.LibraryGraphOps.RegisterAll();
         Layers.LibraryNetworkOps.RegisterAll();
+        Models.LibraryModelFormats.RegisterAll();
     }
 }

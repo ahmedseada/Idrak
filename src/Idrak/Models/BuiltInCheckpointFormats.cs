@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-namespace Idrak.LanguageModels;
+namespace Idrak.Models;
 
 // A model folder with safetensors weights (one file, or shards named by model.safetensors.index.json).
 internal sealed class SafeTensorsCheckpointFormat : ICheckpointFormat

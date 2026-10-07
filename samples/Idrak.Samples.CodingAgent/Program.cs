@@ -9,7 +9,8 @@ using Idrak;
 using Idrak.Diagnostics;
 using Idrak.Generation;
 using Idrak.Layers;
-using Idrak.LanguageModels;
+using Idrak.Models;
+using Idrak.Nlp;
 
 // A coding agent: a language model (any family Idrak loads, in its own chat template) reads, searches, edits and writes
 // files and runs allowlisted commands (dotnet, npm …) in a workspace, run by Idrak's own engine (CPU or CUDA):

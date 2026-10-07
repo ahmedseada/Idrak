@@ -45,8 +45,8 @@ public sealed record TrainingSequence(int[] Tokens, bool[] Trained)
 
 /// <summary>
 /// The teacher of knowledge distillation: the distribution over the next token at every trained position of a batch,
-/// which a fine-tuning loss compares with the student's (Idrak.LanguageModels' <c>FineTuningLossInput.TeacherDivergence</c>
-/// and <c>FineTuningLosses.Distillation</c>; set the teacher as <c>FineTuningOptions.Teacher</c>). Idrak.LanguageModels
+/// which a fine-tuning loss compares with the student's (Idrak.Nlp's <c>FineTuningLossInput.TeacherDivergence</c>
+/// and <c>FineTuningLosses.Distillation</c>; set the teacher as <c>FineTuningOptions.Teacher</c>). Idrak.Nlp
 /// makes the two built-in kinds (<c>DistillationTeachers.FromModel</c>: a loaded model computing its distributions on the
 /// fly; <c>DistillationTeachers.FromFile</c>: stored top-k logits); derive from this class for another source of
 /// distributions (a teacher served elsewhere, another stored format), returning each batch's distributions from

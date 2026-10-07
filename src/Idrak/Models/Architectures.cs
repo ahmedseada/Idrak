@@ -4,7 +4,7 @@
 using System.Text.Json.Nodes;
 using Idrak.Layers;
 
-namespace Idrak.LanguageModels;
+namespace Idrak.Models;
 
 /// <summary>
 /// The model families this assembly reads (registered in <see cref="PretrainedArchitectures"/>, Idrak.Abstraction, when

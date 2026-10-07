@@ -61,7 +61,7 @@ public sealed class GgufType
 }
 
 /// <summary>
-/// The ggml tensor types GGUF files are read with, by type id. Idrak.LanguageModels registers F32 (0), F16 (1), BF16 (30),
+/// The ggml tensor types GGUF files are read with, by type id. Idrak registers F32 (0), F16 (1), BF16 (30),
 /// Q4_0 (2), Q4_1 (3), Q5_0 (6), Q5_1 (7), Q8_0 (8), Q2_K–Q6_K (10–14), IQ4_NL (20) and IQ4_XS (23); add others with
 /// <see cref="Register"/>. A tensor's type is looked up once per read, not per block.
 /// </summary>

@@ -8,6 +8,7 @@
     <Compile Include="..\Shared\*.cs" LinkBase="Shared" />
     <Compile Include="..\Idrak.Samples.Summarizer\Reports.cs" Link="Reports.cs" />
     <ProjectReference Include="..\..\src\Idrak\Idrak.csproj" />
+    <ProjectReference Include="..\..\src\Idrak.Nlp\Idrak.Nlp.csproj" />
   </ItemGroup>
 
 </Project>

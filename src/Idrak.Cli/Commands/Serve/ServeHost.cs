@@ -21,7 +21,8 @@ using Idrak.Cli.Shared;
 using Idrak.Generation;
 using Idrak.Inference;
 using Idrak.Layers;
-using Idrak.LanguageModels;
+using Idrak.Models;
+using Idrak.Nlp;
 
 namespace Idrak.Cli.Commands.Serve;
 

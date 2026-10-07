@@ -23,7 +23,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="Idrak.Tests" />
     <InternalsVisibleTo Include="Idrak.Onnx" />
-    <InternalsVisibleTo Include="Idrak.LanguageModels" />
+    <InternalsVisibleTo Include="Idrak.Nlp" />
     <!-- idrak kernels dump writes the generated kernel sources (PTX, SPIR-V, HIP). -->
     <InternalsVisibleTo Include="Idrak.Cli" />
   </ItemGroup>

@@ -6,7 +6,7 @@ namespace Idrak.Abstraction.Generation;
 /// <summary>
 /// How the tokenizer of a GGUF file splits text before byte-level BPE, by the file's <c>tokenizer.ggml.pre</c> name: a
 /// regular expression (the Hugging Face "Split" pre-tokenizer, isolated matches), or null for GPT-2's own rule.
-/// Idrak.LanguageModels registers the patterns of llama.cpp's llama-vocab.cpp for the llama3, qwen2, tekken and gpt2
+/// Idrak registers the patterns of llama.cpp's llama-vocab.cpp for the llama3, qwen2, tekken and gpt2
 /// families; add others with <see cref="Register"/>. A name nobody registered uses Llama 3's rule, and the prepared model
 /// notes it.
 /// </summary>

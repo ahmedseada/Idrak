@@ -83,7 +83,7 @@ internal sealed class RagIndexCommand : Command
         var builder = RetrievalIndex.Create().Documents(documents, sentences ? ChunkUnit.Sentences : ChunkUnit.Words, size, overlap).Bm25();
         Recorder? recorder = null;
         RagIndexFile.EmbeddingInfo? embedding = null;
-        Idrak.LanguageModels.PretrainedModel? model = null;
+        Idrak.Models.PretrainedModel? model = null;
         try
         {
             if (context.Option("--model") is { } modelName)
