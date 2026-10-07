@@ -294,6 +294,9 @@ public abstract partial class Backend
     /// <summary>A human-readable name of the device, such as the GPU model.</summary>
     public abstract string Name { get; }
 
+    /// <summary>What the device reports about its hardware, for listings and diagnostics; empty when it reports nothing.</summary>
+    public virtual BackendHardware Hardware => new();
+
     /// <summary>Null when this device runs bfloat16 products on matrix units (tensor cores); otherwise why not.</summary>
     public virtual string? TensorCoresUnavailable() => "the device computes matrix products in float32";
 

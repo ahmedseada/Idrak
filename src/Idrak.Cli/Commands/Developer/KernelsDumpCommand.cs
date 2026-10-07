@@ -2,9 +2,9 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Text.Json.Nodes;
-using Idrak.Backends.Cuda;
-using Idrak.Backends.Hip;
-using Idrak.Backends.Vulkan;
+using Idrak.Gpu.Cuda;
+using Idrak.Gpu.Hip;
+using Idrak.Gpu.Vulkan;
 
 namespace Idrak.Cli.Commands.Developer;
 

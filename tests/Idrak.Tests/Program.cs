@@ -18,7 +18,7 @@
 
 using System.Diagnostics;
 using Idrak;
-using Idrak.Backends.Cuda;
+using Idrak.Gpu.Cuda;
 using Idrak.Data;
 using Idrak.Diagnostics;
 using Idrak.Layers;

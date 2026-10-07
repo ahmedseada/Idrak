@@ -1,12 +1,6 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.Numerics;
-using Idrak.Backends;
-using Idrak.Backends.Cuda;
-using Idrak.Backends.Hip;
-using Idrak.Backends.Vulkan;
-
 namespace Idrak.Diagnostics;
 
 /// <summary>One kind of device beyond the CPU (CUDA, Vulkan, HIP, or a registered one) and how many were found.</summary>
@@ -123,41 +117,17 @@ public static class DeviceListing
             return info with { Error = e.Message };
         }
 
-        info = info with { Name = backend.Name, MatrixUnits = backend.Capabilities.MatrixUnits };
-        return backend switch
+        var hardware = backend.Hardware;
+        return info with
         {
-            _ when backend.Kind == "cpu" => info with
-            {
-                MemoryBytes = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes,
-                HardwareKind = "cpu",
-                ComputeUnits = Environment.ProcessorCount,
-                SubgroupSize = Vector<float>.Count,
-            },
-            CudaBackend cuda => info with
-            {
-                MemoryBytes = cuda.Limits.MemoryBytes,
-                ComputeUnits = cuda.Limits.Multiprocessors,
-                SubgroupSize = cuda.Limits.WarpSize,
-                KernelWidth = cuda.Shapes.BlockSize,
-                Driver = cuda.TuningIdentity.Driver,
-            },
-            VulkanBackend vulkan => info with
-            {
-                MemoryBytes = vulkan.StorageHeapBytes,
-                SubgroupSize = (int)vulkan.Facts.SubgroupSize,
-                KernelWidth = vulkan.Width,
-                HardwareKind = vulkan.Facts.DeviceType switch { 1 => "integrated", 2 => "discrete", 3 => "virtual", 4 => "cpu", _ => null },
-                Driver = vulkan.Driver,
-            },
-            HipBackend hip => info with
-            {
-                MemoryBytes = hip.DeviceLimits.TotalMemory,
-                ComputeUnits = hip.DeviceLimits.ComputeUnits,
-                SubgroupSize = hip.DeviceLimits.WarpSize,
-                KernelWidth = HipKernels.BlockSizeFor(hip.DeviceLimits),
-                HardwareKind = hip.DeviceLimits.Integrated ? "integrated" : "discrete",
-            },
-            _ => info,
+            Name = backend.Name,
+            MatrixUnits = backend.Capabilities.MatrixUnits,
+            MemoryBytes = hardware.MemoryBytes,
+            ComputeUnits = hardware.ComputeUnits,
+            SubgroupSize = hardware.SubgroupSize,
+            KernelWidth = hardware.KernelWidth,
+            HardwareKind = hardware.HardwareKind,
+            Driver = hardware.Driver,
         };
     }
 }
