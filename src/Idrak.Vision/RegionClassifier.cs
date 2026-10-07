@@ -110,14 +110,14 @@ public sealed class RegionClassifier : IDisposable
     /// </summary>
     public static RegionClassifierBuilder Load(string path, Device? device = null)
     {
-        var settings = Predictor.Load(path, device).Settings;
+        var settings = Predictor.Load(path, device);
         var builder = new RegionClassifierBuilder(settings.Model!, ownsModel: true) { Device = device };
         if (settings.StoredClasses is { } classes)
         {
             builder.Classes(classes);
         }
 
-        if (settings.InputShape is [1, int h, int w] && h == w)
+        if (settings.SampleShape is [1, int h, int w] && h == w)
         {
             builder.InputSize(h);
         }

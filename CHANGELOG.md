@@ -67,6 +67,18 @@
   - `/idrak/status` reports `kind` in lowercase (`"chat"`).
   - A batcher of a disposed engine throws `ObjectDisposedException`; a builder builds once; a failed `BuildAsync` stops the batchers it started.
 
+- Packages regrouped by domain (plan 10, target layout):
+  - `Idrak.Datasets` is renamed `Idrak.Data` (package, assembly and namespace). Its row dataset `Dataset` is now
+    `DatasetRows`, so it doesn't clash with core's in-memory `Idrak.Data.Dataset`. `DatasetRecipe.Build`,
+    `ChatRows.Normalize`, `HuggingFace`, `GitHub`, `Kaggle` and `Zenodo` return `DatasetRows`.
+  - ONNX import and export (`Idrak.Onnx`) are part of `Idrak`. The `Idrak.Onnx` package is retired;
+    `Idrak.Onnx.Runtime` depends on `Idrak` only.
+  - New package `Idrak.Vision` (region classification, content framing, `ChannelStatistics`), moved out of `Idrak`. It
+    builds on the public API only. `ModelDetector` with `DetectorOptions`, and `ModelSegmenter`, move to it from
+    `Idrak.Abstraction.Vision` (namespace `Idrak.Vision`); the `DetectionDecoder` delegate, the contracts, boxes, masks
+    and metrics stay in Abstraction.
+  - `Module.WeightsDevice` is public. New: `PredictorBuilder.Model` and `PredictorBuilder.SampleShape`.
+
   A file that also imports another `Tensor` (ONNX Runtime's `Microsoft.ML.OnnxRuntime.Tensors`, or
   `System.Numerics.Tensors`) now sees two: `Idrak.Tensor` used to win as a member of an enclosing namespace. Add
   `using Tensor = Idrak.Abstraction.Tensor;`.

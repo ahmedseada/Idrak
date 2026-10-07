@@ -21,7 +21,7 @@ public interface IParquetCodec
 }
 
 /// <summary>
-/// The compression codecs the Parquet reader (<c>ParquetFile</c> in Idrak.Datasets) reads, by Parquet codec id. Idrak.Datasets
+/// The compression codecs the Parquet reader (<c>ParquetFile</c> in Idrak.Data) reads, by Parquet codec id. Idrak.Data
 /// registers uncompressed, Snappy, Gzip, Brotli and LZ4 (raw); add others (Zstandard, for example), or replace these, with
 /// <see cref="Register"/>. The codec is looked up once per column chunk, so a registration applies to chunks read after it.
 /// </summary>
@@ -29,7 +29,7 @@ public static class ParquetCodecs
 {
     private static readonly Dictionary<int, IParquetCodec> Registry = [];
 
-    // The built-ins of the first-party assemblies (Idrak.Datasets) are registered before the first use.
+    // The built-ins of the first-party assemblies (Idrak.Data) are registered before the first use.
     static ParquetCodecs() => LibraryDefaults.Ensure();
 
     /// <summary>Registers (or replaces) the codec for its <see cref="IParquetCodec.Id"/>.</summary>

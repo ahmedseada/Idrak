@@ -42,7 +42,7 @@ public sealed class OnnxAttribute
 /// <summary>
 /// An ONNX graph being written: constants (initializers) and operator nodes. Export translators
 /// (<see cref="OnnxExportOps"/>, or one exporter's own) add their nodes to it; the exporter (<c>OnnxExporter</c> in
-/// Idrak.Onnx) implements it and writes the result as an .onnx file. Operators follow ONNX opset <see cref="Opset"/>.
+/// Idrak) implements it and writes the result as an .onnx file. Operators follow ONNX opset <see cref="Opset"/>.
 /// </summary>
 public abstract class OnnxGraph
 {

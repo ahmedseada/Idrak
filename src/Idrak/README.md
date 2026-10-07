@@ -27,7 +27,8 @@ alone.
 | Generation | Streaming text generation, batches, sampling, float32 / int8 / bfloat16 KV caches, chat with reasoning and tool calls, a coding agent |
 | Inference | Predictors, model packages (`.ikm`), an inference engine with batching and keep-alive |
 | Retrieval | Chunking, BM25, vector and hybrid search, re-ranking, a RAG pipeline that cites passages |
-| Vision | Channel normalization layer, foreground (Otsu), connected components, content framing, region classification; boxes, non-maximum suppression and a detector over any network; segmentation masks, per-pixel loss and IoU metrics |
+| Vision | Channel normalization layer; per-pixel loss for segmentation (region classification and content framing are in `Idrak.Vision`) |
+| ONNX | Export to `.onnx` (opset 17) that ONNX Runtime, TensorRT, OpenVINO, DirectML and other runtimes can run; import of `.onnx` files into layers or graph modules; no dependencies (the protobuf is read and written here) |
 | Telemetry | Hooks that cost nothing when unused: console, CSV metrics, JSON Lines |
 | Extending | More than twenty registries: samplers, KV cache layouts, packed weight formats, builder steps, graph operations, RoPE scalings, tool-call formats, data sources, image codecs, optimizers, differentiable operations |
 
@@ -145,10 +146,11 @@ Console.WriteLine(reply.Message!.Content);
 | Package | What it adds |
 |---------|--------------|
 | `Idrak.LanguageModels` | Hugging Face and GGUF language models, tokenizers, chat templates, fine-tuning, evaluation |
-| `Idrak.Datasets` | JSON Lines, JSON, CSV, text and Parquet files; Hugging Face, GitHub, Kaggle, Zenodo and URL sources |
+| `Idrak.Data` | JSON Lines, JSON, CSV, text and Parquet files; Hugging Face, GitHub, Kaggle, Zenodo and URL sources |
+| `Idrak.Vision` | Region classification in batches, content framing for classifiers of single objects, image statistics |
 | `Idrak.AspNetCore` | Prediction, generation, a local chat API and an OpenAI-style `/v1` API in ASP.NET Core |
 | `Idrak.Mcp` | Model Context Protocol tools |
-| `Idrak.Onnx`, `Idrak.Onnx.Runtime` | ONNX export and import; running `.onnx` models |
+| `Idrak.Onnx.Runtime` | Running `.onnx` models with ONNX Runtime as Idrak modules |
 | `Idrak.Cli` | The `idrak` command-line tool: checks, chat, serving, benchmarks, fine-tuning, data (`dotnet tool install -g Idrak.Cli`) |
 
 ## Documentation

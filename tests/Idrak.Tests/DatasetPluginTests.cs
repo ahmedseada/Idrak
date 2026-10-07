@@ -3,7 +3,7 @@
 
 using System.Text.Json.Nodes;
 using Idrak;
-using Idrak.Datasets;
+using Idrak.Data;
 using RegisteredSources = Idrak.Abstraction.Data.DatasetSources;
 
 // Dataset plug-ins: file formats, sources and Parquet codecs added from outside the library through their registries.
@@ -112,22 +112,22 @@ internal static partial class Tests
             Check(DataFileFormats.Names.Last() == "Lines" && DataFileFormats.Find("A.LINES.gz") == lines, "registered and found by extension");
             Check(DataFiles.FormatOf("a.lines") is null, "a registered format has no DataFormat value");
 
-            var rows = Dataset.FromFile(Path.Combine(folder, "a.lines")).ToList();
+            var rows = DatasetRows.FromFile(Path.Combine(folder, "a.lines")).ToList();
             Check(rows.Count == 2 && (string)rows[1]["line"]! == "second" && (int)rows[1]["number"]! == 2, "read by the registered format");
 
-            var inFolder = Dataset.FromFolder(folder, "*.lines").ToList();
+            var inFolder = DatasetRows.FromFolder(folder, "*.lines").ToList();
             Check(inFolder.Count == 2, $"folders include the registered format: {inFolder.Count} rows");
 
             var named = DatasetSpec.Parse(Path.Combine(folder, "b.txt") + "?format=lines").Open().ToList();
             Check(named.Count == 3 && (int)named[2]["number"]! == 3, "a recipe chooses the format by its name");
-            var forced = Dataset.FromFile(Path.Combine(folder, "b.txt"), new ReadOptions { FileFormat = lines }).ToList();
+            var forced = DatasetRows.FromFile(Path.Combine(folder, "b.txt"), new ReadOptions { FileFormat = lines }).ToList();
             Check(forced.Count == 3 && forced[0]["line"] is not null, "ReadOptions.FileFormat chooses it");
 
             // Replacing a built-in: the enum value and the extension both reach the replacement.
             var counted = new CountingFormat(csv);
             DataFileFormats.Register(counted);
             File.WriteAllText(Path.Combine(folder, "c.csv"), "a,b\n1,2\n");
-            var csvRows = Dataset.FromFile(Path.Combine(folder, "c.csv")).ToList();
+            var csvRows = DatasetRows.FromFile(Path.Combine(folder, "c.csv")).ToList();
             _ = DataFiles.ReadStream(() => new MemoryStream("a\n1\n"u8.ToArray()), "t.csv", DataFormat.Csv, ReadOptions.Default).ToList();
             Check(counted.Reads == 2 && csvRows.Count == 1 && (long)csvRows[0]["b"]! == 2, $"a replaced built-in is used ({counted.Reads} reads)");
             Check(string.Join(",", DataFileFormats.Names.Take(7)) == "JsonLines,Json,Csv,Tsv,Parquet,Text,Code", "a replacement keeps its place");
@@ -168,9 +168,9 @@ internal static partial class Tests
 
         public IDatasetRows Open(DatasetSpec spec, ReadOptions options, IDownloader? downloader)
         {
-            var data = Dataset.FromFile(Path.Combine(folder, spec.Source[5..]), options);
+            var data = DatasetRows.FromFile(Path.Combine(folder, spec.Source[5..]), options);
             return spec.Options.TryGetValue("shout", out var shout) && shout == "true"
-                ? Dataset.FromRows(data.Select(r => { r["text"] = ((string)r["text"]!).ToUpperInvariant(); return r; }))
+                ? DatasetRows.FromRows(data.Select(r => { r["text"] = ((string)r["text"]!).ToUpperInvariant(); return r; }))
                 : data;
         }
     }
@@ -248,7 +248,7 @@ internal static partial class Tests
     {
         _ = device;
         var snappy = ParquetCodecs.Get(1);
-        string Rows(string name) => string.Join("\n", Dataset.FromFile(TestData($"parquet/{name}.parquet")).Select(r => r.ToJsonString()));
+        string Rows(string name) => string.Join("\n", DatasetRows.FromFile(TestData($"parquet/{name}.parquet")).Select(r => r.ToJsonString()));
         string before = Rows("snappy-v1");
         var counting = new CountingCodec(snappy);
         try
@@ -261,7 +261,7 @@ internal static partial class Tests
             ParquetCodecs.Register(new RefusingCodec());
             try
             {
-                _ = Dataset.FromFile(TestData("parquet/zstd.parquet")).ToList();
+                _ = DatasetRows.FromFile(TestData("parquet/zstd.parquet")).ToList();
                 Check(false, "the zstd file should reach the registered codec");
             }
             catch (InvalidOperationException ex)
@@ -278,7 +278,7 @@ internal static partial class Tests
         Check(string.Join(",", ParquetCodecs.Ids) == "0,1,2,4,7" && ParquetCodecs.Get(1) == snappy, "registrations restored");
         try
         {
-            _ = Dataset.FromFile(TestData("parquet/zstd.parquet")).ToList();
+            _ = DatasetRows.FromFile(TestData("parquet/zstd.parquet")).ToList();
             Check(false, "zstd should be refused again");
         }
         catch (NotSupportedException ex)

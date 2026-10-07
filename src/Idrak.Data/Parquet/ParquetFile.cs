@@ -6,9 +6,9 @@ using System.Globalization;
 using System.Numerics;
 using System.Text;
 using System.Text.Json.Nodes;
-using Idrak.Datasets.Parquet;
+using Idrak.Data.Parquet;
 
-namespace Idrak.Datasets;
+namespace Idrak.Data;
 
 /// <summary>
 /// Reads Apache Parquet files into rows, without dependencies: nested lists, structs and maps (a chat dataset's

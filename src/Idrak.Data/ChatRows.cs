@@ -7,7 +7,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 
-namespace Idrak.Datasets;
+namespace Idrak.Data;
 
 /// <summary>
 /// How rows become conversations: templates over the row's columns, such as <c>User = "{instruction}\n\n{input}"</c>,
@@ -75,7 +75,7 @@ public static partial class ChatRows
     ];
 
     /// <summary>Rows as conversations or text (see the class summary); <paramref name="mapping"/> overrides the detection.</summary>
-    public static Dataset Normalize(Dataset data, RowKind kind = RowKind.Auto, ChatMapping? mapping = null, string? system = null) =>
+    public static DatasetRows Normalize(DatasetRows data, RowKind kind = RowKind.Auto, ChatMapping? mapping = null, string? system = null) =>
         data.Select(row => Normalize(row, kind, mapping, system));
 
     /// <summary>One row as a conversation or text, or null when it is neither.</summary>

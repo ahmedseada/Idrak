@@ -11,7 +11,7 @@ namespace Idrak.Cli.Shared;
 internal static class Units
 {
     /// <summary>A byte count: "512 B", "3.4 MB", "1.20 GB" (powers of 1024, as the library's downloader prints them).</summary>
-    public static string Bytes(long bytes) => Datasets.Downloader.Size(bytes);
+    public static string Bytes(long bytes) => Idrak.Data.Downloader.Size(bytes);
 
     /// <summary>A byte count given as a number of any size (estimates): as <see cref="Bytes(long)"/>.</summary>
     public static string Bytes(double bytes) => Bytes((long)Math.Round(bytes));
