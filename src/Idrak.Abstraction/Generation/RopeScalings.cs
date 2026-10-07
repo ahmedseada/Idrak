@@ -314,3 +314,41 @@ public static class RopeScalings
         };
     }
 }
+
+/// <summary>Rotary position embedding settings.</summary>
+/// <param name="Theta">The base of the frequencies (10000 in the original paper; larger for long-context models).</param>
+/// <param name="RotaryDim">Dimensions of each head that rotate (all when null).</param>
+/// <param name="Interleaved">Pairs are (2i, 2i+1) instead of (i, i + rotaryDim / 2).</param>
+/// <param name="Scaling">Frequency scaling for long contexts, or null.</param>
+public sealed record RopeSettings(float Theta, int? RotaryDim = null, bool Interleaved = false, RopeScaling? Scaling = null)
+{
+    /// <summary>The rotation frequency of each pair (after scaling; for a scaling whose frequencies depend on the position, those of the first positions).</summary>
+    public double[] Frequencies(int headDim) => Scaled(headDim).Frequencies;
+
+    /// <summary>
+    /// The frequencies of each pair and the factor on the cos and sin tables, after <see cref="Scaling"/> (computed by the
+    /// method registered for its type in <see cref="RopeScalings"/>).
+    /// </summary>
+    public RopeScalingResult Scaled(int headDim)
+    {
+        int rotary = RotaryDim ?? headDim, half = rotary / 2;
+        var frequencies = new double[half];
+        for (int i = 0; i < half; i++)
+        {
+            frequencies[i] = 1.0 / Math.Pow(Theta, 2.0 * i / rotary);
+        }
+
+        if (Scaling is null)
+        {
+            return new RopeScalingResult(frequencies);
+        }
+
+        var result = RopeScalings.Get(Scaling.Type)(new RopeScalingInput(frequencies, Theta, rotary, Scaling.Parameters));
+        if (result.Frequencies.Length != half)
+        {
+            throw new InvalidOperationException($"RoPE scaling '{Scaling.Type}' returned {result.Frequencies.Length} frequencies; {half} expected.");
+        }
+
+        return result;
+    }
+}

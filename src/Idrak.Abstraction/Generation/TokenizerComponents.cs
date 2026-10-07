@@ -3,7 +3,7 @@
 
 using System.Text.Json.Nodes;
 
-namespace Idrak.LanguageModels;
+namespace Idrak.Abstraction.Generation;
 
 /// <summary>A tokenizer.json normalizer: rewrites the text between added tokens before it is split.</summary>
 public interface ITokenizerNormalizer
@@ -32,15 +32,16 @@ public interface ITokenizerDecoder
 
 /// <summary>
 /// The normalizer, pre-tokenizer and decoder types a tokenizer.json may name ("type": "NFC", "Split", "ByteLevel", …), for
-/// <see cref="BpeTokenizer"/>. The built-in types are listed too: <see cref="BpeTokenizer"/> runs them itself, on its fast
-/// paths. Register a factory for another type (it receives the component's JSON object) with
-/// <see cref="RegisterNormalizer"/>, <see cref="RegisterPreTokenizer"/> or <see cref="RegisterDecoder"/>; registering a
-/// built-in name replaces the built-in. Components are made once, when a tokenizer is read, and a tokenizer using a
-/// registered one encodes (or decodes) through the general string pipeline instead of its fast paths.
+/// the tokenizers that read tokenizer.json (Idrak.LanguageModels' <c>BpeTokenizer</c>). The built-in types are listed too:
+/// the Hugging Face types the BPE tokenizer runs itself, on its fast paths. Register a factory for another type (it
+/// receives the component's JSON object) with <see cref="RegisterNormalizer"/>, <see cref="RegisterPreTokenizer"/> or
+/// <see cref="RegisterDecoder"/>; registering a built-in name replaces the built-in. Components are made once, when a
+/// tokenizer is read, and a tokenizer using a registered one encodes (or decodes) through the general string pipeline
+/// instead of its fast paths.
 /// </summary>
 public static class TokenizerComponents
 {
-    // The types BpeTokenizer runs itself.
+    // The types the BPE tokenizer runs itself.
     private static readonly string[] BuiltInNormalizers = ["Sequence", "NFC", "NFKC", "NFD", "NFKD", "Prepend", "Replace", "Lowercase"];
     private static readonly string[] BuiltInPreTokenizers = ["Sequence", "Split", "ByteLevel", "Metaspace", "Digits", "Whitespace"];
     private static readonly string[] BuiltInDecoders = ["Sequence", "ByteLevel", "Replace", "ByteFallback", "Fuse", "Strip", "Metaspace"];
@@ -49,6 +50,8 @@ public static class TokenizerComponents
     private static readonly Dictionary<string, Func<JsonObject, ITokenizerNormalizer>?> Normalizers = BuiltIn<ITokenizerNormalizer>(BuiltInNormalizers);
     private static readonly Dictionary<string, Func<JsonObject, IPreTokenizer>?> PreTokenizers = BuiltIn<IPreTokenizer>(BuiltInPreTokenizers);
     private static readonly Dictionary<string, Func<JsonObject, ITokenizerDecoder>?> Decoders = BuiltIn<ITokenizerDecoder>(BuiltInDecoders);
+
+    static TokenizerComponents() => LibraryDefaults.Ensure();   // components a first-party assembly adds are registered before the first lookup
 
     private static Dictionary<string, Func<JsonObject, T>?> BuiltIn<T>(string[] types) =>
         types.ToDictionary(t => t, Func<JsonObject, T>? (_) => null, StringComparer.Ordinal);
@@ -80,12 +83,17 @@ public static class TokenizerComponents
     /// <summary>The decoder types: the built-in ones and those registered.</summary>
     public static IReadOnlyCollection<string> DecoderTypes => Types(Decoders);
 
-    // The registered factory of a type, or null for a built-in or unknown type (BpeTokenizer's own switch decides).
-    internal static Func<JsonObject, ITokenizerNormalizer>? Normalizer(string? type) => Find(Normalizers, type);
+    /// <summary>
+    /// The factory registered for the normalizer type <paramref name="type"/>, or null for a built-in type nobody replaced
+    /// (the tokenizer runs it itself) and for an unknown one.
+    /// </summary>
+    public static Func<JsonObject, ITokenizerNormalizer>? FindNormalizer(string? type) => Find(Normalizers, type);
 
-    internal static Func<JsonObject, IPreTokenizer>? PreTokenizer(string? type) => Find(PreTokenizers, type);
+    /// <summary>The factory registered for the pre-tokenizer type <paramref name="type"/>, or null (see <see cref="FindNormalizer"/>).</summary>
+    public static Func<JsonObject, IPreTokenizer>? FindPreTokenizer(string? type) => Find(PreTokenizers, type);
 
-    internal static Func<JsonObject, ITokenizerDecoder>? Decoder(string? type) => Find(Decoders, type);
+    /// <summary>The factory registered for the decoder type <paramref name="type"/>, or null (see <see cref="FindNormalizer"/>).</summary>
+    public static Func<JsonObject, ITokenizerDecoder>? FindDecoder(string? type) => Find(Decoders, type);
 
     private static void Register<T>(Dictionary<string, Func<JsonObject, T>?> registry, string type, Func<JsonObject, T> create)
     {

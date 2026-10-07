@@ -1,17 +1,2 @@
 # Plan 10: abstractions still declared outside Idrak.Abstraction.*. This list may only shrink: declare new
 # interfaces, abstract classes and registries under Idrak.Abstraction.* (tests/Idrak.Tests/InventoryTests.cs).
-Idrak.LanguageModels.CheckpointFormats
-Idrak.LanguageModels.DistillationTeacher
-Idrak.LanguageModels.GgufArchitectures
-Idrak.LanguageModels.GgufPreTokenizers
-Idrak.LanguageModels.GgufTypes
-Idrak.LanguageModels.ICheckpointFormat
-Idrak.LanguageModels.IModelSource
-Idrak.LanguageModels.IPreTokenizer
-Idrak.LanguageModels.ITensorStore
-Idrak.LanguageModels.ITokenizerDecoder
-Idrak.LanguageModels.ITokenizerNormalizer
-Idrak.LanguageModels.ModelSources
-Idrak.LanguageModels.PretrainedArchitectures
-Idrak.LanguageModels.TeacherDistributions
-Idrak.LanguageModels.TokenizerComponents

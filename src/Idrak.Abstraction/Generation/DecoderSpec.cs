@@ -3,19 +3,32 @@
 
 using System.Text.Json.Nodes;
 
-namespace Idrak.Layers;
+namespace Idrak.Abstraction.Generation;
 
 /// <summary>The normalization of a decoder model.</summary>
 public enum DecoderNorm
 {
-    /// <summary>RMS normalization (<see cref="RMSNorm"/>).</summary>
+    /// <summary>RMS normalization (Idrak's RMSNorm layer).</summary>
     Rms,
 
-    /// <summary>Layer normalization with a bias (<see cref="LayerNorm"/>).</summary>
+    /// <summary>Layer normalization with a bias (Idrak's LayerNorm layer).</summary>
     Layer,
 }
 
-/// <summary>Settings for <see cref="DecoderSpec.Build"/>.</summary>
+/// <summary>The activation of a decoder's feed-forward blocks.</summary>
+public enum FeedForwardActivation
+{
+    /// <summary>x · sigmoid(x) (also called swish; with a gate: SwiGLU).</summary>
+    Silu,
+
+    /// <summary>GELU, tanh approximation (with a gate: GeGLU).</summary>
+    Gelu,
+
+    /// <summary>max(0, x).</summary>
+    Relu,
+}
+
+/// <summary>Settings for building a <see cref="DecoderSpec"/> into a network (Idrak's <c>DecoderBuilder.Build</c>).</summary>
 public sealed record DecoderBuildOptions
 {
     /// <summary>Where the layers are created (the default device when null).</summary>
@@ -62,10 +75,12 @@ public sealed record DecoderBuildOptions
 
 /// <summary>
 /// A decoder-only language model described by its settings, so different model families are data rather than code:
-/// token embedding (optionally scaled) → <see cref="Layers"/> × <see cref="DecoderBlock"/> (normalization, causal
+/// token embedding (optionally scaled) → <see cref="Layers"/> × decoder block (normalization, causal
 /// self-attention with grouped-query heads, rotary embeddings, feed-forward block) → final normalization → output head.
-/// <see cref="Build"/> creates it with random weights or from an <see cref="IWeightSource"/>, as a <see cref="Sequential"/>
-/// that works with <see cref="Generation.TextGenerator"/>, the KV cache, int8 quantization and LoRA.
+/// Idrak's <c>DecoderBuilder.Build</c> (<c>spec.Build(weights, options)</c>) creates it with random weights or from an
+/// <see cref="IWeightSource"/>, as a network that works with text generation, the KV cache, int8 quantization and LoRA.
+/// A spec is data: model families (<see cref="PretrainedArchitectures"/>) read it from a checkpoint's configuration, and
+/// model packages store it as JSON (<see cref="ToJson"/>).
 /// <para>
 /// Weight names (Idrak layout): <c>embed</c> [vocabulary, dim]; for each layer i, <c>layers.i.attn_norm</c>,
 /// <c>layers.i.attn.q</c> [dim, heads·headDim], <c>layers.i.attn.k</c> and <c>layers.i.attn.v</c> [dim, kvHeads·headDim],
@@ -76,7 +91,7 @@ public sealed record DecoderBuildOptions
 /// ".weight" (and ".bias" for layer normalization).
 /// </para>
 /// <para>
-/// Mixture-of-experts layers (<see cref="Experts"/> above 0; see <see cref="MixtureOfExperts"/>) have instead
+/// Mixture-of-experts layers (<see cref="Experts"/> above 0) have instead
 /// <c>layers.i.mlp.router</c> [dim, experts], <c>layers.i.mlp.experts.j.gate</c>/<c>up</c> [dim, expertFfDim] and
 /// <c>layers.i.mlp.experts.j.down</c> [expertFfDim, dim] for each expert j, and with a shared expert
 /// <c>layers.i.mlp.shared.gate</c>/<c>up</c>/<c>down</c> (its hidden size <see cref="SharedExpertFfDim"/>) and
@@ -219,7 +234,8 @@ public sealed record DecoderSpec
     /// <summary>Whether layer <paramref name="layer"/> is a mixture-of-experts layer.</summary>
     public bool IsExpertLayer(int layer) => Experts > 0 && (ExpertLayers is not { } layers || layers[layer]);
 
-    private int ExpertHidden => ExpertFfDim > 0 ? ExpertFfDim : FfDim;
+    /// <summary>The hidden size of each expert: <see cref="ExpertFfDim"/>, or <see cref="FfDim"/> when that is 0.</summary>
+    public int ExpertHidden => ExpertFfDim > 0 ? ExpertFfDim : FfDim;
 
     /// <summary>Whether layer <paramref name="layer"/> attends through the sliding window.</summary>
     public bool IsWindowed(int layer) => SlidingWindow is not null && (SlidingWindowLayers is not { } layers || layers[layer]);
@@ -251,197 +267,20 @@ public sealed record DecoderSpec
         return (long)Vocabulary * Dim * (TieEmbeddings ? 1 : 2) + (LearnedPositions ? (long)MaxPositions * Dim : 0) + layers + Dim;
     }
 
-    /// <summary>
-    /// Creates the model: with <paramref name="weights"/>, every layer is made from the named weights (and quantized to
-    /// int8 on the host when <see cref="DecoderBuildOptions.Int8"/>); without, from a seeded random initialization.
-    /// </summary>
-    public Sequential Build(IWeightSource? weights = null, DecoderBuildOptions? options = null)
-    {
-        options ??= new DecoderBuildOptions();
-        if (SlidingWindowLayers is { } windowed && windowed.Count != Layers)
-        {
-            throw new ArgumentException($"SlidingWindowLayers has {windowed.Count} entries for {Layers} layers.");
-        }
-
-        if (ExpertLayers is { } expertLayers && expertLayers.Count != Layers)
-        {
-            throw new ArgumentException($"ExpertLayers has {expertLayers.Count} entries for {Layers} layers.");
-        }
-
-        if (Experts < 0 || Experts > 0 && (ExpertsPerToken < 1 || ExpertsPerToken > Experts))
-        {
-            throw new ArgumentException($"{ExpertsPerToken} experts per token of {Experts}: each token goes to between 1 and {Experts}.");
-        }
-
-        var device = options.Device ?? Device.Default;
-        int maxPositions = options.MaxPositions ?? MaxPositions;
-        var random = new Random(options.Seed);
-        var created = new List<Module>();
-        Linear? head = null;
-        try
-        {
-            Tensor Tensor(string name, int[] shape, Func<float[]> fallback)
-            {
-                var values = weights is null ? fallback() : weights.Read(name, shape) ?? throw new InvalidDataException($"The weights have no '{name}' {Idrak.Abstraction.Tensor.FormatShape(shape)}.");
-                return Idrak.Abstraction.Tensor.Persistent(values, shape, device, requiresGrad: true);
-            }
-
-            float[] Uniform(int count, float bound) => [.. Enumerable.Range(0, count).Select(_ => (random.NextSingle() * 2f - 1f) * bound)];
-
-            float[] Normal(int count, float std)
-            {
-                var values = new float[count];
-                for (int i = 0; i < count; i++)
-                {
-                    double u1 = 1.0 - random.NextDouble(), u2 = random.NextDouble();
-                    values[i] = (float)(std * Math.Sqrt(-2 * Math.Log(u1)) * Math.Cos(2 * Math.PI * u2));
-                }
-
-                return values;
-            }
-
-            float[] Initial(int count, float uniformBound) => options.InitStd is { } std ? Normal(count, std) : Uniform(count, uniformBound);
-
-            // The format the projections are packed in (frozen weights), or null for trainable float32 ones; a format named
-            // in the options is looked up before anything is read.
-            PackedFormat? packed = options.Int8 ? PackedFormat.Int8 : options.Int4 ? PackedFormat.Int4 : options.BFloat16 ? PackedFormat.BFloat16 : null;
-            string? packedName = options.PackedFormatName;
-            var factory = packedName is null ? null : PackedWeight.Factory(packedName);
-
-            Linear Projection(string name, int inputs, int outputs, bool bias, float[]? transposedFrom = null)
-            {
-                int[] shape = [inputs, outputs];
-                float[] Values() => transposedFrom is not null ? Transpose(transposedFrom, outputs, inputs)
-                    : weights?.Read($"{name}.weight", shape) ?? (weights is null
-                        ? Initial(inputs * outputs, MathF.Sqrt(6f / (inputs + outputs)))
-                        : throw new InvalidDataException($"The weights have no '{name}.weight' [{inputs}, {outputs}]."));
-                var b = bias ? Tensor($"{name}.bias", [outputs], () => new float[outputs]) : null;
-                return factory is not null ? Linear.FromPacked(PackedWeight.Pack(factory, packedName!, Values(), inputs, outputs, device), b)
-                    : packed is { } format ? Linear.FromPacked(PackedWeight.FromValues(format, Values(), inputs, outputs, device), b)
-                    : Linear.FromWeights(Idrak.Abstraction.Tensor.Persistent(Values(), shape, device, requiresGrad: true), b);
-            }
-
-            Module Normalization(string name, int features)
-            {
-                var gain = Tensor($"{name}.weight", [features], () => Enumerable.Repeat(Norm == DecoderNorm.Rms ? 1f - NormOffset : 1f, features).ToArray());
-                return Norm == DecoderNorm.Rms
-                    ? RMSNorm.FromWeights(gain, NormEpsilon, NormOffset)
-                    : LayerNorm.FromWeights(gain, Tensor($"{name}.bias", [features], () => new float[features]), NormEpsilon);
-            }
-
-            float[]? embeddingValues = weights is null
-                ? (options.InitStd is { } embedStd ? Normal(Vocabulary * Dim, embedStd) : [.. Enumerable.Range(0, Vocabulary * Dim).Select(_ => (float)(random.NextDouble() * 2 - 1) * 0.02f)])
-                : weights.Read("embed.weight", [Vocabulary, Dim]) ?? throw new InvalidDataException($"The weights have no 'embed.weight' [{Vocabulary}, {Dim}].");
-            // Frozen-weight builds keep the table as bfloat16 (half the memory; lossless for bfloat16 checkpoints).
-            bool frozen = packed is not null || factory is not null;
-            var embedding = frozen
-                ? Embedding.FromBFloat16(BFloat16Weight.FromValues(embeddingValues, Vocabulary, Dim, device))
-                : Embedding.FromWeights(Idrak.Abstraction.Tensor.Persistent(embeddingValues, [Vocabulary, Dim], device, requiresGrad: true));
-            embedding.Name = "embed";
-            created.Add(embedding);
-            // A packed tied head gets its own transposed copy of the table: made now, so the table's float values are not
-            // kept alive while every layer is read (a float tied head reads the embedding in place; see below).
-            if (TieEmbeddings && frozen)
-            {
-                head = Projection("head", Dim, Vocabulary, HeadBias, embeddingValues);
-            }
-
-            embeddingValues = null;
-            if (EmbeddingScale is { } scale)
-            {
-                created.Add(new Scale(scale) { Name = "embed_scale" });
-            }
-
-            if (LearnedPositions)
-            {
-                created.Add(new PositionEmbedding(Tensor("pos.weight", [maxPositions, Dim],
-                    () => options.InitStd is { } std ? Normal(maxPositions * Dim, std) : Uniform(maxPositions * Dim, 0.02f))) { Name = "pos" });
-            }
-
-            if (Dropout > 0f)
-            {
-                created.Add(new Dropout(Dropout, new Random(random.Next())) { Name = "embed_drop" });
-            }
-
-            for (int i = 0; i < Layers; i++)
-            {
-                string p = $"layers.{i}";
-                var attentionNorm = Normalization($"{p}.attn_norm", Dim);
-                var attention = new CausalSelfAttention(
-                    Projection($"{p}.attn.q", Dim, Heads * HeadDim, QkvBias),
-                    Projection($"{p}.attn.k", Dim, KvHeads * HeadDim, QkvBias),
-                    Projection($"{p}.attn.v", Dim, KvHeads * HeadDim, QkvBias),
-                    Projection($"{p}.attn.o", Heads * HeadDim, Dim, OutputBias),
-                    QkNorm ? RMSNorm.FromWeights(Tensor($"{p}.attn.q_norm.weight", [HeadDim], () => Enumerable.Repeat(1f - NormOffset, HeadDim).ToArray()), NormEpsilon, NormOffset) : null,
-                    QkNorm ? RMSNorm.FromWeights(Tensor($"{p}.attn.k_norm.weight", [HeadDim], () => Enumerable.Repeat(1f - NormOffset, HeadDim).ToArray()), NormEpsilon, NormOffset) : null,
-                    Heads, KvHeads, HeadDim, IsWindowed(i) ? SlidingWindowRope ?? Rope : Rope, maxPositions)
-                {
-                    SlidingWindow = IsWindowed(i) ? SlidingWindow : null,
-                    ScoreScale = AttentionScale ?? 1f / MathF.Sqrt(HeadDim),
-                    ScoreSoftcap = AttentionSoftcap,
-                };
-                var feedForwardNorm = ParallelBlocks ? null : Normalization($"{p}.mlp_norm", Dim);
-                FeedForward Dense(string name, int hidden) => new(
-                    Gated ? Projection($"{name}.gate", Dim, hidden, FeedForwardBias) : null,
-                    Projection($"{name}.up", Dim, hidden, FeedForwardBias),
-                    Projection($"{name}.down", hidden, Dim, FeedForwardBias),
-                    Activation);
-
-                // The router and the shared expert's gate stay float32 in every build: they are small, and a packed
-                // router's rounding could change which experts a token goes to.
-                Linear Float(string name, int outputs) => Linear.FromWeights(Tensor($"{name}.weight", [Dim, outputs],
-                    () => Initial(Dim * outputs, MathF.Sqrt(6f / (Dim + outputs)))));
-
-                Module feedForward = IsExpertLayer(i)
-                    ? new MixtureOfExperts(Float($"{p}.mlp.router", Experts),
-                        [.. Enumerable.Range(0, Experts).Select(j => Dense($"{p}.mlp.experts.{j}", ExpertHidden))], ExpertsPerToken, NormalizeTopK,
-                        SharedExpertFfDim > 0 ? Dense($"{p}.mlp.shared", SharedExpertFfDim) : null,
-                        SharedExpertFfDim > 0 ? Float($"{p}.mlp.shared_gate", 1) : null)
-                    : Dense($"{p}.mlp", FfDim);
-                created.Add(new DecoderBlock(attentionNorm, attention, feedForwardNorm, feedForward,
-                    PostNorms ? Normalization($"{p}.post_attn_norm", Dim) : null,
-                    PostNorms ? Normalization($"{p}.post_mlp_norm", Dim) : null,
-                    Dropout > 0f ? new Dropout(Dropout, new Random(random.Next())) : null) { Name = p });
-            }
-
-            var norm = Normalization("norm", Dim);
-            norm.Name = "norm";
-            created.Add(norm);
-            // A float tied head reads the embedding table in place; packed tied heads were made with the embedding.
-            head ??= TieEmbeddings
-                ? Linear.Tied(embedding, HeadBias ? Tensor("head.bias", [Vocabulary], () => new float[Vocabulary]) : null)
-                : Projection("head", Dim, Vocabulary, HeadBias);
-            head.Name = "head";
-            head.OutputSoftcap = LogitSoftcap;
-            created.Add(head);
-            var blocks = created.OfType<DecoderBlock>().ToList();
-            for (int i = 0; i < blocks.Count; i++)
-            {
-                blocks[i].NextNorm = (i + 1 < blocks.Count ? blocks[i + 1].AttentionNorm : norm) as RMSNorm;
-            }
-
-            var model = new Sequential(created) { Name = "decoder" };
-            Specs.AddOrUpdate(model, this);
-            return model;
-        }
-        catch
-        {
-            created.ForEach(m => m.Dispose());
-            if (head is not null && !created.Contains(head))
-            {
-                head.Dispose();
-            }
-
-            throw;
-        }
-    }
-
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Module, DecoderSpec> Specs = [];
 
-    /// <summary>The spec a model was built from with <see cref="Build"/>, or null.</summary>
+    /// <summary>The spec <paramref name="model"/> was built from (see <see cref="Describe"/>), or null.</summary>
     public static DecoderSpec? Of(Module model) => Specs.TryGetValue(model, out var spec) ? spec : null;
 
-    private static float[] Transpose(float[] values, int rows, int columns) => HostParallel.Transpose(values, rows, columns);
+    /// <summary>
+    /// Records that <paramref name="model"/> is the network this spec describes, so <see cref="Of"/> finds it (the inference
+    /// engine reads the model's sizes from it). Building a spec records it; a family that builds its own network may too.
+    /// </summary>
+    public void Describe(Module model)
+    {
+        ArgumentNullException.ThrowIfNull(model);
+        Specs.AddOrUpdate(model, this);
+    }
 
     /// <summary>The spec as JSON (format "idrak-decoder/1"), for packages.</summary>
     public JsonObject ToJson()

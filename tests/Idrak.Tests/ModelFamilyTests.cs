@@ -139,16 +139,16 @@ internal static partial class Tests
         // config.json: the parameters are forwarded with the model's context length added; unknown types list the names.
         var config = FamilyConfig("LlamaForCausalLM");
         config["rope_scaling"] = new JsonObject { ["rope_type"] = "yarn", ["factor"] = 4.0, ["original_max_position_embeddings"] = 8 };
-        var spec = PretrainedArchitectures.CommonSpec(Parsed(config), []);
+        var spec = PretrainedFamilies.CommonSpec(Parsed(config), []);
         var parameters = spec.Rope!.Scaling!.Parameters;
         Check(spec.Rope.Scaling.Type == "yarn" && (double)parameters["factor"]! == 4 && (int)parameters["original_max_position_embeddings"]! == 8
               && (int)parameters["max_position_embeddings"]! == 32 && parameters["rope_type"] is null, $"yarn from config.json: {spec.Rope.Scaling}");
         config["rope_scaling"] = new JsonObject { ["type"] = "dynamic", ["factor"] = 2.0 };
-        Check(PretrainedArchitectures.CommonSpec(Parsed(config), []).Rope!.Scaling == RopeScaling.Dynamic(2, 32), "dynamic from config.json (the older 'type' key)");
+        Check(PretrainedFamilies.CommonSpec(Parsed(config), []).Rope!.Scaling == RopeScaling.Dynamic(2, 32), "dynamic from config.json (the older 'type' key)");
         config["rope_scaling"] = new JsonObject { ["rope_type"] = "longrope", ["factor"] = 2.0 };
         try
         {
-            PretrainedArchitectures.CommonSpec(Parsed(config), []);
+            PretrainedFamilies.CommonSpec(Parsed(config), []);
             Check(false, "an unregistered rope_type is rejected");
         }
         catch (NotSupportedException ex)
@@ -384,7 +384,7 @@ internal static partial class Tests
             var tensors = new List<(string, int[], float[])>();
             foreach (var (name, values) in weights.Values)
             {
-                string stored = PretrainedArchitectures.GemmaTensorName(name)!;
+                string stored = PretrainedFamilies.GemmaTensorName(name)!;
                 bool linear = (name.Contains(".attn.") && !name.Contains("_norm") || name.Contains(".mlp.")) && name.EndsWith(".weight");
                 int[] shape = ShapeOf(gemmaSpec, name);
                 tensors.Add(linear ? (stored, [shape[1], shape[0]], Transpose2D(values, shape[0], shape[1])) : (stored, shape, values));
@@ -404,7 +404,7 @@ internal static partial class Tests
             PretrainedArchitectures.Register("TestOwnBuildForCausalLM", new PretrainedArchitecture
             {
                 Spec = (config, notes) => GemmaSpecOf(config, notes),
-                TensorName = PretrainedArchitectures.GemmaTensorName,
+                TensorName = PretrainedFamilies.GemmaTensorName,
                 Build = context =>
                 {
                     seen = context;

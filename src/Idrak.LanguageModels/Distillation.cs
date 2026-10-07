@@ -8,9 +8,10 @@ using Idrak.Layers;
 namespace Idrak.LanguageModels;
 
 /// <summary>
-/// The teacher of knowledge distillation for <see cref="FineTuner"/>: the distribution over the next token at every
-/// trained position, which <see cref="FineTuningLossInput.TeacherDivergence"/> compares with the student's (and
-/// <see cref="FineTuningLosses.Distillation"/> trains on). Set it as <see cref="FineTuningOptions.Teacher"/>. Two kinds:
+/// The built-in teachers of knowledge distillation (<see cref="DistillationTeacher"/>, Idrak.Abstraction) for
+/// <see cref="FineTuner"/>: the distribution over the next token at every trained position, which
+/// <see cref="FineTuningLossInput.TeacherDivergence"/> compares with the student's (and
+/// <see cref="FineTuningLosses.Distillation"/> trains on). Set one as <see cref="FineTuningOptions.Teacher"/>. Two kinds:
 /// <list type="bullet">
 /// <item><see cref="FromModel"/>: a loaded model computes its distributions on the fly, in inference mode, batch by batch
 /// (any weight format, on any device: the student's or another; only its hidden states at the trained positions are kept
@@ -20,30 +21,12 @@ namespace Idrak.LanguageModels;
 /// (the tokens outside the top k get probability 0): an approximation that keeps nearly all of the mass for usual k
 /// (16 to 64) and a teacher that is confident, and drops the tail the student would otherwise learn.</item>
 /// </list>
-/// Teacher and student must share a vocabulary (the same token for every id): see <see cref="CheckVocabulary"/>. When they
-/// do not, distil through data the teacher writes instead (<see cref="TeacherData"/>).
+/// Teacher and student must share a vocabulary (the same token for every id): see
+/// <see cref="DistillationTeacher.CheckVocabulary"/>. When they do not, distil through data the teacher writes instead
+/// (<see cref="TeacherData"/>).
 /// </summary>
-public abstract class DistillationTeacher : IDisposable
+public static class DistillationTeachers
 {
-    private protected DistillationTeacher()
-    {
-    }
-
-    /// <summary>The width of the teacher's distributions (its output head; for stored logits, the width recorded).</summary>
-    public abstract int Vocabulary { get; }
-
-    /// <summary>Tokens kept per position (0: the full distribution).</summary>
-    public abstract int TopK { get; }
-
-    /// <summary>
-    /// A fingerprint of the teacher's vocabulary (<see cref="VocabularyFingerprint"/>), or null when unknown; a student
-    /// whose own fingerprint differs does not share it.
-    /// </summary>
-    public abstract string? Fingerprint { get; }
-
-    /// <summary>The teacher's tokenizer, when it has one at hand (a model's; not stored logits).</summary>
-    public virtual ITokenizer? Tokenizer => null;
-
     /// <summary>
     /// A teacher that runs <paramref name="teacher"/> on each batch's sequences: in inference mode (dropout off, no
     /// gradients), on its own device, padded batches of at most <paramref name="batchTokens"/> positions. With
@@ -60,124 +43,11 @@ public abstract class DistillationTeacher : IDisposable
 
     /// <summary>A teacher that reads the top-k logits stored in <paramref name="path"/> (see <see cref="TeacherLogitsWriter"/>); disposing it closes the file.</summary>
     public static DistillationTeacher FromFile(string path) => new StoredTeacher(TeacherLogitsFile.Open(path));
-
-    /// <summary>
-    /// Checks that <paramref name="student"/> can learn from this teacher: the same token for every id (see
-    /// <see cref="CheckVocabulary"/>, or the fingerprints of stored logits), and an output head at least as wide as the
-    /// tokens the two share. Throws <see cref="InvalidOperationException"/> naming the difference when not.
-    /// </summary>
-    public void Check(PretrainedModel student)
-    {
-        ArgumentNullException.ThrowIfNull(student);
-        var tokenizer = student.Tokenizer ?? throw new InvalidOperationException("The student has no tokenizer: its vocabulary cannot be compared with the teacher's.");
-        if (Tokenizer is { } own)
-        {
-            CheckVocabulary(own, tokenizer);
-        }
-        else if (Fingerprint is { } fingerprint && fingerprint != VocabularyFingerprint(tokenizer))
-        {
-            throw new InvalidOperationException(Mismatch("the stored teacher logits were written for another vocabulary (their fingerprint differs from the student's)"));
-        }
-    }
-
-    /// <summary>
-    /// Checks that <paramref name="teacher"/> and <paramref name="student"/> share a vocabulary: every id is the same
-    /// token in both (ids past a tokenizer's end, such as the padding rows models add for alignment, count as empty, so
-    /// the same tokenizer padded to two widths matches). Logit distillation compares two distributions entry by entry,
-    /// so it needs this; throws <see cref="InvalidOperationException"/> naming the first id that differs otherwise.
-    /// </summary>
-    public static void CheckVocabulary(ITokenizer teacher, ITokenizer student)
-    {
-        ArgumentNullException.ThrowIfNull(teacher);
-        ArgumentNullException.ThrowIfNull(student);
-        int count = Math.Max(teacher.VocabularySize, student.VocabularySize);
-        for (int id = 0; id < count; id++)
-        {
-            string a = TokenText(teacher, id), b = TokenText(student, id);
-            if (!string.Equals(a, b, StringComparison.Ordinal))
-            {
-                throw new InvalidOperationException(Mismatch(
-                    $"token {id} is {Quote(a)} for the teacher and {Quote(b)} for the student ({Tokens(teacher):N0} and {Tokens(student):N0} tokens)"));
-            }
-        }
-    }
-
-    /// <summary>
-    /// A short fingerprint of <paramref name="tokenizer"/>'s vocabulary (a 64-bit hash of every token's text, in id order,
-    /// trailing empty ids left out): equal for two tokenizers <see cref="CheckVocabulary"/> accepts. Stored with teacher
-    /// logits to check the student that reads them.
-    /// </summary>
-    public static string VocabularyFingerprint(ITokenizer tokenizer)
-    {
-        ArgumentNullException.ThrowIfNull(tokenizer);
-        int count = Tokens(tokenizer);
-        ulong hash = Hash.Start;
-        for (int id = 0; id < count; id++)
-        {
-            hash = Hash.Add(hash, Encoding.UTF8.GetBytes(TokenText(tokenizer, id)));
-            hash = Hash.Add(hash, [0xFF]);                                      // a separator no UTF-8 text contains
-        }
-
-        return $"{count}-{hash:x16}";
-    }
-
-    /// <inheritdoc />
-    public void Dispose()
-    {
-        Dispose(true);
-        GC.SuppressFinalize(this);
-    }
-
-    /// <summary>Releases what the teacher holds (an open file).</summary>
-    protected virtual void Dispose(bool disposing)
-    {
-    }
-
-    /// <summary>The distributions at the trained positions of <paramref name="sequences"/>, in order (the batch's).</summary>
-    internal abstract TeacherDistributions Distributions(IReadOnlyList<TrainingSequence> sequences);
-
-    private static string Mismatch(string detail) =>
-        $"The teacher and the student do not share a vocabulary: {detail}. Logit distillation compares their distributions token by token, "
-        + "so it needs the same tokenizer; distil through answers the teacher writes instead (sequence-level distillation, TeacherData), which works across vocabularies.";
-
-    private static string Quote(string text) => text.Length == 0 ? "nothing" : $"\"{text}\"";
-
-    // A token's text: the vocabulary entry where the tokenizer exposes it, else its decoded text.
-    private static string TokenText(ITokenizer tokenizer, int id) => (uint)id >= (uint)tokenizer.VocabularySize ? ""
-        : tokenizer switch
-        {
-            BpeTokenizer bpe => bpe.TokenOf(id),
-            _ => tokenizer.Decode([id]),
-        };
-
-    // The tokens up to the last non-empty one (padding ids at the end left out).
-    private static int Tokens(ITokenizer tokenizer)
-    {
-        int count = tokenizer.VocabularySize;
-        while (count > 0 && TokenText(tokenizer, count - 1).Length == 0)
-        {
-            count--;
-        }
-
-        return count;
-    }
 }
 
-/// <summary>The teacher's distributions at the trained positions of one batch.</summary>
-internal abstract class TeacherDistributions : IDisposable
+// Top-k logits as dense distributions, for the built-in teachers.
+internal static class TopKLogits
 {
-    /// <summary>
-    /// The probabilities at temperature <paramref name="temperature"/> of trained positions start … start + count − 1 as
-    /// [count, vocabulary] on <paramref name="device"/>: a teacher wider than <paramref name="vocabulary"/> is cut to it (and
-    /// renormalized), a narrower one gets zeros past its end.
-    /// </summary>
-    public abstract Tensor Probabilities(int start, int count, float temperature, int vocabulary, Device device);
-
-    /// <inheritdoc />
-    public virtual void Dispose()
-    {
-    }
-
     // Dense probabilities from top-k entries (ids and logits, k per row): the softmax at the temperature over each row's
     // entries below `vocabulary`.
     internal static Tensor Dense(int[] ids, float[] logits, int k, int start, int count, float temperature, int vocabulary, Device device)
@@ -255,7 +125,7 @@ internal sealed class ModelTeacher(PretrainedModel model, int topK, int batchTok
 
     public override ITokenizer? Tokenizer => model.Tokenizer;
 
-    internal override TeacherDistributions Distributions(IReadOnlyList<TrainingSequence> sequences) => new Batch(this, Hidden(sequences));
+    public override TeacherDistributions Distributions(IReadOnlyList<TrainingSequence> sequences) => new Batch(this, Hidden(sequences));
 
     // The teacher's final hidden states at the trained positions of the sequences, in order: [trained tokens, dim] on its
     // device. Padded batches of sequences in their order (right padding: a causal model's positions before it are
@@ -378,7 +248,7 @@ internal sealed class ModelTeacher(PretrainedModel model, int topK, int batchTok
             int width = values.Length / n;
             for (int r = 0; r < n; r++)
             {
-                TeacherDistributions.Top(values.AsSpan(r * width, width), k, ids.AsSpan((r0 + r) * k, k), logits.AsSpan((r0 + r) * k, k));
+                TopKLogits.Top(values.AsSpan(r * width, width), k, ids.AsSpan((r0 + r) * k, k), logits.AsSpan((r0 + r) * k, k));
             }
         }
 
@@ -402,10 +272,10 @@ internal sealed class ModelTeacher(PretrainedModel model, int topK, int batchTok
                     var top = new float[count * k];
                     for (int r = 0; r < count; r++)
                     {
-                        Top(values.AsSpan(r * width, width), k, ids.AsSpan(r * k, k), top.AsSpan(r * k, k));
+                        TopKLogits.Top(values.AsSpan(r * width, width), k, ids.AsSpan(r * k, k), top.AsSpan(r * k, k));
                     }
 
-                    return scope.Keep(Dense(ids, top, k, 0, count, temperature, vocabulary, device));
+                    return scope.Keep(TopKLogits.Dense(ids, top, k, 0, count, temperature, vocabulary, device));
                 }
 
                 using var noGrad = Autograd.NoGrad();
@@ -440,7 +310,7 @@ internal sealed class StoredTeacher(TeacherLogitsFile file) : DistillationTeache
 
     public override string? Fingerprint => file.VocabularyFingerprint;
 
-    internal override TeacherDistributions Distributions(IReadOnlyList<TrainingSequence> sequences)
+    public override TeacherDistributions Distributions(IReadOnlyList<TrainingSequence> sequences)
     {
         int k = file.TopK, total = sequences.Sum(s => s.TrainedTokens);
         var ids = new int[total * k];
@@ -469,11 +339,11 @@ internal sealed class StoredTeacher(TeacherLogitsFile file) : DistillationTeache
     private sealed class Batch(int[] ids, float[] logits, int k) : TeacherDistributions
     {
         public override Tensor Probabilities(int start, int count, float temperature, int vocabulary, Device device) =>
-            Dense(ids, logits, k, start, count, temperature, vocabulary, device);
+            TopKLogits.Dense(ids, logits, k, start, count, temperature, vocabulary, device);
     }
 }
 
-// FNV-1a, 64 bits: fingerprints and the keys of stored sequences (not for security).
+// FNV-1a, 64 bits: the keys of stored sequences (not for security).
 internal static class Hash
 {
     public const ulong Start = 14695981039346656037UL;

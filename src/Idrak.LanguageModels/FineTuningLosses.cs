@@ -132,7 +132,7 @@ public sealed class FineTuningLossInput
         }
 
         var divergence = _divergence?.Invoke(temperature)
-                         ?? throw new InvalidOperationException("No teacher for this input: set FineTuningOptions.Teacher (DistillationTeacher.FromModel or FromFile) to distil.");
+                         ?? throw new InvalidOperationException("No teacher for this input: set FineTuningOptions.Teacher (DistillationTeachers.FromModel or FromFile) to distil.");
         if (divergence.Length != LogProbabilities.Size)
         {
             throw new InvalidOperationException($"The teacher gave {divergence.Length} divergences for {LogProbabilities.Size} trained tokens.");

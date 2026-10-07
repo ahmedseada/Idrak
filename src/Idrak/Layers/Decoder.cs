@@ -86,44 +86,6 @@ public sealed partial class RMSNorm : Module
     public override string ToString() => $"RMSNorm({Features})";
 }
 
-/// <summary>Rotary position embedding settings.</summary>
-/// <param name="Theta">The base of the frequencies (10000 in the original paper; larger for long-context models).</param>
-/// <param name="RotaryDim">Dimensions of each head that rotate (all when null).</param>
-/// <param name="Interleaved">Pairs are (2i, 2i+1) instead of (i, i + rotaryDim / 2).</param>
-/// <param name="Scaling">Frequency scaling for long contexts, or null.</param>
-public sealed record RopeSettings(float Theta, int? RotaryDim = null, bool Interleaved = false, RopeScaling? Scaling = null)
-{
-    /// <summary>The rotation frequency of each pair (after scaling; for a scaling whose frequencies depend on the position, those of the first positions).</summary>
-    public double[] Frequencies(int headDim) => Scaled(headDim).Frequencies;
-
-    /// <summary>
-    /// The frequencies of each pair and the factor on the cos and sin tables, after <see cref="Scaling"/> (computed by the
-    /// method registered for its type in <see cref="RopeScalings"/>).
-    /// </summary>
-    public RopeScalingResult Scaled(int headDim)
-    {
-        int rotary = RotaryDim ?? headDim, half = rotary / 2;
-        var frequencies = new double[half];
-        for (int i = 0; i < half; i++)
-        {
-            frequencies[i] = 1.0 / Math.Pow(Theta, 2.0 * i / rotary);
-        }
-
-        if (Scaling is null)
-        {
-            return new RopeScalingResult(frequencies);
-        }
-
-        var result = RopeScalings.Get(Scaling.Type)(new RopeScalingInput(frequencies, Theta, rotary, Scaling.Parameters));
-        if (result.Frequencies.Length != half)
-        {
-            throw new InvalidOperationException($"RoPE scaling '{Scaling.Type}' returned {result.Frequencies.Length} frequencies; {half} expected.");
-        }
-
-        return result;
-    }
-}
-
 /// <summary>
 /// Causal self-attention for decoder-only language models: separate query, key and value projections (named "q", "k",
 /// "v"; output "o"), grouped-query attention (fewer key/value heads, each shared by a group of query heads),
@@ -611,19 +573,6 @@ public sealed class CausalSelfAttention : Module, ICachedModule
     public override string ToString() =>
         $"CausalSelfAttention({Heads} heads{(KvHeads != Heads ? $", {KvHeads} kv heads" : "")}, head size {HeadDim}{(Rope is null ? "" : ", rope")}{(QueryNorm is null ? "" : ", qk-norm")}"
         + $"{(_window is { } w ? $", window {w}" : "")}{(_softcap is { } c ? $", softcap {c}" : "")})";
-}
-
-/// <summary>The activation of a <see cref="FeedForward"/> block.</summary>
-public enum FeedForwardActivation
-{
-    /// <summary>x · sigmoid(x) (also called swish; with a gate: SwiGLU).</summary>
-    Silu,
-
-    /// <summary>GELU, tanh approximation (with a gate: GeGLU).</summary>
-    Gelu,
-
-    /// <summary>max(0, x).</summary>
-    Relu,
 }
 
 /// <summary>
