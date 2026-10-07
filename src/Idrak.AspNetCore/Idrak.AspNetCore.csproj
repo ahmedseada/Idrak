@@ -11,8 +11,6 @@
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Include="..\Idrak\Idrak.csproj" />
-    <!-- Conversations and the tool registry (Idrak.Generation) until they become contracts in Idrak.Abstraction. -->
-    <ProjectReference Include="..\Idrak.Nlp\Idrak.Nlp.csproj" />
   </ItemGroup>
 
 </Project>

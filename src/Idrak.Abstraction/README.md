@@ -12,6 +12,8 @@ dotnet add package Idrak.Abstraction  # the contracts alone, for a plug-in
 | Area | What is there |
 |------|---------------|
 | Devices | `Device`, `DeviceType`, `ComputeResources`; the CPU device (SIMD, multi-threaded), which is also every other device's host fallback |
+| Generation: tools | `Tool`, `[Tool]`, `ToolResult`, `IToolRegistry` and its default `ToolRegistry` (validation, allow rules, approvals, a timeout); `IToolChatModel` (a chat model that carries tools) and `ChatTools.WithTools` (runs a chat model's tool calls on the server) |
+| Serving | the engine's model kinds (`EngineModel<TCopy>`), `IPredictor<TIn, TOut>`, `IModelCatalog` (named models reached through their contracts; the inference engine implements it), `KeepAlive` (parses "30m", "1h30m", 0, -1) |
 
 The GPU devices (CUDA, Vulkan, HIP) ship in the `Idrak` package; when an application includes it, `Device.Available`
 lists them, even before any other type of Idrak is used.

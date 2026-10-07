@@ -88,6 +88,7 @@ internal sealed class ServeHost
     private readonly ConcurrentDictionary<string, long> _memory = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, long> _requests = new(StringComparer.Ordinal);
     private StreamWriter? _requestLog;
+    private bool _mcp;
 
     public ServeHost(CommandContext context, ServeSettings settings, IReadOnlyList<ServedModel> models)
     {
@@ -318,16 +319,7 @@ internal sealed class ServeHost
             }));
         }
 
-        var idrak = builder.Services.AddIdrak().LoadOnFirstUse();
-        foreach (var model in Served)
-        {
-            var served = model;
-            idrak.Configure((_, engine) => engine.ChatModel(served.Name, () => Load(served), b =>
-            {
-                b = b.KeepAlive(Settings.KeepAlive);
-                return served.Template is null ? b : b.Template(served.Template);
-            }));
-        }
+        builder.Services.AddIdrak().LoadOnFirstUse().Configure((_, engine) => AddModels(engine));
 
         var app = builder.Build();
         if (Settings.Cors.Count > 0)
@@ -376,6 +368,42 @@ internal sealed class ServeHost
     }
 
     // ------------------------------------------------------------------ models
+
+    /// <summary>
+    /// <c>idrak serve --mcp</c>: the models as MCP tools (generate, chat) with <paramref name="tools"/>, over standard
+    /// input and output until the client disconnects; each model loads on its first call. Status lines go to the error
+    /// output, since the output carries the protocol.
+    /// </summary>
+    public int RunMcp(IReadOnlyList<Tool> tools)
+    {
+        _mcp = true;
+        var engine = AddModels(InferenceEngine.Create().LoadOnFirstUse()).BuildAsync().GetAwaiter().GetResult();
+        try
+        {
+            var registry = ToolRegistry.Create().Add(Idrak.Mcp.McpTools.ModelTools(engine)).Add(tools).Build();
+            return McpServeCommand.Serve(_context, registry);
+        }
+        finally
+        {
+            engine.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+    }
+
+    // Every served model as a chat model, loaded on its first request and unloaded after the keep-alive time.
+    private InferenceEngineBuilder AddModels(InferenceEngineBuilder engine)
+    {
+        foreach (var model in Served)
+        {
+            var served = model;
+            engine.ChatModel(served.Name, () => Load(served), b =>
+            {
+                b = b.KeepAlive(Settings.KeepAlive);
+                return served.Template is null ? b : b.Template(served.Template);
+            });
+        }
+
+        return engine;
+    }
 
     private TextGenerator Load(ServedModel model)
     {
@@ -801,6 +829,12 @@ internal sealed class ServeHost
     {
         lock (_print)
         {
+            if (_mcp)
+            {
+                _context.Error(line);                           // the output carries the protocol
+                return;
+            }
+
             _context.Write(line);
             _context.Output.Flush();
         }

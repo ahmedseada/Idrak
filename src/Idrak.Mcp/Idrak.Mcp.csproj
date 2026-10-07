@@ -6,14 +6,12 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <IsAotCompatible>true</IsAotCompatible>
     <PackageId>Idrak.Mcp</PackageId>
-    <Description>Model Context Protocol for Idrak: use the tools of MCP servers in conversations and the inference engine, and serve Idrak tools to MCP clients.</Description>
+    <Description>Model Context Protocol for Idrak: use the tools of MCP servers in conversations and the inference engine, and serve Idrak tools and the inference engine's models (generate, chat, embed) to MCP clients. Built on the contracts in Idrak.Abstraction only.</Description>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="ModelContextProtocol.Core" Version="2.2.0" />
-    <ProjectReference Include="..\Idrak\Idrak.csproj" />
-    <!-- The tool registry and conversations (Idrak.Generation) until they become contracts in Idrak.Abstraction. -->
-    <ProjectReference Include="..\Idrak.Nlp\Idrak.Nlp.csproj" />
+    <ProjectReference Include="..\Idrak.Abstraction\Idrak.Abstraction.csproj" />
   </ItemGroup>
 
 </Project>
