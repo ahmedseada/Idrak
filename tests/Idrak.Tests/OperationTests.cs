@@ -21,6 +21,7 @@ internal static partial class Tests
         ("operations: with RetryOnHost the dispatcher runs a failing kernel again on the host: the CPU's result, one host call, one retried event; a registered kernel is not retried", DeviceFailureRetriedOnHost),
         ("operations: IDRAK_RETRY_ON_HOST is off when unset or 0, on for every device but the CPU with 1 or all, and for the kinds listed", RetryOnHostSetting),
         ("operations: a device with nothing registered, no trace and retry off keeps the inlined fast path; RetryOnHost leaves it and turning it off returns", RetryOnHostLeavesFastPath),
+        ("operations: NormStats keeps its precision for one-element groups and large values with a small spread (variance from two passes)", NormStatsPrecision),
     ];
 
     // Backend's public virtual members that are not operations: memory, copies, graph capture, profiling and the
@@ -147,6 +148,56 @@ internal static partial class Tests
 
         Check(Kernels.Chain(minimal)[Ops.Softmax.Index].Source == KernelSource.Host, "removing it restores the fallback");
         Check(Ops.Find("softmax") == Ops.Softmax && Ops.Find("MaxPoolBackward2") == Ops.MaxPoolBackward2 && Ops.Find("nothing") is null, "Ops.Find");
+    }
+
+    private static void NormStatsPrecision(Device device)
+    {
+        var b = device.Backend;
+        const float eps = 1e-5f;
+        float[] values = [2.7182817f, -1.4142135f];                               // two groups of one value (squares inexact in float)
+        var x = b.Allocate(values.Length, zeroed: false);
+        var stats = new[] { b.Allocate(2, zeroed: true), b.Allocate(2, zeroed: true), b.Allocate(2, zeroed: true) };
+        try
+        {
+            b.Upload(values, x);
+            b.NormStats(x, stats[0], stats[1], stats[2], 1, 2, 1, eps);              // [outer 1, groups 2, inner 1]: one value each
+            var invStd = new float[2];
+            b.Download(stats[2], invStd);
+            float expected = 1f / MathF.Sqrt(eps);
+            Check(Math.Abs(invStd[0] - expected) < 1e-3f * expected && Math.Abs(invStd[1] - expected) < 1e-3f * expected,
+                $"one-element groups: invStd {invStd[0]}, {invStd[1]}, expected {expected}");
+
+            const int run = 64;                                                       // long enough for the vectorized sums
+            var tail = b.Allocate(run, zeroed: false);
+            var near = new float[run];
+            for (int i = 0; i < run; i++)
+            {
+                near[i] = 1000f + 0.25f * MathF.Sin(i * 1.7f);                         // 1000 ± 0.25, irregular
+            }
+
+            double mu = near.Average(v => (double)v), exact = near.Average(v => (v - mu) * (v - mu));
+
+            try
+            {
+                b.Upload(near, tail);
+                b.NormStats(tail, stats[0], stats[1], stats[2], 1, 1, run, eps);
+                var variance = new float[1];
+                b.Download(stats[1], variance);
+                Check(Math.Abs(variance[0] - exact) < 1e-3 * exact, $"1000 ± 0.25: variance {variance[0]}, expected {exact}");
+            }
+            finally
+            {
+                tail.Release();
+            }
+        }
+        finally
+        {
+            x.Release();
+            foreach (var st in stats)
+            {
+                st.Release();
+            }
+        }
     }
 
     private static void TraceCountsCalls(Device device)

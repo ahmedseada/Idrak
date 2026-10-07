@@ -172,6 +172,8 @@
   `Regression.Save`/`Replay` for cases that once failed. Idrak's own per-device checks run through it.
 - A plain-loop device written outside the library (`tests/Idrak.PluginTests`) passes the kit, and the
   `Idrak.Samples.Override` sample checks an app's own token sampler with the kit from its own tests.
+- Fixed: the CPU's `NormStats` computes the variance in two passes; `E[x²] − mean²` cancelled for one-element groups
+  and for large values with a small spread (found by the conformance kit).
 - `RopeScalings.Default(type)`: the library's own method for a scaling type, even when an app registered its own.
 - New command `idrak kernels [-d DEVICE] [--source KIND] [-j]`: per operation, the kernel a device runs and what runs
   without its own (plan 9, phase 2).
