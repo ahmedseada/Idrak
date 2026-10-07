@@ -324,13 +324,13 @@ apps combine domains without the domains knowing each other.
 | `Idrak.Vision` | region classification, content framing, model-based detection and segmentation, later OCR and detectors (decided 2026-10-07) | Idrak |
 | `Idrak.Diffusion` (planned) | UNet, DiT, VAE, schedulers, text encoders, text-to-image pipelines; registers an image model kind | Idrak |
 | `Idrak.Audio` (planned) | audio decoding, spectrograms, speech recognition, text-to-speech, vocoders; registers transcription and speech model kinds | Idrak |
-| bridge `Idrak.Mcp` | MCP tools | Nlp, ModelContextProtocol |
+| bridge `Idrak.Mcp` | MCP client (tools of any MCP server, for agents and chat) and server (an app's tools over MCP, `idrak serve --mcp`), over the tool contracts (`Tool`, the tool registry, `ToolResult`, moving to Idrak.Abstraction) | Abstraction, ModelContextProtocol |
 | bridge `Idrak.Onnx.Runtime` | ONNX Runtime models as modules | Idrak, Microsoft.ML.OnnxRuntime |
 | bridge `Idrak.AspNetCore` | thin HTTP endpoints over the inference engine (`MapChatApi`, `MapCompletionsApi`, `MapGenerate`, `MapPredictor`), speaking only to the engine and the contracts | Idrak, ASP.NET (the shared framework) |
 | app `Idrak.Cli` | the `idrak` tool (`idrak serve` uses the bridge) | everything |
 
 Retired: `Idrak.LanguageModels`, `Idrak.Datasets` (renamed `Idrak.Data`), `Idrak.Onnx` (into core). Dependencies run one way: Abstraction ← Idrak ← Data ← Nlp; Abstraction ← Gpu; Idrak ← Vision,
-Diffusion, Audio.
+Diffusion, Audio; the bridges depend on contracts (and their third-party package) only where they can.
 
 ## Decided (2026-10-05)
 
