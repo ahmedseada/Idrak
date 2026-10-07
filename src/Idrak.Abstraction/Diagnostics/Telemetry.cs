@@ -37,8 +37,14 @@ public enum TelemetryLevel
     /// <summary>Inference-engine events (<c>Inference.InferenceEngine</c>): model loaded or unloaded, request completed or rejected.</summary>
     Engine = 1 << 7,
 
+    /// <summary>
+    /// The override loop (<see cref="Abstraction.Overrides"/>): every call of an app's implementation that fell back to
+    /// the library default, and every call compared under <see cref="SlotPolicy.Shadow"/>.
+    /// </summary>
+    Overrides = 1 << 8,
+
     /// <summary>Everything.</summary>
-    All = Training | Batches | Gradients | Layers | Operations | Inference | Tools | Engine,
+    All = Training | Batches | Gradients | Layers | Operations | Inference | Tools | Engine | Overrides,
 }
 
 /// <summary>
@@ -93,6 +99,16 @@ public interface ITelemetryHook
 
     /// <summary>The inference engine loaded or unloaded a model, or completed or rejected a request (<see cref="TelemetryLevel.Engine"/>).</summary>
     void OnEngine(in EngineEvent e)
+    {
+    }
+
+    /// <summary>An app's implementation of a slot threw and the call fell back to the library default (<see cref="TelemetryLevel.Overrides"/>).</summary>
+    void OnOverrideFellBack(in OverrideFellBack e)
+    {
+    }
+
+    /// <summary>A call of a <see cref="SlotPolicy.Shadow"/> slot ran both implementations and compared them (<see cref="TelemetryLevel.Overrides"/>).</summary>
+    void OnOverrideCompared(in OverrideCompared e)
     {
     }
 }
@@ -248,6 +264,28 @@ public static class Telemetry
             if ((h.Levels & TelemetryLevel.Engine) != 0)
             {
                 h.OnEngine(in e);
+            }
+        }
+    }
+
+    internal static void OverrideFellBack(in OverrideFellBack e)
+    {
+        foreach (var h in s_hooks)
+        {
+            if ((h.Levels & TelemetryLevel.Overrides) != 0)
+            {
+                h.OnOverrideFellBack(in e);
+            }
+        }
+    }
+
+    internal static void OverrideCompared(in OverrideCompared e)
+    {
+        foreach (var h in s_hooks)
+        {
+            if ((h.Levels & TelemetryLevel.Overrides) != 0)
+            {
+                h.OnOverrideCompared(in e);
             }
         }
     }

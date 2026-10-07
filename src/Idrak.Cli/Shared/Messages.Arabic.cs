@@ -310,6 +310,8 @@ internal static partial class Messages
         ["Removes a stored token (Hugging Face hub, GitHub or Kaggle)"] = "إزالة رمز دخول محفوظ (مستودع Hugging Face أو GitHub أو Kaggle)",
         ["Everything registered: formats, families, RoPE scalings, tool-call formats, ops, devices"] =
             "كل ما هو مسجل: الصيغ والعائلات وتحجيمات RoPE وصيغ استدعاء الأدوات والعمليات والأجهزة",
+        ["What the plug-ins override: each registry entry, where it comes from and its failure policy"] =
+            "ما تستبدله الإضافات: كل مدخل في السجلات ومصدره وسياسة التعامل مع إخفاقه",
         ["Every registered weight, KV cache, checkpoint, dataset and tool-call format"] = "كل الصيغ المسجلة: الأوزان وذاكرة KV ونقاط الحفظ ومجموعات البيانات واستدعاء الأدوات",
         ["A report (Markdown and JSON) of the machine, devices, drivers, tests and benchmarks"] = "تقرير (Markdown و JSON) عن الجهاز والأجهزة والمشغلات والاختبارات وقياسات الأداء",
         ["The Android (Termux) setup steps that are safe to automate, then the phone checks"] = "خطوات إعداد Android (في Termux) الآمنة للأتمتة، ثم فحوص الهاتف",

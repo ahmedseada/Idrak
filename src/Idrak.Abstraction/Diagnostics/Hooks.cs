@@ -110,6 +110,15 @@ public sealed class ConsoleLogger(TelemetryLevel levels = TelemetryLevel.Trainin
         EngineEventKind.RequestCompleted => $"Engine: {e.Model} request in {e.Duration.TotalMilliseconds:F2} ms (queued {e.QueueWait.TotalMilliseconds:F2} ms, batch {e.BatchSize})",
         _ => $"Engine: {e.Model} request rejected: {e.Reason}",
     });
+
+    /// <inheritdoc />
+    public void OnOverrideFellBack(in OverrideFellBack e) =>
+        _out.WriteLine($"Override {e.Registry}/{e.Slot} ({e.Implementation}, {e.Origin}) threw {e.Exception.GetType().Name}: {e.Exception.Message}; the library default answered");
+
+    /// <inheritdoc />
+    public void OnOverrideCompared(in OverrideCompared e) =>
+        _out.WriteLine($"Shadow {e.Registry}/{e.Slot} ({e.Implementation}): {(e.Agreed ? "agrees" : "differs: " + e.Difference)}; "
+                       + $"library {e.LibraryTime.TotalMilliseconds:F3} ms, {e.LibraryBytes:N0} B; override {e.OverrideTime.TotalMilliseconds:F3} ms, {e.OverrideBytes:N0} B");
 }
 
 /// <summary>Keeps every epoch (and optionally batch) event in memory, for charts, reports or CSV export.</summary>
@@ -267,6 +276,12 @@ public sealed class ChannelTelemetry : ITelemetryHook
 
     /// <inheritdoc />
     public void OnEngine(in EngineEvent e) => Write(e);
+
+    /// <inheritdoc />
+    public void OnOverrideFellBack(in OverrideFellBack e) => Write(e);
+
+    /// <inheritdoc />
+    public void OnOverrideCompared(in OverrideCompared e) => Write(e);
 }
 
 /// <summary>
@@ -315,6 +330,12 @@ public sealed class JsonLinesLogger : ITelemetryHook, IDisposable, IAsyncDisposa
 
     /// <inheritdoc />
     public void OnEngine(in EngineEvent e) => _channel.OnEngine(in e);
+
+    /// <inheritdoc />
+    public void OnOverrideFellBack(in OverrideFellBack e) => _channel.OnOverrideFellBack(in e);
+
+    /// <inheritdoc />
+    public void OnOverrideCompared(in OverrideCompared e) => _channel.OnOverrideCompared(in e);
 
     private async Task WriteAsync(FileStream stream)
     {
@@ -456,6 +477,29 @@ public static class TelemetryJson
                 w.WriteNumber("queue_wait_ms", e.QueueWait.TotalMilliseconds);
                 w.WriteNumber("batch_size", e.BatchSize);
                 if (e.Reason is { } reason) w.WriteString("reason", reason);
+                break;
+            case OverrideFellBack e:
+                w.WriteString("event", "override_fell_back");
+                w.WriteString("registry", e.Registry);
+                w.WriteString("slot", e.Slot);
+                w.WriteString("implementation", e.Implementation);
+                w.WriteString("origin", e.Origin);
+                w.WriteString("error", e.Exception.GetType().FullName);
+                w.WriteString("message", e.Exception.Message);
+                break;
+            case OverrideCompared e:
+                w.WriteString("event", "override_compared");
+                w.WriteString("registry", e.Registry);
+                w.WriteString("slot", e.Slot);
+                w.WriteString("implementation", e.Implementation);
+                w.WriteString("origin", e.Origin);
+                w.WriteBoolean("agreed", e.Agreed);
+                if (e.Difference is { } difference) w.WriteString("difference", difference);
+                if (e.Exception is { } thrown) w.WriteString("error", thrown.GetType().FullName);
+                w.WriteNumber("library_ms", e.LibraryTime.TotalMilliseconds);
+                w.WriteNumber("override_ms", e.OverrideTime.TotalMilliseconds);
+                w.WriteNumber("library_bytes", e.LibraryBytes);
+                w.WriteNumber("override_bytes", e.OverrideBytes);
                 break;
         }
 

@@ -42,72 +42,62 @@ public interface ICheckpointFormat
 public static class CheckpointFormats
 {
     // In the order they are asked.
-    private static readonly List<ICheckpointFormat> Registry = [];
+    private static readonly SlotTable<string, ICheckpointFormat> Registry = new(nameof(CheckpointFormats), (slot, app, library) => new GuardedFormat(slot, app, library),
+        StringComparer.Ordinal, newestFirst: true);
 
-    static CheckpointFormats() => LibraryModelFormats.RegisterCheckpointFormats();   // the built-in formats, on first use
+    static CheckpointFormats() => Overrides.AsLibraryDefaults(LibraryModelFormats.RegisterCheckpointFormats);   // the built-in formats, on first use
 
     /// <summary>
-    /// Registers <paramref name="format"/>: it replaces the format of the same name (in its place), or is asked before
-    /// every format registered so far.
+    /// Registers <paramref name="format"/>: it takes the place of the format of the same name (the library's stays behind
+    /// it as its fallback, see <see cref="SetPolicy"/>), or is asked before every format registered so far.
     /// </summary>
     public static void Register(ICheckpointFormat format)
     {
         ArgumentNullException.ThrowIfNull(format);
-        lock (Registry)
-        {
-            int at = Registry.FindIndex(f => f.Name == format.Name);
-            if (at >= 0)
-            {
-                Registry[at] = format;
-            }
-            else
-            {
-                Registry.Insert(0, format);
-            }
-        }
+        Registry.Register(format.Name, format);
     }
 
-    /// <summary>Removes the format registered as <paramref name="name"/>; false when there is none.</summary>
-    public static bool Unregister(string name)
-    {
-        lock (Registry)
-        {
-            return Registry.RemoveAll(f => f.Name == name) > 0;
-        }
-    }
+    /// <summary>Removes the app's format <paramref name="name"/> (a built-in name gets the library's back); false when the app registered none.</summary>
+    public static bool Unregister(string name) => Registry.Unregister(name);
 
     /// <summary>The registered format names, in the order they are asked.</summary>
-    public static IReadOnlyCollection<string> Names
-    {
-        get
-        {
-            lock (Registry)
-            {
-                return [.. Registry.Select(f => f.Name)];
-            }
-        }
-    }
+    public static IReadOnlyCollection<string> Names => Registry.Keys;
 
     /// <summary>The format registered as <paramref name="name"/>.</summary>
-    public static ICheckpointFormat Get(string name)
+    public static ICheckpointFormat Get(string name) => Registry.Find(name)
+        ?? throw new NotSupportedException($"No checkpoint format '{name}' is registered ({string.Join(", ", Registry.Keys)}); add it with CheckpointFormats.Register.");
+
+    /// <summary>The library's format <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
+    public static ICheckpointFormat? Default(string name) => Registry.Default(name);
+
+    /// <summary>Who registered the format <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
+    public static string? Origin(string name) => Registry.Origin(name);
+
+    /// <summary>
+    /// What happens when the app's format <paramref name="name"/> fails (<see cref="SlotPolicy.FallBack"/> to the library's
+    /// unless set): each call falls back on its own. Under <see cref="SlotPolicy.Shadow"/> only <see cref="ICheckpointFormat.CanOpen"/>
+    /// and <see cref="ICheckpointFormat.Notes"/> are compared: preparing writes files and opening holds them, which is not done twice.
+    /// </summary>
+    public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Registry.SetPolicy(name, policy, shadowRate);
+
+    private sealed class GuardedFormat(Slot slot, ICheckpointFormat app, ICheckpointFormat library) : ICheckpointFormat
     {
-        lock (Registry)
-        {
-            return Registry.Find(f => f.Name == name)
-                ?? throw new NotSupportedException($"No checkpoint format '{name}' is registered ({string.Join(", ", Registry.Select(f => f.Name))}); add it with CheckpointFormats.Register.");
-        }
+        public string Name => app.Name;
+
+        public bool CanOpen(string path) => slot.Call(() => app.CanOpen(path), () => library.CanOpen(path), Comparisons.Exact);
+
+        public string Prepare(string path) => slot.Call(() => app.Prepare(path), () => library.Prepare(path), effects: true);
+
+        public ITensorStore Open(string folder) => slot.Call(() => app.Open(folder), () => library.Open(folder), effects: true);
+
+        public IEnumerable<string> Notes(string folder) =>
+            slot.Call<IReadOnlyList<string>>(() => [.. app.Notes(folder)], () => [.. library.Notes(folder)], Comparisons.Sequences);
     }
 
     /// <summary>The format that reads <paramref name="path"/> (the first registered one whose <see cref="ICheckpointFormat.CanOpen"/> says so).</summary>
     public static ICheckpointFormat For(string path)
     {
-        ICheckpointFormat[] formats;
-        lock (Registry)
-        {
-            formats = [.. Registry];
-        }
-
-        // Asked outside the lock: a format's CanOpen may look at the disk.
+        var formats = Registry.Values;
         foreach (var format in formats)
         {
             if (format.CanOpen(path))

@@ -57,55 +57,34 @@ public abstract class DeviceProvider
 /// </summary>
 public static class DeviceProviders
 {
-    private static readonly List<DeviceProvider> Registry = [];
+    // A provider makes devices; a device never falls back to another (plan 10, decision 13).
+    private static readonly SlotTable<string, DeviceProvider> Table = new(nameof(DeviceProviders), comparer: StringComparer.OrdinalIgnoreCase,
+        unguarded: "a provider makes devices, which hold memory and state, and a device never falls back to another");
 
     static DeviceProviders() => LibraryDefaults.Ensure(typeof(DeviceProviders));   // Idrak.Gpu's devices, first
 
     /// <summary>The registered providers, in registration order.</summary>
-    public static IReadOnlyList<DeviceProvider> All
-    {
-        get
-        {
-            lock (Registry)
-            {
-                return [.. Registry];
-            }
-        }
-    }
+    public static IReadOnlyList<DeviceProvider> All => Table.Values;
 
-    /// <summary>Registers (or replaces, by kind) a provider.</summary>
+    /// <summary>
+    /// Registers a provider; one of a registered kind takes its place, and the library's provider of that kind comes back
+    /// with <see cref="Unregister"/>. A device does not fall back to the library's provider when an app's one fails.
+    /// </summary>
     public static void Register(DeviceProvider provider)
     {
         ArgumentNullException.ThrowIfNull(provider);
-        lock (Registry)
-        {
-            int index = Registry.FindIndex(p => p.Kind.Equals(provider.Kind, StringComparison.OrdinalIgnoreCase));
-            if (index >= 0)
-            {
-                Registry[index] = provider;
-            }
-            else
-            {
-                Registry.Add(provider);
-            }
-        }
+        Table.Register(provider.Kind, provider);
     }
 
-    /// <summary>Removes the provider of <paramref name="kind"/>; false when there was none.</summary>
-    public static bool Unregister(string kind)
-    {
-        lock (Registry)
-        {
-            return Registry.RemoveAll(p => p.Kind.Equals(kind, StringComparison.OrdinalIgnoreCase)) > 0;
-        }
-    }
+    /// <summary>Removes the app's provider of <paramref name="kind"/> (the library's comes back, if it has one); false when the app registered none.</summary>
+    public static bool Unregister(string kind) => Table.Unregister(kind);
 
     /// <summary>The provider of <paramref name="kind"/>, or null.</summary>
-    public static DeviceProvider? Find(string kind)
-    {
-        lock (Registry)
-        {
-            return Registry.Find(p => p.Kind.Equals(kind, StringComparison.OrdinalIgnoreCase));
-        }
-    }
+    public static DeviceProvider? Find(string kind) => Table.Find(kind);
+
+    /// <summary>The library's provider of <paramref name="kind"/>, whatever an app registered over it; null when the library has none.</summary>
+    public static DeviceProvider? Default(string kind) => Table.Default(kind);
+
+    /// <summary>Who registered the provider of <paramref name="kind"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
+    public static string? Origin(string kind) => Table.Origin(kind);
 }

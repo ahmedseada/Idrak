@@ -81,153 +81,102 @@ public sealed class OnnxGraphOpContext
 /// </summary>
 public static class OnnxExportOps
 {
-    private static readonly Dictionary<Type, (Delegate Original, OnnxTranslator<Module> Translate)> Modules = [];
-    private static readonly Dictionary<string, OnnxTranslator<Module>> Lambdas = new(StringComparer.Ordinal);
-    private static readonly Dictionary<string, OnnxGraphOpTranslator> GraphOpTranslators = new(StringComparer.Ordinal);
+    private const string Unguarded = "a translator writes nodes into the ONNX graph as it runs, and a half-run translator cannot be undone";
 
-    static OnnxExportOps() => OnnxBuiltIns.RegisterExports();   // the built-in translators, on first use
+    private static readonly SlotTable<Type, (Delegate Original, OnnxTranslator<Module> Translate)> Modules = new("OnnxExportOps.Modules", unguarded: Unguarded);
+    private static readonly SlotTable<string, OnnxTranslator<Module>> Lambdas = new("OnnxExportOps.Lambdas", comparer: StringComparer.Ordinal, unguarded: Unguarded);
+    private static readonly SlotTable<string, OnnxGraphOpTranslator> GraphOpTranslators = new("OnnxExportOps.GraphOps", comparer: StringComparer.Ordinal, unguarded: Unguarded);
 
-    /// <summary>Registers (or replaces) how modules of type <typeparamref name="T"/> (and types derived from it without their own translator) are exported.</summary>
+    static OnnxExportOps() => Overrides.AsLibraryDefaults(OnnxBuiltIns.RegisterExports);   // the built-in translators, on first use
+
+    /// <summary>
+    /// Registers how modules of type <typeparamref name="T"/> (and types derived from it without their own translator) are
+    /// exported; for a type the library translates it overrides the library's until <see cref="Unregister{T}"/>.
+    /// </summary>
     public static void Register<T>(OnnxTranslator<T> translate) where T : Module
     {
         ArgumentNullException.ThrowIfNull(translate);
-        lock (Modules)
-        {
-            Modules[typeof(T)] = (translate, (g, m, x, s) => translate(g, (T)m, x, s));
-        }
+        Modules.Register(typeof(T), (translate, (g, m, x, s) => translate(g, (T)m, x, s)), translate);
     }
 
-    /// <summary>Removes the translator of modules of type <typeparamref name="T"/>; returns whether one was registered.</summary>
-    public static bool Unregister<T>() where T : Module
-    {
-        lock (Modules)
-        {
-            return Modules.Remove(typeof(T));
-        }
-    }
+    /// <summary>Removes the app's translator of modules of type <typeparamref name="T"/> (the library's comes back); false when the app registered none.</summary>
+    public static bool Unregister<T>() where T : Module => Modules.Unregister(typeof(T));
 
     /// <summary>The module types with a registered translator.</summary>
-    public static IReadOnlyCollection<Type> Types
-    {
-        get
-        {
-            lock (Modules)
-            {
-                return [.. Modules.Keys];
-            }
-        }
-    }
+    public static IReadOnlyCollection<Type> Types => Modules.Keys;
 
     /// <summary>The translator registered for modules of exactly the type <typeparamref name="T"/>.</summary>
-    public static OnnxTranslator<T> Get<T>() where T : Module
-    {
-        lock (Modules)
-        {
-            return Modules.TryGetValue(typeof(T), out var entry) ? (OnnxTranslator<T>)entry.Original
-                : throw new NotSupportedException($"No ONNX export translator for {typeof(T).Name} is registered ({string.Join(", ", Types.Select(t => t.Name).Order())}); add it with OnnxExportOps.Register<{typeof(T).Name}>.");
-        }
-    }
+    public static OnnxTranslator<T> Get<T>() where T : Module =>
+        Modules.TryGet(typeof(T), out var entry) ? (OnnxTranslator<T>)entry.Original
+            : throw new NotSupportedException($"No ONNX export translator for {typeof(T).Name} is registered ({string.Join(", ", Types.Select(t => t.Name).Order())}); add it with OnnxExportOps.Register<{typeof(T).Name}>.");
 
-    /// <summary>Registers (or replaces) how the lambdas named <paramref name="name"/> (their <c>ToString()</c>) are exported.</summary>
+    /// <summary>The library's translator of modules of type <typeparamref name="T"/>, whatever an app registered over it; null when the library has none.</summary>
+    public static OnnxTranslator<T>? Default<T>() where T : Module => Modules.HasDefault(typeof(T)) ? (OnnxTranslator<T>)Modules.Default(typeof(T)).Original : null;
+
+    /// <summary>Who registered the translator of modules of type <typeparamref name="T"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
+    public static string? Origin<T>() where T : Module => Modules.Origin(typeof(T));
+
+    /// <summary>Registers how the lambdas named <paramref name="name"/> (their <c>ToString()</c>) are exported; a built-in name overrides the library's until <see cref="UnregisterLambda"/>.</summary>
     public static void RegisterLambda(string name, OnnxTranslator<Module> translate)
     {
         ArgumentException.ThrowIfNullOrEmpty(name);
         ArgumentNullException.ThrowIfNull(translate);
-        lock (Lambdas)
-        {
-            Lambdas[name] = translate;
-        }
+        Lambdas.Register(name, translate);
     }
 
-    /// <summary>Removes the lambda translator <paramref name="name"/>; returns whether it was registered.</summary>
-    public static bool UnregisterLambda(string name)
-    {
-        lock (Lambdas)
-        {
-            return Lambdas.Remove(name);
-        }
-    }
+    /// <summary>Removes the app's lambda translator <paramref name="name"/> (a built-in name gets the library's back); false when the app registered none.</summary>
+    public static bool UnregisterLambda(string name) => Lambdas.Unregister(name);
 
     /// <summary>The lambda names with a registered translator.</summary>
-    public static IReadOnlyCollection<string> LambdaNames
-    {
-        get
-        {
-            lock (Lambdas)
-            {
-                return [.. Lambdas.Keys];
-            }
-        }
-    }
+    public static IReadOnlyCollection<string> LambdaNames => Lambdas.Keys;
 
-    /// <summary>Registers (or replaces) how graph module nodes (<see cref="GraphNode"/>) running the operation <paramref name="op"/> are exported.</summary>
+    /// <summary>The library's translator of the lambdas named <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
+    public static OnnxTranslator<Module>? DefaultLambda(string name) => Lambdas.Default(name);
+
+    /// <summary>Who registered the lambda translator <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
+    public static string? LambdaOrigin(string name) => Lambdas.Origin(name);
+
+    /// <summary>Registers how graph module nodes (<see cref="GraphNode"/>) running the operation <paramref name="op"/> are exported; a built-in operation overrides the library's until <see cref="UnregisterGraphOp"/>.</summary>
     public static void RegisterGraphOp(string op, OnnxGraphOpTranslator translate)
     {
         ArgumentException.ThrowIfNullOrEmpty(op);
         ArgumentNullException.ThrowIfNull(translate);
-        lock (GraphOpTranslators)
-        {
-            GraphOpTranslators[op] = translate;
-        }
+        GraphOpTranslators.Register(op, translate);
     }
 
-    /// <summary>Removes the graph operation translator <paramref name="op"/>; returns whether it was registered.</summary>
-    public static bool UnregisterGraphOp(string op)
-    {
-        lock (GraphOpTranslators)
-        {
-            return GraphOpTranslators.Remove(op);
-        }
-    }
+    /// <summary>Removes the app's graph operation translator <paramref name="op"/> (a built-in operation gets the library's back); false when the app registered none.</summary>
+    public static bool UnregisterGraphOp(string op) => GraphOpTranslators.Unregister(op);
 
     /// <summary>The graph operations with a registered translator.</summary>
-    public static IReadOnlyCollection<string> GraphOpNames
-    {
-        get
-        {
-            lock (GraphOpTranslators)
-            {
-                return [.. GraphOpTranslators.Keys];
-            }
-        }
-    }
+    public static IReadOnlyCollection<string> GraphOpNames => GraphOpTranslators.Keys;
 
     /// <summary>The translator registered for the graph operation <paramref name="op"/>.</summary>
     public static OnnxGraphOpTranslator GetGraphOp(string op) => FindGraphOp(op)
         ?? throw new NotSupportedException($"No ONNX export translator for the graph operation '{op}' is registered ({string.Join(", ", GraphOpNames)}); add it with OnnxExportOps.RegisterGraphOp.");
 
+    /// <summary>The library's translator of the graph operation <paramref name="op"/>, whatever an app registered over it; null when the library has none.</summary>
+    public static OnnxGraphOpTranslator? DefaultGraphOp(string op) => GraphOpTranslators.Default(op);
+
+    /// <summary>Who registered the graph operation translator <paramref name="op"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
+    public static string? GraphOpOrigin(string op) => GraphOpTranslators.Origin(op);
+
     /// <summary>The translator of modules of type <paramref name="type"/>: the one registered for it or for its nearest registered base type, or null.</summary>
     public static OnnxTranslator<Module>? Find(Type type)
     {
-        lock (Modules)
+        for (Type? t = type; t is not null && t != typeof(object); t = t.BaseType)
         {
-            for (Type? t = type; t is not null && t != typeof(object); t = t.BaseType)
+            if (Modules.TryGet(t, out var entry))
             {
-                if (Modules.TryGetValue(t, out var entry))
-                {
-                    return entry.Translate;
-                }
+                return entry.Translate;
             }
-
-            return null;
         }
+
+        return null;
     }
 
     /// <summary>The translator registered for the lambdas named <paramref name="name"/>, or null.</summary>
-    public static OnnxTranslator<Module>? FindLambda(string name)
-    {
-        lock (Lambdas)
-        {
-            return Lambdas.TryGetValue(name, out var translate) ? translate : null;
-        }
-    }
+    public static OnnxTranslator<Module>? FindLambda(string name) => Lambdas.Find(name);
 
     /// <summary>The translator registered for the graph operation <paramref name="op"/>, or null.</summary>
-    public static OnnxGraphOpTranslator? FindGraphOp(string op)
-    {
-        lock (GraphOpTranslators)
-        {
-            return GraphOpTranslators.TryGetValue(op, out var translate) ? translate : null;
-        }
-    }
+    public static OnnxGraphOpTranslator? FindGraphOp(string op) => GraphOpTranslators.Find(op);
 }

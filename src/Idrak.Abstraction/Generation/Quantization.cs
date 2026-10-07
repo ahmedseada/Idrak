@@ -188,12 +188,58 @@ public abstract class PackedWeight : IDisposable
         return weight;
     }
 
-    private static readonly Dictionary<string, PackedWeightFactory> Registry =
-        BuiltIn.Values.ToDictionary(f => f.Name, f => f.Factory, StringComparer.OrdinalIgnoreCase);
+    private static readonly SlotTable<string, PackedWeightFactory> Registry = Formats();
+
+    private static SlotTable<string, PackedWeightFactory> Formats()
+    {
+        var table = new SlotTable<string, PackedWeightFactory>(nameof(PackedWeight), GuardFactory, StringComparer.OrdinalIgnoreCase);
+        foreach (var (name, factory) in BuiltIn.Values)
+        {
+            table.RegisterDefault(name, factory);
+        }
+
+        return table;
+    }
+
+    // Packing makes the weights once: an app's factory falls back when it fails to make them. Under Shadow both pack the
+    // sampled weights, which agree when their shapes do; the app's are then freed.
+    private static PackedWeightFactory GuardFactory(Slot slot, PackedWeightFactory app, PackedWeightFactory library) => (values, rows, columns, device) =>
+    {
+        if (slot.Policy == SlotPolicy.Shadow)
+        {
+            var run = slot.Shadow();
+            var answer = library(values, rows, columns, device);
+            if (run is not null)
+            {
+                run.Answered();
+                try
+                {
+                    using var other = app(values, rows, columns, device);
+                    run.Done(Comparisons.Exact((answer.Rows, answer.Columns), (other.Rows, other.Columns)));
+                }
+                catch (Exception e) when (e is not OperationCanceledException)
+                {
+                    run.Failed(e);
+                }
+            }
+
+            return answer;
+        }
+
+        try
+        {
+            return app(values, rows, columns, device);
+        }
+        catch (Exception e) when (slot.FallsBack(e))
+        {
+            return library(values, rows, columns, device);
+        }
+    };
 
     /// <summary>
-    /// Registers (or replaces) how to pack weights in the format <paramref name="format"/> (names ignore case), so options
-    /// and tools can choose it by name. "int8", "int4" and "bfloat16" are registered; the overload of
+    /// Registers how to pack weights in the format <paramref name="format"/> (names ignore case), so options and tools can
+    /// choose it by name. "int8", "int4" and "bfloat16" are registered; under one of their names the app's factory
+    /// overrides the library's, which stays behind it as its fallback (see <see cref="SetPolicy"/>). The overload of
     /// <see cref="FromValues(PackedFormat, ReadOnlySpan{float}, int, int, Device)"/> taking a <see cref="PackedFormat"/>
     /// always makes the built-in weights.
     /// </summary>
@@ -203,34 +249,32 @@ public abstract class PackedWeight : IDisposable
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(format);
         ArgumentNullException.ThrowIfNull(factory);
-        lock (Registry)
-        {
-            Registry[format] = factory;
-        }
+        Registry.Register(format, factory);
     }
+
+    /// <summary>Removes the app's format <paramref name="format"/> (a built-in name gets the library's back); false when the app registered none.</summary>
+    public static bool Unregister(string format) => Registry.Unregister(format);
 
     /// <summary>The registered format names.</summary>
-    public static IReadOnlyCollection<string> FormatNames
-    {
-        get
-        {
-            lock (Registry)
-            {
-                return [.. Registry.Keys];
-            }
-        }
-    }
+    public static IReadOnlyCollection<string> FormatNames => Registry.Keys;
 
-    /// <summary>The factory registered as <paramref name="format"/>.</summary>
+    /// <summary>The factory registered as <paramref name="format"/>; an app's, guarded by its <see cref="SetPolicy">policy</see>.</summary>
     /// <exception cref="NotSupportedException">No format of that name is registered.</exception>
-    public static PackedWeightFactory Factory(string format)
-    {
-        lock (Registry)
-        {
-            return Registry.TryGetValue(format, out var factory) ? factory
-                : throw new NotSupportedException($"No packed format '{format}' is registered ({string.Join(", ", Registry.Keys)}); add it with PackedWeight.Register.");
-        }
-    }
+    public static PackedWeightFactory Factory(string format) =>
+        Registry.TryGet(format, out var factory) ? factory
+            : throw new NotSupportedException($"No packed format '{format}' is registered ({string.Join(", ", Registry.Keys)}); add it with PackedWeight.Register.");
+
+    /// <summary>The library's factory of <paramref name="format"/>, whatever an app registered over it; null when the library has none.</summary>
+    public static PackedWeightFactory? Default(string format) => Registry.Default(format);
+
+    /// <summary>Who registered the format <paramref name="format"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
+    public static string? Origin(string format) => Registry.Origin(format);
+
+    /// <summary>
+    /// What happens when the app's factory <paramref name="format"/> fails to pack (<see cref="SlotPolicy.FallBack"/> to the
+    /// library's unless set). Packed weights are made once, so the fallback is at packing; their products do not fall back.
+    /// </summary>
+    public static void SetPolicy(string format, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Registry.SetPolicy(format, policy, shadowRate);
 
     /// <summary>The format in messages: "int8", "4-bit", "bfloat16".</summary>
     public virtual string Description => Name;
