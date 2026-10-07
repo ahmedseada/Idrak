@@ -7,7 +7,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json.Nodes;
 using Idrak;
-using Idrak.Datasets;
+using Idrak.Data;
 
 // Datasets: file formats (Parquet checked against pyarrow), archives, operations, the download cache.
 internal static partial class Tests
@@ -166,7 +166,7 @@ internal static partial class Tests
             var files = HuggingFace.Dataset("org/chat", token: "hf_secret", downloader: downloader).Download();
             Check(files.Count == 2 && files.All(File.Exists), "download: the local files of a source");
             Check(files[0] == Path.Combine(cache, "huggingface", "datasets", "org", "chat", "0123456789ab", "data", "train-00000-of-00002.parquet"), $"cache laid out by source: {files[0]}");
-            Check(Dataset.FromFile(TestData("parquet/delta.parquet")).Download().Single().EndsWith("delta.parquet", StringComparison.Ordinal), "download: a local file is itself");
+            Check(DatasetRows.FromFile(TestData("parquet/delta.parquet")).Download().Single().EndsWith("delta.parquet", StringComparison.Ordinal), "download: a local file is itself");
             Check(HuggingFace.Dataset("org/chat", token: "hf_secret", maxFiles: 1, downloader: downloader).Count() == 40, "hf first files only");
             web.Json($"{hf}/api/datasets/org/sft/tree/{commit}?recursive=true",
                 "[{\"type\":\"file\",\"path\":\"data/train_sft-00000-of-00001-ab12.parquet\"},{\"type\":\"file\",\"path\":\"data/train_gen-00000-of-00001-cd34.parquet\"},"
@@ -344,7 +344,7 @@ internal static partial class Tests
         _ = device;
         foreach (var name in new[] { "snappy-v1", "gzip-v2", "brotli-groups", "lz4-plain", "delta" })
         {
-            var rows = Dataset.FromFile(TestData($"parquet/{name}.parquet")).ToList();
+            var rows = DatasetRows.FromFile(TestData($"parquet/{name}.parquet")).ToList();
             var expected = File.ReadAllLines(TestData($"parquet/{name}.jsonl")).Select(l => JsonNode.Parse(l)!).ToList();
             Check(rows.Count == expected.Count, $"{name}: {rows.Count} rows, pyarrow {expected.Count}");
             for (int i = 0; i < rows.Count; i++)
@@ -363,7 +363,7 @@ internal static partial class Tests
 
         try
         {
-            _ = Dataset.FromFile(TestData("parquet/zstd.parquet")).ToList();
+            _ = DatasetRows.FromFile(TestData("parquet/zstd.parquet")).ToList();
             Check(false, "zstd should be refused");
         }
         catch (NotSupportedException ex)
@@ -389,25 +389,25 @@ internal static partial class Tests
             File.WriteAllText(P("g.tsv"), "a\tb\n1\tx y\n");
             File.WriteAllText(P("h.txt"), "first line\n\nsecond\nthird\n\n\nfourth\n");
 
-            Check(Dataset.FromFile(P("a.jsonl")).Select(r => r).Count() == 2, "jsonl skips blank lines");
-            Check(Dataset.FromFile(P("b.json")).Count() == 2 && Dataset.FromFile(P("c.json")).Count() == 3, "json arrays, wrapped arrays");
-            Check(Dataset.FromFile(P("d.json")).Last().ToJsonString() == "{\"q\":\"y\",\"n\":2}", "json columns");
-            Check(Dataset.FromFile(P("e.json")).Count() == 2, ".json holding JSON Lines");
-            var csv = Dataset.FromFile(P("f.csv")).ToList();
+            Check(DatasetRows.FromFile(P("a.jsonl")).Select(r => r).Count() == 2, "jsonl skips blank lines");
+            Check(DatasetRows.FromFile(P("b.json")).Count() == 2 && DatasetRows.FromFile(P("c.json")).Count() == 3, "json arrays, wrapped arrays");
+            Check(DatasetRows.FromFile(P("d.json")).Last().ToJsonString() == "{\"q\":\"y\",\"n\":2}", "json columns");
+            Check(DatasetRows.FromFile(P("e.json")).Count() == 2, ".json holding JSON Lines");
+            var csv = DatasetRows.FromFile(P("f.csv")).ToList();
             Check(csv.Count == 2 && (long)csv[0]["count"]! == 3 && (double)csv[0]["ratio"]! == 0.5 && (bool)csv[0]["ok"]! && (string?)csv[0]["zip"] == "01234",
                 $"csv types: {csv[0].ToJsonString()}");
             Check((string?)csv[0]["note"] == "says \"hi\", then\nleaves" && csv[1]["count"] is null && (double)csv[1]["ratio"]! == 1000 && !(bool)csv[1]["ok"]!, "csv quoting and empty cells");
-            Check(Dataset.FromFile(P("g.tsv")).Single().ToJsonString() == "{\"a\":1,\"b\":\"x y\"}", "tsv");
-            Check(Dataset.FromFile(P("h.txt")).Count() == 4, "text lines");
-            Check(Dataset.FromFile(P("h.txt"), new ReadOptions { Text = TextRows.Paragraphs }).Select(r => r).Count() == 3, "text paragraphs");
-            Check(((string?)Dataset.FromFile(P("h.txt"), new ReadOptions { Text = TextRows.Document }).Single()["text"])!.StartsWith("first line", StringComparison.Ordinal), "text document");
+            Check(DatasetRows.FromFile(P("g.tsv")).Single().ToJsonString() == "{\"a\":1,\"b\":\"x y\"}", "tsv");
+            Check(DatasetRows.FromFile(P("h.txt")).Count() == 4, "text lines");
+            Check(DatasetRows.FromFile(P("h.txt"), new ReadOptions { Text = TextRows.Paragraphs }).Select(r => r).Count() == 3, "text paragraphs");
+            Check(((string?)DatasetRows.FromFile(P("h.txt"), new ReadOptions { Text = TextRows.Document }).Single()["text"])!.StartsWith("first line", StringComparison.Ordinal), "text document");
 
             using (var gz = new GZipStream(File.Create(P("i.jsonl.gz")), CompressionLevel.Fastest))
             {
                 gz.Write(Encoding.UTF8.GetBytes("{\"q\":1}\n{\"q\":2}\n{\"q\":3}\n"));
             }
 
-            Check(Dataset.FromFile(P("i.jsonl.gz")).Count() == 3, "gzip");
+            Check(DatasetRows.FromFile(P("i.jsonl.gz")).Count() == 3, "gzip");
 
             using (var zip = ZipFile.Open(P("j.zip"), ZipArchiveMode.Create))
             {
@@ -417,8 +417,8 @@ internal static partial class Tests
                 zip.CreateEntry("README").Open().Dispose();
             }
 
-            Check(Dataset.FromFile(P("j.zip")).Count() == 2 + 2 + 40, "zip: every data file");
-            Check(Dataset.FromFile(P("j.zip"), new ReadOptions { Pattern = "*.parquet", IncludeFile = true }).First()["_file"]!.GetValue<string>() == "data/rows.parquet",
+            Check(DatasetRows.FromFile(P("j.zip")).Count() == 2 + 2 + 40, "zip: every data file");
+            Check(DatasetRows.FromFile(P("j.zip"), new ReadOptions { Pattern = "*.parquet", IncludeFile = true }).First()["_file"]!.GetValue<string>() == "data/rows.parquet",
                 "zip pattern, source column");
 
             // A repository snapshot, as GitHub's tarballs are: code files become documents; dependencies are skipped.
@@ -439,13 +439,13 @@ internal static partial class Tests
                 Add("repo-abc/README.md", "# Title\n\nText.");
             }
 
-            var code = Dataset.FromFile(P("k.tar.gz"), new ReadOptions { IncludeCode = true, Text = TextRows.Document }).ToList();
+            var code = DatasetRows.FromFile(P("k.tar.gz"), new ReadOptions { IncludeCode = true, Text = TextRows.Document }).ToList();
             Check(code.Count == 3 && code.Any(r => (string?)r["language"] == "csharp") && code.Any(r => (string?)r["language"] == "typescript")
                   && code.All(r => !((string)r["path"]!).Contains("node_modules", StringComparison.Ordinal)), $"tar.gz code: {string.Join(", ", code.Select(r => r["path"]))}");
 
             Directory.CreateDirectory(P("nested/deeper"));
             File.WriteAllText(P("nested/deeper/x.jsonl"), "{\"q\":1}\n");
-            Check(Dataset.FromFolder(root, "**/*.jsonl").Count() == 2 + 1, "folder with a glob");
+            Check(DatasetRows.FromFolder(root, "**/*.jsonl").Count() == 2 + 1, "folder with a glob");
         }
         finally
         {
@@ -457,7 +457,7 @@ internal static partial class Tests
     {
         _ = device;
         int reads = 0;
-        var numbers = new Dataset(() => { reads++; return Enumerable.Range(0, 1000).Select(i => new JsonObject { ["n"] = i, ["even"] = i % 2 == 0 }); }, "numbers");
+        var numbers = new DatasetRows(() => { reads++; return Enumerable.Range(0, 1000).Select(i => new JsonObject { ["n"] = i, ["even"] = i % 2 == 0 }); }, "numbers");
         var chained = numbers.Where(r => (bool)r["even"]!).Select(r => { r["half"] = (int)r["n"]! / 2; return r; }).Skip(10).Take(5);
         Check(reads == 0, "operations are lazy");
         Check(string.Join(",", chained.Select(r => (int)r["half"]!)) == "10,11,12,13,14" && reads == 1, "filter, map, skip, take");
@@ -468,9 +468,9 @@ internal static partial class Tests
         var local = numbers.Shuffle(seed: 1, buffer: 50).Select(r => (int)r["n"]!).ToList();
         Check(local.Order().SequenceEqual(Enumerable.Range(0, 1000)), "buffered shuffle keeps every row");
 
-        var texts = Dataset.FromRows([new() { ["t"] = "Hello  World" }, new() { ["t"] = "hello world" }, new() { ["t"] = "Hello  World" }, new() { ["t"] = "other" }]);
+        var texts = DatasetRows.FromRows([new() { ["t"] = "Hello  World" }, new() { ["t"] = "hello world" }, new() { ["t"] = "Hello  World" }, new() { ["t"] = "other" }]);
         Check(texts.Deduplicate().Count() == 3, "deduplicate: exact values");
-        var edges = Dataset.FromRows([
+        var edges = DatasetRows.FromRows([
             new() { ["a"] = "ab", ["b"] = "c" }, new() { ["a"] = "a", ["b"] = "bc" },          // same characters, other columns
             new() { ["a"] = "", ["b"] = "x" }, new() { ["b"] = "x" },                          // empty text and a missing column
             new() { ["a"] = "5", ["b"] = "x" }, new() { ["a"] = 5, ["b"] = "x" },               // text and a number
@@ -484,7 +484,7 @@ internal static partial class Tests
         Check(keyed.Count == 2 && (string)keyed[0]["t"]! == "Hello  World" && (string)keyed[0]["key"]! == "hello world",
             "normalize into a key column: the text stays as written, the key deduplicates");
         Check(texts.Deduplicate().Select(r => (string)r["t"]!).First() == "Hello  World", "normalizing is a separate step: the source rows are untouched");
-        var nonText = Dataset.FromRows([new() { ["t"] = 5 }, new() { ["u"] = "x" }]).Normalize(spacing, "t").ToList();
+        var nonText = DatasetRows.FromRows([new() { ["t"] = 5 }, new() { ["u"] = "x" }]).Normalize(spacing, "t").ToList();
         Check((int)nonText[0]["t"]! == 5 && !nonText[1].ContainsKey("t"), "normalize leaves values that are not text, and missing columns, as they are");
 
         var (train, evaluation) = numbers.Split(0.1, seed: 3);
@@ -493,25 +493,25 @@ internal static partial class Tests
         Check(trainSet.Count + evalSet.Count == 1000 && !trainSet.Overlaps(evalSet) && evalSet.Count is > 60 and < 140, $"split sizes {trainSet.Count}/{evalSet.Count}");
         Check(numbers.Shuffle(5).Split(0.1, seed: 3).Evaluation.Select(r => (int)r["n"]!).ToHashSet().SetEquals(evalSet), "split does not depend on order");
 
-        var a = new Dataset(() => Enumerable.Range(0, 10_000).Select(i => new JsonObject { ["from"] = "a" }), "a");
-        var b = new Dataset(() => Enumerable.Range(0, 10_000).Select(i => new JsonObject { ["from"] = "b" }), "b");
-        var mixed = Dataset.Mix([(a, 3), (b, 1)], seed: 2).Take(4000).Select(r => (string)r["from"]!).ToList();
+        var a = new DatasetRows(() => Enumerable.Range(0, 10_000).Select(i => new JsonObject { ["from"] = "a" }), "a");
+        var b = new DatasetRows(() => Enumerable.Range(0, 10_000).Select(i => new JsonObject { ["from"] = "b" }), "b");
+        var mixed = DatasetRows.Mix([(a, 3), (b, 1)], seed: 2).Take(4000).Select(r => (string)r["from"]!).ToList();
         double shareA = mixed.Count(f => f == "a") / 4000.0;
         Check(shareA is > 0.72 and < 0.78, $"mix proportions {shareA:F3}");
-        var small = new Dataset(() => Enumerable.Range(0, 5).Select(i => new JsonObject { ["from"] = "s" }), "s");
-        Check(Dataset.Mix([(small, 1), (a, 1)], seed: 1).Count() < 30, "mix stops at the first exhausted source");
-        Check(Dataset.Mix([(small, 1), (a.Take(20), 1)], seed: 1, stop: MixStop.AllExhausted).Count() == 25, "mix can run every source out");
+        var small = new DatasetRows(() => Enumerable.Range(0, 5).Select(i => new JsonObject { ["from"] = "s" }), "s");
+        Check(DatasetRows.Mix([(small, 1), (a, 1)], seed: 1).Count() < 30, "mix stops at the first exhausted source");
+        Check(DatasetRows.Mix([(small, 1), (a.Take(20), 1)], seed: 1, stop: MixStop.AllExhausted).Count() == 25, "mix can run every source out");
 
-        var row = Dataset.FromRows([new() { ["a"] = 1, ["b"] = 2, ["c"] = 3 }]);
+        var row = DatasetRows.FromRows([new() { ["a"] = 1, ["b"] = 2, ["c"] = 3 }]);
         Check(row.SelectColumns("c", "a").Single().ToJsonString() == "{\"c\":3,\"a\":1}" && row.RemoveColumns("b").Single().ToJsonString() == "{\"a\":1,\"c\":3}"
               && row.RenameColumn("a", "z").Single().ContainsKey("z") && string.Join(",", row.Columns()) == "a,b,c", "columns");
 
         string file = Path.Combine(Path.GetTempPath(), $"ns-rows-{Guid.NewGuid():N}.jsonl");
         try
         {
-            var unicode = Dataset.FromRows([new() { ["t"] = "é \"q\" <b>" }]);
+            var unicode = DatasetRows.FromRows([new() { ["t"] = "é \"q\" <b>" }]);
             Check(unicode.WriteJsonLines(file) == 1 && File.ReadAllText(file) == "{\"t\":\"é \\\"q\\\" <b>\"}\n", "json lines output is readable UTF-8");
-            Check(SameJson(Dataset.FromFile(file).Single(), unicode.Single()), "round trip");
+            Check(SameJson(DatasetRows.FromFile(file).Single(), unicode.Single()), "round trip");
         }
         finally
         {
@@ -528,7 +528,7 @@ internal static partial class Tests
             var server = new FakeFileServer();
             server.Files["https://data.example/rows.jsonl"] = Encoding.UTF8.GetBytes(string.Concat(Enumerable.Range(0, 100).Select(i => $"{{\"i\":{i}}}\n")));
             var downloader = new Downloader(new HttpClient(server), cache) { Attempts = 3, RetryDelay = TimeSpan.FromMilliseconds(10) };
-            var data = Dataset.FromUrl("https://data.example/rows.jsonl", downloader: downloader, headers: new Dictionary<string, string> { ["Authorization"] = "Bearer secret" });
+            var data = DatasetRows.FromUrl("https://data.example/rows.jsonl", downloader: downloader, headers: new Dictionary<string, string> { ["Authorization"] = "Bearer secret" });
             Check(data.Count() == 100 && data.Count() == 100 && server.Requests == 1, $"cached ({server.Requests} requests)");
             Check(server.LastAuthorization == "Bearer secret", "headers sent");
             Check(File.Exists(Path.Combine(cache, "urls", "data.example", "rows.jsonl")), "plain URLs under urls/<host>/<path>");
@@ -536,17 +536,17 @@ internal static partial class Tests
             // Resume: a partial file continues with a Range request.
             server.Files["https://data.example/big.jsonl"] = Encoding.UTF8.GetBytes(string.Concat(Enumerable.Range(0, 1000).Select(i => $"{{\"i\":{i}}}\n")));
             server.FailAfterBytes = 3000;
-            var resumed = Dataset.FromUrl("https://data.example/big.jsonl", downloader: downloader);
+            var resumed = DatasetRows.FromUrl("https://data.example/big.jsonl", downloader: downloader);
             Check(resumed.Count() == 1000 && server.RangeRequests >= 1, $"resumed ({server.RangeRequests} range requests)");
 
             server.FailAfterBytes = null;
             server.Files["https://data.example/flaky.jsonl"] = Encoding.UTF8.GetBytes("{\"ok\":1}\n");
             server.Errors = 2;
-            Check(Dataset.FromUrl("https://data.example/flaky.jsonl", downloader: downloader).Count() == 1, "retried after server errors");
+            Check(DatasetRows.FromUrl("https://data.example/flaky.jsonl", downloader: downloader).Count() == 1, "retried after server errors");
 
             try
             {
-                _ = Dataset.FromUrl("https://data.example/private.jsonl", downloader: downloader).Count();
+                _ = DatasetRows.FromUrl("https://data.example/private.jsonl", downloader: downloader).Count();
                 Check(false, "missing file should fail");
             }
             catch (HttpRequestException ex)

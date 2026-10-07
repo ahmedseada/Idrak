@@ -52,13 +52,13 @@ tool. `IDRAK_DISABLE_CUDA=1` (and `_VULKAN`, `_HIP`) turns a backend off.
 
 | Package | What it gives you |
 |---------|-------------------|
-| `Idrak` (core) | Tensors and autograd, layers, training, vision, generation, chat and tools, retrieval, the inference engine, telemetry, every backend |
+| `Idrak` (core) | Tensors and autograd, layers, training, generation, chat and tools, retrieval, the inference engine, ONNX export and import, telemetry, every backend |
 | `Idrak.Abstraction` | The contracts Idrak is built on, each with its default implementation: so far `Device`, `ComputeResources` and the CPU device (preview; brought along by `Idrak`; see [plan 10](plans/10-abstraction.md)) |
 | `Idrak.LanguageModels` | Hugging Face and GGUF models, tokenizers, the models' own Jinja chat templates, LoRA / QLoRA fine-tuning, evaluation |
-| `Idrak.Datasets` | JSON Lines, JSON, CSV, text, code and Parquet files (also compressed or archived); Hugging Face, GitHub, Kaggle, Zenodo and URL sources |
+| `Idrak.Data` | JSON Lines, JSON, CSV, text, code and Parquet files (also compressed or archived); Hugging Face, GitHub, Kaggle, Zenodo and URL sources |
+| `Idrak.Vision` | Region classification, content framing and image statistics, over the vision contracts of `Idrak.Abstraction` |
 | `Idrak.AspNetCore` | `AddIdrak()`, `MapPredictor`, `MapGenerate` (JSON and streaming), `MapChatApi` (the local chat API) and `MapCompletionsApi` (`/v1`) |
 | `Idrak.Mcp` | Tools of Model Context Protocol servers, and serving tools and the engine's models (generate, chat, embed) over MCP; depends on `Idrak.Abstraction` only |
-| `Idrak.Onnx` | Export to `.onnx` (opset 17) and import `.onnx` into layers |
 | `Idrak.Onnx.Runtime` | Run `.onnx` models with ONNX Runtime as Idrak modules |
 | `idrak` (CLI, package `Idrak.Cli`) | One tool for the whole library: `doctor`, `devices`, `chat`, `run`, `serve`, `pull`, `list`, `bench`, `tune`, `train`, `data`, `rag`, `suggest` and more (see "idrak: the command-line tool") |
 
@@ -111,14 +111,14 @@ points"):
 | RoPE scaling methods | `RopeScalings` | `Idrak` |
 | Telemetry listeners | `Telemetry.Subscribe` | `Idrak` |
 | Tool-call formats | `ToolCallFormats` | `Idrak` |
-| ONNX import operators | `OnnxImportOps` | `Idrak.Onnx` |
-| ONNX export of modules, lambdas and graph operations | `OnnxExportOps` | `Idrak.Onnx` |
+| ONNX import operators | `OnnxImportOps` | `Idrak` |
+| ONNX export of modules, lambdas and graph operations | `OnnxExportOps` | `Idrak` |
 | Checkpoint formats | `CheckpointFormats` | `Idrak.LanguageModels` |
 | Model families (a spec, or a network built by the family) | `PretrainedArchitectures` | `Idrak.LanguageModels` |
 | GGUF architectures, quantization types, pre-tokenizers | `GgufArchitectures`, `GgufTypes`, `GgufPreTokenizers` | `Idrak.LanguageModels` |
 | Model sources | `ModelSources` | `Idrak.LanguageModels` |
 | Tokenizer normalizers, pre-tokenizers, decoders | `TokenizerComponents` | `Idrak.LanguageModels` |
-| Dataset file formats, sources, Parquet codecs | `DataFileFormats`, `DatasetSources`, `ParquetCodecs` | `Idrak.Datasets` |
+| Dataset file formats, sources, Parquet codecs | `DataFileFormats`, `DatasetSources`, `ParquetCodecs` | `Idrak.Data` |
 | Training data: samples, streams, transforms, batches | `ISampleSource`, `ISampleStream`, `ISampleTransform`, `IBatchSource`; sources by name in `SampleSources` | `Idrak` |
 | Image formats (a JPEG decoder, for example) | `ImageCodecs` | `Idrak` |
 | Optimizers | derive from `Optimizer` | `Idrak` |
@@ -142,12 +142,12 @@ points"):
 **Libraries**: add them to a project (`dotnet add package`, run in the project's folder):
 
 ```bash
-dotnet add package Idrak                      # tensors, layers, training, generation; every backend
+dotnet add package Idrak                      # tensors, layers, training, generation, ONNX; every backend
 dotnet add package Idrak.LanguageModels       # Hugging Face and GGUF language models, fine-tuning
-dotnet add package Idrak.Datasets             # datasets from files, Hugging Face, GitHub, Kaggle, Zenodo, URLs
+dotnet add package Idrak.Data                 # datasets from files, Hugging Face, GitHub, Kaggle, Zenodo, URLs
+dotnet add package Idrak.Vision               # region classification, content framing
 dotnet add package Idrak.AspNetCore           # serve models from ASP.NET Core
 dotnet add package Idrak.Mcp                  # Model Context Protocol tools
-dotnet add package Idrak.Onnx                 # ONNX export
 dotnet add package Idrak.Onnx.Runtime         # run ONNX models with ONNX Runtime
 ```
 
@@ -232,9 +232,7 @@ src/Idrak/
   Inference/                        Predictor, ModelPackage (.ikm), InferenceEngine
   Retrieval/                        chunking, BM25, TextEncoder (bi-encoder), VectorIndex, RetrievalIndex (hybrid
                                     search with rank fusion), CrossEncoder (re-ranking), Rag pipeline, search tool
-  Vision/                           Foreground (Otsu), ConnectedComponents, ContentFrame, RegionClassifier
-                                    (IRegionProposer), boxes and NonMaxSuppression, ModelDetector (IObjectDetector),
-                                    SegmentationMask, SegmentationMetrics, ModelSegmenter (ISegmenter), ChannelStatistics
+  Onnx/                             OnnxExport, OnnxImport (chains and graphs), the protobuf reader and writer
   Diagnostics/                      Telemetry hub, events, ConsoleLogger, MetricsRecorder,
                                     ChannelTelemetry, JsonLinesLogger
   Backends/                         the device backends: Cpu (SIMD kernels, measured tiling), Cuda (PTX kernels
@@ -250,12 +248,15 @@ src/Idrak.LanguageModels/           optional package, no dependencies: language 
                                     stored top-k logits), packing, CUDA graphs, memory fallbacks; adapters
   AnswerScorer, Evaluation          log-probabilities of given answers, answer metrics
   ModelSource                       Hugging Face ids: found in a cache or downloaded once
-src/Idrak.Datasets/                 optional package, no dependencies: JSON Lines, JSON, CSV, text, code and Parquet
+src/Idrak.Data/                     optional package, no dependencies: JSON Lines, JSON, CSV, text, code and Parquet
                                     files (also compressed and archived); Hugging Face, GitHub, Kaggle, Zenodo and URL
                                     sources with a download cache; rows into conversations; recipes
 src/Idrak.AspNetCore/               optional package: AddIdrak(), MapPredictor, MapGenerate, MapChatApi, MapIdrakStatus
 src/Idrak.Mcp/                      optional package: tools of Model Context Protocol servers, and serving tools and models over MCP
-src/Idrak.Onnx/                     optional package, no dependencies: export networks to .onnx (opset 17), import .onnx into layers
+src/Idrak.Vision/                   optional package, no dependencies: RegionClassifier (ComponentProposer), ContentFrame,
+                                    ChannelStatistics, ModelDetector, ModelSegmenter; the vision contracts and small defaults
+                                    (Foreground, ConnectedComponents, boxes, NonMaxSuppression, masks and metrics) are in
+                                    Idrak.Abstraction/Vision
 src/Idrak.Onnx.Runtime/             optional package: run .onnx models with ONNX Runtime as Idrak modules
 src/Idrak.Cli/                      idrak: the command-line tool (commands under Commands/ in ten groups, shared helpers
                                     under Shared/: the environment table, saved variables, Arabic shaping and bidi)
@@ -939,7 +940,10 @@ chat API this way, and the HouseApi sample is a complete prediction API in about
 
 Building blocks for image networks, independent of any one application. Interfaces (`IObjectDetector`,
 `ISegmenter`, `IRegionProposer`) let an application plug in its own parts; the library's implementations run any
-network that fits.
+network that fits. The contracts, foreground extraction, connected components, boxes, masks and their metrics are in
+`Idrak.Abstraction` (namespace `Idrak.Abstraction.Vision`); region classification, content framing,
+`ChannelStatistics` and the detector and segmenter over a network (`ModelDetector`, `ModelSegmenter`) are in the
+`Idrak.Vision` package.
 
 ```csharp
 using Idrak.Vision;
@@ -1080,7 +1084,7 @@ directly, and recorded CUDA graphs work with it. Cache formats of one's own deri
 rows, expand them to float32) and attend through masked float32 products on any device; register them with
 `KeyValueLayouts.Register` and choose them with `TextGenerator.CacheLayout` or `new DecodingContext(..., layout)`.
 
-### ONNX: the optional `Idrak.Onnx` and `Idrak.Onnx.Runtime` packages
+### ONNX: export and import in `Idrak`, ONNX Runtime in the optional `Idrak.Onnx.Runtime` package
 
 ```csharp
 model.ExportOnnx("house-price.onnx", 9);                                  // one sample is [9]; the batch stays dynamic
@@ -1097,7 +1101,8 @@ imported.SavePackage("model.ikm");                                      // archi
 using var onnx = OnnxModule.Load("model.onnx");                          // or run the file with ONNX Runtime (CPU package)
 ```
 
-`Idrak.Onnx` has no dependencies: it reads and writes the protobuf itself. **Export** covers Linear (LoRA
+ONNX export and import are part of `Idrak` (namespace `Idrak.Onnx`) and need no other package: they read and write
+the protobuf themselves. **Export** covers Linear (LoRA
 adapters merged), activations, Softmax, BatchNorm, LayerNorm, Conv2d, pooling, Flatten, Embedding,
 PositionalEncoding, attention, transformer layers, LSTM, GRU and the builder's shape helpers. **Import** turns a
 chain of those layers into a `Sequential` (with its `Network` builder), and anything else into a `GraphModule`:
@@ -1276,8 +1281,8 @@ the registered names and how to register.
 | Packed weight formats (int8, int4, bfloat16 built in) | `PackedWeight.Register(name, PackedWeightFactory)` | `Idrak` |
 | Network builder steps (JSON round trip) | `NetworkOps.Register(name, NetworkOp)`; a step gets an `INetworkBuilder` (`CurrentShape`, `Lambda`, `Add`, `Op`) | `Idrak` |
 | Tool-call formats (json, pythonic, qwen3-coder, mistral, harmony, deepseek built in) | `ToolCallFormats.Register(name, detect, create)`; or override `ChatTemplate.CreateToolCallParser` | `Idrak` |
-| ONNX import operators (chains and graphs) | `OnnxImportOps.Register(opType, OnnxImportTranslator)` | `Idrak.Onnx` |
-| ONNX export of modules, lambdas and graph operations | `OnnxExportOps.Register<T>(OnnxTranslator<T>)`, `RegisterLambda(name, ...)`, `RegisterGraphOp(op, OnnxGraphOpTranslator)` | `Idrak.Onnx` |
+| ONNX import operators (chains and graphs) | `OnnxImportOps.Register(opType, OnnxImportTranslator)` | `Idrak` |
+| ONNX export of modules, lambdas and graph operations | `OnnxExportOps.Register<T>(OnnxTranslator<T>)`, `RegisterLambda(name, ...)`, `RegisterGraphOp(op, OnnxGraphOpTranslator)` | `Idrak` |
 | Graph operations (`GraphModule` nodes; relu, clip, pow, ... built in) | `GraphOps.Register(name, GraphOp)` | `Idrak` |
 | Graph layer types (`GraphModule` JSON and model packages) | `LayerTypes.Register<T>(type, describe, create)` | `Idrak` |
 | RoPE scaling methods (linear, llama3, yarn, dynamic built in) | `RopeScalings.Register(type, RopeScalingMethod)` | `Idrak` |
@@ -1286,7 +1291,7 @@ the registered names and how to register.
 | GGUF architectures, quantization types and pre-tokenizers | `GgufArchitectures.Register(name, ...)`, `GgufTypes.Register(id, GgufType)`, `GgufPreTokenizers.Register(name, pattern)` | `Idrak.LanguageModels` |
 | Model sources (`name:` prefixes, asked before the built-ins) | `ModelSources.Register(IModelSource)` | `Idrak.LanguageModels` |
 | Tokenizer normalizers, pre-tokenizers, decoders | `TokenizerComponents.RegisterNormalizer` / `RegisterPreTokenizer` / `RegisterDecoder` | `Idrak.LanguageModels` |
-| Dataset file formats, sources, Parquet codecs | `DataFileFormats.Register`, `DatasetSources.Register`, `ParquetCodecs.Register` | `Idrak.Datasets` |
+| Dataset file formats, sources, Parquet codecs | `DataFileFormats.Register`, `DatasetSources.Register`, `ParquetCodecs.Register` | `Idrak.Data` |
 | Training data (samples, streams, per-sample transforms, whole batches) | implement `ISampleSource`, `ISampleStream`, `ISampleTransform` or `IBatchSource` | `Idrak` |
 | Sample sources by name (csv, images, tokens, npy built in) | `SampleSources.Register(name, SampleSourceFactory)` | `Idrak` |
 | Image formats (png, bmp, netpbm built in; JPEG and others as plug-ins) | `ImageCodecs.Register(IImageCodec)` | `Idrak` |
@@ -1378,7 +1383,7 @@ A `DataLoader` batches any `ISampleSource` (`Count`, `FeatureShape`, `TargetShap
 | `ImageFolderSource(folder, channels, height, width)` | `folder/<class>/*` images, classes from the folder names | decoded when read and resized; one-hot targets; also from a list of files, or unlabelled for prediction |
 | `TokenFileSource(path, length, stride)` | packed token ids (16 or 32 bits, or a one-dimensional .npy) | memory-mapped; windows of `length` tokens and the next tokens as targets, for language-model pretraining |
 | `NpySource(features, targets, classes)` | NumPy `.npy` arrays | memory-mapped; the first dimension counts the samples; class indices to one-hot |
-| `TableSamples.Load` / `Stream` (Idrak.Datasets) | JSON Lines, JSON, CSV and Parquet columns | numbers, booleans, numbers in text and arrays of numbers; class names to one-hot; `Stream` reads large files again on every pass |
+| `TableSamples.Load` / `Stream` (Idrak.Data) | JSON Lines, JSON, CSV and Parquet columns | numbers, booleans, numbers in text and arrays of numbers; class names to one-hot; `Stream` reads large files again on every pass |
 
 Views copy nothing: `source.Subset(indices)`, `Shuffle(seed)`, `Split(0.8, seed)` (the samples `Dataset.Split` gives
 with `removeDuplicates: false`) and `Concat(others)`; `Dataset.FromSource(source)` (or `ToDataset()`) reads every

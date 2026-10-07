@@ -5,7 +5,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
-using Idrak.Datasets;
+using Idrak.Data;
 using Idrak.LanguageModels;
 
 namespace Idrak.Cli.Commands.Train;

@@ -76,7 +76,7 @@ internal sealed class LoginCommand : Command
         return Services.Contains(service) ? service : throw new UsageException($"{context.Command.Name} takes hf, github or kaggle, not '{service}'.");
     }
 
-    // Where the Hugging Face token is read from (Idrak.Datasets.HuggingFace.Token).
+    // Where the Hugging Face token is read from (Idrak.Data.HuggingFace.Token).
     internal static string HuggingFaceTokenFile() => Environment.GetEnvironmentVariable("HF_TOKEN_PATH")
         ?? Path.Combine(Environment.GetEnvironmentVariable("HF_HOME") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".cache", "huggingface"), "token");
 

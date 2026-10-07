@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Idrak.Vision</RootNamespace>
+    <AssemblyName>Idrak.Vision</AssemblyName>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IsAotCompatible>true</IsAotCompatible>
+    <PackageId>Idrak.Vision</PackageId>
+    <Description>Computer vision for Idrak (no dependencies beyond Idrak): region classification in batches, content framing for classifiers of single objects (also as a training transform), per-channel image statistics for normalization, and detection and segmentation over any network.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Idrak\Idrak.csproj" />
+  </ItemGroup>
+
+</Project>

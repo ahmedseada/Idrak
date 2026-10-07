@@ -5,7 +5,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
-using Idrak.Datasets;
+using Idrak.Data;
 using Idrak.Generation;
 using Idrak.LanguageModels;
 
