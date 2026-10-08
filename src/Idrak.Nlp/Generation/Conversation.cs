@@ -241,11 +241,15 @@ public sealed class FakeChatModel : IChatModel
     /// <summary>The requests received, in order.</summary>
     public List<ChatRequest> Requests { get; } = [];
 
+    /// <summary>The kinds of message parts it takes (text only unless set); a request with another kind throws, as a real model's would.</summary>
+    public IReadOnlySet<string> PartKinds { get; set; } = ChatParts.TextOnly;
+
     /// <inheritdoc />
     public async IAsyncEnumerable<ChatChunk> StreamAsync(ChatRequest request,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        ChatParts.ThrowIfUnsupported(this, request);
         Requests.Add(request);
         if (!_replies.TryDequeue(out var reply))
         {

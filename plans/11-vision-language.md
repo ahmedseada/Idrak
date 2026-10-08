@@ -1,6 +1,6 @@
 # Plan 11: images into language models (Gemma 3 first)
 
-**Status:** planned 2026-10-07, revised the same day against the code; not started. Starts after plan 10's wave 4 (in
+**Status:** planned 2026-10-07, revised the same day against the code; phase 1 (contracts) done 2026-10-07 on the CPU. Starts after plan 10's wave 4 (in
 progress). Asked for to run `bakrianoo/arabic-legal-documents-ocr-1.0`, a fine-tune of Gemma-3-4B-IT that reads scanned
 Arabic legal documents (low quality scans included) and returns their contents as structured data. Its card asks for
 images resized and turned to grayscale first, and shows it running through transformers and vLLM.
@@ -22,7 +22,7 @@ OpenAI-style `/v1` API (phase 8). MCP and other model families come after that (
 | Loading `Gemma3ForConditionalGeneration`: `text_config` and `vision_config` nested in `config.json` (only the CLI's `BaseModelInfo` reads `text_config` today); the image token ids (`boi_token_index`, `image_token_index`, `eoi_token_index`, `mm_tokens_per_image`) read from the config, not fixed | missing |
 | Image tokens in the prompt: each image becomes `<start_of_image>`, 256 soft tokens whose embeddings are the projected image features (not scaled by √hidden like text embeddings), `<end_of_image>`; the soft tokens of one image attend to each other in both directions, the rest of the prompt stays causal | missing |
 | Preprocessing as `preprocessor_config.json` says (resize to 896 x 896, bilinear, no crop; scale by 1/255; normalize with mean 0.5 and std 0.5; RGB), plus grayscale for this fine-tune | missing (codecs only) |
-| Chat messages with images (`ChatMessage.Content` is a string), and Gemma 3's Jinja chat template walking content parts (`{'type': 'image'}`) | missing |
+| Chat messages with images: content as parts (`ChatPart`, `ChatImage`, phase 1); Gemma 3's Jinja chat template walking content parts (`{'type': 'image'}`) | contracts done (phase 1); templates and generation missing (phase 6) |
 | JPEG decoding (scans are often JPEG) | missing |
 
 ### Tensor names: two layouts
@@ -44,7 +44,7 @@ layer_norm2, mlp.fc1, mlp.fc2}`, `post_layernorm`.
 
 | Part | Package | Why |
 |---|---|---|
-| `ChatMessage` with images (content parts or an image list, open question 2) | `Idrak.Abstraction` (`Generation`) | used by Nlp now, by AspNetCore (`/v1` `image_url`) in phase 8 and by Mcp in phase 9 |
+| `ChatMessage` with content parts (`ChatPart`, the `ChatParts` registry, `IChatModel.PartKinds`; open question 2, decided) | `Idrak.Abstraction` (`Generation`) | Abstraction itself uses them (`ChatMessage`, `IChatModel`, `ChatMLTemplate`); Nlp, AspNetCore and Mcp use `ChatMessage` |
 | The span-masked attention operation (phase 3a) | `Idrak.Abstraction` (an operation in `Backend.cs`, with the CPU kernel) and `Idrak.Gpu` | every device implements operations; plan 9's table |
 | SigLIP layers, the projector, `Gemma3ForConditionalGeneration` loading | `Idrak` (core: layers and `Idrak.Models`) | model loading is core's; core is their only user |
 | Image preprocessing from `preprocessor_config.json` | `Idrak` (core) | read when a model loads |
@@ -70,6 +70,54 @@ namespace until a second library package uses it.
 | 7 | **The command line.** `idrak chat <model> --image FILE` (repeatable; also `/image FILE` inside a chat, like `/file`); the one-shot `idrak run <model> --image FILE "prompt"` (with `--schema` for the structured answer this model gives, `-j` for JSON); `--grayscale` (or the setting stored with a pulled model) | CLI tests pass with the tiny model; on the author's RTX 5070 Ti the real model reads a sample scan and its greedy output matches transformers' for the first 100 tokens |
 | 8 | **Images in chat, after the command line is proven** (phase 7 done on the real model). The engine hosts the model as a chat model that accepts images (`IChatModel`, saying which inputs it takes; the image is encoded once per conversation, as in phase 6); `MapChatApi` takes images in its messages; `MapCompletionsApi` (`/v1/chat/completions`) accepts OpenAI's `image_url` content parts (data URLs and, when allowed, http URLs); `idrak serve` serves it. The same preprocessing (and grayscale setting) as the command line | an OpenAI client sends a scan as an `image_url` part and gets the same answer as `idrak run --image`; streamed and not; the aspnetcore tests cover a tiny model with an image |
 | 9 | **After that.** An MCP `chat` tool with images (and an `ocr` tool if useful); pan-and-scan for tall pages; other families (Qwen2.5-VL); fine-tuning with images (LoRA on the text decoder, encoder frozen) | decided per item after phase 8 |
+
+### Phase 1 as built (2026-10-07)
+
+Decided by the author during the phase: no "default style" (no Ollama-like image list, no flags enum of inputs);
+message content is a contract open to new kinds of input, built the way every other contract and registry of the
+library is (a contract, the library's implementations as defaults beside it, a `SlotTable` registry, a testing-kit
+suite, an outside plug-in test). All in `Idrak.Abstraction.Generation` (`ChatParts.cs`), since Abstraction itself uses
+it (decision 10; the inventory test agrees).
+
+- **`abstract record ChatPart`** with `abstract string Kind`. Library parts: **`ChatText(string Text)`** (kind "text")
+  and **`ChatImage`** (kind "image"): the encoded bytes as received (`ReadOnlyMemory<byte> Data`, copied in), `string?
+  MediaType` (as given, else sniffed from the signature: PNG, JPEG, GIF, BMP, WebP, TIFF), `string Hash` (SHA-256, 64
+  lowercase hex digits; equality and `GetHashCode` by it, so phase 6 can encode an image once per conversation),
+  `FromFile(path, mediaType?)`, `FromBytes(ReadOnlySpan<byte>, mediaType?)`, `FromDataUrl(url)` (base64 data URLs of an
+  image type only; `FormatException` saying what is wrong otherwise), `ToDataUrl()`. No decoding in Abstraction (core's
+  `ImageCodecs` decodes, phase 2). A plug-in makes its own part type (a record deriving from `ChatPart`).
+- **`ChatMessage(string Role, IReadOnlyList<ChatPart> Parts, string? Thinking, IReadOnlyList<ToolCall>? ToolCalls,
+  string? ToolName)`**: the parts in the order given (images and text interleaved; OpenAI's content parts and Ollama's
+  `images` both map onto it). The text constructor stays (`new ChatMessage("user", "hi")`, one `ChatText`; "" gives no
+  part), and **`Content`** is the joined text of the text parts (nothing between them, as templates render consecutive
+  text parts); `with { Content = … }` replaces the text parts with one, after the others. Equality compares the parts in
+  order (the list is not compared by reference), so text-only code and tests are unchanged.
+- **`IChatPartKind`** (`Name`, `Write(ChatPart, JsonObject)`, `Read(JsonObject)`): how a kind is saved in the chat JSON,
+  `{"type": name, …}`. Registry **`ChatParts`** on a `SlotTable<string, IChatPartKind>`: "text" (`{"type": "text",
+  "text"}`) and "image" (`{"type": "image", "media_type", "data": base64}`) registered as library defaults (they live in
+  Abstraction, so no `LibraryRegistrations`); `Register`, `Unregister` (restores the default), `Get`, `Find`, `Names`,
+  `Default(name)`, `Default(name, version)`, `DefaultVersion`, `Origin`, `SetPolicy` (guarded: writing and reading a
+  part are single calls, so an app's kind falls back or is shadowed per call); it shows in `Overrides.Report()` and
+  `idrak overrides`. `ToJson(part)`, `FromJson(node)` (a bare string is text; an unknown type throws naming
+  `ChatParts.Register`), `ContentToJson(parts)` (a string when the content is text alone, so text-only files are written
+  as before; else a list of parts) and `ContentFromJson(node)`.
+- **What a model takes:** `IChatModel.PartKinds` (`IReadOnlySet<string>`, a default interface member returning
+  `ChatParts.TextOnly`, so no implementation broke); `ChatTemplate.PartKinds` (virtual, text only). **The one check:**
+  `ChatParts.ThrowIfUnsupported(model, request, name?)` and `ChatParts.ThrowIfUnsupported(messages, kinds, who)` throw
+  `NotSupportedException` naming the model or template, the message (number and role) and the part's kind. It runs in
+  `ChatGenerator.RenderPrompt` (so `Chat`, `Stream`, `ChatBatch` and `StreamBatch` too), the engine's chat model (before
+  a copy is taken, with the model's name), `FakeChatModel` (whose `PartKinds` is settable), `ChatMLTemplate.Render` and
+  `JinjaChatTemplate.Render` (a template never drops a part); `ChatTools.WithTools` forwards the inner model's kinds.
+- **JSON:** `ChatJson` (fine-tuning data, the CLI's `--history`, `/save`) writes content through `ContentToJson`;
+  `ChatTranscript.FromJson` and the CLI's history loader read it through `ContentFromJson`, so images round-trip and an
+  unknown part type is refused with a clear message (fine-tuning used to drop non-text parts silently). `/api/chat` and
+  `/v1` keep their own request types and are unchanged for text; `/v1` now refuses non-text content parts (`image_url`)
+  with a 400 naming the type instead of dropping them, until phase 8 takes them. MCP takes string content only, as before.
+- **Testing kit:** `ChatPartKindSuite` (`Conformance.CheckChatPartKind(name, kind?, samples?)`): reads parts of its
+  kind, the JSON it writes keeps the type and reads back equal, the same every time, and agrees with the library's kind.
+  `tests/Idrak.PluginTests` registers an audio part kind of its own from outside the library (kit, chat JSON, refused
+  by a text-only model, accepted by one that takes it, unregistered).
+- Tests: `IDRAK_FILTER="chat parts"` (6 tests) and the outside plug-in test.
 
 **Order.** 0 first (everything is checked against it). 1, 2 and 3a in parallel (disjoint files), then 3b. 4 and 5
 together (one family in the decoder). Then 6 and 7. Phase 8 starts only when phase 7 is proven on the real model on the
@@ -106,7 +154,9 @@ slot table; the suite passes on CPU and Vulkan (lavapipe) before the merge; PTX 
 ## Open questions
 
 1. Grayscale: a command-line flag (proposed `--grayscale`), a setting stored with a pulled model, or both.
-2. Content parts on `ChatMessage` (like `/v1`) or a separate image list (simpler now, a mapping later).
+2. ~~Content parts on `ChatMessage` (like `/v1`) or a separate image list.~~ **Decided 2026-10-07: content parts as a
+   contract** (`ChatPart`, registered kinds in `ChatParts`, `IChatModel.PartKinds`), open to new kinds (audio, video,
+   documents) without changing the contract; see "Phase 1 as built".
 3. Pan-and-scan for tall pages (Gemma 3's crops of a long document): first version or phase 9.
 4. Where an `ocr` tool or pipeline lives (phase 9): plan 10 puts OCR in `Idrak.Vision`, but one built on a language model
    needs Nlp, which Vision does not reference; in Nlp (or Mcp and the CLI) unless Vision's OCR is a model of its own.
