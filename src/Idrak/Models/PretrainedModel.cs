@@ -142,7 +142,7 @@ public sealed class PretrainedModel : IDisposable
                 var layers => new Sequential(layers) { Name = "decoder" },
             }
             : spec.Build(weights, buildOptions);
-        var vision = architecture.Vision?.Invoke(config, reader, notes) is { } read ? read with { Source = () => format.Open(folder) } : null;
+        var vision = architecture.Vision?.Invoke(config, reader, notes) is { } read ? read with { Source = () => format.Open(folder), Folder = folder } : null;
         if (vision is not null)
         {
             weights.Used.UnionWith(vision.Tensors.Values.Select(t => t.Stored));
