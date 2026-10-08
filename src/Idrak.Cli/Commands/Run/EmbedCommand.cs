@@ -137,9 +137,50 @@ internal sealed class HiddenStates(Sequential network) : Module
     public override IEnumerable<Module> Children() => [network];
 }
 
-/// <summary>Writes NumPy .npy files (version 1.0, little-endian float32), readable with numpy.load.</summary>
+/// <summary>Writes NumPy .npy files (version 1.0, little-endian float32), readable with numpy.load; reads float32 and int64 ones.</summary>
 internal static class Npy
 {
+    /// <summary>A little-endian float32 array in C order, and its shape.</summary>
+    public static (float[] Values, int[] Shape) ReadFloat32(string path)
+    {
+        var (bytes, start, shape) = Read(path, "<f4");
+        var values = new float[(bytes.Length - start) / 4];
+        Buffer.BlockCopy(bytes, start, values, 0, values.Length * 4);
+        return (values, shape);
+    }
+
+    /// <summary>A little-endian int64 array in C order, and its shape.</summary>
+    public static (long[] Values, int[] Shape) ReadInt64(string path)
+    {
+        var (bytes, start, shape) = Read(path, "<i8");
+        var values = new long[(bytes.Length - start) / 8];
+        Buffer.BlockCopy(bytes, start, values, 0, values.Length * 8);
+        return (values, shape);
+    }
+
+    private static (byte[] Bytes, int Start, int[] Shape) Read(string path, string type)
+    {
+        var bytes = File.ReadAllBytes(path);
+        if (bytes.Length < 12 || bytes[0] != 0x93 || Encoding.ASCII.GetString(bytes, 1, 5) != "NUMPY")
+        {
+            throw new InvalidDataException($"{path} is not a .npy file.");
+        }
+
+        int major = bytes[6];
+        int length = major == 1 ? BitConverter.ToUInt16(bytes, 8) : BitConverter.ToInt32(bytes, 8);
+        int start = (major == 1 ? 10 : 12) + length;
+        string header = Encoding.ASCII.GetString(bytes, major == 1 ? 10 : 12, length);
+        if (!header.Contains($"'descr': '{type}'", StringComparison.Ordinal) || !header.Contains("'fortran_order': False", StringComparison.Ordinal))
+        {
+            throw new InvalidDataException($"{path}: expected a {type} array in C order, found {header.Trim()}");
+        }
+
+        var match = System.Text.RegularExpressions.Regex.Match(header, @"'shape':\s*\(([^)]*)\)");
+        int[] shape = [.. match.Groups[1].Value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(d => int.Parse(d, System.Globalization.CultureInfo.InvariantCulture))];
+        return (bytes, start, shape);
+    }
+
     /// <summary>Writes <paramref name="rows"/> as a [rows, columns] float32 array.</summary>
     public static void Write(string path, IReadOnlyList<float[]> rows, int columns)
     {

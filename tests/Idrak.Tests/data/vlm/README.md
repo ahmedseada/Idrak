@@ -43,6 +43,7 @@ is a random `Gemma3ForConditionalGeneration` built from configs (nothing comes f
 | `reference/prompt-image-generate-logits.npy` | float32 [1, 20, 366]: the logits of each of the 20 greedy steps (`generate`, KV cache) |
 | `reference/prompt-text-input_ids.npy`, `prompt-text-logits.npy` | A text-only chat prompt (39 tokens, longer than the window) and its logits |
 | `exif/` | EXIF orientation fixtures (plan 11, phase 7; `tools/vlm/make_exif.py`): a 7 x 5 image as `exif-N.jpg` with orientation N = 1 to 8 and `exif-N.png` (eXIf chunk) for N = 3, 6, 8, and `upright-N.<ext>.png`, what Pillow's `ImageOps.exif_transpose` gives for each |
+| `compare/color`, `compare/gray` | `tools/vlm/compare_real.py`'s folders for the tiny model (`idrak vlm check`'s reference format): `image.png` with the system line and question of `prompt-image-*` (float32, 20 steps), and `image.jpg` with `--grayscale` and no system line; written from tiny-gemma3-v5 by transformers 5.19.0, then each manifest's absolute `image` path replaced by `../../image.png` (`../../image.jpg`), which `vlm check` reads relative to the folder |
 | `manifest.json` | Versions, every file's size and SHA-256, each layout's tensor names, shapes and writer with its checks, array shapes, and the facts below |
 
 `manifest.json` → `facts` holds: the prompts (messages, the chat template's text, the processor's expanded text, ids,

@@ -22,6 +22,8 @@ internal static partial class Tests
         ("cli images: EXIF orientations 1 to 8 (JPEG APP1, PNG eXIf) turn images as Pillow's exif_transpose", CliImageExif),
         ("cli images: the Jinja chat template renders image parts; Gemma 3's image prompt format expands them to the processor's text and ids", CliImageTemplate),
         ("cli images: run --image with the tiny Gemma 3 gives transformers' 20 greedy tokens (real encoder and reference features), -j, --schema, --grayscale, an alias; chat --image and /image; a text-only model refuses", CliImageRun),
+        ("cli images: vlm check reads tools/vlm/compare_real.py's folders (colour, and grey from a JPEG) for the tiny Gemma 3 and reports exact agreement; a changed token is a near-tie or a real difference by --tie", CliImageCompare),
+        ("cli images: run --out writes the answer, or the -j document, to a file as UTF-8 without a BOM", CliImageRunOut),
     ];
 
     private static string VlmModel => TestData("vlm/tiny-gemma3");
@@ -221,6 +223,91 @@ internal static partial class Tests
         {
             ImageInputs.EncoderFactory = null;
             Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    private static void CliImageCompare(Device device)
+    {
+        foreach (string name in new[] { "color", "gray" })
+        {
+            string reference = TestData($"vlm/compare/{name}");
+            var (code, text, error) = RunIdrakOn(device, null, "vlm", "check", VlmModel, "--reference", reference, "-j");
+            var json = JsonOf(text, $"vlm check {name}");
+            var forced = json["teacher_forced"]!;
+            Check(code == 0 && (bool)json["ok"]! && (int)forced["agree"]! == 20 && (int)forced["steps"]! == 20
+                  && (int)json["teacher_forced_reference_features"]!["agree"]! == 20 && json["greedy"]!["first_divergence"] is null
+                  && (int)forced["prompt_rows_agree"]! == (int)forced["prompt_rows"]!, $"vlm check {name}: {code} {error} {text}");
+            Check((float)json["pixels"]!["max_abs"]! <= 1e-5f && (double)json["features"]!["cosine"]! > 0.99999 && (float)json["features"]!["max_abs"]! < 1e-4f
+                  && (bool)json["prompt"]!["same"]! && (bool)json["grayscale"]! == (name == "gray") && (float)forced["max_top5_logit_difference"]! < 1e-4f,
+                $"vlm check {name}: pixels, features, prompt: {text}");
+            (code, text, _) = RunIdrakOn(device, null, "vlm", "check", VlmModel, "--reference", reference);
+            Check(code == 0 && text.Contains("Verdict: Idrak picks transformers' token at all 20 steps and its own greedy answer is the same.", StringComparison.Ordinal), $"vlm check {name} as text: {text}");
+        }
+
+        // A reference whose last answer token (step 19, so nothing is fed after it) is its second choice: Idrak disagrees there
+        // only; a near-tie or a real difference by --tie.
+        string folder = Path.Combine(Path.GetTempPath(), $"idrak-vlm-check-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(folder);
+        try
+        {
+            foreach (string file in Directory.GetFiles(TestData("vlm/compare/color")))
+            {
+                File.Copy(file, Path.Combine(folder, Path.GetFileName(file)));
+            }
+
+            File.WriteAllText(Path.Combine(folder, "manifest.json"), File.ReadAllText(Path.Combine(folder, "manifest.json")).Replace("\"../../image.png\"", "null", StringComparison.Ordinal));
+            long[] second = ReadNpyInt64(Path.Combine(folder, "gen_top_ids.npy"));
+            string ids = Path.Combine(folder, "generated_ids.npy");
+            byte[] bytes = File.ReadAllBytes(ids);
+            int start = 10 + BitConverter.ToUInt16(bytes, 8);
+            BitConverter.TryWriteBytes(bytes.AsSpan(start + 19 * 8), second[19 * 5 + 1]);
+            File.WriteAllBytes(ids, bytes);
+
+            var (code, text, _) = RunIdrakOn(device, null, "vlm", "check", VlmModel, "--reference", folder, "--tie", "1000", "-j");
+            var json = JsonOf(text, "vlm check, a changed token");
+            var first = json["teacher_forced"]!["disagreements"]![0]!;
+            Check(code == 0 && (int)first["step"]! == 19 && (bool)first["near_tie"]! && (int)first["idrak"]![0]!["id"]! == (int)second[19 * 5]
+                  && json["teacher_forced"]!["disagreements"]!.AsArray().Count == 1 && (int)json["greedy"]!["first_divergence"]! == 19 && json["pixels"] is null
+                  && ((string)json["verdict"]!).Contains("Every disagreement (1) is a near-tie", StringComparison.Ordinal), $"a changed token, --tie 1000: {code} {text}");
+            (code, text, _) = RunIdrakOn(device, null, "vlm", "check", VlmModel, "--reference", folder, "--tie", "0");
+            Check(code == 1 && text.Contains("REAL DIFFERENCE", StringComparison.Ordinal) && text.Contains("reference top-5:", StringComparison.Ordinal)
+                  && text.Contains("NOT a near-tie", StringComparison.Ordinal) && text.Contains("first divergence at step 19", StringComparison.Ordinal), $"a changed token, --tie 0: {code} {text}");
+
+            Check(RunIdrakOn(device, null, "vlm", "check", VlmModel).Code == 2 && RunIdrakOn(device, null, "vlm", "check", VlmModel, "--reference", TestData("vlm/reference")).Code == 2,
+                "vlm check: --reference is required and must be compare_real.py's folder");
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    private static void CliImageRunOut(Device device)
+    {
+        string folder = Path.Combine(Path.GetTempPath(), $"idrak-run-out-{Guid.NewGuid():N}");
+        try
+        {
+            string png = TestData("vlm/image.png");
+            string answerFile = Path.Combine(folder, "sub", "answer.txt"), jsonFile = Path.Combine(folder, "answer.json");
+            string[] greedy = ["-s", "Read the scan.", "--temperature", "0", "--max-tokens", "20"];
+            var (code, text, error) = RunIdrakOn(device, null, ["run", VlmModel, "--image", png, "What is in this image?", .. greedy, "-j", "--out", jsonFile]);
+            byte[] bytes = File.ReadAllBytes(jsonFile);
+            string written = new System.Text.UTF8Encoding(false, throwOnInvalidBytes: true).GetString(bytes);
+            Check(code == 0 && !(bytes is [0xEF, 0xBB, 0xBF, ..]) && written == text && JsonOf(written, "--out -j")["text"] is not null, $"run -j --out: {code} {error}\n{written}\n{text}");
+            string answer = (string)JsonOf(text, "run -j")["text"]!;
+            Check(answer.Any(c => c > 127), $"the tiny model's answer holds non-ASCII text (byte fallback): {answer}");
+
+            (code, text, _) = RunIdrakOn(device, null, ["run", VlmModel, "--image", png, "What is in this image?", .. greedy, "-o", answerFile]);
+            bytes = File.ReadAllBytes(answerFile);
+            written = new System.Text.UTF8Encoding(false, throwOnInvalidBytes: true).GetString(bytes);
+            Check(code == 0 && !(bytes is [0xEF, 0xBB, 0xBF, ..]) && written == answer.Trim() + "\n" && text.Contains(answer.Trim(), StringComparison.Ordinal), $"run -o: {code}\n{written}\n{text}");
+        }
+        finally
+        {
+            if (Directory.Exists(folder))
+            {
+                Directory.Delete(folder, recursive: true);
+            }
         }
     }
 }

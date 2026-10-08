@@ -52,7 +52,7 @@ internal static partial class Tests
     private static void CliDevHelp(Device device)
     {
         _ = device;
-        foreach (string name in new[] { "new", "test", "onnx import", "onnx export", "onnx check", "kernels", "kernels dump", "trace", "demo", "shell" })
+        foreach (string name in new[] { "new", "test", "onnx import", "onnx export", "onnx check", "vlm check", "kernels", "kernels dump", "trace", "demo", "shell" })
         {
             var (code, output, _) = DevRun([.. name.Split(' '), "--help"]);
             Check(code == 0 && output.Contains("Examples:", StringComparison.Ordinal) && output.Contains("Environment (idrak help env for all):", StringComparison.Ordinal),
