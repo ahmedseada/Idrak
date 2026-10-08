@@ -153,16 +153,16 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 
 ## The device contract (`Backend`)
 
-`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 124 virtual methods, 6 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `HipBackend`, `VulkanBackend`. Each
-operation (109, `Ops`) is a `NameKernel` method, the device's own kernel; `Backend.Name(...)` runs the kernel registered
+`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 126 virtual methods, 6 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `HipBackend`, `VulkanBackend`. Each
+operation (111, `Ops`) is a `NameKernel` method, the device's own kernel; `Backend.Name(...)` runs the kernel registered
 for the device in `Kernels` instead, where there is one (plan 9). The rest is device plumbing: memory, copies, graphs, profiling.
 
 | Device | Methods overridden |
 |---|---|
-| `CpuBackend` | 104 of 134 |
-| `CudaBackend` | 126 of 134 |
-| `HipBackend` | 22 of 134 |
-| `VulkanBackend` | 108 of 134 |
+| `CpuBackend` | 106 of 136 |
+| `CudaBackend` | 127 of 136 |
+| `HipBackend` | 22 of 136 |
+| `VulkanBackend` | 109 of 136 |
 
 | Operation | Kind | Cpu | Cuda | Hip | Vulkan |
 |---|---|---|---|---|---|
@@ -185,6 +185,8 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `AttentionScoresInt8Kernel(8)` | virtual | ✓ | ✓ |  |  |
 | `AttentionSegmentedBackwardKernel(18)` | virtual | ✓ | ✓ |  |  |
 | `AttentionSegmentedKernel(14)` | virtual | ✓ | ✓ |  |  |
+| `AttentionSpansBackwardKernel(19)` | virtual | ✓ |  |  |  |
+| `AttentionSpansKernel(15)` | virtual | ✓ | ✓ |  | ✓ |
 | `AttentionStridedBackwardKernel(23)` | virtual |  | ✓ |  |  |
 | `AttentionStridedKernel(16)` | virtual |  | ✓ |  |  |
 | `AttentionTiledBackwardKernel(16)` | virtual | ✓ | ✓ |  | ✓ |

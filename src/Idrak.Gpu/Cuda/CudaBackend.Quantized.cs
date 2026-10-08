@@ -876,6 +876,27 @@ internal sealed unsafe partial class CudaBackend
             U(rowsPerHead), U(steps), U(capacity), U(dim), F(scale), U(variant.Window), F(variant.Softcap));
     }
 
+    // Attention over one range of keys per query row: attention_spans_f32 (head sizes up to FlashMaxDim; the gradient
+    // takes the host fallback).
+    public override void AttentionSpansKernel(Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage y, Storage? logSumExp, int heads,
+        int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant = default)
+    {
+        if (dim <= 0 || dim > PtxKernels.FlashMaxDim || kvHeads <= 0 || headsPerTable <= 0)
+        {
+            base.AttentionSpansKernel(q, keys, values, starts, ends, y, logSumExp, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+            return;
+        }
+
+        if (heads <= 0 || rows <= 0)
+        {
+            return;
+        }
+
+        Launch(K(PtxKernels.SpanAttentionName), (uint)((rows + PtxKernels.FlashTile - 1) / PtxKernels.FlashTile), (uint)heads, 1, 128, 1,
+            P(q), P(keys), P(values), P(starts), P(ends), P(y), logSumExp is null ? 0UL : P(logSumExp),
+            U(rows), U(keyRows), U(dim), F(scale), U(heads / kvHeads), U(headsPerTable), F(variant.Softcap));
+    }
+
     private const float Log2E = 1.4426950408889634f;
 
     // Strides of the tensor-core flash kernels for contiguous [heads, rowsPerHead, dim] queries / outputs and

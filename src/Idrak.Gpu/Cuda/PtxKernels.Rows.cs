@@ -9,7 +9,7 @@ namespace Idrak.Gpu.Cuda;
 // such as a softmax over a 150k-token vocabulary), and matrix products with few rows (token-by-token decoding).
 internal static partial class PtxKernels
 {
-    public static readonly string[] RowNames = ["gemv_nn_f32", "gemv_nt_f32", "attention_decode_f32", "attention_decode_int8", "gemm128_f32", "gemm64_f32", "gemv_multi_f32", "attention_flash_f32", "attention_flash_int8", "attn_bwd_d_f32", "attn_bwd_kv_f32", "attn_bwd_q_f32", "attention_decode_bf16", "attention_flash_bf16", "gemm128_int8_f32", "gemm64_int8_f32", "gemm128_int4_f32", "gemm64_int4_f32", "gemm128_bf16_f32", "gemm64_bf16_f32", "adam8_f32", "transpose_f32", "sumsq_f32", "sum_cols_strided_f32", "multi_sumsq_f32", "multi_adamw_f32"];
+    public static readonly string[] RowNames = ["gemv_nn_f32", "gemv_nt_f32", "attention_decode_f32", "attention_decode_int8", "gemm128_f32", "gemm64_f32", "gemv_multi_f32", "attention_flash_f32", "attention_flash_int8", "attn_bwd_d_f32", "attn_bwd_kv_f32", "attn_bwd_q_f32", "attention_decode_bf16", "attention_flash_bf16", "gemm128_int8_f32", "gemm64_int8_f32", "gemm128_int4_f32", "gemm64_int4_f32", "gemm128_bf16_f32", "gemm64_bf16_f32", "adam8_f32", "transpose_f32", "sumsq_f32", "sum_cols_strided_f32", "multi_sumsq_f32", "multi_adamw_f32", SpanAttentionName];
 
     /// <summary>Threads of a <c>gemm128_f32</c> / <c>gemm64_f32</c> block.</summary>
     public const int GemmThreads = 256;
@@ -596,6 +596,7 @@ internal static partial class PtxKernels
         AttentionFlash(sb, int8: true);
         AttentionFlash(sb, bf16: true);
         AttentionBackward(sb);
+        AttentionSpans(sb);
         Gemm(sb, "gemm128_f32", 128, 8);
         Gemm(sb, "gemm64_f32", 64, 4);
         foreach (var (format, packed) in new[] { ("int8", 1), ("int4", 2), ("bf16", 3) })
