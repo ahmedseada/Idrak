@@ -15,8 +15,8 @@ namespace Idrak.Models;
 /// </summary>
 public static class PretrainedFamilies
 {
-    // Llama, Mistral, Qwen2, Qwen3, Gemma, Gemma 2 and Gemma 3 (text), and the mixture-of-experts families Mixtral,
-    // Qwen2-MoE and Qwen3-MoE.
+    // Llama, Mistral, Qwen2, Qwen3, Gemma, Gemma 2 and Gemma 3 (text, and the vision-language model's decoder with its
+    // vision part as data), and the mixture-of-experts families Mixtral, Qwen2-MoE and Qwen3-MoE.
     internal static IEnumerable<(string Name, PretrainedArchitecture Architecture)> BuiltIns() =>
     [
         ("LlamaForCausalLM", LlamaStyle((config, spec, _) => spec)),
@@ -30,7 +30,8 @@ public static class PretrainedFamilies
             TieEmbeddings = true,
         })),
         ("Gemma2ForCausalLM", new() { Spec = (config, notes) => GemmaSpec(config, CommonSpec(config, notes), version: 2), TensorName = GemmaTensorName }),
-        ("Gemma3ForCausalLM", new() { Spec = (config, notes) => GemmaSpec(config, CommonSpec(config, notes), version: 3), TensorName = GemmaTensorName }),
+        ("Gemma3ForCausalLM", new() { Spec = (config, notes) => Gemma3Spec(Gemma3Keys(config), notes), TensorName = GemmaTensorName }),
+        ("Gemma3ForConditionalGeneration", Gemma3VisionLanguage(Gemma3Layouts[0])),
         ("MixtralForCausalLM", new() { Spec = (config, notes) => ExpertSpec(config, notes, normalizeTopK: true), TensorName = MixtralTensorName }),
         ("Qwen2MoeForCausalLM", new() { Spec = (config, notes) => ExpertSpec(config, notes, normalizeTopK: false) with { QkvBias = true }, TensorName = QwenMoeTensorName }),
         ("Qwen3MoeForCausalLM", new() { Spec = (config, notes) => ExpertSpec(config, notes, normalizeTopK: false) with { QkNorm = true }, TensorName = QwenMoeTensorName }),
@@ -215,6 +216,217 @@ public static class PretrainedFamilies
             Rope = rope,
             SlidingWindowRope = version == 3 ? new RopeSettings((float?)c["rope_local_base_freq"] ?? 10000f, rope.RotaryDim) : null,
         };
+    }
+
+    private static DecoderSpec Gemma3Spec(JsonObject c, List<string> notes) => GemmaSpec(c, CommonSpec(c, notes), version: 3);
+
+    // transformers 5 writes the RoPE settings of Gemma 3 as rope_parameters, one entry per layer kind ({"full_attention":
+    // {"rope_type": "linear", "factor": 8, "rope_theta": 1e6}, "sliding_attention": {"rope_type": "default", "rope_theta":
+    // 1e4}}) or one for all, instead of rope_theta, rope_scaling and rope_local_base_freq. Read into those keys (a copy).
+    private static JsonObject Gemma3Keys(JsonObject c)
+    {
+        if (c["rope_parameters"] is not JsonObject parameters)
+        {
+            return c;
+        }
+
+        c = (JsonObject)c.DeepClone();
+        bool perKind = parameters.ContainsKey("full_attention") || parameters.ContainsKey("sliding_attention");
+        if ((perKind ? parameters["full_attention"] : parameters) is JsonObject full)
+        {
+            if (full["rope_theta"] is { } theta)
+            {
+                c["rope_theta"] = theta.DeepClone();
+            }
+
+            var scaling = (JsonObject)full.DeepClone();
+            scaling.Remove("rope_theta");
+            c["rope_scaling"] = ((string?)full["rope_type"] ?? "default") == "default" ? null : scaling;
+        }
+
+        if (perKind && parameters["sliding_attention"] is JsonObject sliding)
+        {
+            if (((string?)sliding["rope_type"] ?? "default") != "default")
+            {
+                throw new NotSupportedException($"RoPE scaling '{sliding["rope_type"]}' on the sliding-window layers is not supported (Gemma 3 scales the global layers only).");
+            }
+
+            if (sliding["rope_theta"] is { } local)
+            {
+                c["rope_local_base_freq"] = local.DeepClone();
+            }
+        }
+
+        return c;
+    }
+
+    // The three namings of a Gemma3ForConditionalGeneration checkpoint (plan 11): where the text decoder's model, its
+    // lm_head (never saved: tied), the SigLIP vision model and the projector are. transformers 4.52 to 4.57 rename the
+    // modules in memory but save under the old names; version 5 drops the vision model's own level.
+    private sealed record Gemma3Layout(string Name, string Text, string Head, string Vision, string Projector);
+
+    private static readonly Gemma3Layout[] Gemma3Layouts =
+    [
+        new("save_pretrained of transformers 4.x (language_model.model.*, vision_tower.vision_model.*)", "language_model.model.", "language_model.lm_head.",
+            "vision_tower.vision_model.", "multi_modal_projector."),
+        new("state dict of transformers 4.52 to 4.57 (model.language_model.*, model.vision_tower.vision_model.*)", "model.language_model.", "lm_head.",
+            "model.vision_tower.vision_model.", "model.multi_modal_projector."),
+        new("save_pretrained of transformers 5 (language_model.model.*, vision_tower.*)", "language_model.model.", "language_model.lm_head.",
+            "vision_tower.", "multi_modal_projector."),
+    ];
+
+    // Gemma 3 with images: the text decoder is Gemma 3's, read from text_config, never soft-capping its logits
+    // (Gemma3ForConditionalGeneration does not, whatever final_logit_softcapping says); the vision encoder and projector
+    // are read as data (PretrainedVision), in whichever of the three namings the checkpoint uses.
+    private static PretrainedArchitecture Gemma3VisionLanguage(Gemma3Layout layout) => new()
+    {
+        Spec = (config, notes) =>
+        {
+            var text = Gemma3TextConfig(config);
+            var spec = Gemma3Spec(text, notes);
+            // Text embeddings are scaled by √width held in the weights' type (Gemma3TextScaledWordEmbedding): √2560 rounds in bfloat16.
+            return spec with { LogitSoftcap = null, EmbeddingScale = InType(MathF.Sqrt(spec.Dim), (string?)text["dtype"] ?? (string?)text["torch_dtype"]) };
+        },
+        TensorName = name => GemmaTensorName(name) switch
+        {
+            null => null,
+            var stored when stored.StartsWith("model.", StringComparison.Ordinal) => layout.Text + stored["model.".Length..],
+            var stored => layout.Head + stored["lm_head.".Length..],
+        },
+        ForCheckpoint = names =>
+        {
+            var texts = Gemma3Layouts.Where(l => names.Contains(l.Text + "embed_tokens.weight")).ToList();
+            if (texts.Count == 0)
+            {
+                throw new InvalidDataException("This Gemma3ForConditionalGeneration checkpoint has no text decoder under a known name ("
+                    + string.Join(", ", Gemma3Layouts.Select(l => l.Text + "embed_tokens.weight").Distinct()) + ").");
+            }
+
+            return Gemma3VisionLanguage(texts.FirstOrDefault(l => names.Contains(l.Vision + "embeddings.patch_embedding.weight")) ?? texts[0]);
+        },
+        Vision = (config, checkpoint, notes) => Gemma3Vision(config, checkpoint, layout, notes),
+    };
+
+    // text_config read as a Gemma3ForCausalLM configuration: the keys transformers keeps at the top level (tied embeddings,
+    // the weights' type) when text_config lacks them, then Gemma3TextConfig's defaults for absent keys (the original
+    // gemma-3-4b-it's text_config names only its width, layers, MLP, window and RoPE scaling).
+    private static JsonObject Gemma3TextConfig(JsonObject config)
+    {
+        var text = config["text_config"] is JsonObject given ? (JsonObject)given.DeepClone() : new JsonObject();
+        foreach (string key in (string[])["tie_word_embeddings", "dtype", "torch_dtype"])
+        {
+            if (!text.ContainsKey(key) && config[key] is { } value)
+            {
+                text[key] = value.DeepClone();
+            }
+        }
+
+        foreach (var (key, value) in JsonNode.Parse(Gemma3TextDefaults)!.AsObject())      // parsed, so numbers read as any type, as config.json's do
+        {
+            if (!text.ContainsKey(key))
+            {
+                text[key] = value!.DeepClone();
+            }
+        }
+
+        return Gemma3Keys(text);
+    }
+
+    // transformers' Gemma3TextConfig defaults (4.57 and 5.x) for the keys the common reader needs.
+    private const string Gemma3TextDefaults = """
+        {"vocab_size": 262208, "hidden_size": 2304, "intermediate_size": 9216, "num_hidden_layers": 26, "num_attention_heads": 8,
+         "num_key_value_heads": 4, "head_dim": 256, "hidden_activation": "gelu_pytorch_tanh", "max_position_embeddings": 131072,
+         "rms_norm_eps": 1e-6, "query_pre_attn_scalar": 256, "sliding_window": 4096, "rope_local_base_freq": 10000.0}
+        """;
+
+    // A value as the torch type named holds it ("bfloat16" rounds to nearest even, "float16"; float32 otherwise).
+    private static float InType(float value, string? type)
+    {
+        if (type == "bfloat16")
+        {
+            uint bits = BitConverter.SingleToUInt32Bits(value);
+            return BitConverter.UInt32BitsToSingle((bits + 0x7FFFu + ((bits >> 16) & 1u)) & 0xFFFF0000u);
+        }
+
+        return type == "float16" ? (float)(Half)value : value;
+    }
+
+    // The vision part of a Gemma 3 checkpoint: SigLIP's configuration, the image token ids (Gemma3Config's defaults when
+    // absent), and every encoder and projector tensor, its shape checked against them.
+    private static PretrainedVision? Gemma3Vision(JsonObject config, ITensorStore checkpoint, Gemma3Layout layout, List<string> notes)
+    {
+        if (!checkpoint.Contains(layout.Vision + "embeddings.patch_embedding.weight"))
+        {
+            notes.Add("The checkpoint has no vision encoder: the model reads text only.");
+            return null;
+        }
+
+        var encoder = VisionEncoderConfig.FromJson(config["vision_config"] as JsonObject);
+        var tokens = new ImageTokenIds((int?)config["boi_token_index"] ?? 255_999, (int?)config["eoi_token_index"] ?? 256_000,
+            (int?)config["image_token_index"] ?? 262_144, (int?)config["mm_tokens_per_image"] ?? 256);
+        int side = (int)Math.Round(Math.Sqrt(tokens.TokensPerImage));
+        if (side == 0 || side * side != tokens.TokensPerImage || encoder.PatchesPerSide % side != 0)
+        {
+            throw new InvalidDataException($"mm_tokens_per_image {tokens.TokensPerImage} is not a square grid that divides the {encoder.PatchesPerSide} x {encoder.PatchesPerSide} patches.");
+        }
+
+        if (encoder.UseHead)
+        {
+            notes.Add("The vision encoder's pooling head (vision_use_head) is not used: Gemma 3 projects every patch.");
+        }
+
+        int textDim = (int)Gemma3TextConfig(config)["hidden_size"]!, d = encoder.Dim, f = encoder.FfDim;
+        var expected = new List<(string Name, int[] Shape)>
+        {
+            ("vision.embeddings.patch_embedding.weight", [d, encoder.Channels, encoder.PatchSize, encoder.PatchSize]),
+            ("vision.embeddings.patch_embedding.bias", [d]),
+            ("vision.embeddings.position_embedding.weight", [encoder.Patches, d]),
+        };
+        for (int i = 0; i < encoder.Layers; i++)
+        {
+            string l = $"vision.encoder.layers.{i}.";
+            foreach (string norm in (string[])["layer_norm1", "layer_norm2"])
+            {
+                expected.Add(($"{l}{norm}.weight", [d]));
+                expected.Add(($"{l}{norm}.bias", [d]));
+            }
+
+            foreach (string projection in (string[])["q_proj", "k_proj", "v_proj", "out_proj"])
+            {
+                expected.Add(($"{l}self_attn.{projection}.weight", [d, d]));
+                expected.Add(($"{l}self_attn.{projection}.bias", [d]));
+            }
+
+            expected.Add(($"{l}mlp.fc1.weight", [f, d]));
+            expected.Add(($"{l}mlp.fc1.bias", [f]));
+            expected.Add(($"{l}mlp.fc2.weight", [d, f]));
+            expected.Add(($"{l}mlp.fc2.bias", [d]));
+        }
+
+        expected.Add(("vision.post_layernorm.weight", [d]));
+        expected.Add(("vision.post_layernorm.bias", [d]));
+        expected.Add(("projector.mm_soft_emb_norm.weight", [d]));
+        expected.Add(("projector.mm_input_projection_weight", [d, textDim]));      // [vision, text], used as x · W
+
+        var tensors = new Dictionary<string, VisionTensor>(StringComparer.Ordinal);
+        foreach (var (name, shape) in expected)
+        {
+            string stored = name.StartsWith("vision.", StringComparison.Ordinal) ? layout.Vision + name["vision.".Length..] : layout.Projector + name["projector.".Length..];
+            if (!checkpoint.Contains(stored))
+            {
+                throw new InvalidDataException($"The checkpoint ({layout.Name}) has no '{stored}', which vision_config asks for.");
+            }
+
+            var actual = checkpoint.ShapeOf(stored);
+            if (!actual.SequenceEqual(shape))
+            {
+                throw new InvalidDataException($"'{stored}' is [{string.Join(", ", actual)}]; vision_config and text_config make it [{string.Join(", ", shape)}].");
+            }
+
+            tensors[name] = new VisionTensor(stored, actual);
+        }
+
+        return new PretrainedVision { Encoder = encoder, ImageTokens = tokens, TextDim = textDim, Layout = layout.Name, Tensors = tensors };
     }
 
     /// <summary>

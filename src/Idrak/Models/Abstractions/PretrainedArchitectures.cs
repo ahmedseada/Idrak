@@ -35,6 +35,22 @@ public sealed class PretrainedArchitecture
     public required Func<string, string?> TensorName { get; init; }
 
     /// <summary>
+    /// For a family whose checkpoints come in several namings (Gemma 3's vision-language model is saved three ways): the
+    /// architecture fitted to one checkpoint, from the names of the tensors it holds. Loading asks it before reading the
+    /// spec and the weights, and keeps the one it returns (so adapters and exports use the checkpoint's naming). Null (the
+    /// default) when <see cref="TensorName"/> fits every checkpoint of the family.
+    /// </summary>
+    public Func<IReadOnlySet<string>, PretrainedArchitecture>? ForCheckpoint { get; init; }
+
+    /// <summary>
+    /// For a vision-language family: reads the vision part of the checkpoint (configuration, image token ids, the encoder's
+    /// and projector's tensors, checked) from the config.json and the checkpoint's tensors by their stored names, appending
+    /// anything approximated to the notes; null when the checkpoint has none. The loaded model carries it
+    /// (<c>PretrainedModel.Vision</c>) and its tensors do not count as unused. Null (the default) for text-only families.
+    /// </summary>
+    public Func<JsonObject, ITensorStore, List<string>, PretrainedVision?>? Vision { get; init; }
+
+    /// <summary>
     /// Whether the checkpoint stores this weight as [out, in] (the PyTorch Linear layout), so it is transposed to
     /// Idrak's [in, out]. By default: every projection (attention, feed-forward, head) is transposed.
     /// </summary>
@@ -60,7 +76,7 @@ public sealed record PretrainedBuildContext(JsonObject Config, DecoderSpec Spec,
 /// <summary>
 /// The model families pretrained models are loaded as, by the architecture name in <c>config.json</c>
 /// ("architectures": [...]). Idrak registers Llama, Mistral, Qwen2, Qwen3, Gemma, Gemma 2 and Gemma 3
-/// (text), and the mixture-of-experts families Mixtral, Qwen2-MoE and Qwen3-MoE; add others with <see cref="Register"/>
+/// (text, and the text decoder of its vision-language model, with the vision part as data), and the mixture-of-experts families Mixtral, Qwen2-MoE and Qwen3-MoE; add others with <see cref="Register"/>
 /// (its <c>PretrainedFamilies.LlamaStyle</c> makes one for families that share the Llama naming).
 /// </summary>
 public static class PretrainedArchitectures
