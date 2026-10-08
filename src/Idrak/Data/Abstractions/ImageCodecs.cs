@@ -42,8 +42,8 @@ public interface IImageCodec
 /// <summary>
 /// The image formats that <c>ImageFolderSource</c> and the command-line tool read, by name (ignoring case). Built
 /// in, without dependencies: "png" (every bit depth and colour type, interlaced or not, inflated with the zlib in .NET),
-/// "jpeg" (baseline and progressive, grey, YCbCr and RGB, any whole sampling ratio, decoded to libjpeg-turbo's pixels; not
-/// CMYK, 12-bit or arithmetic-coded), "bmp" (1, 4, 8, 16, 24 and 32 bits, uncompressed or with bit fields) and "netpbm"
+/// "jpeg" (baseline and progressive, grey, YCbCr, RGB, CMYK and YCCK, any whole sampling ratio, decoded to Pillow's RGB; not
+/// 12-bit or arithmetic-coded), "bmp" (1, 4, 8, 16, 24 and 32 bits, uncompressed or with bit fields) and "netpbm"
 /// (PGM and PPM, text or binary). Alpha is dropped. Register a codec for another format with <see cref="Register"/>.
 /// </summary>
 public static class ImageCodecs

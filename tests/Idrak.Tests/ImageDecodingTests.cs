@@ -11,9 +11,9 @@ internal static partial class Tests
 {
     private static readonly (string Name, Action<Device> Run)[] ImageDecodingGroup =
     [
-        ("jpeg: baseline, progressive, grey, RGB, restart intervals and every sampling decode to Pillow's pixels exactly", JpegMatchesPillow),
-        ("jpeg: CMYK, 12-bit, arithmetic, lossless and hierarchical files are refused by name; damaged and cut files", JpegRefusals),
-        ("image preprocessing: Pillow's resize (bilinear, bicubic, Lanczos; up and down) and transformers' rescale and normalize, to 1e-5", PreprocessingMatchesTransformers),
+        ("jpeg: baseline, progressive, grey, RGB, CMYK, YCCK, restart intervals and every sampling decode to Pillow's RGB exactly", JpegMatchesPillow),
+        ("jpeg: 12-bit, arithmetic, lossless and hierarchical files are refused by name; damaged and cut files", JpegRefusals),
+        ("image preprocessing: every colour format of the codecs to RGB, Pillow's resize (bilinear, bicubic, Lanczos; up and down), rescale and normalize as transformers, to 1e-5", PreprocessingMatchesTransformers),
         ("image preprocessing: preprocessor_config.json keys, pan and scan refused, grey to three channels, tensors", PreprocessingConfig),
     ];
 
@@ -24,8 +24,8 @@ internal static partial class Tests
         Check(ImageCodecs.Names.SequenceEqual(["png", "jpeg", "bmp", "netpbm"]) && ImageCodecs.Origin("jpeg") == Overrides.Library,
             $"the built-in codecs: {string.Join(", ", ImageCodecs.Names)}");
         Check(ImageCodecs.CanDecode("scan.JPG") && ImageCodecs.CanDecode("a.jpeg"), "JPEG extensions");
-        var files = Directory.GetFiles(JpegFixtures, "*.jpg").Where(f => !f.EndsWith("cmyk.jpg", StringComparison.Ordinal)).Order().ToList();
-        Check(files.Count == 17, $"{files.Count} JPEG fixtures");
+        var files = Directory.GetFiles(JpegFixtures, "*.jpg").Order().ToList();
+        Check(files.Count == 21, $"{files.Count} JPEG fixtures");
         foreach (string file in files)
         {
             string name = Path.GetFileNameWithoutExtension(file);
@@ -73,21 +73,25 @@ internal static partial class Tests
             throw new InvalidOperationException($"{what}: decoded");
         }
 
-        Refused(File.ReadAllBytes(Path.Combine(JpegFixtures, "cmyk.jpg")), "CMYK", "a CMYK file");
         Refused(With(sof + 4, 12), "12-bit", "12-bit samples");
         Refused(With(sof + 1, 0xC9), "arithmetic", "arithmetic coding");
         Refused(With(sof + 1, 0xC3), "lossless", "a lossless frame");
         Refused(With(sof + 1, 0xC5), "hierarchical", "a hierarchical frame");
 
-        string cmyk = Path.Combine(JpegFixtures, "cmyk.jpg");
+        string twelve = Path.Combine(Path.GetTempPath(), $"idrak-jpeg-{Guid.NewGuid():N}.jpg");
+        File.WriteAllBytes(twelve, With(sof + 4, 12));
         try
         {
-            ImageCodecs.Decode(cmyk);
-            Check(false, "the registry decoded CMYK");
+            ImageCodecs.Decode(twelve);
+            Check(false, "the registry decoded a 12-bit file");
         }
         catch (NotSupportedException e)
         {
-            Check(e.Message.StartsWith(cmyk, StringComparison.Ordinal), $"the file is named: {e.Message}");
+            Check(e.Message.StartsWith(twelve, StringComparison.Ordinal), $"the file is named: {e.Message}");
+        }
+        finally
+        {
+            File.Delete(twelve);
         }
 
         // Extended sequential (SOF1) at 8 bits is baseline with more tables allowed: it decodes the same.
@@ -131,27 +135,33 @@ internal static partial class Tests
     private static void PreprocessingMatchesTransformers(Device device)
     {
         var cases = JsonNode.Parse(File.ReadAllText(Path.Combine(JpegFixtures, "preprocess.json")))!.AsArray();
-        Check(cases.Count == 8, $"{cases.Count} cases");
+        Check(cases.Count == 54, $"{cases.Count} cases");
+        var failures = new List<string>();
         foreach (var item in cases)
         {
             string name = (string)item!["name"]!;
             var config = item["config"]!;
             var processor = ImagePreprocessor.Parse(config.ToJsonString(), grayscale: (bool)item["grayscale"]!);
             int h = (int)config["size"]!["height"]!, w = (int)config["size"]!["width"]!;
-            Check(processor.Height == h && processor.Width == w && (int)processor.Resampling == (int)config["resample"]!, $"{name}: the config");
+            Check(processor.Height == h && processor.Width == w && (int)processor.Resampling == (int)config["resample"]! && processor.Resize == (bool)config["do_resize"]!, $"{name}: the config");
             var actual = processor.Pixels(Path.Combine(JpegFixtures, (string)item["image"]!));
             var bytes = File.ReadAllBytes(Path.Combine(JpegFixtures, name + ".f32"));
             var expected = new float[bytes.Length / 4];
             Buffer.BlockCopy(bytes, 0, expected, 0, bytes.Length);
-            Check(actual.Length == 3 * h * w && expected.Length == actual.Length, $"{name}: {actual.Length} values, expected {expected.Length}");
+            Check((!processor.Resize || actual.Length == 3 * h * w) && expected.Length == actual.Length, $"{name}: {actual.Length} values, expected {expected.Length}");
             float worst = 0;
             for (int i = 0; i < actual.Length; i++)
             {
                 worst = MathF.Max(worst, MathF.Abs(actual[i] - expected[i]));
             }
 
-            Check(worst <= 1e-5f, $"{name}: differs from transformers by {worst}");
+            if (worst > 1e-5f)
+            {
+                failures.Add($"{name} by {worst}");
+            }
         }
+
+        Check(failures.Count == 0, $"differ from transformers: {string.Join("; ", failures)}");
     }
 
     private static void PreprocessingConfig(Device device)
