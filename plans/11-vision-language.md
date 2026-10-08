@@ -450,6 +450,22 @@ what is the command line's alone is in the CLI.
   images saved as parts); a text model refuses `--image` and `/image`; a missing file.
 - **Not done here.** The real model on the author's RTX 5070 Ti (phase 7's last check: 100 greedy tokens against
   transformers on a sample scan); the model card's exact prompt and preprocessing (huggingface.co is blocked here).
+- **First real run, and the comparison tool (2026-10-08).** On the author's RTX 5070 Ti, `idrak run MODEL -d cuda:0 -w bf16
+  --grayscale --image scan.jpg --temperature 0 -j` on the real fine-tune gave a faithful structured reading (287 prompt
+  tokens as in transformers, 1,032 generated at 80 tokens/s, the prompt in 1.0 s), but its greedy answer left
+  transformers' (bfloat16 throughout) at about the 17th token. To tell a near-tie flipped by precision from preprocessing
+  or a bug at real size: `tools/vlm/compare_real.py` (transformers' side: the prompt's ids, pixels, the vision output, the
+  projected features, N greedy tokens with each step's top 5 logits, the top 5 of one teacher-forced pass, a few whole
+  logit rows, a manifest with versions, dtypes, grayscale and processor class; bfloat16, decoder bfloat16 with the vision
+  side float32, or float32 on the CPU or with `--offload`) and `idrak vlm check MODEL --reference DIR` (a developer
+  command beside `onnx check`: pixels, encoder and features from the reference's pixels, the prompt's ids from Idrak's
+  template, transformers' tokens fed back with Idrak's features and with the reference's (to separate the image side from
+  the decoder), each disagreement's two top-5 lists and margins (near-tie below `--tie`, 0.5 by default), Idrak's own
+  greedy tokens, a verdict; exit 1 on a real difference). On the tiny model both reference folders checked in
+  (`tests/Idrak.Tests/data/vlm/compare`, colour and grey from a JPEG) agree exactly (`IDRAK_FILTER="cli images"`). Also
+  `run -o FILE` writes the answer (or the `-j` document) as UTF-8 without a BOM: PowerShell decodes a native command's
+  output with `[Console]::OutputEncoding` (cp437 there) even though the tool writes UTF-8; the CLI README's Windows
+  section has the PowerShell setting. The real model's numbers are to come from the author's machine.
 
 ## Performance targets (author's RTX 5070 Ti, the real 4B model)
 
