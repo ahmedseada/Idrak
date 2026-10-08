@@ -97,7 +97,7 @@ internal sealed unsafe partial class HipBackend
                 _pluginFunctions[kernel] = function;
             }
 
-            kernel.LastFunction = (this, function);
+            kernel.LastFunction = new(this, function);
             return function;
         }
     }

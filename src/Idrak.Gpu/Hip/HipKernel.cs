@@ -112,8 +112,12 @@ public sealed class HipKernel
             : null;
     }
 
-    /// <summary>The function loaded for it on the device that launched it last (looked up without a dictionary).</summary>
-    internal (HipBackend Owner, IntPtr Function)? LastFunction;
+    /// <summary>The function loaded for it on the device that launched it last (looked up without a dictionary; one
+    /// reference, so a thread never reads one device's owner with another's function).</summary>
+    internal LoadedFunction? LastFunction;
+
+    /// <summary>A function of this kernel loaded on a device.</summary>
+    internal sealed record LoadedFunction(HipBackend Owner, IntPtr Function);
 
     // The letters of the parameters of __global__ function `entry`, or null when the source declares none of that name.
     internal static string? ReadParameters(string source, string entry)

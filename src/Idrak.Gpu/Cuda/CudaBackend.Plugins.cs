@@ -111,7 +111,7 @@ internal sealed unsafe partial class CudaBackend
                 _pluginFunctions[kernel] = function;
             }
 
-            kernel.LastFunction = (this, function);
+            kernel.LastFunction = new(this, function);
             return function;
         }
     }
