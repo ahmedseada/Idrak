@@ -11,7 +11,8 @@ namespace Idrak.Cli.Shared;
 /// Model arguments, the same in every command: a Hugging Face id, a folder, a GGUF file, a .ikm package or an alias
 /// from the config ("aliases": {"qwen": {"model": "Qwen/Qwen3-0.6B", "weights": "int8", "kv": "int8"}}), with the
 /// weight format (<c>--weights</c>, <c>-w</c>), the KV cache format (<c>--kv</c>, <c>-k</c>), the context length and
-/// an adapter folder.
+/// an adapter folder; for a vision-language model, whether its images are read in grey (<c>--grayscale</c>, or
+/// "grayscale": true in the alias).
 /// </summary>
 internal static class ModelChoices
 {
@@ -22,22 +23,25 @@ internal static class ModelChoices
     public static readonly IReadOnlyDictionary<string, string> ShortForms = new Dictionary<string, string> { ["-w"] = "--weights", ["-k"] = "--kv" };
 
     /// <summary>What an alias or the options say: the model name and its settings.</summary>
-    public sealed record ModelChoice(string Model, string? Weights, string? Kv, int? Context, string? Adapter);
+    public sealed record ModelChoice(string Model, string? Weights, string? Kv, int? Context, string? Adapter, bool Grayscale = false);
 
     /// <summary>The model named by <paramref name="name"/> with the command's options applied over the alias's settings.</summary>
     public static ModelChoice Choose(CommandContext context, string name)
     {
         string model = name;
         string? weights = null, kv = null;
+        bool grayscale = false;
         if (context.Config.Object("aliases")?[name] is System.Text.Json.Nodes.JsonObject alias)
         {
             model = (string?)alias["model"] ?? name;
             weights = (string?)alias["weights"];
             kv = (string?)alias["kv"];
+            grayscale = alias["grayscale"] is System.Text.Json.Nodes.JsonValue grey && grey.TryGetValue(out bool value) && value;
         }
 
         return new ModelChoice(model, context.Option("--weights") ?? weights, context.Option("--kv") ?? kv,
-            context.Option("--context") is null ? null : context.IntOption("--context", 0), context.Option("--adapter"));
+            context.Option("--context") is null ? null : context.IntOption("--context", 0), context.Option("--adapter"),
+            grayscale || context.Flag("--grayscale"));
     }
 
     /// <summary>

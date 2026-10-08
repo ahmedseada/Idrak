@@ -22,9 +22,13 @@ internal sealed class RunCommand : Command
         The prompt is the arguments after MODEL, followed by the text of --input files and of piped standard input, so
         `cat notes.txt | idrak run MODEL "Summarize"` asks about the notes. The answer streams to the output; --json
         prints one document with the text, the token counts and the speed instead; -v adds the figures on the error output.
+        --image gives a vision-language model (Gemma 3 4B and larger) images, before the prompt's text.
 
         Options:
           -i, --input FILE       read (more of) the prompt from FILE (repeatable)
+              --image FILE       an image for the model to read (PNG, JPEG, BMP, PPM/PGM; repeatable), turned upright
+                                 by its EXIF orientation
+              --grayscale        turn the images grey first (some OCR fine-tunes ask for it; an alias can keep it)
           -w, --weights FORMAT   int8, int4, bf16 or a registered packed format (default: as stored)
           -k, --kv FORMAT        KV cache format: float32, int8, bfloat16 or a registered one (default float32)
               --context N        context window in tokens (default 4096, at most the model's)
@@ -38,15 +42,16 @@ internal sealed class RunCommand : Command
           cat notes.txt | idrak r qwen "Summarize in three bullets"
           idrak run ./model.gguf -i question.txt --temperature 0 --json
           idrak run qwen "Extract the name and age: Sara is 31." --schema person.json
+          idrak run google/gemma-3-4b-it --image scan.jpg --grayscale "Extract the text of this page." -j
 
         Gap: the library has no JSON-schema constrained sampling yet (a logits processor; plans/plug-in.md gap 13), so
         --schema gives the schema to the model as an instruction and checks the answer afterwards (it is JSON, has the
         required properties and their types) instead of guaranteeing it while generating.
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, .. GenerationSettings.ValueOptions, "--input", "--schema", "--mcp"];
+    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, .. GenerationSettings.ValueOptions, "--input", "--schema", "--mcp", "--image"];
 
-    public override IReadOnlyCollection<string> Flags => GenerationSettings.Flags;
+    public override IReadOnlyCollection<string> Flags => [.. GenerationSettings.Flags, "--grayscale"];
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } =
         new Dictionary<string, string>(ModelChoices.ShortForms.Concat(GenerationSettings.ShortForms).Append(KeyValuePair.Create("-i", "--input")));
@@ -55,6 +60,7 @@ internal sealed class RunCommand : Command
     {
         string name = context.Argument(0, "MODEL (a Hugging Face id, a folder, a .gguf file or an alias)");
         string prompt = PromptInput.Read(context, 1);
+        var images = ImageInputs.Read(context.Options("--image"));
         var settings = GenerationSettings.From(context);
         JsonObject? schema = null;
         if (context.Option("--schema") is { } schemaPath)
@@ -65,13 +71,18 @@ internal sealed class RunCommand : Command
         }
 
         using var loaded = LoadedChat.Load(context, name, settings);
+        if (images.Count > 0)
+        {
+            loaded.RequireImages("--image");
+        }
+
         var messages = new List<ChatMessage>();
         if (settings.System is { Length: > 0 } system)
         {
             messages.Add(new ChatMessage("system", system));
         }
 
-        messages.Add(new ChatMessage("user", prompt));
+        messages.Add(images.Count == 0 ? new ChatMessage("user", prompt) : new ChatMessage("user", [.. images, new ChatText(prompt)]));
         var responder = new ChatResponder(loaded.Chat, loaded.Registry)
         {
             Stream = context.Json ? null : context.Output,
@@ -100,6 +111,12 @@ internal sealed class RunCommand : Command
             ["device"] = context.Device.ToString(),
             ["text"] = answer.Message.Content,
         };
+        if (images.Count > 0)
+        {
+            json["images"] = new JsonArray([.. context.Options("--image").Select(p => (JsonNode)p)]);
+            json["grayscale"] = loaded.Choice.Grayscale;
+        }
+
         if (answer.Message.Thinking is { } thinking)
         {
             json["thinking"] = thinking;

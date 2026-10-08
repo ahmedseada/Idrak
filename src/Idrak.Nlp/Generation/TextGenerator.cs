@@ -366,7 +366,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
     }
 
     /// <summary>
-    /// <see cref="Stream"/> on a background thread, as an <c>await foreach</c> stream: the same chunks, and the calling
+    /// <see cref="Stream(string, GenerationOptions, CancellationToken)"/> on a background thread, as an <c>await foreach</c> stream: the same chunks, and the calling
     /// thread (a UI or request thread) is never blocked by the model.
     /// </summary>
     public IAsyncEnumerable<GenerationChunk> StreamAsync(string prompt, GenerationOptions options, CancellationToken cancellationToken = default) =>
@@ -378,7 +378,28 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         Task.Run(() => Generate(prompt, options, cancellationToken), CancellationToken.None);
 
     /// <summary>Streams the continuation of <paramref name="prompt"/> in chunks of about <see cref="GenerationOptions.ChunkSize"/> tokens.</summary>
-    public IEnumerable<GenerationChunk> Stream(string prompt, GenerationOptions options, CancellationToken cancellationToken = default)
+    public IEnumerable<GenerationChunk> Stream(string prompt, GenerationOptions options, CancellationToken cancellationToken = default) =>
+        Stream(prompt, null, options, cancellationToken);
+
+    /// <summary>
+    /// Streams the continuation of a prompt holding images (a vision-language model's, such as Gemma 3's): each run of
+    /// <paramref name="imageToken"/> in the tokenized <paramref name="prompt"/> is the next image of
+    /// <paramref name="images"/> (its features, [tokens, width] or [1, tokens, width] on the model's device, read and not
+    /// disposed), whose rows replace the run's embeddings and see each other (<see cref="ImagePrefill"/>). The prompt is
+    /// never cut inside an image: a prompt that does not fit the context window throws, a kept cache is reused only up to
+    /// the first image, and a full window is re-read from after an image. Otherwise as <see cref="Stream(string, GenerationOptions, CancellationToken)"/>.
+    /// </summary>
+    /// <exception cref="ArgumentException">The prompt's runs of image tokens and the images differ in number or length.</exception>
+    /// <exception cref="InvalidOperationException">The prompt with its images does not fit the context window.</exception>
+    public IEnumerable<GenerationChunk> Stream(string prompt, int imageToken, IReadOnlyList<Tensor> images, GenerationOptions options,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(images);
+        return Stream(prompt, (imageToken, images), options, cancellationToken);
+    }
+
+    private IEnumerable<GenerationChunk> Stream(string prompt, (int Token, IReadOnlyList<Tensor> Features)? imageInput, GenerationOptions options,
+        CancellationToken cancellationToken)
     {
         var total = Stopwatch.StartNew();
         int context = Math.Clamp(options.NumCtx, 2, ContextLength);
@@ -389,10 +410,35 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
             history.Add(0);
         }
 
+        // The prompt's images: each run of image tokens and its features (positions in `history`).
+        IReadOnlyList<PromptImage> images = imageInput is { } input ? ImagePrefill.Locate(history, input.Token, input.Features) : [];
+        if (images.Count > 0 && history.Count > context - 1)
+        {
+            throw new InvalidOperationException($"The prompt is {history.Count} tokens with its {images.Count} image{(images.Count == 1 ? "" : "s")} "
+                                                + $"({images.Sum(i => i.Tokens)} image tokens); the context window holds {context - 1}: use a larger context window or fewer images.");
+        }
+
         if (history.Count > context - 1)
         {
             history.RemoveRange(0, history.Count - (context - 1));          // keep the most recent part of the prompt
         }
+
+        // The images whose tokens lie from `start` on, numbered from there; `start` moved past an image it would cut.
+        int SafeStart(int start)
+        {
+            foreach (var image in images)
+            {
+                if (image.Position < start && start < image.Position + image.Tokens)
+                {
+                    start = image.Position + image.Tokens;
+                }
+            }
+
+            return Math.Min(start, history.Count - 1);
+        }
+
+        IReadOnlyList<PromptImage> ImagesFrom(int start) =>
+            images.Count == 0 ? images : [.. images.Where(i => i.Position >= start).Select(i => i with { Position = i.Position - start })];
 
         int promptTokens = history.Count;
         var stops = options.Stop.Where(s => s.Length > 0).ToArray();
@@ -516,14 +562,16 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                 {
                     using var noGrad = Autograd.NoGrad();
                     using var scope = new TensorScope();
+                    int start = SafeStart(history.Count - keep);               // an image is read whole or not at all
+                    keep = history.Count - start;
                     if (options.UseCache)
                     {
                         decoding.Reset();
-                        sampler.Sample(Model.ForwardCached(Window(keep), decoding));
+                        sampler.Sample(Model.ForwardCached(Window(keep), ImagesFrom(start), decoding));
                     }
                     else
                     {
-                        sampler.Sample(Model.Forward(Window(keep)));
+                        sampler.Sample(Model.Forward(Window(keep), ImagesFrom(start)));
                     }
                 }
 
@@ -543,13 +591,14 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                     shared++;
                 }
 
-                shared = Math.Min(shared, history.Count - 1);
+                // Image tokens are the same ids whatever the image: the kept cache is reused up to the first image only.
+                shared = Math.Min(Math.Min(shared, history.Count - 1), images.Count > 0 ? images.Min(i => i.Position) : int.MaxValue);
                 if (kept is not null && shared > 0 && shared <= decoding.Length)
                 {
                     using var noGrad = Autograd.NoGrad();
                     using var scope = new TensorScope();
                     decoding.Truncate(shared);
-                    sampler.Sample(Model.ForwardCached(Window(history.Count - shared), decoding));
+                    sampler.Sample(Model.ForwardCached(Window(history.Count - shared), ImagesFrom(shared), decoding));
                 }
                 else
                 {
