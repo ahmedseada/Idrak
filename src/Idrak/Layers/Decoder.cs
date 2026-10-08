@@ -289,6 +289,15 @@ public sealed class CausalSelfAttention : Module, ICachedModule
             throw new NotSupportedException("Packed sequences need the windowed attention kernels (IDRAK_WINDOW_KERNELS is off); this layer has a sliding window or soft-capped scores (pad the batches instead).");
         }
 
+        if (packing is null && ImageBlocks.Current is { } images && images.Matches(n, t))
+        {
+            // A prompt with images (ImagePrefill): each row's range of keys, image blocks seen whole.
+            var (iq, ik, iv) = Project(input, Positions(t));
+            var attendedImages = AttendSpans(iq, ik!, iv!, images, offset: 0, rowStarts: null);
+            ActivationMemory.Compress(iq, ik!, iv!);
+            return Merge(attendedImages, n, t);
+        }
+
         if (packing is null && !composed && Rope is null && QueryNorm is null && KeyNorm is null && FusedTraining.Enabled && input.Backend.Capabilities.MatrixUnitAttentionHeadDim(HeadDim)
             && input.Backend.Capabilities.MatrixUnits && MixedPrecision.UsesTensorCores
             && Linear.PlainFloat(Query) && Linear.PlainFloat(Key) && Linear.PlainFloat(Value)
@@ -353,6 +362,11 @@ public sealed class CausalSelfAttention : Module, ICachedModule
         int n = input.Shape[0], t = input.Shape[1];
         var positions = context.Positions ?? throw new InvalidOperationException("Call DecodingContext.BeginStep first.");
         var cache = context.CacheFor(this, n * KvHeads, HeadDim);
+        if (ImageBlocks.Current is { } images && images.Matches(n, t))
+        {
+            return MergeHeads(AttendImages(input, context, cache, images), n, t);
+        }
+
         if (context.RowStarts is not null)
         {
             // Rows of different lengths: positions per token, and each row attends from its own start.
@@ -391,6 +405,52 @@ public sealed class CausalSelfAttention : Module, ICachedModule
 
         var context8 = cache.Layout.Attend(q, cache, context, t, scale, decoderKernels: true);
         return MergeHeads(context8, n, t);
+    }
+
+    // A prefill step with images (ImagePrefill): keys and values written to the cache as the plain prefill writes them,
+    // then attention over the cached positions, each row over its own range (its image block seen whole; causal and
+    // windowed elsewhere).
+    private Tensor AttendImages(Tensor input, DecodingContext context, KeyValueCache cache, ImageBlocks images)
+    {
+        Tensor q;
+        if (context.RowStarts is not null)
+        {
+            if (!cache.Layout.RowStarts)
+            {
+                throw new NotSupportedException("Rows of different lengths need a float32 key/value cache.");
+            }
+
+            var (rq, rk, rv) = Project(input, context.TokenPositions!, packed: true);
+            Tensor.WriteKeyValues(rk!, cache.Keys, context.Position);
+            Tensor.WriteKeyValues(rv!, cache.Values, context.Position);
+            q = rq;
+        }
+        else
+        {
+            var (pq, k, v) = Project(input, context.Positions!, cache, context.Position);   // k and v null: already in the cache
+            if (k is not null)
+            {
+                cache.Layout.Write(k, v!, cache, context.Position);
+            }
+
+            q = pq;
+        }
+
+        // Keys as the cache holds them (a float32 cache is read in place; other formats expanded), every slot: the ranges
+        // stop at each row's last key.
+        var keys = cache.Layout.Expand(cache, keys: true);
+        var values = cache.Layout.Expand(cache, keys: false);
+        return AttendSpans(q, keys, values, images, context.Length, context.RowStarts);
+    }
+
+    // q [n·kv, group·t, d] over keys and values [n·kv, keyRows, d], query row i of sequence b over its range of
+    // ImageBlocks.Spans (one table per sequence) → [n·kv, group·t, d].
+    private Tensor AttendSpans(Tensor q, Tensor keys, Tensor values, ImageBlocks images, int offset, IReadOnlyList<int>? rowStarts)
+    {
+        int n = images.Batch, t = images.Steps;
+        var (starts, ends) = images.Spans(Windowed ? _window!.Value : 0, offset, rowStarts, q.Device);
+        var attended = Tensor.AttentionSpans(q.Reshape(n * KvHeads * Group, t, HeadDim), keys, values, starts, ends, ScoreScale, new AttentionVariant(0, _softcap ?? 0f));
+        return attended.Reshape(n * KvHeads, Group * t, HeadDim);
     }
 
     // Attention over every cached slot from basic operations (any layout, any backend; device-side masks, so recordable):
