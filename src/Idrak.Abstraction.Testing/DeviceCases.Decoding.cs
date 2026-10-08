@@ -166,6 +166,8 @@ public static partial class DeviceCases
                 }
             }
         }
+
+        Float8Products(c);
     }
 
     private static void GatedActivations(DeviceCaseContext c)
@@ -286,6 +288,7 @@ public static partial class DeviceCases
             b.AttentionRows(q, keys, values, position, c.Zeros(heads * rows * dim), rowStarts, heads, 1, rows, steps, capacity, dim, scale, variant);
         }
 
+        StridedAttention(c);
         NormRopeHeads(c);
     }
 

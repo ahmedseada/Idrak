@@ -322,7 +322,18 @@ src/); the Override sample builds from the clone and, with `-p:IdrakFromPackages
 feed (both pass its tests). W4.3: see the changelog for each item and its reason. W4.4: `api/*.txt` from reflection
 (nullability through `NullabilityInfoContext`; `T?` on an unconstrained type parameter is not shown, the metadata does
 not tell it apart). W4.5: no retry for operations without a device kernel; the double accumulation documented; the
-Float8 and `AttentionStrided` references and the PTX/HIP plug-in hook wait for a CUDA machine (recorded).
+PTX/HIP plug-in hook waits for a CUDA machine (recorded). **The kit's references for the operations only CUDA has
+(2026-10-08)**: `Float8QuantizeWeight`, `Float8MatMul`, `AttentionStrided` and `AttentionStridedBackward`, whose contracts
+in `Backend.cs` now state the CUDA kernels' arithmetic (read from the PTX: the e4m3 scale max/448, codes of x·(1/scale)
+rounded to nearest even and saturated to ±448, bytes k-major padded to 64; the strided layouts, the natural-log
+log-sum-exp, the gradients added from P = exp(s - lse)), get plain-loop references in `DeviceCases.MatrixUnits.cs`
+(the FP8 bytes compared bit for bit, tolerance 0, with a column of known codes checked in the case itself; the
+attention 2e-2, as `GemmStrided`, since CUDA runs it on bfloat16 matrix units: a bfloat16 emulation of those kernels
+stays within 7e-3). Proved without a GPU: kernels written in the tests from the contracts (another e4m3 encoder, by
+search) pass on the minimal device, each made slightly wrong fails under its own name, devices without them skip them,
+and the e4m3 encoder agrees with the format's known values. **Still needs a CUDA run** (`IDRAK_DEVICES=cuda`, the
+"conformance kit" tests): the FP8 operations on compute 8.9 or newer (the bytes must match bit for bit) and the strided
+attention with head sizes 64 and 128 on 8.0 or newer (32 is unsupported there and reported so).
 
 **W4.6 and W4.7 (2026-10-07).** Docs: the root README (Layout, the override loop's versions, building an app against a
 clone), the package READMEs of Abstraction, Nlp and the kit, the 0.4.0 changelog read through (rows a later move
