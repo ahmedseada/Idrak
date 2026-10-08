@@ -117,14 +117,16 @@ internal static class OperationIndex
     public const int AttentionRows = 101;
     public const int AttentionSegmentedBackward = 102;
     public const int AttentionTiled = 103;
-    public const int DecoderMask = 104;
-    public const int KeyValueWrite = 105;
-    public const int SampleRows = 106;
-    public const int PenalizeRows = 107;
-    public const int HistoryPush = 108;
+    public const int AttentionSpans = 104;
+    public const int AttentionSpansBackward = 105;
+    public const int DecoderMask = 106;
+    public const int KeyValueWrite = 107;
+    public const int SampleRows = 108;
+    public const int PenalizeRows = 109;
+    public const int HistoryPush = 110;
 
     /// <summary>The number of operations.</summary>
-    public const int Count = 109;
+    public const int Count = 111;
 }
 
 /// <summary>
@@ -854,6 +856,32 @@ public static class OperationKernels
     /// <see cref="Backend.AttentionDecode"/> for inference and the host fallback for training.
     /// </summary>
     public delegate void AttentionTiled(Backend backend, Storage q, Storage keys, Storage values, Storage position, Storage y, Storage? logSumExp, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant);
+
+    /// <summary>
+    /// A kernel for <see cref="Ops.AttentionSpans"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// Attention in which each query row sees one range of keys, read from the device: for query head h and row i of q
+    /// [heads, rows, dim], y[h, i] = Σ_c softmax_c(s_c) · values[g, c] with s_c = scale · q[h, i] · keys[g, c] (soft-capped
+    /// with the variant's cap), over the keys c with starts[b·rows + i] ≤ c &lt; ends[b·rows + i] (a half-open range, both
+    /// clamped to [0, keyRows]), where g = h / (heads / kvHeads) is the key/value head the query head reads (grouped-query
+    /// attention; heads is a multiple of kvHeads) and b = h / headsPerTable the table of ranges it reads (heads is a
+    /// multiple of headsPerTable; starts and ends hold [heads / headsPerTable, rows] integers as floats). Keys and values
+    /// are [kvHeads, keyRows, dim]. A row whose range is empty gets zeros, and a log-sum-exp of -∞. Writes each row's
+    /// log-sum-exp of its scores (the natural log of Σ_c exp(s_c)) to <paramref name="logSumExp"/> [heads, rows] when
+    /// given (training). Only the variant's soft-cap is read: a window is a rule for the ranges, like every mask that is
+    /// not plainly causal (bidirectional, causal, sliding window, packed sequences, image blocks: <c>KeySpans</c>). The
+    /// scores are never stored whole: the cost in memory follows rows + keys, not rows · keys.
+    /// </summary>
+    public delegate void AttentionSpans(Backend backend, Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage y, Storage? logSumExp, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant);
+
+    /// <summary>
+    /// A kernel for <see cref="Ops.AttentionSpansBackward"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// The gradients of <see cref="Backend.AttentionSpans"/> given its output, each row's log-sum-exp and dOutput (output's
+    /// layout): with P_c = exp(s_c - logSumExp) over the row's range and Δ = dOutput · output, adds Σ_c scale · P_c ·
+    /// (dOutput · values[g, c] - Δ) · keys[g, c] (times the cap's slope with a cap) to dq [heads, rows, dim], and to dkeys
+    /// and dvalues [kvHeads, keyRows, dim] the matching terms (the query heads of a group add into their key/value head).
+    /// The weights are recomputed, never stored; rows with an empty range add nothing.
+    /// </summary>
+    public delegate void AttentionSpansBackward(Backend backend, Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant);
 
     /// <summary>
     /// A kernel for <see cref="Ops.DecoderMask"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
@@ -1630,6 +1658,32 @@ public static partial class Ops
         new("AttentionTiled", "AttentionTiledKernel", "Storage,Storage,Storage,Storage,Storage,Storage,Int32,Int32,Int32,Int32,Int32,Single,AttentionVariant", OperationIndex.AttentionTiled, typeof(OperationKernels.AttentionTiled), KernelSource.Host);
 
     /// <summary>
+    /// Attention in which each query row sees one range of keys, read from the device: for query head h and row i of q
+    /// [heads, rows, dim], y[h, i] = Σ_c softmax_c(s_c) · values[g, c] with s_c = scale · q[h, i] · keys[g, c] (soft-capped
+    /// with the variant's cap), over the keys c with starts[b·rows + i] ≤ c &lt; ends[b·rows + i] (a half-open range, both
+    /// clamped to [0, keyRows]), where g = h / (heads / kvHeads) is the key/value head the query head reads (grouped-query
+    /// attention; heads is a multiple of kvHeads) and b = h / headsPerTable the table of ranges it reads (heads is a
+    /// multiple of headsPerTable; starts and ends hold [heads / headsPerTable, rows] integers as floats). Keys and values
+    /// are [kvHeads, keyRows, dim]. A row whose range is empty gets zeros, and a log-sum-exp of -∞. Writes each row's
+    /// log-sum-exp of its scores (the natural log of Σ_c exp(s_c)) to <c>logSumExp</c> [heads, rows] when
+    /// given (training). Only the variant's soft-cap is read: a window is a rule for the ranges, like every mask that is
+    /// not plainly causal (bidirectional, causal, sliding window, packed sequences, image blocks: <c>KeySpans</c>). The
+    /// scores are never stored whole: the cost in memory follows rows + keys, not rows · keys.
+    /// </summary>
+    public static readonly Operation AttentionSpans =
+        new("AttentionSpans", "AttentionSpansKernel", "Storage,Storage,Storage,Storage,Storage,Storage,Storage,Int32,Int32,Int32,Int32,Int32,Int32,Single,AttentionVariant", OperationIndex.AttentionSpans, typeof(OperationKernels.AttentionSpans), KernelSource.Host);
+
+    /// <summary>
+    /// The gradients of <see cref="Backend.AttentionSpans"/> given its output, each row's log-sum-exp and dOutput (output's
+    /// layout): with P_c = exp(s_c - logSumExp) over the row's range and Δ = dOutput · output, adds Σ_c scale · P_c ·
+    /// (dOutput · values[g, c] - Δ) · keys[g, c] (times the cap's slope with a cap) to dq [heads, rows, dim], and to dkeys
+    /// and dvalues [kvHeads, keyRows, dim] the matching terms (the query heads of a group add into their key/value head).
+    /// The weights are recomputed, never stored; rows with an empty range add nothing.
+    /// </summary>
+    public static readonly Operation AttentionSpansBackward =
+        new("AttentionSpansBackward", "AttentionSpansBackwardKernel", "Storage,Storage,Storage,Storage,Storage,Storage,Storage,Storage,Storage,Storage,Storage,Int32,Int32,Int32,Int32,Int32,Int32,Single,AttentionVariant", OperationIndex.AttentionSpansBackward, typeof(OperationKernels.AttentionSpansBackward), KernelSource.Host);
+
+    /// <summary>
     /// mask[i, j] = j ≤ position + i ? 0 : -1e9 for a [rows, capacity] mask; position is read from device memory.
     /// </summary>
     public static readonly Operation DecoderMask =
@@ -1781,6 +1835,8 @@ public static partial class Ops
         AttentionRows,
         AttentionSegmentedBackward,
         AttentionTiled,
+        AttentionSpans,
+        AttentionSpansBackward,
         DecoderMask,
         KeyValueWrite,
         SampleRows,

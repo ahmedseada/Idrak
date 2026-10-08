@@ -15,6 +15,7 @@ public sealed class MultiHeadAttention : Module, ICachedModule
     private readonly Linear _output;
     private readonly Dropout? _dropout;
     private Tensor? _mask;
+    private (Tensor Starts, Tensor Ends)? _spans;
 
     /// <summary>Creates the layer.</summary>
     /// <param name="dim">Model width; must be divisible by <paramref name="heads"/>.</param>
@@ -65,6 +66,19 @@ public sealed class MultiHeadAttention : Module, ICachedModule
         var q = SplitHeads(0);
         var k = SplitHeads(1);
         var v = SplitHeads(2);
+        Tensor context;
+        if (!Causal && (_dropout is null || !_dropout.IsTraining))
+        {
+            // Every position sees every other: one attention over key ranges (all keys for each row), tiled, so the
+            // [T, T] scores of each head are never stored (the gradient recomputes them).
+            var (starts, ends) = AllKeys(t, input.Device);
+            context = Tensor.AttentionSpans(q, k, v, starts, ends, 1f / MathF.Sqrt(dh));
+            return _output.Forward(context
+                .Reshape(n, Heads, t, dh)
+                .Permute(0, 2, 1, 3)
+                .Reshape(n, t, Dim));
+        }
+
         var raw = q.MatMul(k, transposeB: true);                           // [N·H, T, T]
         Tensor weights;
         if (!Autograd.IsEnabled)
@@ -88,7 +102,7 @@ public sealed class MultiHeadAttention : Module, ICachedModule
             weights = _dropout.Forward(weights);
         }
 
-        var context = weights.MatMul(v)                                   // [N·H, T, dh]
+        context = weights.MatMul(v)                                       // [N·H, T, dh]
             .Reshape(n, Heads, t, dh)
             .Permute(0, 2, 1, 3)
             .Reshape(n, t, Dim);
@@ -120,6 +134,21 @@ public sealed class MultiHeadAttention : Module, ICachedModule
         return _output.Forward(output);
     }
 
+    /// <summary>The key ranges of a bidirectional pass over <paramref name="t"/> positions (every row sees all), cached per length and device.</summary>
+    private (Tensor Starts, Tensor Ends) AllKeys(int t, Device device)
+    {
+        if (_spans is { } cached && cached.Starts.Shape[0] == t && cached.Starts.Device == device)
+        {
+            return cached;
+        }
+
+        _spans?.Starts.Dispose();
+        _spans?.Ends.Dispose();
+        var spans = KeySpans.Bidirectional(t, t);
+        _spans = (CreateBuffer([.. spans.Starts.Select(s => (float)s)], [t], device), CreateBuffer([.. spans.Ends.Select(e => (float)e)], [t], device));
+        return _spans.Value;
+    }
+
     /// <summary>[T, T] with 0 on and below the diagonal and -1e9 above, cached per length and device.</summary>
     private Tensor CausalMask(int t, Device device)
     {
@@ -149,6 +178,8 @@ public sealed class MultiHeadAttention : Module, ICachedModule
     public override void Dispose()
     {
         _mask?.Dispose();
+        _spans?.Starts.Dispose();
+        _spans?.Ends.Dispose();
         base.Dispose();
     }
 
