@@ -116,4 +116,14 @@ public static class Conformance
     /// </summary>
     public static ConformanceReport CheckRopeScaling(string type, RopeScalingMethod? method = null, ContractCheckOptions? options = null) =>
         Check(method ?? RopeScalings.Get(type), new RopeScalingSuite(type), options);
+
+    /// <summary>
+    /// Checks the kind of message part registered as <paramref name="name"/> (or <paramref name="kind"/>, when given): it
+    /// reads parts of its kind, writes JSON that reads back to an equal part, the same every time, and agrees with the
+    /// library's kind of that name when there is one (<see cref="ChatPartKindSuite"/>). A kind of your own needs
+    /// <paramref name="samples"/>, parts of it as JSON.
+    /// </summary>
+    public static ConformanceReport CheckChatPartKind(string name, IChatPartKind? kind = null, IReadOnlyList<System.Text.Json.Nodes.JsonObject>? samples = null,
+        ContractCheckOptions? options = null) =>
+        Check(kind ?? ChatParts.Get(name), new ChatPartKindSuite(name, samples), options);
 }

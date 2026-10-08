@@ -1207,8 +1207,14 @@ public abstract partial class Backend
     }
 
     /// <summary>
-    /// Quantizes a frozen weight w [k, n] (float32) once for <see cref="Float8MatMul"/>: FP8 (e4m3) values, k-major per
-    /// column ([n, paddedK] bytes), and one scale per column [n]. Returns false when unsupported.
+    /// Quantizes a frozen weight w [k, n] (float32, finite) once for <see cref="Float8MatMul"/>: one scale per column,
+    /// scales[j] = a / 448 for a = max over r of |w[r, j]| (1 when a is 0), and the FP8 (e4m3) code of w[r, j] · (1 /
+    /// scales[j]) (the division, the reciprocal and the product each a float32 operation rounded to nearest), rounded to
+    /// nearest with ties to even and saturated to ±448, the sign kept (-0 included). e4m3: a sign, 4 exponent bits with
+    /// bias 7 and 3 mantissa bits; no infinities, 0x7F and 0xFF are NaN, 0x7E is 448, codes 1-7 are the subnormals
+    /// m · 2⁻⁹. The codes are bytes k-major per column: byte j · paddedK + r (paddedK = <see cref="Float8PaddedK"/>(k),
+    /// four bytes per float of <paramref name="values"/>, the first in the low byte), 0 for r ≥ k. Fixed to the bit:
+    /// the conformance kit compares the bytes exactly. Returns false when unsupported.
     /// </summary>
     /// <remarks>Runs <see cref="Ops.Float8QuantizeWeight"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>Float8QuantizeWeightKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -1224,8 +1230,11 @@ public abstract partial class Backend
     }
 
     /// <summary>
-    /// y = beta·y + x · w on FP8 tensor cores for x [m, k] (quantized per row as it is read, one scale each) and a weight
-    /// quantized by <see cref="Float8QuantizeWeight"/>. Returns false when unsupported.
+    /// y = beta·y + x · w on FP8 matrix units for x [m, k] and a weight quantized by <see cref="Float8QuantizeWeight"/>
+    /// (its values and scales, paddedK = <see cref="Float8PaddedK"/>(k)): each row of x is quantized as it is read the way
+    /// <see cref="Float8QuantizeWeight"/> quantizes a column (sx[i] = max over p of |x[i, p]| / 448, or 1; the e4m3 codes
+    /// of x[i, p] · (1 / sx[i])), then y[i, j] = beta·y[i, j] + sx[i] · scales[j] · Σ_p x8[i, p] · w8[j, p], the
+    /// products of codes summed in float32 (y is not read when beta is 0). Returns false when unsupported.
     /// </summary>
     /// <remarks>Runs <see cref="Ops.Float8MatMul"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>Float8MatMulKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -1280,11 +1289,15 @@ public abstract partial class Backend
     }
 
     /// <summary>
-    /// Causal attention (positions c ≤ t) read in place from [batch, steps, *] rows: head h (= kv · group + g) of the
-    /// queries at q[qOffset + (b·steps + t)·qRow + h·dim], keys and values of kv head kv at k / v[offset + (b·steps + c)·kRow
-    /// + kv·dim]; writes y [batch, steps, heads·dim] and, when given, the log-sum-exp [batch·kvHeads, group·steps] for the
-    /// backward pass. Returns false when the device has no such kernels (callers rearrange the heads and use
-    /// <see cref="AttentionTiled"/>).
+    /// Causal attention (positions c ≤ t) read in place from [batch, steps, *] rows: query head h (= kv · group + g, g &lt;
+    /// group) of batch b at step t at q[qOffset + (b·steps + t)·qRow + h·dim], keys and values of kv head kv at k /
+    /// v[offset + (b·steps + c)·kRow + kv·dim] (offsets and row strides in floats, multiples of 4). With the scores s_c =
+    /// scale · q·k_c for c ≤ t, writes y[(b·steps + t)·heads·dim + h·dim] = Σ_c softmax(s)_c · v_c ([batch, steps,
+    /// heads·dim], heads = kvHeads · group) and, when given, the log-sum-exp ln Σ_c exp(s_c) of the scaled scores at
+    /// [(b·kvHeads + kv)·group·steps + g·steps + t] ([batch·kvHeads, group·steps]) for the backward pass. Devices may run it
+    /// on bfloat16 matrix units (q, k, v and the probabilities rounded to bfloat16, float32 sums), so it agrees with
+    /// float32 attention to about 1e-2. Returns false when the device has no such kernels, or none for this head size
+    /// (callers rearrange the heads and use <see cref="AttentionTiled"/>).
     /// </summary>
     /// <remarks>Runs <see cref="Ops.AttentionStrided"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AttentionStridedKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -1300,8 +1313,12 @@ public abstract partial class Backend
     }
 
     /// <summary>
-    /// Gradients of <see cref="AttentionStrided"/>: adds to dq, dk, dv laid out as q, k, v (same row strides, their own
-    /// offsets) given y, the log-sum-exp and dOutput (y's layout).
+    /// Gradients of <see cref="AttentionStrided"/> given its y and log-sum-exp and dOutput (y's layout): with P_tc =
+    /// exp(s_tc - logSumExp_t) (the scores recomputed from q and k), D_t = Σ_d y_t · dOutput_t and dS_tc = P_tc ·
+    /// (dOutput_t · v_c - D_t), adds scale · Σ_c dS_tc · k_c to dq_t, scale · Σ_t dS_tc · q_t to dk_c and Σ_t P_tc · dOutput_t
+    /// to dv_c (dk and dv summed over the query heads of their group), each laid out as q, k, v (the same row strides,
+    /// their own offsets). q, k and v may be one storage at three offsets, and dq, dk and dv another, as
+    /// <c>Tensor.CausalAttentionPacked</c> passes them. Returns false when the device has no such kernels.
     /// </summary>
     /// <remarks>Runs <see cref="Ops.AttentionStridedBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AttentionStridedBackwardKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

@@ -22,7 +22,7 @@ its README lists it.
 | Training (`Idrak.Abstraction.Training`) | `Optimizer` with SGD, Adam and AdamW; `LearningRateScheduler` with the step, exponential, cosine and lambda schedules |
 | Data (`Idrak.Abstraction.Data`) | `ISampleSource`, `ISampleStream`, `ISampleReader`, `ISampleTransform`, `ImageData`, `IDownloader` |
 | Formats (`Idrak.Abstraction.Formats`) | `IModelSource` and `ModelSources` (core registers the folder, store and .gguf sources, Idrak.Data the Hugging Face one) |
-| Generation (`Idrak.Abstraction.Generation`) | `ITokenizer` (char and word tokenizers), `ChatTemplate` and `ChatTemplates`, `IChatModel`, `ITextModel`, `IToolCallParser` and `ToolCallFormats` (every built-in parser), `PackedWeight` (int8, int4, bfloat16), `KeyValueLayout` and `KeyValueLayouts`, `RopeScalings`, `DecoderSpec`, `GenerationOptions` |
+| Generation (`Idrak.Abstraction.Generation`) | `ITokenizer` (char and word tokenizers), `ChatTemplate` and `ChatTemplates`, `IChatModel` (with the part kinds it takes), `ChatPart` and `ChatParts` (text and image parts), `ITextModel`, `IToolCallParser` and `ToolCallFormats` (every built-in parser), `PackedWeight` (int8, int4, bfloat16), `KeyValueLayout` and `KeyValueLayouts`, `RopeScalings`, `DecoderSpec`, `GenerationOptions` |
 | Generation: tools | `Tool`, `[Tool]`, `ToolResult`, `IToolRegistry` and its default `ToolRegistry` (validation, allow rules, approvals, a timeout); `IToolChatModel` (a chat model that carries tools) and `ChatTools.WithTools` (runs a chat model's tool calls on the server) |
 | Retrieval (`Idrak.Abstraction.Retrieval`) | `IEmbedder` |
 | Serving (`Idrak.Abstraction.Serving`) | the engine's model kinds (`EngineModel<TCopy>`, `IEngineHost`, `IEngineLease`, `IEngineBatcher`), `IPredictor<TIn, TOut>`, `IModelCatalog` (named models reached through their contracts; the inference engine implements it), `KeepAlive` (parses "30m", "1h30m", 0, -1) |
@@ -65,7 +65,7 @@ static readonly PluginOperation<ScaleRows> Scale = PluginOperations.Register<Sca
     (b, rows, scales, output, n, width) => b.GroupScaleShift(rows, scales, null, output, n, n / width, width, false),
     KernelSource.Composed);
 
-// A faster kernel for one kind of device (on Vulkan: Idrak.Gpu's VulkanKernel dispatches SPIR-V words of one's own).
+// A faster kernel for one kind of device (Idrak.Gpu's VulkanKernel, CudaKernel and HipKernel run SPIR-V, PTX and HIP C++ of one's own).
 Kernels.Register(Scale, "cpu", (b, rows, scales, output, n, width) => { /* loops over rows.HostMemory, ... */ });
 
 // Where the plug-in runs it (KeyValueLayout.Expand, say): the kernel for this device, cached per device.

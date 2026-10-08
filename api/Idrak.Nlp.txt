@@ -106,6 +106,7 @@ public sealed class Idrak.Generation.ChatGenerator : Idrak.Abstraction.Generatio
   public System.Collections.Generic.IEnumerable<(int, Idrak.Abstraction.Generation.ChatChunk)> StreamBatch(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatRequest> requests, System.Threading.CancellationToken cancellationToken = default)
   public System.Collections.Generic.IEnumerable<Idrak.Abstraction.Generation.ChatChunk> Stream(Idrak.Abstraction.Generation.ChatRequest request, System.Threading.CancellationToken cancellationToken = default)
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatChunk> ChatBatch(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatRequest> requests, System.Threading.CancellationToken cancellationToken = default)
+  public System.Collections.Generic.IReadOnlySet<string> PartKinds { get; }
   public System.Threading.Tasks.Task<Idrak.Abstraction.Generation.ChatChunk> ChatAsync(Idrak.Abstraction.Generation.ChatRequest request, System.Threading.CancellationToken cancellationToken = default)
   public string RenderPrompt(Idrak.Abstraction.Generation.ChatRequest request)
 
@@ -205,6 +206,7 @@ public sealed record Idrak.Generation.ConversationReply : System.IEquatable<Idra
 
 public sealed class Idrak.Generation.FakeChatModel : Idrak.Abstraction.Generation.IChatModel
   public System.Collections.Generic.IAsyncEnumerable<Idrak.Abstraction.Generation.ChatChunk> StreamAsync(Idrak.Abstraction.Generation.ChatRequest request, System.Threading.CancellationToken cancellationToken = default)
+  public System.Collections.Generic.IReadOnlySet<string> PartKinds { get; set; }
   public System.Collections.Generic.List<Idrak.Abstraction.Generation.ChatRequest> Requests { get; }
   public static Idrak.Abstraction.Generation.ChatMessage Answer(string content, string? thinking = null)
   public static Idrak.Abstraction.Generation.ChatMessage ToolCall(string name, System.Text.Json.Nodes.JsonObject arguments)

@@ -15,7 +15,67 @@ internal static partial class Tests
         ("jpeg: 12-bit, arithmetic, lossless and hierarchical files are refused by name; damaged and cut files", JpegRefusals),
         ("image preprocessing: every colour format of the codecs to RGB, Pillow's resize (bilinear, bicubic, Lanczos; up and down), rescale and normalize as transformers, to 1e-5", PreprocessingMatchesTransformers),
         ("image preprocessing: preprocessor_config.json keys, pan and scan refused, grey to three channels, tensors", PreprocessingConfig),
+        ("image preprocessing: phase 0's reference (tests/data/vlm): JPEGs decode as Pillow, pixel_values as transformers (PNG, JPEG, RGBA, palette, grey)", PreprocessingMatchesVlmReference),
     ];
+
+    // The data of a little-endian .npy file (version 1 to 3), as raw bytes.
+    private static byte[] NpyData(string path)
+    {
+        var bytes = File.ReadAllBytes(path);
+        int headerLength = bytes[6] == 1 ? bytes[8] | bytes[9] << 8 : BitConverter.ToInt32(bytes, 8);
+        int start = (bytes[6] == 1 ? 10 : 12) + headerLength;
+        return bytes[start..];
+    }
+
+    private static void PreprocessingMatchesVlmReference(Device device)
+    {
+        string root = Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data", "vlm");
+        string reference = Path.Combine(root, "reference");
+        foreach (var (file, npy) in new[]
+        {
+            ("image.jpg", "decoded-image.npy"), ("image-progressive.jpg", "decoded-image.npy"), ("image-restart.jpg", "decoded-image.npy"),
+            ("image-444.jpg", "decoded-image-444.npy"), ("image-gray.jpg", "decoded-image-gray.npy"),
+        })
+        {
+            var image = ImageCodecs.Decode(Path.Combine(root, file));
+            var expected = NpyData(Path.Combine(reference, npy));                       // [H, W, C] or [H, W]
+            int c = image.Channels, size = image.Height * image.Width;
+            Check(expected.Length == c * size && image.Width == 100 && image.Height == 75, $"{file}: {c} x {image.Height} x {image.Width}");
+            int worst = 0;
+            for (int i = 0; i < size; i++)
+            {
+                for (int ch = 0; ch < c; ch++)
+                {
+                    worst = Math.Max(worst, Math.Abs((int)MathF.Round(image.Pixels[ch * size + i] * 255) - expected[i * c + ch]));
+                }
+            }
+
+            Check(worst == 0, $"{file}: a pixel differs from Pillow's by {worst}");
+        }
+
+        var processor = ImagePreprocessor.FromConfig(Path.Combine(root, "tiny-gemma3"));
+        var grey = ImagePreprocessor.FromConfig(Path.Combine(root, "tiny-gemma3"), grayscale: true);
+        foreach (var (file, npy, steps) in new[]
+        {
+            ("image.png", "pixel_values-png.npy", processor), ("image.jpg", "pixel_values-jpg.npy", processor),
+            ("image-rgba.png", "pixel_values-rgba.npy", processor), ("image-palette.png", "pixel_values-palette.npy", processor),
+            ("image.png", "pixel_values-png-gray.npy", grey),
+        })
+        {
+            var actual = steps.Pixels(Path.Combine(root, file));
+            var data = NpyData(Path.Combine(reference, npy));
+            var expected = new float[data.Length / 4];
+            Buffer.BlockCopy(data, 0, expected, 0, data.Length);
+            Check(actual.Length == expected.Length && actual.Length == 3 * 56 * 56, $"{npy}: {actual.Length} values");
+            float worst = 0;
+            for (int i = 0; i < actual.Length; i++)
+            {
+                worst = MathF.Max(worst, MathF.Abs(actual[i] - expected[i]));
+            }
+
+            Check(worst <= 1e-5f, $"{npy}: differs from transformers by {worst}");
+        }
+    }
 
     private static string JpegFixtures => Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data", "jpeg");
 
