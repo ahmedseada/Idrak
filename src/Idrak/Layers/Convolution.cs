@@ -38,6 +38,52 @@ public sealed class Conv2d : Module
         Bias = bias ? CreateParameter(new float[outChannels], [outChannels], device) : null;
     }
 
+    private Conv2d(Tensor weight, Tensor? bias, int inChannels, int kernelSize, int stride, int padding)
+    {
+        InChannels = inChannels;
+        OutChannels = weight.Shape[0];
+        KernelSize = kernelSize;
+        Stride = stride;
+        Padding = padding;
+        Weight = weight;
+        Bias = bias;
+    }
+
+    /// <summary>
+    /// A layer around existing filters (for example loaded weights); the layer takes ownership. The weight is
+    /// [outChannels, inChannels, k, k] (PyTorch's layout) or the same values as [outChannels, inChannels · k · k].
+    /// </summary>
+    public static Conv2d FromWeights(Tensor weight, Tensor? bias, int kernelSize, int stride = 1, int padding = 0)
+    {
+        ArgumentNullException.ThrowIfNull(weight);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(kernelSize);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(stride);
+        ArgumentOutOfRangeException.ThrowIfNegative(padding);
+        var shape = weight.Shape;
+        bool fits = shape.Length switch
+        {
+            4 => shape[2] == kernelSize && shape[3] == kernelSize,
+            2 => shape[1] % (kernelSize * kernelSize) == 0,
+            _ => false,
+        };
+        if (!fits || (bias is not null && (bias.Rank != 1 || bias.Shape[0] != shape[0])))
+        {
+            throw new ArgumentException($"Conv2d filters of {kernelSize}x{kernelSize} are [out, in, {kernelSize}, {kernelSize}] or [out, in·{kernelSize * kernelSize}] with a bias [out]; "
+                + $"got {Tensor.FormatShape(shape)} and {(bias is null ? "no bias" : Tensor.FormatShape(bias.Shape))}.");
+        }
+
+        int inChannels = shape.Length == 4 ? shape[1] : shape[1] / (kernelSize * kernelSize);
+        var flat = weight;
+        if (shape.Length == 4)
+        {
+            // The same values as [out, in·k·k] (the order Im2Col writes a patch in), in a tensor of its own.
+            flat = Tensor.Persistent(weight.ToArray(), [shape[0], inChannels * kernelSize * kernelSize], weight.Device, weight.RequiresGrad);
+            weight.Dispose();
+        }
+
+        return new Conv2d(flat, bias, inChannels, kernelSize, stride, padding);
+    }
+
     /// <summary>Input channels.</summary>
     public int InChannels { get; }
 

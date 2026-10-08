@@ -39,6 +39,36 @@ public sealed class MultiHeadAttention : Module, ICachedModule
         _dropout = dropout > 0f ? new Dropout(dropout, random) : null;
     }
 
+    private MultiHeadAttention(Linear qkv, Linear output, int heads, bool causal)
+    {
+        Dim = output.OutFeatures;
+        Heads = heads;
+        Causal = causal;
+        _qkv = qkv;
+        _output = output;
+    }
+
+    /// <summary>
+    /// A layer around existing projections (for example loaded weights), without dropout; the layer takes ownership.
+    /// </summary>
+    /// <param name="qkv">The query, key and value projections side by side, [dim, 3 · dim]: the queries' columns first, then the keys', then the values' (within each, head after head).</param>
+    /// <param name="output">The output projection, [dim, dim].</param>
+    /// <param name="heads">Number of heads (a divisor of dim); scores are scaled by the head size^-0.5.</param>
+    /// <param name="causal">Mask future positions.</param>
+    public static MultiHeadAttention FromWeights(Linear qkv, Linear output, int heads, bool causal = false)
+    {
+        ArgumentNullException.ThrowIfNull(qkv);
+        ArgumentNullException.ThrowIfNull(output);
+        int dim = output.OutFeatures;
+        if (heads <= 0 || dim % heads != 0 || output.InFeatures != dim || qkv.InFeatures != dim || qkv.OutFeatures != 3 * dim)
+        {
+            throw new ArgumentException($"MultiHeadAttention takes qkv [dim, 3·dim] and output [dim, dim] with dim divisible by {heads} heads; "
+                + $"got qkv [{qkv.InFeatures}, {qkv.OutFeatures}] and output [{output.InFeatures}, {output.OutFeatures}].");
+        }
+
+        return new MultiHeadAttention(qkv, output, heads, causal);
+    }
+
     /// <summary>Model width.</summary>
     public int Dim { get; }
 
@@ -217,6 +247,40 @@ public sealed class TransformerEncoderLayer : Module, ICachedModule
         _feedForward2 = new Linear(ffDim ?? 4 * dim, dim, device: device, random: random);
         _dropout = dropout > 0f ? new Dropout(dropout, random) : null;
         Dim = dim;
+    }
+
+    private TransformerEncoderLayer(LayerNorm norm1, MultiHeadAttention attention, LayerNorm norm2, Linear feedForward1, Linear feedForward2)
+    {
+        _norm1 = norm1;
+        _attention = attention;
+        _norm2 = norm2;
+        _feedForward1 = feedForward1;
+        _feedForward2 = feedForward2;
+        Dim = attention.Dim;
+    }
+
+    /// <summary>
+    /// A block around existing layers (for example loaded weights), without dropout; the block takes ownership. Each
+    /// LayerNorm keeps its own epsilon; the feed-forward is GELU with the tanh approximation between
+    /// <paramref name="feedForward1"/> [dim, ffDim] and <paramref name="feedForward2"/> [ffDim, dim]. SigLIP's encoder
+    /// layers are exactly this.
+    /// </summary>
+    public static TransformerEncoderLayer FromLayers(LayerNorm norm1, MultiHeadAttention attention, LayerNorm norm2, Linear feedForward1, Linear feedForward2)
+    {
+        ArgumentNullException.ThrowIfNull(norm1);
+        ArgumentNullException.ThrowIfNull(attention);
+        ArgumentNullException.ThrowIfNull(norm2);
+        ArgumentNullException.ThrowIfNull(feedForward1);
+        ArgumentNullException.ThrowIfNull(feedForward2);
+        int dim = attention.Dim;
+        if (norm1.Features != dim || norm2.Features != dim || feedForward1.InFeatures != dim || feedForward2.InFeatures != feedForward1.OutFeatures
+            || feedForward2.OutFeatures != dim)
+        {
+            throw new ArgumentException($"The layers of a TransformerEncoderLayer of width {dim} do not fit: norms of {norm1.Features} and {norm2.Features}, "
+                + $"feed-forward [{feedForward1.InFeatures}, {feedForward1.OutFeatures}] and [{feedForward2.InFeatures}, {feedForward2.OutFeatures}].");
+        }
+
+        return new TransformerEncoderLayer(norm1, attention, norm2, feedForward1, feedForward2);
     }
 
     /// <summary>Model width.</summary>
