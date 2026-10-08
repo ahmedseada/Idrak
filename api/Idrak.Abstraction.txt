@@ -893,14 +893,31 @@ public sealed record Idrak.Abstraction.Generation.ChatDelta : System.IEquatable<
   public string Content { get; init; }
   public string Thinking { get; init; }
 
+public sealed record Idrak.Abstraction.Generation.ChatImage : Idrak.Abstraction.Generation.ChatPart, System.IEquatable<Idrak.Abstraction.Generation.ChatImage>
+  public System.ReadOnlyMemory<byte> Data { get; }
+  public bool Equals(Idrak.Abstraction.Generation.ChatImage? other)
+  public override int GetHashCode()
+  public override string Kind { get; }
+  public override string ToString()
+  public static Idrak.Abstraction.Generation.ChatImage FromBytes(System.ReadOnlySpan<byte> data, string? mediaType = null)
+  public static Idrak.Abstraction.Generation.ChatImage FromDataUrl(string url)
+  public static Idrak.Abstraction.Generation.ChatImage FromFile(string path, string? mediaType = null)
+  public string Hash { get; }
+  public string ToDataUrl()
+  public string? MediaType { get; }
+
 public sealed class Idrak.Abstraction.Generation.ChatMLTemplate : Idrak.Abstraction.Generation.ChatTemplate
   public ChatMLTemplate()
   public override System.Collections.Generic.IReadOnlyList<string> StopSequences { get; }
   public override string Render(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> messages, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition> tools, bool? think)
 
 public sealed record Idrak.Abstraction.Generation.ChatMessage : System.IEquatable<Idrak.Abstraction.Generation.ChatMessage>
+  public ChatMessage(string Role, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatPart> Parts, string? Thinking = null, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolCall>? ToolCalls = null, string? ToolName = null)
   public ChatMessage(string Role, string Content = "", string? Thinking = null, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolCall>? ToolCalls = null, string? ToolName = null)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatPart> Parts { get; init; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolCall>? ToolCalls { get; init; }
+  public bool Equals(Idrak.Abstraction.Generation.ChatMessage? other)
+  public override int GetHashCode()
   public string Content { get; init; }
   public string Role { get; init; }
   public string? Thinking { get; init; }
@@ -912,6 +929,32 @@ public sealed class Idrak.Abstraction.Generation.ChatOutputParser
   public ChatOutputParser(Idrak.Abstraction.Generation.ChatTemplate template, bool separateThinking = true, System.Collections.Generic.IReadOnlyCollection<string>? toolNames = null)
   public Idrak.Abstraction.Generation.ChatDelta Feed(string text)
   public Idrak.Abstraction.Generation.ChatDelta Finish()
+
+public abstract record Idrak.Abstraction.Generation.ChatPart : System.IEquatable<Idrak.Abstraction.Generation.ChatPart>
+  protected ChatPart()
+  protected ChatPart(Idrak.Abstraction.Generation.ChatPart original)
+  public abstract string Kind { get; }
+
+public static class Idrak.Abstraction.Generation.ChatParts
+  public const string Image = "image"
+  public const string Text = "text"
+  public static Idrak.Abstraction.Generation.ChatPart FromJson(System.Text.Json.Nodes.JsonNode? json)
+  public static Idrak.Abstraction.Generation.IChatPartKind Get(string name)
+  public static Idrak.Abstraction.Generation.IChatPartKind? Default(string name)
+  public static Idrak.Abstraction.Generation.IChatPartKind? Default(string name, int version)
+  public static Idrak.Abstraction.Generation.IChatPartKind? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatPart> ContentFromJson(System.Text.Json.Nodes.JsonNode? content)
+  public static System.Collections.Generic.IReadOnlySet<string> TextOnly { get; }
+  public static System.Text.Json.Nodes.JsonNode ContentToJson(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatPart> parts)
+  public static System.Text.Json.Nodes.JsonObject ToJson(Idrak.Abstraction.Generation.ChatPart part)
+  public static bool Unregister(string name)
+  public static int DefaultVersion(string name)
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Generation.IChatPartKind kind)
+  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+  public static void ThrowIfUnsupported(Idrak.Abstraction.Generation.IChatModel model, Idrak.Abstraction.Generation.ChatRequest request, string? name = null)
+  public static void ThrowIfUnsupported(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> messages, System.Collections.Generic.IReadOnlySet<string> kinds, string who)
 
 public sealed record Idrak.Abstraction.Generation.ChatRequest : System.IEquatable<Idrak.Abstraction.Generation.ChatRequest>
   public ChatRequest(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> Messages, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition>? Tools = null, bool? Think = null, Idrak.Abstraction.Generation.GenerationOptions? Options = null)
@@ -927,6 +970,7 @@ public abstract class Idrak.Abstraction.Generation.ChatTemplate
   public virtual (string, string) ThinkTags { get; }
   public virtual Idrak.Abstraction.Generation.IToolCallParser CreateToolCallParser(Idrak.Abstraction.Generation.ToolCallContext context)
   public virtual Idrak.Abstraction.Generation.ToolCallFormat ToolCalls { get; }
+  public virtual System.Collections.Generic.IReadOnlySet<string> PartKinds { get; }
   public virtual string ToolCallFormatName { get; }
 
 public static class Idrak.Abstraction.Generation.ChatTemplates
@@ -937,6 +981,11 @@ public static class Idrak.Abstraction.Generation.ChatTemplates
   public static string? Origin(string name)
   public static void Register(string name, System.Func<string, Idrak.Abstraction.Generation.ITokenizer?, Idrak.Abstraction.Generation.ChatTemplate?> load)
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
+public sealed record Idrak.Abstraction.Generation.ChatText : Idrak.Abstraction.Generation.ChatPart, System.IEquatable<Idrak.Abstraction.Generation.ChatText>
+  public ChatText(string Text)
+  public override string Kind { get; }
+  public string Text { get; init; }
 
 public static class Idrak.Abstraction.Generation.ChatTools
   public static Idrak.Abstraction.Generation.IChatModel WithTools(this Idrak.Abstraction.Generation.IChatModel model, Idrak.Abstraction.Generation.IToolRegistry tools, int maxToolRounds)
@@ -1069,7 +1118,13 @@ public sealed record Idrak.Abstraction.Generation.GenerationStats : System.IEqua
   public int PromptTokens { get; init; }
 
 public interface Idrak.Abstraction.Generation.IChatModel
+  public (default) System.Collections.Generic.IReadOnlySet<string> PartKinds { get; }
   public System.Collections.Generic.IAsyncEnumerable<Idrak.Abstraction.Generation.ChatChunk> StreamAsync(Idrak.Abstraction.Generation.ChatRequest request, System.Threading.CancellationToken cancellationToken = default)
+
+public interface Idrak.Abstraction.Generation.IChatPartKind
+  public Idrak.Abstraction.Generation.ChatPart Read(System.Text.Json.Nodes.JsonObject json)
+  public string Name { get; }
+  public void Write(Idrak.Abstraction.Generation.ChatPart part, System.Text.Json.Nodes.JsonObject json)
 
 public interface Idrak.Abstraction.Generation.ITextModel
   public System.Collections.Generic.IAsyncEnumerable<Idrak.Abstraction.Generation.GenerationChunk> StreamAsync(string prompt, Idrak.Abstraction.Generation.GenerationOptions options, System.Threading.CancellationToken cancellationToken = default)

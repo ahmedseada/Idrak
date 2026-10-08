@@ -11,7 +11,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 
 | Assembly | Interfaces | Abstract classes | Registries | Total | Misplaced (decision 10) |
 |---|---|---|---|---|---|
-| `Idrak.Abstraction` | 25 | 11 | 9 | 44 | 0 |
+| `Idrak.Abstraction` | 26 | 12 | 10 | 47 | 0 |
 | `Idrak` | 12 | 4 | 13 | 29 | 0 |
 | `Idrak.Gpu` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Nlp` | 4 | 2 | 1 | 7 | 0 |
@@ -52,9 +52,12 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Diagnostics.ITelemetryHook` | interface | public | — | ChannelTelemetry, ConsoleLogger, JsonLinesLogger, MetricsRecorder |  | Abstraction, AspNetCore, Data, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
 | `Idrak.Abstraction.Formats.IModelSource` | interface | public | — | HuggingFaceModels.HubSource, ModelSource.DelegateModelSource, ModelSources.GuardedSource |  | Abstraction, Data, Idrak | Abstraction |
 | `Idrak.Abstraction.Formats.ModelSources` | registry | public | — |  | folder, gguf, huggingface, store | Data, Idrak | Abstraction |
+| `Idrak.Abstraction.Generation.ChatPart` | abstract class | public | — | ChatImage, ChatText |  | Abstraction, AspNetCore, Idrak, Mcp, Nlp | Abstraction |
+| `Idrak.Abstraction.Generation.ChatParts` | registry | public | — |  | image, text | Abstraction, AspNetCore, Idrak, Mcp, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.ChatTemplate` | abstract class | public | — | ChatMLTemplate, JinjaChatTemplate |  | Abstraction, Idrak, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.ChatTemplates` | registry | public | — |  | jinja | Idrak, Nlp | Abstraction |
-| `Idrak.Abstraction.Generation.IChatModel` | interface | public | — | ChatEngineModel, ChatGenerator, ChatTools.ToolRunningChatModel, FakeChatModel |  | Abstraction, AspNetCore, Mcp, Nlp | Abstraction |
+| `Idrak.Abstraction.Generation.IChatModel` | interface | public | — | ChatEngineModel, ChatGenerator, ChatTools.ToolRunningChatModel, FakeChatModel |  | Abstraction, AspNetCore, Idrak, Mcp, Nlp | Abstraction |
+| `Idrak.Abstraction.Generation.IChatPartKind` | interface | public | — | ChatParts.GuardedKind, ChatParts.ImageKind, ChatParts.TextKind |  | Abstraction, AspNetCore, Idrak, Mcp, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.ITextModel` | interface | public | — | ChatEngineModel, TextEngineModel, TextGenerator |  | Abstraction, AspNetCore, Mcp, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.ITokenizer` | interface | public | — | BpeTokenizer, CharTokenizer, WordTokenizer |  | Abstraction, Idrak, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.IToolCallParser` | interface | public | — | DeepSeekToolCallParser, HarmonyToolCallParser, JsonToolCallParser, MistralToolCallParser, PythonicToolCallParser, Qwen3CoderToolCallParser |  | Abstraction, Idrak, Nlp | Abstraction |

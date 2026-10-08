@@ -29,7 +29,10 @@ public static class ChatJson
         return json;
     }
 
-    /// <summary>The messages; assistant reasoning goes in "reasoning_content", call arguments are JSON objects.</summary>
+    /// <summary>
+    /// The messages; assistant reasoning goes in "reasoning_content", call arguments are JSON objects. Content is a string
+    /// when it is text alone, else a list of parts (<see cref="ChatParts.ContentToJson"/>: images as base64).
+    /// </summary>
     public static JsonArray Messages(IReadOnlyList<ChatMessage> messages)
     {
         var array = new JsonArray();
@@ -37,7 +40,7 @@ public static class ChatJson
         int calls = 0;
         foreach (var message in messages)
         {
-            var json = new JsonObject { ["role"] = message.Role, ["content"] = message.Content };
+            var json = new JsonObject { ["role"] = message.Role, ["content"] = ChatParts.ContentToJson(message.Parts) };
             if (!string.IsNullOrEmpty(message.Thinking))
             {
                 json["reasoning_content"] = message.Thinking;
