@@ -158,6 +158,8 @@ internal static partial class Tests
             attention.Forward(x);
             Check(trace.Calls(Ops.AttentionSpans) == 1 && trace.Calls(Ops.ScaleMaskSoftmax) == 0 && trace.Calls(Ops.Softmax) == 0,
                 "the layer runs AttentionSpans, not a softmax over full scores");
+            Check(device.Backend.Kind is not ("cpu" or "vulkan" or "cuda") || !trace.HostCallsByOperation.ContainsKey("AttentionSpans"),
+                "the CPU, Vulkan and CUDA run AttentionSpans on their own kernels");
         }
     }
 }
