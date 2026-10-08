@@ -3,6 +3,7 @@
 
 using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
+using Idrak.Models;
 
 namespace Idrak.Cli.Commands;
 
@@ -62,6 +63,24 @@ internal sealed class ShowCommand : Command
             fields.Add(("Windows", info.Windows));
         }
 
+        // A vision-language model's image side (vision_config), described without loading it.
+        VisionEncoderConfig? vision = null;
+        int perImage = 0;
+        if (info.Config["vision_config"] is JsonObject visionConfig)
+        {
+            try
+            {
+                vision = VisionEncoderConfig.FromJson(visionConfig);
+                perImage = (int?)info.Config["mm_tokens_per_image"] ?? vision.Patches;
+                fields.Add(("Vision", $"{(string?)visionConfig["model_type"] ?? "vision encoder"}: {vision.Layers} layers · width {vision.Dim} · {vision.Heads} heads · "
+                    + $"{vision.ImageSize} px images in {vision.PatchSize} px patches ({vision.Patches:N0}) → {perImage:N0} tokens per image"));
+            }
+            catch (InvalidDataException e)
+            {
+                fields.Add(("Vision", $"vision_config not readable: {e.Message}"));
+            }
+        }
+
         fields.Add(("Weights", $"{info.Format} · {Units.Bytes(info.WeightBytes)}"));
         fields.Add(("Chat", info.Template is null ? "no chat template" : $"chat template ({info.TemplateSource}), tool calls: {info.ToolCallFormat}"));
         fields.Add(("License", info.License ?? "not stated"));
@@ -88,6 +107,11 @@ internal sealed class ShowCommand : Command
             ["spec"] = info.Spec?.ToJson(),
             ["rope"] = info.Rope,
             ["windows"] = info.Windows,
+            ["vision"] = vision is null ? null : new JsonObject
+            {
+                ["layers"] = vision.Layers, ["width"] = vision.Dim, ["heads"] = vision.Heads, ["imageSize"] = vision.ImageSize,
+                ["patchSize"] = vision.PatchSize, ["tokensPerImage"] = perImage,
+            },
             ["format"] = info.Format,
             ["weightBytes"] = info.WeightBytes,
             ["chatTemplate"] = info.Template is not null,

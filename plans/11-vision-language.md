@@ -1,6 +1,6 @@
 # Plan 11: images into language models (Gemma 3 first)
 
-**Status:** planned 2026-10-07, revised the same day against the code; phase 0 (the reference) done 2026-10-08, phase 1 (contracts) done 2026-10-07 on the CPU; plan 10's wave 4 is done. Asked for to run `bakrianoo/arabic-legal-documents-ocr-1.0`, a fine-tune of Gemma-3-4B-IT that reads scanned
+**Status:** planned 2026-10-07, revised the same day against the code; phase 0 (the reference) done 2026-10-08, phase 4 (loading, text side) done 2026-10-08 on CPU and Vulkan, phase 1 (contracts) done 2026-10-07 on the CPU; plan 10's wave 4 is done. Asked for to run `bakrianoo/arabic-legal-documents-ocr-1.0`, a fine-tune of Gemma-3-4B-IT that reads scanned
 Arabic legal documents (low quality scans included) and returns their contents as structured data. Its card asks for
 images resized and turned to grayscale first, and shows it running through transformers and vLLM.
 
@@ -69,7 +69,7 @@ namespace until a second library package uses it.
 | 2 | **Preprocessing and JPEG.** The image pipeline from `preprocessor_config.json` (resize, rescale, normalize, channel order) and the grayscale option; a JPEG decoder (baseline and progressive, 4:2:0 and 4:4:4, restart markers, grayscale and YCbCr; not CMYK) registered as a library default in `ImageCodecs` | pixels match the reference to 1e-5; JPEG files from common encoders (libjpeg, phones, scanners) decode |
 | 3a | **Span-masked attention.** One operation for every mask the library needs: per query row, the range of keys it sees ([first, last], read from a small device buffer or computed from a rule). Bidirectional (the encoder: every row sees all), causal, sliding window, packed segments and image blocks are rules of it. CPU kernel, Vulkan and CUDA kernels tiled like `AttentionTiled`, HIP through the host fallback; a reference in the conformance kit; the existing causal paths unchanged (they keep their kernels; this one is used where a mask is not causal) | the kit's cases pass on CPU and Vulkan; a 4,096-token bidirectional pass never builds the full score matrix |
 | 3b | **The SigLIP encoder and the projector** as core layers, built from a `vision_config`, on 3a's attention | the tiny model's vision features and projected tokens match the reference (CPU and Vulkan) |
-| 4 | **Loading the whole model.** `Gemma3ForConditionalGeneration` in the pretrained families: nested configs, both tensor layouts, tied embeddings, the image token ids; the text part reuses Gemma 3's decoder spec (its `text_config` read as a `Gemma3ForCausalLM` config) | the tiny model loads in each of the three layouts; a text-only prompt gives the same logits as transformers |
+| 4 | **Loading the whole model.** `Gemma3ForConditionalGeneration` in the pretrained families: nested configs, both tensor layouts, tied embeddings, the image token ids; the text part reuses Gemma 3's decoder spec (its `text_config` read as a `Gemma3ForCausalLM` config) | the tiny model loads in each of the three layouts; a text-only prompt gives the same logits as transformers; **done 2026-10-08** (as built below) |
 | 5 | **Image tokens in the decoder.** At prefill, the soft tokens' embeddings are replaced by the image features; each image's soft tokens see each other (3a's image-block rule, on top of the sliding window of the local layers); decoding afterwards uses the KV cache as today (the image costs nothing more per generated token). Several images in one prompt | the tiny model's logits with an image and its 20 greedy tokens match the reference (CPU and Vulkan) |
 | 6 | **Chat with images in Nlp.** The chat template's image parts expand to the image tokens (the Jinja engine walks content parts); generation takes images; an image is encoded once per conversation (kept with the conversation by content hash) | a two-turn chat about one image encodes it once and matches the reference's first turn |
 | 7 | **The command line.** `idrak chat <model> --image FILE` (repeatable; also `/image FILE` inside a chat, like `/file`); the one-shot `idrak run <model> --image FILE "prompt"` (with `--schema` for the structured answer this model gives, `-j` for JSON); `--grayscale` (or the setting stored with a pulled model) | CLI tests pass with the tiny model; on the author's RTX 5070 Ti the real model reads a sample scan and its greedy output matches transformers' for the first 100 tokens |
@@ -199,6 +199,47 @@ of that version) and confirmed by the reference:
 - *Tokenizer* (phase 6). The fixture's tokenizer is Gemma-like (BPE over `▁`-joined text with byte fallback, `<bos>`
   added by the post-processor), its own vocabulary (ids in the README); the chat template is Gemma 3's, rendering
   `{"type": "image"}` as `<start_of_image>` and a system message as a prefix of the first user turn.
+
+## Phase 4, as built (2026-10-08): loading `Gemma3ForConditionalGeneration`
+
+The text side is done; images in the decoder stay phase 5 (and the encoder phase 3b). All in core (`Idrak.Models`).
+
+- **The family** `Gemma3ForConditionalGeneration` is a library default in `PretrainedArchitectures` (registered by
+  `PretrainedFamilies.BuiltIns`, like the others). Its spec is Gemma 3's decoder read from `text_config`, with the
+  top-level `tie_word_embeddings`, `dtype` and `torch_dtype` merged in when `text_config` lacks them, and
+  `Gemma3TextConfig`'s defaults for absent keys (checked against transformers 4.57.6: the original gemma-3-4b-it's
+  `text_config` names only width, layers, MLP, window and RoPE scaling; vocabulary 262,208, 8 heads, 4 KV heads, head
+  size 256, `query_pre_attn_scalar` 256, five windowed layers in six). `LogitSoftcap` is always null for this family
+  (the test gives it `final_logit_softcapping: 30` and checks). The embedding scale √width is rounded to the
+  config's dtype (bfloat16: √2560 → 50.5; float16; float32 unchanged), as `Gemma3TextScaledWordEmbedding` does;
+  `Gemma3ForCausalLM` keeps the unrounded scale (unchanged).
+- **Both config formats.** transformers 5's `rope_parameters` (per layer kind, or one for all) is read into
+  `rope_theta`, `rope_scaling` and `rope_local_base_freq` (it wins over the old keys when both are present; RoPE scaling
+  on the sliding layers is refused). `Gemma3ForCausalLM` reads it too now (a v5 text config gives the same spec as the 4.x one).
+- **Three layouts, detected from the names.** New optional contract member `PretrainedArchitecture.ForCheckpoint`
+  (`Func<IReadOnlySet<string>, PretrainedArchitecture>`, in core's `Idrak.Models.Abstractions` beside the
+  contract): `PretrainedModel.Load` opens the checkpoint first and keeps the architecture fitted to its names, so
+  adapters and exports use the checkpoint's own naming. The text decoder is found by `<prefix>embed_tokens.weight`
+  (`language_model.model.` or `model.language_model.`), the vision model by `<prefix>embeddings.patch_embedding.weight`
+  (`vision_tower.vision_model.`, `model.vision_tower.vision_model.`, `vision_tower.`); the head maps to
+  `language_model.lm_head.*` / `lm_head.*` (never saved: tied).
+- **The vision part as data** (for 3b and 5): second optional member `PretrainedArchitecture.Vision`; the loaded
+  model's `PretrainedModel.Vision` (`PretrainedVision`, null for text models): `Encoder` (`VisionEncoderConfig`:
+  width, MLP, layers, heads, image and patch size, channels, LayerNorm eps, activation, `UseHead`; derived
+  `HeadDim`, `PatchesPerSide`, `Patches`; `FromJson` with SigLIP's defaults), `ImageTokens` (`ImageTokenIds`:
+  `BeginImage` = boi, `EndImage` = eoi, `ImageToken` = image soft token, `TokensPerImage`; Gemma3Config's defaults
+  255999, 256000, 262144, 256 when absent), `TextDim`, `PoolSize` (patches per side / √tokens per image),
+  `ProjectorNormEpsilon` (the vision `layer_norm_eps`), `Layout`, and `Tensors`: every encoder and projector tensor
+  under one naming, `vision.` + SigLIP's names inside its vision model and `projector.` + the projector's
+  (`projector.mm_input_projection_weight` [vision, text], used as x · W, read as stored), each with its stored name
+  and shape, checked against the configs at load (a missing tensor or wrong shape is refused naming it).
+  `OpenTensors()` reopens the checkpoint as an `ITensorStore` under those names (as stored, no transposition).
+  These tensors do not count as unused; the network is the text decoder alone.
+- **CLI:** `idrak show` prints a `Vision` line (and `vision` in `-j`) from `vision_config` and `mm_tokens_per_image`.
+- **Test** (`IDRAK_FILTER=Gemma3ForConditionalGeneration`, in the model family group): each of the three folders
+  loads with no notes, the same spec, the same vision data and projector values, and gives transformers' text-prompt
+  logits within 2e-5 (largest difference 5.4e-6 on the CPU, 4.9e-6 on Vulkan lavapipe, the same in every folder); the
+  original 4B's sparse config reads with transformers' defaults; a wrong vision shape is refused.
 
 ## Performance targets (author's RTX 5070 Ti, the real 4B model)
 
