@@ -11,7 +11,7 @@
 //   … -- --bench-vulkan [sections]                                               time every Vulkan device (or those IDRAK_DEVICES names): dispatches, copies, products, attention, decoders
 //   … -- --bench-text                                                            time the text paths (tokenizer, chat template, parsing, chunking, BM25)
 //   … -- --bench-window                                                          time windowed and soft-capped attention, kernels against the composed path (IDRAK_DEVICES, default every GPU)
-//   … -- --bench-spans [spans|composed]                                          time a 4,096-token bidirectional attention pass, tiled or composed (IDRAK_DEVICES, default the CPU)
+//   … -- --bench-spans [spans|composed|fastest]                                  time a 4,096-token bidirectional attention pass: tiled, composed, the measured choice (default all) (IDRAK_DEVICES, default the CPU)
 //   … -- --bench-dispatch                                                        time a million tiny operations through the dispatcher and straight to the CPU's kernel
 //   … -- --bench-offload                                                         time training steps with weights or optimizer state in system memory
 //   IDRAK_FILTER=retrieval dotnet run --project tests/Idrak.Tests   only tests whose name contains the text
@@ -65,7 +65,7 @@ if (args is ["--bench-window"])
 
 if (args is ["--bench-spans", .. var spanPath])
 {
-    return Tests.BenchSpans(spanPath is [var chosenPath] ? chosenPath : "spans");
+    return Tests.BenchSpans(spanPath is [var chosenPath] ? chosenPath : "all");
 }
 
 if (args is ["--bench-offload"])
@@ -87,6 +87,15 @@ if (args is ["--dump-ptx", var ptxPath])
 {
     File.WriteAllText(ptxPath, PtxKernels.Source);
     File.WriteAllText(Path.ChangeExtension(ptxPath, ".tensorcore.ptx"), PtxKernels.TensorCoreSource);
+    for (int d = 8; d <= PtxKernels.FlashMaxDim; d += 8)                // the span modules, one per padded head size
+    {
+        File.WriteAllText(Path.ChangeExtension(ptxPath, $".spans_f32_d{d}.ptx"), PtxKernels.SpanFloatModule(d).Source);
+        if (d % 16 == 0)
+        {
+            File.WriteAllText(Path.ChangeExtension(ptxPath, $".spans_tc_d{d}.ptx"), PtxKernels.SpanTensorModule(d).Source);
+        }
+    }
+
     Console.WriteLine($"Wrote {PtxKernels.Source.Length} characters of PTX to {ptxPath}");
     return 0;
 }

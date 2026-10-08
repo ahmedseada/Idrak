@@ -678,6 +678,8 @@ internal sealed unsafe partial class VulkanBackend : Backend
 
     public override MemoryUsage GetMemoryUsage() => _memory.Usage;
 
+    public override void ResetPeakMemoryUsage() => _memory.ResetPeak();
+
     /// <summary>Frees every cached (currently unused) block, after the work queued on them has finished.</summary>
     public override void ReleaseCachedMemory()
     {

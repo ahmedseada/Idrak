@@ -153,16 +153,16 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 
 ## The device contract (`Backend`)
 
-`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 126 virtual methods, 6 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `HipBackend`, `VulkanBackend`. Each
+`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 129 virtual methods, 6 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `HipBackend`, `VulkanBackend`. Each
 operation (111, `Ops`) is a `NameKernel` method, the device's own kernel; `Backend.Name(...)` runs the kernel registered
 for the device in `Kernels` instead, where there is one (plan 9). The rest is device plumbing: memory, copies, graphs, profiling.
 
 | Device | Methods overridden |
 |---|---|
-| `CpuBackend` | 106 of 136 |
-| `CudaBackend` | 127 of 136 |
-| `HipBackend` | 22 of 136 |
-| `VulkanBackend` | 109 of 136 |
+| `CpuBackend` | 108 of 139 |
+| `CudaBackend` | 130 of 139 |
+| `HipBackend` | 23 of 139 |
+| `VulkanBackend` | 112 of 139 |
 
 | Operation | Kind | Cpu | Cuda | Hip | Vulkan |
 |---|---|---|---|---|---|
@@ -191,6 +191,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `AttentionStridedKernel(16)` | virtual |  | ✓ |  |  |
 | `AttentionTiledBackwardKernel(16)` | virtual | ✓ | ✓ |  | ✓ |
 | `AttentionTiledKernel(13)` | virtual | ✓ | ✓ |  | ✓ |
+| `AvailableMemory(0)` | virtual | ✓ | ✓ |  | ✓ |
 | `AxpyAtKernel(4)` | virtual | ✓ | ✓ |  | ✓ |
 | `AxpyKernel(4)` | virtual | ✓ | ✓ | ✓ | ✓ |
 | `BFloat16DequantizeKernel(4)` | virtual | ✓ | ✓ |  | ✓ |
@@ -269,9 +270,11 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `PermuteKernel(5)` | virtual | ✓ | ✓ |  | ✓ |
 | `PowBackwardKernel(5)` | virtual | ✓ |  |  | ✓ |
 | `PowKernel(4)` | virtual | ✓ |  |  | ✓ |
+| `PrefersComposedAttention(11)` | virtual |  | ✓ |  | ✓ |
 | `PrefersPackedMatMul(8)` | virtual |  | ✓ |  |  |
 | `ReleaseCachedMemory(0)` | abstract | ✓ | ✓ | ✓ | ✓ |
 | `ReplayGraph(1)` | virtual |  | ✓ |  | ✓ |
+| `ResetPeakMemoryUsage(0)` | virtual | ✓ | ✓ | ✓ | ✓ |
 | `Return(1)` | abstract | ✓ | ✓ | ✓ | ✓ |
 | `ReuseQuantizedOperands(0)` | virtual |  | ✓ |  |  |
 | `RmsNormAffineKernel(7)` | virtual | ✓ | ✓ | ✓ | ✓ |
