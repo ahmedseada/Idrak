@@ -743,6 +743,11 @@ public sealed class Idrak.Layers.GraphModule : Idrak.Abstraction.Module
   public string Input { get; }
   public string Output { get; }
 
+public static class Idrak.Layers.ImagePrefill
+  public static Idrak.Abstraction.Tensor Forward(this Idrak.Layers.Sequential decoder, Idrak.Abstraction.Tensor ids, System.Collections.Generic.IReadOnlyList<Idrak.Layers.PromptImage> images)
+  public static Idrak.Abstraction.Tensor ForwardCached(this Idrak.Layers.Sequential decoder, Idrak.Abstraction.Tensor ids, System.Collections.Generic.IReadOnlyList<Idrak.Layers.PromptImage> images, Idrak.Abstraction.Generation.DecodingContext context, int? layers = null)
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Layers.PromptImage> Locate(System.Collections.Generic.IReadOnlyList<int> ids, int imageToken, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor> features, int sequence = 0)
+
 public enum Idrak.Layers.InputKind : int
   Features = 0
   Image = 1
@@ -927,6 +932,13 @@ public sealed class Idrak.Layers.PositionalEncoding : Idrak.Abstraction.Module, 
   public int MaxLength { get; }
   public override string ToString()
   public override void Dispose()
+
+public sealed record Idrak.Layers.PromptImage : System.IEquatable<Idrak.Layers.PromptImage>
+  public Idrak.Abstraction.Tensor Features { get; init; }
+  public PromptImage(int Position, Idrak.Abstraction.Tensor Features)
+  public int Position { get; init; }
+  public int Sequence { get; init; }
+  public int Tokens { get; }
 
 public sealed class Idrak.Layers.RMSNorm : Idrak.Abstraction.Module
   public Idrak.Abstraction.Tensor Gain { get; }
