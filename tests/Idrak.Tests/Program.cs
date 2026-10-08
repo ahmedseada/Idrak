@@ -11,6 +11,7 @@
 //   … -- --bench-vulkan [sections]                                               time every Vulkan device (or those IDRAK_DEVICES names): dispatches, copies, products, attention, decoders
 //   … -- --bench-text                                                            time the text paths (tokenizer, chat template, parsing, chunking, BM25)
 //   … -- --bench-window                                                          time windowed and soft-capped attention, kernels against the composed path (IDRAK_DEVICES, default every GPU)
+//   … -- --bench-spans [spans|composed]                                          time a 4,096-token bidirectional attention pass, tiled or composed (IDRAK_DEVICES, default the CPU)
 //   … -- --bench-dispatch                                                        time a million tiny operations through the dispatcher and straight to the CPU's kernel
 //   … -- --bench-offload                                                         time training steps with weights or optimizer state in system memory
 //   IDRAK_FILTER=retrieval dotnet run --project tests/Idrak.Tests   only tests whose name contains the text
@@ -60,6 +61,11 @@ if (args is ["--bench-text"])
 if (args is ["--bench-window"])
 {
     return Tests.BenchWindow();
+}
+
+if (args is ["--bench-spans", .. var spanPath])
+{
+    return Tests.BenchSpans(spanPath is [var chosenPath] ? chosenPath : "spans");
 }
 
 if (args is ["--bench-offload"])
