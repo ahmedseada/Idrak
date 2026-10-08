@@ -702,15 +702,15 @@ internal static partial class Tests
             Directory.Delete(folder, recursive: true);
         }
 
-        Check(!ImageCodecs.Names.Contains("tiny") && ImageCodecs.Names.SequenceEqual(["png", "bmp", "netpbm"]), "unregistered");
+        Check(!ImageCodecs.Names.Contains("tiny") && ImageCodecs.Names.SequenceEqual(["png", "jpeg", "bmp", "netpbm"]), "unregistered");
         try
         {
-            ImageCodecs.Get("jpeg");
-            Check(false, "no JPEG codec is built in");
+            ImageCodecs.Get("webp");
+            Check(false, "no WebP codec is built in");
         }
         catch (NotSupportedException e)
         {
-            Check(e.Message.Contains("png, bmp, netpbm", StringComparison.Ordinal) && e.Message.Contains("ImageCodecs.Register", StringComparison.Ordinal), e.Message);
+            Check(e.Message.Contains("png, jpeg, bmp, netpbm", StringComparison.Ordinal) && e.Message.Contains("ImageCodecs.Register", StringComparison.Ordinal), e.Message);
         }
     }
 

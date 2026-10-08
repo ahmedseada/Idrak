@@ -1,0 +1,234 @@
+[
+ {
+  "name": "down-bilinear",
+  "image": "source.png",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": true,
+   "do_resize": true,
+   "size": {
+    "height": 24,
+    "width": 32
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "down-bicubic",
+  "image": "source.png",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": true,
+   "do_resize": true,
+   "size": {
+    "height": 24,
+    "width": 32
+   },
+   "resample": 3,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.48145466,
+    0.4578275,
+    0.40821073
+   ],
+   "image_std": [
+    0.26862954,
+    0.26130258,
+    0.27577711
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "down-bilinear-odd",
+  "image": "source.png",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": true,
+   "do_resize": true,
+   "size": {
+    "height": 17,
+    "width": 13
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "down-lanczos",
+  "image": "source.png",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": true,
+   "do_resize": true,
+   "size": {
+    "height": 20,
+    "width": 20
+   },
+   "resample": 1,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "up-bilinear",
+  "image": "small.png",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": true,
+   "do_resize": true,
+   "size": {
+    "height": 29,
+    "width": 31
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "up-bicubic",
+  "image": "small.png",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": true,
+   "do_resize": true,
+   "size": {
+    "height": 29,
+    "width": 31
+   },
+   "resample": 3,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "mixed-bicubic",
+  "image": "source.png",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": true,
+   "do_resize": true,
+   "size": {
+    "height": 64,
+    "width": 20
+   },
+   "resample": 3,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "grey-bilinear",
+  "image": "source.png",
+  "grayscale": true,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": true,
+   "do_resize": true,
+   "size": {
+    "height": 24,
+    "width": 32
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ }
+]

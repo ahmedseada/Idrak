@@ -1356,7 +1356,7 @@ package's own `.Abstractions`).
 | Training data (samples, streams, per-sample transforms) | implement `ISampleSource`, `ISampleStream` or `ISampleTransform` | `Idrak.Abstraction` |
 | Whole batches | implement `IBatchSource` | `Idrak` (`Idrak.Data.Abstractions`) |
 | Sample sources by name (csv, images, tokens, npy built in) | `SampleSources.Register(name, SampleSourceFactory)` | `Idrak` (`Idrak.Data.Abstractions`) |
-| Image formats (png, bmp, netpbm built in; JPEG and others as plug-ins) | `ImageCodecs.Register(IImageCodec)` | `Idrak` (`Idrak.Data.Abstractions`) |
+| Image formats (png, jpeg, bmp, netpbm built in; others as plug-ins) | `ImageCodecs.Register(IImageCodec)` | `Idrak` (`Idrak.Data.Abstractions`) |
 | Adapters on linear layers (LoRA and DoRA built in) | implement `ILinearAdapter`, set `Linear.Adapter` | `Idrak.Abstraction` |
 | Fine-tuning optimizers, learning-rate schedules and losses | `FineTuningOptions.Optimizer`, `Scheduler` and `Loss` (a `FineTuningLoss` delegate) | `Idrak.Nlp` |
 | Device kernels for the library's operations, per kind of device | `Kernels.Register(Ops.Name, kind, kernel, requirement)` | `Idrak.Abstraction` |
@@ -1550,7 +1550,8 @@ sample into memory. Samples in order whose count is unknown are an `ISampleStrea
 `new DataLoader(stream, batchSize, shuffleBuffer: 10_000)`.
 
 Images are decoded without dependencies: PNG (every bit depth and colour type, interlaced or not, through .NET's zlib),
-BMP (1 to 32 bits, uncompressed or bit fields) and PGM/PPM; alpha is dropped. Other formats, JPEG among them, plug in
+JPEG (baseline and progressive, grey and colour, decoded to libjpeg-turbo's pixels; not CMYK or 12-bit), BMP (1 to 32
+bits, uncompressed or bit fields) and PGM/PPM; alpha is dropped. Other formats plug in
 as an `IImageCodec` registered with `ImageCodecs.Register`. Augmentation runs in the loader, with random numbers seeded
 by the loader's seed, the epoch and the sample, so a seeded run repeats exactly:
 
