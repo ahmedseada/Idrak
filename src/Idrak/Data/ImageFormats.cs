@@ -203,7 +203,7 @@ internal sealed class PngCodec : IImageCodec
 /// <summary>
 /// Windows bitmaps: 1, 4 and 8 bits with a palette (grey when every palette entry is grey), 16 bits (5-5-5 or bit
 /// fields), 24 bits, and 32 bits (with or without bit fields), bottom-up or top-down. Run-length compressed bitmaps are
-/// not read.
+/// not read. Bit fields of up to 8 bits are widened to 8 as Pillow widens them (v * 255 / max, rounded down).
 /// </summary>
 internal sealed class BmpCodec : IImageCodec
 {
@@ -339,12 +339,15 @@ internal sealed class BmpCodec : IImageCodec
             return 0f;
         }
 
+        // A field of up to 8 bits is widened to 8 as Pillow widens it (v * 255 / max, rounded down), so its pixels are
+        // the bytes transformers' image processors see; a wider field keeps its precision.
         int shift = BitOperations.TrailingZeroCount(mask);
-        return ((value & mask) >> shift) / (float)(mask >> shift);
+        uint max = mask >> shift, v = (value & mask) >> shift;
+        return max <= 255 ? v * 255 / max / 255f : v / (float)max;
     }
 }
 
-/// <summary>Netpbm grey and colour images: PGM (P2 text, P5 binary) and PPM (P3 text, P6 binary), 8 or 16 bits.</summary>
+/// <summary>Netpbm grey and colour images: PGM (P2 text, P5 binary) and PPM (P3 text, P6 binary), 8 or 16 bits. A maximum other than 255 is brought to 8 bits as Pillow does (rounded, halves to even), except in a grey image deeper than 8 bits, which keeps its precision.</summary>
 internal sealed class NetpbmCodec : IImageCodec
 {
     public string Name => "netpbm";
@@ -397,7 +400,10 @@ internal sealed class NetpbmCodec : IImageCodec
                     throw new InvalidDataException("a Netpbm text image with fewer values than pixels.");
                 }
 
-                pixels[ch * h * w + i] = value / (float)max;
+                // Brought to 8 bits as Pillow does (rounded, halves to even), so the pixels are the bytes transformers' image processors
+                // see; but a grey image deeper than 8 bits keeps its precision (Pillow reads it as 32-bit integers,
+                // which its convert("RGB") clips at 255: no use to copy).
+                pixels[ch * h * w + i] = max == 255 || c == 1 && max > 255 ? value / (float)max : (float)(Math.Round(value * 255.0 / max) / 255);
             }
         }
 

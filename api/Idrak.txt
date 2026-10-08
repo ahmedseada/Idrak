@@ -185,6 +185,33 @@ public sealed class Idrak.Data.ImageFolderSource : Idrak.Abstraction.Data.ISampl
   public string? Folder { get; }
   public void Read(int index, System.Span<float> features, System.Span<float> targets)
 
+public sealed class Idrak.Data.ImagePreprocessor
+  public Idrak.Abstraction.Tensor Process(Idrak.Abstraction.Data.ImageData image, Idrak.Abstraction.Device? device = null)
+  public Idrak.Abstraction.Tensor Process(string path, Idrak.Abstraction.Device? device = null)
+  public Idrak.Data.ImageResampling Resampling { get; init; }
+  public ImagePreprocessor()
+  public System.Collections.Generic.IReadOnlyList<float> Mean { get; init; }
+  public System.Collections.Generic.IReadOnlyList<float> Std { get; init; }
+  public bool ConvertRgb { get; init; }
+  public bool Grayscale { get; init; }
+  public bool Normalize { get; init; }
+  public bool Rescale { get; init; }
+  public bool Resize { get; init; }
+  public double RescaleFactor { get; init; }
+  public float[] Pixels(Idrak.Abstraction.Data.ImageData image)
+  public float[] Pixels(string path)
+  public int Height { get; init; }
+  public int Width { get; init; }
+  public static Idrak.Data.ImagePreprocessor FromConfig(string path, bool grayscale = false)
+  public static Idrak.Data.ImagePreprocessor Parse(string json, bool grayscale = false)
+
+public enum Idrak.Data.ImageResampling : int
+  Bicubic = 3
+  Bilinear = 2
+  Box = 4
+  Hamming = 5
+  Lanczos = 1
+
 public sealed class Idrak.Data.MinMaxScaler : Idrak.Data.Abstractions.IScaler
   public System.Collections.Generic.IReadOnlyList<float> Min { get; }
   public System.Collections.Generic.IReadOnlyList<float> Range { get; }

@@ -15,8 +15,19 @@ public sealed class ChatGenerator(TextGenerator generator, ChatTemplate? templat
     /// <summary>The prompt format.</summary>
     public ChatTemplate Template { get; } = template ?? new ChatMLTemplate();
 
-    /// <summary>The prompt text for a request (useful for debugging templates).</summary>
-    public string RenderPrompt(ChatRequest request) => Template.Render(request.Messages, request.Tools ?? [], request.Think);
+    /// <summary>
+    /// The kinds of message parts it takes: text only (a text generator reads no pixels; images come with plan 11's
+    /// vision-language models). A request with another kind throws <see cref="NotSupportedException"/>.
+    /// </summary>
+    public IReadOnlySet<string> PartKinds => ChatParts.TextOnly;
+
+    /// <summary>The prompt text for a request (useful for debugging templates); throws for a message part it does not take (<see cref="PartKinds"/>).</summary>
+    public string RenderPrompt(ChatRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ChatParts.ThrowIfUnsupported(this, request);
+        return Template.Render(request.Messages, request.Tools ?? [], request.Think);
+    }
 
     /// <summary>Generates the complete reply.</summary>
     public ChatChunk Chat(ChatRequest request, CancellationToken cancellationToken = default) =>

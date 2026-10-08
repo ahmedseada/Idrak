@@ -613,12 +613,14 @@ public static class CompletionsTranslation
         ["function"] = new JsonObject { ["name"] = call.Name, ["arguments"] = call.Arguments.ToJsonString() },
     };
 
-    // Content as a string, or the text of an array of parts ({"type": "text", "text": ...}).
+    // Content as a string, or the text of an array of parts ({"type": "text", "text": ...}); other parts (image_url) are refused
+    // until the API takes them (plan 11, phase 8), never dropped.
     private static string Text(JsonNode? content) => content switch
     {
         null => "",
         JsonValue v when v.TryGetValue(out string? s) => s,
-        JsonArray parts => string.Concat(parts.Select(p => (string?)p?["type"] == "text" ? (string?)p["text"] : null)),
+        JsonArray parts => string.Concat(parts.Select(p => (string?)p?["type"] is "text" ? (string?)p["text"]
+            : throw new ArgumentException($"Content parts of type '{(string?)p?["type"]}' are not supported yet; send text parts only."))),
         _ => throw new ArgumentException("A message's content must be a string or an array of parts."),
     };
 

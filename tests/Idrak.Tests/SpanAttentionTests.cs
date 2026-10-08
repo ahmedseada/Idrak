@@ -13,7 +13,7 @@ internal static partial class Tests
     private static readonly (string Name, Action<Device> Run)[] SpanAttentionGroup =
     [
         ("attention spans: bidirectional, causal, window, segment and image-block ranges (two tables, grouped heads, a soft-cap) match the composed scores, forward and gradients; empty ranges give zeros and no gradient", SpanAttentionMatchesComposed),
-        ("attention spans: the rules' ranges are Gemma 3's masks (a key seen when not after the row or in the row's image block, within the window on sliding layers)", SpanRulesAreGemmaMasks),
+        ("attention spans: the rules' ranges are Gemma 3's masks (a key seen when not after the row or in the row's image block, within the window on sliding layers), and transformers' for the tiny model's image prompt", SpanRulesAreGemmaMasks),
         ("attention spans: bidirectional multi-head attention runs on the key-range kernel (no full score matrix) and matches the composed path, forward and gradients", BidirectionalAttentionLayer),
     ];
 
@@ -118,6 +118,40 @@ internal static partial class Tests
                     bool ranged = k >= spans.Starts[q] && k < spans.Ends[q];
                     Check(seen == ranged, $"window {window}: row {q}, key {k} is {(seen ? "" : "not ")}seen by Gemma 3's mask");
                 }
+            }
+        }
+
+        // The tiny model's prompt with an image (plan 11, phase 0): transformers' masks as each row's first and last key,
+        // for the global and the sliding-window layers, against the rule built from the prompt's image tokens.
+        string manifest = Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data", "vlm", "manifest.json");
+        var facts = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(manifest))!["facts"]!;
+        var prompt = facts["image_prompt"]!;
+        int[] types = [.. prompt["token_type_ids"]!.AsArray().Select(n => (int)n!)];
+        var runs = new List<(int Start, int Length)>();
+        for (int i = 0; i < types.Length; i++)
+        {
+            if (types[i] == 1 && (i == 0 || types[i - 1] != 1))
+            {
+                int end = i;
+                while (end < types.Length && types[end] == 1)
+                {
+                    end++;
+                }
+
+                runs.Add((i, end - i));
+            }
+        }
+
+        int sliding = (int)facts["model_facts"]!["sliding_window"]!;
+        foreach (var (layer, window) in new[] { ("full_attention", 0), ("sliding_attention", sliding) })
+        {
+            var expected = prompt["mask_rows_first_last_key"]![layer]!.AsArray();
+            var spans = KeySpans.ImageBlocks(types.Length, runs, window);
+            for (int q = 0; q < types.Length; q++)
+            {
+                int first = (int)expected[q]![0]!, last = (int)expected[q]![1]!;
+                Check(spans.Starts[q] == first && spans.Ends[q] == last + 1,
+                    $"{layer}: row {q} sees [{spans.Starts[q]}, {spans.Ends[q]}), transformers [{first}, {last}]");
             }
         }
     }

@@ -26,33 +26,39 @@ public interface IImageCodec
 
     /// <summary>
     /// The size and channels from the start of a file (its first 64 KiB, or all of a smaller file), or null when the
-    /// bytes are not this format.
+    /// bytes are not this format. A file of the format whose size lies further in (a JPEG with long EXIF and ICC
+    /// segments before its frame header) answers a width and height of 0; <see cref="ImageCodecs.ReadInfo"/> then asks
+    /// again with the whole file.
     /// </summary>
     ImageInfo? ReadInfo(ReadOnlySpan<byte> header);
 
-    /// <summary>Decodes a whole file; a variant the codec does not read is an <see cref="InvalidDataException"/>.</summary>
+    /// <summary>
+    /// Decodes a whole file: a damaged file is an <see cref="InvalidDataException"/>, a valid file in a variant the codec
+    /// does not read (a CMYK JPEG, say) an <see cref="InvalidDataException"/> or a <see cref="NotSupportedException"/>.
+    /// </summary>
     ImageData Decode(ReadOnlySpan<byte> file);
 }
 
 /// <summary>
 /// The image formats that <c>ImageFolderSource</c> and the command-line tool read, by name (ignoring case). Built
 /// in, without dependencies: "png" (every bit depth and colour type, interlaced or not, inflated with the zlib in .NET),
-/// "bmp" (1, 4, 8, 16, 24 and 32 bits, uncompressed or with bit fields) and "netpbm" (PGM and PPM, text or binary).
-/// Alpha is dropped. JPEG is not built in: register a codec for it (or any other format) with <see cref="Register"/>.
+/// "jpeg" (baseline and progressive, grey, YCbCr, RGB, CMYK and YCCK, any whole sampling ratio, decoded to Pillow's RGB; not
+/// 12-bit or arithmetic-coded), "bmp" (1, 4, 8, 16, 24 and 32 bits, uncompressed or with bit fields) and "netpbm"
+/// (PGM and PPM, text or binary). Alpha is dropped. Register a codec for another format with <see cref="Register"/>.
 /// </summary>
 public static class ImageCodecs
 {
     /// <summary>The bytes of a file's start that <see cref="IImageCodec.ReadInfo"/> receives.</summary>
     public const int HeaderBytes = 64 * 1024;
 
-    // The most recently registered first; the built-ins png, bmp, netpbm in that order.
+    // The most recently registered first; the built-ins png, jpeg, bmp, netpbm in that order.
     private static readonly SlotTable<string, IImageCodec> Registry = BuiltIn();
 
     private static SlotTable<string, IImageCodec> BuiltIn()
     {
         var table = new SlotTable<string, IImageCodec>(nameof(ImageCodecs), (slot, app, library) => new GuardedCodec(slot, app, library),
             StringComparer.OrdinalIgnoreCase, newestFirst: true);
-        foreach (var codec in (IImageCodec[])[new NetpbmCodec(), new BmpCodec(), new PngCodec()])
+        foreach (var codec in (IImageCodec[])[new NetpbmCodec(), new BmpCodec(), new JpegCodec(), new PngCodec()])
         {
             table.RegisterDefault(codec.Name, codec);
         }
@@ -115,7 +121,8 @@ public static class ImageCodecs
         {
             if (codec.ReadInfo(head.AsSpan(0, length)) is { } info)
             {
-                return info;
+                // The size lies past the first bytes (a JPEG's frame header after long EXIF and ICC segments): ask with all of them.
+                return info.Width == 0 && length == head.Length ? codec.ReadInfo(File.ReadAllBytes(path)) : info;
             }
         }
 
@@ -143,6 +150,10 @@ public static class ImageCodecs
                 catch (InvalidDataException e)
                 {
                     throw new InvalidDataException($"{path}: {e.Message}", e);
+                }
+                catch (NotSupportedException e)
+                {
+                    throw new NotSupportedException($"{path}: {e.Message}", e);
                 }
             }
         }
