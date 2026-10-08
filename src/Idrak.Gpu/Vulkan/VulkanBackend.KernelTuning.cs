@@ -50,6 +50,12 @@ internal enum VulkanTuneOp : byte
 
     /// <summary>A prompt-sized packed product in reduced precision (MixedPrecision): the float32 choice (0) or the single-pass cooperative-matrix kernel (1).</summary>
     MixedPackedPrompt,
+
+    /// <summary>Attention either way (Backend.PrefersComposedAttention): AttentionSpans (0) or the composed scores (1).</summary>
+    AttentionPath,
+
+    /// <summary>Attention over key ranges (attention_spans): the workgroup width.</summary>
+    SpanAttention,
 }
 
 /// <summary>What a measured choice is for: the operation, its variant (kernel, format) and its shape.</summary>

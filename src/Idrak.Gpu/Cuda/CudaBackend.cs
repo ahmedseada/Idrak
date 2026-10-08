@@ -633,6 +633,8 @@ internal sealed unsafe partial class CudaBackend : Backend
 
     public override MemoryUsage GetMemoryUsage() => _memory.Usage;
 
+    public override void ResetPeakMemoryUsage() => _memory.ResetPeak();
+
     /// <summary>Frees every cached (currently unused) device block back to the driver.</summary>
     public override void ReleaseCachedMemory()
     {

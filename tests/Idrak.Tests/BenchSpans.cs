@@ -3,11 +3,15 @@
 
 using System.Diagnostics;
 using Idrak;
+using Idrak.Abstraction.Operations;
 
 // A bidirectional attention pass the size of SigLIP's (4,096 tokens, 16 heads of 72 dimensions; IDRAK_SPAN_TOKENS
-// changes the tokens) on each device IDRAK_DEVICES names (default the CPU): through AttentionSpans (tiled, no score
-// matrix) or composed (the full [heads, T, T] scores, softmax, values). One path per process (its argument: spans or
-// composed, default spans), so the peak memory it prints (VmHWM on Linux) is that path's.
+// changes the tokens) on each device IDRAK_DEVICES names (default the CPU), in the current precision (IDRAK_MATMUL=bf16
+// for tensor cores): through AttentionSpans (tiled, no score matrix), composed (the full [heads, T, T] scores, softmax,
+// values) and Tensor.AttentionFastest (the device's measured choice; which one it took is printed). The argument picks
+// one (spans, composed or fastest); without it all three run. Each path's peak is the device's own count of the bytes
+// its tensors held at once (MemoryUsage.Peak, reset before the path), on every device alike; the process's peak resident
+// memory (VmHWM, Linux) is printed too, for the CPU.
 internal static partial class Tests
 {
     internal static int BenchSpans(string path)
@@ -16,6 +20,7 @@ internal static partial class Tests
         List<Device> devices = Environment.GetEnvironmentVariable("IDRAK_DEVICES") is { Length: > 0 } chosen
             ? [.. chosen.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(Device.Parse)]
             : [Device.Cpu];
+        string[] paths = path == "all" ? ["spans", "composed", "fastest"] : [path];
         float scale = 1f / MathF.Sqrt(dim);
         foreach (var device in devices)
         {
@@ -24,36 +29,60 @@ internal static partial class Tests
             using var k = Tensor.From(RandomArray(random, heads * tokens * dim), [heads, tokens, dim], device);
             using var v = Tensor.From(RandomArray(random, heads * tokens * dim), [heads, tokens, dim], device);
             var (starts, ends) = KeySpans.Bidirectional(tokens, tokens).ToTensors(device);
-            Action run = path == "composed"
-                ? () =>
-                {
-                    using var scores = q.MatMul(k, transposeB: true);
-                    using var weights = scores.ScaleMaskSoftmax(scale, null);
-                    using var y = weights.MatMul(v);
-                }
-                : () =>
-                {
-                    using var y = Tensor.AttentionSpans(q, k, v, starts, ends, scale);
-                };
-            using (Autograd.NoGrad())
+            Console.WriteLine($"{device} ({device.Backend.Name}): {tokens} tokens, {heads} heads, dim {dim}, precision {MixedPrecision.Current}, "
+                + $"attention path {AttentionPaths.Forced}, available memory {Megabytes(device.Backend.AvailableMemory())} MB");
+            foreach (string which in paths)
             {
-                run();
-                device.Synchronize();
-                var watch = Stopwatch.StartNew();
-                const int Repeats = 2;
-                for (int i = 0; i < Repeats; i++)
+                Action run = which switch
                 {
-                    run();
-                }
+                    "composed" => () =>
+                    {
+                        using var scores = q.MatMul(k, transposeB: true);
+                        using var weights = scores.ScaleMaskSoftmax(scale, null);
+                        using var y = weights.MatMul(v);
+                    },
+                    "fastest" => () =>
+                    {
+                        using var y = Tensor.AttentionFastest(q, k, v, starts, ends, scale, everyKey: true);
+                    },
+                    _ => () =>
+                    {
+                        using var y = Tensor.AttentionSpans(q, k, v, starts, ends, scale);
+                    },
+                };
+                using (Autograd.NoGrad())
+                {
+                    ComputeResources.ResetPeakMemoryUsage(device);
+                    string took = "";
+                    run();                                                        // loads kernels, measures the device's choices
+                    device.Synchronize();
+                    if (which == "fastest")
+                    {
+                        using var trace = Kernels.Trace(device.Backend);
+                        run();
+                        device.Synchronize();
+                        took = trace.Calls(Ops.AttentionSpans) > 0 ? " (chose AttentionSpans)" : " (chose composed)";
+                    }
 
-                device.Synchronize();
-                Console.WriteLine($"{device}: {path}, {tokens} tokens, {heads} heads, dim {dim}: {watch.Elapsed.TotalMilliseconds / Repeats:F0} ms a pass, "
-                    + $"peak memory {PeakMegabytes()} MB");
+                    var watch = Stopwatch.StartNew();
+                    const int Repeats = 3;
+                    for (int i = 0; i < Repeats; i++)
+                    {
+                        run();
+                    }
+
+                    device.Synchronize();
+                    var usage = ComputeResources.GetMemoryUsage(device);
+                    Console.WriteLine($"  {which}{took}: {watch.Elapsed.TotalMilliseconds / Repeats:F1} ms a pass, peak device memory {usage.Peak >> 20} MB "
+                        + $"(inputs {(4L * heads * tokens * dim * 3 + 8L * tokens) >> 20} MB), process peak {PeakMegabytes()} MB");
+                }
             }
         }
 
         return 0;
     }
+
+    private static string Megabytes(long? bytes) => bytes is { } b ? (b >> 20).ToString(System.Globalization.CultureInfo.InvariantCulture) : "unreported";
 
     // The process's peak resident memory in MB (Linux; -1 elsewhere).
     private static long PeakMegabytes()

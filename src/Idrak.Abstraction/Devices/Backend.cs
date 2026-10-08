@@ -1493,6 +1493,47 @@ public abstract partial class Backend
             h[dvalues], heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
     }
 
+    /// <summary>
+    /// True when attention over key ranges runs faster on this device composed — the full scores [heads, rows, keyRows]
+    /// through <see cref="BatchedMatMul"/>, <see cref="ScaleMaskSoftmax"/> (with <paramref name="mask"/>, [rows, keyRows],
+    /// or none when every row sees every key) and <see cref="BatchedMatMul"/> again (<see cref="ComposedAttention"/>) —
+    /// than through <see cref="AttentionSpans"/>, for this shape and the current <see cref="MixedPrecision"/>. Given the
+    /// real operands (one table of ranges, as many key/value heads as query heads, no soft-cap), so a device measures both
+    /// on itself (into scratch memory of its own), once per shape and precision, and keeps the choice as it keeps its
+    /// other measured choices (per device and driver). Called only when the device's free memory holds the scores with
+    /// margin (<see cref="AvailableMemory"/>; <c>Tensor.AttentionFastest</c> checks). The default: false, AttentionSpans
+    /// (it never holds the scores, so it never runs out of memory for them).
+    /// </summary>
+    public virtual bool PrefersComposedAttention(Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage? mask, int heads, int rows,
+        int keyRows, int dim, float scale) => false;
+
+    /// <summary>
+    /// Attention through the full scores: scores = q · keysᵀ ([heads, rows, keyRows]), weights = softmax(scale · scores +
+    /// mask) (<paramref name="mask"/> [rows, keyRows] repeated over the heads, or none), y = weights · values; q, y
+    /// [heads, rows, dim], keys, values [heads, keyRows, dim]. <paramref name="scores"/> and <paramref name="weights"/>
+    /// hold heads · rows · keyRows floats each. What <see cref="PrefersComposedAttention"/> measures against
+    /// <see cref="AttentionSpans"/>.
+    /// </summary>
+    protected void ComposedAttention(Storage q, Storage keys, Storage values, Storage? mask, Storage scores, Storage weights, Storage y, int heads, int rows,
+        int keyRows, int dim, float scale)
+    {
+        BatchedMatMul(q, keys, scores, heads, rows, keyRows, dim, transA: false, transB: true, beta: 0f);
+        ScaleMaskSoftmax(scores, mask, weights, heads * rows, keyRows, mask is null ? 1 : rows, scale);
+        BatchedMatMul(weights, values, y, heads, rows, dim, keyRows, transA: false, transB: false, beta: 0f);
+    }
+
+    /// <summary>
+    /// Bytes of device memory new tensors can take now, as the device reports it (its free memory and the blocks its pool
+    /// keeps for reuse, within <see cref="ComputeResources.GpuMemoryLimit"/>), or null when it reports none. Guards paths
+    /// that need much memory at once (the composed attention's scores).
+    /// </summary>
+    public virtual long? AvailableMemory() => null;
+
+    /// <summary>Starts counting the peak of the bytes in use (<see cref="MemoryUsage.Peak"/>) again from what is in use now.</summary>
+    public virtual void ResetPeakMemoryUsage()
+    {
+    }
+
     // ---------------------------------------------------------------- incremental decoding (positions live on the device)
 
     /// <summary>mask[i, j] = j ≤ position + i ? 0 : -1e9 for a [rows, capacity] mask; position is read from device memory.</summary>
@@ -1620,9 +1661,30 @@ public sealed class MemoryAccountant(Func<long?> limit, string deviceName)
     private long _inUse;
     private long _cached;
     private long _offloaded;
+    private long _peak;
 
-    /// <summary>The bytes in use, cached and offloaded, and the limit, as <see cref="Backend.GetMemoryUsage"/> reports them.</summary>
-    public MemoryUsage Usage => new(Interlocked.Read(ref _inUse), Interlocked.Read(ref _cached), limit(), Interlocked.Read(ref _offloaded));
+    /// <summary>The bytes in use, cached and offloaded, the limit and the peak in use, as <see cref="Backend.GetMemoryUsage"/> reports them.</summary>
+    public MemoryUsage Usage => new(Interlocked.Read(ref _inUse), Interlocked.Read(ref _cached), limit(), Interlocked.Read(ref _offloaded),
+        Math.Max(Interlocked.Read(ref _peak), Interlocked.Read(ref _inUse)));
+
+    /// <summary>Starts the peak again from the bytes in use now (<see cref="Backend.ResetPeakMemoryUsage"/>).</summary>
+    public void ResetPeak() => Interlocked.Exchange(ref _peak, Interlocked.Read(ref _inUse));
+
+    // Raises the peak to `inUse` when higher.
+    private void Peak(long inUse)
+    {
+        long peak = Interlocked.Read(ref _peak);
+        while (inUse > peak)
+        {
+            long seen = Interlocked.CompareExchange(ref _peak, inUse, peak);
+            if (seen == peak)
+            {
+                return;
+            }
+
+            peak = seen;
+        }
+    }
 
     /// <summary>Counts bytes placed in system memory for this device (negative when released).</summary>
     public void Offloaded(long bytes) => Interlocked.Add(ref _offloaded, bytes);
@@ -1651,13 +1713,13 @@ public sealed class MemoryAccountant(Func<long?> limit, string deviceName)
     }
 
     /// <summary>Counts newly allocated bytes as in use.</summary>
-    public void Allocated(long bytes) => Interlocked.Add(ref _inUse, bytes);
+    public void Allocated(long bytes) => Peak(Interlocked.Add(ref _inUse, bytes));
 
     /// <summary>Moves bytes taken from the pool from cached to in use.</summary>
     public void Reused(long bytes)
     {
         Interlocked.Add(ref _cached, -bytes);
-        Interlocked.Add(ref _inUse, bytes);
+        Peak(Interlocked.Add(ref _inUse, bytes));
     }
 
     /// <summary>Moves bytes given back to the pool from in use to cached.</summary>

@@ -8,7 +8,8 @@ namespace Idrak.Abstraction;
 /// <param name="Cached">Bytes of freed blocks kept for reuse (returned to the system by <see cref="ComputeResources.ReleaseCachedMemory"/>).</param>
 /// <param name="Limit">The configured cap, or null when unlimited.</param>
 /// <param name="Offloaded">Bytes of this GPU's tensors kept in system memory (see <see cref="ComputeResources.OffloadToHostMemory"/>).</param>
-public readonly record struct MemoryUsage(long InUse, long Cached, long? Limit, long Offloaded = 0)
+/// <param name="Peak">The most bytes held by live tensors at once since the device started or <see cref="ComputeResources.ResetPeakMemoryUsage"/>.</param>
+public readonly record struct MemoryUsage(long InUse, long Cached, long? Limit, long Offloaded = 0, long Peak = 0)
 {
     /// <summary>InUse + Cached: what the library currently holds from the system.</summary>
     public long Reserved => InUse + Cached;
@@ -135,6 +136,9 @@ public static class ComputeResources
 
     /// <summary>Returns the memory accounting for <paramref name="device"/>.</summary>
     public static MemoryUsage GetMemoryUsage(Device device) => device.Backend.GetMemoryUsage();
+
+    /// <summary>Starts the device's peak of bytes in use (<see cref="MemoryUsage.Peak"/>) again from what is in use now.</summary>
+    public static void ResetPeakMemoryUsage(Device device) => device.Backend.ResetPeakMemoryUsage();
 
     /// <summary>Returns cached (unused) blocks to the system for one device, or every initialized device when null.</summary>
     public static void ReleaseCachedMemory(Device? device = null)

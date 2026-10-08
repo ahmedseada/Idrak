@@ -633,7 +633,7 @@ refused with the reason. `--user` writes the Windows user environment too (elsew
 
 | Group | Variables |
 |---|---|
-| Devices and backends | `IDRAK_DISABLE_CUDA`, `IDRAK_DISABLE_VULKAN`, `IDRAK_DISABLE_HIP`, `IDRAK_VULKAN_DEFAULT`, `IDRAK_HIP_DEFAULT`, `IDRAK_CUDA_DEBUG`, `IDRAK_WINDOW_KERNELS`, `IDRAK_POWER_SOURCE`, `IDRAK_RETRY_ON_HOST` |
+| Devices and backends | `IDRAK_DISABLE_CUDA`, `IDRAK_DISABLE_VULKAN`, `IDRAK_DISABLE_HIP`, `IDRAK_VULKAN_DEFAULT`, `IDRAK_HIP_DEFAULT`, `IDRAK_CUDA_DEBUG`, `IDRAK_ATTENTION_PATH`, `IDRAK_WINDOW_KERNELS`, `IDRAK_POWER_SOURCE`, `IDRAK_RETRY_ON_HOST` |
 | Overrides | `IDRAK_OVERRIDE_POLICY` (the first failure policy of the slots: `fallback`, `shadow:0.05`, `RopeScalings/yarn=fallback`) |
 | Tuning and caches | `IDRAK_CACHE`, `IDRAK_AUTOTUNE`, `IDRAK_TUNING_CACHE`, `IDRAK_TUNE_LOG`, `IDRAK_CPU_TUNING_FILE`, `IDRAK_VULKAN_TUNING_CACHE`, `IDRAK_HIP_KERNEL_CACHE` |
 | Precision and memory | `IDRAK_MATMUL`, `IDRAK_FP8_DELAYED`, `IDRAK_OFFLOAD` |
