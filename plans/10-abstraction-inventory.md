@@ -105,11 +105,11 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Models.Abstractions.GgufTypes` | registry | public | — |  | — | Idrak | Idrak |
 | `Idrak.Models.Abstractions.ICheckpointFormat` | interface | public | — | CheckpointFormats.GuardedFormat, GgufCheckpointFormat, SafeTensorsCheckpointFormat |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.IPreTokenizer` | interface | public | — | TokenizerComponents.GuardedPreTokenizer, TokenizerComponents.PreTokenizer |  | Idrak | Idrak |
-| `Idrak.Models.Abstractions.ITensorStore` | interface | public | — | GgufModel.GgufTensors, SafeTensorsReader |  | Idrak | Idrak |
+| `Idrak.Models.Abstractions.ITensorStore` | interface | public | — | GgufModel.GgufTensors, PretrainedVision.RenamedTensorStore, SafeTensorsReader |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.ITokenizerDecoder` | interface | public | — | TokenizerComponents.Decoder, TokenizerComponents.GuardedDecoder |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.ITokenizerNormalizer` | interface | public | — | TokenizerComponents.GuardedNormalizer, TokenizerComponents.Normalizer |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.IWeightSource` | interface | public | — | CheckpointWeights |  | Idrak | Idrak |
-| `Idrak.Models.Abstractions.PretrainedArchitectures` | registry | public | — |  | Gemma2ForCausalLM, Gemma3ForCausalLM, GemmaForCausalLM, LlamaForCausalLM, MistralForCausalLM, MixtralForCausalLM, Qwen2ForCausalLM, Qwen2MoeForCausalLM, +2 | Idrak | Idrak |
+| `Idrak.Models.Abstractions.PretrainedArchitectures` | registry | public | — |  | Gemma2ForCausalLM, Gemma3ForCausalLM, Gemma3ForConditionalGeneration, GemmaForCausalLM, LlamaForCausalLM, MistralForCausalLM, MixtralForCausalLM, Qwen2ForCausalLM, +3 | Idrak | Idrak |
 | `Idrak.Models.Abstractions.TokenizerComponents` | registry | public | — |  | — | Idrak | Idrak |
 | `Idrak.Models.Abstractions.WeightCodec` | abstract class | public | — | WeightCodec.BFloat16Codec, WeightCodec.Float16Codec, WeightCodec.Float32Codec |  | Idrak | Idrak |
 | `Idrak.Onnx.Abstractions.OnnxExportOps` | registry | public | Module |  | — | Idrak | Idrak |
