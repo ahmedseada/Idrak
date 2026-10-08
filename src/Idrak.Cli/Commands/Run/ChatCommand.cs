@@ -32,6 +32,9 @@ internal sealed class ChatCommand : Command
               --adapter DIR      merge a LoRA adapter into the weights as they are read
               --history FILE     load the conversation from FILE if it exists, and save it there after every answer
               --file FILE        add a text file's content to the first message (repeatable; /file adds more later)
+              --image FILE       give a vision-language model an image with the first message (repeatable; /image adds
+                                 more later); turned upright by its EXIF orientation
+              --grayscale        turn the images grey first (some OCR fine-tunes ask for it; an alias can keep it)
               --mcp SERVER       let the model call an MCP server's tools: an http(s) URL, or a command that starts
                                  the server ("npx -y some-server"); repeatable
         """ + "\n" + GenerationSettings.Help + """
@@ -44,11 +47,15 @@ internal sealed class ChatCommand : Command
           idrak c qwen -d vulkan:0 -s "Answer briefly." --history talk.json
           idrak chat ./model.gguf -w int8 -k int8 --temperature 0 --think
           idrak chat qwen --file notes.md --file todo.txt
+          idrak chat google/gemma-3-4b-it --image scan.jpg
+
+        Images stay in the conversation and are read again with each answer (encoded once per turn, not once per
+        conversation, for now).
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, .. GenerationSettings.ValueOptions, "--history", "--file", "--mcp"];
+    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, .. GenerationSettings.ValueOptions, "--history", "--file", "--mcp", "--image"];
 
-    public override IReadOnlyCollection<string> Flags => GenerationSettings.Flags;
+    public override IReadOnlyCollection<string> Flags => [.. GenerationSettings.Flags, "--grayscale"];
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } =
         new Dictionary<string, string>(ModelChoices.ShortForms.Concat(GenerationSettings.ShortForms));
@@ -68,11 +75,22 @@ internal sealed class ChatCommand : Command
             throw new UsageException($"File not found: {file}");
         }
 
+        var images = ImageInputs.Read(context.Options("--image"));
         using var loaded = LoadedChat.Load(context, name, settings);
+        if (images.Count > 0)
+        {
+            loaded.RequireImages("--image");
+        }
+
         var session = new ChatSession(context, loaded, settings, context.Option("--history"));
         foreach (string file in files)
         {
             session.Attach(file);
+        }
+
+        foreach (var image in images)
+        {
+            session.AttachImage(image);
         }
 
         return session.Run(StandardInput.Reader, interactive: !StandardInput.IsRedirected);
@@ -89,6 +107,7 @@ internal sealed class ChatSession
         "  /reset                start over (the system prompt stays)\n" +
         "  /save FILE            save the conversation (chat JSON); /load FILE: continue a saved one\n" +
         "  /file FILE            add a text file's content to the next message\n" +
+        "  /image FILE           add an image to the next message (a vision-language model)\n" +
         "  /stats                speed, tokens, context used and memory\n" +
         "  /think on|off|default reasoning mode\n" +
         "  /tools                the tools the model may call\n" +
@@ -105,6 +124,7 @@ internal sealed class ChatSession
     private readonly List<ChatMessage> _messages = [];
     private readonly List<ChatAnswer> _answers = [];
     private readonly List<string> _attachments = [];
+    private readonly List<ChatImage> _images = [];
     private readonly bool _color;
     private CancellationTokenSource? _cancel;
 
@@ -132,6 +152,9 @@ internal sealed class ChatSession
     /// <summary>Adds a text file's content to the next message.</summary>
     public void Attach(string path) =>
         _attachments.Add($"File {Path.GetFileName(path)}:\n```\n{File.ReadAllText(path).TrimEnd()}\n```");
+
+    /// <summary>Adds an image to the next message.</summary>
+    public void AttachImage(ChatImage image) => _images.Add(image);
 
     /// <summary>The conversation so far.</summary>
     public IReadOnlyList<ChatMessage> Messages => _messages;
@@ -186,7 +209,16 @@ internal sealed class ChatSession
                     _attachments.Clear();
                 }
 
-                _messages.Add(new ChatMessage("user", message));
+                if (_images.Count > 0)
+                {
+                    _messages.Add(new ChatMessage("user", [.. _images, new ChatText(message)]));
+                    _images.Clear();
+                }
+                else
+                {
+                    _messages.Add(new ChatMessage("user", message));
+                }
+
                 Answer();
             }
         }
@@ -333,7 +365,27 @@ internal sealed class ChatSession
                 Attach(argument);
                 Say(Shared.Messages.T("{0} will be sent with the next message.", argument));
                 break;
-            case "/save" or "/load" or "/file":
+            case "/image" when argument.Length > 0:
+                if (!File.Exists(argument))
+                {
+                    Say(Shared.Messages.T("No file {0}.", argument));
+                    break;
+                }
+
+                try
+                {
+                    _loaded.RequireImages("/image");
+                }
+                catch (UsageException e)
+                {
+                    Say(e.Message);
+                    break;
+                }
+
+                AttachImage(ChatImage.FromFile(argument));
+                Say(Shared.Messages.T("{0} will be sent with the next message.", argument));
+                break;
+            case "/save" or "/load" or "/file" or "/image":
                 Say(Shared.Messages.T("{0} needs a file name, e.g. {0} talk.json", command));
                 break;
             case "/stats":

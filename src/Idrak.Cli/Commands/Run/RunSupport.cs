@@ -15,6 +15,30 @@ internal sealed class LoadedChat(PretrainedModel model, ModelChoices.ModelChoice
 {
     private readonly List<Idrak.Mcp.McpToolSource> _servers = [];
 
+    /// <summary>How the chat reads images (a vision-language model), or null.</summary>
+    public ModelImages? Images { get; private init; }
+
+    /// <summary>Why the model reads no images, when it is a vision-language model that cannot (else null).</summary>
+    public string? NoImagesReason { get; private init; }
+
+    /// <summary>
+    /// A usage error unless the chat reads images (the model's <see cref="IChatModel.PartKinds"/> and its template's both
+    /// take "image"): <paramref name="what"/> names the option that gave them.
+    /// </summary>
+    public void RequireImages(string what)
+    {
+        if (!Chat.PartKinds.Contains(ChatParts.Image))
+        {
+            throw new UsageException($"{what}: {Choice.Model} reads text only (its chat model takes {string.Join(", ", Chat.PartKinds.Order(StringComparer.Ordinal))} parts"
+                                     + (NoImagesReason is null ? "" : $"; {NoImagesReason}") + "). Give images to a vision-language model, such as Gemma 3 4B and larger.");
+        }
+
+        if (!Chat.Template.PartKinds.Contains(ChatParts.Image))
+        {
+            throw new UsageException($"{what}: the chat template of {Choice.Model} writes nothing for an image part, so the model would not see it.");
+        }
+    }
+
     public PretrainedModel Model { get; } = model;
 
     public ModelChoices.ModelChoice Choice { get; } = choice;
@@ -49,7 +73,14 @@ internal sealed class LoadedChat(PretrainedModel model, ModelChoices.ModelChoice
             var model = ModelChoices.Load(context, choice);
             try
             {
-                var loaded = new LoadedChat(model, choice, ModelChoices.CreateChat(model, choice), ModelChoices.ContextLength(choice, model), tools);
+                var chat = ModelChoices.CreateChat(model, choice);
+                var images = ImageInputs.For(model, choice.Grayscale, out string? reason);
+                if (images is not null)
+                {
+                    chat = new ChatGenerator(chat.Generator, chat.Template) { Images = images.Images };
+                }
+
+                var loaded = new LoadedChat(model, choice, chat, ModelChoices.ContextLength(choice, model), tools) { Images = images, NoImagesReason = reason };
                 loaded._servers.AddRange(servers);
                 return loaded;
             }
@@ -104,6 +135,7 @@ internal sealed class LoadedChat(PretrainedModel model, ModelChoices.ModelChoice
             server.DisposeAsync().AsTask().GetAwaiter().GetResult();
         }
 
+        Images?.Dispose();
         Model.Dispose();
     }
 }

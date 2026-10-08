@@ -240,9 +240,48 @@ public sealed class JinjaChatTemplate : ChatTemplate
     {
         ArgumentNullException.ThrowIfNull(messages);
         ChatParts.ThrowIfUnsupported(messages, PartKinds, "The chat template " + nameof(JinjaChatTemplate));
+        return RenderValues(ToValues(messages), tools, think, addGenerationPrompt);
+    }
+
+    /// <summary>
+    /// The kinds of message parts the template renders: text, and "image" when it writes something for an image part. A
+    /// message with an image is given to the template as Hugging Face gives it, its content a list of parts
+    /// (<c>{"type": "image"}</c>, <c>{"type": "text", "text": ...}</c>); a text-only message keeps a string. Found by
+    /// rendering a probe: a user turn whose content is one text part must render as the same text given as a string (the
+    /// template reads lists of parts), and adding an image part before it must change the turn (Gemma 3's writes
+    /// <c>&lt;start_of_image&gt;</c>).
+    /// </summary>
+    public override IReadOnlySet<string> PartKinds => _partKinds ??= DetectPartKinds();
+
+    private IReadOnlySet<string>? _partKinds;
+
+    private IReadOnlySet<string> DetectPartKinds()
+    {
+        const string Probe = "ns-probe-text";
+        try
+        {
+            static List<object?> Turn(object? content) => [new Dictionary<string, object?> { ["role"] = "user", ["content"] = content }];
+            var text = new Dictionary<string, object?> { ["type"] = "text", ["text"] = Probe };
+            string plain = RenderValues(Turn(Probe), [], null, addGenerationPrompt: false);
+            string parts = RenderValues(Turn(new List<object?> { text }), [], null, addGenerationPrompt: false);
+            string image = RenderValues(Turn(new List<object?> { new Dictionary<string, object?> { ["type"] = "image" }, text }), [], null, addGenerationPrompt: false);
+            if (plain == parts && image != parts && image.Contains(Probe, StringComparison.Ordinal))
+            {
+                return System.Collections.Frozen.FrozenSet.Create(StringComparer.Ordinal, ChatParts.Text, ChatParts.Image);
+            }
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException or ArgumentException or FormatException or KeyNotFoundException or InvalidCastException)
+        {
+        }
+
+        return ChatParts.TextOnly;
+    }
+
+    private string RenderValues(List<object?> messages, IReadOnlyList<ToolDefinition> tools, bool? think, bool addGenerationPrompt)
+    {
         var variables = new Dictionary<string, object?>(Variables)
         {
-            ["messages"] = ToValues(messages),
+            ["messages"] = messages,
             ["tools"] = tools.Count > 0 ? tools.Select(ToValue).ToList<object?>() : null,
             ["add_generation_prompt"] = addGenerationPrompt,
             ["bos_token"] = BosToken,
@@ -358,7 +397,9 @@ public sealed class JinjaChatTemplate : ChatTemplate
 
     private static Dictionary<string, object?> ToValue(ChatMessage message, Func<string> newId)
     {
-        var value = new Dictionary<string, object?> { ["role"] = message.Role, ["content"] = message.Content };
+        // A message with a part other than text gets its content as a list of parts, as Hugging Face's processors give it.
+        object? content = message.Parts.All(p => p is ChatText) ? message.Content : message.Parts.Select(PartValue).ToList();
+        var value = new Dictionary<string, object?> { ["role"] = message.Role, ["content"] = content };
         if (message.Thinking is not null)
         {
             value["reasoning_content"] = message.Thinking;
@@ -382,6 +423,13 @@ public sealed class JinjaChatTemplate : ChatTemplate
 
         return value;
     }
+
+    // A content part as templates read it: {"type": "text", "text": ...}, {"type": "image"}, or {"type": kind} for others.
+    private static object? PartValue(ChatPart part) => part switch
+    {
+        ChatText text => new Dictionary<string, object?> { ["type"] = ChatParts.Text, ["text"] = text.Text },
+        _ => new Dictionary<string, object?> { ["type"] = part.Kind },
+    };
 
     private static Dictionary<string, object?> ToValue(ToolDefinition tool)
     {

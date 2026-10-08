@@ -14,7 +14,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 | `Idrak.Abstraction` | 26 | 12 | 10 | 47 | 0 |
 | `Idrak` | 12 | 4 | 13 | 29 | 0 |
 | `Idrak.Gpu` | 0 | 0 | 0 | 0 | 0 |
-| `Idrak.Nlp` | 4 | 2 | 1 | 7 | 0 |
+| `Idrak.Nlp` | 5 | 2 | 2 | 9 | 0 |
 | `Idrak.Data` | 5 | 0 | 3 | 8 | 0 |
 | `Idrak.Vision` | 3 | 0 | 0 | 3 | 0 |
 | `Idrak.Onnx.Runtime` | 0 | 0 | 0 | 0 | 0 |
@@ -122,7 +122,9 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 
 | Type | Kind | Visibility | Mentions | Implementations | Registered | Users | Belongs in |
 |---|---|---|---|---|---|---|---|
+| `Idrak.Generation.Abstractions.IImagePromptFormat` | interface | public | — | ImageMarkerFormat, ImagePromptFormats.GuardedFormat |  | Nlp | Nlp |
 | `Idrak.Generation.Abstractions.ITokenSampler` | interface | public | Tensor | TokenSampler, TokenSamplers.ShadowSampler |  | Nlp | Nlp |
+| `Idrak.Generation.Abstractions.ImagePromptFormats` | registry | public | — |  | gemma3 | — | Nlp |
 | `Idrak.Generation.Abstractions.TokenSamplers` | registry | public | — |  | default | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.DistillationTeacher` | abstract class | public | — | ModelTeacher, StoredTeacher |  | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.TeacherDistributions` | abstract class | public | Device, Tensor | ModelTeacher.Batch, StoredTeacher.Batch |  | Nlp | Nlp |
