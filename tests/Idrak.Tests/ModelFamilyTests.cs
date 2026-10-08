@@ -20,6 +20,7 @@ internal static partial class Tests
         ("decoder: sliding windows, soft-capping, score scale and local rotary base match the reference (prompt, training, cached decoding with every cache format); windows past the sequence change nothing", SlidingWindowDecoders),
         ("pretrained: Mistral, Qwen2, Gemma 2 and Gemma 3 configs read windows, soft-capping and scales; a Gemma 2 checkpoint loads; a family with its own Build", ModelFamilyConfigs),
         ("gguf: YaRN scaling keys are read and match the Hugging Face config with the same rope_scaling", GgufYarn),
+        ("pretrained: Gemma3ForConditionalGeneration loads in its three tensor layouts and both config formats; a text prompt gives transformers' logits; the vision part is read as data", Gemma3VisionLanguageLoads),
     ];
 
     private static void RopeScalingMethods(Device device)

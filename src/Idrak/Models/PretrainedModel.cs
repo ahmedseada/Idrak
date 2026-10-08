@@ -53,9 +53,10 @@ public sealed record PretrainedOptions
 public sealed class PretrainedModel : IDisposable
 {
     private PretrainedModel(string folder, JsonObject config, DecoderSpec spec, Sequential network, ITokenizer? tokenizer, ChatTemplate? template,
-        IReadOnlyList<string> notes, int maxPositions, PretrainedArchitecture architecture, Device device)
+        IReadOnlyList<string> notes, int maxPositions, PretrainedArchitecture architecture, Device device, PretrainedVision? vision)
     {
         Architecture = architecture;
+        Vision = vision;
         Device = device;
         Folder = folder;
         Config = config;
@@ -101,6 +102,12 @@ public sealed class PretrainedModel : IDisposable
     public Device Device { get; }
 
     /// <summary>
+    /// The vision part of a vision-language model (its encoder's configuration, image token ids and tensors, read and
+    /// checked but not built), or null for a text-only model. <see cref="Network"/> is the text decoder alone.
+    /// </summary>
+    public PretrainedVision? Vision { get; }
+
+    /// <summary>
     /// Reads the model in <paramref name="folder"/> (a model folder, a .gguf file, or any path a format registered with
     /// <see cref="CheckpointFormats"/> reads). Every weight is read from disk one tensor at a time and (with
     /// <see cref="PretrainedOptions.Int8"/>) quantized on the host, so the model is never held twice.
@@ -115,10 +122,15 @@ public sealed class PretrainedModel : IDisposable
         string name = options.Architecture ?? (string?)config["architectures"]?[0]
             ?? throw new InvalidDataException("config.json names no architecture; pass PretrainedOptions.Architecture.");
         var architecture = PretrainedArchitectures.Get(name);
+        using var reader = format.Open(folder);
+        if (architecture.ForCheckpoint is { } fit)
+        {
+            architecture = fit(reader.Names.ToHashSet(StringComparer.Ordinal));     // the naming this checkpoint uses
+        }
+
         var notes = new List<string>();
         var spec = architecture.Spec(config, notes);
         int maxPositions = Math.Min(options.MaxPositions ?? spec.MaxPositions, spec.MaxPositions);
-        using var reader = format.Open(folder);
         using var adapter = options.MergeAdapter is { } adapterFolder ? new AdapterMerge(adapterFolder) : null;
         var weights = new CheckpointWeights(reader, architecture) { Adapter = adapter };
         var buildOptions = new DecoderBuildOptions { Device = options.Device, Int8 = options.Int8, BFloat16 = options.BFloat16, Int4 = options.Int4, PackedFormatName = options.PackedFormatName, MaxPositions = maxPositions };
@@ -130,6 +142,12 @@ public sealed class PretrainedModel : IDisposable
                 var layers => new Sequential(layers) { Name = "decoder" },
             }
             : spec.Build(weights, buildOptions);
+        var vision = architecture.Vision?.Invoke(config, reader, notes) is { } read ? read with { Source = () => format.Open(folder) } : null;
+        if (vision is not null)
+        {
+            weights.Used.UnionWith(vision.Tensors.Values.Select(t => t.Stored));
+        }
+
         var unused = reader.Names.Where(k => !weights.Used.Contains(k) && !k.EndsWith("rotary_emb.inv_freq", StringComparison.Ordinal)).ToList();
         if (unused.Count > 0)
         {
@@ -153,7 +171,7 @@ public sealed class PretrainedModel : IDisposable
         tokenizer?.PadVocabulary(spec.Vocabulary);
         var template = ChatTemplates.Load(folder, tokenizer);
         return new PretrainedModel(folder, config, spec, network, tokenizer, template, notes, maxPositions, architecture,
-            options.Device ?? Idrak.Abstraction.Device.Default);
+            options.Device ?? Idrak.Abstraction.Device.Default, vision);
     }
 
     /// <summary>
