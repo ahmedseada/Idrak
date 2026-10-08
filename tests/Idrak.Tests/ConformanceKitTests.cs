@@ -15,6 +15,7 @@ internal static partial class Tests
     [
         ("conformance kit: every operation on the device agrees with the CPU, call by call, and the CPU with plain loops (Conformance.Check)", DeviceConformant),
         ("conformance kit: a device with memory and copies only passes the device check; a wrong kernel registered for it fails it, and the saved case replays the failure until the kernel is removed", KitFindsWrongKernel),
+        ("conformance kit: the operations the CPU has no kernel for (FP8 weights and products, strided attention and its gradients) are checked against plain-loop references: kernels written from the contracts pass, each made slightly wrong fails under its name, devices without them skip them; e4m3 codes agree with the format's known values", KitChecksMatrixUnitOperations),
         ("conformance kit: a stress run replays the operations from several threads with no failure and no memory growth; a cancelled run stops early and leaves no memory behind", DeviceStress),
         ("conformance kit: the library's token sampler, tokenizers and RoPE scalings pass their contract suites; a sampler and a scaling that differ fail them", ContractsConformant),
         ("conformance kit: contract stress runs (threads, large inputs) pass; a failing case saved to a file replays the same failure", ContractStressAndRegression),
