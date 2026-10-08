@@ -84,8 +84,12 @@ public sealed class CudaKernel
         cuda.Launch(this, gridX, gridY, gridZ, blockX, blockY, blockZ, arguments, sharedBytes);
     }
 
-    /// <summary>The function loaded for it on the device that launched it last (looked up without a dictionary).</summary>
-    internal (CudaBackend Owner, IntPtr Function)? LastFunction;
+    /// <summary>The function loaded for it on the device that launched it last (looked up without a dictionary; one
+    /// reference, so a thread never reads one device's owner with another's function).</summary>
+    internal LoadedFunction? LastFunction;
+
+    /// <summary>A function of this kernel loaded on a device.</summary>
+    internal sealed record LoadedFunction(CudaBackend Owner, IntPtr Function);
 
     // The letters of the parameters of .entry `entry`, or null when the text declares none of that name.
     internal static string? ReadParameters(string ptx, string entry)
