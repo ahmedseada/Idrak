@@ -402,6 +402,11 @@ calls the public API below), no Abstraction change.
 
 - The vision encoder (4,096 tokens, 27 layers) runs once per image: under half a second in bfloat16. This needs 3a's
   tiled bidirectional attention: composing the scores in full would hold 4,096² x 16 heads (1 GB in float32) per layer.
+- **Measured 2026-10-08 on the author's card** (random weights at the real sizes, `--bench-vision`): one 896 x 896 image
+  to [1, 256, 2560] in 0.43 s in float32 and **0.11 s with bfloat16 tensor cores** (target met). `--bench-spans` (4,096
+  tokens, 16 heads, dim 72): span kernel 8.2 ms against composed 9.9 ms in float32, 1.6 ms against 5.8 ms in bfloat16,
+  72 MB against 2,120 MB of device memory; the measured choice took the span kernel both times. All of "attention",
+  "attention spans", "conformance kit", SigLIP and "image prefill" pass on CUDA.
 - Generated tokens per second within 5% of the text-only Gemma 3 4B with the same weight format (int8).
 - Memory: int8 decoder plus bfloat16 encoder within 8 GB.
 - On a CPU it works but is slow (the encoder's attention over 4,096 tokens); the first version does not optimize it.

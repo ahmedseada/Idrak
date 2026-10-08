@@ -31,6 +31,7 @@ internal static partial class Tests
             using var pixels = Tensor.From(RandomArray(new Random(5), 3 * 896 * 896), [1, 3, 896, 896], device);
             for (int run = 0; run < 2; run++)
             {
+                ComputeResources.ResetPeakMemoryUsage(device);
                 var watch = Stopwatch.StartNew();
                 using (Autograd.NoGrad())
                 using (new TensorScope())
@@ -40,7 +41,7 @@ internal static partial class Tests
                     if (run == 1)
                     {
                         Console.WriteLine($"{device}: one 896 x 896 image to {Tensor.FormatShape(features.Shape)} in {watch.Elapsed.TotalSeconds:F2} s "
-                            + $"(run {run + 1}), peak memory {PeakMegabytes()} MB");
+                            + $"(run {run + 1}), peak device memory {ComputeResources.GetMemoryUsage(device).Peak >> 20} MB, process peak {PeakMegabytes()} MB");
                     }
                     else
                     {

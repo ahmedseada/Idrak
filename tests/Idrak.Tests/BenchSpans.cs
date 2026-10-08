@@ -84,17 +84,23 @@ internal static partial class Tests
 
     private static string Megabytes(long? bytes) => bytes is { } b ? (b >> 20).ToString(System.Globalization.CultureInfo.InvariantCulture) : "unreported";
 
-    // The process's peak resident memory in MB (Linux; -1 elsewhere).
+    // The process's peak resident memory in MB (VmHWM on Linux, the peak working set elsewhere).
     private static long PeakMegabytes()
     {
         try
         {
-            var line = File.ReadLines("/proc/self/status").FirstOrDefault(l => l.StartsWith("VmHWM:", StringComparison.Ordinal));
-            return line is null ? -1 : long.Parse(line.Split(' ', StringSplitOptions.RemoveEmptyEntries)[1]) / 1024;
+            var line = File.Exists("/proc/self/status")
+                ? File.ReadLines("/proc/self/status").FirstOrDefault(l => l.StartsWith("VmHWM:", StringComparison.Ordinal))
+                : null;
+            if (line is not null)
+            {
+                return long.Parse(line.Split(' ', StringSplitOptions.RemoveEmptyEntries)[1]) / 1024;
+            }
         }
         catch (IOException)
         {
-            return -1;
         }
+        using var process = System.Diagnostics.Process.GetCurrentProcess();
+        return process.PeakWorkingSet64 >> 20;
     }
 }
