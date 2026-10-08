@@ -48,8 +48,8 @@ internal sealed class SuggestCommand : Command
         "  idrak sg ./shapes -n 6 -d vulkan:0             try 6 CNN variants on the GPU, keep the best\n" +
         "  idrak sg reviews.jsonl -t label --text review  a text classifier\n" +
         "  idrak sg chats.jsonl -b owner/model -o ./run    LoRA setup sized to the device\n\n" +
-        "Limits: JPEG pixels are decoded only when a --plugin registers a JPEG codec (else JPEG folders are profiled,\n" +
-        "not searched); a GPU's memory is known only through a configured limit (the library does not report it).";
+        "Limits: CMYK, 12-bit and arithmetic-coded JPEG files are not decoded;\n" +
+        "a GPU's memory is known only through a configured limit (the library does not report it).";
 
     public override IReadOnlyCollection<string> ValueOptions =>
         ["--target", "--text", "--task", "--budget", "--max-params", "--search", "--base", "--out", "--assist", .. ModelChoices.ValueOptions.Where(o => o != "--adapter")];

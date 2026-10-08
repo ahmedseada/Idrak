@@ -86,9 +86,9 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | Type | Kind | Visibility | Mentions | Implementations | Registered | Users | Belongs in |
 |---|---|---|---|---|---|---|---|
 | `Idrak.Data.Abstractions.IBatchSource` | interface | public | — | DataLoader |  | Idrak | Idrak |
-| `Idrak.Data.Abstractions.IImageCodec` | interface | public | — | BmpCodec, ImageCodecs.GuardedCodec, NetpbmCodec, PngCodec |  | Idrak | Idrak |
+| `Idrak.Data.Abstractions.IImageCodec` | interface | public | — | BmpCodec, ImageCodecs.GuardedCodec, JpegCodec, NetpbmCodec, PngCodec |  | Idrak | Idrak |
 | `Idrak.Data.Abstractions.IScaler` | interface | public | — | MinMaxScaler, StandardScaler |  | Idrak | Idrak |
-| `Idrak.Data.Abstractions.ImageCodecs` | registry | public | — |  | bmp, netpbm, png | Idrak | Idrak |
+| `Idrak.Data.Abstractions.ImageCodecs` | registry | public | — |  | bmp, jpeg, netpbm, png | Idrak | Idrak |
 | `Idrak.Data.Abstractions.SampleSources` | registry | public | — |  | csv, images, npy, tokens | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.GraphOps` | registry | public | — |  | abs, add, cast, clip, concat, div, elu, exp, +28 | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.ICachedModule` | interface | public | Tensor | CausalSelfAttention, DecoderBlock, MultiHeadAttention, PositionEmbedding, PositionalEncoding, Sequential, +1 |  | Idrak | Idrak |
