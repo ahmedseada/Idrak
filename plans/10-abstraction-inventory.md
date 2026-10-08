@@ -157,9 +157,9 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | Device | Methods overridden |
 |---|---|
 | `CpuBackend` | 106 of 136 |
-| `CudaBackend` | 126 of 136 |
+| `CudaBackend` | 127 of 136 |
 | `HipBackend` | 22 of 136 |
-| `VulkanBackend` | 108 of 136 |
+| `VulkanBackend` | 109 of 136 |
 
 | Operation | Kind | Cpu | Cuda | Hip | Vulkan |
 |---|---|---|---|---|---|
@@ -183,7 +183,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `AttentionSegmentedBackwardKernel(18)` | virtual | ✓ | ✓ |  |  |
 | `AttentionSegmentedKernel(14)` | virtual | ✓ | ✓ |  |  |
 | `AttentionSpansBackwardKernel(19)` | virtual | ✓ |  |  |  |
-| `AttentionSpansKernel(15)` | virtual | ✓ |  |  |  |
+| `AttentionSpansKernel(15)` | virtual | ✓ | ✓ |  | ✓ |
 | `AttentionStridedBackwardKernel(23)` | virtual |  | ✓ |  |  |
 | `AttentionStridedKernel(16)` | virtual |  | ✓ |  |  |
 | `AttentionTiledBackwardKernel(16)` | virtual | ✓ | ✓ |  | ✓ |

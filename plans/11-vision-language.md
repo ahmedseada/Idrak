@@ -16,7 +16,7 @@ OpenAI-style `/v1` API (phase 8). MCP and other model families come after that (
 |---|---|
 | Gemma 3's text decoder (`Gemma3ForCausalLM` in `src/Idrak/Models/Architectures.cs`: sliding-window layers from `layer_types` or `sliding_window_pattern`, RoPE theta per layer kind, the 4B's linear RoPE scaling on the global layers, q/k norms, tied embeddings, safetensors, int8 and int4 weights) | supported |
 | `Conv2d`, `LayerNorm`, `GELU`, `MultiHeadAttention`, image codecs (PNG, BMP, Netpbm in core's `ImageCodecs`, a slot table) | supported, as layers and in core |
-| Attention that is not causal, tiled: every tiled and KV-cache kernel (`AttentionTiled`, `AttentionSegmented`, `AttentionRows`, `AttentionDecode`) masks causally, by window and by packed segment; a bidirectional pass composes the scores in full | missing (see phase 3a) |
+| Attention that is not causal, tiled: every tiled and KV-cache kernel (`AttentionTiled`, `AttentionSegmented`, `AttentionRows`, `AttentionDecode`) masks causally, by window and by packed segment; a bidirectional pass composed the scores in full | phase 3a: `AttentionSpans` (as built below) |
 | The SigLIP vision encoder: 896 x 896 RGB → 64 x 64 = 4,096 patches of 14 x 14, learned position embeddings, 27 bidirectional layers of width 1,152 (LayerNorm eps 1e-6, attention with biases, 16 heads, a GELU-tanh MLP of 4,304), a final LayerNorm | missing |
 | The multimodal projector: 4 x 4 average pooling to 16 x 16 = 256 tokens, Gemma's RMSNorm (1 + w), then x · W with W stored as [1,152, 2,560] (the transpose of a `Linear` weight) | missing |
 | Loading `Gemma3ForConditionalGeneration`: `text_config` and `vision_config` nested in `config.json` (only the CLI's `BaseModelInfo` reads `text_config` today); the image token ids (`boi_token_index`, `image_token_index`, `eoi_token_index`, `mm_tokens_per_image`) read from the config, not fixed | missing |
@@ -74,6 +74,28 @@ namespace until a second library package uses it.
 **Order.** 0 first (everything is checked against it). 1, 2 and 3a in parallel (disjoint files), then 3b. 4 and 5
 together (one family in the decoder). Then 6 and 7. Phase 8 starts only when phase 7 is proven on the real model on the
 author's machine.
+
+**3a as built (2026-10-08).** One operation, `Backend.AttentionSpans(q, keys, values, starts, ends, y, logSumExp?, heads,
+kvHeads, headsPerTable, rows, keyRows, dim, scale, variant)`, and `AttentionSpansBackward`: query row i of head h sees the
+keys starts[t·rows + i] ≤ c < ends[t·rows + i] (half-open, clamped to [0, keyRows]; ints as floats), t = h / headsPerTable
+(one table for all heads, or one per sequence), key/value head h / (heads / kvHeads); only the variant's soft-cap is
+read; an empty range gives zeros and a log-sum-exp of -∞. The rules are `KeySpans` (Abstraction): `Bidirectional`,
+`Causal(rows, window)`, `Segments(lengths, window)`, `ImageBlocks(rows, blocks, window)` (Gemma 3's masks exactly: a row
+in an image block sees [max(0, i - W + 1) or 0, max(i + 1, block end)); a test compares every row and key with the
+mask's own rule), `Concat`, `ToTensors`. `Tensor.AttentionSpans(q, keys, values, starts, ends, scale, variant)` records
+the gradient (weights recomputed from the log-sum-exp). `MultiHeadAttention` without `causal` runs on it (dropout on the
+weights while training still composes); every causal path keeps its kernel. **Kernels:** CPU (blocks of 64 rows, tiles
+of 128 keys as small products, online softmax; the gradient in two passes, by key/value head and key block, then by
+query head and row block), Vulkan (`attention_spans[_lse]`, tiled as `attention_tiled`), CUDA PTX (`attention_spans_f32`,
+tiled as `attention_flash_f32`, head sizes up to 128; ptxas 12.9 for sm_50, sm_75, sm_120, no spills; **not run on a
+GPU**); HIP and every gradient on a GPU take the host fallback. The kit's case ("attention over key ranges") covers
+every rule, random ranges (empty, past the keys), odd sizes, grouped heads, two tables and a soft-cap against plain
+loops; it passes on CPU and lavapipe. **Measured** (`--bench-spans`, 4,096 tokens, 16 heads, dim 72, inference, a
+4-thread shared CPU): CPU 2.24 s a pass through `AttentionSpans`, peak 215 MB, against 2.30 s and 2,254 MB composed;
+lavapipe 44.9 s and 277 MB against 6.0 s and 6,516 MB composed (lavapipe runs the products well and this kernel's
+barriers poorly; at 1,024 tokens 1.8 s against 0.7 s, every workgroup width within 10%, so the width is left to the
+device's own). The 1 GB score matrix of the composed pass is gone on every device; the Vulkan kernel's speed is to be
+measured on a real GPU (and tuned there by measurement if it lags, as `attention_tiled` is).
 
 **Every phase, from plan 10's wave 4:** a public API change updates `api/` (`IDRAK_UPDATE_API=1`) with a changelog
 line in the same commit; a new operation gets its conformance-kit case; a new registry entry is a library default in its
