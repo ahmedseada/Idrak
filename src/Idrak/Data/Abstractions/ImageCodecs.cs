@@ -131,10 +131,15 @@ public static class ImageCodecs
 
     /// <summary>Decodes an image file with the codec that knows its format.</summary>
     /// <exception cref="InvalidDataException">No registered codec reads the file; the message names the file and the codecs.</exception>
-    public static ImageData Decode(string path)
+    public static ImageData Decode(string path) => Decode(File.ReadAllBytes(path), path);
+
+    /// <summary>Decodes an image file held in memory (a chat message's image, a download) with the codec that knows its format.</summary>
+    /// <exception cref="InvalidDataException">No registered codec reads the bytes, or they are damaged.</exception>
+    public static ImageData Decode(ReadOnlySpan<byte> file) => Decode(file, "image");
+
+    private static ImageData Decode(ReadOnlySpan<byte> bytes, string path)
     {
-        var bytes = File.ReadAllBytes(path);
-        var header = bytes.AsSpan(0, Math.Min(bytes.Length, HeaderBytes));
+        var header = bytes[..Math.Min(bytes.Length, HeaderBytes)];
         foreach (var codec in Codecs())
         {
             if (codec.ReadInfo(header) is not null)

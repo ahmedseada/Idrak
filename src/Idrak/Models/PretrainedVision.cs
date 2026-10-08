@@ -2,6 +2,8 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Text.Json.Nodes;
+using Idrak.Data;
+using Idrak.Layers;
 using Idrak.Models.Abstractions;
 
 namespace Idrak.Models;
@@ -49,6 +51,44 @@ public sealed record PretrainedVision
 
     // Opens the checkpoint again (set by PretrainedModel.Load).
     internal Func<ITensorStore>? Source { get; init; }
+
+    // The model folder, where preprocessor_config.json is looked for (set by PretrainedModel.Load).
+    internal string? Folder { get; init; }
+
+    /// <summary>
+    /// The image preprocessing this model expects: the model folder's <c>preprocessor_config.json</c> when it has one,
+    /// else Gemma 3's processor defaults at the encoder's image size (resize to a square with bilinear filtering, scale
+    /// by 1/255, mean and std 0.5, RGB).
+    /// </summary>
+    /// <param name="grayscale">Turn images to grayscale first (Pillow's <c>convert("L")</c>, then three equal channels), as some fine-tunes ask.</param>
+    public ImagePreprocessor Preprocessor(bool grayscale = false) =>
+        Folder is { } folder && File.Exists(Path.Combine(folder, "preprocessor_config.json"))
+            ? ImagePreprocessor.FromConfig(folder, grayscale)
+            : new ImagePreprocessor { Height = Encoder.ImageSize, Width = Encoder.ImageSize, Grayscale = grayscale };
+
+    /// <summary>
+    /// Builds the vision encoder and the projector on <paramref name="device"/> from the checkpoint's tensors (read once,
+    /// float32): an <see cref="ImageEncoder"/> that turns images into the soft tokens' embeddings
+    /// [images, <see cref="ImageTokenIds.TokensPerImage"/>, <see cref="TextDim"/>]. Dispose it when done.
+    /// </summary>
+    /// <param name="device">Where it runs (default <see cref="Device.Default"/>; pass the language model's <see cref="PretrainedModel.Device"/>).</param>
+    /// <param name="preprocessor">How images become pixel values (default <see cref="Preprocessor"/>).</param>
+    public ImageEncoder CreateEncoder(Device? device = null, ImagePreprocessor? preprocessor = null)
+    {
+        device ??= Device.Default;
+        using var tensors = OpenTensors();
+        var encoder = SiglipVisionEncoder.FromTensors(Encoder, tensors, "vision.", device);
+        try
+        {
+            var projector = ImageProjector.FromTensors(tensors, Encoder.Dim, TextDim, PoolSize, ProjectorNormEpsilon, "projector.", device);
+            return new ImageEncoder(this, encoder, projector, preprocessor ?? Preprocessor());
+        }
+        catch
+        {
+            encoder.Dispose();
+            throw;
+        }
+    }
 
     /// <summary>
     /// Opens the checkpoint's vision tensors under the names of <see cref="Tensors"/>, as stored (no transposition):

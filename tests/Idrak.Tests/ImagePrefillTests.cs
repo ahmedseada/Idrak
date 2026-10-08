@@ -39,7 +39,6 @@ internal static partial class Tests
         return best;
     }
 
-    private static float MaxDifference(float[] a, float[] b) => a.Zip(b, (x, y) => MathF.Abs(x - y)).Max();
 
     private static void ImagePrefillMatchesReference(Device device)
     {
