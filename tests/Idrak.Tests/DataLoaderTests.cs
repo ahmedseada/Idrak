@@ -511,7 +511,7 @@ internal static partial class Tests
 
         (int, int, int) Packed(int x, int y) => ((x + y) % 32, (x * 3 + y) % 64, (x * y) % 32);
         CheckImage(TestBmp(W, H, 16, false, Packed), ".bmp", 3, W, H,
-            (c, y, x) => c == 0 ? Packed(x, y).Item1 / 31f : c == 1 ? Packed(x, y).Item2 / 63f : Packed(x, y).Item3 / 31f, "BMP 16 bits, 5-6-5 bit fields");
+            (c, y, x) => (c == 0 ? Packed(x, y).Item1 * 255 / 31 : c == 1 ? Packed(x, y).Item2 * 255 / 63 : Packed(x, y).Item3 * 255 / 31) / 255f, "BMP 16 bits, 5-6-5 bit fields (widened to 8 bits as Pillow does)");
         var grey = Enumerable.Range(0, 256).Select(i => ((byte)i, (byte)i, (byte)i)).ToArray();
         CheckImage(TestBmp(W, H, 8, false, (x, y) => (0, 0, 0), (x, y) => (x * 17 + y * 5) % 256, grey), ".bmp", 1, W, H,
             (c, y, x) => (x * 17 + y * 5) % 256 / 255f, "BMP 8 bits with a grey palette");
@@ -534,7 +534,7 @@ internal static partial class Tests
             p6.Add((byte)(i * 7 % 1001));
         }
 
-        CheckImage([.. p6], ".ppm", 3, W, H, (c, y, x) => ((y * W + x) * 3 + c) * 7 % 1001 / 1000f, "PPM binary 16 bits");
+        CheckImage([.. p6], ".ppm", 3, W, H, (c, y, x) => (float)(Math.Round(((y * W + x) * 3 + c) * 7 % 1001 * 255.0 / 1000) / 255), "PPM binary 16 bits (brought to 8 bits as Pillow does)");
         string p2 = $"P2\n{W} {H}\n# comment\n15\n" + string.Join(' ', Enumerable.Range(0, W * H).Select(i => i % 16));
         CheckImage(Encoding.ASCII.GetBytes(p2), ".pgm", 1, W, H, (c, y, x) => (y * W + x) % 16 / 15f, "PGM text");
 

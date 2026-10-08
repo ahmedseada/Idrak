@@ -1550,7 +1550,7 @@ sample into memory. Samples in order whose count is unknown are an `ISampleStrea
 `new DataLoader(stream, batchSize, shuffleBuffer: 10_000)`.
 
 Images are decoded without dependencies: PNG (every bit depth and colour type, interlaced or not, through .NET's zlib),
-JPEG (baseline and progressive, grey and colour, decoded to libjpeg-turbo's pixels; not CMYK or 12-bit), BMP (1 to 32
+JPEG (baseline and progressive, grey, colour, CMYK and YCCK, decoded to Pillow's RGB; not 12-bit), BMP (1 to 32
 bits, uncompressed or bit fields) and PGM/PPM; alpha is dropped. Other formats plug in
 as an `IImageCodec` registered with `ImageCodecs.Register`. Augmentation runs in the loader, with random numbers seeded
 by the loader's seed, the epoch and the sample, so a seeded run repeats exactly:

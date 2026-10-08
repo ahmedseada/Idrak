@@ -9,12 +9,15 @@ namespace Idrak.Data;
 
 /// <summary>
 /// JPEG (ITU-T T.81, as JFIF, EXIF and Adobe files use it), decoded without dependencies: baseline and extended
-/// sequential (SOF0, SOF1) and progressive (SOF2) Huffman-coded frames at 8 bits, one component (grey) or three
-/// (YCbCr, or RGB when an Adobe APP14 segment says transform 0 or the component ids are 'R', 'G', 'B'), any whole
-/// sampling ratio (4:4:4, 4:2:2, 4:2:0, 4:4:0, 4:1:1, ...), restart intervals, interleaved or not. APPn and comment
-/// segments (EXIF, ICC profiles, XMP) are skipped: the EXIF orientation is not applied.
-/// Not read (a <see cref="NotSupportedException"/> naming the variant): CMYK and YCCK (four components), 12- and
-/// 16-bit samples, arithmetic coding, lossless and hierarchical frames.
+/// sequential (SOF0, SOF1) and progressive (SOF2) Huffman-coded frames at 8 bits: one component (grey), three (YCbCr,
+/// or RGB when an Adobe APP14 segment says transform 0 or the component ids are 'R', 'G', 'B') or four (CMYK, or YCCK
+/// when Adobe says transform 2; turned to RGB as Pillow's <c>convert("RGB")</c> does, always inverted, Adobe's
+/// convention), any whole sampling ratio (4:4:4, 4:2:2, 4:2:0, 4:4:0, 4:1:1, ...), restart intervals, interleaved or
+/// not. APPn and comment segments are skipped: neither the ICC profile nor the EXIF orientation is applied, as Pillow's
+/// decoding and transformers' image processors do not (transformers' <c>load_image</c>, given a path or URL, does
+/// rotate by the EXIF orientation with <c>exif_transpose</c>; Idrak does not yet). Not read (a
+/// <see cref="NotSupportedException"/> naming the variant): 12- and 16-bit samples, arithmetic coding, lossless and
+/// hierarchical frames.
 /// <para>
 /// The pixels follow libjpeg-turbo's defaults (and so Pillow's, which transformers uses): the "islow" integer inverse
 /// DCT of jidctint.c, the "fancy" (triangle) upsampling of jdsample.c for 2:1 ratios (h2v1, h1v2, h2v2; other ratios
@@ -288,14 +291,9 @@ internal sealed class JpegDecoder
         height = s[1] << 8 | s[2];
         width = s[3] << 8 | s[4];
         int n = s[5];
-        if (n is 4)
+        if (n is not (1 or 3 or 4))
         {
-            throw new NotSupportedException("CMYK and YCCK JPEG (four components) is not read; convert it to RGB.");
-        }
-
-        if (n is not (1 or 3))
-        {
-            throw new NotSupportedException($"JPEG with {n} components is not read (only grey and colour).");
+            throw new NotSupportedException($"JPEG with {n} components is not read (only grey, colour, CMYK and YCCK).");
         }
 
         if (height == 0)
@@ -826,6 +824,11 @@ internal sealed class JpegDecoder
             return full;
         }
 
+        if (components.Length == 4)
+        {
+            return CmykToRgb(full);
+        }
+
         bool rgb = sawJfif ? false
             : sawAdobe ? adobeTransform == 0
             : components[0].Id == 'R' && components[1].Id == 'G' && components[2].Id == 'B';
@@ -835,6 +838,49 @@ internal sealed class JpegDecoder
         }
 
         return full;
+    }
+
+    // Four components to RGB as Pillow gives them: libjpeg turns YCCK (Adobe transform 2) into CMYK (jdcolor.c
+    // ycck_cmyk_convert: the inverse of the YCbCr colours, K kept); Pillow reads every CMYK JPEG as inverted (Adobe's
+    // convention, its "CMYK;I", with or without the Adobe segment), then converts with its cmyk2rgb: each channel is
+    // (255 - K) - C * (255 - K) / 255, rounded as Pillow's MULDIV255.
+    private byte[][] CmykToRgb(byte[][] full)
+    {
+        byte[] c = full[0], m = full[1], y = full[2], k = full[3];
+        bool ycck = sawAdobe && adobeTransform == 2;
+        var rgb = new byte[3][];
+        for (int i = 0; i < 3; i++)
+        {
+            rgb[i] = new byte[width * height];
+        }
+
+        HostParallel.For(height, 16, (first, last) =>
+        {
+            for (int i = first * width; i < last * width; i++)
+            {
+                int cyan = c[i], magenta = m[i], yellow = y[i], black = k[i];
+                if (ycck)
+                {
+                    int luma = cyan, blue = magenta, red = yellow;
+                    cyan = Math.Clamp(255 - (luma + CrToR[red]), 0, 255);
+                    magenta = Math.Clamp(255 - (luma + ((CbToG[blue] + CrToG[red]) >> 16)), 0, 255);
+                    yellow = Math.Clamp(255 - (luma + CbToB[blue]), 0, 255);
+                }
+
+                (cyan, magenta, yellow, black) = (255 - cyan, 255 - magenta, 255 - yellow, 255 - black);
+                int nk = 255 - black;
+                rgb[0][i] = (byte)Math.Clamp(nk - MulDiv255(cyan, nk), 0, 255);
+                rgb[1][i] = (byte)Math.Clamp(nk - MulDiv255(magenta, nk), 0, 255);
+                rgb[2][i] = (byte)Math.Clamp(nk - MulDiv255(yellow, nk), 0, 255);
+            }
+        });
+        return rgb;
+
+        static int MulDiv255(int a, int b)
+        {
+            int t = a * b + 128;
+            return ((t >> 8) + t) >> 8;
+        }
     }
 
     private void YccToRgb(byte[] y, byte[] cb, byte[] cr)

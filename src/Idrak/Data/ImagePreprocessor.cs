@@ -42,6 +42,15 @@ public enum ImageResampling
 /// precision, rounded to float, then (value - mean) / std in float.
 /// </para>
 /// <para>
+/// Colour is the default path, and every format of the built-in codecs reaches it as the RGB bytes transformers'
+/// <c>convert_to_rgb</c> (Pillow's <c>convert("RGB")</c>) gives: alpha is dropped, not composited (the colours under
+/// clear pixels stay), a palette's tRNS is ignored, grey is repeated to three channels, CMYK and YCCK JPEGs are
+/// converted as Pillow converts them, 16-bit PNG and PPM channels become bytes as Pillow makes them. The one known
+/// difference: a 16-bit grey PNG (or a grey PGM deeper than 8 bits) is taken by its high byte here, where Pillow's
+/// conversion clips its 16-bit values at 255 (an almost white image). Neither the ICC profile nor the EXIF orientation
+/// is applied (transformers' image processors do not; its <c>load_image</c> rotates by the orientation).
+/// </para>
+/// <para>
 /// Grayscale (not a transformers step: some fine-tunes, such as OCR models trained on grey scans, ask for it) converts
 /// the 8-bit RGB pixels as Pillow's <c>convert("L")</c> does (L = (19595 R + 38470 G + 7471 B + 32768) >> 16, the
 /// ITU-R 601 weights in 16-bit fixed point) before the resize, and repeats the grey to three channels.
@@ -275,7 +284,25 @@ public sealed class ImagePreprocessor
 
         return planes;
 
-        static int Byte(float v) => v <= 0 ? 0 : v >= 1 ? 255 : (int)MathF.Round(v * 255f);
+        // The byte Pillow gives: a value that is a whole number of 255ths (8-bit sources, and those the codecs widen to 8
+        // bits as Pillow does) is that byte; any other (16-bit sources) is its high byte, as Pillow reads 16-bit PNG and
+        // PPM. The high byte of a 16-bit k * 257 is k, so both agree where both apply.
+        static int Byte(float v)
+        {
+            if (v <= 0)
+            {
+                return 0;
+            }
+
+            if (v >= 1)
+            {
+                return 255;
+            }
+
+            float scaled = v * 255f;
+            float nearest = MathF.Round(scaled);
+            return MathF.Abs(scaled - nearest) < 1e-3f ? (int)nearest : (int)MathF.Round(v * 65535f) >> 8;
+        }
     }
 
     // ---------------------------------------------------------------- Pillow's resize (Resample.c)
