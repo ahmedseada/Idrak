@@ -55,9 +55,12 @@ public sealed class Sequential : Module, IEnumerable<Module>, ICachedModule
         return Run(input, layers);
     }
 
-    private Tensor Run(Tensor input, int layers)
+    private Tensor Run(Tensor input, int layers) => Run(input, layers, null);
+
+    // before(i, x): what layer i reads instead of x (images put into a prompt's embeddings), inside the layer's scope.
+    internal Tensor Run(Tensor input, int layers, Func<int, Tensor, Tensor>? before)
     {
-        Tensor Layer(int i, Tensor x) => _modules[i].Forward(x);
+        Tensor Layer(int i, Tensor x) => _modules[i].Forward(before is null ? x : before(i, x));
         return Autograd.IsEnabled || ComputeGraph.IsCapturing ? RunLayers(input, layers, Layer) : RunFreeing(input, layers, Layer);
     }
 
@@ -142,7 +145,9 @@ public sealed class Sequential : Module, IEnumerable<Module>, ICachedModule
     /// <see cref="ForwardCached(Tensor, DecodingContext)"/> through the first <paramref name="layers"/> modules only (for
     /// example all but the output head, to read hidden states rather than logits).
     /// </summary>
-    public Tensor ForwardCached(Tensor input, DecodingContext context, int layers)
+    public Tensor ForwardCached(Tensor input, DecodingContext context, int layers) => ForwardCached(input, context, layers, null);
+
+    internal Tensor ForwardCached(Tensor input, DecodingContext context, int layers, Func<int, Tensor, Tensor>? before)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(layers);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(layers, _modules.Count);
@@ -158,6 +163,11 @@ public sealed class Sequential : Module, IEnumerable<Module>, ICachedModule
         Tensor Layer(int i, Tensor x)
         {
             var module = _modules[i];
+            if (before is not null)
+            {
+                x = before(i, x);
+            }
+
             x = module is ICachedModule cached ? cached.ForwardCached(x, context) : module.Forward(x);
             return i == lastCached && x.Rank == 3 ? x.Narrow(1, x.Shape[1] - 1, 1) : x;
         }
