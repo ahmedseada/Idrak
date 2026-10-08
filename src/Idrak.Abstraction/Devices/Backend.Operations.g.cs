@@ -5011,6 +5011,132 @@ public abstract partial class Backend
         CpuBackend.Instance.AttentionTiled(h[q], h[keys], h[values], h[position], h[y], h[logSumExp], heads, rowsPerHead, steps, capacity, dim, scale, variant);
     }
 
+    /// <summary>
+    /// Attention in which each query row sees one range of keys, read from the device: for query head h and row i of q
+    /// [heads, rows, dim], y[h, i] = Σ_c softmax_c(s_c) · values[g, c] with s_c = scale · q[h, i] · keys[g, c] (soft-capped
+    /// with the variant's cap), over the keys c with starts[b·rows + i] ≤ c &lt; ends[b·rows + i] (a half-open range, both
+    /// clamped to [0, keyRows]), where g = h / (heads / kvHeads) is the key/value head the query head reads (grouped-query
+    /// attention; heads is a multiple of kvHeads) and b = h / headsPerTable the table of ranges it reads (heads is a
+    /// multiple of headsPerTable; starts and ends hold [heads / headsPerTable, rows] integers as floats). Keys and values
+    /// are [kvHeads, keyRows, dim]. A row whose range is empty gets zeros, and a log-sum-exp of -∞. Writes each row's
+    /// log-sum-exp of its scores (the natural log of Σ_c exp(s_c)) to <paramref name="logSumExp"/> [heads, rows] when
+    /// given (training). Only the variant's soft-cap is read: a window is a rule for the ranges, like every mask that is
+    /// not plainly causal (bidirectional, causal, sliding window, packed sequences, image blocks: <c>KeySpans</c>). The
+    /// scores are never stored whole: the cost in memory follows rows + keys, not rows · keys.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.AttentionSpans"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AttentionSpansKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void AttentionSpans(Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage y, Storage? logSumExp, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant = default)
+    {
+        if (_kernels is null)
+        {
+            AttentionSpansKernel(q, keys, values, starts, ends, y, logSumExp, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+        }
+        else
+        {
+            AttentionSpansRegistered(q, keys, values, starts, ends, y, logSumExp, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AttentionSpansRegistered(Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage y, Storage? logSumExp, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant)
+    {
+        if (Kernel(OperationIndex.AttentionSpans) is OperationKernels.AttentionSpans kernel)
+        {
+            kernel(this, q, keys, values, starts, ends, y, logSumExp, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+            return;
+        }
+
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.AttentionSpans))
+        {
+            AttentionSpansKernel(q, keys, values, starts, ends, y, logSumExp, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.AttentionSpans);
+        try
+        {
+            AttentionSpansKernel(q, keys, values, starts, ends, y, logSumExp, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+        }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            AttentionSpansOnHost(q, keys, values, starts, ends, y, logSumExp, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of AttentionSpans (the default body of AttentionSpansKernel), for RetryOnHost.
+    private void AttentionSpansOnHost(Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage y, Storage? logSumExp, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant)
+    {
+        using var h = new HostCall(this, "AttentionSpans");
+        CpuBackend.Instance.AttentionSpans(h[q], h[keys], h[values], h[starts], h[ends], h[y], h.Maybe(logSumExp), heads, kvHeads, headsPerTable, rows,
+            keyRows, dim, scale, variant);
+    }
+
+    /// <summary>
+    /// The gradients of <see cref="AttentionSpans"/> given its output, each row's log-sum-exp and dOutput (output's
+    /// layout): with P_c = exp(s_c - logSumExp) over the row's range and Δ = dOutput · output, adds Σ_c scale · P_c ·
+    /// (dOutput · values[g, c] - Δ) · keys[g, c] (times the cap's slope with a cap) to dq [heads, rows, dim], and to dkeys
+    /// and dvalues [kvHeads, keyRows, dim] the matching terms (the query heads of a group add into their key/value head).
+    /// The weights are recomputed, never stored; rows with an empty range add nothing.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.AttentionSpansBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AttentionSpansBackwardKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void AttentionSpansBackward(Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant = default)
+    {
+        if (_kernels is null)
+        {
+            AttentionSpansBackwardKernel(q, keys, values, starts, ends, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+        }
+        else
+        {
+            AttentionSpansBackwardRegistered(q, keys, values, starts, ends, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AttentionSpansBackwardRegistered(Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant)
+    {
+        if (Kernel(OperationIndex.AttentionSpansBackward) is OperationKernels.AttentionSpansBackward kernel)
+        {
+            kernel(this, q, keys, values, starts, ends, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+            return;
+        }
+
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.AttentionSpansBackward))
+        {
+            AttentionSpansBackwardKernel(q, keys, values, starts, ends, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.AttentionSpansBackward);
+        try
+        {
+            AttentionSpansBackwardKernel(q, keys, values, starts, ends, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+        }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            AttentionSpansBackwardOnHost(q, keys, values, starts, ends, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of AttentionSpansBackward (the default body of AttentionSpansBackwardKernel), for RetryOnHost.
+    private void AttentionSpansBackwardOnHost(Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant)
+    {
+        using var h = new HostCall(this, "AttentionSpansBackward");
+        CpuBackend.Instance.AttentionSpansBackward(h[q], h[keys], h[values], h[starts], h[ends], h[output], h[logSumExp], h[dOutput], h[dq], h[dkeys],
+            h[dvalues], heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+    }
+
     /// <summary>mask[i, j] = j ≤ position + i ? 0 : -1e9 for a [rows, capacity] mask; position is read from device memory.</summary>
     /// <remarks>Runs <see cref="Ops.DecoderMask"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>DecoderMaskKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

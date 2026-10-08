@@ -151,6 +151,64 @@ public sealed partial class Tensor
     }
 
     /// <summary>
+    /// Attention in which each query row sees one range of keys (any mask that is not plainly causal: bidirectional,
+    /// sliding window, packed sequences, image blocks; see <see cref="KeySpans"/>), with its gradient, without storing the
+    /// attention weights (Backend.AttentionSpans; the backward pass recomputes them from each row's log-sum-exp). q is
+    /// [heads, rows, dim]; keys and values are [kvHeads, keyRows, dim], heads a multiple of kvHeads (query head h reads
+    /// key/value head h / (heads / kvHeads)); <paramref name="starts"/> and <paramref name="ends"/> hold one half-open
+    /// range per row, [tables · rows] integers as floats (<see cref="KeySpans.ToTensors"/>), heads a multiple of tables
+    /// (query head h reads table h / (heads / tables): one table for every head, or one per sequence of a batch). A row
+    /// whose range is empty gets zeros. Only the <paramref name="variant"/>'s soft-cap is read (a window belongs in the
+    /// ranges).
+    /// </summary>
+    /// <exception cref="ArgumentException">The shapes do not fit together.</exception>
+    public static Tensor AttentionSpans(Tensor q, Tensor keys, Tensor values, Tensor starts, Tensor ends, float scale, AttentionVariant variant = default)
+    {
+        ArgumentNullException.ThrowIfNull(q);
+        ArgumentNullException.ThrowIfNull(keys);
+        ArgumentNullException.ThrowIfNull(values);
+        ArgumentNullException.ThrowIfNull(starts);
+        ArgumentNullException.ThrowIfNull(ends);
+        if (q.Rank != 3 || keys.Rank != 3 || !keys._shape.AsSpan().SequenceEqual(values._shape) || keys._shape[2] != q._shape[2])
+        {
+            throw new ArgumentException($"AttentionSpans takes q [heads, rows, dim] and keys, values [kvHeads, keyRows, dim]; got {FormatShape(q._shape)}, "
+                + $"{FormatShape(keys._shape)} and {FormatShape(values._shape)}.");
+        }
+
+        int heads = q._shape[0], rows = q._shape[1], dim = q._shape[2], kvHeads = keys._shape[0], keyRows = keys._shape[1];
+        int tables = rows == 0 ? 1 : starts.Size / rows;
+        if (kvHeads == 0 || heads % kvHeads != 0 || starts.Size != ends.Size || tables == 0 || tables * rows != starts.Size || heads % tables != 0)
+        {
+            throw new ArgumentException($"{heads} query heads need key/value heads ({kvHeads}) and tables of ranges ({starts.Size} starts, {ends.Size} ends "
+                + $"for {rows} rows) that divide them.");
+        }
+
+        long start = Telemetry.Start(TelemetryLevel.Operations);
+        int headsPerTable = heads / tables;
+        var y = Empty([heads, rows, dim], q.Device);
+        bool record = Autograd.IsEnabled && (q.RequiresGrad || keys.RequiresGrad || values.RequiresGrad);
+        var lse = record ? Empty([heads, rows], q.Device, track: false) : null;
+        q.Backend.AttentionSpans(q.Storage, keys.Storage, values.Storage, starts.Storage, ends.Storage, y.Storage, lse?.Storage, heads, kvHeads, headsPerTable,
+            rows, keyRows, dim, scale, variant);
+        if (record)
+        {
+            y.Record("attention_spans", g =>
+            {
+                // Gradients go to scratch buffers for inputs that do not need them.
+                using var dq = q.RequiresGrad ? null : Empty(q._shape, q.Device, zeroed: true, track: false);
+                using var dk = keys.RequiresGrad ? null : Empty(keys._shape, q.Device, zeroed: true, track: false);
+                using var dv = values.RequiresGrad ? null : Empty(values._shape, q.Device, zeroed: true, track: false);
+                q.Backend.AttentionSpansBackward(q.Storage, keys.Storage, values.Storage, starts.Storage, ends.Storage, y.Storage, lse!.Storage, g.Storage,
+                    dq?.Storage ?? q.GradStorage(), dk?.Storage ?? keys.GradStorage(), dv?.Storage ?? values.GradStorage(),
+                    heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+                lse.Dispose();
+            }, q, keys, values);
+        }
+
+        return Traced("attention_spans", y, start);
+    }
+
+    /// <summary>
     /// <see cref="AttentionTiled"/> for rows of different lengths: head h's row i sees cached positions c with
     /// starts[(h / headsPerRow)·steps + i % steps] ≤ c ≤ position[0] + i % steps. Null when the device has no such pass.
     /// </summary>

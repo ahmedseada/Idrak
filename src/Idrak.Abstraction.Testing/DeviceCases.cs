@@ -36,6 +36,7 @@ public static partial class DeviceCases
         new("gated activations: SiLU, GELU and ReLU gates, their gradients and bfloat16 forms", GatedActivations, random: true),
         new("decoding: masks and key/value caches in float32, int8 and bfloat16", KeyValueCaches, random: true),
         new("attention: decoding, tiled, int8 and bfloat16 caches, rows, segments, strided, windows and soft-caps", Attention, random: true),
+        new("attention over key ranges: bidirectional, causal, windows, segments, image blocks, grouped heads, empty ranges", SpanAttention, random: true),
         new("sampling: penalties, top-k, top-p and min-p draws, and the token history", Sampling, random: true),
         new("autograd: a small network's forward and backward passes through tensors", Autograd, random: true),
     ];
