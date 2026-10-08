@@ -39,6 +39,8 @@ public static class ChatTools
 
     private sealed class ToolRunningChatModel(IChatModel model, IToolRegistry tools, int maxToolRounds) : IChatModel
     {
+        public IReadOnlySet<string> PartKinds => model.PartKinds;
+
         public async IAsyncEnumerable<ChatChunk> StreamAsync(ChatRequest request, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             var messages = new List<ChatMessage>(request.Messages);

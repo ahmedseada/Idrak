@@ -7,13 +7,76 @@ using System.Text.Json.Nodes;
 
 namespace Idrak.Abstraction.Generation;
 
-/// <summary>One message of a conversation.</summary>
+/// <summary>
+/// One message of a conversation: its content is an ordered list of parts (<see cref="ChatPart"/>: text, images, or kinds
+/// of one's own), in the order they were given, so OpenAI's content parts and Ollama's image list both map onto it. Text
+/// alone is the common case: <c>new ChatMessage("user", "hi")</c> holds one <see cref="ChatText"/>, and
+/// <see cref="Content"/> reads the text back.
+/// </summary>
 /// <param name="Role">"system", "user", "assistant" or "tool".</param>
-/// <param name="Content">The text.</param>
+/// <param name="Parts">The content, in order (empty for a message with no content, such as an assistant's bare tool call).</param>
 /// <param name="Thinking">An assistant's reasoning, kept apart from the answer.</param>
 /// <param name="ToolCalls">Functions an assistant asked to call.</param>
 /// <param name="ToolName">For role "tool": which function produced this result.</param>
-public sealed record ChatMessage(string Role, string Content = "", string? Thinking = null, IReadOnlyList<ToolCall>? ToolCalls = null, string? ToolName = null);
+public sealed record ChatMessage(string Role, IReadOnlyList<ChatPart> Parts, string? Thinking = null, IReadOnlyList<ToolCall>? ToolCalls = null, string? ToolName = null)
+{
+    private readonly IReadOnlyList<ChatPart> _parts = Parts ?? [];
+
+    /// <summary>A message whose content is the text <paramref name="Content"/> (no part when it is empty).</summary>
+    /// <param name="Role">"system", "user", "assistant" or "tool".</param>
+    /// <param name="Content">The text.</param>
+    /// <param name="Thinking">An assistant's reasoning, kept apart from the answer.</param>
+    /// <param name="ToolCalls">Functions an assistant asked to call.</param>
+    /// <param name="ToolName">For role "tool": which function produced this result.</param>
+    public ChatMessage(string Role, string Content = "", string? Thinking = null, IReadOnlyList<ToolCall>? ToolCalls = null, string? ToolName = null)
+        : this(Role, string.IsNullOrEmpty(Content) ? [] : [new ChatText(Content)], Thinking, ToolCalls, ToolName)
+    {
+    }
+
+    /// <summary>The content, in order (never null).</summary>
+    public IReadOnlyList<ChatPart> Parts
+    {
+        get => _parts;
+        init => _parts = value ?? [];
+    }
+
+    /// <summary>
+    /// The text of the message: its text parts joined (with nothing between them, as chat templates render consecutive
+    /// text parts); parts of other kinds are not in it. Setting it (<c>message with { Content = … }</c>) replaces the
+    /// text parts with one, after the other parts.
+    /// </summary>
+    public string Content
+    {
+        get => _parts switch
+        {
+            [] => "",
+            [ChatText only] => only.Text,
+            _ => string.Concat(_parts.OfType<ChatText>().Select(t => t.Text)),
+        };
+        init => _parts = [.. _parts.Where(p => p is not ChatText), .. string.IsNullOrEmpty(value) ? Array.Empty<ChatPart>() : [new ChatText(value)]];
+    }
+
+    /// <summary>Equal when role, parts (in order), reasoning, tool calls (the same list) and tool name are.</summary>
+    public bool Equals(ChatMessage? other) =>
+        other is not null && Role == other.Role && _parts.SequenceEqual(other._parts) && Thinking == other.Thinking
+        && EqualityComparer<IReadOnlyList<ToolCall>?>.Default.Equals(ToolCalls, other.ToolCalls) && ToolName == other.ToolName;
+
+    /// <inheritdoc />
+    public override int GetHashCode()
+    {
+        var hash = new HashCode();
+        hash.Add(Role);
+        foreach (var part in _parts)
+        {
+            hash.Add(part);
+        }
+
+        hash.Add(Thinking);
+        hash.Add(ToolCalls);
+        hash.Add(ToolName);
+        return hash.ToHashCode();
+    }
+}
 
 /// <summary>A function the model may call.</summary>
 /// <param name="Name">Function name.</param>
@@ -62,8 +125,16 @@ public abstract class ChatTemplate
     public abstract IReadOnlyList<string> StopSequences { get; }
 
     /// <summary>
+    /// The kinds of message parts (<see cref="ChatPart.Kind"/>) the template renders: text only by default. A template
+    /// given a part of another kind throws (<see cref="ChatParts.ThrowIfUnsupported(IReadOnlyList{ChatMessage}, IReadOnlySet{string}, string)"/>
+    /// at the start of <see cref="Render"/>); it never drops one.
+    /// </summary>
+    public virtual IReadOnlySet<string> PartKinds => ChatParts.TextOnly;
+
+    /// <summary>
     /// The prompt for the next assistant turn. <paramref name="think"/>: true asks for reasoning, false suppresses it
-    /// (the template closes an empty reasoning block), null leaves it to the model.
+    /// (the template closes an empty reasoning block), null leaves it to the model. Throws
+    /// <see cref="NotSupportedException"/> for a message part whose kind is not in <see cref="PartKinds"/>.
     /// </summary>
     public abstract string Render(IReadOnlyList<ChatMessage> messages, IReadOnlyList<ToolDefinition> tools, bool? think);
 }
@@ -83,6 +154,7 @@ public sealed class ChatMLTemplate : ChatTemplate
     /// <inheritdoc />
     public override string Render(IReadOnlyList<ChatMessage> messages, IReadOnlyList<ToolDefinition> tools, bool? think)
     {
+        ChatParts.ThrowIfUnsupported(messages, PartKinds, "The chat template " + nameof(ChatMLTemplate));
         var sb = new StringBuilder();
         using var json = new JsonText(sb);
         string system = messages.FirstOrDefault(m => m.Role == "system")?.Content ?? "";

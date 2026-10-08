@@ -114,6 +114,7 @@ that does, with the `.Abstractions` namespace to add a `using` line for:
 | RoPE scaling methods | `RopeScalings` | `Idrak.Abstraction` |
 | Telemetry listeners | `Telemetry.Subscribe` | `Idrak.Abstraction` |
 | Tool-call formats | `ToolCallFormats` | `Idrak.Abstraction` |
+| Kinds of message parts (text, images, or audio of your own) | `ChatParts` | `Idrak.Abstraction` |
 | ONNX import operators | `OnnxImportOps` | `Idrak` (`Idrak.Onnx.Abstractions`) |
 | ONNX export of modules, lambdas and graph operations | `OnnxExportOps` | `Idrak` (`Idrak.Onnx.Abstractions`) |
 | Checkpoint formats | `CheckpointFormats` | `Idrak` (`Idrak.Models.Abstractions`) |
@@ -688,6 +689,7 @@ local LLM servers:
 | `GenerationOptions` | `Temperature`, `TopK`, `TopP`, `MinP`, `RepeatPenalty`, `RepeatLastN`, `PresencePenalty`, `FrequencyPenalty`, `Seed`, `NumCtx`, `NumPredict`, `Stop`, plus `UseCache`, `UseGraph`, `ChunkSize` |
 | `TextGenerator` | streams a continuation: prompt truncated to `NumCtx`, sliding context window, stop sequences (never partially emitted), done reason `stop` / `length`, prompt and generation timings |
 | `ChatMessage`, `ToolDefinition`, `ToolCall` | conversations with `system`, `user`, `assistant` and `tool` roles, and function tools |
+| `ChatPart`, `ChatText`, `ChatImage`, `ChatParts` | message content as ordered parts (text, images as received with their SHA-256, kinds of your own registered by name); `IChatModel.PartKinds` says what a model takes, and a model or template given another kind throws |
 | `ChatTemplate`, `ChatMLTemplate` | renders a conversation and its tools as the prompt (Qwen-style ChatML: `<think>`, `<tool_call>`, `<tool_response>`); `think: false` closes an empty reasoning block |
 | `ChatOutputParser` | splits streamed output into reasoning, answer and tool calls, holding back partial tags; the calls are read by the template's tool-call parser |
 | `IToolCallParser`, `ToolCallFormats` | tool calls in the model's own format: JSON (tags, bare, lists), pythonic `[f(a=1)]`, Qwen3-Coder XML, Mistral `[TOOL_CALLS]`, GPT-OSS harmony channels, DeepSeek special tokens; detected from the model's template, or registered by name |

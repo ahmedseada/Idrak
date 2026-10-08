@@ -165,7 +165,17 @@ internal static class ChatHistory
             }
         }
 
-        return new ChatMessage(role, m["content"] is JsonValue c && c.TryGetValue(out string? content) ? content : "",
+        IReadOnlyList<ChatPart> content;
+        try
+        {
+            content = m["content"] is JsonValue c && !c.TryGetValue(out string? _) ? [] : ChatParts.ContentFromJson(m["content"]);   // null: no content
+        }
+        catch (Exception e) when (e is FormatException or NotSupportedException)
+        {
+            throw new InvalidOperationException($"A {role} message's content cannot be read: {e.Message}");
+        }
+
+        return new ChatMessage(role, content,
             (string?)m["reasoning_content"] ?? (string?)m["thinking"], calls is { Count: > 0 } ? calls : null, (string?)m["name"]);
     }
 }
