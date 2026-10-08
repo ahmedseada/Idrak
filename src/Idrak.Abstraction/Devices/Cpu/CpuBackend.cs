@@ -116,6 +116,15 @@ internal sealed partial class CpuBackend : Backend
 
     public override MemoryUsage GetMemoryUsage() => _memory.Usage;
 
+    public override void ResetPeakMemoryUsage() => _memory.ResetPeak();
+
+    // System memory not in use, as the runtime reads it (the machine's or the container's limit less what is loaded).
+    public override long? AvailableMemory()
+    {
+        var info = GC.GetGCMemoryInfo();
+        return Math.Max(0, info.TotalAvailableMemoryBytes - info.MemoryLoadBytes);
+    }
+
     public override void ReleaseCachedMemory()
     {
         lock (_pool)

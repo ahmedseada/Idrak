@@ -264,6 +264,8 @@ internal sealed unsafe partial class HipBackend : Backend
 
     public override MemoryUsage GetMemoryUsage() => _memory.Usage;
 
+    public override void ResetPeakMemoryUsage() => _memory.ResetPeak();
+
     /// <summary>Frees every cached block, after the work queued earlier (which may still use one) has finished.</summary>
     public override void ReleaseCachedMemory()
     {

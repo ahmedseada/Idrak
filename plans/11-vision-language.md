@@ -151,6 +151,51 @@ barriers poorly; at 1,024 tokens 1.8 s against 0.7 s, every workgroup width with
 device's own). The 1 GB score matrix of the composed pass is gone on every device; the Vulkan kernel's speed is to be
 measured on a real GPU (and tuned there by measurement if it lags, as `attention_tiled` is).
 
+**3a on the author's GPU, and the faster kernels (2026-10-08).** Measured by the author (CUDA, 70 SMs, compute 12.0,
+16 GB; `--bench-spans`, 4,096 tokens, 16 heads, dim 72, inference, float32): `attention_spans_f32` 41 ms a pass, the
+composed path (the products, softmax) 10 ms; "attention spans" 3/3 and "conformance kit" 8/8 passed there; the
+benchmark printed "peak memory -1 MB" (it read the process's resident memory, which says nothing of device memory).
+On lavapipe the Vulkan kernel was also ~7x slower than composed. Changed:
+- **CUDA kernels**, one module per padded head size, built and loaded the first time a size runs, each judged first by
+  the shared memory the device reports (`PtxKernels.SpansTiled.cs`, `CudaBackend.Spans.cs`):
+  `attention_spans_f32_d{D}` (head sizes that are multiples of 4, padded to 8; PTX 6.0 for sm_50): 64 query rows per
+  block of 128 threads, keys in tiles of 32, the products tiled in registers (each thread 4 rows × 4 keys of the scores,
+  then 4 rows × D/8 columns of the output: two vector reads of shared memory per 16 multiply-adds, where the first
+  kernel read shared memory once per multiply-add), dynamic shared memory 384·D + 9 KB (past 48 KB from D = 104: a
+  device that cannot opt in to that keeps the first kernel); and `attention_spans_tc_d{D}_w{W}` (padded to 16; PTX 7.0,
+  sm_80) when `MixedPrecision` asks for tensor cores and there is no soft-cap: FlashAttention-2 as `flash_tc_fwd` (bf16
+  `mma.m16n8k16`, float32 sums and softmax), W = 4 or 8 warps of 16 query rows, **measured per device and shape**
+  (`TuneOp.SpanWarps`, kept in the tuning cache), 4 before measuring. `attention_spans_f32` stays for other head sizes.
+  ptxas 12.9 assembles every module for every target it lists at or above the module's own (sm_50 … sm_121f; sm_80 …
+  for the tensor-core ones): no spills (the d128 tensor-core kernel stages its tiles in a loop for that). **Not run on a
+  GPU here**: the speed against the composed 10 ms is the author's to measure.
+- **Measured choice, card-agnostic**: `Tensor.AttentionFastest(q, keys, values, starts, ends, scale, everyKey, mask)`
+  runs AttentionSpans or the composed scores, whichever the device measured faster for the shape and precision
+  (`Backend.PrefersComposedAttention`: CUDA through its tuning cache, `TuneOp.AttentionPath`; Vulkan through its tuning
+  file, `VulkanTuneOp.AttentionPath`; per device and driver; the CPU measures nothing and keeps AttentionSpans), and
+  only where the composed path can: every key or a dense mask, as many key/value heads as query heads, one table, no
+  soft-cap, and the **memory guard**: the scores and weights (four score matrices when the gradient is recorded) within
+  half of `Backend.AvailableMemory()` (CUDA: the driver's free memory plus the pool's blocks, less the reserve; Vulkan:
+  the storage heap less what is in use; the CPU: the runtime's available memory; none reported: never composed).
+  AttentionSpans until measured. `IDRAK_ATTENTION_PATH=spans|composed` (`AttentionPaths.Forced`) forces either (the
+  guard still applies). `MultiHeadAttention`'s bidirectional path takes it; a trace shows which ran (AttentionSpans or
+  ScaleMaskSoftmax), and `idrak tuning show` / `IDRAK_TUNE_LOG=1` the measurement.
+- **Vulkan**: the measured choice above (a path twice as fast as the other in one timed run each is kept at once, since
+  the kernel tuning's budget keeps the default without measuring where one run is slow, a software driver at thousands
+  of rows: where a clear winner matters most), and `attention_spans`' workgroup width (its rows and key tile) measured
+  among the candidate widths per shape as `attention_tiled`'s (`VulkanTuneOp.SpanAttention`), the device's own until
+  then. The kernel itself is unchanged (lavapipe, the only Vulkan device here, cannot show what a GPU's would gain).
+- **Here** (4-thread shared CPU, lavapipe; 1,024 tokens, timings on a shared machine vary by 2x between runs): CPU
+  spans 121 ms, 18 MB of device memory at peak, composed 64 ms and 146 MB, the CPU's measured choice AttentionSpans
+  (it measures nothing); lavapipe spans 1.5-4.0 s and 22 MB, composed 0.43-1.26 s and 205 MB, the measured choice
+  composed. Peak device memory now prints on every device.
+- **For the author's GPU**: `IDRAK_DEVICES=cuda:0` with the filters "attention spans" (the float32 and bf16 kernels
+  against the CPU at head sizes 4 to 128), "conformance kit", "attention", "transformer", "window kernels"; then
+  `--bench-spans` in float32 and with `IDRAK_MATMUL=bf16` (`IDRAK_TUNE_LOG=1` prints the measured warps and path).
+- **Benchmark**: `--bench-spans` runs the three paths (spans, composed, fastest, with the one it chose) in one process
+  and prints each path's peak device memory from the device's own accounting (`MemoryUsage.Peak`, new, reset per path by
+  `ComputeResources.ResetPeakMemoryUsage`), on CUDA and Vulkan as on the CPU, and the process's peak beside it.
+
 **Every phase, from plan 10's wave 4:** a public API change updates `api/` (`IDRAK_UPDATE_API=1`) with a changelog
 line in the same commit; a new operation gets its conformance-kit case; a new registry entry is a library default in its
 slot table; the suite passes on CPU and Vulkan (lavapipe) before the merge; PTX changes are assembled with ptxas
