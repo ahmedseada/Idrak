@@ -9,8 +9,8 @@ namespace Idrak.Cli.Shared;
 /// <summary>
 /// Image files for every command that reads them (<c>idrak suggest</c> and the data it prepares, <c>idrak train</c> and
 /// <c>idrak predict</c> on image folders). The pixels are decoded by the library (<see cref="ImageCodecs"/>: PNG, BMP,
-/// PGM and PPM built in, and any registered codec, through <see cref="ImageFolderSource"/>); this class adds the size and
-/// channels of JPEG files from their headers, so a folder of JPEG files is profiled even when no JPEG codec is registered.
+/// JPEG, PGM and PPM built in, and any registered codec, through <see cref="ImageFolderSource"/>); this class adds the size and
+/// channels of a JPEG file from its header when no codec answers for it (a fallback since the library decodes JPEG).
 /// </summary>
 internal static class ImageFiles
 {

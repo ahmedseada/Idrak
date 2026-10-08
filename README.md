@@ -114,6 +114,7 @@ that does, with the `.Abstractions` namespace to add a `using` line for:
 | RoPE scaling methods | `RopeScalings` | `Idrak.Abstraction` |
 | Telemetry listeners | `Telemetry.Subscribe` | `Idrak.Abstraction` |
 | Tool-call formats | `ToolCallFormats` | `Idrak.Abstraction` |
+| Kinds of message parts (text, images, or audio of your own) | `ChatParts` | `Idrak.Abstraction` |
 | ONNX import operators | `OnnxImportOps` | `Idrak` (`Idrak.Onnx.Abstractions`) |
 | ONNX export of modules, lambdas and graph operations | `OnnxExportOps` | `Idrak` (`Idrak.Onnx.Abstractions`) |
 | Checkpoint formats | `CheckpointFormats` | `Idrak` (`Idrak.Models.Abstractions`) |
@@ -688,6 +689,7 @@ local LLM servers:
 | `GenerationOptions` | `Temperature`, `TopK`, `TopP`, `MinP`, `RepeatPenalty`, `RepeatLastN`, `PresencePenalty`, `FrequencyPenalty`, `Seed`, `NumCtx`, `NumPredict`, `Stop`, plus `UseCache`, `UseGraph`, `ChunkSize` |
 | `TextGenerator` | streams a continuation: prompt truncated to `NumCtx`, sliding context window, stop sequences (never partially emitted), done reason `stop` / `length`, prompt and generation timings |
 | `ChatMessage`, `ToolDefinition`, `ToolCall` | conversations with `system`, `user`, `assistant` and `tool` roles, and function tools |
+| `ChatPart`, `ChatText`, `ChatImage`, `ChatParts` | message content as ordered parts (text, images as received with their SHA-256, kinds of your own registered by name); `IChatModel.PartKinds` says what a model takes, and a model or template given another kind throws |
 | `ChatTemplate`, `ChatMLTemplate` | renders a conversation and its tools as the prompt (Qwen-style ChatML: `<think>`, `<tool_call>`, `<tool_response>`); `think: false` closes an empty reasoning block |
 | `ChatOutputParser` | splits streamed output into reasoning, answer and tool calls, holding back partial tags; the calls are read by the template's tool-call parser |
 | `IToolCallParser`, `ToolCallFormats` | tool calls in the model's own format: JSON (tags, bare, lists), pythonic `[f(a=1)]`, Qwen3-Coder XML, Mistral `[TOOL_CALLS]`, GPT-OSS harmony channels, DeepSeek special tokens; detected from the model's template, or registered by name |
@@ -1356,7 +1358,7 @@ package's own `.Abstractions`).
 | Training data (samples, streams, per-sample transforms) | implement `ISampleSource`, `ISampleStream` or `ISampleTransform` | `Idrak.Abstraction` |
 | Whole batches | implement `IBatchSource` | `Idrak` (`Idrak.Data.Abstractions`) |
 | Sample sources by name (csv, images, tokens, npy built in) | `SampleSources.Register(name, SampleSourceFactory)` | `Idrak` (`Idrak.Data.Abstractions`) |
-| Image formats (png, bmp, netpbm built in; JPEG and others as plug-ins) | `ImageCodecs.Register(IImageCodec)` | `Idrak` (`Idrak.Data.Abstractions`) |
+| Image formats (png, jpeg, bmp, netpbm built in; others as plug-ins) | `ImageCodecs.Register(IImageCodec)` | `Idrak` (`Idrak.Data.Abstractions`) |
 | Adapters on linear layers (LoRA and DoRA built in) | implement `ILinearAdapter`, set `Linear.Adapter` | `Idrak.Abstraction` |
 | Fine-tuning optimizers, learning-rate schedules and losses | `FineTuningOptions.Optimizer`, `Scheduler` and `Loss` (a `FineTuningLoss` delegate) | `Idrak.Nlp` |
 | Device kernels for the library's operations, per kind of device | `Kernels.Register(Ops.Name, kind, kernel, requirement)` | `Idrak.Abstraction` |
@@ -1565,7 +1567,8 @@ sample into memory. Samples in order whose count is unknown are an `ISampleStrea
 `new DataLoader(stream, batchSize, shuffleBuffer: 10_000)`.
 
 Images are decoded without dependencies: PNG (every bit depth and colour type, interlaced or not, through .NET's zlib),
-BMP (1 to 32 bits, uncompressed or bit fields) and PGM/PPM; alpha is dropped. Other formats, JPEG among them, plug in
+JPEG (baseline and progressive, grey, colour, CMYK and YCCK, decoded to Pillow's RGB; not 12-bit), BMP (1 to 32
+bits, uncompressed or bit fields) and PGM/PPM; alpha is dropped. Other formats plug in
 as an `IImageCodec` registered with `ImageCodecs.Register`. Augmentation runs in the loader, with random numbers seeded
 by the loader's seed, the epoch and the sample, so a seeded run repeats exactly:
 

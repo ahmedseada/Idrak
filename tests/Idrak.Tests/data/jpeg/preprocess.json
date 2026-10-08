@@ -1,0 +1,1568 @@
+[
+ {
+  "name": "down-bilinear",
+  "image": "source.png",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": true,
+   "size": {
+    "height": 24,
+    "width": 32
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "down-bicubic",
+  "image": "source.png",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": true,
+   "size": {
+    "height": 24,
+    "width": 32
+   },
+   "resample": 3,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.48145466,
+    0.4578275,
+    0.40821073
+   ],
+   "image_std": [
+    0.26862954,
+    0.26130258,
+    0.27577711
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "down-bilinear-odd",
+  "image": "source.png",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": true,
+   "size": {
+    "height": 17,
+    "width": 13
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "down-lanczos",
+  "image": "source.png",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": true,
+   "size": {
+    "height": 20,
+    "width": 20
+   },
+   "resample": 1,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "up-bilinear",
+  "image": "small.png",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": true,
+   "size": {
+    "height": 29,
+    "width": 31
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "up-bicubic",
+  "image": "small.png",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": true,
+   "size": {
+    "height": 29,
+    "width": 31
+   },
+   "resample": 3,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "mixed-bicubic",
+  "image": "source.png",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": true,
+   "size": {
+    "height": 64,
+    "width": 20
+   },
+   "resample": 3,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "grey-bilinear",
+  "image": "source.png",
+  "grayscale": true,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": true,
+   "size": {
+    "height": 24,
+    "width": 32
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "colour-rgba-png-as-is",
+  "image": "colour/rgba.png",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": false,
+   "size": {
+    "height": 4,
+    "width": 4
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "colour-rgba-png-resized",
+  "image": "colour/rgba.png",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": true,
+   "size": {
+    "height": 7,
+    "width": 10
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "colour-rgb-png-as-is",
+  "image": "colour/rgb.png",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": false,
+   "size": {
+    "height": 4,
+    "width": 4
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "colour-rgb-png-resized",
+  "image": "colour/rgb.png",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": true,
+   "size": {
+    "height": 7,
+    "width": 10
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "colour-la-png-as-is",
+  "image": "colour/la.png",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": false,
+   "size": {
+    "height": 4,
+    "width": 4
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "colour-la-png-resized",
+  "image": "colour/la.png",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": true,
+   "size": {
+    "height": 7,
+    "width": 10
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "colour-grey-png-as-is",
+  "image": "colour/grey.png",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": false,
+   "size": {
+    "height": 4,
+    "width": 4
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "colour-grey-png-resized",
+  "image": "colour/grey.png",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": true,
+   "size": {
+    "height": 7,
+    "width": 10
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "colour-palette-trns-png-as-is",
+  "image": "colour/palette-trns.png",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": false,
+   "size": {
+    "height": 4,
+    "width": 4
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "colour-palette-trns-png-resized",
+  "image": "colour/palette-trns.png",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": true,
+   "size": {
+    "height": 7,
+    "width": 10
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "colour-rgb16-png-as-is",
+  "image": "colour/rgb16.png",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": false,
+   "size": {
+    "height": 4,
+    "width": 4
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "colour-rgb16-png-resized",
+  "image": "colour/rgb16.png",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": true,
+   "size": {
+    "height": 7,
+    "width": 10
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "colour-rgba16-interlaced-png-as-is",
+  "image": "colour/rgba16-interlaced.png",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": false,
+   "size": {
+    "height": 4,
+    "width": 4
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "colour-rgba16-interlaced-png-resized",
+  "image": "colour/rgba16-interlaced.png",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": true,
+   "size": {
+    "height": 7,
+    "width": 10
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "colour-la16-png-as-is",
+  "image": "colour/la16.png",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": false,
+   "size": {
+    "height": 4,
+    "width": 4
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "colour-la16-png-resized",
+  "image": "colour/la16.png",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": true,
+   "size": {
+    "height": 7,
+    "width": 10
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "colour-grey4-interlaced-png-as-is",
+  "image": "colour/grey4-interlaced.png",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": false,
+   "size": {
+    "height": 4,
+    "width": 4
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "colour-grey4-interlaced-png-resized",
+  "image": "colour/grey4-interlaced.png",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": true,
+   "size": {
+    "height": 7,
+    "width": 10
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "colour-rgba-interlaced-png-as-is",
+  "image": "colour/rgba-interlaced.png",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": false,
+   "size": {
+    "height": 4,
+    "width": 4
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "colour-rgba-interlaced-png-resized",
+  "image": "colour/rgba-interlaced.png",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": true,
+   "size": {
+    "height": 7,
+    "width": 10
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "colour-palette-bmp-as-is",
+  "image": "colour/palette.bmp",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": false,
+   "size": {
+    "height": 4,
+    "width": 4
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "colour-palette-bmp-resized",
+  "image": "colour/palette.bmp",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": true,
+   "size": {
+    "height": 7,
+    "width": 10
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "colour-rgb-bmp-as-is",
+  "image": "colour/rgb.bmp",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": false,
+   "size": {
+    "height": 4,
+    "width": 4
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "colour-rgb-bmp-resized",
+  "image": "colour/rgb.bmp",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": true,
+   "size": {
+    "height": 7,
+    "width": 10
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "colour-rgba-bmp-as-is",
+  "image": "colour/rgba.bmp",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": false,
+   "size": {
+    "height": 4,
+    "width": 4
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "colour-rgba-bmp-resized",
+  "image": "colour/rgba.bmp",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": true,
+   "size": {
+    "height": 7,
+    "width": 10
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "colour-rgb565-bmp-as-is",
+  "image": "colour/rgb565.bmp",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": false,
+   "size": {
+    "height": 4,
+    "width": 4
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "colour-rgb565-bmp-resized",
+  "image": "colour/rgb565.bmp",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": true,
+   "size": {
+    "height": 7,
+    "width": 10
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "colour-rgb555-bmp-as-is",
+  "image": "colour/rgb555.bmp",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": false,
+   "size": {
+    "height": 4,
+    "width": 4
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "colour-rgb555-bmp-resized",
+  "image": "colour/rgb555.bmp",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": true,
+   "size": {
+    "height": 7,
+    "width": 10
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "colour-rgb-ppm-as-is",
+  "image": "colour/rgb.ppm",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": false,
+   "size": {
+    "height": 4,
+    "width": 4
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "colour-rgb-ppm-resized",
+  "image": "colour/rgb.ppm",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": true,
+   "size": {
+    "height": 7,
+    "width": 10
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "colour-rgb16-ppm-as-is",
+  "image": "colour/rgb16.ppm",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": false,
+   "size": {
+    "height": 4,
+    "width": 4
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "colour-rgb16-ppm-resized",
+  "image": "colour/rgb16.ppm",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": true,
+   "size": {
+    "height": 7,
+    "width": 10
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "colour-grey100-pgm-as-is",
+  "image": "colour/grey100.pgm",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": false,
+   "size": {
+    "height": 4,
+    "width": 4
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "colour-grey100-pgm-resized",
+  "image": "colour/grey100.pgm",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": true,
+   "size": {
+    "height": 7,
+    "width": 10
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "cmyk-colour-jpg-as-is",
+  "image": "cmyk-colour.jpg",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": false,
+   "size": {
+    "height": 4,
+    "width": 4
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "cmyk-colour-jpg-resized",
+  "image": "cmyk-colour.jpg",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": true,
+   "size": {
+    "height": 7,
+    "width": 10
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "ycck-jpg-as-is",
+  "image": "ycck.jpg",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": false,
+   "size": {
+    "height": 4,
+    "width": 4
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "ycck-jpg-resized",
+  "image": "ycck.jpg",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": true,
+   "size": {
+    "height": 7,
+    "width": 10
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "cmyk-plain-jpg-as-is",
+  "image": "cmyk-plain.jpg",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": false,
+   "size": {
+    "height": 4,
+    "width": 4
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "cmyk-plain-jpg-resized",
+  "image": "cmyk-plain.jpg",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": true,
+   "size": {
+    "height": 7,
+    "width": 10
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "grey-jpg-as-is",
+  "image": "grey.jpg",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": false,
+   "size": {
+    "height": 4,
+    "width": 4
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "grey-jpg-resized",
+  "image": "grey.jpg",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": true,
+   "size": {
+    "height": 7,
+    "width": 10
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "rgb-adobe-jpg-as-is",
+  "image": "rgb-adobe.jpg",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": false,
+   "size": {
+    "height": 4,
+    "width": 4
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ },
+ {
+  "name": "rgb-adobe-jpg-resized",
+  "image": "rgb-adobe.jpg",
+  "grayscale": false,
+  "config": {
+   "image_processor_type": "Gemma3ImageProcessor",
+   "do_convert_rgb": null,
+   "do_resize": true,
+   "size": {
+    "height": 7,
+    "width": 10
+   },
+   "resample": 2,
+   "do_rescale": true,
+   "rescale_factor": 0.00392156862745098,
+   "do_normalize": true,
+   "image_mean": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "image_std": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "do_pan_and_scan": null
+  }
+ }
+]

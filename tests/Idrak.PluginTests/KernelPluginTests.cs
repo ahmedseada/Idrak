@@ -32,7 +32,7 @@ public static class KernelPluginTests
         ("outside plug-in kernels: an Autograd.Function and a graph operation run their plug-in operations, by default and through the CPU kernel, with their gradients", FunctionAndGraphOpKernels),
         ("outside plug-in kernels: the testing kit checks each plug-in kernel on the device against its default kernel on the CPU (Conformance.Check)", KitChecksKernels),
         ("outside plug-in kernels: CUDA and HIP kernels read their parameters from the PTX and the HIP C++ source and refuse other devices and mismatched arguments", GpuKernelShapes),
-        ("outside plug-in kernels: the plug-in's PTX assembles with ptxas for sm_50, sm_75 and sm_120 (skipped without ptxas: IDRAK_PTXAS, PATH or CUDA_PATH)", PtxAssembles),
+        ("outside plug-in kernels: the plug-in's PTX assembles with ptxas for every GPU target the installed ptxas lists at or above the PTX's own (no list of cards; skipped without ptxas: IDRAK_PTXAS, PATH or CUDA_PATH)", PtxAssembles),
     ];
 
     private static void KitChecksKernels(Device device)
@@ -289,7 +289,9 @@ public static class KernelPluginTests
         File.WriteAllText(file, PluginGpuSources.Ptx);
         try
         {
-            foreach (string architecture in new[] { "sm_50", "sm_75", "sm_120" })
+            int assembled = 0;
+            int lowest = PtxTarget(PluginGpuSources.Ptx);
+            foreach (string architecture in Targets(ptxas).Where(t => t.Number >= lowest).Select(t => t.Name))
             {
                 var start = new ProcessStartInfo(ptxas) { RedirectStandardError = true, RedirectStandardOutput = true };
                 foreach (string argument in new[] { $"-arch={architecture}", file, "-o", OperatingSystem.IsWindows() ? "NUL" : "/dev/null" })
@@ -302,13 +304,31 @@ public static class KernelPluginTests
                 string errors = process.StandardError.ReadToEnd() + output.Result;
                 process.WaitForExit();
                 Check(process.ExitCode == 0, $"ptxas -arch={architecture}: exit {process.ExitCode}: {errors}");
+                assembled++;
             }
+
+            Check(assembled > 0, $"the installed ptxas lists no target at or above sm_{lowest}");
         }
         finally
         {
             File.Delete(file);
         }
     }
+
+    // The real GPU targets this ptxas can assemble for (sm_NN without a/f suffix), from its own --help list.
+    private static IEnumerable<(string Name, int Number)> Targets(string ptxas)
+    {
+        var start = new ProcessStartInfo(ptxas, "--help") { RedirectStandardOutput = true, RedirectStandardError = true };
+        using var process = Process.Start(start)!;
+        string help = process.StandardOutput.ReadToEnd();
+        process.WaitForExit();
+        return System.Text.RegularExpressions.Regex.Matches(help, "'sm_(\\d+)'").Select(m => (Name: "sm_" + m.Groups[1].Value, Number: int.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture)))
+            .DistinctBy(t => t.Number).OrderBy(t => t.Number).ToList();
+    }
+
+    // The target a PTX text declares (".target sm_50" gives 50).
+    private static int PtxTarget(string ptx) =>
+        int.Parse(System.Text.RegularExpressions.Regex.Match(ptx, "\\.target\\s+sm_(\\d+)").Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
 
     // ptxas from IDRAK_PTXAS, else PATH, else CUDA_PATH/bin; null when none is there.
     private static string? FindPtxas()

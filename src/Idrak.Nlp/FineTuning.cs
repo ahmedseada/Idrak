@@ -25,7 +25,7 @@ public sealed record ChatTranscript(IReadOnlyList<ChatMessage> Messages, IReadOn
 {
     /// <summary>
     /// Reads one transcript: <c>{"messages": [...], "tools": [...]}</c> in the OpenAI / Hugging Face chat format
-    /// (content as a string or a list of text parts; reasoning in reasoning_content, thinking or reasoning; tool calls as
+    /// (content as a string or a list of parts, each read by <see cref="ChatParts.FromJson"/>: text, images or a registered kind; reasoning in reasoning_content, thinking or reasoning; tool calls as
     /// [{"function": {"name", "arguments"}}] with arguments as an object or a JSON string; tool results with role "tool"
     /// and a name or a tool_call_id), or ShareGPT's <c>{"conversations": [{"from": "human" | "gpt" | "system", "value"}]}</c>.
     /// Optional "enable_thinking" / "think" sets <see cref="Think"/>.
@@ -77,13 +77,16 @@ public sealed record ChatTranscript(IReadOnlyList<ChatMessage> Messages, IReadOn
     private static ChatMessage Message(JsonObject m, Dictionary<string, string> callNames)
     {
         string role = (string?)m["role"] ?? throw new InvalidDataException("A message has no role.");
-        string content = m["content"] switch
+        IReadOnlyList<ChatPart> content;
+        try
         {
-            null => "",
-            JsonValue v => (string?)v ?? "",
-            JsonArray parts => string.Concat(parts.Select(p => p is JsonValue pv ? (string?)pv : (string?)p?["text"] ?? "")),
-            _ => throw new InvalidDataException($"Unsupported content in a {role} message."),
-        };
+            content = ChatParts.ContentFromJson(m["content"]);
+        }
+        catch (Exception ex) when (ex is FormatException or NotSupportedException)
+        {
+            throw new InvalidDataException($"Unsupported content in a {role} message: {ex.Message}", ex);
+        }
+
         string? thinking = (string?)m["reasoning_content"] ?? (string?)m["thinking"] ?? (string?)m["reasoning"];
         List<ToolCall>? calls = null;
         if (m["tool_calls"] is JsonArray toolCalls && toolCalls.Count > 0)
