@@ -297,7 +297,8 @@ calls the public API below), no Abstraction change.
   (phase 6: truncate before a block). Not recordable as a compute graph (ranges uploaded from the host; refused while
   capturing). Packed sequences with images are refused. Batches of equal length and rows of different lengths
   (`SetRowStarts`, float32 cache) both work.
-- **Measured** (`IDRAK_FILTER="image prefill"`, CPU and Vulkan lavapipe): phase 0's `image_features.npy` [1, 4, 24] with
+- **Measured** (`IDRAK_FILTER="image prefill"`, CPU, Vulkan lavapipe and CUDA; on an RTX 5070 Ti, compute 12.0, CUDA gives
+  3.34e-6 one pass and cached, 3.81e-6 over the 20 greedy steps and the same tokens, both tests passing): phase 0's `image_features.npy` [1, 4, 24] with
   the reference ids [1, 38] give transformers' logits [1, 38, 366] within 3.58e-6 on the CPU and 5.62e-6 on Vulkan (one
   pass and cached prefill alike), the 20 greedy tokens exactly (274 361 122 122 122 122 122 122 162 128 128 116 142 131
   340 344 360 360 360 344) with their step logits within 3.81e-6 (CPU) and 3.34e-6 (Vulkan), the same in all three
