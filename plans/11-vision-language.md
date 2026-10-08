@@ -1,6 +1,6 @@
 # Plan 11: images into language models (Gemma 3 first)
 
-**Status:** planned 2026-10-07, revised the same day against the code; phase 0 (the reference) done 2026-10-08, phase 4 (loading, text side) done 2026-10-08 on CPU and Vulkan, phase 1 (contracts) done 2026-10-07 on the CPU; plan 10's wave 4 is done. Asked for to run `bakrianoo/arabic-legal-documents-ocr-1.0`, a fine-tune of Gemma-3-4B-IT that reads scanned
+**Status:** planned 2026-10-07, revised the same day against the code; phase 0 (the reference) done 2026-10-08, phase 4 (loading, text side) and phase 5 (image tokens in the decoder) done 2026-10-08 on CPU and Vulkan, phase 1 (contracts) done 2026-10-07 on the CPU; plan 10's wave 4 is done. Asked for to run `bakrianoo/arabic-legal-documents-ocr-1.0`, a fine-tune of Gemma-3-4B-IT that reads scanned
 Arabic legal documents (low quality scans included) and returns their contents as structured data. Its card asks for
 images resized and turned to grayscale first, and shows it running through transformers and vLLM.
 
@@ -19,7 +19,7 @@ OpenAI-style `/v1` API (phase 8). MCP and other model families come after that (
 | The SigLIP vision encoder: 896 x 896 RGB → 64 x 64 = 4,096 patches of 14 x 14, learned position embeddings, 27 bidirectional layers of width 1,152 (LayerNorm eps 1e-6, attention with biases, 16 heads, a GELU-tanh MLP of 4,304), a final LayerNorm | missing |
 | The multimodal projector: 4 x 4 average pooling to 16 x 16 = 256 tokens, Gemma's RMSNorm (1 + w), then x · W with W stored as [1,152, 2,560] (the transpose of a `Linear` weight) | missing |
 | Loading `Gemma3ForConditionalGeneration`: `text_config` and `vision_config` nested in `config.json` (only the CLI's `BaseModelInfo` reads `text_config` today); the image token ids (`boi_token_index`, `image_token_index`, `eoi_token_index`, `mm_tokens_per_image`) read from the config, not fixed | missing |
-| Image tokens in the prompt: each image becomes `<start_of_image>`, 256 soft tokens whose embeddings are the projected image features (not scaled by √hidden like text embeddings), `<end_of_image>`; the soft tokens of one image attend to each other in both directions, the rest of the prompt stays causal | missing |
+| Image tokens in the prompt: each image becomes `<start_of_image>`, 256 soft tokens whose embeddings are the projected image features (not scaled by √hidden like text embeddings), `<end_of_image>`; the soft tokens of one image attend to each other in both directions, the rest of the prompt stays causal | phase 5: `ImagePrefill` (as built below) |
 | Preprocessing as `preprocessor_config.json` says (resize to 896 x 896, bilinear, no crop; scale by 1/255; normalize with mean 0.5 and std 0.5; RGB), plus grayscale for this fine-tune | missing (codecs only) |
 | Chat messages with images: content as parts (`ChatPart`, `ChatImage`, phase 1); Gemma 3's Jinja chat template walking content parts (`{'type': 'image'}`) | contracts done (phase 1); templates and generation missing (phase 6) |
 | JPEG decoding (scans are often JPEG) | missing |
@@ -71,7 +71,7 @@ namespace until a second library package uses it.
 | 3a | **Span-masked attention.** One operation for every mask the library needs: per query row, the range of keys it sees ([first, last], read from a small device buffer or computed from a rule). Bidirectional (the encoder: every row sees all), causal, sliding window, packed segments and image blocks are rules of it. CPU kernel, Vulkan and CUDA kernels tiled like `AttentionTiled`, HIP through the host fallback; a reference in the conformance kit; the existing causal paths unchanged (they keep their kernels; this one is used where a mask is not causal) | the kit's cases pass on CPU and Vulkan; a 4,096-token bidirectional pass never builds the full score matrix |
 | 3b | **The SigLIP encoder and the projector** as core layers, built from a `vision_config`, on 3a's attention | the tiny model's vision features and projected tokens match the reference (CPU and Vulkan) |
 | 4 | **Loading the whole model.** `Gemma3ForConditionalGeneration` in the pretrained families: nested configs, both tensor layouts, tied embeddings, the image token ids; the text part reuses Gemma 3's decoder spec (its `text_config` read as a `Gemma3ForCausalLM` config) | the tiny model loads in each of the three layouts; a text-only prompt gives the same logits as transformers; **done 2026-10-08** (as built below) |
-| 5 | **Image tokens in the decoder.** At prefill, the soft tokens' embeddings are replaced by the image features; each image's soft tokens see each other (3a's image-block rule, on top of the sliding window of the local layers); decoding afterwards uses the KV cache as today (the image costs nothing more per generated token). Several images in one prompt | the tiny model's logits with an image and its 20 greedy tokens match the reference (CPU and Vulkan) |
+| 5 | **Image tokens in the decoder.** At prefill, the soft tokens' embeddings are replaced by the image features; each image's soft tokens see each other (3a's image-block rule, on top of the sliding window of the local layers); decoding afterwards uses the KV cache as today (the image costs nothing more per generated token). Several images in one prompt | the tiny model's logits with an image and its 20 greedy tokens match the reference (CPU and Vulkan); **done 2026-10-08** (as built below) |
 | 6 | **Chat with images in Nlp.** The chat template's image parts expand to the image tokens (the Jinja engine walks content parts); generation takes images; an image is encoded once per conversation (kept with the conversation by content hash) | a two-turn chat about one image encodes it once and matches the reference's first turn |
 | 7 | **The command line.** `idrak chat <model> --image FILE` (repeatable; also `/image FILE` inside a chat, like `/file`); the one-shot `idrak run <model> --image FILE "prompt"` (with `--schema` for the structured answer this model gives, `-j` for JSON); `--grayscale` (or the setting stored with a pulled model) | CLI tests pass with the tiny model; on the author's RTX 5070 Ti the real model reads a sample scan and its greedy output matches transformers' for the first 100 tokens |
 | 8 | **Images in chat, after the command line is proven** (phase 7 done on the real model). The engine hosts the model as a chat model that accepts images (`IChatModel`, saying which inputs it takes; the image is encoded once per conversation, as in phase 6); `MapChatApi` takes images in its messages; `MapCompletionsApi` (`/v1/chat/completions`) accepts OpenAI's `image_url` content parts (data URLs and, when allowed, http URLs); `idrak serve` serves it. The same preprocessing (and grayscale setting) as the command line | an OpenAI client sends a scan as an `image_url` part and gets the same answer as `idrak run --image`; streamed and not; the aspnetcore tests cover a tiny model with an image |
@@ -263,6 +263,54 @@ The text side is done; images in the decoder stay phase 5 (and the encoder phase
   loads with no notes, the same spec, the same vision data and projector values, and gives transformers' text-prompt
   logits within 2e-5 (largest difference 5.4e-6 on the CPU, 4.9e-6 on Vulkan lavapipe, the same in every folder); the
   original 4B's sparse config reads with transformers' defaults; a wrong vision shape is refused.
+
+## Phase 5, as built (2026-10-08): image tokens in the decoder
+
+All in core (`Idrak.Layers`, `src/Idrak/Layers/ImagePrefill.cs`); no new contract (core is the only user; phase 6's Nlp
+calls the public API below), no Abstraction change.
+
+- **API.** `PromptImage(int Position, Tensor Features) { Sequence }`: an image's features ([tokens, dim] or [1, tokens,
+  dim], on the decoder's device, read and never disposed) and the column of its first image token in the ids given
+  (`Sequence`: the batch row, 0 by default). `ImagePrefill.ForwardCached(this Sequential decoder, ids, images, context,
+  layers?)` (the cached prefill), `ImagePrefill.Forward(this Sequential decoder, ids, images)` (one pass without a cache;
+  gradients reach the features), `ImagePrefill.Locate(ids, imageToken, features, sequence)` (each run of
+  `PretrainedVision.ImageTokens.ImageToken` paired in order with the features; counts and lengths checked). An empty
+  image list is the plain `ForwardCached` / `Forward`.
+- **Substitution.** Before the decoder's first `DecoderBlock` (after the embedding and its √width scale), the embeddings
+  [n, t, dim] and every image's features are joined (`Concat`) and one `EmbeddingLookup` picks each row: an image token's
+  row reads its feature row, every other row its own embedding. So the features are not scaled (as transformers'
+  `masked_scatter` after `Gemma3TextScaledWordEmbedding`), and autograd flows to both. `Sequential` got an internal
+  hook (`Run` / `ForwardCached` with `before(i, x)`) for it; its public behaviour is unchanged.
+- **Masks.** While the step runs, an internal thread-static `ImageBlocks` (like `PackedSequences.Current`) holds each
+  sequence's blocks. `CausalSelfAttention` checks it first (one thread-static read; a prompt without images takes
+  today's kernels untouched): in `ForwardCore` it projects as usual and attends with `Tensor.AttentionSpans`; in
+  `HeadsCached` it projects and **writes the KV cache exactly as the plain prefill does** (fused write, layout `Write`, or
+  `WriteKeyValues` for rows of different lengths), then attends with `AttentionSpans` over the cache as the layout
+  expands it (`KeyValueLayout.Expand`: float32 read in place, bfloat16 and int8 expanded to float32 for the step, every
+  slot; the ranges stop at each row's last key). The ranges are `KeySpans.ImageBlocks` over the cached length plus the
+  step (blocks shifted by the cached length), the layer's window on sliding layers, each row's start raised to
+  `RowStarts[b]`; one table per sequence (query heads stacked as [n·kv·group, t, d], kv heads [n·kv, ...], so
+  `headsPerTable` = kv·group). The soft-cap goes through the variant. After the prefill nothing changes: decoding is the
+  usual one-token step (causal, windowed), as transformers drops `token_type_ids` after the first step.
+- **Limits.** Each image block must lie inside one prefill step (a refusal says so): a prefill continuing a cached prefix
+  (shared-prefix reuse, a later chat turn) works when the image is in the new part; the caller must not split a block
+  (phase 6: truncate before a block). Not recordable as a compute graph (ranges uploaded from the host; refused while
+  capturing). Packed sequences with images are refused. Batches of equal length and rows of different lengths
+  (`SetRowStarts`, float32 cache) both work.
+- **Measured** (`IDRAK_FILTER="image prefill"`, CPU and Vulkan lavapipe): phase 0's `image_features.npy` [1, 4, 24] with
+  the reference ids [1, 38] give transformers' logits [1, 38, 366] within 3.58e-6 on the CPU and 5.62e-6 on Vulkan (one
+  pass and cached prefill alike), the 20 greedy tokens exactly (274 361 122 122 122 122 122 122 162 128 128 116 142 131
+  340 344 360 360 360 344) with their step logits within 3.81e-6 (CPU) and 3.34e-6 (Vulkan), the same in all three
+  layouts; one pass without a cache over prompt and answer gives the step logits too. With each image token as a block
+  of its own (no image-block mask) the logits equal the reference before the first image token and change from it on,
+  by 3.596 at most, transformers' own figure without `token_type_ids`. Consistency (no reference): a two-image prompt
+  (47 tokens) cached equals uncached; split into a cached prefix and a continued prefill holding the second image it
+  equals the one-step prefill; rows before the second image equal the one-image prompt's and do not read it; a batch of
+  two prompts with the images swapped equals the single runs (cached and not); rows of different lengths (the one-image
+  prompt left-padded by 9 beside the two-image one) equal the single runs; a one-token "image" holding a text token's own
+  embedding (the image path with a plainly causal mask) equals the plain prefill within 5e-6 with float32, bfloat16 and
+  int8 caches. With an int8 cache the image prompt's logits are 0.255 from float32's (the tiny model's heads of 8 values
+  round coarsely; a text prompt: 0.065), bfloat16 0.036.
 
 ## Performance targets (author's RTX 5070 Ti, the real 4B model)
 
