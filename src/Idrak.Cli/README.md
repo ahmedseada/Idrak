@@ -156,6 +156,7 @@ Chat, one-off answers, batches and the tools a model may call. Generation uses a
 idrak chat Qwen/Qwen3-0.6B -s "Answer briefly." --history talk.json   # /help lists the slash commands
 cat notes.txt | idrak run qwen "Summarize in three bullets"
 idrak run qwen "Extract the name and age: Sara is 31." --schema person.json --json
+idrak run ocr --image scan.jpg --grayscale "Extract the text." -j -o page.json   # -o: the answer as a UTF-8 file
 idrak batch qwen -i prompts.jsonl -o answers.jsonl                   # resumable after an interruption
 idrak compare qwen qwen --weights-b int4 "Explain recursion" --seed 1
 idrak tokenize qwen --chat "Hello" --count
@@ -473,6 +474,7 @@ Project templates, the library's tests, ONNX, the generated kernels and telemetr
 | `idrak onnx import` | Imports an ONNX model into Idrak layers and saves a model package (.ikm) |
 | `idrak onnx export` | Exports a model package (.ikm) or a network JSON to ONNX |
 | `idrak onnx check` | Checks an ONNX model: Idrak's import against a round trip and against ONNX Runtime |
+| `idrak vlm check` | Compares a vision-language model with a transformers reference folder (`tools/vlm/compare_real.py`): pixels, encoder, image features, logits per position (near-tie or real difference), greedy tokens |
 | `idrak kernels` | Which kernel each operation runs on a device: registered, its own, composed, host fallback or none |
 | `idrak kernels dump` | Writes the generated GPU kernels (PTX, SPIR-V, HIP source) for debugging |
 | `idrak trace` | Runs an idrak command with telemetry printed live or written to JSON Lines |
@@ -483,6 +485,7 @@ Project templates, the library's tests, ONNX, the generated kernels and telemetr
 idrak new plugin MyFormat
 idrak test --filter "cli" -d cpu
 idrak onnx check model.onnx -d vulkan:0
+idrak vlm check ./gemma-ocr --reference ref -d cuda:0 -w bf16        # ref: python tools/vlm/compare_real.py ... --out ref
 idrak trace -o train.jsonl --levels training,batches -- train network.json --data houses.csv
 idrak demo shapes -d vulkan:0
 ```
@@ -528,6 +531,22 @@ idrak b qwen --format md >> results.md
 Exit codes: 0 success, 1 the operation failed (a failed check, a model that is not cached, a server that does not
 answer), 2 a usage error (an unknown option, a missing argument, a question with no terminal to ask on). Errors say
 what to do next; `IDRAK_TRACE=1` adds the stack.
+
+## Windows: non-ASCII output in PowerShell
+
+On Windows the tool writes UTF-8 to the console for every run (it sets the console's output code page for the run and
+restores it after), so Arabic, Chinese or emoji show on the screen. A program that **captures** the output decodes it
+itself: PowerShell reads a native command's output (`$a = idrak ...`, `idrak ... | Out-File`, `> file`) with
+`[Console]::OutputEncoding`, which is the legacy code page (437, 850, 1252, 1256) unless changed, and turns UTF-8 text
+into mojibake. Either set UTF-8 in PowerShell first (once per session, or in `$PROFILE`):
+
+```powershell
+[Console]::OutputEncoding = [Text.Encoding]::UTF8
+$OutputEncoding = [Text.Encoding]::UTF8          # also what PowerShell sends to a native command's input
+```
+
+or let the tool write the file: `idrak run ... -o answer.txt` (the answer, or with `-j` the JSON document) and `-O FILE`
+(any command's main output) write UTF-8 without a BOM whatever the console's code page.
 
 ## Environment
 

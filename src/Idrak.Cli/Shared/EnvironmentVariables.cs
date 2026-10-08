@@ -31,7 +31,7 @@ internal static class EnvironmentVariables
         "doctor", "devices", "version", "report", "init", "chat", "run", "batch", "compare", "complete", "embed", "agent", "serve", "ui",
         "memory", "quantize", "merge", "convert", "bench", "eval", "perplexity", "profile", "check", "tuning show", "tune", "train", "resume", "predict",
         "distill", "suggest", "explain", "rag index", "rag ask", "rag search", "rag eval", "test", "trace", "demo", "onnx import", "onnx export",
-        "onnx check",
+        "onnx check", "vlm check",
     ];
 
     // Commands that read models from the hub or the local stores (a model argument, or an index's embedding model).
@@ -39,7 +39,7 @@ internal static class EnvironmentVariables
     [
         "pull", "list", "rm", "show", "search", "verify", "convert", "diff", "inspect", "chat", "run", "batch", "compare", "complete", "embed",
         "tokenize", "template", "agent", "serve", "ui", "memory", "quantize", "merge", "bench", "eval", "perplexity", "profile", "check", "tune",
-        "distill", "data stats", "rag index", "rag ask", "rag search", "rag eval", "suggest",
+        "distill", "data stats", "rag index", "rag ask", "rag search", "rag eval", "suggest", "vlm check",
     ];
 
     // Commands that read datasets from remote sources (the others read local files only).
