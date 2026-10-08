@@ -31,8 +31,12 @@ internal sealed class ChatEngineModel(GenerativeModelBuilder settings, Func<Devi
 
     public override ModelDescription Describe(ChatGenerator copy) => TextEngineModel.Describe(Name, Kind, copy.Generator);
 
+    /// <summary>The kinds of message parts it takes: those of its <see cref="ChatGenerator"/> copies (text only).</summary>
+    public IReadOnlySet<string> PartKinds => ChatParts.TextOnly;
+
     public async IAsyncEnumerable<ChatChunk> StreamAsync(ChatRequest request, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        ChatParts.ThrowIfUnsupported(this, request, Name);   // before a copy is taken or loaded
         using var lease = await Host.AcquireAsync(cancellationToken).ConfigureAwait(false);
         await foreach (var chunk in lease.Guard(lease.Copy.StreamAsync(request, lease.Token)).ConfigureAwait(false))
         {

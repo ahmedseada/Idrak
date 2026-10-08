@@ -1,12 +1,15 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Diagnostics;
 using System.Text.Json.Nodes;
 using Idrak;
 using Idrak.Abstraction.Devices;
 using Idrak.Abstraction.Operations;
 using Idrak.Abstraction.Testing;
 using Idrak.Generation;
+using Idrak.Gpu.Cuda;
+using Idrak.Gpu.Hip;
 using Idrak.Layers;
 using Idrak.Layers.Abstractions;
 
@@ -15,8 +18,8 @@ namespace Idrak.PluginTests;
 /// <summary>
 /// The plug-ins' own device kernels (<see cref="PluginKernels"/>): the packed format, the cache layout, an
 /// <see cref="Autograd.Function"/> and a graph operation each run their plug-in operation, through its default kernel or
-/// through the kernel <see cref="PluginKernels.Install"/> registers for the device's kind (the CPU; Vulkan for the packed
-/// format and the cache layout), seen in <see cref="Kernels.Chain"/> and counted by <see cref="Kernels.Trace"/>. The test
+/// through the kernel <see cref="PluginKernels.Install"/> registers for the device's kind (the CPU; Vulkan, CUDA and HIP
+/// for the packed format and the cache layout), seen in <see cref="Kernels.Chain"/> and counted by <see cref="Kernels.Trace"/>. The test
 /// runner in tests/Idrak.Tests runs <see cref="All"/> on every device; a failed check throws.
 /// </summary>
 public static class KernelPluginTests
@@ -24,10 +27,12 @@ public static class KernelPluginTests
     /// <summary>The tests, by name.</summary>
     public static IReadOnlyList<(string Name, Action<Device> Run)> All { get; } =
     [
-        ("outside plug-in kernels: the packed format unpacks through its plug-in operation, by default and through the kernel registered for the device (CPU, Vulkan SPIR-V), to the same weights and products", PackedFormatKernel),
-        ("outside plug-in kernels: the key/value cache layout expands its rows through its plug-in operation, by default and through the kernel registered for the device (CPU, Vulkan SPIR-V), and generates the float32 cache's text", CacheLayoutKernel),
+        ("outside plug-in kernels: the packed format unpacks through its plug-in operation, by default and through the kernel registered for the device (CPU, Vulkan SPIR-V, CUDA PTX, HIP C++), to the same weights and products", PackedFormatKernel),
+        ("outside plug-in kernels: the key/value cache layout expands its rows through its plug-in operation, by default and through the kernel registered for the device (CPU, Vulkan SPIR-V, CUDA PTX, HIP C++), and generates the float32 cache's text", CacheLayoutKernel),
         ("outside plug-in kernels: an Autograd.Function and a graph operation run their plug-in operations, by default and through the CPU kernel, with their gradients", FunctionAndGraphOpKernels),
         ("outside plug-in kernels: the testing kit checks each plug-in kernel on the device against its default kernel on the CPU (Conformance.Check)", KitChecksKernels),
+        ("outside plug-in kernels: CUDA and HIP kernels read their parameters from the PTX and the HIP C++ source and refuse other devices and mismatched arguments", GpuKernelShapes),
+        ("outside plug-in kernels: the plug-in's PTX assembles with ptxas for sm_50, sm_75 and sm_120 (skipped without ptxas: IDRAK_PTXAS, PATH or CUDA_PATH)", PtxAssembles),
     ];
 
     private static void KitChecksKernels(Device device)
@@ -93,7 +98,7 @@ public static class KernelPluginTests
             Check(report.Passed && report.Cases == 8, report.ToString());
         }
 
-        bool registers = device.Backend.Kind is "cpu" or "vulkan";
+        bool registers = RegistersFormatKernels(device.Backend);
         Check(reports[0].Entries[0].Detail.StartsWith(registers ? "the registered kernel" : "the host kernel", StringComparison.Ordinal), reports[0].Entries[0].Detail);
     }
 
@@ -109,7 +114,7 @@ public static class KernelPluginTests
 
         var backend = device.Backend;
         var unpack = PluginKernels.Unpack;
-        bool registers = backend.Kind is "cpu" or "vulkan";
+        bool registers = RegistersFormatKernels(backend);
         float[]? product = null;
         foreach (bool installed in new[] { false, true })
         {
@@ -166,7 +171,7 @@ public static class KernelPluginTests
         foreach (bool installed in new[] { false, true })
         {
             using var kernels = installed ? PluginKernels.Install() : null;
-            var source = installed && backend.Kind is "cpu" or "vulkan" ? KernelSource.Registered : KernelSource.Composed;
+            var source = installed && RegistersFormatKernels(backend) ? KernelSource.Registered : KernelSource.Composed;
             Check(Kernels.Chain(backend)[scale.Index].Source == source, $"installed {installed}: {Kernels.Chain(backend)[scale.Index].Source}, expected {source}");
             string actual;
             long calls;
@@ -222,6 +227,119 @@ public static class KernelPluginTests
             GraphOps.Unregister(PluginKernels.ScaledTanhName);
             graph.Dispose();
         }
+    }
+
+    // Whether Install registers the packed format's and the cache layout's kernels for this device: every kind but HIP,
+    // and HIP where hipRTC can compile them.
+    private static bool RegistersFormatKernels(Backend backend) =>
+        backend.Kind is "cpu" or "vulkan" or "cuda" || (backend.Kind == "hip" && HipKernel.UnavailableReason(backend) is null);
+
+    private static void GpuKernelShapes(Device device)
+    {
+        var cuda = PluginKernels.CudaKernels;
+        var hip = PluginKernels.HipKernels;
+        Check(cuda[0].Parameters == "ppi" && cuda[1].Parameters == "pppii", $"PTX parameters: {cuda[0].Parameters}, {cuda[1].Parameters}");
+        Check(hip[0].Parameters == "ppi" && hip[1].Parameters == "pppii", $"HIP parameters: {hip[0].Parameters}, {hip[1].Parameters}");
+        Check(new CudaKernel(".visible .entry k(.param .u64 a, .param .b32 b, .param .f32 c, .param .s32 d, .param .align 8 .b8 e[16]) { ret; }", "k").Parameters == "xwfi?",
+            "PTX parameter types");
+        Check(new HipKernel("""extern "C" __global__ void __launch_bounds__(256) k(float* __restrict__ a, unsigned int b, float c, long long d, double e) {}""", "k").Parameters == "pifl?",
+            "HIP parameter types");
+        Throws<ArgumentException>(() => new CudaKernel(PluginGpuSources.Ptx, "outside_missing"), "an entry the PTX does not declare");
+        Throws<ArgumentException>(() => new HipKernel(PluginGpuSources.Hip, "outside_missing"), "a function the source does not declare");
+
+        var backend = device.Backend;
+        var x = backend.Allocate(4, zeroed: true);
+        try
+        {
+            if (backend.Kind != "cuda")
+            {
+                Throws<ArgumentException>(() => cuda[0].Launch(backend, 1, 1, 1, 64, 1, 1, [x, x, 4]), "a CUDA kernel on another device");
+            }
+            else
+            {
+                Throws<ArgumentException>(() => cuda[0].Launch(backend, 1, 1, 1, 64, 1, 1, [x, x, 4f]), "a float for an integer parameter");
+                Throws<ArgumentException>(() => cuda[0].Launch(backend, 1, 1, 1, 64, 1, 1, [x, x]), "one argument short");
+            }
+
+            if (backend.Kind != "hip")
+            {
+                Throws<ArgumentException>(() => hip[0].Launch(backend, 1, 1, 1, 64, 1, 1, [x, x, 4]), "a HIP kernel on another device");
+                Check(HipKernel.UnavailableReason(backend) is { Length: > 0 }, "no HIP kernels on another device");
+            }
+            else
+            {
+                Throws<ArgumentException>(() => hip[0].Launch(backend, 1, 1, 1, 64, 1, 1, [x, 4, x]), "an integer for a pointer parameter");
+            }
+        }
+        finally
+        {
+            backend.Return(x);
+        }
+    }
+
+    private static void PtxAssembles(Device device)
+    {
+        if (FindPtxas() is not { } ptxas)
+        {
+            Console.WriteLine("    (ptxas not found: set IDRAK_PTXAS, put it on PATH or set CUDA_PATH; skipped)");
+            return;
+        }
+
+        string file = Path.Combine(Path.GetTempPath(), $"idrak-plugin-{Environment.ProcessId}.ptx");
+        File.WriteAllText(file, PluginGpuSources.Ptx);
+        try
+        {
+            foreach (string architecture in new[] { "sm_50", "sm_75", "sm_120" })
+            {
+                var start = new ProcessStartInfo(ptxas) { RedirectStandardError = true, RedirectStandardOutput = true };
+                foreach (string argument in new[] { $"-arch={architecture}", file, "-o", OperatingSystem.IsWindows() ? "NUL" : "/dev/null" })
+                {
+                    start.ArgumentList.Add(argument);
+                }
+
+                using var process = Process.Start(start)!;
+                var output = process.StandardOutput.ReadToEndAsync();
+                string errors = process.StandardError.ReadToEnd() + output.Result;
+                process.WaitForExit();
+                Check(process.ExitCode == 0, $"ptxas -arch={architecture}: exit {process.ExitCode}: {errors}");
+            }
+        }
+        finally
+        {
+            File.Delete(file);
+        }
+    }
+
+    // ptxas from IDRAK_PTXAS, else PATH, else CUDA_PATH/bin; null when none is there.
+    private static string? FindPtxas()
+    {
+        string name = OperatingSystem.IsWindows() ? "ptxas.exe" : "ptxas";
+        if (Environment.GetEnvironmentVariable("IDRAK_PTXAS") is { Length: > 0 } chosen)
+        {
+            return File.Exists(chosen) ? chosen : throw new InvalidOperationException($"IDRAK_PTXAS names {chosen}, which does not exist");
+        }
+
+        var folders = (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries).ToList();
+        if (Environment.GetEnvironmentVariable("CUDA_PATH") is { Length: > 0 } cudaPath)
+        {
+            folders.Add(Path.Combine(cudaPath, "bin"));
+        }
+
+        return folders.Select(f => Path.Combine(f, name)).FirstOrDefault(File.Exists);
+    }
+
+    private static void Throws<TException>(Action action, string what) where TException : Exception
+    {
+        try
+        {
+            action();
+        }
+        catch (TException)
+        {
+            return;
+        }
+
+        throw new InvalidOperationException($"{what}: no {typeof(TException).Name}");
     }
 
     private static void Check(bool condition, string message)

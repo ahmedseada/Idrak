@@ -238,6 +238,8 @@ public sealed class JinjaChatTemplate : ChatTemplate
     /// </summary>
     public string Render(IReadOnlyList<ChatMessage> messages, IReadOnlyList<ToolDefinition> tools, bool? think, bool addGenerationPrompt)
     {
+        ArgumentNullException.ThrowIfNull(messages);
+        ChatParts.ThrowIfUnsupported(messages, PartKinds, "The chat template " + nameof(JinjaChatTemplate));
         var variables = new Dictionary<string, object?>(Variables)
         {
             ["messages"] = ToValues(messages),

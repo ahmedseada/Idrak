@@ -9,8 +9,10 @@ namespace Idrak.Abstraction.Testing;
 public sealed record DeviceCheckOptions
 {
     /// <summary>
-    /// The tolerances by operation name where the default <see cref="Tolerance"/> is too tight: products of bfloat16, 8-bit
-    /// and 4-bit weights, attention over many keys, and the packed (bfloat16) outputs.
+    /// The tolerances by operation name where the default <see cref="Tolerance"/> does not fit: products of bfloat16, 8-bit,
+    /// FP8 and 4-bit weights, attention over many keys, the packed (bfloat16) outputs, and the operations devices run on
+    /// bfloat16 matrix units (<c>GemmStrided</c>, <c>AttentionStrided</c> and its gradients); 0 (bit for bit) for
+    /// <c>Float8QuantizeWeight</c>, whose bytes the contract fixes and a tolerance on the floats holding them would not check.
     /// </summary>
     public static IReadOnlyDictionary<string, float> DefaultTolerances { get; } = BuildDefaults();
 
@@ -54,9 +56,13 @@ public sealed record DeviceCheckOptions
         foreach (var operation in Ops.All)
         {
             string name = operation.Name;
-            if (name.Contains("BFloat16", StringComparison.Ordinal) || name.Contains("Packed", StringComparison.Ordinal)
+            if (name is "Float8QuantizeWeight")
+            {
+                tolerances[name] = 0f;
+            }
+            else if (name.Contains("BFloat16", StringComparison.Ordinal) || name.Contains("Packed", StringComparison.Ordinal)
                 || name.Contains("Int4", StringComparison.Ordinal) || name.Contains("Int8", StringComparison.Ordinal)
-                || name.Contains("Float8", StringComparison.Ordinal) || name is "NormRopeHeads" or "GemmStrided")
+                || name.Contains("Float8", StringComparison.Ordinal) || name is "NormRopeHeads" or "GemmStrided" or "AttentionStrided" or "AttentionStridedBackward")
             {
                 tolerances[name] = 2e-2f;
             }

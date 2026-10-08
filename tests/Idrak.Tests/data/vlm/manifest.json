@@ -1,0 +1,2442 @@
+{
+ "arrays": {
+  "reference/decoded-image-444.npy": {
+   "dtype": "uint8",
+   "shape": [
+    75,
+    100,
+    3
+   ]
+  },
+  "reference/decoded-image-gray.npy": {
+   "dtype": "uint8",
+   "shape": [
+    75,
+    100
+   ]
+  },
+  "reference/decoded-image.npy": {
+   "dtype": "uint8",
+   "shape": [
+    75,
+    100,
+    3
+   ]
+  },
+  "reference/image_features.npy": {
+   "dtype": "float32",
+   "shape": [
+    1,
+    4,
+    24
+   ]
+  },
+  "reference/pixel_values-jpg.npy": {
+   "dtype": "float32",
+   "shape": [
+    1,
+    3,
+    56,
+    56
+   ]
+  },
+  "reference/pixel_values-palette.npy": {
+   "dtype": "float32",
+   "shape": [
+    1,
+    3,
+    56,
+    56
+   ]
+  },
+  "reference/pixel_values-png-gray.npy": {
+   "dtype": "float32",
+   "shape": [
+    1,
+    3,
+    56,
+    56
+   ]
+  },
+  "reference/pixel_values-png.npy": {
+   "dtype": "float32",
+   "shape": [
+    1,
+    3,
+    56,
+    56
+   ]
+  },
+  "reference/pixel_values-rgba.npy": {
+   "dtype": "float32",
+   "shape": [
+    1,
+    3,
+    56,
+    56
+   ]
+  },
+  "reference/prompt-image-generate-logits.npy": {
+   "dtype": "float32",
+   "shape": [
+    1,
+    20,
+    366
+   ]
+  },
+  "reference/prompt-image-input_ids.npy": {
+   "dtype": "int64",
+   "shape": [
+    1,
+    38
+   ]
+  },
+  "reference/prompt-image-logits.npy": {
+   "dtype": "float32",
+   "shape": [
+    1,
+    38,
+    366
+   ]
+  },
+  "reference/prompt-text-input_ids.npy": {
+   "dtype": "int64",
+   "shape": [
+    1,
+    39
+   ]
+  },
+  "reference/prompt-text-logits.npy": {
+   "dtype": "float32",
+   "shape": [
+    1,
+    39,
+    366
+   ]
+  },
+  "reference/vision_embeddings.npy": {
+   "dtype": "float32",
+   "shape": [
+    1,
+    16,
+    8
+   ]
+  },
+  "reference/vision_last_hidden_state.npy": {
+   "dtype": "float32",
+   "shape": [
+    1,
+    16,
+    8
+   ]
+  }
+ },
+ "facts": {
+  "generate": {
+   "matches_one_pass_without_cache": true,
+   "max_abs_diff_step_logits_vs_one_pass": 2.1830201148986816e-06,
+   "new_tokens": [
+    274,
+    361,
+    122,
+    122,
+    122,
+    122,
+    122,
+    122,
+    162,
+    128,
+    128,
+    116,
+    142,
+    131,
+    340,
+    344,
+    360,
+    360,
+    360,
+    344
+   ],
+   "text": "Icorne������������ page linecorcorcor line"
+  },
+  "image_prompt": {
+   "boi_position": 13,
+   "eoi_position": 18,
+   "expanded_text": "<bos><start_of_turn>user\nRead the scan.\n\n\n\n<start_of_image><image_soft_token><image_soft_token><image_soft_token><image_soft_token><end_of_image>\n\nWhat is in this image?<end_of_turn>\n<start_of_turn>model\n",
+   "input_ids": [
+    2,
+    5,
+    298,
+    296,
+    284,
+    295,
+    266,
+    350,
+    308,
+    348,
+    269,
+    364,
+    364,
+    7,
+    365,
+    365,
+    365,
+    365,
+    8,
+    364,
+    277,
+    334,
+    343,
+    325,
+    307,
+    288,
+    296,
+    342,
+    272,
+    6,
+    266,
+    5,
+    291,
+    293,
+    283,
+    284,
+    290,
+    266
+   ],
+   "last_position_argmax": 274,
+   "mask_rows_first_last_key": {
+    "full_attention": [
+     [
+      0,
+      0
+     ],
+     [
+      0,
+      1
+     ],
+     [
+      0,
+      2
+     ],
+     [
+      0,
+      3
+     ],
+     [
+      0,
+      4
+     ],
+     [
+      0,
+      5
+     ],
+     [
+      0,
+      6
+     ],
+     [
+      0,
+      7
+     ],
+     [
+      0,
+      8
+     ],
+     [
+      0,
+      9
+     ],
+     [
+      0,
+      10
+     ],
+     [
+      0,
+      11
+     ],
+     [
+      0,
+      12
+     ],
+     [
+      0,
+      13
+     ],
+     [
+      0,
+      17
+     ],
+     [
+      0,
+      17
+     ],
+     [
+      0,
+      17
+     ],
+     [
+      0,
+      17
+     ],
+     [
+      0,
+      18
+     ],
+     [
+      0,
+      19
+     ],
+     [
+      0,
+      20
+     ],
+     [
+      0,
+      21
+     ],
+     [
+      0,
+      22
+     ],
+     [
+      0,
+      23
+     ],
+     [
+      0,
+      24
+     ],
+     [
+      0,
+      25
+     ],
+     [
+      0,
+      26
+     ],
+     [
+      0,
+      27
+     ],
+     [
+      0,
+      28
+     ],
+     [
+      0,
+      29
+     ],
+     [
+      0,
+      30
+     ],
+     [
+      0,
+      31
+     ],
+     [
+      0,
+      32
+     ],
+     [
+      0,
+      33
+     ],
+     [
+      0,
+      34
+     ],
+     [
+      0,
+      35
+     ],
+     [
+      0,
+      36
+     ],
+     [
+      0,
+      37
+     ]
+    ],
+    "sliding_attention": [
+     [
+      0,
+      0
+     ],
+     [
+      0,
+      1
+     ],
+     [
+      0,
+      2
+     ],
+     [
+      0,
+      3
+     ],
+     [
+      0,
+      4
+     ],
+     [
+      0,
+      5
+     ],
+     [
+      0,
+      6
+     ],
+     [
+      0,
+      7
+     ],
+     [
+      1,
+      8
+     ],
+     [
+      2,
+      9
+     ],
+     [
+      3,
+      10
+     ],
+     [
+      4,
+      11
+     ],
+     [
+      5,
+      12
+     ],
+     [
+      6,
+      13
+     ],
+     [
+      7,
+      17
+     ],
+     [
+      8,
+      17
+     ],
+     [
+      9,
+      17
+     ],
+     [
+      10,
+      17
+     ],
+     [
+      11,
+      18
+     ],
+     [
+      12,
+      19
+     ],
+     [
+      13,
+      20
+     ],
+     [
+      14,
+      21
+     ],
+     [
+      15,
+      22
+     ],
+     [
+      16,
+      23
+     ],
+     [
+      17,
+      24
+     ],
+     [
+      18,
+      25
+     ],
+     [
+      19,
+      26
+     ],
+     [
+      20,
+      27
+     ],
+     [
+      21,
+      28
+     ],
+     [
+      22,
+      29
+     ],
+     [
+      23,
+      30
+     ],
+     [
+      24,
+      31
+     ],
+     [
+      25,
+      32
+     ],
+     [
+      26,
+      33
+     ],
+     [
+      27,
+      34
+     ],
+     [
+      28,
+      35
+     ],
+     [
+      29,
+      36
+     ],
+     [
+      30,
+      37
+     ]
+    ]
+   },
+   "max_abs_logit_change_without_token_type_ids": 3.595696449279785,
+   "max_abs_logit_change_without_token_type_ids_before_first_soft_token": 0.0,
+   "messages": [
+    {
+     "content": [
+      {
+       "text": "Read the scan.",
+       "type": "text"
+      }
+     ],
+     "role": "system"
+    },
+    {
+     "content": [
+      {
+       "type": "image"
+      },
+      {
+       "text": "What is in this image?",
+       "type": "text"
+      }
+     ],
+     "role": "user"
+    }
+   ],
+   "rendered_by_chat_template": "<bos><start_of_turn>user\nRead the scan.\n\n<start_of_image>What is in this image?<end_of_turn>\n<start_of_turn>model\n",
+   "soft_token_positions": [
+    14,
+    15,
+    16,
+    17
+   ],
+   "token_type_ids": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    1,
+    1,
+    1,
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "tokens": [
+    "<bos>",
+    "<start_of_turn>",
+    "u",
+    "s",
+    "e",
+    "r",
+    "\n",
+    "Read",
+    "▁the",
+    "▁scan",
+    ".",
+    "\n\n",
+    "\n\n",
+    "<start_of_image>",
+    "<image_soft_token>",
+    "<image_soft_token>",
+    "<image_soft_token>",
+    "<image_soft_token>",
+    "<end_of_image>",
+    "\n\n",
+    "W",
+    "hat",
+    "▁is",
+    "▁in",
+    "▁th",
+    "i",
+    "s",
+    "▁image",
+    "?",
+    "<end_of_turn>",
+    "\n",
+    "<start_of_turn>",
+    "m",
+    "o",
+    "d",
+    "e",
+    "l",
+    "\n"
+   ]
+  },
+  "jpeg_decodes": {
+   "image-444.jpg": {
+    "mode": "RGB",
+    "pil_decoded": "decoded-image-444.npy",
+    "shape": [
+     75,
+     100,
+     3
+    ]
+   },
+   "image-gray.jpg": {
+    "mode": "L",
+    "pil_decoded": "decoded-image-gray.npy",
+    "shape": [
+     75,
+     100
+    ]
+   },
+   "image-progressive.jpg": {
+    "mode": "RGB",
+    "pil_decoded": "decoded-image.npy",
+    "shape": [
+     75,
+     100,
+     3
+    ]
+   },
+   "image-restart.jpg": {
+    "mode": "RGB",
+    "pil_decoded": "decoded-image.npy",
+    "shape": [
+     75,
+     100,
+     3
+    ]
+   },
+   "image.jpg": {
+    "mode": "RGB",
+    "pil_decoded": "decoded-image.npy",
+    "shape": [
+     75,
+     100,
+     3
+    ]
+   }
+  },
+  "model_facts": {
+   "attention_scaling": 0.28867513459481287,
+   "embed_scale": 4.898979663848877,
+   "inv_freq_full_attention": [
+    0.125,
+    0.0039528473280370235,
+    0.0001250000059371814,
+    3.9528467823402025e-06
+   ],
+   "inv_freq_sliding_attention": [
+    1.0,
+    0.10000000149011612,
+    0.009999999776482582,
+    0.0010000000474974513
+   ],
+   "layer_types": [
+    "sliding_attention",
+    "full_attention"
+   ],
+   "lm_head_tied": true,
+   "projector": {
+    "kernel_size": 2,
+    "norm_eps": 1e-06,
+    "patches_per_image": 4,
+    "tokens_per_side": 2
+   },
+   "rope_parameters": {
+    "full_attention": {
+     "factor": 8.0,
+     "rope_theta": 1000000.0,
+     "rope_type": "linear"
+    },
+    "sliding_attention": {
+     "rope_theta": 10000.0,
+     "rope_type": "default"
+    }
+   },
+   "sliding_window": 8
+  },
+  "pixels_check": {
+   "PIL_L_is_(19595R+38470G+7471B+32768)>>16": true,
+   "gray_channels_equal": true,
+   "gray_is_PIL_convert_L_then_RGB": true,
+   "image_processor_class": "Gemma3ImageProcessorPil",
+   "palette_is_palette_lookup": true,
+   "png_equals_PIL_bilinear_uint8_then_rescale_then_normalize": true,
+   "rgba_drops_alpha_keeps_hidden_rgb": true,
+   "rgba_max_abs_diff_vs_compositing_on_white": 2.0
+  },
+  "text_prompt": {
+   "input_ids": [
+    2,
+    5,
+    298,
+    296,
+    284,
+    295,
+    266,
+    277,
+    337,
+    316,
+    313,
+    344,
+    304,
+    358,
+    308,
+    346,
+    293,
+    292,
+    324,
+    308,
+    311,
+    298,
+    292,
+    325,
+    308,
+    265,
+    292,
+    288,
+    333,
+    269,
+    6,
+    266,
+    5,
+    291,
+    293,
+    283,
+    284,
+    290,
+    266
+   ],
+   "last_position_argmax": 266,
+   "messages": [
+    {
+     "content": "Write one line about the moon and the sun in the night.",
+     "role": "user"
+    }
+   ],
+   "rendered_by_chat_template": "<bos><start_of_turn>user\nWrite one line about the moon and the sun in the night.<end_of_turn>\n<start_of_turn>model\n"
+  },
+  "tokenizer_sample": {
+   "ids": [
+    2,
+    277,
+    334,
+    343,
+    325,
+    307,
+    288,
+    296,
+    342,
+    272,
+    364,
+    305,
+    284,
+    346,
+    293,
+    292
+   ],
+   "text": "What is in this image?\n\nthe moon"
+  }
+ },
+ "files": {
+  "image-444.jpg": {
+   "bytes": 6136,
+   "sha256": "ab944d3ffe584635e876b713f5d6ef32c61c086483cad16637a14ce32eab12b6"
+  },
+  "image-gray.jpg": {
+   "bytes": 2380,
+   "sha256": "9e28d7e847da0282c4c5f1cd103da022e7c8d1963ca9da4c58e18514ef7b0793"
+  },
+  "image-palette.png": {
+   "bytes": 1323,
+   "sha256": "a137f5ddf5e085bc7588b84868d431e23e4aa5f89697068ac1bafadb223ae6e9"
+  },
+  "image-progressive.jpg": {
+   "bytes": 3351,
+   "sha256": "954f6db47dbb85a5890a0d6abf049606bf2fb878bbe28e1fd0f29e90b0573c93"
+  },
+  "image-restart.jpg": {
+   "bytes": 3586,
+   "sha256": "99aef98fc5e6d8e135bee294fa462f59775241b08552fbf82826c34bae255034"
+  },
+  "image-rgba.png": {
+   "bytes": 7213,
+   "sha256": "862be9c2fdbc0687aecc024d65463960c32884f5ab042ee510b97cada7836a61"
+  },
+  "image.jpg": {
+   "bytes": 3559,
+   "sha256": "df8d4da7c8f81ba963c70c29b83d551f1b2988f0b55f256075caf3a79763a32f"
+  },
+  "image.png": {
+   "bytes": 6830,
+   "sha256": "87652378c28c41903afedeb4edcae0f70a3adc26489d69c84d15ff5c15349391"
+  },
+  "reference/decoded-image-444.npy": {
+   "bytes": 22628,
+   "sha256": "27db6f68feb5e6e86b5e4dd8fa2ecf9dee47e21354baae2b7d27fa6034a8e470"
+  },
+  "reference/decoded-image-gray.npy": {
+   "bytes": 7628,
+   "sha256": "0d50522e5415a13eac0bb205d0bca100eda9e9e0e50a817d4ce9bbbf6d8f85df"
+  },
+  "reference/decoded-image.npy": {
+   "bytes": 22628,
+   "sha256": "346ebe7a463392fcacb7da82954acad9095c163ea33e9b7ec8127744ae95b232"
+  },
+  "reference/image_features.npy": {
+   "bytes": 512,
+   "sha256": "46ad6dcfb1d069bd6879f8bf7460ad670de94ba322ff04c636d5fe51113cd727"
+  },
+  "reference/pixel_values-jpg.npy": {
+   "bytes": 37760,
+   "sha256": "0b29062081bc070aef72351974a481badcbdc5f92d506ba4c7fe611c381a1676"
+  },
+  "reference/pixel_values-palette.npy": {
+   "bytes": 37760,
+   "sha256": "a94e52d5bc7b0d41c7b2a74359219c668d3bc941395b5d4894ba98d7a4b18f6c"
+  },
+  "reference/pixel_values-png-gray.npy": {
+   "bytes": 37760,
+   "sha256": "07eea89da285600229c5a82bb6240fb9747362a6539e97ea00146d2ebad980db"
+  },
+  "reference/pixel_values-png.npy": {
+   "bytes": 37760,
+   "sha256": "cf078fd5c85f84b2277a558de0c4c8a2bf49757a3020fbf96b874e0f48a08834"
+  },
+  "reference/pixel_values-rgba.npy": {
+   "bytes": 37760,
+   "sha256": "9a2f02810956e7d328b326004f88d63015203d5a95beb8b40e7a770e527dc535"
+  },
+  "reference/prompt-image-generate-logits.npy": {
+   "bytes": 29408,
+   "sha256": "f485b8ca9901e6ce2004ae764f52d7a320aa70c3c27eff53d78bbdfd369569dd"
+  },
+  "reference/prompt-image-input_ids.npy": {
+   "bytes": 432,
+   "sha256": "79b957a666ebed7c9f84734d7e2e044eab25675f564bd62ab5893d6b2ae7d74f"
+  },
+  "reference/prompt-image-logits.npy": {
+   "bytes": 55760,
+   "sha256": "ed187b2a100de3d1c4bed7b5231e7c2031fa2f50fafbd920205bd57ef50136b4"
+  },
+  "reference/prompt-text-input_ids.npy": {
+   "bytes": 440,
+   "sha256": "5648447b5d07a784b3ca96b271fd6637016c0d194f664d59fe46a8bdfa807427"
+  },
+  "reference/prompt-text-logits.npy": {
+   "bytes": 57224,
+   "sha256": "8053e2ee77280af62dac9fcb92aeaf1d0f99d195816f6803a0fae5ce1a2911c3"
+  },
+  "reference/vision_embeddings.npy": {
+   "bytes": 640,
+   "sha256": "e0201feb207fa1fb5f3cd282fa1d3a2d91b6173b5c8535bc400dd6b07954a7d4"
+  },
+  "reference/vision_last_hidden_state.npy": {
+   "bytes": 640,
+   "sha256": "af11b00fe0912d54be9c86631f0f7d516bb43ee436b704a01ffb595265992135"
+  },
+  "tiny-gemma3-pre452/config.json": {
+   "bytes": 1469,
+   "sha256": "160ee2f6a57d7299a31ca0891924044d534b385e54671f076c77dd89c3c5bbb9"
+  },
+  "tiny-gemma3-pre452/model.safetensors": {
+   "bytes": 115296,
+   "sha256": "95de40f87ffc1bd23a967e072c9c0a1c35cb4a0a8319343c122dec4137745062"
+  },
+  "tiny-gemma3-pre452/preprocessor_config.json": {
+   "bytes": 531,
+   "sha256": "7d0c040e5ff4d0ea3a5b918c7a2f9f3d61962a631de85d10abdc7e0b96872331"
+  },
+  "tiny-gemma3-pre452/processor_config.json": {
+   "bytes": 66,
+   "sha256": "a161395c7d77d71d67be05b9a21daea479ff6ffd4d53a300f33cda6e8bc4ca69"
+  },
+  "tiny-gemma3-pre452/special_tokens_map.json": {
+   "bytes": 199,
+   "sha256": "94595be62bfbfbf45ff23b760cc13d11fd07cb58ace620fa7af609c922245c77"
+  },
+  "tiny-gemma3-pre452/tokenizer.json": {
+   "bytes": 10916,
+   "sha256": "603a478e735ad923899872fd2f1d7d21a3c7f73ee7d29c7998e03fbf53e60b70"
+  },
+  "tiny-gemma3-pre452/tokenizer_config.json": {
+   "bytes": 3739,
+   "sha256": "ff90e903ac8d1c03547f679432f4196cefcb8d7acb01f9e63e82839ed8206988"
+  },
+  "tiny-gemma3-v5/config.json": {
+   "bytes": 1753,
+   "sha256": "e8b676f85d4b3ff4b12139024f4ee97bd5f392d2a3ca10ca96b78b3226250100"
+  },
+  "tiny-gemma3-v5/model.safetensors": {
+   "bytes": 114816,
+   "sha256": "7969f7d9375cc03b4a573547d8b3b1b89307dba7003ba01639702ad0f884b367"
+  },
+  "tiny-gemma3-v5/preprocessor_config.json": {
+   "bytes": 531,
+   "sha256": "7d0c040e5ff4d0ea3a5b918c7a2f9f3d61962a631de85d10abdc7e0b96872331"
+  },
+  "tiny-gemma3-v5/processor_config.json": {
+   "bytes": 66,
+   "sha256": "a161395c7d77d71d67be05b9a21daea479ff6ffd4d53a300f33cda6e8bc4ca69"
+  },
+  "tiny-gemma3-v5/special_tokens_map.json": {
+   "bytes": 199,
+   "sha256": "94595be62bfbfbf45ff23b760cc13d11fd07cb58ace620fa7af609c922245c77"
+  },
+  "tiny-gemma3-v5/tokenizer.json": {
+   "bytes": 10916,
+   "sha256": "603a478e735ad923899872fd2f1d7d21a3c7f73ee7d29c7998e03fbf53e60b70"
+  },
+  "tiny-gemma3-v5/tokenizer_config.json": {
+   "bytes": 3739,
+   "sha256": "ff90e903ac8d1c03547f679432f4196cefcb8d7acb01f9e63e82839ed8206988"
+  },
+  "tiny-gemma3/config.json": {
+   "bytes": 1472,
+   "sha256": "81a2e10a30b4404e6fe4ac94bf76ca990c9a322adbb8d1fc51969b7ce6208381"
+  },
+  "tiny-gemma3/model.safetensors": {
+   "bytes": 115528,
+   "sha256": "7d716335882e5feb5fc9960186ed512c18d7fea282258bcc448d64c247054f61"
+  },
+  "tiny-gemma3/preprocessor_config.json": {
+   "bytes": 531,
+   "sha256": "7d0c040e5ff4d0ea3a5b918c7a2f9f3d61962a631de85d10abdc7e0b96872331"
+  },
+  "tiny-gemma3/processor_config.json": {
+   "bytes": 66,
+   "sha256": "a161395c7d77d71d67be05b9a21daea479ff6ffd4d53a300f33cda6e8bc4ca69"
+  },
+  "tiny-gemma3/special_tokens_map.json": {
+   "bytes": 199,
+   "sha256": "94595be62bfbfbf45ff23b760cc13d11fd07cb58ace620fa7af609c922245c77"
+  },
+  "tiny-gemma3/tokenizer.json": {
+   "bytes": 10916,
+   "sha256": "603a478e735ad923899872fd2f1d7d21a3c7f73ee7d29c7998e03fbf53e60b70"
+  },
+  "tiny-gemma3/tokenizer_config.json": {
+   "bytes": 3739,
+   "sha256": "ff90e903ac8d1c03547f679432f4196cefcb8d7acb01f9e63e82839ed8206988"
+  }
+ },
+ "image_files": {
+  "image-444.jpg": "baseline JPEG, YCbCr 4:4:4, quality 90",
+  "image-gray.jpg": "baseline JPEG, one grayscale component, quality 85",
+  "image-palette.png": "PNG, palette (mode P), 16 colors by median cut, no dithering, no transparency",
+  "image-progressive.jpg": "progressive JPEG, YCbCr 4:2:0, quality 85",
+  "image-restart.jpg": "baseline JPEG, 4:2:0, quality 85, a restart marker every 5 MCUs",
+  "image-rgba.png": "PNG, RGBA 8-bit: alpha falls from 255 (left) to 0 (right); a fully clear box hides pure green",
+  "image.jpg": "baseline JPEG, YCbCr 4:2:0, quality 85",
+  "image.png": "PNG, RGB 8-bit, no metadata"
+ },
+ "layouts": {
+  "tiny-gemma3": {
+   "description": "transformers 4.52 to 4.57: model.language_model.*, model.vision_tower.vision_model.*, model.multi_modal_projector.*",
+   "has_lm_head": false,
+   "loads_in_transformers_5.19.0_same_logits": true,
+   "metadata": {
+    "format": "pt"
+   },
+   "tensors": {
+    "model.language_model.embed_tokens.weight": {
+     "dtype": "F32",
+     "shape": [
+      366,
+      24
+     ]
+    },
+    "model.language_model.layers.0.input_layernorm.weight": {
+     "dtype": "F32",
+     "shape": [
+      24
+     ]
+    },
+    "model.language_model.layers.0.mlp.down_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      24,
+      48
+     ]
+    },
+    "model.language_model.layers.0.mlp.gate_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      48,
+      24
+     ]
+    },
+    "model.language_model.layers.0.mlp.up_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      48,
+      24
+     ]
+    },
+    "model.language_model.layers.0.post_attention_layernorm.weight": {
+     "dtype": "F32",
+     "shape": [
+      24
+     ]
+    },
+    "model.language_model.layers.0.post_feedforward_layernorm.weight": {
+     "dtype": "F32",
+     "shape": [
+      24
+     ]
+    },
+    "model.language_model.layers.0.pre_feedforward_layernorm.weight": {
+     "dtype": "F32",
+     "shape": [
+      24
+     ]
+    },
+    "model.language_model.layers.0.self_attn.k_norm.weight": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "model.language_model.layers.0.self_attn.k_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      16,
+      24
+     ]
+    },
+    "model.language_model.layers.0.self_attn.o_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      24,
+      32
+     ]
+    },
+    "model.language_model.layers.0.self_attn.q_norm.weight": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "model.language_model.layers.0.self_attn.q_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      24
+     ]
+    },
+    "model.language_model.layers.0.self_attn.v_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      16,
+      24
+     ]
+    },
+    "model.language_model.layers.1.input_layernorm.weight": {
+     "dtype": "F32",
+     "shape": [
+      24
+     ]
+    },
+    "model.language_model.layers.1.mlp.down_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      24,
+      48
+     ]
+    },
+    "model.language_model.layers.1.mlp.gate_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      48,
+      24
+     ]
+    },
+    "model.language_model.layers.1.mlp.up_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      48,
+      24
+     ]
+    },
+    "model.language_model.layers.1.post_attention_layernorm.weight": {
+     "dtype": "F32",
+     "shape": [
+      24
+     ]
+    },
+    "model.language_model.layers.1.post_feedforward_layernorm.weight": {
+     "dtype": "F32",
+     "shape": [
+      24
+     ]
+    },
+    "model.language_model.layers.1.pre_feedforward_layernorm.weight": {
+     "dtype": "F32",
+     "shape": [
+      24
+     ]
+    },
+    "model.language_model.layers.1.self_attn.k_norm.weight": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "model.language_model.layers.1.self_attn.k_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      16,
+      24
+     ]
+    },
+    "model.language_model.layers.1.self_attn.o_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      24,
+      32
+     ]
+    },
+    "model.language_model.layers.1.self_attn.q_norm.weight": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "model.language_model.layers.1.self_attn.q_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      24
+     ]
+    },
+    "model.language_model.layers.1.self_attn.v_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      16,
+      24
+     ]
+    },
+    "model.language_model.norm.weight": {
+     "dtype": "F32",
+     "shape": [
+      24
+     ]
+    },
+    "model.multi_modal_projector.mm_input_projection_weight": {
+     "dtype": "F32",
+     "shape": [
+      8,
+      24
+     ]
+    },
+    "model.multi_modal_projector.mm_soft_emb_norm.weight": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "model.vision_tower.vision_model.embeddings.patch_embedding.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "model.vision_tower.vision_model.embeddings.patch_embedding.weight": {
+     "dtype": "F32",
+     "shape": [
+      8,
+      3,
+      14,
+      14
+     ]
+    },
+    "model.vision_tower.vision_model.embeddings.position_embedding.weight": {
+     "dtype": "F32",
+     "shape": [
+      16,
+      8
+     ]
+    },
+    "model.vision_tower.vision_model.encoder.layers.0.layer_norm1.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "model.vision_tower.vision_model.encoder.layers.0.layer_norm1.weight": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "model.vision_tower.vision_model.encoder.layers.0.layer_norm2.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "model.vision_tower.vision_model.encoder.layers.0.layer_norm2.weight": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "model.vision_tower.vision_model.encoder.layers.0.mlp.fc1.bias": {
+     "dtype": "F32",
+     "shape": [
+      16
+     ]
+    },
+    "model.vision_tower.vision_model.encoder.layers.0.mlp.fc1.weight": {
+     "dtype": "F32",
+     "shape": [
+      16,
+      8
+     ]
+    },
+    "model.vision_tower.vision_model.encoder.layers.0.mlp.fc2.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "model.vision_tower.vision_model.encoder.layers.0.mlp.fc2.weight": {
+     "dtype": "F32",
+     "shape": [
+      8,
+      16
+     ]
+    },
+    "model.vision_tower.vision_model.encoder.layers.0.self_attn.k_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "model.vision_tower.vision_model.encoder.layers.0.self_attn.k_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      8,
+      8
+     ]
+    },
+    "model.vision_tower.vision_model.encoder.layers.0.self_attn.out_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "model.vision_tower.vision_model.encoder.layers.0.self_attn.out_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      8,
+      8
+     ]
+    },
+    "model.vision_tower.vision_model.encoder.layers.0.self_attn.q_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "model.vision_tower.vision_model.encoder.layers.0.self_attn.q_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      8,
+      8
+     ]
+    },
+    "model.vision_tower.vision_model.encoder.layers.0.self_attn.v_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "model.vision_tower.vision_model.encoder.layers.0.self_attn.v_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      8,
+      8
+     ]
+    },
+    "model.vision_tower.vision_model.encoder.layers.1.layer_norm1.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "model.vision_tower.vision_model.encoder.layers.1.layer_norm1.weight": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "model.vision_tower.vision_model.encoder.layers.1.layer_norm2.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "model.vision_tower.vision_model.encoder.layers.1.layer_norm2.weight": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "model.vision_tower.vision_model.encoder.layers.1.mlp.fc1.bias": {
+     "dtype": "F32",
+     "shape": [
+      16
+     ]
+    },
+    "model.vision_tower.vision_model.encoder.layers.1.mlp.fc1.weight": {
+     "dtype": "F32",
+     "shape": [
+      16,
+      8
+     ]
+    },
+    "model.vision_tower.vision_model.encoder.layers.1.mlp.fc2.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "model.vision_tower.vision_model.encoder.layers.1.mlp.fc2.weight": {
+     "dtype": "F32",
+     "shape": [
+      8,
+      16
+     ]
+    },
+    "model.vision_tower.vision_model.encoder.layers.1.self_attn.k_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "model.vision_tower.vision_model.encoder.layers.1.self_attn.k_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      8,
+      8
+     ]
+    },
+    "model.vision_tower.vision_model.encoder.layers.1.self_attn.out_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "model.vision_tower.vision_model.encoder.layers.1.self_attn.out_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      8,
+      8
+     ]
+    },
+    "model.vision_tower.vision_model.encoder.layers.1.self_attn.q_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "model.vision_tower.vision_model.encoder.layers.1.self_attn.q_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      8,
+      8
+     ]
+    },
+    "model.vision_tower.vision_model.encoder.layers.1.self_attn.v_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "model.vision_tower.vision_model.encoder.layers.1.self_attn.v_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      8,
+      8
+     ]
+    },
+    "model.vision_tower.vision_model.post_layernorm.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "model.vision_tower.vision_model.post_layernorm.weight": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    }
+   },
+   "written_by": "renamed by make_tiny.py (no --legacy-python of that version given); config.json in the real gemma-3-4b-it's format"
+  },
+  "tiny-gemma3-pre452": {
+   "also_written_by": [
+    {
+     "check_greedy_tokens": [
+      274,
+      361,
+      122,
+      122,
+      122,
+      122,
+      122,
+      122,
+      162,
+      128,
+      128,
+      116,
+      142,
+      131,
+      340,
+      344,
+      360,
+      360,
+      360,
+      344
+     ],
+     "check_max_abs_diff_image_prompt_logits": 0.0,
+     "check_max_abs_diff_image_prompt_logits_before_image": 0.0,
+     "check_max_abs_diff_image_prompt_logits_last_position": 0.0,
+     "check_max_abs_diff_text_prompt_logits": 0.0,
+     "check_max_abs_diff_vision_last_hidden_state": 0.0,
+     "model_safetensors_same_bytes_as_first_writer": true,
+     "written_by": "transformers 4.52.4 save_pretrained (torch 2.14.1+cu130)"
+    },
+    {
+     "check_greedy_tokens": [
+      274,
+      361,
+      122,
+      122,
+      122,
+      122,
+      122,
+      122,
+      162,
+      128,
+      128,
+      116,
+      142,
+      131,
+      340,
+      344,
+      360,
+      360,
+      360,
+      344
+     ],
+     "check_max_abs_diff_image_prompt_logits": 0.0,
+     "check_max_abs_diff_image_prompt_logits_before_image": 0.0,
+     "check_max_abs_diff_image_prompt_logits_last_position": 0.0,
+     "check_max_abs_diff_text_prompt_logits": 0.0,
+     "check_max_abs_diff_vision_last_hidden_state": 0.0,
+     "model_safetensors_same_bytes_as_first_writer": true,
+     "written_by": "transformers 4.57.6 save_pretrained (torch 2.14.1+cu130)"
+    }
+   ],
+   "check_greedy_tokens": [
+    274,
+    361,
+    122,
+    122,
+    122,
+    122,
+    122,
+    122,
+    162,
+    128,
+    128,
+    116,
+    142,
+    131,
+    340,
+    344,
+    360,
+    360,
+    360,
+    344
+   ],
+   "check_max_abs_diff_image_prompt_logits": 0.0,
+   "check_max_abs_diff_image_prompt_logits_before_image": 0.0,
+   "check_max_abs_diff_image_prompt_logits_last_position": 0.0,
+   "check_max_abs_diff_text_prompt_logits": 0.0,
+   "check_max_abs_diff_vision_last_hidden_state": 0.0,
+   "description": "transformers before 4.52: language_model.model.*, vision_tower.vision_model.*, multi_modal_projector.*",
+   "has_lm_head": false,
+   "loads_in_transformers_5.19.0_same_logits": true,
+   "metadata": {
+    "format": "pt"
+   },
+   "tensors": {
+    "language_model.model.embed_tokens.weight": {
+     "dtype": "F32",
+     "shape": [
+      366,
+      24
+     ]
+    },
+    "language_model.model.layers.0.input_layernorm.weight": {
+     "dtype": "F32",
+     "shape": [
+      24
+     ]
+    },
+    "language_model.model.layers.0.mlp.down_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      24,
+      48
+     ]
+    },
+    "language_model.model.layers.0.mlp.gate_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      48,
+      24
+     ]
+    },
+    "language_model.model.layers.0.mlp.up_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      48,
+      24
+     ]
+    },
+    "language_model.model.layers.0.post_attention_layernorm.weight": {
+     "dtype": "F32",
+     "shape": [
+      24
+     ]
+    },
+    "language_model.model.layers.0.post_feedforward_layernorm.weight": {
+     "dtype": "F32",
+     "shape": [
+      24
+     ]
+    },
+    "language_model.model.layers.0.pre_feedforward_layernorm.weight": {
+     "dtype": "F32",
+     "shape": [
+      24
+     ]
+    },
+    "language_model.model.layers.0.self_attn.k_norm.weight": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "language_model.model.layers.0.self_attn.k_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      16,
+      24
+     ]
+    },
+    "language_model.model.layers.0.self_attn.o_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      24,
+      32
+     ]
+    },
+    "language_model.model.layers.0.self_attn.q_norm.weight": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "language_model.model.layers.0.self_attn.q_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      24
+     ]
+    },
+    "language_model.model.layers.0.self_attn.v_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      16,
+      24
+     ]
+    },
+    "language_model.model.layers.1.input_layernorm.weight": {
+     "dtype": "F32",
+     "shape": [
+      24
+     ]
+    },
+    "language_model.model.layers.1.mlp.down_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      24,
+      48
+     ]
+    },
+    "language_model.model.layers.1.mlp.gate_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      48,
+      24
+     ]
+    },
+    "language_model.model.layers.1.mlp.up_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      48,
+      24
+     ]
+    },
+    "language_model.model.layers.1.post_attention_layernorm.weight": {
+     "dtype": "F32",
+     "shape": [
+      24
+     ]
+    },
+    "language_model.model.layers.1.post_feedforward_layernorm.weight": {
+     "dtype": "F32",
+     "shape": [
+      24
+     ]
+    },
+    "language_model.model.layers.1.pre_feedforward_layernorm.weight": {
+     "dtype": "F32",
+     "shape": [
+      24
+     ]
+    },
+    "language_model.model.layers.1.self_attn.k_norm.weight": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "language_model.model.layers.1.self_attn.k_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      16,
+      24
+     ]
+    },
+    "language_model.model.layers.1.self_attn.o_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      24,
+      32
+     ]
+    },
+    "language_model.model.layers.1.self_attn.q_norm.weight": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "language_model.model.layers.1.self_attn.q_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      24
+     ]
+    },
+    "language_model.model.layers.1.self_attn.v_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      16,
+      24
+     ]
+    },
+    "language_model.model.norm.weight": {
+     "dtype": "F32",
+     "shape": [
+      24
+     ]
+    },
+    "multi_modal_projector.mm_input_projection_weight": {
+     "dtype": "F32",
+     "shape": [
+      8,
+      24
+     ]
+    },
+    "multi_modal_projector.mm_soft_emb_norm.weight": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "vision_tower.vision_model.embeddings.patch_embedding.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "vision_tower.vision_model.embeddings.patch_embedding.weight": {
+     "dtype": "F32",
+     "shape": [
+      8,
+      3,
+      14,
+      14
+     ]
+    },
+    "vision_tower.vision_model.embeddings.position_embedding.weight": {
+     "dtype": "F32",
+     "shape": [
+      16,
+      8
+     ]
+    },
+    "vision_tower.vision_model.encoder.layers.0.layer_norm1.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "vision_tower.vision_model.encoder.layers.0.layer_norm1.weight": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "vision_tower.vision_model.encoder.layers.0.layer_norm2.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "vision_tower.vision_model.encoder.layers.0.layer_norm2.weight": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "vision_tower.vision_model.encoder.layers.0.mlp.fc1.bias": {
+     "dtype": "F32",
+     "shape": [
+      16
+     ]
+    },
+    "vision_tower.vision_model.encoder.layers.0.mlp.fc1.weight": {
+     "dtype": "F32",
+     "shape": [
+      16,
+      8
+     ]
+    },
+    "vision_tower.vision_model.encoder.layers.0.mlp.fc2.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "vision_tower.vision_model.encoder.layers.0.mlp.fc2.weight": {
+     "dtype": "F32",
+     "shape": [
+      8,
+      16
+     ]
+    },
+    "vision_tower.vision_model.encoder.layers.0.self_attn.k_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "vision_tower.vision_model.encoder.layers.0.self_attn.k_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      8,
+      8
+     ]
+    },
+    "vision_tower.vision_model.encoder.layers.0.self_attn.out_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "vision_tower.vision_model.encoder.layers.0.self_attn.out_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      8,
+      8
+     ]
+    },
+    "vision_tower.vision_model.encoder.layers.0.self_attn.q_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "vision_tower.vision_model.encoder.layers.0.self_attn.q_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      8,
+      8
+     ]
+    },
+    "vision_tower.vision_model.encoder.layers.0.self_attn.v_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "vision_tower.vision_model.encoder.layers.0.self_attn.v_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      8,
+      8
+     ]
+    },
+    "vision_tower.vision_model.encoder.layers.1.layer_norm1.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "vision_tower.vision_model.encoder.layers.1.layer_norm1.weight": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "vision_tower.vision_model.encoder.layers.1.layer_norm2.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "vision_tower.vision_model.encoder.layers.1.layer_norm2.weight": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "vision_tower.vision_model.encoder.layers.1.mlp.fc1.bias": {
+     "dtype": "F32",
+     "shape": [
+      16
+     ]
+    },
+    "vision_tower.vision_model.encoder.layers.1.mlp.fc1.weight": {
+     "dtype": "F32",
+     "shape": [
+      16,
+      8
+     ]
+    },
+    "vision_tower.vision_model.encoder.layers.1.mlp.fc2.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "vision_tower.vision_model.encoder.layers.1.mlp.fc2.weight": {
+     "dtype": "F32",
+     "shape": [
+      8,
+      16
+     ]
+    },
+    "vision_tower.vision_model.encoder.layers.1.self_attn.k_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "vision_tower.vision_model.encoder.layers.1.self_attn.k_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      8,
+      8
+     ]
+    },
+    "vision_tower.vision_model.encoder.layers.1.self_attn.out_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "vision_tower.vision_model.encoder.layers.1.self_attn.out_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      8,
+      8
+     ]
+    },
+    "vision_tower.vision_model.encoder.layers.1.self_attn.q_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "vision_tower.vision_model.encoder.layers.1.self_attn.q_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      8,
+      8
+     ]
+    },
+    "vision_tower.vision_model.encoder.layers.1.self_attn.v_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "vision_tower.vision_model.encoder.layers.1.self_attn.v_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      8,
+      8
+     ]
+    },
+    "vision_tower.vision_model.post_layernorm.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "vision_tower.vision_model.post_layernorm.weight": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    }
+   },
+   "written_by": "transformers 4.51.3 save_pretrained (torch 2.14.1+cu130)"
+  },
+  "tiny-gemma3-v5": {
+   "description": "transformers 5: language_model.model.*, vision_tower.* (no vision_model), multi_modal_projector.*",
+   "has_lm_head": false,
+   "loads_in_transformers_5.19.0_same_logits": true,
+   "metadata": {
+    "format": "pt"
+   },
+   "tensors": {
+    "language_model.model.embed_tokens.weight": {
+     "dtype": "F32",
+     "shape": [
+      366,
+      24
+     ]
+    },
+    "language_model.model.layers.0.input_layernorm.weight": {
+     "dtype": "F32",
+     "shape": [
+      24
+     ]
+    },
+    "language_model.model.layers.0.mlp.down_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      24,
+      48
+     ]
+    },
+    "language_model.model.layers.0.mlp.gate_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      48,
+      24
+     ]
+    },
+    "language_model.model.layers.0.mlp.up_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      48,
+      24
+     ]
+    },
+    "language_model.model.layers.0.post_attention_layernorm.weight": {
+     "dtype": "F32",
+     "shape": [
+      24
+     ]
+    },
+    "language_model.model.layers.0.post_feedforward_layernorm.weight": {
+     "dtype": "F32",
+     "shape": [
+      24
+     ]
+    },
+    "language_model.model.layers.0.pre_feedforward_layernorm.weight": {
+     "dtype": "F32",
+     "shape": [
+      24
+     ]
+    },
+    "language_model.model.layers.0.self_attn.k_norm.weight": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "language_model.model.layers.0.self_attn.k_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      16,
+      24
+     ]
+    },
+    "language_model.model.layers.0.self_attn.o_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      24,
+      32
+     ]
+    },
+    "language_model.model.layers.0.self_attn.q_norm.weight": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "language_model.model.layers.0.self_attn.q_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      24
+     ]
+    },
+    "language_model.model.layers.0.self_attn.v_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      16,
+      24
+     ]
+    },
+    "language_model.model.layers.1.input_layernorm.weight": {
+     "dtype": "F32",
+     "shape": [
+      24
+     ]
+    },
+    "language_model.model.layers.1.mlp.down_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      24,
+      48
+     ]
+    },
+    "language_model.model.layers.1.mlp.gate_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      48,
+      24
+     ]
+    },
+    "language_model.model.layers.1.mlp.up_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      48,
+      24
+     ]
+    },
+    "language_model.model.layers.1.post_attention_layernorm.weight": {
+     "dtype": "F32",
+     "shape": [
+      24
+     ]
+    },
+    "language_model.model.layers.1.post_feedforward_layernorm.weight": {
+     "dtype": "F32",
+     "shape": [
+      24
+     ]
+    },
+    "language_model.model.layers.1.pre_feedforward_layernorm.weight": {
+     "dtype": "F32",
+     "shape": [
+      24
+     ]
+    },
+    "language_model.model.layers.1.self_attn.k_norm.weight": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "language_model.model.layers.1.self_attn.k_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      16,
+      24
+     ]
+    },
+    "language_model.model.layers.1.self_attn.o_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      24,
+      32
+     ]
+    },
+    "language_model.model.layers.1.self_attn.q_norm.weight": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "language_model.model.layers.1.self_attn.q_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      32,
+      24
+     ]
+    },
+    "language_model.model.layers.1.self_attn.v_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      16,
+      24
+     ]
+    },
+    "language_model.model.norm.weight": {
+     "dtype": "F32",
+     "shape": [
+      24
+     ]
+    },
+    "multi_modal_projector.mm_input_projection_weight": {
+     "dtype": "F32",
+     "shape": [
+      8,
+      24
+     ]
+    },
+    "multi_modal_projector.mm_soft_emb_norm.weight": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "vision_tower.embeddings.patch_embedding.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "vision_tower.embeddings.patch_embedding.weight": {
+     "dtype": "F32",
+     "shape": [
+      8,
+      3,
+      14,
+      14
+     ]
+    },
+    "vision_tower.embeddings.position_embedding.weight": {
+     "dtype": "F32",
+     "shape": [
+      16,
+      8
+     ]
+    },
+    "vision_tower.encoder.layers.0.layer_norm1.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "vision_tower.encoder.layers.0.layer_norm1.weight": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "vision_tower.encoder.layers.0.layer_norm2.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "vision_tower.encoder.layers.0.layer_norm2.weight": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "vision_tower.encoder.layers.0.mlp.fc1.bias": {
+     "dtype": "F32",
+     "shape": [
+      16
+     ]
+    },
+    "vision_tower.encoder.layers.0.mlp.fc1.weight": {
+     "dtype": "F32",
+     "shape": [
+      16,
+      8
+     ]
+    },
+    "vision_tower.encoder.layers.0.mlp.fc2.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "vision_tower.encoder.layers.0.mlp.fc2.weight": {
+     "dtype": "F32",
+     "shape": [
+      8,
+      16
+     ]
+    },
+    "vision_tower.encoder.layers.0.self_attn.k_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "vision_tower.encoder.layers.0.self_attn.k_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      8,
+      8
+     ]
+    },
+    "vision_tower.encoder.layers.0.self_attn.out_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "vision_tower.encoder.layers.0.self_attn.out_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      8,
+      8
+     ]
+    },
+    "vision_tower.encoder.layers.0.self_attn.q_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "vision_tower.encoder.layers.0.self_attn.q_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      8,
+      8
+     ]
+    },
+    "vision_tower.encoder.layers.0.self_attn.v_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "vision_tower.encoder.layers.0.self_attn.v_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      8,
+      8
+     ]
+    },
+    "vision_tower.encoder.layers.1.layer_norm1.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "vision_tower.encoder.layers.1.layer_norm1.weight": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "vision_tower.encoder.layers.1.layer_norm2.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "vision_tower.encoder.layers.1.layer_norm2.weight": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "vision_tower.encoder.layers.1.mlp.fc1.bias": {
+     "dtype": "F32",
+     "shape": [
+      16
+     ]
+    },
+    "vision_tower.encoder.layers.1.mlp.fc1.weight": {
+     "dtype": "F32",
+     "shape": [
+      16,
+      8
+     ]
+    },
+    "vision_tower.encoder.layers.1.mlp.fc2.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "vision_tower.encoder.layers.1.mlp.fc2.weight": {
+     "dtype": "F32",
+     "shape": [
+      8,
+      16
+     ]
+    },
+    "vision_tower.encoder.layers.1.self_attn.k_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "vision_tower.encoder.layers.1.self_attn.k_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      8,
+      8
+     ]
+    },
+    "vision_tower.encoder.layers.1.self_attn.out_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "vision_tower.encoder.layers.1.self_attn.out_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      8,
+      8
+     ]
+    },
+    "vision_tower.encoder.layers.1.self_attn.q_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "vision_tower.encoder.layers.1.self_attn.q_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      8,
+      8
+     ]
+    },
+    "vision_tower.encoder.layers.1.self_attn.v_proj.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "vision_tower.encoder.layers.1.self_attn.v_proj.weight": {
+     "dtype": "F32",
+     "shape": [
+      8,
+      8
+     ]
+    },
+    "vision_tower.post_layernorm.bias": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    },
+    "vision_tower.post_layernorm.weight": {
+     "dtype": "F32",
+     "shape": [
+      8
+     ]
+    }
+   },
+   "written_by": "transformers 5.19.0 save_pretrained"
+  }
+ },
+ "token_ids": {
+  "<bos>": 2,
+  "<end_of_image>": 8,
+  "<end_of_turn>": 6,
+  "<eos>": 1,
+  "<image_soft_token>": 365,
+  "<mask>": 4,
+  "<pad>": 0,
+  "<start_of_image>": 7,
+  "<start_of_turn>": 5,
+  "<unk>": 3
+ },
+ "versions": {
+  "libjpeg": "6.2",
+  "numpy": "2.5.3",
+  "pillow": "12.3.0",
+  "python": "3.13.16",
+  "safetensors": "0.8.0",
+  "tokenizers": "0.23.2",
+  "torch": "2.14.1+cu130",
+  "transformers": "5.19.0",
+  "zlib": "1.3"
+ },
+ "vocab_size": 366
+}

@@ -36,6 +36,18 @@ public sealed record ChatChunk(ChatDelta Delta, bool Done = false, string? DoneR
 /// <summary>Anything that answers chat requests: <c>ChatGenerator</c>, a model hosted by the inference engine, or <c>FakeChatModel</c> in tests.</summary>
 public interface IChatModel
 {
-    /// <summary>Streams the reply to <paramref name="request"/>; the last chunk has <see cref="ChatChunk.Done"/> set and carries the full message.</summary>
+    /// <summary>
+    /// The kinds of message parts (<see cref="ChatPart.Kind"/>) the model takes: "text" only unless it says more (a
+    /// vision-language model adds "image"). A request with a part of another kind fails
+    /// (<see cref="ChatParts.ThrowIfUnsupported(IChatModel, ChatRequest, string?)"/>, which every chat model of the library
+    /// calls before it answers), so a model never answers as if a part were not there. A model that forwards to another
+    /// (a wrapper) returns the inner model's kinds.
+    /// </summary>
+    IReadOnlySet<string> PartKinds => ChatParts.TextOnly;
+
+    /// <summary>
+    /// Streams the reply to <paramref name="request"/>; the last chunk has <see cref="ChatChunk.Done"/> set and carries the
+    /// full message. Throws <see cref="NotSupportedException"/> for a message part whose kind is not in <see cref="PartKinds"/>.
+    /// </summary>
     IAsyncEnumerable<ChatChunk> StreamAsync(ChatRequest request, CancellationToken cancellationToken = default);
 }

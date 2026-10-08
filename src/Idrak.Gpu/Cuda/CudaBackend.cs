@@ -415,7 +415,7 @@ internal sealed unsafe partial class CudaBackend : Backend
         return instances;
     }
 
-    private static IntPtr LoadModule(string ptx)
+    private static IntPtr LoadModule(string ptx, string what = "the Idrak kernels")
     {
         const int LogSize = 16 * 1024;
         byte[] image = Encoding.ASCII.GetBytes(ptx + "\0");
@@ -429,7 +429,7 @@ internal sealed unsafe partial class CudaBackend : Backend
             if (result != 0)
             {
                 string details = Marshal.PtrToStringAnsi((IntPtr)log) ?? "";
-                throw new CudaException($"The CUDA driver could not JIT-compile the Idrak kernels (error {result}). {details}");
+                throw new CudaException($"The CUDA driver could not JIT-compile {what} (error {result}). {details}");
             }
 
             return module;
@@ -1726,7 +1726,10 @@ internal sealed unsafe partial class CudaBackend : Backend
     private void Launch(IntPtr function, uint gridX, uint gridY, uint blockX, uint blockY, params ReadOnlySpan<ulong> args) =>
         Launch(function, gridX, gridY, 1, blockX, blockY, args);
 
-    private void Launch(IntPtr function, uint gridX, uint gridY, uint gridZ, uint blockX, uint blockY, params ReadOnlySpan<ulong> args)
+    private void Launch(IntPtr function, uint gridX, uint gridY, uint gridZ, uint blockX, uint blockY, params ReadOnlySpan<ulong> args) =>
+        LaunchGrid(function, gridX, gridY, gridZ, blockX, blockY, 1, args);
+
+    private void LaunchGrid(IntPtr function, uint gridX, uint gridY, uint gridZ, uint blockX, uint blockY, uint blockZ, ReadOnlySpan<ulong> args)
     {
         if (_signatures.TryGetValue(function, out var signature) && signature.Parameters != args.Length)
         {
@@ -1757,7 +1760,7 @@ internal sealed unsafe partial class CudaBackend : Backend
             }
 
             Check(cuEventRecord(_profileEvents.Start, _stream), nameof(cuEventRecord));
-            Check(cuLaunchKernel(function, gridX, gridY, gridZ, blockX, blockY, 1, shared, _stream, pointers, null), nameof(cuLaunchKernel));
+            Check(cuLaunchKernel(function, gridX, gridY, gridZ, blockX, blockY, blockZ, shared, _stream, pointers, null), nameof(cuLaunchKernel));
             Check(cuEventRecord(_profileEvents.End, _stream), nameof(cuEventRecord));
             Check(cuEventSynchronize(_profileEvents.End), nameof(cuEventSynchronize));
             Check(cuEventElapsedTime(out float elapsed, _profileEvents.Start, _profileEvents.End), nameof(cuEventElapsedTime));
@@ -1774,7 +1777,7 @@ internal sealed unsafe partial class CudaBackend : Backend
             return;
         }
 
-        Check(cuLaunchKernel(function, gridX, gridY, gridZ, blockX, blockY, 1, shared, _stream, pointers, null), nameof(cuLaunchKernel));
+        Check(cuLaunchKernel(function, gridX, gridY, gridZ, blockX, blockY, blockZ, shared, _stream, pointers, null), nameof(cuLaunchKernel));
         if (DebugLaunches && _captureFree is null)
         {
             // Debugging aid: wait for every kernel so a fault is reported by the kernel that caused it.
@@ -1788,7 +1791,7 @@ internal sealed unsafe partial class CudaBackend : Backend
                     shown.Add($"0x{args[i]:X}");
                 }
 
-                throw new CudaException($"Kernel {name} failed (grid {gridX}×{gridY}×{gridZ}, block {blockX}×{blockY}; arguments {string.Join(", ", shown)}): "
+                throw new CudaException($"Kernel {name} failed (grid {gridX}×{gridY}×{gridZ}, block {blockX}×{blockY}×{blockZ}; arguments {string.Join(", ", shown)}): "
                     + CudaDriver.Describe(result));
             }
         }
