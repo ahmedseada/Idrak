@@ -42,6 +42,7 @@ is a random `Gemma3ForConditionalGeneration` built from configs (nothing comes f
 | `reference/prompt-image-logits.npy` | float32 [1, 38, 366]: the logits of that prompt (with `token_type_ids`, so the image block is bidirectional) |
 | `reference/prompt-image-generate-logits.npy` | float32 [1, 20, 366]: the logits of each of the 20 greedy steps (`generate`, KV cache) |
 | `reference/prompt-text-input_ids.npy`, `prompt-text-logits.npy` | A text-only chat prompt (39 tokens, longer than the window) and its logits |
+| `exif/` | EXIF orientation fixtures (plan 11, phase 7; `tools/vlm/make_exif.py`): a 7 x 5 image as `exif-N.jpg` with orientation N = 1 to 8 and `exif-N.png` (eXIf chunk) for N = 3, 6, 8, and `upright-N.<ext>.png`, what Pillow's `ImageOps.exif_transpose` gives for each |
 | `manifest.json` | Versions, every file's size and SHA-256, each layout's tensor names, shapes and writer with its checks, array shapes, and the facts below |
 
 `manifest.json` → `facts` holds: the prompts (messages, the chat template's text, the processor's expanded text, ids,

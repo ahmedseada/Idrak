@@ -1,0 +1,226 @@
+// Copyright (c) 2026 Ahmed Seada
+// Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
+
+using System.Text.Json.Nodes;
+using Idrak;
+using Idrak.Cli.Shared;
+using Idrak.Data;
+using Idrak.Data.Abstractions;
+using Idrak.Generation;
+using Idrak.Generation.Abstractions;
+using Idrak.Models;
+using Idrak.Nlp;
+
+// Images on the command line (plan 11, phase 7): run --image and chat --image / /image with the tiny Gemma 3 of phase 0
+// give transformers' greedy tokens through the CLI's own path (the real encoder, and phase 0's features fed in);
+// --grayscale reads the pixels Pillow's convert("L") gives; EXIF orientations turn images as exif_transpose does; the
+// chat template's image parts expand to the processor's ids; a text-only model refuses images.
+internal static partial class Tests
+{
+    private static readonly (string Name, Action<Device> Run)[] CliImageGroup =
+    [
+        ("cli images: EXIF orientations 1 to 8 (JPEG APP1, PNG eXIf) turn images as Pillow's exif_transpose", CliImageExif),
+        ("cli images: the Jinja chat template renders image parts; Gemma 3's image prompt format expands them to the processor's text and ids", CliImageTemplate),
+        ("cli images: run --image with the tiny Gemma 3 gives transformers' 20 greedy tokens (real encoder and reference features), -j, --schema, --grayscale, an alias; chat --image and /image; a text-only model refuses", CliImageRun),
+    ];
+
+    private static string VlmModel => TestData("vlm/tiny-gemma3");
+
+    private static void CliImageExif(Device device)
+    {
+        _ = device;
+        foreach (string file in Directory.GetFiles(TestData("vlm/exif"), "exif-*").Order(StringComparer.Ordinal))
+        {
+            string name = Path.GetFileName(file);
+            int n = int.Parse(name[5..6], System.Globalization.CultureInfo.InvariantCulture);
+            var image = ChatImage.FromFile(file);
+            Check(ImageInputs.Orientation(image.Data.Span) == n, $"{name}: orientation {ImageInputs.Orientation(image.Data.Span)}, expected {n}");
+            var upright = ImageInputs.Decode(image);
+            var expected = ImageCodecs.Decode(TestData($"vlm/exif/upright-{n}{Path.GetExtension(file)}.png"));
+            Check(upright.Width == expected.Width && upright.Height == expected.Height && upright.Channels == expected.Channels
+                  && upright.Pixels.Select(v => (int)MathF.Round(v * 255)).SequenceEqual(expected.Pixels.Select(v => (int)MathF.Round(v * 255))), $"{name}: {upright.Width} x {upright.Height} differs from Pillow's exif_transpose ({expected.Width} x {expected.Height})");
+        }
+
+        Check(ImageInputs.Orientation(File.ReadAllBytes(TestData("vlm/image.png"))) == 1 && ImageInputs.Orientation(File.ReadAllBytes(TestData("vlm/image.jpg"))) == 1
+              && ImageInputs.Orientation(new byte[] { 0xFF, 0xD8, 0xFF, 0xE1, 0x00 }) == 1, "no EXIF (or a cut one): orientation 1");
+    }
+
+    private static void CliImageTemplate(Device device)
+    {
+        _ = device;
+        var facts = JsonNode.Parse(File.ReadAllText(TestData("vlm/manifest.json")))!["facts"]!["image_prompt"]!;
+        var tokenizer = BpeTokenizer.Load(VlmModel);
+        var template = JinjaChatTemplate.Load(VlmModel, tokenizer)!;
+        Check(template.PartKinds.SetEquals([ChatParts.Text, ChatParts.Image]), $"Gemma 3's template renders images: {string.Join(", ", template.PartKinds)}");
+        Check(JinjaChatTemplate.Load(CliModel, BpeTokenizer.Load(CliModel))!.PartKinds.SetEquals(ChatParts.TextOnly), "a ChatML template renders text only");
+
+        var image = ChatImage.FromFile(TestData("vlm/image.png"));
+        List<ChatMessage> messages = [new("system", "Read the scan."), new("user", [image, new ChatText("What is in this image?")])];
+        string rendered = template.Render(messages, [], null, addGenerationPrompt: true);
+        Check(rendered == (string)facts["rendered_by_chat_template"]!, $"rendered: {rendered}");
+        Check(template.Render([new("user", "hi")], [], null) == template.Render([new("user", [new ChatText("hi")])], [], null), "text-only messages render as before");
+
+        var model = PretrainedModel.Load(VlmModel, new PretrainedOptions { Device = Device.Cpu });
+        using (model)
+        {
+            var tokens = model.Vision!.ImageTokens;
+            var format = ImagePromptFormats.Get((string)model.Config["model_type"]!);
+            string expanded = format.Expand(rendered, 1, tokens, tokenizer);
+            Check(expanded == (string)facts["expanded_text"]!, $"expanded: {expanded}");
+            int[] ids = [.. facts["input_ids"]!.AsArray().Select(i => (int)i!)];
+            Check(tokenizer.Encode(expanded).SequenceEqual(ids), $"ids: {string.Join(" ", tokenizer.Encode(expanded))}");
+            Check(Fails(() => format.Expand(rendered, 2, tokens, tokenizer)), "one marker for two images is refused");
+            Check(ImagePromptFormats.Origin(ImagePromptFormats.Gemma3) == Overrides.Library && ImagePromptFormats.Find("llama") is null
+                  && Fails(() => ImagePromptFormats.Get("llama")), "the registry: gemma3 is the library's");
+
+            // A chat generator without images takes text only; with them, images, and batches refuse them.
+            var chat = model.CreateChat(KeyValueFormat.Float32, 64);
+            Check(chat.PartKinds.SetEquals(ChatParts.TextOnly), "a chat generator takes text unless given images");
+            var withImages = new ChatGenerator(chat.Generator, chat.Template) { Images = new ChatImages(tokens, format, _ => throw new InvalidOperationException("not encoded")) };
+            Check(withImages.PartKinds.Contains(ChatParts.Image) && withImages.RenderPrompt(new ChatRequest(messages)) == expanded, "RenderPrompt expands the images");
+            Check(Fails(() => withImages.ChatBatch([new ChatRequest(messages)])), "a chat batch with images is refused");
+        }
+    }
+
+    private static bool Fails(Action action)
+    {
+        try
+        {
+            action();
+            return false;
+        }
+        catch (Exception e) when (e is InvalidOperationException or NotSupportedException or ArgumentException)
+        {
+            return true;
+        }
+    }
+
+    // The default sampler, recording the ids of the first row it hands out (the CLI's generations, seen from outside).
+    private sealed class RecordingSampler(ITokenSampler inner, List<int> ids) : ITokenSampler
+    {
+        public int Rows => inner.Rows;
+
+        public int Vocabulary => inner.Vocabulary;
+
+        public Tensor Ids => inner.Ids;
+
+        public bool Recordable => inner.Recordable;
+
+        public void Sample(Tensor logits) => inner.Sample(logits);
+
+        public void SetHistory(IReadOnlyList<int> tokens) => inner.SetHistory(tokens);
+
+        public void Reset() => inner.Reset();
+
+        public SampledToken[][] Read(int fromStep, int toStep)
+        {
+            var steps = inner.Read(fromStep, toStep);
+            if (fromStep > 0 || toStep > 1)
+            {
+                ids.AddRange(steps.Select(s => s[0].Id));                // the prompt's own step (0 to 1) is read again later
+            }
+
+            return steps;
+        }
+
+        public void Dispose() => inner.Dispose();
+    }
+
+    private static void CliImageRun(Device device)
+    {
+        var facts = JsonNode.Parse(File.ReadAllText(TestData("vlm/manifest.json")))!["facts"]!;
+        int[] newTokens = [.. facts["generate"]!["new_tokens"]!.AsArray().Select(n => (int)n!)];
+        string expected = BpeTokenizer.Load(VlmModel).Decode(newTokens).Trim();
+        float[] reference = ReadNpyFloat32(TestData("vlm/reference/image_features.npy"));
+        string png = TestData("vlm/image.png");
+        string[] greedy = ["-s", "Read the scan.", "--temperature", "0", "--max-tokens", "20"];
+
+        // The real encoder (SigLIP and the projector of phase 3b) through the CLI; the tokens seen by a sampler that records them.
+        var sampled = new List<int>();
+        var library = TokenSamplers.Default(TokenSamplers.DefaultName)!;
+        TokenSamplers.Register(TokenSamplers.DefaultName, request => new RecordingSampler(library(request), sampled));
+        int code;
+        string text, error;
+        JsonObject json;
+        try
+        {
+            (code, text, error) = RunIdrakOn(device, null, ["run", VlmModel, "--image", png, "What is in this image?", .. greedy, "-j"]);
+        }
+        finally
+        {
+            TokenSamplers.Unregister(TokenSamplers.DefaultName);
+        }
+
+        json = JsonOf(text, "run --image");
+        string answer = (string?)json["text"] ?? "";
+        Check(sampled.SequenceEqual(newTokens), $"run --image: greedy tokens {string.Join(" ", sampled)}, expected {string.Join(" ", newTokens)}");
+        Check(code == 0 && ((string)json["text"]!).Length == expected.Length && (int)json["prompt_tokens"]! == 38 && (int)json["generated_tokens"]! == 20
+              && json["images"] is JsonArray { Count: 1 } && (bool)json["grayscale"]! == false, $"run --image: {code} {text} {error}; expected '{expected}'");
+
+        // Reference features fed in, the pixels each image is read with recorded.
+        var pixels = new List<float[]>();
+        int calls = 0;
+        ImageInputs.EncoderFactory = (model, preprocessor) => (images =>
+        {
+            calls++;
+            pixels.AddRange(images.Select(preprocessor.Pixels));
+            var values = Enumerable.Range(0, images.Count).SelectMany(_ => reference).ToArray();
+            return Tensor.From(values, [images.Count, 4, 24], model.Device);
+        }, null);
+        string folder = Path.Combine(Path.GetTempPath(), $"idrak-cli-image-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(folder);
+        try
+        {
+            (code, text, _) = RunIdrakOn(device, null, ["run", VlmModel, "--image", png, "What is in this image?", .. greedy, "-j"]);
+            Check(code == 0 && (string?)JsonOf(text, "run, reference features")["text"] == answer, $"run with phase 0's features: {text}");
+            AssertClose(ReadNpyFloat32(TestData("vlm/reference/pixel_values-png.npy")), pixels[^1], 1e-5f, "the pixels read");
+
+            // --grayscale: Pillow's convert("L"), as phase 0 wrote it; then the same as an alias setting.
+            (code, text, _) = RunIdrakOn(device, null, ["run", VlmModel, "--image", png, "--grayscale", "What is in this image?", .. greedy, "-j"]);
+            Check(code == 0 && (bool)JsonOf(text, "run --grayscale")["grayscale"]!, $"run --grayscale: {text}");
+            float[] grey = ReadNpyFloat32(TestData("vlm/reference/pixel_values-png-gray.npy"));
+            AssertClose(grey, pixels[^1], 1e-5f, "--grayscale pixels");
+            string config = Path.Combine(folder, "config.json");
+            File.WriteAllText(config, new JsonObject { ["aliases"] = new JsonObject { ["ocr"] = new JsonObject { ["model"] = VlmModel, ["grayscale"] = true } } }.ToJsonString());
+            int before = pixels.Count;
+            var output = new StringWriter();
+            code = StandardInput.With(new StringReader(""), () => Idrak.Cli.CommandLine.Run(
+                ["run", "ocr", "--image", png, "hi", "--max-tokens", "2", "-q", "-d", device.ToString(), "-C", config], output, new StringWriter()));
+            Check(code == 0 && pixels.Count == before + 1, "run with an alias");
+            AssertClose(grey, pixels[^1], 1e-5f, "an alias's grayscale setting");
+
+            // Two images, and --schema with -j (the tiny model's answer is not JSON: exit 1, schema_valid false).
+            (code, text, _) = RunIdrakOn(device, null, ["run", VlmModel, "--image", png, "--image", TestData("vlm/image.jpg"), "Compare.", "--max-tokens", "3", "-j"]);
+            Check(code == 0 && (int)JsonOf(text, "two images")["prompt_tokens"]! > 38 && calls > 0, $"two images: {text}");
+            string schema = Path.Combine(folder, "schema.json");
+            File.WriteAllText(schema, """{"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}""");
+            (code, text, _) = RunIdrakOn(device, null, ["run", VlmModel, "--image", png, "Read it.", "--schema", schema, "--max-tokens", "4", "-j"]);
+            json = JsonOf(text, "run --schema");
+            Check(code == 1 && (bool)json["schema_valid"]! == false && json["images"] is JsonArray, $"run --image --schema: {code} {text}");
+
+            // Chat: --image goes with the first message, /image with the next; each answer reads the conversation's images again.
+            calls = 0;
+            (code, text, error) = RunIdrakOn(device, "What is in this image?\n/image " + png + "\nAnd this one?\n/exit\n", ["chat", VlmModel, "--image", png, .. greedy, "-j"]);
+            json = JsonOf(text, "chat --image");
+            var messages = json["messages"]!.AsArray();
+            Check(code == 0 && messages.Count == 5 && (string?)messages[2]!["content"] == answer && calls == 2, $"chat --image: {code} {calls} calls {text} {error}");
+            Check(messages[1]!["content"] is JsonArray { Count: 2 } first && (string?)first[0]!["type"] == "image"
+                  && messages[3]!["content"] is JsonArray { Count: 2 }, "chat: the images are parts of their messages");
+
+            // A text-only model refuses images; a missing file is a usage error.
+            (code, _, error) = RunIdrakOn(device, null, "run", CliModel, "--image", png, "hi");
+            Check(code == 2 && error.Contains("reads text only") && error.Contains("--image"), $"a text model given --image: {error}");
+            (code, text, _) = RunIdrakOn(device, "/image " + png + "\n/exit\n", "chat", CliModel);
+            Check(code == 0 && text.Contains("reads text only"), $"a text model given /image: {text}");
+            (code, _, error) = RunIdrakOn(device, null, ["run", VlmModel, "--image", png, "What is in this image?", "--context", "32", "--max-tokens", "2"]);
+            Check(code == 1 && error.Contains("context window"), $"a prompt with an image never cut to the window: {error}");
+            (code, _, error) = RunIdrakOn(device, null, "run", VlmModel, "--image", Path.Combine(folder, "missing.png"), "hi");
+            Check(code == 2 && error.Contains("Image file not found"), $"a missing image: {error}");
+        }
+        finally
+        {
+            ImageInputs.EncoderFactory = null;
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+}

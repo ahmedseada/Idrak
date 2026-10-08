@@ -1,6 +1,6 @@
 # Plan 11: images into language models (Gemma 3 first)
 
-**Status:** planned 2026-10-07, revised the same day against the code; phase 0 (the reference) done 2026-10-08, phase 4 (loading, text side), phase 3b (the SigLIP encoder and the projector) and phase 5 (image tokens in the decoder) done 2026-10-08 on CPU and Vulkan (phase 5 on CUDA too), phase 1 (contracts) done 2026-10-07 on the CPU; plan 10's wave 4 is done. Asked for to run `bakrianoo/arabic-legal-documents-ocr-1.0`, a fine-tune of Gemma-3-4B-IT that reads scanned
+**Status:** planned 2026-10-07, revised the same day against the code; phase 0 (the reference) done 2026-10-08, phase 4 (loading, text side), phase 3b (the SigLIP encoder and the projector) and phase 5 (image tokens in the decoder) done 2026-10-08 on CPU and Vulkan (phase 5 on CUDA too), phase 7 (the command line, before phase 6 by the author's choice) built 2026-10-08 and passing with the tiny model on CPU and Vulkan, the real model's run on the author's RTX 5070 Ti still to do, phase 1 (contracts) done 2026-10-07 on the CPU; plan 10's wave 4 is done. Asked for to run `bakrianoo/arabic-legal-documents-ocr-1.0`, a fine-tune of Gemma-3-4B-IT that reads scanned
 Arabic legal documents (low quality scans included) and returns their contents as structured data. Its card asks for
 images resized and turned to grayscale first, and shows it running through transformers and vLLM.
 
@@ -73,7 +73,7 @@ namespace until a second library package uses it.
 | 4 | **Loading the whole model.** `Gemma3ForConditionalGeneration` in the pretrained families: nested configs, both tensor layouts, tied embeddings, the image token ids; the text part reuses Gemma 3's decoder spec (its `text_config` read as a `Gemma3ForCausalLM` config) | the tiny model loads in each of the three layouts; a text-only prompt gives the same logits as transformers; **done 2026-10-08** (as built below) |
 | 5 | **Image tokens in the decoder.** At prefill, the soft tokens' embeddings are replaced by the image features; each image's soft tokens see each other (3a's image-block rule, on top of the sliding window of the local layers); decoding afterwards uses the KV cache as today (the image costs nothing more per generated token). Several images in one prompt | the tiny model's logits with an image and its 20 greedy tokens match the reference (CPU and Vulkan); **done 2026-10-08** (as built below) |
 | 6 | **Chat with images in Nlp.** The chat template's image parts expand to the image tokens (the Jinja engine walks content parts); generation takes images; an image is encoded once per conversation (kept with the conversation by content hash) | a two-turn chat about one image encodes it once and matches the reference's first turn |
-| 7 | **The command line.** `idrak chat <model> --image FILE` (repeatable; also `/image FILE` inside a chat, like `/file`); the one-shot `idrak run <model> --image FILE "prompt"` (with `--schema` for the structured answer this model gives, `-j` for JSON); `--grayscale` (or the setting stored with a pulled model) | CLI tests pass with the tiny model; on the author's RTX 5070 Ti the real model reads a sample scan and its greedy output matches transformers' for the first 100 tokens |
+| 7 | **The command line.** `idrak chat <model> --image FILE` (repeatable; also `/image FILE` inside a chat, like `/file`); the one-shot `idrak run <model> --image FILE "prompt"` (with `--schema` for the structured answer this model gives, `-j` for JSON); `--grayscale` (or the setting stored with a pulled model) | CLI tests pass with the tiny model; on the author's RTX 5070 Ti the real model reads a sample scan and its greedy output matches transformers' for the first 100 tokens; **built 2026-10-08 before phase 6** (as built below): the tiny model passes on CPU and Vulkan, the real model's run is to do |
 | 8 | **Images in chat, after the command line is proven** (phase 7 done on the real model). The engine hosts the model as a chat model that accepts images (`IChatModel`, saying which inputs it takes; the image is encoded once per conversation, as in phase 6); `MapChatApi` takes images in its messages; `MapCompletionsApi` (`/v1/chat/completions`) accepts OpenAI's `image_url` content parts (data URLs and, when allowed, http URLs); `idrak serve` serves it. The same preprocessing (and grayscale setting) as the command line | an OpenAI client sends a scan as an `image_url` part and gets the same answer as `idrak run --image`; streamed and not; the aspnetcore tests cover a tiny model with an image |
 | 9 | **After that.** An MCP `chat` tool with images (and an `ocr` tool if useful); pan-and-scan for tall pages; other families (Qwen2.5-VL); fine-tuning with images (LoRA on the text decoder, encoder frozen) | decided per item after phase 8 |
 
@@ -397,6 +397,59 @@ calls the public API below), no Abstraction change.
   embedding (the image path with a plainly causal mask) equals the plain prefill within 5e-6 with float32, bfloat16 and
   int8 caches. With an int8 cache the image prompt's logits are 0.255 from float32's (the tiny model's heads of 8 values
   round coarsely; a text prompt: 0.065), bfloat16 0.036.
+
+## Phase 7, as built (2026-10-08): the command line, before phase 6
+
+Built before phase 6 (the author: "work on cli first, then chat after settling"). The pieces phase 6 reuses are in Nlp;
+what is the command line's alone is in the CLI.
+
+- **Usage.** `idrak run MODEL --image FILE [--image FILE...] [--grayscale] "prompt"` (with `-s`, `--schema`, `-j` and
+  every generation option as for text: the user message is the images, then the prompt's text, as transformers' examples
+  write it); `idrak chat MODEL --image FILE` (with the first message) and `/image FILE` inside a chat (with the next one,
+  like `/file`); `idrak alias set NAME MODEL --grayscale` keeps the setting with the model (the config's alias, the CLI's
+  per-model settings: `"grayscale": true`), `--grayscale` gives it for one command. `run -j` adds `images` and
+  `grayscale`. `pull` (and the library's `HuggingFaceModels`) now also downloads `preprocessor_config.json` and
+  `processor_config.json`.
+- **Chat template (Nlp).** `JinjaChatTemplate` gives a message holding a part other than text its content as a list of
+  parts, as Hugging Face does (`{"type": "image"}`, `{"type": "text", "text"}`, `{"type": kind}` for other kinds); text-only
+  messages keep a string (unchanged prompts). `JinjaChatTemplate.PartKinds` is found by a probe, as the tool-call format
+  is: a user turn of one text part must render as the same text given as a string, and an image part before it must change
+  it; then "image" is in its kinds (Gemma 3's template: yes; ChatML templates: text only).
+- **Image prompt format (Nlp, new contract and registry).** `IImagePromptFormat` (`Name`, `Expand(prompt, images,
+  ImageTokenIds, ITokenizer)`) in `Idrak.Generation.Abstractions`, registry `ImagePromptFormats` on a `SlotTable` keyed by
+  config.json's `model_type`; library default "gemma3": `ImageMarkerFormat` (each `<start_of_image>` the template wrote
+  becomes "\n\n" + boi + soft token x `mm_tokens_per_image` + eoi + "\n\n", transformers' `full_image_sequence`; one
+  marker per image or a clear error). The tiny model's prompt renders, expands and tokenizes to the reference's text and
+  38 ids exactly.
+- **Generation (Nlp).** `TextGenerator.Stream(prompt, imageToken, images, options)`: the tokenized prompt's runs of the
+  image token are paired with the features (`ImagePrefill.Locate`) and the prefill runs `ImagePrefill.ForwardCached` (or
+  `Forward` without the cache). A block is never split: the prefill is one step (no chunking), a prompt with images that
+  does not fit the window throws (no truncation), the kept cache is reused only up to the first image (image tokens have
+  the same id whatever the image), and a full window re-read starts after an image it would cut. `ChatGenerator.Images`
+  (`ChatImages`: the image token ids, the format, an encoder `Func<IReadOnlyList<ChatImage>, Tensor>` giving
+  [images, tokens, width]) makes `PartKinds` text and image, expands the prompt in `RenderPrompt`, and encodes the
+  request's images in `Stream` (disposed after). **Each request re-encodes the conversation's images** (a later chat turn
+  reads them again, and the prefill restarts at the first image): acceptable for the command line; encoding once per
+  conversation (by `ChatImage.Hash`) is phase 6. Chat batches refuse images (text-only models still refuse them first,
+  with the usual message).
+- **CLI.** `Shared/ImageInputs.cs`: files as `ChatImage`s, decoded by `ImageCodecs` and turned upright by the EXIF
+  orientation (tag 0x0112 of the first IFD, from a JPEG's APP1 "Exif" segment or a PNG's eXIf chunk), as transformers'
+  `load_image` does with `ImageOps.exif_transpose`; only here, the codecs and processors are unchanged. `ModelImages`
+  builds the encoder on first use (`PretrainedVision.CreateEncoder(model.Device, vision.Preprocessor(grayscale))`, phase
+  3b) and disposes it with the model; an internal `ImageInputs.EncoderFactory` lets tests feed phase 0's features. A
+  model whose chat does not take "image" (a text model, a family without a registered format, or a template that writes
+  nothing for an image) refuses `--image` (exit 2, "reads text only (its chat model takes 'text' parts)") and `/image`
+  (a reply in the chat).
+- **Tests** (`IDRAK_FILTER="cli images"`, CPU and Vulkan lavapipe): EXIF orientations 1 to 8 in JPEG and 3, 6, 8 in PNG
+  eXIf give Pillow 12.3's `exif_transpose` bytes exactly (`tools/vlm/make_exif.py` writes the 92 KB of fixtures in
+  `tests/Idrak.Tests/data/vlm/exif`); the template, format and ids against phase 0's facts; `run --image` with the tiny
+  Gemma 3 and the real encoder gives transformers' 20 greedy tokens (read by a recording sampler registered over the
+  default) and 38 prompt tokens, the same answer with phase 0's `image_features.npy` fed in, the pixels read equal
+  `pixel_values-png.npy` and with `--grayscale` (flag or alias) `pixel_values-png-gray.npy` within 1e-5; two images;
+  `--schema -j`; a window too small for the image refused; `chat --image` then `/image` (two turns, two encodings, the
+  images saved as parts); a text model refuses `--image` and `/image`; a missing file.
+- **Not done here.** The real model on the author's RTX 5070 Ti (phase 7's last check: 100 greedy tokens against
+  transformers on a sample scan); the model card's exact prompt and preprocessing (huggingface.co is blocked here).
 
 ## Performance targets (author's RTX 5070 Ti, the real 4B model)
 
