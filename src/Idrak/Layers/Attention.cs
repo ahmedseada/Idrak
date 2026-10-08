@@ -70,9 +70,10 @@ public sealed class MultiHeadAttention : Module, ICachedModule
         if (!Causal && (_dropout is null || !_dropout.IsTraining))
         {
             // Every position sees every other: one attention over key ranges (all keys for each row), tiled, so the
-            // [T, T] scores of each head are never stored (the gradient recomputes them).
+            // [T, T] scores of each head are never stored (the gradient recomputes them); or the full scores where the
+            // device measured them faster and has the memory for them (Tensor.AttentionFastest).
             var (starts, ends) = AllKeys(t, input.Device);
-            context = Tensor.AttentionSpans(q, k, v, starts, ends, 1f / MathF.Sqrt(dh));
+            context = Tensor.AttentionFastest(q, k, v, starts, ends, 1f / MathF.Sqrt(dh), everyKey: true);
             return _output.Forward(context
                 .Reshape(n, Heads, t, dh)
                 .Permute(0, 2, 1, 3)

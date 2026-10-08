@@ -33,6 +33,8 @@ internal enum TuneOp : byte
     FloatTile,
     DecodeSplits,
     DecodeMinChunk,
+    SpanWarps,
+    AttentionPath,
 }
 
 /// <summary>
