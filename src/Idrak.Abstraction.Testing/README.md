@@ -30,6 +30,8 @@ Conformance.CheckRopeScaling("yarn", MyYarn).ThrowIfFailed();        // against 
 | Plug-in operations (`Check(PluginOperation<TKernel>, Device, run)`) | The kernel the operation runs on your device (`KernelFor`: the one registered for its kind, or the default) against the operation's default kernel on the CPU, on cases your `run(backend, kernel, seed)` makes from a seed (inputs uploaded, the kernel called, outputs read back); the entry names the kernel that ran. |
 | RoPE scalings (`RopeScalingSuite`) | As many frequencies, finite and positive; the library method's frequencies and attention factor (`RopeScalings.Default`); the same per position; safe from several threads. |
 | Chat part kinds (`ChatPartKindSuite`, `Conformance.CheckChatPartKind`) | Reads parts of its kind; the JSON it writes keeps the type and reads back to an equal part, the same every time; the library kind's parts and JSON (`ChatParts.Default`). Text: empty, Arabic, quotes, control characters, emoji; images: PNG, JPEG, unknown types, random bytes; yours (`samples`). |
+| Fine-tuning data formats (`TuningDataFormatSuite`, `Conformance.CheckTuningDataFormat`) | On data files of the format's own (`TuningDataSample`): valid files read without failing, every conversation with messages of known roles and image parts with their bytes; the same conversations on a second reading, from two readings at once, and when a reading stops early; the expected conversations when given; invalid files refused with an error naming the file and saying what is wrong. |
+| Feature caches (`FeatureCacheSuite`, `Conformance.CheckFeatureCache`) | Misses when empty and after a clear; a small value kept, given back exactly (values and shape) on the device asked for, as a new tensor each time, from the cache's own copy; a key differing in any field (image, transforms, vision options, family, checkpoint, precision, stage) misses; a second put replaces the first; puts and gets from several threads, every hit exactly its key's value. |
 
 The token-sampler contract (`ITokenSampler`) lives in Idrak.Nlp, and this kit depends on Idrak.Abstraction alone, so
 a test passes the sampler it checks and the reference as delegates (`SamplerUnderTest`: set the history, sample a step,
@@ -45,6 +47,19 @@ static Func<SamplerSettings, SamplerUnderTest> Drive(Func<SamplerRequest, IToken
 };
 
 Conformance.Check(Drive(MySampler.Create), new TokenSamplerSuite(Drive(TokenSampler.Create))).ThrowIfFailed();
+```
+
+The fine-tuning data formats (`ITuningDataFormat`) and feature caches (`IFeatureCache`) live in Idrak.Nlp too, so they
+are checked the same way: a format as its reading, a cache wrapped in `FeatureCacheUnderTest`:
+
+```csharp
+var format = TuningDataFormats.Get("sharegpt");
+Conformance.CheckTuningDataFormat(path => format.Read(path, new TuningDataOptions { Images = "images.zip" }).Select(t => t.Messages),
+    [new TuningDataSample("train.json"), new TuningDataSample("bad.json", Error: "markers")]).ThrowIfFailed();
+
+using var cache = FeatureCaches.Create("disk", new FeatureCacheOptions { Folder = "cache" });
+static FeatureCacheKey Key(FeatureKeyFields f) => new(f.Image, f.Transforms, f.VisionOptions, f.Family, f.Checkpoint, f.DType, f.Stage);
+Conformance.CheckFeatureCache(new FeatureCacheUnderTest((k, v) => cache.Put(Key(k), v), (k, d) => cache.TryGet(Key(k), d, out var v) ? v : null, cache.Clear)).ThrowIfFailed();
 ```
 
 Fixed cases come first, then random ones (`DeviceCheckOptions.RandomRuns`, `ContractCheckOptions.RandomCases`, a seed).

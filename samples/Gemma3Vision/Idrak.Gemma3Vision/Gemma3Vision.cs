@@ -162,8 +162,12 @@ public sealed class Gemma3VisionFamily : IVisionFamily
 /// projector's (<c>projector.mm_soft_emb_norm.weight</c> [width], Gemma's RMSNorm with a gain of 1 + w;
 /// <c>projector.mm_input_projection_weight</c> [vision width, text width], used as x · W: it is the transpose of a Linear
 /// weight, so it is read as stored).
+/// <para>
+/// For fine-tuning (<see cref="IVisionTuningPart"/>), Gemma 3 lets its projector and its SigLIP tower train, both from an
+/// encoder whose weights are float32 (<see cref="EncoderWeights.Float32"/>, or a float32 checkpoint as stored).
+/// </para>
 /// </remarks>
-public sealed class Gemma3Vision : PretrainedVision
+public sealed class Gemma3Vision : PretrainedVision, IVisionTuningPart
 {
     private readonly Func<ITensorStore> _open;
     private readonly string? _folder;
@@ -284,6 +288,64 @@ public sealed class Gemma3Vision : PretrainedVision
     /// them one at a time and dispose the store when done.
     /// </summary>
     public ITensorStore OpenTensors() => new RenamedTensorStore(_open(), Tensors.ToDictionary(t => t.Key, t => t.Value.Stored, StringComparer.Ordinal));
+
+    /// <summary>Gemma 3 lets its projector (the soft-embedding norm and the projection) and its SigLIP tower train.</summary>
+    public IReadOnlyList<string> TrainableParts { get; } = [VisionTuningParts.Projector, VisionTuningParts.Tower];
+
+    /// <inheritdoc />
+    public IReadOnlyList<Tensor> Parameters(IVisionEncoder encoder, string part)
+    {
+        ArgumentNullException.ThrowIfNull(part);
+        var own = Own(encoder);
+        Module module = part.Trim().ToLowerInvariant() switch
+        {
+            VisionTuningParts.Projector => own.Projector,
+            VisionTuningParts.Tower => own.Encoder,
+            _ => throw new NotSupportedException($"The vision family {Family} does not offer '{part}' for training; it offers: {string.Join(", ", TrainableParts)}."),
+        };
+        if (module.Buffers().Any())
+        {
+            throw new InvalidOperationException($"Gemma 3's {part.Trim().ToLowerInvariant()} holds packed (bfloat16) weights in this encoder, which do not train; "
+                + "build the encoder with VisionEncoderOptions.Weights = EncoderWeights.Float32 to train it.");
+        }
+
+        return [.. module.Parameters()];
+    }
+
+    /// <summary>The soft-token embeddings [images, tokens per image, text width] of SigLIP's output [images, patches, vision width] through the projector, recording gradients.</summary>
+    public Tensor Features(IVisionEncoder encoder, Tensor towerOutput)
+    {
+        ArgumentNullException.ThrowIfNull(towerOutput);
+        var own = Own(encoder);
+        if (towerOutput.Device != own.Device)
+        {
+            throw new ArgumentException($"The tower's output is on {towerOutput.Device}, the encoder on {own.Device}: move it first (gradients do not cross a copy).", nameof(towerOutput));
+        }
+
+        return own.Projector.Forward(towerOutput);
+    }
+
+    /// <summary>SigLIP's output [images, patches, vision width] for pixel values [images, channels, size, size], recording gradients (copied to the encoder's device first when elsewhere).</summary>
+    public Tensor Tower(IVisionEncoder encoder, Tensor pixelValues)
+    {
+        ArgumentNullException.ThrowIfNull(pixelValues);
+        var own = Own(encoder);
+        if (pixelValues.Device == own.Device)
+        {
+            return own.Encoder.Forward(pixelValues);
+        }
+
+        var moved = Tensor.From(pixelValues.ToArray(), pixelValues.Shape, own.Device);         // kept: the backward pass reads it
+        return own.Encoder.Forward(moved);
+    }
+
+    // The encoder, when this vision part built it.
+    private Gemma3ImageEncoder Own(IVisionEncoder encoder)
+    {
+        ArgumentNullException.ThrowIfNull(encoder);
+        return encoder is Gemma3ImageEncoder own && ReferenceEquals(own.Vision, this) ? own
+            : throw new ArgumentException($"{encoder.GetType().Name} is not an encoder of this Gemma 3 vision part (make one with its CreateEncoder).", nameof(encoder));
+    }
 
     /// <inheritdoc />
     public override string Describe() =>
