@@ -48,11 +48,8 @@ internal sealed record PeftAdapterConfig(int Rank, float Alpha, float Scale, boo
             unsupported.Add("lora_bias");
         }
 
-        if (config["modules_to_save"] is JsonArray { Count: > 0 })
-        {
-            unsupported.Add("modules_to_save (fully trained modules)");
-        }
-
+        // modules_to_save: kept, and checked against the model's vision part by CheckModulesToSave (a vision part's trained
+        // modules are read, VisionTensors; the language model's are refused).
         if (config["layer_replication"] is JsonArray { Count: > 0 })
         {
             unsupported.Add("layer_replication");
@@ -76,7 +73,32 @@ internal sealed record PeftAdapterConfig(int Rank, float Alpha, float Scale, boo
 
         float alpha = (float?)config["lora_alpha"] ?? rank;
         bool rslora = (bool?)config["use_rslora"] == true;
-        return new PeftAdapterConfig(rank, alpha, rslora ? alpha / MathF.Sqrt(rank) : alpha / rank, (bool?)config["use_dora"] == true);
+        return new PeftAdapterConfig(rank, alpha, rslora ? alpha / MathF.Sqrt(rank) : alpha / rank, (bool?)config["use_dora"] == true)
+        {
+            ConfigFile = path,
+            ModulesToSave = config["modules_to_save"] is JsonArray modules ? [.. modules.Select(m => (string?)m ?? "").Where(m => m.Length > 0)] : [],
+        };
+    }
+
+    /// <summary>The adapter_config.json read.</summary>
+    public string ConfigFile { get; init; } = "";
+
+    /// <summary>The configuration's <c>modules_to_save</c> (fully trained modules), as written.</summary>
+    public IReadOnlyList<string> ModulesToSave { get; init; } = [];
+
+    /// <summary>
+    /// Refuses a <c>modules_to_save</c> entry that is not a module of the vision part (whose checkpoint tensors are
+    /// <paramref name="visionTensors"/>, none for a text model): Idrak reads a vision part's trained modules only.
+    /// </summary>
+    public void CheckModulesToSave(IReadOnlyCollection<string>? visionTensors)
+    {
+        var refused = ModulesToSave.Where(m => visionTensors is null
+            || !visionTensors.Any(t => t.StartsWith(m + ".", StringComparison.Ordinal) || t.Contains("." + m + ".", StringComparison.Ordinal))).ToList();
+        if (refused.Count > 0)
+        {
+            throw new NotSupportedException($"{ConfigFile}: modules_to_save ({string.Join(", ", refused)}) {(refused.Count == 1 ? "is" : "are")} not supported; "
+                                            + "Idrak reads fully trained modules of a vision part only (its projector), and LoRA and DoRA adapters of the language model.");
+        }
     }
 
     /// <summary>
@@ -118,8 +140,35 @@ internal sealed record PeftAdapterConfig(int Rank, float Alpha, float Scale, boo
         {
             throw new InvalidDataException($"The adapter in {folder} has {unused.Count} tensors that match no adaptable layer of the model "
                                            + $"(for example {string.Join(", ", unused.Take(3))}): an adapter for another architecture, or for layers "
-                                           + "Idrak does not adapt (embeddings, tied output heads).");
+                                           + "Idrak does not adapt (embeddings, tied output heads; modules_to_save are read for a vision part's trained modules only).");
         }
+    }
+
+    /// <summary>
+    /// The trained vision tensors of the file (PEFT's <c>modules_to_save</c> of a vision part): each tensor
+    /// <c>base_model.model.</c> + a name of <paramref name="stored"/> (the vision part's checkpoint tensors), read to the
+    /// host under that name, in the checkpoint's layout; their file names are added to <paramref name="used"/>.
+    /// </summary>
+    public static Dictionary<string, (int[] Shape, float[] Values)> VisionTensors(SafeTensorsReader reader, IReadOnlyCollection<string>? stored, ICollection<string> used)
+    {
+        const string Prefix = "base_model.model.";
+        var tensors = new Dictionary<string, (int[] Shape, float[] Values)>(StringComparer.Ordinal);
+        if (stored is null || stored.Count == 0)
+        {
+            return tensors;
+        }
+
+        var names = stored as IReadOnlySet<string> ?? stored.ToHashSet(StringComparer.Ordinal);
+        foreach (var (key, info) in reader.Tensors)
+        {
+            if (key.StartsWith(Prefix, StringComparison.Ordinal) && names.Contains(key[Prefix.Length..]))
+            {
+                tensors[key[Prefix.Length..]] = ([.. info.Shape], reader.Read(key));
+                used.Add(key);
+            }
+        }
+
+        return tensors;
     }
 }
 
@@ -146,6 +195,14 @@ internal sealed class AdapterMerge : IDisposable
 
     /// <summary>Throws when some of the adapter's tensors matched no weight that was read.</summary>
     public void CheckAllUsed() => PeftAdapterConfig.CheckAllUsed(_reader, _used, _folder);
+
+    /// <summary>The adapter's trained vision tensors (see <see cref="PeftAdapterConfig.VisionTensors"/>), counted as used.</summary>
+    /// <exception cref="NotSupportedException">The configuration's modules_to_save names a module that is not the vision part's.</exception>
+    public Dictionary<string, (int[] Shape, float[] Values)> VisionTensors(IReadOnlyCollection<string>? stored)
+    {
+        _config.CheckModulesToSave(stored);
+        return PeftAdapterConfig.VisionTensors(_reader, stored, _used);
+    }
 
     /// <summary>
     /// Adds scale · (B·A)ᵀ to <paramref name="weight"/> ([inputs, outputs], Idrak's layout) when the adapter has

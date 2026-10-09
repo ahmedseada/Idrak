@@ -14,7 +14,8 @@ internal static class Checkpointing
     /// <paramref name="forward"/>(input) without storing its intermediate results (activation checkpointing): the
     /// forward pass runs without recording, and the backward pass runs it again with recording, back-propagates through
     /// it and frees it at once. Parameters used inside receive their gradients then. Memory drops to the checkpointed
-    /// outputs at the cost of a second forward pass. The function must be deterministic (no dropout).
+    /// outputs at the cost of a second forward pass. The function must be deterministic (no dropout). The
+    /// recompute runs with the image blocks the first pass ran with (<see cref="ImageBlocks.Current"/>).
     /// </summary>
     internal static Tensor Checkpoint(Func<Tensor, Tensor> forward, Tensor input)
     {
@@ -23,7 +24,10 @@ internal static class Checkpointing
             return forward(input);
         }
 
-        // Only the output survives the first pass: the module's intermediate results are freed at once.
+        // Only the output survives the first pass: the module's intermediate results are freed at once. The image blocks
+        // the pass ran with (ImagePrefill's, thread-local) travel with the recompute, so the block attends by the same key
+        // ranges in the backward pass wherever and whenever that runs.
+        var images = ImageBlocks.Current;
         Tensor output;
         var seeds = new List<uint>();                                   // dropout masks are drawn again identically
         using (Layers.DropoutSeeds.Record(seeds))
@@ -45,6 +49,7 @@ internal static class Checkpointing
             replay.RequiresGrad = input.RequiresGrad;
             Tensor recomputed;
             using (Layers.DropoutSeeds.Replay(seeds))
+            using (images is not null && !ReferenceEquals(ImageBlocks.Current, images) ? images.Use() : (ImageBlocks.Scope?)null)
             {
                 recomputed = forward(replay);
             }

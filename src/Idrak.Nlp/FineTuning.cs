@@ -218,10 +218,24 @@ public sealed class ChatTranscriptEncoder
     /// <summary>The text that ends an assistant turn (for ChatML: "&lt;|im_end|&gt;"); trained, so the model learns to stop.</summary>
     public string AssistantEnd { get; }
 
+    /// <summary>
+    /// How transcripts with images are encoded (a vision-language model, <see cref="TuningVision.Create"/>): each image's
+    /// marker is expanded by the family's prompt format to its blocks of image tokens, as generation does, and the
+    /// sequences carry their images (<see cref="TrainingSequence.Images"/>). Null (the default): text only, and a
+    /// transcript with an image is refused.
+    /// </summary>
+    public TuningVision? Vision { get; init; }
+
     /// <summary>The rendered transcript and the character ranges [start, end) of the assistant's turns in it.</summary>
     public (string Text, IReadOnlyList<(int Start, int End)> Spans) Render(ChatTranscript transcript)
     {
         string text = Template.Render(transcript.Messages, transcript.Tools, transcript.Think, addGenerationPrompt: false);
+        return (text, Spans(text));
+    }
+
+    // The assistant's turns in a rendered (or expanded) transcript: from each assistant header to the end of the turn.
+    private List<(int Start, int End)> Spans(string text)
+    {
         var spans = new List<(int, int)>();
         for (int at = text.IndexOf(AssistantHeader, StringComparison.Ordinal); at >= 0; at = text.IndexOf(AssistantHeader, at, StringComparison.Ordinal))
         {
@@ -232,7 +246,7 @@ public sealed class ChatTranscriptEncoder
             at = end;
         }
 
-        return (text, spans);
+        return spans;
     }
 
     /// <summary>
@@ -247,16 +261,55 @@ public sealed class ChatTranscriptEncoder
     /// tokens (inputs and targets are the sequence shifted by one); null when nothing trainable remains. A transcript that
     /// is too long is shortened in its last user message (see <see cref="ShortenToFit"/>), else cut at the end.
     /// </summary>
+    /// <remarks>
+    /// With images (<see cref="Vision"/>), each image's marker becomes its blocks of image tokens before tokenizing, and
+    /// the sequence records where they lie; a sequence cut at the end keeps only whole blocks before the cut (the cut
+    /// moves to the first block that does not fit).
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">The transcript holds images and <see cref="Vision"/> is not set.</exception>
+    /// <exception cref="InvalidDataException">An image lies in an assistant turn (images are read, never trained on).</exception>
     public TrainingSequence? Encode(ChatTranscript transcript, int maxLength)
     {
-        var (tokens, trained) = Tokens(transcript);
+        var (tokens, trained, images) = Tokens(transcript);
         if (tokens.Count > maxLength + 1 && ShortenToFit && Shortened(transcript, maxLength) is { } fitted)
         {
             return fitted;
         }
 
+        return Sequence(tokens, trained, images, maxLength);
+    }
+
+    // The first maxLength + 1 tokens as a sequence (null when nothing trainable remains), with the image blocks that lie
+    // whole among its inputs (the cut moves back to the start of the first block that does not).
+    private static TrainingSequence? Sequence(List<int> tokens, List<bool> trained, List<TrainingImage> images, int maxLength)
+    {
         int keep = Math.Min(tokens.Count, maxLength + 1);
-        var sequence = new TrainingSequence([.. tokens.Take(keep)], [.. trained.Take(keep)]);
+        if (images.Count == 0)
+        {
+            var text = new TrainingSequence([.. tokens.Take(keep)], [.. trained.Take(keep)]);
+            return text.TrainedTokens > 0 ? text : null;
+        }
+
+        if (images.SelectMany(i => i.Blocks).FirstOrDefault(b => b.Position + b.Tokens > keep - 1) is { Tokens: > 0 } cut)
+        {
+            keep = Math.Min(keep, cut.Position);
+        }
+
+        var kept = new List<TrainingImage>(images.Count);
+        foreach (var image in images)
+        {
+            var blocks = image.Blocks.Where(b => b.Position + b.Tokens <= keep - 1).ToList();
+            if (blocks.Count == image.Blocks.Count)
+            {
+                kept.Add(image);
+            }
+            else if (blocks.Count > 0)
+            {
+                kept.Add(image with { Blocks = blocks });
+            }
+        }
+
+        var sequence = new TrainingSequence([.. tokens.Take(keep)], [.. trained.Take(keep)]) { Images = kept.Count == 0 ? [] : kept };
         return sequence.TrainedTokens > 0 ? sequence : null;
     }
 
@@ -278,19 +331,13 @@ public sealed class ChatTranscriptEncoder
 
     private TrainingSequence? Shortened(ChatTranscript transcript, int maxLength)
     {
-        var (fitted, tokens, trained) = ShortenedTranscript(transcript, maxLength);
-        if (fitted is null)
-        {
-            return null;
-        }
-
-        var sequence = new TrainingSequence([.. tokens], [.. trained]);
-        return sequence.TrainedTokens > 0 ? sequence : null;
+        var (fitted, tokens, trained, images) = ShortenedTranscript(transcript, maxLength);
+        return fitted is null ? null : Sequence(tokens, trained, images, maxLength);
     }
 
     // Cuts the end of the last user message before the last assistant turn until everything fits: a first cut from the
     // tokens over, then 10% less each time the estimate falls short (tokens do not map to characters exactly).
-    private (ChatTranscript? Transcript, List<int> Tokens, List<bool> Trained) ShortenedTranscript(ChatTranscript transcript, int maxLength)
+    private (ChatTranscript? Transcript, List<int> Tokens, List<bool> Trained, List<TrainingImage> Images) ShortenedTranscript(ChatTranscript transcript, int maxLength)
     {
         var messages = transcript.Messages;
         int answer = -1;
@@ -315,7 +362,7 @@ public sealed class ChatTranscriptEncoder
 
         if (answer < 0 || user < 0 || messages[user].Content.Length == 0)
         {
-            return (null, [], []);
+            return (null, [], [], []);
         }
 
         string content = messages[user].Content;
@@ -328,26 +375,39 @@ public sealed class ChatTranscriptEncoder
             var shorter = messages.ToArray();
             shorter[user] = shorter[user] with { Content = content[..length] };
             var candidate = transcript with { Messages = shorter };
-            var (tokens, trained) = Tokens(candidate);
+            var (tokens, trained, images) = Tokens(candidate);
             if (tokens.Count <= maxLength + 1)
             {
-                return (candidate, tokens, trained);
+                return (candidate, tokens, trained, images);
             }
 
             if (length == 0)
             {
-                return (null, [], []);
+                return (null, [], [], []);
             }
 
             length = length * 9 / 10;
         }
     }
 
-    // Every token of the rendered transcript, the assistant's turns marked as trained (only the last `answerTurns` of them
-    // when given).
-    private (List<int> Tokens, List<bool> Trained) Tokens(ChatTranscript transcript, int answerTurns = int.MaxValue)
+    // Every token of the rendered transcript (each image's marker expanded to its blocks of image tokens), the assistant's
+    // turns marked as trained (only the last `answerTurns` of them when given), and the images with their blocks' positions.
+    private (List<int> Tokens, List<bool> Trained, List<TrainingImage> Images) Tokens(ChatTranscript transcript, int answerTurns = int.MaxValue)
     {
         var (text, spans) = Render(transcript);
+        List<ChatImage>? images = null;
+        List<IReadOnlyList<ImageTokenLayout>>? layouts = null;
+        if (transcript.Messages.Any(m => m.Parts.Any(p => p is ChatImage)))
+        {
+            // The image parts in the order the template renders them, each as the blocks the family's encoder makes of it.
+            images = [.. transcript.Messages.SelectMany(m => m.Parts).OfType<ChatImage>()];
+            var vision = Vision ?? throw new InvalidOperationException($"The transcript holds {images.Count} image(s), and the encoder reads text only: set "
+                + "ChatTranscriptEncoder.Vision (TuningVision.Create with a vision-language model) to train on images.");
+            layouts = [.. images.Select(i => vision.Blocks(i))];
+            text = vision.Format.Expand(text, layouts, Tokenizer);
+            spans = Spans(text);
+        }
+
         int firstTrained = Math.Max(0, spans.Count - answerTurns);
         var tokens = new List<int>();
         var trained = new List<bool>();
@@ -379,7 +439,60 @@ public sealed class ChatTranscriptEncoder
         }
 
         Add(position, text.Length, false);
-        return (tokens, trained);
+        return (tokens, trained, images is null ? [] : Locate(tokens, trained, images, layouts!));
+    }
+
+    // Where each image's blocks lie in the tokens: the image tokens, in order, taken block by block by their counts (so
+    // blocks that touch are told apart). An image next to a trained token is refused: images are read, not trained on.
+    private List<TrainingImage> Locate(List<int> tokens, List<bool> trained, List<ChatImage> images, List<IReadOnlyList<ImageTokenLayout>> layouts)
+    {
+        var vision = Vision!;
+        int imageToken = vision.Format.ImageToken;
+        var located = new List<TrainingImage>(images.Count);
+        int at = 0;
+        for (int k = 0; k < images.Count; k++)
+        {
+            var blocks = new List<(int Position, int Tokens)>(layouts[k].Count);
+            foreach (var layout in layouts[k])
+            {
+                while (at < tokens.Count && tokens[at] != imageToken)
+                {
+                    at++;
+                }
+
+                int end = at;
+                while (end < tokens.Count && end < at + layout.Tokens && tokens[end] == imageToken)
+                {
+                    end++;
+                }
+
+                if (end - at != layout.Tokens)
+                {
+                    throw new InvalidDataException($"Image {k + 1} of the transcript: {end - at} image tokens at {at} where its block takes {layout.Tokens} "
+                        + "(the text holds image tokens of its own, or the tokenizer does not keep the image token whole).");
+                }
+
+                for (int i = Math.Max(0, at - 1); i < Math.Min(tokens.Count, end + 1); i++)
+                {
+                    if (trained[i])
+                    {
+                        throw new InvalidDataException($"Image {k + 1} of the transcript lies in an assistant turn: images are read in the prompt, never trained on.");
+                    }
+                }
+
+                blocks.Add((at, layout.Tokens));
+                at = end;
+            }
+
+            located.Add(new TrainingImage(images[k], vision.Images, blocks));
+        }
+
+        if (tokens.IndexOf(imageToken, at) is var extra and >= 0)
+        {
+            throw new InvalidDataException($"The transcript's text holds image tokens past its {images.Count} image(s) (at {extra}).");
+        }
+
+        return located;
     }
 
     /// <summary>
@@ -459,10 +572,8 @@ public sealed class ChatTranscriptEncoder
                 transcript = fitted;
             }
 
-            var (tokens, trained) = Tokens(transcript, turns);
-            int keep = Math.Min(tokens.Count, maxLength + 1);
-            var sequence = new TrainingSequence([.. tokens.Take(keep)], [.. trained.Take(keep)]);
-            return sequence.TrainedTokens > 0 ? sequence : null;
+            var (tokens, trained, images) = Tokens(transcript, turns);
+            return Sequence(tokens, trained, images, maxLength);
         }
 
         return Answer("chosen") is { } chosen && Answer("rejected") is { } rejected ? new PreferencePair(chosen, rejected) : null;
@@ -668,6 +779,18 @@ public sealed record FineTuningOptions
     /// disposed by training.
     /// </summary>
     public DistillationTeacher? Teacher { get; init; }
+
+    /// <summary>
+    /// The image side for sequences with images (<see cref="TrainingSequence.Images"/>, a vision-language model): the
+    /// family's encoder, the preparation, the vision parts that train beside the adapters and the feature cache
+    /// (<see cref="TuningVision.Create"/>; the one the sequences were encoded with). Null: made from the model when the
+    /// sequences hold images (the language model trains alone, a memory cache), and disposed after training. Not disposed by
+    /// training when given. Steps with images run padded (each sequence with images its own row; text-only sequences still
+    /// pack among themselves) and are never recorded as graphs; the out-of-memory ladder covers them as any step. The
+    /// trained vision parts are saved with the adapters (PEFT's <c>modules_to_save</c>) and the preparation beside them
+    /// (<see cref="TuningImages.FileName"/>).
+    /// </summary>
+    public TuningVision? Vision { get; init; }
 }
 
 /// <summary>What <see cref="FineTuner.Profile"/> measured.</summary>
@@ -857,13 +980,36 @@ public static class FineTuner
         bool pairs, CustomLoss? custom, FineTuningOptions options, string? outputFolder, IProgress<FineTuningProgress>? progress, CancellationToken cancellationToken,
         Action<string>? trace)
     {
+        // The image side first (its family registered, a vision part at all), before anything else runs.
+        var (vision, ownedVision) = VisionFor(model, evaluation is null ? train : train.Concat(evaluation), options.Vision);
+        using var disposeVision = ownedVision;
+        options = options with { Vision = vision };
+        bool images = train.Any(s => s.Images.Count > 0);
+        if (vision is not null)
+        {
+            trace?.Invoke($"images: {vision} ({train.Count(s => s.Images.Count > 0)} of {train.Count} training sequences hold images; "
+                          + "their steps run padded rows, never recorded)");
+        }
+
         var network = model.Network;
         if (!network.Descendants().OfType<Linear>().Any(l => l.Adapter is not null))
         {
             model.AddAdapters(options.Rank, options.Alpha, options.Targets, options.Seed, options.Dora);
         }
 
-        var parameters = network.TrainableParameters().ToList();
+        var parameters = network.TrainableParameters().Concat(vision?.Parameters ?? []).ToList();
+        void Save(string folder)
+        {
+            if (vision is not null)
+            {
+                vision.Save(folder, images);                                  // the trained vision parts and tuning_images.json too
+            }
+            else
+            {
+                model.SaveAdapter(folder);
+            }
+        }
+
         using var float8 = PrepareFloat8(model, train, options, trace);
         using var optimizer = CreateOptimizer(parameters, options);
         var random = new Random(options.Seed);
@@ -893,14 +1039,14 @@ public static class FineTuner
                 bool lastOfEpoch = first + accumulation >= batches.Count;
                 if (evaluation is { Count: > 0 } && (options.EvaluateEvery > 0 ? step % options.EvaluateEvery == 0 : lastOfEpoch))
                 {
-                    evaluationLoss = custom is null ? Evaluate(model, evaluation, options.BatchTokens, options.LossChunkRows, trace)
+                    evaluationLoss = custom is null ? Evaluate(model, evaluation, options.BatchTokens, options.LossChunkRows, trace, vision)
                         : EvaluateCustom(model, evaluation, pairs, custom, options, trace);
                     evaluations.Add(evaluationLoss.Value);
                 }
 
                 if (outputFolder is not null && options.SaveEvery > 0 && step % options.SaveEvery == 0)
                 {
-                    model.SaveAdapter(Path.Combine(outputFolder, $"checkpoint-{step}"));
+                    Save(Path.Combine(outputFolder, $"checkpoint-{step}"));
                 }
 
                 progress?.Report(new FineTuningProgress(step, totalSteps, epoch + 1, loss, rate, tokens / Math.Max(1e-9, watch.Elapsed.TotalSeconds), evaluationLoss));
@@ -910,10 +1056,39 @@ public static class FineTuner
         network.Eval();
         if (outputFolder is not null)
         {
-            model.SaveAdapter(outputFolder);
+            Save(outputFolder);
         }
 
         return evaluations;
+    }
+
+    // The image side of a run: the one given (checked against the model), else one made from the model when the sequences
+    // hold images (returned as Owned too: the caller disposes it), else none.
+    private static (TuningVision? Vision, TuningVision? Owned) VisionFor(PretrainedModel model, IEnumerable<TrainingSequence> sequences, TuningVision? given)
+    {
+        if (given is not null)
+        {
+            if (!ReferenceEquals(given.Model, model))
+            {
+                throw new ArgumentException("FineTuningOptions.Vision was made for another model (TuningVision.Create with the model being tuned).");
+            }
+
+            return (given, null);
+        }
+
+        var preparations = sequences.SelectMany(s => s.Images).Select(i => i.Preparation).Distinct().Take(2).ToList();
+        if (preparations.Count == 0)
+        {
+            return (null, null);
+        }
+
+        if (preparations.Count > 1)
+        {
+            throw new ArgumentException("The sequences' images are prepared in different ways (transforms or vision options); give FineTuningOptions.Vision.");
+        }
+
+        var made = TuningVision.Create(model, preparations[0]);
+        return (made, made);
     }
 
     // Runs optimizer steps: ordinary ones, or replays of a recorded graph once one is recorded (see
@@ -1068,7 +1243,7 @@ public static class FineTuner
             var options = _options;
             _graphs ??= _graphsAllowed;
             var batch = group[0];
-            if (graphs && _graphs == true && group.Count == 1 && batch.Packed)
+            if (graphs && _graphs == true && group.Count == 1 && batch.Packed && !batch.HasImages(train))
             {
                 if (_graph is null && _ordinary >= 2)
                 {
@@ -1128,7 +1303,7 @@ public static class FineTuner
         var removal = new Float8Removal(layers);
         int count = Math.Min(16, train.Count);
         var sample = Enumerable.Range(0, count).Select(i => train[(int)((long)i * train.Count / count)]).ToList();
-        float reference = Evaluate(model, sample, options.BatchTokens, options.LossChunkRows);
+        float reference = Evaluate(model, sample, options.BatchTokens, options.LossChunkRows, vision: options.Vision);
         int attached = layers.Count(l => l.AttachFloat8());
         if (attached == 0)
         {
@@ -1136,7 +1311,7 @@ public static class FineTuner
             return removal;
         }
 
-        float quantized = Evaluate(model, sample, options.BatchTokens, options.LossChunkRows);
+        float quantized = Evaluate(model, sample, options.BatchTokens, options.LossChunkRows, vision: options.Vision);
         double difference = Math.Abs(quantized - reference) / Math.Max(1e-6, Math.Abs(reference));
         trace?.Invoke($"FP8 check on {count} training sequences: loss {quantized:F4} with FP8 products of the frozen weights, {reference:F4} in bfloat16 "
                       + $"({difference:P2} apart, {options.Float8Tolerance:P0} allowed); {attached} of {layers.Count} layers");
@@ -1199,7 +1374,8 @@ public static class FineTuner
             using var packed = packing?.Use();                                // forward and backward (checkpointed blocks run again)
             using var recompute = options.RecomputeFeedForward == true ? ActivationMemory.Recompute() : (ActivationMemory.Scope?)null;
             using var compress = options.BFloat16Activations == true ? ActivationMemory.CompressToBFloat16() : (ActivationMemory.Scope?)null;
-            var (lossTensor, count) = BatchLoss(model, train, batch, normalizer, options.LossChunkRows, options.Checkpointing == true, custom, sequences);
+            long hits = options.Vision?.CacheHits ?? 0, encoded = options.Vision?.Encoded ?? 0;
+            var (lossTensor, count) = BatchLoss(model, train, batch, normalizer, options.LossChunkRows, options.Checkpointing == true, custom, sequences, options.Vision);
             if (options.LoadBalancingWeight > 0f && LoadBalancing(network) is { } balance)
             {
                 lossTensor += (balance * (options.LoadBalancingWeight / group.Count)).Reshape(lossTensor.Shape);
@@ -1210,7 +1386,10 @@ public static class FineTuner
             loss += batchLoss;
             tokens += count;
             float shown = custom is null ? batchLoss * normalizer / Math.Max(1, batch.Sequences.Sum(i => train[i].TrainedTokens)) : batchLoss;
-            trace?.Invoke($"  forward and backward {batchWatch.Elapsed.TotalSeconds:F2} s, loss {shown:F4}");
+            string imageCounts = options.Vision is { } v && batch.HasImages(train)
+                ? $", image features: {v.CacheHits - hits} from the cache, {v.Encoded - encoded} encoded"
+                : "";
+            trace?.Invoke($"  forward and backward {batchWatch.Elapsed.TotalSeconds:F2} s, loss {shown:F4}{imageCounts}");
         }
 
         Update(model, optimizer, options);
@@ -1246,13 +1425,16 @@ public static class FineTuner
         int timed = 3, int profiled = 3, Action<string>? trace = null)
     {
         ArgumentNullException.ThrowIfNull(model);
+        var (vision, ownedVision) = VisionFor(model, train, options.Vision);
+        using var disposeVision = ownedVision;
+        options = options with { Vision = vision };
         if (!model.Network.Descendants().OfType<Linear>().Any(l => l.Adapter is not null))
         {
             model.AddAdapters(options.Rank, options.Alpha, options.Targets, options.Seed, options.Dora);
         }
 
         using var float8 = PrepareFloat8(model, train, options, trace);
-        using var optimizer = CreateOptimizer(model.Network.TrainableParameters().ToList(), options);
+        using var optimizer = CreateOptimizer(model.Network.TrainableParameters().Concat(vision?.Parameters ?? []).ToList(), options);
         var batches = MakeBatches(model, train, options, new Random(options.Seed));
         int accumulation = Math.Max(1, options.GradientAccumulation);
         int next = 0;
@@ -1299,10 +1481,17 @@ public static class FineTuner
         return new FineTuningProfile(kernels, Math.Max(1, profiled), profiledTokens, timedSeconds / Math.Max(1, timed), timedTokens / (double)Math.Max(1, timed));
     }
 
-    /// <summary>Mean loss per trained token of <paramref name="sequences"/> (no gradients).</summary>
+    /// <summary>
+    /// Mean loss per trained token of <paramref name="sequences"/> (no gradients). Sequences with images read their
+    /// features through <paramref name="vision"/> (one made from the model for this call when null).
+    /// </summary>
     public static float Evaluate(PretrainedModel model, IReadOnlyList<TrainingSequence> sequences, int batchTokens = 4096, int chunkRows = 512,
-        Action<string>? trace = null)
+        Action<string>? trace = null, TuningVision? vision = null)
     {
+        ArgumentNullException.ThrowIfNull(model);
+        ArgumentNullException.ThrowIfNull(sequences);
+        var (images, owned) = VisionFor(model, sequences, vision);
+        using var disposeVision = owned;
         model.Network.Eval();
         double total = 0;
         long trained = 0;
@@ -1315,7 +1504,7 @@ public static class FineTuner
                 var watch = Stopwatch.StartNew();
                 using var scope = new TensorScope();
                 int count = batch.Sum(i => sequences[i].TrainedTokens);
-                var (loss, _) = BatchLoss(model, sequences, Batch.Padded(batch, sequences), 1f, chunkRows);
+                var (loss, _) = BatchLoss(model, sequences, Batch.Padded(batch, sequences), 1f, chunkRows, vision: images);
                 total += loss.Item();
                 trained += count;
                 trace?.Invoke($"evaluation batch {b + 1}/{batches.Count}: {batch.Length} sequences × {batch.Max(i => sequences[i].Tokens.Length) - 1} tokens, {watch.Elapsed.TotalSeconds:F2} s");
@@ -1342,7 +1531,7 @@ public static class FineTuner
             {
                 var watch = Stopwatch.StartNew();
                 using var scope = new TensorScope();
-                var (loss, _) = BatchLoss(model, sequences, batches[b], tokens, options.LossChunkRows, custom: custom, stepSequences: count);
+                var (loss, _) = BatchLoss(model, sequences, batches[b], tokens, options.LossChunkRows, custom: custom, stepSequences: count, vision: options.Vision);
                 total += loss.Item();
                 trace?.Invoke($"evaluation batch {b + 1}/{batches.Count}: {batches[b].Describe(sequences)}, {watch.Elapsed.TotalSeconds:F2} s");
             }
@@ -1406,7 +1595,7 @@ public static class FineTuner
         private readonly Dictionary<TrainingSequence, float[]> _reference = [];
 
         public Tensor BatchLoss(PretrainedModel model, Tensor tokens, Tensor hidden, Linear head, IReadOnlyList<TrainingSequence> sequences, BatchData data,
-            int stepTokens, int stepSequences, int chunkRows)
+            int stepTokens, int stepSequences, int chunkRows, StepImages? images = null)
         {
             int[] targets = [.. data.Targets.Select(t => (int)t)];
             var values = Losses.TokenLogProbabilities(hidden, h => head.Forward(h), data.Trained, targets, chunkRows);
@@ -1424,7 +1613,7 @@ public static class FineTuner
                 Func<float, float[]>? divergence = teacher is null ? null
                     : temperature => Tensor.TokenDivergences(hidden, h => head.Forward(h), data.Trained, Teacher(temperature), temperature, chunkRows);
                 var input = new FineTuningLossInput(probabilities, [.. sequences.Select(s => s.TrainedTokens)], sequences,
-                    () => Reference(model, tokens, sequences, data, targets, chunkRows), pairs, stepTokens, stepSequences, divergence);
+                    () => Reference(model, tokens, sequences, data, targets, chunkRows, images), pairs, stepTokens, stepSequences, divergence);
                 var value = loss(input) ?? throw new InvalidOperationException("FineTuningOptions.Loss returned no tensor.");
                 if (value.Size != 1)
                 {
@@ -1480,7 +1669,8 @@ public static class FineTuner
 
         // The trained tokens' log-probabilities under the base model (adapters disabled, no gradients, dropout off), one
         // forward pass of the batch the first time its sequences are seen.
-        private float[] Reference(PretrainedModel model, Tensor tokens, IReadOnlyList<TrainingSequence> sequences, BatchData data, int[] targets, int chunkRows)
+        private float[] Reference(PretrainedModel model, Tensor tokens, IReadOnlyList<TrainingSequence> sequences, BatchData data, int[] targets, int chunkRows,
+            StepImages? images)
         {
             if (sequences.All(_reference.ContainsKey))
             {
@@ -1497,7 +1687,7 @@ public static class FineTuner
                 try
                 {
                     values = NetworkLoss(model, tokens, (hidden, head) => Losses.TokenLogProbabilities(hidden, h => head.Forward(h), data.Trained, targets, chunkRows),
-                        checkpointing: false);
+                        checkpointing: false, images);
                 }
                 finally
                 {
@@ -1522,14 +1712,47 @@ public static class FineTuner
         public static Batch Padded(int[] sequences, IReadOnlyList<TrainingSequence> all) =>
             new([.. sequences.Select(i => new[] { i })], sequences.Max(i => all[i].Tokens.Length) - 1, false);
 
-        public string Describe(IReadOnlyList<TrainingSequence> all) => Packed
+        public string Describe(IReadOnlyList<TrainingSequence> all) => (Packed
             ? $"{Rows.Sum(r => r.Length)} sequences packed in {Rows.Length} × {Length} positions ({Rows.Sum(r => r.Sum(i => all[i].Tokens.Length - 1)) * 100.0 / (Rows.Length * Length):F0}% filled)"
-            : $"{Rows.Length} sequences × {Length} tokens";
+            : $"{Rows.Length} sequences × {Length} tokens") + DescribeImages(all);
+
+        // Whether a sequence of the batch holds images.
+        public bool HasImages(IReadOnlyList<TrainingSequence> all) => Rows.Any(r => r.Any(i => all[i].Images.Count > 0));
+
+        private string DescribeImages(IReadOnlyList<TrainingSequence> all)
+        {
+            if (!HasImages(all))
+            {
+                return "";
+            }
+
+            var images = Sequences.SelectMany(i => all[i].Images).ToList();
+            return $", {images.Count} images ({images.Sum(i => i.Tokens)} image tokens; padded rows, one sequence each, not recorded as a graph)";
+        }
     }
 
-    // The training batches: packed when asked and supported, else padded.
+    // The training batches: packed when asked and supported, else padded. Sequences with images are never packed (each its
+    // own row of a padded batch; plan 12, phase 6 packs them): with packing, the text-only sequences pack among themselves
+    // and the batches of both kinds are shuffled together.
     private static List<Batch> MakeBatches(PretrainedModel model, IReadOnlyList<TrainingSequence> train, FineTuningOptions options, Random random)
     {
+        if (options.Packing && PackedSequences.Supports(model.Network) && train.Any(s => s.Images.Count > 0))
+        {
+            int[] text = [.. Enumerable.Range(0, train.Count).Where(i => train[i].Images.Count == 0)];
+            int[] imaged = [.. Enumerable.Range(0, train.Count).Where(i => train[i].Images.Count > 0)];
+            var batches = new List<Batch>();
+            if (text.Length > 0)
+            {
+                var textOnly = text.Select(i => train[i]).ToList();
+                batches.AddRange(MakeBatches(model, textOnly, options, random).Select(b => b with { Rows = [.. b.Rows.Select(r => r.Select(i => text[i]).ToArray())] }));
+            }
+
+            var withImages = imaged.Select(i => train[i]).ToList();
+            batches.AddRange(Batches(withImages, options.BatchTokens, random).Select(b => Batch.Padded([.. b.Select(i => imaged[i])], train)));
+            random.Shuffle(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(batches));
+            return batches;
+        }
+
         if (options.Packing && PackedSequences.Supports(model.Network))
         {
             int longest = train.Max(s => s.Tokens.Length - 1);
@@ -1713,22 +1936,73 @@ public static class FineTuner
     // The summed weighted loss of one batch divided by normalizer (untrained positions weigh 0), and the number of tokens
     // it covers. Packed batches run under their PackedSequences (the caller's), padded ones as they are.
     // With a loss of one's own (custom), normalizer is the step's trained tokens and stepSequences its sequences.
+    // With images, their features come through `vision` (made in the caller's tensor scope, released with the batch).
     private static (Tensor Loss, long Tokens) BatchLoss(PretrainedModel model, IReadOnlyList<TrainingSequence> sequences, Batch batch, float normalizer,
-        int chunkRows, bool checkpointing = false, CustomLoss? custom = null, int stepSequences = 0)
+        int chunkRows, bool checkpointing = false, CustomLoss? custom = null, int stepSequences = 0, TuningVision? vision = null)
     {
         var data = Prepare(sequences, batch);
+        var images = StepImages.Of(sequences, batch, vision);
         var tokens = Tensor.From(data.Inputs, [batch.Rows.Length, batch.Length], model.Device);
         var loss = custom is null
             ? NetworkLoss(model, tokens, (hidden, head) => Losses.TokenCrossEntropyRows(hidden, h => head.Forward(h), data.Trained, data.Targets,
-                data.Weights, normalizer, chunkRows), checkpointing)
+                data.Weights, normalizer, chunkRows), checkpointing, images)
             : NetworkLoss(model, tokens, (hidden, head) => custom.BatchLoss(model, tokens, hidden, head, [.. batch.Sequences.Select(i => sequences[i])], data,
-                (int)normalizer, stepSequences, chunkRows), checkpointing);
+                (int)normalizer, stepSequences, chunkRows, images), checkpointing, images);
         return (loss, data.Tokens);
     }
 
+    // The images of a batch for the decoder's pass: each image's features (once per distinct image and preparation in the
+    // batch, through the vision side's cache) at its blocks' positions in its row, and the family's attention rule.
+    private sealed record StepImages(IReadOnlyList<PromptImage> Images, IImageAttentionRule Attention)
+    {
+        public static StepImages? Of(IReadOnlyList<TrainingSequence> sequences, Batch batch, TuningVision? vision)
+        {
+            if (!batch.HasImages(sequences))
+            {
+                return null;
+            }
+
+            if (batch.Packed)
+            {
+                throw new InvalidOperationException("A packed batch holds sequences with images; images train in padded rows (each sequence its own row).");
+            }
+
+            if (vision is null)
+            {
+                throw new InvalidOperationException("The sequences hold images and no vision side is given (FineTuningOptions.Vision, TuningVision.Create).");
+            }
+
+            var features = new Dictionary<(string, TuningImages), Tensor>();
+            var images = new List<PromptImage>();
+            for (int row = 0; row < batch.Rows.Length; row++)
+            {
+                foreach (var image in batch.Rows[row].SelectMany(i => sequences[i].Images))
+                {
+                    var key = (image.Image.Hash, image.Preparation);
+                    if (!features.TryGetValue(key, out var all))
+                    {
+                        features[key] = all = vision.Features(image, out _);
+                    }
+
+                    int offset = 0;
+                    foreach (var (position, count) in image.Blocks)
+                    {
+                        var block = offset == 0 && count == all.Shape[0] ? all : all.Narrow(0, offset, count);
+                        images.Add(new PromptImage(position, block) { Sequence = row });
+                        offset += count;
+                    }
+                }
+            }
+
+            return new StepImages(images, vision.Attention);
+        }
+    }
+
     // The network up to its final normalization on tokens [rows, length], then `loss` of the hidden states [rows · length,
-    // dim] with the output head (which the loss runs itself, on the rows it needs).
-    private static T NetworkLoss<T>(PretrainedModel model, Tensor tokens, Func<Tensor, Linear, T> loss, bool checkpointing)
+    // dim] with the output head (which the loss runs itself, on the rows it needs). With images, the decoder attends by the
+    // family's rule and the first decoder block reads the embeddings with the images' features in (checkpointed blocks
+    // recompute with the same image blocks in the backward pass).
+    private static T NetworkLoss<T>(PretrainedModel model, Tensor tokens, Func<Tensor, Linear, T> loss, bool checkpointing, StepImages? images = null)
     {
         var modules = model.Network.ToList();
         if (modules[^1] is not Linear head)
@@ -1736,9 +2010,21 @@ public static class FineTuner
             throw new InvalidOperationException("The network does not end with its output head (a Linear layer).");
         }
 
+        using var imageScope = images is null ? null : model.Network.Begin(tokens, images.Images, images.Attention);
         var hidden = tokens;
         for (int i = 0; i < modules.Count - 1; i++)
         {
+            if (imageScope is not null && i == imageScope.FirstBlock)
+            {
+                var substituted = imageScope.Substitute(hidden);
+                if (!Autograd.IsEnabled && !ReferenceEquals(hidden, tokens))
+                {
+                    hidden.Dispose();                                        // evaluation frees each activation once read
+                }
+
+                hidden = substituted;
+            }
+
             if (checkpointing && modules[i] is DecoderBlock && Autograd.IsEnabled)
             {
                 hidden = modules[i].ForwardCheckpointed(hidden);                // keeps only the block's output

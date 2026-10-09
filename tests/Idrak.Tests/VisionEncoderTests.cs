@@ -137,8 +137,8 @@ internal static partial class Tests
             float[] pixels = ReadNpyFloat32(TestData("vlm/reference/pixel_values-png.npy"));
             using var model = PretrainedModel.Load(folder, new PretrainedOptions { Device = device });
             var vision = (Gemma3Vision)model.Vision!;
-            using var half = (Gemma3ImageEncoder)vision.CreateEncoder(new Idrak.Models.Abstractions.VisionEncoderOptions { Device = device });
-            using var full = (Gemma3ImageEncoder)vision.CreateEncoder(new Idrak.Models.Abstractions.VisionEncoderOptions { Device = device, Weights = Idrak.Models.Abstractions.EncoderWeights.Float32 });
+            using var half = (Gemma3ImageEncoder)vision.CreateEncoder(new VisionEncoderOptions { Device = device });
+            using var full = (Gemma3ImageEncoder)vision.CreateEncoder(new VisionEncoderOptions { Device = device, Weights = EncoderWeights.Float32 });
             var halfLinears = half.Descendants().OfType<Linear>().ToList();
             var fullLinears = full.Descendants().OfType<Linear>().ToList();
             Check(halfLinears.Count == 2 * 4 + 1 && halfLinears.All(l => l.BFloat16 is not null), $"by default a bfloat16 checkpoint's projections stay bfloat16 ({halfLinears.Count(l => l.BFloat16 is not null)} of {halfLinears.Count})");
