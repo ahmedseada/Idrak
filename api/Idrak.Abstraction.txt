@@ -1356,6 +1356,7 @@ public abstract class Idrak.Abstraction.Generation.KeyValueLayout
   public abstract void Write(Idrak.Abstraction.Tensor keys, Idrak.Abstraction.Tensor values, Idrak.Abstraction.Generation.KeyValueCache cache, Idrak.Abstraction.Tensor position)
   public override string ToString()
   public virtual Idrak.Abstraction.Tensor Attend(Idrak.Abstraction.Tensor q, Idrak.Abstraction.Generation.KeyValueCache cache, Idrak.Abstraction.Generation.DecodingContext context, int steps, float scale, bool decoderKernels)
+  public virtual Idrak.Abstraction.Tensor ExpandPrefix(Idrak.Abstraction.Generation.KeyValueCache cache, bool keys, int positions)
   public virtual Idrak.Abstraction.Tensor? AttendVariant(Idrak.Abstraction.Tensor q, Idrak.Abstraction.Generation.KeyValueCache cache, Idrak.Abstraction.Generation.DecodingContext context, int steps, float scale, Idrak.Abstraction.Devices.AttentionVariant variant)
   public virtual bool FusedWrite { get; }
   public virtual bool HalfWords { get; }
