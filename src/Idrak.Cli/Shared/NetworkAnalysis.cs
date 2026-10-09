@@ -129,8 +129,12 @@ internal sealed class NetworkAnalysis
         return op switch
         {
             "linear" => $"linear {I("out")}" + ((bool?)step["bias"] == false ? ", no bias" : ""),
-            "conv2d" => $"conv2d {I("out")}, {I("kernel")}x{I("kernel")}" + (I("stride", 1) != 1 ? $", stride {I("stride")}" : "") + (I("padding") != 0 ? $", padding {I("padding")}" : ""),
-            "maxpool2d" => $"max pool {I("kernel")}x{I("kernel")}",
+            "conv2d" => $"conv2d {I("out")}, {Size(Pair(step, "kernel", 1))}" + (Pair(step, "stride", 1) is not (1, 1) ? $", stride {Size(Pair(step, "stride", 1))}" : "")
+                + (Pair(step, "padding", 0) is not (0, 0) ? $", padding {Size(Pair(step, "padding", 0))}" : "")
+                + (Pair(step, "dilation", 1) is not (1, 1) ? $", dilation {Size(Pair(step, "dilation", 1))}" : "") + (I("groups", 1) != 1 ? $", {I("groups")} groups" : ""),
+            "maxpool2d" => $"max pool {Size(Pair(step, "kernel", 1))}",
+            "avgpool2d" => $"average pool {Size(Pair(step, "kernel", 1))}",
+            "columnsToSequence" => "columns to a sequence",
             "globalavgpool2d" => "global average pool",
             "batchnorm" => "batch norm",
             "layernorm" => "layer norm",
@@ -139,7 +143,8 @@ internal sealed class NetworkAnalysis
             "positional" => "positional encoding",
             "transformer" => $"transformer, {I("heads")} heads" + (step["ffDim"] is not null ? $", feed-forward {I("ffDim")}" : "") + ((bool?)step["causal"] == true ? ", causal" : ""),
             "attention" => $"attention, {I("heads")} heads" + ((bool?)step["causal"] == true ? ", causal" : ""),
-            "lstm" or "gru" => $"{op} {I("hidden")}" + ((bool?)step["returnSequences"] == true ? ", every step" : ""),
+            "lstm" or "gru" => $"{op} {I("hidden")}" + ((bool?)step["bidirectional"] == true ? ", both directions" : "") + (I("layers", 1) > 1 ? $", {I("layers")} layers" : "")
+                + ((bool?)step["returnSequences"] == true ? ", every step" : ""),
             "meanOverTime" => "mean over time",
             "lastStep" => "last step",
             "firstStep" => "first step",
@@ -154,6 +159,29 @@ internal sealed class NetworkAnalysis
 
     private static long Elements(IReadOnlyList<int> shape) => shape.Aggregate(1L, (a, b) => a * b);
 
+    // A window size the builder writes as one number (square) or as [height, width].
+    private static (int H, int W) Pair(JsonObject step, string key, int fallback) => step[key] switch
+    {
+        JsonArray pair => ((int)pair[0]!, (int)pair[1]!),
+        JsonNode one => ((int)one, (int)one),
+        null => (fallback, fallback),
+    };
+
+    private static string Size((int H, int W) size) => $"{size.H}x{size.W}";
+
+    // A recurrent step's layers and directions: each (input size, hidden size, gates), in order.
+    private static IEnumerable<long> RecurrentInputs(JsonObject step, long d)
+    {
+        long hidden = (int)step["hidden"]!, directions = (bool?)step["bidirectional"] == true ? 2 : 1;
+        for (int layer = 0; layer < ((int?)step["layers"] ?? 1); layer++)
+        {
+            for (int direction = 0; direction < directions; direction++)
+            {
+                yield return layer == 0 ? d : hidden * directions;
+            }
+        }
+    }
+
     // Parameters as the layers create them (see Linear, Conv2d, BatchNorm, LayerNorm, Embedding, MultiHeadAttention,
     // TransformerEncoderLayer, LSTM and GRU); null for a step this analysis does not know.
     private static long? CountParameters(string op, JsonObject step, int[] input, int[] output)
@@ -165,8 +193,9 @@ internal sealed class NetworkAnalysis
                 long outFeatures = (int)step["out"]!;
                 return d * outFeatures + ((bool?)step["bias"] ?? true ? outFeatures : 0);
             case "conv2d":
-                long outChannels = (int)step["out"]!, kernel = (int)step["kernel"]!;
-                return input[0] * outChannels * kernel * kernel + ((bool?)step["bias"] ?? true ? outChannels : 0);
+                long outChannels = (int)step["out"]!, groups = (int?)step["groups"] ?? 1;
+                var (kh, kw) = Pair(step, "kernel", 1);
+                return input[0] / groups * outChannels * kh * kw + ((bool?)step["bias"] ?? true ? outChannels : 0);
             case "batchnorm":
                 return 2L * input[0];                                           // gamma and beta (running statistics are buffers)
             case "layernorm":
@@ -180,8 +209,9 @@ internal sealed class NetworkAnalysis
                 return 2 * (2 * d) + Attention(d) + (d * ff + ff) + (ff * d + d);
             case "lstm" or "gru":
                 long gates = op == "lstm" ? 4 : 3, hidden = (int)step["hidden"]!;
-                return d * gates * hidden + hidden * gates * hidden + gates * hidden;
-            case "relu" or "tanh" or "sigmoid" or "gelu" or "softmax" or "dropout" or "maxpool2d" or "globalavgpool2d" or "flatten"
+                long candidate = op == "gru" && (bool?)step["candidateBias"] == true ? hidden : 0;   // the candidate gate's own recurrent bias
+                return RecurrentInputs(step, d).Sum(x => x * gates * hidden + hidden * gates * hidden + gates * hidden + candidate);
+            case "relu" or "tanh" or "sigmoid" or "gelu" or "softmax" or "dropout" or "maxpool2d" or "avgpool2d" or "columnsToSequence" or "globalavgpool2d" or "flatten"
                 or "positional" or "meanOverTime" or "lastStep" or "firstStep" or "reshape":
                 return 0;
             default:
@@ -202,11 +232,11 @@ internal sealed class NetworkAnalysis
             case "linear":
                 return 2 * positions * d * (int)step["out"]!;
             case "conv2d":
-                long kernel = (int)step["kernel"]!;
-                return 2 * input[0] * kernel * kernel * outElements;
-            case "maxpool2d":
-                long k = (int)step["kernel"]!;
-                return outElements * k * k;
+                var (kh, kw) = Pair(step, "kernel", 1);
+                return 2 * input[0] / ((int?)step["groups"] ?? 1) * kh * kw * outElements;
+            case "maxpool2d" or "avgpool2d":
+                var (ph, pw) = Pair(step, "kernel", 1);
+                return outElements * ph * pw;
             case "batchnorm" or "layernorm":
                 return 4 * inElements;
             case "embedding":
@@ -218,10 +248,10 @@ internal sealed class NetworkAnalysis
                 return AttentionFlops(t, d) + 4 * t * d * ff + 8 * inElements + 2 * inElements;
             case "lstm" or "gru":
                 long gates = op == "lstm" ? 4 : 3, hidden = (int)step["hidden"]!;
-                return t * (2 * (d + hidden) * gates * hidden + 10 * hidden);
+                return RecurrentInputs(step, d).Sum(x => t * (2 * (x + hidden) * gates * hidden + 10 * hidden));
             case "globalavgpool2d" or "meanOverTime":
                 return inElements;
-            case "flatten" or "reshape" or "lastStep" or "firstStep" or "dropout":
+            case "flatten" or "reshape" or "lastStep" or "firstStep" or "dropout" or "columnsToSequence":
                 return 0;
             case "relu" or "tanh" or "sigmoid" or "gelu" or "softmax" or "positional":
                 return outElements;
