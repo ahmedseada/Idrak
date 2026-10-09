@@ -13,38 +13,9 @@ public interface Idrak.Data.Abstractions.IBatchSource : System.Collections.Gener
   public (default) int? BatchSize { get; }
   public (default) int? SampleCount { get; }
 
-public interface Idrak.Data.Abstractions.IImageCodec
-  public Idrak.Abstraction.Data.ImageData Decode(System.ReadOnlySpan<byte> file)
-  public Idrak.Data.Abstractions.ImageInfo? ReadInfo(System.ReadOnlySpan<byte> header)
-  public System.Collections.Generic.IReadOnlyCollection<string> Extensions { get; }
-  public string Name { get; }
-
 public interface Idrak.Data.Abstractions.IScaler
   public void InverseTransform(System.Span<float> data, int columns)
   public void Transform(System.Span<float> data, int columns)
-
-public static class Idrak.Data.Abstractions.ImageCodecs
-  public const int HeaderBytes = 65536
-  public static Idrak.Abstraction.Data.ImageData Decode(System.ReadOnlySpan<byte> file)
-  public static Idrak.Abstraction.Data.ImageData Decode(string path)
-  public static Idrak.Data.Abstractions.IImageCodec Get(string name)
-  public static Idrak.Data.Abstractions.IImageCodec? Default(string name)
-  public static Idrak.Data.Abstractions.ImageInfo? ReadInfo(string path)
-  public static System.Collections.Generic.IReadOnlyCollection<string> Extensions { get; }
-  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
-  public static bool CanDecode(string path)
-  public static bool Unregister(string name)
-  public static float[] Load(string path, int channels, int height, int width)
-  public static string? Origin(string name)
-  public static void Register(Idrak.Data.Abstractions.IImageCodec codec)
-  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
-
-public readonly record struct Idrak.Data.Abstractions.ImageInfo : System.IEquatable<Idrak.Data.Abstractions.ImageInfo>
-  public ImageInfo(int Width, int Height, int Channels, string Format)
-  public int Channels { get; init; }
-  public int Height { get; init; }
-  public int Width { get; init; }
-  public string Format { get; init; }
 
 public static class Idrak.Data.Abstractions.SampleSources
   public static Idrak.Abstraction.Data.ISampleSource Open(string name, string path, System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null)
@@ -265,11 +236,13 @@ public static class Idrak.Data.PillowImageOps
   public static Idrak.Abstraction.Data.ImageData ScaleDown(Idrak.Abstraction.Data.ImageData image, int maxWidth, int maxHeight, Idrak.Data.ImageResampling resampling = (Idrak.Data.ImageResampling)1)
   public static Idrak.Abstraction.Data.ImageData Sharpness(Idrak.Abstraction.Data.ImageData image, double factor)
 
-public sealed class Idrak.Data.RandomFlip : Idrak.Abstraction.Data.ISampleTransform
+public sealed class Idrak.Data.RandomFlip : Idrak.Abstraction.Data.IAugmentation, Idrak.Abstraction.Data.ISampleTransform
+  public Idrak.Abstraction.Data.AnnotatedImage Apply(Idrak.Abstraction.Data.AnnotatedImage sample, Idrak.Abstraction.Data.AugmentationContext context)
   public RandomFlip(bool horizontal = true, bool vertical = false, double probability = 0.5)
   public bool Horizontal { get; }
   public bool Vertical { get; }
   public double Probability { get; }
+  public string Name { get; }
   public void Apply(System.Span<float> features, System.Span<float> targets, System.Collections.Generic.IReadOnlyList<int> featureShape, System.Random random)
 
 public sealed class Idrak.Data.RandomRotation : Idrak.Abstraction.Data.ISampleTransform
@@ -278,10 +251,12 @@ public sealed class Idrak.Data.RandomRotation : Idrak.Abstraction.Data.ISampleTr
   public float MaxDegrees { get; }
   public void Apply(System.Span<float> features, System.Span<float> targets, System.Collections.Generic.IReadOnlyList<int> featureShape, System.Random random)
 
-public sealed class Idrak.Data.RandomShift : Idrak.Abstraction.Data.ISampleTransform
+public sealed class Idrak.Data.RandomShift : Idrak.Abstraction.Data.IAugmentation, Idrak.Abstraction.Data.ISampleTransform
+  public Idrak.Abstraction.Data.AnnotatedImage Apply(Idrak.Abstraction.Data.AnnotatedImage sample, Idrak.Abstraction.Data.AugmentationContext context)
   public RandomShift(int maxPixels, float fill = 0f)
   public float Fill { get; }
   public int MaxPixels { get; }
+  public string Name { get; }
   public void Apply(System.Span<float> features, System.Span<float> targets, System.Collections.Generic.IReadOnlyList<int> featureShape, System.Random random)
 
 public static class Idrak.Data.SampleSourceExtensions

@@ -226,7 +226,7 @@ internal static partial class Tests
             Check(TuningImages.Read(folder)!.IsEmpty && TuningImages.Read(folder)!.Equals(TuningImages.None), "nothing round-trips as nothing");
             Check(!images.Equals(images with { Grayscale = false }) && !images.Equals(images with { VisionOptions = VisionOptions.Empty }), "equality sees every field");
 
-            var image = Idrak.Data.Abstractions.ImageCodecs.Decode(TestData("vlm/image.png"));
+            var image = ImageCodecs.Decode(TestData("vlm/image.png"));
             var applied = images.Apply(image);
             var piped = images.Pipeline.Apply(image);
             Check(applied.Channels == piped.Channels && applied.Pixels.AsSpan().SequenceEqual(piped.Pixels), "Apply runs the pipeline, grayscale first");
@@ -434,7 +434,7 @@ internal static partial class Tests
 
         using var encoder = vision.CreateEncoder(new VisionEncoderOptions { Device = device, Weights = EncoderWeights.Float32 });
         var stages = (IVisionEncoderStages)encoder;
-        var image = Idrak.Data.Abstractions.ImageCodecs.Decode(TestData("vlm/image.png"));
+        var image = ImageCodecs.Decode(TestData("vlm/image.png"));
         CheckTrainableProjector(tuning, encoder, stages, image, device, "tiny Gemma 3");
 
         // The tower: its output with gradients equals the stage's, and gradients reach its weights and the pixels.
@@ -472,7 +472,7 @@ internal static partial class Tests
     private static void VisionTuningPartLlava(Device device)
     {
         Idrak.PluginTests.LlavaPlugin.Register();
-        var image = Idrak.Data.Abstractions.ImageCodecs.Decode(TestData("vlm/image.png"));
+        var image = ImageCodecs.Decode(TestData("vlm/image.png"));
         foreach (string folder in new[] { "tiny-llava", "tiny-llava-full" })
         {
             using var model = PretrainedModel.Load(LlavaData(folder), new PretrainedOptions { Device = device });

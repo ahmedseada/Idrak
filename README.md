@@ -126,7 +126,7 @@ that does, with the `.Abstractions` namespace to add a `using` line for:
 | Dataset file formats, sources, Parquet codecs | `DataFileFormats`, `DatasetSources`, `ParquetCodecs` | `Idrak.Data` (`Idrak.Data.Abstractions`) |
 | Training data: samples, streams, transforms | `ISampleSource`, `ISampleStream`, `ISampleTransform` | `Idrak.Abstraction` |
 | Whole batches; sample sources by name | `IBatchSource`; `SampleSources` | `Idrak` (`Idrak.Data.Abstractions`) |
-| Image formats (a JPEG decoder, for example) | `ImageCodecs` | `Idrak` (`Idrak.Data.Abstractions`) |
+| Image formats (a JPEG decoder, for example) | `ImageCodecs` | `Idrak.Abstraction` (`Idrak.Abstraction.Data`) |
 | Optimizers | derive from `Optimizer` | `Idrak.Abstraction` |
 | Differentiable operations | `Autograd.Function(name, forward, backward)` | `Idrak.Abstraction` |
 | Adapters on linear layers | `ILinearAdapter` (LoRA and DoRA built in) on `Linear.Adapter` | `Idrak.Abstraction` |
@@ -1000,7 +1000,6 @@ foreground extraction, connected components, non-maximum suppression, segmentati
 segmenter over a network (`ModelDetector`, `ModelSegmenter`) in `Idrak.Vision`.
 
 ```csharp
-using Idrak.Data.Abstractions;     // ImageCodecs
 using Idrak.Vision;
 using Idrak.Vision.Abstractions;   // Detection
 
@@ -1361,7 +1360,7 @@ package's own `.Abstractions`).
 | Training data (samples, streams, per-sample transforms) | implement `ISampleSource`, `ISampleStream` or `ISampleTransform` | `Idrak.Abstraction` |
 | Whole batches | implement `IBatchSource` | `Idrak` (`Idrak.Data.Abstractions`) |
 | Sample sources by name (csv, images, tokens, npy built in) | `SampleSources.Register(name, SampleSourceFactory)` | `Idrak` (`Idrak.Data.Abstractions`) |
-| Image formats (png, jpeg, bmp, netpbm built in; others as plug-ins) | `ImageCodecs.Register(IImageCodec)` | `Idrak` (`Idrak.Data.Abstractions`) |
+| Image formats (png, jpeg, bmp, netpbm built in; others as plug-ins) | `ImageCodecs.Register(IImageCodec)` | `Idrak.Abstraction` (`Idrak.Abstraction.Data`; core registers the built-ins) |
 | Adapters on linear layers (LoRA and DoRA built in) | implement `ILinearAdapter`, set `Linear.Adapter` | `Idrak.Abstraction` |
 | Fine-tuning optimizers, learning-rate schedules and losses | `FineTuningOptions.Optimizer`, `Scheduler` and `Loss` (a `FineTuningLoss` delegate) | `Idrak.Nlp` |
 | Device kernels for the library's operations, per kind of device | `Kernels.Register(Ops.Name, kind, kernel, requirement)` | `Idrak.Abstraction` |

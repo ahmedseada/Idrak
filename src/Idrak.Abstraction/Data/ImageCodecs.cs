@@ -3,7 +3,7 @@
 
 using System.Runtime.CompilerServices;
 
-namespace Idrak.Data.Abstractions;
+namespace Idrak.Abstraction.Data;
 
 /// <summary>What an image file's header says.</summary>
 /// <param name="Width">Pixels per row.</param>
@@ -51,20 +51,12 @@ public static class ImageCodecs
     /// <summary>The bytes of a file's start that <see cref="IImageCodec.ReadInfo"/> receives.</summary>
     public const int HeaderBytes = 64 * 1024;
 
-    // The most recently registered first; the built-ins png, jpeg, bmp, netpbm in that order.
-    private static readonly SlotTable<string, IImageCodec> Registry = BuiltIn();
+    // The most recently registered first; the built-ins png, jpeg, bmp, netpbm in that order (core registers them, as
+    // library defaults, on the registry's first use: Idrak.Abstraction cannot name its codecs).
+    private static readonly SlotTable<string, IImageCodec> Registry =
+        new(nameof(ImageCodecs), (slot, app, library) => new GuardedCodec(slot, app, library), StringComparer.OrdinalIgnoreCase, newestFirst: true);
 
-    private static SlotTable<string, IImageCodec> BuiltIn()
-    {
-        var table = new SlotTable<string, IImageCodec>(nameof(ImageCodecs), (slot, app, library) => new GuardedCodec(slot, app, library),
-            StringComparer.OrdinalIgnoreCase, newestFirst: true);
-        foreach (var codec in (IImageCodec[])[new NetpbmCodec(), new BmpCodec(), new JpegCodec(), new PngCodec()])
-        {
-            table.RegisterDefault(codec.Name, codec);
-        }
-
-        return table;
-    }
+    static ImageCodecs() => LibraryDefaults.Ensure(typeof(ImageCodecs));
 
     /// <summary>
     /// Registers <paramref name="codec"/>: one of a registered name takes its place (a built-in stays behind it as its

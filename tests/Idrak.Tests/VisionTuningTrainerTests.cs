@@ -156,7 +156,7 @@ internal static partial class Tests
             using var encoder = vision.CreateEncoder(new VisionEncoderOptions { Device = device });
             var record = tuning["records"]![2]!;
             int[] ids = JsonInts(record["input_ids"]);
-            var features = record["images"]!.AsArray().Select(f => encoder.Encode([Idrak.Data.Abstractions.ImageCodecs.Decode(TestData($"vlm/{(string)f!}"))])[0].Features).ToList();
+            var features = record["images"]!.AsArray().Select(f => encoder.Encode([ImageCodecs.Decode(TestData($"vlm/{(string)f!}"))])[0].Features).ToList();
             var adapters = model.Network.Descendants().OfType<Linear>().Select(l => l.Lora).OfType<LoraAdapter>().ToList();
             float[][] Gradients(bool checkpointed)
             {

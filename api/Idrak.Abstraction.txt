@@ -33,6 +33,12 @@ public static class Idrak.Abstraction.Autograd
 public readonly struct Idrak.Abstraction.Autograd.NoGradScope : System.IDisposable
   public void Dispose()
 
+public enum Idrak.Abstraction.BoxOverlap : int
+  CIoU = 3
+  DIoU = 2
+  GIoU = 1
+  IoU = 0
+
 public static class Idrak.Abstraction.Comparisons
   public static bool Close(float expected, float actual, float tolerance)
   public static string? Difference(System.Collections.Generic.IReadOnlyList<int> expected, System.Collections.Generic.IReadOnlyList<int> actual)
@@ -72,6 +78,84 @@ public static class Idrak.Abstraction.ComputeResources
   public static void ReleaseCachedMemory(Idrak.Abstraction.Device? device = null)
   public static void ResetPeakMemoryUsage(Idrak.Abstraction.Device device)
 
+public sealed record Idrak.Abstraction.Data.AnnotatedDataset : System.IEquatable<Idrak.Abstraction.Data.AnnotatedDataset>
+  public AnnotatedDataset(System.Collections.Generic.IReadOnlyList<string> Classes, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ImageAnnotations> Images)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ImageAnnotations> Images { get; init; }
+  public System.Collections.Generic.IReadOnlyList<long>? ClassIds { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> Classes { get; init; }
+  public string PathOf(int index)
+  public string? ImagesRoot { get; init; }
+
+public sealed class Idrak.Abstraction.Data.AnnotatedImage
+  public AnnotatedImage(Idrak.Abstraction.Data.ImageData image, Idrak.Abstraction.Data.BoundingBox[]? boxes = null, int[]? labels = null, byte[][]? masks = null, int[]? pixelClasses = null)
+  public Idrak.Abstraction.Data.AnnotatedImage Select(System.Collections.Generic.IReadOnlyList<int> indices)
+  public Idrak.Abstraction.Data.AnnotatedImage WithImage(Idrak.Abstraction.Data.ImageData image)
+  public Idrak.Abstraction.Data.ImageData Image { get; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.BoundingBox> Boxes { get; }
+  public System.Collections.Generic.IReadOnlyList<byte[]>? Masks { get; }
+  public System.Collections.Generic.IReadOnlyList<int> Labels { get; }
+  public int Count { get; }
+  public int Height { get; }
+  public int Width { get; }
+  public int[]? PixelClasses { get; }
+  public static byte[] Fill(Idrak.Abstraction.Data.BoundingBox box, int width, int height)
+
+public sealed class Idrak.Abstraction.Data.AugmentationContext
+  public AugmentationContext(System.Random random, System.Func<System.Random, Idrak.Abstraction.Data.AnnotatedImage>? draw = null)
+  public Idrak.Abstraction.Data.AnnotatedImage Draw()
+  public Idrak.Abstraction.Data.AugmentationContext WithSeed(int seed)
+  public System.Random Random { get; }
+  public bool CanDraw { get; }
+
+public delegate Idrak.Abstraction.Data.IAugmentation Idrak.Abstraction.Data.AugmentationFactory(Idrak.Abstraction.Data.AugmentationOptions options)
+
+public sealed class Idrak.Abstraction.Data.AugmentationOptions
+  public (double, double) Range(string key, (double, double) otherwise)
+  public AugmentationOptions(string name, System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<string, string>>? values = null)
+  public Idrak.Abstraction.Data.AugmentationOptions Allow(params string[] keys)
+  public System.Collections.Generic.IReadOnlyDictionary<string, string> Values { get; }
+  public bool Flag(string key, bool otherwise)
+  public double Number(string key, double otherwise)
+  public int Integer(string key, int otherwise)
+  public override string ToString()
+  public string Name { get; }
+
+public static class Idrak.Abstraction.Data.Augmentations
+  public static Idrak.Abstraction.Data.AnnotatedImage Apply(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.IAugmentation> pipeline, Idrak.Abstraction.Data.AnnotatedImage sample, Idrak.Abstraction.Data.AugmentationContext context)
+  public static Idrak.Abstraction.Data.AugmentationFactory Get(string name)
+  public static Idrak.Abstraction.Data.AugmentationFactory? Default(string name)
+  public static Idrak.Abstraction.Data.IAugmentation Create(string name, System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<string, string>>? options = null)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.IAugmentation> Parse(string? text)
+  public static bool Unregister(string name)
+  public static string? Origin(string name)
+  public static void Register(string name, Idrak.Abstraction.Data.AugmentationFactory create)
+  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
+public readonly record struct Idrak.Abstraction.Data.BoundingBox : System.IEquatable<Idrak.Abstraction.Data.BoundingBox>
+  public BoundingBox(float X, float Y, float Width, float Height)
+  public Idrak.Abstraction.Data.BoundingBox Clip(float width, float height)
+  public Idrak.Abstraction.Data.BoundingBox Scale(float sx, float sy)
+  public Idrak.Abstraction.Data.BoundingBox Translate(float dx, float dy)
+  public Idrak.Abstraction.Data.PixelBox ToPixelBox()
+  public float Area { get; }
+  public float Bottom { get; }
+  public float CenterX { get; }
+  public float CenterY { get; }
+  public float Height { get; init; }
+  public float IntersectionArea(Idrak.Abstraction.Data.BoundingBox other)
+  public float IntersectionOverUnion(Idrak.Abstraction.Data.BoundingBox other)
+  public float Right { get; }
+  public float Width { get; init; }
+  public float X { get; init; }
+  public float Y { get; init; }
+  public static Idrak.Abstraction.Data.BoundingBox FromCenter(float centerX, float centerY, float width, float height)
+  public static Idrak.Abstraction.Data.BoundingBox FromCorners(float x1, float y1, float x2, float y2)
+
+public interface Idrak.Abstraction.Data.IAugmentation
+  public Idrak.Abstraction.Data.AnnotatedImage Apply(Idrak.Abstraction.Data.AnnotatedImage sample, Idrak.Abstraction.Data.AugmentationContext context)
+  public string Name { get; }
+
 public interface Idrak.Abstraction.Data.IDownloader
   public (default) string Download(string url, System.Collections.Generic.IReadOnlyDictionary<string, string>? headers = null, string? cachePath = null)
   public System.Action<string>? Log { get; }
@@ -80,6 +164,12 @@ public interface Idrak.Abstraction.Data.IDownloader
   public System.Threading.Tasks.Task<string> GetStringAsync(string url, System.Collections.Generic.IReadOnlyDictionary<string, string>? headers = null, System.Threading.CancellationToken cancellationToken = default)
   public string CacheFolder { get; }
   public string PathFor(string cachePath)
+
+public interface Idrak.Abstraction.Data.IImageCodec
+  public Idrak.Abstraction.Data.ImageData Decode(System.ReadOnlySpan<byte> file)
+  public Idrak.Abstraction.Data.ImageInfo? ReadInfo(System.ReadOnlySpan<byte> header)
+  public System.Collections.Generic.IReadOnlyCollection<string> Extensions { get; }
+  public string Name { get; }
 
 public interface Idrak.Abstraction.Data.IImageTransform
   public Idrak.Abstraction.Data.ImageData Apply(Idrak.Abstraction.Data.ImageData image, Idrak.Abstraction.Data.ImageTransformStep step)
@@ -105,6 +195,31 @@ public interface Idrak.Abstraction.Data.ISampleStream
 public interface Idrak.Abstraction.Data.ISampleTransform
   public void Apply(System.Span<float> features, System.Span<float> targets, System.Collections.Generic.IReadOnlyList<int> featureShape, System.Random random)
 
+public sealed record Idrak.Abstraction.Data.ImageAnnotations : System.IEquatable<Idrak.Abstraction.Data.ImageAnnotations>
+  public Idrak.Abstraction.Data.AnnotatedImage ToSample(Idrak.Abstraction.Data.ImageData pixels, bool masks = true, bool includeIgnored = false)
+  public ImageAnnotations(string File, int Width, int Height, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ObjectAnnotation> Objects)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ObjectAnnotation> Objects { get; init; }
+  public int Height { get; init; }
+  public int Width { get; init; }
+  public long? Id { get; init; }
+  public string File { get; init; }
+
+public static class Idrak.Abstraction.Data.ImageCodecs
+  public const int HeaderBytes = 65536
+  public static Idrak.Abstraction.Data.IImageCodec Get(string name)
+  public static Idrak.Abstraction.Data.IImageCodec? Default(string name)
+  public static Idrak.Abstraction.Data.ImageData Decode(System.ReadOnlySpan<byte> file)
+  public static Idrak.Abstraction.Data.ImageData Decode(string path)
+  public static Idrak.Abstraction.Data.ImageInfo? ReadInfo(string path)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Extensions { get; }
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool CanDecode(string path)
+  public static bool Unregister(string name)
+  public static float[] Load(string path, int channels, int height, int width)
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Data.IImageCodec codec)
+  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
 public sealed class Idrak.Abstraction.Data.ImageData
   public ImageData(float[] pixels, int channels, int height, int width)
   public float[] Pixels { get; }
@@ -113,6 +228,13 @@ public sealed class Idrak.Abstraction.Data.ImageData
   public int Height { get; }
   public int Width { get; }
   public void Resize(int channels, int height, int width, System.Span<float> destination)
+
+public readonly record struct Idrak.Abstraction.Data.ImageInfo : System.IEquatable<Idrak.Abstraction.Data.ImageInfo>
+  public ImageInfo(int Width, int Height, int Channels, string Format)
+  public int Channels { get; init; }
+  public int Height { get; init; }
+  public int Width { get; init; }
+  public string Format { get; init; }
 
 public sealed class Idrak.Abstraction.Data.ImageTransformPipeline : System.IEquatable<Idrak.Abstraction.Data.ImageTransformPipeline>
   public Idrak.Abstraction.Data.ImageData Apply(Idrak.Abstraction.Data.ImageData image)
@@ -155,6 +277,45 @@ public static class Idrak.Abstraction.Data.ImageTransforms
   public static string? Origin(string name)
   public static void Register(Idrak.Abstraction.Data.IImageTransform transform)
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
+public sealed record Idrak.Abstraction.Data.ObjectAnnotation : System.IEquatable<Idrak.Abstraction.Data.ObjectAnnotation>
+  public Idrak.Abstraction.Data.BoundingBox Box { get; init; }
+  public Idrak.Abstraction.Data.ObjectMask? Mask { get; init; }
+  public ObjectAnnotation(Idrak.Abstraction.Data.BoundingBox Box, int Class)
+  public bool Crowd { get; init; }
+  public bool Difficult { get; init; }
+  public bool Truncated { get; init; }
+  public float? Area { get; init; }
+  public int Class { get; init; }
+  public long? Id { get; init; }
+  public string? Pose { get; init; }
+
+public sealed class Idrak.Abstraction.Data.ObjectMask
+  public Idrak.Abstraction.Data.BoundingBox Bounds()
+  public System.Collections.Generic.IReadOnlyList<float[]>? Polygons { get; }
+  public System.Collections.Generic.IReadOnlyList<int>? Counts { get; }
+  public bool IsPolygons { get; }
+  public byte[] Rasterize(int width, int height)
+  public int Height { get; }
+  public int Width { get; }
+  public static Idrak.Abstraction.Data.BoundingBox PixelBounds(System.ReadOnlySpan<byte> pixels, int width, int height)
+  public static Idrak.Abstraction.Data.ObjectMask FromPixels(System.ReadOnlySpan<byte> pixels, int width, int height)
+  public static Idrak.Abstraction.Data.ObjectMask FromPolygons(System.Collections.Generic.IEnumerable<float[]> polygons)
+  public static Idrak.Abstraction.Data.ObjectMask FromRunLength(System.Collections.Generic.IReadOnlyList<int> counts, int width, int height)
+  public static int[] DecodeCounts(string text)
+  public static string EncodeCounts(System.Collections.Generic.IReadOnlyList<int> counts)
+
+public readonly record struct Idrak.Abstraction.Data.PixelBox : System.IEquatable<Idrak.Abstraction.Data.PixelBox>
+  public Idrak.Abstraction.Data.BoundingBox ToBoundingBox()
+  public Idrak.Abstraction.Data.PixelBox Union(Idrak.Abstraction.Data.PixelBox other)
+  public PixelBox(int X, int Y, int Width, int Height)
+  public int Area { get; }
+  public int Bottom { get; }
+  public int Height { get; init; }
+  public int Right { get; }
+  public int Width { get; init; }
+  public int X { get; init; }
+  public int Y { get; init; }
 
 public delegate Idrak.Abstraction.Data.ISampleSource Idrak.Abstraction.Data.SampleSourceFactory(string path, System.Collections.Generic.IReadOnlyDictionary<string, string> options)
 
@@ -291,6 +452,8 @@ public abstract class Idrak.Abstraction.Devices.Backend
   public virtual void BeginCapture()
   public virtual void BiasGeluKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage bias, Idrak.Abstraction.Devices.Storage y, int n, int cols)
   public virtual void BinaryKernel(Idrak.Abstraction.Devices.BinaryOp op, Idrak.Abstraction.Devices.Storage a, Idrak.Abstraction.Devices.Storage b, Idrak.Abstraction.Devices.Storage c, int n)
+  public virtual void BoxIouLossBackwardKernel(Idrak.Abstraction.Devices.Storage predicted, Idrak.Abstraction.Devices.Storage target, Idrak.Abstraction.Devices.Storage lossGrads, Idrak.Abstraction.Devices.Storage dPredicted, int count, Idrak.Abstraction.BoxOverlap overlap, float eps)
+  public virtual void BoxIouLossKernel(Idrak.Abstraction.Devices.Storage predicted, Idrak.Abstraction.Devices.Storage target, Idrak.Abstraction.Devices.Storage losses, int count, Idrak.Abstraction.BoxOverlap overlap, float eps)
   public virtual void BroadcastAxisKernel(Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dx, int outer, int dim, int inner, float scale)
   public virtual void ClampBackwardKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dx, int n, float min, float max)
   public virtual void ClampKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, int n, float min, float max)
@@ -357,6 +520,8 @@ public abstract class Idrak.Abstraction.Devices.Backend
   public virtual void ScaleMaskSoftmaxKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage? mask, Idrak.Abstraction.Devices.Storage y, int rows, int cols, int maskRows, float scale)
   public virtual void ScatterAddKernel(Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage indices, Idrak.Abstraction.Devices.Storage dtable, int count, int dim, int vocabulary)
   public virtual void SgdStepKernel(Idrak.Abstraction.Devices.Storage p, Idrak.Abstraction.Devices.Storage g, Idrak.Abstraction.Devices.Storage? v, int n, float lr, float momentum)
+  public virtual void SigmoidFocalLossBackwardKernel(Idrak.Abstraction.Devices.Storage logits, Idrak.Abstraction.Devices.Storage targets, Idrak.Abstraction.Devices.Storage lossGrads, Idrak.Abstraction.Devices.Storage dLogits, int count, float alpha, float gamma)
+  public virtual void SigmoidFocalLossKernel(Idrak.Abstraction.Devices.Storage logits, Idrak.Abstraction.Devices.Storage targets, Idrak.Abstraction.Devices.Storage losses, int count, float alpha, float gamma)
   public virtual void SoftmaxBackwardKernel(Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dx, int rows, int cols, bool log)
   public virtual void SoftmaxCrossEntropyRowsKernel(Idrak.Abstraction.Devices.Storage logits, Idrak.Abstraction.Devices.Storage targets, Idrak.Abstraction.Devices.Storage weights, Idrak.Abstraction.Devices.Storage losses, int rows, int vocabulary, float scale)
   public virtual void SoftmaxKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, int rows, int cols, bool log)
@@ -397,6 +562,8 @@ public abstract class Idrak.Abstraction.Devices.Backend
   public void BatchedMatMul(Idrak.Abstraction.Devices.Storage a, Idrak.Abstraction.Devices.Storage b, Idrak.Abstraction.Devices.Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
   public void BiasGelu(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage bias, Idrak.Abstraction.Devices.Storage y, int n, int cols)
   public void Binary(Idrak.Abstraction.Devices.BinaryOp op, Idrak.Abstraction.Devices.Storage a, Idrak.Abstraction.Devices.Storage b, Idrak.Abstraction.Devices.Storage c, int n)
+  public void BoxIouLoss(Idrak.Abstraction.Devices.Storage predicted, Idrak.Abstraction.Devices.Storage target, Idrak.Abstraction.Devices.Storage losses, int count, Idrak.Abstraction.BoxOverlap overlap, float eps)
+  public void BoxIouLossBackward(Idrak.Abstraction.Devices.Storage predicted, Idrak.Abstraction.Devices.Storage target, Idrak.Abstraction.Devices.Storage lossGrads, Idrak.Abstraction.Devices.Storage dPredicted, int count, Idrak.Abstraction.BoxOverlap overlap, float eps)
   public void BroadcastAxis(Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dx, int outer, int dim, int inner, float scale)
   public void Clamp(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, int n, float min, float max)
   public void ClampBackward(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dx, int n, float min, float max)
@@ -460,6 +627,8 @@ public abstract class Idrak.Abstraction.Devices.Backend
   public void ScaleMaskSoftmax(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage? mask, Idrak.Abstraction.Devices.Storage y, int rows, int cols, int maskRows, float scale)
   public void ScatterAdd(Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage indices, Idrak.Abstraction.Devices.Storage dtable, int count, int dim, int vocabulary)
   public void SgdStep(Idrak.Abstraction.Devices.Storage p, Idrak.Abstraction.Devices.Storage g, Idrak.Abstraction.Devices.Storage? v, int n, float lr, float momentum)
+  public void SigmoidFocalLoss(Idrak.Abstraction.Devices.Storage logits, Idrak.Abstraction.Devices.Storage targets, Idrak.Abstraction.Devices.Storage losses, int count, float alpha, float gamma)
+  public void SigmoidFocalLossBackward(Idrak.Abstraction.Devices.Storage logits, Idrak.Abstraction.Devices.Storage targets, Idrak.Abstraction.Devices.Storage lossGrads, Idrak.Abstraction.Devices.Storage dLogits, int count, float alpha, float gamma)
   public void Softmax(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, int rows, int cols, bool log)
   public void SoftmaxBackward(Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dx, int rows, int cols, bool log)
   public void SoftmaxCrossEntropyRows(Idrak.Abstraction.Devices.Storage logits, Idrak.Abstraction.Devices.Storage targets, Idrak.Abstraction.Devices.Storage weights, Idrak.Abstraction.Devices.Storage losses, int rows, int vocabulary, float scale)
@@ -1836,6 +2005,8 @@ public static class Idrak.Abstraction.Operations.OperationKernels
   nested Idrak.Abstraction.Operations.OperationKernels.BatchedMatMul (below)
   nested Idrak.Abstraction.Operations.OperationKernels.BiasGelu (below)
   nested Idrak.Abstraction.Operations.OperationKernels.Binary (below)
+  nested Idrak.Abstraction.Operations.OperationKernels.BoxIouLoss (below)
+  nested Idrak.Abstraction.Operations.OperationKernels.BoxIouLossBackward (below)
   nested Idrak.Abstraction.Operations.OperationKernels.BroadcastAxis (below)
   nested Idrak.Abstraction.Operations.OperationKernels.Clamp (below)
   nested Idrak.Abstraction.Operations.OperationKernels.ClampBackward (below)
@@ -1910,6 +2081,8 @@ public static class Idrak.Abstraction.Operations.OperationKernels
   nested Idrak.Abstraction.Operations.OperationKernels.ScaleMaskSoftmax (below)
   nested Idrak.Abstraction.Operations.OperationKernels.ScatterAdd (below)
   nested Idrak.Abstraction.Operations.OperationKernels.SgdStep (below)
+  nested Idrak.Abstraction.Operations.OperationKernels.SigmoidFocalLoss (below)
+  nested Idrak.Abstraction.Operations.OperationKernels.SigmoidFocalLossBackward (below)
   nested Idrak.Abstraction.Operations.OperationKernels.Softmax (below)
   nested Idrak.Abstraction.Operations.OperationKernels.SoftmaxBackward (below)
   nested Idrak.Abstraction.Operations.OperationKernels.SoftmaxCrossEntropyRows (below)
@@ -1988,6 +2161,10 @@ public delegate void Idrak.Abstraction.Operations.OperationKernels.BatchedMatMul
 public delegate void Idrak.Abstraction.Operations.OperationKernels.BiasGelu(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage bias, Idrak.Abstraction.Devices.Storage y, int n, int cols)
 
 public delegate void Idrak.Abstraction.Operations.OperationKernels.Binary(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.BinaryOp op, Idrak.Abstraction.Devices.Storage a, Idrak.Abstraction.Devices.Storage b, Idrak.Abstraction.Devices.Storage c, int n)
+
+public delegate void Idrak.Abstraction.Operations.OperationKernels.BoxIouLoss(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage predicted, Idrak.Abstraction.Devices.Storage target, Idrak.Abstraction.Devices.Storage losses, int count, Idrak.Abstraction.BoxOverlap overlap, float eps)
+
+public delegate void Idrak.Abstraction.Operations.OperationKernels.BoxIouLossBackward(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage predicted, Idrak.Abstraction.Devices.Storage target, Idrak.Abstraction.Devices.Storage lossGrads, Idrak.Abstraction.Devices.Storage dPredicted, int count, Idrak.Abstraction.BoxOverlap overlap, float eps)
 
 public delegate void Idrak.Abstraction.Operations.OperationKernels.BroadcastAxis(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dx, int outer, int dim, int inner, float scale)
 
@@ -2137,6 +2314,10 @@ public delegate void Idrak.Abstraction.Operations.OperationKernels.ScatterAdd(Id
 
 public delegate void Idrak.Abstraction.Operations.OperationKernels.SgdStep(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage p, Idrak.Abstraction.Devices.Storage g, Idrak.Abstraction.Devices.Storage? v, int n, float lr, float momentum)
 
+public delegate void Idrak.Abstraction.Operations.OperationKernels.SigmoidFocalLoss(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage logits, Idrak.Abstraction.Devices.Storage targets, Idrak.Abstraction.Devices.Storage losses, int count, float alpha, float gamma)
+
+public delegate void Idrak.Abstraction.Operations.OperationKernels.SigmoidFocalLossBackward(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage logits, Idrak.Abstraction.Devices.Storage targets, Idrak.Abstraction.Devices.Storage lossGrads, Idrak.Abstraction.Devices.Storage dLogits, int count, float alpha, float gamma)
+
 public delegate void Idrak.Abstraction.Operations.OperationKernels.Softmax(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, int rows, int cols, bool log)
 
 public delegate void Idrak.Abstraction.Operations.OperationKernels.SoftmaxBackward(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dx, int rows, int cols, bool log)
@@ -2197,6 +2378,8 @@ public static class Idrak.Abstraction.Operations.Ops
   public static readonly Idrak.Abstraction.Operations.Operation BatchedMatMul
   public static readonly Idrak.Abstraction.Operations.Operation BiasGelu
   public static readonly Idrak.Abstraction.Operations.Operation Binary
+  public static readonly Idrak.Abstraction.Operations.Operation BoxIouLoss
+  public static readonly Idrak.Abstraction.Operations.Operation BoxIouLossBackward
   public static readonly Idrak.Abstraction.Operations.Operation BroadcastAxis
   public static readonly Idrak.Abstraction.Operations.Operation Clamp
   public static readonly Idrak.Abstraction.Operations.Operation ClampBackward
@@ -2271,6 +2454,8 @@ public static class Idrak.Abstraction.Operations.Ops
   public static readonly Idrak.Abstraction.Operations.Operation ScaleMaskSoftmax
   public static readonly Idrak.Abstraction.Operations.Operation ScatterAdd
   public static readonly Idrak.Abstraction.Operations.Operation SgdStep
+  public static readonly Idrak.Abstraction.Operations.Operation SigmoidFocalLoss
+  public static readonly Idrak.Abstraction.Operations.Operation SigmoidFocalLossBackward
   public static readonly Idrak.Abstraction.Operations.Operation Softmax
   public static readonly Idrak.Abstraction.Operations.Operation SoftmaxBackward
   public static readonly Idrak.Abstraction.Operations.Operation SoftmaxCrossEntropyRows
@@ -2458,6 +2643,7 @@ public sealed class Idrak.Abstraction.Tensor : System.IDisposable
   public Idrak.Abstraction.Tensor AdaptiveMaxPool((int, int) size)
   public Idrak.Abstraction.Tensor ArgMax()
   public Idrak.Abstraction.Tensor BiasGelu(Idrak.Abstraction.Tensor bias)
+  public Idrak.Abstraction.Tensor BoxIouLoss(Idrak.Abstraction.Tensor target, Idrak.Abstraction.BoxOverlap overlap = (Idrak.Abstraction.BoxOverlap)1, float eps = 1E-07f)
   public Idrak.Abstraction.Tensor Clamp(float min, float max)
   public Idrak.Abstraction.Tensor Clone()
   public Idrak.Abstraction.Tensor Col2Im(in Idrak.Abstraction.Devices.ConvGeometry geometry)
@@ -2496,6 +2682,7 @@ public sealed class Idrak.Abstraction.Tensor : System.IDisposable
   public Idrak.Abstraction.Tensor Rope(Idrak.Abstraction.Tensor cos, Idrak.Abstraction.Tensor sin, Idrak.Abstraction.Tensor positions, int half, bool interleaved)
   public Idrak.Abstraction.Tensor ScaleMaskSoftmax(float scale, Idrak.Abstraction.Tensor? mask)
   public Idrak.Abstraction.Tensor Sigmoid()
+  public Idrak.Abstraction.Tensor SigmoidFocalLoss(Idrak.Abstraction.Tensor targets, float alpha = 0.25f, float gamma = 2f)
   public Idrak.Abstraction.Tensor Sign()
   public Idrak.Abstraction.Tensor Silu()
   public Idrak.Abstraction.Tensor Sin()
