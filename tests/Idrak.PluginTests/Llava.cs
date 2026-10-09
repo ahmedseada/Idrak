@@ -366,6 +366,82 @@ public sealed class LlavaVision : PretrainedVision, IVisionTuningPart
     public Tensor Tower(IVisionEncoder encoder, Tensor pixelValues) =>
         throw new NotSupportedException($"The vision family {Family} does not offer '{VisionTuningParts.Tower}' for training; it offers: {string.Join(", ", TrainableParts)}.");
 
+    /// <summary>The projector's linear_1 and linear_2 (weight [out, in] and bias) under the checkpoint's names, as stored.</summary>
+    public IReadOnlyDictionary<string, Tensor> Export(IVisionEncoder encoder, string part)
+    {
+        _ = Parameters(encoder, part);                                                   // refuses another part
+        var own = Own(encoder);
+        var tensors = new Dictionary<string, Tensor>(StringComparer.Ordinal);
+        foreach (var (name, layer) in ProjectorLayers(own))
+        {
+            float[] w = layer.Weight.ToArray();
+            int inputs = layer.InFeatures, outputs = layer.OutFeatures;
+            var stored = new float[w.Length];
+            for (int i = 0; i < inputs; i++)
+            {
+                for (int o = 0; o < outputs; o++)
+                {
+                    stored[o * inputs + i] = w[i * outputs + o];
+                }
+            }
+
+            tensors[$"{_projector}{name}.weight"] = Tensor.From(stored, [outputs, inputs], Device.Cpu);
+            if (layer.Bias is { } bias)
+            {
+                tensors[$"{_projector}{name}.bias"] = Tensor.From(bias.ToArray(), [outputs], Device.Cpu);
+            }
+        }
+
+        return tensors;
+    }
+
+    /// <summary>Sets the projector's layers from tensors named and laid out as <see cref="Export"/> gives them; returns the names taken.</summary>
+    public IReadOnlyCollection<string> Import(IVisionEncoder encoder, IReadOnlyDictionary<string, Tensor> tensors)
+    {
+        ArgumentNullException.ThrowIfNull(tensors);
+        var own = Own(encoder);
+        var taken = new List<string>();
+        foreach (var (name, layer) in ProjectorLayers(own))
+        {
+            int inputs = layer.InFeatures, outputs = layer.OutFeatures;
+            if (tensors.TryGetValue($"{_projector}{name}.weight", out var weight))
+            {
+                if (!weight.Shape.SequenceEqual([outputs, inputs]))
+                {
+                    throw new ArgumentException($"{_projector}{name}.weight: shape {Tensor.FormatShape(weight.Shape)}, expected [{outputs}, {inputs}].", nameof(tensors));
+                }
+
+                float[] stored = weight.ToArray();
+                var values = new float[stored.Length];
+                for (int o = 0; o < outputs; o++)
+                {
+                    for (int i = 0; i < inputs; i++)
+                    {
+                        values[i * outputs + o] = stored[o * inputs + i];
+                    }
+                }
+
+                layer.Weight.Load(values);
+                taken.Add($"{_projector}{name}.weight");
+            }
+
+            if (layer.Bias is { } bias && tensors.TryGetValue($"{_projector}{name}.bias", out var b))
+            {
+                if (!b.Shape.SequenceEqual(bias.Shape))
+                {
+                    throw new ArgumentException($"{_projector}{name}.bias: shape {Tensor.FormatShape(b.Shape)}, expected {Tensor.FormatShape(bias.Shape)}.", nameof(tensors));
+                }
+
+                bias.Load(b.ToArray());
+                taken.Add($"{_projector}{name}.bias");
+            }
+        }
+
+        return taken;
+    }
+
+    private static (string Name, Linear Layer)[] ProjectorLayers(LlavaImageEncoder own) => [("linear_1", own.Projector.First), ("linear_2", own.Projector.Second)];
+
     private LlavaImageEncoder Own(IVisionEncoder encoder)
     {
         ArgumentNullException.ThrowIfNull(encoder);
@@ -490,6 +566,12 @@ public sealed class LlavaProjector : Module
             bias ? Tensor.Persistent(store.Read($"{prefix}{name}.bias"), [o], device) : null);
         return new LlavaProjector(Dense("linear_1", inputs, width), ClipVisionConfig.ActivationLayer(activation), Dense("linear_2", width, width));
     }
+
+    /// <summary>linear_1.</summary>
+    public Linear First => _first;
+
+    /// <summary>linear_2.</summary>
+    public Linear Second => _second;
 
     /// <inheritdoc />
     protected override Tensor ForwardCore(Tensor input) => _second.Forward(_activation.Forward(_first.Forward(input)));
