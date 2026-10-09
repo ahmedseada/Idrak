@@ -2,8 +2,9 @@
 
 **Status:** planned 2026-10-09. Built 2026-10-09: step 3 (CTC loss and decoding) and the part of step 2 the line
 recognizer uses (rectangular, strided, dilated and grouped convolutions, rectangular max and average pooling,
-bidirectional and stacked LSTM/GRU); see "as built" below. The rest starts after plan 12's phases 4 and 6 are merged, or
-earlier where the OCR sample (below) needs a step first.
+bidirectional and stacked LSTM/GRU); then the rest of step 2 (transposed convolution, upsampling, adaptive pooling,
+`GroupNorm`, ceil-mode pooling and padding below and right); see "as built" below. The rest starts after plan 12's
+phases 4 and 6 are merged, or earlier where the OCR sample (below) needs a step first.
 
 **Goal.** `Idrak.Vision` and the core layers under it are general building blocks for any image application
 (classification, detection, segmentation, document reading), fast and lean on every device. Applications are not the
@@ -145,7 +146,7 @@ recognizer uses (rectangular kernels and strides, bidirectional recurrent layers
   (ONNX Runtime) and imported again. Existing convolution, recurrent, ONNX, gradient, builder, conformance-kit,
   inventory and public-API tests pass on the CPU.
 - **Left of step 2:** `ConvTranspose2d`, upsampling, adaptive pooling, `GroupNorm` as a layer; `ceil_mode` pooling and
-  asymmetric padding; a dedicated depthwise kernel (the batched product is general, not the fastest for depthwise) and
+  asymmetric padding (all built since: "Step 2 (the rest)" below); a dedicated depthwise kernel (the batched product is general, not the fastest for depthwise) and
   device kernels for dilated windows and CTC (step 1); importing PyTorch exports that read the last time step through
   computed gathers. The CLI's network description (`NetworkAnalysis`) does not know the new steps or [h, w] pairs yet.
 
@@ -155,6 +156,93 @@ recognizer uses (rectangular kernels and strides, bidirectional recurrent layers
 $env:IDRAK_DEVICES="cuda"; $env:IDRAK_FILTER="vision sequence"; dotnet run -c Release --project tests/Idrak.Tests
 $env:IDRAK_DEVICES="cuda"; $env:IDRAK_FILTER="conformance kit"; dotnet run -c Release --project tests/Idrak.Tests
 $env:IDRAK_DEVICES="vulkan"; $env:IDRAK_FILTER="vision sequence"; dotnet run -c Release --project tests/Idrak.Tests
+$env:IDRAK_DEVICES="vulkan"; $env:IDRAK_FILTER="conformance kit"; dotnet run -c Release --project tests/Idrak.Tests
+$env:IDRAK_DEVICES="vulkan"; $env:IDRAK_FILTER="vulkan cnn"; dotnet run -c Release --project tests/Idrak.Tests
+```
+
+## Step 2 (the rest), as built (2026-10-09)
+
+- **Window geometry.** `ConvGeometry` has `PadBottom` / `PadRight` (init-only; PH / PW unless set, stored so `default`,
+  every existing geometry and one set to PH compare equal) and `Asymmetric`; `OH` / `OW` use them. They change only how
+  many windows there are, never where they start, so every existing kernel (CPU, CUDA, Vulkan: they read OH and OW from
+  the host and skip positions outside the input) runs them unchanged. The CPU's col2im now runs in parallel over (image,
+  channel) planes instead of images, so a batch of one (a transposed convolution, a decoder) uses every core.
+- **New operations** (dispatcher, CPU kernels in `CpuBackend.Resampling.cs`, host fallback elsewhere):
+  `Interpolate2d` / `Interpolate2dBackward` (`InterpolationMode` Nearest or Bilinear, align corners, the coordinate
+  scales passed in as PyTorch computes them in float; index and weight tables per axis built once a call; forward in
+  parallel over output rows, backward over planes, each writing only its own part of dx), `AdaptiveAvgPool` /
+  `AdaptiveAvgPoolBackward` and `AdaptiveMaxPool` (PyTorch's windows [floor(o·H/OH), ceil((o+1)·H/OH)); the max keeps
+  arg-max indices, so `MaxPoolBackward` is its gradient). `Tensor.Col2Im(geometry)` (the fold with autograd; its
+  gradient is im2col, written in place when it is the first), `Tensor.Interpolate(size, mode, alignCorners, scaleFactor)`,
+  `Tensor.AdaptiveAvgPool(size)`, `Tensor.AdaptiveMaxPool(size)`. Conformance kit: "image resampling" (every mode, up,
+  down, odd ratios, one row or column, against plain loops, gradients included) and padding below and right in the
+  convolution and pooling case.
+- **`ConvTranspose2d`** (square and pair constructors, `FromWeights`; PyTorch's semantics and weight layout [in,
+  out/groups, kh, kw]; stride, padding, output padding below the stride, dilation, groups, bias): one product
+  [N·H·W, in] × [in, out·kh·kw] (batched per group) and a fold, so it runs on the devices' product and col2im; its
+  backward is im2col and two products. `OutputSize(h, w)`, `Geometry(...)`.
+- **`Upsample`** (`new Upsample(factor or (h, w) factors, mode, alignCorners)`, `Upsample.ToSize((h, w), ...)`):
+  F.interpolate's semantics, the output floor(size · factor) and, as PyTorch, a given factor (as written: 1.7f is read as
+  1.7) sets the coordinate scale. **`AdaptiveAvgPool2d` / `AdaptiveMaxPool2d`** (int or (h, w)): when the output divides
+  the input the windows are ordinary ones, and a device without its own adaptive kernel (`Kernels.Chain`) pools them with
+  its max-pool / im2col kernels instead of the host; the CPU runs the adaptive kernel. **`GroupNorm(groups, channels,
+  epsilon, affine)`** over [N, C, ...]: the batch-norm kernels on the [1, N·groups, C/groups · positions] view (each
+  sample's group is one contiguous run; the statistics are freed at once), then the per-channel affine; the same in
+  training and evaluation.
+- **Pooling.** `MaxPool2d` and `AvgPool2d` pair constructors take `ceilMode` and `paddingEnd` (padding below and right);
+  windows counted as PyTorch and ONNX do (a last ceil-mode window must start inside the input or the padding before it),
+  the ceil mode's extra windows given to the geometry as padding below and right; `AvgPool2d` divides as PyTorch does
+  (counted padding up to the padded end, a ceil-mode window cut there; without `countIncludePad` the input positions
+  covered). `MaxPool2d.Geometry(...)`. Padding of at most half the window on each side.
+- **Builder, layer types, saving.** `ConvTranspose2d(...)`, `Upsample(factor)`, `UpsampleToSize(size)`,
+  `AdaptiveAvgPool2d(...)`, `AdaptiveMaxPool2d(...)`, `GroupNorm(groups, epsilon, affine)`, and the pooling options;
+  `NetworkOps` replays them ("convtranspose2d", "upsample", "adaptiveavgpool2d", "adaptivemaxpool2d", "groupnorm";
+  "ceilMode" and "paddingEnd" written only when set) and `LayerTypes` describes them (pooling layers without the new
+  options are described as before). `idrak explain` / `viz` (`NetworkAnalysis`) know every new step (description,
+  parameters, FLOPs); the CLI test builds a decoder with all of them and checks the parameter count and that no step is
+  unknown.
+- **ONNX.** Export: `ConvTranspose` (output_padding, dilations, group), `Resize` (nearest: asymmetric + floor; bilinear:
+  half_pixel or align_corners; scales [1, 1, h, w], or sizes computed from the input's shape for a fixed size, as PyTorch
+  writes them), GroupNorm as opset 17 has it (Reshape, InstanceNormalization, Reshape, Mul, Add, as PyTorch), adaptive
+  pools as GlobalAveragePool / GlobalMaxPool (1x1) or AveragePool / MaxPool when the output divides the input (else a
+  clear error, as PyTorch's exporter), pools with four pads and `ceil_mode`. ONNX Runtime matches. Import: the same,
+  plus `GroupNormalization` (opset 18's per-group and 21's per-channel scale), `InstanceNormalization` (group norm with
+  one channel a group), PyTorch's group norm with the shape read through `Shape`, PyTorch's resize to a size (Shape,
+  Slice, Concat), `GlobalAveragePool` without a flatten and `GlobalMaxPool` (adaptive pooling to 1x1), Resize-10's
+  (X, scales), in chains and in graphs.
+- **Checked** (`IDRAK_FILTER="vision layers"`, 9 tests): `tools/pytorch/vision_layers_reference.py` (torch 2.14.1 CPU,
+  onnx 1.23.2; reruns write the same bytes) writes `tests/Idrak.Tests/data/vision-layers`: PyTorch's outputs and the
+  gradients of sum(output · w) on input and parameters for two transposed convolutions (1e-4), eight interpolations
+  (1e-5), four adaptive pools (1e-5), two group norms (1e-4) and three ceil-mode pools (exact / 1e-5); finite
+  differences for every layer; a decoder of every new step replayed from JSON, saved and loaded, exported (ONNX
+  Runtime) and imported again; PyTorch's `decoder.onnx` and the hand-written `windows.onnx` (padding below and right,
+  GroupNormalization-21, a Resize to constant sizes; output by onnx's reference evaluator) import and match (1e-4).
+- **Measured** (this container's CPU, 4 threads shared with other work, so a range): `ConvTranspose2d` 64 → 32, kernel
+  4, stride 2 on one 64x64 image: forward 12–20 ms with the planes' fold in parallel, 22–24 ms with it on one core (the
+  old per-image split); interpolation kernels over 512 planes 64x64 → 128x128: nearest 8 ms forward, 7–10 ms backward,
+  bilinear about 25 ms each way; adaptive average pooling of [8, 256, 30, 30] to 7x7 (uneven windows) 2–3 ms forward;
+  `GroupNorm` (32 groups) over [8, 64, 64, 64] costs about what `BatchNorm` does (forward 9–11 ms each). Memory: the
+  transposed convolution holds its input's rows [N·H·W, in] and the columns [N·H·W, out·kh·kw] until the backward
+  pass (as `Conv2d` holds its unfolded patches); interpolation and adaptive average pooling keep nothing but their
+  input, adaptive max pooling its indices (one int per output), group norm its output and one inverse deviation per
+  (sample, group).
+- **On GPUs** (no device kernels written here; step 1's): `Interpolate2d`, `Interpolate2dBackward`, `AdaptiveAvgPool`,
+  `AdaptiveAvgPoolBackward` and `AdaptiveMaxPool` run on the host fallback on CUDA, Vulkan and HIP (adaptive pools whose
+  output divides the input take the devices' window kernels instead); adaptive max pooling's gradient uses
+  `MaxPoolBackward(count)`, which Vulkan runs on the host (its own kernel is the geometry overload). `ConvTranspose2d`
+  uses the products and col2im/im2col every device has (a dilated one falls back, as `Conv2d`'s does); `GroupNorm` the
+  batch-norm kernels (on the host on Vulkan in training, as before); padding below and right and ceil mode need nothing
+  new.
+- **Left:** a fused group-norm kernel (statistics and affine in one pass), a dedicated depthwise kernel, adaptive pooling
+  with uneven windows on ONNX export (ONNX has none), ConvTranspose's `output_shape` and output padding at or above the
+  stride, Resize's other coordinate modes (`asymmetric` linear, `tf_crop_and_resize`), cubic and antialiased resizing.
+
+**For the owner (GPU, from `D:\Projects\Idrak`):**
+
+```powershell
+$env:IDRAK_DEVICES="cuda"; $env:IDRAK_FILTER="vision layers"; dotnet run -c Release --project tests/Idrak.Tests
+$env:IDRAK_DEVICES="cuda"; $env:IDRAK_FILTER="conformance kit"; dotnet run -c Release --project tests/Idrak.Tests
+$env:IDRAK_DEVICES="vulkan"; $env:IDRAK_FILTER="vision layers"; dotnet run -c Release --project tests/Idrak.Tests
 $env:IDRAK_DEVICES="vulkan"; $env:IDRAK_FILTER="conformance kit"; dotnet run -c Release --project tests/Idrak.Tests
 $env:IDRAK_DEVICES="vulkan"; $env:IDRAK_FILTER="vulkan cnn"; dotnet run -c Release --project tests/Idrak.Tests
 ```
