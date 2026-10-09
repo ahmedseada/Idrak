@@ -181,6 +181,7 @@ public sealed class Idrak.Data.ImagePreprocessor
   public bool Normalize { get; init; }
   public bool Rescale { get; init; }
   public bool Resize { get; init; }
+  public bool ResizeOnDevice { get; init; }
   public double RescaleFactor { get; init; }
   public float[] Pixels(Idrak.Abstraction.Data.ImageData image)
   public float[] Pixels(string path)

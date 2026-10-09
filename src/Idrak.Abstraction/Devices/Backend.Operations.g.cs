@@ -2517,6 +2517,282 @@ public abstract partial class Backend
     }
 
     /// <summary>
+    /// 2-D convolution of NCHW images: y[n, f, oh, ow] = act(bias[f] + Σ_{c, kh, kw} weight[f, (c·KH + kh)·KW + kw] ·
+    /// x[n, q·Cg + c, oh·SH - PH + kh·DH, ow·SW - PW + kw·DW]) with 0 outside the image, where filter f is in group
+    /// q = f / (filters / groups) and reads that group's Cg = C / groups channels. weight is [filters, Cg·KH·KW]
+    /// (PyTorch's [filters, C / groups, KH, KW]), bias [filters] or null, y [N, filters, OH, OW]; act is
+    /// <paramref name="activation"/> (the identity for <see cref="ConvActivation.None"/>).
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.Convolution"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>ConvolutionKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void Convolution(Storage x, Storage weight, Storage? bias, Storage y, in ConvGeometry g, int filters, int groups, ConvActivation activation)
+    {
+        if (_kernels is null)
+        {
+            ConvolutionKernel(x, weight, bias, y, in g, filters, groups, activation);
+        }
+        else
+        {
+            ConvolutionRegistered(x, weight, bias, y, in g, filters, groups, activation);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ConvolutionRegistered(Storage x, Storage weight, Storage? bias, Storage y, in ConvGeometry g, int filters, int groups, ConvActivation activation)
+    {
+        if (Kernel(OperationIndex.Convolution) is OperationKernels.Convolution kernel)
+        {
+            kernel(this, x, weight, bias, y, in g, filters, groups, activation);
+        }
+        else
+        {
+            ConvolutionKernel(x, weight, bias, y, in g, filters, groups, activation);
+        }
+    }
+
+    /// <summary>
+    /// The input gradient of <see cref="ConvolutionKernel"/> (without its activation): dx += the transposed convolution of
+    /// dy [N, filters, OH, OW] with weight, dx[n, q·Cg + c, ih, iw] += Σ weight[f, (c·KH + kh)·KW + kw] · dy[n, f, oh, ow] over
+    /// the filters f of group q and the window positions with ih = oh·SH - PH + kh·DH and iw = ow·SW - PW + kw·DW.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.ConvolutionBackwardInput"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>ConvolutionBackwardInputKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void ConvolutionBackwardInput(Storage dy, Storage weight, Storage dx, in ConvGeometry g, int filters, int groups)
+    {
+        if (_kernels is null)
+        {
+            ConvolutionBackwardInputKernel(dy, weight, dx, in g, filters, groups);
+        }
+        else
+        {
+            ConvolutionBackwardInputRegistered(dy, weight, dx, in g, filters, groups);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ConvolutionBackwardInputRegistered(Storage dy, Storage weight, Storage dx, in ConvGeometry g, int filters, int groups)
+    {
+        if (Kernel(OperationIndex.ConvolutionBackwardInput) is OperationKernels.ConvolutionBackwardInput kernel)
+        {
+            kernel(this, dy, weight, dx, in g, filters, groups);
+        }
+        else
+        {
+            ConvolutionBackwardInputKernel(dy, weight, dx, in g, filters, groups);
+        }
+    }
+
+    /// <summary>
+    /// The weight gradient of <see cref="ConvolutionKernel"/>: dweight[f, (c·KH + kh)·KW + kw] += Σ_{n, oh, ow} dy[n, f, oh, ow] ·
+    /// x[n, q·Cg + c, oh·SH - PH + kh·DH, ow·SW - PW + kw·DW] (0 outside the image) for each filter f of group q.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.ConvolutionBackwardWeight"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>ConvolutionBackwardWeightKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void ConvolutionBackwardWeight(Storage x, Storage dy, Storage dweight, in ConvGeometry g, int filters, int groups)
+    {
+        if (_kernels is null)
+        {
+            ConvolutionBackwardWeightKernel(x, dy, dweight, in g, filters, groups);
+        }
+        else
+        {
+            ConvolutionBackwardWeightRegistered(x, dy, dweight, in g, filters, groups);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ConvolutionBackwardWeightRegistered(Storage x, Storage dy, Storage dweight, in ConvGeometry g, int filters, int groups)
+    {
+        if (Kernel(OperationIndex.ConvolutionBackwardWeight) is OperationKernels.ConvolutionBackwardWeight kernel)
+        {
+            kernel(this, x, dy, dweight, in g, filters, groups);
+        }
+        else
+        {
+            ConvolutionBackwardWeightKernel(x, dy, dweight, in g, filters, groups);
+        }
+    }
+
+    /// <summary>
+    /// Average pooling of NCHW images, as PyTorch's <c>AvgPool2d</c>: y[n, c, oh, ow] = the sum of x over the window
+    /// (padded positions add 0, in row order) divided, when <paramref name="countIncludePad"/>, by the window's rows and
+    /// columns up to the padded end (H + <paramref name="padBottom"/>, W + <paramref name="padRight"/>: the padding a
+    /// divisor counts, which a ceil-mode geometry's PadBottom and PadRight may pass), else by the input positions the
+    /// window covers (at least 1).
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.AvgPool"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AvgPoolKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void AvgPool(Storage x, Storage y, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
+    {
+        if (_kernels is null)
+        {
+            AvgPoolKernel(x, y, in g, countIncludePad, padBottom, padRight);
+        }
+        else
+        {
+            AvgPoolRegistered(x, y, in g, countIncludePad, padBottom, padRight);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AvgPoolRegistered(Storage x, Storage y, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
+    {
+        if (Kernel(OperationIndex.AvgPool) is OperationKernels.AvgPool kernel)
+        {
+            kernel(this, x, y, in g, countIncludePad, padBottom, padRight);
+            return;
+        }
+
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.AvgPool))
+        {
+            AvgPoolKernel(x, y, in g, countIncludePad, padBottom, padRight);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.AvgPool);
+        try
+        {
+            AvgPoolKernel(x, y, in g, countIncludePad, padBottom, padRight);
+        }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            AvgPoolOnHost(x, y, in g, countIncludePad, padBottom, padRight);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of AvgPool (the default body of AvgPoolKernel), for RetryOnHost.
+    private void AvgPoolOnHost(Storage x, Storage y, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
+    {
+        using var h = new HostCall(this, "AvgPool");
+        CpuBackend.Instance.AvgPool(h[x], h[y], in g, countIncludePad, padBottom, padRight);
+    }
+
+    /// <summary>
+    /// The gradient of <see cref="AvgPoolKernel"/>: dx[n, c, ih, iw] += Σ dy[n, c, oh, ow] / divisor over the windows that
+    /// cover the element, in window order (the divisor as the forward pass takes it).
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.AvgPoolBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AvgPoolBackwardKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void AvgPoolBackward(Storage dy, Storage dx, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
+    {
+        if (_kernels is null)
+        {
+            AvgPoolBackwardKernel(dy, dx, in g, countIncludePad, padBottom, padRight);
+        }
+        else
+        {
+            AvgPoolBackwardRegistered(dy, dx, in g, countIncludePad, padBottom, padRight);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AvgPoolBackwardRegistered(Storage dy, Storage dx, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
+    {
+        if (Kernel(OperationIndex.AvgPoolBackward) is OperationKernels.AvgPoolBackward kernel)
+        {
+            kernel(this, dy, dx, in g, countIncludePad, padBottom, padRight);
+            return;
+        }
+
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.AvgPoolBackward))
+        {
+            AvgPoolBackwardKernel(dy, dx, in g, countIncludePad, padBottom, padRight);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.AvgPoolBackward);
+        try
+        {
+            AvgPoolBackwardKernel(dy, dx, in g, countIncludePad, padBottom, padRight);
+        }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            AvgPoolBackwardOnHost(dy, dx, in g, countIncludePad, padBottom, padRight);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of AvgPoolBackward (the default body of AvgPoolBackwardKernel), for RetryOnHost.
+    private void AvgPoolBackwardOnHost(Storage dy, Storage dx, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
+    {
+        using var h = new HostCall(this, "AvgPoolBackward");
+        CpuBackend.Instance.AvgPoolBackward(h[dy], h[dx], in g, countIncludePad, padBottom, padRight);
+    }
+
+    /// <summary>
+    /// Image resampling and per-channel normalization in one pass. Each of <paramref name="planes"/> planes of x ([planes,
+    /// height, width]; plane p is channel p % channels) is resampled to [outHeight, outWidth] by separable filters, across then
+    /// down, and mapped per channel into y [planes, outHeight, outWidth]. <paramref name="coefficients"/> holds, for each
+    /// output column, its first input column and its tap count (ints as float bits) then <paramref name="xTaps"/> weights,
+    /// and after them the same for each output row with <paramref name="yTaps"/> weights; a pass with 0 taps is skipped
+    /// (that size kept, no coefficients). Floats (<paramref name="bytes"/> false): x and the weights are floats, each
+    /// output's taps are summed in order, and y = value · values[2c] + values[2c + 1]. Bytes: x holds 8-bit values four to
+    /// a float word (value i in bits 8·(i % 4) of word i / 4), the weights are integers with 22 fractional bits (int bits),
+    /// each pass sums 2^21 and its products as integers, shifts right by 22 and clips to [0, 255] (Pillow's
+    /// <c>ImagingResample</c>), and y = values[256·c + value].
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.ResizeNormalize"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>ResizeNormalizeKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void ResizeNormalize(Storage x, Storage coefficients, Storage values, Storage y, int planes, int channels, int height, int width, int outHeight, int outWidth, int xTaps, int yTaps, bool bytes)
+    {
+        if (_kernels is null)
+        {
+            ResizeNormalizeKernel(x, coefficients, values, y, planes, channels, height, width, outHeight, outWidth, xTaps, yTaps, bytes);
+        }
+        else
+        {
+            ResizeNormalizeRegistered(x, coefficients, values, y, planes, channels, height, width, outHeight, outWidth, xTaps, yTaps, bytes);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ResizeNormalizeRegistered(Storage x, Storage coefficients, Storage values, Storage y, int planes, int channels, int height, int width, int outHeight, int outWidth, int xTaps, int yTaps, bool bytes)
+    {
+        if (Kernel(OperationIndex.ResizeNormalize) is OperationKernels.ResizeNormalize kernel)
+        {
+            kernel(this, x, coefficients, values, y, planes, channels, height, width, outHeight, outWidth, xTaps, yTaps, bytes);
+            return;
+        }
+
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.ResizeNormalize))
+        {
+            ResizeNormalizeKernel(x, coefficients, values, y, planes, channels, height, width, outHeight, outWidth, xTaps, yTaps, bytes);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.ResizeNormalize);
+        try
+        {
+            ResizeNormalizeKernel(x, coefficients, values, y, planes, channels, height, width, outHeight, outWidth, xTaps, yTaps, bytes);
+        }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            ResizeNormalizeOnHost(x, coefficients, values, y, planes, channels, height, width, outHeight, outWidth, xTaps, yTaps, bytes);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of ResizeNormalize (the default body of ResizeNormalizeKernel), for RetryOnHost.
+    private void ResizeNormalizeOnHost(Storage x, Storage coefficients, Storage values, Storage y, int planes, int channels, int height, int width, int outHeight, int outWidth, int xTaps, int yTaps, bool bytes)
+    {
+        using var h = new HostCall(this, "ResizeNormalize");
+        CpuBackend.Instance.ResizeNormalize(h[x], h[coefficients], h[values], h[y], planes, channels, height, width, outHeight, outWidth, xTaps, yTaps, bytes);
+    }
+
+    /// <summary>
     /// Resamples each of <paramref name="planes"/> [height, width] planes to [outHeight, outWidth] as PyTorch's
     /// <c>F.interpolate</c>: output row o reads input row floor(o · scaleHeight) (nearest; the last row at most) or, bilinear,
     /// the two rows around o · scaleHeight (alignCorners) or around max((o + 0.5) · scaleHeight - 0.5, 0), weighted by
@@ -2792,6 +3068,38 @@ public abstract partial class Backend
     {
         using var h = new HostCall(this, "AdaptiveMaxPool");
         CpuBackend.Instance.AdaptiveMaxPool(h[x], h[y], h[argmax], planes, height, width, outHeight, outWidth);
+    }
+
+    /// <summary>
+    /// The gradient of <see cref="AdaptiveMaxPoolKernel"/>: dx[argmax[i]] += dy[i] for its planes · outHeight · outWidth outputs,
+    /// the same as <see cref="Backend.MaxPoolBackward(Storage, Storage, Storage, int)"/>; a device that adds the gradients by
+    /// gathering over the windows (no atomics, the same bits every run) needs the sizes.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.AdaptiveMaxPoolBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AdaptiveMaxPoolBackwardKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void AdaptiveMaxPoolBackward(Storage dy, Storage argmax, Storage dx, int planes, int height, int width, int outHeight, int outWidth)
+    {
+        if (_kernels is null)
+        {
+            AdaptiveMaxPoolBackwardKernel(dy, argmax, dx, planes, height, width, outHeight, outWidth);
+        }
+        else
+        {
+            AdaptiveMaxPoolBackwardRegistered(dy, argmax, dx, planes, height, width, outHeight, outWidth);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AdaptiveMaxPoolBackwardRegistered(Storage dy, Storage argmax, Storage dx, int planes, int height, int width, int outHeight, int outWidth)
+    {
+        if (Kernel(OperationIndex.AdaptiveMaxPoolBackward) is OperationKernels.AdaptiveMaxPoolBackward kernel)
+        {
+            kernel(this, dy, argmax, dx, planes, height, width, outHeight, outWidth);
+        }
+        else
+        {
+            AdaptiveMaxPoolBackwardKernel(dy, argmax, dx, planes, height, width, outHeight, outWidth);
+        }
     }
 
     /// <summary>

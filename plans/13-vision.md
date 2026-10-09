@@ -1,12 +1,14 @@
 # Plan 13: Idrak.Vision (general image building blocks, fast on every device)
 
-**Status:** planned 2026-10-09. Built 2026-10-09: step 3 (CTC loss and decoding) and the part of step 2 the line
-recognizer uses (rectangular, strided, dilated and grouped convolutions, rectangular max and average pooling,
-bidirectional and stacked LSTM/GRU); then the rest of step 2 (transposed convolution, upsampling, adaptive pooling,
-`GroupNorm`, ceil-mode pooling and padding below and right); steps 4 and 5 (detection and segmentation losses, matching
-and metrics; augmentations that move boxes and masks, run off the training thread; COCO, YOLO and Pascal VOC formats); see
-"as built" below. The rest starts after plan 12's phases 4 and 6 are merged, or earlier where the OCR sample (below)
-needs a step first.
+**Status:** planned 2026-10-09. Built 2026-10-09, merged on `abstraction` and checked with targeted CPU tests: step 3
+(CTC loss and decoding); step 2 (rectangular, strided, dilated and grouped convolutions, rectangular max and average
+pooling, bidirectional and stacked LSTM/GRU, transposed convolution, upsampling, adaptive pooling, `GroupNorm`, ceil-mode
+pooling and padding below and right); step 1 (convolution, pooling, resampling and CTC as device operations with
+kernels of their own on CUDA and Vulkan, measured per shape; inference fusion; resize and normalize on the device);
+steps 4 and 5 (detection and segmentation losses, matching and metrics; augmentations that move boxes and masks, run off
+the training thread; COCO, YOLO and Pascal VOC formats); step 6 (image model families as plug-ins, `ImageModels.Load`,
+`DetectionDecoders`). Left: step 7 (the command line). Every GPU kernel is written and compiled, not yet run on a GPU
+(the owner's commands are in each "as built" section). See "as built" below.
 
 **Goal.** `Idrak.Vision` and the core layers under it are general building blocks for any image application
 (classification, detection, segmentation, document reading), fast and lean on every device. Applications are not the
@@ -29,7 +31,7 @@ library holds nothing OCR-specific. Every step keeps the rules of `CLAUDE.md`:
 | `Idrak.Vision` (about 1,400 lines) | `RegionClassifier` + `ComponentProposer`, `ContentFrame`, foreground and connected components, non-maximum suppression, `ModelDetector` (the app writes its `DetectionDecoder`), `ModelSegmenter`, segmentation metrics, `ChannelStatistics` |
 | Convolution layers (core) | `Conv2d` (square kernels; no groups, no dilation), `MaxPool2d`, `GlobalAveragePool2d`, `BatchNorm`, `Flatten` |
 | Other layers (core) | `LayerNorm`, `MultiHeadAttention`, `TransformerEncoderLayer`, `LSTM`, `GRU` (one direction) |
-| Convolution on the GPU | CUDA kernels; on Vulkan, convolution and group-norm training run on the host fallback (a round trip to the CPU per convolution) |
+| Convolution on the GPU | CUDA kernels; on Vulkan, convolution and group-norm training run on the host fallback (a round trip to the CPU per convolution) (at planning; step 1 made every one a device kernel) |
 | Image input | PNG, BMP, Netpbm, JPEG codecs; Pillow-exact transforms (`ImageTransforms`: grayscale, max_width/height, contrast, brightness, sharpness, autocontrast, jpeg); `ImagePreprocessor`; resize and normalize on the host |
 | Augmentation | `RandomFlip`, `RandomShift` (image only: no boxes or masks) |
 | Losses for sequences | none for unsegmented text lines (no CTC) |
@@ -228,7 +230,7 @@ $env:IDRAK_DEVICES="vulkan"; $env:IDRAK_FILTER="vulkan cnn"; dotnet run -c Relea
   pass (as `Conv2d` holds its unfolded patches); interpolation and adaptive average pooling keep nothing but their
   input, adaptive max pooling its indices (one int per output), group norm its output and one inverse deviation per
   (sample, group).
-- **On GPUs** (no device kernels written here; step 1's): `Interpolate2d`, `Interpolate2dBackward`, `AdaptiveAvgPool`,
+- **On GPUs** (no device kernels written here; step 1 added them, see "Step 1, as built"): `Interpolate2d`, `Interpolate2dBackward`, `AdaptiveAvgPool`,
   `AdaptiveAvgPoolBackward` and `AdaptiveMaxPool` run on the host fallback on CUDA, Vulkan and HIP (adaptive pools whose
   output divides the input take the devices' window kernels instead); adaptive max pooling's gradient uses
   `MaxPoolBackward(count)`, which Vulkan runs on the host (its own kernel is the geometry overload). `ConvTranspose2d`
@@ -435,6 +437,120 @@ $env:IDRAK_DEVICES="vulkan"; $env:IDRAK_FILTER="vulkan cnn"; dotnet run -c Relea
   shared container (load average above 12 on 4 cores from other builds); the owner's machine should show it.
 - **Left.** Device kernels for the box and focal losses (host fallback on CUDA, Vulkan and HIP); augmenting on the device;
   the image model families (step 6) and the command line (step 7) that will name these registries.
+## Step 1, as built (2026-10-09)
+
+Convolution, pooling, resampling and CTC are single device operations with a CPU reference and kernels of their own on
+CUDA and Vulkan; which kernel runs is measured per shape on the device in use, as the matrix products and span attention
+are. Nothing here names a card, vendor or memory size: tiles and widths come from what the device reports, choices from
+timings on it.
+
+- **Operations** (dispatcher, `Backend.cs`; generated by `tools/operations/generate.py`):
+  - `Convolution(x, weight, bias?, y, geometry, filters, groups, ConvActivation)`, `ConvolutionBackwardInput` (dx +=) and
+    `ConvolutionBackwardWeight` (dweight +=): every `ConvGeometry` (rectangular windows, strides, padding above/left and
+    below/right, dilation) and groups (depthwise included). Their default is **composed** (`Backend.Convolution.cs`):
+    im2col, one product per group (`BatchedMatMul`, so a device's measured product kernel, its cooperative-matrix or
+    tensor-core path under `MixedPrecision` included) and permutations between the products' rows and NCHW. The images go
+    in chunks only when the unfolded patches would pass a storage's int range or half the memory the device reports free.
+    `ConvActivation` (None, ReLU, sigmoid, tanh, GELU, SiLU) is the fused inference epilogue. A device without kernels of
+    its own (HIP, plug-in devices) runs the composed path on its own operations, as `Conv2d` did before.
+  - `AvgPool` / `AvgPoolBackward(geometry, countIncludePad, padBottom, padRight)`: PyTorch's divisor (counted padding up
+    to the padded end, a ceil-mode window cut there: the layer's own padding below and right, which a ceil-mode geometry's
+    `PadBottom` / `PadRight` pass), the gradient gathered over the windows in order.
+  - `AdaptiveMaxPoolBackward(dy, argmax, dx, planes, h, w, oh, ow)`: the adaptive max gradient by windows (default:
+    `MaxPoolBackward(count)`, so the CPU is unchanged); `Tensor.AdaptiveMaxPool` uses it, so no GPU scatters it.
+  - `ResizeNormalize(x, coefficients, values, y, planes, channels, h, w, oh, ow, xTaps, yTaps, bytes)`: separable
+    resampling (per output: first input, tap count, weights; a pass with 0 taps skipped) then a per-channel map; floats,
+    or Pillow's 8-bit passes in integers (22-bit weights, 2^21 + Σ, >> 22, clipped) with a 256-entry table per channel.
+  - Tensors: `Tensor.Convolution`, `Tensor.ConvolutionTranspose` (the input gradient of a convolution: PyTorch's
+    `conv_transpose2d`, its own gradient the convolution and the weight gradient), `Tensor.AvgPool`,
+    `Tensor.ResizeNormalize(h, w, mean, std, scale, antialias)` (PyTorch's bilinear weights with or without antialias,
+    `Tensor.BilinearTaps`). `Conv2d`, `ConvTranspose2d` and `AvgPool2d` run on them.
+- **Memory.** `Conv2d` no longer keeps its unfolded patches (KH·KW times its input) from the forward to the backward pass:
+  its backward step reads the input and weights; the composed weight gradient unfolds again, the implicit and depthwise
+  kernels never do. `ConvTranspose2d` keeps no rows or columns either; average pooling keeps nothing (it kept im2col's
+  patches).
+- **CPU.** Depthwise convolutions (one input channel a group, any number of filters a channel) run as direct loops, in
+  parallel over planes, every gradient element written by one thread in a fixed order; the rest takes the composed path.
+  The composed weight gradient multiplies the gradient as [groups, filters, positions] (both operands read along the sum)
+  instead of the transposed rows. Measured (this container, 4 threads shared with other work, so noisy; `--bench-conv`
+  with `IDRAK_DEVICES=cpu`; forward / input gradient / weight gradient, ms): 3x3 64 → 64 on 8 × 56x56: 103 / 85 / 419
+  (the weight gradient 710 with the transposed product); depthwise 3x3 over 128 channels, 8 × 56x56: 51 / 50 / 55 where
+  the batched product took 300–430 for the forward pass alone; a text line 3x3 1 → 32 on 16 × 32x400: 33 / 30 / 42 (the
+  weight gradient 127 before).
+- **Inference fusion.** `Sequential` (nothing recorded, no per-layer telemetry, no graph being recorded) runs a `Conv2d` followed by a `BatchNorm`
+  in evaluation mode and/or an activation the convolution applies (`ReLU`, `Sigmoid`, `Tanh`, `GELU`) as one convolution
+  (`Conv2d.ForwardFused`): scale = γ / √(running variance + ε), weight' = weight · scale per filter, bias' = (bias -
+  running mean) · scale + β (five operations of `filters` elements), the activation in the kernel's epilogue (one
+  element-wise pass on the composed path). A training `BatchNorm` is never folded; offloaded weights are staged as their
+  layers' would be. Equal to the layers one by one within 1e-4 on the CPU (test below).
+- **Vulkan kernels** (`VulkanKernels.Convolution.cs`, `.Resampling.cs`, `.Ctc.cs`; `VulkanBackend.Convolution.cs`,
+  `.Ctc.cs`):
+  - Implicit products `conv_forward`, `conv_backward_input`, `conv_backward_weight` (the operands gathered as the tile
+    needs them): register-blocked (4 × 4 outputs an invocation, 4S × 4S blocks, steps of 16) and `_tile` (one output an
+    invocation, S × S), S = `MatSide(width)`, the matrix product's two tilings; batch entries (image × group, or group ×
+    split) along z; the forward epilogue adds the bias and applies the activation; the weight gradient at 1, 4, 16 or 64
+    splits of its sum over positions (each split at least 256 positions), partial sums added in split order by
+    `conv_split_reduce`. Depthwise `conv_depthwise` (an invocation per output), `_backward_input` (per input element,
+    gathering), `_backward_weight` (a workgroup per weight, a fixed tree). No atomics: a shape gives the same bits run
+    after run.
+  - **Measured choice** (`VulkanTuneOp.Convolution`, keyed by the shape with its padding, the pass, the precision, the
+    activation and the groups; kept in the tuning cache with the other kernel choices): the composed path (where its
+    patches fit a binding and half the reported free memory; run once before the timing so its products measure their
+    own choices first), the implicit product tiled and blocked at each candidate width (the device's, half and twice it),
+    with each split count for the weight gradient, and the depthwise kernels where they apply. The formula while nothing
+    can be measured (`IDRAK_AUTOTUNE=0`, a graph being recorded): depthwise where it applies, else the implicit product,
+    blocked when its blocks would be at least half full, the most splits leaving 4,096 positions each.
+  - im2col and col2im take dilated windows (the host fallback for dilation is gone); `avg_pool`, `avg_pool_backward`;
+    `interpolate`, `interpolate_backward` (gathering over the outputs whose source can lie within two positions of the
+    element), `adaptive_avg_pool(_backward)`, `adaptive_max_pool(_backward)`; `resize_normalize` (an invocation per output
+    computing each vertical tap's horizontal pass in place: the two-pass result without the intermediate image).
+  - CTC (`ctc_loss`, `ctc_loss_backward`): a workgroup per sequence over the 2L + 1 states, log space in float, a barrier a
+    step; α and β rows in workgroup memory where 2L + 1 fits the width (which the device's workgroup memory and
+    invocation limits set), else the `_global` variants keep them in a scratch buffer; the gradient keeps α of every step
+    ([batch, steps, states], the CPU's O(T·S)); the blank's sums through the workgroup's reduction, each label's over its
+    occurrences in label order. Lengths and offsets go up with the call (3 ints a sequence); labels are clamped, not
+    checked (the CPU checks them). Decided to build rather than keep the host fallback: the CPU takes 27–109 ms a batch
+    (step 3's measurements) plus a round trip of the log-probabilities and their gradient, once per training step.
+  - Group norms (`NormStats`, `NormApply`, `NormBackward`, `GroupReduce`, `GroupScaleShift`) already had Vulkan kernels;
+    plans/README.md's Vulkan table said otherwise and is corrected.
+  - Still on the host: `MaxPoolBackward(count)` (no library caller now) and the geometry overload when padding below or
+    right is at least the window.
+- **CUDA kernels** (`PtxKernels.Convolution.cs`, `.Resampling.cs`, `.Ctc.cs`; `CudaBackend.Convolution.cs`, `.Ctc.cs`): the
+  same set in PTX. Implicit products in blocks of 16 × 16 threads over 64 × 64 tiles (4 × 4 outputs a thread) or 16 × 16
+  tiles, 16 terms a step staged in shared memory (8.3 KB static: kernel geometry, within every GPU's 48 KB), batch entries
+  along z with a loop past the grid's z limit; depthwise, average pooling, interpolation, adaptive pooling and
+  resize-normalize one thread an output (gradients one an input element, gathering); the depthwise weight gradient and
+  CTC a block of `KernelShapes.BlockSize` threads (derived from the reported limits), CTC's rows in shared memory when
+  2L + 1 ≤ BlockSize, else global. The measured choice goes through `CudaBackend.Tune` (`TuneOp.Convolution`, the same key
+  and candidates, median of seven rounds, the formula kept unless 3% faster; the backward candidates write scratch) and
+  is kept in `TuningCache`; the formula while a graph is recorded, the profiler runs or `IDRAK_AUTOTUNE=0`. im2col and
+  col2im take dilation. bfloat16 tensor cores: the composed path's products go there under `MixedPrecision.BFloat16` as
+  every product does (the precision is part of the key, so the measurement weighs the float32 implicit products against
+  the tensor-core composed path). PTX assembled by ptxas 12.9 for sm_50, sm_75, sm_86 and sm_120: no spills; the blocked
+  products 48–72 registers, the rest 14–52.
+- **Matrix units.** On both devices they come through the composed path (the measured product kernel: cooperative
+  matrices on Vulkan where `VK_KHR_cooperative_matrix` reports float16/bfloat16 shapes, tensor cores on CUDA), which the
+  measurement weighs against the implicit products. No implicit product on matrix units yet (left).
+- **Layout.** Every tensor stays NCHW. The measurement chooses how the data is read: the composed path works on
+  position-major rows (the NHWC order of the patches) and permutes, the implicit products read NCHW in place. A separate
+  NHWC tensor layout is not added (every layer and operation is NCHW); neither is Winograd.
+- **`ImagePreprocessor`.** `Process(image, device)` on a GPU runs `ResizeNormalize` with Pillow's coefficients and the
+  transformers table (`ResizeOnDevice`, default on): integer passes, so its pixels are the host path's bit for bit; the
+  CPU, a center crop and `Pixels(...)` keep the host path (Pillow-exact as before). The encoders' batch paths read
+  `Pixels` and are unchanged.
+- **Conformance kit.** "convolution: forward with a bias and each activation, input and weight gradients (groups,
+  depthwise, dilated, rectangular, more padding below and right, tiles past 64), average pooling (ceil-mode windows) and
+  its gradient", "images: resampling with per-channel normalization, floats and Pillow's 8-bit passes", and the adaptive
+  max gradient by windows in "image resampling"; all against plain loops on the CPU, replayed on devices (convolutions at
+  the matrix products' tolerance, 1e-3).
+- **Checked here** (CPU only; no GPU was run): `IDRAK_DEVICES=cpu` with `IDRAK_FILTER` "conformance kit", "conv", "cnn",
+  "pool", "GroupNorm", "ctc", "gradient", "onnx", "vision sequence", "vision layers", "vision kernels" (fusion, the device resize against the
+  host path on the CPU, `ConvTranspose2d` against the products and fold and finite differences; the two GPU tests do
+  nothing on the CPU), "image preprocessing", "spirv" (every kernel at every width through spirv-val), "kernel shapes",
+  "operations", "public API", "abstraction inventory", "cli dev: kernels".
+- **Left:** implicit products on matrix units (cooperative matrices, `mma.sync`); a CPU split of the weight gradient's long
+  sum ([filters, positions] × [positions, patch]: few outputs over a long sum); a fused group norm (statistics and affine
+  in one pass); checking CTC labels on the device; `MaxPoolBackward(count)` on Vulkan.
 
 **For the owner (GPU, from `D:\Projects\Idrak`):**
 
@@ -449,3 +565,20 @@ $env:IDRAK_DEVICES="vulkan"; $env:IDRAK_FILTER="conformance kit"; dotnet run -c 
 $env:IDRAK_DEVICES="vulkan"; $env:IDRAK_FILTER="vision detection"; dotnet run -c Release --project tests/Idrak.Tests
 $env:IDRAK_DEVICES="cuda"; $env:IDRAK_FILTER="vision augment"; dotnet run -c Release --project tests/Idrak.Tests
 ```
+$env:IDRAK_DEVICES="cuda"; $env:IDRAK_FILTER="vision kernels"; dotnet run -c Release --project tests/Idrak.Tests
+$env:IDRAK_DEVICES="cuda"; $env:IDRAK_FILTER="conformance kit"; dotnet run -c Release --project tests/Idrak.Tests
+$env:IDRAK_DEVICES="cuda"; $env:IDRAK_FILTER="vision"; dotnet run -c Release --project tests/Idrak.Tests
+$env:IDRAK_DEVICES="cuda"; $env:IDRAK_FILTER="conv"; dotnet run -c Release --project tests/Idrak.Tests
+$env:IDRAK_DEVICES="vulkan"; $env:IDRAK_FILTER="vision kernels"; dotnet run -c Release --project tests/Idrak.Tests
+$env:IDRAK_DEVICES="vulkan"; $env:IDRAK_FILTER="conformance kit"; dotnet run -c Release --project tests/Idrak.Tests
+$env:IDRAK_DEVICES="vulkan"; $env:IDRAK_FILTER="vision"; dotnet run -c Release --project tests/Idrak.Tests
+$env:IDRAK_DEVICES="vulkan"; $env:IDRAK_FILTER="vulkan cnn"; dotnet run -c Release --project tests/Idrak.Tests
+$env:IDRAK_DEVICES="cuda"; $env:IDRAK_TUNE_LOG="1"; dotnet run -c Release --project tests/Idrak.Tests -- --bench-conv
+$env:IDRAK_DEVICES="vulkan"; dotnet run -c Release --project tests/Idrak.Tests -- --bench-conv
+$env:IDRAK_DEVICES="cuda"; $env:IDRAK_MATMUL="bf16"; dotnet run -c Release --project tests/Idrak.Tests -- --bench-conv
+$env:IDRAK_DEVICES="vulkan"; $env:IDRAK_MATMUL="bf16"; dotnet run -c Release --project tests/Idrak.Tests -- --bench-conv
+```
+
+(`Remove-Item Env:IDRAK_TUNE_LOG, Env:IDRAK_MATMUL` between runs.) The bench prints, per shape, the host fallback, the
+composed path, both implicit tiles, depthwise and "auto" (the measured choice); auto should never be slower than the host
+fallback, and within noise of the fastest column.

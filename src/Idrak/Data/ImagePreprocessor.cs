@@ -114,6 +114,14 @@ public sealed class ImagePreprocessor
     public bool Grayscale { get; init; }
 
     /// <summary>
+    /// Whether <see cref="Process(ImageData, Device?)"/> resizes, rescales and normalizes on a GPU in one device operation
+    /// (<see cref="Backend.ResizeNormalize"/>) instead of on the host (default true). The device runs Pillow's 8-bit passes
+    /// in integers with the same coefficients and the same per-channel table of the 256 byte values, so its values are the
+    /// host path's bit for bit; a center crop, the CPU and <see cref="Pixels(ImageData)"/> take the host path.
+    /// </summary>
+    public bool ResizeOnDevice { get; init; } = true;
+
+    /// <summary>
     /// Reads a <c>preprocessor_config.json</c> (the file, or the model folder holding it). Keys it does not name (or names
     /// as null) take <paramref name="defaults"/>' values: the family's processor class's own defaults (null: this class's);
     /// a size by longest edge and nearest resampling are not supported. Keys that are not steps of this class (a family's
@@ -231,8 +239,111 @@ public sealed class ImagePreprocessor
     /// <summary>The pixel values of <paramref name="image"/> as a [channels, height, width] tensor on <paramref name="device"/>.</summary>
     public Tensor Process(ImageData image, Device? device = null)
     {
+        var target = device ?? Device.Default;
+        if (ResizeOnDevice && !CenterCrop && target.Type != DeviceType.Cpu)
+        {
+            return ProcessOnDevice(image, target);
+        }
+
         var values = Pixels(image, out int channels, out int height, out int width);
         return Tensor.From(values, [channels, height, width], device);
+    }
+
+    /// <summary>
+    /// <see cref="Process(ImageData, Device?)"/> through the device operation (Backend.ResizeNormalize, 8-bit passes) on any
+    /// device, the CPU included (tests compare it with the host path); no center crop.
+    /// </summary>
+    internal Tensor ProcessOnDevice(ImageData image, Device device)
+    {
+        ArgumentNullException.ThrowIfNull(image);
+        if (CenterCrop)
+        {
+            throw new InvalidOperationException("A center crop runs on the host (Pixels).");
+        }
+
+        int h = image.Height, w = image.Width;
+        var planes = ToBytes(image, Grayscale);
+        var (toHeight, toWidth) = ResizedSize(h, w);
+        int channels = planes.Length == 1 && (ConvertRgb || Grayscale) ? 3 : planes.Length;
+        var table = Table(channels);
+
+        // Each output channel's bytes (a grey plane repeated), four to a float word, the first in the low byte.
+        int area = h * w;
+        var words = new uint[(channels * area + 3) / 4];
+        for (int c = 0; c < channels; c++)
+        {
+            var plane = planes[Math.Min(c, planes.Length - 1)];
+            for (int i = 0, at = c * area; i < area; i++, at++)
+            {
+                words[at >> 2] |= (uint)plane[i] << (8 * (at & 3));
+            }
+        }
+
+        // Per output column (then row): its first input pixel, its tap count and its weights, as int bits; none for a size kept.
+        var coefficients = new List<float>();
+        int Pass(int inSize, int outSize)
+        {
+            if (!Resize || inSize == outSize)
+            {
+                return 0;
+            }
+
+            var (bounds, weights, taps) = Coefficients(inSize, outSize, Resampling);
+            for (int o = 0; o < outSize; o++)
+            {
+                coefficients.Add(BitConverter.Int32BitsToSingle(bounds[2 * o]));
+                coefficients.Add(BitConverter.Int32BitsToSingle(bounds[2 * o + 1]));
+                for (int t = 0; t < taps; t++)
+                {
+                    coefficients.Add(BitConverter.Int32BitsToSingle(weights[o * taps + t]));
+                }
+            }
+
+            return taps;
+        }
+
+        int xTaps = Pass(w, toWidth), yTaps = Pass(h, toHeight);
+        if (coefficients.Count == 0)
+        {
+            coefficients.Add(0f);
+        }
+
+        var packed = new float[words.Length];
+        System.Runtime.InteropServices.MemoryMarshal.Cast<uint, float>(words).CopyTo(packed);
+        using var x = Tensor.From(packed, [Math.Max(1, packed.Length)], device);
+        using var coefficientTensor = Tensor.From(coefficients.ToArray(), [coefficients.Count], device);
+        using var values = Tensor.From(table, [table.Length], device);
+        var y = Tensor.Empty([channels, toHeight, toWidth], device);
+        device.Backend.ResizeNormalize(x.Storage, coefficientTensor.Storage, values.Storage, y.Storage, channels, channels, h, w, toHeight, toWidth, xTaps, yTaps, bytes: true);
+        return y;
+    }
+
+    // Each channel's value of each byte (256 per channel): rescaled as transformers does (the byte times the factor in
+    // double precision, rounded to float) and normalized ((value - mean) / std in float).
+    private float[] Table(int channels)
+    {
+        if (Normalize && (Mean.Count is not 1 && Mean.Count != channels || Std.Count is not 1 && Std.Count != channels))
+        {
+            throw new InvalidOperationException($"{Mean.Count} means and {Std.Count} standard deviations for {channels} channels.");
+        }
+
+        var table = new float[256 * channels];
+        for (int c = 0; c < channels; c++)
+        {
+            for (int v = 0; v < 256; v++)
+            {
+                float value = Rescale ? (float)(v * RescaleFactor) : v;                 // transformers: float64 product, then float32
+                if (Normalize)
+                {
+                    float mean = Mean[Mean.Count == 1 ? 0 : c], std = Std[Std.Count == 1 ? 0 : c];
+                    value = (value - mean) / std;
+                }
+
+                table[256 * c + v] = value;
+            }
+        }
+
+        return table;
     }
 
     /// <summary>The pixel values of an image file (any registered codec) as a tensor, as <see cref="Process(ImageData, Device?)"/>.</summary>
@@ -267,32 +378,16 @@ public sealed class ImagePreprocessor
         channels = planes.Length == 1 && (ConvertRgb || Grayscale) ? 3 : planes.Length;
         height = h;
         width = w;
-        if (Normalize && (Mean.Count is not 1 && Mean.Count != channels || Std.Count is not 1 && Std.Count != channels))
-        {
-            throw new InvalidOperationException($"{Mean.Count} means and {Std.Count} standard deviations for {channels} channels.");
-        }
-
+        var table = Table(channels);
         var result = new float[checked(channels * h * w)];
-        var table = new float[256];
         for (int c = 0; c < channels; c++)
         {
-            for (int v = 0; v < 256; v++)
-            {
-                float value = Rescale ? (float)(v * RescaleFactor) : v;                 // transformers: float64 product, then float32
-                if (Normalize)
-                {
-                    float mean = Mean[Mean.Count == 1 ? 0 : c], std = Std[Std.Count == 1 ? 0 : c];
-                    value = (value - mean) / std;
-                }
-
-                table[v] = value;
-            }
-
             var plane = planes[Math.Min(c, planes.Length - 1)];
             var target = result.AsSpan(c * h * w, h * w);
+            var values = table.AsSpan(256 * c, 256);
             for (int i = 0; i < plane.Length; i++)
             {
-                target[i] = table[plane[i]];
+                target[i] = values[plane[i]];
             }
         }
 

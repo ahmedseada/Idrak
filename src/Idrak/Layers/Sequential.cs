@@ -60,6 +60,28 @@ public sealed class Sequential : Module, IEnumerable<Module>, ICachedModule
     // before(i, x): what layer i reads instead of x (images put into a prompt's embeddings), inside the layer's scope.
     internal Tensor Run(Tensor input, int layers, Func<int, Tensor, Tensor>? before)
     {
+        // Inference (nothing recorded, no per-layer telemetry, no graph being recorded: the folded weights are freed as soon
+        // as the convolution is queued): a convolution and the batch norm (evaluation mode) and activation after it run as
+        // one convolution (Conv2d.ForwardFused).
+        if (before is null && !Autograd.IsEnabled && !ComputeGraph.IsCapturing && !Telemetry.IsEnabled(TelemetryLevel.Layers)
+            && Conv2d.FusedSteps(_modules, layers) is { } steps)
+        {
+            Tensor Step(int s, Tensor x)
+            {
+                var (first, count) = steps[s];
+                if (count == 1)
+                {
+                    return _modules[first].Forward(x);
+                }
+
+                var norm = _modules[first + 1] as BatchNorm;
+                var activation = Conv2d.FusedActivation(_modules[first + count - 1]) ?? ConvActivation.None;
+                return ((Conv2d)_modules[first]).ForwardFused(x, norm, activation);
+            }
+
+            return RunFreeing(input, steps.Length, Step);
+        }
+
         Tensor Layer(int i, Tensor x) => _modules[i].Forward(before is null ? x : before(i, x));
         return Autograd.IsEnabled || ComputeGraph.IsCapturing ? RunLayers(input, layers, Layer) : RunFreeing(input, layers, Layer);
     }

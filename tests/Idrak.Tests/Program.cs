@@ -12,6 +12,7 @@
 //   … -- --bench-text                                                            time the text paths (tokenizer, chat template, parsing, chunking, BM25)
 //   … -- --bench-window                                                          time windowed and soft-capped attention, kernels against the composed path (IDRAK_DEVICES, default every GPU)
 //   … -- --bench-spans [spans|composed|fastest] [train]                          time a 4,096-token bidirectional attention pass: tiled, composed, the measured choice (default all); train: forward and backward (IDRAK_DEVICES, default the CPU)
+//   … -- --bench-conv                                                            time convolutions (forward, both gradients) per path: host fallback, composed, implicit tiles, depthwise, the measured choice (IDRAK_DEVICES, default every GPU)
 //   … -- --bench-vision                                                          time Gemma 3 4B's image encoder and projector (random weights, one 896 x 896 image; IDRAK_DEVICES, default the CPU)
 //   … -- --bench-dispatch                                                        time a million tiny operations through the dispatcher and straight to the CPU's kernel
 //   … -- --bench-offload                                                         time training steps with weights or optimizer state in system memory
@@ -69,6 +70,11 @@ if (args is ["--bench-spans", .. var spanPath])
     bool spanTraining = spanPath.Contains("train");
     string[] spanPaths = [.. spanPath.Where(a => a != "train")];
     return Tests.BenchSpans(spanPaths is [var chosenPath] ? chosenPath : "all", spanTraining);
+}
+
+if (args is ["--bench-conv"])
+{
+    return Tests.BenchConv();
 }
 
 if (args is ["--bench-vision"])
@@ -197,7 +203,7 @@ return failed == 0 ? 0 : 1;
 
 internal static partial class Tests
 {
-    public static (string Name, Action<Device> Run)[] All => [.. InventoryGroup, .. Basic, .. Advanced, .. TensorOpsGroup, .. Decoding, .. Generation, .. Simplified, .. Callbacks, .. AspNetCore, .. Retrieval, .. Onnx, .. Quantization, .. Decoder, .. Pretrained, .. ChatTemplates, .. FineTuning, .. MixedPrecisionGroup, .. CodingToolsGroup, .. DatasetsGroup, .. GgufGroup, .. NamingGroup, .. StreamingText, .. OffloadingGroup, .. TuningGroup, .. CpuTuningGroup, .. AbstractionGroup, .. OperationGroup, .. ConformanceKitGroup, .. OpPluginGroup, .. PackedPluginGroup, .. ModelPluginGroup, .. DatasetPluginGroup, .. MinimalBackendGroup, .. KeyValuePluginGroup, .. OutsidePluginGroup, .. VulkanGroup, .. VulkanRuntimeGroup, .. SpirvGroup, .. VulkanCnnGroup, .. VulkanPromptGroup, .. VulkanMatrixGroup, .. VulkanTrainingGroup, .. VulkanFusedGroup, .. VulkanLimitsGroup, .. VulkanGraphGroup, .. HipGroup, .. ModelFamilyGroup, .. MixtureOfExpertsGroup, .. VulkanMixedMatrixGroup, .. CliRunGroup, .. CliDeveloperGroup, .. CliServeGroup, .. CliModelsGroup, .. CliDesignGroup, .. CliMeasureGroup, .. CliRetrievalGroup, .. CliTrainDataGroup, .. CliHealthGroup, .. CliPolishGroup, .. DataLoaderGroup, .. ImageDecodingGroup, .. WindowKernelGroup, .. SpanAttentionGroup, .. DistillationGroup, .. CliArabicGroup, .. VisionGroup, .. ToolContractGroup, .. ChatPartGroup, .. VisionEncoderGroup, .. CliImageGroup, .. ImagePrefillGroup, .. VisionTuningReferenceGroup, .. VisionContractGroup, .. PanAndScanGroup, .. ImageTransformGroup, .. VisionTuningContractGroup, .. VisionTuningPhase6Group, .. VisionSequenceGroup, .. VisionDetectionGroup, .. VisionAugmentationGroup, .. VisionLayersGroup, .. OverrideLoopGroup, .. ImageFamilyGroup, .. ApiSurfaceGroup];
+    public static (string Name, Action<Device> Run)[] All => [.. InventoryGroup, .. Basic, .. Advanced, .. TensorOpsGroup, .. Decoding, .. Generation, .. Simplified, .. Callbacks, .. AspNetCore, .. Retrieval, .. Onnx, .. Quantization, .. Decoder, .. Pretrained, .. ChatTemplates, .. FineTuning, .. MixedPrecisionGroup, .. CodingToolsGroup, .. DatasetsGroup, .. GgufGroup, .. NamingGroup, .. StreamingText, .. OffloadingGroup, .. TuningGroup, .. CpuTuningGroup, .. AbstractionGroup, .. OperationGroup, .. ConformanceKitGroup, .. OpPluginGroup, .. PackedPluginGroup, .. ModelPluginGroup, .. DatasetPluginGroup, .. MinimalBackendGroup, .. KeyValuePluginGroup, .. OutsidePluginGroup, .. VulkanGroup, .. VulkanRuntimeGroup, .. SpirvGroup, .. VulkanCnnGroup, .. VulkanPromptGroup, .. VulkanMatrixGroup, .. VulkanTrainingGroup, .. VulkanFusedGroup, .. VulkanLimitsGroup, .. VulkanGraphGroup, .. HipGroup, .. ModelFamilyGroup, .. MixtureOfExpertsGroup, .. VulkanMixedMatrixGroup, .. CliRunGroup, .. CliDeveloperGroup, .. CliServeGroup, .. CliModelsGroup, .. CliDesignGroup, .. CliMeasureGroup, .. CliRetrievalGroup, .. CliTrainDataGroup, .. CliHealthGroup, .. CliPolishGroup, .. DataLoaderGroup, .. ImageDecodingGroup, .. WindowKernelGroup, .. SpanAttentionGroup, .. DistillationGroup, .. CliArabicGroup, .. VisionGroup, .. ToolContractGroup, .. ChatPartGroup, .. VisionEncoderGroup, .. CliImageGroup, .. ImagePrefillGroup, .. VisionTuningReferenceGroup, .. VisionContractGroup, .. PanAndScanGroup, .. ImageTransformGroup, .. VisionTuningContractGroup, .. VisionTuningPhase6Group, .. VisionSequenceGroup, .. VisionDetectionGroup, .. VisionAugmentationGroup, .. VisionLayersGroup, .. OverrideLoopGroup, .. ImageFamilyGroup, .. VisionKernelsGroup, .. ApiSurfaceGroup];
 
     private static readonly (string Name, Action<Device> Run)[] Basic =
     [

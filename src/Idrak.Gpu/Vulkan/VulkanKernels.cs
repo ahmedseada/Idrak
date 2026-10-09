@@ -58,7 +58,7 @@ internal static partial class VulkanKernels
     {
         var all = new Dictionary<string, Func<SpirvKernel>>();
         foreach (var (name, build) in ElementwiseKernels().Concat(RowKernels()).Concat(ShapeKernels()).Concat(MatMulKernels()).Concat(DecodingKernels())
-            .Concat(SamplingKernels()).Concat(ConvKernels()).Concat(PromptKernels()).Concat(SpanKernels()).Concat(TrainingKernels()).Concat(FusedKernels()).Concat(PointwiseKernels()))
+            .Concat(SamplingKernels()).Concat(ConvKernels()).Concat(ConvolutionKernels()).Concat(ResamplingKernels()).Concat(CtcKernels()).Concat(PromptKernels()).Concat(SpanKernels()).Concat(TrainingKernels()).Concat(FusedKernels()).Concat(PointwiseKernels()))
         {
             all.Add(name, build);
         }
