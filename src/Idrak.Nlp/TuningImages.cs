@@ -44,6 +44,14 @@ public sealed record TuningImages
     /// </summary>
     public bool Grayscale { get; init; }
 
+    /// <summary>
+    /// The vision family the preparation was saved for (<c>PretrainedVision.Family</c>; the tuner records it), or null when
+    /// not recorded. Its vision options are that family's, so an adapter folder's preparation applies to a model of that
+    /// family only (<see cref="ThrowIfOtherFamily"/>). Not part of equality: it names whose options they are, not how images
+    /// are prepared.
+    /// </summary>
+    public string? Family { get; init; }
+
     /// <summary>Whether this changes nothing: no transforms, no options, colour.</summary>
     public bool IsEmpty => Transforms.IsEmpty && VisionOptions.Count == 0 && !Grayscale;
 
@@ -71,20 +79,45 @@ public sealed record TuningImages
     /// <exception cref="ArgumentException">An option the family does not take.</exception>
     public void ThrowIfUnknown(string family, IReadOnlyCollection<string> accepted) => VisionOptions.ThrowIfUnknown(family, accepted);
 
+    /// <summary>
+    /// Throws unless the preparation was saved for the vision family <paramref name="family"/> (the model's
+    /// <c>PretrainedVision.Family</c>; null for a text-only model) or names none (<see cref="Family"/> null).
+    /// </summary>
+    /// <param name="family">The model's vision family, or null for a text-only model.</param>
+    /// <param name="where">What the preparation is (an adapter folder), for the message.</param>
+    /// <exception cref="InvalidOperationException">Another family: the message names both.</exception>
+    public void ThrowIfOtherFamily(string? family, string where = "the preparation")
+    {
+        if (Family is { } saved && !string.Equals(saved, family, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException($"{where} was tuned on a model of the vision family {saved}, and this model is "
+                + (family is null ? "a text-only one" : $"of the vision family {family}") + $": load it on a {saved} model (the base model it was tuned from).");
+        }
+    }
+
     /// <summary><paramref name="image"/> after <see cref="Pipeline"/> (decoded pixels in and out).</summary>
     public ImageData Apply(ImageData image) => Pipeline.Apply(image);
 
     /// <summary>
     /// The preparation as JSON: <c>{"format", "image_transforms", "vision_options", "grayscale"}</c> (the transforms as
-    /// their text, the options as an object of strings).
+    /// their text, the options as an object of strings), and <c>"family"</c> when <see cref="Family"/> is set.
     /// </summary>
-    public JsonObject ToJson() => new()
+    public JsonObject ToJson()
     {
-        ["format"] = Format,
-        ["image_transforms"] = Transforms.ToString(),
-        ["vision_options"] = VisionOptions.ToJson(),
-        ["grayscale"] = Grayscale,
-    };
+        var json = new JsonObject
+        {
+            ["format"] = Format,
+            ["image_transforms"] = Transforms.ToString(),
+            ["vision_options"] = VisionOptions.ToJson(),
+            ["grayscale"] = Grayscale,
+        };
+        if (Family is not null)
+        {
+            json["family"] = Family;
+        }
+
+        return json;
+    }
 
     /// <summary>The preparation in <paramref name="json"/> (as <see cref="ToJson"/> writes it; missing keys: none).</summary>
     /// <exception cref="InvalidDataException">Another format, or a value of the wrong kind.</exception>
@@ -113,6 +146,12 @@ public sealed record TuningImages
                     null => false,
                     JsonValue v when v.GetValueKind() is JsonValueKind.True or JsonValueKind.False => v.GetValue<bool>(),
                     var other => throw new InvalidDataException($"\"grayscale\" is true or false, not {other.ToJsonString()}."),
+                },
+                Family = json["family"] switch
+                {
+                    null => null,
+                    JsonValue v when v.GetValueKind() == JsonValueKind.String => v.GetValue<string>(),
+                    var other => throw new InvalidDataException($"\"family\" is a text, not {other.ToJsonString()}."),
                 },
             };
         }
@@ -157,7 +196,7 @@ public sealed record TuningImages
         }));
     }
 
-    /// <summary>Equal when the transforms' text, the vision options and the grayscale switch are.</summary>
+    /// <summary>Equal when the transforms' text, the vision options and the grayscale switch are (<see cref="Family"/> aside).</summary>
     public bool Equals(TuningImages? other) =>
         other is not null && Transforms.Equals(other.Transforms) && Grayscale == other.Grayscale && VisionOptions.ToString() == other.VisionOptions.ToString();
 
