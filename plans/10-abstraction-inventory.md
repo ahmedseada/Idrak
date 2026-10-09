@@ -12,7 +12,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 | Assembly | Interfaces | Abstract classes | Registries | Total | Misplaced (decision 10) |
 |---|---|---|---|---|---|
 | `Idrak.Abstraction` | 32 | 13 | 12 | 56 | 0 |
-| `Idrak` | 13 | 4 | 14 | 31 | 0 |
+| `Idrak` | 13 | 4 | 15 | 32 | 0 |
 | `Idrak.Gpu` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Nlp` | 7 | 2 | 4 | 13 | 0 |
 | `Idrak.Data` | 5 | 0 | 3 | 8 | 0 |
@@ -78,7 +78,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Generation.PretrainedVision` | abstract class | public | — | — |  | Abstraction, Idrak, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.RopeScalings` | registry | public | — |  | dynamic, linear, llama3, yarn | Abstraction, Idrak, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.ToolCallFormats` | registry | public | — |  | deepseek, harmony, json, mistral, pythonic, qwen3-coder | Abstraction, Idrak, Nlp | Abstraction |
-| `Idrak.Abstraction.Module` | abstract class | public | Device, Tensor | BatchNorm, CausalSelfAttention, ChannelNormalize, Conv2d, DecoderBlock, Dropout, +27 |  | Abstraction, AspNetCore, Data, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
+| `Idrak.Abstraction.Module` | abstract class | public | Device, Tensor | AvgPool2d, BatchNorm, CausalSelfAttention, ChannelNormalize, Conv2d, DecoderBlock, +28 |  | Abstraction, AspNetCore, Data, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
 | `Idrak.Abstraction.Modules.ILinearAdapter` | interface | public | Tensor | DoraAdapter, LoraAdapter |  | Idrak, Nlp | Abstraction |
 | `Idrak.Abstraction.Modules.ILinearLayer` | interface | public | Tensor | Linear |  | Abstraction, Idrak, Nlp | Abstraction |
 | `Idrak.Abstraction.Operations.Kernels` | registry | public | Backend |  | — | Abstraction, AspNetCore, Data, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
@@ -102,11 +102,12 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Data.Abstractions.IScaler` | interface | public | — | MinMaxScaler, StandardScaler |  | Idrak | Idrak |
 | `Idrak.Data.Abstractions.ImageCodecs` | registry | public | — |  | bmp, jpeg, netpbm, png | Idrak | Idrak |
 | `Idrak.Data.Abstractions.SampleSources` | registry | public | — |  | csv, images, npy, tokens | Idrak | Idrak |
+| `Idrak.Inference.Abstractions.CtcDecoders` | registry | public | Tensor |  | beam, greedy | — | Idrak |
 | `Idrak.Layers.Abstractions.GraphOps` | registry | public | — |  | abs, add, cast, clip, concat, div, elu, exp, +28 | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.ICachedModule` | interface | public | Tensor | CausalSelfAttention, DecoderBlock, MultiHeadAttention, PositionEmbedding, PositionalEncoding, Sequential, +1 |  | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.INetworkBuilder` | interface | public | Device, Module, Tensor | NetworkBuilder |  | Idrak | Idrak |
-| `Idrak.Layers.Abstractions.LayerTypes` | registry | public | Device, Module |  | attention, batchnorm, conv2d, dropout, embedding, flatten, gelu, gelu_exact, +14 | Idrak | Idrak |
-| `Idrak.Layers.Abstractions.NetworkOps` | registry | public | — |  | attention, batchnorm, conv2d, dropout, embedding, firstStep, flatten, gelu, +16 | Idrak | Idrak |
+| `Idrak.Layers.Abstractions.LayerTypes` | registry | public | Device, Module |  | attention, avgpool2d, batchnorm, conv2d, dropout, embedding, flatten, gelu, +15 | Idrak | Idrak |
+| `Idrak.Layers.Abstractions.NetworkOps` | registry | public | — |  | attention, avgpool2d, batchnorm, columnsToSequence, conv2d, dropout, embedding, firstStep, +18 | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.RecurrentModule` | abstract class | public | Device, Module, Tensor | GRU, LSTM |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.CheckpointFormats` | registry | public | — |  | gguf, safetensors | Idrak | Idrak |
 | `Idrak.Models.Abstractions.GgufArchitectures` | registry | public | — |  | llama, qwen2, qwen2moe, qwen3, qwen3moe | Idrak | Idrak |
@@ -126,7 +127,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Onnx.Abstractions.OnnxExportOps` | registry | public | Module |  | — | Idrak | Idrak |
 | `Idrak.Onnx.Abstractions.OnnxGraph` | abstract class | public | Module | OnnxGraphWriter |  | Idrak | Idrak |
 | `Idrak.Onnx.Abstractions.OnnxImportContext` | abstract class | public | Module | ImportContext |  | Idrak | Idrak |
-| `Idrak.Onnx.Abstractions.OnnxImportOps` | registry | public | — |  | Add, BatchNormalization, Cast, Conv, Dropout, Flatten, Gather, GlobalAveragePool, +9 | Idrak | Idrak |
+| `Idrak.Onnx.Abstractions.OnnxImportOps` | registry | public | — |  | Add, AveragePool, BatchNormalization, Cast, Conv, Dropout, Flatten, Gather, +10 | Idrak | Idrak |
 | `Idrak.Training.Abstractions.ITrainerCallback` | interface | public | — | Checkpoint, CsvLog, EarlyStopping |  | Idrak | Idrak |
 
 ### Idrak.Nlp
@@ -170,16 +171,16 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 
 ## The device contract (`Backend`)
 
-`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 130 virtual methods, 6 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `HipBackend`, `VulkanBackend`. Each
-operation (112, `Ops`) is a `NameKernel` method, the device's own kernel; `Backend.Name(...)` runs the kernel registered
+`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 132 virtual methods, 6 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `HipBackend`, `VulkanBackend`. Each
+operation (114, `Ops`) is a `NameKernel` method, the device's own kernel; `Backend.Name(...)` runs the kernel registered
 for the device in `Kernels` instead, where there is one (plan 9). The rest is device plumbing: memory, copies, graphs, profiling.
 
 | Device | Methods overridden |
 |---|---|
-| `CpuBackend` | 109 of 140 |
-| `CudaBackend` | 132 of 140 |
-| `HipBackend` | 23 of 140 |
-| `VulkanBackend` | 114 of 140 |
+| `CpuBackend` | 111 of 142 |
+| `CudaBackend` | 132 of 142 |
+| `HipBackend` | 23 of 142 |
+| `VulkanBackend` | 114 of 142 |
 
 | Operation | Kind | Cpu | Cuda | Hip | Vulkan |
 |---|---|---|---|---|---|
@@ -227,6 +228,8 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `Copy(3)` | virtual | ✓ | ✓ | ✓ | ✓ |
 | `Copy2D(9)` | virtual | ✓ | ✓ | ✓ | ✓ |
 | `CreateHostStaging(2)` | virtual |  | ✓ |  |  |
+| `CtcLossBackwardKernel(13)` | virtual | ✓ |  |  |  |
+| `CtcLossKernel(12)` | virtual | ✓ |  |  |  |
 | `DecoderMaskKernel(4)` | virtual | ✓ | ✓ |  | ✓ |
 | `DestroyGraph(2)` | virtual |  | ✓ |  | ✓ |
 | `Detach(1)` | abstract | ✓ | ✓ | ✓ | ✓ |

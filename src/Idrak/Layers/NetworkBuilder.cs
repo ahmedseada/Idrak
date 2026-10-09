@@ -257,6 +257,38 @@ public sealed class NetworkBuilder : INetworkBuilder
             Step("conv2d", ("out", outChannels), ("kernel", kernelSize), ("stride", stride), ("padding", padding), ("bias", bias)));
     }
 
+    /// <summary>
+    /// <c>new Layers.Conv2d(channels, outChannels, kernelSize, stride, padding, dilation, groups, bias)</c> with (height, width)
+    /// pairs (a text line's tall or wide filters, dilated or grouped convolutions); channels from the current [C, H, W].
+    /// </summary>
+    public NetworkBuilder Conv2d(int outChannels, (int Height, int Width) kernelSize, (int Height, int Width)? stride = null, (int Height, int Width)? padding = null,
+        (int Height, int Width)? dilation = null, int groups = 1, bool bias = true)
+    {
+        var (c, h, w) = Image("Conv2d");
+        var (sh, sw) = stride ?? (1, 1);
+        var (ph, pw) = padding ?? (0, 0);
+        var (dh, dw) = dilation ?? (1, 1);
+        if (sh <= 0 || sw <= 0 || dh <= 0 || dw <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(stride), "Conv2d strides and dilations are positive.");
+        }
+
+        int oh = (h + 2 * ph - dh * (kernelSize.Height - 1) - 1) / sh + 1, ow = (w + 2 * pw - dw * (kernelSize.Width - 1) - 1) / sw + 1;
+        CheckSpatial("Conv2d", oh, ow);
+        var step = Step("conv2d", ("out", outChannels), ("kernel", Pair(kernelSize)), ("stride", Pair((sh, sw))), ("padding", Pair((ph, pw))), ("bias", bias));
+        if (dh != 1 || dw != 1)
+        {
+            step["dilation"] = Pair((dh, dw));
+        }
+
+        if (groups != 1)
+        {
+            step["groups"] = groups;
+        }
+
+        return Push(r => new Layers.Conv2d(c, outChannels, kernelSize, (sh, sw), (ph, pw), (dh, dw), groups, bias, _device, r), [outChannels, oh, ow], step);
+    }
+
     /// <summary><c>new Layers.MaxPool2d(kernelSize, stride, padding)</c>.</summary>
     public NetworkBuilder MaxPool2d(int kernelSize, int? stride = null, int padding = 0)
     {
@@ -272,6 +304,70 @@ public sealed class NetworkBuilder : INetworkBuilder
 
         return Push(_ => new Layers.MaxPool2d(kernelSize, stride, padding), [c, oh, ow], step);
     }
+
+    /// <summary><c>new Layers.MaxPool2d(kernelSize, stride, padding)</c> with (height, width) pairs (a text line's tall or wide windows).</summary>
+    public NetworkBuilder MaxPool2d((int Height, int Width) kernelSize, (int Height, int Width)? stride = null, (int Height, int Width)? padding = null)
+    {
+        var (c, oh, ow) = Pooled("MaxPool2d", kernelSize, stride, padding);
+        var step = Step("maxpool2d", ("kernel", Pair(kernelSize)), ("padding", Pair(padding ?? (0, 0))));
+        if (stride is { } explicitStride)
+        {
+            step["stride"] = Pair(explicitStride);
+        }
+
+        return Push(_ => new Layers.MaxPool2d(kernelSize, stride, padding), [c, oh, ow], step);
+    }
+
+    /// <summary><c>new Layers.AvgPool2d(kernelSize, stride, padding, countIncludePad)</c>.</summary>
+    public NetworkBuilder AvgPool2d(int kernelSize, int? stride = null, int padding = 0, bool countIncludePad = true) =>
+        AvgPool2d((kernelSize, kernelSize), stride is { } s ? (s, s) : null, (padding, padding), countIncludePad);
+
+    /// <summary><c>new Layers.AvgPool2d(kernelSize, stride, padding, countIncludePad)</c> with (height, width) pairs.</summary>
+    public NetworkBuilder AvgPool2d((int Height, int Width) kernelSize, (int Height, int Width)? stride = null, (int Height, int Width)? padding = null, bool countIncludePad = true)
+    {
+        var (c, oh, ow) = Pooled("AvgPool2d", kernelSize, stride, padding);
+        var step = Step("avgpool2d", ("kernel", Pair(kernelSize)), ("padding", Pair(padding ?? (0, 0))), ("countIncludePad", countIncludePad));
+        if (stride is { } explicitStride)
+        {
+            step["stride"] = Pair(explicitStride);
+        }
+
+        return Push(_ => new Layers.AvgPool2d(kernelSize, stride, padding, countIncludePad), [c, oh, ow], step);
+    }
+
+    // A pooling window's output size over the current [C, H, W].
+    private (int C, int OH, int OW) Pooled(string layer, (int Height, int Width) kernel, (int Height, int Width)? stride, (int Height, int Width)? padding)
+    {
+        var (c, h, w) = Image(layer);
+        var (sh, sw) = stride ?? kernel;
+        var (ph, pw) = padding ?? (0, 0);
+        if (sh <= 0 || sw <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(stride), $"{layer} strides are positive.");
+        }
+
+        int oh = (h + 2 * ph - kernel.Height) / sh + 1, ow = (w + 2 * pw - kernel.Width) / sw + 1;
+        CheckSpatial(layer, oh, ow);
+        return (c, oh, ow);
+    }
+
+    // A (height, width) pair as the builder's JSON writes it: one number when both are equal, else [height, width].
+    private static JsonNode Pair((int Height, int Width) pair) =>
+        pair.Height == pair.Width ? JsonValue.Create(pair.Height) : new JsonArray(pair.Height, pair.Width);
+
+    /// <summary>
+    /// A <see cref="Layers.Lambda"/> reading an image's columns as a sequence: [C, H, W] → [W, C · H], step t holding column t
+    /// of every channel (channel-major), as a convolutional feature map enters a recurrent layer (a text line read left to
+    /// right).
+    /// </summary>
+    public NetworkBuilder ColumnsToSequence()
+    {
+        var (c, h, w) = Image("ColumnsToSequence");
+        return Push(_ => new Layers.Lambda(ColumnsAsSequence, "ColumnsToSequence"), [w, c * h], Step("columnsToSequence"));
+    }
+
+    // [N, C, H, W] → [N, W, C·H].
+    internal static Tensor ColumnsAsSequence(Tensor x) => x.Permute(0, 3, 1, 2).Reshape(x.Shape[0], x.Shape[3], x.Shape[1] * x.Shape[2]);
 
     /// <summary><c>new Layers.GlobalAveragePool2d()</c>: [C, H, W] → [C].</summary>
     public NetworkBuilder GlobalAveragePool2d()
@@ -339,12 +435,47 @@ public sealed class NetworkBuilder : INetworkBuilder
             Step("lstm", ("hidden", hiddenSize), ("returnSequences", returnSequences)));
     }
 
+    /// <summary>
+    /// <c>new Layers.LSTM(features, hiddenSize, returnSequences, bidirectional, layers)</c>: [T, F] → [hidden · directions], or
+    /// [T, hidden · directions] with <paramref name="returnSequences"/>.
+    /// </summary>
+    public NetworkBuilder LSTM(int hiddenSize, bool returnSequences, bool bidirectional, int layers = 1)
+    {
+        var (t, f) = Sequence("LSTM");
+        int outputs = hiddenSize * (bidirectional ? 2 : 1);
+        return Push(r => new Layers.LSTM(f, hiddenSize, returnSequences, bidirectional, layers, _device, r), returnSequences ? [t, outputs] : [outputs],
+            Recurrent("lstm", hiddenSize, returnSequences, bidirectional, layers, false));
+    }
+
     /// <summary><c>new Layers.GRU(features, hiddenSize, returnSequences)</c>: [T, F] → [hidden], or [T, hidden] with <paramref name="returnSequences"/>.</summary>
     public NetworkBuilder GRU(int hiddenSize, bool returnSequences = false)
     {
         var (t, f) = Sequence("GRU");
         return Push(r => new Layers.GRU(f, hiddenSize, returnSequences, _device, r), returnSequences ? [t, hiddenSize] : [hiddenSize],
             Step("gru", ("hidden", hiddenSize), ("returnSequences", returnSequences)));
+    }
+
+    /// <summary>
+    /// <c>new Layers.GRU(features, hiddenSize, returnSequences, bidirectional, layers, candidateBias)</c>: [T, F] → [hidden ·
+    /// directions], or [T, hidden · directions] with <paramref name="returnSequences"/>.
+    /// </summary>
+    public NetworkBuilder GRU(int hiddenSize, bool returnSequences, bool bidirectional, int layers = 1, bool candidateBias = false)
+    {
+        var (t, f) = Sequence("GRU");
+        int outputs = hiddenSize * (bidirectional ? 2 : 1);
+        return Push(r => new Layers.GRU(f, hiddenSize, returnSequences, bidirectional, layers, candidateBias, _device, r), returnSequences ? [t, outputs] : [outputs],
+            Recurrent("gru", hiddenSize, returnSequences, bidirectional, layers, candidateBias));
+    }
+
+    private static JsonObject Recurrent(string op, int hidden, bool returnSequences, bool bidirectional, int layers, bool candidateBias)
+    {
+        var step = Step(op, ("hidden", hidden), ("returnSequences", returnSequences), ("bidirectional", bidirectional), ("layers", layers));
+        if (candidateBias)
+        {
+            step["candidateBias"] = true;
+        }
+
+        return step;
     }
 
     /// <summary>A <see cref="Layers.Lambda"/> averaging over the time dimension: [T, F] → [F] (<c>x.Mean(1)</c>).</summary>

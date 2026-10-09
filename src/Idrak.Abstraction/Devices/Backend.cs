@@ -84,14 +84,38 @@ public enum BinaryOp
 /// <param name="SW">Horizontal stride.</param>
 /// <param name="PH">Zero padding above and below.</param>
 /// <param name="PW">Zero padding left and right.</param>
+/// <remarks>
+/// A dilated window (<see cref="DH"/>, <see cref="DW"/> above 1, set with <c>with</c>) reads every DH-th row and DW-th
+/// column: window position (kh, kw) is input row oh·SH - PH + kh·DH and column ow·SW - PW + kw·DW. Pooling takes no dilation.
+/// </remarks>
 public readonly record struct ConvGeometry(
     int N, int C, int H, int W, int KH, int KW, int SH, int SW, int PH, int PW)
 {
-    /// <summary>Output height: (H + 2·PH - KH) / SH + 1.</summary>
-    public int OH => (H + 2 * PH - KH) / SH + 1;
+    // Stored as dilation - 1, so default(ConvGeometry) and every geometry made without it have dilation 1.
+    private readonly int _dh, _dw;
 
-    /// <summary>Output width: (W + 2·PW - KW) / SW + 1.</summary>
-    public int OW => (W + 2 * PW - KW) / SW + 1;
+    /// <summary>Vertical dilation: the step between the rows a window reads (1, the default: adjacent rows).</summary>
+    public int DH
+    {
+        get => _dh + 1;
+        init => _dh = value >= 1 ? value - 1 : throw new ArgumentOutOfRangeException(nameof(DH), value, "A dilation is at least 1.");
+    }
+
+    /// <summary>Horizontal dilation: the step between the columns a window reads (1, the default: adjacent columns).</summary>
+    public int DW
+    {
+        get => _dw + 1;
+        init => _dw = value >= 1 ? value - 1 : throw new ArgumentOutOfRangeException(nameof(DW), value, "A dilation is at least 1.");
+    }
+
+    /// <summary>Whether a dilation is above 1 (devices without a dilated kernel run such windows on the host).</summary>
+    public bool Dilated => _dh != 0 || _dw != 0;
+
+    /// <summary>Output height: (H + 2·PH - DH·(KH - 1) - 1) / SH + 1.</summary>
+    public int OH => (H + 2 * PH - DH * (KH - 1) - 1) / SH + 1;
+
+    /// <summary>Output width: (W + 2·PW - DW·(KW - 1) - 1) / SW + 1.</summary>
+    public int OW => (W + 2 * PW - DW * (KW - 1) - 1) / SW + 1;
 
     /// <summary>Columns of the unfolded matrix: C * KH * KW.</summary>
     public int PatchSize => C * KH * KW;
@@ -954,7 +978,7 @@ public abstract partial class Backend
         CpuBackend.Instance.ScatterAdd(h[dy], h[indices], h[dtable], count, dim, vocabulary);
     }
 
-    /// <summary>Unfolds image patches: cols[(n, oh, ow), (c, kh, kw)] = x[n, c, oh*sh - ph + kh, ow*sw - pw + kw] (0 outside).</summary>
+    /// <summary>Unfolds image patches: cols[(n, oh, ow), (c, kh, kw)] = x[n, c, oh*sh - ph + kh*dh, ow*sw - pw + kw*dw] (0 outside; dh, dw the dilation).</summary>
     public virtual void Im2ColKernel(Storage x, Storage cols, in ConvGeometry g)
     {
         using var h = new HostCall(this);
@@ -988,6 +1012,34 @@ public abstract partial class Backend
     /// </summary>
     public virtual void MaxPoolBackwardKernel(Storage dy, Storage argmax, Storage dx, in ConvGeometry g) =>
         MaxPoolBackward(dy, argmax, dx, g.N * g.C * g.OH * g.OW);
+
+    /// <summary>
+    /// Connectionist temporal classification (Graves et al. 2006): losses[n] = -log of the probability, summed over every
+    /// alignment, that the first inputLengths[n] steps of sequence n read as its labels (with <paramref name="blank"/>
+    /// between them and repeats collapsed). logProbs holds log-probabilities over <paramref name="classes"/> per step and
+    /// sequence, [steps, batch, classes] or, with <paramref name="batchFirst"/>, [batch, steps, classes]; the labels of
+    /// sequence n are targets[targetOffsets[n] ..] (targetLengths[n] ids as floats). A sequence no alignment fits has an
+    /// infinite loss, or 0 with <paramref name="zeroInfinity"/>.
+    /// </summary>
+    public virtual void CtcLossKernel(Storage logProbs, Storage targets, Storage losses, ReadOnlySpan<int> inputLengths, ReadOnlySpan<int> targetLengths,
+        ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
+    {
+        using var h = new HostCall(this);
+        CpuBackend.Instance.CtcLoss(h[logProbs], h[targets], h[losses], inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
+    }
+
+    /// <summary>
+    /// The gradient of <see cref="CtcLossKernel"/>: dLogProbs += lossGrads[n] · ∂losses[n] / ∂logProbs for every sequence n
+    /// (steps past inputLengths[n] and classes outside the labels get nothing; with <paramref name="zeroInfinity"/> a
+    /// sequence of infinite loss gets nothing either).
+    /// </summary>
+    public virtual void CtcLossBackwardKernel(Storage logProbs, Storage targets, Storage lossGrads, Storage dLogProbs, ReadOnlySpan<int> inputLengths,
+        ReadOnlySpan<int> targetLengths, ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
+    {
+        using var h = new HostCall(this);
+        CpuBackend.Instance.CtcLossBackward(h[logProbs], h[targets], h[lossGrads], h[dLogProbs], inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank,
+            batchFirst, zeroInfinity);
+    }
 
     /// <summary>
     /// y (+)= x permuted: output element at coordinates (c0..c[r-1]) of <paramref name="outShape"/> comes from
