@@ -68,7 +68,7 @@ tool. `IDRAK_DISABLE_CUDA=1` (and `_VULKAN`, `_HIP`) turns a backend off.
 
 | Area | What is there |
 |------|---------------|
-| Layers | Linear, Conv2d, pooling, BatchNorm, LayerNorm, Embedding, LSTM, GRU, multi-head attention, transformer layers, dropout, activations; graph modules (skip connections, branches) |
+| Layers | Linear, Conv2d (rectangular, strided, dilated, grouped), max and average pooling, BatchNorm, LayerNorm, Embedding, LSTM, GRU (bidirectional, stacked), multi-head attention, transformer layers, dropout, activations; graph modules (skip connections, branches) |
 | Building | A fluent network builder with a JSON round trip; ready-made architectures |
 | Training | `Trainer`, losses (MSE, MAE, cross-entropy, binary cross-entropy, per-pixel cross-entropy), metrics, early stopping, duplicate removal before splits |
 | Data | In-memory datasets and lazy sources (streamed CSV, image folders, memory-mapped token files and .npy arrays, Parquet and JSON Lines columns), views, image augmentation, PNG/BMP/PGM/PPM decoding without dependencies |
@@ -250,13 +250,13 @@ src/Idrak.Abstraction/              no dependencies: every contract more than on
   Overrides/                        slots: every registry's library default and the app's registration over it, failure
                                     policies, versions, the overrides report
 src/Idrak/                          core: layers, training, data, inference, model loading, ONNX
-  Layers/                           Linear, Conv2d, MaxPool2d, GlobalAveragePool2d, Flatten,
+  Layers/                           Linear, Conv2d, MaxPool2d, AvgPool2d, GlobalAveragePool2d, Flatten,
                                     BatchNorm, LayerNorm, RMSNorm, Embedding, LSTM, GRU,
                                     MultiHeadAttention, TransformerEncoderLayer, PositionalEncoding, Decoder,
                                     ReLU, Tanh, Sigmoid, GELU, Softmax, Dropout, Lambda, Sequential;
                                     Network builder, Blocks, Architectures; GraphModule (layers in a graph: skip
                                     connections, branches); freezing (ModuleExtensions)
-  Losses.cs                         MSE, MAE, CrossEntropy, BinaryCrossEntropy(WithLogits), token log-probabilities
+  Losses.cs                         MSE, MAE, CrossEntropy, BinaryCrossEntropy(WithLogits), CTC, token log-probabilities
   Optimizers/                       AdamW8Bit, GroupedOptimizer, HostOptimizer
   Data/                             Dataset (CSV, class labels, feature shapes), sample sources (CSV, images, tokens, .npy),
                                     views, image codecs and transforms, scalers, DataLoader, DataExtensions
@@ -604,7 +604,9 @@ var transformer = new Sequential
 };
 ```
 
-Use `LSTM(..., returnSequences: true)` or `GRU` for per-step outputs. `MultiHeadAttention(dim, heads, causal: true)`
+Use `LSTM(..., returnSequences: true)` or `GRU` for per-step outputs, with `bidirectional: true` and `layers` for both
+directions and stacked layers. `Losses.Ctc` trains a sequence reader without aligned labels, and `CtcDecoders` reads its
+outputs (best path or prefix beam search). `MultiHeadAttention(dim, heads, causal: true)`
 masks future positions for autoregressive models. Setting `Trainer.MaxGradientNorm` clips gradients,
 which recurrent networks usually need.
 

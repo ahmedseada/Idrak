@@ -33,6 +33,11 @@ public static class OnnxExport
     /// <summary>Reshapes each sample to the measured output shape.</summary>
     public static OnnxValue Reshape(OnnxGraph graph, Module module, OnnxValue input, IReadOnlyList<int> outputShape) =>
         graph.Node("Reshape", [input, graph.Ints("shape", [-1, .. outputShape.Skip(1).Select(d => (long)d)])], outputShape);
+
+    /// <summary>Reads an image's columns as a sequence: [N, C, H, W] → [N, W, C·H] (a Transpose to [N, W, C, H], then a Reshape).</summary>
+    public static OnnxValue ColumnsToSequence(OnnxGraph graph, Module module, OnnxValue input, IReadOnlyList<int> outputShape) =>
+        graph.Node("Reshape", [graph.Node("Transpose", [input], null, OnnxAttribute.Of("perm", [0L, 3, 1, 2])),
+            graph.Ints("shape", [-1, .. outputShape.Skip(1).Select(d => (long)d)])], outputShape);
 }
 
 /// <summary>

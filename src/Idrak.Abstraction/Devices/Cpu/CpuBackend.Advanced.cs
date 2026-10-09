@@ -527,6 +527,7 @@ internal sealed partial class CpuBackend
     private static void Im2ColRows(float[] xv, float[] cv, ConvGeometry g, int start, int end)
     {
         int c = g.C, h = g.H, w = g.W, kh = g.KH, kw = g.KW, sh = g.SH, sw = g.SW, ph = g.PH, pw = g.PW, oh = g.OH, ow = g.OW, patch = g.PatchSize;
+        int dh = g.DH, dw = g.DW;
         for (int noh = start; noh < end; noh++)
         {
             int n = noh / oh, y = noh % oh;
@@ -540,7 +541,7 @@ internal sealed partial class CpuBackend
                     int plane = (n * c + ch) * h;
                     for (int ki = 0; ki < kh; ki++, col += kw)
                     {
-                        int ih = y * sh - ph + ki;
+                        int ih = y * sh - ph + ki * dh;
                         var target = row.Slice(col, kw);
                         if ((uint)ih >= (uint)h)
                         {
@@ -548,7 +549,7 @@ internal sealed partial class CpuBackend
                             continue;
                         }
 
-                        if (iw0 >= 0 && iw0 + kw <= w)
+                        if (dw == 1 && iw0 >= 0 && iw0 + kw <= w)
                         {
                             xv.AsSpan((plane + ih) * w + iw0, kw).CopyTo(target);
                             continue;
@@ -556,7 +557,7 @@ internal sealed partial class CpuBackend
 
                         for (int kj = 0; kj < kw; kj++)
                         {
-                            int iw = iw0 + kj;
+                            int iw = iw0 + kj * dw;
                             target[kj] = (uint)iw < (uint)w ? xv[(plane + ih) * w + iw] : 0f;
                         }
                     }
@@ -578,6 +579,7 @@ internal sealed partial class CpuBackend
     private static void Col2ImImages(float[] cv, float[] dv, ConvGeometry g, int start, int end)
     {
         int c = g.C, h = g.H, w = g.W, kh = g.KH, kw = g.KW, sh = g.SH, sw = g.SW, ph = g.PH, pw = g.PW, oh = g.OH, ow = g.OW, patch = g.PatchSize;
+        int dh = g.DH, dw = g.DW;
         for (int n = start; n < end; n++)
         {
             for (int y = 0; y < oh; y++)
@@ -592,14 +594,14 @@ internal sealed partial class CpuBackend
                         int plane = (n * c + ch) * h;
                         for (int ki = 0; ki < kh; ki++, col += kw)
                         {
-                            int ih = y * sh - ph + ki;
+                            int ih = y * sh - ph + ki * dh;
                             if ((uint)ih >= (uint)h)
                             {
                                 continue;
                             }
 
                             var source = row.Slice(col, kw);
-                            if (iw0 >= 0 && iw0 + kw <= w)
+                            if (dw == 1 && iw0 >= 0 && iw0 + kw <= w)
                             {
                                 AddInPlace(dv.AsSpan((plane + ih) * w + iw0, kw), source);
                                 continue;
@@ -607,7 +609,7 @@ internal sealed partial class CpuBackend
 
                             for (int kj = 0; kj < kw; kj++)
                             {
-                                int iw = iw0 + kj;
+                                int iw = iw0 + kj * dw;
                                 if ((uint)iw < (uint)w)
                                 {
                                     dv[(plane + ih) * w + iw] += source[kj];

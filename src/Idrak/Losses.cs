@@ -179,6 +179,64 @@ public static class Losses
     }
 
     /// <summary>
+    /// Connectionist temporal classification (Graves et al. 2006), for sequences read without knowing where each label
+    /// sits (a text line's characters, speech): -log of the probability, summed over every alignment, that each sequence
+    /// reads as its labels once repeats are collapsed and blanks dropped (<see cref="Tensor.CtcLoss"/>). The same loss as
+    /// PyTorch's <c>ctc_loss</c>: <see cref="LossReduction.Mean"/> divides each sequence's loss by its number of labels
+    /// (at least 1) and averages over the batch.
+    /// </summary>
+    /// <param name="logProbs">Log-probabilities (a log-softmax over the classes): [steps, batch, classes], or [batch, steps,
+    /// classes] with <paramref name="batchFirst"/>.</param>
+    /// <param name="targets">The labels as whole numbers: [batch, maxLabels] padded, or all sequences' labels one after another.</param>
+    /// <param name="inputLengths">The steps of each sequence that count.</param>
+    /// <param name="targetLengths">The labels of each sequence.</param>
+    /// <param name="blank">The blank class (not a label).</param>
+    /// <param name="reduction">Mean (as above), sum, or none (the [batch] losses).</param>
+    /// <param name="zeroInfinity">A sequence no alignment fits counts 0 (and gets no gradient) instead of an infinite loss.</param>
+    /// <param name="batchFirst">Whether <paramref name="logProbs"/> is [batch, steps, classes].</param>
+    public static Tensor Ctc(Tensor logProbs, Tensor targets, IReadOnlyList<int> inputLengths, IReadOnlyList<int> targetLengths, int blank = 0,
+        LossReduction reduction = LossReduction.Mean, bool zeroInfinity = false, bool batchFirst = false)
+    {
+        ArgumentNullException.ThrowIfNull(logProbs);
+        var losses = logProbs.CtcLoss(targets, inputLengths, targetLengths, blank, batchFirst, zeroInfinity);
+        switch (reduction)
+        {
+            case LossReduction.None:
+                return losses;
+            case LossReduction.Sum:
+                return losses.Sum();
+            case LossReduction.Mean:
+                int batch = targetLengths.Count;
+                var weights = new float[batch];
+                for (int n = 0; n < batch; n++)
+                {
+                    weights[n] = 1f / (Math.Max(targetLengths[n], 1) * (float)batch);
+                }
+
+                // Not disposed here: the product's backward pass reads the weights.
+                return (losses * Tensor.From(weights, [batch], logProbs.Device)).Sum();
+            default:
+                throw new ArgumentOutOfRangeException(nameof(reduction), reduction, null);
+        }
+    }
+
+    /// <summary>
+    /// <see cref="Ctc(Tensor, Tensor, IReadOnlyList{int}, IReadOnlyList{int}, int, LossReduction, bool, bool)"/> with each
+    /// sequence's labels given as an array (the target lengths are theirs).
+    /// </summary>
+    public static Tensor Ctc(Tensor logProbs, IReadOnlyList<int[]> labels, IReadOnlyList<int> inputLengths, int blank = 0,
+        LossReduction reduction = LossReduction.Mean, bool zeroInfinity = false, bool batchFirst = false)
+    {
+        ArgumentNullException.ThrowIfNull(logProbs);
+        ArgumentNullException.ThrowIfNull(labels);
+        float[] flat = [.. labels.SelectMany(l => l).Select(v => (float)v)];
+        int[] lengths = [.. labels.Select(l => l.Length)];
+        // Not disposed here: the loss's backward pass reads the targets.
+        var targets = Tensor.From(flat.Length == 0 ? [0f] : flat, [Math.Max(flat.Length, 1)], logProbs.Device);
+        return Ctc(logProbs, targets, inputLengths, lengths, blank, reduction, zeroInfinity, batchFirst);
+    }
+
+    /// <summary>
     /// Binary cross-entropy for probabilities in (0, 1), e.g. after a <see cref="Layers.Sigmoid"/> layer:
     /// -mean(y·log p + (1 - y)·log(1 - p)). Prefer <see cref="BinaryCrossEntropyWithLogits"/> for stability.
     /// </summary>
@@ -196,4 +254,17 @@ public static class Losses
     /// </summary>
     public static Tensor BinaryCrossEntropyWithLogits(Tensor logits, Tensor targets) =>
         (logits.Relu() - logits * targets + ((-logits.Abs()).Exp() + 1f).Log()).Mean();
+}
+
+/// <summary>How a loss over a batch of samples becomes the value returned.</summary>
+public enum LossReduction
+{
+    /// <summary>The mean over the samples (each loss's own normalization first, where it has one).</summary>
+    Mean,
+
+    /// <summary>The sum over the samples.</summary>
+    Sum,
+
+    /// <summary>One loss per sample.</summary>
+    None,
 }

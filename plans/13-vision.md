@@ -1,7 +1,9 @@
 # Plan 13: Idrak.Vision (general image building blocks, fast on every device)
 
-**Status:** planned 2026-10-09, nothing built. Starts after plan 12's phases 4 and 6 are merged, or earlier where the OCR
-sample (below) needs a step first.
+**Status:** planned 2026-10-09. Built 2026-10-09: step 3 (CTC loss and decoding) and the part of step 2 the line
+recognizer uses (rectangular, strided, dilated and grouped convolutions, rectangular max and average pooling,
+bidirectional and stacked LSTM/GRU); see "as built" below. The rest starts after plan 12's phases 4 and 6 are merged, or
+earlier where the OCR sample (below) needs a step first.
 
 **Goal.** `Idrak.Vision` and the core layers under it are general building blocks for any image application
 (classification, detection, segmentation, document reading), fast and lean on every device. Applications are not the
@@ -63,3 +65,96 @@ gains nothing OCR-specific; what the app needs from this plan comes from the ste
 
 **Decided 2026-10-09: both**, in one app, chosen per run. So plan 13 starts with step 3 and the parts of step 2 the
 recognizer uses (rectangular kernels and strides, bidirectional recurrent layers), then step 1; the sample follows.
+
+## Step 3, as built (2026-10-09)
+
+- **Loss.** `Losses.Ctc(logProbs, targets, inputLengths, targetLengths, blank = 0, reduction = Mean, zeroInfinity = false,
+  batchFirst = false)` and an overload taking each sequence's labels as an `int[]`; `LossReduction` (`Mean`, `Sum`, `None`)
+  in core. The same semantics as PyTorch's `F.ctc_loss`: log-probabilities [T, N, C] (or [N, T, C] with `batchFirst`),
+  padded [N, S] or concatenated targets, `Mean` divides each loss by its target length (at least 1) and averages,
+  `zeroInfinity` turns an impossible sequence's loss and gradient into 0. Underneath, `Tensor.CtcLoss(...)` gives the
+  [N] losses with autograd.
+- **Operations.** `Ops.CtcLoss` and `Ops.CtcLossBackward` through the dispatcher (`Backend.CtcLossKernel`,
+  `CtcLossBackwardKernel`; lengths and target offsets as spans, targets as a storage of ids). CPU kernel
+  (`CpuBackend.Ctc.cs`): α and β in log space and double precision over the 2L + 1 extended states, only the states an
+  alignment can be in at each step, parallel over the batch (each sequence writes only its own gradient rows). The loss
+  keeps two rows of α (O(2L + 1) a sequence); the gradient recomputes α into an `ArrayPool` buffer (O(T·(2L + 1))) and
+  runs β a row at a time, so the forward pass stores nothing for the backward one and no [T, N, C] gradient is held
+  beyond the one autograd accumulates into (only the label classes are written). CUDA, Vulkan and HIP use the host
+  fallback (no device kernel yet: a log-space dynamic program is sequential in time; worth a kernel once a GPU recognizer
+  is measured).
+- **Gradient.** The derivative with respect to the log-probabilities themselves (checked against finite differences);
+  behind a log-softmax it equals PyTorch's, which returns its gradient with respect to the scores directly.
+- **Decoding.** `CtcDecoders` (`Idrak.Inference.Abstractions`, a `SlotTable` with Throw / FallBack / Shadow; Shadow
+  compares the labels): the contract is the delegate `CtcDecoder(ReadOnlyMemory<float> logProbs, int steps, int
+  classes, CtcDecodeOptions options)` → `IReadOnlyList<CtcHypothesis>` (labels and log-probability). Built in: "greedy"
+  (best path, repeats collapsed, blanks dropped) and "beam" (prefix beam search: `BeamWidth`, `Results`, per-step pruning
+  `TopClasses` and `MinLogProbability`; candidates keyed by (prefix, label), only kept prefixes become trie nodes, top-k
+  by a heap). `CtcDecoders.Decode(Tensor logProbs, lengths, name, options, batchFirst)` decodes a batch. Placement by
+  decision 10: core is its only library user.
+- **Conformance kit.** "sequence losses: CTC loss and its gradient, against every alignment listed" (both layouts, empty
+  and repeated labels, an impossible sequence, random sizes for device comparison).
+- **Reference.** `tools/pytorch/vision_sequence_reference.py` (torch 2.14.1 on the CPU, onnx 1.23.2 for two exports)
+  writes `tests/Idrak.Tests/data/vision-sequence` (reruns write the same bytes); `IDRAK_FILTER="vision sequence"`
+  (10 tests) checks the losses (all reductions, zero infinity, batch first, blank 4) and the gradient on the logits to
+  1e-5, the beam search against every path listed, and finite differences.
+- **Measured** (this container's CPU, 4 threads): loss and gradient of 32 lines of 100 steps, 80 classes, 25 labels in
+  27 ms; 16 lines of 400 steps, 200 classes, 80 labels in 109 ms (log-softmax included; about 1.7x faster than the first
+  version after a one-logarithm three-way sum and linear-space gradient sums). Beam width 10 over 200 steps of 100
+  classes: 71 ms with every class, 4 ms with `TopClasses = 8`; greedy 0.08 ms.
+
+## Step 2 (the recognizer's part), as built (2026-10-09)
+
+- **Dilation in the window geometry.** `ConvGeometry` has `DH` / `DW` (init-only, default 1, stored so `default` and
+  every existing geometry keep dilation 1) and `Dilated`; `OH` / `OW` account for it. The CPU im2col and col2im read
+  dilated windows; CUDA and Vulkan send a dilated window to the host fallback until step 1's kernels (non-dilated
+  windows are unchanged on every device). Max pooling refuses a dilated geometry. The conformance kit's convolution case
+  adds rectangular, strided, padded and dilated geometries, and rectangular pooling windows.
+- **`Conv2d`.** A second constructor `Conv2d(in, out, (kh, kw), stride?, padding?, dilation?, groups = 1, bias, device,
+  random)`; the square constructor is the same layer (same weights from the same seed). Groups run as one batched
+  product ([G, N·OH·OW, C/G·kh·kw] × [G, OC/G, C/G·kh·kw]ᵀ), depthwise included; the weight is PyTorch's [out, in/groups,
+  kh, kw] flattened. `FromWeights` takes the pairs and groups; properties `KernelHeight/Width`, `StrideHeight/Width`,
+  `PaddingHeight/Width`, `DilationHeight/Width`, `Groups`, `IsSquare`, `Geometry(...)` (`KernelSize`, `Stride`, `Padding`
+  stay: the height values).
+- **Pooling.** `MaxPool2d((kh, kw), stride?, padding?)`; new `AvgPool2d` (square and pair constructors,
+  `countIncludePad` as PyTorch's, default true): each channel's windows unfolded by im2col and averaged, so it runs on
+  every device's im2col and its gradient is col2im's.
+- **Recurrent layers.** `LSTM(in, hidden, returnSequences, bidirectional, layers = 1)` and `GRU(..., bidirectional,
+  layers = 1, candidateBias = false)`: the backward direction reads the sequence reversed and the two hidden states are
+  concatenated (forward first), as PyTorch's `bidirectional=True` with `batch_first`; without `returnSequences` the
+  output is the last state of each direction ([N, 2H], PyTorch's `h_n[-2:]`). Stacked layers read the previous one's
+  every step. `RecurrentModule` now owns the time loop, directions and layers; a cell type implements `Cell(projected,
+  state, weights)` and `States` (the old `Run`/`Step` pair is gone, decision 7). `RecurrentWeights` per layer and
+  direction (PyTorch's order), `LoadGateWeights(layer, reverse, weight_ih, weight_hh, bias_ih, bias_hh)` loads PyTorch's
+  layout. The GRU's `candidateBias` keeps the candidate gate's recurrent bias apart inside the reset product (PyTorch's
+  `b_hn`), so PyTorch's GRU weights load exactly; without it a non-zero `b_hn` is refused with that remedy. One-direction,
+  one-layer layers keep their parameters and saved files.
+- **Builder, layer types, saving.** `NetworkBuilder.Conv2d(out, (kh, kw), ...)`, `MaxPool2d((kh, kw), ...)`,
+  `AvgPool2d(...)`, `LSTM/GRU(hidden, returnSequences, bidirectional, layers[, candidateBias])` and `ColumnsToSequence()`
+  ([C, H, W] → [W, C·H], a feature map's columns as steps); `NetworkOps` replays them ("avgpool2d",
+  "columnsToSequence"; pairs written as [h, w] only when they differ) and `LayerTypes` describes them ("avgpool2d";
+  square and one-direction layers are described exactly as before).
+- **ONNX.** Export: `Conv` with `kernel_shape`, `strides`, `pads`, `dilations`, `group`; `MaxPool` and `AveragePool`
+  (`count_include_pad`) with rectangular windows; LSTM/GRU with `direction = "bidirectional"` and one node per stacked
+  layer, Y read as PyTorch writes it (Transpose [0, 2, 1, 3], Reshape [0, 0, -1]); the GRU candidate bias in the
+  recurrent bias. ONNX Runtime matches. Import: the same, plus PyTorch's own exports (zero initial states expanded to a
+  computed shape are recognized; `tests/.../vision-sequence/conv.onnx` and `recurrent.onnx` import and match PyTorch).
+- **Checked.** PyTorch's outputs for rectangular / dilated-grouped / depthwise convolutions (1e-4), pools (exact /
+  1e-5), a bidirectional two-layer LSTM and GRU with random biases (1e-5, every step and the last states); finite
+  differences for every new path; a convolutional recurrent network replayed from JSON, saved and loaded, exported
+  (ONNX Runtime) and imported again. Existing convolution, recurrent, ONNX, gradient, builder, conformance-kit,
+  inventory and public-API tests pass on the CPU.
+- **Left of step 2:** `ConvTranspose2d`, upsampling, adaptive pooling, `GroupNorm` as a layer; `ceil_mode` pooling and
+  asymmetric padding; a dedicated depthwise kernel (the batched product is general, not the fastest for depthwise) and
+  device kernels for dilated windows and CTC (step 1); importing PyTorch exports that read the last time step through
+  computed gathers. The CLI's network description (`NetworkAnalysis`) does not know the new steps or [h, w] pairs yet.
+
+**For the owner (GPU, from `D:\Projects\Idrak`):**
+
+```powershell
+$env:IDRAK_DEVICES="cuda"; $env:IDRAK_FILTER="vision sequence"; dotnet run -c Release --project tests/Idrak.Tests
+$env:IDRAK_DEVICES="cuda"; $env:IDRAK_FILTER="conformance kit"; dotnet run -c Release --project tests/Idrak.Tests
+$env:IDRAK_DEVICES="vulkan"; $env:IDRAK_FILTER="vision sequence"; dotnet run -c Release --project tests/Idrak.Tests
+$env:IDRAK_DEVICES="vulkan"; $env:IDRAK_FILTER="conformance kit"; dotnet run -c Release --project tests/Idrak.Tests
+$env:IDRAK_DEVICES="vulkan"; $env:IDRAK_FILTER="vulkan cnn"; dotnet run -c Release --project tests/Idrak.Tests
+```

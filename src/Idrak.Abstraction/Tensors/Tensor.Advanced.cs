@@ -554,6 +554,11 @@ public sealed partial class Tensor
     {
         ThrowIfDisposed();
         var g0 = geometry;
+        if (g0.Dilated)
+        {
+            throw new ArgumentException("Max pooling takes no dilation.", nameof(geometry));
+        }
+
         long start = Telemetry.Start(TelemetryLevel.Operations);
         var y = Empty([g0.N, g0.C, g0.OH, g0.OW], Device);
         var argmax = Empty([y.Size], Device, track: false);
@@ -573,6 +578,86 @@ public sealed partial class Tensor
         }
 
         return Traced("maxpool", y, start);
+    }
+
+    /// <summary>
+    /// The connectionist temporal classification loss of each sequence (Graves et al. 2006), [batch]: -log of the
+    /// probability, summed over every alignment, that the sequence reads as its labels once repeats are collapsed and blanks
+    /// dropped. This tensor holds log-probabilities (a log-softmax over the classes), [steps, batch, classes] or, with
+    /// <paramref name="batchFirst"/>, [batch, steps, classes]. Computed in log space on the device, parallel over the
+    /// sequences; the loss keeps O(labels) values a sequence and its gradient O(steps · labels), never a copy of the input.
+    /// </summary>
+    /// <param name="targets">The labels as whole numbers: [batch, maxLabels] padded (each row's first targetLengths[n]
+    /// count), or every sequence's labels one after another, [Σ targetLengths]. The blank is not a label.</param>
+    /// <param name="inputLengths">The steps of each sequence that count (at most steps).</param>
+    /// <param name="targetLengths">The labels of each sequence.</param>
+    /// <param name="blank">The blank class.</param>
+    /// <param name="batchFirst">Whether this tensor is [batch, steps, classes] rather than [steps, batch, classes].</param>
+    /// <param name="zeroInfinity">A sequence no alignment fits (fewer steps than it needs) has loss and gradient 0 rather
+    /// than an infinite loss.</param>
+    /// <remarks>
+    /// The gradient is the derivative of the loss with respect to these log-probabilities: -Σ over the alignments through
+    /// class c at step t of their share of the probability. Behind a log-softmax it gives the same gradient on the scores as
+    /// PyTorch's <c>ctc_loss</c>, which returns its gradient with respect to the scores directly.
+    /// </remarks>
+    public Tensor CtcLoss(Tensor targets, IReadOnlyList<int> inputLengths, IReadOnlyList<int> targetLengths, int blank = 0, bool batchFirst = false, bool zeroInfinity = false)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(targets);
+        ArgumentNullException.ThrowIfNull(inputLengths);
+        ArgumentNullException.ThrowIfNull(targetLengths);
+        targets.ThrowIfDisposed();
+        CheckSameDevice(this, targets);
+        if (Rank != 3)
+        {
+            throw new ArgumentException($"CTC takes log-probabilities [{(batchFirst ? "batch, steps" : "steps, batch")}, classes], not {FormatShape(_shape)}.");
+        }
+
+        int steps = _shape[batchFirst ? 1 : 0], batch = _shape[batchFirst ? 0 : 1], classes = _shape[2];
+        if (inputLengths.Count != batch || targetLengths.Count != batch)
+        {
+            throw new ArgumentException($"CTC needs an input length and a target length for each of the {batch} sequences; got {inputLengths.Count} and {targetLengths.Count}.");
+        }
+
+        if ((uint)blank >= (uint)classes)
+        {
+            throw new ArgumentOutOfRangeException(nameof(blank), blank, $"The blank is one of the {classes} classes.");
+        }
+
+        int[] inputs = [.. inputLengths], lengths = [.. targetLengths], offsets = new int[batch];
+        bool padded = targets.Rank == 2;
+        if (!padded && targets.Rank != 1 || padded && targets._shape[0] != batch)
+        {
+            throw new ArgumentException($"CTC targets are [batch, maxLabels] padded or [Σ targetLengths] one after another, not {FormatShape(targets._shape)}.");
+        }
+
+        for (int n = 0, next = 0; n < batch; n++)
+        {
+            if ((uint)inputs[n] > (uint)steps || lengths[n] < 0 || padded && lengths[n] > targets._shape[1])
+            {
+                throw new ArgumentException($"Sequence {n} has input length {inputs[n]} (of {steps} steps) and target length {lengths[n]}"
+                    + (padded ? $" (of {targets._shape[1]} padded labels)." : "."));
+            }
+
+            offsets[n] = padded ? n * targets._shape[1] : next;
+            next += lengths[n];
+            if (!padded && next > targets.Size)
+            {
+                throw new ArgumentException($"The target lengths add up to more than the {targets.Size} targets given.");
+            }
+        }
+
+        long start = Telemetry.Start(TelemetryLevel.Operations);
+        var y = Empty([batch], Device);
+        Backend.CtcLoss(Storage, targets.Storage, y.Storage, inputs, lengths, offsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
+        if (WillRecord(this))
+        {
+            var x = this;
+            y.Record("ctc_loss", g => x.Backend.CtcLossBackward(x.Storage, targets.Storage, g.Storage, x.GradStorage(), inputs, lengths, offsets, steps, batch, classes, blank,
+                batchFirst, zeroInfinity), x);
+        }
+
+        return Traced("ctc_loss", y, start);
     }
 
     // ---------------------------------------------------------------- helpers

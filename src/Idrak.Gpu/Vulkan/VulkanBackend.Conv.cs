@@ -5,13 +5,13 @@ namespace Idrak.Gpu.Vulkan;
 
 // Convolution and pooling as generated kernels (VulkanKernels.Conv): im2col, col2im, max pooling and its gradient, and
 // the per-group scale, shift and sums of a convolution's bias. A case the kernels do not cover (a storage larger than
-// the device binds, more elements than a 32-bit index reaches) goes to the host fallback.
+// the device binds, more elements than a 32-bit index reaches, a dilated window) goes to the host fallback.
 internal sealed partial class VulkanBackend
 {
     public override void Im2ColKernel(Storage x, Storage cols, in ConvGeometry g)
     {
         long n = (long)g.Positions * g.PatchSize;
-        if (n > int.MaxValue || !Fit(x, cols))
+        if (n > int.MaxValue || g.Dilated || !Fit(x, cols))
         {
             base.Im2ColKernel(x, cols, in g);
             return;
@@ -23,7 +23,7 @@ internal sealed partial class VulkanBackend
 
     public override void Col2ImKernel(Storage dcols, Storage dx, in ConvGeometry g)
     {
-        if ((long)g.Positions * g.PatchSize > int.MaxValue || !Fit(dcols, dx))
+        if ((long)g.Positions * g.PatchSize > int.MaxValue || g.Dilated || !Fit(dcols, dx))
         {
             base.Col2ImKernel(dcols, dx, in g);
             return;
