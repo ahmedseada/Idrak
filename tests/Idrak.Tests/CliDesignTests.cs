@@ -294,6 +294,11 @@ internal static partial class Tests
                 ("lstm", Architectures.Rnn(RecurrentCell.LSTM, 30, 10, 8, 12, 2)),
                 ("gru", Network.Sequence(6, 5).GRU(7, returnSequences: true).MultiHeadAttention(1).LayerNorm().LastStep().Linear(3, bias: false)),
                 ("pool", Network.Image(1, 12, 12).Conv2d(4, 3, stride: 2).BatchNorm().GELU().GlobalAveragePool2d().Tanh().Linear(2).Softmax()),
+                // A text-line recognizer's shape: rectangular, dilated and grouped convolutions, rectangular pools, the columns as a
+                // sequence, stacked bidirectional recurrent layers (a GRU with the candidate gate's own bias).
+                ("recognizer", Network.Image(1, 16, 32).Conv2d(8, (3, 5), padding: (1, 2)).ReLU().MaxPool2d((2, 2)).Conv2d(8, (3, 3), padding: (2, 2), dilation: (2, 2), groups: 2)
+                    .AvgPool2d((2, 1)).ColumnsToSequence().LSTM(12, returnSequences: true, bidirectional: true, layers: 2)
+                    .GRU(6, returnSequences: true, bidirectional: true, layers: 1, candidateBias: true).Linear(11)),
             };
             foreach (var (name, builder) in networks)
             {
