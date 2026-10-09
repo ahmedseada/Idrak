@@ -11,11 +11,13 @@ using Idrak.Data.Abstractions;
 using Idrak.Generation.Abstractions;
 using Idrak.Layers;
 using Idrak.Models;
+using Idrak.Models.Abstractions;
 
 namespace Idrak.Cli.Commands.Developer;
 
 /// <summary>
-/// <c>idrak vlm check MODEL --reference DIR</c>: compares a vision-language model (Gemma 3) on the device with what
+/// <c>idrak vlm check MODEL --reference DIR</c>: compares a vision-language model (any registered vision family whose
+/// encoder shows its stages, <see cref="IVisionEncoderStages"/>; Gemma 3's with its plug-in) on the device with what
 /// transformers saved for one image and prompt (tools/vlm/compare_real.py): the pixels, the vision encoder's output and
 /// the projected image features, the logits of every prompt position and of transformers' greedy answer fed back
 /// (teacher forcing), with Idrak's features and with transformers' own (to tell the image side from the decoder), and
@@ -127,10 +129,14 @@ internal sealed class VlmCheckCommand : Command
 
         using var noGrad = Autograd.NoGrad();
         using var model = ModelChoices.Load(context, choice);
-        var vision = model.Vision ?? throw new UsageException($"{choice.Model} has no vision part: give a vision-language model (Gemma 3 4B and larger).");
+        var vision = model.Vision ?? throw new UsageException($"{choice.Model} has no vision part: give a vision-language model.");
         var tokenizer = model.Tokenizer ?? throw new InvalidOperationException($"{choice.Model} has no tokenizer (tokenizer.json).");
         int vocabulary = tokenizer.VocabularySize;
-        var preprocessor = vision.Preprocessor(grayscale);
+        var watch = Stopwatch.StartNew();
+        using var encoder = vision.CreateEncoder(new VisionEncoderOptions { Device = model.Device, Grayscale = grayscale });
+        double buildMs = watch.Elapsed.TotalMilliseconds;
+        var stages = encoder as IVisionEncoderStages
+            ?? throw new UsageException($"The vision family {vision.Family}'s encoder does not show its stages (IVisionEncoderStages): vlm check compares its pixels and its tower's output.");
         var json = new JsonObject
         {
             ["model"] = choice.Model,
@@ -155,7 +161,11 @@ internal sealed class VlmCheckCommand : Command
         {
             var chatImage = ChatImage.FromFile(imagePath);
             var decoded = (bool?)manifest["exif_applied"] == false ? ImageCodecs.Decode(chatImage.Data.Span) : ImageInputs.Decode(chatImage);
-            ownPixels = preprocessor.Pixels(decoded);
+            using (var own = stages.PixelValues(decoded))
+            {
+                ownPixels = own.ToArray();
+            }
+
             if (ownPixels.Length != refPixels.Length)
             {
                 throw new InvalidOperationException($"Idrak's preprocessing gives {ownPixels.Length} pixel values, the reference [{string.Join(", ", pixelShape)}].");
@@ -176,19 +186,18 @@ internal sealed class VlmCheckCommand : Command
 
         // 2. The encoder and the projector from the reference's pixels.
         context.Write("\nVision encoder and projector (from the reference's pixels)");
-        var watch = Stopwatch.StartNew();
-        using var encoder = vision.CreateEncoder(model.Device, preprocessor);
-        int size = vision.Encoder.ImageSize, channels = vision.Encoder.Channels;
+        watch.Restart();
         float[] hidden, features;
-        using (var pixels = Tensor.From(refPixels, [1, channels, size, size], model.Device))
-        using (var h = encoder.Encoder.Forward(pixels))
-        using (var f = encoder.Projector.Forward(h))
+        using (var pixels = Tensor.From(refPixels, pixelShape, model.Device))
+        using (var h = stages.Tower(pixels))
+        using (var f = stages.Features(pixels))
         {
             hidden = h.ToArray();
             features = f.ToArray();
         }
 
         double encodeMs = watch.Elapsed.TotalMilliseconds;
+        context.Detail($"vision encoder built in {buildMs:F0} ms");
         int hiddenValues = Math.Min(refHidden.Length, hidden.Length);
         var hiddenCompare = Compare(refHidden, hidden.AsSpan(0, hiddenValues));
         var featureCompare = Compare(refFeatures, features);
@@ -201,8 +210,8 @@ internal sealed class VlmCheckCommand : Command
         float[] idrakFeatures = features;
         if (ownPixels is not null && pixelDifference > 0)
         {
-            using var pixels = Tensor.From(ownPixels, [1, channels, size, size], model.Device);
-            using var f = encoder.Encode(pixels);
+            using var pixels = Tensor.From(ownPixels, pixelShape, model.Device);
+            using var f = stages.Features(pixels);
             idrakFeatures = f.ToArray();
             var own = Compare(refFeatures, idrakFeatures);
             context.Write($"  {Mark(own.Cosine >= 0.999)} image features from Idrak's own pixels: {Describe(own)}");
@@ -212,11 +221,15 @@ internal sealed class VlmCheckCommand : Command
         // 3. The prompt's ids as Idrak makes them.
         context.Write("\nPrompt");
         bool promptSame = true;
-        string type = (string?)model.Config["model_type"] ?? "";
-        if (ImagePromptFormats.Find(type) is { } format && model.ChatTemplate is not null)
+        if (model.ChatTemplate is not null)
         {
+            // The image's tokens as many as the reference's features hold (the image is not decoded or encoded here).
             var chat = ModelChoices.CreateChat(model, choice);
-            chat = new ChatGenerator(chat.Generator, chat.Template) { Images = new ChatImages(vision.ImageTokens, format, _ => throw new InvalidOperationException("not encoded here")) };
+            var counted = new LayoutOnly(new ImageTokenLayout(featureShape.Length == 3 ? featureShape[1] : featureShape[0]), vision.Width, model.Device);
+            chat = new ChatGenerator(chat.Generator, chat.Template)
+            {
+                Images = new ChatImages(counted, vision.PromptFormat, vision.Attention) { Decode = _ => new ImageData([0f], 1, 1, 1) },
+            };
             var messages = new List<ChatMessage>();
             if ((string?)manifest["system"] is { Length: > 0 } system)
             {
@@ -233,21 +246,21 @@ internal sealed class VlmCheckCommand : Command
         }
         else
         {
-            context.Write($"  --   no image prompt format for model type '{type}' (or no chat template): the reference's ids are used unchecked");
+            context.Write("  --   no chat template: the reference's ids are used unchecked");
         }
 
-        int imageToken = vision.ImageTokens.ImageToken;
+        int imageToken = vision.PromptFormat.ImageToken;
         int afterImage = Math.Max(0, System.Array.LastIndexOf(ids, imageToken) + 1);
         var layout = ModelChoices.CacheLayout(choice);
 
         // 4. Teacher forcing, 5. greedy.
         Pass Force(string label, float[] featureValues, bool promptRows)
         {
-            using var featureTensor = Tensor.From(featureValues, [1, featureValues.Length / vision.TextDim, vision.TextDim], model.Device);
+            using var featureTensor = Tensor.From(featureValues, [1, featureValues.Length / vision.Width, vision.Width], model.Device);
             using var decoding = new DecodingContext(model.Device, 1, ids.Length + steps + 1, layout);
             var images = ImagePrefill.Locate(ids, imageToken, [featureTensor]);
             using var input = Tensor.From([.. ids.Select(i => (float)i)], [1, ids.Length], model.Device);
-            using var prefill = model.Network.ForwardCached(input, images, decoding);
+            using var prefill = model.Network.ForwardCached(input, images, vision.Attention, decoding);
             int promptAgree = 0, promptRowsCount = 0, afterAgree = 0, afterRows = 0;
             float[] last;
             if (promptRows)
@@ -314,10 +327,10 @@ internal sealed class VlmCheckCommand : Command
 
         // Idrak's own greedy tokens (as idrak run --temperature 0 picks them), from Idrak's features.
         var greedy = new List<int>();
-        using (var featureTensor = Tensor.From(idrakFeatures, [1, idrakFeatures.Length / vision.TextDim, vision.TextDim], model.Device))
+        using (var featureTensor = Tensor.From(idrakFeatures, [1, idrakFeatures.Length / vision.Width, vision.Width], model.Device))
         using (var decoding = new DecodingContext(model.Device, 1, ids.Length + steps + 1, layout))
         using (var input = Tensor.From([.. ids.Select(i => (float)i)], [1, ids.Length], model.Device))
-        using (var prefill = model.Network.ForwardCached(input, ImagePrefill.Locate(ids, imageToken, [featureTensor]), decoding))
+        using (var prefill = model.Network.ForwardCached(input, ImagePrefill.Locate(ids, imageToken, [featureTensor]), vision.Attention, decoding))
         {
             float[] last;
             using (var row = prefill.Narrow(1, ids.Length - 1, 1))
@@ -564,5 +577,21 @@ internal sealed class VlmCheckCommand : Command
         }
 
         return [.. best];
+    }
+
+    // An encoder that only gives a layout (the reference's token count), for rendering the prompt without an image.
+    private sealed class LayoutOnly(ImageTokenLayout layout, int width, Device device) : IVisionEncoder
+    {
+        public int Width => width;
+
+        public Device Device => device;
+
+        public ImageTokenLayout Layout(ImageData image) => layout;
+
+        public IReadOnlyList<ImageFeatures> Encode(IReadOnlyList<ImageData> images) => throw new InvalidOperationException("not encoded here");
+
+        public void Dispose()
+        {
+        }
     }
 }

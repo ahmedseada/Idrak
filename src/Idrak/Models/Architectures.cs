@@ -15,8 +15,8 @@ namespace Idrak.Models;
 /// </summary>
 public static class PretrainedFamilies
 {
-    // Llama, Mistral, Qwen2, Qwen3, Gemma, Gemma 2 and Gemma 3 (text, and the vision-language model's decoder with its
-    // vision part as data), and the mixture-of-experts families Mixtral, Qwen2-MoE and Qwen3-MoE.
+    // Llama, Mistral, Qwen2, Qwen3, Gemma, Gemma 2 and Gemma 3 (text, and the vision-language model's text decoder: its
+    // vision part is a VisionFamilies registration the library does not make), and the mixture-of-experts families Mixtral, Qwen2-MoE and Qwen3-MoE.
     internal static IEnumerable<(string Name, PretrainedArchitecture Architecture)> BuiltIns() =>
     [
         ("LlamaForCausalLM", LlamaStyle((config, spec, _) => spec)),
@@ -260,24 +260,20 @@ public static class PretrainedFamilies
         return c;
     }
 
-    // The three namings of a Gemma3ForConditionalGeneration checkpoint (plan 11): where the text decoder's model, its
-    // lm_head (never saved: tied), the SigLIP vision model and the projector are. transformers 4.52 to 4.57 rename the
-    // modules in memory but save under the old names; version 5 drops the vision model's own level.
-    private sealed record Gemma3Layout(string Name, string Text, string Head, string Vision, string Projector);
+    // The namings of a Gemma3ForConditionalGeneration checkpoint's text decoder (plan 11): where its model and its lm_head
+    // (never saved: tied) are. transformers 4.52 to 4.57 rename the modules in memory but save under the old names. The
+    // vision part's namings are its vision family's (VisionFamilies), which the library does not register.
+    private sealed record Gemma3Layout(string Name, string Text, string Head);
 
     private static readonly Gemma3Layout[] Gemma3Layouts =
     [
-        new("save_pretrained of transformers 4.x (language_model.model.*, vision_tower.vision_model.*)", "language_model.model.", "language_model.lm_head.",
-            "vision_tower.vision_model.", "multi_modal_projector."),
-        new("state dict of transformers 4.52 to 4.57 (model.language_model.*, model.vision_tower.vision_model.*)", "model.language_model.", "lm_head.",
-            "model.vision_tower.vision_model.", "model.multi_modal_projector."),
-        new("save_pretrained of transformers 5 (language_model.model.*, vision_tower.*)", "language_model.model.", "language_model.lm_head.",
-            "vision_tower.", "multi_modal_projector."),
+        new("save_pretrained (language_model.model.*)", "language_model.model.", "language_model.lm_head."),
+        new("state dict of transformers 4.52 to 4.57 (model.language_model.*)", "model.language_model.", "lm_head."),
     ];
 
-    // Gemma 3 with images: the text decoder is Gemma 3's, read from text_config, never soft-capping its logits
-    // (Gemma3ForConditionalGeneration does not, whatever final_logit_softcapping says); the vision encoder and projector
-    // are read as data (PretrainedVision), in whichever of the three namings the checkpoint uses.
+    // The text decoder of Gemma 3 with images: Gemma 3's, read from text_config, never soft-capping its logits
+    // (Gemma3ForConditionalGeneration does not, whatever final_logit_softcapping says), in whichever naming the checkpoint
+    // uses. The vision part is read by a registered vision family of the same name (none in the library).
     private static PretrainedArchitecture Gemma3VisionLanguage(Gemma3Layout layout) => new()
     {
         Spec = (config, notes) =>
@@ -302,9 +298,8 @@ public static class PretrainedFamilies
                     + string.Join(", ", Gemma3Layouts.Select(l => l.Text + "embed_tokens.weight").Distinct()) + ").");
             }
 
-            return Gemma3VisionLanguage(texts.FirstOrDefault(l => names.Contains(l.Vision + "embeddings.patch_embedding.weight")) ?? texts[0]);
+            return Gemma3VisionLanguage(texts[0]);
         },
-        Vision = (config, checkpoint, notes) => Gemma3Vision(config, checkpoint, layout, notes),
     };
 
     // text_config read as a Gemma3ForCausalLM configuration: the keys transformers keeps at the top level (tied embeddings,
@@ -349,84 +344,6 @@ public static class PretrainedFamilies
         }
 
         return type == "float16" ? (float)(Half)value : value;
-    }
-
-    // The vision part of a Gemma 3 checkpoint: SigLIP's configuration, the image token ids (Gemma3Config's defaults when
-    // absent), and every encoder and projector tensor, its shape checked against them.
-    private static PretrainedVision? Gemma3Vision(JsonObject config, ITensorStore checkpoint, Gemma3Layout layout, List<string> notes)
-    {
-        if (!checkpoint.Contains(layout.Vision + "embeddings.patch_embedding.weight"))
-        {
-            notes.Add("The checkpoint has no vision encoder: the model reads text only.");
-            return null;
-        }
-
-        var encoder = VisionEncoderConfig.FromJson(config["vision_config"] as JsonObject);
-        var tokens = new ImageTokenIds((int?)config["boi_token_index"] ?? 255_999, (int?)config["eoi_token_index"] ?? 256_000,
-            (int?)config["image_token_index"] ?? 262_144, (int?)config["mm_tokens_per_image"] ?? 256);
-        int side = (int)Math.Round(Math.Sqrt(tokens.TokensPerImage));
-        if (side == 0 || side * side != tokens.TokensPerImage || encoder.PatchesPerSide % side != 0)
-        {
-            throw new InvalidDataException($"mm_tokens_per_image {tokens.TokensPerImage} is not a square grid that divides the {encoder.PatchesPerSide} x {encoder.PatchesPerSide} patches.");
-        }
-
-        if (encoder.UseHead)
-        {
-            notes.Add("The vision encoder's pooling head (vision_use_head) is not used: Gemma 3 projects every patch.");
-        }
-
-        int textDim = (int)Gemma3TextConfig(config)["hidden_size"]!, d = encoder.Dim, f = encoder.FfDim;
-        var expected = new List<(string Name, int[] Shape)>
-        {
-            ("vision.embeddings.patch_embedding.weight", [d, encoder.Channels, encoder.PatchSize, encoder.PatchSize]),
-            ("vision.embeddings.patch_embedding.bias", [d]),
-            ("vision.embeddings.position_embedding.weight", [encoder.Patches, d]),
-        };
-        for (int i = 0; i < encoder.Layers; i++)
-        {
-            string l = $"vision.encoder.layers.{i}.";
-            foreach (string norm in (string[])["layer_norm1", "layer_norm2"])
-            {
-                expected.Add(($"{l}{norm}.weight", [d]));
-                expected.Add(($"{l}{norm}.bias", [d]));
-            }
-
-            foreach (string projection in (string[])["q_proj", "k_proj", "v_proj", "out_proj"])
-            {
-                expected.Add(($"{l}self_attn.{projection}.weight", [d, d]));
-                expected.Add(($"{l}self_attn.{projection}.bias", [d]));
-            }
-
-            expected.Add(($"{l}mlp.fc1.weight", [f, d]));
-            expected.Add(($"{l}mlp.fc1.bias", [f]));
-            expected.Add(($"{l}mlp.fc2.weight", [d, f]));
-            expected.Add(($"{l}mlp.fc2.bias", [d]));
-        }
-
-        expected.Add(("vision.post_layernorm.weight", [d]));
-        expected.Add(("vision.post_layernorm.bias", [d]));
-        expected.Add(("projector.mm_soft_emb_norm.weight", [d]));
-        expected.Add(("projector.mm_input_projection_weight", [d, textDim]));      // [vision, text], used as x · W
-
-        var tensors = new Dictionary<string, VisionTensor>(StringComparer.Ordinal);
-        foreach (var (name, shape) in expected)
-        {
-            string stored = name.StartsWith("vision.", StringComparison.Ordinal) ? layout.Vision + name["vision.".Length..] : layout.Projector + name["projector.".Length..];
-            if (!checkpoint.Contains(stored))
-            {
-                throw new InvalidDataException($"The checkpoint ({layout.Name}) has no '{stored}', which vision_config asks for.");
-            }
-
-            var actual = checkpoint.ShapeOf(stored);
-            if (!actual.SequenceEqual(shape))
-            {
-                throw new InvalidDataException($"'{stored}' is [{string.Join(", ", actual)}]; vision_config and text_config make it [{string.Join(", ", shape)}].");
-            }
-
-            tensors[name] = new VisionTensor(stored, actual);
-        }
-
-        return new PretrainedVision { Encoder = encoder, ImageTokens = tokens, TextDim = textDim, Layout = layout.Name, Tensors = tensors };
     }
 
     /// <summary>

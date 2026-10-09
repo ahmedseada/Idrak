@@ -43,14 +43,6 @@ public sealed class PretrainedArchitecture
     public Func<IReadOnlySet<string>, PretrainedArchitecture>? ForCheckpoint { get; init; }
 
     /// <summary>
-    /// For a vision-language family: reads the vision part of the checkpoint (configuration, image token ids, the encoder's
-    /// and projector's tensors, checked) from the config.json and the checkpoint's tensors by their stored names, appending
-    /// anything approximated to the notes; null when the checkpoint has none. The loaded model carries it
-    /// (<c>PretrainedModel.Vision</c>) and its tensors do not count as unused. Null (the default) for text-only families.
-    /// </summary>
-    public Func<JsonObject, ITensorStore, List<string>, PretrainedVision?>? Vision { get; init; }
-
-    /// <summary>
     /// Whether the checkpoint stores this weight as [out, in] (the PyTorch Linear layout), so it is transposed to
     /// Idrak's [in, out]. By default: every projection (attention, feed-forward, head) is transposed.
     /// </summary>
@@ -76,7 +68,8 @@ public sealed record PretrainedBuildContext(JsonObject Config, DecoderSpec Spec,
 /// <summary>
 /// The model families pretrained models are loaded as, by the architecture name in <c>config.json</c>
 /// ("architectures": [...]). Idrak registers Llama, Mistral, Qwen2, Qwen3, Gemma, Gemma 2 and Gemma 3
-/// (text, and the text decoder of its vision-language model, with the vision part as data), and the mixture-of-experts families Mixtral, Qwen2-MoE and Qwen3-MoE; add others with <see cref="Register"/>
+/// (text, and the text decoder of its vision-language model: the vision part is a <see cref="VisionFamilies"/> registration,
+/// which the library does not make), and the mixture-of-experts families Mixtral, Qwen2-MoE and Qwen3-MoE; add others with <see cref="Register"/>
 /// (its <c>PretrainedFamilies.LlamaStyle</c> makes one for families that share the Llama naming).
 /// </summary>
 public static class PretrainedArchitectures

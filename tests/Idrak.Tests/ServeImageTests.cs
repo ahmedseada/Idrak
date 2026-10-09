@@ -18,9 +18,11 @@ using Idrak.AspNetCore;
 using Idrak.Cli;
 using Idrak.Data;
 using Idrak.Generation;
+using Idrak.Gemma3Vision;
 using Idrak.Generation.Abstractions;
 using Idrak.Inference;
 using Idrak.Models;
+using Idrak.Models.Abstractions;
 using Idrak.Nlp;
 
 // Images in chat over HTTP (plan 11, phase 8) with the tiny Gemma 3 of phase 0, in-process on a loopback port: the
@@ -103,6 +105,7 @@ internal static partial class Tests
     // Idrak.AspNetCore over the engine: a vision-language chat model of one's own (the library's encoder, no CLI).
     private static void AspNetCoreImages(Device device)
     {
+        RegisterGemma3Vision();
         var (tokens, expected) = VlmReference();
         string png = TestData("vlm/image.png");
         string dataUrl = ChatImage.FromFile(png).ToDataUrl();
@@ -120,11 +123,11 @@ internal static partial class Tests
                 return loaded.CreateGenerator();
             }, b => b.Template(template).Images(generator =>
             {
+                // Everything from the model's vision family (a registration from outside the library).
                 var vision = loaded!.Vision!;
-                var encoder = vision.CreateEncoder(loaded.Device, vision.Preprocessor());
+                var encoder = vision.CreateEncoder(new VisionEncoderOptions { Device = loaded.Device });
                 encoders++;
-                return new ChatImages(vision.ImageTokens, ImagePromptFormats.Get((string)loaded.Config["model_type"]!),
-                    images => encoder.Encode([.. images.Select(ChatImageDecoder.Decode)])) { Owner = new Disposer(() => { encoder.Dispose(); disposed++; }) };
+                return new ChatImages(encoder, vision.PromptFormat, vision.Attention) { Owner = new Disposer(() => { encoder.Dispose(); disposed++; }) };
             }))
             .ChatModel("text", () => { var (m, t) = TinyLanguageModel(device); return new TextGenerator(m, t, 32); }));
         var app = builder.Build();
@@ -196,7 +199,7 @@ internal static partial class Tests
 
             // Grayscale per request: the image is read as Pillow's convert("L") gives it (the reference's grey pixels).
             var grey = ChatImageDecoder.Grayscale(ChatImage.FromFile(png));
-            AssertClose(ReadNpyFloat32(TestData("vlm/reference/pixel_values-png-gray.npy")), loaded!.Vision!.Preprocessor().Pixels(ChatImageDecoder.Decode(grey)), 1e-5f,
+            AssertClose(ReadNpyFloat32(TestData("vlm/reference/pixel_values-png-gray.npy")), ((Gemma3Vision)loaded!.Vision!).Preprocessor().Pixels(ChatImageDecoder.Decode(grey)), 1e-5f,
                 "a grey request's pixels");
             Check(ChatImageDecoder.Grayscale(grey).Equals(grey) && ChatImageDecoder.FormatOf(grey) == "netpbm", "grey twice is grey");
             var greyAnswer = Post("/v1/chat/completions", VlmChatBody(DataUrlPart(dataUrl), false, "vlm", ",\"grayscale\":true"));
@@ -261,6 +264,12 @@ internal static partial class Tests
     // `idrak serve` with the tiny Gemma 3 (and a text model beside it): the answers of `idrak run --image`, the limits.
     private static void CliServeImages(Device device)
     {
+        // Without the Gemma 3 vision family registered, serve refuses the vision model at startup, naming the registry.
+        Gemma3VisionNotRegistered(device);
+        var (refusedCode, _, refused) = RunIdrakOn(device, null, "serve", VlmModel, "-p", "0");
+        Check(refusedCode == 2 && refused.Contains("Vision family 'Gemma3ForConditionalGeneration' is not registered", StringComparison.Ordinal),
+            $"serve without the vision family: {refusedCode} {refused}");
+        RegisterGemma3Vision();
         var (tokens, expected) = VlmReference();
         string png = TestData("vlm/image.png");
         string dataUrl = ChatImage.FromFile(png).ToDataUrl();

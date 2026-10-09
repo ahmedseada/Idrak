@@ -4,16 +4,20 @@
 using System.Text;
 using System.Text.Json.Nodes;
 using Idrak;
+using Idrak.Gemma3Vision;
 using Idrak.Layers;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
 
 // Gemma 3's vision-language model (plan 11, phase 4): the tiny reference of tests/Idrak.Tests/data/vlm loads in its three
-// tensor layouts and gives transformers' logits for a text-only prompt; its vision part is read as data.
+// tensor layouts and gives transformers' logits for a text-only prompt; its vision part is read as data by the Gemma 3
+// vision family, a registration from outside the library (samples/Idrak.Gemma3Vision); without it, loading fails.
 internal static partial class Tests
 {
     private static void Gemma3VisionLanguageLoads(Device device)
     {
+        Gemma3VisionNotRegistered(device);
+        RegisterGemma3Vision();
         long[] ids = ReadNpyInt64(TestData("vlm/reference/prompt-text-input_ids.npy"));
         float[] expected = ReadNpyFloat32(TestData("vlm/reference/prompt-text-logits.npy"));
         using var input = Tensor.From([.. ids.Select(i => (float)i)], [1, ids.Length], device);
@@ -32,10 +36,13 @@ internal static partial class Tests
             Check(spec.ToJson().ToJsonString() == firstSpec, $"{folder}: the same spec from every config format");
 
             // The vision part, as data for the encoder and the image tokens.
-            var vision = model.Vision ?? throw new InvalidOperationException($"{folder}: no vision part");
+            var vision = model.Vision as Gemma3Vision ?? throw new InvalidOperationException($"{folder}: no Gemma 3 vision part");
             Check(vision.Layout.Contains(layout, StringComparison.Ordinal), $"{folder}: layout {vision.Layout}");
-            Check(vision.ImageTokens == new ImageTokenIds(7, 8, 365, 4) && vision.TextDim == 24 && vision.PoolSize == 2 && vision.ProjectorNormEpsilon == 1e-6f,
+            Check(vision.ImageTokens == new Gemma3ImageTokens(7, 8, 365, 4) && vision.TextDim == 24 && vision.PoolSize == 2 && vision.ProjectorNormEpsilon == 1e-6f,
                 $"{folder}: image tokens {vision.ImageTokens}, pooling {vision.PoolSize}");
+            Check(vision is { Family: "Gemma3ForConditionalGeneration", Width: 24, PromptFormat: ImageTokenFormat { Marker: 7, ImageToken: 365, Begin: 7, End: 8, Before: "\n\n", After: "\n\n" } }
+                  && vision.Attention.Name == "image-blocks" && !vision.Attention.Causal && vision.StoredTensors.Count == vision.Tensors.Count,
+                $"{folder}: the family's prompt format and attention rule");
             Check(vision.Encoder is { Dim: 8, FfDim: 16, Layers: 2, Heads: 2, HeadDim: 4, ImageSize: 56, PatchSize: 14, PatchesPerSide: 4, Patches: 16, Channels: 3, Activation: "gelu_pytorch_tanh", UseHead: false },
                 $"{folder}: encoder {vision.Encoder}");
             Check(vision.Tensors.Count == 3 + 2 * 16 + 2 + 2 && vision.Tensors["projector.mm_input_projection_weight"].Shape.SequenceEqual([8, 24])
@@ -70,7 +77,7 @@ internal static partial class Tests
               && Enumerable.Range(0, 34).Count(big.IsWindowed) == 29 && !big.IsWindowed(5) && big.Rope!.Theta == 1e6f && big.Rope.Scaling is { Type: "linear" }
               && big.SlidingWindowRope!.Theta == 1e4f && big.AttentionScale == 1f / 16f,
             $"gemma-3-4b-it's config: {big.ToJson().ToJsonString()}");
-        var encoder = VisionEncoderConfig.FromJson(original["vision_config"]!.AsObject());
+        var encoder = SiglipVisionConfig.FromJson(original["vision_config"]!.AsObject());
         Check(encoder is { Patches: 4096, HeadDim: 72, LayerNormEpsilon: 1e-6f }, $"gemma-3-4b-it's vision: {encoder}");
 
         // Gemma3ForCausalLM reads transformers 5's rope_parameters as the older keys.

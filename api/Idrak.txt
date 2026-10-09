@@ -195,12 +195,14 @@ public sealed class Idrak.Data.ImageFolderSource : Idrak.Abstraction.Data.ISampl
   public void Read(int index, System.Span<float> features, System.Span<float> targets)
 
 public sealed class Idrak.Data.ImagePreprocessor
+  public (int, int) OutputSize(int height, int width)
   public Idrak.Abstraction.Tensor Process(Idrak.Abstraction.Data.ImageData image, Idrak.Abstraction.Device? device = null)
   public Idrak.Abstraction.Tensor Process(string path, Idrak.Abstraction.Device? device = null)
   public Idrak.Data.ImageResampling Resampling { get; init; }
   public ImagePreprocessor()
   public System.Collections.Generic.IReadOnlyList<float> Mean { get; init; }
   public System.Collections.Generic.IReadOnlyList<float> Std { get; init; }
+  public bool CenterCrop { get; init; }
   public bool ConvertRgb { get; init; }
   public bool Grayscale { get; init; }
   public bool Normalize { get; init; }
@@ -209,10 +211,13 @@ public sealed class Idrak.Data.ImagePreprocessor
   public double RescaleFactor { get; init; }
   public float[] Pixels(Idrak.Abstraction.Data.ImageData image)
   public float[] Pixels(string path)
+  public int CropHeight { get; init; }
+  public int CropWidth { get; init; }
   public int Height { get; init; }
+  public int ShortestEdge { get; init; }
   public int Width { get; init; }
-  public static Idrak.Data.ImagePreprocessor FromConfig(string path, bool grayscale = false)
-  public static Idrak.Data.ImagePreprocessor Parse(string json, bool grayscale = false)
+  public static Idrak.Data.ImagePreprocessor FromConfig(string path, bool grayscale = false, Idrak.Data.ImagePreprocessor? defaults = null)
+  public static Idrak.Data.ImagePreprocessor Parse(string json, bool grayscale = false, Idrak.Data.ImagePreprocessor? defaults = null)
 
 public enum Idrak.Data.ImageResampling : int
   Bicubic = 3
@@ -714,6 +719,12 @@ public sealed class Idrak.Layers.Embedding : Idrak.Abstraction.Module
   public static Idrak.Layers.Embedding FromBFloat16(Idrak.Abstraction.Generation.BFloat16Weight weight)
   public static Idrak.Layers.Embedding FromWeights(Idrak.Abstraction.Tensor weight)
 
+public sealed class Idrak.Layers.ExactGELU : Idrak.Abstraction.Module
+  public ExactGELU()
+  public override string ToString()
+  public static Idrak.Abstraction.Tensor Apply(Idrak.Abstraction.Tensor x)
+  public static Idrak.Abstraction.Tensor Erf(Idrak.Abstraction.Tensor x)
+
 public sealed class Idrak.Layers.FeedForward : Idrak.Abstraction.Module
   public FeedForward(Idrak.Layers.Linear? gate, Idrak.Layers.Linear up, Idrak.Layers.Linear down, Idrak.Abstraction.Generation.FeedForwardActivation activation)
   public FeedForward(int dim, int hidden, bool gated, Idrak.Abstraction.Generation.FeedForwardActivation activation, bool bias = false, Idrak.Abstraction.Device? device = null, System.Random? random = null)
@@ -754,17 +765,10 @@ public sealed class Idrak.Layers.GraphModule : Idrak.Abstraction.Module
   public string Output { get; }
 
 public static class Idrak.Layers.ImagePrefill
-  public static Idrak.Abstraction.Tensor Forward(this Idrak.Layers.Sequential decoder, Idrak.Abstraction.Tensor ids, System.Collections.Generic.IReadOnlyList<Idrak.Layers.PromptImage> images)
-  public static Idrak.Abstraction.Tensor ForwardCached(this Idrak.Layers.Sequential decoder, Idrak.Abstraction.Tensor ids, System.Collections.Generic.IReadOnlyList<Idrak.Layers.PromptImage> images, Idrak.Abstraction.Generation.DecodingContext context, int? layers = null)
+  public static Idrak.Abstraction.Tensor Forward(this Idrak.Layers.Sequential decoder, Idrak.Abstraction.Tensor ids, System.Collections.Generic.IReadOnlyList<Idrak.Layers.PromptImage> images, Idrak.Abstraction.Generation.IImageAttentionRule attention)
+  public static Idrak.Abstraction.Tensor ForwardCached(this Idrak.Layers.Sequential decoder, Idrak.Abstraction.Tensor ids, System.Collections.Generic.IReadOnlyList<Idrak.Layers.PromptImage> images, Idrak.Abstraction.Generation.IImageAttentionRule attention, Idrak.Abstraction.Generation.DecodingContext context, int? layers = null)
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Layers.PromptImage> Locate(System.Collections.Generic.IReadOnlyList<int> ids, int imageToken, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageFeatures> features, int sequence = 0)
   public static System.Collections.Generic.IReadOnlyList<Idrak.Layers.PromptImage> Locate(System.Collections.Generic.IReadOnlyList<int> ids, int imageToken, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor> features, int sequence = 0)
-
-public sealed class Idrak.Layers.ImageProjector : Idrak.Abstraction.Module
-  public int PoolSize { get; }
-  public int TextDim { get; }
-  public int VisionDim { get; }
-  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Module> Children()
-  public override string ToString()
-  public static Idrak.Layers.ImageProjector FromTensors(Idrak.Models.Abstractions.ITensorStore tensors, int visionDim, int textDim, int poolSize, float normEpsilon, string prefix = "projector.", Idrak.Abstraction.Device? device = null)
 
 public enum Idrak.Layers.InputKind : int
   Features = 0
@@ -954,10 +958,15 @@ public sealed class Idrak.Layers.PositionalEncoding : Idrak.Abstraction.Module, 
 
 public sealed record Idrak.Layers.PromptImage : System.IEquatable<Idrak.Layers.PromptImage>
   public Idrak.Abstraction.Tensor Features { get; init; }
+  public Idrak.Abstraction.Tensor? Positions { get; init; }
   public PromptImage(int Position, Idrak.Abstraction.Tensor Features)
   public int Position { get; init; }
   public int Sequence { get; init; }
   public int Tokens { get; }
+
+public sealed class Idrak.Layers.QuickGELU : Idrak.Abstraction.Module
+  public QuickGELU()
+  public override string ToString()
 
 public sealed class Idrak.Layers.RMSNorm : Idrak.Abstraction.Module
   public Idrak.Abstraction.Tensor Gain { get; }
@@ -995,15 +1004,6 @@ public sealed class Idrak.Layers.Sequential : Idrak.Abstraction.Module, Idrak.La
   public override string ToString()
   public void Add(Idrak.Abstraction.Module module)
 
-public sealed class Idrak.Layers.SiglipVisionEncoder : Idrak.Abstraction.Module
-  public Idrak.Abstraction.Tensor Embed(Idrak.Abstraction.Tensor pixels)
-  public Idrak.Models.VisionEncoderConfig Config { get; }
-  public System.Collections.Generic.IReadOnlyList<Idrak.Layers.TransformerEncoderLayer> Layers { get; }
-  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Module> Children()
-  public override string ToString()
-  public override void Dispose()
-  public static Idrak.Layers.SiglipVisionEncoder FromTensors(Idrak.Models.VisionEncoderConfig config, Idrak.Models.Abstractions.ITensorStore tensors, string prefix = "vision.", Idrak.Abstraction.Device? device = null)
-
 public sealed class Idrak.Layers.Sigmoid : Idrak.Abstraction.Module
   public Sigmoid()
   public override string ToString()
@@ -1023,6 +1023,7 @@ public sealed class Idrak.Layers.TransformerEncoderLayer : Idrak.Abstraction.Mod
   public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Module> Children()
   public override string ToString()
   public static Idrak.Layers.TransformerEncoderLayer FromLayers(Idrak.Layers.LayerNorm norm1, Idrak.Layers.MultiHeadAttention attention, Idrak.Layers.LayerNorm norm2, Idrak.Layers.Linear feedForward1, Idrak.Layers.Linear feedForward2)
+  public static Idrak.Layers.TransformerEncoderLayer FromLayers(Idrak.Layers.LayerNorm norm1, Idrak.Layers.MultiHeadAttention attention, Idrak.Layers.LayerNorm norm2, Idrak.Layers.Linear feedForward1, Idrak.Layers.Linear feedForward2, Idrak.Abstraction.Module activation)
 
 public static class Idrak.Losses
   public static Idrak.Abstraction.Tensor BinaryCrossEntropy(Idrak.Abstraction.Tensor probabilities, Idrak.Abstraction.Tensor targets)
@@ -1130,6 +1131,10 @@ public interface Idrak.Models.Abstractions.ITokenizerDecoder
 public interface Idrak.Models.Abstractions.ITokenizerNormalizer
   public string Normalize(string text)
 
+public interface Idrak.Models.Abstractions.IVisionFamily
+  public Idrak.Models.Abstractions.PretrainedVision? Read(Idrak.Models.Abstractions.VisionCheckpoint checkpoint)
+  public string Name { get; }
+
 public interface Idrak.Models.Abstractions.IWeightSource
   public float[]? Read(string name, System.Collections.Generic.IReadOnlyList<int> shape)
 
@@ -1137,7 +1142,6 @@ public sealed class Idrak.Models.Abstractions.PretrainedArchitecture
   [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public PretrainedArchitecture()
   public System.Func<Idrak.Models.Abstractions.PretrainedBuildContext, System.Collections.Generic.IEnumerable<Idrak.Abstraction.Module>>? Build { get; init; }
   public System.Func<System.Collections.Generic.IReadOnlySet<string>, Idrak.Models.Abstractions.PretrainedArchitecture>? ForCheckpoint { get; init; }
-  public System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Models.Abstractions.ITensorStore, System.Collections.Generic.List<string>, Idrak.Models.PretrainedVision?>? Vision { get; init; }
   public System.Func<string, bool> Transposed { get; init; }
   public required System.Func<System.Text.Json.Nodes.JsonObject, System.Collections.Generic.List<string>, Idrak.Abstraction.Generation.DecoderSpec> Spec { get; init; }
   public required System.Func<string, string?> TensorName { get; init; }
@@ -1158,6 +1162,17 @@ public sealed record Idrak.Models.Abstractions.PretrainedBuildContext : System.I
   public PretrainedBuildContext(System.Text.Json.Nodes.JsonObject Config, Idrak.Abstraction.Generation.DecoderSpec Spec, Idrak.Models.Abstractions.IWeightSource Weights, Idrak.Models.Abstractions.ITensorStore Checkpoint, Idrak.Models.Abstractions.DecoderBuildOptions Options, System.Collections.Generic.List<string> Notes)
   public System.Collections.Generic.List<string> Notes { get; init; }
   public System.Text.Json.Nodes.JsonObject Config { get; init; }
+
+public abstract class Idrak.Models.Abstractions.PretrainedVision
+  protected PretrainedVision()
+  public abstract Idrak.Abstraction.Generation.IImageAttentionRule Attention { get; }
+  public abstract Idrak.Abstraction.Generation.IImagePromptFormat PromptFormat { get; }
+  public abstract Idrak.Abstraction.Generation.IVisionEncoder CreateEncoder(Idrak.Models.Abstractions.VisionEncoderOptions? options = null)
+  public abstract System.Collections.Generic.IReadOnlyCollection<string> StoredTensors { get; }
+  public abstract int Width { get; }
+  public abstract string Family { get; }
+  public override string ToString()
+  public virtual string Describe()
 
 public static class Idrak.Models.Abstractions.TokenizerComponents
   public static System.Collections.Generic.IReadOnlyCollection<string> DecoderTypes { get; }
@@ -1181,6 +1196,31 @@ public static class Idrak.Models.Abstractions.TokenizerComponents
   public static void SetDecoderPolicy(string type, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
   public static void SetNormalizerPolicy(string type, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
   public static void SetPreTokenizerPolicy(string type, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
+public sealed record Idrak.Models.Abstractions.VisionCheckpoint : System.IEquatable<Idrak.Models.Abstractions.VisionCheckpoint>
+  public Idrak.Models.Abstractions.ITensorStore Tensors { get; init; }
+  public System.Collections.Generic.List<string> Notes { get; init; }
+  public System.Func<Idrak.Models.Abstractions.ITensorStore> Open { get; init; }
+  public System.Text.Json.Nodes.JsonObject Config { get; init; }
+  public VisionCheckpoint(string Architecture, System.Text.Json.Nodes.JsonObject Config, Idrak.Models.Abstractions.ITensorStore Tensors, string? Folder, System.Func<Idrak.Models.Abstractions.ITensorStore> Open, System.Collections.Generic.List<string> Notes)
+  public string Architecture { get; init; }
+  public string? Folder { get; init; }
+
+public sealed record Idrak.Models.Abstractions.VisionEncoderOptions : System.IEquatable<Idrak.Models.Abstractions.VisionEncoderOptions>
+  public Idrak.Abstraction.Device? Device { get; init; }
+  public VisionEncoderOptions()
+  public bool Grayscale { get; init; }
+
+public static class Idrak.Models.Abstractions.VisionFamilies
+  public static Idrak.Models.Abstractions.IVisionFamily Get(string name)
+  public static Idrak.Models.Abstractions.IVisionFamily? Default(string name)
+  public static Idrak.Models.Abstractions.IVisionFamily? Find(string name)
+  public static Idrak.Models.Abstractions.IVisionFamily? For(string architecture, System.Text.Json.Nodes.JsonObject config)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool HasVision(System.Text.Json.Nodes.JsonObject config)
+  public static bool Unregister(string name)
+  public static string? Origin(string name)
+  public static void Register(Idrak.Models.Abstractions.IVisionFamily family)
 
 public abstract class Idrak.Models.Abstractions.WeightCodec
   public abstract int BytesPerValue { get; }
@@ -1233,28 +1273,6 @@ public sealed record Idrak.Models.GgufTensorInfo : System.IEquatable<Idrak.Model
   public long[] Dimensions { get; init; }
   public string Name { get; init; }
 
-public sealed class Idrak.Models.ImageEncoder : Idrak.Abstraction.Module
-  public Idrak.Abstraction.Tensor Encode(Idrak.Abstraction.Data.ImageData image)
-  public Idrak.Abstraction.Tensor Encode(Idrak.Abstraction.Generation.ChatImage image)
-  public Idrak.Abstraction.Tensor Encode(Idrak.Abstraction.Tensor pixelValues)
-  public Idrak.Abstraction.Tensor Encode(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ImageData> images)
-  public Idrak.Abstraction.Tensor Encode(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatImage> images)
-  public Idrak.Abstraction.Tensor Encode(string path)
-  public Idrak.Data.ImagePreprocessor Preprocessor { get; }
-  public Idrak.Layers.ImageProjector Projector { get; }
-  public Idrak.Layers.SiglipVisionEncoder Encoder { get; }
-  public Idrak.Models.PretrainedVision Vision { get; }
-  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Module> Children()
-  public override string ToString()
-  public override void Dispose()
-
-public sealed record Idrak.Models.ImageTokenIds : System.IEquatable<Idrak.Models.ImageTokenIds>
-  public ImageTokenIds(int BeginImage, int EndImage, int ImageToken, int TokensPerImage)
-  public int BeginImage { get; init; }
-  public int EndImage { get; init; }
-  public int ImageToken { get; init; }
-  public int TokensPerImage { get; init; }
-
 public static class Idrak.Models.ModelSource
   public static Idrak.Abstraction.Formats.ModelSourceOptions Options(string revision = "main", string? token = null, Idrak.Abstraction.Data.IDownloader? downloader = null, bool download = true)
   public static bool IsModelId(string model)
@@ -1277,7 +1295,7 @@ public sealed class Idrak.Models.PretrainedModel : System.IDisposable
   public Idrak.Abstraction.Generation.ITokenizer? Tokenizer { get; }
   public Idrak.Layers.Sequential Network { get; }
   public Idrak.Models.Abstractions.PretrainedArchitecture Architecture { get; }
-  public Idrak.Models.PretrainedVision? Vision { get; }
+  public Idrak.Models.Abstractions.PretrainedVision? Vision { get; }
   public System.Collections.Generic.IEnumerable<(string, Idrak.Abstraction.Module)> NamedModules()
   public System.Collections.Generic.IReadOnlyList<string> Notes { get; }
   public System.Text.Json.Nodes.JsonObject Config { get; }
@@ -1300,19 +1318,6 @@ public sealed record Idrak.Models.PretrainedOptions : System.IEquatable<Idrak.Mo
   public string? Architecture { get; init; }
   public string? MergeAdapter { get; init; }
   public string? PackedFormatName { get; init; }
-
-public sealed record Idrak.Models.PretrainedVision : System.IEquatable<Idrak.Models.PretrainedVision>
-  [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public PretrainedVision()
-  public Idrak.Data.ImagePreprocessor Preprocessor(bool grayscale = false)
-  public Idrak.Models.Abstractions.ITensorStore OpenTensors()
-  public Idrak.Models.ImageEncoder CreateEncoder(Idrak.Abstraction.Device? device = null, Idrak.Data.ImagePreprocessor? preprocessor = null)
-  public float ProjectorNormEpsilon { get; }
-  public int PoolSize { get; }
-  public required Idrak.Models.ImageTokenIds ImageTokens { get; init; }
-  public required Idrak.Models.VisionEncoderConfig Encoder { get; init; }
-  public required System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Models.VisionTensor> Tensors { get; init; }
-  public required int TextDim { get; init; }
-  public required string Layout { get; init; }
 
 public sealed record Idrak.Models.SafeTensorInfo : System.IEquatable<Idrak.Models.SafeTensorInfo>
   public Idrak.Models.SafeTensorType Type { get; init; }
@@ -1340,28 +1345,6 @@ public sealed class Idrak.Models.SafeTensorsReader : Idrak.Models.Abstractions.I
 
 public static class Idrak.Models.SafeTensorsWriter
   public static void Write(string path, System.Collections.Generic.IEnumerable<(string, int[], float[])> tensors, Idrak.Models.SafeTensorType type = (Idrak.Models.SafeTensorType)2, System.Collections.Generic.IReadOnlyDictionary<string, string>? metadata = null)
-
-public sealed record Idrak.Models.VisionEncoderConfig : System.IEquatable<Idrak.Models.VisionEncoderConfig>
-  [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public VisionEncoderConfig()
-  public bool UseHead { get; init; }
-  public int HeadDim { get; }
-  public int Patches { get; }
-  public int PatchesPerSide { get; }
-  public required float LayerNormEpsilon { get; init; }
-  public required int Channels { get; init; }
-  public required int Dim { get; init; }
-  public required int FfDim { get; init; }
-  public required int Heads { get; init; }
-  public required int ImageSize { get; init; }
-  public required int Layers { get; init; }
-  public required int PatchSize { get; init; }
-  public required string Activation { get; init; }
-  public static Idrak.Models.VisionEncoderConfig FromJson(System.Text.Json.Nodes.JsonObject? config)
-
-public sealed record Idrak.Models.VisionTensor : System.IEquatable<Idrak.Models.VisionTensor>
-  public System.Collections.Generic.IReadOnlyList<int> Shape { get; init; }
-  public VisionTensor(string Stored, System.Collections.Generic.IReadOnlyList<int> Shape)
-  public string Stored { get; init; }
 
 public static class Idrak.ModuleFiles
   public static void Load(this Idrak.Abstraction.Module module, System.IO.Stream stream)
