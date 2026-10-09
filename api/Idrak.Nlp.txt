@@ -330,6 +330,60 @@ public abstract class Idrak.Nlp.Abstractions.DistillationTeacher : System.IDispo
   public void Check(Idrak.Abstraction.Generation.ITokenizer student)
   public void Dispose()
 
+public sealed record Idrak.Nlp.Abstractions.FeatureCacheKey : System.IEquatable<Idrak.Nlp.Abstractions.FeatureCacheKey>
+  public FeatureCacheKey(string Image, string Transforms, string VisionOptions, string Family, string Checkpoint, string DType, string Stage = "tower")
+  public System.Text.Json.Nodes.JsonArray ToJson()
+  public const string TowerStage = "tower"
+  public static Idrak.Nlp.Abstractions.FeatureCacheKey For(Idrak.Abstraction.Generation.ChatImage image, Idrak.Nlp.TuningImages images, string family, string checkpoint, string dtype, string stage = "tower")
+  public string Checkpoint { get; init; }
+  public string DType { get; init; }
+  public string Family { get; init; }
+  public string Id { get; }
+  public string Image { get; init; }
+  public string Stage { get; init; }
+  public string Transforms { get; init; }
+  public string VisionOptions { get; init; }
+
+public sealed record Idrak.Nlp.Abstractions.FeatureCacheOptions : System.IEquatable<Idrak.Nlp.Abstractions.FeatureCacheOptions>
+  public FeatureCacheOptions()
+  public long? Budget { get; init; }
+  public string? Folder { get; init; }
+
+public static class Idrak.Nlp.Abstractions.FeatureCaches
+  public const string Disk = "disk"
+  public const string Memory = "memory"
+  public static Idrak.Nlp.Abstractions.IFeatureCache Create(string name, Idrak.Nlp.Abstractions.FeatureCacheOptions? options = null)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static System.Func<Idrak.Nlp.Abstractions.FeatureCacheOptions, Idrak.Nlp.Abstractions.IFeatureCache> Get(string name)
+  public static System.Func<Idrak.Nlp.Abstractions.FeatureCacheOptions, Idrak.Nlp.Abstractions.IFeatureCache>? Default(string name)
+  public static bool Unregister(string name)
+  public static string DefaultFolder { get; }
+  public static string? Origin(string name)
+  public static void Register(string name, System.Func<Idrak.Nlp.Abstractions.FeatureCacheOptions, Idrak.Nlp.Abstractions.IFeatureCache> create)
+  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
+public interface Idrak.Nlp.Abstractions.IFeatureCache : System.IDisposable
+  public bool Contains(Idrak.Nlp.Abstractions.FeatureCacheKey key)
+  public bool Put(Idrak.Nlp.Abstractions.FeatureCacheKey key, Idrak.Abstraction.Tensor value)
+  public bool TryGet(Idrak.Nlp.Abstractions.FeatureCacheKey key, Idrak.Abstraction.Device device, out Idrak.Abstraction.Tensor? value)
+  public int Count { get; }
+  public long Bytes { get; }
+  public string Name { get; }
+  public void Clear()
+
+public interface Idrak.Nlp.Abstractions.ITuningDataFormat
+  public System.Collections.Generic.IEnumerable<Idrak.Nlp.ChatTranscript> Read(string path, Idrak.Nlp.Abstractions.TuningDataOptions? options = null)
+  public bool Recognizes(System.Text.Json.Nodes.JsonObject record)
+  public string Name { get; }
+  public string Summary { get; }
+
+public interface Idrak.Nlp.Abstractions.ITuningMetric
+  public Idrak.Nlp.Abstractions.TuningScore Score(string answer, string reference, System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null)
+  public System.Collections.Generic.IReadOnlyCollection<string> Keys { get; }
+  public bool LowerIsBetter { get; }
+  public string Name { get; }
+  public string Summary { get; }
+
 public abstract class Idrak.Nlp.Abstractions.TeacherDistributions : System.IDisposable
   protected TeacherDistributions()
   public abstract Idrak.Abstraction.Tensor Probabilities(int start, int count, float temperature, int vocabulary, Idrak.Abstraction.Device device)
@@ -342,6 +396,48 @@ public sealed record Idrak.Nlp.Abstractions.TrainingSequence : System.IEquatable
   public int TrainedTokens { get; }
   public int[] Tokens { get; init; }
   public override int GetHashCode()
+
+public static class Idrak.Nlp.Abstractions.TuningDataFormats
+  public const string Messages = "messages"
+  public const string ShareGpt = "sharegpt"
+  public static Idrak.Nlp.Abstractions.ITuningDataFormat Detect(string path)
+  public static Idrak.Nlp.Abstractions.ITuningDataFormat Get(string name)
+  public static Idrak.Nlp.Abstractions.ITuningDataFormat? Default(string name)
+  public static Idrak.Nlp.Abstractions.ITuningDataFormat? Find(string name)
+  public static System.Collections.Generic.IEnumerable<Idrak.Nlp.ChatTranscript> Read(string path, string? format = null, Idrak.Nlp.Abstractions.TuningDataOptions? options = null)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Nlp.Abstractions.ITuningDataFormat format)
+
+public sealed record Idrak.Nlp.Abstractions.TuningDataOptions : System.IEquatable<Idrak.Nlp.Abstractions.TuningDataOptions>
+  public TuningDataOptions()
+  public string? Images { get; init; }
+
+public static class Idrak.Nlp.Abstractions.TuningMetrics
+  public const string CharacterErrorRate = "cer"
+  public const string WordErrorRate = "wer"
+  public static Idrak.Nlp.Abstractions.ITuningMetric Get(string name)
+  public static Idrak.Nlp.Abstractions.ITuningMetric? Default(string name)
+  public static Idrak.Nlp.Abstractions.ITuningMetric? Find(string name)
+  public static Idrak.Nlp.Abstractions.TuningScore Score(string name, System.Collections.Generic.IEnumerable<(string, string)> pairs, System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static int EditDistance<T>(System.ReadOnlySpan<T> a, System.ReadOnlySpan<T> b) where T : System.IEquatable<T>
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Nlp.Abstractions.ITuningMetric metric)
+  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
+public readonly record struct Idrak.Nlp.Abstractions.TuningScore : System.IEquatable<Idrak.Nlp.Abstractions.TuningScore>
+  public TuningScore(double Numerator, double Denominator)
+  public double Denominator { get; init; }
+  public double Numerator { get; init; }
+  public double Value { get; }
+  public override string ToString()
+  public static Idrak.Nlp.Abstractions.TuningScore Sum(System.Collections.Generic.IEnumerable<Idrak.Nlp.Abstractions.TuningScore> scores)
+  public static Idrak.Nlp.Abstractions.TuningScore op_Addition(Idrak.Nlp.Abstractions.TuningScore a, Idrak.Nlp.Abstractions.TuningScore b)
 
 public sealed record Idrak.Nlp.AnswerChoice : System.IEquatable<Idrak.Nlp.AnswerChoice>
   public AnswerChoice(int Best, System.Collections.Generic.IReadOnlyList<double> Probabilities, System.Collections.Generic.IReadOnlyList<double> LogLikelihoods)
@@ -595,6 +691,27 @@ public sealed class Idrak.Nlp.TeacherLogitsWriter : System.IDisposable
   public int Vocabulary { get; }
   public static int Write(string path, Idrak.Models.PretrainedModel teacher, System.Collections.Generic.IReadOnlyList<Idrak.Nlp.Abstractions.TrainingSequence> sequences, int topK = 16, System.Action<int>? progress = null, int batchTokens = 4096)
   public void Dispose()
+
+public sealed record Idrak.Nlp.TuningImages : System.IEquatable<Idrak.Nlp.TuningImages>
+  public Idrak.Abstraction.Data.ImageData Apply(Idrak.Abstraction.Data.ImageData image)
+  public Idrak.Abstraction.Data.ImageTransformPipeline Pipeline { get; }
+  public Idrak.Abstraction.Data.ImageTransformPipeline Transforms { get; init; }
+  public Idrak.Abstraction.Generation.VisionOptions VisionOptions { get; init; }
+  public System.Text.Json.Nodes.JsonObject ToJson()
+  public TuningImages()
+  public bool Equals(Idrak.Nlp.TuningImages? other)
+  public bool Grayscale { get; init; }
+  public bool IsEmpty { get; }
+  public const string FileName = "tuning_images.json"
+  public override int GetHashCode()
+  public override string ToString()
+  public static Idrak.Nlp.TuningImages FromJson(System.Text.Json.Nodes.JsonObject json)
+  public static Idrak.Nlp.TuningImages None { get; }
+  public static Idrak.Nlp.TuningImages Parse(string? transforms, System.Collections.Generic.IEnumerable<string>? visionOptions = null, bool grayscale = false)
+  public static Idrak.Nlp.TuningImages? Read(string folder)
+  public static bool Exists(string folder)
+  public void Save(string folder)
+  public void ThrowIfUnknown(string family, System.Collections.Generic.IReadOnlyCollection<string> accepted)
 
 public sealed record Idrak.Nlp.TuningManifest : System.IEquatable<Idrak.Nlp.TuningManifest>
   [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public TuningManifest()

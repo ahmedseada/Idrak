@@ -35,7 +35,9 @@ public static class Idrak.Abstraction.Testing.Conformance
   public static Idrak.Abstraction.Testing.ConformanceReport Check<T>(T implementation, Idrak.Abstraction.Testing.ContractSuite<T> suite, Idrak.Abstraction.Testing.ContractCheckOptions? options = null) where T : class
   public static Idrak.Abstraction.Testing.ConformanceReport Check<TKernel>(Idrak.Abstraction.Operations.PluginOperation<TKernel> operation, Idrak.Abstraction.Device device, System.Func<Idrak.Abstraction.Devices.Backend, TKernel, int, float[]> run, int cases = 8, float tolerance = 1E-05f) where TKernel : System.Delegate
   public static Idrak.Abstraction.Testing.ConformanceReport CheckChatPartKind(string name, Idrak.Abstraction.Generation.IChatPartKind? kind = null, System.Collections.Generic.IReadOnlyList<System.Text.Json.Nodes.JsonObject>? samples = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
+  public static Idrak.Abstraction.Testing.ConformanceReport CheckFeatureCache(Idrak.Abstraction.Testing.FeatureCacheUnderTest cache, Idrak.Abstraction.Device? device = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckRopeScaling(string type, Idrak.Abstraction.Generation.RopeScalingMethod? method = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
+  public static Idrak.Abstraction.Testing.ConformanceReport CheckTuningDataFormat(System.Func<string, System.Collections.Generic.IEnumerable<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage>>> read, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Testing.TuningDataSample> samples, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckVisionEncoder(Idrak.Abstraction.Generation.IVisionEncoder encoder, Idrak.Abstraction.Generation.IVisionEncoder? cpu = null, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ImageData>? samples = null, float tolerance = 0.0001f, Idrak.Abstraction.Testing.ContractCheckOptions? options = null, Idrak.Abstraction.Generation.VisionOptions? visionOptions = null)
 
 public sealed class Idrak.Abstraction.Testing.ConformanceException : System.Exception
@@ -121,6 +123,31 @@ public sealed record Idrak.Abstraction.Testing.DeviceCheckOptions : System.IEqua
   public int RandomRuns { get; init; }
   public int Seed { get; init; }
   public static System.Collections.Generic.IReadOnlyDictionary<string, float> DefaultTolerances { get; }
+
+public sealed class Idrak.Abstraction.Testing.FeatureCacheSuite : Idrak.Abstraction.Testing.ContractSuite<Idrak.Abstraction.Testing.FeatureCacheUnderTest>
+  public FeatureCacheSuite(Idrak.Abstraction.Device? device = null)
+  public override Idrak.Abstraction.Device Device { get; }
+  public override Idrak.Abstraction.Testing.ContractCase RandomCase(System.Random random, bool large)
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
+  public override string Name { get; }
+  public override void Run(Idrak.Abstraction.Testing.FeatureCacheUnderTest implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
+
+public sealed class Idrak.Abstraction.Testing.FeatureCacheUnderTest : System.IDisposable
+  public FeatureCacheUnderTest(System.Func<Idrak.Abstraction.Testing.FeatureKeyFields, Idrak.Abstraction.Tensor, bool> put, System.Func<Idrak.Abstraction.Testing.FeatureKeyFields, Idrak.Abstraction.Device, Idrak.Abstraction.Tensor?> get, System.Action clear, System.IDisposable? owner = null)
+  public Idrak.Abstraction.Tensor? Get(Idrak.Abstraction.Testing.FeatureKeyFields key, Idrak.Abstraction.Device device)
+  public bool Put(Idrak.Abstraction.Testing.FeatureKeyFields key, Idrak.Abstraction.Tensor value)
+  public void Clear()
+  public void Dispose()
+
+public sealed record Idrak.Abstraction.Testing.FeatureKeyFields : System.IEquatable<Idrak.Abstraction.Testing.FeatureKeyFields>
+  public FeatureKeyFields(string Image, string Transforms, string VisionOptions, string Family, string Checkpoint, string DType, string Stage)
+  public string Checkpoint { get; init; }
+  public string DType { get; init; }
+  public string Family { get; init; }
+  public string Image { get; init; }
+  public string Stage { get; init; }
+  public string Transforms { get; init; }
+  public string VisionOptions { get; init; }
 
 public static class Idrak.Abstraction.Testing.Regression
   public const string OperationKind = "operation"
@@ -230,6 +257,19 @@ public sealed class Idrak.Abstraction.Testing.TokenizerSuite : Idrak.Abstraction
   public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
   public override string Name { get; }
   public override void Run(Idrak.Abstraction.Generation.ITokenizer implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
+
+public sealed class Idrak.Abstraction.Testing.TuningDataFormatSuite : Idrak.Abstraction.Testing.ContractSuite<System.Func<string, System.Collections.Generic.IEnumerable<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage>>>>
+  public TuningDataFormatSuite(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Testing.TuningDataSample> samples)
+  public override Idrak.Abstraction.Testing.ContractCase RandomCase(System.Random random, bool large)
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
+  public override string Name { get; }
+  public override void Run(System.Func<string, System.Collections.Generic.IEnumerable<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage>>> implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
+
+public sealed record Idrak.Abstraction.Testing.TuningDataSample : System.IEquatable<Idrak.Abstraction.Testing.TuningDataSample>
+  public System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage>>? Expected { get; init; }
+  public TuningDataSample(string Path, System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage>>? Expected = null, string? Error = null)
+  public string Path { get; init; }
+  public string? Error { get; init; }
 
 public sealed class Idrak.Abstraction.Testing.VisionEncoderSuite : Idrak.Abstraction.Testing.ContractSuite<Idrak.Abstraction.Generation.IVisionEncoder>
   public Idrak.Abstraction.Device On { get; init; }
