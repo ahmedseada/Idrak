@@ -1,6 +1,7 @@
 # Plan 12: fine-tuning vision-language models (images in `FineTuner` and `idrak tune`)
 
-**Status:** planned 2026-10-09, against the code at `abstraction` 4ac4fa4. Nothing built yet.
+**Status:** planned 2026-10-09, against the code at `abstraction` 4ac4fa4. Phase 0 (the reference) built 2026-10-09;
+phases 1 to 6 not yet.
 
 **Goal.** Fine-tune a vision-language model on pages and their answers with LoRA (or QLoRA on an int8/int4 base),
 the way `bakrianoo/arabic-legal-documents-ocr-1.0` was trained in LlamaFactory (LoRA on the language model, the vision
@@ -48,6 +49,39 @@ tower frozen), and run the result through `idrak run`, `chat` and `serve`. The f
   pairs, LoRA on q/k/v/o, frozen tower; loss per step and the adapters' gradients written as fixtures.
 - Decides the exact masking (image tokens, `<start_of_image>`/`<end_of_image>` and the prompt untrained; the answer and
   its end-of-turn trained) and checks it against LlamaFactory's gemma3 template on one record of `train.json`.
+
+**As built.** `tools/vlm/make_tiny_tuning.py` → `tests/Idrak.Tests/data/vlm-tuning` (125 KB, `README.md` and
+`manifest.json` there; two runs write the same bytes). transformers 5.19.0 / torch 2.14.1 (CPU) fine-tunes the tiny
+Gemma 3 and the tiny LLaVA on three records (`image.png`, `image-palette.png`; one record with two images, one with a
+system line) with a hand-written LoRA (no peft): rank 2, alpha 4, q/k/v/o of the text decoder, tower frozen; run `lora`
+(projector frozen) and run `projector` (projector trained too, for phase 2). One step = all records in one batch, loss =
+mean token cross-entropy over the batch's trained tokens, plain SGD (rate 0.2, no momentum, clipping or schedule), 3
+steps. Per model, `tuning.json` holds the records (messages, rendered and expanded text, ids, the trained mask, image
+blocks; Gemma 3's also its ShareGPT form and LlamaFactory's labels), the settings and each run's losses and step-1
+per-token cross-entropies; `adapter-init/` is a PEFT folder `LoadAdapter` reads (B not zero, so A has step-1 gradients);
+`<run>/grads-step1.safetensors`, `<run>/adapter-step3/`, `projector/projector-step3.safetensors`; `features/` the frozen
+features per image. Rerun: `pip download llamafactory==0.9.5 --no-deps -d lf`, then `vlm/bin/python
+tools/vlm/make_tiny_tuning.py tests/Idrak.Tests/data/vlm-tuning --llamafactory-wheel lf/llamafactory-0.9.5-py3-none-any.whl`.
+
+**The masking decided.** Untrained: the whole prompt (system and user text, turn headers, image tokens, `<start_of_image>`,
+`<end_of_image>` and the `"\n\n"` around them). Trained: the answer and the token that ends the turn (`<end_of_turn>`);
+the `"\n"` the Gemma 3 template writes after `<end_of_turn>` untrained. This is `ChatTranscriptEncoder`'s rule for text
+(span from the generation prompt's header to the trimmed end-of-message text), so text and image tuning share it.
+LlamaFactory 0.9.5's `gemma3` template (read from its wheel, reproduced in the script, which asserts the source lines it
+follows) gives the same ids token for token on each record written in its ShareGPT format (`<image>` placeholders, an
+`images` list, `system`), and trains one token more: that `"\n"` (its assistant slot is `{{content}}<end_of_turn>\n`);
+generation stops at `<end_of_turn>`, so the `"\n"` is never predicted. Both masks are in the fixture. The tiny LLaVA
+template writes no end of turn, so its trained span is `" {answer} "` to the end of the text.
+
+**Checked today** (`VisionTuningReferenceTests.cs`, `IDRAK_FILTER="vision tuning reference"`, CPU): the records through
+`ChatTranscriptEncoder.Render`, the family's `IImagePromptFormat.Expand` and segment-wise tokenization (ids and mask
+exact; `Encode` trains the same tokens), `ImagePrefill.Locate`; then the 3 steps by hand: `ImagePrefill.Forward` with
+autograd, `AddAdapters` + `LoadAdapter(adapter-init)`, a masked mean cross-entropy, `Sgd`: losses within 1e-6, step-1
+gradients within 2e-7 (Gemma 3) and 6e-7 (LLaVA) of transformers', adapters after step 3 within 1e-5; Gemma 3's
+projector run through `Gemma3ImageEncoder.Projector` (gradients and values). LLaVA's projector run is in the fixture but
+not checked yet: the test plug-in's projector has no trainable weights (phase 1's `IVisionTuningPart`). Phase 2 runs the
+same fixtures through `FineTuner.Train` (`Optimizer = ps => new Sgd(ps, 0.2f)`, a constant schedule, `MaxGradientNorm =
+0`, rank 2, alpha 4, q/k/v/o, the adapters loaded from `adapter-init`).
 
 ### Phase 1: contracts and registries (Abstraction, no family)
 
