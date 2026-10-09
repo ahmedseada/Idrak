@@ -335,7 +335,8 @@ internal static partial class Tests
         private static string Literal(object? value, Type? type = null) => value switch
         {
             null or DBNull or Missing => type is { IsValueType: true } && Nullable.GetUnderlyingType(type) is null ? "default" : "null",
-            string s => "\"" + s.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal) + "\"",
+            // A multi-line raw string constant holds the checkout's line endings (CRLF on Windows with autocrlf): written as "\n" whatever they are.
+            string s => "\"" + s.ReplaceLineEndings("\n").Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal) + "\"",
             char c => $"'{c}'",
             bool b => b ? "true" : "false",
             float f => f.ToString("R", CultureInfo.InvariantCulture) + "f",

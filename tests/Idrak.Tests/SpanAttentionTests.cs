@@ -381,7 +381,8 @@ internal static partial class Tests
             var (_, kernels, source) = Idrak.Gpu.Cuda.PtxKernels.SpanFloatModule(d);
             var counts = Idrak.Gpu.Cuda.PtxKernels.ParameterCountsOf(source);
             Check(kernels.SequenceEqual([Idrak.Gpu.Cuda.PtxKernels.SpanFloatName(d)]) && counts[kernels[0]] == 14, $"f32 d{d}: one kernel of 14 parameters");
-            Check(source.StartsWith(".version 6.0\n.target sm_50", StringComparison.Ordinal), $"f32 d{d}: PTX 6.0 for sm_50, as the main module");
+            // The PTX is written from raw string literals, so its line endings are the checkout's (CRLF on Windows with autocrlf).
+            Check(source.ReplaceLineEndings("\n").StartsWith(".version 6.0\n.target sm_50", StringComparison.Ordinal), $"f32 d{d}: PTX 6.0 for sm_50, as the main module");
             int shared = Idrak.Gpu.Cuda.PtxKernels.SpanFloatShared(d);
             Check(shared <= documented.SharedPerBlockOptin && (shared <= old.SharedPerBlockOptin) == (d < 104), $"f32 d{d}: {shared} bytes of shared memory");
             if (d % 16 == 0)
