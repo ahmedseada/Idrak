@@ -57,6 +57,14 @@ public static class Idrak.Data.Abstractions.SampleSources
   public static void Register(string name, Idrak.Abstraction.Data.SampleSourceFactory factory)
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
+public static class Idrak.Data.ChatImageDecoder
+  public static Idrak.Abstraction.Data.ImageData Decode(Idrak.Abstraction.Generation.ChatImage image)
+  public static Idrak.Abstraction.Data.ImageData Decode(System.ReadOnlySpan<byte> file)
+  public static Idrak.Abstraction.Data.ImageData Orient(Idrak.Abstraction.Data.ImageData image, int orientation)
+  public static Idrak.Abstraction.Generation.ChatImage Grayscale(Idrak.Abstraction.Generation.ChatImage image)
+  public static int Orientation(System.ReadOnlySpan<byte> file)
+  public static string? FormatOf(Idrak.Abstraction.Generation.ChatImage image)
+
 public sealed record Idrak.Data.CsvOptions : System.IEquatable<Idrak.Data.CsvOptions>
   [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public CsvOptions()
   public System.Collections.Generic.IReadOnlyList<string> IgnoreColumns { get; init; }

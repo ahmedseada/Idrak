@@ -51,9 +51,9 @@ public static class GenerativeModels
     {
         ArgumentNullException.ThrowIfNull(engine);
         var settings = Configure(name, configure, reloadable);
-        if (settings.ChatTemplate is not null || settings.ToolRegistry is not null)
+        if (settings.ChatTemplate is not null || settings.ToolRegistry is not null || settings.ImageReader is not null)
         {
-            throw new InvalidOperationException($"'{name}' is a text model; Template and Tools apply to chat models.");
+            throw new InvalidOperationException($"'{name}' is a text model; Template, Tools and Images apply to chat models.");
         }
 
         return engine.Add(name, new TextEngineModel(settings, load, owns, reloadable));
@@ -101,6 +101,7 @@ public sealed class GenerativeModelBuilder
     internal Device? TargetDevice { get; private set; }
     internal ChatTemplate? ChatTemplate { get; private set; }
     internal IToolRegistry? ToolRegistry { get; private set; }
+    internal Func<TextGenerator, ChatImages>? ImageReader { get; private set; }
 
     /// <summary>Loads <paramref name="count"/> copies, so that many generations run at the same time.</summary>
     public GenerativeModelBuilder Instances(int count)
@@ -161,6 +162,20 @@ public sealed class GenerativeModelBuilder
     public GenerativeModelBuilder Tools(IToolRegistry tools)
     {
         ToolRegistry = tools;
+        return this;
+    }
+
+    /// <summary>
+    /// Chat models: they read images (a vision-language model). <paramref name="images"/> is called for each copy once
+    /// its text generator loads, and gives how that copy reads images (<see cref="ChatGenerator.Images"/>: the model's
+    /// image tokens, its prompt format and its encoder on the copy's device); the engine disposes
+    /// <see cref="ChatImages.Owner"/> when it unloads the copy. The model then takes image parts
+    /// (<see cref="IChatModel.PartKinds"/>) when its chat template renders them; a request is answered with its images
+    /// encoded once each time (no cache across requests).
+    /// </summary>
+    public GenerativeModelBuilder Images(Func<TextGenerator, ChatImages> images)
+    {
+        ImageReader = images ?? throw new ArgumentNullException(nameof(images));
         return this;
     }
 

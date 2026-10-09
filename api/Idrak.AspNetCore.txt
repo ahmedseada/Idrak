@@ -13,10 +13,11 @@ public sealed record Idrak.AspNetCore.ChatApiFunction : System.IEquatable<Idrak.
   public string? Description { get; init; }
 
 public sealed record Idrak.AspNetCore.ChatApiMessage : System.IEquatable<Idrak.AspNetCore.ChatApiMessage>
-  public ChatApiMessage(string Role, string? Content = null, string? Thinking = null, System.Collections.Generic.List<Idrak.AspNetCore.ChatApiToolCall>? ToolCalls = null, string? ToolName = null)
+  public ChatApiMessage(string Role, System.Text.Json.Nodes.JsonNode? Content = null, string? Thinking = null, System.Collections.Generic.List<Idrak.AspNetCore.ChatApiToolCall>? ToolCalls = null, string? ToolName = null, System.Collections.Generic.List<string>? Images = null)
   public System.Collections.Generic.List<Idrak.AspNetCore.ChatApiToolCall>? ToolCalls { get; init; }
+  public System.Collections.Generic.List<string>? Images { get; init; }
+  public System.Text.Json.Nodes.JsonNode? Content { get; init; }
   public string Role { get; init; }
-  public string? Content { get; init; }
   public string? Thinking { get; init; }
   public string? ToolName { get; init; }
 
@@ -37,17 +38,19 @@ public sealed record Idrak.AspNetCore.ChatApiModelTag : System.IEquatable<Idrak.
 
 public sealed class Idrak.AspNetCore.ChatApiOptions
   public ChatApiOptions()
+  public Idrak.AspNetCore.ChatApiOptions Images(System.Action<Idrak.AspNetCore.ImageInputOptions> configure)
   public Idrak.AspNetCore.ChatApiOptions ModelName(string name)
   public Idrak.AspNetCore.ChatApiOptions Tools(Idrak.AspNetCore.ToolExecution execution, int? maxRounds = null, Idrak.Abstraction.Generation.IToolRegistry? tools = null)
   public Idrak.AspNetCore.ChatApiOptions Version(string version)
 
 public sealed record Idrak.AspNetCore.ChatApiRequest : System.IEquatable<Idrak.AspNetCore.ChatApiRequest>
-  public ChatApiRequest(string? Model, System.Collections.Generic.List<Idrak.AspNetCore.ChatApiMessage> Messages, bool? Stream = null, System.Text.Json.JsonElement? Think = null, System.Text.Json.JsonElement? KeepAlive = null, System.Collections.Generic.Dictionary<string, System.Text.Json.JsonElement>? Options = null, System.Collections.Generic.List<Idrak.AspNetCore.ChatApiTool>? Tools = null)
+  public ChatApiRequest(string? Model, System.Collections.Generic.List<Idrak.AspNetCore.ChatApiMessage> Messages, bool? Stream = null, System.Text.Json.JsonElement? Think = null, System.Text.Json.JsonElement? KeepAlive = null, System.Collections.Generic.Dictionary<string, System.Text.Json.JsonElement>? Options = null, System.Collections.Generic.List<Idrak.AspNetCore.ChatApiTool>? Tools = null, bool? Grayscale = null)
   public System.Collections.Generic.Dictionary<string, System.Text.Json.JsonElement>? Options { get; init; }
   public System.Collections.Generic.List<Idrak.AspNetCore.ChatApiMessage> Messages { get; init; }
   public System.Collections.Generic.List<Idrak.AspNetCore.ChatApiTool>? Tools { get; init; }
   public System.Text.Json.JsonElement? KeepAlive { get; init; }
   public System.Text.Json.JsonElement? Think { get; init; }
+  public bool? Grayscale { get; init; }
   public bool? Stream { get; init; }
   public string? Model { get; init; }
 
@@ -95,12 +98,14 @@ public sealed class Idrak.AspNetCore.CompletionsApiOptions
   public CompletionsApiOptions()
   public Idrak.AspNetCore.CompletionsApiOptions ChatModel(string name, Idrak.Abstraction.Generation.IChatModel model)
   public Idrak.AspNetCore.CompletionsApiOptions Embeddings(string name, Idrak.Abstraction.Retrieval.IEmbedder embedder)
+  public Idrak.AspNetCore.CompletionsApiOptions Images(System.Action<Idrak.AspNetCore.ImageInputOptions> configure)
 
 public static class Idrak.AspNetCore.CompletionsTranslation
   public static Idrak.Abstraction.Generation.ChatRequest Chat(System.Text.Json.Nodes.JsonObject body)
   public static Idrak.Abstraction.Generation.GenerationOptions Options(System.Text.Json.Nodes.JsonObject body)
   public static System.Text.Json.Nodes.JsonObject Call(Idrak.Abstraction.Generation.ToolCall call)
   public static System.Text.Json.Nodes.JsonObject Message(Idrak.Abstraction.Generation.ChatMessage message)
+  public static System.Threading.Tasks.Task<(Idrak.Abstraction.Generation.ChatRequest, bool, bool)> Upload(Microsoft.AspNetCore.Http.IFormCollection form, System.Threading.CancellationToken cancellationToken = default)
 
 public sealed record Idrak.AspNetCore.GenerationRequest : System.IEquatable<Idrak.AspNetCore.GenerationRequest>
   public GenerationRequest(string Prompt, System.Collections.Generic.Dictionary<string, System.Text.Json.JsonElement>? Options = null, bool? Stream = null)
@@ -125,6 +130,13 @@ public static class Idrak.AspNetCore.IdrakEndpointExtensions
 
 public static class Idrak.AspNetCore.IdrakServiceCollectionExtensions
   public static Idrak.AspNetCore.IdrakBuilder AddIdrak(this Microsoft.Extensions.DependencyInjection.IServiceCollection services)
+
+public sealed class Idrak.AspNetCore.ImageInputOptions
+  public ImageInputOptions()
+  public System.TimeSpan UrlTimeout { get; set; }
+  public bool AllowUrls { get; set; }
+  public int MaxImages { get; set; }
+  public long MaxUrlBytes { get; set; }
 
 public enum Idrak.AspNetCore.ToolExecution : int
   Client = 0

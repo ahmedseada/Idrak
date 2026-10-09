@@ -36,15 +36,15 @@ internal static partial class Tests
             string name = Path.GetFileName(file);
             int n = int.Parse(name[5..6], System.Globalization.CultureInfo.InvariantCulture);
             var image = ChatImage.FromFile(file);
-            Check(ImageInputs.Orientation(image.Data.Span) == n, $"{name}: orientation {ImageInputs.Orientation(image.Data.Span)}, expected {n}");
+            Check(ChatImageDecoder.Orientation(image.Data.Span) == n, $"{name}: orientation {ChatImageDecoder.Orientation(image.Data.Span)}, expected {n}");
             var upright = ImageInputs.Decode(image);
             var expected = ImageCodecs.Decode(TestData($"vlm/exif/upright-{n}{Path.GetExtension(file)}.png"));
             Check(upright.Width == expected.Width && upright.Height == expected.Height && upright.Channels == expected.Channels
                   && upright.Pixels.Select(v => (int)MathF.Round(v * 255)).SequenceEqual(expected.Pixels.Select(v => (int)MathF.Round(v * 255))), $"{name}: {upright.Width} x {upright.Height} differs from Pillow's exif_transpose ({expected.Width} x {expected.Height})");
         }
 
-        Check(ImageInputs.Orientation(File.ReadAllBytes(TestData("vlm/image.png"))) == 1 && ImageInputs.Orientation(File.ReadAllBytes(TestData("vlm/image.jpg"))) == 1
-              && ImageInputs.Orientation(new byte[] { 0xFF, 0xD8, 0xFF, 0xE1, 0x00 }) == 1, "no EXIF (or a cut one): orientation 1");
+        Check(ChatImageDecoder.Orientation(File.ReadAllBytes(TestData("vlm/image.png"))) == 1 && ChatImageDecoder.Orientation(File.ReadAllBytes(TestData("vlm/image.jpg"))) == 1
+              && ChatImageDecoder.Orientation(new byte[] { 0xFF, 0xD8, 0xFF, 0xE1, 0x00 }) == 1, "no EXIF (or a cut one): orientation 1");
     }
 
     private static void CliImageTemplate(Device device)

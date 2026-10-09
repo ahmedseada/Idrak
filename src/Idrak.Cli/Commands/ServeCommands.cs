@@ -51,6 +51,12 @@ internal sealed class ServeCommand : Command
               --max-concurrency N    model requests answered at once; the rest wait (default 0: no limit)
               --keep-alive DURATION  unload a model after this long without use: 30s, 5m, 1h, 0 (after each
                                      request) or -1 (never) (default 5m)
+              --max-request-mb N     the largest request body, images included (default 32); larger is a 413
+              --max-images N         the most images in one request (default 8)
+              --grayscale            read a vision model's images grey (some OCR fine-tunes ask for it; an alias
+                                     can keep it); a request can also ask with "grayscale": true
+              --allow-image-urls     let image_url parts name http(s) addresses the server downloads (off: data
+                                     URLs and uploads only; each download is held to --max-request-mb and 30 s)
           -w, --weights FORMAT       int8, int4, bf16 or a registered packed format
           -k, --kv FORMAT            the KV cache format (float32, int8, bfloat16 or a registered one)
               --context N            the longest context to allocate
@@ -69,12 +75,18 @@ internal sealed class ServeCommand : Command
         Endpoints:
           chat API           POST /api/chat (streamed lines, tool calls, think, keep_alive), GET /api/tags,
                              GET /api/ps, GET /api/version
-          OpenAI-style API   GET /v1/models, POST /v1/chat/completions (stream, tools), POST /v1/completions;
-                             POST /v1/embeddings answers 404 (no embedding model can be served yet)
+          OpenAI-style API   GET /v1/models, POST /v1/chat/completions (stream, tools, image_url parts as data
+                             URLs), POST /v1/completions; POST /v1/embeddings answers 404 (no embedding model
+                             can be served yet)
+          image upload       POST /v1/chat/upload, a multipart/form-data form: image (one or more files),
+                             prompt, and optionally system, stream (true: server-sent events), max_tokens,
+                             temperature, grayscale, model; answers as /v1/chat/completions
           web chat           GET /ui
           control            GET /idrak/ps, POST /idrak/load, /idrak/unload, /idrak/stop, GET /idrak/status
           metrics            GET /metrics (with --metrics)
-        Tool calls are returned to the client, which runs the tools. Point clients at http://127.0.0.1:7317 (the
+        A vision-language model (Gemma 3, such as an OCR fine-tune) takes images on /v1/chat/completions,
+        /v1/chat/upload and /api/chat (PNG, JPEG, BMP, PPM/PGM; turned upright by their EXIF orientation); a
+        text-only model answers an image with 400. Tool calls are returned to the client, which runs the tools. Point clients at http://127.0.0.1:7317 (the
         chat API's base address, or http://127.0.0.1:7317/v1 for the OpenAI-style API), or serve on the port they
         expect with -p.
 
@@ -90,6 +102,7 @@ internal sealed class ServeCommand : Command
           idrak serve qwen -p 11434                      # for clients that expect the chat API on port 11434
           idrak s qwen phi -p 8080 --api-key $KEY        # two models on one port
           idrak serve tiny=./tiny.gguf -d vulkan:0 -k int8 --keep-alive 30m --cors http://localhost:3000
+          idrak serve ocr=bakrianoo/arabic-legal-documents-ocr-1.0 -d cuda:0 -w bf16 --grayscale
           idrak serve qwen --mcp --tools ./MyTools.dll  # an MCP client's configuration starts it this way
         """;
 

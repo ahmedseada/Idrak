@@ -20,7 +20,7 @@ internal static partial class Tests
         ("chat parts: the registry (text and image as library defaults, Register/Unregister, Origin, versions, policies) and the JSON of parts and content", d => { if (d == Device.Cpu) ChatPartRegistry(); }),
         ("chat parts: the testing kit's ChatPartKindSuite passes the built-in kinds and catches a kind that loses data", d => { if (d == Device.Cpu) ChatPartKit(); }),
         ("chat parts: text-only models (ChatGenerator, the engine's chat model, FakeChatModel, WithTools) and templates refuse an image with a clear message; text is unchanged", ChatPartModelsRefuse),
-        ("chat parts: chat JSON (ChatJson, fine-tuning transcripts, the CLI's --history) round-trips images and keeps text-only content a string; /v1 refuses image_url parts", ChatPartJson),
+        ("chat parts: chat JSON (ChatJson, fine-tuning transcripts, the CLI's --history) round-trips images and keeps text-only content a string; /v1 reads image_url data URLs and refuses other parts", ChatPartJson),
     ];
 
     private static readonly byte[] PngBytes = [0x89, (byte)'P', (byte)'N', (byte)'G', 13, 10, 26, 10, 0, 0, 0, 13, 1, 2, 3];
@@ -314,14 +314,16 @@ internal static partial class Tests
             Directory.Delete(folder, true);
         }
 
+        var withImage = Idrak.AspNetCore.CompletionsTranslation.Chat(JsonNode.Parse("""{"messages": [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}}, {"type": "text", "text": "a"}]}]}""")!.AsObject());
+        Check(withImage.Messages[0].Parts is [ChatImage { MediaType: "image/png" }, ChatText { Text: "a" }], "/v1 image_url data URLs become image parts (plan 11, phase 8)");
         try
         {
-            Idrak.AspNetCore.CompletionsTranslation.Chat(JsonNode.Parse("""{"messages": [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}}]}]}""")!.AsObject());
-            Check(false, "/v1 refuses image_url parts until it takes them");
+            Idrak.AspNetCore.CompletionsTranslation.Chat(JsonNode.Parse("""{"messages": [{"role": "user", "content": [{"type": "input_audio", "input_audio": {}}]}]}""")!.AsObject());
+            Check(false, "/v1 refuses parts it does not take");
         }
         catch (ArgumentException e)
         {
-            Check(e.Message.Contains("'image_url'", StringComparison.Ordinal), e.Message);
+            Check(e.Message.Contains("'input_audio'", StringComparison.Ordinal), e.Message);
         }
 
         var request = Idrak.AspNetCore.CompletionsTranslation.Chat(JsonNode.Parse("""{"messages": [{"role": "user", "content": [{"type": "text", "text": "a"}, {"type": "text", "text": "b"}]}, {"role": "assistant", "content": null}]}""")!.AsObject());

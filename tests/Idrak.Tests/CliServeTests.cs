@@ -45,6 +45,7 @@ internal static partial class Tests
         ("cli serve: the port (--port, IDRAK_PORT, config serve.port, default 7317) for serve and the client commands", d => { if (d == Device.Cpu) CliServePort(); }),
         ("cli serve: serve a tiny model, both APIs (streaming and not), ps, api, ping, load/unload, metrics, request log, stop", CliServeEndToEnd),
         ("cli serve: mcp serve over pipes, --list", d => { if (d == Device.Cpu) CliMcpServe(); }),
+        ("cli serve: images: idrak serve with the tiny Gemma 3 answers /v1 data URLs, uploads and /api/chat as run --image (grayscale per request and --grayscale as run --grayscale); text model, http URL, limits, bad input refused", CliServeImages),
         ("cli serve: OpenAI-style API in Idrak.AspNetCore (tool calls streamed and not, translation, embeddings)", d => { if (d == Device.Cpu) CompletionsApiScripted(); }),
     ];
 

@@ -142,6 +142,7 @@ public sealed class Idrak.Generation.ChatImages
   public Idrak.Generation.Abstractions.IImagePromptFormat Format { get; }
   public Idrak.Models.ImageTokenIds Tokens { get; }
   public System.Func<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatImage>, Idrak.Abstraction.Tensor> Encode { get; }
+  public System.IDisposable? Owner { get; init; }
 
 public static class Idrak.Generation.ChatJson
   public static System.Text.Json.Nodes.JsonArray Messages(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> messages)
@@ -319,6 +320,7 @@ public static class Idrak.Generation.WebTools
 
 public sealed class Idrak.Inference.GenerativeModelBuilder
   public Idrak.Inference.GenerativeModelBuilder Device(Idrak.Abstraction.Device device)
+  public Idrak.Inference.GenerativeModelBuilder Images(System.Func<Idrak.Generation.TextGenerator, Idrak.Generation.ChatImages> images)
   public Idrak.Inference.GenerativeModelBuilder Instances(int count)
   public Idrak.Inference.GenerativeModelBuilder KeepAlive(System.TimeSpan? idle)
   public Idrak.Inference.GenerativeModelBuilder QueueLimit(int waiting)

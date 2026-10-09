@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Collections.Frozen;
 using System.Runtime.CompilerServices;
 using Idrak.Generation;
 
@@ -19,10 +20,32 @@ internal sealed class ChatEngineModel(GenerativeModelBuilder settings, Func<Devi
     /// <summary>The tools registered with the model, or null.</summary>
     public IToolRegistry? Tools => settings.ToolRegistry;
 
-    public override ChatGenerator LoadCopy() => new(settings.Load(load), settings.ChatTemplate);
+    public override ChatGenerator LoadCopy()
+    {
+        var generator = settings.Load(load);
+        if (settings.ImageReader is not { } images)
+        {
+            return new ChatGenerator(generator, settings.ChatTemplate);
+        }
+
+        try
+        {
+            return new ChatGenerator(generator, settings.ChatTemplate) { Images = images(generator) };
+        }
+        catch
+        {
+            if (owns)
+            {
+                generator.Model.Dispose();
+            }
+
+            throw;
+        }
+    }
 
     public override void UnloadCopy(ChatGenerator copy)
     {
+        copy.Images?.Owner?.Dispose();
         if (owns)
         {
             copy.Generator.Model.Dispose();
@@ -31,8 +54,15 @@ internal sealed class ChatEngineModel(GenerativeModelBuilder settings, Func<Devi
 
     public override ModelDescription Describe(ChatGenerator copy) => TextEngineModel.Describe(Name, Kind, copy.Generator);
 
-    /// <summary>The kinds of message parts it takes: those of its <see cref="ChatGenerator"/> copies (text only).</summary>
-    public IReadOnlySet<string> PartKinds => ChatParts.TextOnly;
+    /// <summary>
+    /// The kinds of message parts it takes, known before a copy loads: text, and images when it was given
+    /// <see cref="GenerativeModelBuilder.Images"/> and its chat template renders them (<see cref="ChatTemplate.PartKinds"/>).
+    /// </summary>
+    public IReadOnlySet<string> PartKinds => _partKinds ??= settings.ImageReader is not null
+        && (settings.ChatTemplate ?? new ChatMLTemplate()).PartKinds.Contains(ChatParts.Image)
+            ? FrozenSet.Create(StringComparer.Ordinal, ChatParts.Text, ChatParts.Image) : ChatParts.TextOnly;
+
+    private IReadOnlySet<string>? _partKinds;
 
     public async IAsyncEnumerable<ChatChunk> StreamAsync(ChatRequest request, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
