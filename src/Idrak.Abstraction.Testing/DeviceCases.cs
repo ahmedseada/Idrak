@@ -28,7 +28,8 @@ public static partial class DeviceCases
         new("normalization: batch, group, layer and RMS norms, their gradients and fused forms", Normalization, random: true),
         new("rotary positions: rope forward and back, normalized rope, pairs and attention heads", RotaryPositions, random: true),
         new("embeddings: gather, bfloat16 gather (rows and columns), one-hot and scatter-add", Embeddings, random: true),
-        new("convolution and pooling: im2col, col2im, max pooling and its gradients", ConvolutionAndPooling, random: true),
+        new("convolution and pooling: im2col, col2im (rectangular, strided, padded, dilated), max pooling and its gradients", ConvolutionAndPooling, random: true),
+        new("sequence losses: CTC loss and its gradient, against every alignment listed (both layouts, empty and repeated labels, impossible alignments)", SequenceLosses, random: true),
         new("layout: permutations, axis sums and broadcasts", Layout, random: true),
         new("optimizer steps: SGD, Adam, 8-bit Adam and fused AdamW", OptimizerSteps, random: true),
         new("packed weights: int8, 4-bit and bfloat16 products, dequantization and packing", PackedWeights, random: true),
@@ -524,6 +525,13 @@ public static partial class DeviceCases
         [
             new(1, 1, 1, 1, 1, 1, 1, 1, 0, 0), new(2, 3, 7, 5, 3, 3, 1, 1, 1, 1), new(1, 2, 9, 9, 3, 3, 2, 2, 0, 0),
             new(c.Size(1, 3), c.Size(1, 4), c.Size(3, 12), c.Size(3, 12), 3, 2, c.Size(1, 2), c.Size(1, 2), c.Random.Next(2), c.Random.Next(2)),
+
+            // Rectangular windows, strides and padding, and dilation (a text line's tall and wide kernels, atrous convolution).
+            new(2, 2, 6, 11, 2, 5, 2, 1, 1, 2), new(1, 3, 9, 8, 3, 2, 1, 2, 2, 1) { DH = 2, DW = 3 },
+            new(c.Size(1, 2), c.Size(1, 3), c.Size(7, 14), c.Size(7, 14), c.Size(1, 3), c.Size(1, 3), c.Size(1, 2), c.Size(1, 3), c.Random.Next(3), c.Random.Next(3))
+            {
+                DH = c.Size(1, 3), DW = c.Size(1, 2),
+            },
         ];
         foreach (var g in convolutions)
         {
@@ -532,7 +540,11 @@ public static partial class DeviceCases
             b.Col2Im(Random(c, cols), Random(c, input), g);
         }
 
-        ConvGeometry[] pools = [new(1, 1, 2, 2, 2, 2, 2, 2, 0, 0), new(2, 3, 8, 6, 2, 2, 2, 2, 0, 0), new(c.Size(1, 3), c.Size(1, 4), c.Size(3, 12), c.Size(3, 12), 3, 3, 2, 1, 0, 0)];
+        ConvGeometry[] pools =
+        [
+            new(1, 1, 2, 2, 2, 2, 2, 2, 0, 0), new(2, 3, 8, 6, 2, 2, 2, 2, 0, 0), new(c.Size(1, 3), c.Size(1, 4), c.Size(3, 12), c.Size(3, 12), 3, 3, 2, 1, 0, 0),
+            new(2, 2, 8, 9, 2, 1, 2, 1, 0, 0), new(1, 3, 7, 10, 3, 2, 1, 2, 1, 1),                    // rectangular windows and strides (text lines)
+        ];
         foreach (var g in pools)
         {
             int input = g.N * g.C * g.H * g.W, count = g.N * g.C * g.OH * g.OW;

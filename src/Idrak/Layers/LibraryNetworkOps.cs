@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Text.Json.Nodes;
 using Idrak.Layers.Abstractions;
 
 namespace Idrak.Layers;
@@ -24,21 +25,40 @@ internal static class LibraryNetworkOps
         NetworkOps.Register("batchnorm", (b, a) => Of(b).BatchNorm(a.Float("momentum"), a.Float("epsilon")));
         NetworkOps.Register("layernorm", (b, a) => Of(b).LayerNorm(a.Float("epsilon")));
         NetworkOps.Register("normalize", (b, a) => Of(b).Normalize(a.Floats("mean"), a.Floats("std")));
-        NetworkOps.Register("conv2d", (b, a) => Of(b).Conv2d(a.Int("out"), a.Int("kernel"), a.Int("stride"), a.Int("padding"), a.Bool("bias")));
-        NetworkOps.Register("maxpool2d", (b, a) => Of(b).MaxPool2d(a.Int("kernel"), a.OptionalInt("stride"), a.Int("padding")));
+        NetworkOps.Register("conv2d", (b, a) => Pairs(a, "kernel", "stride", "padding") || a.Has("dilation") || a.Has("groups")
+            ? Of(b).Conv2d(a.Int("out"), Pair(a, "kernel"), Pair(a, "stride"), Pair(a, "padding"), OptionalPair(a, "dilation"), a.OptionalInt("groups") ?? 1, a.Bool("bias"))
+            : Of(b).Conv2d(a.Int("out"), a.Int("kernel"), a.Int("stride"), a.Int("padding"), a.Bool("bias")));
+        NetworkOps.Register("maxpool2d", (b, a) => Pairs(a, "kernel", "stride", "padding")
+            ? Of(b).MaxPool2d(Pair(a, "kernel"), OptionalPair(a, "stride"), Pair(a, "padding"))
+            : Of(b).MaxPool2d(a.Int("kernel"), a.OptionalInt("stride"), a.Int("padding")));
+        NetworkOps.Register("avgpool2d", (b, a) => Of(b).AvgPool2d(Pair(a, "kernel"), OptionalPair(a, "stride"), Pair(a, "padding"), a.Bool("countIncludePad")));
+        NetworkOps.Register("columnsToSequence", (b, _) => Of(b).ColumnsToSequence());
         NetworkOps.Register("globalavgpool2d", (b, _) => Of(b).GlobalAveragePool2d());
         NetworkOps.Register("flatten", (b, _) => Of(b).Flatten());
         NetworkOps.Register("embedding", (b, a) => Of(b).Embedding(a.Int("vocabulary"), a.Int("dim")));
         NetworkOps.Register("positional", (b, a) => Of(b).PositionalEncoding(a.OptionalInt("maxLength")));
         NetworkOps.Register("transformer", (b, a) => Of(b).TransformerEncoderLayer(a.Int("heads"), a.OptionalInt("ffDim"), a.Float("dropout"), a.Bool("causal")));
         NetworkOps.Register("attention", (b, a) => Of(b).MultiHeadAttention(a.Int("heads"), a.Bool("causal"), a.Float("dropout")));
-        NetworkOps.Register("lstm", (b, a) => Of(b).LSTM(a.Int("hidden"), a.Bool("returnSequences")));
-        NetworkOps.Register("gru", (b, a) => Of(b).GRU(a.Int("hidden"), a.Bool("returnSequences")));
+        NetworkOps.Register("lstm", (b, a) => a.Has("bidirectional")
+            ? Of(b).LSTM(a.Int("hidden"), a.Bool("returnSequences"), a.Bool("bidirectional"), a.OptionalInt("layers") ?? 1)
+            : Of(b).LSTM(a.Int("hidden"), a.Bool("returnSequences")));
+        NetworkOps.Register("gru", (b, a) => a.Has("bidirectional")
+            ? Of(b).GRU(a.Int("hidden"), a.Bool("returnSequences"), a.Bool("bidirectional"), a.OptionalInt("layers") ?? 1, a.Has("candidateBias") && a.Bool("candidateBias"))
+            : Of(b).GRU(a.Int("hidden"), a.Bool("returnSequences")));
         NetworkOps.Register("meanOverTime", (b, _) => Of(b).MeanOverTime());
         NetworkOps.Register("lastStep", (b, _) => Of(b).LastStep());
         NetworkOps.Register("firstStep", (b, _) => Of(b).FirstStep());
         NetworkOps.Register("reshape", (b, a) => Of(b).Reshape(a.Ints("shape")));
     }
+
+    // A (height, width) pair: one number for both, or [height, width].
+    private static (int Height, int Width) Pair(NetworkOpArguments a, string key) =>
+        a.Json[key] is JsonArray pair ? ((int)pair[0]!, (int)pair[1]!) : (a.Int(key), a.Int(key));
+
+    private static (int Height, int Width)? OptionalPair(NetworkOpArguments a, string key) => a.Has(key) ? Pair(a, key) : null;
+
+    // Whether any of the keys holds a [height, width] pair (a step the pair overloads wrote).
+    private static bool Pairs(NetworkOpArguments a, params string[] keys) => keys.Any(k => a.Json[k] is JsonArray);
 
     // The built-in steps are the builder's own layer methods, so they need Idrak's builder, the one implementation.
     private static NetworkBuilder Of(INetworkBuilder builder) => builder as NetworkBuilder

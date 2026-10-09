@@ -70,64 +70,66 @@ internal static class OperationIndex
     public const int MaxPool = 54;
     public const int MaxPoolBackward = 55;
     public const int MaxPoolBackward2 = 56;
-    public const int Permute = 57;
-    public const int SumAxis = 58;
-    public const int BroadcastAxis = 59;
-    public const int SgdStep = 60;
-    public const int AdamStep = 61;
-    public const int AdamStep8Bit = 62;
-    public const int SumSquares = 63;
-    public const int FusedAdamW = 64;
-    public const int ClipFactor = 65;
-    public const int Dropout = 66;
-    public const int DropoutBackward = 67;
-    public const int ScaleMaskSoftmax = 68;
-    public const int LayerNormFused = 69;
-    public const int LayerNormTrain = 70;
-    public const int LayerNormBackward = 71;
-    public const int BiasGelu = 72;
-    public const int Int8MatMul = 73;
-    public const int BFloat16MatMul = 74;
-    public const int BFloat16Dequantize = 75;
-    public const int PackBFloat16 = 76;
-    public const int Int8Dequantize = 77;
-    public const int Int4MatMul = 78;
-    public const int Int4Dequantize = 79;
-    public const int RmsNorm = 80;
-    public const int RmsNormBackward = 81;
-    public const int Rope = 82;
-    public const int RmsNormAffine = 83;
-    public const int AddRmsNormAffine = 84;
-    public const int RmsNormRope = 85;
-    public const int RmsNormRopePair = 86;
-    public const int NormRopeHeads = 87;
-    public const int SoftmaxCrossEntropyRows = 88;
-    public const int GatedActivation = 89;
-    public const int GatedActivationBackward = 90;
-    public const int GatedActivationPacked = 91;
-    public const int GatedActivationBackwardPacked = 92;
-    public const int KeyValueWriteInt8 = 93;
-    public const int AttentionScoresInt8 = 94;
-    public const int AttentionContextInt8 = 95;
-    public const int AttentionDecode = 96;
-    public const int AttentionInt8 = 97;
-    public const int AttentionBFloat16 = 98;
-    public const int KeyValueWriteBFloat16 = 99;
-    public const int AttentionTiledBackward = 100;
-    public const int AttentionSegmented = 101;
-    public const int AttentionRows = 102;
-    public const int AttentionSegmentedBackward = 103;
-    public const int AttentionTiled = 104;
-    public const int AttentionSpans = 105;
-    public const int AttentionSpansBackward = 106;
-    public const int DecoderMask = 107;
-    public const int KeyValueWrite = 108;
-    public const int SampleRows = 109;
-    public const int PenalizeRows = 110;
-    public const int HistoryPush = 111;
+    public const int CtcLoss = 57;
+    public const int CtcLossBackward = 58;
+    public const int Permute = 59;
+    public const int SumAxis = 60;
+    public const int BroadcastAxis = 61;
+    public const int SgdStep = 62;
+    public const int AdamStep = 63;
+    public const int AdamStep8Bit = 64;
+    public const int SumSquares = 65;
+    public const int FusedAdamW = 66;
+    public const int ClipFactor = 67;
+    public const int Dropout = 68;
+    public const int DropoutBackward = 69;
+    public const int ScaleMaskSoftmax = 70;
+    public const int LayerNormFused = 71;
+    public const int LayerNormTrain = 72;
+    public const int LayerNormBackward = 73;
+    public const int BiasGelu = 74;
+    public const int Int8MatMul = 75;
+    public const int BFloat16MatMul = 76;
+    public const int BFloat16Dequantize = 77;
+    public const int PackBFloat16 = 78;
+    public const int Int8Dequantize = 79;
+    public const int Int4MatMul = 80;
+    public const int Int4Dequantize = 81;
+    public const int RmsNorm = 82;
+    public const int RmsNormBackward = 83;
+    public const int Rope = 84;
+    public const int RmsNormAffine = 85;
+    public const int AddRmsNormAffine = 86;
+    public const int RmsNormRope = 87;
+    public const int RmsNormRopePair = 88;
+    public const int NormRopeHeads = 89;
+    public const int SoftmaxCrossEntropyRows = 90;
+    public const int GatedActivation = 91;
+    public const int GatedActivationBackward = 92;
+    public const int GatedActivationPacked = 93;
+    public const int GatedActivationBackwardPacked = 94;
+    public const int KeyValueWriteInt8 = 95;
+    public const int AttentionScoresInt8 = 96;
+    public const int AttentionContextInt8 = 97;
+    public const int AttentionDecode = 98;
+    public const int AttentionInt8 = 99;
+    public const int AttentionBFloat16 = 100;
+    public const int KeyValueWriteBFloat16 = 101;
+    public const int AttentionTiledBackward = 102;
+    public const int AttentionSegmented = 103;
+    public const int AttentionRows = 104;
+    public const int AttentionSegmentedBackward = 105;
+    public const int AttentionTiled = 106;
+    public const int AttentionSpans = 107;
+    public const int AttentionSpansBackward = 108;
+    public const int DecoderMask = 109;
+    public const int KeyValueWrite = 110;
+    public const int SampleRows = 111;
+    public const int PenalizeRows = 112;
+    public const int HistoryPush = 113;
 
     /// <summary>The number of operations.</summary>
-    public const int Count = 112;
+    public const int Count = 114;
 }
 
 /// <summary>
@@ -501,7 +503,7 @@ public static class OperationKernels
 
     /// <summary>
     /// A kernel for <see cref="Ops.Im2Col"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
-    /// Unfolds image patches: cols[(n, oh, ow), (c, kh, kw)] = x[n, c, oh*sh - ph + kh, ow*sw - pw + kw] (0 outside).
+    /// Unfolds image patches: cols[(n, oh, ow), (c, kh, kw)] = x[n, c, oh*sh - ph + kh*dh, ow*sw - pw + kw*dw] (0 outside; dh, dw the dilation).
     /// </summary>
     public delegate void Im2Col(Backend backend, Storage x, Storage cols, in ConvGeometry g);
 
@@ -529,6 +531,25 @@ public static class OperationKernels
     /// taking a count; a device that adds the gradients by gathering over the windows needs the geometry.
     /// </summary>
     public delegate void MaxPoolBackward2(Backend backend, Storage dy, Storage argmax, Storage dx, in ConvGeometry g);
+
+    /// <summary>
+    /// A kernel for <see cref="Ops.CtcLoss"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// Connectionist temporal classification (Graves et al. 2006): losses[n] = -log of the probability, summed over every
+    /// alignment, that the first inputLengths[n] steps of sequence n read as its labels (with <paramref name="blank"/>
+    /// between them and repeats collapsed). logProbs holds log-probabilities over <paramref name="classes"/> per step and
+    /// sequence, [steps, batch, classes] or, with <paramref name="batchFirst"/>, [batch, steps, classes]; the labels of
+    /// sequence n are targets[targetOffsets[n] ..] (targetLengths[n] ids as floats). A sequence no alignment fits has an
+    /// infinite loss, or 0 with <paramref name="zeroInfinity"/>.
+    /// </summary>
+    public delegate void CtcLoss(Backend backend, Storage logProbs, Storage targets, Storage losses, ReadOnlySpan<int> inputLengths, ReadOnlySpan<int> targetLengths, ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity);
+
+    /// <summary>
+    /// A kernel for <see cref="Ops.CtcLossBackward"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// The gradient of <see cref="Backend.CtcLossKernel"/>: dLogProbs += lossGrads[n] · ∂losses[n] / ∂logProbs for every sequence n
+    /// (steps past inputLengths[n] and classes outside the labels get nothing; with <paramref name="zeroInfinity"/> a
+    /// sequence of infinite loss gets nothing either).
+    /// </summary>
+    public delegate void CtcLossBackward(Backend backend, Storage logProbs, Storage targets, Storage lossGrads, Storage dLogProbs, ReadOnlySpan<int> inputLengths, ReadOnlySpan<int> targetLengths, ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity);
 
     /// <summary>
     /// A kernel for <see cref="Ops.Permute"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
@@ -1308,7 +1329,7 @@ public static partial class Ops
         new("ScatterAdd", "ScatterAddKernel", "Storage,Storage,Storage,Int32,Int32,Int32", OperationIndex.ScatterAdd, typeof(OperationKernels.ScatterAdd), KernelSource.Host);
 
     /// <summary>
-    /// Unfolds image patches: cols[(n, oh, ow), (c, kh, kw)] = x[n, c, oh*sh - ph + kh, ow*sw - pw + kw] (0 outside).
+    /// Unfolds image patches: cols[(n, oh, ow), (c, kh, kw)] = x[n, c, oh*sh - ph + kh*dh, ow*sw - pw + kw*dw] (0 outside; dh, dw the dilation).
     /// </summary>
     public static readonly Operation Im2Col =
         new("Im2Col", "Im2ColKernel", "Storage,Storage,ConvGeometry&", OperationIndex.Im2Col, typeof(OperationKernels.Im2Col), KernelSource.Host);
@@ -1337,6 +1358,25 @@ public static partial class Ops
     /// </summary>
     public static readonly Operation MaxPoolBackward2 =
         new("MaxPoolBackward2", "MaxPoolBackwardKernel", "Storage,Storage,Storage,ConvGeometry&", OperationIndex.MaxPoolBackward2, typeof(OperationKernels.MaxPoolBackward2), KernelSource.Composed);
+
+    /// <summary>
+    /// Connectionist temporal classification (Graves et al. 2006): losses[n] = -log of the probability, summed over every
+    /// alignment, that the first inputLengths[n] steps of sequence n read as its labels (with <c>blank</c>
+    /// between them and repeats collapsed). logProbs holds log-probabilities over <c>classes</c> per step and
+    /// sequence, [steps, batch, classes] or, with <c>batchFirst</c>, [batch, steps, classes]; the labels of
+    /// sequence n are targets[targetOffsets[n] ..] (targetLengths[n] ids as floats). A sequence no alignment fits has an
+    /// infinite loss, or 0 with <c>zeroInfinity</c>.
+    /// </summary>
+    public static readonly Operation CtcLoss =
+        new("CtcLoss", "CtcLossKernel", "Storage,Storage,Storage,ReadOnlySpan`1,ReadOnlySpan`1,ReadOnlySpan`1,Int32,Int32,Int32,Int32,Boolean,Boolean", OperationIndex.CtcLoss, typeof(OperationKernels.CtcLoss), KernelSource.Host);
+
+    /// <summary>
+    /// The gradient of <see cref="Backend.CtcLossKernel"/>: dLogProbs += lossGrads[n] · ∂losses[n] / ∂logProbs for every sequence n
+    /// (steps past inputLengths[n] and classes outside the labels get nothing; with <c>zeroInfinity</c> a
+    /// sequence of infinite loss gets nothing either).
+    /// </summary>
+    public static readonly Operation CtcLossBackward =
+        new("CtcLossBackward", "CtcLossBackwardKernel", "Storage,Storage,Storage,Storage,ReadOnlySpan`1,ReadOnlySpan`1,ReadOnlySpan`1,Int32,Int32,Int32,Int32,Boolean,Boolean", OperationIndex.CtcLossBackward, typeof(OperationKernels.CtcLossBackward), KernelSource.Host);
 
     /// <summary>
     /// y (+)= x permuted: output element at coordinates (c0..c[r-1]) of <c>outShape</c> comes from
@@ -1805,6 +1845,8 @@ public static partial class Ops
         MaxPool,
         MaxPoolBackward,
         MaxPoolBackward2,
+        CtcLoss,
+        CtcLossBackward,
         Permute,
         SumAxis,
         BroadcastAxis,

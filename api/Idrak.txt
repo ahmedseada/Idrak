@@ -375,6 +375,34 @@ public static class Idrak.Diagnostics.ModelMemory
   public static long KeyValueCacheBytes(Idrak.Abstraction.Generation.DecoderSpec spec, int capacity, Idrak.Abstraction.Generation.KeyValueLayout layout, int batch = 1)
   public static long TensorBytes(Idrak.Abstraction.Module module)
 
+public sealed record Idrak.Inference.Abstractions.CtcDecodeOptions : System.IEquatable<Idrak.Inference.Abstractions.CtcDecodeOptions>
+  public CtcDecodeOptions()
+  public float? MinLogProbability { get; init; }
+  public int BeamWidth { get; init; }
+  public int Blank { get; init; }
+  public int Results { get; init; }
+  public int? TopClasses { get; init; }
+
+public delegate System.Collections.Generic.IReadOnlyList<Idrak.Inference.Abstractions.CtcHypothesis> Idrak.Inference.Abstractions.CtcDecoder(System.ReadOnlyMemory<float> logProbs, int steps, int classes, Idrak.Inference.Abstractions.CtcDecodeOptions options)
+
+public static class Idrak.Inference.Abstractions.CtcDecoders
+  public const string Beam = "beam"
+  public const string Greedy = "greedy"
+  public static Idrak.Inference.Abstractions.CtcDecoder Get(string name)
+  public static Idrak.Inference.Abstractions.CtcDecoder? Default(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Inference.Abstractions.CtcHypothesis> Decode(System.ReadOnlyMemory<float> logProbs, int steps, int classes, string name = "greedy", Idrak.Inference.Abstractions.CtcDecodeOptions? options = null)
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Inference.Abstractions.CtcHypothesis>[] Decode(Idrak.Abstraction.Tensor logProbs, System.Collections.Generic.IReadOnlyList<int>? lengths = null, string name = "greedy", Idrak.Inference.Abstractions.CtcDecodeOptions? options = null, bool batchFirst = false)
+  public static bool Unregister(string name)
+  public static string? Origin(string name)
+  public static void Register(string name, Idrak.Inference.Abstractions.CtcDecoder decoder)
+  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
+public sealed record Idrak.Inference.Abstractions.CtcHypothesis : System.IEquatable<Idrak.Inference.Abstractions.CtcHypothesis>
+  public CtcHypothesis(int[] Labels, float LogProbability)
+  public float LogProbability { get; init; }
+  public int[] Labels { get; init; }
+
 public sealed record Idrak.Inference.ClassPrediction : System.IEquatable<Idrak.Inference.ClassPrediction>
   public ClassPrediction(string Class, int Index, float Probability, System.Collections.Generic.IReadOnlyList<Idrak.Inference.ClassScore> Scores)
   public System.Collections.Generic.IReadOnlyList<Idrak.Inference.ClassScore> Scores { get; init; }
@@ -630,18 +658,34 @@ public static class Idrak.Layers.Abstractions.NetworkOps
 
 public abstract class Idrak.Layers.Abstractions.RecurrentModule : Idrak.Abstraction.Module
   protected RecurrentModule(int inputSize, int hiddenSize, int gates, bool returnSequences, Idrak.Abstraction.Device? device, System.Random? random)
-  protected abstract System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> Run(Idrak.Abstraction.Tensor projected, int batch, int steps)
+  protected RecurrentModule(int inputSize, int hiddenSize, int gates, bool returnSequences, bool bidirectional, int layers, bool hiddenBias, Idrak.Abstraction.Device? device, System.Random? random)
+  protected abstract Idrak.Abstraction.Tensor[] Cell(Idrak.Abstraction.Tensor projected, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor> state, Idrak.Layers.Abstractions.RecurrentWeights weights)
+  protected abstract int States { get; }
   protected override void MoveTo(Idrak.Abstraction.Device device)
   protected sealed override Idrak.Abstraction.Tensor ForwardCore(Idrak.Abstraction.Tensor input)
-  protected static Idrak.Abstraction.Tensor Step(Idrak.Abstraction.Tensor projected, int t, int batch)
+  protected string Options { get; }
+  protected virtual bool ScalesLastHiddenBias { get; }
   protected virtual float[] InitialBias(int gates, int hiddenSize)
   public Idrak.Abstraction.Tensor Bias { get; }
   public Idrak.Abstraction.Tensor HiddenWeight { get; }
   public Idrak.Abstraction.Tensor InputWeight { get; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Layers.Abstractions.RecurrentWeights> Weights { get; }
+  public bool Bidirectional { get; }
   public bool ReturnSequences { get; }
+  public int Directions { get; }
+  public int Gates { get; }
   public int HiddenSize { get; }
   public int InputSize { get; }
+  public int Layers { get; }
+  public int OutputSize { get; }
   public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> Parameters()
+  public void LoadGateWeights(int layer, bool reverse, System.ReadOnlySpan<float> inputWeights, System.ReadOnlySpan<float> hiddenWeights, System.ReadOnlySpan<float> inputBias, System.ReadOnlySpan<float> hiddenBias)
+
+public sealed class Idrak.Layers.Abstractions.RecurrentWeights
+  public Idrak.Abstraction.Tensor Bias { get; }
+  public Idrak.Abstraction.Tensor HiddenWeight { get; }
+  public Idrak.Abstraction.Tensor InputWeight { get; }
+  public Idrak.Abstraction.Tensor? HiddenBias { get; }
 
 public enum Idrak.Layers.Activation : int
   GELU = 3
@@ -656,6 +700,18 @@ public static class Idrak.Layers.Architectures
   public static Idrak.Layers.NetworkBuilder Mlp(int inputs, int[] hidden, int outputs, Idrak.Layers.Activation activation, float dropout)
   public static Idrak.Layers.NetworkBuilder Rnn(Idrak.Layers.RecurrentCell cell, int vocabulary, int length, int embed, int hidden, int outputs)
   public static Idrak.Layers.NetworkBuilder TransformerClassifier(int vocabulary, int length, int dim, int heads, int layers, int ffDim, float dropout, int outputs)
+
+public sealed class Idrak.Layers.AvgPool2d : Idrak.Abstraction.Module
+  public AvgPool2d((int, int) kernelSize, (int, int)? stride = null, (int, int)? padding = null, bool countIncludePad = true)
+  public AvgPool2d(int kernelSize, int? stride = null, int padding = 0, bool countIncludePad = true)
+  public bool CountIncludePad { get; }
+  public int KernelHeight { get; }
+  public int KernelWidth { get; }
+  public int PaddingHeight { get; }
+  public int PaddingWidth { get; }
+  public int StrideHeight { get; }
+  public int StrideWidth { get; }
+  public override string ToString()
 
 public sealed class Idrak.Layers.BatchNorm : Idrak.Abstraction.Module
   public BatchNorm(int channels, float momentum = 0.1f, float epsilon = 1E-05f, Idrak.Abstraction.Device? device = null)
@@ -705,16 +761,29 @@ public sealed class Idrak.Layers.ChannelNormalize : Idrak.Abstraction.Module
   public override string ToString()
 
 public sealed class Idrak.Layers.Conv2d : Idrak.Abstraction.Module
+  public Conv2d(int inChannels, int outChannels, (int, int) kernelSize, (int, int)? stride = null, (int, int)? padding = null, (int, int)? dilation = null, int groups = 1, bool bias = true, Idrak.Abstraction.Device? device = null, System.Random? random = null)
   public Conv2d(int inChannels, int outChannels, int kernelSize, int stride = 1, int padding = 0, bool bias = true, Idrak.Abstraction.Device? device = null, System.Random? random = null)
+  public Idrak.Abstraction.Devices.ConvGeometry Geometry(int batch, int height, int width)
   public Idrak.Abstraction.Tensor Weight { get; }
   public Idrak.Abstraction.Tensor? Bias { get; }
+  public bool IsSquare { get; }
+  public int DilationHeight { get; }
+  public int DilationWidth { get; }
+  public int Groups { get; }
   public int InChannels { get; }
+  public int KernelHeight { get; }
   public int KernelSize { get; }
+  public int KernelWidth { get; }
   public int OutChannels { get; }
   public int Padding { get; }
+  public int PaddingHeight { get; }
+  public int PaddingWidth { get; }
   public int Stride { get; }
+  public int StrideHeight { get; }
+  public int StrideWidth { get; }
   public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> Parameters()
   public override string ToString()
+  public static Idrak.Layers.Conv2d FromWeights(Idrak.Abstraction.Tensor weight, Idrak.Abstraction.Tensor? bias, (int, int) kernelSize, (int, int)? stride = null, (int, int)? padding = null, (int, int)? dilation = null, int groups = 1)
   public static Idrak.Layers.Conv2d FromWeights(Idrak.Abstraction.Tensor weight, Idrak.Abstraction.Tensor? bias, int kernelSize, int stride = 1, int padding = 0)
 
 public sealed class Idrak.Layers.DecoderBlock : Idrak.Abstraction.Module, Idrak.Layers.Abstractions.ICachedModule
@@ -779,6 +848,8 @@ public sealed class Idrak.Layers.GELU : Idrak.Abstraction.Module
 
 public sealed class Idrak.Layers.GRU : Idrak.Layers.Abstractions.RecurrentModule
   public GRU(int inputSize, int hiddenSize, bool returnSequences = false, Idrak.Abstraction.Device? device = null, System.Random? random = null)
+  public GRU(int inputSize, int hiddenSize, bool returnSequences, bool bidirectional, int layers = 1, bool candidateBias = false, Idrak.Abstraction.Device? device = null, System.Random? random = null)
+  public bool CandidateBias { get; }
   public override string ToString()
 
 public sealed class Idrak.Layers.GlobalAveragePool2d : Idrak.Abstraction.Module
@@ -818,6 +889,7 @@ public enum Idrak.Layers.InputKind : int
 
 public sealed class Idrak.Layers.LSTM : Idrak.Layers.Abstractions.RecurrentModule
   public LSTM(int inputSize, int hiddenSize, bool returnSequences = false, Idrak.Abstraction.Device? device = null, System.Random? random = null)
+  public LSTM(int inputSize, int hiddenSize, bool returnSequences, bool bidirectional, int layers = 1, Idrak.Abstraction.Device? device = null, System.Random? random = null)
   public override string ToString()
 
 public sealed class Idrak.Layers.Lambda : Idrak.Abstraction.Module
@@ -861,10 +933,18 @@ public sealed class Idrak.Layers.Linear : Idrak.Abstraction.Module, Idrak.Abstra
   public static Idrak.Layers.Linear Tied(Idrak.Layers.Embedding embedding, Idrak.Abstraction.Tensor? bias = null)
 
 public sealed class Idrak.Layers.MaxPool2d : Idrak.Abstraction.Module
+  public MaxPool2d((int, int) kernelSize, (int, int)? stride = null, (int, int)? padding = null)
   public MaxPool2d(int kernelSize, int? stride = null, int padding = 0)
+  public bool IsSquare { get; }
+  public int KernelHeight { get; }
   public int KernelSize { get; }
+  public int KernelWidth { get; }
   public int Padding { get; }
+  public int PaddingHeight { get; }
+  public int PaddingWidth { get; }
   public int Stride { get; }
+  public int StrideHeight { get; }
+  public int StrideWidth { get; }
   public override string ToString()
 
 public sealed class Idrak.Layers.MixtureOfExperts : Idrak.Abstraction.Module
@@ -927,7 +1007,11 @@ public sealed class Idrak.Layers.NetworkBuilder : Idrak.Layers.Abstractions.INet
   public Idrak.Layers.NetworkBuilder Add(Idrak.Abstraction.Module module, int[] outputShape)
   public Idrak.Layers.NetworkBuilder Add(System.Func<Idrak.Abstraction.Device?, System.Random?, Idrak.Abstraction.Module> create, int[] outputShape)
   public Idrak.Layers.NetworkBuilder Apply(System.Func<Idrak.Layers.NetworkBuilder, Idrak.Layers.NetworkBuilder> block)
+  public Idrak.Layers.NetworkBuilder AvgPool2d((int, int) kernelSize, (int, int)? stride = null, (int, int)? padding = null, bool countIncludePad = true)
+  public Idrak.Layers.NetworkBuilder AvgPool2d(int kernelSize, int? stride = null, int padding = 0, bool countIncludePad = true)
   public Idrak.Layers.NetworkBuilder BatchNorm(float momentum = 0.1f, float epsilon = 1E-05f)
+  public Idrak.Layers.NetworkBuilder ColumnsToSequence()
+  public Idrak.Layers.NetworkBuilder Conv2d(int outChannels, (int, int) kernelSize, (int, int)? stride = null, (int, int)? padding = null, (int, int)? dilation = null, int groups = 1, bool bias = true)
   public Idrak.Layers.NetworkBuilder Conv2d(int outChannels, int kernelSize, int stride = 1, int padding = 0, bool bias = true)
   public Idrak.Layers.NetworkBuilder Dropout(float probability = 0.5f)
   public Idrak.Layers.NetworkBuilder Embedding(int vocabulary, int dim)
@@ -935,12 +1019,15 @@ public sealed class Idrak.Layers.NetworkBuilder : Idrak.Layers.Abstractions.INet
   public Idrak.Layers.NetworkBuilder Flatten()
   public Idrak.Layers.NetworkBuilder GELU()
   public Idrak.Layers.NetworkBuilder GRU(int hiddenSize, bool returnSequences = false)
+  public Idrak.Layers.NetworkBuilder GRU(int hiddenSize, bool returnSequences, bool bidirectional, int layers = 1, bool candidateBias = false)
   public Idrak.Layers.NetworkBuilder GlobalAveragePool2d()
   public Idrak.Layers.NetworkBuilder LSTM(int hiddenSize, bool returnSequences = false)
+  public Idrak.Layers.NetworkBuilder LSTM(int hiddenSize, bool returnSequences, bool bidirectional, int layers = 1)
   public Idrak.Layers.NetworkBuilder Lambda(System.Func<Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor> function, string name, int[] outputShape)
   public Idrak.Layers.NetworkBuilder LastStep()
   public Idrak.Layers.NetworkBuilder LayerNorm(float epsilon = 1E-05f)
   public Idrak.Layers.NetworkBuilder Linear(int outFeatures, bool bias = true, int? inputs = null)
+  public Idrak.Layers.NetworkBuilder MaxPool2d((int, int) kernelSize, (int, int)? stride = null, (int, int)? padding = null)
   public Idrak.Layers.NetworkBuilder MaxPool2d(int kernelSize, int? stride = null, int padding = 0)
   public Idrak.Layers.NetworkBuilder MeanOverTime()
   public Idrak.Layers.NetworkBuilder MultiHeadAttention(int heads, bool causal = false, float dropout = 0f)
@@ -1066,11 +1153,18 @@ public sealed class Idrak.Layers.TransformerEncoderLayer : Idrak.Abstraction.Mod
   public static Idrak.Layers.TransformerEncoderLayer FromLayers(Idrak.Layers.LayerNorm norm1, Idrak.Layers.MultiHeadAttention attention, Idrak.Layers.LayerNorm norm2, Idrak.Layers.Linear feedForward1, Idrak.Layers.Linear feedForward2)
   public static Idrak.Layers.TransformerEncoderLayer FromLayers(Idrak.Layers.LayerNorm norm1, Idrak.Layers.MultiHeadAttention attention, Idrak.Layers.LayerNorm norm2, Idrak.Layers.Linear feedForward1, Idrak.Layers.Linear feedForward2, Idrak.Abstraction.Module activation)
 
+public enum Idrak.LossReduction : int
+  Mean = 0
+  None = 2
+  Sum = 1
+
 public static class Idrak.Losses
   public static Idrak.Abstraction.Tensor BinaryCrossEntropy(Idrak.Abstraction.Tensor probabilities, Idrak.Abstraction.Tensor targets)
   public static Idrak.Abstraction.Tensor BinaryCrossEntropyWithLogits(Idrak.Abstraction.Tensor logits, Idrak.Abstraction.Tensor targets)
   public static Idrak.Abstraction.Tensor CrossEntropy(Idrak.Abstraction.Tensor logits, Idrak.Abstraction.Tensor targets)
   public static Idrak.Abstraction.Tensor CrossEntropy(Idrak.Abstraction.Tensor logits, Idrak.Abstraction.Tensor targets, float labelSmoothing)
+  public static Idrak.Abstraction.Tensor Ctc(Idrak.Abstraction.Tensor logProbs, Idrak.Abstraction.Tensor targets, System.Collections.Generic.IReadOnlyList<int> inputLengths, System.Collections.Generic.IReadOnlyList<int> targetLengths, int blank = 0, Idrak.LossReduction reduction = (Idrak.LossReduction)0, bool zeroInfinity = false, bool batchFirst = false)
+  public static Idrak.Abstraction.Tensor Ctc(Idrak.Abstraction.Tensor logProbs, System.Collections.Generic.IReadOnlyList<int[]> labels, System.Collections.Generic.IReadOnlyList<int> inputLengths, int blank = 0, Idrak.LossReduction reduction = (Idrak.LossReduction)0, bool zeroInfinity = false, bool batchFirst = false)
   public static Idrak.Abstraction.Tensor Distillation(Idrak.Abstraction.Tensor studentLogits, Idrak.Abstraction.Tensor teacherLogits, float temperature)
   public static Idrak.Abstraction.Tensor MeanAbsoluteError(Idrak.Abstraction.Tensor prediction, Idrak.Abstraction.Tensor target)
   public static Idrak.Abstraction.Tensor MeanSquaredError(Idrak.Abstraction.Tensor prediction, Idrak.Abstraction.Tensor target)
@@ -1493,6 +1587,7 @@ public sealed class Idrak.Onnx.ImportedNetwork : System.IDisposable
   public void SavePackage(string path)
 
 public static class Idrak.Onnx.OnnxExport
+  public static Idrak.Onnx.Abstractions.OnnxValue ColumnsToSequence(Idrak.Onnx.Abstractions.OnnxGraph graph, Idrak.Abstraction.Module module, Idrak.Onnx.Abstractions.OnnxValue input, System.Collections.Generic.IReadOnlyList<int> outputShape)
   public static Idrak.Onnx.Abstractions.OnnxValue FirstStep(Idrak.Onnx.Abstractions.OnnxGraph graph, Idrak.Abstraction.Module module, Idrak.Onnx.Abstractions.OnnxValue input, System.Collections.Generic.IReadOnlyList<int> outputShape)
   public static Idrak.Onnx.Abstractions.OnnxValue LastStep(Idrak.Onnx.Abstractions.OnnxGraph graph, Idrak.Abstraction.Module module, Idrak.Onnx.Abstractions.OnnxValue input, System.Collections.Generic.IReadOnlyList<int> outputShape)
   public static Idrak.Onnx.Abstractions.OnnxValue MeanOverTime(Idrak.Onnx.Abstractions.OnnxGraph graph, Idrak.Abstraction.Module module, Idrak.Onnx.Abstractions.OnnxValue input, System.Collections.Generic.IReadOnlyList<int> outputShape)

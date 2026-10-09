@@ -75,9 +75,10 @@ public sealed class ImportedNetwork : IDisposable
 /// <summary>
 /// Imports ONNX models into Idrak layers. The graph must be a chain of supported layers from one input to one
 /// output: MatMul/Gemm (+ Add) → Linear; Relu, Tanh, Sigmoid, Softmax; GELU (the Gelu op, the tanh form, or the erf
-/// form, which becomes the tanh approximation); BatchNormalization; LayerNormalization; Conv (square kernel, one
-/// group); MaxPool; GlobalAveragePool (+ Flatten); Flatten; Gather on a weight table → Embedding; sinusoidal
-/// position tables → PositionalEncoding; LSTM and GRU (forward, PyTorch-style GRU); ReduceMean over time;
+/// form, which becomes the tanh approximation); BatchNormalization; LayerNormalization; Conv (rectangular kernels,
+/// strides, symmetric padding, dilation, groups); MaxPool and AveragePool; GlobalAveragePool (+ Flatten); Flatten; Gather
+/// on a weight table → Embedding; sinusoidal position tables → PositionalEncoding; LSTM and GRU (forward or
+/// bidirectional, stacked, PyTorch-style GRU, zero initial states); an image's columns as a sequence; ReduceMean over time;
 /// first/last time step; Reshape; Dropout and Identity (skipped); and the attention and transformer-layer blocks
 /// Idrak exports. Anything else is reported with the node that could not be imported; operators of your own are
 /// registered in <see cref="OnnxImportOps"/>.
@@ -187,7 +188,8 @@ internal sealed class Importer(OnnxModel model, Device device, int[]? sampleShap
             throw new NotSupportedException($"The value '{x}' is not used by any node and is not the graph output.");
         }
 
-        if ((MatchTransformer(x) ?? MatchRecurrent(x) ?? AttentionLayer(ParseAttention(x)) ?? GeluLayer(ParseGelu(x)) ?? LinearLayer(ParseLinear(x))) is { } match)
+        if ((MatchTransformer(x) ?? MatchRecurrent(x) ?? MatchColumnsToSequence(x) ?? AttentionLayer(ParseAttention(x)) ?? GeluLayer(ParseGelu(x))
+             ?? LinearLayer(ParseLinear(x))) is { } match)
         {
             Consume(match.Nodes);
             return Push(match.Step, match.Load, match.Output);
@@ -235,6 +237,7 @@ internal sealed class Importer(OnnxModel model, Device device, int[]? sampleShap
         },
         ["Conv"] = c => c.Importer.PushMatch(c.Importer.ConvLayer(c.Node)),
         ["MaxPool"] = c => c.Importer.PushMatch(c.Importer.MaxPoolLayer(c.Node)),
+        ["AveragePool"] = c => c.Importer.PushMatch(c.Importer.AveragePoolLayer(c.Node)),
         ["GlobalAveragePool"] = c => c.Importer.GlobalAveragePool(c.Node),
         ["Flatten"] = c => c.Int("axis", 1) == 1 ? c.Add(b => b.Flatten()) : throw c.Unsupported("flatten from an axis other than 1"),
         ["Cast"] = c => c.Importer.Cast(c.Node),
@@ -443,6 +446,7 @@ internal sealed class Importer(OnnxModel model, Device device, int[]? sampleShap
             "BatchNormalization" when node.Inputs[0] == x => BatchNormLayer(node),
             "Conv" when node.Inputs[0] == x => ConvLayer(node),
             "MaxPool" => MaxPoolLayer(node),
+            "AveragePool" => AveragePoolLayer(node),
             "Gather" => EmbeddingLayer(node, x),
             _ => null,
         };
@@ -864,38 +868,139 @@ internal sealed class Importer(OnnxModel model, Device device, int[]? sampleShap
 
     // ------------------------------------------------------------------ recurrent layers
 
+    // A recurrent layer as Idrak and PyTorch export it: [N, T, F] transposed to time-major, then one LSTM or GRU node per
+    // layer (one or two directions); between layers and after the last, Y [T, D, N, H] squeezed (one direction) or
+    // transposed and reshaped to [T, N, D·H] (two); then transposed back to [N, T, ·] for every step, or the last states
+    // Y_h [D, N, H] squeezed or transposed and reshaped to [N, D·H]. Initial states are zero: constants, or zeros expanded
+    // to a shape computed from the input (PyTorch's exporter writes these).
     private LayerMatch? MatchRecurrent(string x)
     {
-        if (Only(x, "Transpose") is not { } timeMajor || timeMajor.Ints("perm") is not [1, 0, 2]
-            || Users(timeMajor.Outputs[0]) is not [{ Op: "LSTM" or "GRU" } rnn] || rnn.Inputs[0] != timeMajor.Outputs[0])
+        if (Only(x, "Transpose") is not { } timeMajor || timeMajor.Ints("perm") is not [1, 0, 2] || RecurrentNode(timeMajor.Outputs[0]) is null)
         {
             return null;
         }
 
-        bool lstm = rnn.Op == "LSTM";
-        if (rnn.String("direction") is { } direction && direction != "forward" || rnn.Int("layout", 0) != 0 || rnn.Attributes.ContainsKey("activations")
-            || rnn.Attributes.ContainsKey("clip") || rnn.Inputs.Skip(4).Any(i => i.Length > 0 && Const(i) is not { } c || i.Length > 0 && Const(i)!.AsFloats().Any(v => v != 0f))
-            || !lstm && rnn.Int("linear_before_reset", 0) != 1 || lstm && rnn.Int("input_forget", 0) != 0)
+        var nodes = new List<OnnxNode> { timeMajor };
+        var layers = new List<RecurrentLayerWeights[]>();
+        string value = timeMajor.Outputs[0], op = "", output;
+        int h = 0, directions = 0, inputs = 0;
+        bool sequences;
+        while (true)
         {
-            throw Unsupported(rnn, "this recurrent configuration (only forward, default activations, no peepholes, zero initial state and, for GRU, linear_before_reset = 1)");
+            var (rnn, state) = RecurrentNode(value) ?? throw new NotSupportedException($"'{value}' feeds no recurrent layer with zero initial states alone.");
+            bool lstm = rnn.Op == "LSTM";
+            int d = rnn.String("direction") switch { null or "forward" => 1, "bidirectional" => 2, _ => 0 };
+            if (d == 0 || rnn.Int("layout", 0) != 0 || rnn.Attributes.ContainsKey("activations") || rnn.Attributes.ContainsKey("clip")
+                || !lstm && rnn.Int("linear_before_reset", 0) != 1 || lstm && rnn.Int("input_forget", 0) != 0
+                || layers.Count > 0 && (rnn.Op != op || (int)rnn.Int("hidden_size", 0) != h || d != directions))
+            {
+                throw Unsupported(rnn, "this recurrent configuration (forward or bidirectional, default activations, no peepholes, zero initial states, the same "
+                    + "cell, size and directions in every stacked layer and, for GRU, linear_before_reset = 1)");
+            }
+
+            (op, h, directions) = (rnn.Op, (int)rnn.Int("hidden_size", 0), d);
+            var weights = RecurrentWeightsOf(rnn, lstm, h, directions);
+            inputs = layers.Count == 0 ? weights[0].Inputs : inputs;
+            layers.Add(weights);
+            nodes.Add(rnn);
+            nodes.AddRange(state);
+
+            // Every step, as the next layer's input or the output.
+            string? next = null;
+            if (directions == 1 && Users(rnn.Outputs[0]) is [{ Op: "Squeeze" } squeeze] && SqueezeAxes(squeeze) is [1])
+            {
+                nodes.Add(squeeze);
+                next = squeeze.Outputs[0];
+            }
+            else if (directions == 2 && Users(rnn.Outputs[0]) is [{ Op: "Transpose" } split] && split.Ints("perm") is [0, 2, 1, 3]
+                     && Only(split.Outputs[0], "Reshape") is { } joined && Const(joined.Inputs[1])?.AsLongs() is [0, 0, var features] && (features == -1 || features == 2 * h))
+            {
+                nodes.AddRange([split, joined]);
+                next = joined.Outputs[0];
+            }
+
+            if (next is not null)
+            {
+                if (Only(next, "Transpose") is { } back && back.Ints("perm") is [1, 0, 2])
+                {
+                    nodes.Add(back);
+                    (sequences, output) = (true, back.Outputs[0]);
+                    break;
+                }
+
+                value = next;
+                continue;
+            }
+
+            // The last states.
+            if (Users(rnn.Outputs[0]).Count == 0 && rnn.Outputs.Count > 1)
+            {
+                if (directions == 1 && Users(rnn.Outputs[1]) is [{ Op: "Squeeze" } last] && SqueezeAxes(last) is [0])
+                {
+                    nodes.Add(last);
+                    (sequences, output) = (false, last.Outputs[0]);
+                    break;
+                }
+
+                if (directions == 2 && Users(rnn.Outputs[1]) is [{ Op: "Transpose" } batchFirst] && batchFirst.Ints("perm") is [1, 0, 2]
+                    && Only(batchFirst.Outputs[0], "Reshape") is { } joined && Const(joined.Inputs[1])?.AsLongs() is [0 or -1, var features] && (features == -1 || features == 2 * h))
+                {
+                    nodes.AddRange([batchFirst, joined]);
+                    (sequences, output) = (false, joined.Outputs[0]);
+                    break;
+                }
+            }
+
+            throw Unsupported(rnn, "a recurrent layer whose outputs are not used as [batch, time, hidden] or the last state");
         }
 
-        int h = (int)rnn.Int("hidden_size", 0), gates = lstm ? 4 : 3;
+        bool lstmLayer = op == "LSTM", bidirectional = directions == 2;
+        bool candidateBias = layers.Any(l => l.Any(w => w.HiddenBias is not null));
+        bool plain = !bidirectional && layers.Count == 1 && !candidateBias;
+        int count = layers.Count;
+        return new([.. nodes], output,
+            builder => plain ? (lstmLayer ? builder.LSTM(h, sequences) : builder.GRU(h, sequences))
+                : lstmLayer ? builder.LSTM(h, sequences, bidirectional, count) : builder.GRU(h, sequences, bidirectional, count, candidateBias),
+            () => plain ? (lstmLayer ? new LSTM(inputs, h, sequences, device) : new GRU(inputs, h, sequences, device))
+                : lstmLayer ? new LSTM(inputs, h, sequences, bidirectional, count, device) : new GRU(inputs, h, sequences, bidirectional, count, candidateBias, device),
+            m =>
+            {
+                var module = (RecurrentModule)m;
+                var all = layers.SelectMany(l => l).ToList();
+                for (int i = 0; i < all.Count; i++)
+                {
+                    var target = module.Weights[i];
+                    target.InputWeight.Load(all[i].InputWeight);
+                    target.HiddenWeight.Load(all[i].HiddenWeight);
+                    target.Bias.Load(all[i].Bias);
+                    target.HiddenBias?.Load(all[i].HiddenBias ?? new float[h]);
+                }
+            });
+    }
+
+    // One direction of one layer in Idrak's layout: [inputs, G·H], [H, G·H], [G·H] and a GRU's candidate bias kept apart.
+    private sealed record RecurrentLayerWeights(int Inputs, float[] InputWeight, float[] HiddenWeight, float[] Bias, float[]? HiddenBias);
+
+    private RecurrentLayerWeights[] RecurrentWeightsOf(OnnxNode rnn, bool lstm, int h, int directions)
+    {
+        int gates = lstm ? 4 : 3;
         var order = lstm ? LstmOrder : GruOrder;
         var w = Const(rnn.Inputs[1]) ?? throw Unsupported(rnn, "computed weights");
         var rw = Const(rnn.Inputs[2]) ?? throw Unsupported(rnn, "computed weights");
-        var b = rnn.Inputs.Count > 3 ? Const(rnn.Inputs[3]) : null;
+        var b = rnn.Inputs.Count > 3 && rnn.Inputs[3].Length > 0 ? Const(rnn.Inputs[3]) ?? throw Unsupported(rnn, "a computed bias") : null;
         int inputs = w.Dims[2];
-        float[] Regroup(float[] source, int rows)
+        var (wv, rv, bv) = (w.AsFloats(), rw.AsFloats(), b?.AsFloats());
+        float[] Regroup(float[] source, int direction, int rows)
         {
             var result = new float[rows * gates * h];                                  // ours: [rows, G·H]
+            int offset = direction * gates * h * rows;
             for (int gate = 0; gate < gates; gate++)
             {
                 for (int j = 0; j < h; j++)
                 {
                     for (int r = 0; r < rows; r++)
                     {
-                        result[r * gates * h + order[gate] * h + j] = source[(gate * h + j) * rows + r];
+                        result[r * gates * h + order[gate] * h + j] = source[offset + (gate * h + j) * rows + r];
                     }
                 }
             }
@@ -903,55 +1008,115 @@ internal sealed class Importer(OnnxModel model, Device device, int[]? sampleShap
             return result;
         }
 
-        var bias = new float[gates * h];
-        if (b is not null)
+        var result = new RecurrentLayerWeights[directions];
+        for (int d = 0; d < directions; d++)
         {
-            var values = b.AsFloats();
-            for (int gate = 0; gate < gates; gate++)
+            var bias = new float[gates * h];
+            float[]? apart = null;
+            if (bv is not null)
             {
-                for (int j = 0; j < h; j++)
+                int offset = d * 2 * gates * h;
+                for (int gate = 0; gate < gates; gate++)
                 {
-                    float recurrent = values[(gates + gate) * h + j];
-                    if (!lstm && gate == 2 && recurrent != 0f)
+                    for (int j = 0; j < h; j++)
                     {
-                        throw Unsupported(rnn, "a GRU with a recurrent bias on the candidate gate");
+                        float recurrent = bv[offset + (gates + gate) * h + j];
+                        bias[order[gate] * h + j] = bv[offset + gate * h + j];
+                        if (!lstm && order[gate] == gates - 1)
+                        {
+                            if (recurrent != 0f)
+                            {
+                                (apart ??= new float[h])[j] = recurrent;      // inside the reset gate's product: kept apart
+                            }
+                        }
+                        else
+                        {
+                            bias[order[gate] * h + j] += recurrent;
+                        }
                     }
-
-                    bias[order[gate] * h + j] = values[gate * h + j] + recurrent;
                 }
             }
+
+            result[d] = new RecurrentLayerWeights(inputs, Regroup(wv, d, inputs), Regroup(rv, d, h), bias, apart);
         }
 
-        var (inputWeight, hiddenWeight) = (Regroup(w.AsFloats(), inputs), Regroup(rw.AsFloats(), h));
-        var nodes = new List<OnnxNode> { timeMajor, rnn };
-        bool sequences;
-        string output;
-        if (Users(rnn.Outputs[0]) is [{ Op: "Squeeze" } squeeze] && SqueezeAxes(squeeze) is [1]
-            && Only(squeeze.Outputs[0], "Transpose") is { } back && back.Ints("perm") is [1, 0, 2])
+        return result;
+    }
+
+    // The recurrent node `value` feeds (as its input sequence) and the nodes computing its zero initial states, when every
+    // other user of `value` belongs to those; null otherwise.
+    private (OnnxNode Node, List<OnnxNode> State)? RecurrentNode(string value)
+    {
+        var users = Users(value);
+        if (users.Where(u => u.Op is "LSTM" or "GRU" && u.Inputs[0] == value).ToList() is not [var rnn])
         {
-            nodes.AddRange([squeeze, back]);
-            (sequences, output) = (true, back.Outputs[0]);
-        }
-        else if (rnn.Outputs.Count > 1 && Users(rnn.Outputs[1]) is [{ Op: "Squeeze" } last] && SqueezeAxes(last) is [0])
-        {
-            nodes.Add(last);
-            (sequences, output) = (false, last.Outputs[0]);
-        }
-        else
-        {
-            throw Unsupported(rnn, "a recurrent layer whose outputs are not used as [batch, time, hidden] or the last state");
+            return null;
         }
 
-        return new([.. nodes], output,
-            builder => lstm ? builder.LSTM(h, sequences) : builder.GRU(h, sequences),
-            () => lstm ? new LSTM(inputs, h, sequences, device) : new GRU(inputs, h, sequences, device),
-            m =>
+        var state = new List<OnnxNode>();
+        for (int i = 4; i < rnn.Inputs.Count; i++)
+        {
+            string input = rnn.Inputs[i];
+            if (input.Length == 0 || i != 4 && Const(input) is { } zeros && zeros.AsFloats().All(v => v == 0f))
             {
-                var module = (RecurrentModule)m;
-                module.InputWeight.Load(inputWeight);
-                module.HiddenWeight.Load(hiddenWeight);
-                module.Bias.Load(bias);
-            });
+                continue;
+            }
+
+            // Zeros expanded to a shape computed from `value` (or from constants).
+            if (i is 5 or 6 && Producer(input) is { Op: "Expand" } expand && Const(expand.Inputs[0]) is { } fill && fill.AsFloats().All(v => v == 0f)
+                && ShapeNodes(expand.Inputs[1], value, state))
+            {
+                state.Add(expand);
+                continue;
+            }
+
+            return null;
+        }
+
+        return users.All(u => u == rnn || state.Contains(u)) ? (rnn, state) : null;
+    }
+
+    // Collects the nodes computing `name` from `value` and constants alone; false when anything else feeds them.
+    private bool ShapeNodes(string name, string value, List<OnnxNode> nodes)
+    {
+        if (name == value || Const(name) is not null)
+        {
+            return true;
+        }
+
+        if (Producer(name) is not { } node || node.Op is "LSTM" or "GRU")
+        {
+            return false;
+        }
+
+        if (!nodes.Contains(node))
+        {
+            nodes.Add(node);
+        }
+
+        return node.Inputs.Where(i => i.Length > 0).All(i => ShapeNodes(i, value, nodes));
+    }
+
+    private Dictionary<string, OnnxNode>? _producers;
+
+    private OnnxNode? Producer(string value)
+    {
+        _producers ??= model.Nodes.SelectMany(n => n.Outputs.Where(o => o.Length > 0).Select(o => (o, n))).GroupBy(p => p.o).ToDictionary(g => g.Key, g => g.First().n);
+        return _producers.TryGetValue(value, out var node) ? node : null;
+    }
+
+    // An image's columns read as a sequence (NetworkBuilder.ColumnsToSequence): [N, C, H, W] transposed to [N, W, C, H] and
+    // reshaped to [N, W, C·H].
+    private LayerMatch? MatchColumnsToSequence(string x)
+    {
+        if (Only(x, "Transpose") is not { } transpose || transpose.Ints("perm") is not [0, 3, 1, 2] || Only(transpose.Outputs[0], "Reshape") is not { } reshape
+            || _network.CurrentShape is not [var c, var h, var w] || Const(reshape.Inputs[1])?.AsLongs() is not [-1 or 0, var steps, var features]
+            || steps != w || features != c * h)
+        {
+            return null;
+        }
+
+        return new([transpose, reshape], reshape.Outputs[0], b => b.ColumnsToSequence(), () => throw new NotSupportedException("ColumnsToSequence is a builder step."), null);
     }
 
     private long[]? SqueezeAxes(OnnxNode squeeze) => squeeze.Ints("axes") ?? (squeeze.Inputs.Count > 1 ? Const(squeeze.Inputs[1])?.AsLongs() : null);
@@ -996,17 +1161,27 @@ internal sealed class Importer(OnnxModel model, Device device, int[]? sampleShap
     {
         var weight = Required(node, 1);
         var bias = node.Inputs.Count > 2 && node.Inputs[2].Length > 0 ? Required(node, 2) : null;
-        var (k, stride, padding) = Window(node);
-        if (node.Int("group", 1) != 1 || weight.Dims is not [var outC, var inC, var kh, var kw] || kh != kw || kh != k)
+        if (weight.Dims is not [var outC, var perGroup, var kh, var kw])
         {
-            throw Unsupported(node, "grouped or non-square convolution");
+            throw Unsupported(node, "a convolution that is not 2-D");
         }
 
-        return new([node], node.Outputs[0], b => b.Conv2d(outC, k, stride, padding, bias is not null),
-            () => new Conv2d(inC, outC, k, stride, padding, bias is not null, device), m =>
+        var w = Window(node, ((int)kh, (int)kw), dilation: true);
+        int groups = (int)node.Int("group", 1);
+        if (w.Kernel != ((int)kh, (int)kw) || groups <= 0 || outC % groups != 0)
+        {
+            throw Unsupported(node, "a convolution whose kernel_shape or group does not match its weights");
+        }
+
+        int inC = (int)perGroup * groups, outputs = (int)outC;
+        bool square = w.Square && w.Dilation == (1, 1) && groups == 1;
+        return new([node], node.Outputs[0],
+            b => square ? b.Conv2d(outputs, w.Kernel.Height, w.Stride.Height, w.Padding.Height, bias is not null)
+                : b.Conv2d(outputs, w.Kernel, w.Stride, w.Padding, w.Dilation == (1, 1) ? null : w.Dilation, groups, bias is not null),
+            () => new Conv2d(inC, outputs, w.Kernel, w.Stride, w.Padding, w.Dilation, groups, bias is not null, device), m =>
             {
                 var conv = (Conv2d)m;
-                conv.Weight.Load(weight.AsFloats());                                   // [out, in, k, k] = [out, in·k·k]
+                conv.Weight.Load(weight.AsFloats());                                   // [out, in / groups, kh, kw] = [out, in / groups · kh · kw]
                 if (bias is not null)
                 {
                     conv.Bias!.Load(bias.AsFloats());
@@ -1016,13 +1191,28 @@ internal sealed class Importer(OnnxModel model, Device device, int[]? sampleShap
 
     private LayerMatch MaxPoolLayer(OnnxNode node)
     {
-        var (k, stride, padding) = Window(node);
+        var w = Window(node, null, dilation: false);
         if (node.Int("ceil_mode", 0) != 0 || node.Outputs.Count > 1 && node.Outputs[1].Length > 0 && Users(node.Outputs[1]).Count > 0)
         {
             throw Unsupported(node, "ceil_mode or indices output");
         }
 
-        return new([node], node.Outputs[0], b => b.MaxPool2d(k, stride, padding), () => new MaxPool2d(k, stride, padding), null);
+        return new([node], node.Outputs[0],
+            b => w.Square ? b.MaxPool2d(w.Kernel.Height, w.Stride.Height, w.Padding.Height) : b.MaxPool2d(w.Kernel, w.Stride, w.Padding),
+            () => new MaxPool2d(w.Kernel, w.Stride, w.Padding), null);
+    }
+
+    private LayerMatch AveragePoolLayer(OnnxNode node)
+    {
+        var w = Window(node, null, dilation: false);
+        if (node.Int("ceil_mode", 0) != 0)
+        {
+            throw Unsupported(node, "ceil_mode");
+        }
+
+        bool countIncludePad = node.Int("count_include_pad", 0) != 0;                   // ONNX's default leaves padding out
+        return new([node], node.Outputs[0], b => b.AvgPool2d(w.Kernel, w.Stride, w.Padding, countIncludePad),
+            () => new AvgPool2d(w.Kernel, w.Stride, w.Padding, countIncludePad), null);
     }
 
     private LayerMatch? EmbeddingLayer(OnnxNode gather, string ids) =>
@@ -1031,19 +1221,27 @@ internal sealed class Importer(OnnxModel model, Device device, int[]? sampleShap
                 m => ((Embedding)m).Weight.Load(table.AsFloats()))
             : null;
 
-    private static (int Kernel, int Stride, int Padding) Window(OnnxNode node)
+    private sealed record WindowShape((int Height, int Width) Kernel, (int Height, int Width) Stride, (int Height, int Width) Padding, (int Height, int Width) Dilation)
     {
-        var kernel = node.Ints("kernel_shape");
+        public bool Square => Kernel.Height == Kernel.Width && Stride.Height == Stride.Width && Padding.Height == Padding.Width;
+    }
+
+    // A 2-D window: kernel_shape (or the weights' kernel), strides, padding equal above and below and left and right, and
+    // dilations where the layer takes them.
+    private static WindowShape Window(OnnxNode node, (int, int)? weights, bool dilation)
+    {
+        var kernel = node.Ints("kernel_shape") ?? (weights is var (wh, ww) ? [wh, ww] : null);
         var strides = node.Ints("strides") ?? [1, 1];
         var pads = node.Ints("pads") ?? [0, 0, 0, 0];
         var dilations = node.Ints("dilations") ?? [1, 1];
-        if (node.String("auto_pad") is { } autoPad && autoPad != "NOTSET" || kernel is not [var kh, var kw] || kh != kw
-            || strides is not [var sh, var sw] || sh != sw || pads.Distinct().Count() != 1 || dilations.Any(d => d != 1))
+        if (node.String("auto_pad") is { } autoPad && autoPad != "NOTSET" || kernel is not [var kh, var kw] || strides is not [var sh, var sw]
+            || pads is not [var top, var left, var bottom, var right] || top != bottom || left != right || dilations is not [var dh, var dw]
+            || !dilation && (dh != 1 || dw != 1))
         {
-            throw Unsupported(node, "a 2-D window with a square kernel, equal strides, equal padding on all sides and no dilation");
+            throw Unsupported(node, "a 2-D window with explicit padding, equal above and below and left and right" + (dilation ? "" : ", and no dilation"));
         }
 
-        return ((int)kh, (int)sh, (int)pads[0]);
+        return new(((int)kh, (int)kw), ((int)sh, (int)sw), ((int)top, (int)left), ((int)dh, (int)dw));
     }
 
     private string Gather(OnnxNode node, string x)
