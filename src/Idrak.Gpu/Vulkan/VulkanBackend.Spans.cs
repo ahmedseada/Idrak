@@ -5,8 +5,10 @@ namespace Idrak.Gpu.Vulkan;
 
 // Attention over one range of keys per query row (attention_spans, with each row's log-sum-exp: attention_spans_lse), a
 // workgroup per block of rows of a head as attention_tiled (its rows and key tile from the device's workgroup width).
-// Its gradient takes the host fallback for now. And the measured choice between it and the composed scores
-// (Backend.PrefersComposedAttention, for Tensor.AttentionFastest), measured and kept as the other kernel choices: per
+// Its gradient: Δ per row (attention_spans_delta), then attention_spans_backward_dq and attention_spans_backward_dkv,
+// tiled the same way (their width measured per shape as the forward's); a device that cannot bind their storages takes
+// the host fallback. And the measured choice between it and the composed scores (Backend.PrefersComposedAttention, for
+// Tensor.AttentionFastest; with their gradients when training), measured and kept as the other kernel choices: per
 // device, driver and width, in the runtime's tuning file.
 internal sealed partial class VulkanBackend
 {
@@ -60,19 +62,83 @@ internal sealed partial class VulkanBackend
         }
     }
 
+    /// <summary>Whether the gradient of AttentionSpans runs on this device's kernels (the kernels are on and the device binds their storages; tests).</summary>
+    internal bool SpanGradientOnDevice => !KernelsOff && Bindable("attention_spans_backward_dq") && Bindable("attention_spans_backward_dkv");
+
+    // Δ = dOutput · output per row, then the queries' pass and the keys' pass, at the width measured for the shape (the
+    // device's own until measured), as the forward's.
+    public override void AttentionSpansBackwardKernel(Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage output, Storage logSumExp,
+        Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale,
+        AttentionVariant variant = default)
+    {
+        long total = (long)heads * rows;
+        if (dim <= 0 || dim > VulkanKernels.AttentionMaxDim || kvHeads <= 0 || headsPerTable <= 0 || total > int.MaxValue
+            || !Fit(q, keys, values, starts, ends, output, logSumExp, dOutput, dq, dkeys, dvalues)
+            || !Bindable("attention_spans_backward_dq") || !Bindable("attention_spans_backward_dkv"))
+        {
+            base.AttentionSpansBackwardKernel(q, keys, values, starts, ends, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, kvHeads, headsPerTable, rows,
+                keyRows, dim, scale, variant);
+            return;
+        }
+
+        if (heads <= 0 || rows <= 0 || keyRows <= 0)
+        {
+            return;
+        }
+
+        var delta = Allocate((int)total, zeroed: false);
+        try
+        {
+            Span<byte> b = stackalloc byte[8];
+            Grid("attention_spans_delta", total, [output, dOutput, delta], new Push(b).I((int)total).I(dim).Bytes);
+            int width = Width;
+            var key = new VulkanTuneKey(VulkanTuneOp.SpanAttentionBackward, 0, heads, rows, keyRows, dim, kvHeads, headsPerTable);
+            if (TryTuned(key, out int stored) && Array.IndexOf(CandidateWidths, stored) >= 0)
+            {
+                width = stored;
+            }
+            else if (CanTune && CandidateWidths.Length > 1)
+            {
+                // The candidates add into scratch gradients.
+                WithScratch([dq.Length, dkeys.Length, dvalues.Length], scratch => width = Tune(key, CandidateWidths, Width,
+                    w => RunSpansBackward(w, q, keys, values, starts, ends, logSumExp, dOutput, delta, scratch[0], scratch[1], scratch[2], heads, kvHeads,
+                        headsPerTable, rows, keyRows, dim, scale, variant)));
+            }
+
+            RunSpansBackward(width, q, keys, values, starts, ends, logSumExp, dOutput, delta, dq, dkeys, dvalues, heads, kvHeads, headsPerTable, rows, keyRows,
+                dim, scale, variant);
+        }
+        finally
+        {
+            delta.Release();                                                   // reused in queue order
+        }
+    }
+
+    private void RunSpansBackward(int width, Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage logSumExp, Storage dOutput,
+        Storage delta, Storage dq, Storage dkeys, Storage dvalues, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale,
+        AttentionVariant variant)
+    {
+        int perBlock = VulkanKernels.TiledAttentionRows(width);
+        long rowBlocks = (long)heads * ((rows + perBlock - 1) / perBlock), keyBlocks = (long)kvHeads * ((keyRows + perBlock - 1) / perBlock);
+        Span<byte> b = stackalloc byte[32];
+        var push = new Push(b).I(heads).I(rows).I(keyRows).I(dim).I(heads / kvHeads).I(headsPerTable).F(scale).F(variant.Softcap).Bytes;
+        RunAt("attention_spans_backward_dq", width, RowGroups(rowBlocks), 1, 1, [q, keys, values, starts, ends, logSumExp, dOutput, delta, dq], push);
+        RunAt("attention_spans_backward_dkv", width, RowGroups(keyBlocks), 1, 1, [q, keys, values, starts, ends, logSumExp, dOutput, delta, dkeys, dvalues], push);
+    }
+
     public override bool PrefersComposedAttention(Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage? mask, int heads, int rows,
-        int keyRows, int dim, float scale)
+        int keyRows, int dim, float scale, bool training = false)
     {
         // 0 = AttentionSpans (the default, also while nothing can be measured), 1 = composed; keyed by the precision too
-        // (the products may run on cooperative matrices under MixedPrecision).
-        var key = new VulkanTuneKey(VulkanTuneOp.AttentionPath, (int)MixedPrecision.Current, heads, rows, keyRows, dim, mask is null ? 0 : 1);
+        // (the products may run on cooperative matrices under MixedPrecision) and by whether the gradient is timed too.
+        var key = new VulkanTuneKey(VulkanTuneOp.AttentionPath, (int)MixedPrecision.Current, heads, rows, keyRows, dim, (mask is null ? 0 : 1) | (training ? 2 : 0));
         if (TryTuned(key, out int known) && known is 0 or 1)
         {
             return known == 1;
         }
 
-        long scores = (long)heads * rows * keyRows, outputs = (long)heads * rows * dim;
-        if (!CanTune || scores > int.MaxValue || outputs > int.MaxValue)
+        long scores = (long)heads * rows * keyRows, outputs = (long)heads * rows * dim, keyFloats = (long)heads * keyRows * dim;
+        if (!CanTune || scores > int.MaxValue || outputs > int.MaxValue || keyFloats > int.MaxValue)
         {
             return false;
         }
@@ -80,17 +146,33 @@ internal sealed partial class VulkanBackend
         int chosen = 0;
         try
         {
-            WithScratch([(int)scores, (int)scores, (int)outputs], scratch =>
+            // Scratch: the scores, the weights, the output (also dOutput in the gradient); with the gradient the softmax's
+            // gradient, the log-sum-exp, dq, dkeys and dvalues.
+            int[] lengths = training
+                ? [(int)scores, (int)scores, (int)outputs, (int)scores, heads * rows, (int)outputs, (int)keyFloats, (int)keyFloats]
+                : [(int)scores, (int)scores, (int)outputs];
+            WithScratch(lengths, scratch =>
             {
                 void Run(int c)
                 {
-                    if (c == 0)
+                    if (!training && c == 0)
                     {
                         AttentionSpans(q, keys, values, starts, ends, scratch[2], null, heads, heads, heads, rows, keyRows, dim, scale);
                     }
-                    else
+                    else if (!training)
                     {
                         ComposedAttention(q, keys, values, mask, scratch[0], scratch[1], scratch[2], heads, rows, keyRows, dim, scale);
+                    }
+                    else if (c == 0)
+                    {
+                        AttentionSpans(q, keys, values, starts, ends, scratch[2], scratch[4], heads, heads, heads, rows, keyRows, dim, scale);
+                        AttentionSpansBackward(q, keys, values, starts, ends, scratch[2], scratch[4], scratch[2], scratch[5], scratch[6], scratch[7], heads, heads,
+                            heads, rows, keyRows, dim, scale);
+                    }
+                    else
+                    {
+                        ComposedAttentionTraining(q, keys, values, mask, scratch[0], scratch[1], scratch[3], scratch[2], scratch[2], scratch[5], scratch[6],
+                            scratch[7], heads, rows, keyRows, dim, scale);
                     }
                 }
 

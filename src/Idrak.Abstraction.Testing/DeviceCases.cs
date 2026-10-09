@@ -37,6 +37,7 @@ public static partial class DeviceCases
         new("decoding: masks and key/value caches in float32, int8 and bfloat16", KeyValueCaches, random: true),
         new("attention: decoding, tiled, int8 and bfloat16 caches, rows, segments, strided, windows and soft-caps", Attention, random: true),
         new("attention over key ranges: bidirectional, causal, windows, segments, image blocks, grouped heads, empty ranges", SpanAttention, random: true),
+        new("attention over key ranges, the gradient: rows and keys past several tiles, head sizes 1 to 256, random ranges, bidirectional, causal, windows, image blocks, grouped heads, tables, a soft-cap; against plain loops and the composed path", SpanAttentionGradient, random: true),
         new("sampling: penalties, top-k, top-p and min-p draws, and the token history", Sampling, random: true),
         new("autograd: a small network's forward and backward passes through tensors", Autograd, random: true),
     ];

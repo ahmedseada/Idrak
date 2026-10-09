@@ -170,9 +170,9 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | Device | Methods overridden |
 |---|---|
 | `CpuBackend` | 109 of 140 |
-| `CudaBackend` | 131 of 140 |
+| `CudaBackend` | 132 of 140 |
 | `HipBackend` | 23 of 140 |
-| `VulkanBackend` | 113 of 140 |
+| `VulkanBackend` | 114 of 140 |
 
 | Operation | Kind | Cpu | Cuda | Hip | Vulkan |
 |---|---|---|---|---|---|
@@ -195,7 +195,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `AttentionScoresInt8Kernel(8)` | virtual | ✓ | ✓ |  |  |
 | `AttentionSegmentedBackwardKernel(18)` | virtual | ✓ | ✓ |  |  |
 | `AttentionSegmentedKernel(14)` | virtual | ✓ | ✓ |  |  |
-| `AttentionSpansBackwardKernel(19)` | virtual | ✓ |  |  |  |
+| `AttentionSpansBackwardKernel(19)` | virtual | ✓ | ✓ |  | ✓ |
 | `AttentionSpansKernel(15)` | virtual | ✓ | ✓ |  | ✓ |
 | `AttentionStridedBackwardKernel(23)` | virtual |  | ✓ |  |  |
 | `AttentionStridedKernel(16)` | virtual |  | ✓ |  |  |
@@ -281,7 +281,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `PermuteKernel(5)` | virtual | ✓ | ✓ |  | ✓ |
 | `PowBackwardKernel(5)` | virtual | ✓ |  |  | ✓ |
 | `PowKernel(4)` | virtual | ✓ |  |  | ✓ |
-| `PrefersComposedAttention(11)` | virtual |  | ✓ |  | ✓ |
+| `PrefersComposedAttention(12)` | virtual |  | ✓ |  | ✓ |
 | `PrefersPackedMatMul(8)` | virtual |  | ✓ |  |  |
 | `ReleaseCachedMemory(0)` | abstract | ✓ | ✓ | ✓ | ✓ |
 | `ReplayGraph(1)` | virtual |  | ✓ |  | ✓ |

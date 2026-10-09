@@ -11,10 +11,12 @@ using Idrak.Abstraction.Operations;
 // values) and Tensor.AttentionFastest (the device's measured choice; which one it took is printed). The argument picks
 // one (spans, composed or fastest); without it all three run. Each path's peak is the device's own count of the bytes
 // its tensors held at once (MemoryUsage.Peak, reset before the path), on every device alike; the process's peak resident
-// memory (VmHWM, Linux) is printed too, for the CPU.
+// memory (VmHWM, Linux) is printed too, for the CPU. With "train", each pass is a training step's: the forward pass with
+// the gradient recorded and the backward pass (AttentionSpansBackward on the key-range path; the products', the
+// softmax's and the scale's gradients on the composed one; the measured choice timed with its gradient).
 internal static partial class Tests
 {
-    internal static int BenchSpans(string path)
+    internal static int BenchSpans(string path, bool training = false)
     {
         int tokens = int.TryParse(Environment.GetEnvironmentVariable("IDRAK_SPAN_TOKENS"), out int t) ? t : 4096, heads = 16, dim = 72;
         List<Device> devices = Environment.GetEnvironmentVariable("IDRAK_DEVICES") is { Length: > 0 } chosen
@@ -30,10 +32,12 @@ internal static partial class Tests
             using var v = Tensor.From(RandomArray(random, heads * tokens * dim), [heads, tokens, dim], device);
             var (starts, ends) = KeySpans.Bidirectional(tokens, tokens).ToTensors(device);
             Console.WriteLine($"{device} ({device.Backend.Name}): {tokens} tokens, {heads} heads, dim {dim}, precision {MixedPrecision.Current}, "
-                + $"attention path {AttentionPaths.Forced}, available memory {Megabytes(device.Backend.AvailableMemory())} MB");
+                + $"attention path {AttentionPaths.Forced}, available memory {Megabytes(device.Backend.AvailableMemory())} MB{(training ? ", forward and backward" : "")}");
+            q.RequiresGrad = k.RequiresGrad = v.RequiresGrad = training;
+            using var w = training ? Tensor.From(RandomArray(random, heads * tokens * dim), [heads, tokens, dim], device) : null;
             foreach (string which in paths)
             {
-                Action run = which switch
+                Action run = training ? () => TrainingPass(which, q, k, v, w!, starts, ends, scale) : which switch
                 {
                     "composed" => () =>
                     {
@@ -50,7 +54,7 @@ internal static partial class Tests
                         using var y = Tensor.AttentionSpans(q, k, v, starts, ends, scale);
                     },
                 };
-                using (Autograd.NoGrad())
+                using (training ? null : (IDisposable)Autograd.NoGrad())
                 {
                     ComputeResources.ResetPeakMemoryUsage(device);
                     string took = "";
@@ -62,6 +66,10 @@ internal static partial class Tests
                         run();
                         device.Synchronize();
                         took = trace.Calls(Ops.AttentionSpans) > 0 ? " (chose AttentionSpans)" : " (chose composed)";
+                        if (training)
+                        {
+                            took += trace.HostCallsByOperation.ContainsKey("AttentionSpansBackward") ? " (its gradient on the host)" : "";
+                        }
                     }
 
                     var watch = Stopwatch.StartNew();
@@ -80,6 +88,36 @@ internal static partial class Tests
         }
 
         return 0;
+    }
+
+    // One training pass of attention over q, k, v (which take the gradient): forward with the gradient recorded, then
+    // backward from Σ y ∘ w (the gradients add into q's, k's and v's); the pass's tensors are released after.
+    private static void TrainingPass(string which, Tensor q, Tensor k, Tensor v, Tensor w, Tensor starts, Tensor ends, float scale)
+    {
+        var made = new List<Tensor>();
+        Tensor Keep(Tensor t)
+        {
+            made.Add(t);
+            return t;
+        }
+
+        try
+        {
+            var y = which switch
+            {
+                "composed" => Keep(Keep(Keep(Keep(q.MatMul(k, transposeB: true)) * scale).Softmax()).MatMul(v)),
+                "fastest" => Keep(Tensor.AttentionFastest(q, k, v, starts, ends, scale, everyKey: true)),
+                _ => Keep(Tensor.AttentionSpans(q, k, v, starts, ends, scale)),
+            };
+            Keep(Keep(y * w).Sum()).Backward();
+        }
+        finally
+        {
+            foreach (var t in made)
+            {
+                t.Dispose();
+            }
+        }
     }
 
     private static string Megabytes(long? bytes) => bytes is { } b ? (b >> 20).ToString(System.Globalization.CultureInfo.InvariantCulture) : "unreported";
