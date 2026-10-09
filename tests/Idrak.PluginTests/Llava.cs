@@ -268,8 +268,8 @@ public sealed class LlavaVisionFamily : IVisionFamily
     }
 }
 
-/// <summary>A LLaVA checkpoint's vision part.</summary>
-public sealed class LlavaVision : PretrainedVision
+/// <summary>A LLaVA checkpoint's vision part; for fine-tuning (<see cref="IVisionTuningPart"/>) it lets its projector train.</summary>
+public sealed class LlavaVision : PretrainedVision, IVisionTuningPart
 {
     private readonly Func<ITensorStore> _open;
     private readonly string? _folder;
@@ -331,6 +331,46 @@ public sealed class LlavaVision : PretrainedVision
             Mean = [0.48145466f, 0.4578275f, 0.40821073f], Std = [0.26862954f, 0.26130258f, 0.27577711f], Grayscale = grayscale,
         };
         return _folder is { } folder && File.Exists(Path.Combine(folder, "preprocessor_config.json")) ? ImagePreprocessor.FromConfig(folder, grayscale, defaults) : defaults;
+    }
+
+    /// <summary>LLaVA lets its projector (the two-layer MLP) train; its CLIP tower stays frozen.</summary>
+    public IReadOnlyList<string> TrainableParts { get; } = [VisionTuningParts.Projector];
+
+    /// <inheritdoc />
+    public IReadOnlyList<Tensor> Parameters(IVisionEncoder encoder, string part)
+    {
+        ArgumentNullException.ThrowIfNull(part);
+        var own = Own(encoder);
+        return string.Equals(part.Trim(), VisionTuningParts.Projector, StringComparison.OrdinalIgnoreCase) ? [.. own.Projector.Parameters()]
+            : throw new NotSupportedException($"The vision family {Family} does not offer '{part}' for training; it offers: {string.Join(", ", TrainableParts)}.");
+    }
+
+    /// <summary>
+    /// The features [images, tokens, width] of the selected hidden states [images, patches + 1, width · layers] (as the
+    /// encoder's <c>Tower</c> gives them): the class token dropped for "default", then the projector, recording gradients.
+    /// </summary>
+    public Tensor Features(IVisionEncoder encoder, Tensor towerOutput)
+    {
+        ArgumentNullException.ThrowIfNull(towerOutput);
+        var own = Own(encoder);
+        if (towerOutput.Rank != 3 || towerOutput.Shape[1] != Clip.Patches + 1)
+        {
+            throw new ArgumentException($"LLaVA's tower output is [images, {Clip.Patches + 1}, width], got {Tensor.FormatShape(towerOutput.Shape)}.", nameof(towerOutput));
+        }
+
+        return own.Projector.Forward(Full ? towerOutput : towerOutput.Narrow(1, 1, Clip.Patches));
+    }
+
+    /// <summary>LLaVA does not offer its tower for training.</summary>
+    /// <exception cref="NotSupportedException">Always: the message names the parts offered.</exception>
+    public Tensor Tower(IVisionEncoder encoder, Tensor pixelValues) =>
+        throw new NotSupportedException($"The vision family {Family} does not offer '{VisionTuningParts.Tower}' for training; it offers: {string.Join(", ", TrainableParts)}.");
+
+    private LlavaImageEncoder Own(IVisionEncoder encoder)
+    {
+        ArgumentNullException.ThrowIfNull(encoder);
+        return encoder is LlavaImageEncoder own && ReferenceEquals(own.Vision, this) ? own
+            : throw new ArgumentException($"{encoder.GetType().Name} is not an encoder of this LLaVA vision part.", nameof(encoder));
     }
 
     /// <inheritdoc />

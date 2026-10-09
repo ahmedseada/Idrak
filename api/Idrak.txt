@@ -1176,6 +1176,12 @@ public interface Idrak.Models.Abstractions.IVisionFamily
   public Idrak.Models.Abstractions.PretrainedVision? Read(Idrak.Models.Abstractions.VisionCheckpoint checkpoint)
   public string Name { get; }
 
+public interface Idrak.Models.Abstractions.IVisionTuningPart
+  public Idrak.Abstraction.Tensor Features(Idrak.Abstraction.Generation.IVisionEncoder encoder, Idrak.Abstraction.Tensor towerOutput)
+  public Idrak.Abstraction.Tensor Tower(Idrak.Abstraction.Generation.IVisionEncoder encoder, Idrak.Abstraction.Tensor pixelValues)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor> Parameters(Idrak.Abstraction.Generation.IVisionEncoder encoder, string part)
+  public System.Collections.Generic.IReadOnlyList<string> TrainableParts { get; }
+
 public interface Idrak.Models.Abstractions.IWeightSource
   public float[]? Read(string name, System.Collections.Generic.IReadOnlyList<int> shape)
 
@@ -1265,6 +1271,12 @@ public static class Idrak.Models.Abstractions.VisionFamilies
   public static bool Unregister(string name)
   public static string? Origin(string name)
   public static void Register(Idrak.Models.Abstractions.IVisionFamily family)
+
+public static class Idrak.Models.Abstractions.VisionTuningParts
+  public const string Projector = "projector"
+  public const string Tower = "tower"
+  public static Idrak.Models.Abstractions.IVisionTuningPart? For(Idrak.Models.Abstractions.PretrainedVision vision, System.Collections.Generic.IEnumerable<string> parts)
+  public static System.Collections.Generic.IReadOnlyList<string> Offered(Idrak.Models.Abstractions.PretrainedVision vision)
 
 public abstract class Idrak.Models.Abstractions.WeightCodec
   public abstract int BytesPerValue { get; }
