@@ -196,7 +196,8 @@ internal sealed class RunCommand : Command
         }
 
         string content = context.Json ? json.ToJsonString(CommandContext.JsonOutput) : text.Trim();
-        File.WriteAllText(path, content + "\n", new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        // Ends as the printed document does (WriteLine: the platform's line ending), so the file and the console agree.
+        File.WriteAllText(path, content + Environment.NewLine, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         if (context.Verbose)
         {
             context.ErrorOutput.WriteLine($"wrote {path}");

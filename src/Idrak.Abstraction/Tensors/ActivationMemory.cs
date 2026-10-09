@@ -28,6 +28,9 @@ public static class ActivationMemory
     [ThreadStatic]
     private static int t_compress;
 
+    [ThreadStatic]
+    private static int t_checkpoint;
+
     /// <summary>Release results no backward step reads during the forward pass (default true; false keeps every result until the step ends).</summary>
     public static bool ReleaseUnused { get; set; } = true;
 
@@ -54,6 +57,22 @@ public static class ActivationMemory
     {
         t_compress++;
         return new Scope(1);
+    }
+
+    /// <summary>Whether modules that run their own blocks checkpoint them on this thread (see <see cref="CheckpointBlocks"/>).</summary>
+    public static bool CheckpointsBlocks => t_checkpoint > 0;
+
+    /// <summary>
+    /// Asks the modules that run blocks of their own outside the decoder's loop (a vision tower trained through
+    /// <c>IVisionTuningPart.Tower</c>) to run each block with activation checkpointing on this thread until the returned
+    /// scope is disposed: only each block's output is kept, and the block runs again in the backward pass. A tuner opens it
+    /// when it checkpoints the decoder's blocks (its out-of-memory ladder or <c>Checkpointing</c>); without gradient
+    /// recording it changes nothing.
+    /// </summary>
+    public static Scope CheckpointBlocks()
+    {
+        t_checkpoint++;
+        return new Scope(2);
     }
 
     /// <summary>Holds the values as bfloat16 until the backward pass reads them, while <see cref="CompressToBFloat16"/> is in effect.</summary>
@@ -105,7 +124,7 @@ public static class ActivationMemory
         }
     }
 
-    /// <summary>Ends <see cref="Recompute"/> or <see cref="CompressToBFloat16"/>.</summary>
+    /// <summary>Ends <see cref="Recompute"/>, <see cref="CompressToBFloat16"/> or <see cref="CheckpointBlocks"/>.</summary>
     public readonly struct Scope : IDisposable
     {
         private readonly int _kind;
@@ -119,9 +138,13 @@ public static class ActivationMemory
             {
                 t_recompute--;
             }
-            else
+            else if (_kind == 1)
             {
                 t_compress--;
+            }
+            else
+            {
+                t_checkpoint--;
             }
         }
     }

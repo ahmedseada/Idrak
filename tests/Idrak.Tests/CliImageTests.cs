@@ -413,7 +413,7 @@ internal static partial class Tests
             (code, text, _) = RunIdrakOn(device, null, ["run", VlmModel, "--image", png, "What is in this image?", .. greedy, "-o", answerFile]);
             bytes = File.ReadAllBytes(answerFile);
             written = new System.Text.UTF8Encoding(false, throwOnInvalidBytes: true).GetString(bytes);
-            Check(code == 0 && !(bytes is [0xEF, 0xBB, 0xBF, ..]) && written == answer.Trim() + "\n" && text.Contains(answer.Trim(), StringComparison.Ordinal), $"run -o: {code}\n{written}\n{text}");
+            Check(code == 0 && !(bytes is [0xEF, 0xBB, 0xBF, ..]) && written == answer.Trim() + Environment.NewLine && text.Contains(answer.Trim(), StringComparison.Ordinal), $"run -o: {code}\n{written}\n{text}");
         }
         finally
         {

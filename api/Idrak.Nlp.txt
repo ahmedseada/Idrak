@@ -334,6 +334,7 @@ public sealed record Idrak.Nlp.Abstractions.FeatureCacheKey : System.IEquatable<
   public FeatureCacheKey(string Image, string Transforms, string VisionOptions, string Family, string Checkpoint, string DType, string Stage = "tower")
   public System.Text.Json.Nodes.JsonArray ToJson()
   public const string FeaturesStage = "features"
+  public const string PixelsStage = "pixels"
   public const string TowerStage = "tower"
   public static Idrak.Nlp.Abstractions.FeatureCacheKey For(Idrak.Abstraction.Generation.ChatImage image, Idrak.Nlp.TuningImages images, string family, string checkpoint, string dtype, string stage = "tower")
   public string Checkpoint { get; init; }
@@ -785,6 +786,7 @@ public sealed class Idrak.Nlp.TuningVision : System.IDisposable
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageTokenLayout> Blocks(Idrak.Abstraction.Generation.ChatImage image, Idrak.Nlp.TuningImages? preparation = null)
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor> Parameters { get; }
   public System.Collections.Generic.IReadOnlyList<string> Parts { get; }
+  public bool TrainsTower { get; }
   public long CacheHits { get; }
   public long Encoded { get; }
   public override string ToString()

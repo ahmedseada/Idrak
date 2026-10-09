@@ -24,12 +24,47 @@ public sealed class SiglipVisionEncoder : Module
     // it goes, so a pass holds one layer's worth of activations (4,096 patches x 27 layers would otherwise keep ~10 GB).
     private readonly Sequential _body;
 
-    private SiglipVisionEncoder(SiglipVisionConfig config, Conv2d patches, Tensor positions, TransformerEncoderLayer[] layers, LayerNorm postNorm)
+    // Each layer's weights as built (the fused q, k, v projection among them), for a trained tower's Export and Import.
+    private readonly SiglipLayerWeights[] _weights;
+    private readonly LayerNorm _postNorm;
+
+    private SiglipVisionEncoder(SiglipVisionConfig config, Conv2d patches, Tensor positions, TransformerEncoderLayer[] layers, SiglipLayerWeights[] weights, LayerNorm postNorm)
     {
         Config = config;
         _embedding = new PatchEmbedding(config, patches, positions);
         _layers = layers;
+        _weights = weights;
+        _postNorm = postNorm;
         _body = new Sequential([_embedding, .. layers, postNorm]);
+    }
+
+    // The patch convolution, the position embedding [patches, dim], each layer's weights and the final norm.
+    internal Conv2d Patches => _embedding.Patches;
+
+    internal Tensor PositionEmbedding => _embedding.Positions;
+
+    internal IReadOnlyList<SiglipLayerWeights> LayerWeights => _weights;
+
+    internal LayerNorm PostNorm => _postNorm;
+
+    /// <summary>
+    /// The forward pass for training the tower: with <paramref name="checkpointed"/> and gradients recorded, each encoder
+    /// layer runs checkpointed (only its output kept, the layer run again in the backward pass; the same gradients).
+    /// </summary>
+    internal Tensor ForwardTraining(Tensor pixels, bool checkpointed)
+    {
+        if (!checkpointed || !Autograd.IsEnabled)
+        {
+            return _body.Forward(pixels);
+        }
+
+        var x = _embedding.Forward(pixels);
+        foreach (var layer in _layers)
+        {
+            x = layer.ForwardCheckpointed(x);
+        }
+
+        return _postNorm.Forward(x);
     }
 
     /// <summary>The encoder's configuration.</summary>
@@ -109,6 +144,7 @@ public sealed class SiglipVisionEncoder : Module
             built.Add(patches);
             var positions = Read("embeddings.position_embedding.weight", [config.Patches, dim]);
             var layers = new TransformerEncoderLayer[config.Layers];
+            var layerWeights = new SiglipLayerWeights[config.Layers];
             for (int i = 0; i < layers.Length; i++)
             {
                 string l = $"encoder.layers.{i}";
@@ -140,12 +176,15 @@ public sealed class SiglipVisionEncoder : Module
                 var qkv = StoredWeights.Linear(qkvWeight, dim, 3 * dim, qkvB,
                     StoredWeights.KeepsBFloat16(tensors, weights, parts.Select(part => $"{prefix}{l}.self_attn.{part}.weight")), device);
                 built.Add(qkv);
-                var attention = MultiHeadAttention.FromWeights(qkv, Dense($"{l}.self_attn.out_proj", dim, dim), config.Heads);
-                layers[i] = TransformerEncoderLayer.FromLayers(Norm($"{l}.layer_norm1"), attention, Norm($"{l}.layer_norm2"),
-                    Dense($"{l}.mlp.fc1", dim, ff), Dense($"{l}.mlp.fc2", ff, dim));
+                var output = Dense($"{l}.self_attn.out_proj", dim, dim);
+                var attention = MultiHeadAttention.FromWeights(qkv, output, config.Heads);
+                var (norm1, norm2) = (Norm($"{l}.layer_norm1"), Norm($"{l}.layer_norm2"));
+                var (fc1, fc2) = (Dense($"{l}.mlp.fc1", dim, ff), Dense($"{l}.mlp.fc2", ff, dim));
+                layers[i] = TransformerEncoderLayer.FromLayers(norm1, attention, norm2, fc1, fc2);
+                layerWeights[i] = new SiglipLayerWeights(norm1, qkv, output, norm2, fc1, fc2);
             }
 
-            return new SiglipVisionEncoder(config, patches, positions, layers, Norm("post_layernorm"));
+            return new SiglipVisionEncoder(config, patches, positions, layers, layerWeights, Norm("post_layernorm"));
         }
         catch
         {
@@ -272,10 +311,18 @@ public sealed class Gemma3Projector : Module
     public override string ToString() => $"Gemma3Projector(pool {PoolSize}, {VisionDim} -> {TextDim})";
 }
 
+// One SigLIP encoder layer's weights as built: its norms, the fused q, k, v projection ([dim, 3·dim], q then k then v),
+// the output projection and the MLP (Linear weights [in, out]).
+internal sealed record SiglipLayerWeights(LayerNorm Norm1, Linear Qkv, Linear Output, LayerNorm Norm2, Linear Fc1, Linear Fc2);
+
 // SigLIP's patch embedding: the patch convolution, patches row by row, plus the learned position embedding.
 internal sealed class PatchEmbedding(SiglipVisionConfig config, Conv2d patches, Tensor positions) : Module
 {
     private Tensor _positions = positions;
+
+    public Conv2d Patches => patches;
+
+    public Tensor Positions => _positions;
 
     protected override Tensor ForwardCore(Tensor input)
     {
