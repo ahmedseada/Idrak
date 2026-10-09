@@ -132,8 +132,18 @@ internal sealed class NetworkAnalysis
             "conv2d" => $"conv2d {I("out")}, {Size(Pair(step, "kernel", 1))}" + (Pair(step, "stride", 1) is not (1, 1) ? $", stride {Size(Pair(step, "stride", 1))}" : "")
                 + (Pair(step, "padding", 0) is not (0, 0) ? $", padding {Size(Pair(step, "padding", 0))}" : "")
                 + (Pair(step, "dilation", 1) is not (1, 1) ? $", dilation {Size(Pair(step, "dilation", 1))}" : "") + (I("groups", 1) != 1 ? $", {I("groups")} groups" : ""),
-            "maxpool2d" => $"max pool {Size(Pair(step, "kernel", 1))}",
-            "avgpool2d" => $"average pool {Size(Pair(step, "kernel", 1))}",
+            "convtranspose2d" => $"transposed conv2d {I("out")}, {Size(Pair(step, "kernel", 1))}"
+                + (Pair(step, "stride", 1) is not (1, 1) ? $", stride {Size(Pair(step, "stride", 1))}" : "")
+                + (Pair(step, "padding", 0) is not (0, 0) ? $", padding {Size(Pair(step, "padding", 0))}" : "")
+                + (Pair(step, "outputPadding", 0) is not (0, 0) ? $", output padding {Size(Pair(step, "outputPadding", 0))}" : "")
+                + (Pair(step, "dilation", 1) is not (1, 1) ? $", dilation {Size(Pair(step, "dilation", 1))}" : "") + (I("groups", 1) != 1 ? $", {I("groups")} groups" : ""),
+            "maxpool2d" => $"max pool {Size(Pair(step, "kernel", 1))}" + ((bool?)step["ceilMode"] == true ? ", ceil mode" : ""),
+            "avgpool2d" => $"average pool {Size(Pair(step, "kernel", 1))}" + ((bool?)step["ceilMode"] == true ? ", ceil mode" : ""),
+            "adaptiveavgpool2d" => $"adaptive average pool to {Size(Pair(step, "size", 1))}",
+            "adaptivemaxpool2d" => $"adaptive max pool to {Size(Pair(step, "size", 1))}",
+            "upsample" => "upsample " + (step["size"] is not null ? $"to {Size(Pair(step, "size", 1))}" : $"x{Scale(step)}") + $", {(string?)step["mode"] ?? "nearest"}"
+                + ((bool?)step["alignCorners"] == true ? ", corners aligned" : ""),
+            "groupnorm" => $"group norm, {I("groups")} groups" + ((bool?)step["affine"] == false ? ", no affine" : ""),
             "columnsToSequence" => "columns to a sequence",
             "globalavgpool2d" => "global average pool",
             "batchnorm" => "batch norm",
@@ -169,6 +179,14 @@ internal sealed class NetworkAnalysis
 
     private static string Size((int H, int W) size) => $"{size.H}x{size.W}";
 
+    // An upsampling factor as written: one number, or height x width.
+    private static string Scale(JsonObject step) => step["scale"] switch
+    {
+        JsonArray pair => $"{(float)pair[0]!:0.###}x{(float)pair[1]!:0.###}",
+        JsonNode one => $"{(float)one:0.###}",
+        null => "?",
+    };
+
     // A recurrent step's layers and directions: each (input size, hidden size, gates), in order.
     private static IEnumerable<long> RecurrentInputs(JsonObject step, long d)
     {
@@ -196,8 +214,14 @@ internal sealed class NetworkAnalysis
                 long outChannels = (int)step["out"]!, groups = (int?)step["groups"] ?? 1;
                 var (kh, kw) = Pair(step, "kernel", 1);
                 return input[0] / groups * outChannels * kh * kw + ((bool?)step["bias"] ?? true ? outChannels : 0);
+            case "convtranspose2d":
+                long transposedOut = (int)step["out"]!, transposedGroups = (int?)step["groups"] ?? 1;
+                var (tkh, tkw) = Pair(step, "kernel", 1);
+                return input[0] * (transposedOut / transposedGroups) * tkh * tkw + ((bool?)step["bias"] ?? true ? transposedOut : 0);
             case "batchnorm":
                 return 2L * input[0];                                           // gamma and beta (running statistics are buffers)
+            case "groupnorm":
+                return (bool?)step["affine"] ?? true ? 2L * input[0] : 0;
             case "layernorm":
                 return 2 * d;
             case "embedding":
@@ -212,7 +236,7 @@ internal sealed class NetworkAnalysis
                 long candidate = op == "gru" && (bool?)step["candidateBias"] == true ? hidden : 0;   // the candidate gate's own recurrent bias
                 return RecurrentInputs(step, d).Sum(x => x * gates * hidden + hidden * gates * hidden + gates * hidden + candidate);
             case "relu" or "tanh" or "sigmoid" or "gelu" or "softmax" or "dropout" or "maxpool2d" or "avgpool2d" or "columnsToSequence" or "globalavgpool2d" or "flatten"
-                or "positional" or "meanOverTime" or "lastStep" or "firstStep" or "reshape":
+                or "positional" or "meanOverTime" or "lastStep" or "firstStep" or "reshape" or "upsample" or "adaptiveavgpool2d" or "adaptivemaxpool2d":
                 return 0;
             default:
                 return null;
@@ -234,10 +258,18 @@ internal sealed class NetworkAnalysis
             case "conv2d":
                 var (kh, kw) = Pair(step, "kernel", 1);
                 return 2 * input[0] / ((int?)step["groups"] ?? 1) * kh * kw * outElements;
+            case "convtranspose2d":
+                // Each input value times the out / groups filters of its group (the product), then the fold adds them up.
+                var (tkh, tkw) = Pair(step, "kernel", 1);
+                return 2 * inElements * ((int)step["out"]! / ((int?)step["groups"] ?? 1)) * tkh * tkw;
             case "maxpool2d" or "avgpool2d":
                 var (ph, pw) = Pair(step, "kernel", 1);
                 return outElements * ph * pw;
-            case "batchnorm" or "layernorm":
+            case "adaptiveavgpool2d" or "adaptivemaxpool2d":
+                return Math.Max(inElements, outElements);
+            case "upsample":
+                return outElements * ((string?)step["mode"] == "bilinear" ? 8 : 1);    // bilinear: four weighted reads per output value
+            case "batchnorm" or "layernorm" or "groupnorm":
                 return 4 * inElements;
             case "embedding":
                 return 0;

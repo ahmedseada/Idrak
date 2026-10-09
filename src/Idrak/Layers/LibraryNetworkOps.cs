@@ -28,10 +28,22 @@ internal static class LibraryNetworkOps
         NetworkOps.Register("conv2d", (b, a) => Pairs(a, "kernel", "stride", "padding") || a.Has("dilation") || a.Has("groups")
             ? Of(b).Conv2d(a.Int("out"), Pair(a, "kernel"), Pair(a, "stride"), Pair(a, "padding"), OptionalPair(a, "dilation"), a.OptionalInt("groups") ?? 1, a.Bool("bias"))
             : Of(b).Conv2d(a.Int("out"), a.Int("kernel"), a.Int("stride"), a.Int("padding"), a.Bool("bias")));
-        NetworkOps.Register("maxpool2d", (b, a) => Pairs(a, "kernel", "stride", "padding")
-            ? Of(b).MaxPool2d(Pair(a, "kernel"), OptionalPair(a, "stride"), Pair(a, "padding"))
+        NetworkOps.Register("maxpool2d", (b, a) => Pairs(a, "kernel", "stride", "padding") || a.Has("ceilMode") || a.Has("paddingEnd")
+            ? Of(b).MaxPool2d(Pair(a, "kernel"), OptionalPair(a, "stride"), Pair(a, "padding"), CeilMode(a), OptionalPair(a, "paddingEnd"))
             : Of(b).MaxPool2d(a.Int("kernel"), a.OptionalInt("stride"), a.Int("padding")));
-        NetworkOps.Register("avgpool2d", (b, a) => Of(b).AvgPool2d(Pair(a, "kernel"), OptionalPair(a, "stride"), Pair(a, "padding"), a.Bool("countIncludePad")));
+        NetworkOps.Register("avgpool2d", (b, a) => Of(b).AvgPool2d(Pair(a, "kernel"), OptionalPair(a, "stride"), Pair(a, "padding"), a.Bool("countIncludePad"), CeilMode(a),
+            OptionalPair(a, "paddingEnd")));
+        NetworkOps.Register("adaptiveavgpool2d", (b, a) => Of(b).AdaptiveAvgPool2d(Pair(a, "size")));
+        NetworkOps.Register("adaptivemaxpool2d", (b, a) => Of(b).AdaptiveMaxPool2d(Pair(a, "size")));
+        NetworkOps.Register("convtranspose2d", (b, a) => Of(b).ConvTranspose2d(a.Int("out"), Pair(a, "kernel"), Pair(a, "stride"), Pair(a, "padding"), OptionalPair(a, "outputPadding"),
+            OptionalPair(a, "dilation"), a.OptionalInt("groups") ?? 1, a.Bool("bias")));
+        NetworkOps.Register("upsample", (b, a) =>
+        {
+            var mode = Interpolation(a);
+            bool align = a.Has("alignCorners") && a.Bool("alignCorners");
+            return a.Has("size") ? Of(b).UpsampleToSize(Pair(a, "size"), mode, align) : Of(b).Upsample(FloatPair(a, "scale"), mode, align);
+        });
+        NetworkOps.Register("groupnorm", (b, a) => Of(b).GroupNorm(a.Int("groups"), a.Float("epsilon"), !a.Has("affine") || a.Bool("affine")));
         NetworkOps.Register("columnsToSequence", (b, _) => Of(b).ColumnsToSequence());
         NetworkOps.Register("globalavgpool2d", (b, _) => Of(b).GlobalAveragePool2d());
         NetworkOps.Register("flatten", (b, _) => Of(b).Flatten());
@@ -56,6 +68,20 @@ internal static class LibraryNetworkOps
         a.Json[key] is JsonArray pair ? ((int)pair[0]!, (int)pair[1]!) : (a.Int(key), a.Int(key));
 
     private static (int Height, int Width)? OptionalPair(NetworkOpArguments a, string key) => a.Has(key) ? Pair(a, key) : null;
+
+    // A (height, width) pair of numbers: one for both, or [height, width].
+    private static (float Height, float Width) FloatPair(NetworkOpArguments a, string key) =>
+        a.Json[key] is JsonArray pair ? ((float)pair[0]!, (float)pair[1]!) : (a.Float(key), a.Float(key));
+
+    private static bool CeilMode(NetworkOpArguments a) => a.Has("ceilMode") && a.Bool("ceilMode");
+
+    // "nearest" (the default) or "bilinear".
+    private static InterpolationMode Interpolation(NetworkOpArguments a) => (string?)a.Json["mode"] switch
+    {
+        null or "nearest" => InterpolationMode.Nearest,
+        "bilinear" => InterpolationMode.Bilinear,
+        var other => throw new InvalidDataException($"Upsampling is \"nearest\" or \"bilinear\", not \"{other}\"."),
+    };
 
     // Whether any of the keys holds a [height, width] pair (a step the pair overloads wrote).
     private static bool Pairs(NetworkOpArguments a, params string[] keys) => keys.Any(k => a.Json[k] is JsonArray);

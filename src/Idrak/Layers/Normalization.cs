@@ -106,6 +106,86 @@ public sealed class BatchNorm : Module
 }
 
 /// <summary>
+/// Group normalization (Wu and He 2018) over [N, C, ...]: the channels are split into <see cref="Groups"/> groups, each
+/// sample's group (its C / groups channels at every position) is normalized with its own mean and variance, then a learned
+/// per-channel scale and shift apply (PyTorch's <c>GroupNorm</c>). Independent of the batch size, so it trains the same with
+/// one image as with many (detection and segmentation backbones); one group is layer norm over (C, H, W), C groups instance norm.
+/// </summary>
+public sealed class GroupNorm : Module
+{
+    /// <summary>Creates the layer.</summary>
+    /// <param name="groups">The groups the channels split into (it divides <paramref name="channels"/>).</param>
+    /// <param name="channels">Size of dimension 1.</param>
+    /// <param name="epsilon">Added to the variance for numerical stability.</param>
+    /// <param name="affine">Whether to learn the per-channel scale (gamma, from 1) and shift (beta, from 0).</param>
+    /// <param name="device">Where the parameters live.</param>
+    public GroupNorm(int groups, int channels, float epsilon = 1e-5f, bool affine = true, Device? device = null)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(groups);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(channels);
+        if (channels % groups != 0)
+        {
+            throw new ArgumentException($"GroupNorm's {groups} groups divide its {channels} channels.", nameof(groups));
+        }
+
+        device ??= Device.Default;
+        Groups = groups;
+        Channels = channels;
+        Epsilon = epsilon;
+        Gamma = affine ? CreateParameter(Enumerable.Repeat(1f, channels).ToArray(), [channels], device) : null;
+        Beta = affine ? CreateParameter(new float[channels], [channels], device) : null;
+    }
+
+    /// <summary>The groups the channels split into.</summary>
+    public int Groups { get; }
+
+    /// <summary>Number of channels.</summary>
+    public int Channels { get; }
+
+    /// <summary>Variance epsilon.</summary>
+    public float Epsilon { get; }
+
+    /// <summary>Whether the layer learns a per-channel scale and shift.</summary>
+    public bool Affine => Gamma is not null;
+
+    /// <summary>Learned per-channel scale, or null without <see cref="Affine"/>.</summary>
+    public Tensor? Gamma { get; private set; }
+
+    /// <summary>Learned per-channel shift, or null without <see cref="Affine"/>.</summary>
+    public Tensor? Beta { get; private set; }
+
+    /// <inheritdoc />
+    protected override Tensor ForwardCore(Tensor input)
+    {
+        if (input.Rank < 2 || input.Shape[1] != Channels)
+        {
+            throw new ArgumentException($"GroupNorm({Groups}, {Channels}) expects [N, {Channels}, ...], got {Tensor.FormatShape(input.Shape)}.");
+        }
+
+        // [N, C, ...] read as [1, N·groups, C / groups · positions]: each (sample, group) is one contiguous run, normalized
+        // with its own statistics by the batch-norm kernels (the same in training and evaluation: nothing is kept).
+        int samples = input.Shape[0], positions = input.Size / (samples * Channels);
+        var normalized = input.Normalize(1, samples * Groups, Channels / Groups * positions, Epsilon, out var mean, out var variance);
+        mean.Dispose();
+        variance.Dispose();
+        return Gamma is null ? normalized : normalized.GroupAffine(Gamma, Beta, Channels, positions);
+    }
+
+    /// <inheritdoc />
+    public override IEnumerable<Tensor> Parameters() => Gamma is null ? [] : [Gamma, Beta!];
+
+    /// <inheritdoc />
+    protected override void MoveTo(Device device)
+    {
+        Gamma = Gamma is null ? null : MoveTensor(Gamma, device);
+        Beta = Beta is null ? null : MoveTensor(Beta, device);
+    }
+
+    /// <inheritdoc />
+    public override string ToString() => $"GroupNorm({Groups}, {Channels}{(Affine ? "" : ", no affine")})";
+}
+
+/// <summary>
 /// Fixed per-channel normalization: (x - mean[c]) / std[c] over [N, C, ...] (the channels of images, the features of
 /// [N, F]). Image networks expect inputs normalized by their training data's statistics (ImageNet's, for example);
 /// as the first layer of the network, the normalization runs on the device, is saved with the model, and every caller

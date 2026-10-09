@@ -71,6 +71,18 @@ public enum BinaryOp
 }
 
 /// <summary>
+/// How <see cref="Backend.Interpolate2d"/> reads an output position from the input (PyTorch's <c>F.interpolate</c> modes).
+/// </summary>
+public enum InterpolationMode
+{
+    /// <summary>The input position floor(o · scale), the last one at most (PyTorch's "nearest").</summary>
+    Nearest,
+
+    /// <summary>The two nearest rows and columns, weighted by distance (PyTorch's "bilinear").</summary>
+    Bilinear,
+}
+
+/// <summary>
 /// Shape parameters of a 2-D convolution or pooling window over NCHW data (<see cref="Backend.Im2Col"/>,
 /// <see cref="Backend.MaxPool"/>).
 /// </summary>
@@ -82,17 +94,42 @@ public enum BinaryOp
 /// <param name="KW">Window width.</param>
 /// <param name="SH">Vertical stride.</param>
 /// <param name="SW">Horizontal stride.</param>
-/// <param name="PH">Zero padding above and below.</param>
-/// <param name="PW">Zero padding left and right.</param>
+/// <param name="PH">Zero padding above (and below, unless <see cref="PadBottom"/> says otherwise).</param>
+/// <param name="PW">Zero padding left (and right, unless <see cref="PadRight"/> says otherwise).</param>
 /// <remarks>
 /// A dilated window (<see cref="DH"/>, <see cref="DW"/> above 1, set with <c>with</c>) reads every DH-th row and DW-th
 /// column: window position (kh, kw) is input row oh·SH - PH + kh·DH and column ow·SW - PW + kw·DW. Pooling takes no dilation.
+/// Padding below and right (<see cref="PadBottom"/>, <see cref="PadRight"/>, set with <c>with</c>) may differ from PH and
+/// PW (ONNX's four pads, a pooling window's ceil mode): it changes only how many windows there are (<see cref="OH"/>,
+/// <see cref="OW"/>), never where they start, so every kernel that reads OH and OW and skips positions outside the input
+/// runs it unchanged.
 /// </remarks>
 public readonly record struct ConvGeometry(
     int N, int C, int H, int W, int KH, int KW, int SH, int SW, int PH, int PW)
 {
     // Stored as dilation - 1, so default(ConvGeometry) and every geometry made without it have dilation 1.
     private readonly int _dh, _dw;
+
+    // Stored as padding + 1, 0 meaning "the same as PH / PW" (also when set to it, so equal geometries compare equal), so
+    // every geometry made without them is symmetric.
+    private readonly int _pb, _pr;
+
+    /// <summary>Zero padding below (PH, the default, unless set).</summary>
+    public int PadBottom
+    {
+        get => _pb == 0 ? PH : _pb - 1;
+        init => _pb = value == PH ? 0 : value >= 0 ? value + 1 : throw new ArgumentOutOfRangeException(nameof(PadBottom), value, "Padding is not negative.");
+    }
+
+    /// <summary>Zero padding right (PW, the default, unless set).</summary>
+    public int PadRight
+    {
+        get => _pr == 0 ? PW : _pr - 1;
+        init => _pr = value == PW ? 0 : value >= 0 ? value + 1 : throw new ArgumentOutOfRangeException(nameof(PadRight), value, "Padding is not negative.");
+    }
+
+    /// <summary>Whether the padding below or right differs from the padding above or left.</summary>
+    public bool Asymmetric => PadBottom != PH || PadRight != PW;
 
     /// <summary>Vertical dilation: the step between the rows a window reads (1, the default: adjacent rows).</summary>
     public int DH
@@ -111,11 +148,11 @@ public readonly record struct ConvGeometry(
     /// <summary>Whether a dilation is above 1 (devices without a dilated kernel run such windows on the host).</summary>
     public bool Dilated => _dh != 0 || _dw != 0;
 
-    /// <summary>Output height: (H + 2·PH - DH·(KH - 1) - 1) / SH + 1.</summary>
-    public int OH => (H + 2 * PH - DH * (KH - 1) - 1) / SH + 1;
+    /// <summary>Output height: (H + PH + PadBottom - DH·(KH - 1) - 1) / SH + 1 (PadBottom is PH unless set).</summary>
+    public int OH => (H + PH + PadBottom - DH * (KH - 1) - 1) / SH + 1;
 
-    /// <summary>Output width: (W + 2·PW - DW·(KW - 1) - 1) / SW + 1.</summary>
-    public int OW => (W + 2 * PW - DW * (KW - 1) - 1) / SW + 1;
+    /// <summary>Output width: (W + PW + PadRight - DW·(KW - 1) - 1) / SW + 1 (PadRight is PW unless set).</summary>
+    public int OW => (W + PW + PadRight - DW * (KW - 1) - 1) / SW + 1;
 
     /// <summary>Columns of the unfolded matrix: C * KH * KW.</summary>
     public int PatchSize => C * KH * KW;
@@ -1012,6 +1049,56 @@ public abstract partial class Backend
     /// </summary>
     public virtual void MaxPoolBackwardKernel(Storage dy, Storage argmax, Storage dx, in ConvGeometry g) =>
         MaxPoolBackward(dy, argmax, dx, g.N * g.C * g.OH * g.OW);
+
+    /// <summary>
+    /// Resamples each of <paramref name="planes"/> [height, width] planes to [outHeight, outWidth] as PyTorch's
+    /// <c>F.interpolate</c>: output row o reads input row floor(o · scaleHeight) (nearest; the last row at most) or, bilinear,
+    /// the two rows around o · scaleHeight (alignCorners) or around max((o + 0.5) · scaleHeight - 0.5, 0), weighted by
+    /// distance; columns likewise. The scales are input positions per output position (1 / the scale factor, or the input
+    /// size over the output size; with alignCorners (input - 1) / (output - 1)).
+    /// </summary>
+    public virtual void Interpolate2dKernel(Storage x, Storage y, int planes, int height, int width, int outHeight, int outWidth, InterpolationMode mode,
+        bool alignCorners, float scaleHeight, float scaleWidth)
+    {
+        using var h = new HostCall(this);
+        CpuBackend.Instance.Interpolate2d(h[x], h[y], planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+    }
+
+    /// <summary>The gradient of <see cref="Interpolate2dKernel"/>: dx += each output position's dy, spread over the input positions it read with their weights.</summary>
+    public virtual void Interpolate2dBackwardKernel(Storage dy, Storage dx, int planes, int height, int width, int outHeight, int outWidth, InterpolationMode mode,
+        bool alignCorners, float scaleHeight, float scaleWidth)
+    {
+        using var h = new HostCall(this);
+        CpuBackend.Instance.Interpolate2dBackward(h[dy], h[dx], planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+    }
+
+    /// <summary>
+    /// Adaptive average pooling of <paramref name="planes"/> [height, width] planes to [outHeight, outWidth] (PyTorch's
+    /// <c>AdaptiveAvgPool2d</c>): output row o averages input rows floor(o · height / outHeight) up to, not including,
+    /// ceil((o + 1) · height / outHeight); columns likewise.
+    /// </summary>
+    public virtual void AdaptiveAvgPoolKernel(Storage x, Storage y, int planes, int height, int width, int outHeight, int outWidth)
+    {
+        using var h = new HostCall(this);
+        CpuBackend.Instance.AdaptiveAvgPool(h[x], h[y], planes, height, width, outHeight, outWidth);
+    }
+
+    /// <summary>The gradient of <see cref="AdaptiveAvgPoolKernel"/>: dx += dy of each window that covers the position, divided by the window's size.</summary>
+    public virtual void AdaptiveAvgPoolBackwardKernel(Storage dy, Storage dx, int planes, int height, int width, int outHeight, int outWidth)
+    {
+        using var h = new HostCall(this);
+        CpuBackend.Instance.AdaptiveAvgPoolBackward(h[dy], h[dx], planes, height, width, outHeight, outWidth);
+    }
+
+    /// <summary>
+    /// Adaptive max pooling over the windows of <see cref="AdaptiveAvgPoolKernel"/>; argmax receives the flat input index of
+    /// each maximum (as raw int bits, the first in row order), so <see cref="Backend.MaxPoolBackward(Storage, Storage, Storage, int)"/> is its gradient.
+    /// </summary>
+    public virtual void AdaptiveMaxPoolKernel(Storage x, Storage y, Storage argmax, int planes, int height, int width, int outHeight, int outWidth)
+    {
+        using var h = new HostCall(this);
+        CpuBackend.Instance.AdaptiveMaxPool(h[x], h[y], h[argmax], planes, height, width, outHeight, outWidth);
+    }
 
     /// <summary>
     /// Connectionist temporal classification (Graves et al. 2006): losses[n] = -log of the probability, summed over every

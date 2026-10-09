@@ -56,15 +56,44 @@ internal static class LibraryLayerTypes
         LayerTypes.Register<GRU>("gru", r => Recurrent(r, r.CandidateBias),
             (d, device) => new GRU(I(d, "in"), I(d, "hidden"), B(d, "sequences"), d["bidirectional"] is not null && B(d, "bidirectional"), d["layers"] is null ? 1 : I(d, "layers"),
                 d["candidateBias"] is not null && B(d, "candidateBias"), device));
-        LayerTypes.Register<MaxPool2d>("maxpool2d", m => new()
+        LayerTypes.Register<MaxPool2d>("maxpool2d", m => Pooling(new()
         {
             ["kernel"] = Pair(m.KernelHeight, m.KernelWidth), ["stride"] = Pair(m.StrideHeight, m.StrideWidth), ["padding"] = Pair(m.PaddingHeight, m.PaddingWidth),
-        }, (d, _) => new MaxPool2d(P(d, "kernel"), P(d, "stride"), P(d, "padding")));
-        LayerTypes.Register<AvgPool2d>("avgpool2d", m => new()
+        }, m.PaddingHeight, m.PaddingWidth, m.PaddingBottom, m.PaddingRight, m.CeilMode),
+            (d, _) => new MaxPool2d(P(d, "kernel"), P(d, "stride"), P(d, "padding"), d["ceilMode"] is not null && B(d, "ceilMode"), d["paddingEnd"] is null ? null : P(d, "paddingEnd")));
+        LayerTypes.Register<AvgPool2d>("avgpool2d", m => Pooling(new()
         {
             ["kernel"] = Pair(m.KernelHeight, m.KernelWidth), ["stride"] = Pair(m.StrideHeight, m.StrideWidth), ["padding"] = Pair(m.PaddingHeight, m.PaddingWidth),
             ["countIncludePad"] = m.CountIncludePad,
-        }, (d, _) => new AvgPool2d(P(d, "kernel"), P(d, "stride"), P(d, "padding"), B(d, "countIncludePad")));
+        }, m.PaddingHeight, m.PaddingWidth, m.PaddingBottom, m.PaddingRight, m.CeilMode),
+            (d, _) => new AvgPool2d(P(d, "kernel"), P(d, "stride"), P(d, "padding"), B(d, "countIncludePad"), d["ceilMode"] is not null && B(d, "ceilMode"),
+                d["paddingEnd"] is null ? null : P(d, "paddingEnd")));
+        LayerTypes.Register<AdaptiveAvgPool2d>("adaptiveavgpool2d", m => new() { ["size"] = Pair(m.OutputHeight, m.OutputWidth) },
+            (d, _) => new AdaptiveAvgPool2d(P(d, "size")));
+        LayerTypes.Register<AdaptiveMaxPool2d>("adaptivemaxpool2d", m => new() { ["size"] = Pair(m.OutputHeight, m.OutputWidth) },
+            (d, _) => new AdaptiveMaxPool2d(P(d, "size")));
+        LayerTypes.Register<ConvTranspose2d>("convtranspose2d", c => new()
+        {
+            ["in"] = c.InChannels, ["out"] = c.OutChannels, ["kernel"] = Pair(c.KernelHeight, c.KernelWidth), ["stride"] = Pair(c.StrideHeight, c.StrideWidth),
+            ["padding"] = Pair(c.PaddingHeight, c.PaddingWidth), ["outputPadding"] = Pair(c.OutputPaddingHeight, c.OutputPaddingWidth),
+            ["dilation"] = Pair(c.DilationHeight, c.DilationWidth), ["groups"] = c.Groups, ["bias"] = c.Bias is not null,
+        }, (d, device) => new ConvTranspose2d(I(d, "in"), I(d, "out"), P(d, "kernel"), P(d, "stride"), P(d, "padding"), P(d, "outputPadding"), P(d, "dilation"), I(d, "groups"),
+            B(d, "bias"), device));
+        LayerTypes.Register<Upsample>("upsample", u =>
+        {
+            var d = u.Size is { } size ? new JsonObject { ["size"] = Pair(size.Height, size.Width) }
+                : new JsonObject { ["scale"] = new JsonArray(u.ScaleFactor!.Value.Height, u.ScaleFactor.Value.Width) };
+            d["mode"] = u.Mode == InterpolationMode.Nearest ? "nearest" : "bilinear";
+            d["alignCorners"] = u.AlignCorners;
+            return d;
+        }, (d, _) =>
+        {
+            var mode = (string)d["mode"]! == "bilinear" ? InterpolationMode.Bilinear : InterpolationMode.Nearest;
+            return d["size"] is not null ? Upsample.ToSize(P(d, "size"), mode, B(d, "alignCorners"))
+                : new Upsample(((float)d["scale"]![0]!, (float)d["scale"]![1]!), mode, B(d, "alignCorners"));
+        });
+        LayerTypes.Register<GroupNorm>("groupnorm", g => new() { ["groups"] = g.Groups, ["channels"] = g.Channels, ["epsilon"] = g.Epsilon, ["affine"] = g.Affine },
+            (d, device) => new GroupNorm(I(d, "groups"), I(d, "channels"), F(d, "epsilon"), B(d, "affine"), device));
         LayerTypes.Register<GlobalAveragePool2d>("globalavgpool2d", _ => [], (_, _) => new GlobalAveragePool2d());
         LayerTypes.Register<Flatten>("flatten", _ => [], (_, _) => new Flatten());
         LayerTypes.Register<ReLU>("relu", _ => [], (_, _) => new ReLU());
@@ -90,6 +119,23 @@ internal static class LibraryLayerTypes
 
     // A (height, width) pair: one number when both are equal (as square layers were always described), else [height, width].
     private static JsonNode Pair(int height, int width) => height == width ? JsonValue.Create(height) : new JsonArray(height, width);
+
+    // A pooling layer's ceil mode and padding below and right, described only when they are not the defaults (so every
+    // other pooling layer is described as before).
+    private static JsonObject Pooling(JsonObject d, int top, int left, int bottom, int right, bool ceilMode)
+    {
+        if (bottom != top || right != left)
+        {
+            d["paddingEnd"] = Pair(bottom, right);
+        }
+
+        if (ceilMode)
+        {
+            d["ceilMode"] = true;
+        }
+
+        return d;
+    }
 
     private static (int Height, int Width) P(JsonObject d, string key) => d[key] is JsonArray pair ? ((int)pair[0]!, (int)pair[1]!) : (I(d, key), I(d, key));
 
