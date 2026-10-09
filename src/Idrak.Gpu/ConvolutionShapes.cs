@@ -1,0 +1,49 @@
+// Copyright (c) 2026 Ahmed Seada
+// Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
+
+namespace Idrak.Gpu;
+
+/// <summary>
+/// What the GPU backends share about their convolution choices: the shape of a convolution as the numbers of a tuning key,
+/// and the formula for the weight gradient's splits of the sum. Which path runs (the composed patches and products, an
+/// implicit product at a tile and width, the depthwise kernels) is measured per shape on the device in use.
+/// </summary>
+internal static class ConvolutionShapes
+{
+    /// <summary>The forward pass, the input gradient and the weight gradient (a key's pass).</summary>
+    public const int Forward = 0, Input = 1, Weight = 2;
+
+    /// <summary>
+    /// The shape as six numbers (a, b, c, d, e, f) for a tuning key: images, channels, filters, height and width, window,
+    /// stride and dilation, padding (above, left, below, right); false when a size passes its field (the formula is used then, not measured).
+    /// </summary>
+    public static bool Key(in ConvGeometry g, int filters, int groups, out (int A, int B, int C, int D, int E, int F) key)
+    {
+        key = default;
+        if (g.H >= 1 << 16 || g.W >= 1 << 16 || g.KH >= 1 << 8 || g.KW >= 1 << 8 || g.SH >= 1 << 4 || g.SW >= 1 << 4 || g.DH >= 1 << 4 || g.DW >= 1 << 4
+            || g.PH >= 1 << 8 || g.PW >= 1 << 8 || g.PadBottom >= 1 << 8 || g.PadRight >= 1 << 7 || groups >= 1 << 22)
+        {
+            return false;
+        }
+
+        key = (g.N, g.C, filters, g.H << 16 | g.W, g.KH << 24 | g.KW << 16 | g.SH << 12 | g.SW << 8 | g.DH << 4 | g.DW,
+            g.PH << 23 | g.PW << 15 | g.PadBottom << 7 | g.PadRight);
+        return true;
+    }
+
+    /// <summary>A key's variant: the pass, the matrix precision (MixedPrecision), whether an activation is applied, the groups.</summary>
+    public static int Variant(int pass, ConvActivation activation, int groups) =>
+        pass | (int)MixedPrecision.Current << 2 | (activation == ConvActivation.None ? 0 : 1 << 4) | groups << 5;
+
+    /// <summary>Whether every group reads one input channel (depthwise; any number of filters a channel).</summary>
+    public static bool Depthwise(in ConvGeometry g, int groups) => groups > 1 && g.C == groups;
+
+    /// <summary>The split counts of the weight gradient's sum over positions tried: 1, 4, 16 and 64, each at least 256 positions a split.</summary>
+    public static int[] SplitCounts(long positions) => [.. new[] { 1, 4, 16, 64 }.Where(s => s == 1 || positions / s >= 256)];
+
+    /// <summary>
+    /// The splits of the weight gradient while nothing is measured: the most of <see cref="SplitCounts"/> that leave each
+    /// split at least 4,096 positions (the product's blocks alone are few where filters and patches are small).
+    /// </summary>
+    public static int FormulaSplits(long positions) => SplitCounts(positions).Where(s => s == 1 || positions / s >= 4096).Max();
+}

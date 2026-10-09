@@ -184,25 +184,26 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 
 ## The device contract (`Backend`)
 
-`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 141 virtual methods, 6 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `HipBackend`, `VulkanBackend`. Each
-operation (123, `Ops`) is a `NameKernel` method, the device's own kernel; `Backend.Name(...)` runs the kernel registered
+`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 148 virtual methods, 6 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `HipBackend`, `VulkanBackend`. Each
+operation (130, `Ops`) is a `NameKernel` method, the device's own kernel; `Backend.Name(...)` runs the kernel registered
 for the device in `Kernels` instead, where there is one (plan 9). The rest is device plumbing: memory, copies, graphs, profiling.
 
 | Device | Methods overridden |
 |---|---|
-| `CpuBackend` | 120 of 151 |
-| `CudaBackend` | 132 of 151 |
-| `HipBackend` | 23 of 151 |
-| `VulkanBackend` | 114 of 151 |
+| `CpuBackend` | 126 of 158 |
+| `CudaBackend` | 146 of 158 |
+| `HipBackend` | 23 of 158 |
+| `VulkanBackend` | 128 of 158 |
 
 | Operation | Kind | Cpu | Cuda | Hip | Vulkan |
 |---|---|---|---|---|---|
 | `AbortCapture(0)` | virtual |  | ✓ |  | ✓ |
 | `AdamStep8BitKernel(13)` | virtual | ✓ | ✓ |  | ✓ |
 | `AdamStepKernel(9)` | virtual | ✓ | ✓ |  | ✓ |
-| `AdaptiveAvgPoolBackwardKernel(7)` | virtual | ✓ |  |  |  |
-| `AdaptiveAvgPoolKernel(7)` | virtual | ✓ |  |  |  |
-| `AdaptiveMaxPoolKernel(8)` | virtual | ✓ |  |  |  |
+| `AdaptiveAvgPoolBackwardKernel(7)` | virtual | ✓ | ✓ |  | ✓ |
+| `AdaptiveAvgPoolKernel(7)` | virtual | ✓ | ✓ |  | ✓ |
+| `AdaptiveMaxPoolBackwardKernel(8)` | virtual |  | ✓ |  | ✓ |
+| `AdaptiveMaxPoolKernel(8)` | virtual | ✓ | ✓ |  | ✓ |
 | `AddBroadcastScalarKernel(4)` | virtual | ✓ | ✓ |  | ✓ |
 | `AddDropoutKernel(6)` | virtual |  | ✓ |  |  |
 | `AddRmsNormAffineKernel(9)` | virtual | ✓ | ✓ |  | ✓ |
@@ -226,6 +227,8 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `AttentionTiledBackwardKernel(16)` | virtual | ✓ | ✓ |  | ✓ |
 | `AttentionTiledKernel(13)` | virtual | ✓ | ✓ |  | ✓ |
 | `AvailableMemory(0)` | virtual | ✓ | ✓ |  | ✓ |
+| `AvgPoolBackwardKernel(6)` | virtual | ✓ | ✓ |  | ✓ |
+| `AvgPoolKernel(6)` | virtual | ✓ | ✓ |  | ✓ |
 | `AxpyAtKernel(4)` | virtual | ✓ | ✓ |  | ✓ |
 | `AxpyKernel(4)` | virtual | ✓ | ✓ | ✓ | ✓ |
 | `BFloat16DequantizeKernel(4)` | virtual | ✓ | ✓ |  | ✓ |
@@ -243,11 +246,14 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `ClassMatchKernel(6)` | virtual | ✓ | ✓ |  |  |
 | `ClipFactorKernel(3)` | virtual | ✓ | ✓ |  | ✓ |
 | `Col2ImKernel(3)` | virtual | ✓ | ✓ |  | ✓ |
+| `ConvolutionBackwardInputKernel(6)` | virtual | ✓ | ✓ |  | ✓ |
+| `ConvolutionBackwardWeightKernel(6)` | virtual | ✓ | ✓ |  | ✓ |
+| `ConvolutionKernel(8)` | virtual | ✓ | ✓ |  | ✓ |
 | `Copy(3)` | virtual | ✓ | ✓ | ✓ | ✓ |
 | `Copy2D(9)` | virtual | ✓ | ✓ | ✓ | ✓ |
 | `CreateHostStaging(2)` | virtual |  | ✓ |  |  |
-| `CtcLossBackwardKernel(13)` | virtual | ✓ |  |  |  |
-| `CtcLossKernel(12)` | virtual | ✓ |  |  |  |
+| `CtcLossBackwardKernel(13)` | virtual | ✓ | ✓ |  | ✓ |
+| `CtcLossKernel(12)` | virtual | ✓ | ✓ |  | ✓ |
 | `DecoderMaskKernel(4)` | virtual | ✓ | ✓ |  | ✓ |
 | `DestroyGraph(2)` | virtual |  | ✓ |  | ✓ |
 | `Detach(1)` | abstract | ✓ | ✓ | ✓ | ✓ |
@@ -279,8 +285,8 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `Int4MatMulKernel(7)` | virtual | ✓ | ✓ |  | ✓ |
 | `Int8DequantizeKernel(5)` | virtual | ✓ | ✓ |  | ✓ |
 | `Int8MatMulKernel(7)` | virtual | ✓ | ✓ | ✓ | ✓ |
-| `Interpolate2dBackwardKernel(11)` | virtual | ✓ |  |  |  |
-| `Interpolate2dKernel(11)` | virtual | ✓ |  |  |  |
+| `Interpolate2dBackwardKernel(11)` | virtual | ✓ | ✓ |  | ✓ |
+| `Interpolate2dKernel(11)` | virtual | ✓ | ✓ |  | ✓ |
 | `InvSqrtKernel(4)` | virtual | ✓ | ✓ |  | ✓ |
 | `KeyValueWriteBFloat16Kernel(7)` | virtual | ✓ | ✓ |  | ✓ |
 | `KeyValueWriteInt8Kernel(8)` | virtual | ✓ | ✓ |  | ✓ |
@@ -316,6 +322,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `ReleaseCachedMemory(0)` | abstract | ✓ | ✓ | ✓ | ✓ |
 | `ReplayGraph(1)` | virtual |  | ✓ |  | ✓ |
 | `ResetPeakMemoryUsage(0)` | virtual | ✓ | ✓ | ✓ | ✓ |
+| `ResizeNormalizeKernel(13)` | virtual | ✓ | ✓ |  | ✓ |
 | `Return(1)` | abstract | ✓ | ✓ | ✓ | ✓ |
 | `ReuseQuantizedOperands(0)` | virtual |  | ✓ |  |  |
 | `RmsNormAffineKernel(7)` | virtual | ✓ | ✓ | ✓ | ✓ |

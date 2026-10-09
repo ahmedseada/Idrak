@@ -111,6 +111,9 @@ public static partial class DeviceCases
             var dMax = c.Zeros(planes * h * w);
             b.MaxPoolBackward(dys, argmax, dMax, planes * oh * ow);
             c.ExpectClose(expectedMaxGrad, Read(dMax), 1e-6f, $"adaptive max pooling gradient {h}x{w} to {oh}x{ow}");
+            var dMaxGathered = c.Zeros(planes * h * w);
+            b.AdaptiveMaxPoolBackward(dys, argmax, dMaxGathered, planes, h, w, oh, ow);
+            c.ExpectClose(expectedMaxGrad, Read(dMaxGathered), 1e-6f, $"adaptive max pooling gradient by windows {h}x{w} to {oh}x{ow}");
         }
     }
 

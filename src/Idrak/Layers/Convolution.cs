@@ -7,11 +7,13 @@ namespace Idrak.Layers;
 /// <summary>
 /// 2-D convolution over [N, C, H, W] images, producing [N, outChannels, OH, OW]. Kernels, strides, padding and dilation
 /// may differ between height and width (a text line's tall or wide filters); <c>groups</c> splits the channels into
-/// groups convolved separately (depthwise when it equals the input channels). Implemented as patch unfolding (im2col)
-/// followed by one large matrix product (a batched one per group), so it runs on the same optimized GEMM as
-/// <see cref="Linear"/> on both CPU and GPU. Weights start He-uniform (suited to ReLU).
+/// groups convolved separately (depthwise when it equals the input channels). Runs as one device operation
+/// (<see cref="Tensor.Convolution"/>): on the CPU as patch unfolding (im2col) and the tiled products, depthwise as direct
+/// loops; on GPUs as the device's own kernels (implicit products, depthwise) or the unfolded patches on its matrix kernels,
+/// whichever is measured faster for the shape. In inference, a following <see cref="BatchNorm"/> (evaluation mode) and
+/// activation fold into the same pass (see <see cref="Sequential"/>). Weights start He-uniform (suited to ReLU).
 /// </summary>
-public sealed class Conv2d : Module
+public sealed partial class Conv2d : Module
 {
     /// <summary>Creates the layer.</summary>
     /// <param name="inChannels">Input channels (1 for grayscale, 3 for RGB).</param>
@@ -197,25 +199,7 @@ public sealed class Conv2d : Module
             throw new ArgumentException($"A {KernelHeight}x{KernelWidth} kernel (dilation {DilationHeight}x{DilationWidth}) does not fit a {g.H}x{g.W} input with padding {PaddingHeight}x{PaddingWidth}.");
         }
 
-        var columns = input.Im2Col(g);                                   // [N·OH·OW, C·kh·kw], channel-major: a group's columns are adjacent
-        int positions = g.OH * g.OW;
-        Tensor output;
-        if (Groups == 1)
-        {
-            var rows = columns.MatMul(Weight, transposeB: true);         // [N·OH·OW, OC]
-            output = rows.Reshape(g.N, positions, OutChannels).Permute(0, 2, 1);
-        }
-        else
-        {
-            // One batched product: [G, N·OH·OW, C/G·kh·kw] × [G, OC/G, C/G·kh·kw]ᵀ = [G, N·OH·OW, OC/G].
-            int patch = g.PatchSize / Groups, filters = OutChannels / Groups;
-            var grouped = columns.Reshape(g.Positions, Groups, patch).Permute(1, 0, 2);
-            var rows = grouped.MatMul(Weight.Reshape(Groups, filters, patch), transposeB: true);
-            output = rows.Reshape(Groups, g.N, positions, filters).Permute(1, 0, 3, 2);      // [N, G, OC/G, OH·OW]
-        }
-
-        output = output.Reshape(g.N, OutChannels, g.OH, g.OW);
-        return Bias is null ? output : output.GroupAffine(null, Bias, OutChannels, positions);
+        return input.Convolution(Weight, Bias, g, Groups);
     }
 
     /// <inheritdoc />
@@ -246,9 +230,10 @@ public sealed class Conv2d : Module
 /// 2-D transposed convolution (PyTorch's <c>ConvTranspose2d</c>, the gradient of a convolution with respect to its input):
 /// [N, inChannels, H, W] → [N, outChannels, OH, OW] with OH = (H - 1)·strideH - 2·paddingH + dilationH·(kh - 1) +
 /// outputPaddingH + 1, and the same for the width. Each input position's products with the filters are spread over the
-/// window it scatters to and added where windows overlap: one matrix product ([N·H·W, in] × [in, out·kh·kw], batched per
-/// group) followed by a fold (<see cref="Tensor.Col2Im"/>), so it runs on the same product and fold as
-/// <see cref="Conv2d"/>'s gradient. The weight is PyTorch's [inChannels, outChannels / groups, kh, kw], flattened.
+/// window it scatters to and added where windows overlap. Runs as <see cref="Conv2d"/>'s input gradient
+/// (<see cref="Tensor.ConvolutionTranspose"/>, one device operation: the products and fold, or the device's implicit
+/// product, whichever is measured faster), and its gradient as the convolution. The weight is PyTorch's [inChannels,
+/// outChannels / groups, kh, kw], flattened.
 /// </summary>
 public sealed class ConvTranspose2d : Module
 {
@@ -441,23 +426,8 @@ public sealed class ConvTranspose2d : Module
             throw new ArgumentException($"{this} gives an empty output for a {h}x{w} input.");
         }
 
-        // Each input position's channels times the filters: [N·H·W, in] × [in, out·kh·kw] (per group: the group's inputs times
-        // its filters, written as that group's adjacent columns), then folded into the output, overlaps added.
-        var rows = input.Permute(0, 2, 3, 1).Reshape(n * h * w, InChannels);
-        Tensor columns;
-        if (Groups == 1)
-        {
-            columns = rows.MatMul(Weight);
-        }
-        else
-        {
-            int perGroup = InChannels / Groups, patch = Weight.Shape[1];
-            var grouped = rows.Reshape(n * h * w, Groups, perGroup).Permute(1, 0, 2);                 // [G, N·H·W, in / G]
-            columns = grouped.MatMul(Weight.Reshape(Groups, perGroup, patch)).Permute(1, 0, 2).Reshape(n * h * w, Groups * patch);
-        }
-
-        var output = columns.Col2Im(g);
-        return Bias is null ? output : output.GroupAffine(null, Bias, OutChannels, g.H * g.W);
+        // The input gradient of the convolution whose windows are the input's positions, as one device operation.
+        return input.ConvolutionTranspose(Weight, Bias, g, Groups);
     }
 
     /// <inheritdoc />
@@ -656,50 +626,14 @@ public sealed class AvgPool2d : Module
             throw new ArgumentException($"AvgPool2d expects [N, C, H, W], got {Tensor.FormatShape(input.Shape)}.");
         }
 
-        // Each channel as an image of one channel: its windows unfold to rows of kh·kw values, whose mean is the output.
         var s = input.Shape;
-        int planes = s[0] * s[1];
-        var g = Pool.Geometry(planes, 1, s[2], s[3], (KernelHeight, KernelWidth), (StrideHeight, StrideWidth), (PaddingHeight, PaddingWidth), (PaddingBottom, PaddingRight), CeilMode);
+        var g = Pool.Geometry(s[0], s[1], s[2], s[3], (KernelHeight, KernelWidth), (StrideHeight, StrideWidth), (PaddingHeight, PaddingWidth), (PaddingBottom, PaddingRight), CeilMode);
         if (g.OH <= 0 || g.OW <= 0)
         {
             throw new ArgumentException($"A {KernelHeight}x{KernelWidth} window does not fit a {s[2]}x{s[3]} input with padding {PaddingHeight}x{PaddingWidth}.");
         }
 
-        var means = input.Reshape(planes, 1, s[2], s[3]).Im2Col(g).Mean(1);   // [N·C·OH·OW]
-        if (Rescale(g, s[2], s[3]) is { } scale)
-        {
-            // Not disposed here: the backward pass of the product reads the scale.
-            means = means.GroupAffine(Tensor.From(scale, [scale.Length], input.Device), null, scale.Length, 1);
-        }
-
-        return means.Reshape(s[0], s[1], g.OH, g.OW);
-    }
-
-    // Each position's mean of kh·kw values rescaled to PyTorch's divisor: the window up to the padded end (the input plus
-    // the padding below and right; a ceil-mode window past it is cut), or only the input positions it covers without
-    // CountIncludePad. Null when every divisor is kh·kw.
-    private float[]? Rescale(ConvGeometry g, int height, int width)
-    {
-        var scale = new float[g.OH * g.OW];
-        bool any = false;
-        for (int y = 0; y < g.OH; y++)
-        {
-            int rows = Divisor(y * StrideHeight - PaddingHeight, KernelHeight, height, PaddingBottom);
-            for (int x = 0; x < g.OW; x++)
-            {
-                int divisor = rows * Divisor(x * StrideWidth - PaddingWidth, KernelWidth, width, PaddingRight);
-                scale[y * g.OW + x] = KernelHeight * KernelWidth / (float)divisor;
-                any |= divisor != KernelHeight * KernelWidth;
-            }
-        }
-
-        return any ? scale : null;
-    }
-
-    private int Divisor(int start, int size, int length, int padEnd)
-    {
-        int end = Math.Min(start + size, length + padEnd);
-        return CountIncludePad ? end - start : Math.Max(Math.Min(end, length) - Math.Max(start, 0), 1);
+        return input.AvgPool(g, CountIncludePad, PaddingBottom, PaddingRight);
     }
 
     /// <inheritdoc />

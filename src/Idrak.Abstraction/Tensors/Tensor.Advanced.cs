@@ -705,7 +705,7 @@ public sealed partial class Tensor
             var x = this;
             y.Record("adaptive_max_pool", g =>
             {
-                x.Backend.MaxPoolBackward(g.Storage, argmax.Storage, x.GradStorage(), y.Size);
+                x.Backend.AdaptiveMaxPoolBackward(g.Storage, argmax.Storage, x.GradStorage(), planes, height, width, oh, ow);
                 argmax.Dispose();
             }, x);
         }

@@ -1051,6 +1051,73 @@ public abstract partial class Backend
         MaxPoolBackward(dy, argmax, dx, g.N * g.C * g.OH * g.OW);
 
     /// <summary>
+    /// 2-D convolution of NCHW images: y[n, f, oh, ow] = act(bias[f] + Σ_{c, kh, kw} weight[f, (c·KH + kh)·KW + kw] ·
+    /// x[n, q·Cg + c, oh·SH - PH + kh·DH, ow·SW - PW + kw·DW]) with 0 outside the image, where filter f is in group
+    /// q = f / (filters / groups) and reads that group's Cg = C / groups channels. weight is [filters, Cg·KH·KW]
+    /// (PyTorch's [filters, C / groups, KH, KW]), bias [filters] or null, y [N, filters, OH, OW]; act is
+    /// <paramref name="activation"/> (the identity for <see cref="ConvActivation.None"/>).
+    /// </summary>
+    public virtual void ConvolutionKernel(Storage x, Storage weight, Storage? bias, Storage y, in ConvGeometry g, int filters, int groups, ConvActivation activation) =>
+        ComposedConvolution(x, weight, bias, y, in g, filters, groups, activation);
+
+    /// <summary>
+    /// The input gradient of <see cref="ConvolutionKernel"/> (without its activation): dx += the transposed convolution of
+    /// dy [N, filters, OH, OW] with weight, dx[n, q·Cg + c, ih, iw] += Σ weight[f, (c·KH + kh)·KW + kw] · dy[n, f, oh, ow] over
+    /// the filters f of group q and the window positions with ih = oh·SH - PH + kh·DH and iw = ow·SW - PW + kw·DW.
+    /// </summary>
+    public virtual void ConvolutionBackwardInputKernel(Storage dy, Storage weight, Storage dx, in ConvGeometry g, int filters, int groups) =>
+        ComposedConvolutionBackwardInput(dy, weight, dx, in g, filters, groups);
+
+    /// <summary>
+    /// The weight gradient of <see cref="ConvolutionKernel"/>: dweight[f, (c·KH + kh)·KW + kw] += Σ_{n, oh, ow} dy[n, f, oh, ow] ·
+    /// x[n, q·Cg + c, oh·SH - PH + kh·DH, ow·SW - PW + kw·DW] (0 outside the image) for each filter f of group q.
+    /// </summary>
+    public virtual void ConvolutionBackwardWeightKernel(Storage x, Storage dy, Storage dweight, in ConvGeometry g, int filters, int groups) =>
+        ComposedConvolutionBackwardWeight(x, dy, dweight, in g, filters, groups);
+
+    /// <summary>
+    /// Average pooling of NCHW images, as PyTorch's <c>AvgPool2d</c>: y[n, c, oh, ow] = the sum of x over the window
+    /// (padded positions add 0, in row order) divided, when <paramref name="countIncludePad"/>, by the window's rows and
+    /// columns up to the padded end (H + <paramref name="padBottom"/>, W + <paramref name="padRight"/>: the padding a
+    /// divisor counts, which a ceil-mode geometry's PadBottom and PadRight may pass), else by the input positions the
+    /// window covers (at least 1).
+    /// </summary>
+    public virtual void AvgPoolKernel(Storage x, Storage y, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
+    {
+        using var h = new HostCall(this);
+        CpuBackend.Instance.AvgPool(h[x], h[y], in g, countIncludePad, padBottom, padRight);
+    }
+
+    /// <summary>
+    /// The gradient of <see cref="AvgPoolKernel"/>: dx[n, c, ih, iw] += Σ dy[n, c, oh, ow] / divisor over the windows that
+    /// cover the element, in window order (the divisor as the forward pass takes it).
+    /// </summary>
+    public virtual void AvgPoolBackwardKernel(Storage dy, Storage dx, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
+    {
+        using var h = new HostCall(this);
+        CpuBackend.Instance.AvgPoolBackward(h[dy], h[dx], in g, countIncludePad, padBottom, padRight);
+    }
+
+    /// <summary>
+    /// Image resampling and per-channel normalization in one pass. Each of <paramref name="planes"/> planes of x ([planes,
+    /// height, width]; plane p is channel p % channels) is resampled to [outHeight, outWidth] by separable filters, across then
+    /// down, and mapped per channel into y [planes, outHeight, outWidth]. <paramref name="coefficients"/> holds, for each
+    /// output column, its first input column and its tap count (ints as float bits) then <paramref name="xTaps"/> weights,
+    /// and after them the same for each output row with <paramref name="yTaps"/> weights; a pass with 0 taps is skipped
+    /// (that size kept, no coefficients). Floats (<paramref name="bytes"/> false): x and the weights are floats, each
+    /// output's taps are summed in order, and y = value · values[2c] + values[2c + 1]. Bytes: x holds 8-bit values four to
+    /// a float word (value i in bits 8·(i % 4) of word i / 4), the weights are integers with 22 fractional bits (int bits),
+    /// each pass sums 2^21 and its products as integers, shifts right by 22 and clips to [0, 255] (Pillow's
+    /// <c>ImagingResample</c>), and y = values[256·c + value].
+    /// </summary>
+    public virtual void ResizeNormalizeKernel(Storage x, Storage coefficients, Storage values, Storage y, int planes, int channels, int height, int width,
+        int outHeight, int outWidth, int xTaps, int yTaps, bool bytes)
+    {
+        using var h = new HostCall(this);
+        CpuBackend.Instance.ResizeNormalize(h[x], h[coefficients], h[values], h[y], planes, channels, height, width, outHeight, outWidth, xTaps, yTaps, bytes);
+    }
+
+    /// <summary>
     /// Resamples each of <paramref name="planes"/> [height, width] planes to [outHeight, outWidth] as PyTorch's
     /// <c>F.interpolate</c>: output row o reads input row floor(o · scaleHeight) (nearest; the last row at most) or, bilinear,
     /// the two rows around o · scaleHeight (alignCorners) or around max((o + 0.5) · scaleHeight - 0.5, 0), weighted by
@@ -1099,6 +1166,14 @@ public abstract partial class Backend
         using var h = new HostCall(this);
         CpuBackend.Instance.AdaptiveMaxPool(h[x], h[y], h[argmax], planes, height, width, outHeight, outWidth);
     }
+
+    /// <summary>
+    /// The gradient of <see cref="AdaptiveMaxPoolKernel"/>: dx[argmax[i]] += dy[i] for its planes · outHeight · outWidth outputs,
+    /// the same as <see cref="Backend.MaxPoolBackward(Storage, Storage, Storage, int)"/>; a device that adds the gradients by
+    /// gathering over the windows (no atomics, the same bits every run) needs the sizes.
+    /// </summary>
+    public virtual void AdaptiveMaxPoolBackwardKernel(Storage dy, Storage argmax, Storage dx, int planes, int height, int width, int outHeight, int outWidth) =>
+        MaxPoolBackward(dy, argmax, dx, planes * outHeight * outWidth);
 
     /// <summary>
     /// Connectionist temporal classification (Graves et al. 2006): losses[n] = -log of the probability, summed over every
@@ -1957,4 +2032,26 @@ public enum GemmEpilogue
 
     /// <summary>Store product · gelu'(auxiliary): the gradient through a GELU whose inputs the auxiliary tensor holds.</summary>
     GeluGradient = 2,
+}
+
+/// <summary>The activation <see cref="Backend.Convolution"/> applies to each output after the bias (a fused inference epilogue).</summary>
+public enum ConvActivation
+{
+    /// <summary>None: the output is the sum plus the bias.</summary>
+    None = 0,
+
+    /// <summary>max(v, 0), as <see cref="UnaryOp.Relu"/>.</summary>
+    Relu = 1,
+
+    /// <summary>1 / (1 + e^-v), as <see cref="UnaryOp.Sigmoid"/>.</summary>
+    Sigmoid = 2,
+
+    /// <summary>tanh v, as <see cref="UnaryOp.Tanh"/>.</summary>
+    Tanh = 3,
+
+    /// <summary>GELU (tanh approximation), as <see cref="UnaryOp.Gelu"/>.</summary>
+    Gelu = 4,
+
+    /// <summary>v · sigmoid(v), as <see cref="UnaryOp.Silu"/>.</summary>
+    Silu = 5,
 }

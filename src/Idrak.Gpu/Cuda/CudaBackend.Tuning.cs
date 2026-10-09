@@ -35,6 +35,7 @@ internal enum TuneOp : byte
     DecodeMinChunk,
     SpanWarps,
     AttentionPath,
+    Convolution,
 }
 
 /// <summary>
