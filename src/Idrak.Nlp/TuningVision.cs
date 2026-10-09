@@ -379,7 +379,7 @@ public sealed class TuningVision : IDisposable
         Model.SaveAdapter(folder);
         if (images)
         {
-            Images.Save(folder);
+            (Images with { Family = Vision.Family }).Save(folder);              // whose vision options they are: run checks the model's family
         }
     }
 

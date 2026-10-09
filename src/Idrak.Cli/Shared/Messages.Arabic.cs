@@ -323,6 +323,8 @@ internal static partial class Messages
         ["Speed of a model (tokens per second, GFLOP/s, memory) or of the kernels on a device"] = "سرعة نموذج (رموز في الثانية و GFLOP/s والذاكرة) أو سرعة النوى على جهاز",
         ["Compare token ids, chat templates, logits and greedy output with a transformers reference"] =
             "مقارنة أرقام الرموز وقوالب المحادثة والقيم اللوغاريتمية والمخرجات الجشعة بمرجع transformers",
+        ["Compares a vision-language model with a transformers reference: pixels, features, logits, tokens"] =
+            "مقارنة نموذج رؤية ولغة بمرجع transformers: البكسلات والخصائص والقيم اللوغاريتمية والرموز",
         ["Answer metrics of a chat model on held-out conversations (accuracy, exact match, F1)"] = "مقاييس إجابات نموذج محادثة على محادثات محجوزة (الدقة والتطابق التام و F1)",
         ["Perplexity of a text under a model (compare weight formats and fine-tunes)"] = "حيرة نص تحت نموذج (لمقارنة صيغ الأوزان والضبط الدقيق)",
         ["Time per layer, operation and kernel of one decoding step"] = "الوقت لكل طبقة وعملية ونواة في خطوة فك ترميز واحدة",
