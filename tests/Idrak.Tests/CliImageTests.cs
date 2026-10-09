@@ -54,8 +54,14 @@ internal static partial class Tests
         var json = JsonOf(text, "run --vision-option");
         Check(code == 0 && (int)json["prompt_tokens"]! == ((JsonArray)tall["input_ids"]!).Count && sampled.SequenceEqual(newTokens),
             $"run --vision-option: {code} {string.Join(" ", sampled)} {text} {error}");
-        (code, text, _) = RunIdrakOn(device, null, ["run", VlmModel, "--image", png, "What is in this image?", .. greedy]);
-        Check(code == 0 && (int)JsonOf(text, "run without options")["prompt_tokens"]! == 38, $"without the options, one block: {text}");
+        (code, text, _) = RunIdrakOn(device, null, ["run", VlmModel, "--image", png, "What is in this image?", .. greedy, "-v"]);
+        var plain = JsonOf(text, "run without options");
+        Check(code == 0 && (int)plain["prompt_tokens"]! == 38, $"without the options, one block: {text}");
+
+        // -v adds where the memory went: the decoder's parts, the encoder it built, the KV cache, the peak's activations.
+        Check(plain["memory"] is JsonObject memory && (long)memory["layers_bytes"]! > 0 && (long)memory["encoder_bytes"]! > 0
+              && (long)memory["kv_cache_bytes"]! > 0 && (long)memory["activations_bytes"]! >= 0 && (long)memory["device_peak_bytes"]! > 0,
+            $"run -v -j memory: {plain["memory"]?.ToJsonString()}");
 
         // An alias keeps them ("vision_options", as alias set writes it); the command line's go over the alias's per key.
         string folder = Path.Combine(Path.GetTempPath(), $"idrak-cli-vision-options-{Guid.NewGuid():N}");
