@@ -35,14 +35,12 @@ internal static class OnnxBuiltIns
             [x, Weights(g, "gamma", bn.Gamma), Weights(g, "beta", bn.Beta), Weights(g, "mean", bn.RunningMean), Weights(g, "var", bn.RunningVariance)],
             shape, OnnxAttribute.Of("epsilon", bn.Epsilon)));
         OnnxExportOps.Register<LayerNorm>((g, ln, x, shape) => LayerNorm(g, ln, x, shape));
-        OnnxExportOps.Register<Conv2d>((g, conv, x, shape) => g.Node("Conv",
-            [x, g.Constant("conv_w", conv.Weight.ToArray(), conv.OutChannels, conv.InChannels, conv.KernelSize, conv.KernelSize),
-                conv.Bias is null ? null : Weights(g, "conv_b", conv.Bias)],
-            shape, OnnxAttribute.Of("kernel_shape", [conv.KernelSize, conv.KernelSize]), OnnxAttribute.Of("strides", [conv.Stride, conv.Stride]),
-            OnnxAttribute.Of("pads", [conv.Padding, conv.Padding, conv.Padding, conv.Padding])));
+        OnnxExportOps.Register<Conv2d>(Conv);
         OnnxExportOps.Register<MaxPool2d>((g, pool, x, shape) => g.Node("MaxPool", [x], shape,
-            OnnxAttribute.Of("kernel_shape", [pool.KernelSize, pool.KernelSize]), OnnxAttribute.Of("strides", [pool.Stride, pool.Stride]),
-            OnnxAttribute.Of("pads", [pool.Padding, pool.Padding, pool.Padding, pool.Padding])));
+            Window(pool.KernelHeight, pool.KernelWidth, pool.StrideHeight, pool.StrideWidth, pool.PaddingHeight, pool.PaddingWidth)));
+        OnnxExportOps.Register<AvgPool2d>((g, pool, x, shape) => g.Node("AveragePool", [x], shape,
+            [.. Window(pool.KernelHeight, pool.KernelWidth, pool.StrideHeight, pool.StrideWidth, pool.PaddingHeight, pool.PaddingWidth),
+                OnnxAttribute.Of("count_include_pad", pool.CountIncludePad ? 1L : 0L)]));
         OnnxExportOps.Register<GlobalAveragePool2d>((g, _, x, shape) => g.Node("Flatten", [g.Node("GlobalAveragePool", [x])], shape, OnnxAttribute.Of("axis", 1L)));
         OnnxExportOps.Register<Layers.Flatten>((g, _, x, shape) => g.Node("Flatten", [x], shape, OnnxAttribute.Of("axis", 1L)));
         OnnxExportOps.Register<Embedding>((g, e, x, shape) => g.Node("Gather",
@@ -63,6 +61,7 @@ internal static class OnnxBuiltIns
         OnnxExportOps.RegisterLambda("FirstStep", OnnxExport.FirstStep);
         OnnxExportOps.RegisterLambda("LastStep", OnnxExport.LastStep);
         OnnxExportOps.RegisterLambda("Reshape", OnnxExport.Reshape);
+        OnnxExportOps.RegisterLambda("ColumnsToSequence", OnnxExport.ColumnsToSequence);
 
         RegisterGraphOps();
     }
@@ -282,23 +281,28 @@ internal static class OnnxBuiltIns
         return g.Node("Add", [attended, hidden], shape);
     }
 
-    // ONNX LSTM/GRU with the time-major layout: X [T, N, I] → Y [T, 1, N, H], Y_h [1, N, H]. Weights are regrouped from
-    // Idrak's [I, G·H] (gate blocks in our order) to ONNX's [1, G·H, I] (gate blocks in ONNX's order); the whole
-    // bias goes into the input bias (the recurrent bias is zero), which for GRU needs linear_before_reset = 1.
+    // ONNX LSTM/GRU with the time-major layout: X [T, N, I] → Y [T, D, N, H], Y_h [D, N, H] for D directions, one node per
+    // layer. Weights are regrouped from Idrak's [I, G·H] (gate blocks in our order) to ONNX's [D, G·H, I] (gate blocks in
+    // ONNX's order); the bias goes into the input bias and a GRU's candidate bias kept apart into the recurrent one (the
+    // reset gate scales it, linear_before_reset = 1). Two directions are read as PyTorch writes them: Y transposed to
+    // [T, N, D, H] and reshaped to [T, N, D·H]; the last states Y_h to [N, D·H].
     private static OnnxValue Recurrent(OnnxGraph g, string op, RecurrentModule rnn, int[] order, OnnxValue x, IReadOnlyList<int>? shape)
     {
-        int h = rnn.HiddenSize, gates = order.Length;
-        float[] Regroup(Tensor weight, int rows)
+        int h = rnn.HiddenSize, gates = order.Length, directions = rnn.Directions;
+        float[] Regroup(Func<RecurrentWeights, Tensor> weight, int layer, int rows)
         {
-            var source = weight.ToArray();                                                      // [rows, G·H]
-            var result = new float[gates * h * rows];                                           // [G·H, rows]
-            for (int gate = 0; gate < gates; gate++)
+            var result = new float[directions * gates * h * rows];                              // [D, G·H, rows]
+            for (int d = 0; d < directions; d++)
             {
-                for (int j = 0; j < h; j++)
+                var source = weight(rnn.Weights[layer * directions + d]).ToArray();           // [rows, G·H]
+                for (int gate = 0; gate < gates; gate++)
                 {
-                    for (int r = 0; r < rows; r++)
+                    for (int j = 0; j < h; j++)
                     {
-                        result[(gate * h + j) * rows + r] = source[r * gates * h + order[gate] * h + j];
+                        for (int r = 0; r < rows; r++)
+                        {
+                            result[((d * gates + gate) * h + j) * rows + r] = source[r * gates * h + order[gate] * h + j];
+                        }
                     }
                 }
             }
@@ -306,24 +310,81 @@ internal static class OnnxBuiltIns
             return result;
         }
 
-        var bias = rnn.Bias.ToArray();
-        var b = new float[2 * gates * h];
-        for (int gate = 0; gate < gates; gate++)
+        List<OnnxAttribute> attributes = [OnnxAttribute.Of("hidden_size", (long)h)];
+        if (directions == 2)
         {
-            Array.Copy(bias, order[gate] * h, b, gate * h, h);
+            attributes.Add(OnnxAttribute.Of("direction", "bidirectional"));
         }
 
-        var timeMajor = g.Node("Transpose", [x], null, OnnxAttribute.Of("perm", [1L, 0, 2]));
-        List<OnnxAttribute> attributes = [OnnxAttribute.Of("hidden_size", (long)h)];
         if (op == "GRU")
         {
             attributes.Add(OnnxAttribute.Of("linear_before_reset", 1L));
         }
 
-        var outputs = g.Nodes(op, [timeMajor, g.Constant("rnn_w", Regroup(rnn.InputWeight, rnn.InputSize), 1, gates * h, rnn.InputSize),
-            g.Constant("rnn_r", Regroup(rnn.HiddenWeight, h), 1, gates * h, h), g.Constant("rnn_b", b, 1, 2 * gates * h)], 2, [.. attributes]);
-        return rnn.ReturnSequences
-            ? g.Node("Transpose", [g.Node("Squeeze", [outputs[0], g.Ints("axes", 1)])], shape, OnnxAttribute.Of("perm", [1L, 0, 2]))
-            : g.Node("Squeeze", [outputs[1], g.Ints("axes", 0)], shape);
+        var value = g.Node("Transpose", [x], null, OnnxAttribute.Of("perm", [1L, 0, 2]));
+        IReadOnlyList<OnnxValue> outputs = [];
+        for (int layer = 0; layer < rnn.Layers; layer++)
+        {
+            var b = new float[directions * 2 * gates * h];
+            for (int d = 0; d < directions; d++)
+            {
+                var weights = rnn.Weights[layer * directions + d];
+                var bias = weights.Bias.ToArray();
+                for (int gate = 0; gate < gates; gate++)
+                {
+                    Array.Copy(bias, order[gate] * h, b, (d * 2 * gates + gate) * h, h);
+                }
+
+                if (weights.HiddenBias is { } apart)
+                {
+                    apart.ToArray().CopyTo(b, (d * 2 * gates + gates + Array.IndexOf(order, gates - 1)) * h);      // the last of our gates, in ONNX's order
+                }
+            }
+
+            int inputs = layer == 0 ? rnn.InputSize : rnn.OutputSize;
+            outputs = g.Nodes(op, [value, g.Constant("rnn_w", Regroup(w => w.InputWeight, layer, inputs), directions, gates * h, inputs),
+                g.Constant("rnn_r", Regroup(w => w.HiddenWeight, layer, h), directions, gates * h, h), g.Constant("rnn_b", b, directions, 2 * gates * h)], 2, [.. attributes]);
+            if (rnn.ReturnSequences || layer < rnn.Layers - 1)
+            {
+                value = directions == 1
+                    ? g.Node("Squeeze", [outputs[0], g.Ints("axes", 1)])
+                    : g.Node("Reshape", [g.Node("Transpose", [outputs[0]], null, OnnxAttribute.Of("perm", [0L, 2, 1, 3])), g.Ints("shape", 0, 0, -1)]);
+            }
+        }
+
+        if (rnn.ReturnSequences)
+        {
+            return g.Node("Transpose", [value], shape, OnnxAttribute.Of("perm", [1L, 0, 2]));
+        }
+
+        return directions == 1
+            ? g.Node("Squeeze", [outputs[1], g.Ints("axes", 0)], shape)
+            : g.Node("Reshape", [g.Node("Transpose", [outputs[1]], null, OnnxAttribute.Of("perm", [1L, 0, 2])), g.Ints("shape", 0, -1)], shape);
     }
+
+    private static OnnxValue Conv(OnnxGraph g, Conv2d conv, OnnxValue x, IReadOnlyList<int>? shape)
+    {
+        List<OnnxAttribute> attributes =
+        [
+            OnnxAttribute.Of("kernel_shape", [conv.KernelHeight, conv.KernelWidth]), OnnxAttribute.Of("strides", [conv.StrideHeight, conv.StrideWidth]),
+            OnnxAttribute.Of("pads", [conv.PaddingHeight, conv.PaddingWidth, conv.PaddingHeight, conv.PaddingWidth]),
+        ];
+        if (conv.DilationHeight != 1 || conv.DilationWidth != 1)
+        {
+            attributes.Add(OnnxAttribute.Of("dilations", [conv.DilationHeight, conv.DilationWidth]));
+        }
+
+        if (conv.Groups != 1)
+        {
+            attributes.Add(OnnxAttribute.Of("group", (long)conv.Groups));
+        }
+
+        return g.Node("Conv", [x, g.Constant("conv_w", conv.Weight.ToArray(), conv.OutChannels, conv.InChannels / conv.Groups, conv.KernelHeight, conv.KernelWidth),
+            conv.Bias is null ? null : Weights(g, "conv_b", conv.Bias)], shape, [.. attributes]);
+    }
+
+    private static OnnxAttribute[] Window(int kh, int kw, int sh, int sw, int ph, int pw) =>
+    [
+        OnnxAttribute.Of("kernel_shape", [kh, kw]), OnnxAttribute.Of("strides", [sh, sw]), OnnxAttribute.Of("pads", [ph, pw, ph, pw]),
+    ];
 }

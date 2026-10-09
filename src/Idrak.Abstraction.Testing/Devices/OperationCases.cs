@@ -78,7 +78,12 @@ internal static class OperationCases
         BinaryOp op => new JsonObject { ["BinaryOp"] = op.ToString() },
         PackedFormat format => new JsonObject { ["PackedFormat"] = format.ToString() },
         GemmEpilogue epilogue => new JsonObject { ["GemmEpilogue"] = epilogue.ToString() },
-        ConvGeometry g => new JsonObject { ["ConvGeometry"] = new JsonArray(g.N, g.C, g.H, g.W, g.KH, g.KW, g.SH, g.SW, g.PH, g.PW) },
+        ConvGeometry g => new JsonObject
+        {
+            ["ConvGeometry"] = g.Dilated
+                ? new JsonArray(g.N, g.C, g.H, g.W, g.KH, g.KW, g.SH, g.SW, g.PH, g.PW, g.DH, g.DW)
+                : new JsonArray(g.N, g.C, g.H, g.W, g.KH, g.KW, g.SH, g.SW, g.PH, g.PW),
+        },
         AttentionVariant v => new JsonObject { ["AttentionVariant"] = new JsonArray(v.Window, Text(v.Softcap)) },
         int[] values => new JsonObject { ["ints"] = new JsonArray([.. values.Select(v => (JsonNode)v)]) },
         object?[][] tuples => new JsonObject { ["tuples"] = new JsonArray([.. tuples.Select(t => (JsonNode)new JsonArray([.. t.Select(Encode)]))]) },
@@ -106,7 +111,7 @@ internal static class OperationCases
             "PackedFormat" => Enum.Parse<PackedFormat>((string)value!),
             "GemmEpilogue" => Enum.Parse<GemmEpilogue>((string)value!),
             "ConvGeometry" => value!.AsArray().Select(v => (int)v!).ToArray() is var g
-                ? new ConvGeometry(g[0], g[1], g[2], g[3], g[4], g[5], g[6], g[7], g[8], g[9]) : default,
+                ? new ConvGeometry(g[0], g[1], g[2], g[3], g[4], g[5], g[6], g[7], g[8], g[9]) { DH = g.Length > 10 ? g[10] : 1, DW = g.Length > 11 ? g[11] : 1 } : default,
             "AttentionVariant" => new AttentionVariant((int)value![0]!, Single(value[1])),
             "ints" => value!.AsArray().Select(v => (int)v!).ToArray(),
             "tuples" => value!.AsArray().Select(t => t!.AsArray().Select(Decode).ToArray()).ToArray(),

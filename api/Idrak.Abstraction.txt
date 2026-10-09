@@ -294,6 +294,8 @@ public abstract class Idrak.Abstraction.Devices.Backend
   public virtual void Col2ImKernel(Idrak.Abstraction.Devices.Storage dcols, Idrak.Abstraction.Devices.Storage dx, in Idrak.Abstraction.Devices.ConvGeometry g)
   public virtual void Copy(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, int n)
   public virtual void Copy2D(Idrak.Abstraction.Devices.Storage src, int srcOffset, int srcStride, Idrak.Abstraction.Devices.Storage dst, int dstOffset, int dstStride, int rows, int cols, bool accumulate)
+  public virtual void CtcLossBackwardKernel(Idrak.Abstraction.Devices.Storage logProbs, Idrak.Abstraction.Devices.Storage targets, Idrak.Abstraction.Devices.Storage lossGrads, Idrak.Abstraction.Devices.Storage dLogProbs, System.ReadOnlySpan<int> inputLengths, System.ReadOnlySpan<int> targetLengths, System.ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
+  public virtual void CtcLossKernel(Idrak.Abstraction.Devices.Storage logProbs, Idrak.Abstraction.Devices.Storage targets, Idrak.Abstraction.Devices.Storage losses, System.ReadOnlySpan<int> inputLengths, System.ReadOnlySpan<int> targetLengths, System.ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
   public virtual void DecoderMaskKernel(Idrak.Abstraction.Devices.Storage position, Idrak.Abstraction.Devices.Storage mask, int rows, int capacity)
   public virtual void DestroyGraph(nint executable, nint graph)
   public virtual void DropoutBackwardKernel(Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dx, int n, float p, uint seed)
@@ -391,6 +393,8 @@ public abstract class Idrak.Abstraction.Devices.Backend
   public void ClassMatch(Idrak.Abstraction.Devices.Storage predictions, Idrak.Abstraction.Devices.Storage targets, Idrak.Abstraction.Devices.Storage y, int rows, int cols, float threshold)
   public void ClipFactor(Idrak.Abstraction.Devices.Storage sumSquares, Idrak.Abstraction.Devices.Storage factor, float maxNorm)
   public void Col2Im(Idrak.Abstraction.Devices.Storage dcols, Idrak.Abstraction.Devices.Storage dx, in Idrak.Abstraction.Devices.ConvGeometry g)
+  public void CtcLoss(Idrak.Abstraction.Devices.Storage logProbs, Idrak.Abstraction.Devices.Storage targets, Idrak.Abstraction.Devices.Storage losses, System.ReadOnlySpan<int> inputLengths, System.ReadOnlySpan<int> targetLengths, System.ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
+  public void CtcLossBackward(Idrak.Abstraction.Devices.Storage logProbs, Idrak.Abstraction.Devices.Storage targets, Idrak.Abstraction.Devices.Storage lossGrads, Idrak.Abstraction.Devices.Storage dLogProbs, System.ReadOnlySpan<int> inputLengths, System.ReadOnlySpan<int> targetLengths, System.ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
   public void DecoderMask(Idrak.Abstraction.Devices.Storage position, Idrak.Abstraction.Devices.Storage mask, int rows, int capacity)
   public void Dropout(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, int n, float p, uint seed)
   public void DropoutBackward(Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dx, int n, float p, uint seed)
@@ -485,7 +489,10 @@ public enum Idrak.Abstraction.Devices.BinaryOp : int
 
 public readonly record struct Idrak.Abstraction.Devices.ConvGeometry : System.IEquatable<Idrak.Abstraction.Devices.ConvGeometry>
   public ConvGeometry(int N, int C, int H, int W, int KH, int KW, int SH, int SW, int PH, int PW)
+  public bool Dilated { get; }
   public int C { get; init; }
+  public int DH { get; init; }
+  public int DW { get; init; }
   public int H { get; init; }
   public int KH { get; init; }
   public int KW { get; init; }
@@ -1810,6 +1817,8 @@ public static class Idrak.Abstraction.Operations.OperationKernels
   nested Idrak.Abstraction.Operations.OperationKernels.ClassMatch (below)
   nested Idrak.Abstraction.Operations.OperationKernels.ClipFactor (below)
   nested Idrak.Abstraction.Operations.OperationKernels.Col2Im (below)
+  nested Idrak.Abstraction.Operations.OperationKernels.CtcLoss (below)
+  nested Idrak.Abstraction.Operations.OperationKernels.CtcLossBackward (below)
   nested Idrak.Abstraction.Operations.OperationKernels.DecoderMask (below)
   nested Idrak.Abstraction.Operations.OperationKernels.Dropout (below)
   nested Idrak.Abstraction.Operations.OperationKernels.DropoutBackward (below)
@@ -1958,6 +1967,10 @@ public delegate void Idrak.Abstraction.Operations.OperationKernels.ClassMatch(Id
 public delegate void Idrak.Abstraction.Operations.OperationKernels.ClipFactor(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage sumSquares, Idrak.Abstraction.Devices.Storage factor, float maxNorm)
 
 public delegate void Idrak.Abstraction.Operations.OperationKernels.Col2Im(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage dcols, Idrak.Abstraction.Devices.Storage dx, in Idrak.Abstraction.Devices.ConvGeometry g)
+
+public delegate void Idrak.Abstraction.Operations.OperationKernels.CtcLoss(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage logProbs, Idrak.Abstraction.Devices.Storage targets, Idrak.Abstraction.Devices.Storage losses, System.ReadOnlySpan<int> inputLengths, System.ReadOnlySpan<int> targetLengths, System.ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
+
+public delegate void Idrak.Abstraction.Operations.OperationKernels.CtcLossBackward(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage logProbs, Idrak.Abstraction.Devices.Storage targets, Idrak.Abstraction.Devices.Storage lossGrads, Idrak.Abstraction.Devices.Storage dLogProbs, System.ReadOnlySpan<int> inputLengths, System.ReadOnlySpan<int> targetLengths, System.ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
 
 public delegate void Idrak.Abstraction.Operations.OperationKernels.DecoderMask(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage position, Idrak.Abstraction.Devices.Storage mask, int rows, int capacity)
 
@@ -2150,6 +2163,8 @@ public static class Idrak.Abstraction.Operations.Ops
   public static readonly Idrak.Abstraction.Operations.Operation ClassMatch
   public static readonly Idrak.Abstraction.Operations.Operation ClipFactor
   public static readonly Idrak.Abstraction.Operations.Operation Col2Im
+  public static readonly Idrak.Abstraction.Operations.Operation CtcLoss
+  public static readonly Idrak.Abstraction.Operations.Operation CtcLossBackward
   public static readonly Idrak.Abstraction.Operations.Operation DecoderMask
   public static readonly Idrak.Abstraction.Operations.Operation Dropout
   public static readonly Idrak.Abstraction.Operations.Operation DropoutBackward
@@ -2402,6 +2417,7 @@ public sealed class Idrak.Abstraction.Tensor : System.IDisposable
   public Idrak.Abstraction.Tensor Clamp(float min, float max)
   public Idrak.Abstraction.Tensor Clone()
   public Idrak.Abstraction.Tensor Cos()
+  public Idrak.Abstraction.Tensor CtcLoss(Idrak.Abstraction.Tensor targets, System.Collections.Generic.IReadOnlyList<int> inputLengths, System.Collections.Generic.IReadOnlyList<int> targetLengths, int blank = 0, bool batchFirst = false, bool zeroInfinity = false)
   public Idrak.Abstraction.Tensor Detach()
   public Idrak.Abstraction.Tensor Dropout(float p, uint seed)
   public Idrak.Abstraction.Tensor EmbeddingLookup(Idrak.Abstraction.Tensor indices)

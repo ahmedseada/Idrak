@@ -2273,7 +2273,7 @@ public abstract partial class Backend
         CpuBackend.Instance.ScatterAdd(h[dy], h[indices], h[dtable], count, dim, vocabulary);
     }
 
-    /// <summary>Unfolds image patches: cols[(n, oh, ow), (c, kh, kw)] = x[n, c, oh*sh - ph + kh, ow*sw - pw + kw] (0 outside).</summary>
+    /// <summary>Unfolds image patches: cols[(n, oh, ow), (c, kh, kw)] = x[n, c, oh*sh - ph + kh*dh, ow*sw - pw + kw*dw] (0 outside; dh, dw the dilation).</summary>
     /// <remarks>Runs <see cref="Ops.Im2Col"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>Im2ColKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Im2Col(Storage x, Storage cols, in ConvGeometry g)
@@ -2514,6 +2514,124 @@ public abstract partial class Backend
         {
             MaxPoolBackwardKernel(dy, argmax, dx, in g);
         }
+    }
+
+    /// <summary>
+    /// Connectionist temporal classification (Graves et al. 2006): losses[n] = -log of the probability, summed over every
+    /// alignment, that the first inputLengths[n] steps of sequence n read as its labels (with <paramref name="blank"/>
+    /// between them and repeats collapsed). logProbs holds log-probabilities over <paramref name="classes"/> per step and
+    /// sequence, [steps, batch, classes] or, with <paramref name="batchFirst"/>, [batch, steps, classes]; the labels of
+    /// sequence n are targets[targetOffsets[n] ..] (targetLengths[n] ids as floats). A sequence no alignment fits has an
+    /// infinite loss, or 0 with <paramref name="zeroInfinity"/>.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.CtcLoss"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>CtcLossKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void CtcLoss(Storage logProbs, Storage targets, Storage losses, ReadOnlySpan<int> inputLengths, ReadOnlySpan<int> targetLengths, ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
+    {
+        if (_kernels is null)
+        {
+            CtcLossKernel(logProbs, targets, losses, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
+        }
+        else
+        {
+            CtcLossRegistered(logProbs, targets, losses, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void CtcLossRegistered(Storage logProbs, Storage targets, Storage losses, ReadOnlySpan<int> inputLengths, ReadOnlySpan<int> targetLengths, ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
+    {
+        if (Kernel(OperationIndex.CtcLoss) is OperationKernels.CtcLoss kernel)
+        {
+            kernel(this, logProbs, targets, losses, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
+            return;
+        }
+
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.CtcLoss))
+        {
+            CtcLossKernel(logProbs, targets, losses, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.CtcLoss);
+        try
+        {
+            CtcLossKernel(logProbs, targets, losses, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
+        }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            CtcLossOnHost(logProbs, targets, losses, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of CtcLoss (the default body of CtcLossKernel), for RetryOnHost.
+    private void CtcLossOnHost(Storage logProbs, Storage targets, Storage losses, ReadOnlySpan<int> inputLengths, ReadOnlySpan<int> targetLengths, ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
+    {
+        using var h = new HostCall(this, "CtcLoss");
+        CpuBackend.Instance.CtcLoss(h[logProbs], h[targets], h[losses], inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
+    }
+
+    /// <summary>
+    /// The gradient of <see cref="CtcLossKernel"/>: dLogProbs += lossGrads[n] · ∂losses[n] / ∂logProbs for every sequence n
+    /// (steps past inputLengths[n] and classes outside the labels get nothing; with <paramref name="zeroInfinity"/> a
+    /// sequence of infinite loss gets nothing either).
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.CtcLossBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>CtcLossBackwardKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void CtcLossBackward(Storage logProbs, Storage targets, Storage lossGrads, Storage dLogProbs, ReadOnlySpan<int> inputLengths, ReadOnlySpan<int> targetLengths, ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
+    {
+        if (_kernels is null)
+        {
+            CtcLossBackwardKernel(logProbs, targets, lossGrads, dLogProbs, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
+        }
+        else
+        {
+            CtcLossBackwardRegistered(logProbs, targets, lossGrads, dLogProbs, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void CtcLossBackwardRegistered(Storage logProbs, Storage targets, Storage lossGrads, Storage dLogProbs, ReadOnlySpan<int> inputLengths, ReadOnlySpan<int> targetLengths, ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
+    {
+        if (Kernel(OperationIndex.CtcLossBackward) is OperationKernels.CtcLossBackward kernel)
+        {
+            kernel(this, logProbs, targets, lossGrads, dLogProbs, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
+            return;
+        }
+
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.CtcLossBackward))
+        {
+            CtcLossBackwardKernel(logProbs, targets, lossGrads, dLogProbs, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.CtcLossBackward);
+        try
+        {
+            CtcLossBackwardKernel(logProbs, targets, lossGrads, dLogProbs, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
+        }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            CtcLossBackwardOnHost(logProbs, targets, lossGrads, dLogProbs, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of CtcLossBackward (the default body of CtcLossBackwardKernel), for RetryOnHost.
+    private void CtcLossBackwardOnHost(Storage logProbs, Storage targets, Storage lossGrads, Storage dLogProbs, ReadOnlySpan<int> inputLengths, ReadOnlySpan<int> targetLengths, ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
+    {
+        using var h = new HostCall(this, "CtcLossBackward");
+        CpuBackend.Instance.CtcLossBackward(h[logProbs], h[targets], h[lossGrads], h[dLogProbs], inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank,
+            batchFirst, zeroInfinity);
     }
 
     /// <summary>

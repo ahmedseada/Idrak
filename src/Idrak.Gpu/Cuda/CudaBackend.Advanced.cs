@@ -102,9 +102,28 @@ internal sealed unsafe partial class CudaBackend
             U(g.OW), U(g.PatchSize), U(g.KH * g.KW), U(g.OH * g.OW), U(n));
     }
 
-    public override void Im2ColKernel(Storage x, Storage cols, in ConvGeometry g) => LaunchPatches("im2col_f32", x, cols, g);
+    // A dilated window has no kernel of its own yet: it runs on the host (plan 13, step 1 adds device kernels).
+    public override void Im2ColKernel(Storage x, Storage cols, in ConvGeometry g)
+    {
+        if (g.Dilated)
+        {
+            base.Im2ColKernel(x, cols, in g);
+            return;
+        }
 
-    public override void Col2ImKernel(Storage dcols, Storage dx, in ConvGeometry g) => LaunchPatches("col2im_f32", dcols, dx, g);
+        LaunchPatches("im2col_f32", x, cols, g);
+    }
+
+    public override void Col2ImKernel(Storage dcols, Storage dx, in ConvGeometry g)
+    {
+        if (g.Dilated)
+        {
+            base.Col2ImKernel(dcols, dx, in g);
+            return;
+        }
+
+        LaunchPatches("col2im_f32", dcols, dx, g);
+    }
 
     public override void MaxPoolKernel(Storage x, Storage y, Storage argmax, in ConvGeometry g)
     {
