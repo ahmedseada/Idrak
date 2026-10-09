@@ -11,6 +11,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Idrak\Idrak.csproj" />
     <ProjectReference Include="..\..\src\Idrak.Nlp\Idrak.Nlp.csproj" />
+    <ProjectReference Include="..\..\src\Idrak.Vision\Idrak.Vision.csproj" />
     <ProjectReference Include="..\..\src\Idrak.Abstraction.Testing\Idrak.Abstraction.Testing.csproj" />
   </ItemGroup>
 

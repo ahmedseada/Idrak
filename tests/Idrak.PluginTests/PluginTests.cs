@@ -33,6 +33,8 @@ public static class PluginTests
         ("outside plug-in: a batch source making tensors itself trains a linear model through Trainer.Fit", DataPluginTests.BatchSourceTrains),
         ("outside plug-in: a message part kind of its own (audio) registers in ChatParts, passes the testing kit, round-trips through the chat JSON and is refused by a text-only model", ChatPartPluginTests.AudioKind),
         ("outside plug-in: a vision family of its own (a trivial encoder with a token count per image, its own prompt format and attention rule) registers in VisionFamilies, passes the testing kit and answers a prompt with two images through the public chat API; unregistered, its checkpoint is refused naming the registry", VisionFamilyPluginTests.OutsideFamily),
+        ("outside plug-in: an image classifier family of its own (a tiny ResNet from safetensors, torchvision's names, its own residual block) registers in ImageModelFamilies, matches PyTorch's pixel values and logits with the fc weight kept as stored bfloat16, classifies through Predictor and RegionClassifier and passes the testing kit; unregistered, its checkpoint is refused naming the registry", ImageFamilyPluginTests.TinyResNet),
+        ("outside plug-in: an image detector family of its own (a grid detector from ONNX) with its own decoder in DetectionDecoders matches PyTorch's outputs and its decoded, suppressed boxes, from the folder and the bare .onnx file, and passes the testing kit; unregistered, the checkpoint and the decoder are refused naming their registries", ImageFamilyPluginTests.GridDetector),
         ("outside plug-in: a plain-loop device on the public device API (its own backend, storage and provider) passes the conformance kit and a stress run", ReferenceDeviceConforms),
     ];
 

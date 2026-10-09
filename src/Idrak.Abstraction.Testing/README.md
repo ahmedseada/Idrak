@@ -31,6 +31,7 @@ Conformance.CheckRopeScaling("yarn", MyYarn).ThrowIfFailed();        // against 
 | RoPE scalings (`RopeScalingSuite`) | As many frequencies, finite and positive; the library method's frequencies and attention factor (`RopeScalings.Default`); the same per position; safe from several threads. |
 | Chat part kinds (`ChatPartKindSuite`, `Conformance.CheckChatPartKind`) | Reads parts of its kind; the JSON it writes keeps the type and reads back to an equal part, the same every time; the library kind's parts and JSON (`ChatParts.Default`). Text: empty, Arabic, quotes, control characters, emoji; images: PNG, JPEG, unknown types, random bytes; yours (`samples`). |
 | Fine-tuning data formats (`TuningDataFormatSuite`, `Conformance.CheckTuningDataFormat`) | On data files of the format's own (`TuningDataSample`): valid files read without failing, every conversation with messages of known roles and image parts with their bytes; the same conversations on a second reading, from two readings at once, and when a reading stops early; the expected conversations when given; invalid files refused with an error naming the file and saying what is wrong. |
+| Image model families (`ImageModelFamilySuite`, `Conformance.CheckImageModelFamily`) | On checkpoints of the family's own (`ImageFamilySample`): each loads, with a known task and labels that are not empty (a classifier one output per label); every image's outputs finite, the same on a second prediction, from two predictions at once, alone as in the batch, and after loading again; the reference's outputs when given; random images of many sizes and channel counts mixed in; invalid checkpoints refused saying why. |
 | Feature caches (`FeatureCacheSuite`, `Conformance.CheckFeatureCache`) | Misses when empty and after a clear; a small value kept, given back exactly (values and shape) on the device asked for, as a new tensor each time, from the cache's own copy; a key differing in any field (image, transforms, vision options, family, checkpoint, precision, stage) misses; a second put replaces the first; puts and gets from several threads, every hit exactly its key's value. |
 
 The token-sampler contract (`ITokenSampler`) lives in Idrak.Nlp, and this kit depends on Idrak.Abstraction alone, so
@@ -60,6 +61,21 @@ Conformance.CheckTuningDataFormat(path => format.Read(path, new TuningDataOption
 using var cache = FeatureCaches.Create("disk", new FeatureCacheOptions { Folder = "cache" });
 static FeatureCacheKey Key(FeatureKeyFields f) => new(f.Image, f.Transforms, f.VisionOptions, f.Family, f.Checkpoint, f.DType, f.Stage);
 Conformance.CheckFeatureCache(new FeatureCacheUnderTest((k, v) => cache.Put(Key(k), v), (k, d) => cache.TryGet(Key(k), d, out var v) ? v : null, cache.Clear)).ThrowIfFailed();
+```
+
+An image model family (core's `IImageModelFamily`, registered in `ImageModelFamilies`) is checked as its loading: a
+checkpoint's path in, the loaded model wrapped in `ImageModelUnderTest` (its task, labels and each image's outputs) out.
+The suite (`ImageModelFamilySuite`) checks that it loads, predicts finite outputs, the same every time, from two threads,
+alone and in a batch and after loading again, the reference's outputs when given, and that invalid checkpoints are
+refused saying why:
+
+```csharp
+Conformance.CheckImageModelFamily(path =>
+{
+    var model = ImageModels.Load(path);
+    var outputs = model.Outputs().Build();
+    return new ImageModelUnderTest("classification", model.Labels, outputs.Predict, model);
+}, [new ImageFamilySample("models/tiny-resnet", images, expectedLogits), new ImageFamilySample("models/broken", Error: "conv1.weight")]).ThrowIfFailed();
 ```
 
 Fixed cases come first, then random ones (`DeviceCheckOptions.RandomRuns`, `ContractCheckOptions.RandomCases`, a seed).

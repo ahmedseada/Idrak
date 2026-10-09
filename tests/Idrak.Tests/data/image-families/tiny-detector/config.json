@@ -1,0 +1,21 @@
+{
+  "architectures": [
+    "OutsideGridDetector"
+  ],
+  "id2label": {
+    "0": "square",
+    "1": "disc",
+    "2": "bar"
+  },
+  "image_size": [
+    64,
+    64
+  ],
+  "label2id": {
+    "bar": 2,
+    "disc": 1,
+    "square": 0
+  },
+  "num_classes": 3,
+  "stride": 8
+}

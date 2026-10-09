@@ -36,6 +36,7 @@ public static class Idrak.Abstraction.Testing.Conformance
   public static Idrak.Abstraction.Testing.ConformanceReport Check<TKernel>(Idrak.Abstraction.Operations.PluginOperation<TKernel> operation, Idrak.Abstraction.Device device, System.Func<Idrak.Abstraction.Devices.Backend, TKernel, int, float[]> run, int cases = 8, float tolerance = 1E-05f) where TKernel : System.Delegate
   public static Idrak.Abstraction.Testing.ConformanceReport CheckChatPartKind(string name, Idrak.Abstraction.Generation.IChatPartKind? kind = null, System.Collections.Generic.IReadOnlyList<System.Text.Json.Nodes.JsonObject>? samples = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckFeatureCache(Idrak.Abstraction.Testing.FeatureCacheUnderTest cache, Idrak.Abstraction.Device? device = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
+  public static Idrak.Abstraction.Testing.ConformanceReport CheckImageModelFamily(System.Func<string, Idrak.Abstraction.Testing.ImageModelUnderTest> load, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Testing.ImageFamilySample> samples, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckRopeScaling(string type, Idrak.Abstraction.Generation.RopeScalingMethod? method = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckTuningDataFormat(System.Func<string, System.Collections.Generic.IEnumerable<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage>>> read, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Testing.TuningDataSample> samples, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckVisionEncoder(Idrak.Abstraction.Generation.IVisionEncoder encoder, Idrak.Abstraction.Generation.IVisionEncoder? cpu = null, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ImageData>? samples = null, float tolerance = 0.0001f, Idrak.Abstraction.Testing.ContractCheckOptions? options = null, Idrak.Abstraction.Generation.VisionOptions? visionOptions = null)
@@ -148,6 +149,28 @@ public sealed record Idrak.Abstraction.Testing.FeatureKeyFields : System.IEquata
   public string Stage { get; init; }
   public string Transforms { get; init; }
   public string VisionOptions { get; init; }
+
+public sealed record Idrak.Abstraction.Testing.ImageFamilySample : System.IEquatable<Idrak.Abstraction.Testing.ImageFamilySample>
+  public ImageFamilySample(string Path, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ImageData>? Images = null, System.Collections.Generic.IReadOnlyList<float[]>? Expected = null, float Tolerance = 0.0001f, string? Error = null)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ImageData>? Images { get; init; }
+  public System.Collections.Generic.IReadOnlyList<float[]>? Expected { get; init; }
+  public float Tolerance { get; init; }
+  public string Path { get; init; }
+  public string? Error { get; init; }
+
+public sealed class Idrak.Abstraction.Testing.ImageModelFamilySuite : Idrak.Abstraction.Testing.ContractSuite<System.Func<string, Idrak.Abstraction.Testing.ImageModelUnderTest>>
+  public ImageModelFamilySuite(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Testing.ImageFamilySample> samples)
+  public override Idrak.Abstraction.Testing.ContractCase RandomCase(System.Random random, bool large)
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
+  public override string Name { get; }
+  public override void Run(System.Func<string, Idrak.Abstraction.Testing.ImageModelUnderTest> implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
+
+public sealed class Idrak.Abstraction.Testing.ImageModelUnderTest : System.IDisposable
+  public ImageModelUnderTest(string task, System.Collections.Generic.IReadOnlyList<string>? labels, System.Func<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ImageData>, System.Collections.Generic.IReadOnlyList<float[]>> predict, System.IDisposable? owner = null)
+  public System.Collections.Generic.IReadOnlyList<float[]> Predict(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ImageData> images)
+  public System.Collections.Generic.IReadOnlyList<string>? Labels { get; }
+  public string Task { get; }
+  public void Dispose()
 
 public static class Idrak.Abstraction.Testing.Regression
   public const string OperationKind = "operation"

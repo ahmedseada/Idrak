@@ -5,6 +5,7 @@ using System.Buffers;
 using Idrak.Data;
 using Idrak.Inference;
 using Idrak.Layers;
+using Idrak.Models.Abstractions;
 using Idrak.Vision.Abstractions;
 
 namespace Idrak.Vision;
@@ -106,6 +107,47 @@ public sealed class RegionClassifier : IDisposable
     public static RegionClassifierBuilder For(Module model) => new(model ?? throw new ArgumentNullException(nameof(model)), ownsModel: false);
 
     /// <summary>
+    /// Starts a classifier over an image model loaded through its family (<c>ImageModels.Load</c>): its labels, its square
+    /// input size (the frame size), and its preprocessing's rescale and normalization applied to the framed regions (grey,
+    /// repeated to the model's channels). The model stays the caller's to dispose.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The model is not a classifier or names no classes.</exception>
+    /// <exception cref="NotSupportedException">Its input is not square, or not one size for every image.</exception>
+    public static RegionClassifierBuilder For(ImageModel model)
+    {
+        ArgumentNullException.ThrowIfNull(model);
+        if (model.Task != ImageTask.Classification || model.Labels is null)
+        {
+            throw new InvalidOperationException(
+                $"A region classifier needs a classification model with labels; {model.Architecture} is a {model.Task} model{(model.Labels is null ? " without labels" : "")}.");
+        }
+
+        if (model.InputShape is not [int channels, int height, int width] || height != width)
+        {
+            throw new NotSupportedException(
+                $"A region classifier frames regions in squares; the {model.Architecture} model's input is {(model.InputShape is { } s ? string.Join(" x ", s) : "each image's own size")}.");
+        }
+
+        var p = model.Preprocessor;
+        var scale = new float[channels];
+        var shift = new float[channels];
+        for (int c = 0; c < channels; c++)
+        {
+            // A frame value v in [0, 1] is the byte 255 v: rescaled as the preprocessor rescales a byte, then normalized.
+            float value = p.Rescale ? (float)(255 * p.RescaleFactor) : 255f, offset = 0f;
+            if (p.Normalize)
+            {
+                float mean = p.Mean[p.Mean.Count == 1 ? 0 : c], std = p.Std[p.Std.Count == 1 ? 0 : c];
+                (value, offset) = (value / std, -mean / std);
+            }
+
+            (scale[c], shift[c]) = (value, offset);
+        }
+
+        return new RegionClassifierBuilder(model.Network, ownsModel: false) { InputScale = scale, InputShift = shift }.Classes(model.Labels).InputSize(height);
+    }
+
+    /// <summary>
     /// Starts a classifier from a package written by <see cref="Predictor{TIn, TOut}.Save"/>: its model, class names and
     /// input shape (which sets the frame size). The classifier disposes the model.
     /// </summary>
@@ -145,6 +187,7 @@ public sealed class RegionClassifier : IDisposable
         ArgumentNullException.ThrowIfNull(image);
         ArgumentNullException.ThrowIfNull(regions);
         int size = _settings.Size, frame = size * size, classes = _classes.Length, count = regions.Count;
+        int channels = _settings.InputScale?.Length ?? 1, sample = channels * frame;
         var probabilities = new float[count * classes];
         if (count == 0)
         {
@@ -152,7 +195,7 @@ public sealed class RegionClassifier : IDisposable
         }
 
         int batch = Math.Min(_settings.Batch, count);
-        var buffer = ArrayPool<float>.Shared.Rent(batch * frame);
+        var buffer = ArrayPool<float>.Shared.Rent(batch * sample);
         try
         {
             for (int start = 0; start < count; start += batch)
@@ -160,10 +203,25 @@ public sealed class RegionClassifier : IDisposable
                 int n = Math.Min(batch, count - start);
                 for (int i = 0; i < n; i++)
                 {
-                    ContentFrame.Extract(image, regions[start + i], buffer.AsSpan(i * frame, frame), size, _settings.Border);
+                    var target = buffer.AsSpan(i * sample, sample);
+                    ContentFrame.Extract(image, regions[start + i], target[..frame], size, _settings.Border);
+                    if (_settings.InputScale is { } scale)
+                    {
+                        // An image model's input: each channel the frame rescaled and normalized as its preprocessing does
+                        // (the first channel last, since the frame is there).
+                        for (int c = channels - 1; c >= 0; c--)
+                        {
+                            float a = scale[c], b = _settings.InputShift![c];
+                            var plane = target.Slice(c * frame, frame);
+                            for (int k = 0; k < frame; k++)
+                            {
+                                plane[k] = target[k] * a + b;
+                            }
+                        }
+                    }
                 }
 
-                using var x = Tensor.From(buffer.AsSpan(0, n * frame), [n, 1, size, size], _device);
+                using var x = Tensor.From(buffer.AsSpan(0, n * sample), [n, channels, size, size], _device);
                 using var logits = _settings.Model.Predict(x);
                 if (logits.Size != n * classes)
                 {
@@ -219,7 +277,12 @@ public sealed class RegionClassifierBuilder
 
     internal float? ForegroundThreshold { get; private set; }
 
-    /// <summary>The model's classes, in output order. Required with <see cref="RegionClassifier.For"/>.</summary>
+    // For an image model's input: per channel, frame value · scale + shift (null: the frame as it is, one channel).
+    internal float[]? InputScale { get; init; }
+
+    internal float[]? InputShift { get; init; }
+
+    /// <summary>The model's classes, in output order. Required with <see cref="RegionClassifier.For(Module)"/>.</summary>
     public RegionClassifierBuilder Classes(IReadOnlyList<string> classes)
     {
         ArgumentNullException.ThrowIfNull(classes);
