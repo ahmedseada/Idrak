@@ -27,7 +27,7 @@ public static partial class DeviceCases
         new("softmax, log-softmax, scaled and masked softmax, arg-max, class match and token cross-entropy", SoftmaxFamily, random: true),
         new("normalization: batch, group, layer and RMS norms, their gradients and fused forms", Normalization, random: true),
         new("rotary positions: rope forward and back, normalized rope, pairs and attention heads", RotaryPositions, random: true),
-        new("embeddings: gather, bfloat16 gather, one-hot and scatter-add", Embeddings, random: true),
+        new("embeddings: gather, bfloat16 gather (rows and columns), one-hot and scatter-add", Embeddings, random: true),
         new("convolution and pooling: im2col, col2im, max pooling and its gradients", ConvolutionAndPooling, random: true),
         new("layout: permutations, axis sums and broadcasts", Layout, random: true),
         new("optimizer steps: SGD, Adam, 8-bit Adam and fused AdamW", OptimizerSteps, random: true),
@@ -511,6 +511,7 @@ public static partial class DeviceCases
         var indices = Indices(c, count, vocabulary);
         b.Gather(c.Storage(table), indices, c.Zeros(count * dim), count, dim, vocabulary);
         b.GatherBFloat16(c.Storage(PackRows(table, vocabulary, dim)), indices, c.Zeros(count * dim), count, dim, vocabulary);
+        b.GatherBFloat16Columns(c.Storage(PackRows(table, dim, vocabulary)), indices, c.Zeros(count * dim), count, dim, vocabulary);   // the table read as [dim, vocabulary]
         b.OneHot(indices, c.Zeros(count * vocabulary), count, vocabulary);
         b.ScatterAdd(Random(c, count * dim), indices, Random(c, vocabulary * dim), count, dim, vocabulary);
     }

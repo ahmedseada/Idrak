@@ -929,6 +929,17 @@ public abstract partial class Backend
         CpuBackend.Instance.GatherBFloat16(h[packed], h[indices], h[y], count, dim, vocabulary);
     }
 
+    /// <summary>
+    /// <see cref="Gather"/> of columns: y[i, :] = column indices[i] of a bfloat16 table [dim, vocabulary] packed as in
+    /// <see cref="BFloat16MatMul"/> (rows of ⌈vocabulary / 2⌉ words): the embedding lookup of a model whose tied output
+    /// head holds the only copy of the table, as its [dim, vocabulary] weight.
+    /// </summary>
+    public virtual void GatherBFloat16ColumnsKernel(Storage packed, Storage indices, Storage y, int count, int dim, int vocabulary)
+    {
+        using var h = new HostCall(this);
+        CpuBackend.Instance.GatherBFloat16Columns(h[packed], h[indices], h[y], count, dim, vocabulary);
+    }
+
     /// <summary>One-hot rows: y[i, :] = 0 except y[i, indices[i]] = 1, for count indices over classes columns.</summary>
     public virtual void OneHotKernel(Storage indices, Storage y, int count, int classes)
     {

@@ -3,6 +3,7 @@
 
 using Idrak.Data;
 using Idrak.Data.Abstractions;
+using Idrak.Models.Abstractions;
 
 namespace Idrak.Gemma3Vision;
 
@@ -14,7 +15,7 @@ namespace Idrak.Gemma3Vision;
 /// <c>preprocessor_config.json</c>). As Idrak's <see cref="IVisionEncoder"/>, every block takes the same layout: a square
 /// grid of <see cref="Gemma3ImageTokens.TokensPerImage"/> tokens; an image is one block, or with pan and scan
 /// (<see cref="PanAndScan"/>, or a request's vision options) the whole image and then its crops, one block each.
-/// Made by <see cref="Gemma3Vision.CreateEncoder(Device?, ImagePreprocessor?, Gemma3PanAndScan?)"/>;
+/// Made by <see cref="Gemma3Vision.CreateEncoder(Device?, ImagePreprocessor?, Gemma3PanAndScan?, EncoderWeights)"/>;
 /// as a module, its forward pass takes pixel values [images, channels, size, size]. Every <c>Encode</c> runs without
 /// recording gradients and returns tensors the caller disposes.
 /// </summary>

@@ -270,6 +270,36 @@ internal sealed partial class VulkanBackend
         return true;
     }
 
+    // gather_bf16_columns from a table [dim, vocabulary] larger than a binding: one dispatch per window of the table's
+    // rows (the outputs' columns); each output element is written by the dispatch whose window holds its row.
+    private bool GatherColumnWindows(Storage table, Storage indices, Storage y, int count, int dim, int vocabulary)
+    {
+        long rowBytes = ((long)vocabulary + 1) / 2 * 4;
+        long window = WindowRows(MaxStorageBytes, StorageAlignment, 1, [rowBytes]);
+        if (!Fit(indices, y) || window <= 0 || window > int.MaxValue)
+        {
+            return false;
+        }
+
+        if (count <= 0 || dim <= 0)
+        {
+            return true;
+        }
+
+        var dispatched = Kernel("gather_bf16_columns");
+        uint groups = GridGroups((long)count * dim);
+        Span<byte> b = stackalloc byte[20];
+        Span<long> at = stackalloc long[3];
+        for (long first = 0; first < dim && first * rowBytes < BlockBytes(table.Length); first += window)
+        {
+            int rows = (int)Math.Min(window, dim - first);
+            at[0] = first * rowBytes;
+            Dispatch(dispatched, groups, 1, 1, [table, indices, y], new Push(b).I(count).I(dim).I(vocabulary).I((int)first).I(rows).Bytes, at);
+        }
+
+        return true;
+    }
+
     // A dequantization of packed weights [k, n] (or of an output) larger than a binding: one dispatch per window of rows
     // of k of the packed weights, the output (and int4's scales) alike. False when int8's scales do not fit a binding or
     // no window fits.

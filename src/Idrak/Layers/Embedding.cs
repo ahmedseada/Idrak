@@ -42,6 +42,38 @@ public sealed class Embedding : Module
         BFloat16 = packed;
     }
 
+    private Embedding(Linear head)
+    {
+        Vocabulary = head.OutFeatures;
+        Dim = head.InFeatures;
+        _head = head;
+        head.SharedTable = this;
+    }
+
+    /// <summary>
+    /// A lookup table that reads the columns of a tied output head's bfloat16 weights [dim, vocabulary]: id i is column
+    /// i, so the model holds one copy of the table, the head's (a decoder whose embeddings are tied to a packed
+    /// bfloat16 head: half the table memory of a separate embedding). The head owns the weights; the table is fixed. When
+    /// the head's weights change format (<c>ToFloat32</c>, quantizing), the embedding takes its own bfloat16 copy first,
+    /// so its values never change.
+    /// </summary>
+    /// <exception cref="ArgumentException">The head does not hold bfloat16 weights, or already serves an embedding.</exception>
+    public static Embedding FromHead(Linear head)
+    {
+        ArgumentNullException.ThrowIfNull(head);
+        if (head.BFloat16 is null || head.SharedTable is not null)
+        {
+            throw new ArgumentException($"{head} must hold bfloat16 weights [dim, vocabulary] and serve no other embedding.", nameof(head));
+        }
+
+        return new Embedding(head);
+    }
+
+    /// <summary>The output head whose bfloat16 weights this table reads (see <see cref="FromHead"/>), else null.</summary>
+    public Linear? Head => _head;
+
+    private Linear? _head;
+
     /// <summary>
     /// A lookup table around existing bfloat16 weights [vocabulary, dim] (half the memory of float32; lossless for tables
     /// stored in bfloat16, as most checkpoints are); the layer takes ownership. The table is fixed (not trained).
@@ -71,7 +103,9 @@ public sealed class Embedding : Module
     public BFloat16Weight? BFloat16 { get; private set; }
 
     /// <inheritdoc />
-    protected override Tensor ForwardCore(Tensor input) => BFloat16 is { } h ? Tensor.EmbeddingLookup(h, input) : Weight.EmbeddingLookup(input);
+    protected override Tensor ForwardCore(Tensor input) =>
+        _head is { } head ? Tensor.EmbeddingLookupColumns(head.BFloat16!, input)
+        : BFloat16 is { } h ? Tensor.EmbeddingLookup(h, input) : Weight.EmbeddingLookup(input);
 
     /// <inheritdoc />
     public override IEnumerable<Tensor> Parameters() => _weight is null ? [] : [_weight];
@@ -79,11 +113,17 @@ public sealed class Embedding : Module
     /// <inheritdoc />
     public override IEnumerable<Tensor> Buffers() => BFloat16 is { } h ? [h.Packed] : [];
 
-    internal Device Device => (_weight ?? BFloat16!.Packed).Device;
+    internal Device Device => _head?.Device ?? (_weight ?? BFloat16!.Packed).Device;
 
     // The table's values [vocabulary, dim] on the host.
     internal float[] WeightValues()
     {
+        if (_head is { } head)
+        {
+            using var columns = head.BFloat16!.Dequantize();                          // [dim, vocabulary]
+            return HostParallel.Transpose(columns.ToArray(), Dim, Vocabulary);
+        }
+
         if (_weight is not null)
         {
             return _weight.ToArray();
@@ -118,8 +158,23 @@ public sealed class Embedding : Module
         _weight = null;
     }
 
+    // Stops reading the head's weights: the table becomes a bfloat16 copy of its own (the same values), before the head
+    // changes its weights' format.
+    internal void TakeOwnTable()
+    {
+        if (_head is not { } head)
+        {
+            return;
+        }
+
+        BFloat16 = BFloat16Weight.FromValues(WeightValues(), Vocabulary, Dim, head.Device);
+        head.SharedTable = null;
+        _head = null;
+    }
+
     internal void ToFloat32(bool trainable)
     {
+        TakeOwnTable();
         if (BFloat16 is not { } h)
         {
             return;
@@ -142,5 +197,5 @@ public sealed class Embedding : Module
     }
 
     /// <inheritdoc />
-    public override string ToString() => $"Embedding({Vocabulary} -> {Dim}{(BFloat16 is null ? "" : ", bf16")})";
+    public override string ToString() => $"Embedding({Vocabulary} -> {Dim}{(_head is not null ? ", bf16, the head's columns" : BFloat16 is null ? "" : ", bf16")})";
 }

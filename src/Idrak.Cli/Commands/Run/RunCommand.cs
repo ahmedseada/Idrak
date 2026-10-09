@@ -21,7 +21,8 @@ internal sealed class RunCommand : Command
 
         The prompt is the arguments after MODEL, followed by the text of --input files and of piped standard input, so
         `cat notes.txt | idrak run MODEL "Summarize"` asks about the notes. The answer streams to the output; --json
-        prints one document with the text, the token counts and the speed instead; -v adds the figures on the error output.
+        prints one document with the text, the token counts and the speed instead; -v adds the figures on the error output, with where the
+        device's memory went (weights by part, image encoder, KV cache, activations at the peak; with --json, a "memory" object).
         --image gives a vision-language model (Gemma 3 4B and larger) images, before the prompt's text.
 
         Options:
@@ -95,6 +96,11 @@ internal sealed class RunCommand : Command
             ThinkingStream = context.Verbose && !context.Json ? context.ErrorOutput : null,
         };
         using var interrupt = new Interrupt(context);           // the first Ctrl+C (or --timeout) stops after the current token
+        if (context.Verbose)
+        {
+            ComputeResources.ResetPeakMemoryUsage(loaded.Model.Device);  // -v: the peak of answering (the breakdown's activations), not of loading
+        }
+
         ChatAnswer answer;
         try
         {
@@ -106,9 +112,14 @@ internal sealed class RunCommand : Command
             return ExitCodes.Failed;
         }
 
+        var memory = context.Verbose ? loaded.Memory() : default;
         if (context.Verbose && !context.Json)
         {
             context.ErrorOutput.WriteLine(answer.Summary(loaded.Context));
+            foreach (string line in LoadedChat.MemoryLines(memory.Parts, memory.Usage))
+            {
+                context.ErrorOutput.WriteLine(line);
+            }
         }
 
         var json = new JsonObject
@@ -137,6 +148,11 @@ internal sealed class RunCommand : Command
         foreach (var (key, value) in answer.Figures())
         {
             json[key] = value?.DeepClone();
+        }
+
+        if (context.Verbose)
+        {
+            json["memory"] = LoadedChat.MemoryJson(memory.Parts, memory.Usage);
         }
 
         if (schema is not null)

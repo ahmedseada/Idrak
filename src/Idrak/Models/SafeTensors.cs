@@ -39,6 +39,14 @@ public sealed class SafeTensorsReader : IDisposable, ITensorStore
 
     int[] ITensorStore.ShapeOf(string name) => _tensors[name].Shape;
 
+    WeightFormat? ITensorStore.FormatOf(string name) => _tensors[name].Type switch
+    {
+        SafeTensorType.F32 => WeightFormat.Float32,
+        SafeTensorType.F16 => WeightFormat.Float16,
+        SafeTensorType.BF16 => WeightFormat.BFloat16,
+        _ => null,
+    };
+
     private readonly Dictionary<string, SafeTensorInfo> _tensors = [];
     private readonly Dictionary<string, FileStream> _files = [];
 

@@ -362,6 +362,19 @@ public static class Idrak.Diagnostics.GpuProfiler
   public static string Format(System.Collections.Generic.IReadOnlyList<Idrak.Diagnostics.GpuProfileEntry> entries, int rows = 40)
   public static void Start(Idrak.Abstraction.Device device)
 
+public sealed record Idrak.Diagnostics.MemoryPart : System.IEquatable<Idrak.Diagnostics.MemoryPart>
+  public MemoryPart(string Name, long Bytes, string? Note = null)
+  public long Bytes { get; init; }
+  public string Name { get; init; }
+  public string? Note { get; init; }
+
+public static class Idrak.Diagnostics.ModelMemory
+  public static Idrak.Diagnostics.MemoryPart Activations(System.Collections.Generic.IEnumerable<Idrak.Diagnostics.MemoryPart> parts, Idrak.Abstraction.MemoryUsage usage)
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Diagnostics.MemoryPart> Decoder(Idrak.Abstraction.Module decoder)
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Diagnostics.MemoryPart> Generation(Idrak.Abstraction.Module decoder, Idrak.Abstraction.Generation.DecoderSpec spec, int capacity, Idrak.Abstraction.Generation.KeyValueLayout layout, Idrak.Abstraction.Generation.IVisionEncoder? encoder = null, int batch = 1)
+  public static long KeyValueCacheBytes(Idrak.Abstraction.Generation.DecoderSpec spec, int capacity, Idrak.Abstraction.Generation.KeyValueLayout layout, int batch = 1)
+  public static long TensorBytes(Idrak.Abstraction.Module module)
+
 public sealed record Idrak.Inference.ClassPrediction : System.IEquatable<Idrak.Inference.ClassPrediction>
   public ClassPrediction(string Class, int Index, float Probability, System.Collections.Generic.IReadOnlyList<Idrak.Inference.ClassScore> Scores)
   public System.Collections.Generic.IReadOnlyList<Idrak.Inference.ClassScore> Scores { get; init; }
@@ -730,12 +743,14 @@ public sealed class Idrak.Layers.Embedding : Idrak.Abstraction.Module
   public Embedding(int vocabulary, int dim, Idrak.Abstraction.Device? device = null, System.Random? random = null)
   public Idrak.Abstraction.Generation.BFloat16Weight? BFloat16 { get; }
   public Idrak.Abstraction.Tensor Weight { get; }
+  public Idrak.Layers.Linear? Head { get; }
   public int Dim { get; }
   public int Vocabulary { get; }
   public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> Buffers()
   public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> Parameters()
   public override string ToString()
   public static Idrak.Layers.Embedding FromBFloat16(Idrak.Abstraction.Generation.BFloat16Weight weight)
+  public static Idrak.Layers.Embedding FromHead(Idrak.Layers.Linear head)
   public static Idrak.Layers.Embedding FromWeights(Idrak.Abstraction.Tensor weight)
 
 public sealed class Idrak.Layers.ExactGELU : Idrak.Abstraction.Module
@@ -822,6 +837,7 @@ public sealed class Idrak.Layers.Linear : Idrak.Abstraction.Module, Idrak.Abstra
   public Idrak.Abstraction.Modules.LoraAdapter? Lora { get; }
   public Idrak.Abstraction.Tensor Weight { get; }
   public Idrak.Abstraction.Tensor? Bias { get; }
+  public Idrak.Layers.Embedding? SharedTable { get; }
   public Idrak.Layers.Embedding? TiedTo { get; }
   public Linear(int inFeatures, int outFeatures, bool bias = true, Idrak.Abstraction.Device? device = null, System.Random? random = null)
   public float? OutputSoftcap { get; set; }
@@ -1082,6 +1098,11 @@ public sealed record Idrak.Models.Abstractions.DecoderBuildOptions : System.IEqu
   public int? MaxPositions { get; init; }
   public string? PackedFormatName { get; init; }
 
+public enum Idrak.Models.Abstractions.EncoderWeights : int
+  AsStored = 0
+  BFloat16 = 2
+  Float32 = 1
+
 public sealed class Idrak.Models.Abstractions.GgufArchitecture
   [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public GgufArchitecture()
   public bool InterleavedQueryKeys { get; init; }
@@ -1138,6 +1159,7 @@ public interface Idrak.Models.Abstractions.IPreTokenizer
   public System.Collections.Generic.IReadOnlyList<string> PreTokenize(System.Collections.Generic.IReadOnlyList<string> pieces, bool atStart)
 
 public interface Idrak.Models.Abstractions.ITensorStore : System.IDisposable
+  public (default) Idrak.Models.Abstractions.WeightFormat? FormatOf(string name)
   public (default) float[] ReadTransposed(string name)
   public System.Collections.Generic.IEnumerable<string> Names { get; }
   public bool Contains(string name)
@@ -1229,6 +1251,7 @@ public sealed record Idrak.Models.Abstractions.VisionCheckpoint : System.IEquata
 public sealed record Idrak.Models.Abstractions.VisionEncoderOptions : System.IEquatable<Idrak.Models.Abstractions.VisionEncoderOptions>
   public Idrak.Abstraction.Device? Device { get; init; }
   public Idrak.Abstraction.Generation.VisionOptions? VisionOptions { get; init; }
+  public Idrak.Models.Abstractions.EncoderWeights Weights { get; init; }
   public VisionEncoderOptions()
   public bool Grayscale { get; init; }
 
@@ -1366,6 +1389,10 @@ public sealed class Idrak.Models.SafeTensorsReader : Idrak.Models.Abstractions.I
 
 public static class Idrak.Models.SafeTensorsWriter
   public static void Write(string path, System.Collections.Generic.IEnumerable<(string, int[], float[])> tensors, Idrak.Models.SafeTensorType type = (Idrak.Models.SafeTensorType)2, System.Collections.Generic.IReadOnlyDictionary<string, string>? metadata = null)
+
+public static class Idrak.Models.StoredWeights
+  public static Idrak.Layers.Linear Linear(float[] values, int inputs, int outputs, Idrak.Abstraction.Tensor? bias, bool bfloat16, Idrak.Abstraction.Device device)
+  public static bool KeepsBFloat16(Idrak.Models.Abstractions.ITensorStore store, Idrak.Models.Abstractions.EncoderWeights weights, params System.Collections.Generic.IEnumerable<string> names)
 
 public static class Idrak.ModuleFiles
   public static void Load(this Idrak.Abstraction.Module module, System.IO.Stream stream)
