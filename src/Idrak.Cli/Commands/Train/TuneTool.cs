@@ -63,7 +63,17 @@ internal sealed class TuneTool(ToolConsole console)
                    --schedule cosine|linear|constant|wsd, --warmup 0.03 (fraction of the steps), --min-lr 0, --decay 0.2 (wsd),
                    --loss sft|dpo|orpo|simpo (dpo, orpo, simpo: preference rows with prompt, chosen and rejected), --beta B
                    (dpo 0.1, orpo's lambda 0.1, simpo 2), --margin G (simpo 1), --adapter-type lora|dora
-        Evaluate:  --adapter DIR, --samples 100 (0: all), --batch 8, --max-new 512, --metric auto|number|exact|contains|f1, --out F.jsonl,
+        Images:    a vision-language model (its family registered by a plug-in, -P) tunes on conversations with images: messages
+                   or ShareGPT files (JSON or JSON Lines; LlamaFactory's "images" list and <image> placeholders), --data-format
+                   auto|messages|sharegpt (default: told from the first record), --images DIR|ZIP (where relative image paths are
+                   found; default: the data file's folder; a zip is read in place), --image-transform P (as run's), --vision
+                   K=V[,K=V] (the family's options, as run's --vision-option), --grayscale, --train-projector or --parts projector
+                   (the projector trains beside the adapters and is saved with them), --feature-cache memory|disk (the frozen
+                   tower's output kept between steps and epochs; disk: under --cache). The adapter keeps tuning_images.json,
+                   which run, chat and serve apply with --adapter; -v shows the images, blocks, image tokens, cache hits and memory
+        Scores:    --metric cer|wer (answers generated on the evaluation data and scored against the references; any metric a
+                   plug-in registers), --metric-every N (steps; default: each epoch), --metric-samples K (the first K; 0: all)
+        Evaluate:  --adapter DIR, --samples 100 (0: all), --batch 8, --max-new 512, --metric auto|number|exact|contains|f1|cer|wer, --out F.jsonl,
                    --choices a,b,c | auto (the answer is one of these: each is scored as the model's answer, the most likely one
                    taken, nothing generated; auto: the distinct answers in the data; accuracy and recall per answer)
         Chat:      --system S, --max-new N, --temperature T (0: greedy)
@@ -82,7 +92,8 @@ internal sealed class TuneTool(ToolConsole console)
         "--accumulate", "--save-every", "--eval-every", "--targets", "--optimizer", "--weight-decay", "--momentum", "--schedule", "--warmup",
         "--min-lr", "--decay", "--loss", "--beta", "--margin", "--adapter-type", "--gpu-memory", "--matmul", "--samples", "--batch", "--max-new",
         "--metric", "--choices", "--temperature", "--eval-fraction", "--system", "--kind", "--max-rows", "--seed", "--min-chars", "--max-chars",
-        "--balance",
+        "--balance", "--data-format", "--images", "--image-transform", "--vision", "--vision-option", "--parts", "--feature-cache", "--metric-every",
+        "--metric-samples",
     ];
 
     /// <summary>The flags.</summary>
@@ -90,7 +101,7 @@ internal sealed class TuneTool(ToolConsole console)
     [
         "--cuda", "--gpu", "--cpu", "--int8", "--bf16", "--int4", "--kv8", "--kv16", "--no-think", "--no-checkpointing", "--checkpointing",
         "--recompute", "--bf16-activations", "--no-packing", "--no-graphs", "--fp8", "--profile", "--offload", "--cpu-optimizer",
-        "--no-shuffle", "--no-dedup", "--mix",
+        "--no-shuffle", "--no-dedup", "--mix", "--train-projector", "--grayscale",
     ];
 
     private readonly TextWriter _out = console.Out;
@@ -115,6 +126,13 @@ internal sealed class TuneTool(ToolConsole console)
     private float? beta, margin;
     private Device device = Device.Default;                                    // the best GPU found, else the CPU
 
+    // Images (a vision-language model) and answer scores.
+    private string? dataFormat, imagesRoot, imageTransform, featureCache, tuningMetric;
+    private readonly List<string> visionItems = [], parts = [];
+    private bool grayscale;
+    private int metricEvery, metricSamples;
+    private TuningImages preparation = TuningImages.None;
+
     // Set by Execute.
     private KeyValueLayout cacheLayout = null!;
     private Downloader downloads = null!;
@@ -136,6 +154,12 @@ internal sealed class TuneTool(ToolConsole console)
     /// or null when it has done the work itself and nothing is to be trained (the command then ends with exit code 0).
     /// </summary>
     public Func<PretrainedModel, IReadOnlyList<TrainingSequence>, IReadOnlyList<TrainingSequence>?, FineTuningOptions, FineTuningOptions?>? BeforeTraining { get; set; }
+
+    /// <summary>Whether to show the run plan in full (idrak's <c>-v</c>): images, blocks, image tokens, every batch, cache hits and memory.</summary>
+    public bool Verbose { get; set; }
+
+    /// <summary>Where the "disk" feature cache keeps image features (null: the library's default folder).</summary>
+    public string? FeatureFolder { get; set; }
 
     /// <summary>Reads the arguments; false when they ask for the help.</summary>
     public bool Parse(IReadOnlyList<string> args)
@@ -216,7 +240,29 @@ internal sealed class TuneTool(ToolConsole console)
                 case "--samples": samples = NextInt(); break;
                 case "--batch": evaluationBatch = NextInt(); break;
                 case "--max-new": maxNew = NextInt(); break;
-                case "--metric": metric = Enum.Parse<AnswerMetric>(Next(), ignoreCase: true); break;
+                case "--metric":
+                    string metricName = Next();
+                    if (Enum.TryParse<AnswerMetric>(metricName, ignoreCase: true, out var answerMetric) && !char.IsAsciiDigit(metricName[0]))
+                    {
+                        metric = answerMetric;
+                    }
+                    else
+                    {
+                        tuningMetric = TuningMetrics.Find(metricName)?.Name ?? throw new ArgumentException(
+                            $"--metric {metricName}: use auto, number, exact, contains or f1 (answers to questions), or {string.Join(", ", TuningMetrics.Names)} (generated text against the reference).");
+                    }
+
+                    break;
+                case "--metric-every": metricEvery = NextInt(); break;
+                case "--metric-samples": metricSamples = NextInt(); break;
+                case "--data-format": dataFormat = Next(); break;
+                case "--images": imagesRoot = Next(); break;
+                case "--image-transform": imageTransform = imageTransform is null ? Next() : $"{imageTransform},{Next()}"; break;
+                case "--vision" or "--vision-option": visionItems.AddRange(Next().Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)); break;
+                case "--grayscale": grayscale = true; break;
+                case "--parts": parts.AddRange(Next().Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)); break;
+                case "--train-projector": parts.Add(VisionTuningParts.Projector); break;
+                case "--feature-cache": featureCache = Next(); break;
                 case "--choices": choices = Next(); break;
                 case "--temperature": temperature = NextFloat(); break;
                 case "--eval-fraction": evalFraction = double.Parse(Next(), CultureInfo.InvariantCulture); break;
@@ -272,6 +318,23 @@ internal sealed class TuneTool(ToolConsole console)
         if (lossName != "sft")
         {
             rowKind = RowKind.Preference;                                       // rows as prompt, chosen and rejected
+        }
+
+        // The images' preparation, the data format and the feature cache, checked by name before anything loads.
+        preparation = TuningImages.Parse(imageTransform, visionItems, grayscale);
+        if (dataFormat is not null && !dataFormat.Equals("auto", StringComparison.OrdinalIgnoreCase) && TuningDataFormats.Find(dataFormat) is null)
+        {
+            throw new ArgumentException($"--data-format {dataFormat}: use auto, {string.Join(", ", TuningDataFormats.Names)}.");
+        }
+
+        if (featureCache is not null && !FeatureCaches.Names.Contains(featureCache, StringComparer.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException($"--feature-cache {featureCache}: use {string.Join(", ", FeatureCaches.Names)}.");
+        }
+
+        if (metricEvery < 0 || metricSamples < 0)
+        {
+            throw new ArgumentException("--metric-every and --metric-samples are 0 or more.");
         }
 
         return true;
@@ -392,7 +455,8 @@ internal sealed class TuneTool(ToolConsole console)
                                        or ResourceLimitExceededException or HttpRequestException)
         {
             console.Clear();
-            _error.WriteLine($"error: {ex.Message}");
+            bool family = ex is NotSupportedException && ex.Message.Contains("VisionFamilies.Register", StringComparison.Ordinal);
+            _error.WriteLine($"error: {ex.Message}{(family ? " Load its plug-in with -P (--plugin)." : "")}");
             return 1;
         }
     }
@@ -405,6 +469,11 @@ internal sealed class TuneTool(ToolConsole console)
         {
             _out.WriteLine($"--max-length {tuning.MaxLength} is beyond the model's context of {model.MaxPositions} positions; using {model.MaxPositions - 1}");
             tuning = tuning with { MaxLength = model.MaxPositions - 1 };
+        }
+
+        if (ReadsTranscripts(model, positional.Skip(2).ToList()))
+        {
+            return TrainOnTranscripts(model, positional.Skip(2).ToList());
         }
 
         var encoder = new ChatTranscriptEncoder(model.JinjaTemplate ?? throw new InvalidOperationException("The model has no chat template."),
@@ -478,6 +547,24 @@ internal sealed class TuneTool(ToolConsole console)
             _out.WriteLine($"evaluation loss before training: {FineTuner.Evaluate(model, evaluation, tuning.BatchTokens, tuning.LossChunkRows):F4}");
         }
 
+        return RunTraining(model, (progress, cancel, trace) =>
+        {
+            if (pairs is not null)
+            {
+                FineTuner.Train(model, pairs, evaluationPairs, tuning, output, progress, cancel, trace);
+            }
+            else
+            {
+                FineTuner.Train(model, train, evaluation, tuning, output, progress, cancel, trace);
+            }
+        }, model.SaveAdapter);
+    }
+
+    // Trains (the work given), with Ctrl+C stopping after the current step and saving what was trained so far (saveSoFar),
+    // progress on the console, the evaluation loss and answer scores as they come, and the adapter folder's manifest.
+    private int RunTraining(PretrainedModel model, Action<IProgress<FineTuningProgress>, CancellationToken, Action<string>> work, Action<string> saveSoFar,
+        TuningVision? vision = null)
+    {
         // What the adapter folder records: the base model as named here, so it loads without being told again.
         var record = new TuningManifest { BaseModel = baseModel, System = systemPrompt, MaxLength = tuning.MaxLength };
         using var cancel = new CancellationTokenSource();
@@ -496,8 +583,10 @@ internal sealed class TuneTool(ToolConsole console)
         try
         {
             _out.WriteLine($"training on {device}…");
+            ComputeResources.ResetPeakMemoryUsage(model.Device);              // the memory figures after training are the run's
             var clock = Stopwatch.StartNew();
             float? lastEvaluation = null;
+            TuningAnswerReport? lastAnswers = null;
             var progress = new Reporter<FineTuningProgress>(p =>
             {
                 if (p.EvaluationLoss is { } e)
@@ -506,15 +595,22 @@ internal sealed class TuneTool(ToolConsole console)
                     console.Log($"  step {p.Step}: evaluation loss {e:F4}");
                 }
 
+                if (p.Answers is { } answers)
+                {
+                    lastAnswers = answers;
+                    console.Log($"  step {p.Step}: {Score(answers)}");
+                }
+
                 console.Progress("training", p.Step, p.TotalSteps, clock.Elapsed,
                     $"epoch {p.Epoch}/{tuning.Epochs}, loss {p.Loss:F4}, lr {p.LearningRate:G3}, {p.TokensPerSecond:N0} tokens/s");
             });
 
-            // The trace's notable lines (graph recording, FP8, checkpoints); not the line of every batch.
+            // The trace's notable lines (graph recording, FP8, checkpoints); with -v every line (each batch, its image
+            // features from the cache or encoded).
             void Trace(string line)
             {
-                if (!line.StartsWith("step ", StringComparison.Ordinal) && !line.StartsWith("evaluation batch", StringComparison.Ordinal)
-                    && !line.StartsWith("  forward ", StringComparison.Ordinal))
+                if (!line.StartsWith("answers at step", StringComparison.Ordinal) && (Verbose || !line.StartsWith("step ", StringComparison.Ordinal) && !line.StartsWith("evaluation batch", StringComparison.Ordinal)
+                    && !line.StartsWith("  forward ", StringComparison.Ordinal)))   // answers: from the progress reports
                 {
                     console.Log("  " + line);
                 }
@@ -522,30 +618,401 @@ internal sealed class TuneTool(ToolConsole console)
 
             try
             {
-                if (pairs is not null)
-                {
-                    FineTuner.Train(model, pairs, evaluationPairs, tuning, output, progress, cancel.Token, Trace);
-                }
-                else
-                {
-                    FineTuner.Train(model, train, evaluation, tuning, output, progress, cancel.Token, Trace);
-                }
-
+                work(progress, cancel.Token, Trace);
                 record.Save(output!);
                 console.Finish();
-                _out.WriteLine($"trained in {Elapsed(clock.Elapsed)}{(lastEvaluation is { } l ? $", evaluation loss {l:F4}" : "")}; adapter written to {Path.GetFullPath(output!)}");
+                _out.WriteLine($"trained in {Elapsed(clock.Elapsed)}{(lastEvaluation is { } l ? $", evaluation loss {l:F4}" : "")}"
+                               + $"{(lastAnswers is { } a ? $", {Score(a)}" : "")}; adapter written to {Path.GetFullPath(output!)}");
             }
             catch (OperationCanceledException)
             {
-                model.SaveAdapter(output!);
+                saveSoFar(output!);
                 record.Save(output!);
                 console.Clear();
                 _out.WriteLine($"stopped after {Elapsed(clock.Elapsed)}; the adapter so far written to {Path.GetFullPath(output!)}");
+            }
+
+            if (Verbose)
+            {
+                ShowMemory(model, vision);
             }
         }
         finally
         {
             Console.CancelKeyPress -= onCancel;
+        }
+
+        return 0;
+    }
+
+    // Whether an option asks for images (a vision-language model's data and preparation).
+    private bool ImageOptionsGiven => imagesRoot is not null || imageTransform is not null || visionItems.Count > 0 || grayscale || parts.Count > 0 || featureCache is not null;
+
+    // Whether the data is read as conversation files (TuningDataFormats: messages or ShareGPT, with images) rather than as
+    // dataset rows: when an image option, --data-format or a generated-text metric asks for it, or when the model reads
+    // images and the data is local .json / .jsonl files (not a recipe).
+    private bool ReadsTranscripts(PretrainedModel model, IReadOnlyList<string> specs)
+    {
+        bool files = specs.Count > 0 && specs.All(s => File.Exists(s) && Path.GetExtension(s).ToLowerInvariant() is ".json" or ".jsonl" && !IsRecipe(s));
+        if (ImageOptionsGiven || dataFormat is not null || tuningMetric is not null)
+        {
+            return files ? true : throw new ArgumentException(
+                "Conversations with images (--images, --image-transform, --vision, --train-projector, --data-format, --metric "
+                + $"{string.Join("|", TuningMetrics.Names)}) are read from local .json or .jsonl files ({TuningDataFormats.Describe().Replace("\n", "; ", StringComparison.Ordinal)}); "
+                + $"not {string.Join(", ", specs.Where(s => !File.Exists(s)).DefaultIfEmpty(string.Join(", ", specs)))}.");
+        }
+
+        return model.Vision is not null && files;
+    }
+
+    // A recipe file (.json with "sources"), told from its first character before it is read whole.
+    private static bool IsRecipe(string path)
+    {
+        if (!path.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        using (var reader = new StreamReader(path))
+        {
+            int c;
+            while ((c = reader.Read()) >= 0 && char.IsWhiteSpace((char)c))
+            {
+            }
+
+            if (c != '{')
+            {
+                return false;
+            }
+        }
+
+        try
+        {
+            return JsonNode.Parse(File.ReadAllText(path)) is JsonObject json && json.ContainsKey("sources");
+        }
+        catch (JsonException)
+        {
+            return false;                                                         // JSON Lines named .json
+        }
+    }
+
+    // The data's format: --data-format, or told from the file's first record ("auto").
+    private string? DataFormat => dataFormat is null || dataFormat.Equals("auto", StringComparison.OrdinalIgnoreCase) ? null : dataFormat;
+
+    // The image side of a vision-language model, or null for a text model (an image option for one is an error).
+    private (TuningVision? Vision, IFeatureCache? Cache) CreateVision(PretrainedModel model, TuningImages images, IReadOnlyList<string> trained)
+    {
+        if (model.Vision is null)
+        {
+            return ImageOptionsGiven
+                ? throw new InvalidOperationException($"{baseModel} has no vision part (a text-only checkpoint): --images, --image-transform, --vision, --grayscale, "
+                                                      + "--train-projector and --feature-cache are for a vision-language model.")
+                : (null, null);
+        }
+
+        var cache = FeatureCaches.Create(featureCache ?? FeatureCaches.Memory, new FeatureCacheOptions { Folder = FeatureFolder });
+        try
+        {
+            return (TuningVision.Create(model, images, trained, cache), cache);
+        }
+        catch
+        {
+            cache.Dispose();
+            throw;
+        }
+    }
+
+    // Conversations from data files through their format (images as image parts; the system prompt added to those
+    // without one).
+    private List<ChatTranscript> ReadTranscripts(IEnumerable<string> files, string what)
+    {
+        var watch = Stopwatch.StartNew();
+        var transcripts = new List<ChatTranscript>();
+        var options = new TuningDataOptions { Images = imagesRoot };
+        foreach (string file in files)
+        {
+            var format = DataFormat is { } name ? TuningDataFormats.Get(name) : TuningDataFormats.Detect(file);
+            int before = transcripts.Count;
+            foreach (var transcript in format.Read(file, options))
+            {
+                transcripts.Add(systemPrompt is not null && !transcript.Messages.Any(m => m.Role == "system")
+                    ? transcript with { Messages = [new ChatMessage("system", systemPrompt), .. transcript.Messages] }
+                    : transcript);
+            }
+
+            int images = transcripts.Skip(before).Sum(t => t.Messages.Sum(m => m.Parts.Count(p => p is ChatImage)));
+            _out.WriteLine($"{what}: {transcripts.Count - before:N0} conversations ({format.Name}) from {file}, {images:N0} images ({watch.Elapsed.TotalSeconds:F1} s)");
+        }
+
+        return transcripts;
+    }
+
+    // Conversations tokenized into training sequences (their images' blocks of tokens from the family's encoder).
+    private List<TrainingSequence> EncodeTranscripts(ChatTranscriptEncoder encoder, IReadOnlyList<ChatTranscript> transcripts, string what)
+    {
+        var watch = Stopwatch.StartNew();
+        var sequences = new List<TrainingSequence>();
+        for (int i = 0; i < transcripts.Count; i++)
+        {
+            if (encoder.Encode(transcripts[i], tuning.MaxLength) is { } sequence)
+            {
+                sequences.Add(sequence);
+            }
+
+            console.Progress($"tokenizing {what}", i + 1, transcripts.Count, watch.Elapsed, unit: "conversations");
+        }
+
+        console.Finish();
+        _out.WriteLine($"{what}: {sequences.Count:N0} sequences, {sequences.Sum(q => (long)q.Tokens.Length):N0} tokens, {sequences.Sum(q => (long)q.TrainedTokens):N0} trained; "
+                       + $"{transcripts.Count - sequences.Count:N0} conversations without trainable tokens skipped ({watch.Elapsed.TotalSeconds:F1} s)");
+        return sequences;
+    }
+
+    // The run plan's image line: images, distinct ones, blocks per image, image tokens.
+    private void ShowImages(IReadOnlyList<TrainingSequence> sequences, string what)
+    {
+        var images = sequences.SelectMany(s => s.Images).ToList();
+        if (images.Count == 0)
+        {
+            return;
+        }
+
+        long tokens = sequences.Sum(s => (long)s.Tokens.Length), imageTokens = images.Sum(i => (long)i.Tokens);
+        var blocks = images.Select(i => i.Blocks.Count).ToList();
+        var (fewest, most) = (images.Min(i => i.Tokens), images.Max(i => i.Tokens));
+        int distinct = images.Select(i => i.Image.Hash).Distinct(StringComparer.Ordinal).Count();
+        _out.WriteLine($"{what} images: {images.Count:N0} in {sequences.Count(s => s.Images.Count > 0):N0} of {sequences.Count:N0} sequences ({distinct:N0} distinct), "
+                       + $"blocks per image {blocks.Min()}{(blocks.Max() > blocks.Min() ? $"–{blocks.Max()}" : "")}, {imageTokens:N0} image tokens "
+                       + $"({imageTokens / (double)Math.Max(1, tokens):P0} of the tokens; {fewest}{(most > fewest ? $"–{most}" : "")} per image)");
+    }
+
+    // Where the device's memory went in training, as measured: the model's weights by part, the vision encoder, the
+    // trained parameters, the feature cache (host memory), and the device's peak beyond them.
+    private void ShowMemory(PretrainedModel model, TuningVision? vision)
+    {
+        var parts = ModelMemory.Decoder(model.Network).ToList();
+        if (vision?.Encoder is Module encoder)
+        {
+            parts.Add(new MemoryPart("encoder", ModelMemory.TensorBytes(encoder)));
+        }
+
+        long trained = model.Network.TrainableParameters().Concat(vision?.Parameters ?? []).Sum(p => 4L * p.Size);
+        parts.Add(new MemoryPart("trained parameters", trained, "adapters and trained vision parts, float32; the optimizer's state adds to the peak"));
+        var usage = ComputeResources.GetMemoryUsage(model.Device);
+        parts.Add(ModelMemory.Activations(parts, usage));
+        foreach (var part in parts)
+        {
+            _out.WriteLine($"memory: {part.Name} {Units.Bytes(part.Bytes)}{(part.Note is null ? "" : $" ({part.Note})")}");
+        }
+
+        _out.WriteLine($"memory: device in use {Units.Bytes(usage.InUse)}, peak {Units.Bytes(usage.Peak)}, cached {Units.Bytes(usage.Cached)}"
+                       + (usage.Limit is { } limit ? $", limit {Units.Bytes(limit)}" : ""));
+        if (vision is not null)
+        {
+            _out.WriteLine($"memory: feature cache ({vision.Cache.Name}) {vision.Cache.Count:N0} entries, {Units.Bytes(vision.Cache.Bytes)}; "
+                           + $"{vision.CacheHits:N0} image features from the cache, {vision.Encoded:N0} encoded");
+        }
+    }
+
+    // "cer 0.1234 on 8 answers (lower is better)".
+    private static string Score(TuningAnswerReport report) =>
+        FormattableString.Invariant($"{report.Metric} {report.Score.Value:F4} on {report.Answers.Count} answers ({(report.LowerIsBetter ? "lower" : "higher")} is better)");
+
+    // train on conversation files (messages or ShareGPT), with their images through the model's vision family.
+    private int TrainOnTranscripts(PretrainedModel model, IReadOnlyList<string> files)
+    {
+        if (rowKind == RowKind.Preference)
+        {
+            _error.WriteLine("error: conversation files (with images) train with --loss sft; preference losses read rows with prompt, chosen and rejected.");
+            return 1;
+        }
+
+        // The adapter being continued keeps its preparation unless the command line gives one.
+        var images = !preparation.IsEmpty || adapterFolder is null ? preparation : TuningImages.Read(adapterFolder) ?? preparation;
+        var (vision, cache) = CreateVision(model, images with { Family = null }, parts);
+        using var ownedCache = cache;
+        using var ownedVision = vision;
+        if (vision is not null)
+        {
+            _out.WriteLine($"images: {vision}");
+        }
+
+        var encoder = new ChatTranscriptEncoder(model.JinjaTemplate ?? throw new InvalidOperationException("The model has no chat template."),
+            model.Tokenizer ?? throw new InvalidOperationException("The model has no tokenizer.")) { Vision = vision };
+        var trainTranscripts = ReadTranscripts(files, "training");
+        var evaluationTranscripts = evalFile is not null ? ReadTranscripts([evalFile], "evaluation") : null;
+        if (evaluationTranscripts is null && evalFraction > 0 && trainTranscripts.Count > 1)
+        {
+            // A seeded part of the conversations held out (at least one, never all).
+            int held = Math.Clamp((int)Math.Round(trainTranscripts.Count * evalFraction), 1, trainTranscripts.Count - 1);
+            var order = Enumerable.Range(0, trainTranscripts.Count).ToArray();
+            new Random(seed).Shuffle(order);
+            var heldOut = order.Take(held).ToHashSet();
+            evaluationTranscripts = [.. heldOut.Order().Select(i => trainTranscripts[i])];
+            trainTranscripts = [.. trainTranscripts.Where((_, i) => !heldOut.Contains(i))];
+            _out.WriteLine($"evaluation: {held:N0} conversations held out ({evalFraction:P1})");
+        }
+
+        var train = EncodeTranscripts(encoder, trainTranscripts, "training");
+        var evaluation = evaluationTranscripts is null ? null : EncodeTranscripts(encoder, evaluationTranscripts, "evaluation");
+        if (train.Count == 0)
+        {
+            _error.WriteLine("error: nothing to train on (no conversation with an assistant turn).");
+            return 1;
+        }
+
+        if (vision is not null)
+        {
+            ShowImages(train, "training");
+            ShowImages(evaluation ?? [], "evaluation");
+        }
+
+        TuningAnswerScorer? scorer = null;
+        if (tuningMetric is not null)
+        {
+            if (evaluationTranscripts is not { Count: > 0 })
+            {
+                _error.WriteLine($"error: --metric {tuningMetric} scores answers on evaluation data: give --eval FILE or --eval-fraction F.");
+                return 1;
+            }
+
+            scorer = new TuningAnswerScorer(evaluationTranscripts, tuningMetric, metricSamples)
+            {
+                Every = metricEvery, MaxNewTokens = maxNew, ContextLength = Math.Min(model.MaxPositions, tuning.MaxLength + maxNew), Think = noThink ? false : null,
+            };
+        }
+
+        if (balance > 1)
+        {
+            var (balanced, answers) = FineTuner.BalanceAnswers(train, balance, seed: seed);
+            _out.WriteLine(answers.Count is > 1 and <= 64 ? $"balanced {answers.Count} answers (at most {balance}×)"
+                : $"--balance: {answers.Count:N0} distinct answers (free text, or one): the data is used as it is");
+            train = answers.Count is > 1 and <= 64 ? balanced : train;
+        }
+
+        tuning = tuning with { Vision = vision, Answers = scorer };
+        if (profileTraining)
+        {
+            return Profile(model, train);
+        }
+
+        if (BeforeTraining is { } prepare)
+        {
+            if (prepare(model, train, evaluation, tuning) is not { } prepared)
+            {
+                return 0;
+            }
+
+            tuning = prepared;
+        }
+
+        _out.WriteLine($"assistant turns start with {JsonValue.Create(encoder.AssistantHeader).ToJsonString(readable)} and end with {JsonValue.Create(encoder.AssistantEnd).ToJsonString(readable)}");
+        if (evaluation is { Count: > 0 })
+        {
+            _out.WriteLine($"evaluation loss before training: {FineTuner.Evaluate(model, evaluation, tuning.BatchTokens, tuning.LossChunkRows, vision: vision):F4}");
+        }
+
+        if (scorer is not null)
+        {
+            var clock = Stopwatch.StartNew();
+            var before = scorer.Score(model, vision, new Reporter<TuningAnswer>(_ => { }));
+            _out.WriteLine($"before training: {Score(before)}, {before.MeanTokens:F0} tokens per answer ({clock.Elapsed.TotalSeconds:F1} s)");
+        }
+
+        return RunTraining(model, (progress, cancel, trace) => FineTuner.Train(model, train, evaluation, tuning, output, progress, cancel, trace), folder =>
+        {
+            if (vision is { Parts.Count: > 0 })
+            {
+                model.KeepTrainedVision(vision.Encoder, vision.Parts);
+            }
+
+            model.SaveAdapter(folder);
+            if (vision is not null && train.Any(s => s.Images.Count > 0))
+            {
+                (vision.Images with { Family = vision.Vision.Family }).Save(folder);
+            }
+        }, vision);
+    }
+
+    // evaluate on conversation files (with images): the loss and answers generated and scored by a metric
+    // (TuningMetrics), for the base model and, with --adapter, the adapter (its trained vision parts and preparation).
+    private int EvaluateTranscripts(IReadOnlyList<string> files)
+    {
+        string metricName = tuningMetric ?? TuningMetrics.CharacterErrorRate;
+        if (!files.All(File.Exists))
+        {
+            _error.WriteLine($"error: conversation files are local .json or .jsonl files: {string.Join(", ", files.Where(f => !File.Exists(f)))} not found.");
+            return 1;
+        }
+
+        var transcripts = ReadTranscripts(files, "evaluation");
+        var scored = samples > 0 ? transcripts.Take(samples).ToList() : transcripts;
+
+        // The adapter's preparation for both runs (the base model then reads the images as the adapter was tuned on them).
+        var images = !preparation.IsEmpty || adapterFolder is null ? preparation : TuningImages.Read(adapterFolder) ?? preparation;
+        var runs = adapterFolder is null ? new[] { (string?)null } : [null, adapterFolder];
+        var reports = new List<(string Name, double Loss, TuningAnswerReport Report)>();
+        string? adapter = adapterFolder;
+        foreach (var run in runs)
+        {
+            adapterFolder = run;
+            string name = run is null ? "base model" : $"adapter {Path.GetFileName(Path.TrimEndingDirectorySeparator(run))}";
+            _out.WriteLine($"\n{name}:");
+            using var model = Load(merge: true);
+            images.ThrowIfOtherFamily(model.Vision?.Family, adapter is null ? "the preparation" : $"The adapter {adapter}");
+            var (vision, cache) = CreateVision(model, images with { Family = null }, []);
+            using var ownedCache = cache;
+            using var ownedVision = vision;
+            var encoder = new ChatTranscriptEncoder(model.JinjaTemplate ?? throw new InvalidOperationException("The model has no chat template."), model.Tokenizer!) { Vision = vision };
+            var sequences = scored.Select(t => encoder.Encode(t, Math.Min(tuning.MaxLength, model.MaxPositions - 1))).OfType<TrainingSequence>().ToList();
+            double loss = sequences.Count > 0 ? FineTuner.Evaluate(model, sequences, tuning.BatchTokens, vision: vision) : double.NaN;
+            var scorer = new TuningAnswerScorer(scored, metricName)
+            {
+                MaxNewTokens = maxNew, ContextLength = Math.Min(model.MaxPositions, context), Think = noThink ? false : null,
+            };
+            var clock = Stopwatch.StartNew();
+            int done = 0;
+            var report = scorer.Score(model, vision, new Reporter<TuningAnswer>(_ =>
+            {
+                done++;
+                console.Progress("answering", done, scorer.Count, clock.Elapsed, unit: "answers");
+            }));
+            console.Finish();
+            reports.Add((name, loss, report));
+            _out.WriteLine($"  loss {loss:F4}, {Score(report)}, {report.MeanTokens:F0} tokens per answer ({report.Duration.TotalSeconds:F0} s)");
+        }
+
+        adapterFolder = adapter;
+        if (reports.Count == 2)
+        {
+            _out.WriteLine($"\n{"",-22}{"loss",10}{metricName,10}{"tokens",9}");
+            foreach (var (name, loss, report) in reports)
+            {
+                _out.WriteLine($"{name,-22}{loss,10:F4}{report.Score.Value,10:F4}{report.MeanTokens,9:F0}");
+            }
+
+            var (b, a) = (reports[0].Report, reports[1].Report);
+            int better = b.Answers.Zip(a.Answers).Count(p => b.LowerIsBetter ? p.Second.Score.Value < p.First.Score.Value : p.Second.Score.Value > p.First.Score.Value);
+            int worse = b.Answers.Zip(a.Answers).Count(p => b.LowerIsBetter ? p.Second.Score.Value > p.First.Score.Value : p.Second.Score.Value < p.First.Score.Value);
+            _out.WriteLine($"the adapter scores better than the base model on {better} answers, and worse on {worse}");
+        }
+
+        if (output is not null)
+        {
+            using var writer = new StreamWriter(output);
+            for (int i = 0; i < reports[0].Report.Answers.Count; i++)
+            {
+                var first = reports[0].Report.Answers[i];
+                var line = new JsonObject { ["prompt"] = first.Prompt[^1].Content, ["reference"] = first.Reference };
+                foreach (var (name, _, report) in reports)
+                {
+                    line[name] = new JsonObject { ["answer"] = report.Answers[i].Answer, [metricName] = Math.Round(report.Answers[i].Score.Value, 6) };
+                }
+
+                writer.WriteLine(line.ToJsonString(readable));
+            }
+
+            _out.WriteLine($"answers written to {output}");
         }
 
         return 0;
@@ -578,6 +1045,11 @@ internal sealed class TuneTool(ToolConsole console)
     private int Evaluate()
     {
         // The rows: the held-out part when --eval-fraction splits the data as train did, else the data itself.
+        if (ImageOptionsGiven || dataFormat is not null || tuningMetric is not null)
+        {
+            return EvaluateTranscripts(positional.Skip(2).ToList());
+        }
+
         var recipe = Recipe(positional.Skip(2).ToList(), forTraining: true) with { Kind = RowKind.Chat };
         var (allRows, heldOut) = recipe.Build(downloads);
         var rows = console.Track(heldOut ?? allRows, "reading").Take(samples > 0 ? samples : int.MaxValue).ToList();
@@ -865,9 +1337,23 @@ internal sealed class TuneTool(ToolConsole console)
             _out.WriteLine($"  note: {note}");
         }
 
-        if (adapterFolder is not null && !merge)
+        try
         {
-            _out.WriteLine($"  adapter: {model.LoadAdapter(adapterFolder)} layers from {adapterFolder}");
+            // An adapter tuned on images belongs to its vision family (its tuning_images.json says which).
+            if (adapterFolder is not null)
+            {
+                TuningImages.Read(adapterFolder)?.ThrowIfOtherFamily(model.Vision?.Family, $"The adapter {adapterFolder}");
+            }
+
+            if (adapterFolder is not null && !merge)
+            {
+                _out.WriteLine($"  adapter: {model.LoadAdapter(adapterFolder)} layers from {adapterFolder}");
+            }
+        }
+        catch
+        {
+            model.Dispose();
+            throw;
         }
 
         return model;

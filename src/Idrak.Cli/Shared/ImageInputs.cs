@@ -35,7 +35,7 @@ internal static class ImageInputs
 
     /// <summary>
     /// Makes the image encoder of a model: given the model and the options (device, vision options), its vision encoder. Null:
-    /// the family's (<see cref="PretrainedVision.CreateEncoder"/>). Tests set it to feed reference features.
+    /// the model's (<see cref="PretrainedModel.CreateVisionEncoder"/>: the family's encoder with the trained vision tensors an adapter brought). Tests set it to feed reference features.
     /// </summary>
     internal static Func<PretrainedModel, VisionEncoderOptions, IVisionEncoder>? EncoderFactory { get; set; }
 
@@ -76,7 +76,7 @@ internal sealed class ModelImages : IDisposable
     public ModelImages(PretrainedModel model, PretrainedVision vision, VisionEncoderOptions options, ImageTransformPipeline? transforms = null)
     {
         Options = options;
-        _encoder = new LazyEncoder(() => (ImageInputs.EncoderFactory ?? ((_, o) => vision.CreateEncoder(o)))(model, options), vision.Width, model.Device);
+        _encoder = new LazyEncoder(() => (ImageInputs.EncoderFactory ?? ((m, o) => m.CreateVisionEncoder(o)))(model, options), vision.Width, model.Device);
         Images = new ChatImages(_encoder, vision.PromptFormat, vision.Attention) { Decode = ImageInputs.Decode, Transforms = transforms ?? ImageTransformPipeline.Empty, Owner = this };   // the engine disposes it with the model it serves
     }
 

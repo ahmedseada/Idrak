@@ -314,6 +314,24 @@ removed (below). Added while building:
 - `idrak data dedupe --columns`, `--near`, `--dry-run`, and in-place rewriting only with `-y`; `data split --validation
   --test -t` (stratified); `data convert --as chat|preference|text -s SYSTEM -f`; `data stats --context --column`.
 
+Images in `idrak tune` (plan 12, phase 4): a vision-language model (its family from a plug-in, `-P`) tunes on
+conversation files read through `TuningDataFormats` (messages, or LlamaFactory's ShareGPT `train.json` with `<image>` and
+an `images` list): `--data FILE` (repeatable; with no command, `train`), `--data-format auto|messages|sharegpt`
+(`--format` is idrak's common output option, so the data's is `--data-format`; a tune.json may still write `"format":
+"sharegpt"`), `--images DIR|ZIP`, `--image-transform P`, `--vision K=V[,K=V]` (also `--vision-option`), `--grayscale`,
+`--train-projector` / `--parts projector`, `--feature-cache memory|disk` (disk: `CACHE/features`), `--metric cer|wer`
+(generated answers on the evaluation data, scored by `TuningMetrics`, through Nlp's `TuningAnswerScorer`), `--metric-every
+N`, `--metric-samples K`. The same keys in tune.json (underscores accepted: `image_transform`, `feature_cache`; `vision`
+may be an object; `parts` a list). `-v` shows the plan: images per set, blocks per image, image tokens, every batch with
+its features from the cache or encoded, and after training the memory measured (`ModelMemory` parts, the device's peak,
+the feature cache, hits). `tune evaluate DATA --metric cer [--adapter DIR]` scores the base model and the adapter side by
+side on image data. `tune init -P PLUGIN` writes a vision example (train.json, val.json, the image keys, `metric: cer`, the
+plug-in in `plugins`). `run`, `chat` and `serve --adapter DIR` build the encoder through
+`PretrainedModel.CreateVisionEncoder` (the adapter's trained projector) and apply its `tuning_images.json` (transforms,
+grayscale, vision options) unless the command line gives its own; an adapter tuned on another vision family is a usage
+error before any weight is read. An unregistered family stops `idrak tune` with the registry's message (and "load its
+plug-in with -P") before the data is read.
+
 Gaps (library): the optimizer state and learning-rate schedule are not checkpointed, so `resume` continues from the
 weights with a fresh optimizer; there is no image decoding in the library (the tool reads 8-bit PNG, BMP and Netpbm itself, with one decoder shared with suggest);
 writing Parquet is not in the library (`data convert` reads it, writes JSON Lines, JSON, CSV or TSV); `distill` has no

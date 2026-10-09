@@ -791,6 +791,14 @@ public sealed record FineTuningOptions
     /// (<see cref="TuningImages.FileName"/>).
     /// </summary>
     public TuningVision? Vision { get; init; }
+
+    /// <summary>
+    /// Answers generated on held-out conversations and scored by a metric (<see cref="TuningAnswerScorer"/>: character or
+    /// word error rate), every <see cref="TuningAnswerScorer.Every"/> steps (at the end of each epoch when 0), with their
+    /// images through <see cref="Vision"/>; each report comes with that step's <see cref="FineTuningProgress.Answers"/>.
+    /// Null: none.
+    /// </summary>
+    public TuningAnswerScorer? Answers { get; init; }
 }
 
 /// <summary>What <see cref="FineTuner.Profile"/> measured.</summary>
@@ -847,7 +855,11 @@ public sealed record FineTuningProfile(IReadOnlyList<GpuProfileEntry> Kernels, i
 /// <param name="LearningRate">The learning rate of the last step.</param>
 /// <param name="TokensPerSecond">Tokens (including prompts) processed per second over the last step.</param>
 /// <param name="EvaluationLoss">The latest evaluation loss, when one was computed at this step.</param>
-public sealed record FineTuningProgress(int Step, int TotalSteps, int Epoch, float Loss, float LearningRate, double TokensPerSecond, float? EvaluationLoss);
+public sealed record FineTuningProgress(int Step, int TotalSteps, int Epoch, float Loss, float LearningRate, double TokensPerSecond, float? EvaluationLoss)
+{
+    /// <summary>The generated answers' score, when <see cref="FineTuningOptions.Answers"/> scored them at this step.</summary>
+    public TuningAnswerReport? Answers { get; init; }
+}
 
 /// <summary>
 /// Fine-tunes a pretrained model with LoRA adapters: the base weights stay as loaded (int4, int8 or bfloat16 for QLoRA,
@@ -1044,12 +1056,18 @@ public static class FineTuner
                     evaluations.Add(evaluationLoss.Value);
                 }
 
+                var answers = options.Answers is { } scorer && scorer.IsDue(step, lastOfEpoch) ? scorer.Score(model, vision, cancellationToken: cancellationToken) : null;
+                if (answers is not null)
+                {
+                    trace?.Invoke($"answers at step {step}: {answers} ({answers.MeanTokens:F0} tokens each, {answers.Duration.TotalSeconds:F1} s)");
+                }
+
                 if (outputFolder is not null && options.SaveEvery > 0 && step % options.SaveEvery == 0)
                 {
                     Save(Path.Combine(outputFolder, $"checkpoint-{step}"));
                 }
 
-                progress?.Report(new FineTuningProgress(step, totalSteps, epoch + 1, loss, rate, tokens / Math.Max(1e-9, watch.Elapsed.TotalSeconds), evaluationLoss));
+                progress?.Report(new FineTuningProgress(step, totalSteps, epoch + 1, loss, rate, tokens / Math.Max(1e-9, watch.Elapsed.TotalSeconds), evaluationLoss) { Answers = answers });
             }
         }
 
