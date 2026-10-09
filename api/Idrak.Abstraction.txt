@@ -2,9 +2,11 @@
 
 public static class Idrak.Abstraction.ActivationMemory
   nested Idrak.Abstraction.ActivationMemory.Scope (below)
+  public static Idrak.Abstraction.ActivationMemory.Scope CheckpointBlocks()
   public static Idrak.Abstraction.ActivationMemory.Scope CompressToBFloat16()
   public static Idrak.Abstraction.ActivationMemory.Scope Recompute()
   public static bool BFloat16 { get; }
+  public static bool CheckpointsBlocks { get; }
   public static bool RecomputeFeedForward { get; }
   public static bool ReleaseUnused { get; set; }
   public static void Compress(params Idrak.Abstraction.Tensor?[] tensors)
@@ -1247,6 +1249,7 @@ public interface Idrak.Abstraction.Generation.IVisionEncoderStages
   public Idrak.Abstraction.Tensor Tower(Idrak.Abstraction.Tensor pixelValues)
 
 public interface Idrak.Abstraction.Generation.IVisionTuningPart
+  public (default) System.Collections.Generic.IReadOnlyList<string> PartsOf(System.Collections.Generic.IEnumerable<string> names)
   public Idrak.Abstraction.Tensor Features(Idrak.Abstraction.Generation.IVisionEncoder encoder, Idrak.Abstraction.Tensor towerOutput)
   public Idrak.Abstraction.Tensor Tower(Idrak.Abstraction.Generation.IVisionEncoder encoder, Idrak.Abstraction.Tensor pixelValues)
   public System.Collections.Generic.IReadOnlyCollection<string> Import(Idrak.Abstraction.Generation.IVisionEncoder encoder, System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Tensor> tensors)
@@ -1584,8 +1587,10 @@ public sealed record Idrak.Abstraction.Generation.VisionEncoderOptions : System.
   public Idrak.Abstraction.Device? Device { get; init; }
   public Idrak.Abstraction.Generation.EncoderWeights Weights { get; init; }
   public Idrak.Abstraction.Generation.VisionOptions? VisionOptions { get; init; }
+  public System.Collections.Generic.IReadOnlyCollection<string> TrainedParts { get; init; }
   public VisionEncoderOptions()
   public bool Grayscale { get; init; }
+  public bool Trains(string part)
 
 public sealed class Idrak.Abstraction.Generation.VisionOptions : System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<string, string>>, System.Collections.Generic.IReadOnlyCollection<System.Collections.Generic.KeyValuePair<string, string>>, System.Collections.Generic.IReadOnlyDictionary<string, string>, System.Collections.IEnumerable
   public Idrak.Abstraction.Generation.VisionOptions With(Idrak.Abstraction.Generation.VisionOptions? over)

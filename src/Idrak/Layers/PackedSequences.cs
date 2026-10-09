@@ -24,8 +24,11 @@ public sealed partial class PackedSequences : IDisposable
     [ThreadStatic]
     private static PackedSequences? t_current;
 
-    private PackedSequences(int rows, int length, Tensor positions, Tensor starts, Tensor ends)
+    private IReadOnlyList<IReadOnlyList<int>> _lengths;
+
+    private PackedSequences(int rows, int length, Tensor positions, Tensor starts, Tensor ends, IReadOnlyList<IReadOnlyList<int>> lengths)
     {
+        _lengths = lengths;
         Rows = rows;
         Length = length;
         Positions = positions;
@@ -46,8 +49,10 @@ public sealed partial class PackedSequences : IDisposable
         return new PackedSequences(rows, length,
             Tensor.Persistent(positions, [rows * length], device, requiresGrad: false),
             Tensor.Persistent(starts, [rows * length], device, requiresGrad: false),
-            Tensor.Persistent(ends, [rows * length], device, requiresGrad: false));
+            Tensor.Persistent(ends, [rows * length], device, requiresGrad: false), Copy(lengths));
     }
+
+    private static IReadOnlyList<IReadOnlyList<int>> Copy(IReadOnlyList<IReadOnlyList<int>> lengths) => [.. lengths.Select(r => (IReadOnlyList<int>)[.. r])];
 
     /// <summary>
     /// Lays out other sequences in the same rows, in place: the tensors keep their memory, so work recorded with this
@@ -65,6 +70,7 @@ public sealed partial class PackedSequences : IDisposable
         Positions.Load(positions);
         Starts.Load(starts);
         Ends.Load(ends);
+        _lengths = Copy(lengths);
     }
 
     private static (float[] Positions, float[] Starts, float[] Ends) Layout(IReadOnlyList<IReadOnlyList<int>> lengths, int length)
@@ -114,6 +120,9 @@ public sealed partial class PackedSequences : IDisposable
 
     /// <summary>Where each position's sequence stops in its row (exclusive), [rows · length].</summary>
     internal Tensor Ends { get; }
+
+    /// <summary>The sequences' lengths of each row, as last laid out (<see cref="Create"/> or <see cref="Update"/>); the rest of a row is padding.</summary>
+    internal IReadOnlyList<IReadOnlyList<int>> Lengths => _lengths;
 
     /// <summary>Whether a [n, t] batch is laid out by this packing.</summary>
     internal bool Matches(int n, int t) => n == Rows && t == Length;

@@ -1,7 +1,7 @@
 # Plan 12: fine-tuning vision-language models (images in `FineTuner` and `idrak tune`)
 
 **Status:** planned 2026-10-09, against the code at `abstraction` 4ac4fa4. Phase 0 (the reference) built 2026-10-09;
-phases 1 to 4 built 2026-10-09; 5 and 6 not yet.
+phases 1 to 4 built 2026-10-09; phase 6 built 2026-10-09 (CPU; the graph paths written, not run on a GPU); 5 not yet.
 
 **Goal.** Fine-tune a vision-language model on pages and their answers with LoRA (or QLoRA on an int8/int4 base),
 the way `bakrianoo/arabic-legal-documents-ocr-1.0` was trained in LlamaFactory (LoRA on the language model, the vision
@@ -257,6 +257,59 @@ same fixtures through `FineTuner.Train` (`Optimizer = ps => new Sgd(ps, 0.2f)`, 
 - Packed sequences with images (spans per segment in `ImageBlocks`).
 - Graph capture with images (features as fixed-shape graph inputs, one graph per image-token count).
 - Tower in the step when `"tower"` is trained (no cache), with checkpointing through the tower's blocks.
+
+**Phase 6, as built (2026-10-09; CPU, the GPU graph paths compiled and checked on the CPU without recording).**
+- **Packing with images.** `PackedSequences` keeps each row's sequence lengths; `ImageBlocks` takes them (from the
+  packing in effect for the ids' shape) and gives each packed sequence (and the row's padding) its own key ranges by the
+  family's `IImageAttentionRule` at its columns, so a row never sees another sequence's keys; an image block must lie
+  inside one sequence. The decoder attends packed rows with images through the span path with the packing's positions
+  (they restart per sequence); a causal rule keeps the packed causal kernels and only substitutes the features.
+  `ImagePrefill.Forward` and `Begin` no longer refuse packed rows. The tuner packs sequences with images like the others
+  (`MakeBatches`), each image at its sequence's offset in the row; the trace says "packed with the others".
+- **Recordable image inputs** (core, public): `ImagePrefillInputs.Create(decoder, rows, steps, imageTokens, rule)` holds
+  the features ([image tokens, width]), the substitution rows and one pair of key-range tables per window the decoder's
+  layers use, in persistent buffers; `Load(images, packing)` copies a batch in (features on the device, the rest
+  uploaded) before recording and before each replay; `Begin()` opens a scope that reads only the buffers (recordable).
+  `TrainingGraph` records steps with images through it when no vision part trains (the features are values, computed
+  or taken from the cache before each replay); the step runner keeps one graph per shape (rows, positions, image
+  tokens; a graph serves batches with up to its image tokens), each recorded after its shape ran twice, and another
+  only while the device's free memory, measured then (`Backend.AvailableMemory`), holds twice the largest graph so far
+  (a device that reports none keeps one); the out-of-memory ladder drops them all as before. With a vision part
+  trained, steps with images run ordinarily (said once in the trace).
+- **The tower in the step** (`TuningVision.Create(..., parts: ["tower"])`): full weights through the contract
+  (`IVisionTuningPart.Parameters`/`Tower`), not LoRA: the contract's parts are saved by the checkpoint's own names
+  (`modules_to_save`), and LoRA on the tower would need the contract to name its linear layers in the checkpoint's terms
+  (a later extension). The cache keeps the pixel values (`FeatureCacheKey.PixelsStage`); each step runs the tower and
+  the projector with gradients; when the tuner checkpoints, `ActivationMemory.CheckpointBlocks()` (Abstraction, public)
+  asks the family to checkpoint its blocks (Gemma 3's SigLIP layers through `ForwardCheckpointed`). A checkpointed first
+  pass now computes as the recompute does (`Checkpointing.FirstPass`: `TransformerEncoderLayer` skips its inference-only
+  fused bias-GELU there), so checkpointed and stored tower gradients agree bit for bit. Every encoder parameter is frozen
+  but the trained parts'. Gemma 3 (sample): `Export`/`Import` of the tower (every SigLIP tensor, the fused q, k, v split
+  back into `q_proj`/`k_proj`/`v_proj`, Linear weights [out, in], the patch convolution in its stored shape),
+  `PartsOf`.
+- **Memory fix**: `VisionEncoderOptions.TrainedParts` (Abstraction, public): the parts built with float32 weights, the
+  rest as `Weights` says; `IVisionTuningPart.PartsOf(names)` (default: every part offered) tells which parts trained
+  tensors belong to. `CreateVisionEncoder` asks for those parts only, and `TuningVision.Create` for the trained parts
+  only: a trained projector over a bfloat16 checkpoint keeps the tower in bfloat16 (the tiny model: 22,976 bytes of
+  weights against 25,024 when the whole encoder was float32; the tower's projections at half their float32 bytes).
+- **Speed**: a batch's distinct images go through the vision side together: cache misses' pixel values through the
+  frozen tower (or the whole encoder for the features stage) in one pass, then the trained or carried projector (and a
+  trained tower) over all of them joined, split back per image (gradients through the join); one image at a time when
+  that frozen pass runs out of device memory (or the encoder shows no stages). Each image's features equal its features
+  alone within 1e-5 (the property `VisionEncoderSuite` checks). The trace per step: "N images in P passes, T ms".
+  Measured on the CPU (4 cores, tiny models, 12 images): Gemma 3 projector 0.18 ms one at a time against 0.06 ms in one
+  pass, frozen tower 11.1 ms against 4.7 ms; LLaVA projector 1.9 ms against 0.9 ms, tower 14.6 ms against 5.2 ms.
+- **Tests** (CPU, `IDRAK_FILTER="vision tuning"`): packing (each sequence's logits and adapter gradients as alone,
+  Gemma 3 and LLaVA, checkpointed packed == stored bit for bit, the fixed inputs bit for bit and loaded again for another
+  layout, refusals), packed against padded `FineTuner.Train` on the phase-0 fixtures (both within 1e-4 of transformers';
+  the phase-2 trainer tests now run packed by default and still match), graph inputs (recorded and replayed on a device
+  with graphs; on the CPU the same pass from the fixed buffers), the tower (export equals the checkpoint, import round
+  trip, finite differences through the decoder, checkpointed == stored; trained through `FineTuner.Train`, saved and read
+  back; checkpointing on and off equal), the trained-projector memory, batched images.
+- **Left**: the GPU runs (the owner's: "vision tuning graph" records and replays there; the tuner's own graph path
+  with images needs packing, which CUDA's packed kernels allow only for bfloat16 head sizes 64 and 128 without a
+  window, so the tiny fixtures run padded there); LoRA on the tower's linear layers; graphs for steps whose vision part
+  trains (the projector would run inside the graph on fixed tower outputs).
 
 ## Tests (targeted, `IDRAK_FILTER`; never the full suite)
 

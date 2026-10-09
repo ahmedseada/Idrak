@@ -235,6 +235,9 @@ public sealed class CausalSelfAttention : Module, ICachedModule
     /// <summary>Plain causal attention: no window that can mask and no soft-capping.</summary>
     internal bool PlainCausal => !Windowed && _softcap is null;
 
+    /// <summary>The keys a row sees back on this layer when it attends by key ranges (its window when it can mask; 0: every earlier key).</summary>
+    internal int SpanWindow => Windowed ? _window!.Value : 0;
+
     /// <summary>The window and soft-cap the attention kernels apply (the default, plain causal attention, when neither can mask).</summary>
     internal AttentionVariant Variant => new(Windowed ? _window!.Value : 0, _softcap ?? 0f);
 
@@ -289,10 +292,18 @@ public sealed class CausalSelfAttention : Module, ICachedModule
             throw new NotSupportedException("Packed sequences need the windowed attention kernels (IDRAK_WINDOW_KERNELS is off); this layer has a sliding window or soft-capped scores (pad the batches instead).");
         }
 
-        if (packing is null && ImageBlocks.Current is { } images && images.AttendsFor(n, t))
+        if (ImageBlocks.Current is { } images && images.AttendsFor(n, t))
         {
-            // A prompt with images (ImagePrefill): each row's range of keys, image blocks seen whole.
-            var (iq, ik, iv) = Project(input, Positions(t));
+            // A prompt with images (ImagePrefill): each row's range of keys, image blocks seen whole; in packed rows each
+            // sequence's own ranges (positions restart per sequence, as the packing numbers them).
+            if (packing is not null != images.Packed)
+            {
+                throw new InvalidOperationException(packing is null
+                    ? "The image blocks were laid out for packed rows, but no packing is in effect for this pass."
+                    : "Packed rows hold images laid out without the packing (open the image scope while the packing is in effect).");
+            }
+
+            var (iq, ik, iv) = Project(input, packing?.Positions ?? Positions(t), packed: packing is not null);
             var attendedImages = AttendSpans(iq, ik!, iv!, images, offset: 0, rowStarts: null);
             ActivationMemory.Compress(iq, ik!, iv!);
             return Merge(attendedImages, n, t);
@@ -450,7 +461,7 @@ public sealed class CausalSelfAttention : Module, ICachedModule
     private Tensor AttendSpans(Tensor q, Tensor keys, Tensor values, ImageBlocks images, int offset, IReadOnlyList<int>? rowStarts)
     {
         int n = images.Batch, t = images.Steps;
-        var (starts, ends) = images.Spans(Windowed ? _window!.Value : 0, offset, rowStarts, q.Device);
+        var (starts, ends) = images.Spans(SpanWindow, offset, rowStarts, q.Device);
         var attended = Tensor.AttentionSpans(q.Reshape(n * KvHeads * Group, t, HeadDim), keys, values, starts, ends, ScoreScale, new AttentionVariant(0, _softcap ?? 0f));
         return attended.Reshape(n * KvHeads, Group * t, HeadDim);
     }
