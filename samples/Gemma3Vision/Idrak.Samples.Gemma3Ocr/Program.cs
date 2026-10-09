@@ -2,11 +2,13 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 // An app that reads a scan with a Gemma 3 vision-language model (bakrianoo/arabic-legal-documents-ocr-1.0, or any
-// Gemma3ForConditionalGeneration folder) through Idrak's public API. The library knows no vision family: the app
+// Gemma3ForConditionalGeneration folder or Hugging Face id) through Idrak's public API. The library knows no vision family: the app
 // registers Gemma 3's (samples/Gemma3Vision/Idrak.Gemma3Vision), then loads the model, encodes the image with the
 // family's encoder and streams the answer.
 //
 //   dotnet run -c Release --project samples/Gemma3Vision/Idrak.Samples.Gemma3Ocr -- MODEL IMAGE [PROMPT] [options]
+//
+//   MODEL is a folder or a Hugging Face id (downloaded once into Idrak's cache, as idrak pull does; HF_TOKEN for gated ones).
 //
 //   -d, --device NAME     cpu (default), cuda:0, vulkan:0, ...
 //   -w, --weights FORMAT  bf16, int8, int4 or a registered packed format (default: as stored); the encoder is float32
@@ -20,6 +22,7 @@
 
 using System.Diagnostics;
 using System.Text;
+using Idrak.Data;
 using Idrak.Gemma3Vision;
 using Idrak.Generation;
 using Idrak.Models;
@@ -71,7 +74,9 @@ var options = new PretrainedOptions
     Int4 = weights == "int4",
     PackedFormatName = weights is "" or "bf16" or "bfloat16" or "int8" or "int4" ? null : weights,
 };
-using var pretrained = PretrainedModel.Load(model, options);
+var folder = Directory.Exists(model) ? model
+    : await HuggingFaceModels.DownloadAsync(model, token: Environment.GetEnvironmentVariable("HF_TOKEN"));
+using var pretrained = PretrainedModel.Load(folder, options);
 var vision = pretrained.Vision ?? throw new InvalidOperationException($"{model} has no vision part.");
 Console.Error.WriteLine($"loaded {model} on {pretrained.Device} in {watch.Elapsed.TotalSeconds:F1} s; vision: {vision.Describe()}");
 
