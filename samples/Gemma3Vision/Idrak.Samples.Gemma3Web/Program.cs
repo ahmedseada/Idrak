@@ -5,6 +5,8 @@
 // Gemma3ForConditionalGeneration folder or Hugging Face id) through Idrak's public API. The library knows no vision
 // family: the app registers Gemma 3's (samples/Gemma3Vision/Idrak.Gemma3Vision), loads the model once, and answers
 // uploads at POST /api/read, streamed (server-sent events) or as one JSON document, with every figure it measures.
+// Pan and scan (Gemma 3's crops of a tall or wide page, each 256 more image tokens) is a per-request setting, sent to the
+// family as vision options (its defaults: the model's preprocessor_config.json, else Gemma3Processor's: off).
 //
 //   dotnet run -c Release --project samples/Gemma3Vision/Idrak.Samples.Gemma3Web -- MODEL [options]
 //
@@ -84,8 +86,10 @@ var cacheFormat = kv.ToLowerInvariant() switch
     _ => KeyValueFormat.Float32,
 };
 
-// Grey images are made per request (ChatImageDecoder.Grayscale), so one encoder serves both.
+// Grey images are made per request (ChatImageDecoder.Grayscale), and pan and scan is a request's vision options, so one
+// encoder serves every request.
 using var encoder = new TimedEncoder(vision.CreateEncoder(new VisionEncoderOptions { Device = pretrained.Device }));
+var panAndScan = (vision as Gemma3Vision)?.PanAndScan ?? Gemma3PanAndScan.Default;
 var chat = pretrained.CreateChat(cacheFormat, context);
 var reader = new ChatGenerator(chat.Generator, chat.Template) { Images = new ChatImages(encoder, vision.PromptFormat, vision.Attention) };
 double loadSeconds = loadWatch.Elapsed.TotalSeconds;
@@ -103,6 +107,15 @@ var info = new Dictionary<string, object?>
     ["vision_family"] = vision.Family,
     ["parameters"] = pretrained.Spec.ParameterCount,
     ["load_seconds"] = Math.Round(loadSeconds, 2),
+    // The model's pan and scan defaults (preprocessor_config.json over Gemma3Processor's): the page starts from them.
+    ["pan_and_scan"] = new Dictionary<string, object?>
+    {
+        ["enabled"] = panAndScan.Enabled,
+        ["max_crops"] = panAndScan.MaxCrops,
+        ["min_crop_size"] = panAndScan.MinCropSize,
+        ["min_ratio"] = panAndScan.MinRatio,
+        ["tokens_per_crop"] = vision is Gemma3Vision gemma ? gemma.ImageTokens.TokensPerImage : null,
+    },
 };
 
 // The model answers one request at a time; the others wait their turn.
@@ -136,6 +149,22 @@ app.MapPost("/api/read", async (HttpContext http, CancellationToken cancel) =>
     float Float(string name, float fallback) => float.TryParse(Text(name, ""), NumberStyles.Float, CultureInfo.InvariantCulture, out var f) ? f : fallback;
     int Int(string name, int fallback) => int.TryParse(Text(name, ""), NumberStyles.Integer, CultureInfo.InvariantCulture, out var n) ? n : fallback;
     bool Bool(string name, bool fallback) => Text(name, "") is { Length: > 0 } b ? b is "true" or "on" or "1" : fallback;
+
+    // Pan and scan, as the family's vision options (transformers' names); absent fields keep the model's defaults.
+    var visionOptions = new List<KeyValuePair<string, string>>();
+    void Option(string field, string key)
+    {
+        if (Text(field, "") is { Length: > 0 } value)
+        {
+            visionOptions.Add(KeyValuePair.Create(key, value is "on" ? "true" : value));
+        }
+    }
+
+    Option("pan_and_scan", Gemma3PanAndScan.EnableKey);
+    Option("pan_and_scan_max_crops", Gemma3PanAndScan.MaxCropsKey);
+    Option("pan_and_scan_min_crop_size", Gemma3PanAndScan.MinCropSizeKey);
+    Option("pan_and_scan_min_ratio", Gemma3PanAndScan.MinRatioKey);
+    var requested = new VisionOptions(visionOptions);
 
     var system = Text("system", "");
     var prompt = Text("prompt", "Extract the contents of this document.");
@@ -199,7 +228,20 @@ app.MapPost("/api/read", async (HttpContext http, CancellationToken cancel) =>
     }
 
     messages.Add(new ChatMessage("user", [image, new ChatText(prompt)]));
-    var request = new ChatRequest(messages) { Options = generation };
+    var request = new ChatRequest(messages) { Options = generation, VisionOptions = requested };
+
+    // The image's blocks under these options: the whole page, then its crops (pan and scan), 256 tokens each.
+    IReadOnlyList<ImageTokenLayout> blocks;
+    try
+    {
+        blocks = encoder.Blocks(decoded, requested);
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+
+    var settings = panAndScan.With(requested);
 
     var imageInfo = new Dictionary<string, object?>
     {
@@ -210,7 +252,11 @@ app.MapPost("/api/read", async (HttpContext http, CancellationToken cancel) =>
         ["height"] = decoded.Height,
         ["channels"] = decoded.Channels,
         ["grayscale"] = grayscale,
-        ["image_tokens"] = encoder.Layout(decoded).Tokens,
+        ["pan_and_scan"] = settings.Enabled,
+        ["pan_and_scan_settings"] = settings.ToString(),
+        ["crops"] = blocks.Count - 1,
+        ["image_blocks"] = blocks.Count,
+        ["image_tokens"] = blocks.Sum(b => b.Tokens),
         ["decode_ms"] = Math.Round(decodeMs, 1),
     };
 
@@ -403,12 +449,12 @@ internal sealed class TimedEncoder(IVisionEncoder inner) : IVisionEncoder
 
     public Device Device => inner.Device;
 
-    public ImageTokenLayout Layout(ImageData image) => inner.Layout(image);
+    public IReadOnlyList<ImageTokenLayout> Blocks(ImageData image, VisionOptions? options = null) => inner.Blocks(image, options);
 
-    public IReadOnlyList<ImageFeatures> Encode(IReadOnlyList<ImageData> images)
+    public IReadOnlyList<ImageFeatures> Encode(IReadOnlyList<ImageData> images, VisionOptions? options = null)
     {
         var watch = Stopwatch.StartNew();
-        var features = inner.Encode(images);
+        var features = inner.Encode(images, options);
         LastMilliseconds += watch.Elapsed.TotalMilliseconds;
         return features;
     }

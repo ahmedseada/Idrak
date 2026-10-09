@@ -1,6 +1,6 @@
 # Plan 11: images into language models (Gemma 3 first)
 
-**Status:** planned 2026-10-07, revised the same day against the code; phase 0 (the reference) done 2026-10-08, phase 4 (loading, text side), phase 3b (the SigLIP encoder and the projector) and phase 5 (image tokens in the decoder) done 2026-10-08 on CPU and Vulkan (phase 5 on CUDA too), phase 7 (the command line, before phase 6 by the author's choice) built 2026-10-08 and checked on the real model on the author's RTX 5070 Ti 2026-10-09, phase 8 (images in `idrak serve`: `/v1` image_url data URLs, a multipart upload, `/api/chat`) built 2026-10-09 without phase 6 (stopped by the author) and passing with the tiny model on CPU, phase 1 (contracts) done 2026-10-07 on the CPU, phase 10 (vision contracts: the library registers no family, Gemma 3 vision a plug-in in samples/Gemma3Vision, a tiny LLaVA from outside) done 2026-10-09 on CPU and Vulkan; plan 10's wave 4 is done. Asked for to run `bakrianoo/arabic-legal-documents-ocr-1.0`, a fine-tune of Gemma-3-4B-IT that reads scanned
+**Status:** planned 2026-10-07, revised the same day against the code; phase 0 (the reference) done 2026-10-08, phase 4 (loading, text side), phase 3b (the SigLIP encoder and the projector) and phase 5 (image tokens in the decoder) done 2026-10-08 on CPU and Vulkan (phase 5 on CUDA too), phase 7 (the command line, before phase 6 by the author's choice) built 2026-10-08 and checked on the real model on the author's RTX 5070 Ti 2026-10-09, phase 8 (images in `idrak serve`: `/v1` image_url data URLs, a multipart upload, `/api/chat`) built 2026-10-09 without phase 6 (stopped by the author) and passing with the tiny model on CPU, phase 1 (contracts) done 2026-10-07 on the CPU, phase 10 (vision contracts: the library registers no family, Gemma 3 vision a plug-in in samples/Gemma3Vision, a tiny LLaVA from outside) done 2026-10-09 on CPU and Vulkan; pan and scan (one image as several blocks; Gemma 3's crops in its plug-in, per-request vision options) done 2026-10-09 on CPU and Vulkan; plan 10's wave 4 is done. Asked for to run `bakrianoo/arabic-legal-documents-ocr-1.0`, a fine-tune of Gemma-3-4B-IT that reads scanned
 Arabic legal documents (low quality scans included) and returns their contents as structured data. Its card asks for
 images resized and turned to grayscale first, and shows it running through transformers and vLLM.
 
@@ -659,6 +659,121 @@ tokenizer's post-processor (`add_special_tokens`), which Idrak's chat path does 
 checkpoints need that, and llava-hf's template's `selectattr` filters, checked. The real Gemma 3 model through the plug-in
 is the author's to run (commands in the hand-back).
 
+## Pan and scan, as built (2026-10-09): one image as several blocks (Gemma 3's crops, in its plug-in)
+
+**Why.** `bakrianoo/arabic-legal-documents-ocr-1.0` read a 700 x 1000 scan squeezed into one 896 x 896 image of 256
+tokens, and misread and invented text. Gemma 3's processor has an answer, pan and scan: the whole page and crops of it
+at full resolution, each its own block of 256 soft tokens. It is the family's, so it lives in the Gemma 3 plug-in; the
+library only had to learn, generically, that one image can be several blocks with text between them, and to carry a
+family's own options per request.
+
+**transformers, read exactly** (5.19.0 `Gemma3ImageProcessorPil` / `Gemma3ImageProcessor` and `Gemma3Processor`; the
+same rule and text in 4.57.6, checked: `make_pan_scan.py --check` gives identical crops, ids, pixels and logits):
+
+- *The grid.* For a landscape or square image (width >= height): nothing when width / height < `min_ratio_to_activate`;
+  else `n = floor(width / height + 0.5)` (halves round up), `n = min(floor(width / min_crop_size), n)`, then
+  `n = min(max_num_crops, max(2, n))`, one row. A portrait image the same down the height. Each crop is
+  `ceil(side / n)` long; when the shorter crop side is below `min_crop_size` nothing is cropped. Crops start at
+  multiples of the crop size, row by row, left to right; the last one is cut at the image's edge (numpy slicing), so it
+  can be a pixel or two shorter. `max_num_crops` 1 makes one crop: the whole image again (kept, as transformers does).
+- *Crops come from the original* (after `convert_rgb`, before any resize); then the whole image and each crop go through
+  the same resize, rescale and normalize on their own. `pixel_values` is [images x (1 + crops), 3, S, S], each image
+  followed by its crops; `num_crops` per image is popped by the processor.
+- *The prompt.* Each `<start_of_image>` the chat template wrote becomes, for an image with crops,
+  `"Here is the original image " + full + " and here are some crops to help you see better " + " ".join([full] * n)`
+  where `full = "\n\n<start_of_image>" + 256 x "<image_soft_token>" + "<end_of_image>\n\n"`; without crops just `full`.
+  So the whole image's block is followed by " and here are...", the crops' blocks are separated by one space between
+  their "\n\n"s ("\n\n \n\n").
+- *The mask.* `token_type_ids` marks every soft token; `get_block_sequence_ids_for_mask` starts a new block at every
+  soft token whose predecessor is not one, so each crop is its own bidirectional block (causal between blocks), exactly
+  the plug-in's existing "image-blocks" rule once each crop is its own run.
+- *Defaults and where they come from.* `Gemma3ProcessorKwargs._defaults`: `do_pan_and_scan` False,
+  `pan_and_scan_min_crop_size` 256, `pan_and_scan_max_num_crops` 4, `pan_and_scan_min_ratio_to_activate` 1.2. The
+  image processor's own class defaults are None; real checkpoints' `preprocessor_config.json` writes the four keys as
+  null. Through `Gemma3Processor` (and `AutoProcessor`) only call kwargs turn it on: the processor passes its defaults to
+  the image processor on every call, overriding `preprocessor_config.json` (a config with `do_pan_and_scan: true` gives
+  one image in 4.57.6 and 5.19.0, measured), and `processor_config.json` keys (top level or `images_kwargs`) are not read
+  for it either. `Gemma3ImageProcessor` called alone uses the config's values (and fails when any of the four is null).
+
+**Contracts (generic; nothing names Gemma or pan and scan).** In `Idrak.Abstraction.Generation`:
+
+- `IVisionEncoder.Blocks(ImageData, VisionOptions?)` replaces `Layout(ImageData)`: the blocks of image tokens an image
+  becomes, in prompt order (one for most families). `Encode(images, VisionOptions?)` returns one `ImageFeatures` per
+  block, images in order and each image's blocks in order. `IVisionEncoderStages.PixelValues(image, options)` gives
+  [blocks, C, H, W].
+- `IImagePromptFormat.Expand(prompt, IReadOnlyList<IReadOnlyList<ImageTokenLayout>>, tokenizer)`: each image's blocks;
+  two blocks never touch, so each is a run of its own and `ImagePrefill.Locate` and the attention rules need no change.
+  `ImageTokenFormat` gains `Block(layout, tokenizer)` (one block's text) and `Join` (an image of several blocks written
+  from its blocks' texts; without it several blocks are a `NotSupportedException` naming the format).
+- `VisionOptions`: a family's own options, string values by ordinal key (`Parse("KEY=VALUE")`, `FromJson`, `With`,
+  `Flag`/`Integer`/`Number`, `ThrowIfUnknown(family, accepted)` naming the accepted keys, `ToJson`).
+  `ChatRequest.VisionOptions` carries them per request; `ChatGenerator` passes them to `Blocks` and `Encode`.
+- In `Idrak.Models.Abstractions`: `VisionEncoderOptions.VisionOptions` (every image, at creation) and
+  `PretrainedVision.VisionOptionKeys` (the keys a family takes, none by default; callers check early).
+- Testing kit: `VisionEncoderSuite(..., options)` and `Conformance.CheckVisionEncoder(..., visionOptions)`: features per
+  block, batch equals single per block, device equals CPU per block; a new case "a tall image and a wide one".
+- `ImagePreprocessor.Parse` no longer refuses `do_pan_and_scan`: keys that are not its steps are the family's.
+
+Decision 10 holds (`VisionOptions` sits with `ChatRequest` in Abstraction, which uses it); `abstraction inventory` and
+`public API` pass (api/*.txt regenerated: Abstraction, Abstraction.Testing, Idrak, AspNetCore).
+
+**The plug-in** (`samples/Gemma3Vision/Idrak.Gemma3Vision`): `Gemma3PanAndScan` (the rule above, `Crops(height,
+width)` as rectangles, `FromConfig(preprocessor_config.json)`, `With(VisionOptions)`), `Gemma3Vision.PanAndScan` (the
+folder's config over Gemma3Processor's defaults: off unless `do_pan_and_scan` is true there; *the family's decision* is
+to honour a true value, as Gemma3ImageProcessor alone does, although transformers' processor ignores it),
+`VisionOptionKeys` = `do_pan_and_scan` (also `pan_and_scan`), `pan_and_scan_min_crop_size`,
+`pan_and_scan_max_num_crops`, `pan_and_scan_min_ratio_to_activate` (transformers' names; anything else is an
+`ArgumentException` naming them; values checked: crop size >= 1, crops >= 1, ratio >= 0, the two switch names must
+agree). The prompt format's `Join` writes the processor's text. The encoder's `Views(image, options)` gives the whole
+image and its crops (cut from the decoded pixels); it encodes one image's views per batch (at most 1 + max crops
+images), so memory grows with the crops of one image, not with a request's images.
+
+**Options, everywhere family-neutral.** CLI: `--vision-option KEY=VALUE` (repeatable) on `run`, `chat`, `serve`/`ui`
+(every image of the server), `vlm check` (over the reference's), and `alias set` (kept as `"vision_options"`, the
+command line's going over the alias's per key); keys are checked against the family when the model loads (exit 2
+naming them). Serve and `MapChatApi`/`MapCompletionsApi`: a request's `"vision_options": {"KEY": VALUE}` on
+`/v1/chat/completions` and `/api/chat`, and a `vision_options` form field (JSON text) on `/v1/chat/upload`; an unknown
+key or a bad value is a 400 naming the family's keys. `tools/vlm/compare_real.py --pan-and-scan
+[--pan-and-scan-min-crop-size N --pan-and-scan-max-crops N --pan-and-scan-min-ratio X]` records them as the
+manifest's `"vision_options"`, which `idrak vlm check` gives the encoder (pixels, features and the prompt per block).
+The OCR sample takes `--pan-and-scan`. The web sample: a "Pan and scan" switch in the Settings card (off unless the
+model's config turns it on; remembered with the other settings), its max crops, min crop size and min ratio shown while
+it is on, `pan_and_scan=true/false` sent on every `/api/read`, and the figures report pan and scan on or off, the crops
+and the image tokens (with the blocks).
+
+**Reference and results.** `tools/vlm/make_pan_scan.py` → `tests/Idrak.Tests/data/vlm-pan-scan` (920 KB; reruns
+write the same bytes): the tiny model of phase 0 with `pan_and_scan_min_crop_size` 32, a 60 x 170 image (3 crops, the
+last a row shorter), a 300 x 60 image (5 wanted, 4 made) and a 90 x 80 one (ratio 1.125: none), each with its pixels,
+features, the processor's ids, prompt logits and 20 greedy steps; plus a `compare/` folder from `compare_real.py
+--pan-and-scan`. Largest differences (`IDRAK_FILTER="pan and scan"`):
+
+| | CPU | Vulkan (lavapipe) |
+|---|---|---|
+| pixels | within 1e-5 | within 1e-5 |
+| tall (3 crops, 120 tokens): features, prompt logits, 20 steps | 2.68e-6, 9.30e-6, 2.03e-6 | 2.34e-6, 1.01e-5, 1.43e-6 |
+| wide (4 crops, 129 tokens) | 4.53e-6, 7.63e-6, 1.79e-6 | 3.81e-6, 1.04e-5, 1.91e-6 |
+| square (no crops, 38 tokens) | 1.67e-6, 7.39e-6, 3.58e-6 | 9.54e-7, 7.87e-6, 3.34e-6 |
+| prompt ids, greedy tokens | identical | identical |
+
+The square image with pan and scan on gives bit for bit the pixels, features, ids and logits of pan and scan off. The
+tiny model's greedy answer after the longer prompts settles on one token (91, twenty times; the square's is varied), so
+the step logits are the closer check. The same answers come through `ChatGenerator`, `idrak run --vision-option`, an
+alias, `/v1`, the upload and `/api/chat`; `idrak vlm check` on the `compare/` folder agrees at all 20 steps. The outside
+plug-in's toy family gained a `halves=true` option (each image as two blocks with " and " between) to show the contracts
+from outside the library.
+
+**Real-model sizing** (Gemma 3 4B: 256 tokens per block, SigLIP at 896 x 896). Each crop is 256 more prompt tokens and
+one more SigLIP pass: measured on the author's RTX 5070 Ti, one image encodes in 0.11 s in bfloat16 and 0.43 s in
+float32, so with 4 crops about 0.55 s and 2.2 s (one batch of 5). The default rule gives a 700 x 1000 scan 2 crops (3
+blocks, 768 image tokens), an A4 page at any resolution 2, a page twice as tall as wide 2, a strip three times as long
+3, and at most 4 (1,280 image tokens). Memory: the KV cache is allocated for the context window, not the prompt, so
+crops do not grow it (float32: 34 layers x 2 x 4 KV heads x 256 = 272 KB per token, 2.2 GB for 8,192; bfloat16 half,
+int8 a quarter); the encoder's transient activations for one image's batch are about 5 x (19 MB hidden + 70 MB MLP) in
+float32 per layer, under half a GB, plus 72 MB per image of span attention. The web sample's context of 8,192 fits the
+worst case: 1,280 image tokens + about 60 of the processor's text + the prompt + its default 4,096 answer tokens is
+about 5,500. Note that Gemma 3's local layers see 1,024 tokens back, so with 4 crops the last crop's tokens no longer
+see the whole page's block on those layers (as in transformers).
+
 ## Performance targets (author's RTX 5070 Ti, the real 4B model)
 
 - The vision encoder (4,096 tokens, 27 layers) runs once per image: under half a second in bfloat16. This needs 3a's
@@ -693,6 +808,6 @@ is the author's to run (commands in the hand-back).
 2. ~~Content parts on `ChatMessage` (like `/v1`) or a separate image list.~~ **Decided 2026-10-07: content parts as a
    contract** (`ChatPart`, registered kinds in `ChatParts`, `IChatModel.PartKinds`), open to new kinds (audio, video,
    documents) without changing the contract; see "Phase 1 as built".
-3. Pan-and-scan for tall pages (Gemma 3's crops of a long document): first version or phase 9.
+3. ~~Pan-and-scan for tall pages (Gemma 3's crops of a long document): first version or phase 9.~~ **Done 2026-10-09** in the Gemma 3 plug-in, off by default (see "Pan and scan, as built").
 4. Where an `ocr` tool or pipeline lives (phase 9): plan 10 puts OCR in `Idrak.Vision`, but one built on a language model
    needs Nlp, which Vision does not reference; in Nlp (or Mcp and the CLI) unless Vision's OCR is a model of its own.

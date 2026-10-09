@@ -183,7 +183,7 @@ public static class IdrakEndpointExtensions
     /// <summary>
     /// The chat API under <paramref name="route"/>, on the routes common local-model clients call: POST /chat (NDJSON
     /// streaming, think, tools, options, keep_alive; images as a message's <c>images</c> or as image parts of its
-    /// content, see <see cref="ChatApiMessage"/>, and <c>"grayscale": true</c> to read them grey), GET /tags, GET /ps and GET /version, all serving the chat model
+    /// content, see <see cref="ChatApiMessage"/>, <c>"grayscale": true</c> to read them grey, <c>"vision_options"</c> for the vision family), GET /tags, GET /ps and GET /version, all serving the chat model
     /// <paramref name="name"/>. The request body is read as JSON whatever its Content-Type (clients often send none).
     /// <see cref="ChatApiOptions.Tools"/> must be set. The OpenAI-style <c>/v1</c> API is
     /// <see cref="CompletionsApiEndpoints.MapCompletionsApi"/>.
@@ -274,7 +274,7 @@ public static class IdrakEndpointExtensions
             request = await JsonSerializer.DeserializeAsync<ChatApiRequest>(http.Body, Json, token)
                 ?? throw new ArgumentException("empty request body");
             (chat, var keepAlive, bool given) = ChatApiTranslation.Translate(request);
-            chat = ImageRequests.Check(chat, settings.ImageSettings, request.Grayscale == true);
+            chat = ImageRequests.WithVisionOptions(ImageRequests.Check(chat, settings.ImageSettings, request.Grayscale == true), request.VisionOptions);
             if (given)
             {
                 engine.KeepAlive(name, keepAlive);

@@ -119,15 +119,17 @@ public static class Conformance
 
     /// <summary>
     /// Checks a vision family's encoder (<see cref="VisionEncoderSuite"/>) on images of many sizes and channels: the same
-    /// features every time, as many tokens as its layout says (width, grid, position ids), an image the same alone and in a
-    /// batch, and, given <paramref name="cpu"/> (the same family's encoder on the CPU), the same features on the encoder's
-    /// device within <paramref name="tolerance"/>. Six random cases unless <paramref name="options"/> says otherwise.
+    /// features every time, one features per block it says each image becomes, as many tokens as each block's layout says
+    /// (width, grid, position ids), an image the same alone and in a batch, and, given <paramref name="cpu"/> (the same
+    /// family's encoder on the CPU), the same features on the encoder's device within <paramref name="tolerance"/>; every
+    /// call with the family's <paramref name="visionOptions"/> when given. Six random cases unless
+    /// <paramref name="options"/> says otherwise.
     /// </summary>
     public static ConformanceReport CheckVisionEncoder(IVisionEncoder encoder, IVisionEncoder? cpu = null, IReadOnlyList<Data.ImageData>? samples = null,
-        float tolerance = 1e-4f, ContractCheckOptions? options = null)
+        float tolerance = 1e-4f, ContractCheckOptions? options = null, VisionOptions? visionOptions = null)
     {
         ArgumentNullException.ThrowIfNull(encoder);
-        return Check(encoder, new VisionEncoderSuite(cpu, samples, tolerance) { On = encoder.Device }, options ?? new ContractCheckOptions { RandomCases = 6 });
+        return Check(encoder, new VisionEncoderSuite(cpu, samples, tolerance, visionOptions) { On = encoder.Device }, options ?? new ContractCheckOptions { RandomCases = 6 });
     }
 
     /// <summary>

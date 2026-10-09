@@ -100,6 +100,9 @@
   .two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; align-items: start; }
   .two .card { margin-top: 0; }
   @media (max-width: 1200px) { .two { grid-template-columns: 1fr; } }
+  .sub-head { font-size: 12px; color: var(--muted); font-weight: 600; margin: 16px 0 8px; display: flex; align-items: center; gap: 8px; }
+  .sub-head .note { font-weight: 400; }
+  .pas-off { display: none !important; }
   .error-box { color: var(--bad); background: color-mix(in srgb, var(--bad) 10%, transparent); border: 1px solid var(--bad); padding: 10px 12px; border-radius: 10px; margin-bottom: 12px; display: none; }
 </style>
 </head>
@@ -144,8 +147,11 @@
         <label class="switch"><input type="checkbox" id="stream"><span class="track"></span>Stream</label>
         <label class="switch"><input type="checkbox" id="grayscale"><span class="track"></span>Grayscale</label>
         <label class="switch"><input type="checkbox" id="pretty"><span class="track"></span>Pretty JSON</label>
+        <label class="switch" title="Gemma 3's pan and scan: the whole page, then crops of a tall or wide page at full resolution (256 more image tokens each)"><input type="checkbox" id="panScan"><span class="track"></span>Pan and scan</label>
       </div>
       <div class="grid" id="args"></div>
+      <div class="sub-head" id="pasHead">Pan and scan <span class="note" id="pasNote">256 image tokens per crop</span></div>
+      <div class="grid" id="pas"></div>
     </div>
 
     <div class="card actions">
@@ -198,6 +204,13 @@ const ARGS = [
   ["max_tokens", "Max tokens", 1, 1], ["temperature", "Temperature", 0, 0.05], ["top_k", "Top-k", 0, 1],
   ["top_p", "Top-p", 0, 0.01], ["min_p", "Min-p", 0, 0.01], ["repeat_penalty", "Repeat penalty", 0, 0.01], ["repeat_last_n", "Repeat window", 0, 1], ["presence_penalty", "Presence penalty", null, 0.05], ["frequency_penalty", "Frequency penalty", null, 0.05], ["stop_repeated_lines", "Stop after N same lines (0 = off)", 0, 1], ["seed", "Seed", null, 1], ["chunk_size", "Stream chunk (tokens)", 1, 1]
 ];
+// Pan and scan (transformers' Gemma3Processor defaults: off, 4 crops at most, 256-pixel crops at least, ratio 1.2).
+const PAS = [
+  ["pan_and_scan_max_crops", "Max crops", 1, 1, 4], ["pan_and_scan_min_crop_size", "Min crop size (px)", 1, 1, 256],
+  ["pan_and_scan_min_ratio", "Min aspect ratio", 0, 0.05, 1.2]
+];
+DEFAULTS.panScan = false;
+DEFAULTS.pas = Object.fromEntries(PAS.map(([k, , , , d]) => [k, d]));
 const STORE = "idrak-vision-reader";
 let file = null, controller = null, rawText = "", view = "text", modelInfo = {}, timer = null;
 
@@ -206,12 +219,18 @@ for (const [key, label, min, step] of ARGS) {
   l.innerHTML = `<span>${label}</span><input type="number" id="a_${key}" step="${step}" ${min !== null ? `min="${min}"` : ""} placeholder="${key === "seed" ? "random" : ""}">`;
   $("args").appendChild(l);
 }
+for (const [key, label, min, step] of PAS) {
+  const l = document.createElement("label"); l.className = "field";
+  l.innerHTML = `<span>${label}</span><input type="number" id="p_${key}" step="${step}" min="${min}">`;
+  $("pas").appendChild(l);
+}
 
 function load() { try { return JSON.parse(localStorage.getItem(STORE)) || null; } catch { return null; } }
 function save() {
   try {
-    const s = { prompt: $("prompt").value, system: $("system").value, stream: $("stream").checked, grayscale: $("grayscale").checked, pretty: $("pretty").checked, args: {} };
+    const s = { prompt: $("prompt").value, system: $("system").value, stream: $("stream").checked, grayscale: $("grayscale").checked, pretty: $("pretty").checked, panScan: $("panScan").checked, args: {}, pas: {} };
     for (const [k] of ARGS) s.args[k] = $("a_" + k).value;
+    for (const [k] of PAS) s.pas[k] = $("p_" + k).value;
     localStorage.setItem(STORE, JSON.stringify(s));
   } catch {}
 }
@@ -219,11 +238,37 @@ function apply(s) {
   $("prompt").value = s.prompt; $("system").value = s.system;
   $("stream").checked = s.stream; $("grayscale").checked = s.grayscale; $("pretty").checked = s.pretty;
   for (const [k] of ARGS) $("a_" + k).value = s.args[k] ?? DEFAULTS.args[k];
+  $("panScan").checked = s.panScan ?? DEFAULTS.panScan;
+  for (const [k] of PAS) $("p_" + k).value = (s.pas || {})[k] ?? DEFAULTS.pas[k];
   $("img").classList.toggle("grey", $("grayscale").checked);
+  crops();
 }
-apply({ ...DEFAULTS, ...(load() || {}), args: { ...DEFAULTS.args, ...((load() || {}).args || {}) } });
-document.querySelectorAll("textarea, input").forEach(e => e.addEventListener("change", () => { save(); $("img").classList.toggle("grey", $("grayscale").checked); render(); }));
+apply({ ...DEFAULTS, ...(load() || {}), args: { ...DEFAULTS.args, ...((load() || {}).args || {}) }, pas: { ...DEFAULTS.pas, ...((load() || {}).pas || {}) } });
+document.querySelectorAll("textarea, input").forEach(e => e.addEventListener("change", () => { save(); $("img").classList.toggle("grey", $("grayscale").checked); crops(); render(); }));
 $("reset").onclick = () => { apply(DEFAULTS); save(); };
+
+// The crops pan and scan would make of the chosen image (transformers' rule; the server's count is the one reported).
+function cropCount(w, h) {
+  if (!$("panScan").checked || !w || !h) return 0;
+  const max = +$("p_pan_and_scan_max_crops").value || 4, size = +$("p_pan_and_scan_min_crop_size").value || 256, ratio = +($("p_pan_and_scan_min_ratio").value || 1.2);
+  let across = 1, down = 1;
+  if (w >= h) {
+    if (w / h < ratio) return 0;
+    across = Math.min(max, Math.max(2, Math.min(Math.floor(w / size), Math.floor(w / h + 0.5))));
+  } else {
+    if (h / w < ratio) return 0;
+    down = Math.min(max, Math.max(2, Math.min(Math.floor(h / size), Math.floor(h / w + 0.5))));
+  }
+  return Math.min(Math.ceil(w / across), Math.ceil(h / down)) < size ? 0 : across * down;
+}
+function crops() {
+  $("pas").classList.toggle("pas-off", !$("panScan").checked); $("pasHead").classList.toggle("pas-off", !$("panScan").checked);
+  const per = (modelInfo.pan_and_scan || {}).tokens_per_crop || 256, img = $("img");
+  if (!$("panScan").checked) { $("pasNote").textContent = `off · each crop adds ${per} image tokens`; return; }
+  if (!file || !img.naturalWidth) { $("pasNote").textContent = `on · each crop adds ${per} image tokens`; return; }
+  const n = cropCount(img.naturalWidth, img.naturalHeight);
+  $("pasNote").textContent = n === 0 ? `on · this image is not cropped (${per} image tokens)` : `on · this image: ${n} crops, ${(n + 1) * per} image tokens`;
+}
 
 // Theme
 try { const t = localStorage.getItem(STORE + "-theme"); if (t) document.documentElement.dataset.theme = t; } catch {}
@@ -236,6 +281,13 @@ $("theme").onclick = () => {
 // Model info
 fetch("api/info").then(r => r.json()).then(i => {
   modelInfo = i;
+  // The model's own pan and scan defaults (its preprocessor_config.json), when it sets them.
+  if (i.pan_and_scan) {
+    DEFAULTS.panScan = !!i.pan_and_scan.enabled;
+    DEFAULTS.pas = { pan_and_scan_max_crops: i.pan_and_scan.max_crops, pan_and_scan_min_crop_size: i.pan_and_scan.min_crop_size, pan_and_scan_min_ratio: i.pan_and_scan.min_ratio };
+    if (!load()) apply(DEFAULTS);
+    crops();
+  }
   const chip = (k, v) => `<span class="chip">${k} <b>${v}</b></span>`;
   $("chips").innerHTML = chip("model", i.model.split(/[\\/]/).slice(-2).join("/")) + chip("device", i.device) + chip("weights", i.weights)
     + chip("KV", i.kv_cache) + chip("context", i.context) + chip("loaded in", i.load_seconds + " s");
@@ -247,7 +299,7 @@ function pick(f) {
   file = f;
   const url = URL.createObjectURL(f);
   $("img").src = url;
-  $("img").onload = () => $("imgSize").textContent = `${$("img").naturalWidth} × ${$("img").naturalHeight} · ${(f.size / 1024).toFixed(0)} KB`;
+  $("img").onload = () => { $("imgSize").textContent = `${$("img").naturalWidth} × ${$("img").naturalHeight} · ${(f.size / 1024).toFixed(0)} KB`; crops(); };
   $("imgName").textContent = f.name;
   $("preview").style.display = "block";
   $("run").disabled = false;
@@ -324,7 +376,10 @@ function imageTable(img) {
   table("mImage", [
     ["File", img ? img.file : "–"], ["Format", img ? img.format : "–"], ["Size", img ? `${img.width} × ${img.height} · ${img.channels} ch` : "–"],
     ["Bytes", img ? fmt(img.bytes) : "–"], ["Decode", img ? `${fmt(img.decode_ms)} ms` : "–"], ["Grayscale", img ? (img.grayscale ? "yes" : "no") : "–"],
-    ["Image tokens", img ? fmt(img.image_tokens) : "–"], ["Model", i.model ?? "–"], ["Vision", i.vision ?? "–"],
+    ["Pan and scan", img ? (img.pan_and_scan ? "on" : "off") : "–"],
+    ["Crops", img ? fmt(img.crops) : "–"],
+    ["Image tokens", img ? (img.image_blocks > 1 ? `${fmt(img.image_tokens)} (${img.image_blocks} × ${fmt(img.image_tokens / img.image_blocks)})` : fmt(img.image_tokens)) : "–"],
+    ["Model", i.model ?? "–"], ["Vision", i.vision ?? "–"],
     ["Parameters (text)", i.parameters ? (i.parameters >= 1e9 ? `${(i.parameters / 1e9).toFixed(2)} B` : i.parameters >= 1e6 ? `${(i.parameters / 1e6).toFixed(1)} M` : fmt(i.parameters)) : "–"], ["Device", i.device ?? "–"],
     ["Weights", i.weights ?? "–"], ["KV cache", i.kv_cache ?? "–"], ["Context", fmt(i.context)], ["Model load", i.load_seconds ? `${i.load_seconds} s` : "–"]
   ]);
@@ -339,6 +394,8 @@ $("run").onclick = async () => {
   fd.append("image", file); fd.append("prompt", $("prompt").value); fd.append("system", $("system").value);
   fd.append("stream", $("stream").checked); fd.append("grayscale", $("grayscale").checked);
   for (const [k] of ARGS) if ($("a_" + k).value !== "") fd.append(k, $("a_" + k).value);
+  fd.append("pan_and_scan", $("panScan").checked);
+  for (const [k] of PAS) if ($("p_" + k).value !== "") fd.append(k, $("p_" + k).value);
   controller = new AbortController();
   $("run").disabled = true; $("stop").disabled = false;
   setStatus($("stream").checked ? "streaming…" : "reading…", "run");

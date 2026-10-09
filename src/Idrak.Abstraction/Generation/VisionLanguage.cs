@@ -106,10 +106,15 @@ public sealed class ImageFeatures : IDisposable
 
 /// <summary>
 /// The image side of a vision-language model: decoded images in, each image's token features out, with as many tokens
-/// per image as its family gives it (<see cref="Layout"/>). It does its family's own preprocessing (resize, crop,
-/// normalize, tiling or dynamic resolution) on the decoded pixels it is given. A family makes one from its checkpoint;
-/// the testing kit checks one (<c>Conformance.CheckVisionEncoder</c>: deterministic, counts matching the layout, a batch
-/// equal to single images, every device equal to the CPU).
+/// per image as its family gives it (<see cref="Blocks"/>). It does its family's own preprocessing (resize, crop,
+/// normalize, tiling or dynamic resolution) on the decoded pixels it is given. One image may become several blocks of
+/// image tokens in the prompt (a family that adds views of an image, such as an overview and parts of it, or tiles):
+/// each block is a run of image tokens of its own, with its own <see cref="ImageFeatures"/>, and the family's prompt
+/// format writes the text around and between them (<see cref="IImagePromptFormat.Expand"/>). Most families give one
+/// block per image. A family's own options (<see cref="VisionOptions"/>, given per request over the encoder's own) reach
+/// both methods; an encoder refuses keys it does not take, naming those it does. A family makes one from its
+/// checkpoint; the testing kit checks one (<c>Conformance.CheckVisionEncoder</c>: deterministic, counts matching the
+/// blocks, a batch equal to single images, every device equal to the CPU).
 /// </summary>
 public interface IVisionEncoder : IDisposable
 {
@@ -119,15 +124,22 @@ public interface IVisionEncoder : IDisposable
     /// <summary>Where the features are made.</summary>
     Device Device { get; }
 
-    /// <summary>How many tokens <paramref name="image"/> becomes and how they are arranged, without encoding it.</summary>
-    ImageTokenLayout Layout(ImageData image);
+    /// <summary>
+    /// The blocks of image tokens <paramref name="image"/> becomes under <paramref name="options"/> (over the encoder's
+    /// own), in prompt order, each with its token count and arrangement, without encoding it: one block for most
+    /// families.
+    /// </summary>
+    /// <exception cref="ArgumentException">An option is not one the family takes, or its value is not valid.</exception>
+    IReadOnlyList<ImageTokenLayout> Blocks(ImageData image, VisionOptions? options = null);
 
     /// <summary>
-    /// The features of <paramref name="images"/> in order, one <see cref="ImageFeatures"/> each (the caller disposes them),
-    /// each with the layout <see cref="Layout"/> gives that image. Runs without recording gradients. An image encodes the
-    /// same alone and in a batch.
+    /// The features of <paramref name="images"/> under <paramref name="options"/>: one <see cref="ImageFeatures"/> per
+    /// block (the caller disposes them), the images in order and each image's blocks in the order <see cref="Blocks"/>
+    /// gives them, each with that block's layout. Runs without recording gradients. An image encodes the same alone and
+    /// in a batch.
     /// </summary>
-    IReadOnlyList<ImageFeatures> Encode(IReadOnlyList<ImageData> images);
+    /// <exception cref="ArgumentException">An option is not one the family takes, or its value is not valid.</exception>
+    IReadOnlyList<ImageFeatures> Encode(IReadOnlyList<ImageData> images, VisionOptions? options = null);
 }
 
 /// <summary>
@@ -137,8 +149,11 @@ public interface IVisionEncoder : IDisposable
 /// </summary>
 public interface IVisionEncoderStages
 {
-    /// <summary>The pixel values the encoder's preprocessing gives <paramref name="image"/>, [channels, height, width], on the CPU.</summary>
-    Tensor PixelValues(ImageData image);
+    /// <summary>
+    /// The pixel values the encoder's preprocessing gives <paramref name="image"/> under <paramref name="options"/>:
+    /// [blocks, channels, height, width], one per block of <see cref="IVisionEncoder.Blocks"/>, on the CPU.
+    /// </summary>
+    Tensor PixelValues(ImageData image, VisionOptions? options = null);
 
     /// <summary>The vision tower's output for pixel values [images, channels, height, width] (before any projection), without gradients.</summary>
     Tensor Tower(Tensor pixelValues);
@@ -164,20 +179,27 @@ public interface IImagePromptFormat
     int ImageToken { get; }
 
     /// <summary>
-    /// The rendered prompt <paramref name="prompt"/> with each image's marker expanded to the text the model reads, the
-    /// image's <see cref="ImageTokenLayout.Tokens"/> image tokens included (written as the tokenizer's text of
-    /// <see cref="ImageToken"/>, so that tokenizing it gives their ids), the images in order.
+    /// The rendered prompt <paramref name="prompt"/> with each image's marker expanded to the text the model reads: each
+    /// of the image's blocks (<see cref="IVisionEncoder.Blocks"/>) as its <see cref="ImageTokenLayout.Tokens"/> image
+    /// tokens (written as the tokenizer's text of <see cref="ImageToken"/>, so that tokenizing it gives their ids), in
+    /// order, with the family's text around and between them; the images in order. Two blocks never touch (text or
+    /// another token separates them), so each is a run of image tokens of its own.
     /// </summary>
+    /// <param name="prompt">The rendered prompt.</param>
+    /// <param name="images">Each image's blocks, the images in prompt order.</param>
+    /// <param name="tokenizer">The model's tokenizer.</param>
     /// <exception cref="InvalidOperationException">The prompt does not hold one marker per image.</exception>
-    string Expand(string prompt, IReadOnlyList<ImageTokenLayout> images, ITokenizer tokenizer);
+    /// <exception cref="NotSupportedException">An image has several blocks and the format writes one per image.</exception>
+    string Expand(string prompt, IReadOnlyList<IReadOnlyList<ImageTokenLayout>> images, ITokenizer tokenizer);
 }
 
 /// <summary>
 /// An image prompt format built from token ids: each marker token the chat template wrote (in order, one per image)
-/// becomes <see cref="Before"/>, the begin token (if any), the image's count of image tokens, the end token (if any) and
-/// <see cref="After"/>. Gemma 3's processor is the marker <c>&lt;start_of_image&gt;</c>, begin and end
-/// <c>&lt;start_of_image&gt;</c> and <c>&lt;end_of_image&gt;</c>, "\n\n" around; LLaVA's is the marker <c>&lt;image&gt;</c>
-/// replaced by the image tokens alone (the marker is the image token).
+/// becomes its block (<see cref="Block"/>): <see cref="Before"/>, the begin token (if any), the block's count of image
+/// tokens, the end token (if any) and <see cref="After"/>. Gemma 3's processor is the marker <c>&lt;start_of_image&gt;</c>,
+/// begin and end <c>&lt;start_of_image&gt;</c> and <c>&lt;end_of_image&gt;</c>, "\n\n" around; LLaVA's is the marker
+/// <c>&lt;image&gt;</c> replaced by the image tokens alone (the marker is the image token). An image of several blocks
+/// is written by <see cref="Join"/> from its blocks' texts.
 /// </summary>
 /// <param name="name">A name for messages.</param>
 /// <param name="marker">The token the chat template writes once per image.</param>
@@ -209,14 +231,32 @@ public sealed class ImageTokenFormat(string name, int marker, int imageToken, in
     /// <summary>Text after the end token.</summary>
     public string After { get; } = after ?? "";
 
+    /// <summary>
+    /// How an image of several blocks is written, given each block's text (as <see cref="Block"/> writes it) in order:
+    /// a family whose processor puts text between an image's views gives it. Its text keeps every block's text whole and
+    /// in order, with something between any two. Null (the default): an image takes one block, and several are a
+    /// <see cref="NotSupportedException"/>.
+    /// </summary>
+    public Func<IReadOnlyList<string>, string>? Join { get; init; }
+
+    /// <summary>One block's text: <see cref="Before"/>, the begin token, <paramref name="layout"/>'s image tokens, the end token, <see cref="After"/>.</summary>
+    public string Block(ImageTokenLayout layout, ITokenizer tokenizer)
+    {
+        ArgumentNullException.ThrowIfNull(layout);
+        ArgumentNullException.ThrowIfNull(tokenizer);
+        string image = Token(tokenizer, ImageToken, "image");
+        string begin = Begin is { } b ? Token(tokenizer, b, "begin-image") : "", end = End is { } e ? Token(tokenizer, e, "end-image") : "";
+        var text = new StringBuilder(Before.Length + begin.Length + layout.Tokens * image.Length + end.Length + After.Length).Append(Before).Append(begin);
+        return text.Insert(text.Length, image, layout.Tokens).Append(end).Append(After).ToString();
+    }
+
     /// <inheritdoc />
-    public string Expand(string prompt, IReadOnlyList<ImageTokenLayout> images, ITokenizer tokenizer)
+    public string Expand(string prompt, IReadOnlyList<IReadOnlyList<ImageTokenLayout>> images, ITokenizer tokenizer)
     {
         ArgumentNullException.ThrowIfNull(prompt);
         ArgumentNullException.ThrowIfNull(images);
         ArgumentNullException.ThrowIfNull(tokenizer);
-        string markerText = Token(tokenizer, Marker, "image marker"), image = Token(tokenizer, ImageToken, "image");
-        string begin = Begin is { } b ? Token(tokenizer, b, "begin-image") : "", end = End is { } e ? Token(tokenizer, e, "end-image") : "";
+        string markerText = Token(tokenizer, Marker, "image marker");
         var at = new List<int>();
         for (int i = prompt.IndexOf(markerText, StringComparison.Ordinal); i >= 0; i = prompt.IndexOf(markerText, i + markerText.Length, StringComparison.Ordinal))
         {
@@ -233,11 +273,19 @@ public sealed class ImageTokenFormat(string name, int marker, int imageToken, in
             return prompt;
         }
 
-        var text = new StringBuilder(prompt.Length + images.Sum(l => l.Tokens) * image.Length);
+        var text = new StringBuilder(prompt.Length);
         int from = 0;
         for (int k = 0; k < at.Count; k++)
         {
-            text.Append(prompt, from, at[k] - from).Append(Before).Append(begin).Insert(text.Length, image, images[k].Tokens).Append(end).Append(After);
+            var blocks = images[k];
+            string written = blocks?.Count switch
+            {
+                null or 0 => throw new ArgumentException($"Image {k} has no blocks of image tokens.", nameof(images)),
+                1 => Block(blocks[0], tokenizer),
+                _ when Join is { } join => join([.. blocks.Select(block => Block(block, tokenizer))]),
+                _ => throw new NotSupportedException($"Image {k} has {blocks.Count} blocks of image tokens; the prompt format {Name} writes one per image (it has no Join)."),
+            };
+            text.Append(prompt, from, at[k] - from).Append(written);
             from = at[k] + markerText.Length;
         }
 

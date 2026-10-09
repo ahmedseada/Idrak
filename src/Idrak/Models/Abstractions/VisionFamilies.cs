@@ -35,6 +35,13 @@ public abstract class PretrainedVision
     /// </summary>
     public abstract IVisionEncoder CreateEncoder(VisionEncoderOptions? options = null);
 
+    /// <summary>
+    /// The keys of the <see cref="VisionOptions"/> this family's encoder takes (at creation,
+    /// <see cref="VisionEncoderOptions.VisionOptions"/>, and per request); none unless the family says. Callers check
+    /// options against them early (<see cref="VisionOptions.ThrowIfUnknown"/>); the encoder checks the values.
+    /// </summary>
+    public virtual IReadOnlyCollection<string> VisionOptionKeys => [];
+
     /// <summary>One line for <c>idrak show</c> and messages: the family's encoder and image tokens.</summary>
     public virtual string Describe() => $"{Family}, {PromptFormat.Name}, image tokens attend: {Attention.Name}";
 
@@ -50,6 +57,13 @@ public sealed record VisionEncoderOptions
 
     /// <summary>Turn images to grayscale before the family's preprocessing (some fine-tunes ask for it).</summary>
     public bool Grayscale { get; init; }
+
+    /// <summary>
+    /// The family's own options for every image the encoder reads (its keys, <see cref="PretrainedVision.VisionOptionKeys"/>),
+    /// over the family's defaults from the checkpoint's files; a request's options go over these per key. Null: none.
+    /// </summary>
+    /// <remarks>The family refuses a key it does not take, naming those it does, when it builds the encoder.</remarks>
+    public VisionOptions? VisionOptions { get; init; }
 }
 
 /// <summary>What a vision family reads a checkpoint's vision part from (<see cref="IVisionFamily.Read"/>).</summary>

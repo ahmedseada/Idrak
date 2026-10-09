@@ -23,7 +23,14 @@ public sealed record GenerationStats(int PromptTokens, TimeSpan PromptDuration, 
 /// <param name="Think">true: return reasoning separately; false: suppress it; null: model default (returned separately if produced).</param>
 /// <param name="Options">Sampling and length options; the template's stop sequences are added to <see cref="GenerationOptions.Stop"/>.</param>
 public sealed record ChatRequest(IReadOnlyList<ChatMessage> Messages, IReadOnlyList<ToolDefinition>? Tools = null, bool? Think = null,
-    GenerationOptions? Options = null);
+    GenerationOptions? Options = null)
+{
+    /// <summary>
+    /// Options for the model's vision family, for this request's images (over the encoder's own; null: none): the family
+    /// reads its own keys and refuses others (<see cref="IVisionEncoder.Blocks"/>). A text-only model ignores them.
+    /// </summary>
+    public VisionOptions? VisionOptions { get; init; }
+}
 
 /// <summary>A streamed piece of the assistant's reply; the final one carries the reason, the full message and statistics.</summary>
 /// <param name="Delta">What this piece added (content, reasoning, completed tool calls).</param>
