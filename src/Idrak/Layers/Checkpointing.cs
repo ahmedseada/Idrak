@@ -10,6 +10,16 @@ namespace Idrak.Layers;
 /// <summary>Gradient checkpointing: a forward run again during backward instead of keeping its activations (dropout replays its seeds).</summary>
 internal static class Checkpointing
 {
+    [ThreadStatic]
+    private static int t_firstPass;
+
+    /// <summary>
+    /// Whether a checkpointed forward pass runs on this thread without recording (the pass the backward pass repeats with
+    /// recording): layers then compute as they do with gradients (no inference-only fused kernels), so the kept output is
+    /// the one the recompute gives, bit for bit.
+    /// </summary>
+    internal static bool FirstPass => t_firstPass > 0;
+
     /// <summary>
     /// <paramref name="forward"/>(input) without storing its intermediate results (activation checkpointing): the
     /// forward pass runs without recording, and the backward pass runs it again with recording, back-propagates through
@@ -34,7 +44,15 @@ internal static class Checkpointing
         using (Autograd.NoGrad())
         using (var pass = new TensorScope())
         {
-            output = pass.Keep(forward(input));
+            t_firstPass++;
+            try
+            {
+                output = pass.Keep(forward(input));
+            }
+            finally
+            {
+                t_firstPass--;
+            }
         }
 
         if (ReferenceEquals(output, input))

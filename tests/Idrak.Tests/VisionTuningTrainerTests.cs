@@ -79,8 +79,8 @@ internal static partial class Tests
             // Two distinct images: the tower runs once for each; every later step (epoch) takes them from the cache.
             Check(vision.Encoded == 2 && vision.CacheHits == 2 * (expected.Length - 1),
                 $"{what}: {vision.Encoded} images encoded, {vision.CacheHits} cache hits (expected 2 and {2 * (expected.Length - 1)})");
-            Check(lines.Any(l => l.Contains("images", StringComparison.Ordinal) && l.Contains("not recorded as a graph", StringComparison.Ordinal))
-                  && lines.Any(l => l.Contains("image features: 2 from the cache, 0 encoded", StringComparison.Ordinal)),
+            Check(lines.Any(l => l.Contains("images (", StringComparison.Ordinal) && l.Contains("image tokens, packed with the others)", StringComparison.Ordinal))
+                  && lines.Any(l => l.Contains($"image features: 2 from the cache, 0 encoded, 2 images in {(run == "projector" ? "1 pass," : "0 passes,")}", StringComparison.Ordinal)),
                 $"{what}: the trace shows the images and the cache:\n{string.Join("\n", lines)}");
 
             // The saved folder: the adapters and the projector (modules_to_save) as transformers' after the last step.
@@ -232,8 +232,6 @@ internal static partial class Tests
         using (var vision = TuningVision.Create(model))
         {
             train = TuningSequences(model, tuning, vision);
-            Check(Failure<NotSupportedException>(() => TuningVision.Create(model, parts: [VisionTuningParts.Tower])).Message.Contains("phase 6", StringComparison.Ordinal),
-                "the tower does not train yet");
             Check(Failure<ArgumentException>(() => TuningVision.Create(model, TuningImages.Parse(null, ["no_such_option=1"]))).Message.Contains("no_such_option", StringComparison.Ordinal),
                 "an unknown vision option is refused");
         }

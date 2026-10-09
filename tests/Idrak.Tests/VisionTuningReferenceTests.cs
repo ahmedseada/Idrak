@@ -24,7 +24,7 @@ internal static partial class Tests
         ("vision tuning reference: three SGD steps of LoRA on q, k, v, o with images (ImagePrefill.Forward with autograd, the fixture's initial adapters, the masked mean cross-entropy) give transformers' losses, step-1 gradients and final adapters; with the Gemma 3 projector trained too, its gradients and values", VisionTuningSteps),
         ("vision tuning trainer: FineTuner.Train on the tiny Gemma 3 and LLaVA records (LoRA alone, and with the projector) gives transformers' losses and final adapters and projector; the tower runs once per distinct image (the feature cache serves the later epochs); adapters, projector (modules_to_save) and tuning_images.json saved, read back by LoadAdapter and MergeAdapter into the vision encoder", VisionTuningTrainer),
         ("vision tuning trainer: checkpointed blocks with images give the gradients of stored activations, bit for bit (the image blocks travel with the recompute, the scope closed before the backward pass), through ImagePrefill.Begin and through FineTuner.Train", VisionTuningCheckpointed),
-        ("vision tuning trainer: a vision family no longer registered fails with the registry's message before any step; a text model given images, and a text-only encoder given a transcript with images, fail clearly; the tower is refused for training until it trains in the step", VisionTuningRefusals),
+        ("vision tuning trainer: a vision family no longer registered fails with the registry's message before any step; a text model given images, and a text-only encoder given a transcript with images, fail clearly", VisionTuningRefusals),
     ];
 
     private static string TuningData(string name) => TestData($"vlm-tuning/{name}");

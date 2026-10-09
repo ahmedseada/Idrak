@@ -876,6 +876,17 @@ public static class Idrak.Layers.ImagePrefill
   public static System.Collections.Generic.IReadOnlyList<Idrak.Layers.PromptImage> Locate(System.Collections.Generic.IReadOnlyList<int> ids, int imageToken, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageFeatures> features, int sequence = 0)
   public static System.Collections.Generic.IReadOnlyList<Idrak.Layers.PromptImage> Locate(System.Collections.Generic.IReadOnlyList<int> ids, int imageToken, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor> features, int sequence = 0)
 
+public sealed class Idrak.Layers.ImagePrefillInputs : System.IDisposable
+  public Idrak.Layers.ImagePrefillScope Begin()
+  public bool Fits(int batch, int steps, int imageTokens)
+  public int Batch { get; }
+  public int ImageTokens { get; }
+  public int Steps { get; }
+  public long Bytes { get; }
+  public static Idrak.Layers.ImagePrefillInputs Create(Idrak.Layers.Sequential decoder, int batch, int steps, int imageTokens, Idrak.Abstraction.Generation.IImageAttentionRule attention)
+  public void Dispose()
+  public void Load(System.Collections.Generic.IReadOnlyList<Idrak.Layers.PromptImage> images, Idrak.Layers.PackedSequences? packing = null)
+
 public sealed class Idrak.Layers.ImagePrefillScope : System.IDisposable
   public Idrak.Abstraction.Tensor Substitute(Idrak.Abstraction.Tensor embeddings)
   public int FirstBlock { get; }

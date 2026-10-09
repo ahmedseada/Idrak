@@ -72,6 +72,18 @@ public sealed record VisionEncoderOptions
     /// <c>StoredWeights</c> to honour it.
     /// </summary>
     public EncoderWeights Weights { get; init; }
+
+    /// <summary>
+    /// The vision parts (<see cref="VisionTuningParts"/> names) that train, or take trained values, in this encoder: a
+    /// family builds them with float32 weights whatever <see cref="Weights"/> says, and the rest as <see cref="Weights"/>
+    /// says, so a trained projector over a bfloat16 checkpoint keeps its tower in bfloat16 (half the tower's weight
+    /// memory). Empty (the default): every part as <see cref="Weights"/> says. A family that cannot build its parts apart
+    /// may build the whole encoder in float32 when any is named.
+    /// </summary>
+    public IReadOnlyCollection<string> TrainedParts { get; init; } = [];
+
+    /// <summary>Whether <see cref="TrainedParts"/> names <paramref name="part"/> (ignoring case).</summary>
+    public bool Trains(string part) => TrainedParts.Contains(part, StringComparer.OrdinalIgnoreCase);
 }
 
 /// <summary>How an encoder built from a checkpoint holds its projection weights (<see cref="VisionEncoderOptions.Weights"/>).</summary>
@@ -131,7 +143,10 @@ public interface IVisionTuningPart
 
     /// <summary>
     /// The tower's output for pixel values [images, channels, height, width] (as <see cref="IVisionEncoderStages.PixelValues"/>
-    /// gives them), recording gradients: for training <see cref="VisionTuningParts.Tower"/>.
+    /// gives them, several images' values joined along the first dimension giving each image's output as alone), recording
+    /// gradients: for training <see cref="VisionTuningParts.Tower"/>. While <see cref="ActivationMemory.CheckpointsBlocks"/>
+    /// is on (the tuner checkpoints), the family runs the tower's blocks checkpointed (each block's output kept, the block
+    /// run again in the backward pass), with the same gradients.
     /// </summary>
     /// <exception cref="ArgumentException">The encoder is not one this family built.</exception>
     /// <exception cref="NotSupportedException">The family does not offer <see cref="VisionTuningParts.Tower"/>.</exception>
@@ -156,6 +171,14 @@ public interface IVisionTuningPart
     /// <exception cref="ArgumentException">The encoder is not one this family built, or a tensor's shape is not the part's.</exception>
     /// <exception cref="InvalidOperationException">The part's weights are held packed in this encoder (build it with <see cref="EncoderWeights.Float32"/>).</exception>
     IReadOnlyCollection<string> Import(IVisionEncoder encoder, IReadOnlyDictionary<string, Tensor> tensors);
+
+    /// <summary>
+    /// The parts whose tensors <paramref name="names"/> (checkpoint names, as <see cref="Export"/> gives them) are: the
+    /// parts an encoder must build with float32 weights to take those values (<see cref="VisionEncoderOptions.TrainedParts"/>).
+    /// By default every part the family offers (<see cref="TrainableParts"/>); a family says which, so the others keep the
+    /// checkpoint's precision.
+    /// </summary>
+    IReadOnlyList<string> PartsOf(IEnumerable<string> names) => TrainableParts;
 }
 
 /// <summary>
