@@ -502,8 +502,12 @@ function tableHtml(t) {
 // One answer laid out as a document: the page's text first, then its parts, then every other field.
 function documentHtml(obj, tag) {
   const o = Array.isArray(obj) ? { items: obj } : { ...obj };
-  const c = o.content && typeof o.content === "object" ? { ...o.content } : {};
-  delete o.content;
+  // The page's content: the object holding full_text, under whatever key the model chose ("content" as trained,
+  // "output", ...) or at the top level.
+  const key = Object.keys(o).find(k => o[k] && typeof o[k] === "object" && !Array.isArray(o[k]) && "full_text" in o[k]);
+  let c = {};
+  if (key) { c = { ...o[key] }; delete o[key]; }
+  else if ("full_text" in o) { for (const k of ["subject", "subject_translation", "keywords", "full_text", "has_tables", "tables", "has_lists", "lists", "has_charts", "charts", "legal_articles", "financial_data"]) if (k in o) { c[k] = o[k]; delete o[k]; } }
   const sec = (title, html) => `<section><h3>${title}${tag ? ` <span class="part">${tag}</span>` : ""}</h3>${html}</section>`;
   let h = "";
   if (c.subject) h += `<div class="subject" dir="auto">${esc(c.subject)}</div>`;
@@ -558,7 +562,8 @@ function merged() {
   return JSON.stringify(out, null, 2);
 }
 function fullText() {
-  const texts = (parts.length ? parts : [{ text: rawText }]).map(p => { const v = parsed(p.text); return v && v.content && v.content.full_text; }).filter(Boolean);
+  const find = v => v && typeof v === "object" ? (typeof v.full_text === "string" ? v.full_text : Object.values(v).map(find).find(Boolean)) : null;
+  const texts = (parts.length ? parts : [{ text: rawText }]).map(p => find(parsed(p.text))).filter(Boolean);
   return texts.length ? texts.join("\n\n") : null;
 }
 $("copy").onclick = () => navigator.clipboard.writeText(view === "raw" ? rawText : view === "doc" && fullText() ? fullText() : merged() ?? pretty(rawText));
