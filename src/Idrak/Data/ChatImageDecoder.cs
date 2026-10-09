@@ -65,6 +65,16 @@ public static class ChatImageDecoder
     }
 
     /// <summary>
+    /// The image grey, as Pillow's <c>convert("L")</c> of its 8-bit red, green and blue ((19595 R + 38470 G + 7471 B +
+    /// 32768) &gt;&gt; 16; a grey image keeps its values), one channel: the library's <c>grayscale</c> image transform.
+    /// </summary>
+    public static ImageData Grayscale(ImageData image)
+    {
+        ArgumentNullException.ThrowIfNull(image);
+        return image.Channels == 1 ? image : PillowImageOps.FromBytes(ImagePreprocessor.ToBytes(image, grayscale: true), image.Height, image.Width);
+    }
+
+    /// <summary>
     /// The EXIF orientation of an image file (1 to 8; 1 when it has none): tag 0x0112 of the first IFD, read from a JPEG's
     /// APP1 "Exif" segment or a PNG's eXIf chunk.
     /// </summary>

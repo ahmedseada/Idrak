@@ -60,6 +60,7 @@ public static class Idrak.Data.Abstractions.SampleSources
 public static class Idrak.Data.ChatImageDecoder
   public static Idrak.Abstraction.Data.ImageData Decode(Idrak.Abstraction.Generation.ChatImage image)
   public static Idrak.Abstraction.Data.ImageData Decode(System.ReadOnlySpan<byte> file)
+  public static Idrak.Abstraction.Data.ImageData Grayscale(Idrak.Abstraction.Data.ImageData image)
   public static Idrak.Abstraction.Data.ImageData Orient(Idrak.Abstraction.Data.ImageData image, int orientation)
   public static Idrak.Abstraction.Generation.ChatImage Grayscale(Idrak.Abstraction.Generation.ChatImage image)
   public static int Orientation(System.ReadOnlySpan<byte> file)
@@ -226,6 +227,15 @@ public enum Idrak.Data.ImageResampling : int
   Hamming = 5
   Lanczos = 1
 
+public static class Idrak.Data.JpegEncoder
+  public static byte[] Encode(Idrak.Abstraction.Data.ImageData image, int quality = 75, bool optimize = false, Idrak.Data.JpegSubsampling subsampling = (Idrak.Data.JpegSubsampling)0)
+  public static byte[] Encode(byte[][] planes, int height, int width, int quality = 75, bool optimize = false, Idrak.Data.JpegSubsampling subsampling = (Idrak.Data.JpegSubsampling)0)
+
+public enum Idrak.Data.JpegSubsampling : int
+  Full444 = 2
+  Half420 = 0
+  Half422 = 1
+
 public sealed class Idrak.Data.MinMaxScaler : Idrak.Data.Abstractions.IScaler
   public System.Collections.Generic.IReadOnlyList<float> Min { get; }
   public System.Collections.Generic.IReadOnlyList<float> Range { get; }
@@ -244,6 +254,15 @@ public sealed class Idrak.Data.NpySource : Idrak.Abstraction.Data.ISampleSource,
   public int Count { get; }
   public void Dispose()
   public void Read(int index, System.Span<float> features, System.Span<float> targets)
+
+public static class Idrak.Data.PillowImageOps
+  public static Idrak.Abstraction.Data.ImageData Autocontrast(Idrak.Abstraction.Data.ImageData image, double cutoffLow = 0, double cutoffHigh = 0, int? ignore = null, bool preserveTone = false)
+  public static Idrak.Abstraction.Data.ImageData Brightness(Idrak.Abstraction.Data.ImageData image, double factor)
+  public static Idrak.Abstraction.Data.ImageData Contrast(Idrak.Abstraction.Data.ImageData image, double factor)
+  public static Idrak.Abstraction.Data.ImageData JpegRoundTrip(Idrak.Abstraction.Data.ImageData image, int quality, Idrak.Data.JpegSubsampling subsampling = (Idrak.Data.JpegSubsampling)0)
+  public static Idrak.Abstraction.Data.ImageData Resize(Idrak.Abstraction.Data.ImageData image, int width, int height, Idrak.Data.ImageResampling resampling = (Idrak.Data.ImageResampling)1)
+  public static Idrak.Abstraction.Data.ImageData ScaleDown(Idrak.Abstraction.Data.ImageData image, int maxWidth, int maxHeight, Idrak.Data.ImageResampling resampling = (Idrak.Data.ImageResampling)1)
+  public static Idrak.Abstraction.Data.ImageData Sharpness(Idrak.Abstraction.Data.ImageData image, double factor)
 
 public sealed class Idrak.Data.RandomFlip : Idrak.Abstraction.Data.ISampleTransform
   public RandomFlip(bool horizontal = true, bool vertical = false, double probability = 0.5)

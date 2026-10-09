@@ -11,7 +11,8 @@ namespace Idrak.AspNetCore;
 
 /// <summary>
 /// An /api/chat request. Unknown fields are ignored; any model name selects the served model. <c>vision_options</c>
-/// holds a vision model's family options for this request's images (<see cref="ChatRequest.VisionOptions"/>).
+/// holds a vision model's family options for this request's images (<see cref="ChatRequest.VisionOptions"/>);
+/// <c>image_transforms</c> the image transforms run on them first (<see cref="ChatRequest.ImageTransforms"/>).
 /// </summary>
 public sealed record ChatApiRequest(
     [property: JsonPropertyName("model")] string? Model,
@@ -22,7 +23,8 @@ public sealed record ChatApiRequest(
     [property: JsonPropertyName("options")] Dictionary<string, JsonElement>? Options = null,
     [property: JsonPropertyName("tools")] List<ChatApiTool>? Tools = null,
     [property: JsonPropertyName("grayscale")] bool? Grayscale = null,
-    [property: JsonPropertyName("vision_options")] JsonNode? VisionOptions = null);
+    [property: JsonPropertyName("vision_options")] JsonNode? VisionOptions = null,
+    [property: JsonPropertyName("image_transforms")] JsonNode? ImageTransforms = null);
 
 /// <summary>
 /// A chat message: role (system, user, assistant, tool), content, and optionally reasoning, tool calls or the tool name.

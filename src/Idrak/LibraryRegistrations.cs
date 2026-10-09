@@ -17,6 +17,7 @@ internal static class LibraryRegistrations
     {
         [typeof(DeviceProviders)] = Offloading.ConnectTensors,   // the GPU devices (Idrak.Gpu) are the ones that offload weights
         [typeof(ModelSources)] = Models.LibraryModelFormats.RegisterModelSources,
+        [typeof(ImageTransforms)] = Data.LibraryImageTransforms.RegisterDefaults,   // Pillow's operations, byte for byte
     };
 
     private static void RegisterFor(Type registry)

@@ -93,7 +93,7 @@ internal sealed class ServeHost
 
     /// <summary>The options of serve and ui (besides the model options).</summary>
     public static readonly string[] ValueOptions = ["--host", "--port", "--api-key", "--cors", "--max-concurrency", "--keep-alive", "--log-requests",
-        "--max-request-mb", "--max-images", ModelChoices.VisionOption];
+        "--max-request-mb", "--max-images", ModelChoices.VisionOption, ModelChoices.ImageTransformOption];
 
     /// <summary>The flags of serve and ui.</summary>
     public static readonly string[] Flags = ["--metrics", "--log-content", "--grayscale", "--allow-image-urls"];
@@ -328,7 +328,7 @@ internal sealed class ServeHost
         var vision = Served.Where(m => m.ReadsImages).ToList();
         if (vision.Count > 0)
         {
-            _context.Write($"Images            {string.Join(", ", vision.Select(m => m.Name + (m.Choice.Grayscale ? " (grey)" : "")))}: image_url parts on /v1/chat/completions, "
+            _context.Write($"Images            {string.Join(", ", vision.Select(m => m.Name + (m.Choice.Transforms is { IsEmpty: false } t ? $" ({t})" : "")))}: image_url parts on /v1/chat/completions, "
                 + $"or a form upload to {url}/v1/chat/upload (up to {Settings.MaxImages} per request, {Settings.MaxRequestBytes / (1024 * 1024)} MB a request)");
         }
 
@@ -363,6 +363,7 @@ internal sealed class ServeHost
             ["models"] = new JsonArray([.. Served.Select(m => (JsonNode)new JsonObject
             {
                 ["name"] = m.Name, ["source"] = m.Source, ["path"] = m.Path, ["images"] = m.ReadsImages, ["grayscale"] = m.ReadsImages && m.Choice.Grayscale,
+                ["image_transforms"] = m.ReadsImages && !m.Choice.Transforms.IsEmpty ? m.Choice.Transforms.ToString() : null,
             })]),
         });
         _context.Output.Flush();
@@ -508,7 +509,7 @@ internal sealed class ServeHost
     private Idrak.Generation.ChatImages Images(ServedModel model, TextGenerator generator)
     {
         var pretrained = _loaded.TryGetValue(generator, out var p) ? p : throw new InvalidOperationException($"{model.Name}: the loaded model is unknown.");
-        var images = ImageInputs.For(pretrained, model.Choice.Grayscale, model.Choice.VisionOptions, out string? reason)
+        var images = ImageInputs.For(pretrained, model.Choice.Transforms, model.Choice.VisionOptions, out string? reason)
             ?? throw new InvalidOperationException($"{model.Name} reads no images{(reason is null ? "" : $": {reason}")}.");
         return images.Images;
     }

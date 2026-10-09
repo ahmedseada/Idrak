@@ -48,7 +48,7 @@
   .preview { margin-top: 12px; display: none; }
   .preview img { width: 100%; max-height: 420px; object-fit: contain; border-radius: 10px; border: 1px solid var(--border); background: repeating-conic-gradient(var(--panel-2) 0 25%, var(--panel) 0 50%) 0 0/16px 16px; }
   .preview img.grey { filter: grayscale(1); }
-  .preview .meta { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; margin-top: 6px; gap: 8px; }
+  .preview .meta { display: flex; flex-wrap: wrap; justify-content: space-between; color: var(--muted); font-size: 12px; margin-top: 6px; gap: 4px 8px; overflow-wrap: anywhere; }
   label.field { display: block; margin-bottom: 12px; }
   label.field span { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; font-weight: 500; }
   textarea, input[type=text], input[type=number] { width: 100%; font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid var(--border); border-radius: 9px; padding: 8px 10px; outline: none; transition: border-color .15s; }
@@ -101,8 +101,14 @@
   .two .card { margin-top: 0; }
   @media (max-width: 1200px) { .two { grid-template-columns: 1fr; } }
   .sub-head { font-size: 12px; color: var(--muted); font-weight: 600; margin: 16px 0 8px; display: flex; align-items: center; gap: 8px; }
-  .sub-head .note { font-weight: 400; }
-  .pas-off { display: none !important; }
+  .sub-head .note { font-weight: 400; overflow-wrap: anywhere; min-width: 0; }
+  .pas-off, .card-off { display: none !important; }
+  select { width: 100%; font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid var(--border); border-radius: 9px; padding: 8px 10px; outline: none; }
+  .presets { display: flex; gap: 8px; flex-wrap: wrap; margin: -4px 0 12px; }
+  button.small { font-size: 12px; padding: 4px 10px; }
+  .badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
+  .badge.warn { color: var(--warn); border-color: var(--warn); }
+  .badge.ok { color: var(--good); border-color: var(--good); }
   .error-box { color: var(--bad); background: color-mix(in srgb, var(--bad) 10%, transparent); border: 1px solid var(--bad); padding: 10px 12px; border-radius: 10px; margin-bottom: 12px; display: none; }
 </style>
 </head>
@@ -130,6 +136,7 @@
       <div class="preview" id="preview">
         <img id="img" alt="preview">
         <div class="meta"><span id="imgName"></span><span id="imgSize"></span></div>
+        <div class="meta"><span id="imgWhat">as uploaded</span><span id="imgAfter"></span></div>
       </div>
     </div>
 
@@ -139,6 +146,9 @@
         <textarea id="system" rows="2" dir="auto" placeholder="You are a precise OCR assistant…"></textarea></label>
       <label class="field"><span>Prompt</span>
         <textarea id="prompt" rows="3" dir="auto"></textarea></label>
+      <div class="presets card-off" id="cardPresets">
+        <button class="ghost small" id="cardPrompt" title="The model card's prompt, with no system message">Card prompt: “Extract details to JSON.”</button>
+      </div>
     </div>
 
     <div class="card">
@@ -148,8 +158,20 @@
         <label class="switch"><input type="checkbox" id="grayscale"><span class="track"></span>Grayscale</label>
         <label class="switch"><input type="checkbox" id="pretty"><span class="track"></span>Pretty JSON</label>
         <label class="switch" title="Gemma 3's pan and scan: the whole page, then crops of a tall or wide page at full resolution (256 more image tokens each)"><input type="checkbox" id="panScan"><span class="track"></span>Pan and scan</label>
+        <label class="switch" title="The fine-tune's own preparation of a scan (its model card): grey, at most this wide (aspect kept), contrast raised; done on the server by the library's image transforms, as Pillow does them"><input type="checkbox" id="card"><span class="track"></span>Model-card preprocessing</label>
+      </div>
+      <div class="presets">
+        <button class="ghost small" id="sampling" title="The model's generation_config.json: do_sample with temperature 1, top-k 64, top-p 0.95 (what the card's transformers example runs)">Use the model's sampling settings</button>
+        <button class="ghost small" id="greedy" title="Temperature 0: the same answer every time">Greedy</button>
       </div>
       <div class="grid" id="args"></div>
+      <div class="sub-head card-off" id="cardHead">Model-card preprocessing <span class="note" id="cardNote"></span></div>
+      <div class="grid card-off" id="cardArgs">
+        <label class="field"><span>Max width (px)</span><input type="number" id="c_max_width" min="1" step="1"></label>
+        <label class="field"><span>Contrast</span><input type="number" id="c_contrast" min="0" step="0.05"></label>
+        <label class="field"><span>Resample</span><select id="c_resample"><option value="lanczos">Lanczos</option><option value="bicubic">Bicubic</option><option value="bilinear">Bilinear</option><option value="hamming">Hamming</option><option value="box">Box</option></select></label>
+        <label class="field" title="Re-encode as JPEG at this quality and decode again, as the card's OpenAI/vLLM path does with base64 (95 there); empty: not done"><span>JPEG round trip (quality)</span><input type="number" id="c_jpeg" min="1" max="100" step="1" placeholder="off"></label>
+      </div>
       <div class="sub-head" id="pasHead">Pan and scan <span class="note" id="pasNote">256 image tokens per crop</span></div>
       <div class="grid" id="pas"></div>
     </div>
@@ -164,7 +186,7 @@
   <section>
     <div class="card">
       <div class="result-head">
-        <h2>Result</h2><span class="status" id="status">idle</span>
+        <h2>Result</h2><span class="status" id="status">idle</span><span class="badge" id="jsonBadge" style="display:none" title="Pretty JSON: valid as written, or repaired leniently (the Raw tab keeps the model's text)"></span>
         <span class="spacer"></span>
         <div class="tabs"><button id="viewText" class="on">Text</button><button id="viewRaw">Raw</button></div>
         <button class="ghost" id="copy">Copy</button>
@@ -210,9 +232,13 @@ const PAS = [
   ["pan_and_scan_min_ratio", "Min aspect ratio", 0, 0.05, 1.2]
 ];
 DEFAULTS.panScan = false;
+// The card's preprocessing (bakrianoo/arabic-legal-documents-ocr-1.0): grey, at most 1,024 wide (Lanczos), contrast 1.5.
+DEFAULTS.card = false;
+DEFAULTS.cardArgs = { max_width: 1024, contrast: 1.5, resample: "lanczos", jpeg: "" };
+const CARD_PROMPT = "Extract details to JSON.";
 DEFAULTS.pas = Object.fromEntries(PAS.map(([k, , , , d]) => [k, d]));
 const STORE = "idrak-vision-reader";
-let file = null, controller = null, rawText = "", view = "text", modelInfo = {}, timer = null;
+let file = null, controller = null, rawText = "", view = "text", modelInfo = {}, timer = null, after = null, originalUrl = null, previewSeq = 0, jsonState = null;
 
 for (const [key, label, min, step] of ARGS) {
   const l = document.createElement("label"); l.className = "field";
@@ -228,7 +254,8 @@ for (const [key, label, min, step] of PAS) {
 function load() { try { return JSON.parse(localStorage.getItem(STORE)) || null; } catch { return null; } }
 function save() {
   try {
-    const s = { prompt: $("prompt").value, system: $("system").value, stream: $("stream").checked, grayscale: $("grayscale").checked, pretty: $("pretty").checked, panScan: $("panScan").checked, args: {}, pas: {} };
+    const s = { prompt: $("prompt").value, system: $("system").value, stream: $("stream").checked, grayscale: $("grayscale").checked, pretty: $("pretty").checked, panScan: $("panScan").checked, card: $("card").checked, cardArgs: {}, args: {}, pas: {} };
+    for (const k of Object.keys(DEFAULTS.cardArgs)) s.cardArgs[k] = $("c_" + k).value;
     for (const [k] of ARGS) s.args[k] = $("a_" + k).value;
     for (const [k] of PAS) s.pas[k] = $("p_" + k).value;
     localStorage.setItem(STORE, JSON.stringify(s));
@@ -240,12 +267,32 @@ function apply(s) {
   for (const [k] of ARGS) $("a_" + k).value = s.args[k] ?? DEFAULTS.args[k];
   $("panScan").checked = s.panScan ?? DEFAULTS.panScan;
   for (const [k] of PAS) $("p_" + k).value = (s.pas || {})[k] ?? DEFAULTS.pas[k];
-  $("img").classList.toggle("grey", $("grayscale").checked);
-  crops();
+  $("card").checked = s.card ?? DEFAULTS.card;
+  for (const k of Object.keys(DEFAULTS.cardArgs)) $("c_" + k).value = (s.cardArgs || {})[k] ?? DEFAULTS.cardArgs[k];
+  crops(); cardFields();
 }
-apply({ ...DEFAULTS, ...(load() || {}), args: { ...DEFAULTS.args, ...((load() || {}).args || {}) }, pas: { ...DEFAULTS.pas, ...((load() || {}).pas || {}) } });
-document.querySelectorAll("textarea, input").forEach(e => e.addEventListener("change", () => { save(); $("img").classList.toggle("grey", $("grayscale").checked); crops(); render(); }));
-$("reset").onclick = () => { apply(DEFAULTS); save(); };
+// The image transforms the request asks for (the library's syntax; the server parses and runs them).
+function transforms() {
+  const steps = [];
+  if ($("grayscale").checked || $("card").checked) steps.push("grayscale");
+  if ($("card").checked) {
+    if (+$("c_max_width").value > 0) steps.push(`max_width=${+$("c_max_width").value}`, `resample=${$("c_resample").value}`);
+    if ($("c_contrast").value !== "") steps.push(`contrast=${+$("c_contrast").value}`);
+    if (+$("c_jpeg").value > 0) steps.push(`jpeg=${+$("c_jpeg").value}`);
+  }
+  return steps.join(",");
+}
+function cardFields() {
+  const on = $("card").checked;
+  ["cardHead", "cardArgs", "cardPresets"].forEach(id => $(id).classList.toggle("card-off", !on));
+  $("cardNote").textContent = transforms() || "none";
+}
+apply({ ...DEFAULTS, ...(load() || {}), args: { ...DEFAULTS.args, ...((load() || {}).args || {}) }, pas: { ...DEFAULTS.pas, ...((load() || {}).pas || {}) }, cardArgs: { ...DEFAULTS.cardArgs, ...((load() || {}).cardArgs || {}) } });
+document.querySelectorAll("textarea, input, select").forEach(e => e.addEventListener("change", () => { save(); cardFields(); crops(); render(); if (e.closest("#cardArgs") || e.id === "card" || e.id === "grayscale") showPreview(); }));
+$("reset").onclick = () => { apply(DEFAULTS); save(); showPreview(); };
+$("cardPrompt").onclick = () => { $("prompt").value = CARD_PROMPT; $("system").value = ""; save(); };
+$("sampling").onclick = () => { $("a_temperature").value = 1; $("a_top_k").value = 64; $("a_top_p").value = 0.95; $("a_min_p").value = 0; save(); };
+$("greedy").onclick = () => { $("a_temperature").value = 0; save(); };
 
 // The crops pan and scan would make of the chosen image (transformers' rule; the server's count is the one reported).
 function cropCount(w, h) {
@@ -266,7 +313,7 @@ function crops() {
   const per = (modelInfo.pan_and_scan || {}).tokens_per_crop || 256, img = $("img");
   if (!$("panScan").checked) { $("pasNote").textContent = `off · each crop adds ${per} image tokens`; return; }
   if (!file || !img.naturalWidth) { $("pasNote").textContent = `on · each crop adds ${per} image tokens`; return; }
-  const n = cropCount(img.naturalWidth, img.naturalHeight);
+  const n = cropCount(after ? after.w : img.naturalWidth, after ? after.h : img.naturalHeight);
   $("pasNote").textContent = n === 0 ? `on · this image is not cropped (${per} image tokens)` : `on · this image: ${n} crops, ${(n + 1) * per} image tokens`;
 }
 
@@ -296,13 +343,43 @@ fetch("api/info").then(r => r.json()).then(i => {
 // Image picking: click, drop, paste
 function pick(f) {
   if (!f || !f.type.startsWith("image/") && !/\.(p[gp]m|bmp)$/i.test(f.name)) return;
-  file = f;
-  const url = URL.createObjectURL(f);
-  $("img").src = url;
-  $("img").onload = () => { $("imgSize").textContent = `${$("img").naturalWidth} × ${$("img").naturalHeight} · ${(f.size / 1024).toFixed(0)} KB`; crops(); };
+  file = f; after = null;
+  if (originalUrl) URL.revokeObjectURL(originalUrl);
+  originalUrl = URL.createObjectURL(f);
+  const probe = new Image();
+  probe.onload = () => { $("imgSize").textContent = `${probe.naturalWidth} × ${probe.naturalHeight} · ${(f.size / 1024).toFixed(0)} KB`; crops(); };
+  probe.src = originalUrl;
   $("imgName").textContent = f.name;
   $("preview").style.display = "block";
   $("run").disabled = false;
+  showPreview();
+}
+// The preview shows the image the encoder will read: with transforms, the server's own result (POST /api/preview: the
+// exact pixels, as a BMP); if that fails, the upload with the browser's grey filter, labelled approximate.
+async function showPreview() {
+  if (!file) return;
+  const pipeline = transforms(), seq = ++previewSeq, img = $("img");
+  img.classList.remove("grey");
+  if (!pipeline) { img.src = originalUrl; after = null; $("imgWhat").textContent = "as uploaded (no transforms)"; $("imgAfter").textContent = ""; crops(); return; }
+  $("imgWhat").textContent = "transforming on the server…";
+  try {
+    const fd = new FormData(); fd.append("image", file); fd.append("image_transforms", pipeline); fd.append("grayscale", "false");
+    const r = await fetch("api/preview", { method: "POST", body: fd });
+    if (!r.ok) { const e = await r.json().catch(() => ({ error: r.statusText })); throw new Error(e.error || r.statusText); }
+    const blob = await r.blob();
+    if (seq !== previewSeq) return;
+    const [w, h, c] = (r.headers.get("X-Image-Size") || "0x0x0").split("x").map(Number);
+    after = { w, h, c };
+    if (img.dataset.url) URL.revokeObjectURL(img.dataset.url);
+    img.dataset.url = URL.createObjectURL(blob); img.src = img.dataset.url;
+    $("imgWhat").textContent = `after ${pipeline} (server, exact)`;
+    $("imgAfter").textContent = `${w} × ${h} · ${c === 1 ? "grey" : "colour"} · ${r.headers.get("X-Transform-Ms")} ms`;
+  } catch (e) {
+    if (seq !== previewSeq) return;
+    after = null; img.src = originalUrl; img.classList.toggle("grey", pipeline.includes("grayscale"));
+    $("imgWhat").textContent = `approximate (browser filter): ${e.message}`; $("imgAfter").textContent = "";
+  }
+  crops();
 }
 $("file").onchange = e => pick(e.target.files[0]);
 const drop = $("drop");
@@ -312,11 +389,47 @@ drop.addEventListener("drop", e => pick(e.dataTransfer.files[0]));
 document.addEventListener("paste", e => { const f = [...e.clipboardData.files][0]; if (f) pick(f); });
 
 // Output views
+// Pretty JSON: strict first; when that fails, a lenient repair as the card's json_repair would (trailing commas, a
+// string, array or object left open at the end, a dangling key, smart quotes as delimiters). The Raw tab keeps the text.
 function pretty(t) {
+  jsonState = null;
   if (!$("pretty").checked) return t;
   const s = t.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
-  if (!/^[\[{]/.test(s)) return t;
-  try { return JSON.stringify(JSON.parse(s), null, 2); } catch { return t; }
+  if (!/^[\[{]/.test(s)) { jsonState = "not JSON"; return t; }
+  try { const v = JSON.parse(s); jsonState = "valid"; return JSON.stringify(v, null, 2); } catch {}
+  const fixed = repairJson(s);
+  if (fixed !== null) { jsonState = "repaired"; return JSON.stringify(fixed, null, 2); }
+  jsonState = "invalid (not repaired)"; return t;
+}
+function repairJson(s) {
+  const attempts = [s, s.replace(/[\u201C\u201D\u201E\u201F\u2033]/g, '"').replace(/[\u2018\u2019]/g, "'")];
+  for (const a of attempts) {
+    for (const candidate of closeJson(a)) { try { return JSON.parse(candidate); } catch {} }
+  }
+  return null;
+}
+// Candidates: trailing commas dropped (outside strings), then whatever is left open closed in order.
+function closeJson(s) {
+  let out = "", stack = [], inString = false, escape = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (inString) {
+      out += ch;
+      if (escape) escape = false; else if (ch === "\\") escape = true; else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') { inString = true; out += ch; continue; }
+    if (ch === "{" || ch === "[") stack.push(ch === "{" ? "}" : "]");
+    if (ch === "}" || ch === "]") { out = out.replace(/,\s*$/, ""); if (stack.length && stack[stack.length - 1] === ch) stack.pop(); }
+    out += ch;
+  }
+  if (inString) { if (escape) out = out.slice(0, -1); out += '"'; }
+  let tail = out.replace(/[\s,]+$/, "");
+  const close = stack.slice().reverse().join("");
+  const list = [tail + close];
+  if (/:\s*$/.test(tail)) list.unshift(tail + " null" + close);
+  if (/[{,]\s*"[^"]*"$/.test(tail)) list.push(tail + ": null" + close, tail.replace(/,?\s*"[^"]*"$/, "") + close);
+  return list;
 }
 function render(streaming) {
   const out = $("output");
@@ -324,6 +437,9 @@ function render(streaming) {
   const t = view === "raw" || streaming ? rawText : pretty(rawText);
   out.classList.toggle("mono", view === "raw" || t !== rawText);
   out.textContent = t;
+  const b = $("jsonBadge");
+  b.style.display = !streaming && jsonState && jsonState !== "not JSON" && view !== "raw" ? "" : "none";
+  b.textContent = "JSON " + (jsonState || ""); b.className = "badge " + (jsonState === "valid" ? "ok" : "warn");
   if (streaming) { const c = document.createElement("span"); c.className = "caret"; out.appendChild(c); out.scrollTop = out.scrollHeight; }
 }
 $("viewText").onclick = () => { view = "text"; $("viewText").classList.add("on"); $("viewRaw").classList.remove("on"); render(); };
@@ -365,6 +481,7 @@ function figures(m, img) {
     ["Time to first token", `${fmt(m.time_to_first_token_ms)} ms`], ["Image encode", `${fmt(m.image_encode_ms)} ms`],
     ["Queue wait", `${fmt(m.queue_ms)} ms`], ["Total (wall)", `${fmt(m.total_ms)} ms`], ["Total (library)", `${fmt(m.library_total_ms)} ms`],
     ["Context resets", fmt(m.context_resets)], ["Streamed pieces", fmt(m.streamed_pieces)], ["Characters", fmt(m.characters)],
+    ["JSON", jsonState ?? "–"],
     ["Device memory in use", `${fmt(m.device_memory_in_use_mb)} MB`], ["Device memory peak", `${fmt(m.device_memory_peak_mb)} MB`],
     ["Device memory cached", `${fmt(m.device_memory_cached_mb)} MB`], ["Device memory limit", m.device_memory_limit_mb ? `${fmt(m.device_memory_limit_mb)} MB` : "–"],
     ["Process working set", `${fmt(m.process_working_set_mb)} MB`]
@@ -376,6 +493,9 @@ function imageTable(img) {
   table("mImage", [
     ["File", img ? img.file : "–"], ["Format", img ? img.format : "–"], ["Size", img ? `${img.width} × ${img.height} · ${img.channels} ch` : "–"],
     ["Bytes", img ? fmt(img.bytes) : "–"], ["Decode", img ? `${fmt(img.decode_ms)} ms` : "–"], ["Grayscale", img ? (img.grayscale ? "yes" : "no") : "–"],
+    ["Model-card preprocessing", img ? (img.model_card ? "on" : "off") : "–"],
+    ["Transforms", img ? img.image_transforms ?? "none" : "–"],
+    ["Size after transforms", img && img.transformed_width ? `${img.transformed_width} × ${img.transformed_height} · ${img.transformed_channels} ch · ${fmt(img.transform_ms)} ms` : "–"],
     ["Pan and scan", img ? (img.pan_and_scan ? "on" : "off") : "–"],
     ["Crops", img ? fmt(img.crops) : "–"],
     ["Image tokens", img ? (img.image_blocks > 1 ? `${fmt(img.image_tokens)} (${img.image_blocks} × ${fmt(img.image_tokens / img.image_blocks)})` : fmt(img.image_tokens)) : "–"],
@@ -392,7 +512,8 @@ $("run").onclick = async () => {
   save(); showError(""); rawText = ""; render(true);
   const fd = new FormData();
   fd.append("image", file); fd.append("prompt", $("prompt").value); fd.append("system", $("system").value);
-  fd.append("stream", $("stream").checked); fd.append("grayscale", $("grayscale").checked);
+  fd.append("stream", $("stream").checked); fd.append("grayscale", $("grayscale").checked || $("card").checked);
+  fd.append("model_card", $("card").checked); fd.append("image_transforms", transforms());
   for (const [k] of ARGS) if ($("a_" + k).value !== "") fd.append(k, $("a_" + k).value);
   fd.append("pan_and_scan", $("panScan").checked);
   for (const [k] of PAS) if ($("p_" + k).value !== "") fd.append(k, $("p_" + k).value);

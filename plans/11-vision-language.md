@@ -1,6 +1,6 @@
 # Plan 11: images into language models (Gemma 3 first)
 
-**Status:** planned 2026-10-07, revised the same day against the code; phase 0 (the reference) done 2026-10-08, phase 4 (loading, text side), phase 3b (the SigLIP encoder and the projector) and phase 5 (image tokens in the decoder) done 2026-10-08 on CPU and Vulkan (phase 5 on CUDA too), phase 7 (the command line, before phase 6 by the author's choice) built 2026-10-08 and checked on the real model on the author's RTX 5070 Ti 2026-10-09, phase 8 (images in `idrak serve`: `/v1` image_url data URLs, a multipart upload, `/api/chat`) built 2026-10-09 without phase 6 (stopped by the author) and passing with the tiny model on CPU, phase 1 (contracts) done 2026-10-07 on the CPU, phase 10 (vision contracts: the library registers no family, Gemma 3 vision a plug-in in samples/Gemma3Vision, a tiny LLaVA from outside) done 2026-10-09 on CPU and Vulkan; pan and scan (one image as several blocks; Gemma 3's crops in its plug-in, per-request vision options) done 2026-10-09 on CPU and Vulkan; plan 10's wave 4 is done. Asked for to run `bakrianoo/arabic-legal-documents-ocr-1.0`, a fine-tune of Gemma-3-4B-IT that reads scanned
+**Status:** planned 2026-10-07, revised the same day against the code; phase 0 (the reference) done 2026-10-08, phase 4 (loading, text side), phase 3b (the SigLIP encoder and the projector) and phase 5 (image tokens in the decoder) done 2026-10-08 on CPU and Vulkan (phase 5 on CUDA too), phase 7 (the command line, before phase 6 by the author's choice) built 2026-10-08 and checked on the real model on the author's RTX 5070 Ti 2026-10-09, phase 8 (images in `idrak serve`: `/v1` image_url data URLs, a multipart upload, `/api/chat`) built 2026-10-09 without phase 6 (stopped by the author) and passing with the tiny model on CPU, phase 1 (contracts) done 2026-10-07 on the CPU, phase 10 (vision contracts: the library registers no family, Gemma 3 vision a plug-in in samples/Gemma3Vision, a tiny LLaVA from outside) done 2026-10-09 on CPU and Vulkan; pan and scan (one image as several blocks; Gemma 3's crops in its plug-in, per-request vision options) done 2026-10-09 on CPU and Vulkan; image transforms (a contract and registry; Pillow-exact grayscale, resize, contrast, brightness, sharpness, autocontrast and a JPEG round trip with a libjpeg-turbo-exact encoder; a model card's preprocessing as a string) done 2026-10-09 on CPU; plan 10's wave 4 is done. Asked for to run `bakrianoo/arabic-legal-documents-ocr-1.0`, a fine-tune of Gemma-3-4B-IT that reads scanned
 Arabic legal documents (low quality scans included) and returns their contents as structured data. Its card asks for
 images resized and turned to grayscale first, and shows it running through transformers and vLLM.
 
@@ -773,6 +773,129 @@ float32 per layer, under half a GB, plus 72 MB per image of span attention. The 
 worst case: 1,280 image tokens + about 60 of the processor's text + the prompt + its default 4,096 answer tokens is
 about 5,500. Note that Gemma 3's local layers see 1,024 tokens back, so with 4 crops the last crop's tokens no longer
 see the whole page's block on those layers (as in transformers).
+
+## Image transforms, as built (2026-10-09): a model card's preprocessing, Pillow's bytes exactly
+
+**Why.** The card of `bakrianoo/arabic-legal-documents-ocr-1.0` prepares every scan in Pillow before the processor:
+`convert('L')`; when wider than 1,024, `resize((1024, int(h * (1024 / float(w)))), Image.LANCZOS)`;
+`ImageEnhance.Contrast(...).enhance(1.5)`; on its OpenAI/vLLM path also `save(format='JPEG', quality=95,
+optimize=True)` and base64. Its prompt is "Extract details to JSON." with no system message; its transformers example
+calls `generate(max_new_tokens=2048)` without `do_sample`, so the fine-tune's `generation_config.json` samples
+(`do_sample`, top-k 64, top-p 0.95, temperature 1), and it parses the answer with `json_repair.loads`. These steps are
+the fine-tune's, not Gemma 3's and not the library's: the library offers generic transforms, and the card's pipeline is
+a string an app passes (`grayscale,max_width=1024,contrast=1.5`, plus `,jpeg=95` for the vLLM path).
+
+**Contract and registry** (decision 10: `ChatRequest` in Abstraction carries a pipeline, Nlp runs it, AspNetCore
+parses it, core implements the library's; so all in `Idrak.Abstraction.Data`, beside `ImageData`; the inventory and the
+public API files are updated):
+
+- `IImageTransform` (`Name`, `Summary`, `Keys`: the option keys besides its value, `Check(step)`, `Apply(ImageData,
+  step)`): decoded pixels in ([C, H, W] in [0, 1]), decoded pixels out.
+- `ImageTransformStep` (`Name`, `Value`, `Options`; `Number`, `Integer`, `Option`, `ThrowIfValue`,
+  `ThrowIfUnknownOptions`) and `ImageTransformPipeline` (`Steps` in the user's order, `Parse(text)`, `FromJson`,
+  `Then`, `Contains`, `Apply`, `ToJson`, `Empty`; equal by their text). Text: comma-separated `name` or `name=value`;
+  an item naming an option of the step before it belongs to that step (`max_width=1024,resample=bicubic`); `none` or
+  empty: no steps. JSON: that text, or an array of texts and objects `{"name", "value", ...options}`. An unknown
+  name, an option of another step or before any step, and a bad value are an `ArgumentException` naming the
+  registered transforms (and the step's keys).
+- Registry `ImageTransforms` on a `SlotTable` (`Register`, `Unregister`, `Find`, `Get`, `Names`, `Default`, `Origin`,
+  `SetPolicy`, `Describe`; guarded: an app's transform over a library name falls back or is shadowed per call). The
+  library's are library defaults, registered by core's `LibraryRegistrations` on first use (`LibraryImageTransforms`).
+  A test registers its own (`invert`) from outside the library, runs it in a pipeline and unregisters it.
+- `ChatRequest.ImageTransforms` (null: the model's; empty: none) beside `VisionOptions`, and `ChatImages.Transforms`
+  (every image's, replaced by a request's); `ChatImages.Read(image, request)` decodes then transforms, and
+  `ChatGenerator` reads every image through it (`RenderPrompt` and `Stream`), so blocks, prompt and features all see
+  the transformed image. Not a family option: nothing in it knows Gemma 3.
+
+**The library's transforms** (`Idrak.Data.PillowImageOps`, public, and the registry's names), each copying Pillow 12's
+C: 8-bit planes read as `ImagePreprocessor` reads them (Pillow's bytes), results given back as byte / 255.
+
+| Name | Pillow | How it is exact |
+|---|---|---|
+| `grayscale` | `convert("L")` | `ChatImageDecoder.Grayscale(ImageData)` (new overload; the `ChatImage` one and the preprocessor share its arithmetic): (19595 R + 38470 G + 7471 B + 32768) >> 16 |
+| `max_width=N`, `max_height=N` (`resample=lanczos` default, `bicubic`, `bilinear`, `box`, `hamming`) | the card's `ratio = N / float(w)`, `int(h * ratio)`, `resize(..., resample)` | the ratio in double and truncated as Python does (at least 1); `ImagePreprocessor`'s `ImagingResample` (22-bit weights, two passes, 8-bit rounding) reused; an image within the limit is untouched |
+| `contrast=F` | `ImageEnhance.Contrast` | the mean of the L image's histogram (`sum / count` in double, `int(mean + 0.5)`), a flat image of it (grey to RGB for colour), then `Blend.c`: `in1 + alpha * (in2 - in1)` in float32 with alpha cast to float, truncated to a byte, clipped when alpha is outside [0, 1]; alpha 0 and 1 copy |
+| `brightness=F` | `ImageEnhance.Brightness` | the blend with black |
+| `sharpness=F` | `ImageEnhance.Sharpness` | `Filter.c`'s 3 x 3 `SMOOTH` (weights 1/13 and 5/13 in float32, offset 0.5, sums in Pillow's order, clamp then truncate, border rows and columns copied, images under 3 pixels copied), then the blend |
+| `autocontrast[=CUTOFF]` (`ignore=V`, `preserve_tone=true`) | `ImageOps.autocontrast` | per-channel histograms (or the L one with `preserve_tone`), the cutoff with CPython's float floor division, `int(i * scale + offset)` clipped, a lookup table |
+| `jpeg=Q` (`subsampling=4:2:0` default for colour, `4:2:2`, `4:4:4`) | `save("JPEG", quality=Q, optimize=True)`, then open | the new `JpegEncoder` (below), then the library's JPEG decoder (Pillow's pixels since phase 2) |
+
+**The JPEG encoder** (`Idrak.Data.JpegEncoder.Encode(ImageData or planes, quality, optimize, JpegSubsampling)`,
+public; not an `IImageCodec`, which decodes only): libjpeg-turbo 3.1 as Pillow drives it. JFIF 1.01 header; the Annex
+K tables scaled by `jpeg_quality_scaling` with `force_baseline` (1 to 255); grey as one component (1 x 1, Pillow's
+default for L), colour as YCbCr with `jccolor.c`'s 16-bit tables; `jcsample.c`'s h2v1 (bias 0, 1) and h2v2 (bias 1,
+2) averaging over edges replicated as `jcprepct.c`/`expand_right_edge` pad them; `jfdctint.c`'s islow forward DCT;
+`jcdctmgr.c`'s quantization by reciprocals for a 16-bit DCTELEM (libjpeg-turbo built with SIMD, as Pillow's wheels;
+`compute_reciprocal`, its correction and shift); `jccoefct.c`'s dummy blocks at the MCU edges (zero AC, DC of the
+block before, or of the row above's last block in the MCU); standard Huffman tables, or with `optimize` the image's
+own from `jpeg_gen_optimal_table` (with the reserved symbol and the over-16-bit folding); markers in libjpeg's order
+(DQT per table, SOF0, DHT DC/AC per table, SOS), byte stuffing and one-bits padding.
+
+**Measured against Pillow 12.3.0 / libjpeg-turbo 3.1.4.1** (`tools/vlm/make_image_transforms.py` →
+`tests/Idrak.Tests/data/image-transforms`, 2.0 MB; reruns write the same bytes; `IDRAK_FILTER="image transforms"`):
+
+- **All 238 transform cases give Pillow's bytes exactly (max difference 0, by SHA-256 of every output, with the
+  largest difference reported from the PNG when one differs):** 29 pipelines (every transform, every resample, factors
+  0, 0.5, 1, 1.5, 3.25, cutoffs and `ignore`, `preserve_tone`, a limit larger than the image, the card's pipeline and
+  the reversed order `contrast=1.5,grayscale`, `jpeg` at 30, 75, 95 and with 4:4:4 and 4:2:2) on 8 inputs (the colour,
+  grey, RGBA phase-0 images, a 17 x 13 4:2:0 JPEG, a 45 x 37 grey progressive JPEG, an EXIF JPEG, 37 x 23 and 61 x
+  203), plus 6 pipelines on the 1,654 x 2,339 scan (the card's, with `jpeg=95`, bicubic, bilinear `max_height` with
+  sharpness and autocontrast, `jpeg=95` in colour and grey).
+- **The JPEG encoder: all 51 files are byte for byte Pillow's** (so their pixels are too): the 8 small inputs at
+  quality 95, 75, 10 and 100 (4:2:0), 90 (4:4:4) and 85 (4:2:2), the scan at 95 (4:2:0) and 80 (4:4:4) in colour and at
+  95 in grey (772 KB). Optimized tables are smaller than the standard ones and leave the pixels unchanged (asserted).
+- The one caveat, outside these files: the enhancers' blend and the smoothing filter are float32 in Pillow's C. Pillow's
+  x86-64 wheels do not fuse multiply-adds there and neither does .NET; a Pillow compiled to contract them (some ARM
+  builds) could differ by 1 at a few pixels. Integer steps (L, resize, JPEG) have no such dependence.
+- Speed (this container, 4 threads): the card's pipeline on the 1,654 x 2,339 scan, about 90 ms (the web sample's
+  figure; Pillow's resize alone is about as fast).
+
+**Through the stack** (all family-neutral; the card's pipeline is only ever a string):
+
+- CLI: `--image-transform P` (repeatable, joined in order) on `run`, `chat`, `serve`/`ui` and `vlm check`; `alias set
+  --image-transform P` keeps it as `"image_transforms"` (the command line's replaces the alias's; `none` for none).
+  `--grayscale` (and an alias's `"grayscale": true`) is now sugar for the `grayscale` step first (when the pipeline has
+  none): the encoder is built without its own grey, and every grey path gives the reference's pixels as before. `run -j`
+  reports `image_transforms`; `serve`'s announcement and `--json` name each model's transforms.
+- Serve and `MapCompletionsApi`/`MapChatApi`: `"image_transforms"` (text or array) on `/v1/chat/completions` and
+  `/api/chat`, and an `image_transforms` form field on `/v1/chat/upload` (`ImageRequests.WithImageTransforms`); a
+  request's replace the server's; an unknown name or bad value is a 400 naming the registered transforms.
+- `vlm check`: the manifest's `"image_transforms"` (written by `compare_real.py --image-transform`) run on the image
+  before the family's preprocessing, or `--image-transform` instead.
+- Web sample: a "Model-card preprocessing" switch in the Settings row (remembered), showing Max width (1024), Contrast
+  (1.5), Resample (Lanczos) and an optional JPEG round trip (the vLLM path); a "Card prompt" button ("Extract details
+  to JSON.", no system message); "Use the model's sampling settings" (temperature 1, top-k 64, top-p 0.95) and
+  "Greedy" buttons (greedy stays the default). The page sends `image_transforms` (and `model_card`) to `/api/read`;
+  the preview is the server's own transformed pixels (`POST /api/preview`, an exact BMP; on failure the upload with
+  the browser's grey filter, labelled approximate); the figures give the transforms, the size after them and their
+  time. Pretty JSON tries a lenient repair when strict parsing fails (trailing commas, a string, array or object left
+  open, a dangling key, smart quotes as delimiters) and says "JSON repaired"; the Raw tab keeps the model's text. No
+  JSON-repair dependency anywhere. The OCR sample takes `--image-transform`.
+- Tools: `tools/vlm/image_transforms.py` (the Pillow reference of the syntax); `compare_real.py --image-transform`
+  (after the EXIF orientation and `--grayscale`; recorded as `"image_transforms"`); `tools/vlm/ocr_transformers.py`,
+  standalone: transformers' answer for a scan with the same transforms, the card's prompt by default, `--prompt`/
+  `--prompt-file`, `--system`, `--grayscale`, `--pan-and-scan`, `--vision-float32`, `--max-tokens` (2048), greedy
+  unless `--sample` (the model's generation config; `--seed`), the answer as UTF-8 at `--out` and a `.json` of figures
+  beside it (sizes before and after, tokens, blocks, timings, versions, and whether the answer is JSON, repaired by
+  `json_repair` when that package is installed).
+
+**Tests** (CPU): `image transforms` (5 + the tiny model): the Pillow cases above; pipeline parsing (text and JSON,
+order, case, round trip, 15 refusals with their messages, the card's truncation arithmetic); the registry (library
+defaults, an outside transform); and the tiny Gemma 3 with `compare_real.py --image-transform
+grayscale,max_width=64,contrast=1.5` on `image.jpg` (`tests/Idrak.Tests/data/vlm/compare/transformed`): a request's
+transforms give transformers' pixels and features within 1e-5 and its 20 greedy tokens, as do `ChatImages.Transforms`,
+and an empty pipeline on the request turns them off. `cli images` (vlm check on the transformed folder agrees at all
+20 steps; without the transforms its pixels do not), `aspnetcore: images` (`/v1` with text and array forms, the
+upload, `/api/chat`: the reference's 20 tokens; refusals), `cli serve: images` (`run --image-transform`, `--grayscale`
+plus two `--image-transform`, an alias, `none` over it, an unknown name; `serve --grayscale --image-transform` answers
+an upload as `run`, and a request's own transforms replace the server's). Also passing: `image preprocessing`, `jpeg`,
+`cli serve`, `aspnetcore`, `vision contracts`, `pan and scan`, `outside plug-in`, `cli run`, `cli models`,
+`cli design`, `cli polish` (it needed two old fixes: `vlm check`'s summary was over 120 characters and its help did not
+describe `--context` and `--adapter`), `abstraction inventory`, `public API`.
+
+**Not done.** The real model with the card's pipeline is the author's to run (commands in the hand-back). The
+transforms run once more in the web sample than they need to (once for its figures and preview, once in the chat
+generator), which costs about 90 ms a request.
 
 ## Performance targets (author's RTX 5070 Ti, the real 4B model)
 

@@ -7,6 +7,10 @@
 // uploads at POST /api/read, streamed (server-sent events) or as one JSON document, with every figure it measures.
 // Pan and scan (Gemma 3's crops of a tall or wide page, each 256 more image tokens) is a per-request setting, sent to the
 // family as vision options (its defaults: the model's preprocessor_config.json, else Gemma3Processor's: off).
+// Image transforms (the library's, Pillow's operations byte for byte) run on the decoded scan first: a fine-tune's card
+// can ask for its own preparation, such as bakrianoo/arabic-legal-documents-ocr-1.0's grey, at most 1,024 pixels wide
+// (Lanczos), contrast 1.5: the page sends it as image_transforms ("grayscale,max_width=1024,contrast=1.5"), and
+// POST /api/preview answers the transformed image (a BMP of the exact pixels the encoder reads).
 //
 //   dotnet run -c Release --project samples/Gemma3Vision/Idrak.Samples.Gemma3Web -- MODEL [options]
 //
@@ -86,8 +90,8 @@ var cacheFormat = kv.ToLowerInvariant() switch
     _ => KeyValueFormat.Float32,
 };
 
-// Grey images are made per request (ChatImageDecoder.Grayscale), and pan and scan is a request's vision options, so one
-// encoder serves every request.
+// Grey images and the other image transforms are a request's (ChatRequest.ImageTransforms), and pan and scan is a
+// request's vision options, so one encoder serves every request.
 using var encoder = new TimedEncoder(vision.CreateEncoder(new VisionEncoderOptions { Device = pretrained.Device }));
 var panAndScan = (vision as Gemma3Vision)?.PanAndScan ?? Gemma3PanAndScan.Default;
 var chat = pretrained.CreateChat(cacheFormat, context);
@@ -132,6 +136,48 @@ app.UseStaticFiles();
 
 app.MapGet("/api/info", () => Results.Json(info, json));
 
+// The image transforms of a form: "image_transforms" (a pipeline's text), with "grayscale" adding the grayscale step
+// first when the pipeline has none. An unknown name or a bad value is an ArgumentException naming the registered ones.
+static ImageTransformPipeline TransformsOf(IFormCollection form)
+{
+    string text = form.TryGetValue("image_transforms", out var t) ? t.ToString() : "";
+    var pipeline = ImageTransformPipeline.Parse(text);
+    bool grey = !form.TryGetValue("grayscale", out var g) || g.ToString() is "true" or "on" or "1";   // grey unless asked otherwise, as before
+    return grey && !pipeline.Contains("grayscale") ? ImageTransformPipeline.Parse("grayscale").Then(pipeline) : pipeline;
+}
+
+// The transformed image, as the encoder will read it: a BMP of its exact pixels (the page shows it as the preview).
+app.MapPost("/api/preview", async (HttpContext http, CancellationToken cancel) =>
+{
+    if (!http.Request.HasFormContentType)
+    {
+        return Results.BadRequest(new { error = "send multipart/form-data with an 'image' file" });
+    }
+
+    var form = await http.Request.ReadFormAsync(cancel);
+    if (form.Files.GetFile("image") is not { Length: > 0 } file)
+    {
+        return Results.BadRequest(new { error = "no image: add a file field named 'image'" });
+    }
+
+    using var memory = new MemoryStream();
+    await file.CopyToAsync(memory, cancel);
+    try
+    {
+        var pipeline = TransformsOf(form);
+        var watch = Stopwatch.StartNew();
+        var transformed = pipeline.Apply(ChatImageDecoder.Decode(memory.ToArray()));
+        http.Response.Headers["X-Image-Transforms"] = pipeline.IsEmpty ? "none" : pipeline.ToString();
+        http.Response.Headers["X-Image-Size"] = $"{transformed.Width}x{transformed.Height}x{transformed.Channels}";
+        http.Response.Headers["X-Transform-Ms"] = watch.Elapsed.TotalMilliseconds.ToString("F1", CultureInfo.InvariantCulture);
+        return Results.Bytes(Bmp(transformed), "image/bmp");
+    }
+    catch (Exception ex) when (ex is ArgumentException or InvalidDataException or NotSupportedException)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+});
+
 app.MapPost("/api/read", async (HttpContext http, CancellationToken cancel) =>
 {
     if (!http.Request.HasFormContentType)
@@ -168,7 +214,17 @@ app.MapPost("/api/read", async (HttpContext http, CancellationToken cancel) =>
 
     var system = Text("system", "");
     var prompt = Text("prompt", "Extract the contents of this document.");
-    bool stream = Bool("stream", true), grayscale = Bool("grayscale", true);
+    bool stream = Bool("stream", true), modelCard = Bool("model_card", false);
+    ImageTransformPipeline transforms;
+    try
+    {
+        transforms = TransformsOf(form);
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.BadRequest(new { error = $"image_transforms: {ex.Message}" });
+    }
+
     // Greedy decoding can fall into a cycle on a page's stamps and watermarks (the model, not the decoder): stop when the
     // same line comes this many times in a row (0: never), and keep one copy of it.
     int loopLines = Math.Max(0, Int("stop_repeated_lines", 3));
@@ -216,10 +272,12 @@ app.MapPost("/api/read", async (HttpContext http, CancellationToken cancel) =>
     }
 
     double decodeMs = decodeWatch.Elapsed.TotalMilliseconds;
-    if (grayscale)
-    {
-        image = ChatImageDecoder.Grayscale(image);
-    }
+
+    // The transforms, here for the figures (the size the encoder sees); the chat generator runs them again on the
+    // request's image (ChatRequest.ImageTransforms), as any app passing them would.
+    var transformWatch = Stopwatch.StartNew();
+    var transformed = transforms.Apply(decoded);
+    double transformMs = transformWatch.Elapsed.TotalMilliseconds;
 
     var messages = new List<ChatMessage>();
     if (system.Length > 0)
@@ -228,13 +286,13 @@ app.MapPost("/api/read", async (HttpContext http, CancellationToken cancel) =>
     }
 
     messages.Add(new ChatMessage("user", [image, new ChatText(prompt)]));
-    var request = new ChatRequest(messages) { Options = generation, VisionOptions = requested };
+    var request = new ChatRequest(messages) { Options = generation, VisionOptions = requested, ImageTransforms = transforms };
 
     // The image's blocks under these options: the whole page, then its crops (pan and scan), 256 tokens each.
     IReadOnlyList<ImageTokenLayout> blocks;
     try
     {
-        blocks = encoder.Blocks(decoded, requested);
+        blocks = encoder.Blocks(transformed, requested);
     }
     catch (ArgumentException ex)
     {
@@ -251,7 +309,13 @@ app.MapPost("/api/read", async (HttpContext http, CancellationToken cancel) =>
         ["width"] = decoded.Width,
         ["height"] = decoded.Height,
         ["channels"] = decoded.Channels,
-        ["grayscale"] = grayscale,
+        ["grayscale"] = transforms.Contains("grayscale"),
+        ["model_card"] = modelCard,
+        ["image_transforms"] = transforms.IsEmpty ? "none" : transforms.ToString(),
+        ["transformed_width"] = transformed.Width,
+        ["transformed_height"] = transformed.Height,
+        ["transformed_channels"] = transformed.Channels,
+        ["transform_ms"] = Math.Round(transformMs, 1),
         ["pan_and_scan"] = settings.Enabled,
         ["pan_and_scan_settings"] = settings.ToString(),
         ["crops"] = blocks.Count - 1,
@@ -432,6 +496,39 @@ static int? RepeatedTail(string text, int n)
     }
 
     return keep;
+}
+
+// An uncompressed 24-bit BMP of an image's pixels (grey repeated to the three channels), bottom row first.
+static byte[] Bmp(ImageData image)
+{
+    int w = image.Width, h = image.Height, c = image.Channels, stride = (w * 3 + 3) & ~3, size = 54 + stride * h;
+    var bmp = new byte[size];
+    void Int(int at, int v) => BitConverter.TryWriteBytes(bmp.AsSpan(at, 4), v);
+    bmp[0] = (byte)'B';
+    bmp[1] = (byte)'M';
+    Int(2, size);
+    Int(10, 54);
+    Int(14, 40);
+    Int(18, w);
+    Int(22, h);
+    bmp[26] = 1;
+    bmp[28] = 24;
+    Int(34, stride * h);
+    var p = image.Pixels;
+    for (int y = 0; y < h; y++)
+    {
+        int row = 54 + (h - 1 - y) * stride;
+        for (int x = 0; x < w; x++)
+        {
+            int at = y * w + x;
+            byte Value(int ch) => (byte)Math.Clamp((int)MathF.Round(p[Math.Min(ch, c - 1) * w * h + at] * 255f), 0, 255);
+            bmp[row + 3 * x] = Value(2);
+            bmp[row + 3 * x + 1] = Value(1);
+            bmp[row + 3 * x + 2] = Value(0);
+        }
+    }
+
+    return bmp;
 }
 
 static async Task Send(HttpContext http, string name, object data, JsonSerializerOptions json, CancellationToken cancel)
