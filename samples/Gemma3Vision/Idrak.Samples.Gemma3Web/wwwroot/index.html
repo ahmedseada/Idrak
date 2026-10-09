@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Idrak Vision Reader</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Naskh+Arabic:wght@400;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f5f6fa; --panel: #ffffff; --panel-2: #f0f2f7; --border: #e2e5ee; --text: #161a23; --muted: #667085;
+    --accent: #4f46e5; --accent-2: #7c3aed; --accent-soft: #eef0ff; --good: #12805c; --bad: #c4321c; --warn: #b26b00;
+    --shadow: 0 1px 2px rgba(16,24,40,.05), 0 8px 24px rgba(16,24,40,.06);
+    --mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0d1017; --panel: #151a23; --panel-2: #1b2130; --border: #262e3f; --text: #e7eaf1; --muted: #8b95a8;
+      --accent: #8b85ff; --accent-2: #b48cff; --accent-soft: #232848; --good: #3ccf91; --bad: #ff7a66; --warn: #f0b44c;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0d1017; --panel: #151a23; --panel-2: #1b2130; --border: #262e3f; --text: #e7eaf1; --muted: #8b95a8;
+    --accent: #8b85ff; --accent-2: #b48cff; --accent-soft: #232848; --good: #3ccf91; --bad: #ff7a66; --warn: #f0b44c;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.3);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: var(--bg); color: var(--text); font: 14px/1.5 Inter, system-ui, sans-serif; }
+  header { display: flex; align-items: center; gap: 14px; padding: 14px 24px; border-bottom: 1px solid var(--border); background: var(--panel); position: sticky; top: 0; z-index: 5; }
+  .logo { flex: none; width: 34px; height: 34px; font-size: 13px; border-radius: 10px; background: linear-gradient(135deg, var(--accent), var(--accent-2)); display: grid; place-items: center; color: #fff; font-weight: 700; }
+  header h1 { font-size: 16px; margin: 0; font-weight: 650; }
+  header .sub { color: var(--muted); font-size: 12px; }
+  .chips { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  .chip { font-size: 12px; padding: 3px 9px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--border); color: var(--muted); white-space: nowrap; }
+  .chip b { color: var(--text); font-weight: 600; }
+  .icon-btn { background: none; border: 1px solid var(--border); color: var(--muted); border-radius: 8px; width: 32px; height: 32px; cursor: pointer; }
+  main { display: grid; grid-template-columns: minmax(340px, 440px) 1fr; gap: 20px; padding: 20px 24px; max-width: 1600px; margin: 0 auto; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; padding: 16px; } header { flex-wrap: wrap; padding: 12px 16px; position: static; } .chips { margin-left: 0; justify-content: flex-start; } }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow); padding: 16px; }
+  .card + .card { margin-top: 16px; }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 12px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .drop { border: 2px dashed var(--border); border-radius: 12px; padding: 18px; text-align: center; cursor: pointer; transition: .15s; background: var(--panel-2); position: relative; }
+  .drop:hover, .drop.over { border-color: var(--accent); background: var(--accent-soft); }
+  .drop input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+  .drop .hint { color: var(--muted); font-size: 13px; }
+  .preview { margin-top: 12px; display: none; }
+  .preview img { width: 100%; max-height: 420px; object-fit: contain; border-radius: 10px; border: 1px solid var(--border); background: repeating-conic-gradient(var(--panel-2) 0 25%, var(--panel) 0 50%) 0 0/16px 16px; }
+  .preview img.grey { filter: grayscale(1); }
+  .preview .meta { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; margin-top: 6px; gap: 8px; }
+  label.field { display: block; margin-bottom: 12px; }
+  label.field span { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; font-weight: 500; }
+  textarea, input[type=text], input[type=number] { width: 100%; font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid var(--border); border-radius: 9px; padding: 8px 10px; outline: none; transition: border-color .15s; }
+  textarea { resize: vertical; min-height: 64px; unicode-bidi: plaintext; }
+  textarea:focus, input:focus { border-color: var(--accent); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; }
+  .grid label.field { margin: 0; }
+  .switches { display: flex; gap: 18px; flex-wrap: wrap; margin: 4px 0 14px; }
+  .switch { display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
+  .switch input { display: none; }
+  .switch .track { width: 36px; height: 20px; border-radius: 999px; background: var(--border); position: relative; transition: .15s; }
+  .switch .track::after { content: ""; position: absolute; width: 16px; height: 16px; border-radius: 50%; background: #fff; top: 2px; left: 2px; transition: .15s; box-shadow: 0 1px 2px rgba(0,0,0,.3); }
+  .switch input:checked + .track { background: var(--accent); }
+  .switch input:checked + .track::after { left: 18px; }
+  .actions { display: flex; gap: 8px; }
+  button.primary { flex: 1; font: inherit; font-weight: 600; color: #fff; border: 0; border-radius: 10px; padding: 11px 14px; cursor: pointer; background: linear-gradient(135deg, var(--accent), var(--accent-2)); box-shadow: 0 4px 14px rgba(79,70,229,.3); }
+  button.primary:disabled { opacity: .55; cursor: not-allowed; }
+  button.ghost { font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; padding: 9px 12px; cursor: pointer; }
+  button.ghost:hover { border-color: var(--accent); }
+  .result-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+  .result-head h2 { margin: 0; }
+  .status { font-size: 12px; padding: 3px 10px; border-radius: 999px; background: var(--panel-2); color: var(--muted); border: 1px solid var(--border); }
+  .status.run { color: var(--accent); border-color: var(--accent); }
+  .status.ok { color: var(--good); border-color: var(--good); }
+  .status.err { color: var(--bad); border-color: var(--bad); }
+  .spacer { flex: 1; }
+  .tabs { display: inline-flex; background: var(--panel-2); border: 1px solid var(--border); border-radius: 9px; padding: 2px; }
+  .tabs button { font: inherit; font-size: 12px; border: 0; background: none; color: var(--muted); padding: 5px 10px; border-radius: 7px; cursor: pointer; }
+  .tabs button.on { background: var(--panel); color: var(--text); box-shadow: var(--shadow); }
+  .output { min-height: 320px; max-height: 62vh; overflow: auto; white-space: pre-wrap; word-wrap: break-word; padding: 14px; border-radius: 10px; background: var(--panel-2); border: 1px solid var(--border); font-family: "Noto Naskh Arabic", Inter, system-ui, sans-serif; font-size: 15px; line-height: 1.85; unicode-bidi: plaintext; text-align: start; }
+  .output.mono { font-family: var(--mono), "Noto Naskh Arabic"; font-size: 13px; line-height: 1.7; }
+  .output .caret { display: inline-block; width: 8px; height: 1.1em; background: var(--accent); vertical-align: text-bottom; animation: blink 1s steps(2) infinite; margin-inline-start: 2px; }
+  .output .empty { color: var(--muted); font-family: Inter, sans-serif; font-size: 14px; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .live { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }
+  @media (max-width: 1200px) { .live { grid-template-columns: repeat(2, 1fr); } }
+  .kpi { background: var(--panel-2); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; }
+  .kpi .k { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  .kpi .v { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .kpi .v small { font-size: 12px; color: var(--muted); font-weight: 500; margin-inline-start: 3px; }
+  .bar { height: 10px; border-radius: 6px; overflow: hidden; display: flex; background: var(--panel-2); border: 1px solid var(--border); margin: 6px 0 4px; }
+  .bar div { height: 100%; }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+  .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-inline-end: 5px; vertical-align: -1px; }
+  table.metrics { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.metrics td { padding: 6px 4px; border-bottom: 1px solid var(--border); }
+  table.metrics td:first-child { color: var(--muted); }
+  table.metrics td:last-child { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--mono); font-size: 12.5px; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; align-items: start; }
+  .two .card { margin-top: 0; }
+  @media (max-width: 1200px) { .two { grid-template-columns: 1fr; } }
+  .error-box { color: var(--bad); background: color-mix(in srgb, var(--bad) 10%, transparent); border: 1px solid var(--bad); padding: 10px 12px; border-radius: 10px; margin-bottom: 12px; display: none; }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">Id</div>
+  <div>
+    <h1>Idrak Vision Reader</h1>
+    <div class="sub">Images into a vision-language model, through Idrak's public API</div>
+  </div>
+  <div class="chips" id="chips"><span class="chip">loading model info…</span></div>
+  <button class="icon-btn" id="theme" title="Light / dark" style="width:auto;padding:0 10px;font:inherit;font-size:12px">Theme</button>
+</header>
+
+<main>
+  <!-- Left: the image, the prompts and the settings -->
+  <section>
+    <div class="card">
+      <h2>Image</h2>
+      <div class="drop" id="drop">
+        <input type="file" id="file" accept="image/png,image/jpeg,image/bmp,image/x-portable-pixmap,image/x-portable-graymap,.pgm,.ppm,.bmp,.jpg,.jpeg,.png">
+        <div><b>Drop an image here</b> or click to choose</div>
+        <div class="hint">PNG, JPEG, BMP, PPM/PGM · or paste from the clipboard</div>
+      </div>
+      <div class="preview" id="preview">
+        <img id="img" alt="preview">
+        <div class="meta"><span id="imgName"></span><span id="imgSize"></span></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Prompts</h2>
+      <label class="field"><span>System prompt (optional)</span>
+        <textarea id="system" rows="2" dir="auto" placeholder="You are a precise OCR assistant…"></textarea></label>
+      <label class="field"><span>Prompt</span>
+        <textarea id="prompt" rows="3" dir="auto"></textarea></label>
+    </div>
+
+    <div class="card">
+      <h2>Settings <span class="spacer"></span><button class="ghost" id="reset" style="padding:3px 9px;font-size:12px">Reset defaults</button></h2>
+      <div class="switches">
+        <label class="switch"><input type="checkbox" id="stream"><span class="track"></span>Stream</label>
+        <label class="switch"><input type="checkbox" id="grayscale"><span class="track"></span>Grayscale</label>
+        <label class="switch"><input type="checkbox" id="pretty"><span class="track"></span>Pretty JSON</label>
+      </div>
+      <div class="grid" id="args"></div>
+    </div>
+
+    <div class="card actions">
+      <button class="primary" id="run" disabled>Read image</button>
+      <button class="ghost" id="stop" disabled>Stop</button>
+    </div>
+  </section>
+
+  <!-- Right: the answer and the figures -->
+  <section>
+    <div class="card">
+      <div class="result-head">
+        <h2>Result</h2><span class="status" id="status">idle</span>
+        <span class="spacer"></span>
+        <div class="tabs"><button id="viewText" class="on">Text</button><button id="viewRaw">Raw</button></div>
+        <button class="ghost" id="copy">Copy</button>
+        <button class="ghost" id="download">Download</button>
+      </div>
+      <div class="error-box" id="error"></div>
+      <div class="live">
+        <div class="kpi"><div class="k">Tokens</div><div class="v" id="kTokens">–</div></div>
+        <div class="kpi"><div class="k">Speed</div><div class="v" id="kSpeed">–<small>tok/s</small></div></div>
+        <div class="kpi"><div class="k">First token</div><div class="v" id="kTtft">–<small>s</small></div></div>
+        <div class="kpi"><div class="k">Elapsed</div><div class="v" id="kElapsed">–<small>s</small></div></div>
+      </div>
+      <div class="output" id="output"><span class="empty">Upload an image and press “Read image”. The answer appears here.</span></div>
+    </div>
+
+    <div class="card">
+      <h2>Where the time went</h2>
+      <div class="bar" id="bar"></div>
+      <div class="legend" id="legend"></div>
+    </div>
+
+    <div class="two">
+      <div class="card"><h2>Request metrics</h2><table class="metrics" id="mRequest"><tr><td>—</td><td></td></tr></table></div>
+      <div class="card"><h2>Image & model</h2><table class="metrics" id="mImage"><tr><td>—</td><td></td></tr></table></div>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const DEFAULTS = {
+  prompt: "اقرأ هذه الوثيقة واكتب نصها الكامل كما هو، سطراً بسطر، دون تلخيص.",
+  system: "", stream: true, grayscale: true, pretty: true,
+  args: { max_tokens: 4096, temperature: 0, top_k: 64, top_p: 0.95, min_p: 0, repeat_penalty: 1, seed: "", chunk_size: 1 }
+};
+const ARGS = [
+  ["max_tokens", "Max tokens", 1, 1], ["temperature", "Temperature", 0, 0.05], ["top_k", "Top-k", 0, 1],
+  ["top_p", "Top-p", 0, 0.01], ["min_p", "Min-p", 0, 0.01], ["repeat_penalty", "Repeat penalty", 0, 0.01], ["seed", "Seed", null, 1], ["chunk_size", "Stream chunk (tokens)", 1, 1]
+];
+const STORE = "idrak-vision-reader";
+let file = null, controller = null, rawText = "", view = "text", modelInfo = {}, timer = null;
+
+for (const [key, label, min, step] of ARGS) {
+  const l = document.createElement("label"); l.className = "field";
+  l.innerHTML = `<span>${label}</span><input type="number" id="a_${key}" step="${step}" ${min !== null ? `min="${min}"` : ""} placeholder="${key === "seed" ? "random" : ""}">`;
+  $("args").appendChild(l);
+}
+
+function load() { try { return JSON.parse(localStorage.getItem(STORE)) || null; } catch { return null; } }
+function save() {
+  try {
+    const s = { prompt: $("prompt").value, system: $("system").value, stream: $("stream").checked, grayscale: $("grayscale").checked, pretty: $("pretty").checked, args: {} };
+    for (const [k] of ARGS) s.args[k] = $("a_" + k).value;
+    localStorage.setItem(STORE, JSON.stringify(s));
+  } catch {}
+}
+function apply(s) {
+  $("prompt").value = s.prompt; $("system").value = s.system;
+  $("stream").checked = s.stream; $("grayscale").checked = s.grayscale; $("pretty").checked = s.pretty;
+  for (const [k] of ARGS) $("a_" + k).value = s.args[k] ?? DEFAULTS.args[k];
+  $("img").classList.toggle("grey", $("grayscale").checked);
+}
+apply({ ...DEFAULTS, ...(load() || {}), args: { ...DEFAULTS.args, ...((load() || {}).args || {}) } });
+document.querySelectorAll("textarea, input").forEach(e => e.addEventListener("change", () => { save(); $("img").classList.toggle("grey", $("grayscale").checked); render(); }));
+$("reset").onclick = () => { apply(DEFAULTS); save(); };
+
+// Theme
+try { const t = localStorage.getItem(STORE + "-theme"); if (t) document.documentElement.dataset.theme = t; } catch {}
+$("theme").onclick = () => {
+  const dark = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim() === "#0d1017";
+  document.documentElement.dataset.theme = dark ? "light" : "dark";
+  try { localStorage.setItem(STORE + "-theme", document.documentElement.dataset.theme); } catch {}
+};
+
+// Model info
+fetch("api/info").then(r => r.json()).then(i => {
+  modelInfo = i;
+  const chip = (k, v) => `<span class="chip">${k} <b>${v}</b></span>`;
+  $("chips").innerHTML = chip("model", i.model.split(/[\\/]/).slice(-2).join("/")) + chip("device", i.device) + chip("weights", i.weights)
+    + chip("KV", i.kv_cache) + chip("context", i.context) + chip("loaded in", i.load_seconds + " s");
+}).catch(() => $("chips").innerHTML = `<span class="chip">server not reachable</span>`);
+
+// Image picking: click, drop, paste
+function pick(f) {
+  if (!f || !f.type.startsWith("image/") && !/\.(p[gp]m|bmp)$/i.test(f.name)) return;
+  file = f;
+  const url = URL.createObjectURL(f);
+  $("img").src = url;
+  $("img").onload = () => $("imgSize").textContent = `${$("img").naturalWidth} × ${$("img").naturalHeight} · ${(f.size / 1024).toFixed(0)} KB`;
+  $("imgName").textContent = f.name;
+  $("preview").style.display = "block";
+  $("run").disabled = false;
+}
+$("file").onchange = e => pick(e.target.files[0]);
+const drop = $("drop");
+["dragenter", "dragover"].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", e => pick(e.dataTransfer.files[0]));
+document.addEventListener("paste", e => { const f = [...e.clipboardData.files][0]; if (f) pick(f); });
+
+// Output views
+function pretty(t) {
+  if (!$("pretty").checked) return t;
+  const s = t.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  if (!/^[\[{]/.test(s)) return t;
+  try { return JSON.stringify(JSON.parse(s), null, 2); } catch { return t; }
+}
+function render(streaming) {
+  const out = $("output");
+  if (!rawText && !streaming) { out.innerHTML = `<span class="empty">Upload an image and press “Read image”. The answer appears here.</span>`; return; }
+  const t = view === "raw" || streaming ? rawText : pretty(rawText);
+  out.classList.toggle("mono", view === "raw" || t !== rawText);
+  out.textContent = t;
+  if (streaming) { const c = document.createElement("span"); c.className = "caret"; out.appendChild(c); out.scrollTop = out.scrollHeight; }
+}
+$("viewText").onclick = () => { view = "text"; $("viewText").classList.add("on"); $("viewRaw").classList.remove("on"); render(); };
+$("viewRaw").onclick = () => { view = "raw"; $("viewRaw").classList.add("on"); $("viewText").classList.remove("on"); render(); };
+$("copy").onclick = () => navigator.clipboard.writeText(view === "raw" ? rawText : pretty(rawText));
+$("download").onclick = () => {
+  const t = pretty(rawText), isJson = t !== rawText;
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([t], { type: isJson ? "application/json" : "text/plain;charset=utf-8" }));
+  a.download = (file ? file.name.replace(/\.[^.]+$/, "") : "answer") + (isJson ? ".json" : ".txt");
+  a.click();
+};
+
+// Figures
+const fmt = (v, d = 1) => v === null || v === undefined ? "–" : typeof v === "number" ? (Number.isInteger(v) ? v.toLocaleString() : v.toLocaleString(undefined, { maximumFractionDigits: d })) : String(v);
+function table(id, rows) { $(id).innerHTML = rows.filter(r => r[1] !== undefined).map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join(""); }
+function setStatus(text, cls) { const s = $("status"); s.textContent = text; s.className = "status " + (cls || ""); }
+function showError(msg) { $("error").textContent = msg; $("error").style.display = msg ? "block" : "none"; }
+
+function figures(m, img) {
+  const s = v => v === null || v === undefined ? null : v / 1000;
+  $("kTokens").innerHTML = fmt(m.generated_tokens, 0);
+  $("kSpeed").innerHTML = `${fmt(m.tokens_per_second, 1)}<small>tok/s</small>`;
+  $("kTtft").innerHTML = `${fmt(s(m.time_to_first_token_ms), 2)}<small>s</small>`;
+  $("kElapsed").innerHTML = `${fmt(s(m.total_ms), 2)}<small>s</small>`;
+  const parts = [
+    ["Queue", m.queue_ms, "#94a3b8"], ["Image encode", m.image_encode_ms, "#f59e0b"],
+    ["Prompt (prefill)", m.prompt_ms, "#06b6d4"],
+    ["Generation", m.generation_ms, "#6366f1"]
+  ];
+  const sum = parts.reduce((a, p) => a + (p[1] || 0), 0) || 1;
+  $("bar").innerHTML = parts.map(p => `<div style="width:${(p[1] || 0) / sum * 100}%;background:${p[2]}" title="${p[0]}: ${fmt(p[1])} ms"></div>`).join("");
+  const t = v => (v || 0) >= 1000 ? `${fmt(v / 1000, 2)} s` : `${fmt(v || 0, 1)} ms`;
+  $("legend").innerHTML = parts.map(p => `<span><i style="background:${p[2]}"></i>${p[0]} ${t(p[1])}</span>`).join("");
+  table("mRequest", [
+    ["Done reason", m.done_reason ?? "–"], ["Prompt tokens", fmt(m.prompt_tokens)], ["Prompt time", `${fmt(m.prompt_ms)} ms`],
+    ["Prompt speed", `${fmt(m.prompt_tokens_per_second)} tok/s`], ["Generated tokens", fmt(m.generated_tokens)],
+    ["Generation time", `${fmt(m.generation_ms)} ms`], ["Generation speed", `${fmt(m.tokens_per_second, 2)} tok/s`],
+    ["Time to first token", `${fmt(m.time_to_first_token_ms)} ms`], ["Image encode", `${fmt(m.image_encode_ms)} ms`],
+    ["Queue wait", `${fmt(m.queue_ms)} ms`], ["Total (wall)", `${fmt(m.total_ms)} ms`], ["Total (library)", `${fmt(m.library_total_ms)} ms`],
+    ["Context resets", fmt(m.context_resets)], ["Streamed pieces", fmt(m.streamed_pieces)], ["Characters", fmt(m.characters)],
+    ["Device memory in use", `${fmt(m.device_memory_in_use_mb)} MB`], ["Device memory peak", `${fmt(m.device_memory_peak_mb)} MB`],
+    ["Device memory cached", `${fmt(m.device_memory_cached_mb)} MB`], ["Device memory limit", m.device_memory_limit_mb ? `${fmt(m.device_memory_limit_mb)} MB` : "–"],
+    ["Process working set", `${fmt(m.process_working_set_mb)} MB`]
+  ]);
+  imageTable(img);
+}
+function imageTable(img) {
+  const i = modelInfo;
+  table("mImage", [
+    ["File", img ? img.file : "–"], ["Format", img ? img.format : "–"], ["Size", img ? `${img.width} × ${img.height} · ${img.channels} ch` : "–"],
+    ["Bytes", img ? fmt(img.bytes) : "–"], ["Decode", img ? `${fmt(img.decode_ms)} ms` : "–"], ["Grayscale", img ? (img.grayscale ? "yes" : "no") : "–"],
+    ["Image tokens", img ? fmt(img.image_tokens) : "–"], ["Model", i.model ?? "–"], ["Vision", i.vision ?? "–"],
+    ["Parameters (text)", i.parameters ? (i.parameters >= 1e9 ? `${(i.parameters / 1e9).toFixed(2)} B` : i.parameters >= 1e6 ? `${(i.parameters / 1e6).toFixed(1)} M` : fmt(i.parameters)) : "–"], ["Device", i.device ?? "–"],
+    ["Weights", i.weights ?? "–"], ["KV cache", i.kv_cache ?? "–"], ["Context", fmt(i.context)], ["Model load", i.load_seconds ? `${i.load_seconds} s` : "–"]
+  ]);
+}
+
+// Run
+$("stop").onclick = () => controller && controller.abort();
+$("run").onclick = async () => {
+  if (!file) return;
+  save(); showError(""); rawText = ""; render(true);
+  const fd = new FormData();
+  fd.append("image", file); fd.append("prompt", $("prompt").value); fd.append("system", $("system").value);
+  fd.append("stream", $("stream").checked); fd.append("grayscale", $("grayscale").checked);
+  for (const [k] of ARGS) if ($("a_" + k).value !== "") fd.append(k, $("a_" + k).value);
+  controller = new AbortController();
+  $("run").disabled = true; $("stop").disabled = false;
+  setStatus($("stream").checked ? "streaming…" : "reading…", "run");
+  const start = performance.now(); let first = null, pieces = 0;
+  ["kTokens", "kSpeed", "kTtft"].forEach(k => $(k).innerHTML = "–");
+  timer = setInterval(() => {
+    const el = (performance.now() - start) / 1000;
+    $("kElapsed").innerHTML = `${el.toFixed(1)}<small>s</small>`;
+    if (first !== null && pieces > 1) $("kSpeed").innerHTML = `${(pieces / ((performance.now() - first) / 1000)).toFixed(1)}<small>pieces/s</small>`;
+  }, 100);
+  try {
+    const r = await fetch("api/read", { method: "POST", body: fd, signal: controller.signal });
+    if (!r.ok) { const e = await r.json().catch(() => ({ error: r.statusText })); throw new Error(e.error || r.statusText); }
+    if (!$("stream").checked) {
+      const d = await r.json();
+      if (d.error) throw new Error(d.error);
+      rawText = d.text; render(); figures(d.metrics, d.image); setStatus("done", "ok");
+      return;
+    }
+    const reader = r.body.getReader(), dec = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i;
+      while ((i = buf.indexOf("\n\n")) >= 0) {
+        const block = buf.slice(0, i); buf = buf.slice(i + 2);
+        const ev = (block.match(/^event: (.*)$/m) || [])[1], data = JSON.parse((block.match(/^data: (.*)$/m) || [])[1] || "{}");
+        if (ev === "start") { imageTable(data.image); }
+        else if (ev === "token") {
+          if (first === null) { first = performance.now(); $("kTtft").innerHTML = `${((first - start) / 1000).toFixed(2)}<small>s</small>`; }
+          pieces++; rawText += data.text; $("kTokens").innerHTML = `~${pieces}`; render(true);
+        }
+        else if (ev === "done") { rawText = data.text; render(); figures(data.metrics, data.image); setStatus("done", "ok"); }
+        else if (ev === "error") { throw new Error(data.error); }
+      }
+    }
+  } catch (e) {
+    if (e.name === "AbortError") { setStatus("stopped", "err"); render(); }
+    else { showError(e.message); setStatus("error", "err"); render(); }
+  } finally {
+    clearInterval(timer); controller = null;
+    $("run").disabled = false; $("stop").disabled = true;
+  }
+};
+imageTable(null);
+</script>
+</body>
+</html>
