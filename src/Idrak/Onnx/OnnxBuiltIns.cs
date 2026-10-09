@@ -37,10 +37,15 @@ internal static class OnnxBuiltIns
         OnnxExportOps.Register<LayerNorm>((g, ln, x, shape) => LayerNorm(g, ln, x, shape));
         OnnxExportOps.Register<Conv2d>(Conv);
         OnnxExportOps.Register<MaxPool2d>((g, pool, x, shape) => g.Node("MaxPool", [x], shape,
-            Window(pool.KernelHeight, pool.KernelWidth, pool.StrideHeight, pool.StrideWidth, pool.PaddingHeight, pool.PaddingWidth)));
+            Window(pool.KernelHeight, pool.KernelWidth, pool.StrideHeight, pool.StrideWidth, pool.PaddingHeight, pool.PaddingWidth, pool.PaddingBottom, pool.PaddingRight, pool.CeilMode)));
         OnnxExportOps.Register<AvgPool2d>((g, pool, x, shape) => g.Node("AveragePool", [x], shape,
-            [.. Window(pool.KernelHeight, pool.KernelWidth, pool.StrideHeight, pool.StrideWidth, pool.PaddingHeight, pool.PaddingWidth),
-                OnnxAttribute.Of("count_include_pad", pool.CountIncludePad ? 1L : 0L)]));
+            [.. Window(pool.KernelHeight, pool.KernelWidth, pool.StrideHeight, pool.StrideWidth, pool.PaddingHeight, pool.PaddingWidth, pool.PaddingBottom, pool.PaddingRight,
+                pool.CeilMode), OnnxAttribute.Of("count_include_pad", pool.CountIncludePad ? 1L : 0L)]));
+        OnnxExportOps.Register<AdaptiveAvgPool2d>((g, pool, x, shape) => Adaptive(g, x, shape, (pool.OutputHeight, pool.OutputWidth), max: false));
+        OnnxExportOps.Register<AdaptiveMaxPool2d>((g, pool, x, shape) => Adaptive(g, x, shape, (pool.OutputHeight, pool.OutputWidth), max: true));
+        OnnxExportOps.Register<ConvTranspose2d>(ConvTranspose);
+        OnnxExportOps.Register<Upsample>(Resize);
+        OnnxExportOps.Register<GroupNorm>(GroupNorm);
         OnnxExportOps.Register<GlobalAveragePool2d>((g, _, x, shape) => g.Node("Flatten", [g.Node("GlobalAveragePool", [x])], shape, OnnxAttribute.Of("axis", 1L)));
         OnnxExportOps.Register<Layers.Flatten>((g, _, x, shape) => g.Node("Flatten", [x], shape, OnnxAttribute.Of("axis", 1L)));
         OnnxExportOps.Register<Embedding>((g, e, x, shape) => g.Node("Gather",
@@ -383,8 +388,91 @@ internal static class OnnxBuiltIns
             conv.Bias is null ? null : Weights(g, "conv_b", conv.Bias)], shape, [.. attributes]);
     }
 
-    private static OnnxAttribute[] Window(int kh, int kw, int sh, int sw, int ph, int pw) =>
+    private static OnnxAttribute[] Window(int kh, int kw, int sh, int sw, int ph, int pw, int pb, int pr, bool ceilMode) =>
     [
-        OnnxAttribute.Of("kernel_shape", [kh, kw]), OnnxAttribute.Of("strides", [sh, sw]), OnnxAttribute.Of("pads", [ph, pw, ph, pw]),
+        OnnxAttribute.Of("kernel_shape", [kh, kw]), OnnxAttribute.Of("strides", [sh, sw]), OnnxAttribute.Of("pads", [ph, pw, pb, pr]),
+        .. ceilMode ? [OnnxAttribute.Of("ceil_mode", 1L)] : Array.Empty<OnnxAttribute>(),
     ];
+
+    private static OnnxValue ConvTranspose(OnnxGraph g, ConvTranspose2d conv, OnnxValue x, IReadOnlyList<int>? shape)
+    {
+        List<OnnxAttribute> attributes =
+        [
+            OnnxAttribute.Of("kernel_shape", [conv.KernelHeight, conv.KernelWidth]), OnnxAttribute.Of("strides", [conv.StrideHeight, conv.StrideWidth]),
+            OnnxAttribute.Of("pads", [conv.PaddingHeight, conv.PaddingWidth, conv.PaddingHeight, conv.PaddingWidth]),
+        ];
+        if (conv.OutputPaddingHeight != 0 || conv.OutputPaddingWidth != 0)
+        {
+            attributes.Add(OnnxAttribute.Of("output_padding", [conv.OutputPaddingHeight, conv.OutputPaddingWidth]));
+        }
+
+        if (conv.DilationHeight != 1 || conv.DilationWidth != 1)
+        {
+            attributes.Add(OnnxAttribute.Of("dilations", [conv.DilationHeight, conv.DilationWidth]));
+        }
+
+        if (conv.Groups != 1)
+        {
+            attributes.Add(OnnxAttribute.Of("group", (long)conv.Groups));
+        }
+
+        return g.Node("ConvTranspose", [x, g.Constant("convt_w", conv.Weight.ToArray(), conv.InChannels, conv.OutChannels / conv.Groups, conv.KernelHeight, conv.KernelWidth),
+            conv.Bias is null ? null : Weights(g, "convt_b", conv.Bias)], shape, [.. attributes]);
+    }
+
+    // Resize (opset 13 and later): scales [1, 1, h, w] for a scale factor; for a fixed size, the sizes [N, C, h, w] with N
+    // and C read from the input's shape (the batch stays dynamic), as PyTorch exports it.
+    private static OnnxValue Resize(OnnxGraph g, Upsample up, OnnxValue x, IReadOnlyList<int>? shape)
+    {
+        List<OnnxAttribute> attributes = up.Mode == InterpolationMode.Nearest
+            ? [OnnxAttribute.Of("mode", "nearest"), OnnxAttribute.Of("coordinate_transformation_mode", "asymmetric"), OnnxAttribute.Of("nearest_mode", "floor")]
+            : [OnnxAttribute.Of("mode", "linear"), OnnxAttribute.Of("coordinate_transformation_mode", up.AlignCorners ? "align_corners" : "half_pixel")];
+        if (up.Size is { } size)
+        {
+            var leading = g.Node("Slice", [g.Node("Shape", [x]), g.Ints("starts", 0), g.Ints("ends", 2), g.Ints("axes", 0)]);
+            var sizes = g.Node("Concat", [leading, g.Ints("size", size.Height, size.Width)], null, OnnxAttribute.Of("axis", 0L));
+            return g.Node("Resize", [x, null, null, sizes], shape, [.. attributes]);
+        }
+
+        var (fh, fw) = up.ScaleFactor!.Value;
+        return g.Node("Resize", [x, null, g.Constant("scales", [1f, 1f, fh, fw], 4)], shape, [.. attributes]);
+    }
+
+    // Global pooling for one output position, ordinary windows (k = s = input / output) when the output divides the input;
+    // ONNX has no adaptive pooling with uneven windows (nor does PyTorch's exporter).
+    private static OnnxValue Adaptive(OnnxGraph g, OnnxValue x, IReadOnlyList<int>? shape, (int Height, int Width) size, bool max)
+    {
+        if (size == (1, 1))
+        {
+            return g.Node(max ? "GlobalMaxPool" : "GlobalAveragePool", [x], shape);
+        }
+
+        if (x.Shape is not [.., var h, var w] || h <= 0 || w <= 0 || h % size.Height != 0 || w % size.Width != 0)
+        {
+            throw new NotSupportedException($"Adaptive pooling to {size.Height}x{size.Width} exports to ONNX only when it divides the input's height and width "
+                + $"(ONNX has no uneven windows); the input is {(x.Shape is null ? "of unknown shape" : $"[{string.Join(", ", x.Shape)}]")}.");
+        }
+
+        int kh = h / size.Height, kw = w / size.Width;
+        return g.Node(max ? "MaxPool" : "AveragePool", [x], shape, Window(kh, kw, kh, kw, 0, 0, 0, 0, false));
+    }
+
+    // Opset 17 has no GroupNormalization: [N, C, ...] reshaped to [N, groups, -1], instance-normalized (unit scale, zero
+    // shift), reshaped back and scaled and shifted per channel, as PyTorch exports it.
+    private static OnnxValue GroupNorm(OnnxGraph g, GroupNorm norm, OnnxValue x, IReadOnlyList<int>? shape)
+    {
+        var dims = x.Shape ?? throw new NotSupportedException("GroupNorm exports for an input of known shape.");
+        var grouped = g.Node("Reshape", [x, g.Ints("groups_shape", 0, norm.Groups, -1)]);
+        var normalized = g.Node("InstanceNormalization", [grouped, g.Constant("ones", Enumerable.Repeat(1f, norm.Groups).ToArray(), norm.Groups),
+            g.Constant("zeros", new float[norm.Groups], norm.Groups)], null, OnnxAttribute.Of("epsilon", norm.Epsilon));
+        var restored = g.Node("Reshape", [normalized, g.Ints("shape", [0, .. dims.Skip(1).Select(d => (long)d)])], norm.Affine ? null : shape);
+        if (!norm.Affine)
+        {
+            return restored;
+        }
+
+        int[] perChannel = [norm.Channels, .. Enumerable.Repeat(1, dims.Count - 2)];
+        var scaled = g.Node("Mul", [restored, g.Constant("gamma", norm.Gamma!.ToArray(), perChannel)]);
+        return g.Node("Add", [scaled, g.Constant("beta", norm.Beta!.ToArray(), perChannel)], shape);
+    }
 }

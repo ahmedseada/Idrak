@@ -299,6 +299,13 @@ internal static partial class Tests
                 ("recognizer", Network.Image(1, 16, 32).Conv2d(8, (3, 5), padding: (1, 2)).ReLU().MaxPool2d((2, 2)).Conv2d(8, (3, 3), padding: (2, 2), dilation: (2, 2), groups: 2)
                     .AvgPool2d((2, 1)).ColumnsToSequence().LSTM(12, returnSequences: true, bidirectional: true, layers: 2)
                     .GRU(6, returnSequences: true, bidirectional: true, layers: 1, candidateBias: true).Linear(11)),
+
+                // A decoder's steps: group norm, ceil-mode pools with padding below and right, a grouped transposed convolution with
+                // output padding, nearest and bilinear upsampling, adaptive pools.
+                ("decoder", Network.Image(3, 15, 17).Conv2d(8, 3, stride: 2, padding: 1).GroupNorm(4).ReLU().MaxPool2d((3, 3), (2, 2), (1, 1), ceilMode: true)
+                    .AvgPool2d((2, 2), ceilMode: true, paddingEnd: (1, 1)).ConvTranspose2d(6, (3, 2), (2, 2), (1, 0), (1, 1), groups: 2).Upsample(2)
+                    .UpsampleToSize((20, 24), InterpolationMode.Bilinear, alignCorners: true).AdaptiveAvgPool2d((3, 5)).AdaptiveMaxPool2d(2).GroupNorm(2, affine: false)
+                    .Flatten().Linear(4)),
             };
             foreach (var (name, builder) in networks)
             {
@@ -309,12 +316,17 @@ internal static partial class Tests
                 Check((long)json["parameters"]! == built.ParameterCount, $"{name}: explain counts {json["parameters"]} parameters, the built network has {built.ParameterCount}");
                 Check(json["output"]!.AsArray().Select(v => (int)v!).SequenceEqual(builder.CurrentShape), $"{name}: output shape {json["output"]!.ToJsonString()}");
                 Check((long)json["flopsPerSample"]! > 0 && (long)json["memory"]!["training"]! > (long)json["memory"]!["inference1"]!, $"{name}: FLOPs and memory");
+                Check(json["unknownSteps"]!.AsArray().Count == 0, $"{name}: steps explain does not know: {json["unknownSteps"]!.ToJsonString()}");
             }
 
             var batched = RunIdrakJson("x", Path.Combine(folder, "mlp.json"), "--batch", "64");
             Check((int)batched["batch"]! == 64, "--batch sets the batch the memory is computed for");
             var (code, text, _) = RunIdrak("x", Path.Combine(folder, "cnn.json"), "-d", device.ToString());
             Check(code == 0 && text.Contains("conv2d 8, 3x3, padding 1") && text.Contains("Parameters") && text.Contains("Training"), text);
+            (code, text, _) = RunIdrak("x", Path.Combine(folder, "decoder.json"), "-d", device.ToString());
+            Check(code == 0 && text.Contains("transposed conv2d 6, 3x2, stride 2x2, padding 1x0, output padding 1x1, 2 groups") && text.Contains("upsample x2, nearest")
+                && text.Contains("upsample to 20x24, bilinear, corners aligned") && text.Contains("adaptive average pool to 3x5") && text.Contains("group norm, 4 groups")
+                && text.Contains("max pool 3x3, ceil mode"), text);
 
             (code, text, _) = RunIdrak("viz", Path.Combine(folder, "mlp.json"));
             Check(code == 0 && text.Contains("linear 32") && text.Contains("  |"), text);

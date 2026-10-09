@@ -78,7 +78,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Generation.PretrainedVision` | abstract class | public | — | — |  | Abstraction, Idrak, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.RopeScalings` | registry | public | — |  | dynamic, linear, llama3, yarn | Abstraction, Idrak, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.ToolCallFormats` | registry | public | — |  | deepseek, harmony, json, mistral, pythonic, qwen3-coder | Abstraction, Idrak, Nlp | Abstraction |
-| `Idrak.Abstraction.Module` | abstract class | public | Device, Tensor | AvgPool2d, BatchNorm, CausalSelfAttention, ChannelNormalize, Conv2d, DecoderBlock, +28 |  | Abstraction, AspNetCore, Data, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
+| `Idrak.Abstraction.Module` | abstract class | public | Device, Tensor | AdaptiveAvgPool2d, AdaptiveMaxPool2d, AvgPool2d, BatchNorm, CausalSelfAttention, ChannelNormalize, +33 |  | Abstraction, AspNetCore, Data, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
 | `Idrak.Abstraction.Modules.ILinearAdapter` | interface | public | Tensor | DoraAdapter, LoraAdapter |  | Idrak, Nlp | Abstraction |
 | `Idrak.Abstraction.Modules.ILinearLayer` | interface | public | Tensor | Linear |  | Abstraction, Idrak, Nlp | Abstraction |
 | `Idrak.Abstraction.Operations.Kernels` | registry | public | Backend |  | — | Abstraction, AspNetCore, Data, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
@@ -106,8 +106,8 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Layers.Abstractions.GraphOps` | registry | public | — |  | abs, add, cast, clip, concat, div, elu, exp, +28 | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.ICachedModule` | interface | public | Tensor | CausalSelfAttention, DecoderBlock, MultiHeadAttention, PositionEmbedding, PositionalEncoding, Sequential, +1 |  | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.INetworkBuilder` | interface | public | Device, Module, Tensor | NetworkBuilder |  | Idrak | Idrak |
-| `Idrak.Layers.Abstractions.LayerTypes` | registry | public | Device, Module |  | attention, avgpool2d, batchnorm, conv2d, dropout, embedding, flatten, gelu, +15 | Idrak | Idrak |
-| `Idrak.Layers.Abstractions.NetworkOps` | registry | public | — |  | attention, avgpool2d, batchnorm, columnsToSequence, conv2d, dropout, embedding, firstStep, +18 | Idrak | Idrak |
+| `Idrak.Layers.Abstractions.LayerTypes` | registry | public | Device, Module |  | adaptiveavgpool2d, adaptivemaxpool2d, attention, avgpool2d, batchnorm, conv2d, convtranspose2d, dropout, +20 | Idrak | Idrak |
+| `Idrak.Layers.Abstractions.NetworkOps` | registry | public | — |  | adaptiveavgpool2d, adaptivemaxpool2d, attention, avgpool2d, batchnorm, columnsToSequence, conv2d, convtranspose2d, +23 | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.RecurrentModule` | abstract class | public | Device, Module, Tensor | GRU, LSTM |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.CheckpointFormats` | registry | public | — |  | gguf, safetensors | Idrak | Idrak |
 | `Idrak.Models.Abstractions.GgufArchitectures` | registry | public | — |  | llama, qwen2, qwen2moe, qwen3, qwen3moe | Idrak | Idrak |
@@ -127,7 +127,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Onnx.Abstractions.OnnxExportOps` | registry | public | Module |  | — | Idrak | Idrak |
 | `Idrak.Onnx.Abstractions.OnnxGraph` | abstract class | public | Module | OnnxGraphWriter |  | Idrak | Idrak |
 | `Idrak.Onnx.Abstractions.OnnxImportContext` | abstract class | public | Module | ImportContext |  | Idrak | Idrak |
-| `Idrak.Onnx.Abstractions.OnnxImportOps` | registry | public | — |  | Add, AveragePool, BatchNormalization, Cast, Conv, Dropout, Flatten, Gather, +10 | Idrak | Idrak |
+| `Idrak.Onnx.Abstractions.OnnxImportOps` | registry | public | — |  | Add, AveragePool, BatchNormalization, Cast, Conv, ConvTranspose, Dropout, Flatten, +15 | Idrak | Idrak |
 | `Idrak.Training.Abstractions.ITrainerCallback` | interface | public | — | Checkpoint, CsvLog, EarlyStopping |  | Idrak | Idrak |
 
 ### Idrak.Nlp
@@ -171,22 +171,25 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 
 ## The device contract (`Backend`)
 
-`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 132 virtual methods, 6 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `HipBackend`, `VulkanBackend`. Each
-operation (114, `Ops`) is a `NameKernel` method, the device's own kernel; `Backend.Name(...)` runs the kernel registered
+`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 137 virtual methods, 6 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `HipBackend`, `VulkanBackend`. Each
+operation (119, `Ops`) is a `NameKernel` method, the device's own kernel; `Backend.Name(...)` runs the kernel registered
 for the device in `Kernels` instead, where there is one (plan 9). The rest is device plumbing: memory, copies, graphs, profiling.
 
 | Device | Methods overridden |
 |---|---|
-| `CpuBackend` | 111 of 142 |
-| `CudaBackend` | 132 of 142 |
-| `HipBackend` | 23 of 142 |
-| `VulkanBackend` | 114 of 142 |
+| `CpuBackend` | 116 of 147 |
+| `CudaBackend` | 132 of 147 |
+| `HipBackend` | 23 of 147 |
+| `VulkanBackend` | 114 of 147 |
 
 | Operation | Kind | Cpu | Cuda | Hip | Vulkan |
 |---|---|---|---|---|---|
 | `AbortCapture(0)` | virtual |  | ✓ |  | ✓ |
 | `AdamStep8BitKernel(13)` | virtual | ✓ | ✓ |  | ✓ |
 | `AdamStepKernel(9)` | virtual | ✓ | ✓ |  | ✓ |
+| `AdaptiveAvgPoolBackwardKernel(7)` | virtual | ✓ |  |  |  |
+| `AdaptiveAvgPoolKernel(7)` | virtual | ✓ |  |  |  |
+| `AdaptiveMaxPoolKernel(8)` | virtual | ✓ |  |  |  |
 | `AddBroadcastScalarKernel(4)` | virtual | ✓ | ✓ |  | ✓ |
 | `AddDropoutKernel(6)` | virtual |  | ✓ |  |  |
 | `AddRmsNormAffineKernel(9)` | virtual | ✓ | ✓ |  | ✓ |
@@ -261,6 +264,8 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `Int4MatMulKernel(7)` | virtual | ✓ | ✓ |  | ✓ |
 | `Int8DequantizeKernel(5)` | virtual | ✓ | ✓ |  | ✓ |
 | `Int8MatMulKernel(7)` | virtual | ✓ | ✓ | ✓ | ✓ |
+| `Interpolate2dBackwardKernel(11)` | virtual | ✓ |  |  |  |
+| `Interpolate2dKernel(11)` | virtual | ✓ |  |  |  |
 | `InvSqrtKernel(4)` | virtual | ✓ | ✓ |  | ✓ |
 | `KeyValueWriteBFloat16Kernel(7)` | virtual | ✓ | ✓ |  | ✓ |
 | `KeyValueWriteInt8Kernel(8)` | virtual | ✓ | ✓ |  | ✓ |

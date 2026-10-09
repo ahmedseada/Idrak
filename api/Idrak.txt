@@ -693,6 +693,20 @@ public enum Idrak.Layers.Activation : int
   Sigmoid = 2
   Tanh = 1
 
+public sealed class Idrak.Layers.AdaptiveAvgPool2d : Idrak.Abstraction.Module
+  public AdaptiveAvgPool2d((int, int) outputSize)
+  public AdaptiveAvgPool2d(int outputSize)
+  public int OutputHeight { get; }
+  public int OutputWidth { get; }
+  public override string ToString()
+
+public sealed class Idrak.Layers.AdaptiveMaxPool2d : Idrak.Abstraction.Module
+  public AdaptiveMaxPool2d((int, int) outputSize)
+  public AdaptiveMaxPool2d(int outputSize)
+  public int OutputHeight { get; }
+  public int OutputWidth { get; }
+  public override string ToString()
+
 public static class Idrak.Layers.Architectures
   public static Idrak.Layers.NetworkBuilder Cnn(int channels, int height, int width, int[] filters, int kernelSize, int outputs)
   public static Idrak.Layers.NetworkBuilder Gpt(int vocabulary, int context, int dim, int heads, int layers, int ffDim, float dropout)
@@ -702,12 +716,15 @@ public static class Idrak.Layers.Architectures
   public static Idrak.Layers.NetworkBuilder TransformerClassifier(int vocabulary, int length, int dim, int heads, int layers, int ffDim, float dropout, int outputs)
 
 public sealed class Idrak.Layers.AvgPool2d : Idrak.Abstraction.Module
-  public AvgPool2d((int, int) kernelSize, (int, int)? stride = null, (int, int)? padding = null, bool countIncludePad = true)
+  public AvgPool2d((int, int) kernelSize, (int, int)? stride = null, (int, int)? padding = null, bool countIncludePad = true, bool ceilMode = false, (int, int)? paddingEnd = null)
   public AvgPool2d(int kernelSize, int? stride = null, int padding = 0, bool countIncludePad = true)
+  public bool CeilMode { get; }
   public bool CountIncludePad { get; }
   public int KernelHeight { get; }
   public int KernelWidth { get; }
+  public int PaddingBottom { get; }
   public int PaddingHeight { get; }
+  public int PaddingRight { get; }
   public int PaddingWidth { get; }
   public int StrideHeight { get; }
   public int StrideWidth { get; }
@@ -785,6 +802,30 @@ public sealed class Idrak.Layers.Conv2d : Idrak.Abstraction.Module
   public override string ToString()
   public static Idrak.Layers.Conv2d FromWeights(Idrak.Abstraction.Tensor weight, Idrak.Abstraction.Tensor? bias, (int, int) kernelSize, (int, int)? stride = null, (int, int)? padding = null, (int, int)? dilation = null, int groups = 1)
   public static Idrak.Layers.Conv2d FromWeights(Idrak.Abstraction.Tensor weight, Idrak.Abstraction.Tensor? bias, int kernelSize, int stride = 1, int padding = 0)
+
+public sealed class Idrak.Layers.ConvTranspose2d : Idrak.Abstraction.Module
+  public (int, int) OutputSize(int height, int width)
+  public ConvTranspose2d(int inChannels, int outChannels, (int, int) kernelSize, (int, int)? stride = null, (int, int)? padding = null, (int, int)? outputPadding = null, (int, int)? dilation = null, int groups = 1, bool bias = true, Idrak.Abstraction.Device? device = null, System.Random? random = null)
+  public ConvTranspose2d(int inChannels, int outChannels, int kernelSize, int stride = 1, int padding = 0, int outputPadding = 0, bool bias = true, Idrak.Abstraction.Device? device = null, System.Random? random = null)
+  public Idrak.Abstraction.Devices.ConvGeometry Geometry(int batch, int height, int width)
+  public Idrak.Abstraction.Tensor Weight { get; }
+  public Idrak.Abstraction.Tensor? Bias { get; }
+  public int DilationHeight { get; }
+  public int DilationWidth { get; }
+  public int Groups { get; }
+  public int InChannels { get; }
+  public int KernelHeight { get; }
+  public int KernelWidth { get; }
+  public int OutChannels { get; }
+  public int OutputPaddingHeight { get; }
+  public int OutputPaddingWidth { get; }
+  public int PaddingHeight { get; }
+  public int PaddingWidth { get; }
+  public int StrideHeight { get; }
+  public int StrideWidth { get; }
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> Parameters()
+  public override string ToString()
+  public static Idrak.Layers.ConvTranspose2d FromWeights(Idrak.Abstraction.Tensor weight, Idrak.Abstraction.Tensor? bias, (int, int) kernelSize, (int, int)? stride = null, (int, int)? padding = null, (int, int)? outputPadding = null, (int, int)? dilation = null, int groups = 1)
 
 public sealed class Idrak.Layers.DecoderBlock : Idrak.Abstraction.Module, Idrak.Layers.Abstractions.ICachedModule
   public DecoderBlock(Idrak.Abstraction.Module attentionNorm, Idrak.Layers.CausalSelfAttention attention, Idrak.Abstraction.Module? feedForwardNorm, Idrak.Abstraction.Module feedForward, Idrak.Abstraction.Module? postAttentionNorm = null, Idrak.Abstraction.Module? postFeedForwardNorm = null, Idrak.Layers.Dropout? residualDropout = null)
@@ -869,6 +910,17 @@ public sealed class Idrak.Layers.GraphModule : Idrak.Abstraction.Module
   public string Input { get; }
   public string Output { get; }
 
+public sealed class Idrak.Layers.GroupNorm : Idrak.Abstraction.Module
+  public GroupNorm(int groups, int channels, float epsilon = 1E-05f, bool affine = true, Idrak.Abstraction.Device? device = null)
+  public Idrak.Abstraction.Tensor? Beta { get; }
+  public Idrak.Abstraction.Tensor? Gamma { get; }
+  public bool Affine { get; }
+  public float Epsilon { get; }
+  public int Channels { get; }
+  public int Groups { get; }
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> Parameters()
+  public override string ToString()
+
 public static class Idrak.Layers.ImagePrefill
   public static Idrak.Abstraction.Tensor Forward(this Idrak.Layers.Sequential decoder, Idrak.Abstraction.Tensor ids, System.Collections.Generic.IReadOnlyList<Idrak.Layers.PromptImage> images, Idrak.Abstraction.Generation.IImageAttentionRule attention)
   public static Idrak.Abstraction.Tensor ForwardCached(this Idrak.Layers.Sequential decoder, Idrak.Abstraction.Tensor ids, System.Collections.Generic.IReadOnlyList<Idrak.Layers.PromptImage> images, Idrak.Abstraction.Generation.IImageAttentionRule attention, Idrak.Abstraction.Generation.DecodingContext context, int? layers = null)
@@ -944,14 +996,18 @@ public sealed class Idrak.Layers.Linear : Idrak.Abstraction.Module, Idrak.Abstra
   public static Idrak.Layers.Linear Tied(Idrak.Layers.Embedding embedding, Idrak.Abstraction.Tensor? bias = null)
 
 public sealed class Idrak.Layers.MaxPool2d : Idrak.Abstraction.Module
-  public MaxPool2d((int, int) kernelSize, (int, int)? stride = null, (int, int)? padding = null)
+  public Idrak.Abstraction.Devices.ConvGeometry Geometry(int batch, int channels, int height, int width)
+  public MaxPool2d((int, int) kernelSize, (int, int)? stride = null, (int, int)? padding = null, bool ceilMode = false, (int, int)? paddingEnd = null)
   public MaxPool2d(int kernelSize, int? stride = null, int padding = 0)
+  public bool CeilMode { get; }
   public bool IsSquare { get; }
   public int KernelHeight { get; }
   public int KernelSize { get; }
   public int KernelWidth { get; }
   public int Padding { get; }
+  public int PaddingBottom { get; }
   public int PaddingHeight { get; }
+  public int PaddingRight { get; }
   public int PaddingWidth { get; }
   public int Stride { get; }
   public int StrideHeight { get; }
@@ -1015,15 +1071,21 @@ public static class Idrak.Layers.Network
 public sealed class Idrak.Layers.NetworkBuilder : Idrak.Layers.Abstractions.INetworkBuilder
   public Idrak.Layers.InputKind InputKind { get; }
   public Idrak.Layers.NetworkBuilder Activate(Idrak.Layers.Activation activation)
+  public Idrak.Layers.NetworkBuilder AdaptiveAvgPool2d((int, int) outputSize)
+  public Idrak.Layers.NetworkBuilder AdaptiveAvgPool2d(int outputSize)
+  public Idrak.Layers.NetworkBuilder AdaptiveMaxPool2d((int, int) outputSize)
+  public Idrak.Layers.NetworkBuilder AdaptiveMaxPool2d(int outputSize)
   public Idrak.Layers.NetworkBuilder Add(Idrak.Abstraction.Module module, int[] outputShape)
   public Idrak.Layers.NetworkBuilder Add(System.Func<Idrak.Abstraction.Device?, System.Random?, Idrak.Abstraction.Module> create, int[] outputShape)
   public Idrak.Layers.NetworkBuilder Apply(System.Func<Idrak.Layers.NetworkBuilder, Idrak.Layers.NetworkBuilder> block)
-  public Idrak.Layers.NetworkBuilder AvgPool2d((int, int) kernelSize, (int, int)? stride = null, (int, int)? padding = null, bool countIncludePad = true)
+  public Idrak.Layers.NetworkBuilder AvgPool2d((int, int) kernelSize, (int, int)? stride = null, (int, int)? padding = null, bool countIncludePad = true, bool ceilMode = false, (int, int)? paddingEnd = null)
   public Idrak.Layers.NetworkBuilder AvgPool2d(int kernelSize, int? stride = null, int padding = 0, bool countIncludePad = true)
   public Idrak.Layers.NetworkBuilder BatchNorm(float momentum = 0.1f, float epsilon = 1E-05f)
   public Idrak.Layers.NetworkBuilder ColumnsToSequence()
   public Idrak.Layers.NetworkBuilder Conv2d(int outChannels, (int, int) kernelSize, (int, int)? stride = null, (int, int)? padding = null, (int, int)? dilation = null, int groups = 1, bool bias = true)
   public Idrak.Layers.NetworkBuilder Conv2d(int outChannels, int kernelSize, int stride = 1, int padding = 0, bool bias = true)
+  public Idrak.Layers.NetworkBuilder ConvTranspose2d(int outChannels, (int, int) kernelSize, (int, int)? stride = null, (int, int)? padding = null, (int, int)? outputPadding = null, (int, int)? dilation = null, int groups = 1, bool bias = true)
+  public Idrak.Layers.NetworkBuilder ConvTranspose2d(int outChannels, int kernelSize, int stride = 1, int padding = 0, int outputPadding = 0, bool bias = true)
   public Idrak.Layers.NetworkBuilder Dropout(float probability = 0.5f)
   public Idrak.Layers.NetworkBuilder Embedding(int vocabulary, int dim)
   public Idrak.Layers.NetworkBuilder FirstStep()
@@ -1032,13 +1094,14 @@ public sealed class Idrak.Layers.NetworkBuilder : Idrak.Layers.Abstractions.INet
   public Idrak.Layers.NetworkBuilder GRU(int hiddenSize, bool returnSequences = false)
   public Idrak.Layers.NetworkBuilder GRU(int hiddenSize, bool returnSequences, bool bidirectional, int layers = 1, bool candidateBias = false)
   public Idrak.Layers.NetworkBuilder GlobalAveragePool2d()
+  public Idrak.Layers.NetworkBuilder GroupNorm(int groups, float epsilon = 1E-05f, bool affine = true)
   public Idrak.Layers.NetworkBuilder LSTM(int hiddenSize, bool returnSequences = false)
   public Idrak.Layers.NetworkBuilder LSTM(int hiddenSize, bool returnSequences, bool bidirectional, int layers = 1)
   public Idrak.Layers.NetworkBuilder Lambda(System.Func<Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor> function, string name, int[] outputShape)
   public Idrak.Layers.NetworkBuilder LastStep()
   public Idrak.Layers.NetworkBuilder LayerNorm(float epsilon = 1E-05f)
   public Idrak.Layers.NetworkBuilder Linear(int outFeatures, bool bias = true, int? inputs = null)
-  public Idrak.Layers.NetworkBuilder MaxPool2d((int, int) kernelSize, (int, int)? stride = null, (int, int)? padding = null)
+  public Idrak.Layers.NetworkBuilder MaxPool2d((int, int) kernelSize, (int, int)? stride = null, (int, int)? padding = null, bool ceilMode = false, (int, int)? paddingEnd = null)
   public Idrak.Layers.NetworkBuilder MaxPool2d(int kernelSize, int? stride = null, int padding = 0)
   public Idrak.Layers.NetworkBuilder MeanOverTime()
   public Idrak.Layers.NetworkBuilder MultiHeadAttention(int heads, bool causal = false, float dropout = 0f)
@@ -1055,6 +1118,9 @@ public sealed class Idrak.Layers.NetworkBuilder : Idrak.Layers.Abstractions.INet
   public Idrak.Layers.NetworkBuilder Softmax()
   public Idrak.Layers.NetworkBuilder Tanh()
   public Idrak.Layers.NetworkBuilder TransformerEncoderLayer(int heads, int? ffDim = null, float dropout = 0.1f, bool causal = false)
+  public Idrak.Layers.NetworkBuilder Upsample((float, float) scaleFactor, Idrak.Abstraction.Devices.InterpolationMode mode = (Idrak.Abstraction.Devices.InterpolationMode)0, bool alignCorners = false)
+  public Idrak.Layers.NetworkBuilder Upsample(float scaleFactor, Idrak.Abstraction.Devices.InterpolationMode mode = (Idrak.Abstraction.Devices.InterpolationMode)0, bool alignCorners = false)
+  public Idrak.Layers.NetworkBuilder UpsampleToSize((int, int) size, Idrak.Abstraction.Devices.InterpolationMode mode = (Idrak.Abstraction.Devices.InterpolationMode)0, bool alignCorners = false)
   public Idrak.Layers.NetworkBuilder WithRandom(System.Random random)
   public Idrak.Layers.Sequential Build()
   public System.Collections.Generic.IReadOnlyList<int> CurrentShape { get; }
@@ -1163,6 +1229,17 @@ public sealed class Idrak.Layers.TransformerEncoderLayer : Idrak.Abstraction.Mod
   public override string ToString()
   public static Idrak.Layers.TransformerEncoderLayer FromLayers(Idrak.Layers.LayerNorm norm1, Idrak.Layers.MultiHeadAttention attention, Idrak.Layers.LayerNorm norm2, Idrak.Layers.Linear feedForward1, Idrak.Layers.Linear feedForward2)
   public static Idrak.Layers.TransformerEncoderLayer FromLayers(Idrak.Layers.LayerNorm norm1, Idrak.Layers.MultiHeadAttention attention, Idrak.Layers.LayerNorm norm2, Idrak.Layers.Linear feedForward1, Idrak.Layers.Linear feedForward2, Idrak.Abstraction.Module activation)
+
+public sealed class Idrak.Layers.Upsample : Idrak.Abstraction.Module
+  public (float, float)? ScaleFactor { get; }
+  public (int, int) OutputSize(int height, int width)
+  public (int, int)? Size { get; }
+  public Idrak.Abstraction.Devices.InterpolationMode Mode { get; }
+  public Upsample((float, float) scaleFactor, Idrak.Abstraction.Devices.InterpolationMode mode = (Idrak.Abstraction.Devices.InterpolationMode)0, bool alignCorners = false)
+  public Upsample(float scaleFactor, Idrak.Abstraction.Devices.InterpolationMode mode = (Idrak.Abstraction.Devices.InterpolationMode)0, bool alignCorners = false)
+  public bool AlignCorners { get; }
+  public override string ToString()
+  public static Idrak.Layers.Upsample ToSize((int, int) size, Idrak.Abstraction.Devices.InterpolationMode mode = (Idrak.Abstraction.Devices.InterpolationMode)0, bool alignCorners = false)
 
 public enum Idrak.LossReduction : int
   Mean = 0
