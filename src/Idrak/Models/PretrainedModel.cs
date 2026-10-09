@@ -201,8 +201,10 @@ public sealed class PretrainedModel : IDisposable
     /// <summary>
     /// The family's vision encoder (<see cref="PretrainedVision.CreateEncoder"/>) on <paramref name="options"/>' device
     /// (the model's when not given), with the model's trained vision tensors put in (<see cref="TrainedVisionTensors"/>,
-    /// through the family's <see cref="IVisionTuningPart.Import"/>). An encoder whose trained part would hold packed
-    /// weights is built with float32 weights instead (only then). Dispose it when done.
+    /// through the family's <see cref="IVisionTuningPart.Import"/>). The parts those tensors belong to
+    /// (<see cref="IVisionTuningPart.PartsOf"/>) are built with float32 weights (<see cref="VisionEncoderOptions.TrainedParts"/>),
+    /// the others as <paramref name="options"/> say (a bfloat16 checkpoint's tower stays bfloat16 under a trained
+    /// projector); a family that cannot build them apart gets a float32 encoder (only then). Dispose it when done.
     /// </summary>
     /// <exception cref="InvalidOperationException">The model has no vision part.</exception>
     /// <exception cref="NotSupportedException">The vision family is no longer registered (the message names the registry).</exception>
@@ -215,6 +217,13 @@ public sealed class PretrainedModel : IDisposable
         if (options.Device is null)
         {
             options = options with { Device = Device };
+        }
+
+        // The parts the trained tensors belong to take float32 weights; the rest keep the checkpoint's precision (a trained
+        // projector over a bfloat16 tower: the tower stays bfloat16).
+        if (_vision.Count > 0 && options.Weights != EncoderWeights.Float32 && vision is IVisionTuningPart parts)
+        {
+            options = options with { TrainedParts = [.. options.TrainedParts.Union(parts.PartsOf(_vision.Keys), StringComparer.OrdinalIgnoreCase)] };
         }
 
         var encoder = vision.CreateEncoder(options);

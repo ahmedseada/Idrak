@@ -988,7 +988,8 @@ public static class FineTuner
         if (vision is not null)
         {
             trace?.Invoke($"images: {vision} ({train.Count(s => s.Images.Count > 0)} of {train.Count} training sequences hold images; "
-                          + "their steps run padded rows, never recorded)");
+                          + (vision.Parameters.Count == 0 ? "steps with images may be recorded as graphs, their features copied in)"
+                              : "steps with images are not recorded as graphs while a vision part trains: their features need gradients)"));
         }
 
         var network = model.Network;
@@ -1115,9 +1116,14 @@ public static class FineTuner
         private Tensor?[] _gradients = [];
         private readonly bool _automatic = options.Checkpointing is null && !ComputeResources.OffloadToHostMemory;
         private FineTuningOptions _options = options with { Checkpointing = options.Checkpointing ?? ComputeResources.OffloadToHostMemory };
-        private TrainingGraph? _graph;
+
+        // The recorded steps: one graph per batch shape (rows, positions, and image tokens: a graph holds the features of up
+        // to its batch's count), each recorded once its shape ran twice as an ordinary step; another only while the device's
+        // measured free memory leaves room for one more of the largest so far.
+        private readonly List<TrainingGraph> _recorded = [];
+        private readonly Dictionary<(int Rows, int Length, int ImageTokens), int> _seen = [];
         private bool? _graphs;
-        private int _ordinary;
+        private bool _toldImages;
 
         private readonly bool _automaticRecompute = options.RecomputeFeedForward is null && options.Checkpointing is null && !ComputeResources.OffloadToHostMemory;
         private readonly bool _automaticBFloat16 = options.BFloat16Activations is null && options.Checkpointing is null && !ComputeResources.OffloadToHostMemory;
@@ -1136,6 +1142,13 @@ public static class FineTuner
 
         public (float Loss, long Tokens) Run(IReadOnlyList<Batch> group, CancellationToken cancellationToken, Func<int, string> label, bool graphs = true)
         {
+            // Every step with images whose vision side trains runs ordinarily (its features need gradients); said once.
+            if (!_toldImages && options.Vision is { Parameters.Count: > 0 } && _graphsAllowed && group.Any(b => b.HasImages(train)))
+            {
+                _toldImages = true;
+                trace?.Invoke("steps with images run without graphs while a vision part trains (the features need gradients)");
+            }
+
             // Out of device memory: first recompute the feed-forward activations (cheap), then hold activations as
             // bfloat16, then checkpoint every block (a third more compute); the step is run again each time and the graph,
             // recorded without them, recorded again. Which of the setting that fits and checkpointing is faster is measured.
@@ -1234,8 +1247,15 @@ public static class FineTuner
         private void Reset()
         {
             Changes++;
-            _graph?.Dispose();
-            (_graph, _graphs, _ordinary) = (null, null, 0);
+            DropGraphs();
+            _graphs = null;
+            _seen.Clear();
+        }
+
+        private void DropGraphs()
+        {
+            _recorded.ForEach(g => g.Dispose());
+            _recorded.Clear();
         }
 
         private (float Loss, long Tokens) RunOnce(IReadOnlyList<Batch> group, CancellationToken cancellationToken, Func<int, string> label, bool graphs)
@@ -1243,47 +1263,91 @@ public static class FineTuner
             var options = _options;
             _graphs ??= _graphsAllowed;
             var batch = group[0];
-            if (graphs && _graphs == true && group.Count == 1 && batch.Packed && !batch.HasImages(train))
+            var shape = (batch.Rows.Length, batch.Length, batch.ImageTokens(train));
+
+            // A batch with images replays only when its features are values (no vision part trains): they are copied in.
+            if (graphs && _graphs == true && group.Count == 1 && batch.Packed && (shape.Item3 == 0 || options.Vision is { Parameters.Count: 0 }))
             {
-                if (_graph is null && _ordinary >= 2)
+                var graph = _recorded.Where(g => g.Fits(batch, train)).MinBy(g => g.ImageTokens);
+                if (graph is null && _seen.GetValueOrDefault(shape) >= 2 && RoomForAnother(shape))
                 {
                     if (_checkGradients && optimizer.Parameters.Any(p => p.RequiresGrad && p.Grad is null))
                     {
                         trace?.Invoke("graph not used (the optimizer does not keep the gradient buffers between steps); ordinary steps continue");
                         _graphs = false;
-                        _ordinary++;
-                        return RunStep(model, train, group, optimizer, options, custom, cancellationToken, trace, label);
+                        return Ordinary(group, shape, cancellationToken, label);
                     }
 
-                    _graph = TrainingGraph.Record(model, train, optimizer, options, batch, (Math.Max(1, lossRows) + 63) / 64 * 64, trace);
-                    _graphs = _graph is not null;
-                    _gradients = [.. optimizer.Parameters.Select(p => p.Grad)];
+                    graph = TrainingGraph.Record(model, train, optimizer, options, batch, (Math.Max(1, lossRows) + 63) / 64 * 64, trace);
+                    if (graph is null)
+                    {
+                        _graphs = _recorded.Count > 0;                       // the first failed: none; a later one: not this shape
+                        _seen[shape] = int.MinValue;
+                    }
+                    else
+                    {
+                        if (_recorded.Count == 0)
+                        {
+                            _gradients = [.. optimizer.Parameters.Select(p => p.Grad)];
+                        }
+
+                        _recorded.Add(graph);
+                    }
                 }
 
-                if (_graph is not null && _checkGradients && optimizer.Parameters.Where((p, i) => !ReferenceEquals(p.Grad, _gradients[i])).Any())
+                if (_recorded.Count > 0 && _checkGradients && optimizer.Parameters.Where((p, i) => !ReferenceEquals(p.Grad, _gradients[i])).Any())
                 {
                     trace?.Invoke("graph dropped (the optimizer replaced the gradient buffers the recorded step writes); ordinary steps continue");
-                    _graph.Dispose();
-                    (_graph, _graphs) = (null, false);
+                    DropGraphs();
+                    (graph, _graphs) = (null, false);
                 }
 
-                if (_graph is not null && _graph.Fits(batch, train))
+                if (graph is not null)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     var watch = Stopwatch.StartNew();
                     model.Network.Train();
-                    var (loss, tokens) = _graph.Run(train, batch);
+                    var (loss, tokens) = graph.Run(train, batch);
                     trace?.Invoke($"{label(0)}: {batch.Describe(train)}, replayed: loss {loss:F4}, {watch.Elapsed.TotalSeconds:F2} s");
                     Update(model, optimizer, options);
                     return (loss, tokens);
                 }
             }
 
-            _ordinary++;
-            return RunStep(model, train, group, optimizer, options, custom, cancellationToken, trace, label);
+            return Ordinary(group, shape, cancellationToken, label);
         }
 
-        public void Dispose() => _graph?.Dispose();
+        private (float Loss, long Tokens) Ordinary(IReadOnlyList<Batch> group, (int, int, int) shape, CancellationToken cancellationToken, Func<int, string> label)
+        {
+            _seen[shape] = _seen.GetValueOrDefault(shape) + 1;
+            return RunStep(model, train, group, optimizer, _options, custom, cancellationToken, trace, label);
+        }
+
+        // Whether another graph may be recorded: always the first; another while the device's free memory, measured now,
+        // holds twice the largest recorded graph (the new one, and the same again for the steps that still run
+        // ordinarily). A device that reports no free memory keeps one graph. Said once per shape refused.
+        private bool RoomForAnother((int Rows, int Length, int ImageTokens) shape)
+        {
+            if (_recorded.Count == 0)
+            {
+                return true;
+            }
+
+            long largest = _recorded.Max(g => g.Bytes);
+            long? free = model.Device.Backend.AvailableMemory();
+            if (free is long bytes && bytes >= 2 * largest)
+            {
+                return true;
+            }
+
+            _seen[shape] = int.MinValue;
+            trace?.Invoke($"no graph for {shape.Rows} × {shape.Length} positions with {shape.ImageTokens} image tokens: "
+                          + (free is long f ? $"{f / 1048576.0:F0} MB free on the device, " : "the device reports no free memory, ")
+                          + $"{_recorded.Count} recorded graphs hold up to {largest / 1048576.0:F0} MB each; that shape runs ordinary steps");
+            return false;
+        }
+
+        public void Dispose() => DropGraphs();
 
         // Whether the optimizer updates the parameters where they are: not the CPU update, which releases the gradients.
         private static bool Recordable(Optimizer optimizer) =>
@@ -1387,7 +1451,8 @@ public static class FineTuner
             tokens += count;
             float shown = custom is null ? batchLoss * normalizer / Math.Max(1, batch.Sequences.Sum(i => train[i].TrainedTokens)) : batchLoss;
             string imageCounts = options.Vision is { } v && batch.HasImages(train)
-                ? $", image features: {v.CacheHits - hits} from the cache, {v.Encoded - encoded} encoded"
+                ? $", image features: {v.CacheHits - hits} from the cache, {v.Encoded - encoded} encoded, {v.LastFeatures.Images} images in {v.LastFeatures.Passes} "
+                  + $"pass{(v.LastFeatures.Passes == 1 ? "" : "es")}, {v.LastFeatures.Milliseconds:F1} ms"
                 : "";
             trace?.Invoke($"  forward and backward {batchWatch.Elapsed.TotalSeconds:F2} s, loss {shown:F4}{imageCounts}");
         }
@@ -1719,6 +1784,9 @@ public static class FineTuner
         // Whether a sequence of the batch holds images.
         public bool HasImages(IReadOnlyList<TrainingSequence> all) => Rows.Any(r => r.Any(i => all[i].Images.Count > 0));
 
+        // The image tokens of the batch's sequences.
+        public int ImageTokens(IReadOnlyList<TrainingSequence> all) => Sequences.Sum(i => all[i].Images.Sum(image => image.Tokens));
+
         private string DescribeImages(IReadOnlyList<TrainingSequence> all)
         {
             if (!HasImages(all))
@@ -1727,32 +1795,14 @@ public static class FineTuner
             }
 
             var images = Sequences.SelectMany(i => all[i].Images).ToList();
-            return $", {images.Count} images ({images.Sum(i => i.Tokens)} image tokens; padded rows, one sequence each, not recorded as a graph)";
+            return $", {images.Count} images ({images.Sum(i => i.Tokens)} image tokens{(Packed ? ", packed with the others" : "")})";
         }
     }
 
-    // The training batches: packed when asked and supported, else padded. Sequences with images are never packed (each its
-    // own row of a padded batch; plan 12, phase 6 packs them): with packing, the text-only sequences pack among themselves
-    // and the batches of both kinds are shuffled together.
+    // The training batches: packed when asked and supported, else padded. Sequences with images pack like the others (each
+    // keeps its images at its own positions and attends within itself by the family's rule).
     private static List<Batch> MakeBatches(PretrainedModel model, IReadOnlyList<TrainingSequence> train, FineTuningOptions options, Random random)
     {
-        if (options.Packing && PackedSequences.Supports(model.Network) && train.Any(s => s.Images.Count > 0))
-        {
-            int[] text = [.. Enumerable.Range(0, train.Count).Where(i => train[i].Images.Count == 0)];
-            int[] imaged = [.. Enumerable.Range(0, train.Count).Where(i => train[i].Images.Count > 0)];
-            var batches = new List<Batch>();
-            if (text.Length > 0)
-            {
-                var textOnly = text.Select(i => train[i]).ToList();
-                batches.AddRange(MakeBatches(model, textOnly, options, random).Select(b => b with { Rows = [.. b.Rows.Select(r => r.Select(i => text[i]).ToArray())] }));
-            }
-
-            var withImages = imaged.Select(i => train[i]).ToList();
-            batches.AddRange(Batches(withImages, options.BatchTokens, random).Select(b => Batch.Padded([.. b.Select(i => imaged[i])], train)));
-            random.Shuffle(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(batches));
-            return batches;
-        }
-
         if (options.Packing && PackedSequences.Supports(model.Network))
         {
             int longest = train.Max(s => s.Tokens.Length - 1);
@@ -1941,7 +1991,7 @@ public static class FineTuner
         int chunkRows, bool checkpointing = false, CustomLoss? custom = null, int stepSequences = 0, TuningVision? vision = null)
     {
         var data = Prepare(sequences, batch);
-        var images = StepImages.Of(sequences, batch, vision);
+        var images = StepImages.Of(sequences, batch, vision, checkpointing);
         var tokens = Tensor.From(data.Inputs, [batch.Rows.Length, batch.Length], model.Device);
         var loss = custom is null
             ? NetworkLoss(model, tokens, (hidden, head) => Losses.TokenCrossEntropyRows(hidden, h => head.Forward(h), data.Trained, data.Targets,
@@ -1952,19 +2002,18 @@ public static class FineTuner
     }
 
     // The images of a batch for the decoder's pass: each image's features (once per distinct image and preparation in the
-    // batch, through the vision side's cache) at its blocks' positions in its row, and the family's attention rule.
+    // batch, all of them through the vision side together and its cache) at its blocks' positions in its row (after the
+    // sequences before it, in a packed row), and the family's attention rule. With fixed inputs (a recorded step) the pass
+    // reads the features from them.
     private sealed record StepImages(IReadOnlyList<PromptImage> Images, IImageAttentionRule Attention)
     {
-        public static StepImages? Of(IReadOnlyList<TrainingSequence> sequences, Batch batch, TuningVision? vision)
+        public ImagePrefillInputs? Inputs { get; init; }
+
+        public static StepImages? Of(IReadOnlyList<TrainingSequence> sequences, Batch batch, TuningVision? vision, bool checkpointing = false)
         {
             if (!batch.HasImages(sequences))
             {
                 return null;
-            }
-
-            if (batch.Packed)
-            {
-                throw new InvalidOperationException("A packed batch holds sequences with images; images train in padded rows (each sequence its own row).");
             }
 
             if (vision is null)
@@ -1972,25 +2021,36 @@ public static class FineTuner
                 throw new InvalidOperationException("The sequences hold images and no vision side is given (FineTuningOptions.Vision, TuningVision.Create).");
             }
 
-            var features = new Dictionary<(string, TuningImages), Tensor>();
+            var distinct = new List<TrainingImage>();
+            var index = new Dictionary<(string, TuningImages), int>();
+            foreach (var image in batch.Sequences.SelectMany(i => sequences[i].Images))
+            {
+                if (index.TryAdd((image.Image.Hash, image.Preparation), distinct.Count))
+                {
+                    distinct.Add(image);
+                }
+            }
+
+            var features = vision.Features(distinct, checkpointing);
             var images = new List<PromptImage>();
             for (int row = 0; row < batch.Rows.Length; row++)
             {
-                foreach (var image in batch.Rows[row].SelectMany(i => sequences[i].Images))
+                int offset = 0;
+                foreach (int sequence in batch.Rows[row])
                 {
-                    var key = (image.Image.Hash, image.Preparation);
-                    if (!features.TryGetValue(key, out var all))
+                    foreach (var image in sequences[sequence].Images)
                     {
-                        features[key] = all = vision.Features(image, out _);
+                        var all = features[index[(image.Image.Hash, image.Preparation)]];
+                        int at = 0;
+                        foreach (var (position, count) in image.Blocks)
+                        {
+                            var block = at == 0 && count == all.Shape[0] ? all : all.Narrow(0, at, count);
+                            images.Add(new PromptImage(offset + position, block) { Sequence = row });
+                            at += count;
+                        }
                     }
 
-                    int offset = 0;
-                    foreach (var (position, count) in image.Blocks)
-                    {
-                        var block = offset == 0 && count == all.Shape[0] ? all : all.Narrow(0, offset, count);
-                        images.Add(new PromptImage(position, block) { Sequence = row });
-                        offset += count;
-                    }
+                    offset += sequences[sequence].Tokens.Length - 1;
                 }
             }
 
@@ -2010,7 +2070,7 @@ public static class FineTuner
             throw new InvalidOperationException("The network does not end with its output head (a Linear layer).");
         }
 
-        using var imageScope = images is null ? null : model.Network.Begin(tokens, images.Images, images.Attention);
+        using var imageScope = images is null ? null : images.Inputs is { } inputs ? inputs.Begin() : model.Network.Begin(tokens, images.Images, images.Attention);
         var hidden = tokens;
         for (int i = 0; i < modules.Count - 1; i++)
         {
@@ -2070,14 +2130,18 @@ public static class FineTuner
     }
 
     // One training step's forward and backward pass over a packed batch, recorded as a graph: its inputs (tokens,
-    // the packing's layout, the trained positions with targets and weights) live in fixed buffers that each step
-    // overwrites before replaying the graph. The loss weights carry 1 / trained tokens, so the recorded pass needs no
-    // per-batch constant. Parameters' gradients are the ones the graph zeroes and fills.
+    // the packing's layout, the trained positions with targets and weights, and with images their features, where they go
+    // and each row's key ranges) live in fixed buffers that each step overwrites before replaying the graph. The loss
+    // weights carry 1 / trained tokens, so the recorded pass needs no per-batch constant. Parameters' gradients are the
+    // ones the graph zeroes and fills. A graph with images serves batches of its shape holding up to its image tokens;
+    // their features are computed (or taken from the cache) before each replay, without gradients.
     private sealed class TrainingGraph : IDisposable
     {
         private readonly PretrainedModel _model;
         private readonly Tensor _tokens, _rows, _targets, _weights, _loss;
         private readonly PackedSequences _packing;
+        private ImagePrefillInputs? _images;
+        private TuningVision? _vision;
         private IntPtr _executable, _graph;
         private List<Idrak.Abstraction.Devices.Storage> _owned = [];
 
@@ -2096,6 +2160,12 @@ public static class FineTuner
 
         public int LossRows { get; }
 
+        // The image tokens the graph holds features for (0: a graph without images).
+        public int ImageTokens => _images?.ImageTokens ?? 0;
+
+        // The device memory the graph keeps: what it allocated while recording, and its image inputs.
+        public long Bytes => _owned.Sum(s => 4L * s.Length) + (_images?.Bytes ?? 0);
+
         private static int[][] Lengths(Batch batch, IReadOnlyList<TrainingSequence> train) =>
             [.. batch.Rows.Select(r => r.Select(i => train[i].Tokens.Length - 1).ToArray())];
 
@@ -2105,6 +2175,32 @@ public static class FineTuner
         {
             var graph = new TrainingGraph(model, batch, train, lossRows);
             var backend = model.Device.Backend;
+            StepImages? images = null;
+            if (batch.HasImages(train))
+            {
+                // The features are values (no vision part trains): computed now, copied into the fixed inputs the recorded
+                // pass reads, as before every replay.
+                try
+                {
+                    var vision = options.Vision!;
+                    graph._vision = vision;
+                    graph._images = ImagePrefillInputs.Create(model.Network, batch.Rows.Length, batch.Length, batch.ImageTokens(train), vision.Attention);
+                    using var scope = new TensorScope();
+                    using (Autograd.NoGrad())
+                    {
+                        var step = StepImages.Of(train, batch, vision)!;
+                        graph._images.Load(step.Images, graph._packing);
+                        images = step with { Inputs = graph._images };
+                    }
+                }
+                catch (Exception ex) when (ex is not (OutOfMemoryException or ResourceLimitExceededException))
+                {
+                    graph.Dispose();
+                    trace?.Invoke($"graph not used ({ex.Message}); ordinary steps continue");
+                    return null;
+                }
+            }
+
             model.Device.Synchronize();
             model.Network.Train();
             try
@@ -2127,13 +2223,14 @@ public static class FineTuner
                 using (options.BFloat16Activations == true ? ActivationMemory.CompressToBFloat16() : (ActivationMemory.Scope?)null)
                 {
                     var loss = NetworkLoss(model, graph._tokens, (hidden, head) => Tensor.TokenCrossEntropyRows(hidden, h => head.Forward(h),
-                        graph._rows, graph._targets, graph._weights, 1f, options.LossChunkRows), options.Checkpointing == true);
+                        graph._rows, graph._targets, graph._weights, 1f, options.LossChunkRows), options.Checkpointing == true, images);
                     loss.Backward();
                     backend.Copy(loss.Storage, graph._loss.Storage, 1);
                 }
 
                 (graph._executable, graph._graph, graph._owned) = backend.EndCapture();
-                trace?.Invoke($"recorded one training step as a graph ({batch.Rows.Length} × {batch.Length} positions, up to {lossRows} trained); later steps replay it");
+                trace?.Invoke($"recorded one training step as a graph ({batch.Rows.Length} × {batch.Length} positions, up to {lossRows} trained"
+                              + (graph._images is { } inputs ? $", up to {inputs.ImageTokens} image tokens" : "") + $", {graph.Bytes / 1048576.0:F0} MB); later steps of that shape replay it");
                 return graph;
             }
             catch (Exception ex) when (ex is not OutOfMemoryException)
@@ -2145,10 +2242,12 @@ public static class FineTuner
             }
         }
 
-        // Same shape, and trained positions within the recorded capacity.
+        // Same shape, trained positions within the recorded capacity, and images (or none) as recorded, their tokens within
+        // the recorded features' buffer.
         public bool Fits(Batch batch, IReadOnlyList<TrainingSequence> train) =>
             batch.Packed && batch.Rows.Length == _packing.Rows && batch.Length == _packing.Length
-            && batch.Sequences.Sum(i => train[i].TrainedTokens) <= LossRows;
+            && batch.Sequences.Sum(i => train[i].TrainedTokens) <= LossRows
+            && (batch.HasImages(train) ? _images is { } inputs && inputs.Fits(batch.Rows.Length, batch.Length, batch.ImageTokens(train)) : _images is null);
 
         // Copies the batch in and replays the pass: the parameters' gradients are then set; returns the mean loss per
         // trained token and the tokens covered.
@@ -2171,6 +2270,15 @@ public static class FineTuner
             _targets.Load(targets);
             _weights.Load(weights);
             _packing.Update(Lengths(batch, train));
+            if (_images is not null)
+            {
+                using var scope = new TensorScope();
+                using (Autograd.NoGrad())
+                {
+                    _images.Load(StepImages.Of(train, batch, _vision)!.Images, _packing);
+                }
+            }
+
             _model.Device.Backend.ReplayGraph(_executable);
             return (_loss.Item(), data.Tokens);
         }
@@ -2196,6 +2304,7 @@ public static class FineTuner
             _weights.Dispose();
             _loss.Dispose();
             _packing.Dispose();
+            _images?.Dispose();
         }
     }
 }

@@ -30,6 +30,12 @@ public sealed record FeatureCacheKey(string Image, string Transforms, string Vis
     /// <summary>The image tokens' features (after the projector): what a fine-tune keeps when the projector is frozen too.</summary>
     public const string FeaturesStage = "features";
 
+    /// <summary>
+    /// The pixel values the tower reads (the image decoded, transformed and preprocessed by the family): what a fine-tune
+    /// keeps when the tower itself trains (its output changes every step, its input does not).
+    /// </summary>
+    public const string PixelsStage = "pixels";
+
     /// <summary>The key of <paramref name="image"/> prepared by <paramref name="images"/> and encoded by the encoder described.</summary>
     public static FeatureCacheKey For(ChatImage image, TuningImages images, string family, string checkpoint, string dtype, string stage = TowerStage)
     {
