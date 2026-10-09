@@ -259,9 +259,9 @@ same fixtures through `FineTuner.Train` (`Optimizer = ps => new Sgd(ps, 0.2f)`, 
   cd D:\Projects\Idrak
   $plugin = "D:\Projects\Idrak\samples\Gemma3Vision\Idrak.Gemma3Vision\bin\Release\net10.0\Idrak.Gemma3Vision.dll"
   $m = "<the model folder>"
-  dotnet run -c Release --project src\Idrak.Cli -- tune evaluate -P $plugin $m "$m\data\val.json" --metric cer --metric-samples 20 -v
+  dotnet run -c Release --project src\Idrak.Cli -- tune evaluate -P $plugin $m "$m\data\val.json" --images "$m\data" --grayscale --metric cer --samples 20 -v
   dotnet run -c Release --project src\Idrak.Cli -- tune -P $plugin -b $m --data "$m\data\train.json" --eval "$m\data\val.json" --images "$m\data" --grayscale --metric cer --metric-every 50 --metric-samples 20 --epochs 1 -o "$m-lora" -v
-  dotnet run -c Release --project src\Idrak.Cli -- tune evaluate -P $plugin $m "$m\data\val.json" --adapter "$m-lora" --metric cer --metric-samples 20
+  dotnet run -c Release --project src\Idrak.Cli -- tune evaluate -P $plugin $m "$m\data\val.json" --images "$m\data" --adapter "$m-lora" --metric cer --samples 20
   dotnet run -c Release --project src\Idrak.Cli -- run -P $plugin $m --adapter "$m-lora" --image "<a scan>" "<the prompt from train.json>"
   ```
 
