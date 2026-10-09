@@ -59,6 +59,12 @@ internal enum VulkanTuneOp : byte
 
     /// <summary>The gradient of attention over key ranges (attention_spans_backward_dq and _dkv): the workgroup width.</summary>
     SpanAttentionBackward,
+
+    /// <summary>
+    /// A convolution pass (forward, input or weight gradient): the composed path, an implicit product (tiled or blocked, at
+    /// a width; the weight gradient at a split count) or the depthwise kernels.
+    /// </summary>
+    Convolution,
 }
 
 /// <summary>What a measured choice is for: the operation, its variant (kernel, format) and its shape.</summary>

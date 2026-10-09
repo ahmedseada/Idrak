@@ -10,7 +10,7 @@ public sealed record DeviceCheckOptions
 {
     /// <summary>
     /// The tolerances by operation name where the default <see cref="Tolerance"/> does not fit: products of bfloat16, 8-bit,
-    /// FP8 and 4-bit weights, attention over many keys, the packed (bfloat16) outputs, and the operations devices run on
+    /// FP8 and 4-bit weights, attention over many keys and convolutions (sums of many terms in another order), the packed (bfloat16) outputs, and the operations devices run on
     /// bfloat16 matrix units (<c>GemmStrided</c>, <c>AttentionStrided</c> and its gradients); 0 (bit for bit) for
     /// <c>Float8QuantizeWeight</c>, whose bytes the contract fixes and a tolerance on the floats holding them would not check.
     /// </summary>
@@ -67,7 +67,7 @@ public sealed record DeviceCheckOptions
                 tolerances[name] = 2e-2f;
             }
             else if (name.Contains("Attention", StringComparison.Ordinal) || name.Contains("MatMul", StringComparison.Ordinal)
-                     || name is "SoftmaxCrossEntropyRows")
+                     || name.StartsWith("Convolution", StringComparison.Ordinal) || name is "SoftmaxCrossEntropyRows")
             {
                 tolerances[name] = 1e-3f;
             }

@@ -7,11 +7,13 @@ namespace Idrak.Layers;
 /// <summary>
 /// 2-D convolution over [N, C, H, W] images, producing [N, outChannels, OH, OW]. Kernels, strides, padding and dilation
 /// may differ between height and width (a text line's tall or wide filters); <c>groups</c> splits the channels into
-/// groups convolved separately (depthwise when it equals the input channels). Implemented as patch unfolding (im2col)
-/// followed by one large matrix product (a batched one per group), so it runs on the same optimized GEMM as
-/// <see cref="Linear"/> on both CPU and GPU. Weights start He-uniform (suited to ReLU).
+/// groups convolved separately (depthwise when it equals the input channels). Runs as one device operation
+/// (<see cref="Tensor.Convolution"/>): on the CPU as patch unfolding (im2col) and the tiled products, depthwise as direct
+/// loops; on GPUs as the device's own kernels (implicit products, depthwise) or the unfolded patches on its matrix kernels,
+/// whichever is measured faster for the shape. In inference, a following <see cref="BatchNorm"/> (evaluation mode) and
+/// activation fold into the same pass (see <see cref="Sequential"/>). Weights start He-uniform (suited to ReLU).
 /// </summary>
-public sealed class Conv2d : Module
+public sealed partial class Conv2d : Module
 {
     /// <summary>Creates the layer.</summary>
     /// <param name="inChannels">Input channels (1 for grayscale, 3 for RGB).</param>
@@ -197,25 +199,7 @@ public sealed class Conv2d : Module
             throw new ArgumentException($"A {KernelHeight}x{KernelWidth} kernel (dilation {DilationHeight}x{DilationWidth}) does not fit a {g.H}x{g.W} input with padding {PaddingHeight}x{PaddingWidth}.");
         }
 
-        var columns = input.Im2Col(g);                                   // [N·OH·OW, C·kh·kw], channel-major: a group's columns are adjacent
-        int positions = g.OH * g.OW;
-        Tensor output;
-        if (Groups == 1)
-        {
-            var rows = columns.MatMul(Weight, transposeB: true);         // [N·OH·OW, OC]
-            output = rows.Reshape(g.N, positions, OutChannels).Permute(0, 2, 1);
-        }
-        else
-        {
-            // One batched product: [G, N·OH·OW, C/G·kh·kw] × [G, OC/G, C/G·kh·kw]ᵀ = [G, N·OH·OW, OC/G].
-            int patch = g.PatchSize / Groups, filters = OutChannels / Groups;
-            var grouped = columns.Reshape(g.Positions, Groups, patch).Permute(1, 0, 2);
-            var rows = grouped.MatMul(Weight.Reshape(Groups, filters, patch), transposeB: true);
-            output = rows.Reshape(Groups, g.N, positions, filters).Permute(1, 0, 3, 2);      // [N, G, OC/G, OH·OW]
-        }
-
-        output = output.Reshape(g.N, OutChannels, g.OH, g.OW);
-        return Bias is null ? output : output.GroupAffine(null, Bias, OutChannels, positions);
+        return input.Convolution(Weight, Bias, g, Groups);
     }
 
     /// <inheritdoc />
@@ -367,37 +351,15 @@ public sealed class AvgPool2d : Module
             throw new ArgumentException($"AvgPool2d expects [N, C, H, W], got {Tensor.FormatShape(input.Shape)}.");
         }
 
-        // Each channel as an image of one channel: its windows unfold to rows of kh·kw values, whose mean is the output.
         var s = input.Shape;
-        int planes = s[0] * s[1];
-        var g = new ConvGeometry(planes, 1, s[2], s[3], KernelHeight, KernelWidth, StrideHeight, StrideWidth, PaddingHeight, PaddingWidth);
+        var g = new ConvGeometry(s[0], s[1], s[2], s[3], KernelHeight, KernelWidth, StrideHeight, StrideWidth, PaddingHeight, PaddingWidth);
         if (g.OH <= 0 || g.OW <= 0)
         {
             throw new ArgumentException($"A {KernelHeight}x{KernelWidth} window does not fit a {s[2]}x{s[3]} input with padding {PaddingHeight}x{PaddingWidth}.");
         }
 
-        var means = input.Reshape(planes, 1, s[2], s[3]).Im2Col(g).Mean(1);   // [N·C·OH·OW]
-        if (!CountIncludePad && (PaddingHeight > 0 || PaddingWidth > 0))
-        {
-            // Rescale each position's mean from kh·kw values to the input positions its window covers.
-            var scale = new float[g.OH * g.OW];
-            for (int y = 0; y < g.OH; y++)
-            {
-                int rows = Covered(y * StrideHeight - PaddingHeight, KernelHeight, s[2]);
-                for (int x = 0; x < g.OW; x++)
-                {
-                    scale[y * g.OW + x] = KernelHeight * KernelWidth / (float)(rows * Covered(x * StrideWidth - PaddingWidth, KernelWidth, s[3]));
-                }
-            }
-
-            // Not disposed here: the backward pass of the product reads the scale.
-            means = means.GroupAffine(Tensor.From(scale, [scale.Length], input.Device), null, scale.Length, 1);
-        }
-
-        return means.Reshape(s[0], s[1], g.OH, g.OW);
+        return input.AvgPool(g, CountIncludePad);
     }
-
-    private static int Covered(int start, int size, int length) => Math.Max(Math.Min(start + size, length) - Math.Max(start, 0), 1);
 
     /// <inheritdoc />
     public override string ToString() => $"AvgPool2d({KernelHeight}x{KernelWidth}, stride {StrideHeight}x{StrideWidth}, padding {PaddingHeight}x{PaddingWidth}"

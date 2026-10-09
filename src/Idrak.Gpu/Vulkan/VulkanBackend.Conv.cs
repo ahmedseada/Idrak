@@ -4,32 +4,32 @@
 namespace Idrak.Gpu.Vulkan;
 
 // Convolution and pooling as generated kernels (VulkanKernels.Conv): im2col, col2im, max pooling and its gradient, and
-// the per-group scale, shift and sums of a convolution's bias. A case the kernels do not cover (a storage larger than
-// the device binds, more elements than a 32-bit index reaches, a dilated window) goes to the host fallback.
+// the per-group scale, shift and sums of a convolution's bias, dilated windows included. A case the kernels do not cover
+// (a storage larger than the device binds, more elements than a 32-bit index reaches) goes to the host fallback.
 internal sealed partial class VulkanBackend
 {
     public override void Im2ColKernel(Storage x, Storage cols, in ConvGeometry g)
     {
         long n = (long)g.Positions * g.PatchSize;
-        if (n > int.MaxValue || g.Dilated || !Fit(x, cols))
+        if (n > int.MaxValue || !Fit(x, cols))
         {
             base.Im2ColKernel(x, cols, in g);
             return;
         }
 
-        Span<byte> b = stackalloc byte[48];
+        Span<byte> b = stackalloc byte[56];
         Grid("im2col", n, [x, cols], PushGeometry(b, g));
     }
 
     public override void Col2ImKernel(Storage dcols, Storage dx, in ConvGeometry g)
     {
-        if ((long)g.Positions * g.PatchSize > int.MaxValue || g.Dilated || !Fit(dcols, dx))
+        if ((long)g.Positions * g.PatchSize > int.MaxValue || !Fit(dcols, dx))
         {
             base.Col2ImKernel(dcols, dx, in g);
             return;
         }
 
-        Span<byte> b = stackalloc byte[48];
+        Span<byte> b = stackalloc byte[56];
         Grid("col2im", (long)g.N * g.C * g.H * g.W, [dcols, dx], PushGeometry(b, g));
     }
 
@@ -41,7 +41,7 @@ internal sealed partial class VulkanBackend
             return;
         }
 
-        Span<byte> b = stackalloc byte[48];
+        Span<byte> b = stackalloc byte[56];
         Grid("max_pool", (long)g.N * g.C * g.OH * g.OW, [x, y, argmax], PushGeometry(b, g));
     }
 
@@ -55,11 +55,11 @@ internal sealed partial class VulkanBackend
             return;
         }
 
-        Span<byte> b = stackalloc byte[48];
+        Span<byte> b = stackalloc byte[56];
         Grid("max_pool_backward", (long)g.N * g.C * g.H * g.W, [dy, argmax, dx], PushGeometry(b, g));
     }
 
-    // The twelve geometry push constants of the window kernels: N, C, H, W, KH, KW, SH, SW, PH, PW, OH, OW.
+    // The fourteen geometry push constants of the window kernels: N, C, H, W, KH, KW, SH, SW, PH, PW, OH, OW, DH, DW.
     private static ReadOnlySpan<byte> PushGeometry(Span<byte> bytes, in ConvGeometry g) =>
-        new Push(bytes).I(g.N).I(g.C).I(g.H).I(g.W).I(g.KH).I(g.KW).I(g.SH).I(g.SW).I(g.PH).I(g.PW).I(g.OH).I(g.OW).Bytes;
+        new Push(bytes).I(g.N).I(g.C).I(g.H).I(g.W).I(g.KH).I(g.KW).I(g.SH).I(g.SW).I(g.PH).I(g.PW).I(g.OH).I(g.OW).I(g.DH).I(g.DW).Bytes;
 }

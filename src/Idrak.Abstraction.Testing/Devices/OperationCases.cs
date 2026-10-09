@@ -78,6 +78,7 @@ internal static class OperationCases
         BinaryOp op => new JsonObject { ["BinaryOp"] = op.ToString() },
         PackedFormat format => new JsonObject { ["PackedFormat"] = format.ToString() },
         GemmEpilogue epilogue => new JsonObject { ["GemmEpilogue"] = epilogue.ToString() },
+        ConvActivation activation => new JsonObject { ["ConvActivation"] = activation.ToString() },
         ConvGeometry g => new JsonObject
         {
             ["ConvGeometry"] = g.Dilated
@@ -110,6 +111,7 @@ internal static class OperationCases
             "BinaryOp" => Enum.Parse<BinaryOp>((string)value!),
             "PackedFormat" => Enum.Parse<PackedFormat>((string)value!),
             "GemmEpilogue" => Enum.Parse<GemmEpilogue>((string)value!),
+            "ConvActivation" => Enum.Parse<ConvActivation>((string)value!),
             "ConvGeometry" => value!.AsArray().Select(v => (int)v!).ToArray() is var g
                 ? new ConvGeometry(g[0], g[1], g[2], g[3], g[4], g[5], g[6], g[7], g[8], g[9]) { DH = g.Length > 10 ? g[10] : 1, DW = g.Length > 11 ? g[11] : 1 } : default,
             "AttentionVariant" => new AttentionVariant((int)value![0]!, Single(value[1])),

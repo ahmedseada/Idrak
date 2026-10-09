@@ -5,14 +5,14 @@ namespace Idrak.Gpu.Vulkan;
 
 // Convolution and pooling kernels over NCHW data (im2col, col2im, max pooling and its gradient), and the per-group
 // scale, shift and sums that a convolution's bias and batch statistics use. Each window kernel takes the geometry as
-// twelve push constants: N, C, H, W, KH, KW, SH, SW, PH, PW, OH, OW. The gradients gather (an invocation per input
-// element walks the windows that cover it, in the CPU's order) rather than scatter, so they need no atomics and give
-// the same bits run after run.
+// fourteen push constants: N, C, H, W, KH, KW, SH, SW, PH, PW, OH, OW, DH, DW (the dilation; pooling passes 1). The
+// gradients gather (an invocation per input element walks the windows that cover it, in the CPU's order) rather than
+// scatter, so they need no atomics and give the same bits run after run.
 internal static partial class VulkanKernels
 {
     private static IEnumerable<(string, Func<SpirvKernel>)> ConvKernels()
     {
-        // cols[(n, oh, ow), (c, kh, kw)] = x[n, c, oh·sh - ph + kh, ow·sw - pw + kw], 0 outside the image.
+        // cols[(n, oh, ow), (c, kh, kw)] = x[n, c, oh·sh - ph + kh·dh, ow·sw - pw + kw·dw], 0 outside the image.
         yield return ("im2col", () =>
         {
             var k = new KernelBuilder("im2col", Block);
@@ -28,8 +28,8 @@ internal static partial class VulkanKernels
                 var kw = col % g.KW;
                 var u = col / g.KW;
                 var (kh, c) = (u % g.KH, u / g.KH);
-                var ih = oh * g.SH - g.PH + kh;
-                var iw = ow * g.SW - g.PW + kw;
+                var ih = oh * g.SH - g.PH + kh * g.DH;
+                var iw = ow * g.SW - g.PW + kw * g.DW;
                 var inside = (ih >= 0) & (ih < g.H) & (iw >= 0) & (iw < g.W);
                 var at = ((n * g.C + c) * g.H + k.Clamp(ih, k.Int(0), g.H - 1)) * g.W + k.Clamp(iw, k.Int(0), g.W - 1);
                 cols[idx] = k.Select(inside, x[at], k.Float(0f));
@@ -37,7 +37,8 @@ internal static partial class VulkanKernels
             return k.Build();
         });
 
-        // dx += fold(dcols): an invocation per input element adds the column entries that read it, windows in row order.
+        // dx += fold(dcols): an invocation per input element adds the column entries that read it, windows in row order
+        // (a dilated window reads the element only where its offset from the window's start is a whole number of steps).
         yield return ("col2im", () =>
         {
             var k = new KernelBuilder("col2im", Block);
@@ -51,18 +52,21 @@ internal static partial class VulkanKernels
                 var ih = t % g.H;
                 t = t / g.H;
                 var (c, n) = (t % g.C, t / g.C);
-                var (ohFirst, ohLast) = Covering(k, ih, g.PH, g.KH, g.SH, g.OH);
-                var (owFirst, owLast) = Covering(k, iw, g.PW, g.KW, g.SW, g.OW);
+                var (ohFirst, ohLast) = Covering(k, ih, g.PH, (g.KH - 1) * g.DH + 1, g.SH, g.OH);
+                var (owFirst, owLast) = Covering(k, iw, g.PW, (g.KW - 1) * g.DW + 1, g.SW, g.OW);
                 var acc = k.Local(dx[idx]);
                 k.For(ohFirst, ohLast, 1, oh =>
                 {
-                    var kh = ih + g.PH - oh * g.SH;
-                    var rowBase = (n * g.OH + oh) * g.OW;
-                    var colBase = (c * g.KH + kh) * g.KW;
-                    k.For(owFirst, owLast, 1, ow =>
+                    var th = ih + g.PH - oh * g.SH;
+                    k.If((th % g.DH).Eq(0), () =>
                     {
-                        var kw = iw + g.PW - ow * g.SW;
-                        acc.V = acc.V + dcols[(rowBase + ow) * patch + colBase + kw];
+                        var rowBase = (n * g.OH + oh) * g.OW;
+                        var colBase = (c * g.KH + th / g.DH) * g.KW;
+                        k.For(owFirst, owLast, 1, ow =>
+                        {
+                            var tw = iw + g.PW - ow * g.SW;
+                            k.If((tw % g.DW).Eq(0), () => acc.V = acc.V + dcols[(rowBase + ow) * patch + colBase + tw / g.DW]);
+                        });
                     });
                 });
                 dx[idx] = acc.V;
@@ -143,11 +147,11 @@ internal static partial class VulkanKernels
     }
 
     // The window geometry push constants, in the order every window kernel declares them.
-    private readonly record struct WindowGeometry(Val N, Val C, Val H, Val W, Val KH, Val KW, Val SH, Val SW, Val PH, Val PW, Val OH, Val OW);
+    private readonly record struct WindowGeometry(Val N, Val C, Val H, Val W, Val KH, Val KW, Val SH, Val SW, Val PH, Val PW, Val OH, Val OW, Val DH, Val DW);
 
     private static WindowGeometry Geometry(KernelBuilder k) => new(
         k.PushInt("N"), k.PushInt("C"), k.PushInt("H"), k.PushInt("W"), k.PushInt("KH"), k.PushInt("KW"),
-        k.PushInt("SH"), k.PushInt("SW"), k.PushInt("PH"), k.PushInt("PW"), k.PushInt("OH"), k.PushInt("OW"));
+        k.PushInt("SH"), k.PushInt("SW"), k.PushInt("PH"), k.PushInt("PW"), k.PushInt("OH"), k.PushInt("OW"), k.PushInt("DH"), k.PushInt("DW"));
 
     // The windows [first, last) along one axis whose span covers input coordinate i: o·stride - pad ≤ i < o·stride - pad + size,
     // within [0, outputs).
