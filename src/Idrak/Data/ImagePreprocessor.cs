@@ -306,9 +306,14 @@ public sealed class ImagePreprocessor
         return CenterCrop ? (CropHeight, CropWidth) : (h, w);
     }
 
-    // The size the resize gives: Height x Width, or by the shortest edge as transformers' get_resize_output_image_size
-    // (default_to_square false): the short side becomes ShortestEdge, the long one int(ShortestEdge * long / short).
-    private (int Height, int Width) ResizedSize(int h, int w)
+    /// <summary>
+    /// The [height, width] the resize gives an image of <paramref name="h"/> x <paramref name="w"/>, before any crop:
+    /// <see cref="Height"/> x <see cref="Width"/>, or by the shortest edge as transformers' <c>get_resize_output_image_size</c>
+    /// (default_to_square false: the short side becomes <see cref="ShortestEdge"/>, the long one int(ShortestEdge · long / short)),
+    /// or the image's own size without <see cref="Resize"/>. With <see cref="OutputSize"/> it maps the network's pixels back
+    /// to the image's (a detector's boxes).
+    /// </summary>
+    public (int Height, int Width) ResizedSize(int h, int w)
     {
         if (!Resize)
         {

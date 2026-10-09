@@ -1,0 +1,26 @@
+{
+  "crop_size": {
+    "height": 32,
+    "width": 32
+  },
+  "do_center_crop": true,
+  "do_convert_rgb": true,
+  "do_normalize": true,
+  "do_rescale": true,
+  "do_resize": true,
+  "image_mean": [
+    0.485,
+    0.456,
+    0.406
+  ],
+  "image_std": [
+    0.229,
+    0.224,
+    0.225
+  ],
+  "resample": 3,
+  "rescale_factor": 0.00392156862745098,
+  "size": {
+    "shortest_edge": 36
+  }
+}

@@ -246,3 +246,93 @@ $env:IDRAK_DEVICES="vulkan"; $env:IDRAK_FILTER="vision layers"; dotnet run -c Re
 $env:IDRAK_DEVICES="vulkan"; $env:IDRAK_FILTER="conformance kit"; dotnet run -c Release --project tests/Idrak.Tests
 $env:IDRAK_DEVICES="vulkan"; $env:IDRAK_FILTER="vulkan cnn"; dotnet run -c Release --project tests/Idrak.Tests
 ```
+
+## Step 6, as built (2026-10-09)
+
+- **Contracts and placement (decision 10).** `IImageModelFamily` and the `ImageModelFamilies` registry (a `SlotTable`,
+  unguarded: a family's network, preprocessing, labels and decoder must agree, as `VisionFamilies`) live in core's
+  `Idrak.Models.Abstractions`, beside `VisionFamilies`: their only library user is core's loader (`ImageModels.Load`), which
+  opens checkpoints with core's `CheckpointFormats` and ONNX importer and hands families an `ITensorStore`; Idrak.Vision
+  names only the description record `ImageModel` (not a contract), so `ITensorStore` stays a core contract with one user.
+  The records the contract speaks in sit with it: `ImageCheckpoint` (architecture, config.json, path, folder, the
+  tensors open while reading or an `Onnx()` import, options, notes; helpers `Labels()` from `id2label`,
+  `Preprocessor(defaults)` from `preprocessor_config.json`, `RequireTensors()`, `RequireOnnx()`), `ImageModel` (network,
+  `ImageTask` Classification / Detection / Segmentation / Features, `ImagePreprocessor`, channels, labels, decoder name
+  and settings, notes, `InputShape`; disposing it disposes the network) and `ImageModelOptions` (device, `EncoderWeights`
+  precision, AsStored by default; an architecture override). `DetectionDecoders` (a `SlotTable` of
+  `DetectionDecoderFactory(DetectionDecoderContext)` → `DetectionDecoder`; context: input size, labels, settings) lives in
+  `Idrak.Vision.Abstractions`: `ModelDetector` is its only user. An app's decoder over a library one is guarded (Throw,
+  FallBack, Shadow comparing the detections; the outputs are copied once for it, since a span cannot be held).
+- **No family in the library.** `ImageModelFamilies` is empty; an unregistered architecture is refused before any weight
+  is opened: "Image model family 'X' is not registered (registered: none); register it with ImageModelFamilies.Register (a
+  plug-in or the app that brings the family; the library registers none)." The one library decoder is the generic
+  "boxes-scores" (outputs already boxes and class scores: [N, 4 + C] or columns, xyxy / xywh / cxcywh, normalized or in
+  pixels, probabilities or logits); nothing named after a family. An unknown decoder: "Detection decoder 'x' is not
+  registered (...); register it with DetectionDecoders.Register (...)".
+- **Loading** (`ImageModels.Load(path, options)`, core `Idrak.Models`): a model folder (config.json + safetensors, or any
+  folder a registered checkpoint format reads), a .safetensors file (its folder), an .onnx file, or a folder holding one
+  .onnx file and no safetensors. The architecture is config.json's "architectures" (or "architecture"); for an ONNX file
+  without config.json its "architecture" metadata, and its "config" metadata (a config.json's text) stands for the file.
+  The ONNX network is imported at most once and belongs to the model once the family takes it (disposed otherwise). The
+  loader checks the description (a network, preprocessing, channels, a decoder name for a detector, labels not empty),
+  puts the network in evaluation mode and carries the format's, importer's and family's notes.
+- **Weights as stored, streamed.** `StoredWeights.Conv2d(store, name, stride, padding, dilation, groups, device)`,
+  `StoredWeights.BatchNorm(store, name, epsilon)` and `StoredWeights.Linear(store, name, weights, device)` build layers
+  from PyTorch's tensor names and layouts, one tensor read at a time (a convolution's weight straight into the layer's
+  [out, in/g · kh · kw] tensor; the fc weight transposed while read); `Linear` keeps a bfloat16 checkpoint's weight as
+  bfloat16 under AsStored (`KeepsBFloat16`), convolutions and norms hold float32 copies (no narrower form yet; a note
+  says so in the plug-in family). Missing or mis-shaped tensors are refused naming the tensor.
+- **Ready to predict** (Idrak.Vision, `ImageModelPredictors`): `model.Classifier(labels?)` (a `PredictorBuilder<ImageData,
+  ClassPrediction>`: the family's preprocessing, input shape, softmax, labels), `model.Outputs()` (raw outputs, any
+  task), `model.Detector(options)` (the decoder by name, labels from the model), `model.Segmenter()`, and
+  `RegionClassifier.For(model)` (frames regions at the model's square input, rescaled and normalized as its preprocessing,
+  grey repeated to its channels). `ModelDetector` gained constructors taking a decoder by name and/or an
+  `ImagePreprocessor`: boxes are mapped back through the resize (by size or shortest edge) and the center crop's offset,
+  images of one network size run as one batch (sizes that follow the image run in runs of equal size); `ModelSegmenter`
+  takes a preprocessor (a center crop refused: the mask would not cover the edges). `ImagePreprocessor.ResizedSize` is
+  public for the mapping. Existing constructors are unchanged.
+- **Two families outside the library** (`tests/Idrak.PluginTests/ImageFamilyPlugin.cs`, the "outside plug-in" group,
+  which now references Idrak.Vision): `TinyResNetFamily` ("OutsideTinyResNetForImageClassification": torchvision's names,
+  stem conv + BN + ReLU + max pool, basic residual blocks as the plug-in's own `Module`, strided 1x1 downsample, global
+  average pooling, fc; config "embedding_size", "hidden_sizes", "depths", "id2label") from safetensors, and
+  `GridDetectorFamily` ("OutsideGridDetector") from ONNX with the plug-in's anchor-free grid decoder `GridDecoder`
+  ("outside-grid": cell centre (g + σ(t)) · stride, size e^t · stride, best class by σ(objectness) · σ(class)) and the
+  library's NMS. Fixtures: `tools/pytorch/image_families_reference.py` (torch 2.14.1 CPU, Pillow 12.3, safetensors 0.8,
+  onnx 1.23.2; reruns write the same bytes) writes `tests/Idrak.Tests/data/image-families` (196 KB: three PNGs, the two
+  checkpoints, reference.json). Checked: pixel values as transformers' PIL path (shortest edge 36, bicubic, crop 32,
+  ImageNet mean/std; 1e-6), logits (1e-4) with the fc weight bfloat16 as stored and again all float32 (1e-5), predictor and
+  region classifier; the detector's raw outputs (1e-4) and decoded, clipped, suppressed boxes (count exact, values 1e-4;
+  the fixture's seed keeps every score and same-class IoU at least 0.001 from the thresholds), from the folder, image by
+  image, and from the bare .onnx file (metadata architecture, the family's default preprocessing); unregistered, both
+  checkpoints and the decoder are refused naming their registries; both pass the testing kit.
+- **Testing kit.** `Conformance.CheckImageModelFamily(load, samples)` with `ImageModelFamilySuite` (the kit depends on
+  Idrak.Abstraction alone, so the family is given as its loading: path → `ImageModelUnderTest` (task, labels, each image's
+  outputs)); `ImageFamilySample` (path, images, expected outputs, tolerance, or an error text). Checks: loads; known task;
+  labels not empty, a classifier one output per label; outputs finite, the same on a second prediction, from two threads,
+  alone as in the batch, after loading again; the reference's; invalid checkpoints refused saying why; random cases mix
+  random images of many sizes and 1 or 3 channels. `IDRAK_FILTER="conformance kit: the image"` shows it failing families
+  that change between loads, leak between images, accept an invalid checkpoint or miss the reference.
+- **Tests** (CPU): `IDRAK_FILTER="image famil"` 5 (refusals, a safetensors family built with StoredWeights against the
+  same layers by hand, ONNX metadata, decoders, detector/segmenter mapping and the predictors' checks) plus the kit test;
+  "outside plug-in" 19 (2 new), "vision" 58, "onnx" 22, "conformance kit" 10, "public API" 1, "abstraction inventory" 4.
+  Inventory and api/*.txt regenerated (Idrak +1 interface +1 registry; Vision +1 registry).
+- **Measured** (this container's CPU, 4 threads shared): a ResNet-18-sized checkpoint of the plug-in family (11.7 M
+  parameters, 23.4 MB bfloat16 safetensors) loads in 132 ms; the managed heap peaks at 55 MB for 47 MB of float32 layers
+  (each tensor's float32 copy lives only while its layer is made; about 2x the weights are allocated in total, the
+  read array and the layer's storage); 8 images of 400x300 through shortest-edge 256 and a 224 crop: preprocessing
+  75 ms, prediction 3.7 s (the convolutions: step 1's work).
+- **Left for step 7 and later:** `idrak predict` / `idrak train` over these registries (resolve the family from the
+  checkpoint, print classes, boxes or masks; a `--decoder` option naming a `DetectionDecoders` entry); bfloat16
+  convolution weights (needs a convolution product reading bfloat16); reading a safetensors tensor straight into device
+  storage (no intermediate float32 array); an ONNX import that streams initializers instead of reading the whole file;
+  segmentation families (the path exists and is unit-tested; no plug-in family checked against a reference yet); the
+  table at the top still describes Idrak before this plan.
+
+**For the owner (GPU, from `D:\Projects\Idrak`):**
+
+```powershell
+$env:IDRAK_DEVICES="cuda"; $env:IDRAK_FILTER="image famil"; dotnet run -c Release --project tests/Idrak.Tests
+$env:IDRAK_DEVICES="cuda"; $env:IDRAK_FILTER="outside plug-in: an image"; dotnet run -c Release --project tests/Idrak.Tests
+$env:IDRAK_DEVICES="vulkan"; $env:IDRAK_FILTER="image famil"; dotnet run -c Release --project tests/Idrak.Tests
+$env:IDRAK_DEVICES="vulkan"; $env:IDRAK_FILTER="outside plug-in: an image"; dotnet run -c Release --project tests/Idrak.Tests
+```

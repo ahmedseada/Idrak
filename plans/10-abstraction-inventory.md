@@ -12,11 +12,11 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 | Assembly | Interfaces | Abstract classes | Registries | Total | Misplaced (decision 10) |
 |---|---|---|---|---|---|
 | `Idrak.Abstraction` | 32 | 13 | 12 | 56 | 0 |
-| `Idrak` | 13 | 4 | 15 | 32 | 0 |
+| `Idrak` | 14 | 4 | 16 | 34 | 0 |
 | `Idrak.Gpu` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Nlp` | 7 | 2 | 4 | 13 | 0 |
 | `Idrak.Data` | 5 | 0 | 3 | 8 | 0 |
-| `Idrak.Vision` | 3 | 0 | 0 | 3 | 0 |
+| `Idrak.Vision` | 3 | 0 | 1 | 4 | 0 |
 | `Idrak.Onnx.Runtime` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.AspNetCore` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Mcp` | 0 | 0 | 0 | 0 | 0 |
@@ -114,12 +114,14 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Models.Abstractions.GgufPreTokenizers` | registry | public | — |  | deepseek-r1-qwen, default, falcon3, gpt-2, gpt2, hunyuan, llama-bpe, llama-v3, +7 | Idrak | Idrak |
 | `Idrak.Models.Abstractions.GgufTypes` | registry | public | — |  | — | Idrak | Idrak |
 | `Idrak.Models.Abstractions.ICheckpointFormat` | interface | public | — | CheckpointFormats.GuardedFormat, GgufCheckpointFormat, SafeTensorsCheckpointFormat |  | Idrak | Idrak |
+| `Idrak.Models.Abstractions.IImageModelFamily` | interface | public | — | — |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.IPreTokenizer` | interface | public | — | TokenizerComponents.GuardedPreTokenizer, TokenizerComponents.PreTokenizer |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.ITensorStore` | interface | public | — | GgufModel.GgufTensors, SafeTensorsReader |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.ITokenizerDecoder` | interface | public | — | TokenizerComponents.Decoder, TokenizerComponents.GuardedDecoder |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.ITokenizerNormalizer` | interface | public | — | TokenizerComponents.GuardedNormalizer, TokenizerComponents.Normalizer |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.IVisionFamily` | interface | public | — | — |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.IWeightSource` | interface | public | — | CheckpointWeights |  | Idrak | Idrak |
+| `Idrak.Models.Abstractions.ImageModelFamilies` | registry | public | — |  | — | Idrak | Idrak |
 | `Idrak.Models.Abstractions.PretrainedArchitectures` | registry | public | — |  | Gemma2ForCausalLM, Gemma3ForCausalLM, Gemma3ForConditionalGeneration, GemmaForCausalLM, LlamaForCausalLM, MistralForCausalLM, MixtralForCausalLM, Qwen2ForCausalLM, +3 | Idrak | Idrak |
 | `Idrak.Models.Abstractions.TokenizerComponents` | registry | public | — |  | — | Idrak | Idrak |
 | `Idrak.Models.Abstractions.VisionFamilies` | registry | public | — |  | — | Idrak | Idrak |
@@ -165,6 +167,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 
 | Type | Kind | Visibility | Mentions | Implementations | Registered | Users | Belongs in |
 |---|---|---|---|---|---|---|---|
+| `Idrak.Vision.Abstractions.DetectionDecoders` | registry | public | — |  | boxes-scores | Vision | Vision |
 | `Idrak.Vision.Abstractions.IObjectDetector` | interface | public | — | ModelDetector |  | Vision | Vision |
 | `Idrak.Vision.Abstractions.IRegionProposer` | interface | public | — | ComponentProposer |  | Vision | Vision |
 | `Idrak.Vision.Abstractions.ISegmenter` | interface | public | — | ModelSegmenter |  | Vision | Vision |

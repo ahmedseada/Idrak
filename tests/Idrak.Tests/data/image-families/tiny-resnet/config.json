@@ -1,0 +1,30 @@
+{
+  "architectures": [
+    "OutsideTinyResNetForImageClassification"
+  ],
+  "depths": [
+    1,
+    1
+  ],
+  "embedding_size": 8,
+  "hidden_sizes": [
+    8,
+    16
+  ],
+  "id2label": {
+    "0": "circle",
+    "1": "square",
+    "2": "triangle",
+    "3": "star",
+    "4": "ring"
+  },
+  "label2id": {
+    "circle": 0,
+    "ring": 4,
+    "square": 1,
+    "star": 3,
+    "triangle": 2
+  },
+  "layer_norm_eps": 1e-05,
+  "num_channels": 3
+}

@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Text.Json.Nodes;
+using Idrak.Data;
 using Idrak.Vision.Abstractions;
 
 namespace Idrak.Vision;
@@ -25,23 +27,75 @@ public sealed record DetectorOptions
 }
 
 /// <summary>
-/// An <see cref="IObjectDetector"/> over any detection network: each image is resized to the network's input
-/// (channels x height x width, values in [0, 1]; put normalization in the network, see
-/// <c>NetworkBuilder.Normalize</c>), the network runs on its device, the <see cref="DetectionDecoder"/> reads
-/// its outputs, and the boxes are scaled back to the image, clipped and filtered by non-maximum suppression.
+/// An <see cref="IObjectDetector"/> over any detection network: each image becomes the network's input (resized to
+/// channels x height x width with values in [0, 1], normalization in the network, see <c>NetworkBuilder.Normalize</c>; or
+/// through an <see cref="ImagePreprocessor"/>, a model family's resize, crop and normalization), the network runs on its
+/// device, the <see cref="DetectionDecoder"/> (given, or registered in <see cref="DetectionDecoders"/> and named) reads its
+/// outputs, and the boxes are mapped back to the image, clipped and filtered by non-maximum suppression.
 /// </summary>
-public sealed class ModelDetector(Module model, int channels, int height, int width, DetectionDecoder decoder, DetectorOptions? options = null, Device? device = null)
-    : IObjectDetector
+public sealed class ModelDetector : IObjectDetector
 {
-    private readonly Module _model = model ?? throw new ArgumentNullException(nameof(model));
-    private readonly DetectionDecoder _decoder = decoder ?? throw new ArgumentNullException(nameof(decoder));
-    private readonly DetectorOptions _options = options ?? new DetectorOptions();
-    private readonly Device _device = device ?? model.WeightsDevice ?? Device.Default;
+    private readonly Module _model;
+    private readonly DetectionDecoder _decoder;
+    private readonly DetectorOptions _options;
+    private readonly Device _device;
+    private readonly int _channels, _height, _width;
+    private readonly ImagePreprocessor? _preprocessor;
+
+    /// <summary>A detector over <paramref name="model"/>, its images resized to <paramref name="channels"/> x <paramref name="height"/> x <paramref name="width"/> (values in [0, 1]).</summary>
+    public ModelDetector(Module model, int channels, int height, int width, DetectionDecoder decoder, DetectorOptions? options = null, Device? device = null)
+    {
+        _model = model ?? throw new ArgumentNullException(nameof(model));
+        _decoder = decoder ?? throw new ArgumentNullException(nameof(decoder));
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(channels);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(height);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(width);
+        (_channels, _height, _width) = (channels, height, width);
+        _options = options ?? new DetectorOptions();
+        _device = device ?? model.WeightsDevice ?? Device.Default;
+    }
+
+    /// <summary>
+    /// A detector whose decoder is the one registered as <paramref name="decoder"/> in <see cref="DetectionDecoders"/>,
+    /// made for this input size, <paramref name="options"/>' classes and <paramref name="settings"/>.
+    /// </summary>
+    /// <exception cref="NotSupportedException">No decoder is registered under that name.</exception>
+    public ModelDetector(Module model, int channels, int height, int width, string decoder, JsonObject? settings = null, DetectorOptions? options = null, Device? device = null)
+        : this(model, channels, height, width, DetectionDecoders.Create(decoder, new DetectionDecoderContext(height, width, options?.Classes, settings ?? [])), options, device)
+    {
+    }
+
+    /// <summary>
+    /// A detector whose images become the network's input through <paramref name="preprocessor"/> (a model family's resize,
+    /// crop and normalization); boxes are mapped back through the same resize and crop.
+    /// </summary>
+    public ModelDetector(Module model, ImagePreprocessor preprocessor, DetectionDecoder decoder, DetectorOptions? options = null, Device? device = null)
+    {
+        _model = model ?? throw new ArgumentNullException(nameof(model));
+        _preprocessor = preprocessor ?? throw new ArgumentNullException(nameof(preprocessor));
+        _decoder = decoder ?? throw new ArgumentNullException(nameof(decoder));
+        _options = options ?? new DetectorOptions();
+        _device = device ?? model.WeightsDevice ?? Device.Default;
+    }
+
+    /// <summary>
+    /// A detector with <paramref name="preprocessor"/> and the decoder registered as <paramref name="decoder"/> in
+    /// <see cref="DetectionDecoders"/> (its context's input size is the preprocessor's fixed output size, or 0 when that
+    /// follows the image).
+    /// </summary>
+    /// <exception cref="NotSupportedException">No decoder is registered under that name.</exception>
+    public ModelDetector(Module model, ImagePreprocessor preprocessor, string decoder, JsonObject? settings = null, DetectorOptions? options = null, Device? device = null)
+        : this(model, preprocessor, DetectionDecoders.Create(decoder, ContextFor(preprocessor, options, settings)), options, device)
+    {
+    }
 
     /// <inheritdoc />
     public IReadOnlyList<Detection> Detect(ImageData image) => Detect([image])[0];
 
-    /// <summary>Detects objects in several images, run through the network as one batch.</summary>
+    /// <summary>
+    /// Detects objects in several images, run through the network as one batch (with a preprocessor whose output size
+    /// follows each image, images of different sizes run one at a time).
+    /// </summary>
     public IReadOnlyList<IReadOnlyList<Detection>> Detect(IReadOnlyList<ImageData> images)
     {
         ArgumentNullException.ThrowIfNull(images);
@@ -50,38 +104,97 @@ public sealed class ModelDetector(Module model, int channels, int height, int wi
             return [];
         }
 
-        int input = channels * height * width;
-        var batch = new float[images.Count * input];
-        for (int i = 0; i < images.Count; i++)
+        var results = new IReadOnlyList<Detection>[images.Count];
+        if (_preprocessor is null)
         {
-            images[i].Resize(channels, height, width, batch.AsSpan(i * input, input));
+            int input = _channels * _height * _width;
+            var batch = new float[images.Count * input];
+            for (int i = 0; i < images.Count; i++)
+            {
+                images[i].Resize(_channels, _height, _width, batch.AsSpan(i * input, input));
+            }
+
+            Run(images, 0, images.Count, batch, _channels, _height, _width, results);
+            return results;
         }
 
+        // Runs of images of the same network input size go through as one batch.
+        for (int start = 0; start < images.Count;)
+        {
+            var size = _preprocessor.OutputSize(images[start].Height, images[start].Width);
+            int end = start + 1;
+            while (end < images.Count && _preprocessor.OutputSize(images[end].Height, images[end].Width) == size)
+            {
+                end++;
+            }
+
+            float[]? batch = null;
+            int channels = 0;
+            for (int i = start; i < end; i++)
+            {
+                var pixels = _preprocessor.Pixels(images[i]);
+                channels = pixels.Length / (size.Height * size.Width);
+                batch ??= new float[(end - start) * pixels.Length];
+                pixels.CopyTo(batch, (i - start) * pixels.Length);
+            }
+
+            Run(images, start, end, batch!, channels, size.Height, size.Width, results);
+            start = end;
+        }
+
+        return results;
+    }
+
+    private void Run(IReadOnlyList<ImageData> images, int start, int end, float[] batch, int channels, int height, int width, IReadOnlyList<Detection>[] results)
+    {
+        int count = end - start;
         float[] outputs;
         int[] shape;
-        using (var x = Tensor.From(batch, [images.Count, channels, height, width], _device))
+        using (var x = Tensor.From(batch, [count, channels, height, width], _device))
         using (var y = _model.Predict(x))
         {
             outputs = y.ToArray();
             shape = [.. y.Shape[1..]];
         }
 
-        int per = outputs.Length / images.Count;
-        var results = new IReadOnlyList<Detection>[images.Count];
-        for (int i = 0; i < images.Count; i++)
+        int per = outputs.Length / count;
+        for (int i = 0; i < count; i++)
         {
-            float sx = images[i].Width / (float)width, sy = images[i].Height / (float)height;
+            var image = images[start + i];
+            var toImage = ToImage(image.Height, image.Width, height, width);
             var found = _decoder(outputs.AsSpan(i * per, per), shape)
                 .Select(d => d with
                 {
-                    Box = d.Box.Scale(sx, sy).Clip(images[i].Width, images[i].Height),
+                    Box = toImage(d.Box).Clip(image.Width, image.Height),
                     Label = d.Label ?? (_options.Classes is { } names && d.Class >= 0 && d.Class < names.Count ? names[d.Class] : null),
                 })
                 .Where(d => d.Box.Area > 0)
                 .ToList();
-            results[i] = NonMaxSuppression.Apply(found, _options.IouThreshold, _options.MinScore, _options.PerClass, _options.MaxDetections);
+            results[start + i] = NonMaxSuppression.Apply(found, _options.IouThreshold, _options.MinScore, _options.PerClass, _options.MaxDetections);
+        }
+    }
+
+    // Maps a box in the network's input pixels back to the image's: undoes the center crop (an offset), then the resize.
+    private Func<BoundingBox, BoundingBox> ToImage(int imageHeight, int imageWidth, int height, int width)
+    {
+        if (_preprocessor is null)
+        {
+            float sx = imageWidth / (float)width, sy = imageHeight / (float)height;
+            return box => box.Scale(sx, sy);
         }
 
-        return results;
+        var (rh, rw) = _preprocessor.ResizedSize(imageHeight, imageWidth);
+        float top = _preprocessor.CenterCrop ? MathF.Floor((rh - height) / 2f) : 0, left = _preprocessor.CenterCrop ? MathF.Floor((rw - width) / 2f) : 0;
+        float scaleX = imageWidth / (float)rw, scaleY = imageHeight / (float)rh;
+        return box => (box with { X = box.X + left, Y = box.Y + top }).Scale(scaleX, scaleY);
+    }
+
+    private static DetectionDecoderContext ContextFor(ImagePreprocessor preprocessor, DetectorOptions? options, JsonObject? settings)
+    {
+        ArgumentNullException.ThrowIfNull(preprocessor);
+        var (h, w) = preprocessor.CenterCrop ? (preprocessor.CropHeight, preprocessor.CropWidth)
+            : preprocessor.Resize && preprocessor.ShortestEdge <= 0 ? (preprocessor.Height, preprocessor.Width)
+            : (0, 0);
+        return new DetectionDecoderContext(h, w, options?.Classes, settings ?? []);
     }
 }
