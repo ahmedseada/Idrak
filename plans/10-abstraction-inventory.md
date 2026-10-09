@@ -11,12 +11,12 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 
 | Assembly | Interfaces | Abstract classes | Registries | Total | Misplaced (decision 10) |
 |---|---|---|---|---|---|
-| `Idrak.Abstraction` | 32 | 13 | 12 | 56 | 0 |
-| `Idrak` | 14 | 4 | 16 | 34 | 0 |
+| `Idrak.Abstraction` | 34 | 13 | 14 | 60 | 0 |
+| `Idrak` | 13 | 4 | 15 | 32 | 0 |
 | `Idrak.Gpu` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Nlp` | 7 | 2 | 4 | 13 | 0 |
-| `Idrak.Data` | 5 | 0 | 3 | 8 | 0 |
-| `Idrak.Vision` | 3 | 0 | 1 | 4 | 0 |
+| `Idrak.Data` | 6 | 0 | 4 | 10 | 0 |
+| `Idrak.Vision` | 6 | 0 | 4 | 10 | 0 |
 | `Idrak.Onnx.Runtime` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.AspNetCore` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Mcp` | 0 | 0 | 0 | 0 | 0 |
@@ -36,12 +36,16 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 
 | Type | Kind | Visibility | Mentions | Implementations | Registered | Users | Belongs in |
 |---|---|---|---|---|---|---|---|
+| `Idrak.Abstraction.Data.Augmentations` | registry | public | — |  | affine, color-jitter, cutout, flip, mixup, mosaic, resize, resized-crop, +2 | Idrak, Vision | Abstraction |
+| `Idrak.Abstraction.Data.IAugmentation` | interface | public | — | Augmentations.Guarded, ColorJitter, Cutout, MixUp, Mosaic, RandomAffine, +4 |  | Abstraction, Idrak, Vision | Abstraction |
 | `Idrak.Abstraction.Data.IDownloader` | interface | public | — | Downloader |  | Abstraction, Data, Idrak, Nlp | Abstraction |
+| `Idrak.Abstraction.Data.IImageCodec` | interface | public | — | BmpCodec, ImageCodecs.GuardedCodec, JpegCodec, NetpbmCodec, PngCodec |  | Abstraction, Data, Idrak, Vision | Abstraction |
 | `Idrak.Abstraction.Data.IImageTransform` | interface | public | — | ImageTransforms.GuardedTransform, LibraryImageTransforms.Transform |  | Abstraction, AspNetCore, Idrak, Mcp, Nlp | Abstraction |
 | `Idrak.Abstraction.Data.ISampleReader` | interface | public | — | CsvSource.Reader, TableSamples.Reader |  | Abstraction, Data, Idrak | Abstraction |
 | `Idrak.Abstraction.Data.ISampleSource` | interface | public | — | CsvSource, Dataset, ImageFolderSource, NpySource, SampleSourceExtensions.ConcatSource, SampleSourceExtensions.SubsetSource, +1 |  | Abstraction, Data, Idrak, Vision | Abstraction |
 | `Idrak.Abstraction.Data.ISampleStream` | interface | public | — | CsvSource.Stream, TableSamples.RowStream |  | Data, Idrak | Abstraction |
 | `Idrak.Abstraction.Data.ISampleTransform` | interface | public | — | ContentFrame.ReframeTransform, GaussianNoise, RandomFlip, RandomRotation, RandomShift |  | Idrak, Vision | Abstraction |
+| `Idrak.Abstraction.Data.ImageCodecs` | registry | public | — |  | bmp, jpeg, netpbm, png | Data, Idrak, Vision | Abstraction |
 | `Idrak.Abstraction.Data.ImageTransforms` | registry | public | — |  | autocontrast, brightness, contrast, grayscale, jpeg, max_height, max_width, sharpness | Abstraction, AspNetCore, Idrak, Mcp, Nlp | Abstraction |
 | `Idrak.Abstraction.Devices.Backend` | abstract class | public | Storage | CpuBackend, CudaBackend, HipBackend, VulkanBackend |  | Abstraction, AspNetCore, Data, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
 | `Idrak.Abstraction.Devices.Cpu.CpuBackend.IRangeKernel` | interface | internal | — | CpuBackend.AbsBackwardLoop, CpuBackend.AbsLoop, CpuBackend.AdamLoop, CpuBackend.AddLoop, CpuBackend.AffineLoop, CpuBackend.AxpyLoop, +29 |  | Abstraction, AspNetCore, Data, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
@@ -98,9 +102,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | Type | Kind | Visibility | Mentions | Implementations | Registered | Users | Belongs in |
 |---|---|---|---|---|---|---|---|
 | `Idrak.Data.Abstractions.IBatchSource` | interface | public | — | DataLoader |  | Idrak | Idrak |
-| `Idrak.Data.Abstractions.IImageCodec` | interface | public | — | BmpCodec, ImageCodecs.GuardedCodec, JpegCodec, NetpbmCodec, PngCodec |  | Idrak | Idrak |
 | `Idrak.Data.Abstractions.IScaler` | interface | public | — | MinMaxScaler, StandardScaler |  | Idrak | Idrak |
-| `Idrak.Data.Abstractions.ImageCodecs` | registry | public | — |  | bmp, jpeg, netpbm, png | Idrak | Idrak |
 | `Idrak.Data.Abstractions.SampleSources` | registry | public | — |  | csv, images, npy, tokens | Idrak | Idrak |
 | `Idrak.Inference.Abstractions.CtcDecoders` | registry | public | Tensor |  | beam, greedy | — | Idrak |
 | `Idrak.Layers.Abstractions.GraphOps` | registry | public | — |  | abs, add, cast, clip, concat, div, elu, exp, +28 | Idrak | Idrak |
@@ -154,8 +156,10 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 
 | Type | Kind | Visibility | Mentions | Implementations | Registered | Users | Belongs in |
 |---|---|---|---|---|---|---|---|
+| `Idrak.Data.Abstractions.AnnotationFormats` | registry | public | — |  | coco, voc, yolo | Data | Data |
 | `Idrak.Data.Abstractions.DataFileFormats` | registry | public | — |  | Code, Csv, Json, JsonLines, Parquet, Text, Tsv | Data | Data |
 | `Idrak.Data.Abstractions.DatasetSources` | registry | public | — |  | file, folder, github, hf, http, kaggle, zenodo | Data | Data |
+| `Idrak.Data.Abstractions.IAnnotationFormat` | interface | public | — | AnnotationFormats.Guarded, CocoFormat, VocFormat, YoloFormat |  | Data | Data |
 | `Idrak.Data.Abstractions.IDataFileFormat` | interface | public | — | DataFiles.BuiltIn |  | Data | Data |
 | `Idrak.Data.Abstractions.IDatasetRows` | interface | public | — | DatasetRows |  | Data | Data |
 | `Idrak.Data.Abstractions.IDatasetSource` | interface | public | — | DatasetSources.GuardedSource, LibraryDatasetSources.Local, LibraryDatasetSources.Prefixed |  | Data | Data |
@@ -167,23 +171,29 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 
 | Type | Kind | Visibility | Mentions | Implementations | Registered | Users | Belongs in |
 |---|---|---|---|---|---|---|---|
+| `Idrak.Vision.Abstractions.BoxMatchers` | registry | public | — |  | hungarian, iou-threshold | — | Vision |
 | `Idrak.Vision.Abstractions.DetectionDecoders` | registry | public | — |  | boxes-scores | Vision | Vision |
+| `Idrak.Vision.Abstractions.IDetectionMetric` | interface | public | — | CocoAveragePrecision, VisionMetrics.GuardedDetection, VocAveragePrecision |  | Vision | Vision |
 | `Idrak.Vision.Abstractions.IObjectDetector` | interface | public | — | ModelDetector |  | Vision | Vision |
 | `Idrak.Vision.Abstractions.IRegionProposer` | interface | public | — | ComponentProposer |  | Vision | Vision |
+| `Idrak.Vision.Abstractions.ISegmentationMetric` | interface | public | — | SegmentationMetrics, VisionMetrics.GuardedSegmentation |  | Vision | Vision |
 | `Idrak.Vision.Abstractions.ISegmenter` | interface | public | — | ModelSegmenter |  | Vision | Vision |
+| `Idrak.Vision.Abstractions.IVisionMetric` | interface | public | — | CocoAveragePrecision, SegmentationMetrics, VisionMetrics.GuardedDetection, VisionMetrics.GuardedSegmentation, VocAveragePrecision |  | Vision | Vision |
+| `Idrak.Vision.Abstractions.VisionLosses` | registry | public | Tensor |  | ciou, dice, diou, focal, giou, iou, l1, smooth-l1 | — | Vision |
+| `Idrak.Vision.Abstractions.VisionMetrics` | registry | public | — |  | coco, miou, voc, voc07 | — | Vision |
 
 ## The device contract (`Backend`)
 
-`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 137 virtual methods, 6 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `HipBackend`, `VulkanBackend`. Each
-operation (119, `Ops`) is a `NameKernel` method, the device's own kernel; `Backend.Name(...)` runs the kernel registered
+`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 141 virtual methods, 6 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `HipBackend`, `VulkanBackend`. Each
+operation (123, `Ops`) is a `NameKernel` method, the device's own kernel; `Backend.Name(...)` runs the kernel registered
 for the device in `Kernels` instead, where there is one (plan 9). The rest is device plumbing: memory, copies, graphs, profiling.
 
 | Device | Methods overridden |
 |---|---|
-| `CpuBackend` | 116 of 147 |
-| `CudaBackend` | 132 of 147 |
-| `HipBackend` | 23 of 147 |
-| `VulkanBackend` | 114 of 147 |
+| `CpuBackend` | 120 of 151 |
+| `CudaBackend` | 132 of 151 |
+| `HipBackend` | 23 of 151 |
+| `VulkanBackend` | 114 of 151 |
 
 | Operation | Kind | Cpu | Cuda | Hip | Vulkan |
 |---|---|---|---|---|---|
@@ -225,6 +235,8 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `BeginCapture(0)` | virtual |  | ✓ |  | ✓ |
 | `BiasGeluKernel(5)` | virtual | ✓ | ✓ |  | ✓ |
 | `BinaryKernel(5)` | virtual | ✓ | ✓ | ✓ | ✓ |
+| `BoxIouLossBackwardKernel(7)` | virtual | ✓ |  |  |  |
+| `BoxIouLossKernel(6)` | virtual | ✓ |  |  |  |
 | `BroadcastAxisKernel(6)` | virtual | ✓ | ✓ |  | ✓ |
 | `ClampBackwardKernel(6)` | virtual | ✓ |  |  | ✓ |
 | `ClampKernel(5)` | virtual | ✓ |  |  | ✓ |
@@ -316,6 +328,8 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `ScaleMaskSoftmaxKernel(7)` | virtual | ✓ | ✓ |  | ✓ |
 | `ScatterAddKernel(6)` | virtual | ✓ | ✓ |  | ✓ |
 | `SgdStepKernel(6)` | virtual | ✓ | ✓ |  | ✓ |
+| `SigmoidFocalLossBackwardKernel(7)` | virtual | ✓ |  |  |  |
+| `SigmoidFocalLossKernel(6)` | virtual | ✓ |  |  |  |
 | `SoftmaxBackwardKernel(6)` | virtual | ✓ | ✓ |  | ✓ |
 | `SoftmaxCrossEntropyRowsKernel(7)` | virtual | ✓ | ✓ |  | ✓ |
 | `SoftmaxKernel(5)` | virtual | ✓ | ✓ |  | ✓ |

@@ -96,7 +96,7 @@ internal static partial class Tests
                 var (start, end) = spans[0];
 
                 // The image markers (all in the prompt) expanded by the family's format, each image as its encoder's blocks.
-                var layouts = record["images"]!.AsArray().Select(f => images.Blocks(Idrak.Data.Abstractions.ImageCodecs.Decode(TestData($"vlm/{(string)f!}")))).ToList();
+                var layouts = record["images"]!.AsArray().Select(f => images.Blocks(ImageCodecs.Decode(TestData($"vlm/{(string)f!}")))).ToList();
                 string prompt = vision.PromptFormat.Expand(text[..start], layouts, tokenizer);
                 Check(prompt + text[start..] == (string)record["expanded"]!, $"{what}: expanded\n{prompt + text[start..]}\nexpected\n{record["expanded"]}");
 
@@ -210,7 +210,7 @@ internal static partial class Tests
         var features = new Dictionary<string, Tensor>();
         foreach (string file in files)
         {
-            var image = Idrak.Data.Abstractions.ImageCodecs.Decode(TestData($"vlm/{file}"));
+            var image = ImageCodecs.Decode(TestData($"vlm/{file}"));
             Tensor frozen;
             using (Autograd.NoGrad())
             {
@@ -238,7 +238,7 @@ internal static partial class Tests
                 var stages = (IVisionEncoderStages)encoder;
                 stepFeatures = files.ToDictionary(f => f, f =>
                 {
-                    var tower = stages.Tower(stages.PixelValues(Idrak.Data.Abstractions.ImageCodecs.Decode(TestData($"vlm/{f}"))));
+                    var tower = stages.Tower(stages.PixelValues(ImageCodecs.Decode(TestData($"vlm/{f}"))));
                     return projector.Forward(tower);                                     // gradients reach the projector (the tower is frozen)
                 });
             }

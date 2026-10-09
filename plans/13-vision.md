@@ -3,8 +3,10 @@
 **Status:** planned 2026-10-09. Built 2026-10-09: step 3 (CTC loss and decoding) and the part of step 2 the line
 recognizer uses (rectangular, strided, dilated and grouped convolutions, rectangular max and average pooling,
 bidirectional and stacked LSTM/GRU); then the rest of step 2 (transposed convolution, upsampling, adaptive pooling,
-`GroupNorm`, ceil-mode pooling and padding below and right); see "as built" below. The rest starts after plan 12's
-phases 4 and 6 are merged, or earlier where the OCR sample (below) needs a step first.
+`GroupNorm`, ceil-mode pooling and padding below and right); steps 4 and 5 (detection and segmentation losses, matching
+and metrics; augmentations that move boxes and masks, run off the training thread; COCO, YOLO and Pascal VOC formats); see
+"as built" below. The rest starts after plan 12's phases 4 and 6 are merged, or earlier where the OCR sample (below)
+needs a step first.
 
 **Goal.** `Idrak.Vision` and the core layers under it are general building blocks for any image application
 (classification, detection, segmentation, document reading), fast and lean on every device. Applications are not the
@@ -328,6 +330,112 @@ $env:IDRAK_DEVICES="vulkan"; $env:IDRAK_FILTER="vulkan cnn"; dotnet run -c Relea
   segmentation families (the path exists and is unit-tested; no plug-in family checked against a reference yet); the
   table at the top still describes Idrak before this plan.
 
+## Step 4, as built (2026-10-09)
+
+- **Losses.** Box overlap losses as two operations through the dispatcher, `Ops.BoxIouLoss` and `Ops.BoxIouLossBackward`
+  (`Backend.BoxIouLossKernel`, `BoxIouLossBackwardKernel`; `BoxOverlap` IoU, GIoU, DIoU, CIoU), and the sigmoid focal loss,
+  `Ops.SigmoidFocalLoss` and `Ops.SigmoidFocalLossBackward`: one pass over the boxes or logits each way, no intermediate
+  tensors (composing GIoU or CIoU from tensor operations takes some 30 small tensors and needs a division and an arctangent
+  the tensors lack). CPU kernels in `CpuBackend.Detection.cs` (box losses in double precision; focal in single, one
+  exponential and one logarithm an element, γ 1 and 2 without a power); CUDA, Vulkan and HIP use the host fallback until a
+  device kernel is measured worth it. On tensors: `Tensor.BoxIouLoss(target, overlap, eps)` ([..., 4] corners → [...]) and
+  `Tensor.SigmoidFocalLoss(targets, alpha, gamma)`; the gradient goes to the predictions (targets are constants), a tie of
+  a minimum or maximum shares it in halves and CIoU's α is a constant, as torchvision's. Smooth L1 / L1 and soft dice are
+  composed from tensor operations (`DetectionLosses.SmoothL1`: 0.5·m²/β + |d| - m with m = min(|d|, β); `SegmentationLosses.Dice`
+  per sample and class, or per class over the batch, one product the size of the input). `DetectionLosses.BoxIou`,
+  `.Focal`, `.SmoothL1` and `SegmentationLosses.Dice` take a `LossReduction`.
+- **Contracts and registries** (all in `Idrak.Vision.Abstractions`: Idrak.Vision is their only library user, decision 10):
+  `VisionLoss(predicted, target, VisionLossOptions)` with `VisionLosses` ("iou", "giou", "diou", "ciou", "l1",
+  "smooth-l1", "focal", "dice"); `BoxMatcher(quality, predictions, truths, BoxMatchOptions)` with `BoxMatchers`
+  ("iou-threshold": torchvision's `Matcher`, thresholds and low-quality matches; "hungarian": optimal one to one in
+  O(n²·m), forbidden pairs as -∞); `IVisionMetric` (`IDetectionMetric`, `ISegmentationMetric`) made by a
+  `VisionMetricFactory` in `VisionMetrics` ("coco", "voc", "voc07", "miou"). Each `SlotTable` has Throw / FallBack /
+  Shadow guards (a metric's guard feeds the library's metric the same images, so it can answer or be compared).
+- **Matching helpers** (`BoxMatching`): `IouMatrix`, `GeneralizedIouMatrix`, `SetPredictionQuality` (class probability,
+  L1 of corners over a scale and GIoU, weighted; no family's defaults beyond the usual 1, 5, 2).
+- **Metrics.** `CocoAveragePrecision`: pycocotools' `evaluateImg` and `accumulate` (greedy matching per threshold, crowd and
+  difficult truths last and ignored, a crowd's overlap over the detection's area, 101 recall points from numpy's
+  linspace, area ranges small / medium / large, at most `MaxDetections` an image) giving `map`, `map50`, `map75`,
+  `map_small`, `map_medium`, `map_large`, `mar100` and `ap/CLASS`. Each image is matched when added, its overlaps once for
+  every threshold and area range; only scores and outcome bits are kept (8 bytes a detection and range: 5,000 images of 100
+  detections keep 21 MB). `VocAveragePrecision`: the devkit's `voc_eval` (best-overlap truth, above 0.5, difficult neither
+  way), every recall point or VOC 2007's 11. `SegmentationMetrics` (extended, now `ISegmentationMetric`): an ignored true
+  class, per-class accuracy, mean accuracy, frequency-weighted IoU, `Compute()` with `miou`, `pixel_accuracy`,
+  `mean_accuracy`, `fwiou`, `iou/CLASS`.
+- **Conformance kit.** Device case "detection losses" (every overlap kind and the focal loss against torchvision's
+  formulas written as plain loops, gradients against central differences with CIoU's α held). Contract suites (the
+  contracts live in Idrak.Vision, so they take delegates, as `TokenSamplerSuite` does): `VisionLossSuite` (finite,
+  deterministic, a perfect prediction loses nothing, a sample alone as in the batch, gradient against central
+  differences, agreement with a reference), `BoxMatcherSuite` (well-formed answers; thresholds, or one to one with no
+  assignment of a larger total, every assignment listed for small matrices), `DetectionMetricSuite` (range, perfect 1,
+  none 0, only the ranking and not the image order counts, a false detection ranked first lowers it, ranked last or of an
+  unknown class or on a difficult truth changes nothing) and `SegmentationMetricSuite`.
+- **References.** `tools/pytorch/vision_detection_reference.py` (torch 2.14.1, torchvision 0.29.1, SciPy 1.18.1,
+  pycocotools 2.0.11; reruns write the same bytes) writes `tests/Idrak.Tests/data/vision-detection/reference.json`.
+  `IDRAK_FILTER="vision detection"` (6 tests): IoU/GIoU/DIoU/CIoU losses and gradients to 1e-5 / 1e-4 (the same box,
+  boxes apart, one inside the other among them), smooth L1, L1, focal (two settings) and dice with their gradients,
+  Hungarian against `linear_sum_assignment`, threshold matching against `Matcher` (with and without low-quality
+  matches), COCO stats against `COCOeval` to 1e-9 (crowds, an image without objects), VOC against `voc_eval` (in
+  continuous coordinates), mean IoU against numpy's confusion matrix, COCO's compressed run lengths against
+  `mask.encode`; finite differences for every registered loss; the kit's suites pass for every library loss, matcher and
+  metric, and fail a loss 1% off, a greedy matcher and a recall posing as average precision.
+- **Measured** (this container's CPU, shared with other builds, so rough): GIoU loss and gradient of 100,000 boxes 21 ms,
+  CIoU 30 ms; focal loss and gradient of 672,000 logits 56 ms (about the composed binary cross-entropy's time); Hungarian
+  300 x 300 12 ms, 1,000 x 1,000 180 ms; IoU of 8,400 anchors with 50 truths and threshold matching 9 ms; COCO over
+  5,000 images of 100 detections 1.3 s to add, 0.5 s to compute.
+
+## Step 5, as built (2026-10-09)
+
+- **Types in `Idrak.Abstraction.Data`** (core, Idrak.Data and Idrak.Vision all use them): `BoundingBox` and `PixelBox`
+  (moved from Idrak.Vision; `Translate` added), `AnnotatedImage` (an image with its objects' boxes and classes, per-object
+  masks and a pixel-class map; immutable), `ObjectAnnotation` (box, class, crowd, difficult, truncated, pose, area, id,
+  mask), `ObjectMask` (polygons or COCO run lengths, kept in the form read; `Rasterize`, `Bounds`, `FromPixels`,
+  `PixelBounds`, COCO's compressed counts `EncodeCounts` / `DecodeCounts`), `ImageAnnotations` (`ToSample` decodes into an
+  `AnnotatedImage`, crowds and difficult objects left out unless asked) and `AnnotatedDataset` (class names and ids, images
+  named, not decoded). `ImageCodecs`, `IImageCodec` and `ImageInfo` moved there too (decision 10: Idrak.Data and Idrak.Vision
+  now read image headers and decode); core registers png, jpeg, bmp and netpbm through `LibraryRegistrations`.
+- **Augmentations.** Contract `IAugmentation.Apply(AnnotatedImage, AugmentationContext)` (the context gives the random
+  numbers and, for those that combine samples, `Draw`), `AugmentationFactory(AugmentationOptions)` and the `Augmentations`
+  registry in `Idrak.Abstraction.Data` (core and Idrak.Vision implement it); pipelines parse from text
+  (`flip, rotation(degrees=10), resized-crop(width=320, height=320, scale=0.5:1)`); the guard runs the app's and the
+  library's from the same seed. Core's `RandomFlip` ("flip") and `RandomShift` ("shift") are now box-, mask- and
+  pixel-class-aware and draw what their sample-transform paths draw. Idrak.Vision registers `RandomResizedCrop`
+  ("resized-crop", torchvision's crop choice), `RandomAffine` ("affine": rotation, translation, scale, shear about the
+  centre; "rotation"), `ColorJitter` ("color-jitter", random order as torchvision's), `Cutout` ("cutout", RandomErasing's
+  choice), `Mosaic` ("mosaic", four samples about a random centre), `MixUp` ("mixup", λ ~ Beta(α, α)) and `SampleResize`
+  ("resize", stretched or letterboxed). Pixels move bilinearly (by area when shrinking), masks and pixel classes by the
+  nearest pixel, in coordinates where pixel (i, j) covers [i, i + 1), so boxes move by the same map; boxes are clipped
+  and dropped below `min_visibility`, and after rotations become their masks' boxes.
+- **Off the training thread.** `AugmentedImageLoader` (Idrak.Vision): a producer task gathers batches ahead while the model
+  trains, each batch's samples read, augmented and letterboxed in parallel. Workers default to
+  `ComputeResources.MaxCpuThreads - 1` (at least 1), batches ahead to as many as fit in a quarter of the free memory the CPU
+  device reports (at most one per worker); both can be set, nothing is a constant. Each sample is seeded from the seed,
+  the epoch and its index, so the batches are the same whatever the workers. A worker copies its sample's pixels into the
+  batch's pooled buffer, which goes back to the pool after the upload, so a batch's pixels are held once on the host and
+  once in its tensors; `DetectionBatch` holds `Images`, `Boxes`, `Labels`, `Masks`, `PixelClasses` and `Corners(i)`.
+  `AugmentedImageLoader.FromDataset(dataset, ...)` decodes an `AnnotatedDataset`'s images as they are read.
+- **Dataset formats** (`Idrak.Data`): `IAnnotationFormat` and `AnnotationFormats` (in `Idrak.Data.Abstractions`; Idrak.Data is
+  its one library user) with "coco" (`CocoFormat`: instances JSON read into a compact document, polygons, plain and
+  compressed RLE, crowds, category ids kept, written with `Utf8JsonWriter`), "yolo" (`YoloFormat`: `images/` and `labels/`
+  or side by side, box and polygon lines, names from `classes.txt` or `data.yaml`, sizes from the image headers) and "voc"
+  (`VocFormat`: `Annotations/*.xml` with System.Xml, VOC's 1-based inclusive pixels turned into continuous boxes, pose,
+  truncated, difficult, `classes.txt` kept for the class order). Errors are `InvalidDataException`s naming the file (and
+  line, for YOLO).
+- **Kit suites.** `AugmentationSuite` (on synthetic samples of objects apart from each other: well formed, deterministic,
+  the input untouched, every box holds its mask, pixel classes follow the masks, pixels inside each mask stay nearer the
+  object's value than the background's) and `AnnotationFormatSuite` (writes generated datasets with PPM images, reads them
+  back, again, and after writing what was read; `AnnotationFormatTraits` says what a format keeps).
+- **Tests.** `IDRAK_FILTER="vision augment"` (4) and `"vision data"` (2): the registry, parsing and fall-back; every library
+  augmentation passes the kit's suite (and a flip of the pixels alone fails it); flip and shift exact, letterbox and stretch
+  boxes exact; the loader off the training thread, one worker and three giving the same batches, leaving an epoch early;
+  COCO, YOLO and VOC pass the round-trip suite and read hand-written files as expected; a COCO dataset with masks loads
+  into batches.
+- **Measured** (shared CPU, rough): one 640 x 480 sample through flip, affine and colour jitter 25 to 30 ms, a mosaic of four
+  to 640 x 640 32 ms, a letterbox to 640 x 640 about 20 ms. The loader's scaling with workers could not be measured on this
+  shared container (load average above 12 on 4 cores from other builds); the owner's machine should show it.
+- **Left.** Device kernels for the box and focal losses (host fallback on CUDA, Vulkan and HIP); augmenting on the device;
+  the image model families (step 6) and the command line (step 7) that will name these registries.
+
 **For the owner (GPU, from `D:\Projects\Idrak`):**
 
 ```powershell
@@ -335,4 +443,9 @@ $env:IDRAK_DEVICES="cuda"; $env:IDRAK_FILTER="image famil"; dotnet run -c Releas
 $env:IDRAK_DEVICES="cuda"; $env:IDRAK_FILTER="outside plug-in: an image"; dotnet run -c Release --project tests/Idrak.Tests
 $env:IDRAK_DEVICES="vulkan"; $env:IDRAK_FILTER="image famil"; dotnet run -c Release --project tests/Idrak.Tests
 $env:IDRAK_DEVICES="vulkan"; $env:IDRAK_FILTER="outside plug-in: an image"; dotnet run -c Release --project tests/Idrak.Tests
+$env:IDRAK_DEVICES="cuda"; $env:IDRAK_FILTER="conformance kit"; dotnet run -c Release --project tests/Idrak.Tests
+$env:IDRAK_DEVICES="cuda"; $env:IDRAK_FILTER="vision detection"; dotnet run -c Release --project tests/Idrak.Tests
+$env:IDRAK_DEVICES="vulkan"; $env:IDRAK_FILTER="conformance kit"; dotnet run -c Release --project tests/Idrak.Tests
+$env:IDRAK_DEVICES="vulkan"; $env:IDRAK_FILTER="vision detection"; dotnet run -c Release --project tests/Idrak.Tests
+$env:IDRAK_DEVICES="cuda"; $env:IDRAK_FILTER="vision augment"; dotnet run -c Release --project tests/Idrak.Tests
 ```

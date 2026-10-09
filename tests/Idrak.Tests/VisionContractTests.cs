@@ -28,7 +28,7 @@ internal static partial class Tests
     {
         Idrak.PluginTests.LlavaPlugin.Register();
         var manifest = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(LlavaData("manifest.json")))!;
-        var image = Idrak.Data.Abstractions.ImageCodecs.Decode(TestData("vlm/image.png"));
+        var image = ImageCodecs.Decode(TestData("vlm/image.png"));
         using var noGrad = Autograd.NoGrad();
         foreach (var (folder, tag) in new[] { ("tiny-llava", ""), ("tiny-llava-full", "-full") })
         {
@@ -141,7 +141,7 @@ internal static partial class Tests
     {
         RegisterGemma3Vision();
         Idrak.PluginTests.LlavaPlugin.Register();
-        var samples = new[] { Idrak.Data.Abstractions.ImageCodecs.Decode(TestData("vlm/image.png")), Idrak.Data.Abstractions.ImageCodecs.Decode(TestData("vlm/image-gray.jpg")) };
+        var samples = new[] { ImageCodecs.Decode(TestData("vlm/image.png")), ImageCodecs.Decode(TestData("vlm/image-gray.jpg")) };
         foreach (string folder in new[] { "vlm/tiny-gemma3", "vlm-llava/tiny-llava", "vlm-llava/tiny-llava-full" })
         {
             using var model = PretrainedModel.Load(TestData(folder), new PretrainedOptions { Device = device });

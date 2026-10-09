@@ -18,7 +18,17 @@ internal static class LibraryRegistrations
         [typeof(DeviceProviders)] = Offloading.ConnectTensors,   // the GPU devices (Idrak.Gpu) are the ones that offload weights
         [typeof(ModelSources)] = Models.LibraryModelFormats.RegisterModelSources,
         [typeof(ImageTransforms)] = Data.LibraryImageTransforms.RegisterDefaults,   // Pillow's operations, byte for byte
+        [typeof(Augmentations)] = Data.LibraryAugmentations.RegisterDefaults,       // flip and shift (Idrak.Vision adds the others)
+        [typeof(ImageCodecs)] = RegisterImageCodecs,                                 // png, jpeg, bmp, netpbm (asked newest first)
     };
+
+    private static void RegisterImageCodecs()
+    {
+        foreach (var codec in (IImageCodec[])[new Data.NetpbmCodec(), new Data.BmpCodec(), new Data.JpegCodec(), new Data.PngCodec()])
+        {
+            ImageCodecs.Register(codec);
+        }
+    }
 
     private static void RegisterFor(Type registry)
     {
