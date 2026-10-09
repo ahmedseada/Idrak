@@ -7,8 +7,10 @@ using Idrak.Cli.Shared;
 using Idrak.Data;
 using Idrak.Data.Abstractions;
 using Idrak.Generation;
+using Idrak.Gemma3Vision;
 using Idrak.Generation.Abstractions;
 using Idrak.Models;
+using Idrak.Models.Abstractions;
 using Idrak.Nlp;
 
 // Images on the command line (plan 11, phase 7): run --image and chat --image / /image with the tiny Gemma 3 of phase 0
@@ -62,23 +64,25 @@ internal static partial class Tests
         Check(rendered == (string)facts["rendered_by_chat_template"]!, $"rendered: {rendered}");
         Check(template.Render([new("user", "hi")], [], null) == template.Render([new("user", [new ChatText("hi")])], [], null), "text-only messages render as before");
 
+        RegisterGemma3Vision();
         var model = PretrainedModel.Load(VlmModel, new PretrainedOptions { Device = Device.Cpu });
         using (model)
         {
-            var tokens = model.Vision!.ImageTokens;
-            var format = ImagePromptFormats.Get((string)model.Config["model_type"]!);
-            string expanded = format.Expand(rendered, 1, tokens, tokenizer);
+            // The prompt format and its token ids come from the family's registration (samples/Gemma3Vision).
+            var vision = model.Vision!;
+            var format = vision.PromptFormat;
+            var layout = new ImageTokenLayout(4) { Grid = [2, 2] };
+            string expanded = format.Expand(rendered, [layout], tokenizer);
             Check(expanded == (string)facts["expanded_text"]!, $"expanded: {expanded}");
             int[] ids = [.. facts["input_ids"]!.AsArray().Select(i => (int)i!)];
             Check(tokenizer.Encode(expanded).SequenceEqual(ids), $"ids: {string.Join(" ", tokenizer.Encode(expanded))}");
-            Check(Fails(() => format.Expand(rendered, 2, tokens, tokenizer)), "one marker for two images is refused");
-            Check(ImagePromptFormats.Origin(ImagePromptFormats.Gemma3) == Overrides.Library && ImagePromptFormats.Find("llama") is null
-                  && Fails(() => ImagePromptFormats.Get("llama")), "the registry: gemma3 is the library's");
+            Check(Fails(() => format.Expand(rendered, [layout, layout], tokenizer)), "one marker for two images is refused");
 
             // A chat generator without images takes text only; with them, images, and batches refuse them.
             var chat = model.CreateChat(KeyValueFormat.Float32, 64);
             Check(chat.PartKinds.SetEquals(ChatParts.TextOnly), "a chat generator takes text unless given images");
-            var withImages = new ChatGenerator(chat.Generator, chat.Template) { Images = new ChatImages(tokens, format, _ => throw new InvalidOperationException("not encoded")) };
+            using var encoder = vision.CreateEncoder(new VisionEncoderOptions { Device = Device.Cpu });
+            var withImages = new ChatGenerator(chat.Generator, chat.Template) { Images = new ChatImages(encoder, format, vision.Attention) };
             Check(withImages.PartKinds.Contains(ChatParts.Image) && withImages.RenderPrompt(new ChatRequest(messages)) == expanded, "RenderPrompt expands the images");
             Check(Fails(() => withImages.ChatBatch([new ChatRequest(messages)])), "a chat batch with images is refused");
         }
@@ -130,6 +134,12 @@ internal static partial class Tests
 
     private static void CliImageRun(Device device)
     {
+        // Without the Gemma 3 vision family registered, the vision checkpoint is refused, naming the registry.
+        Gemma3VisionNotRegistered(device);
+        var (refusedCode, _, refused) = RunIdrakOn(device, null, "run", VlmModel, "--image", TestData("vlm/image.png"), "hi");
+        Check(refusedCode != 0 && refused.Contains("Vision family 'Gemma3ForConditionalGeneration' is not registered", StringComparison.Ordinal)
+              && refused.Contains("VisionFamilies.Register", StringComparison.Ordinal), $"run --image without the family: {refusedCode} {refused}");
+        RegisterGemma3Vision();
         var facts = JsonNode.Parse(File.ReadAllText(TestData("vlm/manifest.json")))!["facts"]!;
         int[] newTokens = [.. facts["generate"]!["new_tokens"]!.AsArray().Select(n => (int)n!)];
         string expected = BpeTokenizer.Load(VlmModel).Decode(newTokens).Trim();
@@ -162,13 +172,11 @@ internal static partial class Tests
         // Reference features fed in, the pixels each image is read with recorded.
         var pixels = new List<float[]>();
         int calls = 0;
-        ImageInputs.EncoderFactory = (model, preprocessor) => (images =>
+        ImageInputs.EncoderFactory = (model, options) => new ReferenceEncoder(((Gemma3Vision)model.Vision!).Preprocessor(options.Grayscale), reference, model.Device, images =>
         {
             calls++;
-            pixels.AddRange(images.Select(preprocessor.Pixels));
-            var values = Enumerable.Range(0, images.Count).SelectMany(_ => reference).ToArray();
-            return Tensor.From(values, [images.Count, 4, 24], model.Device);
-        }, null);
+            return images;
+        }, pixels);
         string folder = Path.Combine(Path.GetTempPath(), $"idrak-cli-image-{Guid.NewGuid():N}");
         Directory.CreateDirectory(folder);
         try
@@ -226,8 +234,32 @@ internal static partial class Tests
         }
     }
 
+    // Phase 0's features for every image, recording the pixels each image is read with (the family's preprocessing).
+    private sealed class ReferenceEncoder(ImagePreprocessor preprocessor, float[] features, Device device, Func<IReadOnlyList<ImageData>, IReadOnlyList<ImageData>> seen,
+        List<float[]> pixels) : IVisionEncoder
+    {
+        private static readonly ImageTokenLayout Grid = new(4) { Grid = [2, 2] };
+
+        public int Width => 24;
+
+        public Device Device => device;
+
+        public ImageTokenLayout Layout(ImageData image) => Grid;
+
+        public IReadOnlyList<ImageFeatures> Encode(IReadOnlyList<ImageData> images)
+        {
+            pixels.AddRange(seen(images).Select(preprocessor.Pixels));
+            return [.. images.Select(_ => new ImageFeatures(Tensor.From(features, [4, 24], device), Grid))];
+        }
+
+        public void Dispose()
+        {
+        }
+    }
+
     private static void CliImageCompare(Device device)
     {
+        RegisterGemma3Vision();
         foreach (string name in new[] { "color", "gray" })
         {
             string reference = TestData($"vlm/compare/{name}");
@@ -284,6 +316,7 @@ internal static partial class Tests
 
     private static void CliImageRunOut(Device device)
     {
+        RegisterGemma3Vision();
         string folder = Path.Combine(Path.GetTempPath(), $"idrak-run-out-{Guid.NewGuid():N}");
         try
         {

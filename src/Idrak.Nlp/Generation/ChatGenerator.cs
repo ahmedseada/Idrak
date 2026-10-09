@@ -2,32 +2,36 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Collections.Frozen;
-using Idrak.Generation.Abstractions;
-using Idrak.Models;
+using Idrak.Data;
 
 namespace Idrak.Generation;
 
 /// <summary>
-/// What a <see cref="ChatGenerator"/> needs to read the images of a conversation (a vision-language model such as Gemma 3):
-/// the model's image token ids, how its prompt holds an image (<see cref="IImagePromptFormat"/>), and the encoder that
-/// turns images into the features of their image tokens.
+/// What a <see cref="ChatGenerator"/> needs to read the images of a conversation (a vision-language model), all of it
+/// from the model's vision family (<c>PretrainedModel.Vision</c>): the encoder that turns decoded images into their
+/// tokens' features (<see cref="IVisionEncoder"/>, with the family's preprocessing and token counts), how its prompt
+/// holds an image (<see cref="IImagePromptFormat"/>, with the family's token ids) and how image tokens attend
+/// (<see cref="IImageAttentionRule"/>). Nothing here assumes a family.
 /// </summary>
-/// <param name="tokens">The model's image tokens (<c>PretrainedModel.Vision.ImageTokens</c>).</param>
-/// <param name="format">How the rendered prompt's image markers expand (<see cref="ImagePromptFormats"/>, by model type).</param>
-/// <param name="encode">
-/// The images of a request, in the order they appear, to their features [images, tokens per image, model width] on the
-/// model's device (a tensor the generator disposes).
-/// </param>
-public sealed class ChatImages(ImageTokenIds tokens, IImagePromptFormat format, Func<IReadOnlyList<ChatImage>, Tensor> encode)
+/// <param name="encoder">The family's encoder, on the model's device (its features are disposed by the generator; the encoder is not).</param>
+/// <param name="format">How the rendered prompt's image markers expand (<c>PretrainedVision.PromptFormat</c>).</param>
+/// <param name="attention">How the image tokens attend (<c>PretrainedVision.Attention</c>).</param>
+public sealed class ChatImages(IVisionEncoder encoder, IImagePromptFormat format, IImageAttentionRule attention)
 {
-    /// <summary>The model's image tokens.</summary>
-    public ImageTokenIds Tokens { get; } = tokens ?? throw new ArgumentNullException(nameof(tokens));
+    /// <summary>The family's encoder.</summary>
+    public IVisionEncoder Encoder { get; } = encoder ?? throw new ArgumentNullException(nameof(encoder));
 
     /// <summary>How the rendered prompt's image markers expand.</summary>
     public IImagePromptFormat Format { get; } = format ?? throw new ArgumentNullException(nameof(format));
 
-    /// <summary>Encodes a request's images (see the constructor).</summary>
-    public Func<IReadOnlyList<ChatImage>, Tensor> Encode { get; } = encode ?? throw new ArgumentNullException(nameof(encode));
+    /// <summary>How the image tokens attend.</summary>
+    public IImageAttentionRule Attention { get; } = attention ?? throw new ArgumentNullException(nameof(attention));
+
+    /// <summary>
+    /// How a chat image's bytes become pixels: by default the registered codecs, then the EXIF orientation
+    /// (<see cref="ChatImageDecoder.Decode(ChatImage)"/>, as transformers' <c>load_image</c>).
+    /// </summary>
+    public Func<ChatImage, ImageData> Decode { get; init; } = ChatImageDecoder.Decode;
 
     /// <summary>
     /// What the encoder holds (its module, built on first use for example), or null: the inference engine disposes it
@@ -65,16 +69,21 @@ public sealed class ChatGenerator(TextGenerator generator, ChatTemplate? templat
 
     /// <summary>
     /// The prompt text for a request (useful for debugging templates), its images' markers expanded to the model's image
-    /// tokens (<see cref="ChatImages.Format"/>); throws for a message part it does not take (<see cref="PartKinds"/>).
+    /// tokens (<see cref="ChatImages.Format"/>, each image as many as its encoder's layout gives it, so its images are
+    /// decoded); throws for a message part it does not take (<see cref="PartKinds"/>).
     /// </summary>
     public string RenderPrompt(ChatRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
+        var images = Images is null ? [] : ImagesOf(request);
+        return RenderPrompt(request, images.Count == 0 ? [] : [.. images.Select(i => Images!.Encoder.Layout(Images.Decode(i)))]);
+    }
+
+    private string RenderPrompt(ChatRequest request, IReadOnlyList<ImageTokenLayout> layouts)
+    {
         ChatParts.ThrowIfUnsupported(this, request);
         string prompt = Template.Render(request.Messages, request.Tools ?? [], request.Think);
-        return Images is { } images && ImagesOf(request) is { Count: > 0 } parts
-            ? images.Format.Expand(prompt, parts.Count, images.Tokens, Generator.Tokenizer)
-            : prompt;
+        return Images is { } images && layouts.Count > 0 ? images.Format.Expand(prompt, layouts, Generator.Tokenizer) : prompt;
     }
 
     // The image parts of a request, in the order the template renders them.
@@ -196,46 +205,53 @@ public sealed class ChatGenerator(TextGenerator generator, ChatTemplate? templat
         var content = new System.Text.StringBuilder();
         var thinking = new System.Text.StringBuilder();
         var calls = new List<ToolCall>();
-        string prompt = RenderPrompt(request);
         var images = Images is null ? [] : ImagesOf(request);
-        var features = new List<Tensor>();
-        try
+        IReadOnlyList<ImageFeatures> features = [];
+        string prompt;
+        if (images.Count == 0)
         {
-            if (images.Count > 0)
+            prompt = RenderPrompt(request, []);
+        }
+        else
+        {
+            // Each image decoded once: its layout expands the prompt (template errors before the encoder runs), then the
+            // family's encoder gives its features, which must have that layout.
+            ChatParts.ThrowIfUnsupported(this, request);
+            var decoded = images.Select(Images!.Decode).ToList();
+            var layouts = decoded.Select(Images.Encoder.Layout).ToList();
+            prompt = RenderPrompt(request, layouts);
+            features = Images.Encoder.Encode(decoded);
+            try
             {
-                var encoded = Images!.Encode(images);
-                if (encoded.Rank != 3 || encoded.Shape[0] != images.Count)
+                if (features.Count != images.Count)
                 {
-                    encoded.Dispose();
-                    throw new InvalidOperationException($"The image encoder gave {Tensor.FormatShape(encoded.Shape)} for {images.Count} images, not [images, tokens, width].");
+                    throw new InvalidOperationException($"The image encoder gave {features.Count} images' features for {images.Count} images.");
                 }
 
-                if (images.Count == 1)
+                for (int i = 0; i < features.Count; i++)
                 {
-                    features.Add(encoded);
-                }
-                else
-                {
-                    using (encoded)
+                    if (!features[i].Layout.Equals(layouts[i]) || features[i].Features.Shape[^1] != Images.Encoder.Width)
                     {
-                        for (int i = 0; i < images.Count; i++)
-                        {
-                            features.Add(encoded.Narrow(0, i, 1));
-                        }
+                        throw new InvalidOperationException($"Image {i}: the encoder gave {Tensor.FormatShape(features[i].Features.Shape)} ({features[i].Layout}); "
+                            + $"its layout says {layouts[i]} of width {Images.Encoder.Width}.");
                     }
                 }
             }
-        }
-        catch
-        {
-            features.ForEach(f => f.Dispose());
-            throw;
+            catch
+            {
+                foreach (var f in features)
+                {
+                    f.Dispose();
+                }
+
+                throw;
+            }
         }
 
         try
         {
             var source = images.Count > 0
-                ? Generator.Stream(prompt, Images!.Tokens.ImageToken, features, options, cancellationToken)
+                ? Generator.Stream(prompt, Images!.Format.ImageToken, features, Images.Attention, options, cancellationToken)
                 : Generator.Stream(prompt, options, cancellationToken);
             foreach (var chunk in source)
             {
@@ -256,7 +272,10 @@ public sealed class ChatGenerator(TextGenerator generator, ChatTemplate? templat
         }
         finally
         {
-            features.ForEach(f => f.Dispose());
+            foreach (var f in features)
+            {
+                f.Dispose();
+            }
         }
     }
 

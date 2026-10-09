@@ -1,5 +1,7 @@
 <Solution>
   <Folder Name="/samples/">
+    <Project Path="samples/Gemma3Vision/Idrak.Gemma3Vision/Idrak.Gemma3Vision.csproj" />
+    <Project Path="samples/Gemma3Vision/Idrak.Samples.Gemma3Ocr/Idrak.Samples.Gemma3Ocr.csproj" />
     <Project Path="samples/Idrak.Samples.Chat/Idrak.Samples.Chat.csproj" />
     <Project Path="samples/Idrak.Samples.CodingAgent/Idrak.Samples.CodingAgent.csproj" />
     <Project Path="samples/Idrak.Samples.GptApi/Idrak.Samples.GptApi.csproj" />

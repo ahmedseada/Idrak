@@ -382,25 +382,28 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         Stream(prompt, null, options, cancellationToken);
 
     /// <summary>
-    /// Streams the continuation of a prompt holding images (a vision-language model's, such as Gemma 3's): each run of
-    /// <paramref name="imageToken"/> in the tokenized <paramref name="prompt"/> is the next image of
-    /// <paramref name="images"/> (its features, [tokens, width] or [1, tokens, width] on the model's device, read and not
-    /// disposed), whose rows replace the run's embeddings and see each other (<see cref="ImagePrefill"/>). The prompt is
-    /// never cut inside an image: a prompt that does not fit the context window throws, a kept cache is reused only up to
-    /// the first image, and a full window is re-read from after an image. Otherwise as <see cref="Stream(string, GenerationOptions, CancellationToken)"/>.
+    /// Streams the continuation of a prompt holding images (a vision-language model's): the image tokens
+    /// (<paramref name="imageToken"/>) of the tokenized <paramref name="prompt"/> are taken in order by
+    /// <paramref name="images"/> (each image's features from its family's encoder, on the model's device, read and not
+    /// disposed), each its own count, whose rows replace those tokens' embeddings and attend by the family's
+    /// <paramref name="attention"/> rule (<see cref="ImagePrefill"/>). The prompt is never cut inside an image: a prompt that
+    /// does not fit the context window throws, a kept cache is reused only up to the first image, and a full window is
+    /// re-read from after an image. Otherwise as <see cref="Stream(string, GenerationOptions, CancellationToken)"/>.
     /// </summary>
-    /// <exception cref="ArgumentException">The prompt's runs of image tokens and the images differ in number or length.</exception>
+    /// <exception cref="ArgumentException">The prompt's image tokens and the images differ in number or length.</exception>
     /// <exception cref="InvalidOperationException">The prompt with its images does not fit the context window.</exception>
-    public IEnumerable<GenerationChunk> Stream(string prompt, int imageToken, IReadOnlyList<Tensor> images, GenerationOptions options,
+    public IEnumerable<GenerationChunk> Stream(string prompt, int imageToken, IReadOnlyList<ImageFeatures> images, IImageAttentionRule attention, GenerationOptions options,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(images);
-        return Stream(prompt, (imageToken, images), options, cancellationToken);
+        ArgumentNullException.ThrowIfNull(attention);
+        return Stream(prompt, (imageToken, images, attention), options, cancellationToken);
     }
 
-    private IEnumerable<GenerationChunk> Stream(string prompt, (int Token, IReadOnlyList<Tensor> Features)? imageInput, GenerationOptions options,
+    private IEnumerable<GenerationChunk> Stream(string prompt, (int Token, IReadOnlyList<ImageFeatures> Features, IImageAttentionRule Attention)? imageInput, GenerationOptions options,
         CancellationToken cancellationToken)
     {
+        var attention = imageInput?.Attention;                              // the family's rule, read only with images
         var total = Stopwatch.StartNew();
         int context = Math.Clamp(options.NumCtx, 2, ContextLength);
         int limit = options.NumPredict > 0 ? Math.Min(options.NumPredict, MaxTokens) : MaxTokens;
@@ -439,6 +442,11 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
 
         IReadOnlyList<PromptImage> ImagesFrom(int start) =>
             images.Count == 0 ? images : [.. images.Where(i => i.Position >= start).Select(i => i with { Position = i.Position - start })];
+
+        // A prefill (cached when a decoding context is given) with these images, attending by the family's rule; none: the plain one.
+        Tensor WithImages(Tensor ids, IReadOnlyList<PromptImage> from, DecodingContext? cached) =>
+            from.Count == 0 ? cached is null ? Model.Forward(ids) : Model.ForwardCached(ids, cached)
+            : cached is null ? Model.Forward(ids, from, attention!) : Model.ForwardCached(ids, from, attention!, cached);
 
         int promptTokens = history.Count;
         var stops = options.Stop.Where(s => s.Length > 0).ToArray();
@@ -567,11 +575,11 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                     if (options.UseCache)
                     {
                         decoding.Reset();
-                        sampler.Sample(Model.ForwardCached(Window(keep), ImagesFrom(start), decoding));
+                        sampler.Sample(WithImages(Window(keep), ImagesFrom(start), decoding));
                     }
                     else
                     {
-                        sampler.Sample(Model.Forward(Window(keep), ImagesFrom(start)));
+                        sampler.Sample(WithImages(Window(keep), ImagesFrom(start), null));
                     }
                 }
 
@@ -598,7 +606,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                     using var noGrad = Autograd.NoGrad();
                     using var scope = new TensorScope();
                     decoding.Truncate(shared);
-                    sampler.Sample(Model.ForwardCached(Window(history.Count - shared), ImagesFrom(shared), decoding));
+                    sampler.Sample(WithImages(Window(history.Count - shared), ImagesFrom(shared), decoding));
                 }
                 else
                 {

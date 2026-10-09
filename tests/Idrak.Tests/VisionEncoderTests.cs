@@ -3,6 +3,7 @@
 
 using Idrak;
 using Idrak.Data;
+using Idrak.Gemma3Vision;
 using Idrak.Models;
 
 // Gemma 3's image side (plan 11, phase 3b): the SigLIP encoder and the projector of the tiny reference in
@@ -18,6 +19,7 @@ internal static partial class Tests
 
     private static void SiglipMatchesReference(Device device)
     {
+        RegisterGemma3Vision();
         float[] pixels = ReadNpyFloat32(TestData("vlm/reference/pixel_values-png.npy"));
         float[] embeddings = ReadNpyFloat32(TestData("vlm/reference/vision_embeddings.npy"));
         float[] hidden = ReadNpyFloat32(TestData("vlm/reference/vision_last_hidden_state.npy"));
@@ -25,7 +27,7 @@ internal static partial class Tests
         foreach (string folder in new[] { "tiny-gemma3-pre452", "tiny-gemma3", "tiny-gemma3-v5" })
         {
             using var model = PretrainedModel.Load(TestData($"vlm/{folder}"), new PretrainedOptions { Device = device });
-            using var encoder = model.Vision!.CreateEncoder(device);
+            using var encoder = ((Gemma3Vision)model.Vision!).CreateEncoder(device);
             Check(encoder.Encoder.Config.Patches == 16 && encoder.Projector is { PoolSize: 2, VisionDim: 8, TextDim: 24 } && encoder.WeightsDevice == device,
                 $"{folder}: {encoder}");
             using var input = Tensor.From(pixels, [1, 3, 56, 56], device);
@@ -58,10 +60,11 @@ internal static partial class Tests
 
     private static void SiglipEndToEnd(Device device)
     {
+        RegisterGemma3Vision();
         float[] features = ReadNpyFloat32(TestData("vlm/reference/image_features.npy"));
         string path = TestData("vlm/image.png");
         using var model = PretrainedModel.Load(TestData("vlm/tiny-gemma3-v5"), new PretrainedOptions { Device = device });
-        var vision = model.Vision!;
+        var vision = (Gemma3Vision)model.Vision!;
         var preprocessor = vision.Preprocessor();
         Check(preprocessor is { Height: 56, Width: 56, Resampling: ImageResampling.Bilinear, Grayscale: false }, "the model folder's preprocessor_config.json");
         using var encoder = vision.CreateEncoder(device);

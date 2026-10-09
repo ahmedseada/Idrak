@@ -1144,6 +1144,16 @@ public interface Idrak.Abstraction.Generation.IChatPartKind
   public string Name { get; }
   public void Write(Idrak.Abstraction.Generation.ChatPart part, System.Text.Json.Nodes.JsonObject json)
 
+public interface Idrak.Abstraction.Generation.IImageAttentionRule
+  public Idrak.Abstraction.KeySpans Spans(int rows, System.Collections.Generic.IReadOnlyList<(int, int)> blocks, int window)
+  public bool Causal { get; }
+  public string Name { get; }
+
+public interface Idrak.Abstraction.Generation.IImagePromptFormat
+  public int ImageToken { get; }
+  public string Expand(string prompt, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageTokenLayout> images, Idrak.Abstraction.Generation.ITokenizer tokenizer)
+  public string Name { get; }
+
 public interface Idrak.Abstraction.Generation.ITextModel
   public System.Collections.Generic.IAsyncEnumerable<Idrak.Abstraction.Generation.GenerationChunk> StreamAsync(string prompt, Idrak.Abstraction.Generation.GenerationOptions options, System.Threading.CancellationToken cancellationToken = default)
 
@@ -1165,6 +1175,56 @@ public interface Idrak.Abstraction.Generation.IToolRegistry
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition> Definitions { get; }
   public System.Threading.Tasks.Task<Idrak.Abstraction.Generation.ToolResult> InvokeAsync(Idrak.Abstraction.Generation.ToolCall call, System.Threading.CancellationToken cancellationToken = default)
   public System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolResult>> InvokeAsync(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolCall> calls, System.Threading.CancellationToken cancellationToken = default)
+
+public interface Idrak.Abstraction.Generation.IVisionEncoder : System.IDisposable
+  public Idrak.Abstraction.Device Device { get; }
+  public Idrak.Abstraction.Generation.ImageTokenLayout Layout(Idrak.Abstraction.Data.ImageData image)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageFeatures> Encode(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ImageData> images)
+  public int Width { get; }
+
+public interface Idrak.Abstraction.Generation.IVisionEncoderStages
+  public Idrak.Abstraction.Tensor Features(Idrak.Abstraction.Tensor pixelValues)
+  public Idrak.Abstraction.Tensor PixelValues(Idrak.Abstraction.Data.ImageData image)
+  public Idrak.Abstraction.Tensor Tower(Idrak.Abstraction.Tensor pixelValues)
+
+public static class Idrak.Abstraction.Generation.ImageAttentionRules
+  public const string Causal = "causal"
+  public static Idrak.Abstraction.Generation.IImageAttentionRule Get(string name)
+  public static Idrak.Abstraction.Generation.IImageAttentionRule? Default(string name)
+  public static Idrak.Abstraction.Generation.IImageAttentionRule? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Generation.IImageAttentionRule rule)
+  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
+public sealed class Idrak.Abstraction.Generation.ImageFeatures : System.IDisposable
+  public Idrak.Abstraction.Generation.ImageTokenLayout Layout { get; }
+  public Idrak.Abstraction.Tensor Features { get; }
+  public Idrak.Abstraction.Tensor? Positions { get; }
+  public ImageFeatures(Idrak.Abstraction.Tensor features, Idrak.Abstraction.Generation.ImageTokenLayout layout, Idrak.Abstraction.Tensor? positions = null)
+  public int Tokens { get; }
+  public void Dispose()
+
+public sealed class Idrak.Abstraction.Generation.ImageTokenFormat : Idrak.Abstraction.Generation.IImagePromptFormat
+  public ImageTokenFormat(string name, int marker, int imageToken, int? begin = null, int? end = null, string before = "", string after = "")
+  public int ImageToken { get; }
+  public int Marker { get; }
+  public int? Begin { get; }
+  public int? End { get; }
+  public override string ToString()
+  public string After { get; }
+  public string Before { get; }
+  public string Expand(string prompt, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageTokenLayout> images, Idrak.Abstraction.Generation.ITokenizer tokenizer)
+  public string Name { get; }
+
+public sealed record Idrak.Abstraction.Generation.ImageTokenLayout : System.IEquatable<Idrak.Abstraction.Generation.ImageTokenLayout>
+  public ImageTokenLayout(int Tokens)
+  public System.Collections.Generic.IReadOnlyList<int> Grid { get; init; }
+  public bool Equals(Idrak.Abstraction.Generation.ImageTokenLayout? other)
+  public int Tokens { get; }
+  public override int GetHashCode()
+  public override string ToString()
 
 public sealed class Idrak.Abstraction.Generation.Int4Weight : Idrak.Abstraction.Generation.PackedWeight
   public Idrak.Abstraction.Tensor Packed { get; }
