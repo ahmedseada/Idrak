@@ -163,6 +163,29 @@ public static class Conformance
     }
 
     /// <summary>
+    /// Checks an image model family (core's <c>IImageModelFamily</c>, given as its loading: a checkpoint's path in, the
+    /// loaded model wrapped as <see cref="ImageModelUnderTest"/> out) on checkpoints of its own
+    /// (<see cref="ImageModelFamilySuite"/>): it loads, predicts finite outputs, the same every time, from several threads,
+    /// alone and in a batch, and after loading again; the reference's outputs when given; invalid checkpoints refused saying
+    /// why. Four random cases (random images of many sizes) unless <paramref name="options"/> says otherwise.
+    /// </summary>
+    /// <example>
+    /// <code>
+    /// Conformance.CheckImageModelFamily(path =&gt;
+    /// {
+    ///     var model = ImageModels.Load(path);
+    ///     var outputs = model.Outputs().Build();
+    ///     return new ImageModelUnderTest("classification", model.Labels, images =&gt; outputs.Predict(images), model);
+    /// }, samples).ThrowIfFailed();
+    /// </code>
+    /// </example>
+    public static ConformanceReport CheckImageModelFamily(Func<string, ImageModelUnderTest> load, IReadOnlyList<ImageFamilySample> samples, ContractCheckOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(load);
+        return Check(load, new ImageModelFamilySuite(samples), options ?? new ContractCheckOptions { RandomCases = 4 });
+    }
+
+    /// <summary>
     /// Checks a feature cache (Idrak.Nlp's <c>IFeatureCache</c>, wrapped as <see cref="FeatureCacheUnderTest"/>) with
     /// <see cref="FeatureCacheSuite"/>: misses when empty or cleared, exact values and shapes back on the device asked for,
     /// its own copy, a miss for a key differing in any field, a put replacing the last, and many threads at once. Six random

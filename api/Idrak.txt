@@ -197,6 +197,7 @@ public sealed class Idrak.Data.ImageFolderSource : Idrak.Abstraction.Data.ISampl
 
 public sealed class Idrak.Data.ImagePreprocessor
   public (int, int) OutputSize(int height, int width)
+  public (int, int) ResizedSize(int h, int w)
   public Idrak.Abstraction.Tensor Process(Idrak.Abstraction.Data.ImageData image, Idrak.Abstraction.Device? device = null)
   public Idrak.Abstraction.Tensor Process(string path, Idrak.Abstraction.Device? device = null)
   public Idrak.Data.ImageResampling Resampling { get; init; }
@@ -1338,6 +1339,10 @@ public interface Idrak.Models.Abstractions.ICheckpointFormat
   public string Name { get; }
   public string Prepare(string path)
 
+public interface Idrak.Models.Abstractions.IImageModelFamily
+  public Idrak.Models.Abstractions.ImageModel Read(Idrak.Models.Abstractions.ImageCheckpoint checkpoint)
+  public string Name { get; }
+
 public interface Idrak.Models.Abstractions.IPreTokenizer
   public System.Collections.Generic.IReadOnlyList<string> PreTokenize(System.Collections.Generic.IReadOnlyList<string> pieces, bool atStart)
 
@@ -1361,6 +1366,57 @@ public interface Idrak.Models.Abstractions.IVisionFamily
 
 public interface Idrak.Models.Abstractions.IWeightSource
   public float[]? Read(string name, System.Collections.Generic.IReadOnlyList<int> shape)
+
+public sealed record Idrak.Models.Abstractions.ImageCheckpoint : System.IEquatable<Idrak.Models.Abstractions.ImageCheckpoint>
+  public Idrak.Abstraction.Device Device { get; }
+  public Idrak.Data.ImagePreprocessor Preprocessor(Idrak.Data.ImagePreprocessor? defaults = null)
+  public Idrak.Models.Abstractions.ITensorStore RequireTensors()
+  public Idrak.Models.Abstractions.ITensorStore? Tensors { get; init; }
+  public Idrak.Models.Abstractions.ImageModelOptions Options { get; init; }
+  public Idrak.Onnx.ImportedNetwork RequireOnnx()
+  public ImageCheckpoint(string Architecture, System.Text.Json.Nodes.JsonObject Config, string Path, string? Folder, Idrak.Models.Abstractions.ITensorStore? Tensors, System.Func<Idrak.Onnx.ImportedNetwork>? Onnx, Idrak.Models.Abstractions.ImageModelOptions Options, System.Collections.Generic.List<string> Notes)
+  public System.Collections.Generic.IReadOnlyList<string>? Labels()
+  public System.Collections.Generic.List<string> Notes { get; init; }
+  public System.Func<Idrak.Onnx.ImportedNetwork>? Onnx { get; init; }
+  public System.Text.Json.Nodes.JsonObject Config { get; init; }
+  public string Architecture { get; init; }
+  public string Path { get; init; }
+  public string? Folder { get; init; }
+
+public sealed record Idrak.Models.Abstractions.ImageModel : System.IDisposable, System.IEquatable<Idrak.Models.Abstractions.ImageModel>
+  [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public ImageModel()
+  public System.Collections.Generic.IReadOnlyList<int>? InputShape { get; }
+  public System.Collections.Generic.IReadOnlyList<string> Notes { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string>? Labels { get; init; }
+  public System.Text.Json.Nodes.JsonObject? DecoderSettings { get; init; }
+  public int Channels { get; init; }
+  public required Idrak.Abstraction.Module Network { get; init; }
+  public required Idrak.Data.ImagePreprocessor Preprocessor { get; init; }
+  public required Idrak.Models.Abstractions.ImageTask Task { get; init; }
+  public required string Architecture { get; init; }
+  public string? Decoder { get; init; }
+  public void Dispose()
+
+public static class Idrak.Models.Abstractions.ImageModelFamilies
+  public static Idrak.Models.Abstractions.IImageModelFamily Get(string name)
+  public static Idrak.Models.Abstractions.IImageModelFamily? Default(string name)
+  public static Idrak.Models.Abstractions.IImageModelFamily? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string? Origin(string name)
+  public static void Register(Idrak.Models.Abstractions.IImageModelFamily family)
+
+public sealed record Idrak.Models.Abstractions.ImageModelOptions : System.IEquatable<Idrak.Models.Abstractions.ImageModelOptions>
+  public Idrak.Abstraction.Device? Device { get; init; }
+  public Idrak.Abstraction.Generation.EncoderWeights Weights { get; init; }
+  public ImageModelOptions()
+  public string? Architecture { get; init; }
+
+public enum Idrak.Models.Abstractions.ImageTask : int
+  Classification = 0
+  Detection = 1
+  Features = 3
+  Segmentation = 2
 
 public sealed class Idrak.Models.Abstractions.PretrainedArchitecture
   [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public PretrainedArchitecture()
@@ -1481,6 +1537,9 @@ public sealed record Idrak.Models.GgufTensorInfo : System.IEquatable<Idrak.Model
   public long[] Dimensions { get; init; }
   public string Name { get; init; }
 
+public static class Idrak.Models.ImageModels
+  public static Idrak.Models.Abstractions.ImageModel Load(string path, Idrak.Models.Abstractions.ImageModelOptions? options = null)
+
 public static class Idrak.Models.ModelSource
   public static Idrak.Abstraction.Formats.ModelSourceOptions Options(string revision = "main", string? token = null, Idrak.Abstraction.Data.IDownloader? downloader = null, bool download = true)
   public static bool IsModelId(string model)
@@ -1558,6 +1617,9 @@ public static class Idrak.Models.SafeTensorsWriter
   public static void Write(string path, System.Collections.Generic.IEnumerable<(string, int[], float[])> tensors, Idrak.Models.SafeTensorType type = (Idrak.Models.SafeTensorType)2, System.Collections.Generic.IReadOnlyDictionary<string, string>? metadata = null)
 
 public static class Idrak.Models.StoredWeights
+  public static Idrak.Layers.BatchNorm BatchNorm(Idrak.Models.Abstractions.ITensorStore store, string name, float epsilon = 1E-05f, float momentum = 0.1f, Idrak.Abstraction.Device? device = null)
+  public static Idrak.Layers.Conv2d Conv2d(Idrak.Models.Abstractions.ITensorStore store, string name, (int, int)? stride = null, (int, int)? padding = null, (int, int)? dilation = null, int groups = 1, Idrak.Abstraction.Device? device = null)
+  public static Idrak.Layers.Linear Linear(Idrak.Models.Abstractions.ITensorStore store, string name, Idrak.Abstraction.Generation.EncoderWeights weights = (Idrak.Abstraction.Generation.EncoderWeights)0, Idrak.Abstraction.Device? device = null)
   public static Idrak.Layers.Linear Linear(float[] values, int inputs, int outputs, Idrak.Abstraction.Tensor? bias, bool bfloat16, Idrak.Abstraction.Device device)
   public static bool KeepsBFloat16(Idrak.Models.Abstractions.ITensorStore store, Idrak.Abstraction.Generation.EncoderWeights weights, params System.Collections.Generic.IEnumerable<string> names)
 

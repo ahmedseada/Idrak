@@ -28,6 +28,31 @@ public sealed record Idrak.Vision.Abstractions.Detection : System.IEquatable<Idr
 
 public delegate System.Collections.Generic.IEnumerable<Idrak.Vision.Abstractions.Detection> Idrak.Vision.Abstractions.DetectionDecoder(System.ReadOnlySpan<float> outputs, System.Collections.Generic.IReadOnlyList<int> outputShape)
 
+public sealed record Idrak.Vision.Abstractions.DetectionDecoderContext : System.IEquatable<Idrak.Vision.Abstractions.DetectionDecoderContext>
+  public DetectionDecoderContext(int InputHeight, int InputWidth, System.Collections.Generic.IReadOnlyList<string>? Labels, System.Text.Json.Nodes.JsonObject Settings)
+  public System.Collections.Generic.IReadOnlyList<string>? Labels { get; init; }
+  public System.Text.Json.Nodes.JsonObject Settings { get; init; }
+  public bool Flag(string name, bool otherwise)
+  public float Number(string name, float otherwise)
+  public int Classes { get; }
+  public int InputHeight { get; init; }
+  public int InputWidth { get; init; }
+  public int[]? Integers(string name)
+  public string Text(string name, string otherwise)
+
+public delegate Idrak.Vision.Abstractions.DetectionDecoder Idrak.Vision.Abstractions.DetectionDecoderFactory(Idrak.Vision.Abstractions.DetectionDecoderContext context)
+
+public static class Idrak.Vision.Abstractions.DetectionDecoders
+  public const string BoxesScores = "boxes-scores"
+  public static Idrak.Vision.Abstractions.DetectionDecoder Create(string name, Idrak.Vision.Abstractions.DetectionDecoderContext context)
+  public static Idrak.Vision.Abstractions.DetectionDecoderFactory Get(string name)
+  public static Idrak.Vision.Abstractions.DetectionDecoderFactory? Default(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string? Origin(string name)
+  public static void Register(string name, Idrak.Vision.Abstractions.DetectionDecoderFactory factory)
+  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
 public sealed class Idrak.Vision.Abstractions.ForegroundImage
   public ForegroundImage(float[] values, int width, int height, float threshold, bool inverted = false)
   public System.ReadOnlySpan<float> Values { get; }
@@ -106,13 +131,23 @@ public static class Idrak.Vision.Foreground
   public static float Otsu(System.ReadOnlySpan<float> values)
   public static float[] Grey(Idrak.Abstraction.Data.ImageData image)
 
+public static class Idrak.Vision.ImageModelPredictors
+  public static Idrak.Inference.PredictorBuilder<Idrak.Abstraction.Data.ImageData, Idrak.Inference.ClassPrediction> Classifier(this Idrak.Models.Abstractions.ImageModel model, System.Collections.Generic.IReadOnlyList<string>? labels = null)
+  public static Idrak.Inference.PredictorBuilder<Idrak.Abstraction.Data.ImageData, float[]> Outputs(this Idrak.Models.Abstractions.ImageModel model)
+  public static Idrak.Vision.ModelDetector Detector(this Idrak.Models.Abstractions.ImageModel model, Idrak.Vision.DetectorOptions? options = null, Idrak.Abstraction.Device? device = null)
+  public static Idrak.Vision.ModelSegmenter Segmenter(this Idrak.Models.Abstractions.ImageModel model, Idrak.Abstraction.Device? device = null)
+
 public sealed class Idrak.Vision.ModelDetector : Idrak.Vision.Abstractions.IObjectDetector
+  public ModelDetector(Idrak.Abstraction.Module model, Idrak.Data.ImagePreprocessor preprocessor, Idrak.Vision.Abstractions.DetectionDecoder decoder, Idrak.Vision.DetectorOptions? options = null, Idrak.Abstraction.Device? device = null)
+  public ModelDetector(Idrak.Abstraction.Module model, Idrak.Data.ImagePreprocessor preprocessor, string decoder, System.Text.Json.Nodes.JsonObject? settings = null, Idrak.Vision.DetectorOptions? options = null, Idrak.Abstraction.Device? device = null)
   public ModelDetector(Idrak.Abstraction.Module model, int channels, int height, int width, Idrak.Vision.Abstractions.DetectionDecoder decoder, Idrak.Vision.DetectorOptions? options = null, Idrak.Abstraction.Device? device = null)
+  public ModelDetector(Idrak.Abstraction.Module model, int channels, int height, int width, string decoder, System.Text.Json.Nodes.JsonObject? settings = null, Idrak.Vision.DetectorOptions? options = null, Idrak.Abstraction.Device? device = null)
   public System.Collections.Generic.IReadOnlyList<Idrak.Vision.Abstractions.Detection> Detect(Idrak.Abstraction.Data.ImageData image)
   public System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyList<Idrak.Vision.Abstractions.Detection>> Detect(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ImageData> images)
 
 public sealed class Idrak.Vision.ModelSegmenter : Idrak.Vision.Abstractions.ISegmenter
   public Idrak.Vision.Abstractions.SegmentationMask Segment(Idrak.Abstraction.Data.ImageData image)
+  public ModelSegmenter(Idrak.Abstraction.Module model, Idrak.Data.ImagePreprocessor preprocessor, Idrak.Abstraction.Device? device = null)
   public ModelSegmenter(Idrak.Abstraction.Module model, int channels, int height, int width, Idrak.Abstraction.Device? device = null)
   public System.Collections.Generic.IReadOnlyList<Idrak.Vision.Abstractions.SegmentationMask> Segment(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ImageData> images)
 
@@ -138,6 +173,7 @@ public sealed class Idrak.Vision.RegionClassifier : System.IDisposable
   public Idrak.Vision.RegionPredictions Classify(Idrak.Vision.Abstractions.ForegroundImage image, System.Collections.Generic.IReadOnlyList<Idrak.Vision.Abstractions.PixelBox> regions)
   public System.Collections.Generic.IReadOnlyList<string> Classes { get; }
   public static Idrak.Vision.RegionClassifierBuilder For(Idrak.Abstraction.Module model)
+  public static Idrak.Vision.RegionClassifierBuilder For(Idrak.Models.Abstractions.ImageModel model)
   public static Idrak.Vision.RegionClassifierBuilder Load(string path, Idrak.Abstraction.Device? device = null)
   public void Dispose()
 
