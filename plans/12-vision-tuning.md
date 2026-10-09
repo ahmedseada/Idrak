@@ -5,8 +5,7 @@
 **Goal.** Fine-tune a vision-language model on pages and their answers with LoRA (or QLoRA on an int8/int4 base),
 the way `bakrianoo/arabic-legal-documents-ocr-1.0` was trained in LlamaFactory (LoRA on the language model, the vision
 tower frozen), and run the result through `idrak run`, `chat` and `serve`. The first data: that model's own
-`data/train.json` and `data/val.json` (LlamaFactory ShareGPT, an `<image>` placeholder and an `images` list) and
-synthetic pages (text such as SANAD rendered in several fonts).
+`data/train.json` and `data/val.json` (LlamaFactory ShareGPT, an `<image>` placeholder and an `images` list).
 
 **Rules that hold for every phase** (see `CLAUDE.md`):
 
@@ -112,8 +111,6 @@ synthetic pages (text such as SANAD rendered in several fonts).
 - On the owner's machine (whatever device it has; commands given in PowerShell): LoRA on
   `bakrianoo/arabic-legal-documents-ocr-1.0` (or `google/gemma-3-4b-it`) with its `train.json`, a short run, loss
   falling, `val.json` CER before and after, the adapter loaded by `idrak run`.
-- Synthetic data is a separate tool (rendering text in fonts with proper Arabic shaping) and not part of this plan's
-  library work; it only has to write the same data format.
 
 ### Phase 6: speed and packing (after the proof)
 
@@ -144,4 +141,3 @@ synthetic pages (text such as SANAD rendered in several fonts).
 
 1. Train the projector by default for Gemma 3, or the language model only (LlamaFactory's run: language model only)?
 2. Feature cache on disk by default, or memory first and disk when it does not fit?
-3. Where the font renderer for synthetic pages lives (a tool, a sample, or an `Idrak.Data` registry of renderers).
