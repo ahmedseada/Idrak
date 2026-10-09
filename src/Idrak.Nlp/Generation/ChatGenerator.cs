@@ -28,6 +28,13 @@ public sealed class ChatImages(ImageTokenIds tokens, IImagePromptFormat format, 
 
     /// <summary>Encodes a request's images (see the constructor).</summary>
     public Func<IReadOnlyList<ChatImage>, Tensor> Encode { get; } = encode ?? throw new ArgumentNullException(nameof(encode));
+
+    /// <summary>
+    /// What the encoder holds (its module, built on first use for example), or null: the inference engine disposes it
+    /// when it unloads the chat model these images were made for (<see cref="Idrak.Inference.GenerativeModelBuilder.Images"/>);
+    /// otherwise whoever made them disposes it.
+    /// </summary>
+    public IDisposable? Owner { get; init; }
 }
 
 /// <summary>

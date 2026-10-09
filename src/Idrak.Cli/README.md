@@ -202,6 +202,43 @@ idrak api /v1/chat/completions '{"model":"qwen","messages":[{"role":"user","cont
 idrak ping http://192.168.1.20:8080 --timeout 5s
 ```
 
+#### Images
+
+A vision-language model (Gemma 3 and its fine-tunes, such as the OCR model `bakrianoo/arabic-legal-documents-ocr-1.0`)
+reads images on three routes, with the same preprocessing as `idrak run --image` (the model's
+`preprocessor_config.json`, the EXIF orientation of photos, grey when asked): `image_url` content parts on
+`POST /v1/chat/completions` (data URLs: `data:image/jpeg;base64,...`), a `multipart/form-data` upload on
+`POST /v1/chat/upload`, and `images` (base64) or image parts on `POST /api/chat`. PNG, JPEG, BMP and PPM/PGM are
+read; another format, bad base64 or a damaged file is a 400, and so is an image sent to a text-only model.
+`"stream": true` (or the form field `stream=true`) streams server-sent events ending with `data: [DONE]`; otherwise
+the answer is one JSON object. On `/v1` no repetition penalty applies unless the request gives `repeat_penalty`
+(the wire format has none), so `--temperature 0` there gives `idrak run`'s greedy answer.
+
+| Option | What it does |
+|---|---|
+| `--grayscale` | Read every image grey (Pillow's `convert("L")`, as the OCR fine-tune asks); an alias can keep it. Per request: `"grayscale": true` in a JSON body, `grayscale=true` in a form |
+| `--max-request-mb N` | The largest request body, images included (default 32); larger is a 413 |
+| `--max-images N` | The most images in one request (default 8); more is a 400 |
+| `--allow-image-urls` | Let `image_url` parts give `http(s)` addresses the server downloads (off by default; each download is held to `--max-request-mb` and 30 s) |
+
+The upload form's fields: `image` (one or more files), `prompt` (text), and optionally `system`, `stream`
+(`true`/`false`), `max_tokens`, `temperature`, `top_p`, `top_k`, `seed`, `grayscale` (`true`/`false`) and `model`
+(needed when several models are served). Requests are answered one at a time per loaded model (each request's images
+are encoded with it); others wait their turn, and `--max-concurrency` bounds them all.
+
+In Postman: `POST http://127.0.0.1:7317/v1/chat/upload`, Body → form-data, add the key `image`, switch its type from
+Text to File and choose the scan, then add `prompt` (and `max_tokens`, `temperature` 0, `stream`) as Text. Send: the
+answer is in `choices[0].message.content`. With `stream` = `true` Postman shows each event as it arrives. The JSON
+route works the same way with Body → raw → JSON.
+
+```bash
+idrak serve ocr=bakrianoo/arabic-legal-documents-ocr-1.0 -d cuda:0 -w bf16 --grayscale
+curl http://127.0.0.1:7317/v1/chat/upload -F image=@scan.jpg -F "prompt=Extract the text." -F max_tokens=2048 -F temperature=0
+curl http://127.0.0.1:7317/v1/chat/completions -H "Content-Type: application/json" -d '{"model": "ocr", "temperature": 0,
+  "messages": [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,'"$(base64 -w0 scan.jpg)"'"}},
+  {"type": "text", "text": "Extract the text."}]}]}'
+```
+
 ### Models
 
 The model cache: what `pull` downloads is what loading reads (Hugging Face models under

@@ -14,6 +14,15 @@ app.MapChatApi("/api", "my-gpt", o => o.Tools(ToolExecution.Client));           
 app.MapChatApi("/agent", "my-gpt", o => o.Tools(ToolExecution.Server, maxRounds: 5, tools: registry));
 ```
 
+A chat model that reads images (a vision-language model added with `GenerativeModelBuilder.Images`) takes them on
+`/v1/chat/completions` as `image_url` data URLs, on `/v1/chat/upload` as a `multipart/form-data` upload (`image`
+files, `prompt`, `stream`, ...) and on `MapChatApi` as `images` or image parts; `"grayscale": true` reads them grey.
+`ImageInputOptions` limits the images per request and allows http(s) image URLs (off by default):
+
+```csharp
+app.MapCompletionsApi("/v1", o => o.Images(i => { i.MaxImages = 4; i.AllowUrls = false; }));
+```
+
 ## Install
 
 ```bash
