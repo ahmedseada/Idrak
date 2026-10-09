@@ -1,7 +1,8 @@
 # Plan 12: fine-tuning vision-language models (images in `FineTuner` and `idrak tune`)
 
 **Status:** planned 2026-10-09, against the code at `abstraction` 4ac4fa4. Phase 0 (the reference) built 2026-10-09;
-phases 1 to 4 built 2026-10-09; phase 6 built 2026-10-09 (CPU; the graph paths written, not run on a GPU); 5 not yet.
+phases 1 to 4 built 2026-10-09; phase 6 built 2026-10-09 (CPU; the graph paths written, not run on a GPU). All merged on `abstraction`; the CPU tests pass
+on Linux and on the owner's Windows machine. Left for the owner: phase 5 (the real model; commands below) and the GPU runs.
 
 **Goal.** Fine-tune a vision-language model on pages and their answers with LoRA (or QLoRA on an int8/int4 base),
 the way `bakrianoo/arabic-legal-documents-ocr-1.0` was trained in LlamaFactory (LoRA on the language model, the vision
@@ -251,6 +252,18 @@ same fixtures through `FineTuner.Train` (`Optimizer = ps => new Sgd(ps, 0.2f)`, 
 - On the owner's machine (whatever device it has; commands given in PowerShell): LoRA on
   `bakrianoo/arabic-legal-documents-ocr-1.0` (or `google/gemma-3-4b-it`) with its `train.json`, a short run, loss
   falling, `val.json` CER before and after, the adapter loaded by `idrak run`.
+- **Commands for the owner** (PowerShell; `$m` is the model's folder with its `data/train.json`, `data/val.json` and the
+  images they name; the plug-in built first with `dotnet build -c Release samples\Gemma3Vision\Idrak.Gemma3Vision`):
+
+  ```powershell
+  cd D:\Projects\Idrak
+  $plugin = "D:\Projects\Idrak\samples\Gemma3Vision\Idrak.Gemma3Vision\bin\Release\net10.0\Idrak.Gemma3Vision.dll"
+  $m = "<the model folder>"
+  dotnet run -c Release --project src\Idrak.Cli -- tune evaluate -P $plugin $m "$m\data\val.json" --metric cer --metric-samples 20 -v
+  dotnet run -c Release --project src\Idrak.Cli -- tune -P $plugin -b $m --data "$m\data\train.json" --eval "$m\data\val.json" --images "$m\data" --grayscale --metric cer --metric-every 50 --metric-samples 20 --epochs 1 -o "$m-lora" -v
+  dotnet run -c Release --project src\Idrak.Cli -- tune evaluate -P $plugin $m "$m\data\val.json" --adapter "$m-lora" --metric cer --metric-samples 20
+  dotnet run -c Release --project src\Idrak.Cli -- run -P $plugin $m --adapter "$m-lora" --image "<a scan>" "<the prompt from train.json>"
+  ```
 
 ### Phase 6: speed and packing (after the proof)
 
