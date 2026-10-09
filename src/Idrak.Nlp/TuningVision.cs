@@ -19,10 +19,18 @@ namespace Idrak.Nlp;
 /// <see cref="ChatTranscriptEncoder.Vision"/> encodes transcripts with images through it, and
 /// <see cref="FineTuningOptions.Vision"/> trains on them.
 /// <para>
-/// The vision tower is frozen: each distinct image (its bytes, preparation and this encoder) runs through it once, without
+/// A frozen vision tower: each distinct image (its bytes, preparation and this encoder) runs through it once, without
 /// gradients and with its intermediate results freed at once, and its output is kept in the cache: the features
 /// themselves when the projector is frozen too, the tower's output when the projector trains (the projector then runs in
-/// every step, with gradients). A step's features are released with the step.
+/// every step, with gradients). A trained tower (<see cref="VisionTuningParts.Tower"/>, full weights through the family's
+/// <see cref="IVisionTuningPart.Tower"/>) runs in every step with gradients, its blocks checkpointed when the tuner
+/// checkpoints; the cache then keeps the pixel values. A step's distinct images go through the tower (on cache misses)
+/// and the projector together, one pass each where their shapes allow (each image's features as it gets alone; one at
+/// a time when the device runs out of memory for the frozen pass). A step's features are released with the step.
+/// </para>
+/// <para>
+/// Memory: only the trained parts are built with float32 weights (<see cref="VisionEncoderOptions.TrainedParts"/>); a
+/// frozen tower keeps the checkpoint's precision.
 /// </para>
 /// </summary>
 /// <example>
@@ -51,17 +59,16 @@ public sealed class TuningVision : IDisposable
     /// <summary>
     /// The image side of fine-tuning <paramref name="model"/>: its family checked first (registered, the vision options
     /// it takes, the parts it offers), then its encoder built on the model's device (with the model's trained vision
-    /// tensors, <see cref="PretrainedModel.CreateVisionEncoder"/>; float32 weights when a part trains), the trained parts'
-    /// parameters marked to receive gradients.
+    /// tensors, <see cref="PretrainedModel.CreateVisionEncoder"/>; the trained parts with float32 weights, the rest as the
+    /// checkpoint stores them), every encoder parameter frozen but the trained parts', which are marked to receive gradients.
     /// </summary>
     /// <param name="model">A vision-language model (its family registered).</param>
     /// <param name="images">How every image is prepared (<see cref="TuningImages.None"/> when null).</param>
-    /// <param name="parts">The vision parts that train beside the language model's adapters (<see cref="VisionTuningParts.Projector"/>); none when null.</param>
+    /// <param name="parts">The vision parts that train beside the language model's adapters (<see cref="VisionTuningParts.Projector"/>, <see cref="VisionTuningParts.Tower"/>); none when null.</param>
     /// <param name="cache">Where image features are kept (<see cref="FeatureCaches"/>; not disposed by this); a new "memory" one when null (disposed with this).</param>
     /// <exception cref="InvalidOperationException">The model has no vision part.</exception>
     /// <exception cref="NotSupportedException">
-    /// The model's vision family is not registered (the registry's message), it does not offer a part asked for, or the
-    /// tower is asked for (it trains in the step: plan 12, phase 6).
+    /// The model's vision family is not registered (the registry's message), or it does not offer a part asked for.
     /// </exception>
     /// <exception cref="ArgumentException">A vision option the family does not take.</exception>
     public static TuningVision Create(PretrainedModel model, TuningImages? images = null, IEnumerable<string>? parts = null, IFeatureCache? cache = null)
@@ -73,21 +80,25 @@ public sealed class TuningVision : IDisposable
         var asked = (parts ?? []).Select(p => p?.Trim().ToLowerInvariant() ?? "").Where(p => p.Length > 0).Distinct(StringComparer.Ordinal).ToList();
 
         // The encoder first: a family no longer registered fails here, with the registry's message.
-        var encoder = model.CreateVisionEncoder(new VisionEncoderOptions { Device = model.Device, Weights = asked.Count > 0 ? EncoderWeights.Float32 : EncoderWeights.AsStored });
+        var encoder = model.CreateVisionEncoder(new VisionEncoderOptions { Device = model.Device, Weights = EncoderWeights.AsStored, TrainedParts = asked });
         try
         {
             images.ThrowIfUnknown(vision.Family, vision.VisionOptionKeys);
             var tuning = VisionTuningParts.For(vision, asked);
-            if (asked.FirstOrDefault(p => p != VisionTuningParts.Projector) is { } other)
-            {
-                throw new NotSupportedException($"Training the vision {other} needs it in every step, with no cached features (plan 12, phase 6, not built yet); "
-                    + $"train the {VisionTuningParts.Projector} or the language model only.");
-            }
-
             if ((tuning is not null || model.TrainedVisionTensors.Count > 0) && encoder is not IVisionEncoderStages)
             {
                 throw new NotSupportedException($"The vision family {vision.Family}'s encoder does not show its stages (IVisionEncoderStages): the tower's output cannot be kept "
-                    + "apart from the projector, so the projector cannot train with a cached tower.");
+                    + "apart from the projector, so the projector cannot train with a cached tower, nor the tower from pixel values.");
+            }
+
+            // Nothing of the encoder records gradients but the trained parts (a frozen projector between a trained tower and
+            // the decoder passes gradients through without keeping its own).
+            if (encoder is Module module)
+            {
+                foreach (var parameter in module.Parameters())
+                {
+                    parameter.RequiresGrad = false;
+                }
             }
 
             var parameters = new List<Tensor>();
@@ -177,69 +188,185 @@ public sealed class TuningVision : IDisposable
     public FeatureCacheKey Key(ChatImage image, TuningImages preparation, string stage) =>
         FeatureCacheKey.For(image, preparation, Vision.Family, Checkpoint, "float32", stage);
 
+    /// <summary>Whether the vision tower trains (<see cref="VisionTuningParts.Tower"/> among <see cref="Parts"/>): it then runs in every step.</summary>
+    public bool TrainsTower => Parts.Contains(VisionTuningParts.Tower);
+
     /// <summary>
-    /// The stage the cache keeps: the tower's output when the projector trains or the model carries trained vision tensors
-    /// (the projector then runs in every step), else the features.
+    /// The stage the cache keeps: the pixel values when the tower trains (it runs in every step); the tower's output when
+    /// the projector trains or the model carries trained vision tensors (the projector then runs in every step); else the
+    /// features.
     /// </summary>
-    public string CachedStage => _projector is not null ? FeatureCacheKey.TowerStage : FeatureCacheKey.FeaturesStage;
+    public string CachedStage => TrainsTower ? FeatureCacheKey.PixelsStage : _projector is not null ? FeatureCacheKey.TowerStage : FeatureCacheKey.FeaturesStage;
 
-    // The image's features for a step, [its tokens (all blocks, in order), width] on the encoder's device: the cached stage
-    // (computed once, without gradients), then the projector with gradients when it trains. Made in the caller's tensor
-    // scope (released with the step).
-    internal Tensor Features(TrainingImage image, out bool hit)
+    /// <summary>
+    /// The time the last batch's images took (their cached stage from the cache or computed, then the trained or carried
+    /// parts), and how many went through one pass together; for the tuner's trace.
+    /// </summary>
+    internal (double Milliseconds, int Images, int Passes) LastFeatures { get; private set; }
+
+    // The features of a batch's distinct images for a step, each [its tokens (all blocks, in order), width] on the
+    // encoder's device: the cached stage (from the cache, else computed without gradients, the misses together), then the
+    // tower (when it trains, its blocks checkpointed with `checkpointing`) and the projector (when it trains or carries
+    // trained values) over all the images joined, with gradients when a part trains. Made in the caller's tensor scope
+    // (released with the step).
+    internal IReadOnlyList<Tensor> Features(IReadOnlyList<TrainingImage> images, bool checkpointing = false)
     {
-        var prepared = image.Preparation;
-        var key = Key(image.Image, prepared, CachedStage);
-        Tensor kept;
-        if (Cache.TryGet(key, Encoder.Device, out var cached))
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        var kept = new Tensor[images.Count];
+        var missing = new List<int>();
+        for (int i = 0; i < images.Count; i++)
         {
-            (hit, kept) = (true, cached);
-            Interlocked.Increment(ref _hits);
-        }
-        else
-        {
-            hit = false;
-            Interlocked.Increment(ref _encoded);
-            kept = Compute(image.Image, prepared);
-            Cache.Put(key, kept);
-        }
-
-        Tensor features = kept;
-        if (_projector is not null)
-        {
-            var projected = _projector.Features(Encoder, kept);                          // [blocks, tokens, width], gradients reach the projector
-            features = projected.Reshape(projected.Shape[0] * projected.Shape[1], projected.Shape[2]);
+            if (Cache.TryGet(Key(images[i].Image, images[i].Preparation, CachedStage), Encoder.Device, out var cached))
+            {
+                kept[i] = cached;
+                Interlocked.Increment(ref _hits);
+            }
+            else
+            {
+                missing.Add(i);
+            }
         }
 
-        if (features.Rank != 2 || features.Shape[0] < image.Tokens || features.Shape[1] != Vision.Width)
+        int passes = 0;
+        if (missing.Count > 0)
         {
-            throw new InvalidOperationException($"The features of {image.Image} are {Tensor.FormatShape(features.Shape)}; its blocks take {image.Tokens} tokens of width {Vision.Width}.");
+            Interlocked.Add(ref _encoded, missing.Count);
+            var computed = Compute([.. missing.Select(i => images[i])], ref passes);
+            for (int k = 0; k < missing.Count; k++)
+            {
+                kept[missing[k]] = computed[k];
+                Cache.Put(Key(images[missing[k]].Image, images[missing[k]].Preparation, CachedStage), computed[k]);
+            }
         }
 
-        return features;
+        IReadOnlyList<Tensor> features = kept;
+        using (Parameters.Count == 0 ? Autograd.NoGrad() : (IDisposable?)null)            // nothing trains on the image side
+        {
+            if (TrainsTower)
+            {
+                using var blocks = checkpointing ? ActivationMemory.CheckpointBlocks() : (ActivationMemory.Scope?)null;
+                features = Joined(kept, x => Tuning!.Tower(Encoder, x), ref passes);
+            }
+
+            if (_projector is not null)
+            {
+                features = Joined(features, x => _projector.Features(Encoder, x), ref passes);   // [blocks, tokens, width] each
+            }
+        }
+
+        var result = new Tensor[images.Count];
+        for (int i = 0; i < images.Count; i++)
+        {
+            var f = features[i];
+            if (f.Rank == 3)
+            {
+                f = f.Reshape(f.Shape[0] * f.Shape[1], f.Shape[2]);
+            }
+
+            if (f.Rank != 2 || f.Shape[0] < images[i].Tokens || f.Shape[1] != Vision.Width)
+            {
+                throw new InvalidOperationException($"The features of {images[i].Image} are {Tensor.FormatShape(f.Shape)}; its blocks take {images[i].Tokens} tokens of width {Vision.Width}.");
+            }
+
+            result[i] = f;
+        }
+
+        LastFeatures = (watch.Elapsed.TotalMilliseconds, images.Count, passes);
+        return result;
     }
 
-    // The cached stage of one image: the tower's output [blocks, ...] (projector trained) or the features [tokens, width],
-    // without gradients; every intermediate result (pixels, the tower's activations) freed at once.
-    private Tensor Compute(ChatImage image, TuningImages preparation)
+    // `pass` over the tensors joined along their first dimension (one pass for all, when their other dimensions agree and
+    // there are several), split back into each tensor's rows; one pass each otherwise. Gradients flow through the join.
+    private static IReadOnlyList<Tensor> Joined(IReadOnlyList<Tensor> inputs, Func<Tensor, Tensor> pass, ref int passes)
+    {
+        if (inputs.Count > 1 && inputs.All(x => x.Rank == inputs[0].Rank && x.Shape[1..].SequenceEqual(inputs[0].Shape[1..])))
+        {
+            var output = pass(Tensor.Concat(inputs, 0));
+            passes++;
+            var parts = new Tensor[inputs.Count];
+            int at = 0;
+            for (int i = 0; i < inputs.Count; i++)
+            {
+                parts[i] = output.Narrow(0, at, inputs[i].Shape[0]);
+                at += inputs[i].Shape[0];
+            }
+
+            if (at != output.Shape[0])
+            {
+                throw new InvalidOperationException($"A joined pass over {at} rows gave {output.Shape[0]}.");
+            }
+
+            return parts;
+        }
+
+        passes += inputs.Count;
+        return [.. inputs.Select(pass)];
+    }
+
+    // The cached stage of images, without gradients (every intermediate result freed at once): the pixel values (tower
+    // trained), the tower's output [blocks, ...] (projector run in the step), or the features [tokens, width]. The images'
+    // pixel values go through the family's stages in one pass when their shapes agree; one at a time when the device runs
+    // out of memory for that pass (or the encoder shows no stages).
+    private List<Tensor> Compute(IReadOnlyList<TrainingImage> images, ref int passes)
     {
         using var noGrad = Autograd.NoGrad();
         using var scope = new TensorScope();
-        var pixels = Read(image, preparation);
-        var options = Options(preparation);
-        if (_projector is not null)
+        var stages = Encoder as IVisionEncoderStages;
+        if (stages is null || !_positionsChecked)
         {
-            return scope.Keep(VisionTuningParts.FrozenTower(Encoder, pixels, options)!);
+            // The first image through the encoder's own Encode: a family that places image tokens by several axes (M-RoPE)
+            // says so there, and the tuner's decoder does not.
+            var first = images[0];
+            var blocks = Encoder.Encode([Read(first.Image, first.Preparation)], Options(first.Preparation));
+            if (blocks.Any(b => b.Positions is not null))
+            {
+                throw new NotSupportedException($"The vision family {Vision.Family} places image tokens by several axes (M-RoPE), which the tuner's decoder does not.");
+            }
+
+            _positionsChecked = true;
+            if (stages is null)
+            {
+                // No stages: each image through Encode (only the features can be kept).
+                var all = new List<Tensor> { blocks.Count == 1 ? blocks[0].Features : Tensor.Concat([.. blocks.Select(b => b.Features)], 0) };
+                foreach (var image in images.Skip(1))
+                {
+                    var more = Encoder.Encode([Read(image.Image, image.Preparation)], Options(image.Preparation));
+                    all.Add(more.Count == 1 ? more[0].Features : Tensor.Concat([.. more.Select(b => b.Features)], 0));
+                }
+
+                passes += images.Count;
+                return [.. all.Select(scope.Keep)];
+            }
         }
 
-        var blocks = Encoder.Encode([pixels], options);
-        if (blocks.Any(b => b.Positions is not null))
+        var pixels = images.Select(i => OnDevice(stages.PixelValues(Read(i.Image, i.Preparation), Options(i.Preparation)))).ToList();
+        if (TrainsTower)
         {
-            throw new NotSupportedException($"The vision family {Vision.Family} places image tokens by several axes (M-RoPE), which the tuner's decoder does not.");
+            return [.. pixels.Select(scope.Keep)];
         }
 
-        return scope.Keep(blocks.Count == 1 ? blocks[0].Features : Tensor.Concat([.. blocks.Select(b => b.Features)], 0));
+        Func<Tensor, Tensor> pass = _projector is not null ? stages.Tower : stages.Features;
+        IReadOnlyList<Tensor> outputs;
+        int counted = passes;
+        try
+        {
+            outputs = Joined(pixels, pass, ref counted);
+        }
+        catch (ResourceLimitExceededException) when (pixels.Count > 1)
+        {
+            counted = passes;
+            outputs = Joined([pixels[0]], pass, ref counted);           // the device's memory decides: one image at a time
+            outputs = [.. outputs, .. pixels.Skip(1).Select(p => Joined([p], pass, ref counted)[0])];
+        }
+
+        passes = counted;
+        return [.. outputs.Select(o => scope.Keep(_projector is not null || o.Rank != 3 ? o : o.Reshape(o.Shape[0] * o.Shape[1], o.Shape[2])))];
     }
+
+    private bool _positionsChecked;
+
+    // Pixel values on the encoder's device (a family may make them on the host).
+    private Tensor OnDevice(Tensor values) => values.Device == Encoder.Device ? values : Tensor.From(values.ToArray(), values.Shape.ToArray(), Encoder.Device);
 
     // Writes the trained parts (as the model's trained vision tensors) and the preparation beside the adapters.
     internal void Save(string folder, bool images)
