@@ -33,14 +33,15 @@ internal sealed class VlmCheckCommand : Command
 
     public override string Name => "vlm check";
 
-    public override string Summary => "Compares a vision-language model with a transformers reference folder: pixels, encoder, features, logits, greedy tokens";
+    public override string Summary => "Compares a vision-language model with a transformers reference: pixels, features, logits, tokens";
 
     public override string Usage =>
         "MODEL --reference DIR [options]\n\n" +
         "DIR is the folder tools/vlm/compare_real.py writes (manifest.json and .npy arrays: the prompt's ids, the pixels,\n" +
         "the vision output, the projected features, transformers' greedy tokens with the top 5 logits of every step, and\n" +
         "the top 5 of one teacher-forced pass). The model loads on the device with the chosen weights; the image named in\n" +
-        "the manifest (or --image) is read as idrak run reads it, grey when the reference was. Reported:\n" +
+        "the manifest (or --image) is read as idrak run reads it, grey when the reference was, through the image transforms\n" +
+        "the reference was made with (compare_real.py --image-transform, kept as \"image_transforms\"). Reported:\n" +
         "  - pixels: the largest difference from the reference's;\n" +
         "  - the encoder's output and the projected features from the reference's pixels: largest, relative and cosine;\n" +
         "  - the prompt's ids as Idrak's chat template and tokenizer make them;\n" +
@@ -57,14 +58,18 @@ internal sealed class VlmCheckCommand : Command
         "      --show N          disagreements printed in full (default 10)\n" +
         "      --vision-option K=V  a vision family option over the reference's (compare_real.py records the processor\n" +
         "                        options it used, such as --pan-and-scan, as \"vision_options\"; repeatable)\n" +
+        "      --image-transform P  the image transforms instead of the reference's (the same syntax as run's)\n" +
         "  -w, --weights FORMAT  int8, int4, bf16 or a registered packed format (default: as stored); the encoder is float32\n" +
-        "  -k, --kv FORMAT       the KV cache format (default float32)\n\n" +
+        "  -k, --kv FORMAT       the KV cache format (default float32)\n" +
+        "      --context N       the context window in tokens (default 4096, at most the model's)\n" +
+        "      --adapter DIR     merge a LoRA adapter into the weights as they are read\n\n" +
         "Examples:\n" +
         "  python tools/vlm/compare_real.py ./gemma-ocr scan.jpg --grayscale --prompt-file prompt.txt --out ref\n" +
+        "  python tools/vlm/compare_real.py ./gemma-ocr scan.jpg --image-transform grayscale,max_width=1024,contrast=1.5 --out rc\n" +
         "  idrak vlm check ./gemma-ocr --reference ref -d cuda:0 -w bf16\n" +
         "  idrak vlm check ./gemma-ocr --reference ref -d cpu -j -O report.json";
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, "--reference", "--image", "--steps", "--tie", "--show", ModelChoices.VisionOption];
+    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, "--reference", "--image", "--steps", "--tie", "--show", ModelChoices.VisionOption, ModelChoices.ImageTransformOption];
 
     public override IReadOnlyDictionary<string, string> ShortForms => ModelChoices.ShortForms;
 
@@ -105,6 +110,17 @@ internal sealed class VlmCheckCommand : Command
         // encoder is given them; a run's own --vision-option goes over them.
         var visionOptions = (manifest["vision_options"] is JsonObject saved ? VisionOptions.FromJson(saved) : VisionOptions.Empty).With(ModelChoices.VisionOptionsOf(context));
 
+        // The image transforms the reference ran in Pillow before its processor (compare_real.py --image-transform), or the run's own.
+        ImageTransformPipeline transforms;
+        try
+        {
+            transforms = ModelChoices.ImageTransformsOf(context) ?? ImageTransformPipeline.FromJson(manifest["image_transforms"]);
+        }
+        catch (ArgumentException ex)
+        {
+            throw new UsageException($"image transforms of {manifestPath}: {ex.Message}");
+        }
+
         // The reference's arrays.
         string Array(string file) => Path.Combine(folder, file);
         long[] promptIds = Npy.ReadInt64(Array("input_ids.npy")).Values;
@@ -124,11 +140,11 @@ internal sealed class VlmCheckCommand : Command
             throw new UsageException("--steps needs a positive number (and the reference at least one generated token).");
         }
 
-        var choice = ModelChoices.Choose(context, name) with { Grayscale = grayscale, VisionOptions = visionOptions.Count > 0 ? visionOptions : null };
+        var choice = ModelChoices.Choose(context, name) with { Grayscale = grayscale, VisionOptions = visionOptions.Count > 0 ? visionOptions : null, ImageTransforms = transforms };
         var device = context.Device;
         context.Write($"Reference  {folder}: transformers {manifest["versions"]?["transformers"]}, torch {manifest["versions"]?["torch"]}, "
                       + $"{manifest["dtype"]} (vision {manifest["vision_dtype"]}), logits {manifest["logits_dtype"]}, {manifest["image_processor_class"]}, "
-                      + $"grayscale {grayscale}, vision options {visionOptions}, {ids.Length} prompt tokens, {generated.Length} generated");
+                      + $"grayscale {grayscale}, image transforms {(choice.Transforms.IsEmpty ? "none" : choice.Transforms)}, vision options {visionOptions}, {ids.Length} prompt tokens, {generated.Length} generated");
         context.Write($"Idrak      {choice.Model} on {device}, weights {choice.Weights ?? "as stored"}, KV cache {choice.Kv ?? "float32"}, encoder float32, "
                       + $"matrix products {MixedPrecision.Default}");
 
@@ -139,7 +155,7 @@ internal sealed class VlmCheckCommand : Command
         int vocabulary = tokenizer.VocabularySize;
         var watch = Stopwatch.StartNew();
         visionOptions.ThrowIfUnknown(vision.Family, vision.VisionOptionKeys);
-        using var encoder = vision.CreateEncoder(new VisionEncoderOptions { Device = model.Device, Grayscale = grayscale, VisionOptions = visionOptions });
+        using var encoder = vision.CreateEncoder(new VisionEncoderOptions { Device = model.Device, VisionOptions = visionOptions });   // grey through the transforms
         double buildMs = watch.Elapsed.TotalMilliseconds;
         var stages = encoder as IVisionEncoderStages
             ?? throw new UsageException($"The vision family {vision.Family}'s encoder does not show its stages (IVisionEncoderStages): vlm check compares its pixels and its tower's output.");
@@ -153,6 +169,7 @@ internal sealed class VlmCheckCommand : Command
             ["reference_dtype"] = manifest["dtype"]?.DeepClone(),
             ["reference_vision_dtype"] = manifest["vision_dtype"]?.DeepClone(),
             ["grayscale"] = grayscale,
+            ["image_transforms"] = choice.Transforms.ToString(),
             ["vision_options"] = visionOptions.ToJson(),
             ["steps"] = steps,
             ["tie"] = tie,
@@ -167,7 +184,7 @@ internal sealed class VlmCheckCommand : Command
         if (imagePath is not null && File.Exists(imagePath))
         {
             var chatImage = ChatImage.FromFile(imagePath);
-            var decoded = (bool?)manifest["exif_applied"] == false ? ImageCodecs.Decode(chatImage.Data.Span) : ImageInputs.Decode(chatImage);
+            var decoded = choice.Transforms.Apply((bool?)manifest["exif_applied"] == false ? ImageCodecs.Decode(chatImage.Data.Span) : ImageInputs.Decode(chatImage));
             using (var own = stages.PixelValues(decoded, visionOptions))
             {
                 ownPixels = own.ToArray();

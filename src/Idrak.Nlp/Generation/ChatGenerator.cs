@@ -34,6 +34,20 @@ public sealed class ChatImages(IVisionEncoder encoder, IImagePromptFormat format
     public Func<ChatImage, ImageData> Decode { get; init; } = ChatImageDecoder.Decode;
 
     /// <summary>
+    /// The image transforms run on every decoded image before the encoder (a request's
+    /// <see cref="ChatRequest.ImageTransforms"/> replaces them); none unless set.
+    /// </summary>
+    public ImageTransformPipeline Transforms { get; init; } = ImageTransformPipeline.Empty;
+
+    /// <summary>A chat image's pixels as the encoder reads them for <paramref name="request"/>: decoded, then transformed (the request's transforms, else <see cref="Transforms"/>).</summary>
+    public ImageData Read(ChatImage image, ChatRequest? request = null)
+    {
+        var pipeline = request?.ImageTransforms ?? Transforms;
+        var decoded = Decode(image);
+        return pipeline.IsEmpty ? decoded : pipeline.Apply(decoded);
+    }
+
+    /// <summary>
     /// What the encoder holds (its module, built on first use for example), or null: the inference engine disposes it
     /// when it unloads the chat model these images were made for (<see cref="Idrak.Inference.GenerativeModelBuilder.Images"/>);
     /// otherwise whoever made them disposes it.
@@ -77,7 +91,7 @@ public sealed class ChatGenerator(TextGenerator generator, ChatTemplate? templat
     {
         ArgumentNullException.ThrowIfNull(request);
         var images = Images is null ? [] : ImagesOf(request);
-        return RenderPrompt(request, images.Count == 0 ? [] : [.. images.Select(i => Images!.Encoder.Blocks(Images.Decode(i), request.VisionOptions))]);
+        return RenderPrompt(request, images.Count == 0 ? [] : [.. images.Select(i => Images!.Encoder.Blocks(Images.Read(i, request), request.VisionOptions))]);
     }
 
     private string RenderPrompt(ChatRequest request, IReadOnlyList<IReadOnlyList<ImageTokenLayout>> layouts)
@@ -218,11 +232,12 @@ public sealed class ChatGenerator(TextGenerator generator, ChatTemplate? templat
             // Each image decoded once: its blocks expand the prompt (template errors before the encoder runs), then the
             // family's encoder gives one features per block, which must have that block's layout.
             ChatParts.ThrowIfUnsupported(this, request);
-            var decoded = images.Select(Images!.Decode).ToList();
-            var layouts = decoded.Select(d => Images.Encoder.Blocks(d, request.VisionOptions)).ToList();
+            var reader = Images!;
+            var decoded = images.Select(i => reader.Read(i, request)).ToList();
+            var layouts = decoded.Select(d => reader.Encoder.Blocks(d, request.VisionOptions)).ToList();
             prompt = RenderPrompt(request, layouts);
             var blocks = layouts.SelectMany(l => l).ToList();
-            features = Images.Encoder.Encode(decoded, request.VisionOptions);
+            features = reader.Encoder.Encode(decoded, request.VisionOptions);
             try
             {
                 if (features.Count != blocks.Count)
@@ -232,10 +247,10 @@ public sealed class ChatGenerator(TextGenerator generator, ChatTemplate? templat
 
                 for (int i = 0; i < features.Count; i++)
                 {
-                    if (!features[i].Layout.Equals(blocks[i]) || features[i].Features.Shape[^1] != Images.Encoder.Width)
+                    if (!features[i].Layout.Equals(blocks[i]) || features[i].Features.Shape[^1] != reader.Encoder.Width)
                     {
                         throw new InvalidOperationException($"Image block {i}: the encoder gave {Tensor.FormatShape(features[i].Features.Shape)} ({features[i].Layout}); "
-                            + $"its layout says {blocks[i]} of width {Images.Encoder.Width}.");
+                            + $"its layout says {blocks[i]} of width {reader.Encoder.Width}.");
                     }
                 }
             }

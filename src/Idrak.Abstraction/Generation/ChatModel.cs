@@ -30,6 +30,14 @@ public sealed record ChatRequest(IReadOnlyList<ChatMessage> Messages, IReadOnlyL
     /// reads its own keys and refuses others (<see cref="IVisionEncoder.Blocks"/>). A text-only model ignores them.
     /// </summary>
     public VisionOptions? VisionOptions { get; init; }
+
+    /// <summary>
+    /// The image transforms for this request's images, run on each decoded image before the model's own preprocessing
+    /// (<see cref="ImageTransformPipeline"/>: <c>grayscale,max_width=1024,contrast=1.5</c>, in that order); null: the
+    /// model's default (none unless whoever made it set one); an empty pipeline: none. Family-neutral: an app passes what
+    /// a fine-tune's card asks for. A text-only model ignores them.
+    /// </summary>
+    public ImageTransformPipeline? ImageTransforms { get; init; }
 }
 
 /// <summary>A streamed piece of the assistant's reply; the final one carries the reason, the full message and statistics.</summary>

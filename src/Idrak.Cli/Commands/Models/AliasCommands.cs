@@ -17,7 +17,7 @@ internal sealed class AliasSetCommand : Command
     public override string Summary => "Give a model (and its weight and KV formats) a short name, kept in the config";
 
     public override string Usage => """
-        NAME MODEL [-w FORMAT] [-k FORMAT] [--grayscale] [--vision-option KEY=VALUE]
+        NAME MODEL [-w FORMAT] [-k FORMAT] [--grayscale] [--image-transform P] [--vision-option K=V]
 
         Arguments:
           NAME   the short name (letters, digits, '.', '-', '_')
@@ -28,6 +28,8 @@ internal sealed class AliasSetCommand : Command
           -k, --kv F       the KV cache format (int8, bfloat16 or a registered one)
               --grayscale  turn images to grayscale before the model reads them (run and chat --image), for
                            vision-language models fine-tuned on grey scans
+              --image-transform P  image transforms run on every image first, in order (kept as "image_transforms";
+                           such as grayscale,max_width=1024,contrast=1.5, a model card's preprocessing)
               --vision-option K=V  an option of a vision-language model's family for its images (repeatable;
                            kept as "vision_options"; the family checks the keys when the model loads)
 
@@ -38,9 +40,10 @@ internal sealed class AliasSetCommand : Command
           idrak c qwen
           idrak alias set ocr bakrianoo/arabic-legal-documents-ocr-1.0 -w int8 --grayscale
           idrak alias set ocr-crops bakrianoo/arabic-legal-documents-ocr-1.0 --grayscale --vision-option do_pan_and_scan=true
+          idrak alias set ocr-card bakrianoo/arabic-legal-documents-ocr-1.0 --image-transform grayscale,max_width=1024,contrast=1.5
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => ["--weights", "--kv", Shared.ModelChoices.VisionOption];
+    public override IReadOnlyCollection<string> ValueOptions => ["--weights", "--kv", Shared.ModelChoices.VisionOption, Shared.ModelChoices.ImageTransformOption];
 
     public override IReadOnlyCollection<string> Flags => ["--grayscale"];
 
@@ -75,6 +78,11 @@ internal sealed class AliasSetCommand : Command
         if (context.Flag("--grayscale"))
         {
             entry["grayscale"] = true;
+        }
+
+        if (Shared.ModelChoices.ImageTransformsOf(context) is { IsEmpty: false } transforms)
+        {
+            entry["image_transforms"] = transforms.ToString();
         }
 
         if (Shared.ModelChoices.VisionOptionsOf(context) is { Count: > 0 } vision)
@@ -131,6 +139,7 @@ internal sealed class AliasListCommand : Command
     internal static string Describe(JsonObject alias) =>
         (string?)alias["model"] + ((string?)alias["weights"] is { } w ? $" -w {w}" : "") + ((string?)alias["kv"] is { } k ? $" -k {k}" : "")
         + (alias["grayscale"] is JsonValue g && g.TryGetValue(out bool grey) && grey ? " --grayscale" : "")
+        + (alias["image_transforms"] is JsonValue t && t.TryGetValue(out string? pipeline) ? $" --image-transform {pipeline}" : "")
         + (alias["vision_options"] is JsonObject vision ? string.Concat(vision.Select(o => $" --vision-option {o.Key}={(o.Value is JsonValue v && v.TryGetValue(out string? text) ? text : o.Value?.ToJsonString())}")) : "");
 }
 

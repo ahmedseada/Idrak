@@ -12,7 +12,9 @@ namespace Idrak.Cli.Shared;
 /// from the config ("aliases": {"qwen": {"model": "Qwen/Qwen3-0.6B", "weights": "int8", "kv": "int8"}}), with the
 /// weight format (<c>--weights</c>, <c>-w</c>), the KV cache format (<c>--kv</c>, <c>-k</c>), the context length and
 /// an adapter folder; for a vision-language model, whether its images are read in grey (<c>--grayscale</c>, or
-/// "grayscale": true in the alias) and its vision family's own options (<c>--vision-option KEY=VALUE</c>, repeatable,
+/// "grayscale": true in the alias), the image transforms run on its images first (<c>--image-transform
+/// "grayscale,max_width=1024,contrast=1.5"</c>, or the alias's "image_transforms"; <c>--grayscale</c> is the
+/// <c>grayscale</c> transform first) and its vision family's own options (<c>--vision-option KEY=VALUE</c>, repeatable,
 /// over the alias's "vision_options": {"KEY": VALUE}).
 /// </summary>
 internal static class ModelChoices
@@ -30,11 +32,29 @@ internal static class ModelChoices
                                  adds crops of a tall or wide page); an alias can keep them ("vision_options")
         """;
 
+    /// <summary>The option giving the image transforms, a pipeline such as grayscale,max_width=1024,contrast=1.5 (repeatable: joined in order).</summary>
+    public const string ImageTransformOption = "--image-transform";
+
+    /// <summary>Help lines for <see cref="ImageTransformOption"/>, aligned as the commands' options are.</summary>
+    public const string ImageTransformHelp = """
+              --image-transform P image transforms run on every image first, in order, as Pillow does them (P such as
+                                 grayscale,max_width=1024,contrast=1.5; also max_height=N, resample=lanczos|bicubic|
+                                 bilinear|box|hamming after a size, brightness=F, sharpness=F, autocontrast[=CUT],
+                                 jpeg=Q); "none" for none; an alias can keep them ("image_transforms")
+        """;
+
     /// <summary>Their short forms.</summary>
     public static readonly IReadOnlyDictionary<string, string> ShortForms = new Dictionary<string, string> { ["-w"] = "--weights", ["-k"] = "--kv" };
 
     /// <summary>What an alias or the options say: the model name and its settings.</summary>
-    public sealed record ModelChoice(string Model, string? Weights, string? Kv, int? Context, string? Adapter, bool Grayscale = false, VisionOptions? VisionOptions = null);
+    public sealed record ModelChoice(string Model, string? Weights, string? Kv, int? Context, string? Adapter, bool Grayscale = false, VisionOptions? VisionOptions = null,
+        ImageTransformPipeline? ImageTransforms = null)
+    {
+        /// <summary>The transforms every image goes through: <c>grayscale</c> first when asked (and not already a step), then <see cref="ImageTransforms"/>.</summary>
+        public ImageTransformPipeline Transforms => Grayscale && ImageTransforms?.Contains("grayscale") != true
+            ? ImageTransformPipeline.Parse("grayscale").Then(ImageTransforms)
+            : ImageTransforms ?? ImageTransformPipeline.Empty;
+    }
 
     /// <summary>The model named by <paramref name="name"/> with the command's options applied over the alias's settings.</summary>
     public static ModelChoice Choose(CommandContext context, string name)
@@ -43,6 +63,7 @@ internal static class ModelChoices
         string? weights = null, kv = null;
         bool grayscale = false;
         var vision = VisionOptions.Empty;
+        ImageTransformPipeline? transforms = null;
         if (context.Config.Object("aliases")?[name] is System.Text.Json.Nodes.JsonObject alias)
         {
             model = (string?)alias["model"] ?? name;
@@ -53,25 +74,37 @@ internal static class ModelChoices
             {
                 vision = Parsed(() => VisionOptions.FromJson(saved), $"the alias {name}'s \"vision_options\"");
             }
+
+            if (alias["image_transforms"] is { } pipeline)
+            {
+                transforms = Parsed(() => ImageTransformPipeline.FromJson(pipeline), $"the alias {name}'s \"image_transforms\"");
+            }
         }
 
         vision = vision.With(VisionOptionsOf(context));
         return new ModelChoice(model, context.Option("--weights") ?? weights, context.Option("--kv") ?? kv,
             context.Option("--context") is null ? null : context.IntOption("--context", 0), context.Option("--adapter"),
-            grayscale || context.Flag("--grayscale"), vision.Count > 0 ? vision : null);
+            grayscale || context.Flag("--grayscale"), vision.Count > 0 ? vision : null, ImageTransformsOf(context) ?? transforms);
+    }
+
+    /// <summary>The command's <c>--image-transform</c> pipeline (several joined in order), or null when not given.</summary>
+    public static ImageTransformPipeline? ImageTransformsOf(CommandContext context)
+    {
+        var given = context.Options(ImageTransformOption);
+        return given.Count == 0 ? null : Parsed(() => ImageTransformPipeline.Parse(string.Join(",", given)), ImageTransformOption);
     }
 
     /// <summary>The command's <c>--vision-option KEY=VALUE</c> options (empty when none).</summary>
     public static VisionOptions VisionOptionsOf(CommandContext context) =>
         Parsed(() => VisionOptions.Parse(context.Options(VisionOption)), VisionOption);
 
-    private static VisionOptions Parsed(Func<VisionOptions> parse, string where)
+    private static T Parsed<T>(Func<T> parse, string where)
     {
         try
         {
             return parse();
         }
-        catch (Exception ex) when (ex is FormatException or ArgumentException)
+        catch (Exception ex) when (ex is FormatException or ArgumentException or System.Text.Json.JsonException)
         {
             throw new UsageException($"{where}: {ex.Message}");
         }

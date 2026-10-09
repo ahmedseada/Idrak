@@ -34,7 +34,7 @@ internal static class ImageInputs
     public static ImageData Decode(ChatImage image) => ChatImageDecoder.Decode(image);
 
     /// <summary>
-    /// Makes the image encoder of a model: given the model and the options (device, grayscale), its vision encoder. Null:
+    /// Makes the image encoder of a model: given the model and the options (device, vision options), its vision encoder. Null:
     /// the family's (<see cref="PretrainedVision.CreateEncoder"/>). Tests set it to feed reference features.
     /// </summary>
     internal static Func<PretrainedModel, VisionEncoderOptions, IVisionEncoder>? EncoderFactory { get; set; }
@@ -42,11 +42,11 @@ internal static class ImageInputs
     /// <summary>
     /// How a chat generator reads <paramref name="model"/>'s images (<see cref="ChatGenerator.Images"/>), or null with
     /// the reason when it reads none (a text model). Everything comes from the model's vision family: the encoder (built
-    /// when the first image is read, disposed with the returned owner; <paramref name="grayscale"/> turns images grey
-    /// first; <paramref name="visionOptions"/> are the family's own options for every image, their keys checked against
+    /// when the first image is read, disposed with the returned owner; <paramref name="transforms"/> run on every decoded
+    /// image first, unless a request gives its own; <paramref name="visionOptions"/> are the family's own options for every image, their keys checked against
     /// the family's here), the prompt format and the attention rule.
     /// </summary>
-    public static ModelImages? For(PretrainedModel model, bool grayscale, VisionOptions? visionOptions, out string? reason)
+    public static ModelImages? For(PretrainedModel model, ImageTransformPipeline transforms, VisionOptions? visionOptions, out string? reason)
     {
         ArgumentNullException.ThrowIfNull(model);
         reason = null;
@@ -64,7 +64,7 @@ internal static class ImageInputs
             throw new UsageException($"{ModelChoices.VisionOption}: {ex.Message}");
         }
 
-        return new ModelImages(model, vision, new VisionEncoderOptions { Device = model.Device, Grayscale = grayscale, VisionOptions = visionOptions });
+        return new ModelImages(model, vision, new VisionEncoderOptions { Device = model.Device, VisionOptions = visionOptions }, transforms);
     }
 }
 
@@ -73,14 +73,14 @@ internal sealed class ModelImages : IDisposable
 {
     private readonly LazyEncoder _encoder;
 
-    public ModelImages(PretrainedModel model, PretrainedVision vision, VisionEncoderOptions options)
+    public ModelImages(PretrainedModel model, PretrainedVision vision, VisionEncoderOptions options, ImageTransformPipeline? transforms = null)
     {
         Options = options;
         _encoder = new LazyEncoder(() => (ImageInputs.EncoderFactory ?? ((_, o) => vision.CreateEncoder(o)))(model, options), vision.Width, model.Device);
-        Images = new ChatImages(_encoder, vision.PromptFormat, vision.Attention) { Decode = ImageInputs.Decode, Owner = this };   // the engine disposes it with the model it serves
+        Images = new ChatImages(_encoder, vision.PromptFormat, vision.Attention) { Decode = ImageInputs.Decode, Transforms = transforms ?? ImageTransformPipeline.Empty, Owner = this };   // the engine disposes it with the model it serves
     }
 
-    /// <summary>The device and grayscale setting its encoder is built with.</summary>
+    /// <summary>The device and vision options its encoder is built with.</summary>
     public VisionEncoderOptions Options { get; }
 
     /// <summary>What the chat generator reads images with.</summary>

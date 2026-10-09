@@ -24,7 +24,7 @@ internal static partial class Tests
         ("cli images: EXIF orientations 1 to 8 (JPEG APP1, PNG eXIf) turn images as Pillow's exif_transpose", CliImageExif),
         ("cli images: the Jinja chat template renders image parts; Gemma 3's image prompt format expands them to the processor's text and ids", CliImageTemplate),
         ("cli images: run --image with the tiny Gemma 3 gives transformers' 20 greedy tokens (real encoder and reference features), -j, --schema, --grayscale, an alias; chat --image and /image; a text-only model refuses", CliImageRun),
-        ("cli images: vlm check reads tools/vlm/compare_real.py's folders (colour, grey from a JPEG, a tall page with pan and scan) for the tiny Gemma 3 and reports exact agreement; a changed token is a near-tie or a real difference by --tie", CliImageCompare),
+        ("cli images: vlm check reads tools/vlm/compare_real.py's folders (colour, grey from a JPEG, a tall page with pan and scan, image transforms) for the tiny Gemma 3 and reports exact agreement; a changed token is a near-tie or a real difference by --tie", CliImageCompare),
         ("cli images: run --out writes the answer, or the -j document, to a file as UTF-8 without a BOM", CliImageRunOut),
         ("cli images: run --vision-option gives the family its options (Gemma 3's pan and scan of a tall page: transformers' prompt and tokens); an alias keeps them; an unknown key names the family's", CliImageVisionOptions),
     ];
@@ -324,7 +324,9 @@ internal static partial class Tests
         RegisterGemma3Vision();
         // color and gray: phase 7's folders; pan-scan: a tall page with pan and scan (compare_real.py --pan-and-scan), its
         // manifest's "vision_options" given to the encoder: 4 blocks of pixels and features, a 120-token prompt.
-        foreach (string name in new[] { "color", "gray", "pan-scan" })
+        // transformed: compare_real.py --image-transform grayscale,max_width=64,contrast=1.5 (Pillow), run by vlm check through
+        // the library's transforms from the manifest's "image_transforms": the same pixels.
+        foreach (string name in new[] { "color", "gray", "pan-scan", "transformed" })
         {
             string reference = name == "pan-scan" ? TestData("vlm-pan-scan/compare") : TestData($"vlm/compare/{name}");
             var (code, text, error) = RunIdrakOn(device, null, "vlm", "check", VlmModel, "--reference", reference, "-j");
@@ -336,9 +338,14 @@ internal static partial class Tests
             Check((float)json["pixels"]!["max_abs"]! <= 1e-5f && (double)json["features"]!["cosine"]! > 0.99999 && (float)json["features"]!["max_abs"]! < 1e-4f
                   && (bool)json["prompt"]!["same"]! && (bool)json["grayscale"]! == (name == "gray") && (float)forced["max_top5_logit_difference"]! < 1e-4f,
                 $"vlm check {name}: pixels, features, prompt: {text}");
+            Check(name != "transformed" || (string?)json["image_transforms"] == "grayscale,max_width=64,resample=lanczos,contrast=1.5", $"vlm check {name}: the transforms: {text}");
             (code, text, _) = RunIdrakOn(device, null, "vlm", "check", VlmModel, "--reference", reference);
             Check(code == 0 && text.Contains("Verdict: Idrak picks transformers' token at all 20 steps and its own greedy answer is the same.", StringComparison.Ordinal), $"vlm check {name} as text: {text}");
         }
+
+        // Without the reference's transforms (--image-transform none) the pixels are not the reference's.
+        var (noneCode, noneText, _) = RunIdrakOn(device, null, "vlm", "check", VlmModel, "--reference", TestData("vlm/compare/transformed"), "--image-transform", "none", "-j");
+        Check((float)JsonOf(noneText, "vlm check --image-transform none")["pixels"]!["max_abs"]! > 0.01f, $"vlm check without the transforms: {noneCode} {noneText}");
 
         // A reference whose last answer token (step 19, so nothing is fed after it) is its second choice: Idrak disagrees there
         // only; a near-tie or a real difference by --tie.
