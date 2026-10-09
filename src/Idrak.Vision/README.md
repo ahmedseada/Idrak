@@ -12,6 +12,29 @@ In `Idrak.Vision.Abstractions` (add the `using` line to name them): `IObjectDete
 `DetectionDecoder`, and the records they speak in (`PixelBox`, `BoundingBox`, `Detection`, `SegmentationMask`,
 `ForegroundImage`).
 
+`DetectionDecoders` (also in `Idrak.Vision.Abstractions`) holds the detection decoders by name: `ModelDetector` takes one
+by name, and an image model family names its own. The library registers only the generic "boxes-scores" (a network that
+already outputs boxes and class scores); a family's decoder (anchors, grids, box encodings) is registered by the plug-in
+or app that brings the family.
+
+## Image models from their families
+
+Image model families (classifiers, detectors, segmenters, backbones) are plug-ins: core's `ImageModelFamilies` registry,
+filled by whoever brings a family (the library registers none). `ImageModels.Load` (core) reads a checkpoint (a
+safetensors folder with config.json, or an ONNX file) through its family; this package makes it ready for images with
+the family's preprocessing:
+
+```csharp
+using Idrak.Models;   // ImageModels
+using Idrak.Vision;
+
+ImageModelFamilies.Register(new MyDetectorFamily());          // a plug-in's family
+DetectionDecoders.Register("my-grid", MyGridDecoder.Create);  // and its decoder
+using var model = ImageModels.Load("models/my-detector");
+var detections = model.Detector(new DetectorOptions { MinScore = 0.4f }).Detect(ImageCodecs.Decode("street.jpg"));
+// model.Classifier().Build(), model.Segmenter(), model.Outputs().Build(), RegionClassifier.For(model)
+```
+
 ## Install
 
 ```bash
