@@ -13,6 +13,8 @@
 //   -d, --device NAME     cpu (default), cuda:0, vulkan:0, ...
 //   -w, --weights FORMAT  bf16, int8, int4 or a registered packed format (default: as stored); the encoder is float32
 //   --grayscale           turn the image grey first (the OCR fine-tune's card asks for it)
+//   --image-transform P   image transforms first, in order, as Pillow does them (the card's preparation:
+//                         grayscale,max_width=1024,contrast=1.5; see ImageTransforms)
 //   --pan-and-scan        also read crops of a tall or wide page (Gemma 3's pan and scan: 256 more tokens per crop)
 //   --system TEXT         a system message
 //   --prompt-file FILE    the prompt from a UTF-8 file
@@ -34,6 +36,7 @@ var positional = new List<string>();
 string device = "cpu", weights = "", system = "", output = "";
 string? promptFile = null;
 bool grayscale = false, panAndScan = false;
+string? transforms = null;
 int maxTokens = 2048;
 for (int i = 0; i < args.Length; i++)
 {
@@ -43,6 +46,7 @@ for (int i = 0; i < args.Length; i++)
         case "-w" or "--weights": weights = args[++i]; break;
         case "--grayscale": grayscale = true; break;
         case "--pan-and-scan": panAndScan = true; break;
+        case "--image-transform": transforms = args[++i]; break;
         case "--system": system = args[++i]; break;
         case "--prompt-file": promptFile = args[++i]; break;
         case "--max-tokens": maxTokens = int.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture); break;
@@ -53,7 +57,7 @@ for (int i = 0; i < args.Length; i++)
 
 if (positional.Count < 2)
 {
-    Console.Error.WriteLine("usage: Idrak.Samples.Gemma3Ocr MODEL IMAGE [PROMPT] [-d DEVICE] [-w FORMAT] [--grayscale] [--pan-and-scan] [--system TEXT] [--prompt-file FILE] [--max-tokens N] [-o FILE]");
+    Console.Error.WriteLine("usage: Idrak.Samples.Gemma3Ocr MODEL IMAGE [PROMPT] [-d DEVICE] [-w FORMAT] [--grayscale] [--image-transform P] [--pan-and-scan] [--system TEXT] [--prompt-file FILE] [--max-tokens N] [-o FILE]");
     return 2;
 }
 
@@ -100,7 +104,11 @@ if (system.Length > 0)
 }
 
 messages.Add(new ChatMessage("user", [ChatImage.FromFile(imagePath), new ChatText(prompt)]));
-var request = new ChatRequest(messages) { Options = new GenerationOptions { Temperature = 0, RepeatPenalty = 1, NumPredict = maxTokens } };
+var request = new ChatRequest(messages)
+{
+    Options = new GenerationOptions { Temperature = 0, RepeatPenalty = 1, NumPredict = maxTokens },
+    ImageTransforms = ImageTransformPipeline.Parse(transforms),   // family-neutral: run on the decoded image before the encoder
+};
 
 // 5. The answer, streamed; then the file and the speed.
 var answer = new StringBuilder();

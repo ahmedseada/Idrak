@@ -113,6 +113,8 @@ public sealed class Idrak.Generation.ChatGenerator : Idrak.Abstraction.Generatio
 
 public sealed class Idrak.Generation.ChatImages
   public ChatImages(Idrak.Abstraction.Generation.IVisionEncoder encoder, Idrak.Abstraction.Generation.IImagePromptFormat format, Idrak.Abstraction.Generation.IImageAttentionRule attention)
+  public Idrak.Abstraction.Data.ImageData Read(Idrak.Abstraction.Generation.ChatImage image, Idrak.Abstraction.Generation.ChatRequest? request = null)
+  public Idrak.Abstraction.Data.ImageTransformPipeline Transforms { get; init; }
   public Idrak.Abstraction.Generation.IImageAttentionRule Attention { get; }
   public Idrak.Abstraction.Generation.IImagePromptFormat Format { get; }
   public Idrak.Abstraction.Generation.IVisionEncoder Encoder { get; }

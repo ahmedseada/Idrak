@@ -74,7 +74,7 @@ internal sealed class LoadedChat(PretrainedModel model, ModelChoices.ModelChoice
             try
             {
                 var chat = ModelChoices.CreateChat(model, choice);
-                var images = ImageInputs.For(model, choice.Grayscale, choice.VisionOptions, out string? reason);
+                var images = ImageInputs.For(model, choice.Transforms, choice.VisionOptions, out string? reason);
                 if (images is not null)
                 {
                     chat = new ChatGenerator(chat.Generator, chat.Template) { Images = images.Images };

@@ -155,9 +155,36 @@ internal static class ImageRequests
     }
 
     /// <summary>
+    /// The request with the image transforms a client sent (<c>"image_transforms"</c>: a pipeline's text such as
+    /// <c>"grayscale,max_width=1024,contrast=1.5"</c>, or a JSON array of steps; in a form field, either as text) for this
+    /// request's images (<see cref="ChatRequest.ImageTransforms"/>, run in the order given, replacing the server's own;
+    /// <c>"none"</c>: none). Absent, null or an empty field: the request as it is (the server's transforms).
+    /// </summary>
+    /// <exception cref="ArgumentException">An unknown transform or option, or a bad value: the message names the registered transforms (a 400).</exception>
+    public static ChatRequest WithImageTransforms(ChatRequest request, JsonNode? transforms)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        try
+        {
+            var parsed = transforms switch
+            {
+                null => null,
+                JsonValue text when text.TryGetValue(out string? s) => string.IsNullOrWhiteSpace(s) ? null
+                    : s.TrimStart().StartsWith('[') ? ImageTransformPipeline.FromJson(JsonNode.Parse(s)) : ImageTransformPipeline.Parse(s),
+                _ => ImageTransformPipeline.FromJson(transforms),
+            };
+            return parsed is null ? request : request with { ImageTransforms = parsed };
+        }
+        catch (Exception ex) when (ex is ArgumentException or System.Text.Json.JsonException or FormatException)
+        {
+            throw new ArgumentException($"image_transforms: {ex.Message}");
+        }
+    }
+
+    /// <summary>
     /// The request with its images checked: no more than <see cref="ImageInputOptions.MaxImages"/>, each in a format a
     /// registered codec reads (PNG, JPEG, BMP, PPM/PGM by default); with <paramref name="grayscale"/>, each turned upright
-    /// and grey (<see cref="ChatImageDecoder.Grayscale"/>). Throws <see cref="ArgumentException"/> (a 400).
+    /// and grey (<see cref="ChatImageDecoder.Grayscale(ChatImage)"/>). Throws <see cref="ArgumentException"/> (a 400).
     /// </summary>
     public static ChatRequest Check(ChatRequest request, ImageInputOptions options, bool grayscale)
     {

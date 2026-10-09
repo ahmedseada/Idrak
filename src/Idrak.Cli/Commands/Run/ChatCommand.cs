@@ -34,8 +34,9 @@ internal sealed class ChatCommand : Command
               --file FILE        add a text file's content to the first message (repeatable; /file adds more later)
               --image FILE       give a vision-language model an image with the first message (repeatable; /image adds
                                  more later); turned upright by its EXIF orientation
-              --grayscale        turn the images grey first (some OCR fine-tunes ask for it; an alias can keep it)
-        """ + "\n" + ModelChoices.VisionOptionHelp + "\n" + """
+              --grayscale        turn the images grey first (some OCR fine-tunes ask for it; an alias can keep it);
+                                 the same as the grayscale image transform first
+        """ + "\n" + ModelChoices.ImageTransformHelp + "\n" + ModelChoices.VisionOptionHelp + "\n" + """
               --mcp SERVER      let the model call an MCP server's tools: an http(s) URL, or a command that starts
                                  the server ("npx -y some-server"); repeatable
         """ + "\n" + GenerationSettings.Help + """
@@ -54,7 +55,7 @@ internal sealed class ChatCommand : Command
         conversation, for now).
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, .. GenerationSettings.ValueOptions, "--history", "--file", "--mcp", "--image", ModelChoices.VisionOption];
+    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, .. GenerationSettings.ValueOptions, "--history", "--file", "--mcp", "--image", ModelChoices.ImageTransformOption, ModelChoices.VisionOption];
 
     public override IReadOnlyCollection<string> Flags => [.. GenerationSettings.Flags, "--grayscale"];
 

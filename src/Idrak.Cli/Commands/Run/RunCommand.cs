@@ -30,8 +30,9 @@ internal sealed class RunCommand : Command
                                  whatever the console's code page (Arabic stays readable when a shell would garble it)
               --image FILE       an image for the model to read (PNG, JPEG, BMP, PPM/PGM; repeatable), turned upright
                                  by its EXIF orientation
-              --grayscale        turn the images grey first (some OCR fine-tunes ask for it; an alias can keep it)
-        """ + "\n" + ModelChoices.VisionOptionHelp + "\n" + """
+              --grayscale        turn the images grey first (some OCR fine-tunes ask for it; an alias can keep it);
+                                 the same as the grayscale image transform first
+        """ + "\n" + ModelChoices.ImageTransformHelp + "\n" + ModelChoices.VisionOptionHelp + "\n" + """
           -w, --weights FORMAT   int8, int4, bf16 or a registered packed format (default: as stored)
           -k, --kv FORMAT        KV cache format: float32, int8, bfloat16 or a registered one (default float32)
               --context N        context window in tokens (default 4096, at most the model's)
@@ -46,13 +47,14 @@ internal sealed class RunCommand : Command
           idrak run ./model.gguf -i question.txt --temperature 0 --json
           idrak run qwen "Extract the name and age: Sara is 31." --schema person.json
           idrak run google/gemma-3-4b-it --image scan.jpg --grayscale "Extract the text of this page." -j -o page.json
+          idrak run -P Idrak.Gemma3Vision.dll ocr --image scan.jpg --image-transform grayscale,max_width=1024,contrast=1.5 -j
 
         Gap: the library has no JSON-schema constrained sampling yet (a logits processor; plans/plug-in.md gap 13), so
         --schema gives the schema to the model as an instruction and checks the answer afterwards (it is JSON, has the
         required properties and their types) instead of guaranteeing it while generating.
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, .. GenerationSettings.ValueOptions, "--input", "--schema", "--mcp", "--image", "--out", ModelChoices.VisionOption];
+    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, .. GenerationSettings.ValueOptions, "--input", "--schema", "--mcp", "--image", ModelChoices.ImageTransformOption, "--out", ModelChoices.VisionOption];
 
     public override IReadOnlyCollection<string> Flags => [.. GenerationSettings.Flags, "--grayscale"];
 
@@ -119,6 +121,7 @@ internal sealed class RunCommand : Command
         {
             json["images"] = new JsonArray([.. context.Options("--image").Select(p => (JsonNode)p)]);
             json["grayscale"] = loaded.Choice.Grayscale;
+            json["image_transforms"] = loaded.Choice.Transforms.ToString();
         }
 
         if (answer.Message.Thinking is { } thinking)

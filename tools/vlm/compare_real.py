@@ -41,11 +41,17 @@ turns it on with Gemma3Processor's defaults (crops of 256 pixels at least, 4 at 
 --pan-and-scan-min-crop-size, --pan-and-scan-max-crops and --pan-and-scan-min-ratio change them. The manifest records
 them as "vision_options" (transformers' names), which `idrak vlm check` gives the encoder.
 
+Image transforms (a fine-tune's own preparation of a scan, done in Pillow before the processor): --image-transform
+takes Idrak's syntax ("grayscale,max_width=1024,contrast=1.5"; see tools/vlm/image_transforms.py), applied after the
+EXIF orientation (and after --grayscale's grey). The manifest records it as "image_transforms", which `idrak vlm check`
+runs on the image the same way (the library's transforms give Pillow's bytes exactly), so pixels compare like for like.
+
 Examples (PowerShell or bash; a prompt with non-ASCII text is safer in a UTF-8 file given with --prompt-file):
   python tools/vlm/compare_real.py MODEL scan.jpg --grayscale --prompt-file prompt.txt --out ref-bf16
   python tools/vlm/compare_real.py MODEL scan.jpg --grayscale --prompt-file prompt.txt --vision-dtype float32 --out ref-v32
   python tools/vlm/compare_real.py MODEL scan.jpg --grayscale --prompt-file prompt.txt --dtype float32 --device cpu --out ref-f32
   python tools/vlm/compare_real.py MODEL scan.jpg --grayscale --prompt-file prompt.txt --pan-and-scan --out ref-pas
+  python tools/vlm/compare_real.py MODEL scan.jpg --prompt "Extract details to JSON." --image-transform grayscale,max_width=1024,contrast=1.5 --out ref-card
   idrak vlm check MODEL --reference ref-bf16 -d cuda:0 -w bf16
 """
 import argparse
@@ -56,6 +62,9 @@ import sys
 import time
 
 import numpy as np
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import image_transforms  # noqa: E402  (Pillow only)
 
 TOP = 5
 
@@ -82,6 +91,8 @@ def parse():
     p.add_argument("--grayscale", action="store_true",
                    help='turn the image grey first: ImageOps.exif_transpose, convert("L"), convert("RGB") (as idrak --grayscale)')
     p.add_argument("--no-exif", action="store_true", help="do not apply the EXIF orientation (idrak always does)")
+    p.add_argument("--image-transform", help="image transforms in Pillow before the processor, in Idrak's syntax "
+                                             "(such as grayscale,max_width=1024,contrast=1.5)")
     p.add_argument("--dtype", choices=["bfloat16", "float32", "float16"], default="bfloat16", help="the model's dtype")
     p.add_argument("--vision-dtype", choices=["bfloat16", "float32", "float16"],
                    help="the vision tower's and projector's dtype (default: --dtype)")
@@ -98,6 +109,11 @@ def parse():
     p.add_argument("--pan-and-scan-max-crops", type=int, help="pan_and_scan_max_num_crops (default 4)")
     p.add_argument("--pan-and-scan-min-ratio", type=float, help="pan_and_scan_min_ratio_to_activate (default 1.2)")
     args = p.parse_args()
+    if args.image_transform:
+        try:
+            image_transforms.parse(args.image_transform)
+        except ValueError as e:
+            p.error(f"--image-transform: {e}")
     if (args.prompt is None) == (args.prompt_file is None):
         p.error("give the prompt with --prompt TEXT or --prompt-file FILE (one of them)")
     return args
@@ -149,12 +165,20 @@ def main():
     first_device = model.device if not args.offload else next(model.parameters()).device
     log(f"loaded in {time.time() - started:.1f} s")
 
-    # The image, as idrak reads it: upright by its EXIF orientation, grey when asked.
+    # The image, as idrak reads it: upright by its EXIF orientation, grey when asked, then the image transforms.
     with Image.open(args.image) as opened:
         exif_orientation = opened.getexif().get(0x0112, 1)
         image = opened if args.no_exif else ImageOps.exif_transpose(opened)
-        image = image.convert("L").convert("RGB") if args.grayscale else image.convert("RGB")
+        image = image.convert("L") if image.mode in ("L", "LA", "1") else image.convert("RGB")
         image.load()
+    original_size = list(image.size)
+    pipeline = image_transforms.describe(args.image_transform)
+    steps = pipeline
+    if args.grayscale and not any(name == "grayscale" for name, _, _ in image_transforms.parse(pipeline)):
+        steps = "grayscale" + ("," + pipeline if pipeline else "")
+    image = image_transforms.apply(image, steps).convert("RGB")
+    if steps:
+        log(f"image transforms {steps}: {original_size[0]} x {original_size[1]} -> {image.size[0]} x {image.size[1]}")
 
     # Pillow's image processor unless --fast-processor (transformers 5 names it backend=, 4.x use_fast=).
     if version >= (5, 0):
@@ -273,6 +297,8 @@ def main():
         "exif_orientation": int(exif_orientation),
         "exif_applied": not args.no_exif,
         "grayscale": bool(args.grayscale),
+        "image_transforms": pipeline or None,
+        "original_image_size": original_size,
         "vision_options": vision_options,
         "image_blocks": int(pixel_values.shape[0]),
         "system": args.system,
