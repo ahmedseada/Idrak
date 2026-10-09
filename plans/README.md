@@ -22,6 +22,8 @@ Decisions and hardware checks waiting for the maintainer: [open-questions.md](op
 One command-line tool for everything (`idrak doctor`, `chat`, `serve`, `bench`, ...): [idrak-cli.md](idrak-cli.md).
 Images into language models, Gemma 3 first (to run Arabic document OCR models such as
 `bakrianoo/arabic-legal-documents-ocr-1.0`; planned, after plan 10's wave 4): [11-vision-language.md](11-vision-language.md).
+Fine-tuning vision-language models (images in `FineTuner` and `idrak tune`, families as plug-ins; planned):
+[12-vision-tuning.md](12-vision-tuning.md).
 
 ## Not supported yet
 
