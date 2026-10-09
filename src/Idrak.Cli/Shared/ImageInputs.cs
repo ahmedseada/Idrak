@@ -43,9 +43,10 @@ internal static class ImageInputs
     /// How a chat generator reads <paramref name="model"/>'s images (<see cref="ChatGenerator.Images"/>), or null with
     /// the reason when it reads none (a text model). Everything comes from the model's vision family: the encoder (built
     /// when the first image is read, disposed with the returned owner; <paramref name="grayscale"/> turns images grey
-    /// first), the prompt format and the attention rule.
+    /// first; <paramref name="visionOptions"/> are the family's own options for every image, their keys checked against
+    /// the family's here), the prompt format and the attention rule.
     /// </summary>
-    public static ModelImages? For(PretrainedModel model, bool grayscale, out string? reason)
+    public static ModelImages? For(PretrainedModel model, bool grayscale, VisionOptions? visionOptions, out string? reason)
     {
         ArgumentNullException.ThrowIfNull(model);
         reason = null;
@@ -54,7 +55,16 @@ internal static class ImageInputs
             return null;
         }
 
-        return new ModelImages(model, vision, new VisionEncoderOptions { Device = model.Device, Grayscale = grayscale });
+        try
+        {
+            visionOptions?.ThrowIfUnknown(vision.Family, vision.VisionOptionKeys);
+        }
+        catch (ArgumentException ex)
+        {
+            throw new UsageException($"{ModelChoices.VisionOption}: {ex.Message}");
+        }
+
+        return new ModelImages(model, vision, new VisionEncoderOptions { Device = model.Device, Grayscale = grayscale, VisionOptions = visionOptions });
     }
 }
 
@@ -88,9 +98,9 @@ internal sealed class ModelImages : IDisposable
 
         public Device Device => device;
 
-        public ImageTokenLayout Layout(ImageData image) => Built().Layout(image);
+        public IReadOnlyList<ImageTokenLayout> Blocks(ImageData image, VisionOptions? options = null) => Built().Blocks(image, options);
 
-        public IReadOnlyList<ImageFeatures> Encode(IReadOnlyList<ImageData> images) => Built().Encode(images);
+        public IReadOnlyList<ImageFeatures> Encode(IReadOnlyList<ImageData> images, VisionOptions? options = null) => Built().Encode(images, options);
 
         public void Dispose()
         {

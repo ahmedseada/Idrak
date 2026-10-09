@@ -15,7 +15,9 @@ namespace Idrak.PluginTests;
 /// image's mean colour per band of rows, through a fixed matrix: one token per band, the bands one per 16 rows, so the
 /// count depends on the image: dynamic resolution), its own prompt format and its own attention rule (its image tokens
 /// see each other). Its text decoder is LLaVA's tiny one (this assembly's <see cref="LlavaPlugin"/>), under its own
-/// architecture name. No library change was needed for it.
+/// architecture name. With its vision option <c>halves=true</c> an image becomes two blocks of image tokens (its top
+/// half and its bottom half, " and " between them in the prompt): one image as several blocks with text between, as a
+/// family that adds views of an image does. No library change was needed for it.
 /// </summary>
 public static class VisionFamilyPluginTests
 {
@@ -69,6 +71,9 @@ public static class VisionFamilyPluginTests
             using var encoder = vision.CreateEncoder(new VisionEncoderOptions { Device = device });
             using var cpu = vision.CreateEncoder(new VisionEncoderOptions { Device = Device.Cpu });
             Conformance.CheckVisionEncoder(encoder, cpu).ThrowIfFailed();
+            var halves = new VisionOptions([KeyValuePair.Create("halves", "true")]);
+            Conformance.CheckVisionEncoder(encoder, cpu, visionOptions: halves).ThrowIfFailed();
+            Check(vision.VisionOptionKeys.SequenceEqual(["halves"]), "the family names its option");
 
             // A prompt with two images of different sizes: 2 and 4 tokens, the outside rule, through the public chat API.
             var chat = model.CreateChat(KeyValueFormat.Float32, 128);
@@ -85,6 +90,23 @@ public static class VisionFamilyPluginTests
             Check(reply.Done && reply.Stats is { GeneratedTokens: 6 }, $"a reply of 6 tokens: {reply.Message?.Content}");
             var swapped = withImages.Chat(request with { Messages = [new ChatMessage("user", [tall, small, new ChatText("What is in this image?")])] });
             Check(swapped.Done && swapped.Stats is { GeneratedTokens: 6 }, "the images in the other order");
+
+            // Per request, each image in two blocks (1 + 1 and 2 + 2 tokens) with the family's text between them: four runs.
+            var split = request with { VisionOptions = halves };
+            var splitIds = model.Tokenizer!.Encode(withImages.RenderPrompt(split));
+            int runs = splitIds.Where((id, i) => id == vision.PromptFormat.ImageToken && (i == 0 || splitIds[i - 1] != id)).Count();
+            Check(splitIds.Count(i => i == vision.PromptFormat.ImageToken) == 2 + 4 && runs == 4, $"two blocks per image, four runs: {string.Join(" ", splitIds)}");
+            var splitReply = withImages.Chat(split);
+            Check(splitReply.Done && splitReply.Stats is { GeneratedTokens: 6 } && splitReply.Stats.PromptTokens == splitIds.Count, "a reply with each image in two blocks");
+            try
+            {
+                withImages.Chat(request with { VisionOptions = new VisionOptions([KeyValuePair.Create("quarters", "true")]) });
+                Check(false, "an unknown vision option is refused");
+            }
+            catch (ArgumentException e)
+            {
+                Check(e.Message.Contains("quarters", StringComparison.Ordinal) && e.Message.Contains("halves", StringComparison.Ordinal), $"refused naming the keys it takes: {e.Message}");
+            }
         }
         finally
         {
@@ -158,7 +180,7 @@ public static class VisionFamilyPluginTests
         {
             int imageToken = (int?)checkpoint.Config["image_token_index"] ?? throw new InvalidDataException("no image_token_index");
             int width = PretrainedArchitectures.Get(checkpoint.Architecture).Spec(checkpoint.Config, []).Dim;
-            return new ToyVision(width, new ImageTokenFormat("outside-toy", imageToken, imageToken));
+            return new ToyVision(width, new ImageTokenFormat("outside-toy", imageToken, imageToken) { Join = blocks => string.Join(" and ", blocks) });
         }
     }
 
@@ -174,19 +196,51 @@ public static class VisionFamilyPluginTests
 
         public override IReadOnlyCollection<string> StoredTensors => [];
 
-        public override IVisionEncoder CreateEncoder(VisionEncoderOptions? options = null) => new ToyEncoder(width, options?.Device ?? Device.Default);
+        public override IReadOnlyCollection<string> VisionOptionKeys => [ToyEncoder.Halves];
+
+        public override IVisionEncoder CreateEncoder(VisionEncoderOptions? options = null) => new ToyEncoder(width, options?.Device ?? Device.Default, options?.VisionOptions);
     }
 
     // One token per 16 rows (at least one): the mean of each channel over the band, times a fixed [3, width] matrix.
-    private sealed class ToyEncoder(int width, Device device) : IVisionEncoder
+    // With halves=true, the top and the bottom half of an image (at least 2 rows) are two blocks.
+    private sealed class ToyEncoder(int width, Device device, VisionOptions? defaults) : IVisionEncoder
     {
+        public const string Halves = "halves";
+
         public int Width => width;
 
         public Device Device => device;
 
-        public ImageTokenLayout Layout(ImageData image) => new(Math.Max(1, image.Height / 16)) { Grid = [Math.Max(1, image.Height / 16), 1] };
+        public IReadOnlyList<ImageTokenLayout> Blocks(ImageData image, VisionOptions? options = null) => [.. Parts(image, options).Select(Layout)];
 
-        public IReadOnlyList<ImageFeatures> Encode(IReadOnlyList<ImageData> images) => [.. images.Select(Encode)];
+        public IReadOnlyList<ImageFeatures> Encode(IReadOnlyList<ImageData> images, VisionOptions? options = null) =>
+            [.. images.SelectMany(image => Parts(image, options)).Select(Encode)];
+
+        private static ImageTokenLayout Layout(ImageData image) => new(Math.Max(1, image.Height / 16)) { Grid = [Math.Max(1, image.Height / 16), 1] };
+
+        private IReadOnlyList<ImageData> Parts(ImageData image, VisionOptions? options)
+        {
+            var all = (defaults ?? VisionOptions.Empty).With(options);
+            all.ThrowIfUnknown(Architecture, [Halves]);
+            if (!all.Flag(Halves, false) || image.Height < 2)
+            {
+                return [image];
+            }
+
+            int top = image.Height / 2;
+            return [Rows(image, 0, top), Rows(image, top, image.Height - top)];
+        }
+
+        private static ImageData Rows(ImageData image, int from, int count)
+        {
+            var pixels = new float[image.Channels * count * image.Width];
+            for (int c = 0; c < image.Channels; c++)
+            {
+                Array.Copy(image.Pixels, (c * image.Height + from) * image.Width, pixels, c * count * image.Width, count * image.Width);
+            }
+
+            return new ImageData(pixels, image.Channels, count, image.Width);
+        }
 
         private ImageFeatures Encode(ImageData image)
         {

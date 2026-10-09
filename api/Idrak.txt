@@ -1172,6 +1172,7 @@ public abstract class Idrak.Models.Abstractions.PretrainedVision
   public abstract int Width { get; }
   public abstract string Family { get; }
   public override string ToString()
+  public virtual System.Collections.Generic.IReadOnlyCollection<string> VisionOptionKeys { get; }
   public virtual string Describe()
 
 public static class Idrak.Models.Abstractions.TokenizerComponents
@@ -1208,6 +1209,7 @@ public sealed record Idrak.Models.Abstractions.VisionCheckpoint : System.IEquata
 
 public sealed record Idrak.Models.Abstractions.VisionEncoderOptions : System.IEquatable<Idrak.Models.Abstractions.VisionEncoderOptions>
   public Idrak.Abstraction.Device? Device { get; init; }
+  public Idrak.Abstraction.Generation.VisionOptions? VisionOptions { get; init; }
   public VisionEncoderOptions()
   public bool Grayscale { get; init; }
 

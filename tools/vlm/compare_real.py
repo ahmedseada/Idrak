@@ -6,10 +6,11 @@ Runs a `Gemma3ForConditionalGeneration` (a local folder or a Hugging Face id) on
 what `idrak vlm check MODEL --reference DIR` compares against:
 
   input_ids.npy                 int64 [1, L]: the whole prompt as the processor builds it (image tokens included)
-  pixel_values.npy              float32 [1, 3, S, S]: the processor's pixels
-  vision_last_hidden_state.npy  float32 [1, rows, width]: the vision tower's output (after post_layernorm); all 4,096
+  pixel_values.npy              float32 [B, 3, S, S]: the processor's pixels, B = 1 (with --pan-and-scan: 1 + its crops,
+                                the whole image first)
+  vision_last_hidden_state.npy  float32 [B, rows, width]: the vision tower's output (after post_layernorm); all 4,096
                                 rows by default, the first --vision-rows only when given (to keep the folder small)
-  image_features.npy            float32 [1, tokens, text width]: the projector's output (the soft tokens' embeddings)
+  image_features.npy            float32 [B, tokens, text width]: the projector's output (the soft tokens' embeddings)
   generated_ids.npy             int64 [N]: N greedy tokens from generate() (no sampling, repetition penalty 1)
   gen_top_ids.npy, gen_top_logits.npy
                                 int64 / float32 [N, 5]: the five best ids and their logits at each generate() step
@@ -35,10 +36,16 @@ Choosing the precision (the logits' last bits decide near-ties, so say which one
                                            20 GB of RAM), or on a smaller GPU with --offload (device_map="auto": the
                                            layers that do not fit stay in CPU memory; slow but exact)
 
+Pan and scan (Gemma 3's crops of a tall or wide page; transformers' do_pan_and_scan, off by default): --pan-and-scan
+turns it on with Gemma3Processor's defaults (crops of 256 pixels at least, 4 at most, from an aspect ratio of 1.2);
+--pan-and-scan-min-crop-size, --pan-and-scan-max-crops and --pan-and-scan-min-ratio change them. The manifest records
+them as "vision_options" (transformers' names), which `idrak vlm check` gives the encoder.
+
 Examples (PowerShell or bash; a prompt with non-ASCII text is safer in a UTF-8 file given with --prompt-file):
   python tools/vlm/compare_real.py MODEL scan.jpg --grayscale --prompt-file prompt.txt --out ref-bf16
   python tools/vlm/compare_real.py MODEL scan.jpg --grayscale --prompt-file prompt.txt --vision-dtype float32 --out ref-v32
   python tools/vlm/compare_real.py MODEL scan.jpg --grayscale --prompt-file prompt.txt --dtype float32 --device cpu --out ref-f32
+  python tools/vlm/compare_real.py MODEL scan.jpg --grayscale --prompt-file prompt.txt --pan-and-scan --out ref-pas
   idrak vlm check MODEL --reference ref-bf16 -d cuda:0 -w bf16
 """
 import argparse
@@ -86,6 +93,10 @@ def parse():
     p.add_argument("--vision-rows", type=int, default=0, help="save only the first N rows of the vision output (0: all)")
     p.add_argument("--attn", help="attn_implementation (eager, sdpa); default: transformers' choice")
     p.add_argument("--fast-processor", action="store_true", help="use_fast=True (torchvision); default use_fast=False (Pillow)")
+    p.add_argument("--pan-and-scan", action="store_true", help="do_pan_and_scan=True: the whole image, then its crops")
+    p.add_argument("--pan-and-scan-min-crop-size", type=int, help="pan_and_scan_min_crop_size (default 256)")
+    p.add_argument("--pan-and-scan-max-crops", type=int, help="pan_and_scan_max_num_crops (default 4)")
+    p.add_argument("--pan-and-scan-min-ratio", type=float, help="pan_and_scan_min_ratio_to_activate (default 1.2)")
     args = p.parse_args()
     if (args.prompt is None) == (args.prompt_file is None):
         p.error("give the prompt with --prompt TEXT or --prompt-file FILE (one of them)")
@@ -174,8 +185,21 @@ def main():
     text_messages = [{"role": m["role"], "content": [{k: v for k, v in c.items() if k != "image"} for c in m["content"]]}
                      for m in messages]
     rendered = processor.apply_chat_template(text_messages, tokenize=False, add_generation_prompt=True)
-    inputs = processor.apply_chat_template(messages, tokenize=True, add_generation_prompt=True, return_dict=True,
-                                           return_tensors="pt")
+    # Pan and scan: the processor's keyword arguments (transformers' names), given to the call as transformers takes
+    # them (Gemma3Processor passes its own defaults otherwise, whatever preprocessor_config.json says).
+    vision_options = {}
+    if args.pan_and_scan:
+        vision_options["do_pan_and_scan"] = True
+        for name, value in [("pan_and_scan_min_crop_size", args.pan_and_scan_min_crop_size),
+                            ("pan_and_scan_max_num_crops", args.pan_and_scan_max_crops),
+                            ("pan_and_scan_min_ratio_to_activate", args.pan_and_scan_min_ratio)]:
+            if value is not None:
+                vision_options[name] = value
+    if vision_options:
+        inputs = processor(text=rendered, images=[[image]], return_tensors="pt", add_special_tokens=False, **vision_options)
+    else:
+        inputs = processor.apply_chat_template(messages, tokenize=True, add_generation_prompt=True, return_dict=True,
+                                               return_tensors="pt")
     input_ids = inputs["input_ids"]
     pixel_values = inputs["pixel_values"]
     token_type_ids = inputs.get("token_type_ids")
@@ -249,6 +273,8 @@ def main():
         "exif_orientation": int(exif_orientation),
         "exif_applied": not args.no_exif,
         "grayscale": bool(args.grayscale),
+        "vision_options": vision_options,
+        "image_blocks": int(pixel_values.shape[0]),
         "system": args.system,
         "prompt": prompt,
         "rendered": rendered,

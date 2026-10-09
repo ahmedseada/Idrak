@@ -106,7 +106,7 @@ public static class CompletionsApiEndpoints
             body = await ReadBody(http, token);
             await ImageRequests.ResolveUrls(body, settings.ImageSettings, token);
             request = CompletionsTranslation.Chat(body);
-            request = ImageRequests.Check(request, settings.ImageSettings, (bool?)body["grayscale"] == true);
+            request = ImageRequests.WithVisionOptions(ImageRequests.Check(request, settings.ImageSettings, (bool?)body["grayscale"] == true), body["vision_options"]);
         }
         catch (Exception ex) when (ex is ArgumentException or JsonException or InvalidOperationException or FormatException)
         {
@@ -122,13 +122,13 @@ public static class CompletionsApiEndpoints
     }
 
     // POST /chat/upload: a multipart/form-data form (image files, prompt, system, stream, max_tokens, temperature,
-    // grayscale, model, and the other options of /chat/completions by the same names) answered as /chat/completions.
+    // grayscale, vision_options (a JSON object), model, and the other options of /chat/completions by the same names) answered as /chat/completions.
     private static async Task<IResult> ChatUpload(HttpContext http, CompletionsApiOptions settings, CancellationToken token)
     {
         if (!http.Request.HasFormContentType)
         {
             return Error(415, "POST a multipart/form-data form: image (one or more files), prompt (text), and optionally system, stream, "
-                + "max_tokens, temperature, grayscale and model. JSON requests go to /chat/completions.", "unsupported_media_type");
+                + "max_tokens, temperature, grayscale, vision_options (a JSON object) and model. JSON requests go to /chat/completions.", "unsupported_media_type");
         }
 
         IFormCollection form;
@@ -138,7 +138,7 @@ public static class CompletionsApiEndpoints
         {
             form = await http.Request.ReadFormAsync(token);
             (request, stream, usage) = await CompletionsTranslation.Upload(form, token);
-            request = ImageRequests.Check(request, settings.ImageSettings, Flag(form, "grayscale"));
+            request = ImageRequests.WithVisionOptions(ImageRequests.Check(request, settings.ImageSettings, Flag(form, "grayscale")), form["vision_options"].FirstOrDefault() is { } visionOptions ? JsonValue.Create(visionOptions) : null);
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or FormatException)
         {

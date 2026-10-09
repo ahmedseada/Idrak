@@ -14,7 +14,7 @@ internal static partial class Tests
         ("jpeg: baseline, progressive, grey, RGB, CMYK, YCCK, restart intervals and every sampling decode to Pillow's RGB exactly", JpegMatchesPillow),
         ("jpeg: 12-bit, arithmetic, lossless and hierarchical files are refused by name; damaged and cut files", JpegRefusals),
         ("image preprocessing: every colour format of the codecs to RGB, Pillow's resize (bilinear, bicubic, Lanczos; up and down), rescale and normalize as transformers, to 1e-5", PreprocessingMatchesTransformers),
-        ("image preprocessing: preprocessor_config.json keys, pan and scan refused, grey to three channels, tensors", PreprocessingConfig),
+        ("image preprocessing: preprocessor_config.json keys, a family's own keys left, grey to three channels, tensors", PreprocessingConfig),
         ("image preprocessing: phase 0's reference (tests/data/vlm): JPEGs decode as Pillow, pixel_values as transformers (PNG, JPEG, RGBA, palette, grey)", PreprocessingMatchesVlmReference),
     ];
 
@@ -242,7 +242,7 @@ internal static partial class Tests
             {
                 ImagePreprocessor.Parse(json);
             }
-            catch (NotSupportedException e)
+            catch (Exception e) when (e is NotSupportedException or InvalidDataException)
             {
                 Check(e.Message.Contains(words, StringComparison.Ordinal), e.Message);
                 return;
@@ -251,8 +251,10 @@ internal static partial class Tests
             throw new InvalidOperationException($"accepted: {json}");
         }
 
-        Refused(gemma.Replace("\"do_pan_and_scan\": null", "\"do_pan_and_scan\": true", StringComparison.Ordinal), "do_pan_and_scan");
-        Refused("""{"size": {"shortest_edge": 224}}""", "shortest");
+        // A family's own keys (Gemma 3's crops) are the family's to read: the building block leaves them.
+        Check(ImagePreprocessor.Parse(gemma.Replace("\"do_pan_and_scan\": null", "\"do_pan_and_scan\": true", StringComparison.Ordinal)) is { Height: 896, Width: 896 },
+            "a family's own keys are left to the family");
+        Refused("""{"size": {"longest_edge": 224}}""", "longest_edge");
         Refused("""{"size": {"height": 8, "width": 8}, "resample": 0}""", "resample 0");
         Refused("""{"size": {"height": 8, "width": 8}, "do_center_crop": true}""", "do_center_crop");
 

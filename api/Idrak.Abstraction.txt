@@ -977,6 +977,7 @@ public static class Idrak.Abstraction.Generation.ChatParts
 public sealed record Idrak.Abstraction.Generation.ChatRequest : System.IEquatable<Idrak.Abstraction.Generation.ChatRequest>
   public ChatRequest(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> Messages, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition>? Tools = null, bool? Think = null, Idrak.Abstraction.Generation.GenerationOptions? Options = null)
   public Idrak.Abstraction.Generation.GenerationOptions? Options { get; init; }
+  public Idrak.Abstraction.Generation.VisionOptions? VisionOptions { get; init; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> Messages { get; init; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition>? Tools { get; init; }
   public bool? Think { get; init; }
@@ -1151,7 +1152,7 @@ public interface Idrak.Abstraction.Generation.IImageAttentionRule
 
 public interface Idrak.Abstraction.Generation.IImagePromptFormat
   public int ImageToken { get; }
-  public string Expand(string prompt, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageTokenLayout> images, Idrak.Abstraction.Generation.ITokenizer tokenizer)
+  public string Expand(string prompt, System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageTokenLayout>> images, Idrak.Abstraction.Generation.ITokenizer tokenizer)
   public string Name { get; }
 
 public interface Idrak.Abstraction.Generation.ITextModel
@@ -1178,13 +1179,13 @@ public interface Idrak.Abstraction.Generation.IToolRegistry
 
 public interface Idrak.Abstraction.Generation.IVisionEncoder : System.IDisposable
   public Idrak.Abstraction.Device Device { get; }
-  public Idrak.Abstraction.Generation.ImageTokenLayout Layout(Idrak.Abstraction.Data.ImageData image)
-  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageFeatures> Encode(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ImageData> images)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageFeatures> Encode(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ImageData> images, Idrak.Abstraction.Generation.VisionOptions? options = null)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageTokenLayout> Blocks(Idrak.Abstraction.Data.ImageData image, Idrak.Abstraction.Generation.VisionOptions? options = null)
   public int Width { get; }
 
 public interface Idrak.Abstraction.Generation.IVisionEncoderStages
   public Idrak.Abstraction.Tensor Features(Idrak.Abstraction.Tensor pixelValues)
-  public Idrak.Abstraction.Tensor PixelValues(Idrak.Abstraction.Data.ImageData image)
+  public Idrak.Abstraction.Tensor PixelValues(Idrak.Abstraction.Data.ImageData image, Idrak.Abstraction.Generation.VisionOptions? options = null)
   public Idrak.Abstraction.Tensor Tower(Idrak.Abstraction.Tensor pixelValues)
 
 public static class Idrak.Abstraction.Generation.ImageAttentionRules
@@ -1208,6 +1209,7 @@ public sealed class Idrak.Abstraction.Generation.ImageFeatures : System.IDisposa
 
 public sealed class Idrak.Abstraction.Generation.ImageTokenFormat : Idrak.Abstraction.Generation.IImagePromptFormat
   public ImageTokenFormat(string name, int marker, int imageToken, int? begin = null, int? end = null, string before = "", string after = "")
+  public System.Func<System.Collections.Generic.IReadOnlyList<string>, string>? Join { get; init; }
   public int ImageToken { get; }
   public int Marker { get; }
   public int? Begin { get; }
@@ -1215,7 +1217,8 @@ public sealed class Idrak.Abstraction.Generation.ImageTokenFormat : Idrak.Abstra
   public override string ToString()
   public string After { get; }
   public string Before { get; }
-  public string Expand(string prompt, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageTokenLayout> images, Idrak.Abstraction.Generation.ITokenizer tokenizer)
+  public string Block(Idrak.Abstraction.Generation.ImageTokenLayout layout, Idrak.Abstraction.Generation.ITokenizer tokenizer)
+  public string Expand(string prompt, System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageTokenLayout>> images, Idrak.Abstraction.Generation.ITokenizer tokenizer)
   public string Name { get; }
 
 public sealed record Idrak.Abstraction.Generation.ImageTokenLayout : System.IEquatable<Idrak.Abstraction.Generation.ImageTokenLayout>
@@ -1497,6 +1500,26 @@ public sealed record Idrak.Abstraction.Generation.ToolResult : System.IEquatable
   public bool Succeeded { get; init; }
   public string Content { get; init; }
   public string? Error { get; init; }
+
+public sealed class Idrak.Abstraction.Generation.VisionOptions : System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<string, string>>, System.Collections.Generic.IReadOnlyCollection<System.Collections.Generic.KeyValuePair<string, string>>, System.Collections.Generic.IReadOnlyDictionary<string, string>, System.Collections.IEnumerable
+  public Idrak.Abstraction.Generation.VisionOptions With(Idrak.Abstraction.Generation.VisionOptions? over)
+  public System.Collections.Generic.IEnumerable<string> Keys { get; }
+  public System.Collections.Generic.IEnumerable<string> Values { get; }
+  public System.Collections.Generic.IEnumerator<System.Collections.Generic.KeyValuePair<string, string>> GetEnumerator()
+  public System.Text.Json.Nodes.JsonObject ToJson()
+  public VisionOptions(System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<string, string>> values)
+  public bool ContainsKey(string key)
+  public bool Flag(string key, bool otherwise)
+  public bool TryGetValue(string key, out string value)
+  public double Number(string key, double otherwise)
+  public int Count { get; }
+  public int Integer(string key, int otherwise)
+  public override string ToString()
+  public static Idrak.Abstraction.Generation.VisionOptions Empty { get; }
+  public static Idrak.Abstraction.Generation.VisionOptions FromJson(System.Text.Json.Nodes.JsonObject json)
+  public static Idrak.Abstraction.Generation.VisionOptions Parse(System.Collections.Generic.IEnumerable<string> pairs)
+  public string this[string key] { get; }
+  public void ThrowIfUnknown(string family, System.Collections.Generic.IReadOnlyCollection<string> accepted)
 
 public sealed class Idrak.Abstraction.Generation.WordTokenizer : Idrak.Abstraction.Generation.ITokenizer
   nested Idrak.Abstraction.Generation.WordTokenizer.Units (below)

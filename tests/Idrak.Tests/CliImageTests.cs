@@ -24,9 +24,71 @@ internal static partial class Tests
         ("cli images: EXIF orientations 1 to 8 (JPEG APP1, PNG eXIf) turn images as Pillow's exif_transpose", CliImageExif),
         ("cli images: the Jinja chat template renders image parts; Gemma 3's image prompt format expands them to the processor's text and ids", CliImageTemplate),
         ("cli images: run --image with the tiny Gemma 3 gives transformers' 20 greedy tokens (real encoder and reference features), -j, --schema, --grayscale, an alias; chat --image and /image; a text-only model refuses", CliImageRun),
-        ("cli images: vlm check reads tools/vlm/compare_real.py's folders (colour, and grey from a JPEG) for the tiny Gemma 3 and reports exact agreement; a changed token is a near-tie or a real difference by --tie", CliImageCompare),
+        ("cli images: vlm check reads tools/vlm/compare_real.py's folders (colour, grey from a JPEG, a tall page with pan and scan) for the tiny Gemma 3 and reports exact agreement; a changed token is a near-tie or a real difference by --tie", CliImageCompare),
         ("cli images: run --out writes the answer, or the -j document, to a file as UTF-8 without a BOM", CliImageRunOut),
+        ("cli images: run --vision-option gives the family its options (Gemma 3's pan and scan of a tall page: transformers' prompt and tokens); an alias keeps them; an unknown key names the family's", CliImageVisionOptions),
     ];
+
+    private static void CliImageVisionOptions(Device device)
+    {
+        RegisterGemma3Vision();
+        var tall = JsonNode.Parse(File.ReadAllText(TestData("vlm-pan-scan/manifest.json")))!["facts"]!["images"]!["tall"]!;
+        int[] newTokens = [.. tall["new_tokens"]!.AsArray().Select(n => (int)n!)];
+        string png = TestData("vlm-pan-scan/image-tall.png");
+        string[] greedy = ["-s", "Read the scan.", "--temperature", "0", "--max-tokens", "20", "-j"];
+        string[] panScan = ["--vision-option", "do_pan_and_scan=true", "--vision-option", "pan_and_scan_min_crop_size=32"];
+        var sampled = new List<int>();
+        var library = TokenSamplers.Default(TokenSamplers.DefaultName)!;
+        TokenSamplers.Register(TokenSamplers.DefaultName, request => new RecordingSampler(library(request), sampled));
+        int code;
+        string text, error;
+        try
+        {
+            (code, text, error) = RunIdrakOn(device, null, ["run", VlmModel, "--image", png, "What is in this image?", .. panScan, .. greedy]);
+        }
+        finally
+        {
+            TokenSamplers.Unregister(TokenSamplers.DefaultName);
+        }
+
+        var json = JsonOf(text, "run --vision-option");
+        Check(code == 0 && (int)json["prompt_tokens"]! == ((JsonArray)tall["input_ids"]!).Count && sampled.SequenceEqual(newTokens),
+            $"run --vision-option: {code} {string.Join(" ", sampled)} {text} {error}");
+        (code, text, _) = RunIdrakOn(device, null, ["run", VlmModel, "--image", png, "What is in this image?", .. greedy]);
+        Check(code == 0 && (int)JsonOf(text, "run without options")["prompt_tokens"]! == 38, $"without the options, one block: {text}");
+
+        // An alias keeps them ("vision_options", as alias set writes it); the command line's go over the alias's per key.
+        string folder = Path.Combine(Path.GetTempPath(), $"idrak-cli-vision-options-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(folder);
+        try
+        {
+            string config = Path.Combine(folder, "config.json");
+            File.WriteAllText(config, "{}");
+            var output = new StringWriter();
+            code = StandardInput.With(new StringReader(""), () => Idrak.Cli.CommandLine.Run(
+                ["alias", "set", "ocr", VlmModel, .. panScan, "-q", "-C", config], output, new StringWriter()));
+            var saved = JsonNode.Parse(File.ReadAllText(config))!["aliases"]!["ocr"]!;
+            Check(code == 0 && (string?)saved["vision_options"]?["do_pan_and_scan"] == "true" && (string?)saved["vision_options"]?["pan_and_scan_min_crop_size"] == "32",
+                $"alias set --vision-option: {code} {saved}");
+            foreach (var (extra, tokens) in new[] { (Array.Empty<string>(), 120), (["--vision-option", "do_pan_and_scan=false"], 38) })
+            {
+                output = new StringWriter();
+                code = StandardInput.With(new StringReader(""), () => Idrak.Cli.CommandLine.Run(
+                    ["run", "ocr", "--image", png, "What is in this image?", .. extra, .. greedy, "-d", device.ToString(), "-C", config], output, new StringWriter()));
+                Check(code == 0 && (int)JsonOf(output.ToString(), "run with the alias")["prompt_tokens"]! == tokens, $"run with the alias {string.Join(" ", extra)}: {output}");
+            }
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+
+        // An unknown key: a usage error naming the keys Gemma 3 takes; a malformed one too.
+        (code, _, error) = RunIdrakOn(device, null, ["run", VlmModel, "--image", png, "hi", "--vision-option", "tiles=2"]);
+        Check(code == 2 && error.Contains("tiles") && error.Contains("pan_and_scan_max_num_crops"), $"an unknown vision option: {code} {error}");
+        (code, _, error) = RunIdrakOn(device, null, ["run", VlmModel, "--image", png, "hi", "--vision-option", "do_pan_and_scan"]);
+        Check(code == 2 && error.Contains("KEY=VALUE"), $"a vision option without a value: {code} {error}");
+    }
 
     private static string VlmModel => TestData("vlm/tiny-gemma3");
 
@@ -72,11 +134,11 @@ internal static partial class Tests
             var vision = model.Vision!;
             var format = vision.PromptFormat;
             var layout = new ImageTokenLayout(4) { Grid = [2, 2] };
-            string expanded = format.Expand(rendered, [layout], tokenizer);
+            string expanded = format.Expand(rendered, [[layout]], tokenizer);
             Check(expanded == (string)facts["expanded_text"]!, $"expanded: {expanded}");
             int[] ids = [.. facts["input_ids"]!.AsArray().Select(i => (int)i!)];
             Check(tokenizer.Encode(expanded).SequenceEqual(ids), $"ids: {string.Join(" ", tokenizer.Encode(expanded))}");
-            Check(Fails(() => format.Expand(rendered, [layout, layout], tokenizer)), "one marker for two images is refused");
+            Check(Fails(() => format.Expand(rendered, [[layout], [layout]], tokenizer)), "one marker for two images is refused");
 
             // A chat generator without images takes text only; with them, images, and batches refuse them.
             var chat = model.CreateChat(KeyValueFormat.Float32, 64);
@@ -244,9 +306,9 @@ internal static partial class Tests
 
         public Device Device => device;
 
-        public ImageTokenLayout Layout(ImageData image) => Grid;
+        public IReadOnlyList<ImageTokenLayout> Blocks(ImageData image, VisionOptions? options = null) => [Grid];
 
-        public IReadOnlyList<ImageFeatures> Encode(IReadOnlyList<ImageData> images)
+        public IReadOnlyList<ImageFeatures> Encode(IReadOnlyList<ImageData> images, VisionOptions? options = null)
         {
             pixels.AddRange(seen(images).Select(preprocessor.Pixels));
             return [.. images.Select(_ => new ImageFeatures(Tensor.From(features, [4, 24], device), Grid))];
@@ -260,9 +322,11 @@ internal static partial class Tests
     private static void CliImageCompare(Device device)
     {
         RegisterGemma3Vision();
-        foreach (string name in new[] { "color", "gray" })
+        // color and gray: phase 7's folders; pan-scan: a tall page with pan and scan (compare_real.py --pan-and-scan), its
+        // manifest's "vision_options" given to the encoder: 4 blocks of pixels and features, a 120-token prompt.
+        foreach (string name in new[] { "color", "gray", "pan-scan" })
         {
-            string reference = TestData($"vlm/compare/{name}");
+            string reference = name == "pan-scan" ? TestData("vlm-pan-scan/compare") : TestData($"vlm/compare/{name}");
             var (code, text, error) = RunIdrakOn(device, null, "vlm", "check", VlmModel, "--reference", reference, "-j");
             var json = JsonOf(text, $"vlm check {name}");
             var forced = json["teacher_forced"]!;

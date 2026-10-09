@@ -44,12 +44,13 @@ public sealed class Idrak.AspNetCore.ChatApiOptions
   public Idrak.AspNetCore.ChatApiOptions Version(string version)
 
 public sealed record Idrak.AspNetCore.ChatApiRequest : System.IEquatable<Idrak.AspNetCore.ChatApiRequest>
-  public ChatApiRequest(string? Model, System.Collections.Generic.List<Idrak.AspNetCore.ChatApiMessage> Messages, bool? Stream = null, System.Text.Json.JsonElement? Think = null, System.Text.Json.JsonElement? KeepAlive = null, System.Collections.Generic.Dictionary<string, System.Text.Json.JsonElement>? Options = null, System.Collections.Generic.List<Idrak.AspNetCore.ChatApiTool>? Tools = null, bool? Grayscale = null)
+  public ChatApiRequest(string? Model, System.Collections.Generic.List<Idrak.AspNetCore.ChatApiMessage> Messages, bool? Stream = null, System.Text.Json.JsonElement? Think = null, System.Text.Json.JsonElement? KeepAlive = null, System.Collections.Generic.Dictionary<string, System.Text.Json.JsonElement>? Options = null, System.Collections.Generic.List<Idrak.AspNetCore.ChatApiTool>? Tools = null, bool? Grayscale = null, System.Text.Json.Nodes.JsonNode? VisionOptions = null)
   public System.Collections.Generic.Dictionary<string, System.Text.Json.JsonElement>? Options { get; init; }
   public System.Collections.Generic.List<Idrak.AspNetCore.ChatApiMessage> Messages { get; init; }
   public System.Collections.Generic.List<Idrak.AspNetCore.ChatApiTool>? Tools { get; init; }
   public System.Text.Json.JsonElement? KeepAlive { get; init; }
   public System.Text.Json.JsonElement? Think { get; init; }
+  public System.Text.Json.Nodes.JsonNode? VisionOptions { get; init; }
   public bool? Grayscale { get; init; }
   public bool? Stream { get; init; }
   public string? Model { get; init; }
