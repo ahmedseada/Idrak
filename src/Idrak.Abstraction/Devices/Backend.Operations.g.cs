@@ -2913,6 +2913,232 @@ public abstract partial class Backend
     }
 
     /// <summary>
+    /// Box overlap losses, torchvision's formulas: for each of <paramref name="count"/> pairs of boxes given by their corners
+    /// (x1, y1, x2, y2; predicted and target are [count, 4]), losses[i] = 1 - IoU (<see cref="BoxOverlap.IoU"/>), plus the
+    /// enclosing box's empty share (GIoU), plus the centres' squared distance over the enclosing box's squared diagonal
+    /// (DIoU), plus α·v with v the aspect-ratio term and α = v / (1 - IoU + v + eps) taken as a constant (CIoU).
+    /// <paramref name="eps"/> keeps the divisions finite (torchvision's 1e-7).
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.BoxIouLoss"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>BoxIouLossKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void BoxIouLoss(Storage predicted, Storage target, Storage losses, int count, BoxOverlap overlap, float eps)
+    {
+        if (_kernels is null)
+        {
+            BoxIouLossKernel(predicted, target, losses, count, overlap, eps);
+        }
+        else
+        {
+            BoxIouLossRegistered(predicted, target, losses, count, overlap, eps);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void BoxIouLossRegistered(Storage predicted, Storage target, Storage losses, int count, BoxOverlap overlap, float eps)
+    {
+        if (Kernel(OperationIndex.BoxIouLoss) is OperationKernels.BoxIouLoss kernel)
+        {
+            kernel(this, predicted, target, losses, count, overlap, eps);
+            return;
+        }
+
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.BoxIouLoss))
+        {
+            BoxIouLossKernel(predicted, target, losses, count, overlap, eps);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.BoxIouLoss);
+        try
+        {
+            BoxIouLossKernel(predicted, target, losses, count, overlap, eps);
+        }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            BoxIouLossOnHost(predicted, target, losses, count, overlap, eps);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of BoxIouLoss (the default body of BoxIouLossKernel), for RetryOnHost.
+    private void BoxIouLossOnHost(Storage predicted, Storage target, Storage losses, int count, BoxOverlap overlap, float eps)
+    {
+        using var h = new HostCall(this, "BoxIouLoss");
+        CpuBackend.Instance.BoxIouLoss(h[predicted], h[target], h[losses], count, overlap, eps);
+    }
+
+    /// <summary>
+    /// The gradient of <see cref="BoxIouLossKernel"/> with respect to the predicted corners: dPredicted[i] += lossGrads[i] ·
+    /// ∂losses[i] / ∂predicted[i] (the targets are constants; a tie of a minimum or maximum shares the gradient in halves,
+    /// as PyTorch's).
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.BoxIouLossBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>BoxIouLossBackwardKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void BoxIouLossBackward(Storage predicted, Storage target, Storage lossGrads, Storage dPredicted, int count, BoxOverlap overlap, float eps)
+    {
+        if (_kernels is null)
+        {
+            BoxIouLossBackwardKernel(predicted, target, lossGrads, dPredicted, count, overlap, eps);
+        }
+        else
+        {
+            BoxIouLossBackwardRegistered(predicted, target, lossGrads, dPredicted, count, overlap, eps);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void BoxIouLossBackwardRegistered(Storage predicted, Storage target, Storage lossGrads, Storage dPredicted, int count, BoxOverlap overlap, float eps)
+    {
+        if (Kernel(OperationIndex.BoxIouLossBackward) is OperationKernels.BoxIouLossBackward kernel)
+        {
+            kernel(this, predicted, target, lossGrads, dPredicted, count, overlap, eps);
+            return;
+        }
+
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.BoxIouLossBackward))
+        {
+            BoxIouLossBackwardKernel(predicted, target, lossGrads, dPredicted, count, overlap, eps);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.BoxIouLossBackward);
+        try
+        {
+            BoxIouLossBackwardKernel(predicted, target, lossGrads, dPredicted, count, overlap, eps);
+        }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            BoxIouLossBackwardOnHost(predicted, target, lossGrads, dPredicted, count, overlap, eps);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of BoxIouLossBackward (the default body of BoxIouLossBackwardKernel), for RetryOnHost.
+    private void BoxIouLossBackwardOnHost(Storage predicted, Storage target, Storage lossGrads, Storage dPredicted, int count, BoxOverlap overlap, float eps)
+    {
+        using var h = new HostCall(this, "BoxIouLossBackward");
+        CpuBackend.Instance.BoxIouLossBackward(h[predicted], h[target], h[lossGrads], h[dPredicted], count, overlap, eps);
+    }
+
+    /// <summary>
+    /// Sigmoid focal loss (Lin et al. 2017), torchvision's formula, element by element over <paramref name="count"/> logits:
+    /// losses = α_t · (1 - p_t)^γ · BCE(logits, targets), p = σ(logits), p_t = p·t + (1 - p)(1 - t),
+    /// α_t = α·t + (1 - α)(1 - t), with no α weighting when <paramref name="alpha"/> is negative. Targets in [0, 1].
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.SigmoidFocalLoss"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>SigmoidFocalLossKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void SigmoidFocalLoss(Storage logits, Storage targets, Storage losses, int count, float alpha, float gamma)
+    {
+        if (_kernels is null)
+        {
+            SigmoidFocalLossKernel(logits, targets, losses, count, alpha, gamma);
+        }
+        else
+        {
+            SigmoidFocalLossRegistered(logits, targets, losses, count, alpha, gamma);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void SigmoidFocalLossRegistered(Storage logits, Storage targets, Storage losses, int count, float alpha, float gamma)
+    {
+        if (Kernel(OperationIndex.SigmoidFocalLoss) is OperationKernels.SigmoidFocalLoss kernel)
+        {
+            kernel(this, logits, targets, losses, count, alpha, gamma);
+            return;
+        }
+
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.SigmoidFocalLoss))
+        {
+            SigmoidFocalLossKernel(logits, targets, losses, count, alpha, gamma);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.SigmoidFocalLoss);
+        try
+        {
+            SigmoidFocalLossKernel(logits, targets, losses, count, alpha, gamma);
+        }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            SigmoidFocalLossOnHost(logits, targets, losses, count, alpha, gamma);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of SigmoidFocalLoss (the default body of SigmoidFocalLossKernel), for RetryOnHost.
+    private void SigmoidFocalLossOnHost(Storage logits, Storage targets, Storage losses, int count, float alpha, float gamma)
+    {
+        using var h = new HostCall(this, "SigmoidFocalLoss");
+        CpuBackend.Instance.SigmoidFocalLoss(h[logits], h[targets], h[losses], count, alpha, gamma);
+    }
+
+    /// <summary>The gradient of <see cref="SigmoidFocalLossKernel"/>: dLogits[i] += lossGrads[i] · ∂losses[i] / ∂logits[i] (the targets are constants).</summary>
+    /// <remarks>Runs <see cref="Ops.SigmoidFocalLossBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>SigmoidFocalLossBackwardKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void SigmoidFocalLossBackward(Storage logits, Storage targets, Storage lossGrads, Storage dLogits, int count, float alpha, float gamma)
+    {
+        if (_kernels is null)
+        {
+            SigmoidFocalLossBackwardKernel(logits, targets, lossGrads, dLogits, count, alpha, gamma);
+        }
+        else
+        {
+            SigmoidFocalLossBackwardRegistered(logits, targets, lossGrads, dLogits, count, alpha, gamma);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void SigmoidFocalLossBackwardRegistered(Storage logits, Storage targets, Storage lossGrads, Storage dLogits, int count, float alpha, float gamma)
+    {
+        if (Kernel(OperationIndex.SigmoidFocalLossBackward) is OperationKernels.SigmoidFocalLossBackward kernel)
+        {
+            kernel(this, logits, targets, lossGrads, dLogits, count, alpha, gamma);
+            return;
+        }
+
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.SigmoidFocalLossBackward))
+        {
+            SigmoidFocalLossBackwardKernel(logits, targets, lossGrads, dLogits, count, alpha, gamma);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.SigmoidFocalLossBackward);
+        try
+        {
+            SigmoidFocalLossBackwardKernel(logits, targets, lossGrads, dLogits, count, alpha, gamma);
+        }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            SigmoidFocalLossBackwardOnHost(logits, targets, lossGrads, dLogits, count, alpha, gamma);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of SigmoidFocalLossBackward (the default body of SigmoidFocalLossBackwardKernel), for RetryOnHost.
+    private void SigmoidFocalLossBackwardOnHost(Storage logits, Storage targets, Storage lossGrads, Storage dLogits, int count, float alpha, float gamma)
+    {
+        using var h = new HostCall(this, "SigmoidFocalLossBackward");
+        CpuBackend.Instance.SigmoidFocalLossBackward(h[logits], h[targets], h[lossGrads], h[dLogits], count, alpha, gamma);
+    }
+
+    /// <summary>
     /// y (+)= x permuted: output element at coordinates (c0..c[r-1]) of <paramref name="outShape"/> comes from
     /// input offset Σ c_k * inStrides[k] (the input strides already reordered by the permutation). Rank ≤ 6.
     /// </summary>

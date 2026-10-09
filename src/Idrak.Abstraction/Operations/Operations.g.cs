@@ -77,64 +77,68 @@ internal static class OperationIndex
     public const int AdaptiveMaxPool = 61;
     public const int CtcLoss = 62;
     public const int CtcLossBackward = 63;
-    public const int Permute = 64;
-    public const int SumAxis = 65;
-    public const int BroadcastAxis = 66;
-    public const int SgdStep = 67;
-    public const int AdamStep = 68;
-    public const int AdamStep8Bit = 69;
-    public const int SumSquares = 70;
-    public const int FusedAdamW = 71;
-    public const int ClipFactor = 72;
-    public const int Dropout = 73;
-    public const int DropoutBackward = 74;
-    public const int ScaleMaskSoftmax = 75;
-    public const int LayerNormFused = 76;
-    public const int LayerNormTrain = 77;
-    public const int LayerNormBackward = 78;
-    public const int BiasGelu = 79;
-    public const int Int8MatMul = 80;
-    public const int BFloat16MatMul = 81;
-    public const int BFloat16Dequantize = 82;
-    public const int PackBFloat16 = 83;
-    public const int Int8Dequantize = 84;
-    public const int Int4MatMul = 85;
-    public const int Int4Dequantize = 86;
-    public const int RmsNorm = 87;
-    public const int RmsNormBackward = 88;
-    public const int Rope = 89;
-    public const int RmsNormAffine = 90;
-    public const int AddRmsNormAffine = 91;
-    public const int RmsNormRope = 92;
-    public const int RmsNormRopePair = 93;
-    public const int NormRopeHeads = 94;
-    public const int SoftmaxCrossEntropyRows = 95;
-    public const int GatedActivation = 96;
-    public const int GatedActivationBackward = 97;
-    public const int GatedActivationPacked = 98;
-    public const int GatedActivationBackwardPacked = 99;
-    public const int KeyValueWriteInt8 = 100;
-    public const int AttentionScoresInt8 = 101;
-    public const int AttentionContextInt8 = 102;
-    public const int AttentionDecode = 103;
-    public const int AttentionInt8 = 104;
-    public const int AttentionBFloat16 = 105;
-    public const int KeyValueWriteBFloat16 = 106;
-    public const int AttentionTiledBackward = 107;
-    public const int AttentionSegmented = 108;
-    public const int AttentionRows = 109;
-    public const int AttentionSegmentedBackward = 110;
-    public const int AttentionTiled = 111;
-    public const int AttentionSpans = 112;
-    public const int AttentionSpansBackward = 113;
-    public const int DecoderMask = 114;
-    public const int KeyValueWrite = 115;
-    public const int SampleRows = 116;
-    public const int PenalizeRows = 117;
-    public const int HistoryPush = 118;
+    public const int BoxIouLoss = 64;
+    public const int BoxIouLossBackward = 65;
+    public const int SigmoidFocalLoss = 66;
+    public const int SigmoidFocalLossBackward = 67;
+    public const int Permute = 68;
+    public const int SumAxis = 69;
+    public const int BroadcastAxis = 70;
+    public const int SgdStep = 71;
+    public const int AdamStep = 72;
+    public const int AdamStep8Bit = 73;
+    public const int SumSquares = 74;
+    public const int FusedAdamW = 75;
+    public const int ClipFactor = 76;
+    public const int Dropout = 77;
+    public const int DropoutBackward = 78;
+    public const int ScaleMaskSoftmax = 79;
+    public const int LayerNormFused = 80;
+    public const int LayerNormTrain = 81;
+    public const int LayerNormBackward = 82;
+    public const int BiasGelu = 83;
+    public const int Int8MatMul = 84;
+    public const int BFloat16MatMul = 85;
+    public const int BFloat16Dequantize = 86;
+    public const int PackBFloat16 = 87;
+    public const int Int8Dequantize = 88;
+    public const int Int4MatMul = 89;
+    public const int Int4Dequantize = 90;
+    public const int RmsNorm = 91;
+    public const int RmsNormBackward = 92;
+    public const int Rope = 93;
+    public const int RmsNormAffine = 94;
+    public const int AddRmsNormAffine = 95;
+    public const int RmsNormRope = 96;
+    public const int RmsNormRopePair = 97;
+    public const int NormRopeHeads = 98;
+    public const int SoftmaxCrossEntropyRows = 99;
+    public const int GatedActivation = 100;
+    public const int GatedActivationBackward = 101;
+    public const int GatedActivationPacked = 102;
+    public const int GatedActivationBackwardPacked = 103;
+    public const int KeyValueWriteInt8 = 104;
+    public const int AttentionScoresInt8 = 105;
+    public const int AttentionContextInt8 = 106;
+    public const int AttentionDecode = 107;
+    public const int AttentionInt8 = 108;
+    public const int AttentionBFloat16 = 109;
+    public const int KeyValueWriteBFloat16 = 110;
+    public const int AttentionTiledBackward = 111;
+    public const int AttentionSegmented = 112;
+    public const int AttentionRows = 113;
+    public const int AttentionSegmentedBackward = 114;
+    public const int AttentionTiled = 115;
+    public const int AttentionSpans = 116;
+    public const int AttentionSpansBackward = 117;
+    public const int DecoderMask = 118;
+    public const int KeyValueWrite = 119;
+    public const int SampleRows = 120;
+    public const int PenalizeRows = 121;
+    public const int HistoryPush = 122;
 
     /// <summary>The number of operations.</summary>
-    public const int Count = 119;
+    public const int Count = 123;
 }
 
 /// <summary>
@@ -592,6 +596,38 @@ public static class OperationKernels
     /// sequence of infinite loss gets nothing either).
     /// </summary>
     public delegate void CtcLossBackward(Backend backend, Storage logProbs, Storage targets, Storage lossGrads, Storage dLogProbs, ReadOnlySpan<int> inputLengths, ReadOnlySpan<int> targetLengths, ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity);
+
+    /// <summary>
+    /// A kernel for <see cref="Ops.BoxIouLoss"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// Box overlap losses, torchvision's formulas: for each of <paramref name="count"/> pairs of boxes given by their corners
+    /// (x1, y1, x2, y2; predicted and target are [count, 4]), losses[i] = 1 - IoU (<see cref="BoxOverlap.IoU"/>), plus the
+    /// enclosing box's empty share (GIoU), plus the centres' squared distance over the enclosing box's squared diagonal
+    /// (DIoU), plus α·v with v the aspect-ratio term and α = v / (1 - IoU + v + eps) taken as a constant (CIoU).
+    /// <paramref name="eps"/> keeps the divisions finite (torchvision's 1e-7).
+    /// </summary>
+    public delegate void BoxIouLoss(Backend backend, Storage predicted, Storage target, Storage losses, int count, BoxOverlap overlap, float eps);
+
+    /// <summary>
+    /// A kernel for <see cref="Ops.BoxIouLossBackward"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// The gradient of <see cref="Backend.BoxIouLossKernel"/> with respect to the predicted corners: dPredicted[i] += lossGrads[i] ·
+    /// ∂losses[i] / ∂predicted[i] (the targets are constants; a tie of a minimum or maximum shares the gradient in halves,
+    /// as PyTorch's).
+    /// </summary>
+    public delegate void BoxIouLossBackward(Backend backend, Storage predicted, Storage target, Storage lossGrads, Storage dPredicted, int count, BoxOverlap overlap, float eps);
+
+    /// <summary>
+    /// A kernel for <see cref="Ops.SigmoidFocalLoss"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// Sigmoid focal loss (Lin et al. 2017), torchvision's formula, element by element over <paramref name="count"/> logits:
+    /// losses = α_t · (1 - p_t)^γ · BCE(logits, targets), p = σ(logits), p_t = p·t + (1 - p)(1 - t),
+    /// α_t = α·t + (1 - α)(1 - t), with no α weighting when <paramref name="alpha"/> is negative. Targets in [0, 1].
+    /// </summary>
+    public delegate void SigmoidFocalLoss(Backend backend, Storage logits, Storage targets, Storage losses, int count, float alpha, float gamma);
+
+    /// <summary>
+    /// A kernel for <see cref="Ops.SigmoidFocalLossBackward"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// The gradient of <see cref="Backend.SigmoidFocalLossKernel"/>: dLogits[i] += lossGrads[i] · ∂losses[i] / ∂logits[i] (the targets are constants).
+    /// </summary>
+    public delegate void SigmoidFocalLossBackward(Backend backend, Storage logits, Storage targets, Storage lossGrads, Storage dLogits, int count, float alpha, float gamma);
 
     /// <summary>
     /// A kernel for <see cref="Ops.Permute"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
@@ -1458,6 +1494,38 @@ public static partial class Ops
         new("CtcLossBackward", "CtcLossBackwardKernel", "Storage,Storage,Storage,Storage,ReadOnlySpan`1,ReadOnlySpan`1,ReadOnlySpan`1,Int32,Int32,Int32,Int32,Boolean,Boolean", OperationIndex.CtcLossBackward, typeof(OperationKernels.CtcLossBackward), KernelSource.Host);
 
     /// <summary>
+    /// Box overlap losses, torchvision's formulas: for each of <c>count</c> pairs of boxes given by their corners
+    /// (x1, y1, x2, y2; predicted and target are [count, 4]), losses[i] = 1 - IoU (<see cref="BoxOverlap.IoU"/>), plus the
+    /// enclosing box's empty share (GIoU), plus the centres' squared distance over the enclosing box's squared diagonal
+    /// (DIoU), plus α·v with v the aspect-ratio term and α = v / (1 - IoU + v + eps) taken as a constant (CIoU).
+    /// <c>eps</c> keeps the divisions finite (torchvision's 1e-7).
+    /// </summary>
+    public static readonly Operation BoxIouLoss =
+        new("BoxIouLoss", "BoxIouLossKernel", "Storage,Storage,Storage,Int32,BoxOverlap,Single", OperationIndex.BoxIouLoss, typeof(OperationKernels.BoxIouLoss), KernelSource.Host);
+
+    /// <summary>
+    /// The gradient of <see cref="Backend.BoxIouLossKernel"/> with respect to the predicted corners: dPredicted[i] += lossGrads[i] ·
+    /// ∂losses[i] / ∂predicted[i] (the targets are constants; a tie of a minimum or maximum shares the gradient in halves,
+    /// as PyTorch's).
+    /// </summary>
+    public static readonly Operation BoxIouLossBackward =
+        new("BoxIouLossBackward", "BoxIouLossBackwardKernel", "Storage,Storage,Storage,Storage,Int32,BoxOverlap,Single", OperationIndex.BoxIouLossBackward, typeof(OperationKernels.BoxIouLossBackward), KernelSource.Host);
+
+    /// <summary>
+    /// Sigmoid focal loss (Lin et al. 2017), torchvision's formula, element by element over <c>count</c> logits:
+    /// losses = α_t · (1 - p_t)^γ · BCE(logits, targets), p = σ(logits), p_t = p·t + (1 - p)(1 - t),
+    /// α_t = α·t + (1 - α)(1 - t), with no α weighting when <c>alpha</c> is negative. Targets in [0, 1].
+    /// </summary>
+    public static readonly Operation SigmoidFocalLoss =
+        new("SigmoidFocalLoss", "SigmoidFocalLossKernel", "Storage,Storage,Storage,Int32,Single,Single", OperationIndex.SigmoidFocalLoss, typeof(OperationKernels.SigmoidFocalLoss), KernelSource.Host);
+
+    /// <summary>
+    /// The gradient of <see cref="Backend.SigmoidFocalLossKernel"/>: dLogits[i] += lossGrads[i] · ∂losses[i] / ∂logits[i] (the targets are constants).
+    /// </summary>
+    public static readonly Operation SigmoidFocalLossBackward =
+        new("SigmoidFocalLossBackward", "SigmoidFocalLossBackwardKernel", "Storage,Storage,Storage,Storage,Int32,Single,Single", OperationIndex.SigmoidFocalLossBackward, typeof(OperationKernels.SigmoidFocalLossBackward), KernelSource.Host);
+
+    /// <summary>
     /// y (+)= x permuted: output element at coordinates (c0..c[r-1]) of <c>outShape</c> comes from
     /// input offset Σ c_k * inStrides[k] (the input strides already reordered by the permutation). Rank ≤ 6.
     /// </summary>
@@ -1931,6 +1999,10 @@ public static partial class Ops
         AdaptiveMaxPool,
         CtcLoss,
         CtcLossBackward,
+        BoxIouLoss,
+        BoxIouLossBackward,
+        SigmoidFocalLoss,
+        SigmoidFocalLossBackward,
         Permute,
         SumAxis,
         BroadcastAxis,
