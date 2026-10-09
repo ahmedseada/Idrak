@@ -436,10 +436,12 @@ public sealed class CausalSelfAttention : Module, ICachedModule
             q = pq;
         }
 
-        // Keys as the cache holds them (a float32 cache is read in place; other formats expanded), every slot: the ranges
-        // stop at each row's last key.
-        var keys = cache.Layout.Expand(cache, keys: true);
-        var values = cache.Layout.Expand(cache, keys: false);
+        // Keys as the cache holds them, up to this step's last position: the ranges stop at each row's last key, so only
+        // that prefix is read (a float32 cache in place; bfloat16 and int8 expanded for those slots only, not every slot
+        // of the context window).
+        int filled = context.Length + images.Steps;
+        var keys = cache.Layout.ExpandPrefix(cache, keys: true, filled);
+        var values = cache.Layout.ExpandPrefix(cache, keys: false, filled);
         return AttendSpans(q, keys, values, images, context.Length, context.RowStarts);
     }
 
