@@ -24,6 +24,13 @@ public interface ITensorStore : IDisposable
     float[] Read(string name);
 
     /// <summary>
+    /// The format the tensor <paramref name="name"/> is stored in (float32, float16, bfloat16), or null when the store
+    /// does not say (quantized GGUF types, a store of one's own). <see cref="Read"/> gives float32 values whatever it is;
+    /// this tells a reader whether a narrower copy would hold the same values (a bfloat16 tensor kept as bfloat16).
+    /// </summary>
+    WeightFormat? FormatOf(string name) => null;
+
+    /// <summary>
     /// The 2-D tensor <paramref name="name"/> [rows, columns] transposed to [columns, rows]. Stores override this to
     /// transpose while reading, so the stored-order values never exist as a second full array.
     /// </summary>
