@@ -50,6 +50,13 @@ internal static class ModelChoices
     public sealed record ModelChoice(string Model, string? Weights, string? Kv, int? Context, string? Adapter, bool Grayscale = false, VisionOptions? VisionOptions = null,
         ImageTransformPipeline? ImageTransforms = null)
     {
+        /// <summary>
+        /// The preparation saved with the adapter (<see cref="TuningImages.FileName"/>: how its images were prepared in
+        /// tuning, and for which vision family), or null. Its transforms, grayscale and vision options are in this choice
+        /// unless the command line gave its own.
+        /// </summary>
+        public TuningImages? AdapterImages { get; init; }
+
         /// <summary>The transforms every image goes through: <c>grayscale</c> first when asked (and not already a step), then <see cref="ImageTransforms"/>.</summary>
         public ImageTransformPipeline Transforms => Grayscale && ImageTransforms?.Contains("grayscale") != true
             ? ImageTransformPipeline.Parse("grayscale").Then(ImageTransforms)
@@ -81,10 +88,55 @@ internal static class ModelChoices
             }
         }
 
+        // An adapter tuned on images: its preparation (transforms, grayscale, vision options) over the alias's; the command
+        // line's over both (--image-transform replaces its transforms and grayscale, --vision-option its options key by key).
+        string? adapter = context.Option("--adapter");
+        var tuned = AdapterImages(adapter);
+        var given = ImageTransformsOf(context);
+        if (tuned is not null)
+        {
+            vision = vision.With(tuned.VisionOptions);
+            (transforms, grayscale) = given is null ? (tuned.Transforms, tuned.Grayscale) : (transforms, false);
+        }
+
         vision = vision.With(VisionOptionsOf(context));
         return new ModelChoice(model, context.Option("--weights") ?? weights, context.Option("--kv") ?? kv,
-            context.Option("--context") is null ? null : context.IntOption("--context", 0), context.Option("--adapter"),
-            grayscale || context.Flag("--grayscale"), vision.Count > 0 ? vision : null, ImageTransformsOf(context) ?? transforms);
+            context.Option("--context") is null ? null : context.IntOption("--context", 0), adapter,
+            grayscale || context.Flag("--grayscale"), vision.Count > 0 ? vision : null, given ?? transforms) { AdapterImages = tuned };
+    }
+
+    /// <summary>The image preparation an adapter folder was tuned with (<see cref="TuningImages.FileName"/>), or null when it has none.</summary>
+    public static TuningImages? AdapterImages(string? adapter)
+    {
+        if (adapter is null || !Directory.Exists(adapter))
+        {
+            return null;
+        }
+
+        try
+        {
+            return TuningImages.Read(adapter);
+        }
+        catch (Exception ex) when (ex is InvalidDataException or IOException)
+        {
+            throw new UsageException($"--adapter {adapter}: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Throws unless the adapter's saved preparation (<see cref="ModelChoice.AdapterImages"/>) was tuned on
+    /// <paramref name="family"/> (a model's vision family; null for a text-only model).
+    /// </summary>
+    public static void CheckAdapterFamily(ModelChoice choice, string? family)
+    {
+        try
+        {
+            choice.AdapterImages?.ThrowIfOtherFamily(family, $"The adapter {choice.Adapter}");
+        }
+        catch (InvalidOperationException ex)
+        {
+            throw new UsageException($"{ex.Message} (the model given: {choice.Model})");
+        }
     }
 
     /// <summary>The command's <c>--image-transform</c> pipeline (several joined in order), or null when not given.</summary>
@@ -170,6 +222,13 @@ internal static class ModelChoices
         device ??= context.Device;
         string folder = Resolve(context, choice.Model);
         string? weights = choice.Weights?.ToLowerInvariant();
+        if (choice.AdapterImages?.Family is not null && Path.Combine(folder, "config.json") is var configFile && File.Exists(configFile)
+            && System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(configFile)) is System.Text.Json.Nodes.JsonObject config)
+        {
+            // Before reading any weight: a vision family is registered under its architecture's name (VisionFamilies).
+            CheckAdapterFamily(choice, Idrak.Models.Abstractions.VisionFamilies.HasVision(config) ? (string?)config["architectures"]?[0] : null);
+        }
+
         var watch = Stopwatch.StartNew();
         PretrainedModel model;
         using (var progress = new ProgressLine(context, $"loading {choice.Model} on {device}", unit: ProgressUnit.Elapsed))
@@ -188,6 +247,16 @@ internal static class ModelChoices
         }
 
         context.Detail($"loaded {choice.Model} in {watch.Elapsed.TotalSeconds:F1} s on {device}");
+        try
+        {
+            CheckAdapterFamily(choice, model.Vision?.Family);
+        }
+        catch
+        {
+            model.Dispose();
+            throw;
+        }
+
         return model;
     }
 

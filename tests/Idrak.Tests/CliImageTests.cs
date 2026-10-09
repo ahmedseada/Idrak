@@ -27,6 +27,9 @@ internal static partial class Tests
         ("cli images: vlm check reads tools/vlm/compare_real.py's folders (colour, grey from a JPEG, a tall page with pan and scan, image transforms) for the tiny Gemma 3 and reports exact agreement; a changed token is a near-tie or a real difference by --tie", CliImageCompare),
         ("cli images: run --out writes the answer, or the -j document, to a file as UTF-8 without a BOM", CliImageRunOut),
         ("cli images: run --vision-option gives the family its options (Gemma 3's pan and scan of a tall page: transformers' prompt and tokens); an alias keeps them; an unknown key names the family's", CliImageVisionOptions),
+        ("cli vision tuning: idrak tune on ShareGPT with <image> (the tiny Gemma 3, images from a folder and a zip; the tiny LLaVA) writes adapters, projector and tuning_images.json; --metric cer before, every step and in the summary; -v's plan; run --adapter applies the projector and the preparation; tune evaluate --metric cer; another family's adapter refused", CliVisionTuning),
+        ("cli vision tuning: an unregistered family exits with the registry's message before the data is read; image options on a text model and bad names refused", CliVisionTuningRefusals),
+        ("cli vision tuning: tune init -P writes a vision example; tune.json's image keys (format, images, image_transform, vision, parts, feature_cache) and the disk feature cache", CliVisionTuneInit),
     ];
 
     private static void CliImageVisionOptions(Device device)

@@ -29,7 +29,8 @@ internal sealed class ChatCommand : Command
           -w, --weights FORMAT   int8, int4, bf16 or a registered packed format (default: as stored)
           -k, --kv FORMAT        KV cache format: float32, int8, bfloat16 or a registered one (default float32)
               --context N        context window in tokens (default 4096, at most the model's)
-              --adapter DIR      merge a LoRA adapter into the weights as they are read
+              --adapter DIR      merge a LoRA adapter into the weights as they are read; one tuned on images
+                                 (idrak tune) brings its trained projector and image preparation too
               --history FILE     load the conversation from FILE if it exists, and save it there after every answer
               --file FILE        add a text file's content to the first message (repeatable; /file adds more later)
               --image FILE       give a vision-language model an image with the first message (repeatable; /image adds

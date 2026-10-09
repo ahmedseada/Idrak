@@ -37,7 +37,8 @@ internal sealed class RunCommand : Command
           -w, --weights FORMAT   int8, int4, bf16 or a registered packed format (default: as stored)
           -k, --kv FORMAT        KV cache format: float32, int8, bfloat16 or a registered one (default float32)
               --context N        context window in tokens (default 4096, at most the model's)
-              --adapter DIR      merge a LoRA adapter into the weights as they are read
+              --adapter DIR      merge a LoRA adapter into the weights as they are read; one tuned on images
+                                 (idrak tune) brings its trained projector and image preparation too
               --schema FILE      ask for JSON matching this JSON schema and check the answer (exit 1 when it is not)
               --mcp SERVER       let the model call an MCP server's tools (an http(s) URL or a command; repeatable)
         """ + "\n" + GenerationSettings.Help + """
@@ -133,6 +134,10 @@ internal sealed class RunCommand : Command
             json["images"] = new JsonArray([.. context.Options("--image").Select(p => (JsonNode)p)]);
             json["grayscale"] = loaded.Choice.Grayscale;
             json["image_transforms"] = loaded.Choice.Transforms.ToString();
+            if (loaded.Choice.VisionOptions is { Count: > 0 } visionOptions)
+            {
+                json["vision_options"] = visionOptions.ToJson();
+            }
         }
 
         if (answer.Message.Thinking is { } thinking)
