@@ -118,6 +118,19 @@ public static class Conformance
         Check(method ?? RopeScalings.Get(type), new RopeScalingSuite(type), options);
 
     /// <summary>
+    /// Checks a vision family's encoder (<see cref="VisionEncoderSuite"/>) on images of many sizes and channels: the same
+    /// features every time, as many tokens as its layout says (width, grid, position ids), an image the same alone and in a
+    /// batch, and, given <paramref name="cpu"/> (the same family's encoder on the CPU), the same features on the encoder's
+    /// device within <paramref name="tolerance"/>. Six random cases unless <paramref name="options"/> says otherwise.
+    /// </summary>
+    public static ConformanceReport CheckVisionEncoder(IVisionEncoder encoder, IVisionEncoder? cpu = null, IReadOnlyList<Data.ImageData>? samples = null,
+        float tolerance = 1e-4f, ContractCheckOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(encoder);
+        return Check(encoder, new VisionEncoderSuite(cpu, samples, tolerance) { On = encoder.Device }, options ?? new ContractCheckOptions { RandomCases = 6 });
+    }
+
+    /// <summary>
     /// Checks the kind of message part registered as <paramref name="name"/> (or <paramref name="kind"/>, when given): it
     /// reads parts of its kind, writes JSON that reads back to an equal part, the same every time, and agrees with the
     /// library's kind of that name when there is one (<see cref="ChatPartKindSuite"/>). A kind of your own needs

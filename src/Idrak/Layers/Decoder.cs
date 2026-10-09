@@ -289,7 +289,7 @@ public sealed class CausalSelfAttention : Module, ICachedModule
             throw new NotSupportedException("Packed sequences need the windowed attention kernels (IDRAK_WINDOW_KERNELS is off); this layer has a sliding window or soft-capped scores (pad the batches instead).");
         }
 
-        if (packing is null && ImageBlocks.Current is { } images && images.Matches(n, t))
+        if (packing is null && ImageBlocks.Current is { } images && images.AttendsFor(n, t))
         {
             // A prompt with images (ImagePrefill): each row's range of keys, image blocks seen whole.
             var (iq, ik, iv) = Project(input, Positions(t));
@@ -362,7 +362,7 @@ public sealed class CausalSelfAttention : Module, ICachedModule
         int n = input.Shape[0], t = input.Shape[1];
         var positions = context.Positions ?? throw new InvalidOperationException("Call DecodingContext.BeginStep first.");
         var cache = context.CacheFor(this, n * KvHeads, HeadDim);
-        if (ImageBlocks.Current is { } images && images.Matches(n, t))
+        if (ImageBlocks.Current is { } images && images.AttendsFor(n, t))
         {
             return MergeHeads(AttendImages(input, context, cache, images), n, t);
         }

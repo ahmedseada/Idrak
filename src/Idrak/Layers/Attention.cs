@@ -230,6 +230,7 @@ public sealed class TransformerEncoderLayer : Module, ICachedModule
     private readonly Linear _feedForward1;
     private readonly Linear _feedForward2;
     private readonly Dropout? _dropout;
+    private readonly Module? _activation;
 
     /// <summary>Creates the block.</summary>
     /// <param name="dim">Model width.</param>
@@ -250,8 +251,9 @@ public sealed class TransformerEncoderLayer : Module, ICachedModule
         Dim = dim;
     }
 
-    private TransformerEncoderLayer(LayerNorm norm1, MultiHeadAttention attention, LayerNorm norm2, Linear feedForward1, Linear feedForward2)
+    private TransformerEncoderLayer(LayerNorm norm1, MultiHeadAttention attention, LayerNorm norm2, Linear feedForward1, Linear feedForward2, Module? activation)
     {
+        _activation = activation;
         _norm1 = norm1;
         _attention = attention;
         _norm2 = norm2;
@@ -266,7 +268,21 @@ public sealed class TransformerEncoderLayer : Module, ICachedModule
     /// <paramref name="feedForward1"/> [dim, ffDim] and <paramref name="feedForward2"/> [ffDim, dim]. SigLIP's encoder
     /// layers are exactly this.
     /// </summary>
-    public static TransformerEncoderLayer FromLayers(LayerNorm norm1, MultiHeadAttention attention, LayerNorm norm2, Linear feedForward1, Linear feedForward2)
+    public static TransformerEncoderLayer FromLayers(LayerNorm norm1, MultiHeadAttention attention, LayerNorm norm2, Linear feedForward1, Linear feedForward2) =>
+        Create(norm1, attention, norm2, feedForward1, feedForward2, null);
+
+    /// <summary>
+    /// A block around existing layers, as <see cref="FromLayers(LayerNorm, MultiHeadAttention, LayerNorm, Linear, Linear)"/>, with
+    /// the feed-forward's activation <paramref name="activation"/> (for example <see cref="QuickGELU"/>, CLIP's, or
+    /// <see cref="ExactGELU"/>) between <paramref name="feedForward1"/> and <paramref name="feedForward2"/>.
+    /// </summary>
+    public static TransformerEncoderLayer FromLayers(LayerNorm norm1, MultiHeadAttention attention, LayerNorm norm2, Linear feedForward1, Linear feedForward2, Module activation)
+    {
+        ArgumentNullException.ThrowIfNull(activation);
+        return Create(norm1, attention, norm2, feedForward1, feedForward2, activation);
+    }
+
+    private static TransformerEncoderLayer Create(LayerNorm norm1, MultiHeadAttention attention, LayerNorm norm2, Linear feedForward1, Linear feedForward2, Module? activation)
     {
         ArgumentNullException.ThrowIfNull(norm1);
         ArgumentNullException.ThrowIfNull(attention);
@@ -281,7 +297,7 @@ public sealed class TransformerEncoderLayer : Module, ICachedModule
                 + $"feed-forward [{feedForward1.InFeatures}, {feedForward1.OutFeatures}] and [{feedForward2.InFeatures}, {feedForward2.OutFeatures}].");
         }
 
-        return new TransformerEncoderLayer(norm1, attention, norm2, feedForward1, feedForward2);
+        return new TransformerEncoderLayer(norm1, attention, norm2, feedForward1, feedForward2, activation);
     }
 
     /// <summary>Model width.</summary>
@@ -303,16 +319,17 @@ public sealed class TransformerEncoderLayer : Module, ICachedModule
         return x + _feedForward2.Forward(FeedForwardHidden(_norm2.Forward(x)));
     }
 
-    /// <summary>GELU(x·W1 + b1); fused into one kernel (plus the product) during inference.</summary>
+    /// <summary>GELU(x·W1 + b1) (fused into one kernel, plus the product, during inference), or the block's own activation.</summary>
     private Tensor FeedForwardHidden(Tensor x) =>
-        !Autograd.IsEnabled && _feedForward1.Bias is { } bias
+        _activation is not null ? _activation.Forward(_feedForward1.Forward(x))
+        : !Autograd.IsEnabled && _feedForward1.Bias is { } bias
             ? _feedForward1.ProjectWithoutBias(x).BiasGelu(bias)
             : _feedForward1.Forward(x).Gelu();
 
     /// <inheritdoc />
     public override IEnumerable<Module> Children() =>
         _dropout is null
-            ? [_norm1, _attention, _norm2, _feedForward1, _feedForward2]
+            ? _activation is null ? [_norm1, _attention, _norm2, _feedForward1, _feedForward2] : [_norm1, _attention, _norm2, _feedForward1, _activation, _feedForward2]
             : [_norm1, _attention, _norm2, _feedForward1, _feedForward2, _dropout];
 
     /// <inheritdoc />

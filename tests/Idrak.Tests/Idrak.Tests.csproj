@@ -27,6 +27,8 @@
     <ProjectReference Include="..\..\src\Idrak.Cli\Idrak.Cli.csproj" />
     <ProjectReference Include="..\..\src\Idrak.Abstraction.Testing\Idrak.Abstraction.Testing.csproj" />
     <ProjectReference Include="..\Idrak.PluginTests\Idrak.PluginTests.csproj" />
+    <!-- The vision families, registrations from outside the library (plan 11, "Vision contracts"). -->
+    <ProjectReference Include="..\..\samples\Gemma3Vision\Idrak.Gemma3Vision\Idrak.Gemma3Vision.csproj" />
   </ItemGroup>
 
 </Project>

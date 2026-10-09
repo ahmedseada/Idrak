@@ -36,6 +36,7 @@ public static class Idrak.Abstraction.Testing.Conformance
   public static Idrak.Abstraction.Testing.ConformanceReport Check<TKernel>(Idrak.Abstraction.Operations.PluginOperation<TKernel> operation, Idrak.Abstraction.Device device, System.Func<Idrak.Abstraction.Devices.Backend, TKernel, int, float[]> run, int cases = 8, float tolerance = 1E-05f) where TKernel : System.Delegate
   public static Idrak.Abstraction.Testing.ConformanceReport CheckChatPartKind(string name, Idrak.Abstraction.Generation.IChatPartKind? kind = null, System.Collections.Generic.IReadOnlyList<System.Text.Json.Nodes.JsonObject>? samples = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckRopeScaling(string type, Idrak.Abstraction.Generation.RopeScalingMethod? method = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
+  public static Idrak.Abstraction.Testing.ConformanceReport CheckVisionEncoder(Idrak.Abstraction.Generation.IVisionEncoder encoder, Idrak.Abstraction.Generation.IVisionEncoder? cpu = null, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ImageData>? samples = null, float tolerance = 0.0001f, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
 
 public sealed class Idrak.Abstraction.Testing.ConformanceException : System.Exception
   public ConformanceException(string message)
@@ -229,3 +230,12 @@ public sealed class Idrak.Abstraction.Testing.TokenizerSuite : Idrak.Abstraction
   public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
   public override string Name { get; }
   public override void Run(Idrak.Abstraction.Generation.ITokenizer implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
+
+public sealed class Idrak.Abstraction.Testing.VisionEncoderSuite : Idrak.Abstraction.Testing.ContractSuite<Idrak.Abstraction.Generation.IVisionEncoder>
+  public Idrak.Abstraction.Device On { get; init; }
+  public VisionEncoderSuite(Idrak.Abstraction.Generation.IVisionEncoder? cpu = null, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ImageData>? samples = null, float tolerance = 0.0001f)
+  public override Idrak.Abstraction.Device Device { get; }
+  public override Idrak.Abstraction.Testing.ContractCase RandomCase(System.Random random, bool large)
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
+  public override string Name { get; }
+  public override void Run(Idrak.Abstraction.Generation.IVisionEncoder implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)

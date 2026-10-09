@@ -81,6 +81,49 @@ public sealed class GELU : Module
 }
 
 /// <summary>
+/// GELU without the tanh approximation: 0.5 · x · (1 + erf(x / √2)), PyTorch's <c>gelu</c> (transformers' "gelu").
+/// erf is computed from the library's element-wise operations (Abramowitz and Stegun 7.1.26: within 1.5e-7 of erf), so it
+/// runs and is differentiated on every device without a kernel of its own; <see cref="GELU"/> (the tanh form) is the
+/// fused one.
+/// </summary>
+public sealed class ExactGELU : Module
+{
+    /// <inheritdoc />
+    protected override Tensor ForwardCore(Tensor input) => Apply(input);
+
+    /// <summary>0.5 · x · (1 + erf(x / √2)) of <paramref name="x"/>.</summary>
+    public static Tensor Apply(Tensor x)
+    {
+        ArgumentNullException.ThrowIfNull(x);
+        return x * (Erf(x * (1f / MathF.Sqrt(2f))) * 0.5f + 0.5f);
+    }
+
+    /// <summary>The error function of <paramref name="x"/>, element-wise, within 1.5e-7 (Abramowitz and Stegun 7.1.26).</summary>
+    public static Tensor Erf(Tensor x)
+    {
+        ArgumentNullException.ThrowIfNull(x);
+        const float p = 0.3275911f, a1 = 0.254829592f, a2 = -0.284496736f, a3 = 1.421413741f, a4 = -1.453152027f, a5 = 1.061405429f;
+        var a = x.Abs();
+        var t = (a * p + 1f).Pow(-1f);
+        var poly = ((((t * a5 + a4) * t + a3) * t + a2) * t + a1) * t;
+        return x.Sign() * (1f - poly * (a.Square() * -1f).Exp());
+    }
+
+    /// <inheritdoc />
+    public override string ToString() => "ExactGELU";
+}
+
+/// <summary>Quick GELU, x · sigmoid(1.702 · x): the activation of OpenAI's CLIP (transformers' "quick_gelu").</summary>
+public sealed class QuickGELU : Module
+{
+    /// <inheritdoc />
+    protected override Tensor ForwardCore(Tensor input) => input * (input * 1.702f).Sigmoid();
+
+    /// <inheritdoc />
+    public override string ToString() => "QuickGELU";
+}
+
+/// <summary>
 /// Softmax over the last dimension, turning scores into probabilities. Use it for inference output only:
 /// train with raw scores and <see cref="Losses.CrossEntropy(Tensor, Tensor)"/>, which applies log-softmax itself.
 /// </summary>

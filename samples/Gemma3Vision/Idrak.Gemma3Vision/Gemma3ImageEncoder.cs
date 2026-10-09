@@ -3,40 +3,88 @@
 
 using Idrak.Data;
 using Idrak.Data.Abstractions;
-using Idrak.Layers;
 
-namespace Idrak.Models;
+namespace Idrak.Gemma3Vision;
 
 /// <summary>
-/// The image side of a vision-language model (Gemma 3): images become the embeddings of their soft tokens,
-/// [images, <see cref="ImageTokenIds.TokensPerImage"/>, text width], which replace the <c>&lt;image_soft_token&gt;</c>
-/// rows of the prompt's embeddings. Pixel values go through <see cref="Encoder"/> (SigLIP) and <see cref="Projector"/>;
-/// files, encoded bytes and chat images are first decoded (<see cref="ImageCodecs"/>) and preprocessed
-/// (<see cref="Preprocessor"/>, the model's <c>preprocessor_config.json</c>). Made by
-/// <see cref="PretrainedVision.CreateEncoder"/>; as a module, its forward pass takes pixel values [images, channels,
-/// size, size]. Every <c>Encode</c> runs without recording gradients and returns a tensor the caller disposes.
+/// Gemma 3's image side: images become the embeddings of their soft tokens, [images, <see cref="Gemma3ImageTokens.TokensPerImage"/>,
+/// text width], which replace the <c>&lt;image_soft_token&gt;</c> rows of the prompt's embeddings. Pixel values go
+/// through <see cref="Encoder"/> (SigLIP) and <see cref="Projector"/>; files, encoded bytes and chat images are first
+/// decoded (<see cref="ImageCodecs"/>) and preprocessed (<see cref="Preprocessor"/>, the model's
+/// <c>preprocessor_config.json</c>). As Idrak's <see cref="IVisionEncoder"/>, every image takes the same layout: a square
+/// grid of <see cref="Gemma3ImageTokens.TokensPerImage"/> tokens. Made by <see cref="Gemma3Vision.CreateEncoder(Device?, ImagePreprocessor?)"/>;
+/// as a module, its forward pass takes pixel values [images, channels, size, size]. Every <c>Encode</c> runs without
+/// recording gradients and returns tensors the caller disposes.
 /// </summary>
-public sealed class ImageEncoder : Module
+public sealed class Gemma3ImageEncoder : Module, IVisionEncoder, IVisionEncoderStages
 {
-    internal ImageEncoder(PretrainedVision vision, SiglipVisionEncoder encoder, ImageProjector projector, ImagePreprocessor preprocessor)
+    private readonly ImageTokenLayout _layout;
+
+    internal Gemma3ImageEncoder(Gemma3Vision vision, SiglipVisionEncoder encoder, Gemma3Projector projector, ImagePreprocessor preprocessor)
     {
         Vision = vision;
         Encoder = encoder;
         Projector = projector;
         Preprocessor = preprocessor;
+        int side = (int)Math.Round(Math.Sqrt(vision.ImageTokens.TokensPerImage));
+        _layout = new ImageTokenLayout(vision.ImageTokens.TokensPerImage) { Grid = [side, side] };
     }
 
     /// <summary>The vision part this encoder was built from (its configuration and image token ids).</summary>
-    public PretrainedVision Vision { get; }
+    public Gemma3Vision Vision { get; }
 
     /// <summary>The SigLIP encoder: pixel values to patch outputs [images, patches, vision width].</summary>
     public SiglipVisionEncoder Encoder { get; }
 
     /// <summary>The projector: patch outputs to soft-token embeddings [images, tokens per image, text width].</summary>
-    public ImageProjector Projector { get; }
+    public Gemma3Projector Projector { get; }
 
     /// <summary>How images become pixel values (resize, rescale, normalize, optionally grayscale).</summary>
     public ImagePreprocessor Preprocessor { get; }
+
+    /// <inheritdoc />
+    public int Width => Vision.TextDim;
+
+    /// <inheritdoc />
+    public Device Device => WeightsDevice ?? Device.Default;
+
+    /// <inheritdoc />
+    public ImageTokenLayout Layout(ImageData image) => _layout;
+
+    /// <inheritdoc />
+    IReadOnlyList<ImageFeatures> IVisionEncoder.Encode(IReadOnlyList<ImageData> images)
+    {
+        using var batch = Encode(images);
+        var result = new List<ImageFeatures>(images.Count);
+        try
+        {
+            for (int i = 0; i < images.Count; i++)
+            {
+                result.Add(new ImageFeatures(batch.Narrow(0, i, 1).Reshape(_layout.Tokens, Width), _layout));
+            }
+        }
+        catch
+        {
+            result.ForEach(f => f.Dispose());
+            throw;
+        }
+
+        return result;
+    }
+
+    /// <inheritdoc />
+    public Tensor PixelValues(ImageData image) => Preprocessor.Process(image, Device.Cpu);
+
+    /// <inheritdoc />
+    public Tensor Tower(Tensor pixelValues)
+    {
+        using var noGrad = Autograd.NoGrad();
+        using var moved = OnDevice(pixelValues);
+        return Encoder.Forward(moved ?? pixelValues);
+    }
+
+    /// <inheritdoc />
+    public Tensor Features(Tensor pixelValues) => Encode(pixelValues);
 
     /// <summary>
     /// The soft-token embeddings of pixel values [images, channels, size, size] or of one image [channels, size, size]
@@ -45,14 +93,8 @@ public sealed class ImageEncoder : Module
     public Tensor Encode(Tensor pixelValues)
     {
         ArgumentNullException.ThrowIfNull(pixelValues);
-        var device = WeightsDevice ?? pixelValues.Device;
-        if (pixelValues.Device != device)
-        {
-            using var moved = Tensor.From(pixelValues.ToArray(), pixelValues.Shape, device);
-            return Predict(moved);
-        }
-
-        return Predict(pixelValues);
+        using var moved = OnDevice(pixelValues);
+        return Predict(moved ?? pixelValues);
     }
 
     /// <summary>The soft-token embeddings of decoded images, [images.Count, tokens per image, text width].</summary>
@@ -113,5 +155,12 @@ public sealed class ImageEncoder : Module
     }
 
     /// <inheritdoc />
-    public override string ToString() => $"ImageEncoder({Encoder}, {Projector})";
+    public override string ToString() => $"Gemma3ImageEncoder({Encoder}, {Projector})";
+
+    // The pixel values on the encoder's device: a copy when they are elsewhere, else null (use them as they are).
+    private Tensor? OnDevice(Tensor pixelValues)
+    {
+        var device = WeightsDevice ?? pixelValues.Device;
+        return pixelValues.Device == device ? null : Tensor.From(pixelValues.ToArray(), pixelValues.Shape, device);
+    }
 }

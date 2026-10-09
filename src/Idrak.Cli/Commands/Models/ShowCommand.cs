@@ -4,6 +4,7 @@
 using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
 using Idrak.Models;
+using Idrak.Models.Abstractions;
 
 namespace Idrak.Cli.Commands;
 
@@ -63,22 +64,23 @@ internal sealed class ShowCommand : Command
             fields.Add(("Windows", info.Windows));
         }
 
-        // A vision-language model's image side (vision_config), described without loading it.
-        VisionEncoderConfig? vision = null;
-        int perImage = 0;
+        // A vision-language model's image side (vision_config), described without loading it: the keys most vision
+        // configs share, as written (no family's defaults), and whether a vision family is registered for it (-P PLUGIN).
+        JsonObject? vision = null;
         if (info.Config["vision_config"] is JsonObject visionConfig)
         {
-            try
+            string? architecture = info.Config["architectures"] is JsonArray { Count: > 0 } names ? (string?)names[0] : null;
+            bool registered = architecture is not null && VisionFamilies.Find(architecture) is not null;
+            vision = new JsonObject
             {
-                vision = VisionEncoderConfig.FromJson(visionConfig);
-                perImage = (int?)info.Config["mm_tokens_per_image"] ?? vision.Patches;
-                fields.Add(("Vision", $"{(string?)visionConfig["model_type"] ?? "vision encoder"}: {vision.Layers} layers · width {vision.Dim} · {vision.Heads} heads · "
-                    + $"{vision.ImageSize} px images in {vision.PatchSize} px patches ({vision.Patches:N0}) → {perImage:N0} tokens per image"));
-            }
-            catch (InvalidDataException e)
-            {
-                fields.Add(("Vision", $"vision_config not readable: {e.Message}"));
-            }
+                ["modelType"] = (string?)visionConfig["model_type"], ["family"] = architecture, ["registered"] = registered,
+                ["layers"] = (int?)visionConfig["num_hidden_layers"], ["width"] = (int?)visionConfig["hidden_size"], ["heads"] = (int?)visionConfig["num_attention_heads"],
+                ["imageSize"] = (int?)visionConfig["image_size"], ["patchSize"] = (int?)visionConfig["patch_size"],
+            };
+            string Part(string key, string label) => vision[key] is { } value ? $" · {label} {value}" : "";
+            fields.Add(("Vision", $"{(string?)visionConfig["model_type"] ?? "vision encoder"}{Part("layers", "layers")}{Part("width", "width")}{Part("heads", "heads")}"
+                + $"{Part("imageSize", "image px")}{Part("patchSize", "patch px")} · "
+                + (registered ? $"vision family {architecture} registered" : $"vision family '{architecture}' not registered (load its plug-in with -P)")));
         }
 
         fields.Add(("Weights", $"{info.Format} · {Units.Bytes(info.WeightBytes)}"));
@@ -107,11 +109,7 @@ internal sealed class ShowCommand : Command
             ["spec"] = info.Spec?.ToJson(),
             ["rope"] = info.Rope,
             ["windows"] = info.Windows,
-            ["vision"] = vision is null ? null : new JsonObject
-            {
-                ["layers"] = vision.Layers, ["width"] = vision.Dim, ["heads"] = vision.Heads, ["imageSize"] = vision.ImageSize,
-                ["patchSize"] = vision.PatchSize, ["tokensPerImage"] = perImage,
-            },
+            ["vision"] = vision,
             ["format"] = info.Format,
             ["weightBytes"] = info.WeightBytes,
             ["chatTemplate"] = info.Template is not null,

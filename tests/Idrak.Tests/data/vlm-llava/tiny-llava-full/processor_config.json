@@ -1,0 +1,35 @@
+{
+ "image_processor": {
+  "crop_size": {
+   "height": 28,
+   "width": 28
+  },
+  "do_center_crop": true,
+  "do_convert_rgb": true,
+  "do_normalize": true,
+  "do_pad": false,
+  "do_rescale": true,
+  "do_resize": true,
+  "image_mean": [
+   0.48145466,
+   0.4578275,
+   0.40821073
+  ],
+  "image_processor_type": "LlavaImageProcessor",
+  "image_std": [
+   0.26862954,
+   0.26130258,
+   0.27577711
+  ],
+  "resample": 3,
+  "rescale_factor": 0.00392156862745098,
+  "size": {
+   "shortest_edge": 28
+  }
+ },
+ "image_token": "<image>",
+ "num_additional_image_tokens": 1,
+ "patch_size": 7,
+ "processor_class": "LlavaProcessor",
+ "vision_feature_select_strategy": "full"
+}

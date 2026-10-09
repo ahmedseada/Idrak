@@ -3,6 +3,7 @@
 
 using System.Text.Json.Nodes;
 using Idrak;
+using Idrak.Gemma3Vision;
 using Idrak.Layers;
 using Idrak.Models;
 
@@ -42,6 +43,7 @@ internal static partial class Tests
 
     private static void ImagePrefillMatchesReference(Device device)
     {
+        RegisterGemma3Vision();
         var (ids, featureValues) = ImagePromptReference();
         float[] expected = ReadNpyFloat32(TestData("vlm/reference/prompt-image-logits.npy"));
         float[] expectedSteps = ReadNpyFloat32(TestData("vlm/reference/prompt-image-generate-logits.npy"));
@@ -54,20 +56,21 @@ internal static partial class Tests
         {
             using var model = PretrainedModel.Load(TestData($"vlm/{folder}"), new PretrainedOptions { Device = device });
             var decoder = model.Network;
-            var tokens = model.Vision!.ImageTokens;
+            var tokens = ((Gemma3Vision)model.Vision!).ImageTokens;
+            var rule = model.Vision!.Attention;
             using var features = Tensor.From(featureValues, [1, 4, 24], device);
             var images = ImagePrefill.Locate(ids, tokens.ImageToken, [features]);
             Check(images is [{ Position: 14, Tokens: 4, Sequence: 0 }], $"{folder}: the image's tokens at {string.Join(", ", images.Select(i => i.Position))}");
             using var input = Ids(ids, device);
 
             // One pass without the cache.
-            var whole = decoder.Forward(input, images).ToArray();
+            var whole = decoder.Forward(input, images, rule).ToArray();
             float wholeDifference = MaxDifference(expected, whole);
             AssertClose(expected, whole, 2e-5f, $"{folder}: prompt logits without the cache");
 
             // The cached prefill, then 20 greedy steps over the cache.
             using var context = new DecodingContext(device, batch: 1, capacity: 64);
-            var prefill = decoder.ForwardCached(input, images, context).ToArray();
+            var prefill = decoder.ForwardCached(input, images, rule, context).ToArray();
             float prefillDifference = MaxDifference(expected, prefill);
             AssertClose(expected, prefill, 2e-5f, $"{folder}: prompt logits of the cached prefill");
             var generated = new List<int>();
@@ -88,13 +91,13 @@ internal static partial class Tests
 
             // One pass without the cache over the prompt and the generated tokens: the same logits.
             using var full = Ids([.. ids, .. generated[..^1]], device);
-            var fullLogits = decoder.Forward(full, images).ToArray();
+            var fullLogits = decoder.Forward(full, images, rule).ToArray();
             AssertClose(expectedSteps, fullLogits[((ids.Length - 1) * vocabulary)..], 2e-5f, $"{folder}: one pass over prompt and answer");
 
             // Without the image-block mask (each image token a block of its own: causal), the logits change from the first
             // image token on, by what transformers measured without token_type_ids, and not before.
             var causal = Enumerable.Range(0, 4).Select(i => new PromptImage(14 + i, features.Reshape(4, 24).Narrow(0, i, 1))).ToList();
-            var unmasked = decoder.Forward(input, causal).ToArray();
+            var unmasked = decoder.Forward(input, causal, rule).ToArray();
             float before = MaxDifference(expected[..(14 * vocabulary)], unmasked[..(14 * vocabulary)]);
             float after = MaxDifference(expected[(14 * vocabulary)..(15 * vocabulary)], unmasked[(14 * vocabulary)..(15 * vocabulary)]);
             float change = MaxDifference(expected, unmasked);
@@ -106,12 +109,14 @@ internal static partial class Tests
 
     private static void ImagePrefillConsistency(Device device)
     {
+        RegisterGemma3Vision();
         var (ids, featureValues) = ImagePromptReference();
         const int vocabulary = 366;
         using var noGrad = Autograd.NoGrad();
         using var model = PretrainedModel.Load(TestData("vlm/tiny-gemma3"), new PretrainedOptions { Device = device });
         var decoder = model.Network;
-        int imageToken = model.Vision!.ImageTokens.ImageToken;
+        int imageToken = ((Gemma3Vision)model.Vision!).ImageTokens.ImageToken;
+        var rule = model.Vision!.Attention;
         using var first = Tensor.From(featureValues, [1, 4, 24], device);
         using var second = first * -0.5f;
 
@@ -121,42 +126,42 @@ internal static partial class Tests
         var images = ImagePrefill.Locate(two, imageToken, [first, second]);
         Check(images.Select(i => i.Position).SequenceEqual([14, 23]), $"two images at {string.Join(", ", images.Select(i => i.Position))}");
         using var input = Ids(two, device);
-        var whole = decoder.Forward(input, images).ToArray();
+        var whole = decoder.Forward(input, images, rule).ToArray();
 
         // Cached, in one step and continued after a cached prefix (the second image in the second step).
         using (var context = new DecodingContext(device, 1, 64))
         {
-            AssertClose(whole, decoder.ForwardCached(input, images, context).ToArray(), 2e-5f, "two images: cached prefill against one pass");
+            AssertClose(whole, decoder.ForwardCached(input, images, rule, context).ToArray(), 2e-5f, "two images: cached prefill against one pass");
         }
 
         using (var context = new DecodingContext(device, 1, 64))
         {
             using var head = Ids(two[..20], device);
             using var tail = Ids(two[20..], device);
-            var a = decoder.ForwardCached(head, [images[0]], context).ToArray();
-            var b = decoder.ForwardCached(tail, [images[1] with { Position = 3 }], context).ToArray();
+            var a = decoder.ForwardCached(head, [images[0]], rule, context).ToArray();
+            var b = decoder.ForwardCached(tail, [images[1] with { Position = 3 }], rule, context).ToArray();
             AssertClose(whole, [.. a, .. b], 2e-5f, "two images: a prefill continuing a cached prefix");
         }
 
         // The first image's rows do not depend on what follows (rows before the second image equal the one-image prompt's).
         using (var single = Ids(ids, device))
         {
-            var one = decoder.Forward(single, ImagePrefill.Locate(ids, imageToken, [first])).ToArray();
+            var one = decoder.Forward(single, ImagePrefill.Locate(ids, imageToken, [first]), rule).ToArray();
             AssertClose(one[..(20 * vocabulary)], whole[..(20 * vocabulary)], 2e-5f, "two images: the prefix as with one image");
-            var same = decoder.Forward(input, ImagePrefill.Locate(two, imageToken, [first, first])).ToArray();
+            var same = decoder.Forward(input, ImagePrefill.Locate(two, imageToken, [first, first]), rule).ToArray();
             AssertClose(same[..(23 * vocabulary)], whole[..(23 * vocabulary)], 2e-5f, "two images: rows before the second image do not read it");
             Check(MaxDifference(same[(23 * vocabulary)..], whole[(23 * vocabulary)..]) > 1e-3f, "two images: the second image's features reach what follows");
         }
 
         // A batch: the same prompt with the images swapped in its second row.
         var swapped = ImagePrefill.Locate(two, imageToken, [second, first], sequence: 1);
-        var alone = decoder.Forward(input, ImagePrefill.Locate(two, imageToken, [second, first])).ToArray();
+        var alone = decoder.Forward(input, ImagePrefill.Locate(two, imageToken, [second, first]), rule).ToArray();
         using (var batch = Ids([.. two, .. two], device, rows: 2))
         {
-            var both = decoder.Forward(batch, [.. images, .. swapped]).ToArray();
+            var both = decoder.Forward(batch, [.. images, .. swapped], rule).ToArray();
             AssertClose([.. whole, .. alone], both, 2e-5f, "a batch of two prompts without the cache");
             using var context = new DecodingContext(device, 2, 64);
-            AssertClose([.. whole, .. alone], decoder.ForwardCached(batch, [.. images, .. swapped], context).ToArray(), 2e-5f, "a batch of two prompts, cached");
+            AssertClose([.. whole, .. alone], decoder.ForwardCached(batch, [.. images, .. swapped], rule, context).ToArray(), 2e-5f, "a batch of two prompts, cached");
         }
 
         // Rows of different lengths: the one-image prompt left-padded beside the two-image one.
@@ -165,9 +170,9 @@ internal static partial class Tests
         using (var context = new DecodingContext(device, 2, 64))
         {
             int pad = two.Length - ids.Length;
-            var one = decoder.Forward(single, ImagePrefill.Locate(ids, imageToken, [first])).ToArray();
+            var one = decoder.Forward(single, ImagePrefill.Locate(ids, imageToken, [first]), rule).ToArray();
             context.SetRowStarts([0, pad]);
-            var rows = decoder.ForwardCached(padded, [.. images, new PromptImage(14 + pad, first) { Sequence = 1 }], context).ToArray();
+            var rows = decoder.ForwardCached(padded, [.. images, new PromptImage(14 + pad, first) { Sequence = 1 }], rule, context).ToArray();
             AssertClose(whole, rows[..whole.Length], 2e-5f, "rows of different lengths: the full row");
             AssertClose(one, rows[(whole.Length + pad * vocabulary)..], 2e-5f, "rows of different lengths: the padded row");
         }
@@ -184,12 +189,17 @@ internal static partial class Tests
         foreach (var format in new[] { KeyValueFormat.Float32, KeyValueFormat.BFloat16, KeyValueFormat.Int8 })
         {
             using var context = new DecodingContext(device, 1, 64, format);
-            float difference = MaxDifference(whole, decoder.ForwardCached(input, images, context).ToArray());
+            float difference = MaxDifference(whole, decoder.ForwardCached(input, images, rule, context).ToArray());
             using var textContext = new DecodingContext(device, 1, 64, format);
             var plain = decoder.ForwardCached(textInput, textContext).ToArray();
             float textDifference = MaxDifference(textExact, plain);
             using var spansContext = new DecodingContext(device, 1, 64, format);
-            var spans = decoder.ForwardCached(textInput, asImage, spansContext).ToArray();
+            var spans = decoder.ForwardCached(textInput, asImage, rule, spansContext).ToArray();
+
+            // The library's causal rule (LLaVA's): the embeddings substituted, the decoder's own causal kernels.
+            using var causalContext = new DecodingContext(device, 1, 64, format);
+            AssertClose(plain, decoder.ForwardCached(textInput, asImage, ImageAttentionRules.Get(ImageAttentionRules.Causal), causalContext).ToArray(), 2e-5f,
+                $"{format} cache: the causal rule's image path against the plain prefill");
             Console.WriteLine($"    {format} cache on {device}: {difference:G3} from float32 with images, {textDifference:G3} for the text prompt, "
                 + $"image path against plain prefill {MaxDifference(plain, spans):G3}");
             AssertClose(plain, spans, 2e-5f, $"{format} cache: the image path with a causal mask against the plain prefill");
@@ -198,7 +208,7 @@ internal static partial class Tests
         // A text-only prompt through ImagePrefill with no images is the plain prefill.
         {
             using var context = new DecodingContext(device, 1, 64);
-            AssertClose(ReadNpyFloat32(TestData("vlm/reference/prompt-text-logits.npy")), decoder.ForwardCached(textInput, [], context).ToArray(), 2e-5f, "a text prompt");
+            AssertClose(ReadNpyFloat32(TestData("vlm/reference/prompt-text-logits.npy")), decoder.ForwardCached(textInput, [], rule, context).ToArray(), 2e-5f, "a text prompt");
         }
 
         // Refused: a block past the prompt, overlapping blocks, features of the wrong width.
@@ -211,7 +221,7 @@ internal static partial class Tests
         {
             try
             {
-                decoder.Forward(input, bad).Dispose();
+                decoder.Forward(input, bad, rule).Dispose();
                 Check(false, $"an image {what} is refused");
             }
             catch (ArgumentException)

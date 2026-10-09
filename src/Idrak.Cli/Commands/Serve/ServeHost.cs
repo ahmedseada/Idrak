@@ -30,14 +30,16 @@ namespace Idrak.Cli.Commands.Serve;
 
 /// <summary>
 /// One model of a server: the name clients use, what was asked for, and what is read at startup (the template, and
-/// whether it reads images: a vision-language model whose family has an image prompt format and whose template renders
-/// images).
+/// whether it reads images: a vision-language model whose vision family is registered and whose template renders images).
 /// </summary>
 internal sealed record ServedModel(string Name, string Source, ModelChoices.ModelChoice Choice, string Path, string Folder, ChatTemplate? Template, JsonObject? Config)
 {
     /// <summary>Whether its chat takes images.</summary>
-    public bool ReadsImages => Config?["vision_config"] is JsonObject && ImagePromptFormats.Find((string?)Config["model_type"] ?? "") is not null
-        && Template?.PartKinds.Contains(ChatParts.Image) == true;
+    public bool ReadsImages => Config is not null && VisionFamilies.HasVision(Config) && Architecture(Config) is { } architecture
+        && VisionFamilies.Find(architecture) is not null && Template?.PartKinds.Contains(ChatParts.Image) == true;
+
+    /// <summary>The architecture name config.json gives (its first "architectures" entry), or null.</summary>
+    public static string? Architecture(JsonObject config) => config["architectures"] is JsonArray { Count: > 0 } names ? (string?)names[0] : null;
 }
 
 /// <summary>The server's settings from the command line.</summary>
@@ -256,6 +258,16 @@ internal sealed class ServeHost
             var template = JinjaChatTemplate.Load(folder, tokenizer);
             string configFile = System.IO.Path.Combine(folder, "config.json");
             var config = File.Exists(configFile) ? JsonNode.Parse(File.ReadAllText(configFile)) as JsonObject : null;
+            try
+            {
+                // A vision-language model is read by its own registered vision family (-P PLUGIN): none fails now, not on the first request.
+                _ = config is not null && ServedModel.Architecture(config) is { } architecture ? VisionFamilies.For(architecture, config) : null;
+            }
+            catch (NotSupportedException e)
+            {
+                throw new UsageException($"{name}: {e.Message}");
+            }
+
             models.Add(new ServedModel(name, source, choice, path, folder, template, config));
         }
 
