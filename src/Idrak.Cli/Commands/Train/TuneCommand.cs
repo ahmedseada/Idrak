@@ -5,6 +5,7 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
+using Idrak.Nlp.Abstractions;
 
 namespace Idrak.Cli.Commands.Train;
 
@@ -34,12 +35,15 @@ internal sealed class TuneCommand : Command
 
         Options:
           -b, --base MODEL     the model as an option (then every argument after the command is data)
+              --data FILE      data as an option (repeatable); with no command given, train
           -w, --weights F      base weights: int8, int4 (QLoRA) or bf16 (as --int8, --int4, --bf16)
           -k, --kv F           the KV cache format (chat, evaluate)
           -o, --out DIR        where train writes the adapter, export the merged model, evaluate the answers
           -s, --system TEXT    a system message for conversations without one
           -C, --config FILE    a tune.json (idrak tune init writes one): its keys are these options without the dashes,
-                               plus "command", "model" and "data"; options on the command line win
+                               plus "command", "model" and "data" (image_transform, feature_cache and the like may be
+                               written with underscores; "format" may name the data's format; "vision" may be an object
+                               of the family's options); options on the command line win
           and the options of each command above (Data, Training, Evaluate, Chat, Model). MODEL may be an alias from the
           config (its weights and KV format apply unless given); --json prints one JSON document at the end with the
           command's output lines.
@@ -50,10 +54,13 @@ internal sealed class TuneCommand : Command
           idrak tune train -b qwen prefs.jsonl --loss dpo -o adapters/dpo -d cuda:0
           idrak tune evaluate adapters/chat held-out.jsonl --adapter adapters/chat
           idrak tune export adapters/chat -o merged
+          idrak tune -P plugins/MyVision.dll -b owner/vlm --data train.json --eval val.json --images images.zip
+              --train-projector --metric cer --metric-every 100 -w int4 -o adapters/ocr
+          idrak tune evaluate owner/vlm val.json --images images.zip --adapter adapters/ocr --metric cer -P plugins/MyVision.dll
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } =
-        [.. TuneTool.ValueOptions.Where(o => o is not ("--device" or "--seed")), "--weights", "--base"];      // --device and --seed are common options
+        [.. TuneTool.ValueOptions.Where(o => o is not ("--device" or "--seed")), "--weights", "--base", "--data"];      // --device and --seed are common options
 
     public override IReadOnlyCollection<string> Flags => TuneTool.Flags;
 
@@ -73,6 +80,7 @@ internal sealed class TuneCommand : Command
         }
 
         command ??= Text(settings, "command")
+            ?? (context.Options("--data").Count > 0 ? "train" : null)                // idrak tune -b MODEL --data FILE ... trains
             ?? throw new UsageException($"Give a command: {string.Join(", ", TuneTool.Commands)} (or --config tune.json from idrak tune init).");
         if (!TuneTool.Commands.Contains(command))
         {
@@ -88,7 +96,7 @@ internal sealed class TuneCommand : Command
         }
 
         model ??= Text(settings, "model");
-        var data = positional.Count > 0 ? positional : List(settings, "data");
+        var data = positional.Count > 0 || context.Options("--data").Count > 0 ? [.. positional, .. context.Options("--data")] : List(settings, "data");
         if (model is null)
         {
             throw new UsageException(command == "download" ? "download needs one or more model ids." : $"{command} needs a model (MODEL or -b, --base MODEL).");
@@ -116,7 +124,7 @@ internal sealed class TuneCommand : Command
             args.AddRange(["--device", device]);
         }
 
-        foreach (string option in ValueOptions.Where(o => o is not ("--weights" or "--base")).Append("--seed"))
+        foreach (string option in ValueOptions.Where(o => o is not ("--weights" or "--base" or "--data")).Append("--seed"))
         {
             var values = option == "--kv" && choice.Kv is { } kv ? [kv] : context.Options(option);
             if (values.Count == 0 && Text(settings, option[2..]) is { } fromFile)
@@ -142,7 +150,7 @@ internal sealed class TuneCommand : Command
         var captured = context.Json ? new StringWriter() : null;
         var output = captured ?? (context.Quiet ? TextWriter.Null : context.Output);
         var console = ToolHost.Console(context, output);
-        var tool = new TuneTool(console);
+        var tool = new TuneTool(console) { Verbose = context.Verbose, FeatureFolder = Path.Combine(context.CacheFolder, "features") };
         try
         {
             if (!tool.Parse(args))
@@ -190,12 +198,38 @@ internal sealed class TuneCommand : Command
 
         var json = JsonNode.Parse(File.ReadAllText(path), documentOptions: CliConfig.ReadOptions) as JsonObject
             ?? throw new UsageException($"{path} is not a JSON object.");
+        // "format": the file's own (idrak-tune/1), or the data's (auto, messages, sharegpt: as --data-format).
         if (json["format"] is { } format && (format.GetValueKind() != JsonValueKind.String || (string?)format != Format))
         {
-            throw new UsageException($"{path}: format {format.ToJsonString()} is not a tune.json ({Format}).");
+            string? name = format.GetValueKind() == JsonValueKind.String ? (string?)format : null;
+            if (name is null || !name.Equals("auto", StringComparison.OrdinalIgnoreCase) && TuningDataFormats.Find(name) is null
+                || json.ContainsKey("data-format") || json.ContainsKey("data_format"))
+            {
+                throw new UsageException($"{path}: format {format.ToJsonString()} is not a tune.json ({Format}) nor a data format (auto, {string.Join(", ", TuningDataFormats.Names)}).");
+            }
+
+            json.Remove("format");
+            json["data-format"] = name;
         }
 
+        // Keys written with underscores (image_transform, feature_cache) are the options' names; "vision" may be an object
+        // of the family's options.
         var known = ValueOptions.Append("--seed").Concat(Flags).Select(o => o[2..]).ToHashSet(StringComparer.Ordinal);
+        foreach (string key in json.Select(p => p.Key).ToList())
+        {
+            if (!known.Contains(key) && !OwnKeys.Contains(key) && known.Contains(key.Replace('_', '-')) && !json.ContainsKey(key.Replace('_', '-')))
+            {
+                var value = json[key];
+                json.Remove(key);
+                json[key.Replace('_', '-')] = value;
+            }
+        }
+
+        if (json["vision"] is JsonObject options)
+        {
+            json["vision"] = string.Join(",", options.Select(p => $"{p.Key}={(p.Value is JsonValue v && v.TryGetValue(out string? s) ? s : p.Value?.ToJsonString())}"));
+        }
+
         foreach (var (key, _) in json)
         {
             if (!known.Contains(key) && !OwnKeys.Contains(key))
@@ -244,11 +278,15 @@ internal sealed class TuneInitCommand : Command
           -f, --force            overwrite an existing file
 
         The values are the library's defaults (rank, alpha, learning rate, lengths); the device given with -d is written
-        too. Sizing them to the data and the device's memory is what idrak suggest does, when it is available.
+        too. Sizing them to the data and the device's memory is what idrak suggest does, when it is available. With a
+        plug-in that registers a vision family (-P), the example tunes on images: train.json and val.json as LlamaFactory
+        writes them, the image settings (images, image-transform, vision, train-projector, feature-cache) and a score of
+        generated answers (metric cer), with the plug-in kept in "plugins".
 
         Examples:
           idrak tune init -b Qwen/Qwen3-0.6B --data chats.jsonl
           idrak tune init -b qwen --data prefs.jsonl --loss dpo -w int4 -o dpo.json && idrak tune --config dpo.json
+          idrak tune init -P plugins/MyVision.dll -b owner/vlm -w int4 -o ocr.json && idrak tune --config ocr.json
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } = ["--base", "--data", "--out", "--adapter-out", "--loss", "--weights"];
@@ -287,13 +325,46 @@ internal sealed class TuneInitCommand : Command
         }
 
         string model = context.Option("--base") ?? "owner/model";
-        var data = context.Options("--data").Count > 0 ? context.Options("--data") : [loss == "sft" ? "chats.jsonl" : "preferences.jsonl"];
+
+        // A plug-in given with -P that registers a vision family: the example tunes on images (LlamaFactory's ShareGPT
+        // train.json and val.json), and the plug-in is kept so idrak tune --config loads it again.
+        var plugins = context.Options("--plugin").Select(Path.GetFullPath).ToList();
+        var families = plugins.Count > 0 ? Idrak.Models.Abstractions.VisionFamilies.Names.Order(StringComparer.Ordinal).ToList() : [];
+        bool images = families.Count > 0 && loss == "sft";
+        var data = context.Options("--data").Count > 0 ? context.Options("--data") : [images ? "train.json" : loss == "sft" ? "chats.jsonl" : "preferences.jsonl"];
         string name = Path.GetFileName(Path.TrimEndingDirectorySeparator(model.Replace(':', '-'))).ToLowerInvariant();
         string adapters = context.Option("--adapter-out") ?? $"adapters/{(name.Length > 0 ? name : "model")}";
         string? device = context.Option("--device") ?? context.Config.Get("device");
         var defaults = new Idrak.Nlp.FineTuningOptions();
         string Json(string text) => JsonValue.Create(text).ToJsonString(CommandContext.JsonOutput);
         string Number(double value) => value.ToString("R", CultureInfo.InvariantCulture);
+        string evaluation = images
+            ? $$"""
+              // The evaluation data: its loss while training, and answers generated on it and scored.
+              "eval": "val.json",
+              // Images (the vision family {{string.Join(", ", families)}}, from the plug-in below): conversations as messages or
+              // ShareGPT (an "images" list and <image> placeholders); the format told from the first record, or named.
+              "plugins": [{{string.Join(", ", plugins.Select(Json))}}],
+              "data-format": "auto",
+              // Where relative image paths are found: a folder or a .zip read in place (left out: the data file's folder).
+              // "images": "images.zip",
+              // Image transforms run on every image first, as run's --image-transform (for example max_width=1024,contrast=1.5).
+              // "image-transform": "max_width=1024",
+              // The vision family's own options, KEY=VALUE separated by commas (as run's --vision-option).
+              // "vision": "KEY=VALUE",
+              // Train the projector beside the adapters (saved with them); the vision tower stays frozen.
+              "train-projector": false,
+              // Where the frozen tower's output is kept between steps and epochs: memory, or disk (under the cache folder).
+              "feature-cache": "memory",
+              // Answers generated on the evaluation data and scored: cer or wer, every N steps (0: each epoch), on the first K (0: all).
+              "metric": "cer",
+              "metric-every": 0,
+              "metric-samples": 16,
+            """
+            : """
+              // A fraction of the data held out to report the evaluation loss while training.
+              "eval-fraction": 0.02,
+            """;
         string text = $$"""
             // idrak tune settings, written by idrak tune init. Run them with: idrak tune --config {{path}}
             // Options on the command line win over these. The keys are idrak tune's options without the dashes
@@ -329,15 +400,14 @@ internal sealed class TuneInitCommand : Command
               // Sequences: the longest kept (tokens) and the tokens in a batch.
               "max-length": {{defaults.MaxLength}},
               "batch-tokens": {{defaults.BatchTokens}},
-              // A fraction of the data held out to report the evaluation loss while training.
-              "eval-fraction": 0.02,
+            {{evaluation}}
               "seed": 0
             }
 
             """;
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
         File.WriteAllText(path, text);
-        context.Write($"Wrote {path} ({(loss == "sft" ? "supervised fine-tuning" : loss)} of {model} on {string.Join(", ", data)})");
+        context.Write($"Wrote {path} ({(loss == "sft" ? "supervised fine-tuning" : loss)} of {model} on {string.Join(", ", data)}{(images ? ", with images" : "")})");
         if (model == "owner/model")
         {
             context.Write("Set \"model\" in it (or give -b MODEL next time).");
@@ -351,6 +421,7 @@ internal sealed class TuneInitCommand : Command
             ["data"] = new JsonArray([.. data.Select(d => (JsonNode)d)]),
             ["out"] = adapters,
             ["loss"] = loss,
+            ["images"] = images,
         });
         return ExitCodes.Ok;
     }

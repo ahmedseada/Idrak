@@ -1,7 +1,7 @@
 # Plan 12: fine-tuning vision-language models (images in `FineTuner` and `idrak tune`)
 
 **Status:** planned 2026-10-09, against the code at `abstraction` 4ac4fa4. Phase 0 (the reference) built 2026-10-09;
-phases 1 to 3 built 2026-10-09; phase 6 built 2026-10-09 (CPU; the graph paths written, not run on a GPU); 4 and 5 not yet.
+phases 1 to 4 built 2026-10-09; phase 6 built 2026-10-09 (CPU; the graph paths written, not run on a GPU); 5 not yet.
 
 **Goal.** Fine-tune a vision-language model on pages and their answers with LoRA (or QLoRA on an int8/int4 base),
 the way `bakrianoo/arabic-legal-documents-ocr-1.0` was trained in LlamaFactory (LoRA on the language model, the vision
@@ -214,6 +214,37 @@ same fixtures through `FineTuner.Train` (`Optimizer = ps => new Sgd(ps, 0.2f)`, 
 - `--metric cer` and `--metric-every N`: generated answers on (a sample of) the evaluation set, scored.
 - The run plan (`-v`) shows the images, blocks per image, image tokens, cache hits, and the memory the tuner measured.
 - `idrak run`, `chat` and `serve` load the adapters and the saved `TuningImages` (preprocessing) with `--adapter`.
+
+**Phase 4, as built (2026-10-09; CPU).**
+- **Nlp**: `TuningAnswerScorer` (`TuningAnswers.cs`): the conversations ending with an assistant answer, generated greedily
+  through the model's chat template and, with images, the run's `TuningVision` (its encoder, a training projector as it
+  is now, its transforms and vision options), scored by a `TuningMetrics` metric (`TuningAnswerReport`: the summed
+  `TuningScore`, each answer); its own key/value cache per request, released after each scoring, training mode put back.
+  `FineTuningOptions.Answers` scores every `Every` steps (each epoch when 0) and `FineTuningProgress.Answers` carries the
+  report (the only edit to `FineTuning.cs`: three lines in the step loop). `TuningImages.Family` (saved as `"family"` by
+  the tuner, outside equality) and `ThrowIfOtherFamily`.
+- **CLI** (`TuneTool`, `TuneCommand`): `--data` (with no command: train), `--data-format` (not `--format`: that is
+  idrak's common output option; a tune.json's `"format"` may name the data's), `--images`, `--image-transform`,
+  `--vision`/`--vision-option`, `--grayscale`, `--train-projector`/`--parts`, `--feature-cache` (disk under `--cache`),
+  `--metric cer|wer`, `--metric-every`, `--metric-samples`; the same keys in tune.json (underscores accepted). The data
+  goes through `TuningDataFormats` when an image option, `--data-format` or a text metric asks, or when the model reads
+  images and the data is local .json/.jsonl; otherwise the dataset path is unchanged. `--eval-fraction` holds out a seeded
+  part of the conversations. The plan: an images line per set (images, distinct, blocks per image, image tokens); `-v`
+  every batch (features from the cache or encoded) and, after training, the measured memory (`ModelMemory.Decoder`, the
+  encoder, trained parameters, the peak's activations, the feature cache and its hits). `tune evaluate --metric cer` on
+  image data: loss and score of the base model and the adapter, side by side, `-o` answers. `tune init -P` writes the
+  vision example. Ctrl+C saves adapters, projector and preparation.
+- **run/chat/serve**: `ModelChoices` reads the adapter's `tuning_images.json` (command line over it, it over an alias),
+  checks its family against config.json before loading and against the model after; `ImageInputs` builds the encoder with
+  `PretrainedModel.CreateVisionEncoder` (the trained projector); `run -j` reports `vision_options`.
+- **Tests** ("cli vision tuning", CPU): tune on ShareGPT with `<image>` (tiny Gemma 3 from a folder with the projector, a
+  transform and a vision option, cer before / every step / in the summary, the -v plan; from a zip, LoRA only; tiny LLaVA
+  with its projector); `run --adapter` answers as the library does with `MergeAdapter` + `CreateVisionEncoder` (the trained
+  projector changes the features), `--image-transform none` overrides; `tune evaluate --metric cer`; a Gemma 3 adapter on
+  LLaVA refused; an unregistered family stops tune before the data; image options on a text model, bad names; tune init -P;
+  a tune.json with the image keys and the disk cache.
+- **Left**: generated answers re-encode their images (the feature cache keys on image bytes, the generator reads decoded
+  pixels); chat batches refuse images, so answers are generated one by one; the GPU runs (the owner's).
 
 ### Phase 5: proof on the real model
 
