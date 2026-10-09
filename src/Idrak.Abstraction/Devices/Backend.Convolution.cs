@@ -221,11 +221,11 @@ public abstract partial class Backend
                     Permute(cols, grouped, [groups, positions, patch], [patch, groups * patch, 1], false);
                 }
 
+                // The gradient as [G, Fg, P] (each filter's positions in a row), so the product reads both operands along
+                // the sum: dweight [G, Fg, pg] += gradient [G, Fg, P] · patches [G, P, pg].
                 var rows = scratch.Take(positions * filters);
-                Permute(gradient, rows, [groups, images, outputs, perGroup], [perGroup * outputs, groups * perGroup * outputs, 1, outputs], false);
-
-                // dweight [G, Fg, pg] += rows [G, P, Fg]ᵀ · patches [G, P, pg].
-                BatchedMatMul(rows, grouped, dweight, groups, perGroup, patch, positions, true, false, 1f);
+                Permute(gradient, rows, [groups, perGroup, images, outputs], [perGroup * outputs, outputs, groups * perGroup * outputs, 1], false);
+                BatchedMatMul(rows, grouped, dweight, groups, perGroup, patch, positions, false, false, 1f);
             }
             finally
             {

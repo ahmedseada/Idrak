@@ -13,7 +13,9 @@ using Idrak.Gpu.Vulkan;
 // gradient and the weight gradient, timed through each path the device has (composed: im2col and its products; tile:
 // the implicit product on 16 x 16 tiles; blocked: on 64 x 64 tiles; depthwise), through the measured choice ("auto", the
 // one the library runs), and through the host fallback (the CPU's kernel on host copies plus the copies down and up: what
-// a device without kernels pays). Milliseconds per call, the median of five timed rounds after a warm-up.
+// a device without kernels pays). Milliseconds per call, the median of five timed rounds after a warm-up. On the CPU
+// (IDRAK_DEVICES=cpu): the operation as the CPU runs it (its kernel: the composed path, depthwise as direct loops) against
+// unfolded patches and products through tensors (Conv2d's path before the operation existed).
 internal static partial class Tests
 {
     internal static int BenchConv()
@@ -39,6 +41,12 @@ internal static partial class Tests
         (string Name, int? Path)[] paths = [("host", -1), ("composed", 0), ("tile", 1), ("blocked", 2), ("depthwise", 3), ("auto", null)];
         foreach (var device in devices)
         {
+            if (device.Type == DeviceType.Cpu)
+            {
+                BenchConvCpu(shapes);
+                continue;
+            }
+
             var backend = device.Backend;
             Console.WriteLine($"{device} ({backend.Name}): precision {MixedPrecision.Current}; milliseconds per call (forward / input gradient / weight gradient)");
             Console.WriteLine($"{"shape",-56} " + string.Join(" ", paths.Select(p => $"{p.Name,22}")));
@@ -163,6 +171,40 @@ internal static partial class Tests
             {
                 s.Release();
             }
+        }
+    }
+
+    // The CPU: forward, input and weight gradients through the operation, and the forward pass through tensors (im2col, the
+    // product per group and the permutation, as Conv2d ran before).
+    private static void BenchConvCpu((string Name, ConvGeometry G, int Filters, int Groups)[] shapes)
+    {
+        var device = Device.Cpu;
+        var backend = device.Backend;
+        Console.WriteLine($"cpu ({backend.Name}): milliseconds per call");
+        Console.WriteLine($"{"shape",-56} {"operation (fwd / dx / dw)",28} {"tensors (fwd)",14}");
+        foreach (var (name, g, filters, groups) in shapes)
+        {
+            var random = new Random(1);
+            int input = g.N * g.C * g.H * g.W, output = g.N * filters * g.OH * g.OW, weights = filters * (g.PatchSize / groups);
+            using var x = Tensor.From(RandomArray(random, input), [g.N, g.C, g.H, g.W], device);
+            using var w = Tensor.From(RandomArray(random, weights), [filters, g.PatchSize / groups], device);
+            using var dy = Tensor.From(RandomArray(random, output), [output], device);
+            using var y = Tensor.Empty([output], device);
+            using var dx = Tensor.Empty([input], device, zeroed: true);
+            using var dw = Tensor.Empty([weights], device, zeroed: true);
+            double forward = Time(device, () => backend.Convolution(x.Storage, w.Storage, null, y.Storage, g, filters, groups, ConvActivation.None));
+            double inputGradient = Time(device, () => backend.ConvolutionBackwardInput(dy.Storage, w.Storage, dx.Storage, g, filters, groups));
+            double weightGradient = Time(device, () => backend.ConvolutionBackwardWeight(x.Storage, dy.Storage, dw.Storage, g, filters, groups));
+            double tensors = Time(device, () =>
+            {
+                using var scope = new TensorScope();
+                int positions = g.OH * g.OW, patch = g.PatchSize / groups, perGroup = filters / groups;
+                var columns = x.Im2Col(g);
+                var grouped = groups == 1 ? columns : columns.Reshape(g.Positions, groups, patch).Permute(1, 0, 2);
+                var rows = groups == 1 ? columns.MatMul(w, transposeB: true) : grouped.MatMul(w.Reshape(groups, perGroup, patch), transposeB: true);
+                _ = groups == 1 ? rows.Reshape(g.N, positions, filters).Permute(0, 2, 1) : rows.Reshape(groups, g.N, positions, perGroup).Permute(1, 0, 3, 2);
+            });
+            Console.WriteLine($"{name,-56} {$"{forward:F2} / {inputGradient:F2} / {weightGradient:F2}",28} {tensors,14:F2}");
         }
     }
 }
