@@ -250,7 +250,7 @@ public sealed class ImagePreprocessor
     }
 
     // The image as 8-bit planes (values rounded from [0, 1]), turned to one grey plane as Pillow's "L" when asked.
-    private static byte[][] ToBytes(ImageData image, bool grayscale)
+    internal static byte[][] ToBytes(ImageData image, bool grayscale)
     {
         int size = image.Height * image.Width, c = image.Channels;
         var pixels = image.Pixels;
