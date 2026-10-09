@@ -730,12 +730,14 @@ public sealed class Idrak.Layers.Embedding : Idrak.Abstraction.Module
   public Embedding(int vocabulary, int dim, Idrak.Abstraction.Device? device = null, System.Random? random = null)
   public Idrak.Abstraction.Generation.BFloat16Weight? BFloat16 { get; }
   public Idrak.Abstraction.Tensor Weight { get; }
+  public Idrak.Layers.Linear? Head { get; }
   public int Dim { get; }
   public int Vocabulary { get; }
   public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> Buffers()
   public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> Parameters()
   public override string ToString()
   public static Idrak.Layers.Embedding FromBFloat16(Idrak.Abstraction.Generation.BFloat16Weight weight)
+  public static Idrak.Layers.Embedding FromHead(Idrak.Layers.Linear head)
   public static Idrak.Layers.Embedding FromWeights(Idrak.Abstraction.Tensor weight)
 
 public sealed class Idrak.Layers.ExactGELU : Idrak.Abstraction.Module
@@ -822,6 +824,7 @@ public sealed class Idrak.Layers.Linear : Idrak.Abstraction.Module, Idrak.Abstra
   public Idrak.Abstraction.Modules.LoraAdapter? Lora { get; }
   public Idrak.Abstraction.Tensor Weight { get; }
   public Idrak.Abstraction.Tensor? Bias { get; }
+  public Idrak.Layers.Embedding? SharedTable { get; }
   public Idrak.Layers.Embedding? TiedTo { get; }
   public Linear(int inFeatures, int outFeatures, bool bias = true, Idrak.Abstraction.Device? device = null, System.Random? random = null)
   public float? OutputSoftcap { get; set; }

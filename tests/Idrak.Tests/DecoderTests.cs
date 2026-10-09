@@ -20,7 +20,7 @@ internal static partial class Tests
         ("decoder: cached decoding (float32 and int8 KV) and int8 weights match the full pass; generation", DecoderCachedAndInt8),
         ("decoder: cached decoding through int8 / int4 / bfloat16 weights (fused head layout, cache writes, split attention, gate/up + activation, projection + residual + norm) matches the full pass and the CPU", DecoderCachedPacked),
         ("decoder: LoRA by layer name trains; JSON and package round trip", DecoderLoraAndPackage),
-        ("decoder: tied head shares the table; last-position prefill; bf16 embedding tables save and load", DecoderMemory),
+        ("decoder: tied head shares the table (float32, and a bfloat16 head's columns read as the embedding, bit for bit); last-position prefill; bf16 embedding tables save and load", DecoderMemory),
     ];
 
     private static void DecoderMemory(Device device)
@@ -54,11 +54,57 @@ internal static partial class Tests
             AssertClose(full[((T - 1) * V)..], last.ToArray(), 1e-4f, "last-position logits");
         }
 
-        // Frozen builds keep the table as bfloat16; a float model loads the file with a bf16 table as bf16.
+        // Frozen builds keep the table as bfloat16. Tied to a bfloat16 head, the head's [dim, vocabulary] weights are the
+        // only copy: the embedding reads their columns, the same bfloat16 values a table of its own holds, so lookups and
+        // logits equal a separate table's bit for bit; the shared model saves and loads as itself.
         using var half = spec.Build(new RandomWeights(64), new DecoderBuildOptions { Device = device, BFloat16 = true });
-        Check(half.Descendants().OfType<Embedding>().Single().BFloat16 is not null, "bf16 embedding table");
+        var halfEmbedding = half.Descendants().OfType<Embedding>().Single();
+        var halfHead = half.Descendants().OfType<Linear>().Last();
+        Check(ReferenceEquals(halfEmbedding.Head, halfHead) && ReferenceEquals(halfHead.SharedTable, halfEmbedding) && halfEmbedding.BFloat16 is null
+              && !halfEmbedding.Buffers().Any() && halfHead.BFloat16 is not null, "a tied bf16 head holds the only table");
+        long sharedBytes = half.Buffers().Sum(b => 4L * b.Size);
         var predicted = half.Predict(sequence).ToArray();
         AssertClose(full, predicted, 0.05f * full.Max(MathF.Abs), "bf16 build near float32");
+        float[] sharedLookup;
+        using (Autograd.NoGrad())
+        {
+            sharedLookup = halfEmbedding.Forward(sequence).ToArray();
+        }
+
+        string sharedPath = Path.GetTempFileName();
+        try
+        {
+            half.Save(sharedPath);
+            using var reloadedShared = spec.Build(new RandomWeights(1), new DecoderBuildOptions { Device = device, BFloat16 = true });
+            reloadedShared.Load(sharedPath);
+            Check(reloadedShared.Predict(sequence).ToArray().SequenceEqual(predicted), "the shared table saves and loads: identical predictions");
+        }
+        finally
+        {
+            File.Delete(sharedPath);
+        }
+
+        halfEmbedding.TakeOwnTable();                                               // a separate bf16 table, as before
+        Check(halfEmbedding.Head is null && halfHead.SharedTable is null && halfEmbedding.BFloat16 is not null, "the embedding takes its own table");
+        long separateBytes = half.Buffers().Sum(b => 4L * b.Size);
+        Check(separateBytes - sharedBytes == 4L * halfEmbedding.BFloat16!.Packed.Size, $"the shared table saves the table's bytes ({separateBytes} - {sharedBytes})");
+        using (Autograd.NoGrad())
+        {
+            Check(halfEmbedding.Forward(sequence).ToArray().SequenceEqual(sharedLookup), "lookups from the head's columns equal the table's, bit for bit");
+        }
+
+        Check(half.Predict(sequence).ToArray().SequenceEqual(predicted), "logits with the shared table equal a separate table's, bit for bit");
+
+        // A shared model converted to float32: the embedding takes its own copy first, so nothing changes but the products.
+        using (var converted = spec.Build(new RandomWeights(64), new DecoderBuildOptions { Device = device, BFloat16 = true }))
+        {
+            Check(converted.ToFloat32(trainable: false) > 0, "converted to float32");
+            var convertedEmbedding = converted.Descendants().OfType<Embedding>().Single();
+            Check(convertedEmbedding.Head is null && convertedEmbedding.BFloat16 is null, "float32 table of its own");
+            AssertClose(predicted, converted.Predict(sequence).ToArray(), 1e-4f * predicted.Max(MathF.Abs), "float32 conversion of the shared model");
+        }
+
+        // A float model loads the file with a bf16 table as bf16.
         string path = Path.GetTempFileName();
         try
         {

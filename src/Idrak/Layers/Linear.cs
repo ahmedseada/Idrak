@@ -76,6 +76,12 @@ public sealed partial class Linear : Module, ILinearLayer
     /// <summary>The embedding this layer reads its weights from (see <see cref="Tied"/>), else null.</summary>
     public Embedding? TiedTo => _tiedTo;
 
+    /// <summary>
+    /// The embedding that reads this layer's bfloat16 weights as its table (<see cref="Embedding.FromHead"/>), else null.
+    /// Before the weights change format the embedding is given its own copy.
+    /// </summary>
+    public Embedding? SharedTable { get; internal set; }
+
     private Embedding? _tiedTo;
 
     /// <summary>A layer around existing 4-bit weights (see <see cref="ModuleExtensions.QuantizeInt4"/>); the layer takes ownership.</summary>
@@ -385,6 +391,8 @@ public sealed partial class Linear : Module, ILinearLayer
             return;                                                        // float already, or int8 (DequantizeInt8)
         }
 
+        SharedTable?.TakeOwnTable();
+
         using (var w = _packed.Dequantize())
         {
             _weight = Tensor.Persistent(w.ToArray(), [InFeatures, OutFeatures], w.Device, trainable);
@@ -423,6 +431,7 @@ public sealed partial class Linear : Module, ILinearLayer
     // Releases the weights (a tied layer only lets go of the table) and returns their device.
     private Device ReleaseWeights()
     {
+        SharedTable?.TakeOwnTable();
         var device = Device;
         _tiedTo = null;
         _tiedTransposed?.Dispose();

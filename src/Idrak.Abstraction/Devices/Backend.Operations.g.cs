@@ -2110,6 +2110,63 @@ public abstract partial class Backend
         CpuBackend.Instance.GatherBFloat16(h[packed], h[indices], h[y], count, dim, vocabulary);
     }
 
+    /// <summary>
+    /// <see cref="Gather"/> of columns: y[i, :] = column indices[i] of a bfloat16 table [dim, vocabulary] packed as in
+    /// <see cref="BFloat16MatMul"/> (rows of ⌈vocabulary / 2⌉ words): the embedding lookup of a model whose tied output
+    /// head holds the only copy of the table, as its [dim, vocabulary] weight.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.GatherBFloat16Columns"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>GatherBFloat16ColumnsKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void GatherBFloat16Columns(Storage packed, Storage indices, Storage y, int count, int dim, int vocabulary)
+    {
+        if (_kernels is null)
+        {
+            GatherBFloat16ColumnsKernel(packed, indices, y, count, dim, vocabulary);
+        }
+        else
+        {
+            GatherBFloat16ColumnsRegistered(packed, indices, y, count, dim, vocabulary);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void GatherBFloat16ColumnsRegistered(Storage packed, Storage indices, Storage y, int count, int dim, int vocabulary)
+    {
+        if (Kernel(OperationIndex.GatherBFloat16Columns) is OperationKernels.GatherBFloat16Columns kernel)
+        {
+            kernel(this, packed, indices, y, count, dim, vocabulary);
+            return;
+        }
+
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.GatherBFloat16Columns))
+        {
+            GatherBFloat16ColumnsKernel(packed, indices, y, count, dim, vocabulary);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.GatherBFloat16Columns);
+        try
+        {
+            GatherBFloat16ColumnsKernel(packed, indices, y, count, dim, vocabulary);
+        }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            GatherBFloat16ColumnsOnHost(packed, indices, y, count, dim, vocabulary);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of GatherBFloat16Columns (the default body of GatherBFloat16ColumnsKernel), for RetryOnHost.
+    private void GatherBFloat16ColumnsOnHost(Storage packed, Storage indices, Storage y, int count, int dim, int vocabulary)
+    {
+        using var h = new HostCall(this, "GatherBFloat16Columns");
+        CpuBackend.Instance.GatherBFloat16Columns(h[packed], h[indices], h[y], count, dim, vocabulary);
+    }
+
     /// <summary>One-hot rows: y[i, :] = 0 except y[i, indices[i]] = 1, for count indices over classes columns.</summary>
     /// <remarks>Runs <see cref="Ops.OneHot"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>OneHotKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
