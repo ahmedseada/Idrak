@@ -24,6 +24,9 @@ Images into language models, Gemma 3 first (to run Arabic document OCR models su
 `bakrianoo/arabic-legal-documents-ocr-1.0`; planned, after plan 10's wave 4): [11-vision-language.md](11-vision-language.md).
 Fine-tuning vision-language models (images in `FineTuner` and `idrak tune`, families as plug-ins; planned):
 [12-vision-tuning.md](12-vision-tuning.md).
+`Idrak.Vision` as general image building blocks, fast on every device (convolution kernels, backbone layers, CTC,
+detection and segmentation training, augmentation, image model families as plug-ins; OCR is an application on top;
+planned): [13-vision.md](13-vision.md).
 
 ## Not supported yet
 
