@@ -205,6 +205,30 @@ internal static partial class Tests
             var greyAnswer = Post("/v1/chat/completions", VlmChatBody(DataUrlPart(dataUrl), false, "vlm", ",\"grayscale\":true"));
             Check(greyAnswer.StatusCode == HttpStatusCode.OK, $"grayscale: {Text(greyAnswer)}");
 
+            // Vision options per request ("vision_options", the family's keys): Gemma 3's pan and scan of a tall page gives
+            // transformers' prompt (120 tokens: the page and 3 crops) and tokens, on /v1, the upload and /api/chat.
+            var tallFacts = JsonNode.Parse(File.ReadAllText(TestData("vlm-pan-scan/manifest.json")))!["facts"]!["images"]!["tall"]!;
+            int[] tallTokens = [.. tallFacts["new_tokens"]!.AsArray().Select(n => (int)n!)];
+            string tallPng = TestData("vlm-pan-scan/image-tall.png");
+            string panScan = """{"do_pan_and_scan":true,"pan_and_scan_min_crop_size":32}""";
+            sampled.Clear();
+            var tall = JsonNode.Parse(Text(WithRecordedTokens(sampled, () => Post("/v1/chat/completions",
+                VlmChatBody(DataUrlPart(ChatImage.FromFile(tallPng).ToDataUrl()), false, "vlm", $",\"vision_options\":{panScan}")))))!;
+            Check((int?)tall["usage"]?["prompt_tokens"] == 120 && sampled.SequenceEqual(tallTokens), $"/v1 with vision_options: {string.Join(" ", sampled)}: {tall}");
+            var tallUpload = JsonNode.Parse(Text(http.PostAsync("/v1/chat/upload", UploadForm(tallPng, false, ("model", "vlm"), ("vision_options", panScan))).Result))!;
+            Check((int?)tallUpload["usage"]?["prompt_tokens"] == 120 && (string?)tallUpload["choices"]?[0]?["message"]?["content"] == (string?)tall["choices"]![0]!["message"]!["content"],
+                $"upload with vision_options: {tallUpload}");
+            var tallChat = JsonNode.Parse(Text(Post("/api/chat", $$$"""
+                {"messages":[{"role":"system","content":"Read the scan."},{"role":"user","content":"What is in this image?","images":["{{{Convert.ToBase64String(File.ReadAllBytes(tallPng))}}}"]}],
+                 "stream":false,"vision_options":{{{panScan}}},"options":{"temperature":0,"num_predict":20,"repeat_penalty":1}}
+                """)))!;
+            Check((int?)tallChat["prompt_eval_count"] == 120, $"/api/chat with vision_options: {tallChat}");
+            var unknownOption = Post("/v1/chat/completions", VlmChatBody(DataUrlPart(dataUrl), false, "vlm", ",\"vision_options\":{\"tiles\":2}"));
+            Check(unknownOption.StatusCode == HttpStatusCode.BadRequest && Text(unknownOption).Contains("tiles") && Text(unknownOption).Contains("pan_and_scan_max_num_crops"),
+                $"an option the family does not take: {Text(unknownOption)}");
+            var badOptions = Post("/v1/chat/completions", VlmChatBody(DataUrlPart(dataUrl), false, "vlm", ",\"vision_options\":[1]"));
+            Check(badOptions.StatusCode == HttpStatusCode.BadRequest && Text(badOptions).Contains("vision_options"), $"vision_options not an object: {Text(badOptions)}");
+
             // Refusals.
             var refused = Post("/v1/chat/completions", VlmChatBody(DataUrlPart(dataUrl), false, "text"));
             Check(refused.StatusCode == HttpStatusCode.BadRequest && Text(refused).Contains("\\u0027image\\u0027") && Text(refused).Contains("unsupported_content"), $"a text-only model refuses images: {Text(refused)}");

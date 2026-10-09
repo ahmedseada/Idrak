@@ -151,7 +151,7 @@ public sealed class Gemma3VisionFamily : IVisionFamily
 
 /// <summary>
 /// The vision part of a Gemma 3 checkpoint, as data: SigLIP's configuration, the image token ids, and the encoder's and
-/// projector's tensors under one naming whatever layout the checkpoint was saved in. <see cref="CreateEncoder(Device?, ImagePreprocessor?)"/>
+/// projector's tensors under one naming whatever layout the checkpoint was saved in. <see cref="CreateEncoder(Device?, ImagePreprocessor?, Gemma3PanAndScan?)"/>
 /// builds the encoder and the projector from it.
 /// </summary>
 /// <remarks>
@@ -172,8 +172,16 @@ public sealed class Gemma3Vision : PretrainedVision
         Func<ITensorStore> open, string? folder)
     {
         (Encoder, ImageTokens, TextDim, Layout, Tensors, _open, _folder) = (encoder, tokens, textDim, layout, tensors, open, folder);
-        // Gemma3Processor: each <start_of_image> the template writes becomes "\n\n" + boi + soft tokens + eoi + "\n\n".
-        PromptFormat = new ImageTokenFormat("gemma3", tokens.BeginImage, tokens.ImageToken, tokens.BeginImage, tokens.EndImage, "\n\n", "\n\n");
+        // Gemma3Processor: each <start_of_image> the template writes becomes "\n\n" + boi + soft tokens + eoi + "\n\n" (its
+        // full_image_sequence); with pan and scan, an image of crops becomes "Here is the original image " + the whole
+        // image's block + " and here are some crops to help you see better " + the crops' blocks joined by spaces.
+        PromptFormat = new ImageTokenFormat("gemma3", tokens.BeginImage, tokens.ImageToken, tokens.BeginImage, tokens.EndImage, "\n\n", "\n\n")
+        {
+            Join = blocks => $"Here is the original image {blocks[0]} and here are some crops to help you see better " + string.Join(" ", blocks.Skip(1)),
+        };
+        PanAndScan = _folder is { } path && File.Exists(Path.Combine(path, "preprocessor_config.json"))
+            ? Gemma3PanAndScan.FromConfig(File.ReadAllText(Path.Combine(path, "preprocessor_config.json")))
+            : Gemma3PanAndScan.Default;
     }
 
     /// <inheritdoc />
@@ -190,6 +198,15 @@ public sealed class Gemma3Vision : PretrainedVision
 
     /// <inheritdoc />
     public override IReadOnlyCollection<string> StoredTensors => [.. Tensors.Values.Select(t => t.Stored)];
+
+    /// <summary>Gemma 3's vision options: pan and scan's (<see cref="Gemma3PanAndScan.Keys"/>).</summary>
+    public override IReadOnlyCollection<string> VisionOptionKeys => Gemma3PanAndScan.Keys;
+
+    /// <summary>
+    /// Pan and scan as the model folder's <c>preprocessor_config.json</c> sets it (its null or absent keys:
+    /// Gemma3Processor's defaults, off): every encoder's defaults, under the options it is built with and each request's.
+    /// </summary>
+    public Gemma3PanAndScan PanAndScan { get; }
 
     /// <summary>The vision encoder's configuration (config.json's <c>vision_config</c>).</summary>
     public SiglipVisionConfig Encoder { get; }
@@ -231,7 +248,7 @@ public sealed class Gemma3Vision : PretrainedVision
 
     /// <inheritdoc />
     public override IVisionEncoder CreateEncoder(VisionEncoderOptions? options = null) =>
-        CreateEncoder(options?.Device, Preprocessor(options?.Grayscale ?? false));
+        CreateEncoder(options?.Device, Preprocessor(options?.Grayscale ?? false), PanAndScan.With(options?.VisionOptions));
 
     /// <summary>
     /// Builds the vision encoder and the projector on <paramref name="device"/> from the checkpoint's tensors (read once,
@@ -239,7 +256,8 @@ public sealed class Gemma3Vision : PretrainedVision
     /// </summary>
     /// <param name="device">Where it runs (default <see cref="Device.Default"/>; pass the language model's device).</param>
     /// <param name="preprocessor">How images become pixel values (default <see cref="Preprocessor"/>).</param>
-    public Gemma3ImageEncoder CreateEncoder(Device? device, ImagePreprocessor? preprocessor = null)
+    /// <param name="panAndScan">Pan and scan for every image (default <see cref="PanAndScan"/>); a request's options go over it.</param>
+    public Gemma3ImageEncoder CreateEncoder(Device? device, ImagePreprocessor? preprocessor = null, Gemma3PanAndScan? panAndScan = null)
     {
         device ??= Device.Default;
         using var tensors = OpenTensors();
@@ -247,7 +265,7 @@ public sealed class Gemma3Vision : PretrainedVision
         try
         {
             var projector = Gemma3Projector.FromTensors(tensors, Encoder.Dim, TextDim, PoolSize, ProjectorNormEpsilon, "projector.", device);
-            return new Gemma3ImageEncoder(this, encoder, projector, preprocessor ?? Preprocessor());
+            return new Gemma3ImageEncoder(this, encoder, projector, preprocessor ?? Preprocessor(), panAndScan ?? PanAndScan);
         }
         catch
         {
@@ -264,7 +282,7 @@ public sealed class Gemma3Vision : PretrainedVision
 
     /// <inheritdoc />
     public override string Describe() =>
-        $"Gemma 3: SigLIP {Encoder.ImageSize} x {Encoder.ImageSize}, {Encoder.Layers} layers of {Encoder.Dim}, {ImageTokens.TokensPerImage} tokens per image";
+        $"Gemma 3: SigLIP {Encoder.ImageSize} x {Encoder.ImageSize}, {Encoder.Layers} layers of {Encoder.Dim}, {ImageTokens.TokensPerImage} tokens per image, {PanAndScan}";
 
     // A store showing some tensors of another under other names.
     private sealed class RenamedTensorStore(ITensorStore inner, Dictionary<string, string> names) : ITensorStore

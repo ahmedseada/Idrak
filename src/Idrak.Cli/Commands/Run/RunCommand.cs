@@ -31,6 +31,7 @@ internal sealed class RunCommand : Command
               --image FILE       an image for the model to read (PNG, JPEG, BMP, PPM/PGM; repeatable), turned upright
                                  by its EXIF orientation
               --grayscale        turn the images grey first (some OCR fine-tunes ask for it; an alias can keep it)
+        """ + "\n" + ModelChoices.VisionOptionHelp + "\n" + """
           -w, --weights FORMAT   int8, int4, bf16 or a registered packed format (default: as stored)
           -k, --kv FORMAT        KV cache format: float32, int8, bfloat16 or a registered one (default float32)
               --context N        context window in tokens (default 4096, at most the model's)
@@ -51,7 +52,7 @@ internal sealed class RunCommand : Command
         required properties and their types) instead of guaranteeing it while generating.
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, .. GenerationSettings.ValueOptions, "--input", "--schema", "--mcp", "--image", "--out"];
+    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, .. GenerationSettings.ValueOptions, "--input", "--schema", "--mcp", "--image", "--out", ModelChoices.VisionOption];
 
     public override IReadOnlyCollection<string> Flags => [.. GenerationSettings.Flags, "--grayscale"];
 

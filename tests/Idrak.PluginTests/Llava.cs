@@ -483,12 +483,17 @@ public sealed class LlavaImageEncoder : IVisionEncoder, IVisionEncoderStages
     public Device Device { get; }
 
     /// <inheritdoc />
-    public ImageTokenLayout Layout(ImageData image) => Vision.Layout;
+    public IReadOnlyList<ImageTokenLayout> Blocks(ImageData image, VisionOptions? options = null)
+    {
+        options?.ThrowIfUnknown(LlavaPlugin.Architecture, []);                          // LLaVA's processor takes none
+        return [Vision.Layout];
+    }
 
     /// <inheritdoc />
-    public IReadOnlyList<ImageFeatures> Encode(IReadOnlyList<ImageData> images)
+    public IReadOnlyList<ImageFeatures> Encode(IReadOnlyList<ImageData> images, VisionOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(images);
+        options?.ThrowIfUnknown(LlavaPlugin.Architecture, []);
         int size = Vision.Clip.ImageSize, each = 3 * size * size;
         var values = new float[images.Count * each];
         for (int i = 0; i < images.Count; i++)
@@ -509,7 +514,12 @@ public sealed class LlavaImageEncoder : IVisionEncoder, IVisionEncoderStages
     }
 
     /// <inheritdoc />
-    public Tensor PixelValues(ImageData image) => Preprocessor.Process(image, Device.Cpu);
+    public Tensor PixelValues(ImageData image, VisionOptions? options = null)
+    {
+        options?.ThrowIfUnknown(LlavaPlugin.Architecture, []);
+        using var one = Preprocessor.Process(image, Device.Cpu);
+        return Tensor.From(one.ToArray(), [1, .. one.Shape], Device.Cpu);
+    }
 
     /// <inheritdoc />
     public Tensor Tower(Tensor pixelValues)

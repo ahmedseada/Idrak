@@ -17,7 +17,7 @@ internal sealed class AliasSetCommand : Command
     public override string Summary => "Give a model (and its weight and KV formats) a short name, kept in the config";
 
     public override string Usage => """
-        NAME MODEL [-w FORMAT] [-k FORMAT] [--grayscale]
+        NAME MODEL [-w FORMAT] [-k FORMAT] [--grayscale] [--vision-option KEY=VALUE]
 
         Arguments:
           NAME   the short name (letters, digits, '.', '-', '_')
@@ -28,6 +28,8 @@ internal sealed class AliasSetCommand : Command
           -k, --kv F       the KV cache format (int8, bfloat16 or a registered one)
               --grayscale  turn images to grayscale before the model reads them (run and chat --image), for
                            vision-language models fine-tuned on grey scans
+              --vision-option K=V  an option of a vision-language model's family for its images (repeatable;
+                           kept as "vision_options"; the family checks the keys when the model loads)
 
         Options given to a command override the alias's (idrak chat qwen -w int4).
 
@@ -35,9 +37,10 @@ internal sealed class AliasSetCommand : Command
           idrak alias set qwen Qwen/Qwen3-0.6B -w int8 -k int8
           idrak c qwen
           idrak alias set ocr bakrianoo/arabic-legal-documents-ocr-1.0 -w int8 --grayscale
+          idrak alias set ocr-crops bakrianoo/arabic-legal-documents-ocr-1.0 --grayscale --vision-option do_pan_and_scan=true
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => ["--weights", "--kv"];
+    public override IReadOnlyCollection<string> ValueOptions => ["--weights", "--kv", Shared.ModelChoices.VisionOption];
 
     public override IReadOnlyCollection<string> Flags => ["--grayscale"];
 
@@ -72,6 +75,11 @@ internal sealed class AliasSetCommand : Command
         if (context.Flag("--grayscale"))
         {
             entry["grayscale"] = true;
+        }
+
+        if (Shared.ModelChoices.VisionOptionsOf(context) is { Count: > 0 } vision)
+        {
+            entry["vision_options"] = vision.ToJson();
         }
 
         aliases[name] = entry;
@@ -122,7 +130,8 @@ internal sealed class AliasListCommand : Command
 
     internal static string Describe(JsonObject alias) =>
         (string?)alias["model"] + ((string?)alias["weights"] is { } w ? $" -w {w}" : "") + ((string?)alias["kv"] is { } k ? $" -k {k}" : "")
-        + (alias["grayscale"] is JsonValue g && g.TryGetValue(out bool grey) && grey ? " --grayscale" : "");
+        + (alias["grayscale"] is JsonValue g && g.TryGetValue(out bool grey) && grey ? " --grayscale" : "")
+        + (alias["vision_options"] is JsonObject vision ? string.Concat(vision.Select(o => $" --vision-option {o.Key}={(o.Value is JsonValue v && v.TryGetValue(out string? text) ? text : o.Value?.ToJsonString())}")) : "");
 }
 
 /// <summary><c>idrak alias rm NAME</c>: removes an alias from the config.</summary>

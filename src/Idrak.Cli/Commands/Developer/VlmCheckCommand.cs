@@ -55,6 +55,8 @@ internal sealed class VlmCheckCommand : Command
         "      --steps N         compare the first N answer tokens (default: all the reference has)\n" +
         "      --tie X           a margin below X is a near-tie (default 0.5)\n" +
         "      --show N          disagreements printed in full (default 10)\n" +
+        "      --vision-option K=V  a vision family option over the reference's (compare_real.py records the processor\n" +
+        "                        options it used, such as --pan-and-scan, as \"vision_options\"; repeatable)\n" +
         "  -w, --weights FORMAT  int8, int4, bf16 or a registered packed format (default: as stored); the encoder is float32\n" +
         "  -k, --kv FORMAT       the KV cache format (default float32)\n\n" +
         "Examples:\n" +
@@ -62,7 +64,7 @@ internal sealed class VlmCheckCommand : Command
         "  idrak vlm check ./gemma-ocr --reference ref -d cuda:0 -w bf16\n" +
         "  idrak vlm check ./gemma-ocr --reference ref -d cpu -j -O report.json";
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, "--reference", "--image", "--steps", "--tie", "--show"];
+    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, "--reference", "--image", "--steps", "--tie", "--show", ModelChoices.VisionOption];
 
     public override IReadOnlyDictionary<string, string> ShortForms => ModelChoices.ShortForms;
 
@@ -99,6 +101,9 @@ internal sealed class VlmCheckCommand : Command
             : throw new UsageException($"--tie needs a number such as 0.5, not '{t}'.");
         int show = context.IntOption("--show", 10);
         bool grayscale = (bool?)manifest["grayscale"] ?? false;
+        // The family's options the reference was made with (compare_real.py's processor keyword arguments), as the
+        // encoder is given them; a run's own --vision-option goes over them.
+        var visionOptions = (manifest["vision_options"] is JsonObject saved ? VisionOptions.FromJson(saved) : VisionOptions.Empty).With(ModelChoices.VisionOptionsOf(context));
 
         // The reference's arrays.
         string Array(string file) => Path.Combine(folder, file);
@@ -119,11 +124,11 @@ internal sealed class VlmCheckCommand : Command
             throw new UsageException("--steps needs a positive number (and the reference at least one generated token).");
         }
 
-        var choice = ModelChoices.Choose(context, name) with { Grayscale = grayscale };
+        var choice = ModelChoices.Choose(context, name) with { Grayscale = grayscale, VisionOptions = visionOptions.Count > 0 ? visionOptions : null };
         var device = context.Device;
         context.Write($"Reference  {folder}: transformers {manifest["versions"]?["transformers"]}, torch {manifest["versions"]?["torch"]}, "
                       + $"{manifest["dtype"]} (vision {manifest["vision_dtype"]}), logits {manifest["logits_dtype"]}, {manifest["image_processor_class"]}, "
-                      + $"grayscale {grayscale}, {ids.Length} prompt tokens, {generated.Length} generated");
+                      + $"grayscale {grayscale}, vision options {visionOptions}, {ids.Length} prompt tokens, {generated.Length} generated");
         context.Write($"Idrak      {choice.Model} on {device}, weights {choice.Weights ?? "as stored"}, KV cache {choice.Kv ?? "float32"}, encoder float32, "
                       + $"matrix products {MixedPrecision.Default}");
 
@@ -133,7 +138,8 @@ internal sealed class VlmCheckCommand : Command
         var tokenizer = model.Tokenizer ?? throw new InvalidOperationException($"{choice.Model} has no tokenizer (tokenizer.json).");
         int vocabulary = tokenizer.VocabularySize;
         var watch = Stopwatch.StartNew();
-        using var encoder = vision.CreateEncoder(new VisionEncoderOptions { Device = model.Device, Grayscale = grayscale });
+        visionOptions.ThrowIfUnknown(vision.Family, vision.VisionOptionKeys);
+        using var encoder = vision.CreateEncoder(new VisionEncoderOptions { Device = model.Device, Grayscale = grayscale, VisionOptions = visionOptions });
         double buildMs = watch.Elapsed.TotalMilliseconds;
         var stages = encoder as IVisionEncoderStages
             ?? throw new UsageException($"The vision family {vision.Family}'s encoder does not show its stages (IVisionEncoderStages): vlm check compares its pixels and its tower's output.");
@@ -147,6 +153,7 @@ internal sealed class VlmCheckCommand : Command
             ["reference_dtype"] = manifest["dtype"]?.DeepClone(),
             ["reference_vision_dtype"] = manifest["vision_dtype"]?.DeepClone(),
             ["grayscale"] = grayscale,
+            ["vision_options"] = visionOptions.ToJson(),
             ["steps"] = steps,
             ["tie"] = tie,
         };
@@ -161,7 +168,7 @@ internal sealed class VlmCheckCommand : Command
         {
             var chatImage = ChatImage.FromFile(imagePath);
             var decoded = (bool?)manifest["exif_applied"] == false ? ImageCodecs.Decode(chatImage.Data.Span) : ImageInputs.Decode(chatImage);
-            using (var own = stages.PixelValues(decoded))
+            using (var own = stages.PixelValues(decoded, visionOptions))
             {
                 ownPixels = own.ToArray();
             }
@@ -198,8 +205,11 @@ internal sealed class VlmCheckCommand : Command
 
         double encodeMs = watch.Elapsed.TotalMilliseconds;
         context.Detail($"vision encoder built in {buildMs:F0} ms");
-        int hiddenValues = Math.Min(refHidden.Length, hidden.Length);
-        var hiddenCompare = Compare(refHidden, hidden.AsSpan(0, hiddenValues));
+        // The reference may keep only the first rows of each block's output (--vision-rows): compare those, block by block.
+        int hiddenBlocks = hiddenShape.Length == 3 ? hiddenShape[0] : 1, refBlock = refHidden.Length / hiddenBlocks, ownBlock = hidden.Length / hiddenBlocks;
+        float[] ownHidden = refBlock == ownBlock ? hidden
+            : [.. Enumerable.Range(0, hiddenBlocks).SelectMany(b => hidden.AsSpan(b * ownBlock, Math.Min(refBlock, ownBlock)).ToArray())];
+        var hiddenCompare = Compare(refHidden.AsSpan(0, Math.Min(refHidden.Length, ownHidden.Length)), ownHidden.AsSpan(0, Math.Min(refHidden.Length, ownHidden.Length)));
         var featureCompare = Compare(refFeatures, features);
         context.Write($"  {Mark(hiddenCompare.Cosine >= 0.999)} encoder output [{string.Join(", ", hiddenShape)}]: {Describe(hiddenCompare)} ({encodeMs:F0} ms with the projector)");
         context.Write($"  {Mark(featureCompare.Cosine >= 0.999)} image features [{string.Join(", ", featureShape)}]: {Describe(featureCompare)}");
@@ -225,7 +235,9 @@ internal sealed class VlmCheckCommand : Command
         {
             // The image's tokens as many as the reference's features hold (the image is not decoded or encoded here).
             var chat = ModelChoices.CreateChat(model, choice);
-            var counted = new LayoutOnly(new ImageTokenLayout(featureShape.Length == 3 ? featureShape[1] : featureShape[0]), vision.Width, model.Device);
+            // One block per row of the reference's features [blocks, tokens, width] (an image the family shows as several views).
+            var counted = new LayoutOnly([.. Enumerable.Repeat(new ImageTokenLayout(featureShape.Length == 3 ? featureShape[1] : featureShape[0]), featureShape.Length == 3 ? featureShape[0] : 1)],
+                vision.Width, model.Device);
             chat = new ChatGenerator(chat.Generator, chat.Template)
             {
                 Images = new ChatImages(counted, vision.PromptFormat, vision.Attention) { Decode = _ => new ImageData([0f], 1, 1, 1) },
@@ -256,9 +268,9 @@ internal sealed class VlmCheckCommand : Command
         // 4. Teacher forcing, 5. greedy.
         Pass Force(string label, float[] featureValues, bool promptRows)
         {
-            using var featureTensor = Tensor.From(featureValues, [1, featureValues.Length / vision.Width, vision.Width], model.Device);
+            using var featureBlocks = new Blocks(featureValues, featureShape, vision.Width, model.Device);
             using var decoding = new DecodingContext(model.Device, 1, ids.Length + steps + 1, layout);
-            var images = ImagePrefill.Locate(ids, imageToken, [featureTensor]);
+            var images = ImagePrefill.Locate(ids, imageToken, featureBlocks.Tensors);
             using var input = Tensor.From([.. ids.Select(i => (float)i)], [1, ids.Length], model.Device);
             using var prefill = model.Network.ForwardCached(input, images, vision.Attention, decoding);
             int promptAgree = 0, promptRowsCount = 0, afterAgree = 0, afterRows = 0;
@@ -327,10 +339,10 @@ internal sealed class VlmCheckCommand : Command
 
         // Idrak's own greedy tokens (as idrak run --temperature 0 picks them), from Idrak's features.
         var greedy = new List<int>();
-        using (var featureTensor = Tensor.From(idrakFeatures, [1, idrakFeatures.Length / vision.Width, vision.Width], model.Device))
+        using (var featureBlocks = new Blocks(idrakFeatures, featureShape, vision.Width, model.Device))
         using (var decoding = new DecodingContext(model.Device, 1, ids.Length + steps + 1, layout))
         using (var input = Tensor.From([.. ids.Select(i => (float)i)], [1, ids.Length], model.Device))
-        using (var prefill = model.Network.ForwardCached(input, ImagePrefill.Locate(ids, imageToken, [featureTensor]), vision.Attention, decoding))
+        using (var prefill = model.Network.ForwardCached(input, ImagePrefill.Locate(ids, imageToken, featureBlocks.Tensors), vision.Attention, decoding))
         {
             float[] last;
             using (var row = prefill.Narrow(1, ids.Length - 1, 1))
@@ -580,15 +592,35 @@ internal sealed class VlmCheckCommand : Command
     }
 
     // An encoder that only gives a layout (the reference's token count), for rendering the prompt without an image.
-    private sealed class LayoutOnly(ImageTokenLayout layout, int width, Device device) : IVisionEncoder
+    // Features [blocks, tokens, width] (or [tokens, width]: one block) as one [1, tokens, width] tensor per block.
+    private sealed class Blocks : IDisposable
+    {
+        public Blocks(float[] values, int[] shape, int width, Device device)
+        {
+            int count = shape.Length == 3 ? shape[0] : 1, each = values.Length / count;
+            Tensors = [.. Enumerable.Range(0, count).Select(b => Tensor.From(values.AsSpan(b * each, each).ToArray(), [1, each / width, width], device))];
+        }
+
+        public IReadOnlyList<Tensor> Tensors { get; }
+
+        public void Dispose()
+        {
+            foreach (var tensor in Tensors)
+            {
+                tensor.Dispose();
+            }
+        }
+    }
+
+    private sealed class LayoutOnly(IReadOnlyList<ImageTokenLayout> blocks, int width, Device device) : IVisionEncoder
     {
         public int Width => width;
 
         public Device Device => device;
 
-        public ImageTokenLayout Layout(ImageData image) => layout;
+        public IReadOnlyList<ImageTokenLayout> Blocks(ImageData image, VisionOptions? options = null) => blocks;
 
-        public IReadOnlyList<ImageFeatures> Encode(IReadOnlyList<ImageData> images) => throw new InvalidOperationException("not encoded here");
+        public IReadOnlyList<ImageFeatures> Encode(IReadOnlyList<ImageData> images, VisionOptions? options = null) => throw new InvalidOperationException("not encoded here");
 
         public void Dispose()
         {

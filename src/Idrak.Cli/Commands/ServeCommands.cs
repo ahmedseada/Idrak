@@ -55,6 +55,10 @@ internal sealed class ServeCommand : Command
               --max-images N         the most images in one request (default 8)
               --grayscale            read a vision model's images grey (some OCR fine-tunes ask for it; an alias
                                      can keep it); a request can also ask with "grayscale": true
+              --vision-option K=V    an option of a vision model's family for every image (repeatable; the family
+                                     names the keys it takes; with the Gemma 3 plug-in, do_pan_and_scan=true adds
+                                     crops of a tall or wide page); a request gives its own as "vision_options":
+                                     {"KEY": VALUE}, over these
               --allow-image-urls     let image_url parts name http(s) addresses the server downloads (off: data
                                      URLs and uploads only; each download is held to --max-request-mb and 30 s)
           -w, --weights FORMAT       int8, int4, bf16 or a registered packed format
@@ -80,7 +84,8 @@ internal sealed class ServeCommand : Command
                              can be served yet)
           image upload       POST /v1/chat/upload, a multipart/form-data form: image (one or more files),
                              prompt, and optionally system, stream (true: server-sent events), max_tokens,
-                             temperature, grayscale, model; answers as /v1/chat/completions
+                             temperature, grayscale, vision_options (a JSON object), model; answers as
+                             /v1/chat/completions
           web chat           GET /ui
           control            GET /idrak/ps, POST /idrak/load, /idrak/unload, /idrak/stop, GET /idrak/status
           metrics            GET /metrics (with --metrics)

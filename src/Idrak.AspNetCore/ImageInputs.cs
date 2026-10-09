@@ -128,6 +128,33 @@ internal static class ImageRequests
         type?.MediaType is { } media && media.StartsWith("image/", StringComparison.OrdinalIgnoreCase) ? media : null;
 
     /// <summary>
+    /// The request with the vision options a client sent (<c>"vision_options"</c>: a JSON object, or its text in a form
+    /// field) for the model's vision family (<see cref="ChatRequest.VisionOptions"/>; the family checks the keys and
+    /// values when it reads the images: an unknown key is a 400 naming those it takes). Absent or null: the request as it is.
+    /// </summary>
+    /// <exception cref="ArgumentException">The value is not a JSON object of strings, numbers and booleans (a 400).</exception>
+    public static ChatRequest WithVisionOptions(ChatRequest request, JsonNode? options)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        try
+        {
+            var parsed = options switch
+            {
+                null => null,
+                JsonObject json => VisionOptions.FromJson(json),
+                JsonValue text when text.TryGetValue(out string? s) => string.IsNullOrWhiteSpace(s) ? null
+                    : JsonNode.Parse(s) as JsonObject is { } json ? VisionOptions.FromJson(json) : throw new FormatException("it is not a JSON object"),
+                _ => throw new FormatException("it is not a JSON object"),
+            };
+            return parsed is null || parsed.Count == 0 ? request : request with { VisionOptions = parsed };
+        }
+        catch (Exception ex) when (ex is FormatException or System.Text.Json.JsonException)
+        {
+            throw new ArgumentException($"vision_options: {ex.Message} (give an object such as {{\"KEY\": true}}; the model's vision family names the keys it takes).");
+        }
+    }
+
+    /// <summary>
     /// The request with its images checked: no more than <see cref="ImageInputOptions.MaxImages"/>, each in a format a
     /// registered codec reads (PNG, JPEG, BMP, PPM/PGM by default); with <paramref name="grayscale"/>, each turned upright
     /// and grey (<see cref="ChatImageDecoder.Grayscale"/>). Throws <see cref="ArgumentException"/> (a 400).

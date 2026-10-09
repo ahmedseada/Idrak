@@ -10,17 +10,22 @@ namespace Idrak.Abstraction.Testing;
 /// The checks of a vision encoder (<see cref="IVisionEncoder"/>, a vision family's image side) on images of many sizes:
 /// <list type="bullet">
 /// <item>deterministic: the same image gives the same features every time;</item>
-/// <item>token counts match the layout: each image's features have as many rows as <see cref="IVisionEncoder.Layout"/> says, the
-/// encoder's width, a grid holding that many tokens, and position ids (when given) for every token;</item>
+/// <item>token counts match the blocks: one features per block <see cref="IVisionEncoder.Blocks"/> gives (most families: one
+/// per image), each with as many rows as its layout says, the encoder's width, a grid holding that many tokens, and position
+/// ids (when given) for every token;</item>
 /// <item>batch equals single: an image encodes the same alone and among others;</item>
 /// <item>device equals CPU: given the same family's encoder on the CPU, the same layouts and features within the tolerance.</item>
 /// </list>
 /// Each case is images described as data (sizes, channels and a seed for their pixels, or the index of a sample given).
+/// With <c>options</c>, every call gives the family those options (a family that makes several views of an image checks
+/// them that way: a tall and a wide image are among the cases).
 /// </summary>
 /// <param name="cpu">The same family's encoder on the CPU, to compare a device's with; null skips that check.</param>
 /// <param name="samples">Images of your own to check first (real ones: the encoder's preprocessing sees what it is for).</param>
 /// <param name="tolerance">The largest difference allowed between features that should agree (batch, device).</param>
-public sealed class VisionEncoderSuite(IVisionEncoder? cpu = null, IReadOnlyList<ImageData>? samples = null, float tolerance = 1e-4f) : ContractSuite<IVisionEncoder>
+/// <param name="options">The family's options given to every call (null: none).</param>
+public sealed class VisionEncoderSuite(IVisionEncoder? cpu = null, IReadOnlyList<ImageData>? samples = null, float tolerance = 1e-4f, VisionOptions? options = null)
+    : ContractSuite<IVisionEncoder>
 {
     private readonly IReadOnlyList<ImageData> _samples = samples ?? [];
 
@@ -45,6 +50,7 @@ public sealed class VisionEncoderSuite(IVisionEncoder? cpu = null, IReadOnlyList
         yield return Case("a grey image", [Random(1, 16, 16, 2)]);
         yield return Case("a tiny image", [Random(3, 5, 9, 3)]);
         yield return Case("three images of different sizes", [Random(3, 40, 24, 4), Random(1, 12, 30, 5), Random(3, 64, 64, 6)]);
+        yield return Case("a tall image and a wide one", [Random(3, 150, 47, 7), Random(3, 41, 133, 8)]);
     }
 
     /// <inheritdoc />
@@ -64,16 +70,19 @@ public sealed class VisionEncoderSuite(IVisionEncoder? cpu = null, IReadOnlyList
         ArgumentNullException.ThrowIfNull(@case);
         ArgumentNullException.ThrowIfNull(checks);
         var images = @case.Data["images"]!.AsArray().Select(n => Image(n!.AsObject())).ToList();
-        var layouts = images.Select(implementation.Layout).ToList();
+        var layouts = images.Select(i => implementation.Blocks(i, options)).ToList();
         var first = Values(implementation, images, checks, layouts);
         var again = Values(implementation, images, null, layouts);
         checks.Check("deterministic", first.Zip(again).All(p => p.First.AsSpan().SequenceEqual(p.Second)), "the same images gave different features");
 
         string? batch = null;
-        for (int i = 0; i < images.Count && batch is null; i++)
+        for (int i = 0, at = 0; i < images.Count && batch is null; at += layouts[i].Count, i++)
         {
-            var alone = Values(implementation, [images[i]], null, [layouts[i]])[0];
-            batch = Comparisons.Difference(alone, first[i], tolerance) is { } difference ? $"image {i} alone and in the batch: {difference}" : null;
+            var alone = Values(implementation, [images[i]], null, [layouts[i]]);
+            for (int b = 0; b < alone.Length && batch is null; b++)
+            {
+                batch = Comparisons.Difference(alone[b], first[at + b], tolerance) is { } difference ? $"image {i} block {b} alone and in the batch: {difference}" : null;
+            }
         }
 
         checks.Compare("batch equals single", batch);
@@ -83,45 +92,49 @@ public sealed class VisionEncoderSuite(IVisionEncoder? cpu = null, IReadOnlyList
             return;
         }
 
-        var cpuLayouts = images.Select(cpu.Layout).ToList();
-        if (!cpuLayouts.SequenceEqual(layouts))
+        var cpuLayouts = images.Select(i => cpu.Blocks(i, options)).ToList();
+        if (!cpuLayouts.Zip(layouts).All(p => p.First.SequenceEqual(p.Second)))
         {
-            checks.Fail("device equals CPU", $"layouts {string.Join(", ", layouts)} on {implementation.Device}, {string.Join(", ", cpuLayouts)} on the CPU");
+            checks.Fail("device equals CPU", $"blocks {Describe(layouts)} on {implementation.Device}, {Describe(cpuLayouts)} on the CPU");
             return;
         }
 
         var reference = Values(cpu, images, null, cpuLayouts);
         string? device = null;
-        for (int i = 0; i < images.Count && device is null; i++)
+        for (int i = 0; i < reference.Length && device is null; i++)
         {
-            device = Comparisons.Difference(reference[i], first[i], tolerance) is { } difference ? $"image {i}: {difference}" : null;
+            device = Comparisons.Difference(reference[i], first[i], tolerance) is { } difference ? $"block {i}: {difference}" : null;
         }
 
         checks.Compare("device equals CPU", device);
     }
 
-    // Each image's features as floats; with checks, the layout rules are recorded.
-    private static float[][] Values(IVisionEncoder encoder, IReadOnlyList<ImageData> images, CaseChecks? checks, IReadOnlyList<ImageTokenLayout> layouts)
+    private static string Describe(IEnumerable<IReadOnlyList<ImageTokenLayout>> layouts) => string.Join("; ", layouts.Select(l => string.Join(" + ", l)));
+
+    // Each block's features as floats (the images' blocks in order); with checks, the layout rules are recorded.
+    private float[][] Values(IVisionEncoder encoder, IReadOnlyList<ImageData> images, CaseChecks? checks, IReadOnlyList<IReadOnlyList<ImageTokenLayout>> layouts)
     {
-        var features = encoder.Encode(images);
+        var features = encoder.Encode(images, options);
         try
         {
             if (checks is not null)
             {
-                string? problem = features.Count != images.Count ? $"{features.Count} images' features for {images.Count} images" : null;
+                var blocks = layouts.SelectMany(l => l).ToList();
+                string? problem = layouts.Any(l => l.Count == 0) ? "an image has no blocks"
+                    : features.Count != blocks.Count ? $"{features.Count} blocks' features for {images.Count} images of {blocks.Count} blocks" : null;
                 for (int i = 0; i < features.Count && problem is null; i++)
                 {
                     var f = features[i];
                     var shape = f.Features.Shape;
-                    problem = !f.Layout.Equals(layouts[i]) ? $"image {i}: features laid out as {f.Layout}, Layout says {layouts[i]}"
-                        : shape.Length != 2 || shape[0] != layouts[i].Tokens || shape[1] != encoder.Width ? $"image {i}: features {Tensor.FormatShape(shape)} for {layouts[i]} of width {encoder.Width}"
-                        : f.Layout.Grid.Count > 0 && f.Layout.Grid.Aggregate(1, (a, v) => a * v) != f.Tokens ? $"image {i}: grid [{string.Join(", ", f.Layout.Grid)}] for {f.Tokens} tokens"
-                        : f.Positions is { } p && (p.Rank != 2 || p.Shape[1] != f.Tokens) ? $"image {i}: position ids {Tensor.FormatShape(p.Shape)} for {f.Tokens} tokens"
-                        : f.Features.Device != encoder.Device ? $"image {i}: features on {f.Features.Device}, the encoder on {encoder.Device}"
+                    problem = !f.Layout.Equals(blocks[i]) ? $"block {i}: features laid out as {f.Layout}, Blocks says {blocks[i]}"
+                        : shape.Length != 2 || shape[0] != blocks[i].Tokens || shape[1] != encoder.Width ? $"block {i}: features {Tensor.FormatShape(shape)} for {blocks[i]} of width {encoder.Width}"
+                        : f.Layout.Grid.Count > 0 && f.Layout.Grid.Aggregate(1, (a, v) => a * v) != f.Tokens ? $"block {i}: grid [{string.Join(", ", f.Layout.Grid)}] for {f.Tokens} tokens"
+                        : f.Positions is { } p && (p.Rank != 2 || p.Shape[1] != f.Tokens) ? $"block {i}: position ids {Tensor.FormatShape(p.Shape)} for {f.Tokens} tokens"
+                        : f.Features.Device != encoder.Device ? $"block {i}: features on {f.Features.Device}, the encoder on {encoder.Device}"
                         : null;
                 }
 
-                checks.Compare("token counts match the layout", problem);
+                checks.Compare("token counts match the blocks", problem);
             }
 
             return [.. features.Select(f => f.Features.ToArray())];
