@@ -604,8 +604,9 @@ Gemma3Config's defaults, the three tensor layouts of the vision part, shape chec
 over Gemma3ImageProcessor's defaults, or that processor at the encoder's size without the file: the family's decision),
 `Gemma3ImageEncoder` (`IVisionEncoder`, `IVisionEncoderStages`), `SiglipVisionEncoder`, `SiglipVisionConfig`,
 `Gemma3Projector`, and the "image-blocks" rule. Entry points: `Gemma3VisionPlugin.Register()` and
-`RegisterIdrakPlugin()` (the CLI's `-P` convention). `Idrak.Samples.Gemma3Ocr` is an app reading a scan through the
-public API (register, load, encode, stream, `-o` as UTF-8 without a BOM, `--grayscale`, `-d`, `-w`). The CLI's `run`,
+`RegisterIdrakPlugin()` (the CLI's `-P` convention). `Idrak.Samples.Gemma3Ocr` was an app reading a scan through the
+public API (removed from the branch 2026-10-09 with the web sample `Idrak.Samples.Gemma3Web`; both are in history up to
+06f5808) (register, load, encode, stream, `-o` as UTF-8 without a BOM, `--grayscale`, `-d`, `-w`). The CLI's `run`,
 `chat`, `serve`, `vlm check` and `show` use the contracts only: without `-P` the tiny Gemma 3 is refused with the
 registry's message (`serve` refuses it at startup, exit 2), `show` says "vision family ... not registered (load its
 plug-in with -P)". The Gemma 3 tests reference the sample and register it first; the numbers are identical to phases
