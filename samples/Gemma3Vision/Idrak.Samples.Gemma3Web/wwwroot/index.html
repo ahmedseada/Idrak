@@ -109,6 +109,26 @@
   .badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
   .badge.warn { color: var(--warn); border-color: var(--warn); }
   .badge.ok { color: var(--good); border-color: var(--good); }
+  .doc { font-family: "Noto Naskh Arabic", Inter, system-ui, sans-serif; unicode-bidi: plaintext; }
+  .doc section { margin-bottom: 18px; }
+  .doc h3 { font: 600 12px/1.4 Inter, sans-serif; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 8px; display: flex; gap: 8px; align-items: center; }
+  .doc .fulltext { white-space: pre-wrap; font-size: 16px; line-height: 2; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; unicode-bidi: plaintext; }
+  .doc .subject { font-size: 18px; font-weight: 600; margin-bottom: 8px; }
+  .doc .kw { display: flex; flex-wrap: wrap; gap: 6px; }
+  .doc .kw span { font-size: 13px; padding: 2px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--text); border: 1px solid var(--border); }
+  .doc table { border-collapse: collapse; width: 100%; font-size: 14px; margin: 6px 0; }
+  .doc th, .doc td { border: 1px solid var(--border); padding: 6px 8px; text-align: start; vertical-align: top; }
+  .doc th { background: var(--panel); font-weight: 600; }
+  .doc ol, .doc ul { margin: 4px 0; padding-inline-start: 22px; line-height: 1.9; }
+  .doc .article { border-inline-start: 3px solid var(--accent); padding: 4px 12px; margin: 8px 0; }
+  .doc .article b { display: block; margin-bottom: 2px; }
+  .doc dl { display: grid; grid-template-columns: minmax(120px, max-content) 1fr; gap: 4px 14px; margin: 0; font-size: 14px; }
+  .doc dt { color: var(--muted); font-family: Inter, sans-serif; font-size: 12.5px; padding-top: 3px; }
+  .doc dd { margin: 0; overflow-wrap: anywhere; }
+  .doc dd dl { border-inline-start: 2px solid var(--border); padding-inline-start: 10px; }
+  .doc .item { border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; margin: 4px 0; background: var(--panel); }
+  .doc .null { color: var(--muted); font-style: italic; }
+  .doc .part { font: 600 11px Inter, sans-serif; color: var(--accent); border: 1px solid var(--accent); border-radius: 999px; padding: 1px 8px; }
   .error-box { color: var(--bad); background: color-mix(in srgb, var(--bad) 10%, transparent); border: 1px solid var(--bad); padding: 10px 12px; border-radius: 10px; margin-bottom: 12px; display: none; }
 </style>
 </head>
@@ -146,6 +166,11 @@
         <textarea id="system" rows="2" dir="auto" placeholder="You are a precise OCR assistant…"></textarea></label>
       <label class="field"><span>Prompt</span>
         <textarea id="prompt" rows="3" dir="auto"></textarea></label>
+      <div class="presets">
+        <button class="ghost small" id="task1" title="The fine-tune's training instruction 1: the page's text (content.full_text, tables, lists, articles) and its structural elements; with the training preprocessing (grey, 600 wide, contrast 1.5, JPEG 85), greedy, no pan and scan">Trained task 1: full text</button>
+        <button class="ghost small" id="task2" title="The fine-tune's training instruction 2: classification, source and dates, marks, signatures, routing, references, condition and confidence; with the training preprocessing">Trained task 2: details</button>
+        <label class="switch" title="Run task 1 then task 2 on the same image and show both together in the Content view (the prompt above is not used)"><input type="checkbox" id="both"><span class="track"></span>Both tasks (full content)</label>
+      </div>
       <div class="presets card-off" id="cardPresets">
         <button class="ghost small" id="cardPrompt" title="The model card's prompt, with no system message">Card prompt: “Extract details to JSON.”</button>
       </div>
@@ -188,7 +213,7 @@
       <div class="result-head">
         <h2>Result</h2><span class="status" id="status">idle</span><span class="badge" id="jsonBadge" style="display:none" title="Pretty JSON: valid as written, or repaired leniently (the Raw tab keeps the model's text)"></span>
         <span class="spacer"></span>
-        <div class="tabs"><button id="viewText" class="on">Text</button><button id="viewRaw">Raw</button></div>
+        <div class="tabs"><button id="viewText" class="on">JSON</button><button id="viewDoc" title="The answer laid out for reading: the page's full text, then its tables, lists, articles and every other field">Content</button><button id="viewRaw">Raw</button></div>
         <button class="ghost" id="copy">Copy</button>
         <button class="ghost" id="download">Download</button>
       </div>
@@ -236,9 +261,14 @@ DEFAULTS.panScan = false;
 DEFAULTS.card = false;
 DEFAULTS.cardArgs = { max_width: 1024, contrast: 1.5, resample: "lanczos", jpeg: "" };
 const CARD_PROMPT = "Extract details to JSON.";
+// The fine-tune's two training instructions (its notebook: LlamaFactory sharegpt, "<image>" then the text, no system).
+const TASK1 = "You are a professional OCR Details Extractor.\nYour rule to extract: the page markdown content in addition to the structural_elements of the document.\nExtract the final output into a json format.\nDo not generate any introduction or conclusion.";
+const TASK2 = "You are a professional OCR Details Extractor.\nYour rule to extract the: document_classification, source, physical_properties, official_marks, signatures_authorization, routing_distribution, attachments_references, condition_notes and confidence_quality of the document.\nExtract the final output into a json format.\nDo not generate any introduction or conclusion.";
+// Its training images: a PDF page at 200 dpi, grey, at most 600 wide (Lanczos), contrast 1.5, saved as JPEG quality 85.
+const TRAINING = { max_width: 600, contrast: 1.5, resample: "lanczos", jpeg: 85 };
 DEFAULTS.pas = Object.fromEntries(PAS.map(([k, , , , d]) => [k, d]));
 const STORE = "idrak-vision-reader";
-let file = null, controller = null, rawText = "", view = "text", modelInfo = {}, timer = null, after = null, originalUrl = null, previewSeq = 0, jsonState = null;
+let parts = [], file = null, controller = null, rawText = "", view = "text", modelInfo = {}, timer = null, after = null, originalUrl = null, previewSeq = 0, jsonState = null;
 
 for (const [key, label, min, step] of ARGS) {
   const l = document.createElement("label"); l.className = "field";
@@ -254,7 +284,7 @@ for (const [key, label, min, step] of PAS) {
 function load() { try { return JSON.parse(localStorage.getItem(STORE)) || null; } catch { return null; } }
 function save() {
   try {
-    const s = { prompt: $("prompt").value, system: $("system").value, stream: $("stream").checked, grayscale: $("grayscale").checked, pretty: $("pretty").checked, panScan: $("panScan").checked, card: $("card").checked, cardArgs: {}, args: {}, pas: {} };
+    const s = { prompt: $("prompt").value, system: $("system").value, stream: $("stream").checked, grayscale: $("grayscale").checked, pretty: $("pretty").checked, panScan: $("panScan").checked, both: $("both").checked, card: $("card").checked, cardArgs: {}, args: {}, pas: {} };
     for (const k of Object.keys(DEFAULTS.cardArgs)) s.cardArgs[k] = $("c_" + k).value;
     for (const [k] of ARGS) s.args[k] = $("a_" + k).value;
     for (const [k] of PAS) s.pas[k] = $("p_" + k).value;
@@ -266,6 +296,7 @@ function apply(s) {
   $("stream").checked = s.stream; $("grayscale").checked = s.grayscale; $("pretty").checked = s.pretty;
   for (const [k] of ARGS) $("a_" + k).value = s.args[k] ?? DEFAULTS.args[k];
   $("panScan").checked = s.panScan ?? DEFAULTS.panScan;
+  $("both").checked = !!s.both;
   for (const [k] of PAS) $("p_" + k).value = (s.pas || {})[k] ?? DEFAULTS.pas[k];
   $("card").checked = s.card ?? DEFAULTS.card;
   for (const k of Object.keys(DEFAULTS.cardArgs)) $("c_" + k).value = (s.cardArgs || {})[k] ?? DEFAULTS.cardArgs[k];
@@ -293,6 +324,14 @@ $("reset").onclick = () => { apply(DEFAULTS); save(); showPreview(); };
 $("cardPrompt").onclick = () => { $("prompt").value = CARD_PROMPT; $("system").value = ""; save(); };
 $("sampling").onclick = () => { $("a_temperature").value = 1; $("a_top_k").value = 64; $("a_top_p").value = 0.95; $("a_min_p").value = 0; save(); };
 $("greedy").onclick = () => { $("a_temperature").value = 0; save(); };
+function trained(prompt) {
+  $("prompt").value = prompt; $("system").value = "";
+  $("card").checked = true; $("panScan").checked = false; $("a_temperature").value = 0;
+  for (const [k, v] of Object.entries(TRAINING)) $("c_" + k).value = v;
+  cardFields(); crops(); save(); showPreview();
+}
+$("task1").onclick = () => trained(TASK1);
+$("task2").onclick = () => trained(TASK2);
 
 // The crops pan and scan would make of the chosen image (transformers' rule; the server's count is the one reported).
 function cropCount(w, h) {
@@ -431,10 +470,74 @@ function closeJson(s) {
   if (/[{,]\s*"[^"]*"$/.test(tail)) list.push(tail + ": null" + close, tail.replace(/,?\s*"[^"]*"$/, "") + close);
   return list;
 }
+// The answer as JSON (strict, else repaired), or null.
+function parsed(t) {
+  const s = t.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  if (!/^[\[{]/.test(s)) return null;
+  try { return JSON.parse(s); } catch {}
+  return repairJson(s);
+}
+const esc = v => String(v).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const label = k => esc(String(k).replace(/_/g, " "));
+const isEmpty = v => v === null || v === undefined || v === "" || (Array.isArray(v) && v.length === 0);
+// Any value as nested definition lists (objects), item boxes (arrays of objects), or text.
+function tree(v) {
+  if (v === null || v === undefined) return `<span class="null">—</span>`;
+  if (typeof v === "boolean") return v ? "yes" : "no";
+  if (typeof v !== "object") return `<span dir="auto">${esc(v)}</span>`;
+  if (Array.isArray(v)) {
+    if (v.length === 0) return `<span class="null">none</span>`;
+    if (v.every(x => typeof x !== "object" || x === null)) return `<ul>${v.map(x => `<li dir="auto">${esc(x ?? "—")}</li>`).join("")}</ul>`;
+    return v.map(x => `<div class="item">${tree(x)}</div>`).join("");
+  }
+  const keys = Object.keys(v);
+  if (keys.length === 0) return `<span class="null">—</span>`;
+  return `<dl>${keys.map(k => `<dt>${label(k)}</dt><dd>${tree(v[k])}</dd>`).join("")}</dl>`;
+}
+function tableHtml(t) {
+  const head = (t.headers || []).length ? `<tr>${t.headers.map(h => `<th dir="auto">${esc(h)}</th>`).join("")}</tr>` : "";
+  const rows = (t.rows || []).map(r => `<tr>${(Array.isArray(r) ? r : [r]).map(c => `<td dir="auto">${esc(c ?? "")}</td>`).join("")}</tr>`).join("");
+  return `${t.title ? `<div dir="auto"><b>${esc(t.title)}</b></div>` : ""}<table>${head}${rows}</table>${t.notes ? `<div class="null" dir="auto">${esc(t.notes)}</div>` : ""}`;
+}
+// One answer laid out as a document: the page's text first, then its parts, then every other field.
+function documentHtml(obj, tag) {
+  const o = Array.isArray(obj) ? { items: obj } : { ...obj };
+  const c = o.content && typeof o.content === "object" ? { ...o.content } : {};
+  delete o.content;
+  const sec = (title, html) => `<section><h3>${title}${tag ? ` <span class="part">${tag}</span>` : ""}</h3>${html}</section>`;
+  let h = "";
+  if (c.subject) h += `<div class="subject" dir="auto">${esc(c.subject)}</div>`;
+  if (c.full_text) h += sec("Full text", `<div class="fulltext" dir="auto">${esc(c.full_text)}</div>`);
+  if (!isEmpty(c.keywords)) h += sec("Keywords", `<div class="kw">${c.keywords.map(k => `<span dir="auto">${esc(k)}</span>`).join("")}</div>`);
+  if (!isEmpty(c.legal_articles)) h += sec("Articles", c.legal_articles.map(a => `<div class="article" dir="auto"><b>${esc(a.article_number ?? "")}${a.article_title ? " — " + esc(a.article_title) : ""}</b>${esc(a.content ?? "")}</div>`).join(""));
+  if (!isEmpty(c.tables)) h += sec("Tables", c.tables.map(tableHtml).join(""));
+  if (!isEmpty(c.lists)) h += sec("Lists", c.lists.map(l => `<${/numbered|lettered/.test(l.type || "") ? "ol" : "ul"}>${(l.items || []).map(i => `<li dir="auto">${typeof i === "object" ? tree(i) : esc(i)}</li>`).join("")}</${/numbered|lettered/.test(l.type || "") ? "ol" : "ul"}>`).join(""));
+  if (!isEmpty(c.charts)) h += sec("Charts", tree(c.charts));
+  if (!isEmpty(c.financial_data)) h += sec("Financial data", tree(c.financial_data));
+  for (const k of ["subject", "full_text", "keywords", "legal_articles", "tables", "lists", "charts", "financial_data", "has_tables", "has_lists", "has_charts"]) delete c[k];
+  if (Object.keys(c).some(k => !isEmpty(c[k]))) h += sec("Content (other)", tree(c));
+  for (const [k, v] of Object.entries(o)) if (!isEmpty(v)) h += sec(label(k), tree(v));
+  return h;
+}
+function renderDocument(out) {
+  const answers = parts.length ? parts : [{ text: rawText }];
+  let html = "", any = false;
+  answers.forEach((a, i) => {
+    const v = parsed(a.text || "");
+    const tag = answers.length > 1 ? a.label : "";
+    if (v && typeof v === "object") { any = true; html += documentHtml(v, tag); }
+    else if (a.text) html += `<section>${tag ? `<h3><span class="part">${tag}</span></h3>` : ""}<div class="fulltext" dir="auto">${esc(a.text)}</div></section>`;
+  });
+  out.classList.remove("mono"); out.classList.add("doc");
+  out.innerHTML = html || `<span class="empty">No answer yet.</span>`;
+  return any;
+}
 function render(streaming) {
   const out = $("output");
-  if (!rawText && !streaming) { out.innerHTML = `<span class="empty">Upload an image and press “Read image”. The answer appears here.</span>`; return; }
-  const t = view === "raw" || streaming ? rawText : pretty(rawText);
+  out.classList.remove("doc");
+  if (!rawText && !streaming && !parts.length) { out.innerHTML = `<span class="empty">Upload an image and press “Read image”. The answer appears here.</span>`; return; }
+  if (view === "doc" && !streaming) { pretty(rawText); renderDocument(out); const b = $("jsonBadge"); b.style.display = jsonState && jsonState !== "not JSON" ? "" : "none"; b.textContent = "JSON " + (jsonState || ""); b.className = "badge " + (jsonState === "valid" ? "ok" : "warn"); return; }
+  const t = view === "raw" || streaming ? rawText : (parts.length > 1 ? parts.map(p => `// ${p.label}\n${pretty(p.text)}`).join("\n\n") : pretty(rawText));
   out.classList.toggle("mono", view === "raw" || t !== rawText);
   out.textContent = t;
   const b = $("jsonBadge");
@@ -442,11 +545,26 @@ function render(streaming) {
   b.textContent = "JSON " + (jsonState || ""); b.className = "badge " + (jsonState === "valid" ? "ok" : "warn");
   if (streaming) { const c = document.createElement("span"); c.className = "caret"; out.appendChild(c); out.scrollTop = out.scrollHeight; }
 }
-$("viewText").onclick = () => { view = "text"; $("viewText").classList.add("on"); $("viewRaw").classList.remove("on"); render(); };
-$("viewRaw").onclick = () => { view = "raw"; $("viewRaw").classList.add("on"); $("viewText").classList.remove("on"); render(); };
-$("copy").onclick = () => navigator.clipboard.writeText(view === "raw" ? rawText : pretty(rawText));
+function setView(v) { view = v; try { localStorage.setItem(STORE + "-view", v); } catch {} ["viewDoc", "viewText", "viewRaw"].forEach(id => $(id).classList.toggle("on", id === { doc: "viewDoc", text: "viewText", raw: "viewRaw" }[v])); render(); }
+$("viewDoc").onclick = () => setView("doc");
+$("viewText").onclick = () => setView("text");
+$("viewRaw").onclick = () => setView("raw");
+try { const v = localStorage.getItem(STORE + "-view"); if (v) setView(v); } catch {}
+// Copy and download: the page's text in the Content view; the JSON (both answers merged) or the raw text otherwise.
+function merged() {
+  if (parts.length < 2) return null;
+  const out = {};
+  for (const p of parts) { const v = parsed(p.text); if (v && typeof v === "object" && !Array.isArray(v)) Object.assign(out, v); else out[p.label] = p.text; }
+  return JSON.stringify(out, null, 2);
+}
+function fullText() {
+  const texts = (parts.length ? parts : [{ text: rawText }]).map(p => { const v = parsed(p.text); return v && v.content && v.content.full_text; }).filter(Boolean);
+  return texts.length ? texts.join("\n\n") : null;
+}
+$("copy").onclick = () => navigator.clipboard.writeText(view === "raw" ? rawText : view === "doc" && fullText() ? fullText() : merged() ?? pretty(rawText));
 $("download").onclick = () => {
-  const t = pretty(rawText), isJson = t !== rawText;
+  const ft = view === "doc" ? fullText() : null, m = merged();
+  const t = ft ?? m ?? pretty(rawText), isJson = !ft && (m !== null || t !== rawText);
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([t], { type: isJson ? "application/json" : "text/plain;charset=utf-8" }));
   a.download = (file ? file.name.replace(/\.[^.]+$/, "") : "answer") + (isJson ? ".json" : ".txt");
@@ -509,17 +627,29 @@ function imageTable(img) {
 $("stop").onclick = () => controller && controller.abort();
 $("run").onclick = async () => {
   if (!file) return;
-  save(); showError(""); rawText = ""; render(true);
+  save(); showError(""); parts = [];
+  const jobs = $("both").checked ? [["task 1 · text", TASK1, ""], ["task 2 · details", TASK2, ""]] : [["answer", $("prompt").value, $("system").value]];
+  $("run").disabled = true;
+  for (const [name, prompt, system] of jobs) {
+    const ok = await runOne(prompt, system, jobs.length > 1 ? name : null);
+    if (!ok) break;
+  }
+  $("run").disabled = false;
+};
+// One request; with a label it is one of several (its answer is kept in parts for the Content view).
+async function runOne(promptText, systemText, name) {
+  rawText = ""; render(true);
+  let ok = false;
   const fd = new FormData();
-  fd.append("image", file); fd.append("prompt", $("prompt").value); fd.append("system", $("system").value);
+  fd.append("image", file); fd.append("prompt", promptText); fd.append("system", systemText);
   fd.append("stream", $("stream").checked); fd.append("grayscale", $("grayscale").checked || $("card").checked);
   fd.append("model_card", $("card").checked); fd.append("image_transforms", transforms());
   for (const [k] of ARGS) if ($("a_" + k).value !== "") fd.append(k, $("a_" + k).value);
   fd.append("pan_and_scan", $("panScan").checked);
   for (const [k] of PAS) if ($("p_" + k).value !== "") fd.append(k, $("p_" + k).value);
   controller = new AbortController();
-  $("run").disabled = true; $("stop").disabled = false;
-  setStatus($("stream").checked ? "streaming…" : "reading…", "run");
+  $("stop").disabled = false;
+  setStatus((name ? name + ": " : "") + ($("stream").checked ? "streaming…" : "reading…"), "run");
   const start = performance.now(); let first = null, pieces = 0;
   ["kTokens", "kSpeed", "kTtft"].forEach(k => $(k).innerHTML = "–");
   timer = setInterval(() => {
@@ -533,8 +663,8 @@ $("run").onclick = async () => {
     if (!$("stream").checked) {
       const d = await r.json();
       if (d.error) throw new Error(d.error);
-      rawText = d.text; render(); figures(d.metrics, d.image); setStatus("done", "ok");
-      return;
+      rawText = d.text; parts.push({ label: name || "answer", text: rawText }); render(); figures(d.metrics, d.image); setStatus("done", "ok");
+      return ok = true;
     }
     const reader = r.body.getReader(), dec = new TextDecoder();
     let buf = "";
@@ -551,7 +681,7 @@ $("run").onclick = async () => {
           if (first === null) { first = performance.now(); $("kTtft").innerHTML = `${((first - start) / 1000).toFixed(2)}<small>s</small>`; }
           pieces++; rawText += data.text; $("kTokens").innerHTML = `~${pieces}`; render(true);
         }
-        else if (ev === "done") { rawText = data.text; render(); figures(data.metrics, data.image); setStatus("done", "ok"); }
+        else if (ev === "done") { rawText = data.text; parts.push({ label: name || "answer", text: rawText }); ok = true; render(); figures(data.metrics, data.image); setStatus("done", "ok"); }
         else if (ev === "error") { throw new Error(data.error); }
       }
     }
@@ -560,9 +690,10 @@ $("run").onclick = async () => {
     else { showError(e.message); setStatus("error", "err"); render(); }
   } finally {
     clearInterval(timer); controller = null;
-    $("run").disabled = false; $("stop").disabled = true;
+    $("stop").disabled = true;
   }
-};
+  return ok;
+}
 imageTable(null);
 </script>
 </body>
