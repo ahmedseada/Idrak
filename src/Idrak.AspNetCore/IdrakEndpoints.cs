@@ -34,6 +34,7 @@ public sealed class ChatApiOptions
     internal int? Rounds { get; private set; }
     internal IToolRegistry? ServerTools { get; private set; }
     internal string? Served { get; private set; }
+    internal ImageInputOptions ImageSettings { get; } = new();
     internal string VersionText { get; private set; } =
         typeof(InferenceEngine).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
 
@@ -57,6 +58,14 @@ public sealed class ChatApiOptions
         Execution = execution;
         Rounds = maxRounds;
         ServerTools = tools;
+        return this;
+    }
+
+    /// <summary>How /chat takes images (<see cref="ImageInputOptions.MaxImages"/>; the chat API has no image URLs).</summary>
+    public ChatApiOptions Images(Action<ImageInputOptions> configure)
+    {
+        ArgumentNullException.ThrowIfNull(configure);
+        configure(ImageSettings);
         return this;
     }
 
@@ -173,7 +182,8 @@ public static class IdrakEndpointExtensions
 
     /// <summary>
     /// The chat API under <paramref name="route"/>, on the routes common local-model clients call: POST /chat (NDJSON
-    /// streaming, think, tools, options, keep_alive), GET /tags, GET /ps and GET /version, all serving the chat model
+    /// streaming, think, tools, options, keep_alive; images as a message's <c>images</c> or as image parts of its
+    /// content, see <see cref="ChatApiMessage"/>, and <c>"grayscale": true</c> to read them grey), GET /tags, GET /ps and GET /version, all serving the chat model
     /// <paramref name="name"/>. The request body is read as JSON whatever its Content-Type (clients often send none).
     /// <see cref="ChatApiOptions.Tools"/> must be set. The OpenAI-style <c>/v1</c> API is
     /// <see cref="CompletionsApiEndpoints.MapCompletionsApi"/>.
@@ -264,6 +274,7 @@ public static class IdrakEndpointExtensions
             request = await JsonSerializer.DeserializeAsync<ChatApiRequest>(http.Body, Json, token)
                 ?? throw new ArgumentException("empty request body");
             (chat, var keepAlive, bool given) = ChatApiTranslation.Translate(request);
+            chat = ImageRequests.Check(chat, settings.ImageSettings, request.Grayscale == true);
             if (given)
             {
                 engine.KeepAlive(name, keepAlive);
@@ -272,6 +283,10 @@ public static class IdrakEndpointExtensions
         catch (Exception ex) when (ex is ArgumentException or JsonException or InvalidOperationException)
         {
             return Error(400, ex.Message);
+        }
+        catch (BadHttpRequestException ex)
+        {
+            return Error(ex.StatusCode, ex.Message);
         }
 
         string served = request.Model ?? settings.Served ?? name;
@@ -287,6 +302,15 @@ public static class IdrakEndpointExtensions
             }
 
             model = model.WithTools(tools, settings.Rounds!.Value);
+        }
+
+        try
+        {
+            ChatParts.ThrowIfUnsupported(model, chat, name);            // an image for a text-only model: before anything loads
+        }
+        catch (NotSupportedException ex)
+        {
+            return Error(400, ex.Message);
         }
 
         var lines = ChatLines(model.StreamAsync(chat, token), served, stream, clock).GetAsyncEnumerator(token);
@@ -387,6 +411,14 @@ public static class IdrakEndpointExtensions
         catch (ArgumentException ex)
         {
             return Error(400, ex.Message);
+        }
+        catch (NotSupportedException ex)
+        {
+            return Error(400, ex.Message);
+        }
+        catch (InvalidDataException ex)
+        {
+            return Error(400, $"An image does not decode: {ex.Message}");
         }
     }
 

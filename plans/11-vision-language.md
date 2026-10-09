@@ -1,6 +1,6 @@
 # Plan 11: images into language models (Gemma 3 first)
 
-**Status:** planned 2026-10-07, revised the same day against the code; phase 0 (the reference) done 2026-10-08, phase 4 (loading, text side), phase 3b (the SigLIP encoder and the projector) and phase 5 (image tokens in the decoder) done 2026-10-08 on CPU and Vulkan (phase 5 on CUDA too), phase 7 (the command line, before phase 6 by the author's choice) built 2026-10-08 and passing with the tiny model on CPU and Vulkan, the real model's run on the author's RTX 5070 Ti still to do, phase 1 (contracts) done 2026-10-07 on the CPU; plan 10's wave 4 is done. Asked for to run `bakrianoo/arabic-legal-documents-ocr-1.0`, a fine-tune of Gemma-3-4B-IT that reads scanned
+**Status:** planned 2026-10-07, revised the same day against the code; phase 0 (the reference) done 2026-10-08, phase 4 (loading, text side), phase 3b (the SigLIP encoder and the projector) and phase 5 (image tokens in the decoder) done 2026-10-08 on CPU and Vulkan (phase 5 on CUDA too), phase 7 (the command line, before phase 6 by the author's choice) built 2026-10-08 and checked on the real model on the author's RTX 5070 Ti 2026-10-09, phase 8 (images in `idrak serve`: `/v1` image_url data URLs, a multipart upload, `/api/chat`) built 2026-10-09 without phase 6 (stopped by the author) and passing with the tiny model on CPU, phase 1 (contracts) done 2026-10-07 on the CPU; plan 10's wave 4 is done. Asked for to run `bakrianoo/arabic-legal-documents-ocr-1.0`, a fine-tune of Gemma-3-4B-IT that reads scanned
 Arabic legal documents (low quality scans included) and returns their contents as structured data. Its card asks for
 images resized and turned to grayscale first, and shows it running through transformers and vLLM.
 
@@ -74,7 +74,7 @@ namespace until a second library package uses it.
 | 5 | **Image tokens in the decoder.** At prefill, the soft tokens' embeddings are replaced by the image features; each image's soft tokens see each other (3a's image-block rule, on top of the sliding window of the local layers); decoding afterwards uses the KV cache as today (the image costs nothing more per generated token). Several images in one prompt | the tiny model's logits with an image and its 20 greedy tokens match the reference (CPU and Vulkan); **done 2026-10-08** (as built below) |
 | 6 | **Chat with images in Nlp.** The chat template's image parts expand to the image tokens (the Jinja engine walks content parts); generation takes images; an image is encoded once per conversation (kept with the conversation by content hash) | a two-turn chat about one image encodes it once and matches the reference's first turn |
 | 7 | **The command line.** `idrak chat <model> --image FILE` (repeatable; also `/image FILE` inside a chat, like `/file`); the one-shot `idrak run <model> --image FILE "prompt"` (with `--schema` for the structured answer this model gives, `-j` for JSON); `--grayscale` (or the setting stored with a pulled model) | CLI tests pass with the tiny model; on the author's RTX 5070 Ti the real model reads a sample scan and its greedy output matches transformers' for the first 100 tokens; **built 2026-10-08 before phase 6** (as built below): the tiny model passes on CPU and Vulkan; **the real model checked 2026-10-09** (below): done |
-| 8 | **Images in chat, after the command line is proven** (phase 7 done on the real model). The engine hosts the model as a chat model that accepts images (`IChatModel`, saying which inputs it takes; the image is encoded once per conversation, as in phase 6); `MapChatApi` takes images in its messages; `MapCompletionsApi` (`/v1/chat/completions`) accepts OpenAI's `image_url` content parts (data URLs and, when allowed, http URLs); `idrak serve` serves it. The same preprocessing (and grayscale setting) as the command line | an OpenAI client sends a scan as an `image_url` part and gets the same answer as `idrak run --image`; streamed and not; the aspnetcore tests cover a tiny model with an image |
+| 8 | **Images in chat, after the command line is proven** (phase 7 done on the real model). The engine hosts the model as a chat model that accepts images (`IChatModel`, saying which inputs it takes; the image is encoded once per conversation, as in phase 6); `MapChatApi` takes images in its messages; `MapCompletionsApi` (`/v1/chat/completions`) accepts OpenAI's `image_url` content parts (data URLs and, when allowed, http URLs); `idrak serve` serves it. The same preprocessing (and grayscale setting) as the command line | an OpenAI client sends a scan as an `image_url` part and gets the same answer as `idrak run --image`; streamed and not; the aspnetcore tests cover a tiny model with an image; **built 2026-10-09 without phase 6** (as built below: `/v1` data URLs, the multipart `/v1/chat/upload`, `/api/chat` images, `serve --grayscale`, limits; each request encodes its images): the tiny model passes on CPU; the real model through the server is the author's to run |
 | 9 | **After that.** An MCP `chat` tool with images (and an `ocr` tool if useful); pan-and-scan for tall pages; other families (Qwen2.5-VL); fine-tuning with images (LoRA on the text decoder, encoder frozen) | decided per item after phase 8 |
 
 ### Phase 1 as built (2026-10-07)
@@ -476,6 +476,65 @@ what is the command line's alone is in the CLI.
   `run -o FILE` writes the answer (or the `-j` document) as UTF-8 without a BOM: PowerShell decodes a native command's
   output with `[Console]::OutputEncoding` (cp437 there) even though the tool writes UTF-8; the CLI README's Windows
   section has the PowerShell setting. The real model's numbers are to come from the author's machine.
+
+## Phase 8, as built (2026-10-09): images in `idrak serve`
+
+Built after phase 7 was checked on the real model, without phase 6 (stopped by the author): each request encodes its
+images once, when it is answered; nothing is kept between requests (no content-hash cache).
+
+- **Engine (Nlp).** `GenerativeModelBuilder.Images(Func<TextGenerator, ChatImages>)`: called for each copy once its
+  text generator loads, giving how that copy reads images; the engine disposes the new `ChatImages.Owner` (the
+  encoder's holder) when it unloads the copy. The engine's chat model's `PartKinds` is text and image, known before
+  anything loads, when it has `Images` and its template renders images (`ChatTemplate.PartKinds`); text only otherwise,
+  so a text model refuses an image before it loads (`ChatParts.ThrowIfUnsupported`, as phase 1). Generation is as
+  before: one request at a time per copy (the engine's lease), the encoder built on the copy's first image.
+- **Core.** `Idrak.Data.ChatImageDecoder` (moved from the CLI's `ImageInputs`, not copied): `Decode(ChatImage)` (the
+  codecs, then the EXIF orientation as `exif_transpose`), `Orientation`, `Orient`, `FormatOf(image)` (the registered
+  codec whose `ReadInfo` accepts the header, or null: the check before decoding) and `Grayscale(image)`: the image
+  upright and grey (Pillow's L, the preprocessor's own byte rounding) as an 8-bit binary PGM, which any preprocessor
+  reads exactly as it reads the original with `Grayscale` on (asserted against phase 0's `pixel_values-png-gray.npy`),
+  so one request can be grey without another preprocessor. The CLI's `ImageInputs.Decode` calls it.
+- **AspNetCore.** `ImageInputOptions` (`MaxImages` 8, `AllowUrls` false, `MaxUrlBytes` 20 MB, `UrlTimeout` 30 s) on
+  `CompletionsApiOptions.Images` and `ChatApiOptions.Images`. Every chat endpoint checks a request's images before
+  answering: at most `MaxImages` (400), each in a format a registered codec reads (400 naming PNG, JPEG, BMP,
+  PPM/PGM), grey when asked; an image for a text-only model is a 400 (`unsupported_content`), a file that does not
+  decode a 400 (`invalid_image`), a body over the host's limit a 413.
+  - `/v1/chat/completions`: content parts `{"type": "text"}` and `{"type": "image_url", "image_url": {"url":
+    "data:image/...;base64,..."}}` (or `"image_url": "..."`); http(s) URLs are downloaded first only with `AllowUrls`
+    (size and time limits; a failed download is a 400 naming the address), otherwise refused with a 400; other part
+    types are refused. `"grayscale": true` reads the request's images grey. `stream` as before (chunks, `[DONE]`).
+    `CompletionsTranslation.Options` now defaults `repeat_penalty` to 1 (off): the wire format has no repetition
+    penalty, and with the library's 1.1 a greedy `/v1` answer left `idrak run`'s at the 11th token of the reference.
+  - `POST /v1/chat/upload` (new): `multipart/form-data` with `image` (one or more files; `images`, `image[]` too),
+    `prompt`, and optionally `system`, `stream`, `include_usage`, `max_tokens`, `temperature`, `top_p`, `top_k`,
+    `min_p`, `seed`, `stop`, the penalties, `reasoning_effort`, `grayscale`, `model`; the user message is the images
+    then the prompt (as `run --image`). Answers exactly as `/v1/chat/completions` (`chat.completion`, or
+    `chat.completion.chunk` events and `data: [DONE]`); not a form: 415. `CompletionsTranslation.Upload(form)` is public.
+  - `MapChatApi` (`/api/chat`): `ChatApiMessage.Content` is a `JsonNode` (a string as before, or parts in phase 1's
+    chat JSON: `{"type": "image", "media_type", "data"}`), plus `images` (base64 strings or data URLs, before the
+    content, as common local-model clients send them); `ChatApiRequest.Grayscale`.
+- **`idrak serve`.** A served model reads images when its config has a `vision_config`, its `model_type` has an
+  image prompt format and its template renders images; its copies then read them through phase 7's `ModelImages`
+  (the same preprocessing, EXIF orientation and grayscale as `run --image`). New options: `--grayscale` (or the alias's
+  setting), `--max-request-mb` (32: Kestrel's body limit and the form limit; 413 with a JSON error), `--max-images`
+  (8), `--allow-image-urls` (downloads held to the request size and 30 s). The announcement and `--json` name the
+  vision models and the upload route; uploads are logged with their fields and file sizes, not their bytes.
+- **Tests** (CPU, in-process on a loopback port): `IDRAK_FILTER="aspnetcore: images"`: a vision chat model of the
+  library's own (the engine with `Images`, no CLI) answers `/v1` with a data URL with transformers' 20 greedy tokens
+  (recorded by a sampler) and 38 prompt tokens, streamed text equal to the non-streamed, three requests at once each
+  as alone, an allowed http URL served by the same app, a URL answering 404 refused, the upload both ways, `/api/chat`
+  with parts and with `images`, grayscale pixels equal to the reference; refused: a text model (400 before loading),
+  bad base64, a GIF, three images over a limit of two, a damaged PNG, an unknown part type; the owner disposed on
+  unload. `IDRAK_FILTER="cli serve: images"`: `idrak serve` with the tiny Gemma 3 and a text GGUF answers `/v1`
+  (both modes), the upload (both modes) and `/api/chat` exactly as `idrak run --image` (and the reference's tokens);
+  `grayscale=true` and `serve --grayscale` give `run --grayscale`'s answer; refused: images to the text model (JSON and
+  upload), an http URL without `--allow-image-urls`, three images over `--max-images 2`, bodies over
+  `--max-request-mb 1` (413, JSON and form, judged from the announced length), bad base64, a GIF upload, an upload
+  with neither prompt nor image, `grayscale=maybe`. Also run: `aspnetcore`, `cli serve`, `chat parts`, `cli images`,
+  `public API`, `abstraction inventory`.
+- **Not done.** Phase 6 (encoding once per conversation); a content-hash cache of features; MCP images (phase 9);
+  `--schema` on the server (the CLI's schema is an instruction plus a check, not a server feature yet); the real model
+  through the server on the author's machine (the commands are in the hand-back).
 
 ## Performance targets (author's RTX 5070 Ti, the real 4B model)
 

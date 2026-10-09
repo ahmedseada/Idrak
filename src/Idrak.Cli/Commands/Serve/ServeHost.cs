@@ -11,6 +11,7 @@ using System.Text.Json.Nodes;
 using Idrak.AspNetCore;
 using Idrak.Cli.Shared;
 using Idrak.Generation;
+using Idrak.Generation.Abstractions;
 using Idrak.Inference;
 using Idrak.Layers;
 using Idrak.Models;
@@ -27,8 +28,17 @@ using Microsoft.Extensions.Logging;
 
 namespace Idrak.Cli.Commands.Serve;
 
-/// <summary>One model of a server: the name clients use, what was asked for, and what is read at startup (the template).</summary>
-internal sealed record ServedModel(string Name, string Source, ModelChoices.ModelChoice Choice, string Path, string Folder, ChatTemplate? Template, JsonObject? Config);
+/// <summary>
+/// One model of a server: the name clients use, what was asked for, and what is read at startup (the template, and
+/// whether it reads images: a vision-language model whose family has an image prompt format and whose template renders
+/// images).
+/// </summary>
+internal sealed record ServedModel(string Name, string Source, ModelChoices.ModelChoice Choice, string Path, string Folder, ChatTemplate? Template, JsonObject? Config)
+{
+    /// <summary>Whether its chat takes images.</summary>
+    public bool ReadsImages => Config?["vision_config"] is JsonObject && ImagePromptFormats.Find((string?)Config["model_type"] ?? "") is not null
+        && Template?.PartKinds.Contains(ChatParts.Image) == true;
+}
 
 /// <summary>The server's settings from the command line.</summary>
 internal sealed record ServeSettings(string Host, int Port, string? ApiKey, IReadOnlyList<string> Cors, int MaxConcurrency, TimeSpan? KeepAlive, string KeepAliveText)
@@ -47,6 +57,15 @@ internal sealed record ServeSettings(string Host, int Port, string? ApiKey, IRea
 
     /// <summary>Whether requests need a key.</summary>
     public bool NeedsKey => ApiKey is not null || KeyHashes.Count > 0;
+
+    /// <summary>The largest request body in bytes (--max-request-mb); a larger one is a 413.</summary>
+    public long MaxRequestBytes { get; init; } = ServeHost.DefaultMaxRequestMegabytes * 1024L * 1024;
+
+    /// <summary>The most images one request may hold (--max-images).</summary>
+    public int MaxImages { get; init; } = ServeHost.DefaultMaxImages;
+
+    /// <summary>Whether image_url parts may give http(s) addresses the server downloads (--allow-image-urls).</summary>
+    public bool AllowImageUrls { get; init; }
 }
 
 /// <summary>
@@ -71,17 +90,27 @@ internal sealed class ServeHost
     public const string PortKey = "serve.port";
 
     /// <summary>The options of serve and ui (besides the model options).</summary>
-    public static readonly string[] ValueOptions = ["--host", "--port", "--api-key", "--cors", "--max-concurrency", "--keep-alive", "--log-requests"];
+    public static readonly string[] ValueOptions = ["--host", "--port", "--api-key", "--cors", "--max-concurrency", "--keep-alive", "--log-requests",
+        "--max-request-mb", "--max-images"];
 
     /// <summary>The flags of serve and ui.</summary>
-    public static readonly string[] Flags = ["--metrics", "--log-content"];
+    public static readonly string[] Flags = ["--metrics", "--log-content", "--grayscale", "--allow-image-urls"];
+
+    /// <summary>The largest request body when --max-request-mb is not given, in MB (a phone photo as a data URL fits).</summary>
+    public const int DefaultMaxRequestMegabytes = 32;
+
+    /// <summary>The most images in one request when --max-images is not given.</summary>
+    public const int DefaultMaxImages = 8;
+
+    /// <summary>How long the server waits for one http(s) image URL (--allow-image-urls).</summary>
+    public static readonly TimeSpan ImageUrlTimeout = TimeSpan.FromSeconds(30);
 
     /// <summary>Their short forms.</summary>
     public static readonly Dictionary<string, string> ShortForms = new() { ["-p"] = "--port", ["-H"] = "--host" };
 
     private const string Internal = "/idrak/models";           // where each model's chat API is mapped; /api/chat dispatches to it
 
-    private static readonly string[] ModelRoutes = ["/api/chat", "/v1/chat/completions", "/v1/completions", "/v1/embeddings"];
+    private static readonly string[] ModelRoutes = ["/api/chat", "/v1/chat/completions", "/v1/chat/upload", "/v1/completions", "/v1/embeddings"];
 
     private readonly CommandContext _context;
     private readonly object _print = new();
@@ -89,6 +118,7 @@ internal sealed class ServeHost
     private readonly ConcurrentDictionary<string, long> _memory = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, long> _requests = new(StringComparer.Ordinal);
     private StreamWriter? _requestLog;
+    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<TextGenerator, PretrainedModel> _loaded = [];
     private bool _mcp;
 
     public ServeHost(CommandContext context, ServeSettings settings, IReadOnlyList<ServedModel> models)
@@ -153,6 +183,18 @@ internal sealed class ServeHost
             throw new UsageException($"--keep-alive: {e.Message}");
         }
 
+        int requestMb = context.IntOption("--max-request-mb", DefaultMaxRequestMegabytes);
+        if (requestMb < 1)
+        {
+            throw new UsageException("--max-request-mb must be 1 or more.");
+        }
+
+        int images = context.IntOption("--max-images", DefaultMaxImages);
+        if (images < 0)
+        {
+            throw new UsageException("--max-images must be 0 (no images) or more.");
+        }
+
         return new ServeSettings(host, port, context.Option("--api-key") ?? Environment.GetEnvironmentVariable("IDRAK_API_KEY"),
             [.. context.Options("--cors").SelectMany(o => o.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))],
             concurrency, keep, keepText)
@@ -160,6 +202,9 @@ internal sealed class ServeHost
             KeyHashes = [.. ServerKeys.Hashes(context)],
             Metrics = context.Flag("--metrics"),
             RequestLog = context.Option("--log-requests"),
+            MaxRequestBytes = requestMb * 1024L * 1024,
+            MaxImages = images,
+            AllowImageUrls = context.Flag("--allow-image-urls"),
             LogContent = context.Flag("--log-content") && (context.Option("--log-requests") is not null
                 ? true : throw new UsageException("--log-content adds the request bodies to the request log; give the log with --log-requests FILE.")),
         };
@@ -268,6 +313,13 @@ internal sealed class ServeHost
         _context.Table(["Model", "Source"], Served.Select(m => (IReadOnlyList<string>)[m.Name, m.Source]));
         _context.Write($"Chat API          {url}/api/chat");
         _context.Write($"OpenAI-style API  {url}/v1");
+        var vision = Served.Where(m => m.ReadsImages).ToList();
+        if (vision.Count > 0)
+        {
+            _context.Write($"Images            {string.Join(", ", vision.Select(m => m.Name + (m.Choice.Grayscale ? " (grey)" : "")))}: image_url parts on /v1/chat/completions, "
+                + $"or a form upload to {url}/v1/chat/upload (up to {Settings.MaxImages} per request, {Settings.MaxRequestBytes / (1024 * 1024)} MB a request)");
+        }
+
         _context.Write($"Web chat          {url}/ui");
         if (Settings.Metrics)
         {
@@ -285,6 +337,10 @@ internal sealed class ServeHost
             ["url"] = url,
             ["chat_api"] = url + "/api",
             ["openai_style_api"] = url + "/v1",
+            ["upload"] = url + "/v1/chat/upload",
+            ["max_request_bytes"] = Settings.MaxRequestBytes,
+            ["max_images"] = Settings.MaxImages,
+            ["image_urls"] = Settings.AllowImageUrls,
             ["ui"] = url + "/ui",
             ["device"] = _context.Device.ToString(),
             ["keep_alive"] = Settings.KeepAliveText,
@@ -292,7 +348,10 @@ internal sealed class ServeHost
             ["api_key"] = Settings.NeedsKey,
             ["metrics"] = Settings.Metrics ? url + "/metrics" : null,
             ["request_log"] = Settings.RequestLog is { } file ? System.IO.Path.GetFullPath(file) : null,
-            ["models"] = new JsonArray([.. Served.Select(m => (JsonNode)new JsonObject { ["name"] = m.Name, ["source"] = m.Source, ["path"] = m.Path })]),
+            ["models"] = new JsonArray([.. Served.Select(m => (JsonNode)new JsonObject
+            {
+                ["name"] = m.Name, ["source"] = m.Source, ["path"] = m.Path, ["images"] = m.ReadsImages, ["grayscale"] = m.ReadsImages && m.Choice.Grayscale,
+            })]),
         });
         _context.Output.Flush();
     }
@@ -304,6 +363,8 @@ internal sealed class ServeHost
         builder.Services.Configure<ConsoleLifetimeOptions>(o => o.SuppressStatusMessages = true);
         builder.Services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(30));      // open requests drain
         builder.WebHost.UseUrls($"http://{(Settings.Host is "0.0.0.0" or "*" ? "0.0.0.0" : Settings.Host)}:{Settings.Port}");
+        builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = Settings.MaxRequestBytes);
+        builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(o => o.MultipartBodyLengthLimit = Settings.MaxRequestBytes);
         if (Settings.Cors.Count > 0)
         {
             builder.Services.AddCors(o => o.AddDefaultPolicy(p =>
@@ -337,14 +398,14 @@ internal sealed class ServeHost
         for (int i = 0; i < Served.Count; i++)
         {
             string name = Served[i].Name;
-            app.MapChatApi($"{Internal}/{i}/api", name, o => o.Tools(ToolExecution.Client).ModelName(name).Version(Version));
+            app.MapChatApi($"{Internal}/{i}/api", name, o => o.Tools(ToolExecution.Client).ModelName(name).Version(Version).Images(Limits));
         }
 
         app.MapGet("/", () => Results.Text("Idrak is running\n"));
         app.MapGet("/api/version", () => Results.Json(new { version = Version }));
         app.MapGet("/api/tags", Tags);
         app.MapGet("/api/ps", (InferenceEngine engine) => Ps(engine));
-        app.MapCompletionsApi("/v1");
+        app.MapCompletionsApi("/v1", o => o.Images(Limits));
         app.MapGet("/ui", () => Results.Content(ChatPage.Html, "text/html; charset=utf-8"));
         app.MapIdrakStatus("/idrak/status");
         if (Settings.Metrics)
@@ -369,6 +430,15 @@ internal sealed class ServeHost
     }
 
     // ------------------------------------------------------------------ models
+
+    // The image limits of every chat endpoint (--max-images, --allow-image-urls; a download is held to the request size).
+    private void Limits(ImageInputOptions images)
+    {
+        images.MaxImages = Settings.MaxImages;
+        images.AllowUrls = Settings.AllowImageUrls;
+        images.MaxUrlBytes = Settings.MaxRequestBytes;
+        images.UrlTimeout = ImageUrlTimeout;
+    }
 
     /// <summary>
     /// <c>idrak serve --mcp</c>: the models as MCP tools (generate, chat) with <paramref name="tools"/>, over standard
@@ -399,7 +469,8 @@ internal sealed class ServeHost
             engine.ChatModel(served.Name, () => Load(served), b =>
             {
                 b = b.KeepAlive(Settings.KeepAlive);
-                return served.Template is null ? b : b.Template(served.Template);
+                b = served.Template is null ? b : b.Template(served.Template);
+                return served.ReadsImages ? b.Images(generator => Images(served, generator)) : b;
             });
         }
 
@@ -414,9 +485,20 @@ internal sealed class ServeHost
         var pretrained = ModelChoices.Load(_context, model.Choice with { Model = model.Path });
         var generator = model.Choice.Kv is { } kv ? pretrained.CreateGenerator(KeyValueLayouts.Get(kv), model.Choice.Context)
             : pretrained.CreateGenerator(contextLength: model.Choice.Context);
+        _loaded.AddOrUpdate(generator, pretrained);
         _memory[model.Name] = Math.Max(0, ComputeResources.GetMemoryUsage(device).InUse - before);
         Print($"loaded {model.Name} in {watch.Elapsed.TotalSeconds:F1} s on {device}");
         return generator;
+    }
+
+    // How a loaded copy reads images: the command line's (ModelImages: the encoder built on the first image, on the
+    // model's device, with the model's preprocessing, grey with --grayscale or the alias's setting, EXIF orientation).
+    private Idrak.Generation.ChatImages Images(ServedModel model, TextGenerator generator)
+    {
+        var pretrained = _loaded.TryGetValue(generator, out var p) ? p : throw new InvalidOperationException($"{model.Name}: the loaded model is unknown.");
+        var images = ImageInputs.For(pretrained, model.Choice.Grayscale, out string? reason)
+            ?? throw new InvalidOperationException($"{model.Name} reads no images{(reason is null ? "" : $": {reason}")}.");
+        return images.Images;
     }
 
     // The served model a request names; with anyName (client requests), any name selects the only model.
@@ -485,7 +567,7 @@ internal sealed class ServeHost
 
     private static readonly HashSet<string> KnownRoutes = new(StringComparer.Ordinal)
     {
-        "/", "/ui", "/api/chat", "/api/tags", "/api/ps", "/api/version", "/v1/chat/completions", "/v1/completions", "/v1/embeddings", "/v1/models",
+        "/", "/ui", "/api/chat", "/api/tags", "/api/ps", "/api/version", "/v1/chat/completions", "/v1/chat/upload", "/v1/completions", "/v1/embeddings", "/v1/models",
     };
 
     // Longest first: "/chat/completions" before "/completions".
@@ -532,21 +614,61 @@ internal sealed class ServeHost
 
         var started = DateTimeOffset.UtcNow;
         var watch = Stopwatch.StartNew();
-        http.Request.EnableBuffering();
-        string body = await new StreamReader(http.Request.Body, leaveOpen: true).ReadToEndAsync(http.RequestAborted);
-        http.Request.Body.Position = 0;
+        string body;
         string? asked = null;
         try
         {
-            using var document = JsonDocument.Parse(body);
-            if (document.RootElement.ValueKind == JsonValueKind.Object && document.RootElement.TryGetProperty("model", out var model) && model.ValueKind == JsonValueKind.String)
+            if (http.Request.HasFormContentType)
             {
-                asked = model.GetString();
+                // An upload: the form is read once here (the endpoint reads the same one); the log gets its fields, not its files.
+                var form = await http.Request.ReadFormAsync(http.RequestAborted);
+                asked = form["model"].FirstOrDefault();
+                var fields = new JsonObject();
+                foreach (var (key, value) in form)
+                {
+                    fields[key] = value.ToString();
+                }
+
+                fields["files"] = new JsonArray([.. form.Files.Select(f => (JsonNode)new JsonObject { ["field"] = f.Name, ["name"] = f.FileName, ["bytes"] = f.Length })]);
+                body = fields.ToJsonString();
+            }
+            else
+            {
+                http.Request.EnableBuffering();
+                body = await new StreamReader(http.Request.Body, leaveOpen: true).ReadToEndAsync(http.RequestAborted);
+                http.Request.Body.Position = 0;
+                try
+                {
+                    using var document = JsonDocument.Parse(body);
+                    if (document.RootElement.ValueKind == JsonValueKind.Object && document.RootElement.TryGetProperty("model", out var model) && model.ValueKind == JsonValueKind.String)
+                    {
+                        asked = model.GetString();
+                    }
+                }
+                catch (JsonException)
+                {
+                    // The endpoint answers bad JSON with 400.
+                }
             }
         }
-        catch (JsonException)
+        catch (Exception e) when (e is BadHttpRequestException { StatusCode: StatusCodes.Status413PayloadTooLarge }
+                                  || e is InvalidDataException && e.Message.Contains("limit", StringComparison.OrdinalIgnoreCase))
         {
-            // The endpoint answers bad JSON with 400.
+            // Larger than --max-request-mb (Kestrel's body limit, or the form's).
+            http.Response.StatusCode = StatusCodes.Status413PayloadTooLarge;
+            await http.Response.WriteAsJsonAsync(new
+            {
+                error = new
+                {
+                    message = $"The request is larger than this server takes ({Settings.MaxRequestBytes / (1024 * 1024)} MB; idrak serve --max-request-mb N).",
+                    type = "request_too_large", code = "request_too_large",
+                },
+            });
+            return;
+        }
+        catch (Exception e) when (e is InvalidDataException or IOException && http.Request.HasFormContentType)
+        {
+            body = "";                                          // a malformed form: the endpoint answers it with 400
         }
 
         var served = Find(asked);

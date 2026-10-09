@@ -17,15 +17,22 @@ public sealed record ChatApiRequest(
     [property: JsonPropertyName("think")] JsonElement? Think = null,
     [property: JsonPropertyName("keep_alive")] JsonElement? KeepAlive = null,
     [property: JsonPropertyName("options")] Dictionary<string, JsonElement>? Options = null,
-    [property: JsonPropertyName("tools")] List<ChatApiTool>? Tools = null);
+    [property: JsonPropertyName("tools")] List<ChatApiTool>? Tools = null,
+    [property: JsonPropertyName("grayscale")] bool? Grayscale = null);
 
-/// <summary>A chat message: role (system, user, assistant, tool), content, and optionally reasoning, tool calls or the tool name.</summary>
+/// <summary>
+/// A chat message: role (system, user, assistant, tool), content, and optionally reasoning, tool calls or the tool name.
+/// The content is a string, or (in requests) a list of parts as the library's chat JSON writes them
+/// (<see cref="ChatParts.ContentFromJson"/>: <c>{"type": "text", "text"}</c>, <c>{"type": "image", "media_type",
+/// "data": base64}</c>); <c>images</c> adds images as base64 strings (or data URLs) before the content.
+/// </summary>
 public sealed record ChatApiMessage(
     [property: JsonPropertyName("role")] string Role,
-    [property: JsonPropertyName("content")] string? Content = null,
+    [property: JsonPropertyName("content")] JsonNode? Content = null,
     [property: JsonPropertyName("thinking"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Thinking = null,
     [property: JsonPropertyName("tool_calls"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] List<ChatApiToolCall>? ToolCalls = null,
-    [property: JsonPropertyName("tool_name"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ToolName = null);
+    [property: JsonPropertyName("tool_name"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ToolName = null,
+    [property: JsonPropertyName("images"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] List<string>? Images = null);
 
 /// <summary>A tool definition: {"type": "function", "function": {name, description, parameters}}.</summary>
 public sealed record ChatApiTool(
@@ -108,12 +115,45 @@ public static class ChatApiTranslation
             _ => null,
         };
 
-        var messages = request.Messages.Select(m => new ChatMessage(m.Role, m.Content ?? "", m.Thinking,
+        var messages = request.Messages.Select(m => new ChatMessage(m.Role, Parts(m), m.Thinking,
             m.ToolCalls?.Select(c => new ToolCall(c.Function.Name, c.Function.Arguments)).ToList(), m.ToolName)).ToList();
         var tools = (request.Tools ?? []).Where(t => t.Type == "function")
             .Select(t => new ToolDefinition(t.Function.Name, t.Function.Description, t.Function.Parameters)).ToList();
         var (keepAlive, given) = KeepAliveOf(request.KeepAlive);
         return (new ChatRequest(messages, tools, think, options), keepAlive, given);
+    }
+
+    // A message's images (base64 or data URLs), then its content (a string, or parts in the library's chat JSON).
+    private static List<ChatPart> Parts(ChatApiMessage message)
+    {
+        var parts = new List<ChatPart>();
+        foreach (string image in message.Images ?? [])
+        {
+            try
+            {
+                parts.Add(image.StartsWith("data:", StringComparison.OrdinalIgnoreCase) ? ChatImage.FromDataUrl(image)
+                    : ChatImage.FromBytes(Convert.FromBase64String(image)));
+            }
+            catch (FormatException ex)
+            {
+                throw new ArgumentException($"images: {(ex.Message.StartsWith("The input is not a valid Base-64", StringComparison.Ordinal) ? "an image is not valid base64." : ex.Message)}");
+            }
+        }
+
+        try
+        {
+            parts.AddRange(ChatParts.ContentFromJson(message.Content));
+        }
+        catch (FormatException ex)
+        {
+            throw new ArgumentException($"content: {ex.Message}");
+        }
+        catch (InvalidOperationException ex)
+        {
+            throw new ArgumentException($"content: {ex.Message}");
+        }
+
+        return parts;
     }
 
     /// <summary>Maps the chat API's option names to <see cref="GenerationOptions"/> (unknown names are ignored).</summary>
