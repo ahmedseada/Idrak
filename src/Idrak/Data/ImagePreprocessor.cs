@@ -30,9 +30,12 @@ public enum ImageResampling
 }
 
 /// <summary>
-/// The image steps a vision-language model's <c>preprocessor_config.json</c> asks for (Gemma 3's and SigLIP's image
-/// processors): optionally to grey, to RGB, resized, rescaled and normalized, giving the [3, height, width] float values
-/// transformers calls <c>pixel_values</c> (channels first).
+/// The image steps a vision-language model's <c>preprocessor_config.json</c> asks for (the PIL image processors of
+/// transformers: SigLIP's, Gemma 3's, CLIP's, LLaVA's): optionally to grey, to RGB, resized (to a size, or by its shortest
+/// edge), center-cropped, rescaled and normalized, giving the [3, height, width] float values transformers calls
+/// <c>pixel_values</c> (channels first). A building block: each vision family chooses its own steps and the defaults of
+/// its own processor class (<see cref="Parse(string, bool, ImagePreprocessor?)"/>); the defaults of this class are
+/// transformers' base processor's (bilinear, mean and std 0.5).
 /// <para>
 /// The resize is Pillow's <c>Image.resize</c> (its <c>ImagingResample</c>), which transformers' PIL image processors
 /// call: two passes (across, then down) on 8-bit pixels, each output pixel a weighted sum over a support widened by the
@@ -58,8 +61,27 @@ public enum ImageResampling
 /// </summary>
 public sealed class ImagePreprocessor
 {
-    /// <summary>Whether images are resized to <see cref="Height"/> x <see cref="Width"/> ("do_resize").</summary>
+    /// <summary>Whether images are resized to <see cref="Height"/> x <see cref="Width"/>, or by <see cref="ShortestEdge"/> ("do_resize").</summary>
     public bool Resize { get; init; } = true;
+
+    /// <summary>
+    /// Resize so the shorter side has this length and the longer keeps the aspect ratio, truncated as transformers'
+    /// <c>get_resize_output_image_size</c> does ("size": {"shortest_edge"}); 0 (the default): resize to
+    /// <see cref="Height"/> x <see cref="Width"/>.
+    /// </summary>
+    public int ShortestEdge { get; init; }
+
+    /// <summary>
+    /// Whether the resized image is cut to <see cref="CropHeight"/> x <see cref="CropWidth"/> around its center
+    /// ("do_center_crop"; transformers' <c>center_crop</c>: offsets rounded down, zeros around an image smaller than the crop).
+    /// </summary>
+    public bool CenterCrop { get; init; }
+
+    /// <summary>The crop's height ("crop_size": {"height"}).</summary>
+    public int CropHeight { get; init; }
+
+    /// <summary>The crop's width ("crop_size": {"width"}).</summary>
+    public int CropWidth { get; init; }
 
     /// <summary>The height images are resized to ("size": {"height"}).</summary>
     public int Height { get; init; }
@@ -92,20 +114,21 @@ public sealed class ImagePreprocessor
     public bool Grayscale { get; init; }
 
     /// <summary>
-    /// Reads a <c>preprocessor_config.json</c> (the file, or the model folder holding it). Keys it does not name keep the
-    /// defaults above; <c>do_pan_and_scan</c> true, a <c>size</c> without height and width (shortest edge) and a
-    /// center crop are not supported yet.
+    /// Reads a <c>preprocessor_config.json</c> (the file, or the model folder holding it). Keys it does not name (or names
+    /// as null) take <paramref name="defaults"/>' values: the family's processor class's own defaults (null: this class's);
+    /// <c>do_pan_and_scan</c> true, a size by longest edge and nearest resampling are not supported.
     /// </summary>
-    public static ImagePreprocessor FromConfig(string path, bool grayscale = false)
+    public static ImagePreprocessor FromConfig(string path, bool grayscale = false, ImagePreprocessor? defaults = null)
     {
         string file = Directory.Exists(path) ? Path.Combine(path, "preprocessor_config.json") : path;
-        return Parse(File.ReadAllText(file), grayscale);
+        return Parse(File.ReadAllText(file), grayscale, defaults);
     }
 
     /// <summary>The steps of a <c>preprocessor_config.json</c>'s text (see <see cref="FromConfig"/>).</summary>
-    /// <exception cref="NotSupportedException">Pan and scan, a size by shortest edge, a center crop or nearest resampling.</exception>
-    public static ImagePreprocessor Parse(string json, bool grayscale = false)
+    /// <exception cref="NotSupportedException">Pan and scan, a size by longest edge, or nearest resampling.</exception>
+    public static ImagePreprocessor Parse(string json, bool grayscale = false, ImagePreprocessor? defaults = null)
     {
+        var d = defaults ?? new ImagePreprocessor();
         using var document = JsonDocument.Parse(json);
         var root = document.RootElement;
         if (root.ValueKind != JsonValueKind.Object)
@@ -118,32 +141,53 @@ public sealed class ImagePreprocessor
             throw new NotSupportedException("do_pan_and_scan (Gemma 3's crops of tall or wide images) is not supported yet; set it to false or null.");
         }
 
-        if (Flag(root, "do_center_crop", false))
+        bool resize = Flag(root, "do_resize", d.Resize);
+        int height = d.Height, width = d.Width, shortest = d.ShortestEdge;
+        if (root.TryGetProperty("size", out var size) && size.ValueKind is JsonValueKind.Object or JsonValueKind.Number)
         {
-            throw new NotSupportedException("do_center_crop is not supported; the processors of Gemma 3 and SigLIP do not crop.");
-        }
-
-        bool resize = Flag(root, "do_resize", true);
-        int height = 0, width = 0;
-        if (root.TryGetProperty("size", out var size) && size.ValueKind == JsonValueKind.Object)
-        {
-            if (size.TryGetProperty("height", out var h) && size.TryGetProperty("width", out var w))
+            if (size.ValueKind == JsonValueKind.Number)
             {
-                height = h.GetInt32();
-                width = w.GetInt32();
+                (height, width, shortest) = (size.GetInt32(), size.GetInt32(), 0);       // an old processor's one number: a square
+            }
+            else if (size.TryGetProperty("height", out var h) && size.TryGetProperty("width", out var w))
+            {
+                (height, width, shortest) = (h.GetInt32(), w.GetInt32(), 0);
+            }
+            else if (size.TryGetProperty("shortest_edge", out var edge) && !size.TryGetProperty("longest_edge", out _))
+            {
+                (height, width, shortest) = (0, 0, edge.GetInt32());
             }
             else if (resize)
             {
-                throw new NotSupportedException($"A size of {size.GetRawText()} (by shortest or longest edge) is not supported; give height and width.");
+                throw new NotSupportedException($"A size of {size.GetRawText()} is not supported; give height and width, or shortest_edge alone.");
             }
         }
 
-        if (resize && (height <= 0 || width <= 0))
+        if (resize && shortest <= 0 && (height <= 0 || width <= 0))
         {
-            throw new InvalidDataException("do_resize without a size of height and width.");
+            throw new InvalidDataException("do_resize without a size (height and width, or shortest_edge).");
         }
 
-        int resample = root.TryGetProperty("resample", out var r) && r.ValueKind == JsonValueKind.Number ? r.GetInt32() : (int)ImageResampling.Bilinear;
+        bool crop = Flag(root, "do_center_crop", d.CenterCrop);
+        int cropHeight = d.CropHeight, cropWidth = d.CropWidth;
+        if (root.TryGetProperty("crop_size", out var cropSize))
+        {
+            if (cropSize.ValueKind == JsonValueKind.Number)
+            {
+                cropHeight = cropWidth = cropSize.GetInt32();
+            }
+            else if (cropSize.ValueKind == JsonValueKind.Object && cropSize.TryGetProperty("height", out var ch) && cropSize.TryGetProperty("width", out var cw))
+            {
+                (cropHeight, cropWidth) = (ch.GetInt32(), cw.GetInt32());
+            }
+        }
+
+        if (crop && (cropHeight <= 0 || cropWidth <= 0))
+        {
+            throw new InvalidDataException("do_center_crop without a crop_size of height and width.");
+        }
+
+        int resample = root.TryGetProperty("resample", out var r) && r.ValueKind == JsonValueKind.Number ? r.GetInt32() : (int)d.Resampling;
         if (!Enum.IsDefined((ImageResampling)resample))
         {
             throw new NotSupportedException($"resample {resample} is not supported (1 Lanczos, 2 bilinear, 3 bicubic, 4 box, 5 Hamming).");
@@ -154,13 +198,17 @@ public sealed class ImagePreprocessor
             Resize = resize,
             Height = height,
             Width = width,
+            ShortestEdge = shortest,
+            CenterCrop = crop,
+            CropHeight = cropHeight,
+            CropWidth = cropWidth,
             Resampling = (ImageResampling)resample,
-            Rescale = Flag(root, "do_rescale", true),
-            RescaleFactor = root.TryGetProperty("rescale_factor", out var f) && f.ValueKind == JsonValueKind.Number ? f.GetDouble() : 1 / 255.0,
-            Normalize = Flag(root, "do_normalize", true),
-            Mean = Values(root, "image_mean"),
-            Std = Values(root, "image_std"),
-            ConvertRgb = Flag(root, "do_convert_rgb", true),
+            Rescale = Flag(root, "do_rescale", d.Rescale),
+            RescaleFactor = root.TryGetProperty("rescale_factor", out var f) && f.ValueKind == JsonValueKind.Number ? f.GetDouble() : d.RescaleFactor,
+            Normalize = Flag(root, "do_normalize", d.Normalize),
+            Mean = Values(root, "image_mean") ?? d.Mean,
+            Std = Values(root, "image_std") ?? d.Std,
+            ConvertRgb = Flag(root, "do_convert_rgb", d.ConvertRgb),
             Grayscale = grayscale,
         };
 
@@ -172,8 +220,8 @@ public sealed class ImagePreprocessor
                 _ => otherwise,                                                          // null: the processor's default
             } : otherwise;
 
-        static float[] Values(JsonElement root, string name) =>
-            !root.TryGetProperty(name, out var value) || value.ValueKind == JsonValueKind.Null ? [0.5f, 0.5f, 0.5f]
+        static float[]? Values(JsonElement root, string name) =>
+            !root.TryGetProperty(name, out var value) || value.ValueKind == JsonValueKind.Null ? null
             : value.ValueKind == JsonValueKind.Number ? [value.GetSingle()]
             : [.. value.EnumerateArray().Select(v => v.GetSingle())];
     }
@@ -199,19 +247,25 @@ public sealed class ImagePreprocessor
         ArgumentNullException.ThrowIfNull(image);
         int h = image.Height, w = image.Width;
         var planes = ToBytes(image, Grayscale);
-        if (Resize && (Height != h || Width != w))
+        var (toHeight, toWidth) = ResizedSize(h, w);
+        if (Resize && (toHeight != h || toWidth != w))
         {
-            if (Height <= 0 || Width <= 0)
-            {
-                throw new InvalidOperationException($"Resize to {Height} x {Width}: give a positive height and width.");
-            }
-
             for (int c = 0; c < planes.Length; c++)
             {
-                planes[c] = PillowResize(planes[c], h, w, Height, Width, Resampling);
+                planes[c] = PillowResize(planes[c], h, w, toHeight, toWidth, Resampling);
             }
 
-            (h, w) = (Height, Width);
+            (h, w) = (toHeight, toWidth);
+        }
+
+        if (CenterCrop)
+        {
+            for (int c = 0; c < planes.Length; c++)
+            {
+                planes[c] = Crop(planes[c], h, w, CropHeight, CropWidth);
+            }
+
+            (h, w) = (CropHeight, CropWidth);
         }
 
         channels = planes.Length == 1 && (ConvertRgb || Grayscale) ? 3 : planes.Length;
@@ -247,6 +301,77 @@ public sealed class ImagePreprocessor
         }
 
         return result;
+    }
+
+    /// <summary>The [height, width] of the pixel values of an image of <paramref name="height"/> x <paramref name="width"/> (after the resize and the crop).</summary>
+    public (int Height, int Width) OutputSize(int height, int width)
+    {
+        var (h, w) = ResizedSize(height, width);
+        return CenterCrop ? (CropHeight, CropWidth) : (h, w);
+    }
+
+    // The size the resize gives: Height x Width, or by the shortest edge as transformers' get_resize_output_image_size
+    // (default_to_square false): the short side becomes ShortestEdge, the long one int(ShortestEdge * long / short).
+    private (int Height, int Width) ResizedSize(int h, int w)
+    {
+        if (!Resize)
+        {
+            return (h, w);
+        }
+
+        if (ShortestEdge > 0)
+        {
+            int shortSide = Math.Min(w, h), longSide = Math.Max(w, h);
+            int newLong = (int)(ShortestEdge * (double)longSide / shortSide);
+            return w <= h ? (newLong, ShortestEdge) : (ShortestEdge, newLong);
+        }
+
+        if (Height <= 0 || Width <= 0)
+        {
+            throw new InvalidOperationException($"Resize to {Height} x {Width}: give a positive height and width (or a shortest edge).");
+        }
+
+        return (Height, Width);
+    }
+
+    // transformers' center_crop on one plane: top = (h - ch) // 2 and left = (w - cw) // 2 (rounded down); a plane smaller
+    // than the crop is first put on zeros, ceil((new - old) / 2) from the top and left.
+    private static byte[] Crop(byte[] plane, int h, int w, int ch, int cw)
+    {
+        int top = FloorHalf(h - ch), left = FloorHalf(w - cw);
+        if (top >= 0 && left >= 0 && top + ch <= h && left + cw <= w)
+        {
+            var cut = new byte[ch * cw];
+            for (int y = 0; y < ch; y++)
+            {
+                Array.Copy(plane, (top + y) * w + left, cut, y * cw, cw);
+            }
+
+            return cut;
+        }
+
+        int nh = Math.Max(ch, h), nw = Math.Max(cw, w), topPad = (nh - h + 1) / 2, leftPad = (nw - w + 1) / 2;
+        var padded = new byte[nh * nw];
+        for (int y = 0; y < h; y++)
+        {
+            Array.Copy(plane, y * w, padded, (y + topPad) * nw + leftPad, w);
+        }
+
+        int y0 = Math.Max(0, top + topPad), y1 = Math.Min(nh, top + topPad + ch), x0 = Math.Max(0, left + leftPad), x1 = Math.Min(nw, left + leftPad + cw);
+        if (y1 - y0 != ch || x1 - x0 != cw)
+        {
+            throw new InvalidOperationException($"A center crop of {ch} x {cw} from {h} x {w} does not fit.");
+        }
+
+        var result = new byte[ch * cw];
+        for (int y = 0; y < ch; y++)
+        {
+            Array.Copy(padded, (y0 + y) * nw + x0, result, y * cw, cw);
+        }
+
+        return result;
+
+        static int FloorHalf(int v) => (int)Math.Floor(v / 2.0);
     }
 
     // The image as 8-bit planes (values rounded from [0, 1]), turned to one grey plane as Pillow's "L" when asked.

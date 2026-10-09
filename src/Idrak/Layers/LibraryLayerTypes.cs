@@ -46,6 +46,8 @@ internal static class LibraryLayerTypes
         LayerTypes.Register<Tanh>("tanh", _ => [], (_, _) => new Tanh());
         LayerTypes.Register<Sigmoid>("sigmoid", _ => [], (_, _) => new Sigmoid());
         LayerTypes.Register<GELU>("gelu", _ => [], (_, _) => new GELU());
+        LayerTypes.Register<ExactGELU>("gelu_exact", _ => [], (_, _) => new ExactGELU());
+        LayerTypes.Register<QuickGELU>("quick_gelu", _ => [], (_, _) => new QuickGELU());
         LayerTypes.Register<Softmax>("softmax", _ => [], (_, _) => new Softmax());
         LayerTypes.Register<Dropout>("dropout", d => new() { ["p"] = d.Probability }, (d, _) => new Dropout(F(d, "p")));
 

@@ -4,6 +4,7 @@
 using System.Diagnostics;
 using System.Text.Json.Nodes;
 using Idrak;
+using Idrak.Gemma3Vision;
 using Idrak.Layers;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
@@ -15,7 +16,7 @@ internal static partial class Tests
 {
     internal static int BenchVision()
     {
-        var config = VisionEncoderConfig.FromJson(JsonNode.Parse("""
+        var config = SiglipVisionConfig.FromJson(JsonNode.Parse("""
             {"hidden_size": 1152, "image_size": 896, "intermediate_size": 4304, "num_attention_heads": 16, "num_hidden_layers": 27, "patch_size": 14}
             """)!.AsObject());
         List<Device> devices = Environment.GetEnvironmentVariable("IDRAK_DEVICES") is { Length: > 0 } chosen
@@ -26,7 +27,7 @@ internal static partial class Tests
             var build = Stopwatch.StartNew();
             using var store = new RandomTensorStore(config, textDim: 2560);
             using var encoder = SiglipVisionEncoder.FromTensors(config, store, device: device);
-            using var projector = ImageProjector.FromTensors(store, config.Dim, 2560, poolSize: 4, normEpsilon: 1e-6f, device: device);
+            using var projector = Gemma3Projector.FromTensors(store, config.Dim, 2560, poolSize: 4, normEpsilon: 1e-6f, device: device);
             Console.WriteLine($"{device}: {encoder}, {encoder.ParameterCount / 1e6:F0} M parameters, built in {build.Elapsed.TotalSeconds:F1} s");
             using var pixels = Tensor.From(RandomArray(new Random(5), 3 * 896 * 896), [1, 3, 896, 896], device);
             for (int run = 0; run < 2; run++)
@@ -54,12 +55,12 @@ internal static partial class Tests
         return 0;
     }
 
-    // SigLIP's and the projector's tensors under PretrainedVision's names, random (norm gains near 1, weights near 0).
+    // SigLIP's and the projector's tensors under Gemma3Vision's names, random (norm gains near 1, weights near 0).
     private sealed class RandomTensorStore : ITensorStore
     {
         private readonly Dictionary<string, int[]> _shapes = new(StringComparer.Ordinal);
 
-        public RandomTensorStore(VisionEncoderConfig c, int textDim)
+        public RandomTensorStore(SiglipVisionConfig c, int textDim)
         {
             int d = c.Dim;
             _shapes["vision.embeddings.patch_embedding.weight"] = [d, c.Channels, c.PatchSize, c.PatchSize];

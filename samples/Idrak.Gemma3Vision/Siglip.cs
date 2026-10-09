@@ -1,16 +1,16 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using Idrak.Models;
+using Idrak.Layers;
 using Idrak.Models.Abstractions;
 
-namespace Idrak.Layers;
+namespace Idrak.Gemma3Vision;
 
 /// <summary>
 /// SigLIP's vision encoder (the vision tower of Gemma 3 and PaliGemma), without its pooling head: pixel values
 /// [images, channels, size, size] become [images, patches, dim]. A convolution with stride = kernel = the patch size
 /// (with a bias) cuts the image into patches, row by row; a learned position embedding is added (no class token); then
-/// <see cref="VisionEncoderConfig.Layers"/> pre-LayerNorm <see cref="TransformerEncoderLayer"/>s (attention with biases on
+/// <see cref="SiglipVisionConfig.Layers"/> pre-LayerNorm <see cref="TransformerEncoderLayer"/>s (attention with biases on
 /// every projection, scaled by head size^-0.5, every patch seeing every other through <see cref="Tensor.AttentionSpans"/>,
 /// so the [patches, patches] scores are never stored; a GELU-tanh MLP) and a final LayerNorm (<c>post_layernorm</c>).
 /// </summary>
@@ -23,7 +23,7 @@ public sealed class SiglipVisionEncoder : Module
     // it goes, so a pass holds one layer's worth of activations (4,096 patches x 27 layers would otherwise keep ~10 GB).
     private readonly Sequential _body;
 
-    private SiglipVisionEncoder(VisionEncoderConfig config, Conv2d patches, Tensor positions, TransformerEncoderLayer[] layers, LayerNorm postNorm)
+    private SiglipVisionEncoder(SiglipVisionConfig config, Conv2d patches, Tensor positions, TransformerEncoderLayer[] layers, LayerNorm postNorm)
     {
         Config = config;
         _embedding = new PatchEmbedding(config, patches, positions);
@@ -32,7 +32,7 @@ public sealed class SiglipVisionEncoder : Module
     }
 
     /// <summary>The encoder's configuration.</summary>
-    public VisionEncoderConfig Config { get; }
+    public SiglipVisionConfig Config { get; }
 
     /// <summary>The encoder layers.</summary>
     public IReadOnlyList<TransformerEncoderLayer> Layers => _layers;
@@ -41,11 +41,11 @@ public sealed class SiglipVisionEncoder : Module
     /// Builds the encoder from SigLIP's tensors under <paramref name="prefix"/> (<c>embeddings.patch_embedding.{weight,bias}</c>
     /// [dim, channels, patch, patch], <c>embeddings.position_embedding.weight</c> [patches, dim],
     /// <c>encoder.layers.N.{layer_norm1, self_attn.{q,k,v,out}_proj, layer_norm2, mlp.fc1, mlp.fc2}.{weight,bias}</c> with
-    /// linear weights [out, in], <c>post_layernorm.{weight,bias}</c>), as <see cref="PretrainedVision.OpenTensors"/> gives
+    /// linear weights [out, in], <c>post_layernorm.{weight,bias}</c>), as <see cref="Gemma3Vision.OpenTensors"/> gives
     /// them with the prefix <c>vision.</c>. Tensors are read one at a time, in float32.
     /// </summary>
     /// <exception cref="NotSupportedException">An activation other than GELU with the tanh approximation, or a pooling head.</exception>
-    public static SiglipVisionEncoder FromTensors(VisionEncoderConfig config, ITensorStore tensors, string prefix = "vision.", Device? device = null)
+    public static SiglipVisionEncoder FromTensors(SiglipVisionConfig config, ITensorStore tensors, string prefix = "vision.", Device? device = null)
     {
         ArgumentNullException.ThrowIfNull(config);
         ArgumentNullException.ThrowIfNull(tensors);
@@ -170,12 +170,12 @@ public sealed class SiglipVisionEncoder : Module
 /// decoder's width as x · W with W stored [visionDim, textDim] (read as stored, no transposition). The output is the
 /// soft tokens' embeddings, not scaled by √textDim.
 /// </summary>
-public sealed class ImageProjector : Module
+public sealed class Gemma3Projector : Module
 {
     private readonly RMSNorm _norm;
     private readonly Linear _projection;
 
-    private ImageProjector(RMSNorm norm, Linear projection, int poolSize)
+    private Gemma3Projector(RMSNorm norm, Linear projection, int poolSize)
     {
         _norm = norm;
         _projection = projection;
@@ -194,9 +194,9 @@ public sealed class ImageProjector : Module
     /// <summary>
     /// Builds the projector from Gemma 3's tensors (<c>mm_soft_emb_norm.weight</c> [visionDim] and
     /// <c>mm_input_projection_weight</c> [visionDim, textDim]) under <paramref name="prefix"/>, as
-    /// <see cref="PretrainedVision.OpenTensors"/> gives them with the prefix <c>projector.</c>.
+    /// <see cref="Gemma3Vision.OpenTensors"/> gives them with the prefix <c>projector.</c>.
     /// </summary>
-    public static ImageProjector FromTensors(ITensorStore tensors, int visionDim, int textDim, int poolSize, float normEpsilon, string prefix = "projector.", Device? device = null)
+    public static Gemma3Projector FromTensors(ITensorStore tensors, int visionDim, int textDim, int poolSize, float normEpsilon, string prefix = "projector.", Device? device = null)
     {
         ArgumentNullException.ThrowIfNull(tensors);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(poolSize);
@@ -210,7 +210,7 @@ public sealed class ImageProjector : Module
 
         var gain = Tensor.Persistent(tensors.Read(normName), [visionDim], device, requiresGrad: true);
         var weight = Tensor.Persistent(tensors.Read(projectionName), [visionDim, textDim], device, requiresGrad: true);   // x · W as stored
-        return new ImageProjector(RMSNorm.FromWeights(gain, normEpsilon, offset: 1f), Linear.FromWeights(weight), poolSize);
+        return new Gemma3Projector(RMSNorm.FromWeights(gain, normEpsilon, offset: 1f), Linear.FromWeights(weight), poolSize);
     }
 
     /// <summary>[images, side², visionDim] to [images, (side / PoolSize)², textDim].</summary>
@@ -239,11 +239,11 @@ public sealed class ImageProjector : Module
     public override IEnumerable<Module> Children() => [_norm, _projection];
 
     /// <inheritdoc />
-    public override string ToString() => $"ImageProjector(pool {PoolSize}, {VisionDim} -> {TextDim})";
+    public override string ToString() => $"Gemma3Projector(pool {PoolSize}, {VisionDim} -> {TextDim})";
 }
 
 // SigLIP's patch embedding: the patch convolution, patches row by row, plus the learned position embedding.
-internal sealed class PatchEmbedding(VisionEncoderConfig config, Conv2d patches, Tensor positions) : Module
+internal sealed class PatchEmbedding(SiglipVisionConfig config, Conv2d patches, Tensor positions) : Module
 {
     private Tensor _positions = positions;
 

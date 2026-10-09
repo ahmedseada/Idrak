@@ -102,8 +102,9 @@ public sealed class PretrainedModel : IDisposable
     public Device Device { get; }
 
     /// <summary>
-    /// The vision part of a vision-language model (its encoder's configuration, image token ids and tensors, read and
-    /// checked but not built), or null for a text-only model. <see cref="Network"/> is the text decoder alone.
+    /// The vision part of a vision-language model as its family's registration read it (<see cref="VisionFamilies"/>: the
+    /// encoder it builds, its prompt format and attention rule; read and checked but not built), or null for a text-only
+    /// model. <see cref="Network"/> is the text decoder alone.
     /// </summary>
     public PretrainedVision? Vision { get; }
 
@@ -122,6 +123,10 @@ public sealed class PretrainedModel : IDisposable
         string name = options.Architecture ?? (string?)config["architectures"]?[0]
             ?? throw new InvalidDataException("config.json names no architecture; pass PretrainedOptions.Architecture.");
         var architecture = PretrainedArchitectures.Get(name);
+        // A vision-language checkpoint is read by its own vision family, by the same name; none registered is an error
+        // (families are applications of the contracts, registered by whoever brings them; nothing falls back to another).
+        var visionFamily = VisionFamilies.For(name, config);
+
         using var reader = format.Open(folder);
         if (architecture.ForCheckpoint is { } fit)
         {
@@ -142,10 +147,10 @@ public sealed class PretrainedModel : IDisposable
                 var layers => new Sequential(layers) { Name = "decoder" },
             }
             : spec.Build(weights, buildOptions);
-        var vision = architecture.Vision?.Invoke(config, reader, notes) is { } read ? read with { Source = () => format.Open(folder), Folder = folder } : null;
+        var vision = visionFamily?.Read(new VisionCheckpoint(name, config, reader, folder, () => format.Open(folder), notes));
         if (vision is not null)
         {
-            weights.Used.UnionWith(vision.Tensors.Values.Select(t => t.Stored));
+            weights.Used.UnionWith(vision.StoredTensors);
         }
 
         var unused = reader.Names.Where(k => !weights.Used.Contains(k) && !k.EndsWith("rotary_emb.inv_freq", StringComparison.Ordinal)).ToList();

@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The Gemma 3 vision family as a plug-in: a registration of Idrak's vision contracts, outside the library (plan 11,
+       "Vision contracts"). Load it in the command line with -P (idrak -P Idrak.Gemma3Vision.dll run MODEL, image option),
+       or reference it and call Gemma3VisionPlugin.Register() in an app. It references Idrak as packages, as an outside
+       plug-in does; in this repository they come from the clone (IdrakFromSource, samples/Directory.Build.props). -->
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Idrak" Version="$(IdrakVersion)" />
+  </ItemGroup>
+
+</Project>
