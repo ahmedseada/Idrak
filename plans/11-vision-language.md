@@ -1,6 +1,6 @@
 # Plan 11: images into language models (Gemma 3 first)
 
-**Status:** planned 2026-10-07, revised the same day against the code; phase 0 (the reference) done 2026-10-08, phase 4 (loading, text side), phase 3b (the SigLIP encoder and the projector) and phase 5 (image tokens in the decoder) done 2026-10-08 on CPU and Vulkan (phase 5 on CUDA too), phase 7 (the command line, before phase 6 by the author's choice) built 2026-10-08 and checked on the real model on the author's RTX 5070 Ti 2026-10-09, phase 8 (images in `idrak serve`: `/v1` image_url data URLs, a multipart upload, `/api/chat`) built 2026-10-09 without phase 6 (stopped by the author) and passing with the tiny model on CPU, phase 1 (contracts) done 2026-10-07 on the CPU; plan 10's wave 4 is done. Asked for to run `bakrianoo/arabic-legal-documents-ocr-1.0`, a fine-tune of Gemma-3-4B-IT that reads scanned
+**Status:** planned 2026-10-07, revised the same day against the code; phase 0 (the reference) done 2026-10-08, phase 4 (loading, text side), phase 3b (the SigLIP encoder and the projector) and phase 5 (image tokens in the decoder) done 2026-10-08 on CPU and Vulkan (phase 5 on CUDA too), phase 7 (the command line, before phase 6 by the author's choice) built 2026-10-08 and checked on the real model on the author's RTX 5070 Ti 2026-10-09, phase 8 (images in `idrak serve`: `/v1` image_url data URLs, a multipart upload, `/api/chat`) built 2026-10-09 without phase 6 (stopped by the author) and passing with the tiny model on CPU, phase 1 (contracts) done 2026-10-07 on the CPU, phase 10 (vision contracts: the library registers no family, Gemma 3 vision a plug-in in samples/Gemma3Vision, a tiny LLaVA from outside) done 2026-10-09 on CPU and Vulkan; plan 10's wave 4 is done. Asked for to run `bakrianoo/arabic-legal-documents-ocr-1.0`, a fine-tune of Gemma-3-4B-IT that reads scanned
 Arabic legal documents (low quality scans included) and returns their contents as structured data. Its card asks for
 images resized and turned to grayscale first, and shows it running through transformers and vLLM.
 
@@ -76,6 +76,7 @@ namespace until a second library package uses it.
 | 7 | **The command line.** `idrak chat <model> --image FILE` (repeatable; also `/image FILE` inside a chat, like `/file`); the one-shot `idrak run <model> --image FILE "prompt"` (with `--schema` for the structured answer this model gives, `-j` for JSON); `--grayscale` (or the setting stored with a pulled model) | CLI tests pass with the tiny model; on the author's RTX 5070 Ti the real model reads a sample scan and its greedy output matches transformers' for the first 100 tokens; **built 2026-10-08 before phase 6** (as built below): the tiny model passes on CPU and Vulkan; **the real model checked 2026-10-09** (below): done |
 | 8 | **Images in chat, after the command line is proven** (phase 7 done on the real model). The engine hosts the model as a chat model that accepts images (`IChatModel`, saying which inputs it takes; the image is encoded once per conversation, as in phase 6); `MapChatApi` takes images in its messages; `MapCompletionsApi` (`/v1/chat/completions`) accepts OpenAI's `image_url` content parts (data URLs and, when allowed, http URLs); `idrak serve` serves it. The same preprocessing (and grayscale setting) as the command line | an OpenAI client sends a scan as an `image_url` part and gets the same answer as `idrak run --image`; streamed and not; the aspnetcore tests cover a tiny model with an image; **built 2026-10-09 without phase 6** (as built below: `/v1` data URLs, the multipart `/v1/chat/upload`, `/api/chat` images, `serve --grayscale`, limits; each request encodes its images): the tiny model passes on CPU; the real model through the server is the author's to run |
 | 9 | **After that.** An MCP `chat` tool with images (and an `ocr` tool if useful); pan-and-scan for tall pages; other families (Qwen2.5-VL); fine-tuning with images (LoRA on the text decoder, encoder frozen) | decided per item after phase 8 |
+| 10 | **Vision contracts (families are applications).** The library defines the contracts and the generic machinery of vision-language models and registers no family; Gemma 3's vision part moves out to a plug-in; a second family (a tiny LLaVA) registered from outside proves the contracts general | **done 2026-10-09** (as built below): the Gemma 3 tests give identical numbers with the plug-in registered and fail loudly without it; the tiny LLaVA matches transformers on CPU and Vulkan |
 
 ### Phase 1 as built (2026-10-07)
 
@@ -535,6 +536,128 @@ images once, when it is answered; nothing is kept between requests (no content-h
 - **Not done.** Phase 6 (encoding once per conversation); a content-hash cache of features; MCP images (phase 9);
   `--schema` on the server (the CLI's schema is an instruction plus a check, not a server feature yet); the real model
   through the server on the author's machine (the commands are in the hand-back).
+
+## Phase 10, as built (2026-10-09): vision contracts (families are applications)
+
+**Why.** Until now the vision side was Gemma 3 dressed as the library: `PretrainedVision`, `VisionEncoderConfig` and
+`ImageEncoder` were sealed SigLIP-plus-Gemma-projector types in core, carrying Gemma 3's token ids (`BeginImage`,
+`EndImage`), a fixed 256 `TokensPerImage`, the bidirectional image-block mask in `ImagePrefill`, and Gemma 3's
+processor as the fallback when a model folder had no `preprocessor_config.json`; `ImagePromptFormats` shipped "gemma3".
+Qwen2.5-VL, LLaVA or InternVL could not plug in without changing core. The author: the library abstracts any family and
+exposes it; a model is an application of the library, not the other way round.
+
+**Decision: families are registrations, never defaults.** A default is right only where implementations are
+interchangeable (a GPU kernel falling back to the CPU's: the same contract, the same results). Families are not: a
+checkpoint is read by its own family or not at all. So a checkpoint is matched to its family by exact key (the
+architecture name in `config.json`), and when nothing matches the error names the registry ("Vision family
+'Gemma3ForConditionalGeneration' is not registered (registered: none); register it with VisionFamilies.Register ...").
+Nothing falls back to another family, and the library registers none, not even as a library default: Idrak.Abstraction,
+Idrak, Idrak.Nlp, Idrak.AspNetCore and the CLI hold contracts, registries and generic machinery only. (Text families
+are unchanged and out of scope; `Gemma3ForConditionalGeneration`'s text decoder stays a library text family, its vision
+part is not.)
+
+**Contracts** (decision 10: where their users are; the inventory and the public API files are updated):
+
+- `Idrak.Abstraction.Generation` (core and Nlp use them):
+  - `IVisionEncoder` (`Width`, `Device`, `Layout(ImageData)`, `Encode(IReadOnlyList<ImageData>)`): decoded images in,
+    one `ImageFeatures` per image out. The family's own preprocessing is part of the encoder (it takes decoded pixels, so
+    resizing, cropping, tiling or dynamic resolution are its business; core's `ImagePreprocessor` is a building block).
+  - `ImageTokenLayout` (`Tokens`, optional `Grid` such as [rows, columns] or [frames, rows, columns], checked to hold the
+    tokens): a variable number of tokens per image.
+  - `ImageFeatures` (`Features` [tokens, width], `Layout`, optional `Positions` [axes, tokens]): the M-RoPE slot.
+  - `IImagePromptFormat` (`Name`, `ImageToken`, `Expand(prompt, layouts, tokenizer)`): each image's marker expanded by
+    its own layout; the format carries the family's token ids. `ImageTokenFormat(name, marker, imageToken, begin?,
+    end?, before, after)` is a building block covering Gemma 3's (`<start_of_image>` → "\n\n" boi + soft tokens + eoi
+    "\n\n") and LLaVA's (`<image>` → that many `<image>` tokens).
+  - `IImageAttentionRule` (`Name`, `Causal`, `Spans(rows, blocks, window)`) and the registry `ImageAttentionRules`. The
+    library has one rule, "causal" (image rows attend as text rows: the decoder's own behaviour, not a family's
+    choice). Gemma 3's plug-in registers "image-blocks" (`KeySpans.ImageBlocks`); an app can take a rule's name.
+  - `IVisionEncoderStages` (`PixelValues`, `Tower`, `Features`): optional, for `idrak vlm check`.
+- `Idrak.Models.Abstractions` (core alone uses them): `PretrainedVision` (abstract: `Family`, `Width`, `PromptFormat`,
+  `Attention`, `StoredTensors`, `CreateEncoder(VisionEncoderOptions)`), `VisionEncoderOptions` (`Device`, `Grayscale`),
+  `VisionCheckpoint` (architecture, config, tensors, folder, reopen, notes), `IVisionFamily` (`Name`,
+  `Read(VisionCheckpoint)`) and the registry `VisionFamilies` (`Register`, `Unregister`, `Find`, `Get`, `For(name,
+  config)`, `HasVision`; keyed by architecture name; a checkpoint "has vision" when its config has a `vision_config`).
+  `PretrainedArchitecture.Vision` is gone: `PretrainedModel.Load` asks `VisionFamilies.For` before reading anything.
+- Testing kit: `VisionEncoderSuite` and `Conformance.CheckVisionEncoder(encoder, cpu?, samples?, tolerance)`:
+  deterministic; token counts match the layout (rows, width, grid, position ids, device); batch equals single; device
+  equals CPU.
+
+**Generic machinery changed.** `ImagePrefill.Forward/ForwardCached` take the family's `IImageAttentionRule` (a causal
+rule only substitutes the embeddings and keeps the decoder's causal kernels; another rule gives each row its key range);
+`Locate` pairs images with image tokens by each image's count, so LLaVA's adjacent images (`<image><image>`) are told
+apart, and an overload takes `ImageFeatures` (with their position ids); position ids are refused by the decoder with a
+clear `NotSupportedException` (see Qwen2.5-VL below). `TextGenerator.Stream(prompt, imageToken, ImageFeatures[],
+rule, options)`. `ChatImages(encoder, format, rule)` with `Decode` (default `ChatImageDecoder.Decode`): `RenderPrompt`
+decodes the images for their layouts; `Stream` decodes each image once, expands by the layouts, encodes, checks the
+features against the layouts. `ImagePromptFormats` (Nlp) is removed. `ImagePreprocessor`: resize by `ShortestEdge`
+(transformers' `get_resize_output_image_size`), `CenterCrop` (transformers' `center_crop`, zero padding when smaller),
+and `FromConfig/Parse(..., defaults)` so absent keys take the family's processor defaults. New generic layers:
+`ExactGELU` (erf from element-wise operations, Abramowitz and Stegun 7.1.26, within 1.5e-7; every device, no kernel),
+`QuickGELU`, registered as layer types `gelu_exact`, `quick_gelu`; `TransformerEncoderLayer.FromLayers(..., Module
+activation)`.
+
+**Where Gemma 3 lives now: `samples/Gemma3Vision/`.** `Idrak.Gemma3Vision` (a library referencing Idrak as packages,
+from the clone through IdrakFromSource) holds everything Gemma-3-vision: `Gemma3VisionFamily` (config reading with
+Gemma3Config's defaults, the three tensor layouts of the vision part, shape checks), `Gemma3Vision : PretrainedVision`
+(token ids as `Gemma3ImageTokens`, `PoolSize`, its prompt format, its rule, its preprocessing: `preprocessor_config.json`
+over Gemma3ImageProcessor's defaults, or that processor at the encoder's size without the file: the family's decision),
+`Gemma3ImageEncoder` (`IVisionEncoder`, `IVisionEncoderStages`), `SiglipVisionEncoder`, `SiglipVisionConfig`,
+`Gemma3Projector`, and the "image-blocks" rule. Entry points: `Gemma3VisionPlugin.Register()` and
+`RegisterIdrakPlugin()` (the CLI's `-P` convention). `Idrak.Samples.Gemma3Ocr` is an app reading a scan through the
+public API (register, load, encode, stream, `-o` as UTF-8 without a BOM, `--grayscale`, `-d`, `-w`). The CLI's `run`,
+`chat`, `serve`, `vlm check` and `show` use the contracts only: without `-P` the tiny Gemma 3 is refused with the
+registry's message (`serve` refuses it at startup, exit 2), `show` says "vision family ... not registered (load its
+plug-in with -P)". The Gemma 3 tests reference the sample and register it first; the numbers are identical to phases
+3b to 8 (CPU: SigLIP 1.43e-6 / 4.68e-6 / 2.62e-6, prompt logits 3.58e-6, 20 greedy steps 3.81e-6, without the mask
+3.596, text prompt 5.36e-6; Vulkan lavapipe: 1.91e-6 / 3.99e-6 / 2.15e-6, 5.62e-6, 3.34e-6, 4.89e-6); a core test loads the tiny Gemma 3 vision folder without the registration and checks the
+error.
+
+**The LLaVA proof** (`tools/vlm/make_tiny_llava.py` → `tests/Idrak.Tests/data/vlm-llava`, 682 KB, two runs write the
+same bytes; transformers 5.19.0, torch 2.14.1, Pillow 12.3.0). A tiny `LlavaForConditionalGeneration`: CLIP tower
+(width 16, 3 layers, 2 heads, quick-GELU, LayerNorm 1e-5, 28 x 28 images in 7 x 7 patches plus a class token), a
+two-layer MLP projector with exact GELU, a Llama decoder (width 32, 2 layers, 4 heads, 2 KV heads), its own tokenizer,
+phase 0's 100 x 75 image resized by its shortest edge (bicubic, to 37 x 28) and center-cropped. Two configurations:
+`tiny-llava` (vision_feature_layer -2, "default": 16 tokens, a 4 x 4 grid) and `tiny-llava-full` (layers [-3, -1]
+concatenated, "full": 17 tokens, no grid). The registration lives outside the library, in `tests/Idrak.PluginTests`
+(`LlavaPlugin`: the text decoder read by the library's text family of `text_config.model_type`, with LlamaConfig's
+defaults and transformers 5's `rope_parameters`; `LlavaVisionFamily`, `ClipVisionTower`, `LlavaProjector`,
+`LlavaImageEncoder`; the causal rule). Largest differences against transformers (`IDRAK_FILTER="vision contracts"`):
+
+| | CPU | Vulkan (lavapipe) |
+|---|---|---|
+| pixels | within 1e-5 | within 1e-5 |
+| tiny-llava: selected hidden states, projector alone, features | 5.25e-6, 3.81e-6, 9.54e-6 | 5.01e-6, 5.72e-6, 1.0e-5 |
+| tiny-llava: prompt logits one pass, cached, 20 greedy steps | 1.08e-5, 1.08e-5, 8.11e-6 | 8.82e-6, 1.07e-5, 1.04e-5 |
+| tiny-llava-full: hidden, projector, features | 1.1e-5, 2.86e-6, 1.38e-5 | 1.03e-5, 2.86e-6, 1.82e-5 |
+| tiny-llava-full: logits one pass, cached, 20 steps | 1.17e-5, 1.17e-5, 1.16e-5 | 9.42e-6, 8.94e-6, 7.15e-6 |
+| 20 greedy tokens | identical (both) | identical (both) |
+
+(The tiny LLaVA's weights are drawn 1.5x larger than phase 0's to keep its greedy answer varied, so its float32 noise is
+about twice Gemma's; features are checked within 3e-5, logits within 2e-5.) The prompt renders and expands to the
+processor's ids, and the public chat API (`ChatGenerator` with the family's encoder, format and rule) answers with the
+20 tokens. The kit's suite passes for the Gemma 3 and both LLaVA encoders on CPU and Vulkan. The outside plug-in test
+(`tests/Idrak.PluginTests`, `VisionFamilyPluginTests`) registers a family of its own (a trivial encoder giving one token
+per 16 rows: a count per image; its own format; its own attention rule), passes the kit and answers a prompt with two
+images of different sizes through the public API; unregistered, its checkpoint is refused naming the registry.
+
+**What Qwen2.5-VL would still need.** (1) M-RoPE in the decoder spec: `DecoderSpec` gains the rotary sections
+(`mrope_section`, e.g. [16, 24, 24] of the head's half-dimension for time, height, width); `CausalSelfAttention` takes
+positions [3, n, t] instead of one per token (text tokens (p, p, p), image tokens (t0 + ti, t0 + hi, t0 + wi) from
+`ImageFeatures.Positions`), each section rotated by its axis; and positions after an image continue from the image's
+largest position plus one, so a sequence's position is no longer its cache index: the decoding context keeps a
+per-sequence offset ("rope delta") for every later token, cached prefill and one-token steps alike. `ImagePrefill`
+already carries the ids to the decoder and refuses them until then. (2) Its ViT: window attention in most layers (rows
+see their window of patches, full attention every few layers: `KeySpans` per window, which `AttentionSpans` already
+runs), 2-D rotary positions in the vision tower, and the 2 x 2 patch merger; its processor's dynamic resolution
+(`smart_resize`) is the encoder's own business, which the contract allows. **Encoder-decoder OCR models** (TrOCR, Donut:
+an image encoder and a text decoder with cross-attention) are a separate item: the decoder has no cross-attention.
+
+**Remaining.** A tokenizer gap seen while building the LLaVA fixture: llava-hf's chat template leaves `<s>` to the
+tokenizer's post-processor (`add_special_tokens`), which Idrak's chat path does not apply (the fixture's template writes
+`{{ bos_token }}` itself); transformers 5 also drops `add_bos_token` from `tokenizer_config.json`. The real LLaVA
+checkpoints need that, and llava-hf's template's `selectattr` filters, checked. The real Gemma 3 model through the plug-in
+is the author's to run (commands in the hand-back).
 
 ## Performance targets (author's RTX 5070 Ti, the real 4B model)
 

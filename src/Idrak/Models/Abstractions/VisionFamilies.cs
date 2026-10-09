@@ -83,7 +83,7 @@ public interface IVisionFamily
 /// The vision-language families, by architecture name (config.json's "architectures"). The library registers none: a
 /// family (its configuration, tensor names, encoder, preprocessing, prompt format, token ids and attention rule) is an
 /// application of these contracts, registered by the app or plug-in that brings it (the Gemma 3 and LLaVA registrations
-/// are samples, <c>samples/Idrak.Gemma3Vision</c> and <c>samples/Idrak.LlavaVision</c>). A checkpoint is matched to its
+/// are samples, <c>samples/Gemma3Vision</c> and <c>tests/Idrak.PluginTests</c>). A checkpoint is matched to its
 /// own family by that exact name; a checkpoint with a vision part (a <c>vision_config</c>) whose name has no family is
 /// refused, naming this registry: nothing falls back to another family, since families are not interchangeable. Register
 /// one with <see cref="Register"/> (and its text decoder with <see cref="PretrainedArchitectures.Register"/>).

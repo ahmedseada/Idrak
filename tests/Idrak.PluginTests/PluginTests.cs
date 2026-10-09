@@ -32,6 +32,7 @@ public static class PluginTests
         ("outside plug-in: a sample source computed when read trains a classifier, to the weights of its in-memory copy", DataPluginTests.SourceTrains),
         ("outside plug-in: a batch source making tensors itself trains a linear model through Trainer.Fit", DataPluginTests.BatchSourceTrains),
         ("outside plug-in: a message part kind of its own (audio) registers in ChatParts, passes the testing kit, round-trips through the chat JSON and is refused by a text-only model", ChatPartPluginTests.AudioKind),
+        ("outside plug-in: a vision family of its own (a trivial encoder with a token count per image, its own prompt format and attention rule) registers in VisionFamilies, passes the testing kit and answers a prompt with two images through the public chat API; unregistered, its checkpoint is refused naming the registry", VisionFamilyPluginTests.OutsideFamily),
         ("outside plug-in: a plain-loop device on the public device API (its own backend, storage and provider) passes the conformance kit and a stress run", ReferenceDeviceConforms),
     ];
 

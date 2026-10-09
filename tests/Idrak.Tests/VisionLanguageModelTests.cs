@@ -11,7 +11,7 @@ using Idrak.Models.Abstractions;
 
 // Gemma 3's vision-language model (plan 11, phase 4): the tiny reference of tests/Idrak.Tests/data/vlm loads in its three
 // tensor layouts and gives transformers' logits for a text-only prompt; its vision part is read as data by the Gemma 3
-// vision family, a registration from outside the library (samples/Idrak.Gemma3Vision); without it, loading fails.
+// vision family, a registration from outside the library (samples/Gemma3Vision); without it, loading fails.
 internal static partial class Tests
 {
     private static void Gemma3VisionLanguageLoads(Device device)
