@@ -177,7 +177,7 @@ internal static partial class VulkanKernels
             var k = new KernelBuilder("avg_pool", Block);
             var (x, y) = (k.Buffer("x"), k.Buffer("y"));
             var g = Geometry(k);
-            var countPad = k.PushInt("countPad");
+            var (countPad, bottom, right) = (k.PushInt("countPad"), k.PushInt("bottom"), k.PushInt("right"));
             Grid(k, g.N * g.C * g.OH * g.OW, idx =>
             {
                 var ow = idx % g.OW;
@@ -189,7 +189,7 @@ internal static partial class VulkanKernels
                 var (cStart, cEnd) = (k.Max(c0, k.Int(0)), k.Min(c0 + g.KW, g.W));
                 var sum = k.Local(0f);
                 k.For(rStart, rEnd, 1, r => k.For(cStart, cEnd, 1, col => sum.V = sum.V + x[plane + r * g.W + col]));
-                y[idx] = sum.V / PoolDivisor(k, g, oh, ow, countPad);
+                y[idx] = sum.V / PoolDivisor(k, g, oh, ow, countPad, bottom, right);
             });
             return k.Build();
         });
@@ -199,7 +199,7 @@ internal static partial class VulkanKernels
             var k = new KernelBuilder("avg_pool_backward", Block);
             var (dy, dx) = (k.Buffer("dy"), k.Buffer("dx"));
             var g = Geometry(k);
-            var countPad = k.PushInt("countPad");
+            var (countPad, bottom, right) = (k.PushInt("countPad"), k.PushInt("bottom"), k.PushInt("right"));
             Grid(k, g.N * g.C * g.H * g.W, idx =>
             {
                 var iw = idx % g.W;
@@ -211,7 +211,7 @@ internal static partial class VulkanKernels
                 k.For(ohFirst, ohLast, 1, oh =>
                 {
                     var rowBase = (nc * g.OH + oh) * g.OW;
-                    k.For(owFirst, owLast, 1, ow => acc.V = acc.V + dy[rowBase + ow] / PoolDivisor(k, g, oh, ow, countPad));
+                    k.For(owFirst, owLast, 1, ow => acc.V = acc.V + dy[rowBase + ow] / PoolDivisor(k, g, oh, ow, countPad, bottom, right));
                 });
                 dx[idx] = acc.V;
             });
@@ -286,13 +286,15 @@ internal static partial class VulkanKernels
     private static Val Clip8(KernelBuilder k, Val sum) =>
         k.Select(sum >= (1 << 30), k.Float(255f), k.Select(sum <= 0, k.Float(0f), (sum >> 22).ToFloat()));
 
-    // The divisor of an average-pooling window: KH·KW, or (countPad 0) the input positions it covers, at least 1.
-    private static Val PoolDivisor(KernelBuilder k, WindowGeometry g, Val oh, Val ow, Val countPad)
+    // The divisor of an average-pooling window: its rows and columns up to the padded end (H + bottom, W + right), or
+    // (countPad 0) the input positions it covers, at least 1.
+    private static Val PoolDivisor(KernelBuilder k, WindowGeometry g, Val oh, Val ow, Val countPad, Val bottom, Val right)
     {
         var (r0, c0) = (oh * g.SH - g.PH, ow * g.SW - g.PW);
+        var counted = (k.Min(r0 + g.KH, g.H + bottom) - r0) * (k.Min(c0 + g.KW, g.W + right) - c0);
         var rows = k.Min(r0 + g.KH, g.H) - k.Max(r0, k.Int(0));
         var cols = k.Min(c0 + g.KW, g.W) - k.Max(c0, k.Int(0));
-        return k.Select(countPad.Ne(0), g.KH * g.KW, k.Max(rows * cols, k.Int(1))).ToFloat();
+        return k.Select(countPad.Ne(0), counted, k.Max(rows * cols, k.Int(1))).ToFloat();
     }
 
     // The activation code of the forward kernels (ConvActivation: 0 none, 1 ReLU, 2 sigmoid, 3 tanh, 4 GELU, 5 SiLU), as

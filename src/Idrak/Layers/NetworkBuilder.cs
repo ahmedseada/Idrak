@@ -238,6 +238,32 @@ public sealed class NetworkBuilder : INetworkBuilder
             Step("normalize", ("mean", new JsonArray([.. m.Select(v => JsonValue.Create(v))])), ("std", new JsonArray([.. s.Select(v => JsonValue.Create(v))]))));
     }
 
+    /// <summary>
+    /// <c>new Layers.GroupNorm(groups, channels, epsilon, affine)</c>; channels are the features of [F] or the channels of
+    /// [C, H, W] (normalized per sample and group, whatever the batch size).
+    /// </summary>
+    public NetworkBuilder GroupNorm(int groups, float epsilon = 1e-5f, bool affine = true)
+    {
+        if (_shape.Length is not (1 or 3))
+        {
+            throw new InvalidOperationException($"GroupNorm needs [features] or [channels, height, width], the current shape is {Tensor.FormatShape(_shape)}.");
+        }
+
+        int channels = _shape[0];
+        if (groups <= 0 || channels % groups != 0)
+        {
+            throw new ArgumentException($"GroupNorm's {groups} groups divide the {channels} channels.", nameof(groups));
+        }
+
+        var step = Step("groupnorm", ("groups", groups), ("epsilon", epsilon));
+        if (!affine)
+        {
+            step["affine"] = false;
+        }
+
+        return Push(_ => new Layers.GroupNorm(groups, channels, epsilon, affine, _device), _shape, step);
+    }
+
     /// <summary><c>new Layers.LayerNorm(features, epsilon)</c>; features are the last dimension.</summary>
     public NetworkBuilder LayerNorm(float epsilon = 1e-5f)
     {
@@ -305,50 +331,161 @@ public sealed class NetworkBuilder : INetworkBuilder
         return Push(_ => new Layers.MaxPool2d(kernelSize, stride, padding), [c, oh, ow], step);
     }
 
-    /// <summary><c>new Layers.MaxPool2d(kernelSize, stride, padding)</c> with (height, width) pairs (a text line's tall or wide windows).</summary>
-    public NetworkBuilder MaxPool2d((int Height, int Width) kernelSize, (int Height, int Width)? stride = null, (int Height, int Width)? padding = null)
+    /// <summary>
+    /// <c>new Layers.MaxPool2d(kernelSize, stride, padding, ceilMode, paddingEnd)</c> with (height, width) pairs (a text
+    /// line's tall or wide windows; ONNX's padding below and right; PyTorch's ceil mode).
+    /// </summary>
+    public NetworkBuilder MaxPool2d((int Height, int Width) kernelSize, (int Height, int Width)? stride = null, (int Height, int Width)? padding = null, bool ceilMode = false,
+        (int Height, int Width)? paddingEnd = null)
     {
-        var (c, oh, ow) = Pooled("MaxPool2d", kernelSize, stride, padding);
+        var (c, oh, ow) = Pooled("MaxPool2d", kernelSize, stride, padding, paddingEnd, ceilMode);
         var step = Step("maxpool2d", ("kernel", Pair(kernelSize)), ("padding", Pair(padding ?? (0, 0))));
         if (stride is { } explicitStride)
         {
             step["stride"] = Pair(explicitStride);
         }
 
-        return Push(_ => new Layers.MaxPool2d(kernelSize, stride, padding), [c, oh, ow], step);
+        PoolingExtras(step, padding, paddingEnd, ceilMode);
+        return Push(_ => new Layers.MaxPool2d(kernelSize, stride, padding, ceilMode, paddingEnd), [c, oh, ow], step);
     }
 
     /// <summary><c>new Layers.AvgPool2d(kernelSize, stride, padding, countIncludePad)</c>.</summary>
     public NetworkBuilder AvgPool2d(int kernelSize, int? stride = null, int padding = 0, bool countIncludePad = true) =>
         AvgPool2d((kernelSize, kernelSize), stride is { } s ? (s, s) : null, (padding, padding), countIncludePad);
 
-    /// <summary><c>new Layers.AvgPool2d(kernelSize, stride, padding, countIncludePad)</c> with (height, width) pairs.</summary>
-    public NetworkBuilder AvgPool2d((int Height, int Width) kernelSize, (int Height, int Width)? stride = null, (int Height, int Width)? padding = null, bool countIncludePad = true)
+    /// <summary><c>new Layers.AvgPool2d(kernelSize, stride, padding, countIncludePad, ceilMode, paddingEnd)</c> with (height, width) pairs.</summary>
+    public NetworkBuilder AvgPool2d((int Height, int Width) kernelSize, (int Height, int Width)? stride = null, (int Height, int Width)? padding = null, bool countIncludePad = true,
+        bool ceilMode = false, (int Height, int Width)? paddingEnd = null)
     {
-        var (c, oh, ow) = Pooled("AvgPool2d", kernelSize, stride, padding);
+        var (c, oh, ow) = Pooled("AvgPool2d", kernelSize, stride, padding, paddingEnd, ceilMode);
         var step = Step("avgpool2d", ("kernel", Pair(kernelSize)), ("padding", Pair(padding ?? (0, 0))), ("countIncludePad", countIncludePad));
         if (stride is { } explicitStride)
         {
             step["stride"] = Pair(explicitStride);
         }
 
-        return Push(_ => new Layers.AvgPool2d(kernelSize, stride, padding, countIncludePad), [c, oh, ow], step);
+        PoolingExtras(step, padding, paddingEnd, ceilMode);
+        return Push(_ => new Layers.AvgPool2d(kernelSize, stride, padding, countIncludePad, ceilMode, paddingEnd), [c, oh, ow], step);
     }
 
-    // A pooling window's output size over the current [C, H, W].
-    private (int C, int OH, int OW) Pooled(string layer, (int Height, int Width) kernel, (int Height, int Width)? stride, (int Height, int Width)? padding)
+    // A pooling window's output size over the current [C, H, W] (PyTorch's and ONNX's count, ceil mode included).
+    private (int C, int OH, int OW) Pooled(string layer, (int Height, int Width) kernel, (int Height, int Width)? stride, (int Height, int Width)? padding,
+        (int Height, int Width)? paddingEnd = null, bool ceilMode = false)
     {
         var (c, h, w) = Image(layer);
-        var (sh, sw) = stride ?? kernel;
-        var (ph, pw) = padding ?? (0, 0);
-        if (sh <= 0 || sw <= 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(stride), $"{layer} strides are positive.");
-        }
-
-        int oh = (h + 2 * ph - kernel.Height) / sh + 1, ow = (w + 2 * pw - kernel.Width) / sw + 1;
+        var (_, _, sh, sw, ph, pw, pb, pr) = Layers.Pool.Check(layer, kernel, stride, padding, paddingEnd);
+        int oh = Layers.Pool.Windows(h, kernel.Height, sh, ph, pb, ceilMode), ow = Layers.Pool.Windows(w, kernel.Width, sw, pw, pr, ceilMode);
         CheckSpatial(layer, oh, ow);
         return (c, oh, ow);
+    }
+
+    // The ceil mode and padding below and right, written only when they are not the defaults.
+    private static void PoolingExtras(JsonObject step, (int Height, int Width)? padding, (int Height, int Width)? paddingEnd, bool ceilMode)
+    {
+        if (paddingEnd is { } end && end != (padding ?? (0, 0)))
+        {
+            step["paddingEnd"] = Pair(end);
+        }
+
+        if (ceilMode)
+        {
+            step["ceilMode"] = true;
+        }
+    }
+
+    /// <summary>
+    /// <c>new Layers.ConvTranspose2d(channels, outChannels, kernelSize, stride, padding, outputPadding, bias)</c>; channels from the
+    /// current [C, H, W]: [C, H, W] → [out, (H - 1)·stride - 2·padding + kernel + outputPadding, ...] (a decoder's upsampling step).
+    /// </summary>
+    public NetworkBuilder ConvTranspose2d(int outChannels, int kernelSize, int stride = 1, int padding = 0, int outputPadding = 0, bool bias = true) =>
+        ConvTranspose2d(outChannels, (kernelSize, kernelSize), (stride, stride), (padding, padding), (outputPadding, outputPadding), null, 1, bias);
+
+    /// <summary>
+    /// <c>new Layers.ConvTranspose2d(channels, outChannels, kernelSize, stride, padding, outputPadding, dilation, groups, bias)</c>
+    /// with (height, width) pairs; channels from the current [C, H, W].
+    /// </summary>
+    public NetworkBuilder ConvTranspose2d(int outChannels, (int Height, int Width) kernelSize, (int Height, int Width)? stride = null, (int Height, int Width)? padding = null,
+        (int Height, int Width)? outputPadding = null, (int Height, int Width)? dilation = null, int groups = 1, bool bias = true)
+    {
+        var (c, h, w) = Image("ConvTranspose2d");
+        var (sh, sw) = stride ?? (1, 1);
+        var (ph, pw) = padding ?? (0, 0);
+        var (oph, opw) = outputPadding ?? (0, 0);
+        var (dh, dw) = dilation ?? (1, 1);
+        Layers.ConvTranspose2d.Validate(c, outChannels, kernelSize, (sh, sw), (ph, pw), (oph, opw), (dh, dw), groups);
+        int oh = (h - 1) * sh - 2 * ph + dh * (kernelSize.Height - 1) + oph + 1, ow = (w - 1) * sw - 2 * pw + dw * (kernelSize.Width - 1) + opw + 1;
+        CheckSpatial("ConvTranspose2d", oh, ow);
+        var step = Step("convtranspose2d", ("out", outChannels), ("kernel", Pair(kernelSize)), ("stride", Pair((sh, sw))), ("padding", Pair((ph, pw))), ("bias", bias));
+        if (oph != 0 || opw != 0)
+        {
+            step["outputPadding"] = Pair((oph, opw));
+        }
+
+        if (dh != 1 || dw != 1)
+        {
+            step["dilation"] = Pair((dh, dw));
+        }
+
+        if (groups != 1)
+        {
+            step["groups"] = groups;
+        }
+
+        return Push(r => new Layers.ConvTranspose2d(c, outChannels, kernelSize, (sh, sw), (ph, pw), (oph, opw), (dh, dw), groups, bias, _device, r), [outChannels, oh, ow], step);
+    }
+
+    /// <summary><c>new Layers.Upsample(scaleFactor, mode, alignCorners)</c>: [C, H, W] → [C, floor(H · factor), floor(W · factor)].</summary>
+    public NetworkBuilder Upsample(float scaleFactor, InterpolationMode mode = InterpolationMode.Nearest, bool alignCorners = false) =>
+        Upsample((scaleFactor, scaleFactor), mode, alignCorners);
+
+    /// <summary><c>new Layers.Upsample(scaleFactor, mode, alignCorners)</c> with a (height, width) factor.</summary>
+    public NetworkBuilder Upsample((float Height, float Width) scaleFactor, InterpolationMode mode = InterpolationMode.Nearest, bool alignCorners = false)
+    {
+        var layer = new Layers.Upsample(scaleFactor, mode, alignCorners);
+        var step = Step("upsample", ("scale", scaleFactor.Height == scaleFactor.Width ? JsonValue.Create(scaleFactor.Height) : new JsonArray(scaleFactor.Height, scaleFactor.Width)));
+        return Upsampled(layer, step, () => new Layers.Upsample(scaleFactor, mode, alignCorners));
+    }
+
+    /// <summary><c>Layers.Upsample.ToSize(size, mode, alignCorners)</c>: [C, H, W] → [C, size.Height, size.Width].</summary>
+    public NetworkBuilder UpsampleToSize((int Height, int Width) size, InterpolationMode mode = InterpolationMode.Nearest, bool alignCorners = false)
+    {
+        var layer = Layers.Upsample.ToSize(size, mode, alignCorners);
+        return Upsampled(layer, Step("upsample", ("size", Pair(size))), () => Layers.Upsample.ToSize(size, mode, alignCorners));
+    }
+
+    private NetworkBuilder Upsampled(Layers.Upsample layer, JsonObject step, Func<Module> create)
+    {
+        var (c, h, w) = Image("Upsample");
+        var (oh, ow) = layer.OutputSize(h, w);
+        CheckSpatial("Upsample", oh, ow);
+        step["mode"] = layer.Mode == InterpolationMode.Nearest ? "nearest" : "bilinear";
+        if (layer.AlignCorners)
+        {
+            step["alignCorners"] = true;
+        }
+
+        return Push(_ => create(), [c, oh, ow], step);
+    }
+
+    /// <summary><c>new Layers.AdaptiveAvgPool2d(outputSize)</c>: [C, H, W] → [C, outputSize, outputSize].</summary>
+    public NetworkBuilder AdaptiveAvgPool2d(int outputSize) => AdaptiveAvgPool2d((outputSize, outputSize));
+
+    /// <summary><c>new Layers.AdaptiveAvgPool2d(outputSize)</c>: [C, H, W] → [C, outputSize.Height, outputSize.Width].</summary>
+    public NetworkBuilder AdaptiveAvgPool2d((int Height, int Width) outputSize) =>
+        Adaptive("adaptiveavgpool2d", "AdaptiveAvgPool2d", outputSize, () => new Layers.AdaptiveAvgPool2d(outputSize));
+
+    /// <summary><c>new Layers.AdaptiveMaxPool2d(outputSize)</c>: [C, H, W] → [C, outputSize, outputSize].</summary>
+    public NetworkBuilder AdaptiveMaxPool2d(int outputSize) => AdaptiveMaxPool2d((outputSize, outputSize));
+
+    /// <summary><c>new Layers.AdaptiveMaxPool2d(outputSize)</c>: [C, H, W] → [C, outputSize.Height, outputSize.Width].</summary>
+    public NetworkBuilder AdaptiveMaxPool2d((int Height, int Width) outputSize) =>
+        Adaptive("adaptivemaxpool2d", "AdaptiveMaxPool2d", outputSize, () => new Layers.AdaptiveMaxPool2d(outputSize));
+
+    private NetworkBuilder Adaptive(string op, string layer, (int Height, int Width) size, Func<Module> create)
+    {
+        var (c, _, _) = Image(layer);
+        Layers.AdaptivePooling.Check(layer, size);
+        return Push(_ => create(), [c, size.Height, size.Width], Step(op, ("size", Pair(size))));
     }
 
     // A (height, width) pair as the builder's JSON writes it: one number when both are equal, else [height, width].

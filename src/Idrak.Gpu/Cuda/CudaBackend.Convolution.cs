@@ -305,18 +305,18 @@ internal sealed unsafe partial class CudaBackend
 
     // ------------------------------------------------------------------ average pooling and resampling
 
-    public override void AvgPoolKernel(Storage x, Storage y, in ConvGeometry g, bool countIncludePad)
+    public override void AvgPoolKernel(Storage x, Storage y, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
     {
         int n = g.N * g.C * g.OH * g.OW;
         Launch1D(K("avgpool_f32"), n, P(x), P(y), U(g.H), U(g.W), U(g.KH), U(g.KW), U(g.SH), U(g.SW), U(g.PH), U(g.PW), U(g.OH), U(g.OW),
-            U(countIncludePad ? 1 : 0), U(n));
+            U(countIncludePad ? 1 : 0), U(padBottom), U(padRight), U(n));
     }
 
-    public override void AvgPoolBackwardKernel(Storage dy, Storage dx, in ConvGeometry g, bool countIncludePad)
+    public override void AvgPoolBackwardKernel(Storage dy, Storage dx, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
     {
         int n = g.N * g.C * g.H * g.W;
         Launch1D(K("avgpool_bwd_f32"), n, P(dy), P(dx), U(g.H), U(g.W), U(g.KH), U(g.KW), U(g.SH), U(g.SW), U(g.PH), U(g.PW), U(g.OH), U(g.OW),
-            U(countIncludePad ? 1 : 0), U(n));
+            U(countIncludePad ? 1 : 0), U(padBottom), U(padRight), U(n));
     }
 
     public override void ResizeNormalizeKernel(Storage x, Storage coefficients, Storage values, Storage y, int planes, int channels, int height, int width,
@@ -331,5 +331,75 @@ internal sealed unsafe partial class CudaBackend
         int n = planes * outHeight * outWidth;
         Launch1D(K("resize_normalize_f32"), n, P(x), P(coefficients), P(values), P(y), U(planes), U(Math.Max(channels, 1)), U(height), U(width), U(outHeight),
             U(outWidth), U(xTaps), U(yTaps), U(bytes ? 1 : 0), U(n));
+    }
+
+    // ------------------------------------------------------------------ interpolation and adaptive pooling (PtxKernels.Resampling.cs)
+
+    public override void Interpolate2dKernel(Storage x, Storage y, int planes, int height, int width, int outHeight, int outWidth, InterpolationMode mode,
+        bool alignCorners, float scaleHeight, float scaleWidth)
+    {
+        int n = planes * outHeight * outWidth;
+        Launch1D(K("interpolate_f32"), n, P(x), P(y), U(planes), U(height), U(width), U(outHeight), U(outWidth), U(mode == InterpolationMode.Nearest ? 0 : 1),
+            U(alignCorners ? 1 : 0), F(scaleHeight), F(scaleWidth), U(n));
+    }
+
+    public override void Interpolate2dBackwardKernel(Storage dy, Storage dx, int planes, int height, int width, int outHeight, int outWidth, InterpolationMode mode,
+        bool alignCorners, float scaleHeight, float scaleWidth)
+    {
+        int n = planes * height * width;
+        Launch1D(K("interpolate_bwd_f32"), n, P(dy), P(dx), U(planes), U(height), U(width), U(outHeight), U(outWidth), U(mode == InterpolationMode.Nearest ? 0 : 1),
+            U(alignCorners ? 1 : 0), F(scaleHeight), F(scaleWidth), U(n));
+    }
+
+    // The adaptive windows' index arithmetic ((o + 1) · size, (i + 1) · outSize) stays within 32 bits.
+    private static bool AdaptiveFits(int height, int width, int outHeight, int outWidth) =>
+        (long)(outHeight + 1) * (height + 1) <= int.MaxValue && (long)(outWidth + 1) * (width + 1) <= int.MaxValue;
+
+    public override void AdaptiveAvgPoolKernel(Storage x, Storage y, int planes, int height, int width, int outHeight, int outWidth)
+    {
+        if (!AdaptiveFits(height, width, outHeight, outWidth))
+        {
+            base.AdaptiveAvgPoolKernel(x, y, planes, height, width, outHeight, outWidth);
+            return;
+        }
+
+        int n = planes * outHeight * outWidth;
+        Launch1D(K("adaptive_avgpool_f32"), n, P(x), P(y), U(planes), U(height), U(width), U(outHeight), U(outWidth), U(n));
+    }
+
+    public override void AdaptiveAvgPoolBackwardKernel(Storage dy, Storage dx, int planes, int height, int width, int outHeight, int outWidth)
+    {
+        if (!AdaptiveFits(height, width, outHeight, outWidth))
+        {
+            base.AdaptiveAvgPoolBackwardKernel(dy, dx, planes, height, width, outHeight, outWidth);
+            return;
+        }
+
+        int n = planes * height * width;
+        Launch1D(K("adaptive_avgpool_bwd_f32"), n, P(dy), P(dx), U(planes), U(height), U(width), U(outHeight), U(outWidth), U(n));
+    }
+
+    public override void AdaptiveMaxPoolKernel(Storage x, Storage y, Storage argmax, int planes, int height, int width, int outHeight, int outWidth)
+    {
+        if (!AdaptiveFits(height, width, outHeight, outWidth))
+        {
+            base.AdaptiveMaxPoolKernel(x, y, argmax, planes, height, width, outHeight, outWidth);
+            return;
+        }
+
+        int n = planes * outHeight * outWidth;
+        Launch1D(K("adaptive_maxpool_f32"), n, P(x), P(y), P(argmax), U(planes), U(height), U(width), U(outHeight), U(outWidth), U(n));
+    }
+
+    public override void AdaptiveMaxPoolBackwardKernel(Storage dy, Storage argmax, Storage dx, int planes, int height, int width, int outHeight, int outWidth)
+    {
+        if (!AdaptiveFits(height, width, outHeight, outWidth))
+        {
+            base.AdaptiveMaxPoolBackwardKernel(dy, argmax, dx, planes, height, width, outHeight, outWidth);
+            return;
+        }
+
+        int n = planes * height * width;
+        Launch1D(K("adaptive_maxpool_bwd_f32"), n, P(dy), P(argmax), P(dx), U(planes), U(height), U(width), U(outHeight), U(outWidth), U(n));
     }
 }

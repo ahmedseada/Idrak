@@ -76,7 +76,12 @@ public sealed class ImportedNetwork : IDisposable
 /// Imports ONNX models into Idrak layers. The graph must be a chain of supported layers from one input to one
 /// output: MatMul/Gemm (+ Add) → Linear; Relu, Tanh, Sigmoid, Softmax; GELU (the Gelu op, the tanh form, or the erf
 /// form, which becomes the tanh approximation); BatchNormalization; LayerNormalization; Conv (rectangular kernels,
-/// strides, symmetric padding, dilation, groups); MaxPool and AveragePool; GlobalAveragePool (+ Flatten); Flatten; Gather
+/// strides, symmetric padding, dilation, groups); ConvTranspose (the same, with output_padding); MaxPool and AveragePool
+/// (padding below and right may differ, ceil_mode); GlobalAveragePool and GlobalMaxPool (adaptive pooling to 1x1, or
+/// global average pooling + Flatten); Resize (nearest with asymmetric coordinates and floor, linear with half_pixel or
+/// align_corners; constant scales or sizes, or sizes computed from the input's shape as PyTorch exports them);
+/// GroupNormalization, InstanceNormalization, and PyTorch's group norm (Reshape, InstanceNormalization, Reshape, Mul, Add);
+/// Flatten; Gather
 /// on a weight table → Embedding; sinusoidal position tables → PositionalEncoding; LSTM and GRU (forward or
 /// bidirectional, stacked, PyTorch-style GRU, zero initial states); an image's columns as a sequence; ReduceMean over time;
 /// first/last time step; Reshape; Dropout and Identity (skipped); and the attention and transformer-layer blocks
@@ -188,8 +193,8 @@ internal sealed class Importer(OnnxModel model, Device device, int[]? sampleShap
             throw new NotSupportedException($"The value '{x}' is not used by any node and is not the graph output.");
         }
 
-        if ((MatchTransformer(x) ?? MatchRecurrent(x) ?? MatchColumnsToSequence(x) ?? AttentionLayer(ParseAttention(x)) ?? GeluLayer(ParseGelu(x))
-             ?? LinearLayer(ParseLinear(x))) is { } match)
+        if ((MatchTransformer(x) ?? MatchRecurrent(x) ?? MatchColumnsToSequence(x) ?? MatchGroupNorm(x) ?? MatchResize(x) ?? AttentionLayer(ParseAttention(x))
+             ?? GeluLayer(ParseGelu(x)) ?? LinearLayer(ParseLinear(x))) is { } match)
         {
             Consume(match.Nodes);
             return Push(match.Step, match.Load, match.Output);
@@ -236,9 +241,14 @@ internal sealed class Importer(OnnxModel model, Device device, int[]? sampleShap
             return c.Importer.PushMatch(c.Importer.LayerNormLayer(c.Node));
         },
         ["Conv"] = c => c.Importer.PushMatch(c.Importer.ConvLayer(c.Node)),
+        ["ConvTranspose"] = c => c.Importer.PushMatch(c.Importer.ConvTransposeLayer(c.Node)),
         ["MaxPool"] = c => c.Importer.PushMatch(c.Importer.MaxPoolLayer(c.Node)),
         ["AveragePool"] = c => c.Importer.PushMatch(c.Importer.AveragePoolLayer(c.Node)),
         ["GlobalAveragePool"] = c => c.Importer.GlobalAveragePool(c.Node),
+        ["GlobalMaxPool"] = c => c.Importer.PushMatch(c.Importer.GlobalPoolLayer(c.Node, max: true)),
+        ["Resize"] = c => c.Importer.PushMatch(c.Importer.ResizeLayer(c.Node, null)),
+        ["GroupNormalization"] = c => c.Importer.PushMatch(c.Importer.GroupNormalizationLayer(c.Node, c.CurrentShape[0])),
+        ["InstanceNormalization"] = c => c.Importer.PushMatch(c.Importer.InstanceNormLayer(c.Node)),
         ["Flatten"] = c => c.Int("axis", 1) == 1 ? c.Add(b => b.Flatten()) : throw c.Unsupported("flatten from an axis other than 1"),
         ["Cast"] = c => c.Importer.Cast(c.Node),
         ["Gather"] = c => c.Importer.Gather(c.Node, c.Input),
@@ -267,13 +277,16 @@ internal sealed class Importer(OnnxModel model, Device device, int[]? sampleShap
 
     private string GlobalAveragePool(OnnxNode node)
     {
-        var next = Users(node.Outputs[0]) is [var flatten] && (flatten.Op == "Flatten" && flatten.Int("axis", 1) == 1
+        // Followed by a flatten: the global average pool that gives [C]; otherwise adaptive pooling to [C, 1, 1].
+        if (Users(node.Outputs[0]) is not [var flatten] || !(flatten.Op == "Flatten" && flatten.Int("axis", 1) == 1
             || flatten.Op == "Reshape" && Const(flatten.Inputs[1]) is { } target && target.AsLongs() is [-1 or 0, _]
-            || flatten.Op == "Squeeze")
-            ? flatten
-            : throw Unsupported(node, "global average pooling that is not followed by a flatten");
-        Consume(next);
-        return Push(b => b.GlobalAveragePool2d(), null, next.Outputs[0]);
+            || flatten.Op == "Squeeze"))
+        {
+            return PushMatch(GlobalPoolLayer(node, max: false));
+        }
+
+        Consume(flatten);
+        return Push(b => b.GlobalAveragePool2d(), null, flatten.Outputs[0]);
     }
 
     private string Cast(OnnxNode node)
@@ -445,8 +458,15 @@ internal sealed class Importer(OnnxModel model, Device device, int[]? sampleShap
             "Mul" or "Div" or "Gelu" => GeluLayer(ParseGelu(x)),
             "BatchNormalization" when node.Inputs[0] == x => BatchNormLayer(node),
             "Conv" when node.Inputs[0] == x => ConvLayer(node),
+            "ConvTranspose" when node.Inputs[0] == x => ConvTransposeLayer(node),
             "MaxPool" => MaxPoolLayer(node),
             "AveragePool" => AveragePoolLayer(node),
+            "GlobalMaxPool" => GlobalPoolLayer(node, max: true),
+            "Shape" => MatchResize(x),
+            "Resize" when node.Inputs[0] == x => ResizeLayer(node, null),
+            "Reshape" => MatchGroupNorm(x),
+            "GroupNormalization" when node.Inputs[0] == x => GroupNormalizationLayer(node, SampleShape(node, x)[0]),
+            "InstanceNormalization" when node.Inputs[0] == x => InstanceNormLayer(node),
             "Gather" => EmbeddingLayer(node, x),
             _ => null,
         };
@@ -1191,28 +1211,212 @@ internal sealed class Importer(OnnxModel model, Device device, int[]? sampleShap
 
     private LayerMatch MaxPoolLayer(OnnxNode node)
     {
-        var w = Window(node, null, dilation: false);
-        if (node.Int("ceil_mode", 0) != 0 || node.Outputs.Count > 1 && node.Outputs[1].Length > 0 && Users(node.Outputs[1]).Count > 0)
+        var w = Window(node, null, dilation: false, uneven: true);
+        bool ceil = node.Int("ceil_mode", 0) != 0;
+        if (node.Outputs.Count > 1 && node.Outputs[1].Length > 0 && Users(node.Outputs[1]).Count > 0)
         {
-            throw Unsupported(node, "ceil_mode or indices output");
+            throw Unsupported(node, "max pooling whose indices output is used");
         }
 
+        bool square = w.Square && !ceil;
+        var end = w.Uneven ? w.PaddingEnd : ((int, int)?)null;
         return new([node], node.Outputs[0],
-            b => w.Square ? b.MaxPool2d(w.Kernel.Height, w.Stride.Height, w.Padding.Height) : b.MaxPool2d(w.Kernel, w.Stride, w.Padding),
-            () => new MaxPool2d(w.Kernel, w.Stride, w.Padding), null);
+            b => square ? b.MaxPool2d(w.Kernel.Height, w.Stride.Height, w.Padding.Height) : b.MaxPool2d(w.Kernel, w.Stride, w.Padding, ceil, end),
+            () => new MaxPool2d(w.Kernel, w.Stride, w.Padding, ceil, end), null);
     }
 
     private LayerMatch AveragePoolLayer(OnnxNode node)
     {
-        var w = Window(node, null, dilation: false);
-        if (node.Int("ceil_mode", 0) != 0)
+        var w = Window(node, null, dilation: false, uneven: true);
+        bool ceil = node.Int("ceil_mode", 0) != 0;
+        bool countIncludePad = node.Int("count_include_pad", 0) != 0;                   // ONNX's default leaves padding out
+        var end = w.Uneven ? w.PaddingEnd : ((int, int)?)null;
+        return new([node], node.Outputs[0], b => b.AvgPool2d(w.Kernel, w.Stride, w.Padding, countIncludePad, ceil, end),
+            () => new AvgPool2d(w.Kernel, w.Stride, w.Padding, countIncludePad, ceil, end), null);
+    }
+
+    // GlobalAveragePool / GlobalMaxPool kept as [C, 1, 1]: adaptive pooling to one position.
+    private LayerMatch GlobalPoolLayer(OnnxNode node, bool max) => new([node], node.Outputs[0],
+        b => max ? b.AdaptiveMaxPool2d(1) : b.AdaptiveAvgPool2d(1), () => max ? new AdaptiveMaxPool2d(1) : new AdaptiveAvgPool2d(1), null);
+
+    private LayerMatch ConvTransposeLayer(OnnxNode node)
+    {
+        var weight = Required(node, 1);
+        var bias = node.Inputs.Count > 2 && node.Inputs[2].Length > 0 ? Required(node, 2) : null;
+        if (weight.Dims is not [var inC, var perGroup, var kh, var kw])
         {
-            throw Unsupported(node, "ceil_mode");
+            throw Unsupported(node, "a transposed convolution that is not 2-D");
         }
 
-        bool countIncludePad = node.Int("count_include_pad", 0) != 0;                   // ONNX's default leaves padding out
-        return new([node], node.Outputs[0], b => b.AvgPool2d(w.Kernel, w.Stride, w.Padding, countIncludePad),
-            () => new AvgPool2d(w.Kernel, w.Stride, w.Padding, countIncludePad), null);
+        if (node.Ints("output_shape") is not null)
+        {
+            throw Unsupported(node, "a transposed convolution given an output_shape (pads and output_padding are)");
+        }
+
+        var w = Window(node, ((int)kh, (int)kw), dilation: true);
+        int groups = (int)node.Int("group", 1);
+        if (w.Kernel != ((int)kh, (int)kw) || groups <= 0 || inC % groups != 0 || node.Ints("output_padding") is { } given && given.Length != 2)
+        {
+            throw Unsupported(node, "a transposed convolution whose kernel_shape, group or output_padding does not match its weights");
+        }
+
+        var outputPadding = node.Ints("output_padding") is [var oph, var opw] ? ((int)oph, (int)opw) : (0, 0);
+        int inputs = (int)inC, outputs = (int)perGroup * groups;
+        return new([node], node.Outputs[0],
+            b => b.ConvTranspose2d(outputs, w.Kernel, w.Stride, w.Padding, outputPadding, w.Dilation == (1, 1) ? null : w.Dilation, groups, bias is not null),
+            () => new ConvTranspose2d(inputs, outputs, w.Kernel, w.Stride, w.Padding, outputPadding, w.Dilation, groups, bias is not null, device), m =>
+            {
+                var conv = (ConvTranspose2d)m;
+                conv.Weight.Load(weight.AsFloats());                                   // [in, out / groups, kh, kw] = [in, out / groups · kh · kw]
+                if (bias is not null)
+                {
+                    conv.Bias!.Load(bias.AsFloats());
+                }
+            });
+    }
+
+    // Resize as Upsample: nearest with asymmetric coordinates and floor (PyTorch's nearest), linear with half_pixel (or
+    // pytorch_half_pixel, the same but for one output position) or align_corners; scales [1, 1, h, w] or sizes [N, C, h, w]
+    // as constants, or the (height, width) a matched shape computation gives (`size`).
+    private LayerMatch ResizeLayer(OnnxNode node, (int Height, int Width)? size, params OnnxNode[] more)
+    {
+        string mode = node.String("mode") ?? "nearest", transform = node.String("coordinate_transformation_mode") ?? "half_pixel";
+        string nearest = node.String("nearest_mode") ?? "round_prefer_floor";
+        (InterpolationMode Mode, bool Align) how = (mode, transform) switch
+        {
+            ("nearest", "asymmetric") when nearest == "floor" => (InterpolationMode.Nearest, false),
+            ("linear", "half_pixel" or "pytorch_half_pixel") => (InterpolationMode.Bilinear, false),
+            ("linear", "align_corners") => (InterpolationMode.Bilinear, true),
+            _ => throw Unsupported(node, $"a {mode} resize with {transform} coordinates{(mode == "nearest" ? $" and {nearest} rounding" : "")} (nearest is imported with asymmetric "
+                + "coordinates and floor rounding, linear with half_pixel or align_corners)"),
+        };
+        if (node.Int("antialias", 0) != 0 || node.Ints("axes") is not null || node.Int("exclude_outside", 0) != 0)
+        {
+            throw Unsupported(node, "a resize with antialias, axes or exclude_outside");
+        }
+
+        // Opset 10 takes (X, scales); later opsets (X, roi, scales, sizes).
+        string Input(int index) => index < node.Inputs.Count ? node.Inputs[index] : "";
+        string scalesName = Opset < 11 ? Input(1) : Input(2), sizesName = Opset < 11 ? "" : Input(3);
+        (float, float)? scale = null;
+        if (size is null && sizesName.Length > 0)
+        {
+            size = Const(sizesName)?.AsLongs() is [_, _, var h, var w] ? ((int)h, (int)w) : throw Unsupported(node, "a resize to sizes computed in the graph");
+        }
+        else if (size is null)
+        {
+            scale = (scalesName.Length > 0 ? Const(scalesName)?.AsFloats() : null) is [1f, 1f, var sh, var sw] ? (sh, sw)
+                : throw Unsupported(node, "a resize whose scales are computed or scale the batch or the channels");
+        }
+
+        return new([node, .. more], node.Outputs[0],
+            b => scale is { } f ? b.Upsample(f, how.Mode, how.Align) : b.UpsampleToSize(size!.Value, how.Mode, how.Align),
+            () => scale is { } f ? new Upsample(f, how.Mode, how.Align) : Upsample.ToSize(size!.Value, how.Mode, how.Align), null);
+    }
+
+    // PyTorch's resize to a size: Resize(x, sizes = Concat(Slice(Shape(x), 0, 2), [h, w])).
+    private LayerMatch? MatchResize(string x)
+    {
+        foreach (var shape in Users(x).Where(n => n.Op == "Shape"))
+        {
+            if (Only(shape.Outputs[0], "Slice") is not { } slice || Const(slice.Inputs.ElementAtOrDefault(1) ?? "")?.AsLongs() is not [0]
+                || Const(slice.Inputs.ElementAtOrDefault(2) ?? "")?.AsLongs() is not [2] || Only(slice.Outputs[0], "Concat") is not { Inputs.Count: 2 } concat
+                || concat.Inputs[0] != slice.Outputs[0] || Const(concat.Inputs[1])?.AsLongs() is not [var h, var w]
+                || Only(concat.Outputs[0], "Resize") is not { } resize || resize.Inputs[0] != x || resize.Inputs.ElementAtOrDefault(3) != concat.Outputs[0])
+            {
+                continue;
+            }
+
+            return ResizeLayer(resize, ((int)h, (int)w), shape, slice, concat);
+        }
+
+        return null;
+    }
+
+    // PyTorch's group norm before opset 18: Reshape(x, [0, groups, -1]), InstanceNormalization (unit scale, zero shift),
+    // Reshape back (to a constant shape or Shape(x)), then Mul by gamma and Add beta per channel (left out without affine).
+    private LayerMatch? MatchGroupNorm(string x)
+    {
+        foreach (var reshape in Users(x).Where(n => n.Op == "Reshape" && n.Inputs[0] == x))
+        {
+            if (Const(reshape.Inputs.ElementAtOrDefault(1) ?? "")?.AsLongs() is not [0, var g, -1] || Only(reshape.Outputs[0], "InstanceNormalization") is not { } norm
+                || Const(norm.Inputs.ElementAtOrDefault(1) ?? "")?.AsFloats() is not { } ones || ones.Length != g || ones.Any(v => v != 1f)
+                || Const(norm.Inputs.ElementAtOrDefault(2) ?? "")?.AsFloats() is not { } zeros || zeros.Length != g || zeros.Any(v => v != 0f)
+                || Only(norm.Outputs[0], "Reshape") is not { } back)
+            {
+                continue;
+            }
+
+            List<OnnxNode> nodes = [reshape, norm, back];
+            string target = back.Inputs.ElementAtOrDefault(1) ?? "";
+            if (Const(target) is null)
+            {
+                if (Users(x).FirstOrDefault(n => n.Op == "Shape" && n.Outputs[0] == target) is not { } shape)
+                {
+                    continue;
+                }
+
+                nodes.Add(shape);
+            }
+
+            float[]? gamma = null, beta = null;
+            string output = back.Outputs[0];
+            if (Only(output, "Mul") is { } mul && Other(mul, output) is { } scaleName && Const(scaleName)?.AsFloats() is { } scale
+                && Only(mul.Outputs[0], "Add") is { } add && Other(add, mul.Outputs[0]) is { } shiftName && Const(shiftName)?.AsFloats() is { } shift && shift.Length == scale.Length)
+            {
+                (gamma, beta, output) = (scale, shift, add.Outputs[0]);
+                nodes.AddRange([mul, add]);
+            }
+
+            int groups = (int)g;
+            float epsilon = norm.Float("epsilon", 1e-5f);
+            int Channels() => gamma?.Length ?? (Const(target)?.AsLongs() is [_, var c, ..] && c > 0 ? (int)c : SampleShape(reshape, x)[0]);
+            return new([.. nodes], output, b => b.GroupNorm(groups, epsilon, gamma is not null), () => new GroupNorm(groups, Channels(), epsilon, gamma is not null, device), m =>
+            {
+                var layer = (GroupNorm)m;
+                if (gamma is not null)
+                {
+                    layer.Gamma!.Load(gamma);
+                    layer.Beta!.Load(beta!);
+                }
+            });
+        }
+
+        return null;
+    }
+
+    // GroupNormalization: opset 18's scale and bias per group, opset 21's per channel.
+    private LayerMatch GroupNormalizationLayer(OnnxNode node, int channels)
+    {
+        int groups = (int)node.Int("num_groups", 0);
+        float[] scale = Required(node, 1).AsFloats(), bias = Required(node, 2).AsFloats();
+        if (groups <= 0 || channels % groups != 0 || scale.Length != bias.Length || scale.Length != channels && scale.Length != groups || node.Int("stash_type", 1) != 1)
+        {
+            throw Unsupported(node, $"group normalization with {groups} groups, {scale.Length} scales and {bias.Length} biases over {channels} channels");
+        }
+
+        float[] PerChannel(float[] values) => values.Length == channels ? values : [.. Enumerable.Range(0, channels).Select(c => values[c / (channels / groups)])];
+        float epsilon = node.Float("epsilon", 1e-5f);
+        return new([node], node.Outputs[0], b => b.GroupNorm(groups, epsilon), () => new GroupNorm(groups, channels, epsilon, true, device), m =>
+        {
+            var layer = (GroupNorm)m;
+            layer.Gamma!.Load(PerChannel(scale));
+            layer.Beta!.Load(PerChannel(bias));
+        });
+    }
+
+    // InstanceNormalization: group norm with one channel a group.
+    private LayerMatch InstanceNormLayer(OnnxNode node)
+    {
+        float[] scale = Required(node, 1).AsFloats(), bias = Required(node, 2).AsFloats();
+        int channels = scale.Length;
+        float epsilon = node.Float("epsilon", 1e-5f);
+        return new([node], node.Outputs[0], b => b.GroupNorm(channels, epsilon), () => new GroupNorm(channels, channels, epsilon, true, device), m =>
+        {
+            var layer = (GroupNorm)m;
+            layer.Gamma!.Load(scale);
+            layer.Beta!.Load(bias);
+        });
     }
 
     private LayerMatch? EmbeddingLayer(OnnxNode gather, string ids) =>
@@ -1221,27 +1425,30 @@ internal sealed class Importer(OnnxModel model, Device device, int[]? sampleShap
                 m => ((Embedding)m).Weight.Load(table.AsFloats()))
             : null;
 
-    private sealed record WindowShape((int Height, int Width) Kernel, (int Height, int Width) Stride, (int Height, int Width) Padding, (int Height, int Width) Dilation)
+    private sealed record WindowShape((int Height, int Width) Kernel, (int Height, int Width) Stride, (int Height, int Width) Padding, (int Height, int Width) Dilation,
+        (int Height, int Width) PaddingEnd)
     {
-        public bool Square => Kernel.Height == Kernel.Width && Stride.Height == Stride.Width && Padding.Height == Padding.Width;
+        public bool Uneven => PaddingEnd != Padding;
+
+        public bool Square => Kernel.Height == Kernel.Width && Stride.Height == Stride.Width && Padding.Height == Padding.Width && !Uneven;
     }
 
-    // A 2-D window: kernel_shape (or the weights' kernel), strides, padding equal above and below and left and right, and
-    // dilations where the layer takes them.
-    private static WindowShape Window(OnnxNode node, (int, int)? weights, bool dilation)
+    // A 2-D window: kernel_shape (or the weights' kernel), strides, explicit padding (equal above and below and left and
+    // right, unless the layer takes more below and right: `uneven`), and dilations where the layer takes them.
+    private static WindowShape Window(OnnxNode node, (int, int)? weights, bool dilation, bool uneven = false)
     {
         var kernel = node.Ints("kernel_shape") ?? (weights is var (wh, ww) ? [wh, ww] : null);
         var strides = node.Ints("strides") ?? [1, 1];
         var pads = node.Ints("pads") ?? [0, 0, 0, 0];
         var dilations = node.Ints("dilations") ?? [1, 1];
         if (node.String("auto_pad") is { } autoPad && autoPad != "NOTSET" || kernel is not [var kh, var kw] || strides is not [var sh, var sw]
-            || pads is not [var top, var left, var bottom, var right] || top != bottom || left != right || dilations is not [var dh, var dw]
+            || pads is not [var top, var left, var bottom, var right] || !uneven && (top != bottom || left != right) || dilations is not [var dh, var dw]
             || !dilation && (dh != 1 || dw != 1))
         {
-            throw Unsupported(node, "a 2-D window with explicit padding, equal above and below and left and right" + (dilation ? "" : ", and no dilation"));
+            throw Unsupported(node, "a 2-D window with explicit padding" + (uneven ? "" : ", equal above and below and left and right") + (dilation ? "" : ", and no dilation"));
         }
 
-        return new(((int)kh, (int)kw), ((int)sh, (int)sw), ((int)top, (int)left), ((int)dh, (int)dw));
+        return new(((int)kh, (int)kw), ((int)sh, (int)sw), ((int)top, (int)left), ((int)dh, (int)dw), ((int)bottom, (int)right));
     }
 
     private string Gather(OnnxNode node, string x)

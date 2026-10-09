@@ -15,18 +15,19 @@ internal static class ConvolutionShapes
 
     /// <summary>
     /// The shape as six numbers (a, b, c, d, e, f) for a tuning key: images, channels, filters, height and width, window,
-    /// stride and dilation, padding; false when a size passes its field (the formula is used then, not measured).
+    /// stride and dilation, padding (above, left, below, right); false when a size passes its field (the formula is used then, not measured).
     /// </summary>
     public static bool Key(in ConvGeometry g, int filters, int groups, out (int A, int B, int C, int D, int E, int F) key)
     {
         key = default;
         if (g.H >= 1 << 16 || g.W >= 1 << 16 || g.KH >= 1 << 8 || g.KW >= 1 << 8 || g.SH >= 1 << 4 || g.SW >= 1 << 4 || g.DH >= 1 << 4 || g.DW >= 1 << 4
-            || g.PH >= 1 << 16 || g.PW >= 1 << 16 || groups >= 1 << 22)
+            || g.PH >= 1 << 8 || g.PW >= 1 << 8 || g.PadBottom >= 1 << 8 || g.PadRight >= 1 << 7 || groups >= 1 << 22)
         {
             return false;
         }
 
-        key = (g.N, g.C, filters, g.H << 16 | g.W, g.KH << 24 | g.KW << 16 | g.SH << 12 | g.SW << 8 | g.DH << 4 | g.DW, g.PH << 16 | g.PW);
+        key = (g.N, g.C, filters, g.H << 16 | g.W, g.KH << 24 | g.KW << 16 | g.SH << 12 | g.SW << 8 | g.DH << 4 | g.DW,
+            g.PH << 23 | g.PW << 15 | g.PadBottom << 7 | g.PadRight);
         return true;
     }
 

@@ -572,48 +572,46 @@ internal sealed partial class CpuBackend
         float[] cv = D(dcols), dv = D(dx);
         var geo = g;
 
-        // Images write to disjoint parts of dx, so they can run in parallel without atomics.
-        For(g.N, (long)g.Positions * g.PatchSize, (start, end) => Col2ImImages(cv, dv, geo, start, end));
+        // Each (image, channel) plane of dx is written only by its own columns, so the planes run in parallel without atomics
+        // (a batch of one, as a transposed convolution's or a decoder's, still uses every core).
+        For(g.N * g.C, (long)g.Positions * g.PatchSize, (start, end) => Col2ImPlanes(cv, dv, geo, start, end));
     }
 
-    private static void Col2ImImages(float[] cv, float[] dv, ConvGeometry g, int start, int end)
+    private static void Col2ImPlanes(float[] cv, float[] dv, ConvGeometry g, int start, int end)
     {
         int c = g.C, h = g.H, w = g.W, kh = g.KH, kw = g.KW, sh = g.SH, sw = g.SW, ph = g.PH, pw = g.PW, oh = g.OH, ow = g.OW, patch = g.PatchSize;
         int dh = g.DH, dw = g.DW;
-        for (int n = start; n < end; n++)
+        for (int nc = start; nc < end; nc++)
         {
+            int n = nc / c, ch = nc % c, plane = nc * h;
             for (int y = 0; y < oh; y++)
             {
                 for (int x0 = 0; x0 < ow; x0++)
                 {
                     var row = cv.AsSpan(((n * oh + y) * ow + x0) * patch, patch);
-                    int col = 0;
+                    int col = ch * kh * kw;
                     int iw0 = x0 * sw - pw;
-                    for (int ch = 0; ch < c; ch++)
+                    for (int ki = 0; ki < kh; ki++, col += kw)
                     {
-                        int plane = (n * c + ch) * h;
-                        for (int ki = 0; ki < kh; ki++, col += kw)
+                        int ih = y * sh - ph + ki * dh;
+                        if ((uint)ih >= (uint)h)
                         {
-                            int ih = y * sh - ph + ki * dh;
-                            if ((uint)ih >= (uint)h)
-                            {
-                                continue;
-                            }
+                            continue;
+                        }
 
-                            var source = row.Slice(col, kw);
-                            if (dw == 1 && iw0 >= 0 && iw0 + kw <= w)
-                            {
-                                AddInPlace(dv.AsSpan((plane + ih) * w + iw0, kw), source);
-                                continue;
-                            }
+                        var source = row.Slice(col, kw);
+                        if (dw == 1 && iw0 >= 0 && iw0 + kw <= w)
+                        {
+                            AddInPlace(dv.AsSpan((plane + ih) * w + iw0, kw), source);
+                            continue;
+                        }
 
-                            for (int kj = 0; kj < kw; kj++)
+                        for (int kj = 0; kj < kw; kj++)
+                        {
+                            int iw = iw0 + kj * dw;
+                            if ((uint)iw < (uint)w)
                             {
-                                int iw = iw0 + kj * dw;
-                                if ((uint)iw < (uint)w)
-                                {
-                                    dv[(plane + ih) * w + iw] += source[kj];
-                                }
+                                dv[(plane + ih) * w + iw] += source[kj];
                             }
                         }
                     }

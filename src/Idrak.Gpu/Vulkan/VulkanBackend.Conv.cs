@@ -49,7 +49,9 @@ internal sealed partial class VulkanBackend
     // overlapping windows' gradients in no fixed order. Tensor.MaxPool passes the geometry.
     public override void MaxPoolBackwardKernel(Storage dy, Storage argmax, Storage dx, in ConvGeometry g)
     {
-        if ((long)g.N * g.C * g.H * g.W > int.MaxValue || !Fit(dy, argmax, dx))
+        // A window wholly in the padding below or right (more padding there than the window) is left to the host: the
+        // kernel's walk of every window from the plane's first element knows only the padding above and left.
+        if ((long)g.N * g.C * g.H * g.W > int.MaxValue || g.Asymmetric && (g.PadBottom >= g.KH || g.PadRight >= g.KW) || !Fit(dy, argmax, dx))
         {
             base.MaxPoolBackwardKernel(dy, argmax, dx, in g);
             return;

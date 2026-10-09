@@ -2614,48 +2614,50 @@ public abstract partial class Backend
     }
 
     /// <summary>
-    /// Average pooling of NCHW images: y[n, c, oh, ow] = the sum of x over the window (padded positions add 0, in row
-    /// order) divided by KH·KW when <paramref name="countIncludePad"/>, else by the input positions the window covers
-    /// (at least 1), as PyTorch's <c>AvgPool2d</c> without ceil mode.
+    /// Average pooling of NCHW images, as PyTorch's <c>AvgPool2d</c>: y[n, c, oh, ow] = the sum of x over the window
+    /// (padded positions add 0, in row order) divided, when <paramref name="countIncludePad"/>, by the window's rows and
+    /// columns up to the padded end (H + <paramref name="padBottom"/>, W + <paramref name="padRight"/>: the padding a
+    /// divisor counts, which a ceil-mode geometry's PadBottom and PadRight may pass), else by the input positions the
+    /// window covers (at least 1).
     /// </summary>
     /// <remarks>Runs <see cref="Ops.AvgPool"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AvgPoolKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void AvgPool(Storage x, Storage y, in ConvGeometry g, bool countIncludePad)
+    public void AvgPool(Storage x, Storage y, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
     {
         if (_kernels is null)
         {
-            AvgPoolKernel(x, y, in g, countIncludePad);
+            AvgPoolKernel(x, y, in g, countIncludePad, padBottom, padRight);
         }
         else
         {
-            AvgPoolRegistered(x, y, in g, countIncludePad);
+            AvgPoolRegistered(x, y, in g, countIncludePad, padBottom, padRight);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void AvgPoolRegistered(Storage x, Storage y, in ConvGeometry g, bool countIncludePad)
+    private void AvgPoolRegistered(Storage x, Storage y, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
     {
         if (Kernel(OperationIndex.AvgPool) is OperationKernels.AvgPool kernel)
         {
-            kernel(this, x, y, in g, countIncludePad);
+            kernel(this, x, y, in g, countIncludePad, padBottom, padRight);
             return;
         }
 
         if (!RetryOnHost || !OwnsKernel(OperationIndex.AvgPool))
         {
-            AvgPoolKernel(x, y, in g, countIncludePad);
+            AvgPoolKernel(x, y, in g, countIncludePad, padBottom, padRight);
             return;
         }
 
         var retry = new HostRetry(Ops.AvgPool);
         try
         {
-            AvgPoolKernel(x, y, in g, countIncludePad);
+            AvgPoolKernel(x, y, in g, countIncludePad, padBottom, padRight);
         }
         catch (DeviceException failure)
         {
             retry.Failed(failure);
-            AvgPoolOnHost(x, y, in g, countIncludePad);
+            AvgPoolOnHost(x, y, in g, countIncludePad, padBottom, padRight);
         }
         finally
         {
@@ -2664,10 +2666,10 @@ public abstract partial class Backend
     }
 
     // The host fallback of AvgPool (the default body of AvgPoolKernel), for RetryOnHost.
-    private void AvgPoolOnHost(Storage x, Storage y, in ConvGeometry g, bool countIncludePad)
+    private void AvgPoolOnHost(Storage x, Storage y, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
     {
         using var h = new HostCall(this, "AvgPool");
-        CpuBackend.Instance.AvgPool(h[x], h[y], in g, countIncludePad);
+        CpuBackend.Instance.AvgPool(h[x], h[y], in g, countIncludePad, padBottom, padRight);
     }
 
     /// <summary>
@@ -2676,42 +2678,42 @@ public abstract partial class Backend
     /// </summary>
     /// <remarks>Runs <see cref="Ops.AvgPoolBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AvgPoolBackwardKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void AvgPoolBackward(Storage dy, Storage dx, in ConvGeometry g, bool countIncludePad)
+    public void AvgPoolBackward(Storage dy, Storage dx, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
     {
         if (_kernels is null)
         {
-            AvgPoolBackwardKernel(dy, dx, in g, countIncludePad);
+            AvgPoolBackwardKernel(dy, dx, in g, countIncludePad, padBottom, padRight);
         }
         else
         {
-            AvgPoolBackwardRegistered(dy, dx, in g, countIncludePad);
+            AvgPoolBackwardRegistered(dy, dx, in g, countIncludePad, padBottom, padRight);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void AvgPoolBackwardRegistered(Storage dy, Storage dx, in ConvGeometry g, bool countIncludePad)
+    private void AvgPoolBackwardRegistered(Storage dy, Storage dx, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
     {
         if (Kernel(OperationIndex.AvgPoolBackward) is OperationKernels.AvgPoolBackward kernel)
         {
-            kernel(this, dy, dx, in g, countIncludePad);
+            kernel(this, dy, dx, in g, countIncludePad, padBottom, padRight);
             return;
         }
 
         if (!RetryOnHost || !OwnsKernel(OperationIndex.AvgPoolBackward))
         {
-            AvgPoolBackwardKernel(dy, dx, in g, countIncludePad);
+            AvgPoolBackwardKernel(dy, dx, in g, countIncludePad, padBottom, padRight);
             return;
         }
 
         var retry = new HostRetry(Ops.AvgPoolBackward);
         try
         {
-            AvgPoolBackwardKernel(dy, dx, in g, countIncludePad);
+            AvgPoolBackwardKernel(dy, dx, in g, countIncludePad, padBottom, padRight);
         }
         catch (DeviceException failure)
         {
             retry.Failed(failure);
-            AvgPoolBackwardOnHost(dy, dx, in g, countIncludePad);
+            AvgPoolBackwardOnHost(dy, dx, in g, countIncludePad, padBottom, padRight);
         }
         finally
         {
@@ -2720,10 +2722,10 @@ public abstract partial class Backend
     }
 
     // The host fallback of AvgPoolBackward (the default body of AvgPoolBackwardKernel), for RetryOnHost.
-    private void AvgPoolBackwardOnHost(Storage dy, Storage dx, in ConvGeometry g, bool countIncludePad)
+    private void AvgPoolBackwardOnHost(Storage dy, Storage dx, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
     {
         using var h = new HostCall(this, "AvgPoolBackward");
-        CpuBackend.Instance.AvgPoolBackward(h[dy], h[dx], in g, countIncludePad);
+        CpuBackend.Instance.AvgPoolBackward(h[dy], h[dx], in g, countIncludePad, padBottom, padRight);
     }
 
     /// <summary>
@@ -2788,6 +2790,316 @@ public abstract partial class Backend
     {
         using var h = new HostCall(this, "ResizeNormalize");
         CpuBackend.Instance.ResizeNormalize(h[x], h[coefficients], h[values], h[y], planes, channels, height, width, outHeight, outWidth, xTaps, yTaps, bytes);
+    }
+
+    /// <summary>
+    /// Resamples each of <paramref name="planes"/> [height, width] planes to [outHeight, outWidth] as PyTorch's
+    /// <c>F.interpolate</c>: output row o reads input row floor(o · scaleHeight) (nearest; the last row at most) or, bilinear,
+    /// the two rows around o · scaleHeight (alignCorners) or around max((o + 0.5) · scaleHeight - 0.5, 0), weighted by
+    /// distance; columns likewise. The scales are input positions per output position (1 / the scale factor, or the input
+    /// size over the output size; with alignCorners (input - 1) / (output - 1)).
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.Interpolate2d"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>Interpolate2dKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void Interpolate2d(Storage x, Storage y, int planes, int height, int width, int outHeight, int outWidth, InterpolationMode mode, bool alignCorners, float scaleHeight, float scaleWidth)
+    {
+        if (_kernels is null)
+        {
+            Interpolate2dKernel(x, y, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+        }
+        else
+        {
+            Interpolate2dRegistered(x, y, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void Interpolate2dRegistered(Storage x, Storage y, int planes, int height, int width, int outHeight, int outWidth, InterpolationMode mode, bool alignCorners, float scaleHeight, float scaleWidth)
+    {
+        if (Kernel(OperationIndex.Interpolate2d) is OperationKernels.Interpolate2d kernel)
+        {
+            kernel(this, x, y, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+            return;
+        }
+
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.Interpolate2d))
+        {
+            Interpolate2dKernel(x, y, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.Interpolate2d);
+        try
+        {
+            Interpolate2dKernel(x, y, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+        }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            Interpolate2dOnHost(x, y, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of Interpolate2d (the default body of Interpolate2dKernel), for RetryOnHost.
+    private void Interpolate2dOnHost(Storage x, Storage y, int planes, int height, int width, int outHeight, int outWidth, InterpolationMode mode, bool alignCorners, float scaleHeight, float scaleWidth)
+    {
+        using var h = new HostCall(this, "Interpolate2d");
+        CpuBackend.Instance.Interpolate2d(h[x], h[y], planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+    }
+
+    /// <summary>The gradient of <see cref="Interpolate2dKernel"/>: dx += each output position's dy, spread over the input positions it read with their weights.</summary>
+    /// <remarks>Runs <see cref="Ops.Interpolate2dBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>Interpolate2dBackwardKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void Interpolate2dBackward(Storage dy, Storage dx, int planes, int height, int width, int outHeight, int outWidth, InterpolationMode mode, bool alignCorners, float scaleHeight, float scaleWidth)
+    {
+        if (_kernels is null)
+        {
+            Interpolate2dBackwardKernel(dy, dx, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+        }
+        else
+        {
+            Interpolate2dBackwardRegistered(dy, dx, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void Interpolate2dBackwardRegistered(Storage dy, Storage dx, int planes, int height, int width, int outHeight, int outWidth, InterpolationMode mode, bool alignCorners, float scaleHeight, float scaleWidth)
+    {
+        if (Kernel(OperationIndex.Interpolate2dBackward) is OperationKernels.Interpolate2dBackward kernel)
+        {
+            kernel(this, dy, dx, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+            return;
+        }
+
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.Interpolate2dBackward))
+        {
+            Interpolate2dBackwardKernel(dy, dx, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.Interpolate2dBackward);
+        try
+        {
+            Interpolate2dBackwardKernel(dy, dx, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+        }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            Interpolate2dBackwardOnHost(dy, dx, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of Interpolate2dBackward (the default body of Interpolate2dBackwardKernel), for RetryOnHost.
+    private void Interpolate2dBackwardOnHost(Storage dy, Storage dx, int planes, int height, int width, int outHeight, int outWidth, InterpolationMode mode, bool alignCorners, float scaleHeight, float scaleWidth)
+    {
+        using var h = new HostCall(this, "Interpolate2dBackward");
+        CpuBackend.Instance.Interpolate2dBackward(h[dy], h[dx], planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+    }
+
+    /// <summary>
+    /// Adaptive average pooling of <paramref name="planes"/> [height, width] planes to [outHeight, outWidth] (PyTorch's
+    /// <c>AdaptiveAvgPool2d</c>): output row o averages input rows floor(o · height / outHeight) up to, not including,
+    /// ceil((o + 1) · height / outHeight); columns likewise.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.AdaptiveAvgPool"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AdaptiveAvgPoolKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void AdaptiveAvgPool(Storage x, Storage y, int planes, int height, int width, int outHeight, int outWidth)
+    {
+        if (_kernels is null)
+        {
+            AdaptiveAvgPoolKernel(x, y, planes, height, width, outHeight, outWidth);
+        }
+        else
+        {
+            AdaptiveAvgPoolRegistered(x, y, planes, height, width, outHeight, outWidth);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AdaptiveAvgPoolRegistered(Storage x, Storage y, int planes, int height, int width, int outHeight, int outWidth)
+    {
+        if (Kernel(OperationIndex.AdaptiveAvgPool) is OperationKernels.AdaptiveAvgPool kernel)
+        {
+            kernel(this, x, y, planes, height, width, outHeight, outWidth);
+            return;
+        }
+
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.AdaptiveAvgPool))
+        {
+            AdaptiveAvgPoolKernel(x, y, planes, height, width, outHeight, outWidth);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.AdaptiveAvgPool);
+        try
+        {
+            AdaptiveAvgPoolKernel(x, y, planes, height, width, outHeight, outWidth);
+        }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            AdaptiveAvgPoolOnHost(x, y, planes, height, width, outHeight, outWidth);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of AdaptiveAvgPool (the default body of AdaptiveAvgPoolKernel), for RetryOnHost.
+    private void AdaptiveAvgPoolOnHost(Storage x, Storage y, int planes, int height, int width, int outHeight, int outWidth)
+    {
+        using var h = new HostCall(this, "AdaptiveAvgPool");
+        CpuBackend.Instance.AdaptiveAvgPool(h[x], h[y], planes, height, width, outHeight, outWidth);
+    }
+
+    /// <summary>The gradient of <see cref="AdaptiveAvgPoolKernel"/>: dx += dy of each window that covers the position, divided by the window's size.</summary>
+    /// <remarks>Runs <see cref="Ops.AdaptiveAvgPoolBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AdaptiveAvgPoolBackwardKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void AdaptiveAvgPoolBackward(Storage dy, Storage dx, int planes, int height, int width, int outHeight, int outWidth)
+    {
+        if (_kernels is null)
+        {
+            AdaptiveAvgPoolBackwardKernel(dy, dx, planes, height, width, outHeight, outWidth);
+        }
+        else
+        {
+            AdaptiveAvgPoolBackwardRegistered(dy, dx, planes, height, width, outHeight, outWidth);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AdaptiveAvgPoolBackwardRegistered(Storage dy, Storage dx, int planes, int height, int width, int outHeight, int outWidth)
+    {
+        if (Kernel(OperationIndex.AdaptiveAvgPoolBackward) is OperationKernels.AdaptiveAvgPoolBackward kernel)
+        {
+            kernel(this, dy, dx, planes, height, width, outHeight, outWidth);
+            return;
+        }
+
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.AdaptiveAvgPoolBackward))
+        {
+            AdaptiveAvgPoolBackwardKernel(dy, dx, planes, height, width, outHeight, outWidth);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.AdaptiveAvgPoolBackward);
+        try
+        {
+            AdaptiveAvgPoolBackwardKernel(dy, dx, planes, height, width, outHeight, outWidth);
+        }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            AdaptiveAvgPoolBackwardOnHost(dy, dx, planes, height, width, outHeight, outWidth);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of AdaptiveAvgPoolBackward (the default body of AdaptiveAvgPoolBackwardKernel), for RetryOnHost.
+    private void AdaptiveAvgPoolBackwardOnHost(Storage dy, Storage dx, int planes, int height, int width, int outHeight, int outWidth)
+    {
+        using var h = new HostCall(this, "AdaptiveAvgPoolBackward");
+        CpuBackend.Instance.AdaptiveAvgPoolBackward(h[dy], h[dx], planes, height, width, outHeight, outWidth);
+    }
+
+    /// <summary>
+    /// Adaptive max pooling over the windows of <see cref="AdaptiveAvgPoolKernel"/>; argmax receives the flat input index of
+    /// each maximum (as raw int bits, the first in row order), so <see cref="Backend.MaxPoolBackward(Storage, Storage, Storage, int)"/> is its gradient.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.AdaptiveMaxPool"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AdaptiveMaxPoolKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void AdaptiveMaxPool(Storage x, Storage y, Storage argmax, int planes, int height, int width, int outHeight, int outWidth)
+    {
+        if (_kernels is null)
+        {
+            AdaptiveMaxPoolKernel(x, y, argmax, planes, height, width, outHeight, outWidth);
+        }
+        else
+        {
+            AdaptiveMaxPoolRegistered(x, y, argmax, planes, height, width, outHeight, outWidth);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AdaptiveMaxPoolRegistered(Storage x, Storage y, Storage argmax, int planes, int height, int width, int outHeight, int outWidth)
+    {
+        if (Kernel(OperationIndex.AdaptiveMaxPool) is OperationKernels.AdaptiveMaxPool kernel)
+        {
+            kernel(this, x, y, argmax, planes, height, width, outHeight, outWidth);
+            return;
+        }
+
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.AdaptiveMaxPool))
+        {
+            AdaptiveMaxPoolKernel(x, y, argmax, planes, height, width, outHeight, outWidth);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.AdaptiveMaxPool);
+        try
+        {
+            AdaptiveMaxPoolKernel(x, y, argmax, planes, height, width, outHeight, outWidth);
+        }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            AdaptiveMaxPoolOnHost(x, y, argmax, planes, height, width, outHeight, outWidth);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of AdaptiveMaxPool (the default body of AdaptiveMaxPoolKernel), for RetryOnHost.
+    private void AdaptiveMaxPoolOnHost(Storage x, Storage y, Storage argmax, int planes, int height, int width, int outHeight, int outWidth)
+    {
+        using var h = new HostCall(this, "AdaptiveMaxPool");
+        CpuBackend.Instance.AdaptiveMaxPool(h[x], h[y], h[argmax], planes, height, width, outHeight, outWidth);
+    }
+
+    /// <summary>
+    /// The gradient of <see cref="AdaptiveMaxPoolKernel"/>: dx[argmax[i]] += dy[i] for its planes · outHeight · outWidth outputs,
+    /// the same as <see cref="Backend.MaxPoolBackward(Storage, Storage, Storage, int)"/>; a device that adds the gradients by
+    /// gathering over the windows (no atomics, the same bits every run) needs the sizes.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.AdaptiveMaxPoolBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AdaptiveMaxPoolBackwardKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void AdaptiveMaxPoolBackward(Storage dy, Storage argmax, Storage dx, int planes, int height, int width, int outHeight, int outWidth)
+    {
+        if (_kernels is null)
+        {
+            AdaptiveMaxPoolBackwardKernel(dy, argmax, dx, planes, height, width, outHeight, outWidth);
+        }
+        else
+        {
+            AdaptiveMaxPoolBackwardRegistered(dy, argmax, dx, planes, height, width, outHeight, outWidth);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AdaptiveMaxPoolBackwardRegistered(Storage dy, Storage argmax, Storage dx, int planes, int height, int width, int outHeight, int outWidth)
+    {
+        if (Kernel(OperationIndex.AdaptiveMaxPoolBackward) is OperationKernels.AdaptiveMaxPoolBackward kernel)
+        {
+            kernel(this, dy, argmax, dx, planes, height, width, outHeight, outWidth);
+        }
+        else
+        {
+            AdaptiveMaxPoolBackwardKernel(dy, argmax, dx, planes, height, width, outHeight, outWidth);
+        }
     }
 
     /// <summary>

@@ -250,8 +250,9 @@ src/Idrak.Abstraction/              no dependencies: every contract more than on
   Overrides/                        slots: every registry's library default and the app's registration over it, failure
                                     policies, versions, the overrides report
 src/Idrak/                          core: layers, training, data, inference, model loading, ONNX
-  Layers/                           Linear, Conv2d, MaxPool2d, AvgPool2d, GlobalAveragePool2d, Flatten,
-                                    BatchNorm, LayerNorm, RMSNorm, Embedding, LSTM, GRU,
+  Layers/                           Linear, Conv2d, ConvTranspose2d, MaxPool2d, AvgPool2d, AdaptiveAvgPool2d,
+                                    AdaptiveMaxPool2d, GlobalAveragePool2d, Upsample, Flatten,
+                                    BatchNorm, GroupNorm, LayerNorm, RMSNorm, Embedding, LSTM, GRU,
                                     MultiHeadAttention, TransformerEncoderLayer, PositionalEncoding, Decoder,
                                     ReLU, Tanh, Sigmoid, GELU, Softmax, Dropout, Lambda, Sequential;
                                     Network builder, Blocks, Architectures; GraphModule (layers in a graph: skip

@@ -34,6 +34,7 @@ internal static partial class PtxKernels
         Convolution(sb);
         ShapeKernels(sb);
         BuildConvolution(sb);
+        BuildResampling(sb);
     }
 
     // ------------------------------------------------------------------ element-wise math

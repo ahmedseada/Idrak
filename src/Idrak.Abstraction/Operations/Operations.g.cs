@@ -76,66 +76,72 @@ internal static class OperationIndex
     public const int AvgPool = 60;
     public const int AvgPoolBackward = 61;
     public const int ResizeNormalize = 62;
-    public const int CtcLoss = 63;
-    public const int CtcLossBackward = 64;
-    public const int Permute = 65;
-    public const int SumAxis = 66;
-    public const int BroadcastAxis = 67;
-    public const int SgdStep = 68;
-    public const int AdamStep = 69;
-    public const int AdamStep8Bit = 70;
-    public const int SumSquares = 71;
-    public const int FusedAdamW = 72;
-    public const int ClipFactor = 73;
-    public const int Dropout = 74;
-    public const int DropoutBackward = 75;
-    public const int ScaleMaskSoftmax = 76;
-    public const int LayerNormFused = 77;
-    public const int LayerNormTrain = 78;
-    public const int LayerNormBackward = 79;
-    public const int BiasGelu = 80;
-    public const int Int8MatMul = 81;
-    public const int BFloat16MatMul = 82;
-    public const int BFloat16Dequantize = 83;
-    public const int PackBFloat16 = 84;
-    public const int Int8Dequantize = 85;
-    public const int Int4MatMul = 86;
-    public const int Int4Dequantize = 87;
-    public const int RmsNorm = 88;
-    public const int RmsNormBackward = 89;
-    public const int Rope = 90;
-    public const int RmsNormAffine = 91;
-    public const int AddRmsNormAffine = 92;
-    public const int RmsNormRope = 93;
-    public const int RmsNormRopePair = 94;
-    public const int NormRopeHeads = 95;
-    public const int SoftmaxCrossEntropyRows = 96;
-    public const int GatedActivation = 97;
-    public const int GatedActivationBackward = 98;
-    public const int GatedActivationPacked = 99;
-    public const int GatedActivationBackwardPacked = 100;
-    public const int KeyValueWriteInt8 = 101;
-    public const int AttentionScoresInt8 = 102;
-    public const int AttentionContextInt8 = 103;
-    public const int AttentionDecode = 104;
-    public const int AttentionInt8 = 105;
-    public const int AttentionBFloat16 = 106;
-    public const int KeyValueWriteBFloat16 = 107;
-    public const int AttentionTiledBackward = 108;
-    public const int AttentionSegmented = 109;
-    public const int AttentionRows = 110;
-    public const int AttentionSegmentedBackward = 111;
-    public const int AttentionTiled = 112;
-    public const int AttentionSpans = 113;
-    public const int AttentionSpansBackward = 114;
-    public const int DecoderMask = 115;
-    public const int KeyValueWrite = 116;
-    public const int SampleRows = 117;
-    public const int PenalizeRows = 118;
-    public const int HistoryPush = 119;
+    public const int Interpolate2d = 63;
+    public const int Interpolate2dBackward = 64;
+    public const int AdaptiveAvgPool = 65;
+    public const int AdaptiveAvgPoolBackward = 66;
+    public const int AdaptiveMaxPool = 67;
+    public const int AdaptiveMaxPoolBackward = 68;
+    public const int CtcLoss = 69;
+    public const int CtcLossBackward = 70;
+    public const int Permute = 71;
+    public const int SumAxis = 72;
+    public const int BroadcastAxis = 73;
+    public const int SgdStep = 74;
+    public const int AdamStep = 75;
+    public const int AdamStep8Bit = 76;
+    public const int SumSquares = 77;
+    public const int FusedAdamW = 78;
+    public const int ClipFactor = 79;
+    public const int Dropout = 80;
+    public const int DropoutBackward = 81;
+    public const int ScaleMaskSoftmax = 82;
+    public const int LayerNormFused = 83;
+    public const int LayerNormTrain = 84;
+    public const int LayerNormBackward = 85;
+    public const int BiasGelu = 86;
+    public const int Int8MatMul = 87;
+    public const int BFloat16MatMul = 88;
+    public const int BFloat16Dequantize = 89;
+    public const int PackBFloat16 = 90;
+    public const int Int8Dequantize = 91;
+    public const int Int4MatMul = 92;
+    public const int Int4Dequantize = 93;
+    public const int RmsNorm = 94;
+    public const int RmsNormBackward = 95;
+    public const int Rope = 96;
+    public const int RmsNormAffine = 97;
+    public const int AddRmsNormAffine = 98;
+    public const int RmsNormRope = 99;
+    public const int RmsNormRopePair = 100;
+    public const int NormRopeHeads = 101;
+    public const int SoftmaxCrossEntropyRows = 102;
+    public const int GatedActivation = 103;
+    public const int GatedActivationBackward = 104;
+    public const int GatedActivationPacked = 105;
+    public const int GatedActivationBackwardPacked = 106;
+    public const int KeyValueWriteInt8 = 107;
+    public const int AttentionScoresInt8 = 108;
+    public const int AttentionContextInt8 = 109;
+    public const int AttentionDecode = 110;
+    public const int AttentionInt8 = 111;
+    public const int AttentionBFloat16 = 112;
+    public const int KeyValueWriteBFloat16 = 113;
+    public const int AttentionTiledBackward = 114;
+    public const int AttentionSegmented = 115;
+    public const int AttentionRows = 116;
+    public const int AttentionSegmentedBackward = 117;
+    public const int AttentionTiled = 118;
+    public const int AttentionSpans = 119;
+    public const int AttentionSpansBackward = 120;
+    public const int DecoderMask = 121;
+    public const int KeyValueWrite = 122;
+    public const int SampleRows = 123;
+    public const int PenalizeRows = 124;
+    public const int HistoryPush = 125;
 
     /// <summary>The number of operations.</summary>
-    public const int Count = 120;
+    public const int Count = 126;
 }
 
 /// <summary>
@@ -565,18 +571,20 @@ public static class OperationKernels
 
     /// <summary>
     /// A kernel for <see cref="Ops.AvgPool"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
-    /// Average pooling of NCHW images: y[n, c, oh, ow] = the sum of x over the window (padded positions add 0, in row
-    /// order) divided by KH·KW when <paramref name="countIncludePad"/>, else by the input positions the window covers
-    /// (at least 1), as PyTorch's <c>AvgPool2d</c> without ceil mode.
+    /// Average pooling of NCHW images, as PyTorch's <c>AvgPool2d</c>: y[n, c, oh, ow] = the sum of x over the window
+    /// (padded positions add 0, in row order) divided, when <paramref name="countIncludePad"/>, by the window's rows and
+    /// columns up to the padded end (H + <paramref name="padBottom"/>, W + <paramref name="padRight"/>: the padding a
+    /// divisor counts, which a ceil-mode geometry's PadBottom and PadRight may pass), else by the input positions the
+    /// window covers (at least 1).
     /// </summary>
-    public delegate void AvgPool(Backend backend, Storage x, Storage y, in ConvGeometry g, bool countIncludePad);
+    public delegate void AvgPool(Backend backend, Storage x, Storage y, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight);
 
     /// <summary>
     /// A kernel for <see cref="Ops.AvgPoolBackward"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
     /// The gradient of <see cref="Backend.AvgPoolKernel"/>: dx[n, c, ih, iw] += Σ dy[n, c, oh, ow] / divisor over the windows that
     /// cover the element, in window order (the divisor as the forward pass takes it).
     /// </summary>
-    public delegate void AvgPoolBackward(Backend backend, Storage dy, Storage dx, in ConvGeometry g, bool countIncludePad);
+    public delegate void AvgPoolBackward(Backend backend, Storage dy, Storage dx, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight);
 
     /// <summary>
     /// A kernel for <see cref="Ops.ResizeNormalize"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
@@ -592,6 +600,51 @@ public static class OperationKernels
     /// <c>ImagingResample</c>), and y = values[256·c + value].
     /// </summary>
     public delegate void ResizeNormalize(Backend backend, Storage x, Storage coefficients, Storage values, Storage y, int planes, int channels, int height, int width, int outHeight, int outWidth, int xTaps, int yTaps, bool bytes);
+
+    /// <summary>
+    /// A kernel for <see cref="Ops.Interpolate2d"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// Resamples each of <paramref name="planes"/> [height, width] planes to [outHeight, outWidth] as PyTorch's
+    /// <c>F.interpolate</c>: output row o reads input row floor(o · scaleHeight) (nearest; the last row at most) or, bilinear,
+    /// the two rows around o · scaleHeight (alignCorners) or around max((o + 0.5) · scaleHeight - 0.5, 0), weighted by
+    /// distance; columns likewise. The scales are input positions per output position (1 / the scale factor, or the input
+    /// size over the output size; with alignCorners (input - 1) / (output - 1)).
+    /// </summary>
+    public delegate void Interpolate2d(Backend backend, Storage x, Storage y, int planes, int height, int width, int outHeight, int outWidth, InterpolationMode mode, bool alignCorners, float scaleHeight, float scaleWidth);
+
+    /// <summary>
+    /// A kernel for <see cref="Ops.Interpolate2dBackward"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// The gradient of <see cref="Backend.Interpolate2dKernel"/>: dx += each output position's dy, spread over the input positions it read with their weights.
+    /// </summary>
+    public delegate void Interpolate2dBackward(Backend backend, Storage dy, Storage dx, int planes, int height, int width, int outHeight, int outWidth, InterpolationMode mode, bool alignCorners, float scaleHeight, float scaleWidth);
+
+    /// <summary>
+    /// A kernel for <see cref="Ops.AdaptiveAvgPool"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// Adaptive average pooling of <paramref name="planes"/> [height, width] planes to [outHeight, outWidth] (PyTorch's
+    /// <c>AdaptiveAvgPool2d</c>): output row o averages input rows floor(o · height / outHeight) up to, not including,
+    /// ceil((o + 1) · height / outHeight); columns likewise.
+    /// </summary>
+    public delegate void AdaptiveAvgPool(Backend backend, Storage x, Storage y, int planes, int height, int width, int outHeight, int outWidth);
+
+    /// <summary>
+    /// A kernel for <see cref="Ops.AdaptiveAvgPoolBackward"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// The gradient of <see cref="Backend.AdaptiveAvgPoolKernel"/>: dx += dy of each window that covers the position, divided by the window's size.
+    /// </summary>
+    public delegate void AdaptiveAvgPoolBackward(Backend backend, Storage dy, Storage dx, int planes, int height, int width, int outHeight, int outWidth);
+
+    /// <summary>
+    /// A kernel for <see cref="Ops.AdaptiveMaxPool"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// Adaptive max pooling over the windows of <see cref="Backend.AdaptiveAvgPoolKernel"/>; argmax receives the flat input index of
+    /// each maximum (as raw int bits, the first in row order), so <see cref="Backend.MaxPoolBackward(Storage, Storage, Storage, int)"/> is its gradient.
+    /// </summary>
+    public delegate void AdaptiveMaxPool(Backend backend, Storage x, Storage y, Storage argmax, int planes, int height, int width, int outHeight, int outWidth);
+
+    /// <summary>
+    /// A kernel for <see cref="Ops.AdaptiveMaxPoolBackward"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// The gradient of <see cref="Backend.AdaptiveMaxPoolKernel"/>: dx[argmax[i]] += dy[i] for its planes · outHeight · outWidth outputs,
+    /// the same as <see cref="Backend.MaxPoolBackward(Storage, Storage, Storage, int)"/>; a device that adds the gradients by
+    /// gathering over the windows (no atomics, the same bits every run) needs the sizes.
+    /// </summary>
+    public delegate void AdaptiveMaxPoolBackward(Backend backend, Storage dy, Storage argmax, Storage dx, int planes, int height, int width, int outHeight, int outWidth);
 
     /// <summary>
     /// A kernel for <see cref="Ops.CtcLoss"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
@@ -1446,19 +1499,21 @@ public static partial class Ops
         new("ConvolutionBackwardWeight", "ConvolutionBackwardWeightKernel", "Storage,Storage,Storage,ConvGeometry&,Int32,Int32", OperationIndex.ConvolutionBackwardWeight, typeof(OperationKernels.ConvolutionBackwardWeight), KernelSource.Composed);
 
     /// <summary>
-    /// Average pooling of NCHW images: y[n, c, oh, ow] = the sum of x over the window (padded positions add 0, in row
-    /// order) divided by KH·KW when <c>countIncludePad</c>, else by the input positions the window covers
-    /// (at least 1), as PyTorch's <c>AvgPool2d</c> without ceil mode.
+    /// Average pooling of NCHW images, as PyTorch's <c>AvgPool2d</c>: y[n, c, oh, ow] = the sum of x over the window
+    /// (padded positions add 0, in row order) divided, when <c>countIncludePad</c>, by the window's rows and
+    /// columns up to the padded end (H + <c>padBottom</c>, W + <c>padRight</c>: the padding a
+    /// divisor counts, which a ceil-mode geometry's PadBottom and PadRight may pass), else by the input positions the
+    /// window covers (at least 1).
     /// </summary>
     public static readonly Operation AvgPool =
-        new("AvgPool", "AvgPoolKernel", "Storage,Storage,ConvGeometry&,Boolean", OperationIndex.AvgPool, typeof(OperationKernels.AvgPool), KernelSource.Host);
+        new("AvgPool", "AvgPoolKernel", "Storage,Storage,ConvGeometry&,Boolean,Int32,Int32", OperationIndex.AvgPool, typeof(OperationKernels.AvgPool), KernelSource.Host);
 
     /// <summary>
     /// The gradient of <see cref="Backend.AvgPoolKernel"/>: dx[n, c, ih, iw] += Σ dy[n, c, oh, ow] / divisor over the windows that
     /// cover the element, in window order (the divisor as the forward pass takes it).
     /// </summary>
     public static readonly Operation AvgPoolBackward =
-        new("AvgPoolBackward", "AvgPoolBackwardKernel", "Storage,Storage,ConvGeometry&,Boolean", OperationIndex.AvgPoolBackward, typeof(OperationKernels.AvgPoolBackward), KernelSource.Host);
+        new("AvgPoolBackward", "AvgPoolBackwardKernel", "Storage,Storage,ConvGeometry&,Boolean,Int32,Int32", OperationIndex.AvgPoolBackward, typeof(OperationKernels.AvgPoolBackward), KernelSource.Host);
 
     /// <summary>
     /// Image resampling and per-channel normalization in one pass. Each of <c>planes</c> planes of x ([planes,
@@ -1474,6 +1529,51 @@ public static partial class Ops
     /// </summary>
     public static readonly Operation ResizeNormalize =
         new("ResizeNormalize", "ResizeNormalizeKernel", "Storage,Storage,Storage,Storage,Int32,Int32,Int32,Int32,Int32,Int32,Int32,Int32,Boolean", OperationIndex.ResizeNormalize, typeof(OperationKernels.ResizeNormalize), KernelSource.Host);
+
+    /// <summary>
+    /// Resamples each of <c>planes</c> [height, width] planes to [outHeight, outWidth] as PyTorch's
+    /// <c>F.interpolate</c>: output row o reads input row floor(o · scaleHeight) (nearest; the last row at most) or, bilinear,
+    /// the two rows around o · scaleHeight (alignCorners) or around max((o + 0.5) · scaleHeight - 0.5, 0), weighted by
+    /// distance; columns likewise. The scales are input positions per output position (1 / the scale factor, or the input
+    /// size over the output size; with alignCorners (input - 1) / (output - 1)).
+    /// </summary>
+    public static readonly Operation Interpolate2d =
+        new("Interpolate2d", "Interpolate2dKernel", "Storage,Storage,Int32,Int32,Int32,Int32,Int32,InterpolationMode,Boolean,Single,Single", OperationIndex.Interpolate2d, typeof(OperationKernels.Interpolate2d), KernelSource.Host);
+
+    /// <summary>
+    /// The gradient of <see cref="Backend.Interpolate2dKernel"/>: dx += each output position's dy, spread over the input positions it read with their weights.
+    /// </summary>
+    public static readonly Operation Interpolate2dBackward =
+        new("Interpolate2dBackward", "Interpolate2dBackwardKernel", "Storage,Storage,Int32,Int32,Int32,Int32,Int32,InterpolationMode,Boolean,Single,Single", OperationIndex.Interpolate2dBackward, typeof(OperationKernels.Interpolate2dBackward), KernelSource.Host);
+
+    /// <summary>
+    /// Adaptive average pooling of <c>planes</c> [height, width] planes to [outHeight, outWidth] (PyTorch's
+    /// <c>AdaptiveAvgPool2d</c>): output row o averages input rows floor(o · height / outHeight) up to, not including,
+    /// ceil((o + 1) · height / outHeight); columns likewise.
+    /// </summary>
+    public static readonly Operation AdaptiveAvgPool =
+        new("AdaptiveAvgPool", "AdaptiveAvgPoolKernel", "Storage,Storage,Int32,Int32,Int32,Int32,Int32", OperationIndex.AdaptiveAvgPool, typeof(OperationKernels.AdaptiveAvgPool), KernelSource.Host);
+
+    /// <summary>
+    /// The gradient of <see cref="Backend.AdaptiveAvgPoolKernel"/>: dx += dy of each window that covers the position, divided by the window's size.
+    /// </summary>
+    public static readonly Operation AdaptiveAvgPoolBackward =
+        new("AdaptiveAvgPoolBackward", "AdaptiveAvgPoolBackwardKernel", "Storage,Storage,Int32,Int32,Int32,Int32,Int32", OperationIndex.AdaptiveAvgPoolBackward, typeof(OperationKernels.AdaptiveAvgPoolBackward), KernelSource.Host);
+
+    /// <summary>
+    /// Adaptive max pooling over the windows of <see cref="Backend.AdaptiveAvgPoolKernel"/>; argmax receives the flat input index of
+    /// each maximum (as raw int bits, the first in row order), so <see cref="Backend.MaxPoolBackward(Storage, Storage, Storage, int)"/> is its gradient.
+    /// </summary>
+    public static readonly Operation AdaptiveMaxPool =
+        new("AdaptiveMaxPool", "AdaptiveMaxPoolKernel", "Storage,Storage,Storage,Int32,Int32,Int32,Int32,Int32", OperationIndex.AdaptiveMaxPool, typeof(OperationKernels.AdaptiveMaxPool), KernelSource.Host);
+
+    /// <summary>
+    /// The gradient of <see cref="Backend.AdaptiveMaxPoolKernel"/>: dx[argmax[i]] += dy[i] for its planes · outHeight · outWidth outputs,
+    /// the same as <see cref="Backend.MaxPoolBackward(Storage, Storage, Storage, int)"/>; a device that adds the gradients by
+    /// gathering over the windows (no atomics, the same bits every run) needs the sizes.
+    /// </summary>
+    public static readonly Operation AdaptiveMaxPoolBackward =
+        new("AdaptiveMaxPoolBackward", "AdaptiveMaxPoolBackwardKernel", "Storage,Storage,Storage,Int32,Int32,Int32,Int32,Int32", OperationIndex.AdaptiveMaxPoolBackward, typeof(OperationKernels.AdaptiveMaxPoolBackward), KernelSource.Composed);
 
     /// <summary>
     /// Connectionist temporal classification (Graves et al. 2006): losses[n] = -log of the probability, summed over every
@@ -1967,6 +2067,12 @@ public static partial class Ops
         AvgPool,
         AvgPoolBackward,
         ResizeNormalize,
+        Interpolate2d,
+        Interpolate2dBackward,
+        AdaptiveAvgPool,
+        AdaptiveAvgPoolBackward,
+        AdaptiveMaxPool,
+        AdaptiveMaxPoolBackward,
         CtcLoss,
         CtcLossBackward,
         Permute,

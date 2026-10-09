@@ -27,6 +27,7 @@ public static partial class DeviceCases
             (new(1, 2, 9, 6, 5, 3, 2, 1, 2, 1) { DW = 2 }, 4, 2),
             (new(2, 8, 5, 5, 1, 1, 1, 1, 0, 0), 5, 1),
             (new(2, 16, 12, 11, 3, 3, 1, 1, 1, 1), 70, 1),
+            (new(1, 4, 7, 9, 3, 3, 2, 2, 0, 1) { PadBottom = 2, PadRight = 0 }, 4, 4),
             (random, G * filtersPerGroup, G),
         ];
 
@@ -73,26 +74,33 @@ public static partial class DeviceCases
         [
             new(1, 1, 2, 2, 2, 2, 2, 2, 0, 0), new(2, 3, 8, 6, 2, 2, 2, 2, 0, 0), new(2, 2, 7, 10, 3, 2, 1, 2, 1, 1), new(1, 3, 9, 9, 3, 3, 2, 2, 1, 1),
             new(c.Size(1, 3), c.Size(1, 4), c.Size(3, 12), c.Size(3, 12), 3, 3, c.Size(1, 3), c.Size(1, 3), c.Random.Next(2), c.Random.Next(2)),
+
+            // A ceil-mode geometry (more padding below and right for the last window, not counted in its divisor) and
+            // asymmetric padding that is counted.
+            new(2, 2, 8, 7, 3, 3, 2, 2, 1, 0) { PadBottom = 2, PadRight = 2 },
+            new(1, 3, 6, 9, 2, 3, 2, 2, 0, 1) { PadBottom = 1, PadRight = 2 },
         ];
         foreach (var g in pools)
         {
             int input = g.N * g.C * g.H * g.W, count = g.N * g.C * g.OH * g.OW;
             foreach (bool countPad in new[] { true, false })
             {
+                // The padding a divisor counts: the geometry's, or (the ceil mode's) less.
+                int bottom = Math.Max(g.PH, g.PadBottom - 1), right = Math.Max(g.PW, g.PadRight - 1);
                 var xs = c.Values(input);
                 var y = c.Zeros(count);
-                b.AvgPool(c.Storage(xs), y, g, countPad);
-                c.ExpectClose(AvgPoolReference(xs, g, countPad), Read(y), 1e-5f, $"average pooling {g} (padding counted: {countPad})");
+                b.AvgPool(c.Storage(xs), y, g, countPad, bottom, right);
+                c.ExpectClose(AvgPoolReference(xs, g, countPad, bottom, right), Read(y), 1e-5f, $"average pooling {g} (padding counted: {countPad})");
                 var dys = c.Values(count);
                 var dx0 = c.Values(input);
                 var dx = c.Storage(dx0);
-                b.AvgPoolBackward(c.Storage(dys), dx, g, countPad);
-                c.ExpectClose(AvgPoolGradient(dys, dx0, g, countPad), Read(dx), 1e-5f, $"average pooling gradient {g} (padding counted: {countPad})");
+                b.AvgPoolBackward(c.Storage(dys), dx, g, countPad, bottom, right);
+                c.ExpectClose(AvgPoolGradient(dys, dx0, g, countPad, bottom, right), Read(dx), 1e-5f, $"average pooling gradient {g} (padding counted: {countPad})");
             }
         }
     }
 
-    private static void Resampling(DeviceCaseContext c)
+    private static void ResizeNormalizeCase(DeviceCaseContext c)
     {
         var b = c.Backend;
 
@@ -235,7 +243,7 @@ public static partial class DeviceCases
     }
 
     // Each window's divisor, its sum and the elements it covers, by output index.
-    private static IEnumerable<(int Output, float Divisor, IEnumerable<int> Inputs)> PoolWindows(ConvGeometry g, bool countPad)
+    private static IEnumerable<(int Output, float Divisor, IEnumerable<int> Inputs)> PoolWindows(ConvGeometry g, bool countPad, int bottom, int right)
     {
         for (int nc = 0; nc < g.N * g.C; nc++)
         {
@@ -253,16 +261,17 @@ public static partial class DeviceCases
                         }
                     }
 
-                    yield return ((nc * g.OH + oh) * g.OW + ow, countPad ? g.KH * g.KW : Math.Max(inputs.Count, 1), inputs);
+                    int counted = (Math.Min(r0 + g.KH, g.H + bottom) - r0) * (Math.Min(c0 + g.KW, g.W + right) - c0);
+                    yield return ((nc * g.OH + oh) * g.OW + ow, countPad ? counted : Math.Max(inputs.Count, 1), inputs);
                 }
             }
         }
     }
 
-    private static float[] AvgPoolReference(float[] x, ConvGeometry g, bool countPad)
+    private static float[] AvgPoolReference(float[] x, ConvGeometry g, bool countPad, int bottom, int right)
     {
         var y = new float[g.N * g.C * g.OH * g.OW];
-        foreach (var (o, divisor, inputs) in PoolWindows(g, countPad))
+        foreach (var (o, divisor, inputs) in PoolWindows(g, countPad, bottom, right))
         {
             y[o] = (float)(inputs.Sum(i => (double)x[i]) / divisor);
         }
@@ -270,10 +279,10 @@ public static partial class DeviceCases
         return y;
     }
 
-    private static float[] AvgPoolGradient(float[] dy, float[] dx0, ConvGeometry g, bool countPad)
+    private static float[] AvgPoolGradient(float[] dy, float[] dx0, ConvGeometry g, bool countPad, int bottom, int right)
     {
         var dx = dx0.Select(v => (double)v).ToArray();
-        foreach (var (o, divisor, inputs) in PoolWindows(g, countPad))
+        foreach (var (o, divisor, inputs) in PoolWindows(g, countPad, bottom, right))
         {
             foreach (int i in inputs)
             {
