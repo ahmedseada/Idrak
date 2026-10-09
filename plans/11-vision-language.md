@@ -73,7 +73,7 @@ namespace until a second library package uses it.
 | 4 | **Loading the whole model.** `Gemma3ForConditionalGeneration` in the pretrained families: nested configs, both tensor layouts, tied embeddings, the image token ids; the text part reuses Gemma 3's decoder spec (its `text_config` read as a `Gemma3ForCausalLM` config) | the tiny model loads in each of the three layouts; a text-only prompt gives the same logits as transformers; **done 2026-10-08** (as built below) |
 | 5 | **Image tokens in the decoder.** At prefill, the soft tokens' embeddings are replaced by the image features; each image's soft tokens see each other (3a's image-block rule, on top of the sliding window of the local layers); decoding afterwards uses the KV cache as today (the image costs nothing more per generated token). Several images in one prompt | the tiny model's logits with an image and its 20 greedy tokens match the reference (CPU and Vulkan); **done 2026-10-08** (as built below) |
 | 6 | **Chat with images in Nlp.** The chat template's image parts expand to the image tokens (the Jinja engine walks content parts); generation takes images; an image is encoded once per conversation (kept with the conversation by content hash) | a two-turn chat about one image encodes it once and matches the reference's first turn |
-| 7 | **The command line.** `idrak chat <model> --image FILE` (repeatable; also `/image FILE` inside a chat, like `/file`); the one-shot `idrak run <model> --image FILE "prompt"` (with `--schema` for the structured answer this model gives, `-j` for JSON); `--grayscale` (or the setting stored with a pulled model) | CLI tests pass with the tiny model; on the author's RTX 5070 Ti the real model reads a sample scan and its greedy output matches transformers' for the first 100 tokens; **built 2026-10-08 before phase 6** (as built below): the tiny model passes on CPU and Vulkan, the real model's run is to do |
+| 7 | **The command line.** `idrak chat <model> --image FILE` (repeatable; also `/image FILE` inside a chat, like `/file`); the one-shot `idrak run <model> --image FILE "prompt"` (with `--schema` for the structured answer this model gives, `-j` for JSON); `--grayscale` (or the setting stored with a pulled model) | CLI tests pass with the tiny model; on the author's RTX 5070 Ti the real model reads a sample scan and its greedy output matches transformers' for the first 100 tokens; **built 2026-10-08 before phase 6** (as built below): the tiny model passes on CPU and Vulkan; **the real model checked 2026-10-09** (below): done |
 | 8 | **Images in chat, after the command line is proven** (phase 7 done on the real model). The engine hosts the model as a chat model that accepts images (`IChatModel`, saying which inputs it takes; the image is encoded once per conversation, as in phase 6); `MapChatApi` takes images in its messages; `MapCompletionsApi` (`/v1/chat/completions`) accepts OpenAI's `image_url` content parts (data URLs and, when allowed, http URLs); `idrak serve` serves it. The same preprocessing (and grayscale setting) as the command line | an OpenAI client sends a scan as an `image_url` part and gets the same answer as `idrak run --image`; streamed and not; the aspnetcore tests cover a tiny model with an image |
 | 9 | **After that.** An MCP `chat` tool with images (and an `ocr` tool if useful); pan-and-scan for tall pages; other families (Qwen2.5-VL); fine-tuning with images (LoRA on the text decoder, encoder frozen) | decided per item after phase 8 |
 
@@ -399,6 +399,16 @@ calls the public API below), no Abstraction change.
   round coarsely; a text prompt: 0.065), bfloat16 0.036.
 
 ## Phase 7, as built (2026-10-08): the command line, before phase 6
+
+**The real model (2026-10-09, author's RTX 5070 Ti, `idrak vlm check`, transformers 5.17 Pillow processor, grayscale, a
+700 x 1000 JPEG scan).** Idrak with bf16 decoder weights and its float32 encoder against transformers with the vision
+tower in float32 (`compare_real.py --vision-dtype float32`): pixels identical (max |Δ| 0), encoder output cosine 1.000000
+(max |Δ| 0.0019), image features relative 3.8e-5, 287 prompt ids identical, teacher-forced top-1 63 of 64 and the first
+45 greedy tokens identical; the one disagreement is a tie in transformers itself (`reference`/`references`, margin 0 in
+bf16 logits). Against transformers all in bfloat16, the answers part at step 17 with a margin of 7 in Idrak: the cause
+is transformers' bfloat16 vision tower (features cosine 0.9968 against the float32 ones); given those features Idrak's
+decoder agrees except at near-ties, and transformers with a float32 vision tower writes Idrak's answer. So the float32
+encoder stays the default. Speed: prompt with the image 1.0 s, 80 tokens/s, a 1,032-token answer in 14 s.
 
 Built before phase 6 (the author: "work on cli first, then chat after settling"). The pieces phase 6 reuses are in Nlp;
 what is the command line's alone is in the CLI.
