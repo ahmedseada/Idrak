@@ -68,7 +68,7 @@ internal static partial class Tests
         var model = PretrainedModel.Load(VlmModel, new PretrainedOptions { Device = Device.Cpu });
         using (model)
         {
-            // The prompt format and its token ids come from the family's registration (samples/Idrak.Gemma3Vision).
+            // The prompt format and its token ids come from the family's registration (samples/Gemma3Vision).
             var vision = model.Vision!;
             var format = vision.PromptFormat;
             var layout = new ImageTokenLayout(4) { Grid = [2, 2] };

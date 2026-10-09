@@ -1,0 +1,2 @@
+{{ bos_token }}{% for message in messages %}{% if message['role'] == 'user' %}{{ 'USER: ' }}{% elif message['role'] == 'assistant' %}{{ 'ASSISTANT: ' }}{% endif %}{% if message['content'] is string %}{{ message['content'] + ' ' }}{% else %}{% for item in message['content'] %}{% if item['type'] == 'image' %}{{ '<image>
+' }}{% elif item['type'] == 'text' %}{{ item['text'] + ' ' }}{% endif %}{% endfor %}{% endif %}{% endfor %}{% if add_generation_prompt %}{{ 'ASSISTANT:' }}{% endif %}

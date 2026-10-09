@@ -1,0 +1,18 @@
+{
+ "backend": "tokenizers",
+ "bos_token": "<s>",
+ "clean_up_tokenization_spaces": false,
+ "eos_token": "</s>",
+ "image_token": "<image>",
+ "is_local": true,
+ "local_files_only": false,
+ "model_max_length": 256,
+ "model_specific_special_tokens": {
+  "image_token": "<image>"
+ },
+ "pad_token": "<pad>",
+ "padding_side": "left",
+ "processor_class": "LlavaProcessor",
+ "tokenizer_class": "TokenizersBackend",
+ "unk_token": "<unk>"
+}
