@@ -319,10 +319,13 @@ public sealed class TransformerEncoderLayer : Module, ICachedModule
         return x + _feedForward2.Forward(FeedForwardHidden(_norm2.Forward(x)));
     }
 
-    /// <summary>GELU(x·W1 + b1) (fused into one kernel, plus the product, during inference), or the block's own activation.</summary>
+    /// <summary>
+    /// GELU(x·W1 + b1) (fused into one kernel, plus the product, during inference; not in a checkpointed pass, whose values
+    /// the recompute with gradients must give again), or the block's own activation.
+    /// </summary>
     private Tensor FeedForwardHidden(Tensor x) =>
         _activation is not null ? _activation.Forward(_feedForward1.Forward(x))
-        : !Autograd.IsEnabled && _feedForward1.Bias is { } bias
+        : !Autograd.IsEnabled && !Checkpointing.FirstPass && _feedForward1.Bias is { } bias
             ? _feedForward1.ProjectWithoutBias(x).BiasGelu(bias)
             : _feedForward1.Forward(x).Gelu();
 

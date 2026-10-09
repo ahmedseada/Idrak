@@ -163,8 +163,10 @@ public sealed class Gemma3VisionFamily : IVisionFamily
 /// <c>projector.mm_input_projection_weight</c> [vision width, text width], used as x · W: it is the transpose of a Linear
 /// weight, so it is read as stored).
 /// <para>
-/// For fine-tuning (<see cref="IVisionTuningPart"/>), Gemma 3 lets its projector and its SigLIP tower train, both from an
-/// encoder whose weights are float32 (<see cref="EncoderWeights.Float32"/>, or a float32 checkpoint as stored).
+/// For fine-tuning (<see cref="IVisionTuningPart"/>), Gemma 3 lets its projector and its SigLIP tower train (full weights,
+/// saved under the checkpoint's names: the tower's fused q, k, v projection split back into q_proj, k_proj and v_proj),
+/// each from an encoder that holds that part in float32 (<see cref="VisionEncoderOptions.TrainedParts"/>,
+/// <see cref="EncoderWeights.Float32"/>, or a float32 checkpoint as stored).
 /// </para>
 /// </remarks>
 public sealed class Gemma3Vision : PretrainedVision, IVisionTuningPart
@@ -251,8 +253,18 @@ public sealed class Gemma3Vision : PretrainedVision, IVisionTuningPart
     }
 
     /// <inheritdoc />
-    public override IVisionEncoder CreateEncoder(VisionEncoderOptions? options = null) =>
-        CreateEncoder(options?.Device, Preprocessor(options?.Grayscale ?? false), PanAndScan.With(options?.VisionOptions), options?.Weights ?? EncoderWeights.AsStored);
+    /// <remarks>
+    /// The parts <see cref="VisionEncoderOptions.TrainedParts"/> names (projector, tower) are built with float32 weights,
+    /// the other as <see cref="VisionEncoderOptions.Weights"/> says: a trained projector over a bfloat16 checkpoint keeps
+    /// SigLIP's projections in bfloat16.
+    /// </remarks>
+    public override IVisionEncoder CreateEncoder(VisionEncoderOptions? options = null)
+    {
+        var weights = options?.Weights ?? EncoderWeights.AsStored;
+        EncoderWeights For(string part) => options?.Trains(part) == true ? EncoderWeights.Float32 : weights;
+        return Build(options?.Device, Preprocessor(options?.Grayscale ?? false), PanAndScan.With(options?.VisionOptions), For(VisionTuningParts.Tower),
+            For(VisionTuningParts.Projector));
+    }
 
     /// <summary>
     /// Builds the vision encoder and the projector on <paramref name="device"/> from the checkpoint's tensors (read once):
@@ -266,14 +278,17 @@ public sealed class Gemma3Vision : PretrainedVision, IVisionTuningPart
     /// <param name="panAndScan">Pan and scan for every image (default <see cref="PanAndScan"/>); a request's options go over it.</param>
     /// <param name="weights">The projection weights' precision (<see cref="EncoderWeights.Float32"/> forces float32).</param>
     public Gemma3ImageEncoder CreateEncoder(Device? device, ImagePreprocessor? preprocessor = null, Gemma3PanAndScan? panAndScan = null,
-        EncoderWeights weights = EncoderWeights.AsStored)
+        EncoderWeights weights = EncoderWeights.AsStored) => Build(device, preprocessor, panAndScan, weights, weights);
+
+    // The encoder with the tower's and the projector's weights each as asked.
+    private Gemma3ImageEncoder Build(Device? device, ImagePreprocessor? preprocessor, Gemma3PanAndScan? panAndScan, EncoderWeights tower, EncoderWeights projectorWeights)
     {
         device ??= Device.Default;
         using var tensors = OpenTensors();
-        var encoder = SiglipVisionEncoder.FromTensors(Encoder, tensors, "vision.", device, weights);
+        var encoder = SiglipVisionEncoder.FromTensors(Encoder, tensors, "vision.", device, tower);
         try
         {
-            var projector = Gemma3Projector.FromTensors(tensors, Encoder.Dim, TextDim, PoolSize, ProjectorNormEpsilon, "projector.", device, weights);
+            var projector = Gemma3Projector.FromTensors(tensors, Encoder.Dim, TextDim, PoolSize, ProjectorNormEpsilon, "projector.", device, projectorWeights);
             return new Gemma3ImageEncoder(this, encoder, projector, preprocessor ?? Preprocessor(), panAndScan ?? PanAndScan);
         }
         catch
@@ -325,49 +340,69 @@ public sealed class Gemma3Vision : PretrainedVision, IVisionTuningPart
         return own.Projector.Forward(towerOutput);
     }
 
-    /// <summary>SigLIP's output [images, patches, vision width] for pixel values [images, channels, size, size], recording gradients (copied to the encoder's device first when elsewhere).</summary>
+    /// <summary>
+    /// SigLIP's output [images, patches, vision width] for pixel values [images, channels, size, size], recording gradients
+    /// (copied to the encoder's device first when elsewhere); each encoder layer checkpointed while
+    /// <see cref="ActivationMemory.CheckpointsBlocks"/> is on.
+    /// </summary>
     public Tensor Tower(IVisionEncoder encoder, Tensor pixelValues)
     {
         ArgumentNullException.ThrowIfNull(pixelValues);
         var own = Own(encoder);
+        bool checkpointed = ActivationMemory.CheckpointsBlocks;
         if (pixelValues.Device == own.Device)
         {
-            return own.Encoder.Forward(pixelValues);
+            return own.Encoder.ForwardTraining(pixelValues, checkpointed);
         }
 
         var moved = Tensor.From(pixelValues.ToArray(), pixelValues.Shape, own.Device);         // kept: the backward pass reads it
-        return own.Encoder.Forward(moved);
+        return own.Encoder.ForwardTraining(moved, checkpointed);
     }
 
     /// <summary>
-    /// The projector's two tensors under the checkpoint's names (<c>…multi_modal_projector.mm_soft_emb_norm.weight</c> and
-    /// <c>…mm_input_projection_weight</c>, both as stored: the gain w of 1 + w, and W of x · W). Writing a trained tower
-    /// is not supported yet (plan 12, phase 6: the tower trains in the step).
+    /// The part's tensors under the checkpoint's names, as the checkpoint stores them. The projector: its two tensors
+    /// (<c>…multi_modal_projector.mm_soft_emb_norm.weight</c>, the gain w of 1 + w, and <c>…mm_input_projection_weight</c>,
+    /// W of x · W). The tower: every SigLIP tensor (the patch convolution and position embedding, each layer's norms, its
+    /// q, k and v projections split from the fused projection the encoder holds, its output projection and MLP with Linear
+    /// weights [out, in], and the final norm).
     /// </summary>
     public IReadOnlyDictionary<string, Tensor> Export(IVisionEncoder encoder, string part)
     {
         ArgumentNullException.ThrowIfNull(part);
         var own = Own(encoder);
         _ = Parameters(encoder, part);                                                   // refuses an unknown part and packed weights
-        if (!string.Equals(part.Trim(), VisionTuningParts.Projector, StringComparison.OrdinalIgnoreCase))
+        var tensors = new Dictionary<string, Tensor>(StringComparer.Ordinal);
+        if (string.Equals(part.Trim(), VisionTuningParts.Projector, StringComparison.OrdinalIgnoreCase))
         {
-            throw new NotSupportedException($"Writing Gemma 3's trained {part.Trim().ToLowerInvariant()} beside the adapters is not supported yet; the projector is.");
+            tensors[Tensors[NormTensor].Stored] = Host(own.Projector.Gain.ToArray(), [.. own.Projector.Gain.Shape]);
+            tensors[Tensors[ProjectionTensor].Stored] = Host(own.Projector.Weight.ToArray(), [.. own.Projector.Weight.Shape]);
+            return tensors;
         }
 
-        return new Dictionary<string, Tensor>(StringComparer.Ordinal)
+        foreach (var (name, (values, _)) in TowerValues(own.Encoder))
         {
-            [Tensors[NormTensor].Stored] = Tensor.From(own.Projector.Gain.ToArray(), [.. own.Projector.Gain.Shape], Device.Cpu),
-            [Tensors[ProjectionTensor].Stored] = Tensor.From(own.Projector.Weight.ToArray(), [.. own.Projector.Weight.Shape], Device.Cpu),
-        };
+            int[] stored = [.. Tensors[name].Shape];                                     // the convolution's [dim, channels, patch, patch], not the layer's flat rows
+            if (values.Length != stored.Aggregate(1, (a, b) => a * b))
+            {
+                throw new InvalidOperationException($"{Tensors[name].Stored}: {values.Length} values for the stored shape {Tensor.FormatShape(stored)}.");
+            }
+
+            tensors[Tensors[name].Stored] = Host(values, stored);
+        }
+
+        return tensors;
     }
 
-    /// <summary>Sets the projector's gain and projection from tensors named as <see cref="Export"/> names them; returns the names taken.</summary>
+    /// <summary>
+    /// Sets the projector's or the tower's tensors from tensors named and laid out as <see cref="Export"/> gives them
+    /// (q, k and v go into the fused projection, each where it lies); returns the names taken.
+    /// </summary>
     public IReadOnlyCollection<string> Import(IVisionEncoder encoder, IReadOnlyDictionary<string, Tensor> tensors)
     {
         ArgumentNullException.ThrowIfNull(tensors);
         var own = Own(encoder);
         var taken = new List<string>();
-        foreach (var (name, target) in new[] { (Tensors[NormTensor].Stored, own.Projector.Gain), (Tensors[ProjectionTensor].Stored, own.Projector.Weight) })
+        foreach (var (name, read) in new (string, Func<Tensor>)[] { (Tensors[NormTensor].Stored, () => own.Projector.Gain), (Tensors[ProjectionTensor].Stored, () => own.Projector.Weight) })
         {
             if (!tensors.TryGetValue(name, out var value))
             {
@@ -376,9 +411,11 @@ public sealed class Gemma3Vision : PretrainedVision, IVisionTuningPart
 
             if (own.Projector.Buffers().Any())
             {
-                throw new InvalidOperationException("Gemma 3's projector holds packed (bfloat16) weights in this encoder; build it with VisionEncoderOptions.Weights = EncoderWeights.Float32 to load trained values.");
+                throw new InvalidOperationException("Gemma 3's projector holds packed (bfloat16) weights in this encoder; build it with VisionEncoderOptions.TrainedParts naming the projector "
+                    + "(or Weights = EncoderWeights.Float32) to load trained values.");
             }
 
+            var target = read();
             if (!value.Shape.SequenceEqual(target.Shape))
             {
                 throw new ArgumentException($"{name}: shape {Tensor.FormatShape(value.Shape)}, the projector's is {Tensor.FormatShape(target.Shape)}.", nameof(tensors));
@@ -388,8 +425,177 @@ public sealed class Gemma3Vision : PretrainedVision, IVisionTuningPart
             taken.Add(name);
         }
 
+        var tower = TowerTensorNames().Where(n => tensors.ContainsKey(Tensors[n].Stored)).ToList();
+        if (tower.Count > 0)
+        {
+            if (own.Encoder.Buffers().Any())
+            {
+                throw new InvalidOperationException("Gemma 3's tower holds packed (bfloat16) weights in this encoder; build it with VisionEncoderOptions.TrainedParts naming the tower "
+                    + "(or Weights = EncoderWeights.Float32) to load trained values.");
+            }
+
+            foreach (string name in tower)
+            {
+                var value = tensors[Tensors[name].Stored];
+                int[] expected = [.. Tensors[name].Shape];
+                if (!value.Shape.SequenceEqual(expected))
+                {
+                    throw new ArgumentException($"{Tensors[name].Stored}: shape {Tensor.FormatShape(value.Shape)}, the tower's is {Tensor.FormatShape(expected)}.", nameof(tensors));
+                }
+            }
+
+            SetTower(own.Encoder, tower.ToDictionary(n => n, n => tensors[Tensors[n].Stored].ToArray(), StringComparer.Ordinal));
+            taken.AddRange(tower.Select(n => Tensors[n].Stored));
+        }
+
         return taken;
     }
+
+    /// <summary>The projector's tensors are the projector's; SigLIP's (<c>vision.</c>…) the tower's.</summary>
+    public IReadOnlyList<string> PartsOf(IEnumerable<string> names)
+    {
+        ArgumentNullException.ThrowIfNull(names);
+        var projector = new HashSet<string>([Tensors[NormTensor].Stored, Tensors[ProjectionTensor].Stored], StringComparer.Ordinal);
+        var tower = new HashSet<string>(TowerTensorNames().Select(n => Tensors[n].Stored), StringComparer.Ordinal);
+        var parts = new List<string>();
+        foreach (string name in names)
+        {
+            string? part = projector.Contains(name) ? VisionTuningParts.Projector : tower.Contains(name) ? VisionTuningParts.Tower : null;
+            if (part is not null && !parts.Contains(part))
+            {
+                parts.Add(part);
+            }
+        }
+
+        return parts;
+    }
+
+    // SigLIP's tensors under this part's names (vision.…).
+    private IEnumerable<string> TowerTensorNames() => Tensors.Keys.Where(k => k.StartsWith("vision.", StringComparison.Ordinal)).Order(StringComparer.Ordinal);
+
+    // Every SigLIP tensor of the encoder by its name here, in the checkpoint's layout: Linear weights [in, out] transposed
+    // to [out, in], the fused [dim, 3·dim] q, k, v projection split into q_proj, k_proj and v_proj.
+    private static IEnumerable<(string Name, (float[] Values, int[] Shape))> TowerValues(SiglipVisionEncoder tower)
+    {
+        int dim = tower.Config.Dim;
+        yield return ("vision.embeddings.patch_embedding.weight", (tower.Patches.Weight.ToArray(), [.. tower.Patches.Weight.Shape]));
+        yield return ("vision.embeddings.patch_embedding.bias", (tower.Patches.Bias!.ToArray(), [dim]));
+        yield return ("vision.embeddings.position_embedding.weight", (tower.PositionEmbedding.ToArray(), [.. tower.PositionEmbedding.Shape]));
+        for (int i = 0; i < tower.LayerWeights.Count; i++)
+        {
+            var w = tower.LayerWeights[i];
+            string l = $"vision.encoder.layers.{i}";
+            yield return ($"{l}.layer_norm1.weight", (w.Norm1.Gamma.ToArray(), [dim]));
+            yield return ($"{l}.layer_norm1.bias", (w.Norm1.Beta.ToArray(), [dim]));
+            float[] qkv = w.Qkv.Weight.ToArray(), qkvBias = w.Qkv.Bias!.ToArray();
+            string[] parts = ["q_proj", "k_proj", "v_proj"];
+            for (int part = 0; part < 3; part++)
+            {
+                var weight = new float[dim * dim];
+                for (int input = 0; input < dim; input++)
+                {
+                    for (int output = 0; output < dim; output++)
+                    {
+                        weight[output * dim + input] = qkv[input * 3 * dim + part * dim + output];
+                    }
+                }
+
+                yield return ($"{l}.self_attn.{parts[part]}.weight", (weight, [dim, dim]));
+                yield return ($"{l}.self_attn.{parts[part]}.bias", (qkvBias[(part * dim)..((part + 1) * dim)], [dim]));
+            }
+
+            foreach (var (name, layer) in new[] { ("self_attn.out_proj", w.Output), ("mlp.fc1", w.Fc1), ("mlp.fc2", w.Fc2) })
+            {
+                yield return ($"{l}.{name}.weight", (Transpose(layer.Weight.ToArray(), layer.InFeatures, layer.OutFeatures), [layer.OutFeatures, layer.InFeatures]));
+                yield return ($"{l}.{name}.bias", (layer.Bias!.ToArray(), [layer.OutFeatures]));
+            }
+
+            yield return ($"{l}.layer_norm2.weight", (w.Norm2.Gamma.ToArray(), [dim]));
+            yield return ($"{l}.layer_norm2.bias", (w.Norm2.Beta.ToArray(), [dim]));
+        }
+
+        yield return ("vision.post_layernorm.weight", (tower.PostNorm.Gamma.ToArray(), [dim]));
+        yield return ("vision.post_layernorm.bias", (tower.PostNorm.Beta.ToArray(), [dim]));
+    }
+
+    // Puts SigLIP tensors (names here, the checkpoint's layout) into the encoder: the inverse of TowerValues.
+    private static void SetTower(SiglipVisionEncoder tower, Dictionary<string, float[]> values)
+    {
+        int dim = tower.Config.Dim;
+        void Set(string name, Tensor target, Func<float[], float[]>? layout = null)
+        {
+            if (values.TryGetValue(name, out var v))
+            {
+                target.Load(layout is null ? v : layout(v));
+            }
+        }
+
+        Set("vision.embeddings.patch_embedding.weight", tower.Patches.Weight);
+        Set("vision.embeddings.patch_embedding.bias", tower.Patches.Bias!);
+        Set("vision.embeddings.position_embedding.weight", tower.PositionEmbedding);
+        for (int i = 0; i < tower.LayerWeights.Count; i++)
+        {
+            var w = tower.LayerWeights[i];
+            string l = $"vision.encoder.layers.{i}";
+            Set($"{l}.layer_norm1.weight", w.Norm1.Gamma);
+            Set($"{l}.layer_norm1.bias", w.Norm1.Beta);
+            string[] parts = ["q_proj", "k_proj", "v_proj"];
+            if (parts.Any(p => values.ContainsKey($"{l}.self_attn.{p}.weight") || values.ContainsKey($"{l}.self_attn.{p}.bias")))
+            {
+                float[] qkv = w.Qkv.Weight.ToArray(), qkvBias = w.Qkv.Bias!.ToArray();
+                for (int part = 0; part < 3; part++)
+                {
+                    if (values.TryGetValue($"{l}.self_attn.{parts[part]}.weight", out var weight))
+                    {
+                        for (int input = 0; input < dim; input++)
+                        {
+                            for (int output = 0; output < dim; output++)
+                            {
+                                qkv[input * 3 * dim + part * dim + output] = weight[output * dim + input];
+                            }
+                        }
+                    }
+
+                    if (values.TryGetValue($"{l}.self_attn.{parts[part]}.bias", out var bias))
+                    {
+                        bias.CopyTo(qkvBias, part * dim);
+                    }
+                }
+
+                w.Qkv.Weight.Load(qkv);
+                w.Qkv.Bias!.Load(qkvBias);
+            }
+
+            foreach (var (name, layer) in new[] { ("self_attn.out_proj", w.Output), ("mlp.fc1", w.Fc1), ("mlp.fc2", w.Fc2) })
+            {
+                Set($"{l}.{name}.weight", layer.Weight, v => Transpose(v, layer.OutFeatures, layer.InFeatures));
+                Set($"{l}.{name}.bias", layer.Bias!);
+            }
+
+            Set($"{l}.layer_norm2.weight", w.Norm2.Gamma);
+            Set($"{l}.layer_norm2.bias", w.Norm2.Beta);
+        }
+
+        Set("vision.post_layernorm.weight", tower.PostNorm.Gamma);
+        Set("vision.post_layernorm.bias", tower.PostNorm.Beta);
+    }
+
+    // [rows, columns] row-major to [columns, rows].
+    private static float[] Transpose(float[] values, int rows, int columns)
+    {
+        var result = new float[values.Length];
+        for (int r = 0; r < rows; r++)
+        {
+            for (int c = 0; c < columns; c++)
+            {
+                result[c * rows + r] = values[r * columns + c];
+            }
+        }
+
+        return result;
+    }
+
+    private static Tensor Host(float[] values, int[] shape) => Tensor.From(values, shape, Device.Cpu);
 
     private const string NormTensor = "projector.mm_soft_emb_norm.weight", ProjectionTensor = "projector.mm_input_projection_weight";
 
