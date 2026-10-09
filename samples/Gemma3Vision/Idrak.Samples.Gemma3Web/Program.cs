@@ -140,6 +140,9 @@ app.MapPost("/api/read", async (HttpContext http, CancellationToken cancel) =>
     var system = Text("system", "");
     var prompt = Text("prompt", "Extract the contents of this document.");
     bool stream = Bool("stream", true), grayscale = Bool("grayscale", true);
+    // Greedy decoding can fall into a cycle on a page's stamps and watermarks (the model, not the decoder): stop when the
+    // same line comes this many times in a row (0: never), and keep one copy of it.
+    int loopLines = Math.Max(0, Int("stop_repeated_lines", 3));
     var seedText = Text("seed", "");
     var generation = new GenerationOptions
     {
@@ -148,6 +151,9 @@ app.MapPost("/api/read", async (HttpContext http, CancellationToken cancel) =>
         TopP = Float("top_p", 0.95f),
         MinP = Float("min_p", 0f),
         RepeatPenalty = Float("repeat_penalty", 1f),
+        RepeatLastN = Int("repeat_last_n", 64),
+        PresencePenalty = Float("presence_penalty", 0f),
+        FrequencyPenalty = Float("frequency_penalty", 0f),
         Seed = seedText.Length > 0 ? int.Parse(seedText, CultureInfo.InvariantCulture) : null,
         NumPredict = Int("max_tokens", 4096),
         NumCtx = context,
@@ -230,12 +236,14 @@ app.MapPost("/api/read", async (HttpContext http, CancellationToken cancel) =>
         }
 
         // ChatGenerator.Stream is synchronous: run it off the request thread and hand pieces back as they come.
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+        bool looped = false;
         var channel = System.Threading.Channels.Channel.CreateUnbounded<ChatChunk>();
         var producer = Task.Run(() =>
         {
             try
             {
-                foreach (var chunk in reader.Stream(request, cancel))
+                foreach (var chunk in reader.Stream(request, stop.Token))
                 {
                     channel.Writer.TryWrite(chunk);
                 }
@@ -266,9 +274,20 @@ app.MapPost("/api/read", async (HttpContext http, CancellationToken cancel) =>
                 {
                     await Send(http, "token", new { text = delta }, json, cancel);
                 }
+
+                if (loopLines > 0 && RepeatedTail(answer.ToString(), loopLines) is { } keep)
+                {
+                    looped = true;
+                    answer.Length = keep;
+                    stop.Cancel();
+                    break;
+                }
             }
 
             await producer;
+        }
+        catch (OperationCanceledException) when (looped && !cancel.IsCancellationRequested)
+        {
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -282,8 +301,10 @@ app.MapPost("/api/read", async (HttpContext http, CancellationToken cancel) =>
         }
 
         var memory = ComputeResources.GetMemoryUsage(pretrained.Device);
-        var stats = last?.Stats;
-        var text = last?.Message?.Content ?? answer.ToString();
+        var stats = looped ? null : last?.Stats;
+        var text = looped ? answer.ToString().TrimEnd() : last?.Message?.Content ?? answer.ToString();
+        int? countedTokens = stats is null ? chat.Generator.Tokenizer.Encode(text).Count : null;
+        double generationMs = stats?.GenerationDuration.TotalMilliseconds ?? total.Elapsed.TotalMilliseconds - (firstTokenMs ?? 0);
         var metrics = new Dictionary<string, object?>
         {
             ["queue_ms"] = Math.Round(queueMs, 1),
@@ -292,13 +313,14 @@ app.MapPost("/api/read", async (HttpContext http, CancellationToken cancel) =>
             ["prompt_tokens"] = stats?.PromptTokens,
             ["prompt_ms"] = stats is null ? null : Math.Round(stats.PromptDuration.TotalMilliseconds, 1),
             ["prompt_tokens_per_second"] = stats is { PromptDuration.TotalSeconds: > 0 } ? Math.Round(stats.PromptTokens / stats.PromptDuration.TotalSeconds, 1) : null,
-            ["generated_tokens"] = stats?.GeneratedTokens,
-            ["generation_ms"] = stats is null ? null : Math.Round(stats.GenerationDuration.TotalMilliseconds, 1),
-            ["tokens_per_second"] = stats is null ? null : Math.Round(stats.TokensPerSecond, 2),
+            ["generated_tokens"] = stats?.GeneratedTokens ?? countedTokens,
+            ["generation_ms"] = Math.Round(generationMs, 1),
+            ["tokens_per_second"] = stats is not null ? Math.Round(stats.TokensPerSecond, 2) : generationMs > 0 ? Math.Round(countedTokens!.Value / (generationMs / 1000), 2) : null,
             ["total_ms"] = Math.Round(total.Elapsed.TotalMilliseconds, 1),
             ["library_total_ms"] = stats is null ? null : Math.Round(stats.TotalDuration.TotalMilliseconds, 1),
             ["context_resets"] = stats?.ContextResets,
-            ["done_reason"] = last?.DoneReason,
+            ["done_reason"] = looped ? "repetition" : last?.DoneReason,
+            ["stopped_on_repeated_lines"] = looped ? loopLines : null,
             ["streamed_pieces"] = pieces,
             ["characters"] = text.Length,
             ["device_memory_in_use_mb"] = memory.InUse >> 20,
@@ -325,6 +347,46 @@ app.MapPost("/api/read", async (HttpContext http, CancellationToken cancel) =>
 Console.WriteLine($"open http://{host}:{port}");
 await app.RunAsync();
 return 0;
+
+// When the text ends with the same non-empty line n times in a row (each one finished by a newline), the length that keeps
+// the first of them; null otherwise.
+static int? RepeatedTail(string text, int n)
+{
+    int end = text.LastIndexOf('\n');
+    if (end < 0)
+    {
+        return null;
+    }
+
+    var lines = text[..end].Split('\n');
+    if (lines.Length < n)
+    {
+        return null;
+    }
+
+    var line = lines[^1].Trim();
+    if (line.Length == 0)
+    {
+        return null;
+    }
+
+    for (int i = 2; i <= n; i++)
+    {
+        if (lines[^i].Trim() != line)
+        {
+            return null;
+        }
+    }
+
+    // Keep everything up to and including the first of the repeated lines.
+    int keep = 0;
+    for (int i = 0; i <= lines.Length - n; i++)
+    {
+        keep += lines[i].Length + 1;
+    }
+
+    return keep;
+}
 
 static async Task Send(HttpContext http, string name, object data, JsonSerializerOptions json, CancellationToken cancel)
 {

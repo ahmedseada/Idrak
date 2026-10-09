@@ -192,11 +192,11 @@ const $ = id => document.getElementById(id);
 const DEFAULTS = {
   prompt: "اقرأ هذه الوثيقة واكتب نصها الكامل كما هو، سطراً بسطر، دون تلخيص.",
   system: "", stream: true, grayscale: true, pretty: true,
-  args: { max_tokens: 4096, temperature: 0, top_k: 64, top_p: 0.95, min_p: 0, repeat_penalty: 1, seed: "", chunk_size: 1 }
+  args: { max_tokens: 4096, temperature: 0, top_k: 64, top_p: 0.95, min_p: 0, repeat_penalty: 1, repeat_last_n: 64, presence_penalty: 0, frequency_penalty: 0, stop_repeated_lines: 3, seed: "", chunk_size: 1 }
 };
 const ARGS = [
   ["max_tokens", "Max tokens", 1, 1], ["temperature", "Temperature", 0, 0.05], ["top_k", "Top-k", 0, 1],
-  ["top_p", "Top-p", 0, 0.01], ["min_p", "Min-p", 0, 0.01], ["repeat_penalty", "Repeat penalty", 0, 0.01], ["seed", "Seed", null, 1], ["chunk_size", "Stream chunk (tokens)", 1, 1]
+  ["top_p", "Top-p", 0, 0.01], ["min_p", "Min-p", 0, 0.01], ["repeat_penalty", "Repeat penalty", 0, 0.01], ["repeat_last_n", "Repeat window", 0, 1], ["presence_penalty", "Presence penalty", null, 0.05], ["frequency_penalty", "Frequency penalty", null, 0.05], ["stop_repeated_lines", "Stop after N same lines (0 = off)", 0, 1], ["seed", "Seed", null, 1], ["chunk_size", "Stream chunk (tokens)", 1, 1]
 ];
 const STORE = "idrak-vision-reader";
 let file = null, controller = null, rawText = "", view = "text", modelInfo = {}, timer = null;
@@ -307,7 +307,7 @@ function figures(m, img) {
   const t = v => (v || 0) >= 1000 ? `${fmt(v / 1000, 2)} s` : `${fmt(v || 0, 1)} ms`;
   $("legend").innerHTML = parts.map(p => `<span><i style="background:${p[2]}"></i>${p[0]} ${t(p[1])}</span>`).join("");
   table("mRequest", [
-    ["Done reason", m.done_reason ?? "–"], ["Prompt tokens", fmt(m.prompt_tokens)], ["Prompt time", `${fmt(m.prompt_ms)} ms`],
+    ["Done reason", m.done_reason === "repetition" ? `repetition (same line ${m.stopped_on_repeated_lines}×, trimmed)` : (m.done_reason ?? "–")], ["Prompt tokens", fmt(m.prompt_tokens)], ["Prompt time", `${fmt(m.prompt_ms)} ms`],
     ["Prompt speed", `${fmt(m.prompt_tokens_per_second)} tok/s`], ["Generated tokens", fmt(m.generated_tokens)],
     ["Generation time", `${fmt(m.generation_ms)} ms`], ["Generation speed", `${fmt(m.tokens_per_second, 2)} tok/s`],
     ["Time to first token", `${fmt(m.time_to_first_token_ms)} ms`], ["Image encode", `${fmt(m.image_encode_ms)} ms`],
