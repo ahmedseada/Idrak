@@ -1213,6 +1213,22 @@ internal sealed partial class VulkanBackend
         Grid("gather_bf16", (long)count * dim, [packed, indices, y], new Push(b).I(count).I(dim).I(vocabulary).I(0).I(vocabulary).Bytes);
     }
 
+    public override void GatherBFloat16ColumnsKernel(Storage packed, Storage indices, Storage y, int count, int dim, int vocabulary)
+    {
+        if (!Fit(packed, indices, y))
+        {
+            if (!GatherColumnWindows(packed, indices, y, count, dim, vocabulary))
+            {
+                base.GatherBFloat16ColumnsKernel(packed, indices, y, count, dim, vocabulary);
+            }
+
+            return;
+        }
+
+        Span<byte> b = stackalloc byte[20];
+        Grid("gather_bf16_columns", (long)count * dim, [packed, indices, y], new Push(b).I(count).I(dim).I(vocabulary).I(0).I(dim).Bytes);
+    }
+
     public override void KeyValueWriteKernel(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
     {
         if (!Fit(source, cache, position))

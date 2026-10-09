@@ -125,6 +125,41 @@ internal sealed class LoadedChat(PretrainedModel model, ModelChoices.ModelChoice
     public string Describe(CommandContext context) =>
         $"{Choice.Model} ({Model.Config["architectures"]?[0]}, {Parameters(Model.Spec.ParameterCount)} parameters) on {context.Device}";
 
+    /// <summary>
+    /// Where the device's memory went (<see cref="Idrak.Diagnostics.ModelMemory"/>): the model's weights by part, the image
+    /// encoder once built, the key/value cache of the context window, and the peak beyond them since the peak was last
+    /// reset (activations and workspaces), with the device's own figures.
+    /// </summary>
+    public (IReadOnlyList<Idrak.Diagnostics.MemoryPart> Parts, MemoryUsage Usage) Memory()
+    {
+        var generator = Chat.Generator;
+        var parts = Idrak.Diagnostics.ModelMemory.Generation(Model.Network, Model.Spec, Context,
+            generator.CacheLayout ?? KeyValueLayouts.For(generator.CacheFormat), Images?.Encoder).ToList();
+        var usage = ComputeResources.GetMemoryUsage(Model.Device);
+        parts.Add(Idrak.Diagnostics.ModelMemory.Activations(parts, usage));
+        return (parts, usage);
+    }
+
+    /// <summary>The breakdown of <see cref="Memory"/> as lines for people: "memory: embedding 0 B (...)".</summary>
+    public static IEnumerable<string> MemoryLines(IReadOnlyList<Idrak.Diagnostics.MemoryPart> parts, MemoryUsage usage) =>
+        parts.Select(p => $"memory: {p.Name} {Units.Bytes(p.Bytes)}{(p.Note is null ? "" : $" ({p.Note})")}")
+            .Append($"memory: device in use {Units.Bytes(usage.InUse)}, peak {Units.Bytes(usage.Peak)}, cached {Units.Bytes(usage.Cached)}"
+                    + (usage.Limit is { } limit ? $", limit {Units.Bytes(limit)}" : ""));
+
+    /// <summary>The breakdown of <see cref="Memory"/> as JSON: bytes by part, and the device's in use and peak.</summary>
+    public static JsonObject MemoryJson(IReadOnlyList<Idrak.Diagnostics.MemoryPart> parts, MemoryUsage usage)
+    {
+        var json = new JsonObject();
+        foreach (var part in parts)
+        {
+            json[part.Name.Replace(' ', '_') + "_bytes"] = part.Bytes;
+        }
+
+        json["device_in_use_bytes"] = usage.InUse;
+        json["device_peak_bytes"] = usage.Peak;
+        return json;
+    }
+
     /// <summary>A parameter count for people (1.2M, 7.6B).</summary>
     public static string Parameters(long count) => count >= 1e9 ? $"{count / 1e9:F1}B" : count >= 1e6 ? $"{count / 1e6:F1}M" : $"{count / 1e3:F0}k";
 

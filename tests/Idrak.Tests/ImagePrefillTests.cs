@@ -15,7 +15,7 @@ internal static partial class Tests
     private static readonly (string Name, Action<Device> Run)[] ImagePrefillGroup =
     [
         ("image prefill: the tiny Gemma 3 with phase 0's image features gives transformers' prompt logits and 20 greedy tokens (cached and not, every layout); without the image-block mask the logits change from the first image token on", ImagePrefillMatchesReference),
-        ("image prefill: two images in one prompt, a continued prefill, a batch and rows of different lengths agree with single runs; other cache formats; text prompts unchanged", ImagePrefillConsistency),
+        ("image prefill: two images in one prompt, a continued prefill, a batch and rows of different lengths agree with single runs; other cache formats (bfloat16 and int8 expanded only up to the step's last position, whatever the window); text prompts unchanged", ImagePrefillConsistency),
     ];
 
     private static (int[] Ids, float[] Features) ImagePromptReference()
@@ -203,6 +203,40 @@ internal static partial class Tests
             Console.WriteLine($"    {format} cache on {device}: {difference:G3} from float32 with images, {textDifference:G3} for the text prompt, "
                 + $"image path against plain prefill {MaxDifference(plain, spans):G3}");
             AssertClose(plain, spans, 2e-5f, $"{format} cache: the image path with a causal mask against the plain prefill");
+
+            // The image step reads only the cache's prefix up to its last position: a context window 16 times larger
+            // gives the same logits (bit for bit with bfloat16 and int8, whose prefix alone is expanded to float32).
+            using var wide = new DecodingContext(device, 1, 1024, format);
+            var wideLogits = decoder.ForwardCached(input, images, rule, wide).ToArray();
+            using var narrow = new DecodingContext(device, 1, 64, format);
+            var narrowLogits = decoder.ForwardCached(input, images, rule, narrow).ToArray();
+            if (format == KeyValueFormat.Float32)
+            {
+                AssertClose(narrowLogits, wideLogits, 2e-6f, $"{format} cache: 1,024 slots against 64");
+            }
+            else
+            {
+                Check(narrowLogits.SequenceEqual(wideLogits), $"{format} cache: 1,024 slots give 64 slots' logits bit for bit ({MaxDifference(narrowLogits, wideLogits):G3})");
+            }
+
+            Check(format == KeyValueFormat.Float32 ? difference < 2e-5f : difference < (format == KeyValueFormat.Int8 ? 0.5f : 0.1f),
+                $"{format} cache: {difference:G3} from float32 with images (phase 5: int8 0.255, bfloat16 0.036)");
+
+            // The prefix itself: [rows, positions, headDim], the full expansion's first slots exactly; float32 in place.
+            var cache = narrow[decoder.Descendants().OfType<CausalSelfAttention>().First()]!;
+            using var full = cache.Layout.Expand(cache, keys: false) is var f && ReferenceEquals(f, cache.Values) ? null : f;
+            var prefix = cache.Layout.ExpandPrefix(cache, keys: false, ids.Length);
+            if (format == KeyValueFormat.Float32)
+            {
+                Check(ReferenceEquals(prefix, cache.Values), "a float32 cache is read in place");
+            }
+            else
+            {
+                int rows = cache.Values.Shape[0], dim = cache.HeadDim;
+                Check(prefix.Shape.SequenceEqual([rows, ids.Length, dim]), $"{format} prefix {Tensor.FormatShape(prefix.Shape)}");
+                Check(prefix.ToArray().SequenceEqual(full!.Narrow(1, 0, ids.Length).ToArray()), $"{format} prefix equals the full expansion's first slots");
+                prefix.Dispose();
+            }
         }
 
         // A text-only prompt through ImagePrefill with no images is the plain prefill.

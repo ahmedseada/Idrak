@@ -98,17 +98,21 @@ public static class DecoderBuilder
                 : weights.Read("embed.weight", [spec.Vocabulary, spec.Dim]) ?? throw new InvalidDataException($"The weights have no 'embed.weight' [{spec.Vocabulary}, {spec.Dim}].");
             // Frozen-weight builds keep the table as bfloat16 (half the memory; lossless for bfloat16 checkpoints).
             bool frozen = packed is not null || factory is not null;
-            var embedding = frozen
-                ? Embedding.FromBFloat16(BFloat16Weight.FromValues(embeddingValues, spec.Vocabulary, spec.Dim, device))
-                : Embedding.FromWeights(Idrak.Abstraction.Tensor.Persistent(embeddingValues, [spec.Vocabulary, spec.Dim], device, requiresGrad: true));
-            embedding.Name = "embed";
-            created.Add(embedding);
             // A packed tied head gets its own transposed copy of the table: made now, so the table's float values are not
-            // kept alive while every layer is read (a float tied head reads the embedding in place; see below).
+            // kept alive while every layer is read (a float tied head reads the embedding in place; see below). When that
+            // copy is bfloat16, it is the only one: the embedding reads its columns (the same bfloat16 values the table
+            // would hold, so lookups are unchanged bit for bit), which saves the table's memory once more. Heads in
+            // other formats (int8, int4, one's own) keep a separate bfloat16 table, since the head's values differ from it.
             if (spec.TieEmbeddings && frozen)
             {
                 head = Projection("head", spec.Dim, spec.Vocabulary, spec.HeadBias, embeddingValues);
             }
+
+            var embedding = head is { BFloat16: not null } ? Embedding.FromHead(head)
+                : frozen ? Embedding.FromBFloat16(BFloat16Weight.FromValues(embeddingValues, spec.Vocabulary, spec.Dim, device))
+                : Embedding.FromWeights(Idrak.Abstraction.Tensor.Persistent(embeddingValues, [spec.Vocabulary, spec.Dim], device, requiresGrad: true));
+            embedding.Name = "embed";
+            created.Add(embedding);
 
             embeddingValues = null;
             if (spec.EmbeddingScale is { } scale)

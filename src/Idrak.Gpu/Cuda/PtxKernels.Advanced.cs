@@ -13,7 +13,7 @@ internal static partial class PtxKernels
         "exp_f32", "exp_bwd_f32", "log_f32", "log_bwd_f32", "gelu_f32", "gelu_bwd_f32", "inv_sqrt_f32",
         "softmax_f32", "softmax_bwd_f32", "argmax_f32", "class_match_f32",
         "norm_stats_f32", "norm_apply_f32", "norm_bwd_f32", "group_scale_shift_f32", "group_reduce_f32",
-        "gather_f32", "gather_bf16_f32", "one_hot_f32", "scatter_add_f32", "im2col_f32", "col2im_f32", "maxpool_f32", "maxpool_bwd_f32",
+        "gather_f32", "gather_bf16_f32", "gather_bf16_cols_f32", "one_hot_f32", "scatter_add_f32", "im2col_f32", "col2im_f32", "maxpool_f32", "maxpool_bwd_f32",
         "permute_f32", "copy2d_f32", "sum_axis_f32", "broadcast_axis_f32",
     ];
 
@@ -532,6 +532,33 @@ internal static partial class PtxKernels
             add.u64 %rd3, %b_table, %rd3;
             ld.global.u32 %r10, [%rd3];
             and.b32 %r11, %r6, 1;
+            setp.eq.u32 %p1, %r11, 0;
+            shl.b32 %r12, %r10, 16;
+            and.b32 %r13, %r10, 0xFFFF0000;
+            selp.b32 %r12, %r12, %r13, %p1;
+            mov.b32 %f2, %r12;
+            st.global.f32 [%a_y], %f2;
+            """);
+
+        // Columns of a bfloat16 table [dim, vocabulary] packed two per word along each row (words per row =
+        // ⌈vocabulary / 2⌉): y[t, j] = table[j, indices[t]] (a tied head's weight read as the embedding table). The
+        // word's offset j · words + index / 2 is formed in 64 bits (tables past 4 GiB of words stay addressable).
+        Elementwise(sb, "gather_bf16_cols_f32", ["table", "indices", "y"], [("u32", "dim"), ("u32", "maxindex"), ("u32", "words")], """
+            div.u32 %r5, %i, %s_dim;
+            rem.u32 %r6, %i, %s_dim;
+            mul.wide.u32 %rd1, %r5, 4;
+            add.u64 %rd2, %b_indices, %rd1;
+            ld.global.f32 %f1, [%rd2];
+            cvt.rzi.u32.f32 %r7, %f1;
+            min.u32 %r7, %r7, %s_maxindex;
+            shr.u32 %r9, %r7, 1;
+            mul.wide.u32 %rd3, %r6, %s_words;
+            cvt.u64.u32 %rd4, %r9;
+            add.u64 %rd3, %rd3, %rd4;
+            shl.b64 %rd3, %rd3, 2;
+            add.u64 %rd3, %b_table, %rd3;
+            ld.global.u32 %r10, [%rd3];
+            and.b32 %r11, %r7, 1;
             setp.eq.u32 %p1, %r11, 0;
             shl.b32 %r12, %r10, 16;
             and.b32 %r13, %r10, 0xFFFF0000;

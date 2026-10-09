@@ -64,6 +64,30 @@ public sealed record VisionEncoderOptions
     /// </summary>
     /// <remarks>The family refuses a key it does not take, naming those it does, when it builds the encoder.</remarks>
     public VisionOptions? VisionOptions { get; init; }
+
+    /// <summary>
+    /// How the encoder holds its projection weights: as the checkpoint stores them (the default: a bfloat16 checkpoint's
+    /// weights stay bfloat16, half the memory of float32 for the same values, while inputs, outputs and sums stay
+    /// float32), all float32, or bfloat16 (rounded when stored wider). A family builds its layers with
+    /// <c>StoredWeights</c> to honour it.
+    /// </summary>
+    public EncoderWeights Weights { get; init; }
+}
+
+/// <summary>How an encoder built from a checkpoint holds its projection weights (<see cref="VisionEncoderOptions.Weights"/>).</summary>
+public enum EncoderWeights
+{
+    /// <summary>
+    /// As the checkpoint stores them (<see cref="ITensorStore.FormatOf"/>): bfloat16 weights as bfloat16, anything else
+    /// as float32. The computation is the float32 one either way (the same weight values, float32 activations and sums).
+    /// </summary>
+    AsStored,
+
+    /// <summary>Every weight in float32 (twice the memory of a bfloat16 checkpoint's, the same values).</summary>
+    Float32,
+
+    /// <summary>Projection weights in bfloat16, rounded to nearest when the checkpoint stores them wider.</summary>
+    BFloat16,
 }
 
 /// <summary>What a vision family reads a checkpoint's vision part from (<see cref="IVisionFamily.Read"/>).</summary>

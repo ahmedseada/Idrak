@@ -62,71 +62,72 @@ internal static class OperationIndex
     public const int InvSqrt = 46;
     public const int Gather = 47;
     public const int GatherBFloat16 = 48;
-    public const int OneHot = 49;
-    public const int ScatterAdd = 50;
-    public const int Im2Col = 51;
-    public const int Col2Im = 52;
-    public const int MaxPool = 53;
-    public const int MaxPoolBackward = 54;
-    public const int MaxPoolBackward2 = 55;
-    public const int Permute = 56;
-    public const int SumAxis = 57;
-    public const int BroadcastAxis = 58;
-    public const int SgdStep = 59;
-    public const int AdamStep = 60;
-    public const int AdamStep8Bit = 61;
-    public const int SumSquares = 62;
-    public const int FusedAdamW = 63;
-    public const int ClipFactor = 64;
-    public const int Dropout = 65;
-    public const int DropoutBackward = 66;
-    public const int ScaleMaskSoftmax = 67;
-    public const int LayerNormFused = 68;
-    public const int LayerNormTrain = 69;
-    public const int LayerNormBackward = 70;
-    public const int BiasGelu = 71;
-    public const int Int8MatMul = 72;
-    public const int BFloat16MatMul = 73;
-    public const int BFloat16Dequantize = 74;
-    public const int PackBFloat16 = 75;
-    public const int Int8Dequantize = 76;
-    public const int Int4MatMul = 77;
-    public const int Int4Dequantize = 78;
-    public const int RmsNorm = 79;
-    public const int RmsNormBackward = 80;
-    public const int Rope = 81;
-    public const int RmsNormAffine = 82;
-    public const int AddRmsNormAffine = 83;
-    public const int RmsNormRope = 84;
-    public const int RmsNormRopePair = 85;
-    public const int NormRopeHeads = 86;
-    public const int SoftmaxCrossEntropyRows = 87;
-    public const int GatedActivation = 88;
-    public const int GatedActivationBackward = 89;
-    public const int GatedActivationPacked = 90;
-    public const int GatedActivationBackwardPacked = 91;
-    public const int KeyValueWriteInt8 = 92;
-    public const int AttentionScoresInt8 = 93;
-    public const int AttentionContextInt8 = 94;
-    public const int AttentionDecode = 95;
-    public const int AttentionInt8 = 96;
-    public const int AttentionBFloat16 = 97;
-    public const int KeyValueWriteBFloat16 = 98;
-    public const int AttentionTiledBackward = 99;
-    public const int AttentionSegmented = 100;
-    public const int AttentionRows = 101;
-    public const int AttentionSegmentedBackward = 102;
-    public const int AttentionTiled = 103;
-    public const int AttentionSpans = 104;
-    public const int AttentionSpansBackward = 105;
-    public const int DecoderMask = 106;
-    public const int KeyValueWrite = 107;
-    public const int SampleRows = 108;
-    public const int PenalizeRows = 109;
-    public const int HistoryPush = 110;
+    public const int GatherBFloat16Columns = 49;
+    public const int OneHot = 50;
+    public const int ScatterAdd = 51;
+    public const int Im2Col = 52;
+    public const int Col2Im = 53;
+    public const int MaxPool = 54;
+    public const int MaxPoolBackward = 55;
+    public const int MaxPoolBackward2 = 56;
+    public const int Permute = 57;
+    public const int SumAxis = 58;
+    public const int BroadcastAxis = 59;
+    public const int SgdStep = 60;
+    public const int AdamStep = 61;
+    public const int AdamStep8Bit = 62;
+    public const int SumSquares = 63;
+    public const int FusedAdamW = 64;
+    public const int ClipFactor = 65;
+    public const int Dropout = 66;
+    public const int DropoutBackward = 67;
+    public const int ScaleMaskSoftmax = 68;
+    public const int LayerNormFused = 69;
+    public const int LayerNormTrain = 70;
+    public const int LayerNormBackward = 71;
+    public const int BiasGelu = 72;
+    public const int Int8MatMul = 73;
+    public const int BFloat16MatMul = 74;
+    public const int BFloat16Dequantize = 75;
+    public const int PackBFloat16 = 76;
+    public const int Int8Dequantize = 77;
+    public const int Int4MatMul = 78;
+    public const int Int4Dequantize = 79;
+    public const int RmsNorm = 80;
+    public const int RmsNormBackward = 81;
+    public const int Rope = 82;
+    public const int RmsNormAffine = 83;
+    public const int AddRmsNormAffine = 84;
+    public const int RmsNormRope = 85;
+    public const int RmsNormRopePair = 86;
+    public const int NormRopeHeads = 87;
+    public const int SoftmaxCrossEntropyRows = 88;
+    public const int GatedActivation = 89;
+    public const int GatedActivationBackward = 90;
+    public const int GatedActivationPacked = 91;
+    public const int GatedActivationBackwardPacked = 92;
+    public const int KeyValueWriteInt8 = 93;
+    public const int AttentionScoresInt8 = 94;
+    public const int AttentionContextInt8 = 95;
+    public const int AttentionDecode = 96;
+    public const int AttentionInt8 = 97;
+    public const int AttentionBFloat16 = 98;
+    public const int KeyValueWriteBFloat16 = 99;
+    public const int AttentionTiledBackward = 100;
+    public const int AttentionSegmented = 101;
+    public const int AttentionRows = 102;
+    public const int AttentionSegmentedBackward = 103;
+    public const int AttentionTiled = 104;
+    public const int AttentionSpans = 105;
+    public const int AttentionSpansBackward = 106;
+    public const int DecoderMask = 107;
+    public const int KeyValueWrite = 108;
+    public const int SampleRows = 109;
+    public const int PenalizeRows = 110;
+    public const int HistoryPush = 111;
 
     /// <summary>The number of operations.</summary>
-    public const int Count = 111;
+    public const int Count = 112;
 }
 
 /// <summary>
@@ -477,6 +478,14 @@ public static class OperationKernels
     /// <see cref="Backend.Gather"/> from a bfloat16 table packed as in <see cref="Backend.BFloat16MatMul"/> ([vocabulary, dim]).
     /// </summary>
     public delegate void GatherBFloat16(Backend backend, Storage packed, Storage indices, Storage y, int count, int dim, int vocabulary);
+
+    /// <summary>
+    /// A kernel for <see cref="Ops.GatherBFloat16Columns"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// <see cref="Backend.Gather"/> of columns: y[i, :] = column indices[i] of a bfloat16 table [dim, vocabulary] packed as in
+    /// <see cref="Backend.BFloat16MatMul"/> (rows of ⌈vocabulary / 2⌉ words): the embedding lookup of a model whose tied output
+    /// head holds the only copy of the table, as its [dim, vocabulary] weight.
+    /// </summary>
+    public delegate void GatherBFloat16Columns(Backend backend, Storage packed, Storage indices, Storage y, int count, int dim, int vocabulary);
 
     /// <summary>
     /// A kernel for <see cref="Ops.OneHot"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
@@ -1279,6 +1288,14 @@ public static partial class Ops
         new("GatherBFloat16", "GatherBFloat16Kernel", "Storage,Storage,Storage,Int32,Int32,Int32", OperationIndex.GatherBFloat16, typeof(OperationKernels.GatherBFloat16), KernelSource.Host);
 
     /// <summary>
+    /// <see cref="Backend.Gather"/> of columns: y[i, :] = column indices[i] of a bfloat16 table [dim, vocabulary] packed as in
+    /// <see cref="Backend.BFloat16MatMul"/> (rows of ⌈vocabulary / 2⌉ words): the embedding lookup of a model whose tied output
+    /// head holds the only copy of the table, as its [dim, vocabulary] weight.
+    /// </summary>
+    public static readonly Operation GatherBFloat16Columns =
+        new("GatherBFloat16Columns", "GatherBFloat16ColumnsKernel", "Storage,Storage,Storage,Int32,Int32,Int32", OperationIndex.GatherBFloat16Columns, typeof(OperationKernels.GatherBFloat16Columns), KernelSource.Host);
+
+    /// <summary>
     /// One-hot rows: y[i, :] = 0 except y[i, indices[i]] = 1, for count indices over classes columns.
     /// </summary>
     public static readonly Operation OneHot =
@@ -1780,6 +1797,7 @@ public static partial class Ops
         InvSqrt,
         Gather,
         GatherBFloat16,
+        GatherBFloat16Columns,
         OneHot,
         ScatterAdd,
         Im2Col,

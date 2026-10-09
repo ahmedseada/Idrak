@@ -62,6 +62,18 @@ public abstract class KeyValueLayout
     public abstract Tensor Expand(KeyValueCache cache, bool keys);
 
     /// <summary>
+    /// The cached keys (<paramref name="keys"/> true) or values of the first <paramref name="positions"/> slots as float32,
+    /// [rows, at least <paramref name="positions"/>, headDim]: what attention over a prefix of the cache reads (an image
+    /// prefill step, whose key ranges end at the step's last position), without a float32 copy of every slot. The
+    /// default is <see cref="Expand"/> (every slot); the built-in float32 cache is read in place, bfloat16 and int8 caches
+    /// expand only those slots. Only read, never changed or disposed (it may be the cache's own tensor).
+    /// </summary>
+    /// <param name="cache">The cache.</param>
+    /// <param name="keys">Keys (true) or values.</param>
+    /// <param name="positions">How many slots from the first are read (clamped to [1, capacity]).</param>
+    public virtual Tensor ExpandPrefix(KeyValueCache cache, bool keys, int positions) => Expand(cache, keys);
+
+    /// <summary>
     /// Attention of q [rows, queries, headDim] over the cached positions up to each query's own → [rows, queries, headDim].
     /// The default expands keys and values (<see cref="Expand"/>) and computes
     /// softmax(scale · q·Kᵀ + mask)·V with the context's causal mask (<see cref="DecodingContext.Mask"/>), from basic
@@ -261,11 +273,27 @@ public static class KeyValueLayouts
         }
 
         // The bytes as floats (each row's bytes are a weight row with unit column scales), times each row's scale.
-        public override Tensor Expand(KeyValueCache cache, bool keys)
+        public override Tensor Expand(KeyValueCache cache, bool keys) =>
+            Expanded(keys ? cache.Keys : cache.Values, keys ? cache.KeyScales! : cache.ValueScales!, cache.HeadDim);
+
+        // Only the first slots: the packed rows and their scales narrowed first (a copy of the prefix's bytes).
+        public override Tensor ExpandPrefix(KeyValueCache cache, bool keys, int positions)
         {
             var packed = keys ? cache.Keys : cache.Values;
-            var scales = keys ? cache.KeyScales! : cache.ValueScales!;
-            int rows = packed.Shape[0], capacity = packed.Shape[1], dim = cache.HeadDim;
+            positions = Math.Clamp(positions, 1, packed.Shape[1]);
+            if (positions == packed.Shape[1])
+            {
+                return Expand(cache, keys);
+            }
+
+            using var prefix = packed.Narrow(1, 0, positions);
+            using var scales = (keys ? cache.KeyScales! : cache.ValueScales!).Narrow(1, 0, positions);
+            return Expanded(prefix, scales, cache.HeadDim);
+        }
+
+        private static Tensor Expanded(Tensor packed, Tensor scales, int dim)
+        {
+            int rows = packed.Shape[0], capacity = packed.Shape[1];
             using var ones = Tensor.Ones([dim], packed.Device);
             using var bytes = Tensor.Empty([rows, capacity, dim], packed.Device);
             using var wide = Tensor.Empty([rows, capacity, dim], packed.Device, zeroed: true);
@@ -318,6 +346,23 @@ public static class KeyValueLayouts
             int rows = packed.Shape[0], capacity = packed.Shape[1];
             var y = Tensor.Empty([rows, capacity, cache.HeadDim], packed.Device);
             packed.Backend.BFloat16Dequantize(packed.Storage, y.Storage, rows * capacity, cache.HeadDim);
+            return y;
+        }
+
+        // Only the first slots: the packed words of the prefix copied out, then expanded.
+        public override Tensor ExpandPrefix(KeyValueCache cache, bool keys, int positions)
+        {
+            var packed = keys ? cache.Keys : cache.Values;
+            int rows = packed.Shape[0];
+            positions = Math.Clamp(positions, 1, packed.Shape[1]);
+            if (positions == packed.Shape[1])
+            {
+                return Expand(cache, keys);
+            }
+
+            using var prefix = packed.Narrow(1, 0, positions);
+            var y = Tensor.Empty([rows, positions, cache.HeadDim], packed.Device);
+            packed.Backend.BFloat16Dequantize(prefix.Storage, y.Storage, rows * positions, cache.HeadDim);
             return y;
         }
 

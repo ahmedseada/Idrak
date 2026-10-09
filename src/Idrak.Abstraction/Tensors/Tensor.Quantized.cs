@@ -330,4 +330,23 @@ public sealed partial class Tensor
         indices.Backend.GatherBFloat16(table.Packed.Storage, indices.Storage, y.Storage, indices.Size, table.Columns, table.Rows);
         return Tensor.Traced("embedding_bf16", y, start);
     }
+
+    /// <summary>
+    /// Embedding lookup from the columns of a bfloat16 [dim, vocabulary] weight (fixed: no gradient): id i gives column i,
+    /// so a tied output head's weight serves as the embedding table too, without a second copy.
+    /// </summary>
+    public static Tensor EmbeddingLookupColumns(BFloat16Weight table, Tensor indices)
+    {
+        ArgumentNullException.ThrowIfNull(table);
+        indices.ThrowIfDisposed();
+        if (table.Packed.Device != indices.Device)
+        {
+            throw new ArgumentException($"The embedding table is on {table.Packed.Device}, the ids on {indices.Device}.");
+        }
+
+        long start = Telemetry.Start(TelemetryLevel.Operations);
+        var y = Tensor.Empty([.. indices._shape, table.Rows], indices.Device);
+        indices.Backend.GatherBFloat16Columns(table.Packed.Storage, indices.Storage, y.Storage, indices.Size, table.Rows, table.Columns);
+        return Tensor.Traced("embedding_bf16_columns", y, start);
+    }
 }
