@@ -15,7 +15,7 @@ namespace Idrak.Abstraction.Testing.Devices;
 internal static class OperationCalls
 {
     // The operations this file knows; Ops.All.Count when it is current.
-    public const int Count = 120;
+    public const int Count = 126;
 
     // The parameter names of each operation (after the backend), by operation index.
     public static readonly string[][] Parameters =
@@ -80,9 +80,15 @@ internal static class OperationCalls
         ["x", "weight", "bias", "y", "g", "filters", "groups", "activation"],
         ["dy", "weight", "dx", "g", "filters", "groups"],
         ["x", "dy", "dweight", "g", "filters", "groups"],
-        ["x", "y", "g", "countIncludePad"],
-        ["dy", "dx", "g", "countIncludePad"],
+        ["x", "y", "g", "countIncludePad", "padBottom", "padRight"],
+        ["dy", "dx", "g", "countIncludePad", "padBottom", "padRight"],
         ["x", "coefficients", "values", "y", "planes", "channels", "height", "width", "outHeight", "outWidth", "xTaps", "yTaps", "bytes"],
+        ["x", "y", "planes", "height", "width", "outHeight", "outWidth", "mode", "alignCorners", "scaleHeight", "scaleWidth"],
+        ["dy", "dx", "planes", "height", "width", "outHeight", "outWidth", "mode", "alignCorners", "scaleHeight", "scaleWidth"],
+        ["x", "y", "planes", "height", "width", "outHeight", "outWidth"],
+        ["dy", "dx", "planes", "height", "width", "outHeight", "outWidth"],
+        ["x", "y", "argmax", "planes", "height", "width", "outHeight", "outWidth"],
+        ["dy", "argmax", "dx", "planes", "height", "width", "outHeight", "outWidth"],
         ["logProbs", "targets", "losses", "inputLengths", "targetLengths", "targetOffsets", "steps", "batch", "classes", "blank", "batchFirst", "zeroInfinity"],
         ["logProbs", "targets", "lossGrads", "dLogProbs", "inputLengths", "targetLengths", "targetOffsets", "steps", "batch", "classes", "blank", "batchFirst", "zeroInfinity"],
         ["x", "y", "outShape", "inStrides", "accumulate"],
@@ -940,12 +946,12 @@ internal static class OperationCalls
                 recorder.Exit(call);
             }
         })),
-        Kernels.Register(Ops.AvgPool, kind, (OperationKernels.AvgPool)((Backend backend, Storage x, Storage y, in ConvGeometry g, bool countIncludePad) =>
+        Kernels.Register(Ops.AvgPool, kind, (OperationKernels.AvgPool)((Backend backend, Storage x, Storage y, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight) =>
         {
-            var call = recorder.Enter(backend, Ops.AvgPool, [x, y, g, countIncludePad]);
+            var call = recorder.Enter(backend, Ops.AvgPool, [x, y, g, countIncludePad, padBottom, padRight]);
             try
             {
-                backend.AvgPoolKernel(x, y, in g, countIncludePad);
+                backend.AvgPoolKernel(x, y, in g, countIncludePad, padBottom, padRight);
                 CallRecorder.Returned(call, null);
             }
             finally
@@ -953,12 +959,12 @@ internal static class OperationCalls
                 recorder.Exit(call);
             }
         })),
-        Kernels.Register(Ops.AvgPoolBackward, kind, (OperationKernels.AvgPoolBackward)((Backend backend, Storage dy, Storage dx, in ConvGeometry g, bool countIncludePad) =>
+        Kernels.Register(Ops.AvgPoolBackward, kind, (OperationKernels.AvgPoolBackward)((Backend backend, Storage dy, Storage dx, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight) =>
         {
-            var call = recorder.Enter(backend, Ops.AvgPoolBackward, [dy, dx, g, countIncludePad]);
+            var call = recorder.Enter(backend, Ops.AvgPoolBackward, [dy, dx, g, countIncludePad, padBottom, padRight]);
             try
             {
-                backend.AvgPoolBackwardKernel(dy, dx, in g, countIncludePad);
+                backend.AvgPoolBackwardKernel(dy, dx, in g, countIncludePad, padBottom, padRight);
                 CallRecorder.Returned(call, null);
             }
             finally
@@ -972,6 +978,84 @@ internal static class OperationCalls
             try
             {
                 backend.ResizeNormalizeKernel(x, coefficients, values, y, planes, channels, height, width, outHeight, outWidth, xTaps, yTaps, bytes);
+                CallRecorder.Returned(call, null);
+            }
+            finally
+            {
+                recorder.Exit(call);
+            }
+        })),
+        Kernels.Register(Ops.Interpolate2d, kind, (OperationKernels.Interpolate2d)((Backend backend, Storage x, Storage y, int planes, int height, int width, int outHeight, int outWidth, InterpolationMode mode, bool alignCorners, float scaleHeight, float scaleWidth) =>
+        {
+            var call = recorder.Enter(backend, Ops.Interpolate2d, [x, y, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth]);
+            try
+            {
+                backend.Interpolate2dKernel(x, y, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+                CallRecorder.Returned(call, null);
+            }
+            finally
+            {
+                recorder.Exit(call);
+            }
+        })),
+        Kernels.Register(Ops.Interpolate2dBackward, kind, (OperationKernels.Interpolate2dBackward)((Backend backend, Storage dy, Storage dx, int planes, int height, int width, int outHeight, int outWidth, InterpolationMode mode, bool alignCorners, float scaleHeight, float scaleWidth) =>
+        {
+            var call = recorder.Enter(backend, Ops.Interpolate2dBackward, [dy, dx, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth]);
+            try
+            {
+                backend.Interpolate2dBackwardKernel(dy, dx, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+                CallRecorder.Returned(call, null);
+            }
+            finally
+            {
+                recorder.Exit(call);
+            }
+        })),
+        Kernels.Register(Ops.AdaptiveAvgPool, kind, (OperationKernels.AdaptiveAvgPool)((Backend backend, Storage x, Storage y, int planes, int height, int width, int outHeight, int outWidth) =>
+        {
+            var call = recorder.Enter(backend, Ops.AdaptiveAvgPool, [x, y, planes, height, width, outHeight, outWidth]);
+            try
+            {
+                backend.AdaptiveAvgPoolKernel(x, y, planes, height, width, outHeight, outWidth);
+                CallRecorder.Returned(call, null);
+            }
+            finally
+            {
+                recorder.Exit(call);
+            }
+        })),
+        Kernels.Register(Ops.AdaptiveAvgPoolBackward, kind, (OperationKernels.AdaptiveAvgPoolBackward)((Backend backend, Storage dy, Storage dx, int planes, int height, int width, int outHeight, int outWidth) =>
+        {
+            var call = recorder.Enter(backend, Ops.AdaptiveAvgPoolBackward, [dy, dx, planes, height, width, outHeight, outWidth]);
+            try
+            {
+                backend.AdaptiveAvgPoolBackwardKernel(dy, dx, planes, height, width, outHeight, outWidth);
+                CallRecorder.Returned(call, null);
+            }
+            finally
+            {
+                recorder.Exit(call);
+            }
+        })),
+        Kernels.Register(Ops.AdaptiveMaxPool, kind, (OperationKernels.AdaptiveMaxPool)((Backend backend, Storage x, Storage y, Storage argmax, int planes, int height, int width, int outHeight, int outWidth) =>
+        {
+            var call = recorder.Enter(backend, Ops.AdaptiveMaxPool, [x, y, argmax, planes, height, width, outHeight, outWidth]);
+            try
+            {
+                backend.AdaptiveMaxPoolKernel(x, y, argmax, planes, height, width, outHeight, outWidth);
+                CallRecorder.Returned(call, null);
+            }
+            finally
+            {
+                recorder.Exit(call);
+            }
+        })),
+        Kernels.Register(Ops.AdaptiveMaxPoolBackward, kind, (OperationKernels.AdaptiveMaxPoolBackward)((Backend backend, Storage dy, Storage argmax, Storage dx, int planes, int height, int width, int outHeight, int outWidth) =>
+        {
+            var call = recorder.Enter(backend, Ops.AdaptiveMaxPoolBackward, [dy, argmax, dx, planes, height, width, outHeight, outWidth]);
+            try
+            {
+                backend.AdaptiveMaxPoolBackwardKernel(dy, argmax, dx, planes, height, width, outHeight, outWidth);
                 CallRecorder.Returned(call, null);
             }
             finally
@@ -1903,178 +1987,196 @@ internal static class OperationCalls
                     backend.ConvolutionBackwardWeight((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (ConvGeometry)a[3]!, (int)a[4]!, (int)a[5]!);
                     return null;
                 case 60:
-                    backend.AvgPool((Storage)a[0]!, (Storage)a[1]!, (ConvGeometry)a[2]!, (bool)a[3]!);
+                    backend.AvgPool((Storage)a[0]!, (Storage)a[1]!, (ConvGeometry)a[2]!, (bool)a[3]!, (int)a[4]!, (int)a[5]!);
                     return null;
                 case 61:
-                    backend.AvgPoolBackward((Storage)a[0]!, (Storage)a[1]!, (ConvGeometry)a[2]!, (bool)a[3]!);
+                    backend.AvgPoolBackward((Storage)a[0]!, (Storage)a[1]!, (ConvGeometry)a[2]!, (bool)a[3]!, (int)a[4]!, (int)a[5]!);
                     return null;
                 case 62:
                     backend.ResizeNormalize((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (int)a[4]!, (int)a[5]!, (int)a[6]!, (int)a[7]!, (int)a[8]!, (int)a[9]!, (int)a[10]!, (int)a[11]!, (bool)a[12]!);
                     return null;
                 case 63:
-                    backend.CtcLoss((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (int[])a[3]!, (int[])a[4]!, (int[])a[5]!, (int)a[6]!, (int)a[7]!, (int)a[8]!, (int)a[9]!, (bool)a[10]!, (bool)a[11]!);
+                    backend.Interpolate2d((Storage)a[0]!, (Storage)a[1]!, (int)a[2]!, (int)a[3]!, (int)a[4]!, (int)a[5]!, (int)a[6]!, (InterpolationMode)a[7]!, (bool)a[8]!, (float)a[9]!, (float)a[10]!);
                     return null;
                 case 64:
-                    backend.CtcLossBackward((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (int[])a[4]!, (int[])a[5]!, (int[])a[6]!, (int)a[7]!, (int)a[8]!, (int)a[9]!, (int)a[10]!, (bool)a[11]!, (bool)a[12]!);
+                    backend.Interpolate2dBackward((Storage)a[0]!, (Storage)a[1]!, (int)a[2]!, (int)a[3]!, (int)a[4]!, (int)a[5]!, (int)a[6]!, (InterpolationMode)a[7]!, (bool)a[8]!, (float)a[9]!, (float)a[10]!);
                     return null;
                 case 65:
-                    backend.Permute((Storage)a[0]!, (Storage)a[1]!, (int[])a[2]!, (int[])a[3]!, (bool)a[4]!);
+                    backend.AdaptiveAvgPool((Storage)a[0]!, (Storage)a[1]!, (int)a[2]!, (int)a[3]!, (int)a[4]!, (int)a[5]!, (int)a[6]!);
                     return null;
                 case 66:
-                    backend.SumAxis((Storage)a[0]!, (Storage)a[1]!, (int)a[2]!, (int)a[3]!, (int)a[4]!, (float)a[5]!, (bool)a[6]!);
+                    backend.AdaptiveAvgPoolBackward((Storage)a[0]!, (Storage)a[1]!, (int)a[2]!, (int)a[3]!, (int)a[4]!, (int)a[5]!, (int)a[6]!);
                     return null;
                 case 67:
-                    backend.BroadcastAxis((Storage)a[0]!, (Storage)a[1]!, (int)a[2]!, (int)a[3]!, (int)a[4]!, (float)a[5]!);
+                    backend.AdaptiveMaxPool((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (int)a[3]!, (int)a[4]!, (int)a[5]!, (int)a[6]!, (int)a[7]!);
                     return null;
                 case 68:
-                    backend.SgdStep((Storage)a[0]!, (Storage)a[1]!, (Storage?)a[2], (int)a[3]!, (float)a[4]!, (float)a[5]!);
+                    backend.AdaptiveMaxPoolBackward((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (int)a[3]!, (int)a[4]!, (int)a[5]!, (int)a[6]!, (int)a[7]!);
                     return null;
                 case 69:
-                    backend.AdamStep((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (int)a[4]!, (float)a[5]!, (float)a[6]!, (float)a[7]!, (float)a[8]!);
+                    backend.CtcLoss((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (int[])a[3]!, (int[])a[4]!, (int[])a[5]!, (int)a[6]!, (int)a[7]!, (int)a[8]!, (int)a[9]!, (bool)a[10]!, (bool)a[11]!);
                     return null;
                 case 70:
-                    backend.AdamStep8Bit((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage)a[4]!, (Storage)a[5]!, (int)a[6]!, (float)a[7]!, (float)a[8]!, (float)a[9]!, (float)a[10]!, (float)a[11]!, (float)a[12]!);
+                    backend.CtcLossBackward((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (int[])a[4]!, (int[])a[5]!, (int[])a[6]!, (int)a[7]!, (int)a[8]!, (int)a[9]!, (int)a[10]!, (bool)a[11]!, (bool)a[12]!);
                     return null;
                 case 71:
-                    backend.SumSquares((Storage)a[0]!, (Storage)a[1]!, (int)a[2]!);
+                    backend.Permute((Storage)a[0]!, (Storage)a[1]!, (int[])a[2]!, (int[])a[3]!, (bool)a[4]!);
                     return null;
                 case 72:
-                    return backend.FusedAdamW(Array.ConvertAll((object?[][])a[0]!, t => ((Storage)t[0]!, (Storage)t[1]!, (Storage)t[2]!, (Storage)t[3]!, (int)t[4]!)), ref cache, (float)a[2]!, (float)a[3]!, (float)a[4]!, (float)a[5]!, (float)a[6]!, (float)a[7]!, (bool)a[8]!);
+                    backend.SumAxis((Storage)a[0]!, (Storage)a[1]!, (int)a[2]!, (int)a[3]!, (int)a[4]!, (float)a[5]!, (bool)a[6]!);
+                    return null;
                 case 73:
-                    backend.ClipFactor((Storage)a[0]!, (Storage)a[1]!, (float)a[2]!);
+                    backend.BroadcastAxis((Storage)a[0]!, (Storage)a[1]!, (int)a[2]!, (int)a[3]!, (int)a[4]!, (float)a[5]!);
                     return null;
                 case 74:
-                    backend.Dropout((Storage)a[0]!, (Storage)a[1]!, (int)a[2]!, (float)a[3]!, (uint)a[4]!);
+                    backend.SgdStep((Storage)a[0]!, (Storage)a[1]!, (Storage?)a[2], (int)a[3]!, (float)a[4]!, (float)a[5]!);
                     return null;
                 case 75:
-                    backend.DropoutBackward((Storage)a[0]!, (Storage)a[1]!, (int)a[2]!, (float)a[3]!, (uint)a[4]!);
+                    backend.AdamStep((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (int)a[4]!, (float)a[5]!, (float)a[6]!, (float)a[7]!, (float)a[8]!);
                     return null;
                 case 76:
-                    backend.ScaleMaskSoftmax((Storage)a[0]!, (Storage?)a[1], (Storage)a[2]!, (int)a[3]!, (int)a[4]!, (int)a[5]!, (float)a[6]!);
+                    backend.AdamStep8Bit((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage)a[4]!, (Storage)a[5]!, (int)a[6]!, (float)a[7]!, (float)a[8]!, (float)a[9]!, (float)a[10]!, (float)a[11]!, (float)a[12]!);
                     return null;
                 case 77:
-                    backend.LayerNormFused((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (int)a[4]!, (int)a[5]!, (float)a[6]!);
+                    backend.SumSquares((Storage)a[0]!, (Storage)a[1]!, (int)a[2]!);
                     return null;
                 case 78:
-                    backend.LayerNormTrain((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage)a[4]!, (int)a[5]!, (int)a[6]!, (float)a[7]!);
-                    return null;
+                    return backend.FusedAdamW(Array.ConvertAll((object?[][])a[0]!, t => ((Storage)t[0]!, (Storage)t[1]!, (Storage)t[2]!, (Storage)t[3]!, (int)t[4]!)), ref cache, (float)a[2]!, (float)a[3]!, (float)a[4]!, (float)a[5]!, (float)a[6]!, (float)a[7]!, (bool)a[8]!);
                 case 79:
-                    backend.LayerNormBackward((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage?)a[4], (Storage?)a[5], (Storage?)a[6], (int)a[7]!, (int)a[8]!);
+                    backend.ClipFactor((Storage)a[0]!, (Storage)a[1]!, (float)a[2]!);
                     return null;
                 case 80:
-                    backend.BiasGelu((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (int)a[3]!, (int)a[4]!);
+                    backend.Dropout((Storage)a[0]!, (Storage)a[1]!, (int)a[2]!, (float)a[3]!, (uint)a[4]!);
                     return null;
                 case 81:
-                    backend.Int8MatMul((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (int)a[4]!, (int)a[5]!, (int)a[6]!);
+                    backend.DropoutBackward((Storage)a[0]!, (Storage)a[1]!, (int)a[2]!, (float)a[3]!, (uint)a[4]!);
                     return null;
                 case 82:
-                    backend.BFloat16MatMul((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (int)a[3]!, (int)a[4]!, (int)a[5]!);
+                    backend.ScaleMaskSoftmax((Storage)a[0]!, (Storage?)a[1], (Storage)a[2]!, (int)a[3]!, (int)a[4]!, (int)a[5]!, (float)a[6]!);
                     return null;
                 case 83:
-                    backend.BFloat16Dequantize((Storage)a[0]!, (Storage)a[1]!, (int)a[2]!, (int)a[3]!);
+                    backend.LayerNormFused((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (int)a[4]!, (int)a[5]!, (float)a[6]!);
                     return null;
                 case 84:
-                    backend.PackBFloat16((Storage)a[0]!, (Storage)a[1]!, (int)a[2]!);
+                    backend.LayerNormTrain((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage)a[4]!, (int)a[5]!, (int)a[6]!, (float)a[7]!);
                     return null;
                 case 85:
-                    backend.Int8Dequantize((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (int)a[3]!, (int)a[4]!);
+                    backend.LayerNormBackward((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage?)a[4], (Storage?)a[5], (Storage?)a[6], (int)a[7]!, (int)a[8]!);
                     return null;
                 case 86:
-                    backend.Int4MatMul((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (int)a[4]!, (int)a[5]!, (int)a[6]!);
+                    backend.BiasGelu((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (int)a[3]!, (int)a[4]!);
                     return null;
                 case 87:
-                    backend.Int4Dequantize((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (int)a[3]!, (int)a[4]!);
+                    backend.Int8MatMul((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (int)a[4]!, (int)a[5]!, (int)a[6]!);
                     return null;
                 case 88:
-                    backend.RmsNorm((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (int)a[3]!, (int)a[4]!, (float)a[5]!);
+                    backend.BFloat16MatMul((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (int)a[3]!, (int)a[4]!, (int)a[5]!);
                     return null;
                 case 89:
-                    backend.RmsNormBackward((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (int)a[4]!, (int)a[5]!);
+                    backend.BFloat16Dequantize((Storage)a[0]!, (Storage)a[1]!, (int)a[2]!, (int)a[3]!);
                     return null;
                 case 90:
-                    backend.Rope((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage)a[4]!, (int)a[5]!, (int)a[6]!, (int)a[7]!, (int)a[8]!, (int)a[9]!, (bool)a[10]!, (float)a[11]!);
+                    backend.PackBFloat16((Storage)a[0]!, (Storage)a[1]!, (int)a[2]!);
                     return null;
                 case 91:
-                    backend.RmsNormAffine((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (int)a[3]!, (int)a[4]!, (float)a[5]!, (float)a[6]!);
+                    backend.Int8Dequantize((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (int)a[3]!, (int)a[4]!);
                     return null;
                 case 92:
-                    backend.AddRmsNormAffine((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage)a[4]!, (int)a[5]!, (int)a[6]!, (float)a[7]!, (float)a[8]!);
+                    backend.Int4MatMul((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (int)a[4]!, (int)a[5]!, (int)a[6]!);
                     return null;
                 case 93:
-                    backend.RmsNormRope((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage)a[4]!, (Storage)a[5]!, (int)a[6]!, (int)a[7]!, (float)a[8]!, (float)a[9]!, (int)a[10]!, (int)a[11]!, (int)a[12]!, (bool)a[13]!);
+                    backend.Int4Dequantize((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (int)a[3]!, (int)a[4]!);
                     return null;
                 case 94:
-                    backend.RmsNormRopePair((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (int)a[3]!, (float)a[4]!, (float)a[5]!, (int)a[6]!, (Storage)a[7]!, (Storage)a[8]!, (Storage)a[9]!, (int)a[10]!, (float)a[11]!, (float)a[12]!, (int)a[13]!, (Storage)a[14]!, (Storage)a[15]!, (Storage)a[16]!, (int)a[17]!, (int)a[18]!, (int)a[19]!, (bool)a[20]!);
+                    backend.RmsNorm((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (int)a[3]!, (int)a[4]!, (float)a[5]!);
                     return null;
                 case 95:
-                    return backend.NormRopeHeads((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (int)a[3]!, (int)a[4]!, (int)a[5]!, (int)a[6]!, (int)a[7]!, (Storage?)a[8], (float)a[9]!, (float)a[10]!, (Storage?)a[11], (float)a[12]!, (float)a[13]!, (Storage?)a[14], (Storage?)a[15], (Storage?)a[16], (int)a[17]!, (bool)a[18]!, (Storage)a[19]!, (Storage)a[20]!, (Storage)a[21]!, (Storage?)a[22], (int)a[23]!, (int)a[24]!, (bool)a[25]!);
+                    backend.RmsNormBackward((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (int)a[4]!, (int)a[5]!);
+                    return null;
                 case 96:
-                    backend.SoftmaxCrossEntropyRows((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (int)a[4]!, (int)a[5]!, (float)a[6]!);
+                    backend.Rope((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage)a[4]!, (int)a[5]!, (int)a[6]!, (int)a[7]!, (int)a[8]!, (int)a[9]!, (bool)a[10]!, (float)a[11]!);
                     return null;
                 case 97:
-                    backend.GatedActivation((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (int)a[3]!, (int)a[4]!);
+                    backend.RmsNormAffine((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (int)a[3]!, (int)a[4]!, (float)a[5]!, (float)a[6]!);
                     return null;
                 case 98:
-                    backend.GatedActivationBackward((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage)a[4]!, (int)a[5]!, (int)a[6]!, (int)a[7]!);
+                    backend.AddRmsNormAffine((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage)a[4]!, (int)a[5]!, (int)a[6]!, (float)a[7]!, (float)a[8]!);
                     return null;
                 case 99:
-                    backend.GatedActivationPacked((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage)a[4]!, (Storage)a[5]!, (int)a[6]!, (int)a[7]!, (int)a[8]!);
+                    backend.RmsNormRope((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage)a[4]!, (Storage)a[5]!, (int)a[6]!, (int)a[7]!, (float)a[8]!, (float)a[9]!, (int)a[10]!, (int)a[11]!, (int)a[12]!, (bool)a[13]!);
                     return null;
                 case 100:
-                    backend.GatedActivationBackwardPacked((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage)a[4]!, (int)a[5]!, (int)a[6]!, (int)a[7]!);
+                    backend.RmsNormRopePair((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (int)a[3]!, (float)a[4]!, (float)a[5]!, (int)a[6]!, (Storage)a[7]!, (Storage)a[8]!, (Storage)a[9]!, (int)a[10]!, (float)a[11]!, (float)a[12]!, (int)a[13]!, (Storage)a[14]!, (Storage)a[15]!, (Storage)a[16]!, (int)a[17]!, (int)a[18]!, (int)a[19]!, (bool)a[20]!);
                     return null;
                 case 101:
-                    backend.KeyValueWriteInt8((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (int)a[4]!, (int)a[5]!, (int)a[6]!, (int)a[7]!);
-                    return null;
+                    return backend.NormRopeHeads((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (int)a[3]!, (int)a[4]!, (int)a[5]!, (int)a[6]!, (int)a[7]!, (Storage?)a[8], (float)a[9]!, (float)a[10]!, (Storage?)a[11], (float)a[12]!, (float)a[13]!, (Storage?)a[14], (Storage?)a[15], (Storage?)a[16], (int)a[17]!, (bool)a[18]!, (Storage)a[19]!, (Storage)a[20]!, (Storage)a[21]!, (Storage?)a[22], (int)a[23]!, (int)a[24]!, (bool)a[25]!);
                 case 102:
-                    backend.AttentionScoresInt8((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (int)a[4]!, (int)a[5]!, (int)a[6]!, (int)a[7]!);
+                    backend.SoftmaxCrossEntropyRows((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (int)a[4]!, (int)a[5]!, (float)a[6]!);
                     return null;
                 case 103:
-                    backend.AttentionContextInt8((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (int)a[4]!, (int)a[5]!, (int)a[6]!, (int)a[7]!);
+                    backend.GatedActivation((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (int)a[3]!, (int)a[4]!);
                     return null;
                 case 104:
-                    backend.AttentionDecode((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage)a[4]!, (int)a[5]!, (int)a[6]!, (int)a[7]!, (int)a[8]!, (int)a[9]!, (float)a[10]!, (AttentionVariant)a[11]!);
+                    backend.GatedActivationBackward((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage)a[4]!, (int)a[5]!, (int)a[6]!, (int)a[7]!);
                     return null;
                 case 105:
-                    backend.AttentionInt8((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage)a[4]!, (Storage)a[5]!, (Storage)a[6]!, (int)a[7]!, (int)a[8]!, (int)a[9]!, (int)a[10]!, (int)a[11]!, (float)a[12]!, (bool)a[13]!, (AttentionVariant)a[14]!);
+                    backend.GatedActivationPacked((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage)a[4]!, (Storage)a[5]!, (int)a[6]!, (int)a[7]!, (int)a[8]!);
                     return null;
                 case 106:
-                    backend.AttentionBFloat16((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage)a[4]!, (int)a[5]!, (int)a[6]!, (int)a[7]!, (int)a[8]!, (int)a[9]!, (float)a[10]!, (bool)a[11]!, (AttentionVariant)a[12]!);
+                    backend.GatedActivationBackwardPacked((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage)a[4]!, (int)a[5]!, (int)a[6]!, (int)a[7]!);
                     return null;
                 case 107:
-                    backend.KeyValueWriteBFloat16((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (int)a[3]!, (int)a[4]!, (int)a[5]!, (int)a[6]!);
+                    backend.KeyValueWriteInt8((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (int)a[4]!, (int)a[5]!, (int)a[6]!, (int)a[7]!);
                     return null;
                 case 108:
-                    backend.AttentionTiledBackward((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage)a[4]!, (Storage)a[5]!, (Storage)a[6]!, (Storage)a[7]!, (Storage)a[8]!, (int)a[9]!, (int)a[10]!, (int)a[11]!, (int)a[12]!, (int)a[13]!, (float)a[14]!, (AttentionVariant)a[15]!);
+                    backend.AttentionScoresInt8((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (int)a[4]!, (int)a[5]!, (int)a[6]!, (int)a[7]!);
                     return null;
                 case 109:
-                    return backend.AttentionSegmented((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage?)a[4], (Storage)a[5]!, (Storage)a[6]!, (int)a[7]!, (int)a[8]!, (int)a[9]!, (int)a[10]!, (int)a[11]!, (float)a[12]!, (AttentionVariant)a[13]!);
+                    backend.AttentionContextInt8((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (int)a[4]!, (int)a[5]!, (int)a[6]!, (int)a[7]!);
+                    return null;
                 case 110:
-                    return backend.AttentionRows((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage)a[4]!, (Storage)a[5]!, (int)a[6]!, (int)a[7]!, (int)a[8]!, (int)a[9]!, (int)a[10]!, (int)a[11]!, (float)a[12]!, (AttentionVariant)a[13]!);
+                    backend.AttentionDecode((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage)a[4]!, (int)a[5]!, (int)a[6]!, (int)a[7]!, (int)a[8]!, (int)a[9]!, (float)a[10]!, (AttentionVariant)a[11]!);
+                    return null;
                 case 111:
-                    return backend.AttentionSegmentedBackward((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage)a[4]!, (Storage)a[5]!, (Storage)a[6]!, (Storage)a[7]!, (Storage)a[8]!, (Storage)a[9]!, (Storage)a[10]!, (int)a[11]!, (int)a[12]!, (int)a[13]!, (int)a[14]!, (int)a[15]!, (float)a[16]!, (AttentionVariant)a[17]!);
+                    backend.AttentionInt8((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage)a[4]!, (Storage)a[5]!, (Storage)a[6]!, (int)a[7]!, (int)a[8]!, (int)a[9]!, (int)a[10]!, (int)a[11]!, (float)a[12]!, (bool)a[13]!, (AttentionVariant)a[14]!);
+                    return null;
                 case 112:
-                    backend.AttentionTiled((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage)a[4]!, (Storage?)a[5], (int)a[6]!, (int)a[7]!, (int)a[8]!, (int)a[9]!, (int)a[10]!, (float)a[11]!, (AttentionVariant)a[12]!);
+                    backend.AttentionBFloat16((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage)a[4]!, (int)a[5]!, (int)a[6]!, (int)a[7]!, (int)a[8]!, (int)a[9]!, (float)a[10]!, (bool)a[11]!, (AttentionVariant)a[12]!);
                     return null;
                 case 113:
-                    backend.AttentionSpans((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage)a[4]!, (Storage)a[5]!, (Storage?)a[6], (int)a[7]!, (int)a[8]!, (int)a[9]!, (int)a[10]!, (int)a[11]!, (int)a[12]!, (float)a[13]!, (AttentionVariant)a[14]!);
+                    backend.KeyValueWriteBFloat16((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (int)a[3]!, (int)a[4]!, (int)a[5]!, (int)a[6]!);
                     return null;
                 case 114:
-                    backend.AttentionSpansBackward((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage)a[4]!, (Storage)a[5]!, (Storage)a[6]!, (Storage)a[7]!, (Storage)a[8]!, (Storage)a[9]!, (Storage)a[10]!, (int)a[11]!, (int)a[12]!, (int)a[13]!, (int)a[14]!, (int)a[15]!, (int)a[16]!, (float)a[17]!, (AttentionVariant)a[18]!);
+                    backend.AttentionTiledBackward((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage)a[4]!, (Storage)a[5]!, (Storage)a[6]!, (Storage)a[7]!, (Storage)a[8]!, (int)a[9]!, (int)a[10]!, (int)a[11]!, (int)a[12]!, (int)a[13]!, (float)a[14]!, (AttentionVariant)a[15]!);
                     return null;
                 case 115:
-                    backend.DecoderMask((Storage)a[0]!, (Storage)a[1]!, (int)a[2]!, (int)a[3]!);
-                    return null;
+                    return backend.AttentionSegmented((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage?)a[4], (Storage)a[5]!, (Storage)a[6]!, (int)a[7]!, (int)a[8]!, (int)a[9]!, (int)a[10]!, (int)a[11]!, (float)a[12]!, (AttentionVariant)a[13]!);
                 case 116:
-                    backend.KeyValueWrite((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (int)a[3]!, (int)a[4]!, (int)a[5]!, (int)a[6]!);
-                    return null;
+                    return backend.AttentionRows((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage)a[4]!, (Storage)a[5]!, (int)a[6]!, (int)a[7]!, (int)a[8]!, (int)a[9]!, (int)a[10]!, (int)a[11]!, (float)a[12]!, (AttentionVariant)a[13]!);
                 case 117:
-                    backend.SampleRows((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (int)a[4]!, (int)a[5]!, (int)a[6]!, (int)a[7]!, (float)a[8]!, (int)a[9]!, (float)a[10]!, (float)a[11]!, (uint)a[12]!);
-                    return null;
+                    return backend.AttentionSegmentedBackward((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage)a[4]!, (Storage)a[5]!, (Storage)a[6]!, (Storage)a[7]!, (Storage)a[8]!, (Storage)a[9]!, (Storage)a[10]!, (int)a[11]!, (int)a[12]!, (int)a[13]!, (int)a[14]!, (int)a[15]!, (float)a[16]!, (AttentionVariant)a[17]!);
                 case 118:
-                    backend.PenalizeRows((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (int)a[4]!, (int)a[5]!, (int)a[6]!, (int)a[7]!, (int)a[8]!, (int)a[9]!, (float)a[10]!, (float)a[11]!, (float)a[12]!);
+                    backend.AttentionTiled((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage)a[4]!, (Storage?)a[5], (int)a[6]!, (int)a[7]!, (int)a[8]!, (int)a[9]!, (int)a[10]!, (float)a[11]!, (AttentionVariant)a[12]!);
                     return null;
                 case 119:
+                    backend.AttentionSpans((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage)a[4]!, (Storage)a[5]!, (Storage?)a[6], (int)a[7]!, (int)a[8]!, (int)a[9]!, (int)a[10]!, (int)a[11]!, (int)a[12]!, (float)a[13]!, (AttentionVariant)a[14]!);
+                    return null;
+                case 120:
+                    backend.AttentionSpansBackward((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage)a[4]!, (Storage)a[5]!, (Storage)a[6]!, (Storage)a[7]!, (Storage)a[8]!, (Storage)a[9]!, (Storage)a[10]!, (int)a[11]!, (int)a[12]!, (int)a[13]!, (int)a[14]!, (int)a[15]!, (int)a[16]!, (float)a[17]!, (AttentionVariant)a[18]!);
+                    return null;
+                case 121:
+                    backend.DecoderMask((Storage)a[0]!, (Storage)a[1]!, (int)a[2]!, (int)a[3]!);
+                    return null;
+                case 122:
+                    backend.KeyValueWrite((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (int)a[3]!, (int)a[4]!, (int)a[5]!, (int)a[6]!);
+                    return null;
+                case 123:
+                    backend.SampleRows((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (int)a[4]!, (int)a[5]!, (int)a[6]!, (int)a[7]!, (float)a[8]!, (int)a[9]!, (float)a[10]!, (float)a[11]!, (uint)a[12]!);
+                    return null;
+                case 124:
+                    backend.PenalizeRows((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (int)a[4]!, (int)a[5]!, (int)a[6]!, (int)a[7]!, (int)a[8]!, (int)a[9]!, (float)a[10]!, (float)a[11]!, (float)a[12]!);
+                    return null;
+                case 125:
                     backend.HistoryPush((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (int)a[3]!, (int)a[4]!);
                     return null;
                 default:

@@ -202,20 +202,21 @@ internal sealed partial class CpuBackend
 
     // ------------------------------------------------------------------ average pooling
 
-    // The divisor of the window at (oh, ow): KH·KW, or the input positions it covers (at least 1).
-    private static float PoolDivisor(in ConvGeometry g, int oh, int ow, bool countIncludePad)
+    // The divisor of the window at (oh, ow): its rows and columns up to the padded end (H + padBottom, W + padRight), or the
+    // input positions it covers (at least 1).
+    private static float PoolDivisor(in ConvGeometry g, int oh, int ow, bool countIncludePad, int padBottom, int padRight)
     {
+        int r0 = oh * g.SH - g.PH, c0 = ow * g.SW - g.PW;
         if (countIncludePad)
         {
-            return g.KH * g.KW;
+            return (Math.Min(r0 + g.KH, g.H + padBottom) - r0) * (Math.Min(c0 + g.KW, g.W + padRight) - c0);
         }
 
-        int r0 = oh * g.SH - g.PH, c0 = ow * g.SW - g.PW;
         int rows = Math.Min(r0 + g.KH, g.H) - Math.Max(r0, 0), cols = Math.Min(c0 + g.KW, g.W) - Math.Max(c0, 0);
         return Math.Max(rows * cols, 1);
     }
 
-    public override void AvgPoolKernel(Storage x, Storage y, in ConvGeometry g, bool countIncludePad)
+    public override void AvgPoolKernel(Storage x, Storage y, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
     {
         float[] xv = D(x), yv = D(y);
         var geo = g;
@@ -242,14 +243,14 @@ internal sealed partial class CpuBackend
                             }
                         }
 
-                        yv[o] = sum / PoolDivisor(geo, oh, ow, countIncludePad);
+                        yv[o] = sum / PoolDivisor(geo, oh, ow, countIncludePad, padBottom, padRight);
                     }
                 }
             }
         });
     }
 
-    public override void AvgPoolBackwardKernel(Storage dy, Storage dx, in ConvGeometry g, bool countIncludePad)
+    public override void AvgPoolBackwardKernel(Storage dy, Storage dx, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
     {
         float[] gv = D(dy), dv = D(dx);
         var geo = g;
@@ -270,7 +271,7 @@ internal sealed partial class CpuBackend
                         {
                             for (int ow = owFirst; ow < owLast; ow++)
                             {
-                                sum += source[oh * geo.OW + ow] / PoolDivisor(geo, oh, ow, countIncludePad);
+                                sum += source[oh * geo.OW + ow] / PoolDivisor(geo, oh, ow, countIncludePad, padBottom, padRight);
                             }
                         }
 

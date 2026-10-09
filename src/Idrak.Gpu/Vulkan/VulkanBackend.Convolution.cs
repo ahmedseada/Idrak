@@ -308,32 +308,33 @@ internal sealed partial class VulkanBackend
 
     // ------------------------------------------------------------------ average pooling
 
-    public override void AvgPoolKernel(Storage x, Storage y, in ConvGeometry g, bool countIncludePad)
+    public override void AvgPoolKernel(Storage x, Storage y, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
     {
         if ((long)g.N * g.C * g.H * g.W > int.MaxValue || !Fit(x, y))
         {
-            base.AvgPoolKernel(x, y, in g, countIncludePad);
+            base.AvgPoolKernel(x, y, in g, countIncludePad, padBottom, padRight);
             return;
         }
 
-        Span<byte> b = stackalloc byte[60];
-        Grid("avg_pool", (long)g.N * g.C * g.OH * g.OW, [x, y], PushPool(b, g, countIncludePad));
+        Span<byte> b = stackalloc byte[68];
+        Grid("avg_pool", (long)g.N * g.C * g.OH * g.OW, [x, y], PushPool(b, g, countIncludePad, padBottom, padRight));
     }
 
-    public override void AvgPoolBackwardKernel(Storage dy, Storage dx, in ConvGeometry g, bool countIncludePad)
+    public override void AvgPoolBackwardKernel(Storage dy, Storage dx, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
     {
         if ((long)g.N * g.C * g.H * g.W > int.MaxValue || !Fit(dy, dx))
         {
-            base.AvgPoolBackwardKernel(dy, dx, in g, countIncludePad);
+            base.AvgPoolBackwardKernel(dy, dx, in g, countIncludePad, padBottom, padRight);
             return;
         }
 
-        Span<byte> b = stackalloc byte[60];
-        Grid("avg_pool_backward", (long)g.N * g.C * g.H * g.W, [dy, dx], PushPool(b, g, countIncludePad));
+        Span<byte> b = stackalloc byte[68];
+        Grid("avg_pool_backward", (long)g.N * g.C * g.H * g.W, [dy, dx], PushPool(b, g, countIncludePad, padBottom, padRight));
     }
 
-    private static ReadOnlySpan<byte> PushPool(Span<byte> bytes, in ConvGeometry g, bool countIncludePad) =>
-        new Push(bytes).I(g.N).I(g.C).I(g.H).I(g.W).I(g.KH).I(g.KW).I(g.SH).I(g.SW).I(g.PH).I(g.PW).I(g.OH).I(g.OW).I(1).I(1).B(countIncludePad).Bytes;
+    private static ReadOnlySpan<byte> PushPool(Span<byte> bytes, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight) =>
+        new Push(bytes).I(g.N).I(g.C).I(g.H).I(g.W).I(g.KH).I(g.KW).I(g.SH).I(g.SW).I(g.PH).I(g.PW).I(g.OH).I(g.OW).I(1).I(1).B(countIncludePad)
+            .I(padBottom).I(padRight).Bytes;
 
     // ------------------------------------------------------------------ resampling
 
@@ -349,5 +350,92 @@ internal sealed partial class VulkanBackend
         Span<byte> b = stackalloc byte[36];
         Grid("resize_normalize", (long)planes * outHeight * outWidth, [x, coefficients, values, y],
             new Push(b).I(planes).I(Math.Max(channels, 1)).I(height).I(width).I(outHeight).I(outWidth).I(xTaps).I(yTaps).B(bytes).Bytes);
+    }
+
+    // ------------------------------------------------------------------ interpolation and adaptive pooling
+
+    public override void Interpolate2dKernel(Storage x, Storage y, int planes, int height, int width, int outHeight, int outWidth, InterpolationMode mode,
+        bool alignCorners, float scaleHeight, float scaleWidth)
+    {
+        if ((long)planes * outHeight * outWidth > int.MaxValue || (long)planes * height * width > int.MaxValue || !Fit(x, y))
+        {
+            base.Interpolate2dKernel(x, y, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+            return;
+        }
+
+        Span<byte> b = stackalloc byte[36];
+        Grid("interpolate", (long)planes * outHeight * outWidth, [x, y], PushInterpolation(b, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth));
+    }
+
+    public override void Interpolate2dBackwardKernel(Storage dy, Storage dx, int planes, int height, int width, int outHeight, int outWidth, InterpolationMode mode,
+        bool alignCorners, float scaleHeight, float scaleWidth)
+    {
+        if ((long)planes * outHeight * outWidth > int.MaxValue || (long)planes * height * width > int.MaxValue || !Fit(dy, dx))
+        {
+            base.Interpolate2dBackwardKernel(dy, dx, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+            return;
+        }
+
+        Span<byte> b = stackalloc byte[36];
+        Grid("interpolate_backward", (long)planes * height * width, [dy, dx],
+            PushInterpolation(b, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth));
+    }
+
+    private static ReadOnlySpan<byte> PushInterpolation(Span<byte> bytes, int planes, int height, int width, int outHeight, int outWidth, InterpolationMode mode,
+        bool alignCorners, float scaleHeight, float scaleWidth) =>
+        new Push(bytes).I(planes).I(height).I(width).I(outHeight).I(outWidth).I(mode == InterpolationMode.Nearest ? 0 : 1).B(alignCorners).F(scaleHeight).F(scaleWidth).Bytes;
+
+    // Whether the adaptive windows' index arithmetic ((o + 1) · size and (i + 1) · outSize) and the element counts stay
+    // within an int.
+    private static bool AdaptiveFits(int planes, int height, int width, int outHeight, int outWidth) =>
+        (long)planes * height * width <= int.MaxValue && (long)planes * outHeight * outWidth <= int.MaxValue
+        && (long)(outHeight + 1) * (height + 1) <= int.MaxValue && (long)(outWidth + 1) * (width + 1) <= int.MaxValue;
+
+    public override void AdaptiveAvgPoolKernel(Storage x, Storage y, int planes, int height, int width, int outHeight, int outWidth)
+    {
+        if (!AdaptiveFits(planes, height, width, outHeight, outWidth) || !Fit(x, y))
+        {
+            base.AdaptiveAvgPoolKernel(x, y, planes, height, width, outHeight, outWidth);
+            return;
+        }
+
+        Span<byte> b = stackalloc byte[20];
+        Grid("adaptive_avg_pool", (long)planes * outHeight * outWidth, [x, y], new Push(b).I(planes).I(height).I(width).I(outHeight).I(outWidth).Bytes);
+    }
+
+    public override void AdaptiveAvgPoolBackwardKernel(Storage dy, Storage dx, int planes, int height, int width, int outHeight, int outWidth)
+    {
+        if (!AdaptiveFits(planes, height, width, outHeight, outWidth) || !Fit(dy, dx))
+        {
+            base.AdaptiveAvgPoolBackwardKernel(dy, dx, planes, height, width, outHeight, outWidth);
+            return;
+        }
+
+        Span<byte> b = stackalloc byte[20];
+        Grid("adaptive_avg_pool_backward", (long)planes * height * width, [dy, dx], new Push(b).I(planes).I(height).I(width).I(outHeight).I(outWidth).Bytes);
+    }
+
+    public override void AdaptiveMaxPoolKernel(Storage x, Storage y, Storage argmax, int planes, int height, int width, int outHeight, int outWidth)
+    {
+        if (!AdaptiveFits(planes, height, width, outHeight, outWidth) || !Fit(x, y, argmax))
+        {
+            base.AdaptiveMaxPoolKernel(x, y, argmax, planes, height, width, outHeight, outWidth);
+            return;
+        }
+
+        Span<byte> b = stackalloc byte[20];
+        Grid("adaptive_max_pool", (long)planes * outHeight * outWidth, [x, y, argmax], new Push(b).I(planes).I(height).I(width).I(outHeight).I(outWidth).Bytes);
+    }
+
+    public override void AdaptiveMaxPoolBackwardKernel(Storage dy, Storage argmax, Storage dx, int planes, int height, int width, int outHeight, int outWidth)
+    {
+        if (!AdaptiveFits(planes, height, width, outHeight, outWidth) || !Fit(dy, argmax, dx))
+        {
+            base.AdaptiveMaxPoolBackwardKernel(dy, argmax, dx, planes, height, width, outHeight, outWidth);
+            return;
+        }
+
+        Span<byte> b = stackalloc byte[20];
+        Grid("adaptive_max_pool_backward", (long)planes * height * width, [dy, argmax, dx], new Push(b).I(planes).I(height).I(width).I(outHeight).I(outWidth).Bytes);
     }
 }

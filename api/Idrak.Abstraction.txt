@@ -265,6 +265,9 @@ public abstract class Idrak.Abstraction.Devices.Backend
   public virtual string? TensorCoresUnavailable()
   public virtual void AdamStep8BitKernel(Idrak.Abstraction.Devices.Storage p, Idrak.Abstraction.Devices.Storage g, Idrak.Abstraction.Devices.Storage m, Idrak.Abstraction.Devices.Storage v, Idrak.Abstraction.Devices.Storage absMax, Idrak.Abstraction.Devices.Storage map, int n, float lr, float beta1, float beta2, float eps, float gradientScale, float decay)
   public virtual void AdamStepKernel(Idrak.Abstraction.Devices.Storage p, Idrak.Abstraction.Devices.Storage g, Idrak.Abstraction.Devices.Storage m, Idrak.Abstraction.Devices.Storage v, int n, float lr, float beta1, float beta2, float eps)
+  public virtual void AdaptiveAvgPoolBackwardKernel(Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dx, int planes, int height, int width, int outHeight, int outWidth)
+  public virtual void AdaptiveAvgPoolKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, int planes, int height, int width, int outHeight, int outWidth)
+  public virtual void AdaptiveMaxPoolKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage argmax, int planes, int height, int width, int outHeight, int outWidth)
   public virtual void AddBroadcastScalarKernel(Idrak.Abstraction.Devices.Storage s, Idrak.Abstraction.Devices.Storage y, int n, float scale)
   public virtual void AddDropoutKernel(Idrak.Abstraction.Devices.Storage residual, Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage output, int n, float p, uint seed)
   public virtual void AddRmsNormAffineKernel(Idrak.Abstraction.Devices.Storage a, Idrak.Abstraction.Devices.Storage b, Idrak.Abstraction.Devices.Storage sum, Idrak.Abstraction.Devices.Storage gain, Idrak.Abstraction.Devices.Storage y, int rows, int cols, float eps, float offset)
@@ -319,6 +322,8 @@ public abstract class Idrak.Abstraction.Devices.Backend
   public virtual void Int4MatMulKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage scales, Idrak.Abstraction.Devices.Storage y, int m, int n, int k)
   public virtual void Int8DequantizeKernel(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage scales, Idrak.Abstraction.Devices.Storage w, int k, int n)
   public virtual void Int8MatMulKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage scales, Idrak.Abstraction.Devices.Storage y, int m, int n, int k)
+  public virtual void Interpolate2dBackwardKernel(Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dx, int planes, int height, int width, int outHeight, int outWidth, Idrak.Abstraction.Devices.InterpolationMode mode, bool alignCorners, float scaleHeight, float scaleWidth)
+  public virtual void Interpolate2dKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, int planes, int height, int width, int outHeight, int outWidth, Idrak.Abstraction.Devices.InterpolationMode mode, bool alignCorners, float scaleHeight, float scaleWidth)
   public virtual void InvSqrtKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, int n, float eps)
   public virtual void KeyValueWriteBFloat16Kernel(Idrak.Abstraction.Devices.Storage source, Idrak.Abstraction.Devices.Storage cache, Idrak.Abstraction.Devices.Storage position, int heads, int steps, int capacity, int dim)
   public virtual void KeyValueWriteInt8Kernel(Idrak.Abstraction.Devices.Storage source, Idrak.Abstraction.Devices.Storage cache, Idrak.Abstraction.Devices.Storage scales, Idrak.Abstraction.Devices.Storage position, int heads, int steps, int capacity, int dim)
@@ -367,6 +372,9 @@ public abstract class Idrak.Abstraction.Devices.Backend
   public virtual void WhereKernel(Idrak.Abstraction.Devices.Storage condition, Idrak.Abstraction.Devices.Storage a, Idrak.Abstraction.Devices.Storage b, Idrak.Abstraction.Devices.Storage y, int n)
   public void AdamStep(Idrak.Abstraction.Devices.Storage p, Idrak.Abstraction.Devices.Storage g, Idrak.Abstraction.Devices.Storage m, Idrak.Abstraction.Devices.Storage v, int n, float lr, float beta1, float beta2, float eps)
   public void AdamStep8Bit(Idrak.Abstraction.Devices.Storage p, Idrak.Abstraction.Devices.Storage g, Idrak.Abstraction.Devices.Storage m, Idrak.Abstraction.Devices.Storage v, Idrak.Abstraction.Devices.Storage absMax, Idrak.Abstraction.Devices.Storage map, int n, float lr, float beta1, float beta2, float eps, float gradientScale, float decay)
+  public void AdaptiveAvgPool(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, int planes, int height, int width, int outHeight, int outWidth)
+  public void AdaptiveAvgPoolBackward(Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dx, int planes, int height, int width, int outHeight, int outWidth)
+  public void AdaptiveMaxPool(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage argmax, int planes, int height, int width, int outHeight, int outWidth)
   public void AddBroadcastScalar(Idrak.Abstraction.Devices.Storage s, Idrak.Abstraction.Devices.Storage y, int n, float scale)
   public void AddDropout(Idrak.Abstraction.Devices.Storage residual, Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage output, int n, float p, uint seed)
   public void AddRmsNormAffine(Idrak.Abstraction.Devices.Storage a, Idrak.Abstraction.Devices.Storage b, Idrak.Abstraction.Devices.Storage sum, Idrak.Abstraction.Devices.Storage gain, Idrak.Abstraction.Devices.Storage y, int rows, int cols, float eps, float offset)
@@ -418,6 +426,8 @@ public abstract class Idrak.Abstraction.Devices.Backend
   public void Int4MatMul(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage scales, Idrak.Abstraction.Devices.Storage y, int m, int n, int k)
   public void Int8Dequantize(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage scales, Idrak.Abstraction.Devices.Storage w, int k, int n)
   public void Int8MatMul(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage scales, Idrak.Abstraction.Devices.Storage y, int m, int n, int k)
+  public void Interpolate2d(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, int planes, int height, int width, int outHeight, int outWidth, Idrak.Abstraction.Devices.InterpolationMode mode, bool alignCorners, float scaleHeight, float scaleWidth)
+  public void Interpolate2dBackward(Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dx, int planes, int height, int width, int outHeight, int outWidth, Idrak.Abstraction.Devices.InterpolationMode mode, bool alignCorners, float scaleHeight, float scaleWidth)
   public void InvSqrt(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, int n, float eps)
   public void KeyValueWrite(Idrak.Abstraction.Devices.Storage source, Idrak.Abstraction.Devices.Storage cache, Idrak.Abstraction.Devices.Storage position, int heads, int steps, int capacity, int dim)
   public void KeyValueWriteBFloat16(Idrak.Abstraction.Devices.Storage source, Idrak.Abstraction.Devices.Storage cache, Idrak.Abstraction.Devices.Storage position, int heads, int steps, int capacity, int dim)
@@ -491,6 +501,7 @@ public enum Idrak.Abstraction.Devices.BinaryOp : int
 
 public readonly record struct Idrak.Abstraction.Devices.ConvGeometry : System.IEquatable<Idrak.Abstraction.Devices.ConvGeometry>
   public ConvGeometry(int N, int C, int H, int W, int KH, int KW, int SH, int SW, int PH, int PW)
+  public bool Asymmetric { get; }
   public bool Dilated { get; }
   public int C { get; init; }
   public int DH { get; init; }
@@ -503,6 +514,8 @@ public readonly record struct Idrak.Abstraction.Devices.ConvGeometry : System.IE
   public int OW { get; }
   public int PH { get; init; }
   public int PW { get; init; }
+  public int PadBottom { get; init; }
+  public int PadRight { get; init; }
   public int PatchSize { get; }
   public int Positions { get; }
   public int SH { get; init; }
@@ -568,6 +581,10 @@ public interface Idrak.Abstraction.Devices.IMemoryOffload
   public int Rebalance(bool makeRoom = true)
   public void Prefetch(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Devices.Storage> storages)
   public void SetPriority(Idrak.Abstraction.Devices.Storage storage, Idrak.Abstraction.Devices.OffloadPriority priority)
+
+public enum Idrak.Abstraction.Devices.InterpolationMode : int
+  Bilinear = 1
+  Nearest = 0
 
 public sealed class Idrak.Abstraction.Devices.MemoryAccountant
   public Idrak.Abstraction.MemoryUsage Usage { get; }
@@ -1788,6 +1805,9 @@ public class Idrak.Abstraction.Operations.Operation
 public static class Idrak.Abstraction.Operations.OperationKernels
   nested Idrak.Abstraction.Operations.OperationKernels.AdamStep (below)
   nested Idrak.Abstraction.Operations.OperationKernels.AdamStep8Bit (below)
+  nested Idrak.Abstraction.Operations.OperationKernels.AdaptiveAvgPool (below)
+  nested Idrak.Abstraction.Operations.OperationKernels.AdaptiveAvgPoolBackward (below)
+  nested Idrak.Abstraction.Operations.OperationKernels.AdaptiveMaxPool (below)
   nested Idrak.Abstraction.Operations.OperationKernels.AddBroadcastScalar (below)
   nested Idrak.Abstraction.Operations.OperationKernels.AddDropout (below)
   nested Idrak.Abstraction.Operations.OperationKernels.AddRmsNormAffine (below)
@@ -1848,6 +1868,8 @@ public static class Idrak.Abstraction.Operations.OperationKernels
   nested Idrak.Abstraction.Operations.OperationKernels.Int4MatMul (below)
   nested Idrak.Abstraction.Operations.OperationKernels.Int8Dequantize (below)
   nested Idrak.Abstraction.Operations.OperationKernels.Int8MatMul (below)
+  nested Idrak.Abstraction.Operations.OperationKernels.Interpolate2d (below)
+  nested Idrak.Abstraction.Operations.OperationKernels.Interpolate2dBackward (below)
   nested Idrak.Abstraction.Operations.OperationKernels.InvSqrt (below)
   nested Idrak.Abstraction.Operations.OperationKernels.KeyValueWrite (below)
   nested Idrak.Abstraction.Operations.OperationKernels.KeyValueWriteBFloat16 (below)
@@ -1904,6 +1926,12 @@ public static class Idrak.Abstraction.Operations.OperationKernels
 public delegate void Idrak.Abstraction.Operations.OperationKernels.AdamStep(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage p, Idrak.Abstraction.Devices.Storage g, Idrak.Abstraction.Devices.Storage m, Idrak.Abstraction.Devices.Storage v, int n, float lr, float beta1, float beta2, float eps)
 
 public delegate void Idrak.Abstraction.Operations.OperationKernels.AdamStep8Bit(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage p, Idrak.Abstraction.Devices.Storage g, Idrak.Abstraction.Devices.Storage m, Idrak.Abstraction.Devices.Storage v, Idrak.Abstraction.Devices.Storage absMax, Idrak.Abstraction.Devices.Storage map, int n, float lr, float beta1, float beta2, float eps, float gradientScale, float decay)
+
+public delegate void Idrak.Abstraction.Operations.OperationKernels.AdaptiveAvgPool(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, int planes, int height, int width, int outHeight, int outWidth)
+
+public delegate void Idrak.Abstraction.Operations.OperationKernels.AdaptiveAvgPoolBackward(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dx, int planes, int height, int width, int outHeight, int outWidth)
+
+public delegate void Idrak.Abstraction.Operations.OperationKernels.AdaptiveMaxPool(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage argmax, int planes, int height, int width, int outHeight, int outWidth)
 
 public delegate void Idrak.Abstraction.Operations.OperationKernels.AddBroadcastScalar(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage s, Idrak.Abstraction.Devices.Storage y, int n, float scale)
 
@@ -2025,6 +2053,10 @@ public delegate void Idrak.Abstraction.Operations.OperationKernels.Int8Dequantiz
 
 public delegate void Idrak.Abstraction.Operations.OperationKernels.Int8MatMul(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage scales, Idrak.Abstraction.Devices.Storage y, int m, int n, int k)
 
+public delegate void Idrak.Abstraction.Operations.OperationKernels.Interpolate2d(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, int planes, int height, int width, int outHeight, int outWidth, Idrak.Abstraction.Devices.InterpolationMode mode, bool alignCorners, float scaleHeight, float scaleWidth)
+
+public delegate void Idrak.Abstraction.Operations.OperationKernels.Interpolate2dBackward(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dx, int planes, int height, int width, int outHeight, int outWidth, Idrak.Abstraction.Devices.InterpolationMode mode, bool alignCorners, float scaleHeight, float scaleWidth)
+
 public delegate void Idrak.Abstraction.Operations.OperationKernels.InvSqrt(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, int n, float eps)
 
 public delegate void Idrak.Abstraction.Operations.OperationKernels.KeyValueWrite(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage source, Idrak.Abstraction.Devices.Storage cache, Idrak.Abstraction.Devices.Storage position, int heads, int steps, int capacity, int dim)
@@ -2134,6 +2166,9 @@ public static class Idrak.Abstraction.Operations.Ops
   public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Operations.Operation> All { get; }
   public static readonly Idrak.Abstraction.Operations.Operation AdamStep
   public static readonly Idrak.Abstraction.Operations.Operation AdamStep8Bit
+  public static readonly Idrak.Abstraction.Operations.Operation AdaptiveAvgPool
+  public static readonly Idrak.Abstraction.Operations.Operation AdaptiveAvgPoolBackward
+  public static readonly Idrak.Abstraction.Operations.Operation AdaptiveMaxPool
   public static readonly Idrak.Abstraction.Operations.Operation AddBroadcastScalar
   public static readonly Idrak.Abstraction.Operations.Operation AddDropout
   public static readonly Idrak.Abstraction.Operations.Operation AddRmsNormAffine
@@ -2194,6 +2229,8 @@ public static class Idrak.Abstraction.Operations.Ops
   public static readonly Idrak.Abstraction.Operations.Operation Int4MatMul
   public static readonly Idrak.Abstraction.Operations.Operation Int8Dequantize
   public static readonly Idrak.Abstraction.Operations.Operation Int8MatMul
+  public static readonly Idrak.Abstraction.Operations.Operation Interpolate2d
+  public static readonly Idrak.Abstraction.Operations.Operation Interpolate2dBackward
   public static readonly Idrak.Abstraction.Operations.Operation InvSqrt
   public static readonly Idrak.Abstraction.Operations.Operation KeyValueWrite
   public static readonly Idrak.Abstraction.Operations.Operation KeyValueWriteBFloat16
@@ -2417,10 +2454,13 @@ public sealed class Idrak.Abstraction.Tensor : System.IDisposable
   public Idrak.Abstraction.Devices.Storage GradientTarget(out float beta)
   public Idrak.Abstraction.Devices.Storage Storage { get; }
   public Idrak.Abstraction.Tensor Abs()
+  public Idrak.Abstraction.Tensor AdaptiveAvgPool((int, int) size)
+  public Idrak.Abstraction.Tensor AdaptiveMaxPool((int, int) size)
   public Idrak.Abstraction.Tensor ArgMax()
   public Idrak.Abstraction.Tensor BiasGelu(Idrak.Abstraction.Tensor bias)
   public Idrak.Abstraction.Tensor Clamp(float min, float max)
   public Idrak.Abstraction.Tensor Clone()
+  public Idrak.Abstraction.Tensor Col2Im(in Idrak.Abstraction.Devices.ConvGeometry geometry)
   public Idrak.Abstraction.Tensor Cos()
   public Idrak.Abstraction.Tensor CtcLoss(Idrak.Abstraction.Tensor targets, System.Collections.Generic.IReadOnlyList<int> inputLengths, System.Collections.Generic.IReadOnlyList<int> targetLengths, int blank = 0, bool batchFirst = false, bool zeroInfinity = false)
   public Idrak.Abstraction.Tensor Detach()
@@ -2431,6 +2471,7 @@ public sealed class Idrak.Abstraction.Tensor : System.IDisposable
   public Idrak.Abstraction.Tensor Gelu()
   public Idrak.Abstraction.Tensor GroupAffine(Idrak.Abstraction.Tensor? scale, Idrak.Abstraction.Tensor? shift, int groups, int inner)
   public Idrak.Abstraction.Tensor Im2Col(in Idrak.Abstraction.Devices.ConvGeometry geometry)
+  public Idrak.Abstraction.Tensor Interpolate((int, int) size, Idrak.Abstraction.Devices.InterpolationMode mode = (Idrak.Abstraction.Devices.InterpolationMode)0, bool alignCorners = false, (double, double)? scaleFactor = null)
   public Idrak.Abstraction.Tensor LayerNormFused(Idrak.Abstraction.Tensor gamma, Idrak.Abstraction.Tensor beta, float eps)
   public Idrak.Abstraction.Tensor LayerNormTrain(Idrak.Abstraction.Tensor gamma, Idrak.Abstraction.Tensor beta, float eps)
   public Idrak.Abstraction.Tensor Log()

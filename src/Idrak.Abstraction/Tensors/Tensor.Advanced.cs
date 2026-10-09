@@ -581,6 +581,143 @@ public sealed partial class Tensor
     }
 
     /// <summary>
+    /// Folds [N·OH·OW, C·KH·KW] patch rows back into [N, C, H, W], adding where windows overlap: the adjoint of
+    /// <see cref="Im2Col"/>, and with a matrix product a transposed convolution (each input position's products spread over
+    /// the window it scatters to). Its gradient unfolds the incoming gradient with <see cref="Im2Col"/>.
+    /// </summary>
+    public Tensor Col2Im(in ConvGeometry geometry)
+    {
+        ThrowIfDisposed();
+        var g0 = geometry;
+        if (Rank != 2 || _shape[0] != g0.Positions || _shape[1] != g0.PatchSize)
+        {
+            throw new ArgumentException($"Folding a {g0.KH}x{g0.KW} window over {g0.N} images of {g0.H}x{g0.W} takes [{g0.Positions}, {g0.PatchSize}] patch rows, not {FormatShape(_shape)}.");
+        }
+
+        long start = Telemetry.Start(TelemetryLevel.Operations);
+        var y = Empty([g0.N, g0.C, g0.H, g0.W], Device, zeroed: true);
+        Backend.Col2Im(Storage, y.Storage, g0);
+        if (WillRecord(this))
+        {
+            var x = this;
+            y.Record("col2im", g =>
+            {
+                // A first gradient is written in place; a later one goes through a scratch matrix and is added.
+                if (x.Grad is null)
+                {
+                    x.Grad = Empty(x._shape, x.Device, track: false);
+                    x.Backend.Im2Col(g.Storage, x.Grad.Storage, g0);
+                    return;
+                }
+
+                using var columns = Empty(x._shape, x.Device, track: false);
+                x.Backend.Im2Col(g.Storage, columns.Storage, g0);
+                x.Backend.Axpy(columns.Storage, x.Grad.Storage, x.Size, 1f);
+            }, x);
+        }
+
+        return Traced("col2im", y, start);
+    }
+
+    /// <summary>
+    /// Resamples the last two dimensions (height and width) to <paramref name="size"/> as PyTorch's <c>F.interpolate</c>:
+    /// nearest (the input position floor(o · scale)) or bilinear, with or without <paramref name="alignCorners"/>.
+    /// </summary>
+    /// <param name="size">The output height and width.</param>
+    /// <param name="mode">Nearest or bilinear.</param>
+    /// <param name="alignCorners">Bilinear only: the corner positions of input and output coincide (scale (in - 1) / (out - 1)).</param>
+    /// <param name="scaleFactor">The scale factor the size came from, if any: as PyTorch, it then sets the coordinate scale
+    /// (1 / factor) instead of input / output size, which differ when the factor times the input is not whole.</param>
+    public Tensor Interpolate((int Height, int Width) size, InterpolationMode mode = InterpolationMode.Nearest, bool alignCorners = false,
+        (double Height, double Width)? scaleFactor = null)
+    {
+        ThrowIfDisposed();
+        RequireRank(2, "Interpolation");
+        if (size.Height <= 0 || size.Width <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(size), size, "An interpolated size is positive.");
+        }
+
+        if (alignCorners && mode == InterpolationMode.Nearest)
+        {
+            throw new ArgumentException("alignCorners applies to bilinear interpolation, not nearest (as PyTorch).", nameof(alignCorners));
+        }
+
+        int height = _shape[^2], width = _shape[^1], planes = Size / Math.Max(height * width, 1);
+        var (oh, ow) = size;
+        float sh = CoordinateScale(height, oh, alignCorners, scaleFactor?.Height), sw = CoordinateScale(width, ow, alignCorners, scaleFactor?.Width);
+        long start = Telemetry.Start(TelemetryLevel.Operations);
+        var y = Empty([.. _shape[..^2], oh, ow], Device);
+        Backend.Interpolate2d(Storage, y.Storage, planes, height, width, oh, ow, mode, alignCorners, sh, sw);
+        if (WillRecord(this))
+        {
+            var x = this;
+            y.Record("interpolate", g => x.Backend.Interpolate2dBackward(g.Storage, x.GradStorage(), planes, height, width, oh, ow, mode, alignCorners, sh, sw), x);
+        }
+
+        return Traced("interpolate", y, start);
+    }
+
+    // Input positions per output position, as PyTorch computes it in float: (in - 1) / (out - 1) with aligned corners (0 for
+    // one output), else 1 / the scale factor when one is given, else in / out.
+    private static float CoordinateScale(int input, int output, bool alignCorners, double? factor) =>
+        alignCorners ? (output > 1 ? (input - 1) / (float)(output - 1) : 0f)
+        : factor is > 0 and var f ? (float)(1.0 / f) : input / (float)output;
+
+    /// <summary>
+    /// Adaptive average pooling of the last two dimensions to <paramref name="size"/> (PyTorch's <c>AdaptiveAvgPool2d</c>):
+    /// output row o averages input rows floor(o · H / OH) to ceil((o + 1) · H / OH), exclusive; columns likewise.
+    /// </summary>
+    public Tensor AdaptiveAvgPool((int Height, int Width) size) => AdaptivePool(size, max: false);
+
+    /// <summary>Adaptive max pooling of the last two dimensions to <paramref name="size"/>, over the windows of <see cref="AdaptiveAvgPool"/>.</summary>
+    public Tensor AdaptiveMaxPool((int Height, int Width) size) => AdaptivePool(size, max: true);
+
+    private Tensor AdaptivePool((int Height, int Width) size, bool max)
+    {
+        ThrowIfDisposed();
+        RequireRank(2, "Adaptive pooling");
+        var (oh, ow) = size;
+        if (oh <= 0 || ow <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(size), size, "An adaptive pooling size is positive.");
+        }
+
+        int height = _shape[^2], width = _shape[^1], planes = Size / Math.Max(height * width, 1);
+        long start = Telemetry.Start(TelemetryLevel.Operations);
+        var y = Empty([.. _shape[..^2], oh, ow], Device);
+        if (!max)
+        {
+            Backend.AdaptiveAvgPool(Storage, y.Storage, planes, height, width, oh, ow);
+            if (WillRecord(this))
+            {
+                var x = this;
+                y.Record("adaptive_avg_pool", g => x.Backend.AdaptiveAvgPoolBackward(g.Storage, x.GradStorage(), planes, height, width, oh, ow), x);
+            }
+
+            return Traced("adaptive_avg_pool", y, start);
+        }
+
+        var argmax = Empty([y.Size], Device, track: false);
+        Backend.AdaptiveMaxPool(Storage, y.Storage, argmax.Storage, planes, height, width, oh, ow);
+        if (WillRecord(this))
+        {
+            var x = this;
+            y.Record("adaptive_max_pool", g =>
+            {
+                x.Backend.AdaptiveMaxPoolBackward(g.Storage, argmax.Storage, x.GradStorage(), planes, height, width, oh, ow);
+                argmax.Dispose();
+            }, x);
+        }
+        else
+        {
+            argmax.Dispose();
+        }
+
+        return Traced("adaptive_max_pool", y, start);
+    }
+
+    /// <summary>
     /// The connectionist temporal classification loss of each sequence (Graves et al. 2006), [batch]: -log of the
     /// probability, summed over every alignment, that the sequence reads as its labels once repeats are collapsed and blanks
     /// dropped. This tensor holds log-probabilities (a log-softmax over the classes), [steps, batch, classes] or, with

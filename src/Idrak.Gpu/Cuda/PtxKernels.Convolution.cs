@@ -224,7 +224,7 @@ internal static partial class PtxKernels
         // Average pooling: a thread per output sums its window in row order and divides by KH·KW or (countpad 0) the
         // positions it covers; the gradient gathers dy / divisor of the windows covering each element, in window order.
         var pool = new[] { ("u32", "H"), ("u32", "W"), ("u32", "KH"), ("u32", "KW"), ("u32", "SH"), ("u32", "SW"), ("u32", "PH"), ("u32", "PW"),
-            ("u32", "OH"), ("u32", "OW"), ("u32", "countpad") };
+            ("u32", "OH"), ("u32", "OW"), ("u32", "countpad"), ("u32", "bottom"), ("u32", "right") };
         Elementwise(sb, "avgpool_f32", ["x", "y"], pool, $"""
             rem.u32 %r5, %i, %s_OW;
             div.u32 %r6, %i, %s_OW;
@@ -254,7 +254,7 @@ internal static partial class PtxKernels
             add.u32 %r14, %r14, 1;
             bra AP_R;
             AP_END:
-            {PoolDivisor("%f3")}
+            {PoolDivisor("%r7", "%r5", "%f3")}
             div.rn.f32 %f1, %f1, %f3;
             st.global.f32 [%a_y], %f1;
             """);
@@ -283,7 +283,7 @@ internal static partial class PtxKernels
             add.u64 %rd1, %b_dy, %rd1;
             ld.global.f32 %f2, [%rd1];
             {PoolWindow("%r24", "%r26")}
-            {PoolDivisor("%f3")}
+            {PoolDivisor("%r24", "%r26", "%f3")}
             div.rn.f32 %f2, %f2, %f3;
             add.f32 %f1, %f1, %f2;
             add.u32 %r26, %r26, 1;
@@ -312,17 +312,31 @@ internal static partial class PtxKernels
         max.s32 %r12, %r12, 0;
         """;
 
-    // The divisor of the window PoolWindow left in %r10 … %r13, into `target`: KH·KW, or the positions it covers (≥ 1).
-    private static string PoolDivisor(string target) => $"""
+    // The divisor of window (oh, ow), whose clipped rows and columns PoolWindow left in %r10 … %r13, into `target`: its
+    // rows and columns up to the padded end (H + bottom, W + right), or the input positions it covers (at least 1).
+    private static string PoolDivisor(string oh, string ow, string target) => $"""
         sub.s32 %r28, %r11, %r10;
         sub.s32 %r29, %r13, %r12;
         mul.lo.s32 %r28, %r28, %r29;
         max.s32 %r28, %r28, 1;
-        setp.ne.u32 %p5, %s_countpad, 0;
-        mul.lo.u32 %r29, %s_KH, %s_KW;
-        selp.u32 %r28, %r29, %r28, %p5;
-        cvt.rn.f32.u32 {target}, %r28;
-        """;
+        setp.eq.u32 %p5, %s_countpad, 0;
+        @%p5 bra {oh}_{ow}_DIVISOR;
+        mul.lo.u32 %r29, {oh}, %s_SH;
+        sub.s32 %r29, %r29, %s_PH;
+        add.s32 %r30, %r29, %s_KH;
+        add.u32 %r31, %s_H, %s_bottom;
+        min.s32 %r30, %r30, %r31;
+        sub.s32 %r28, %r30, %r29;
+        mul.lo.u32 %r29, {ow}, %s_SW;
+        sub.s32 %r29, %r29, %s_PW;
+        add.s32 %r30, %r29, %s_KW;
+        add.u32 %r31, %s_W, %s_right;
+        min.s32 %r30, %r30, %r31;
+        sub.s32 %r30, %r30, %r29;
+        mul.lo.s32 %r28, %r28, %r30;
+        {oh}_{ow}_DIVISOR:
+        cvt.rn.f32.s32 {target}, %r28;
+        """.Replace($"{oh}_{ow}_DIVISOR", $"DIVISOR_{oh.TrimStart('%')}_{ow.TrimStart('%')}", StringComparison.Ordinal);
 
     // The windows [first, last) along one axis whose span covers input coordinate i: o·stride - pad ≤ i < o·stride - pad + size.
     private static string Covering(string i, string pad, string size, string stride, string outputs, string first, string last, string label) => $"""

@@ -88,10 +88,76 @@ public sealed partial class Tensor
     }
 
     /// <summary>
-    /// 2-D average pooling of this [N, C, H, W] tensor over the windows of <paramref name="geometry"/> (no dilation): each
-    /// window's sum divided by KH·KW, or with <paramref name="countIncludePad"/> false by the input positions it covers.
+    /// The transposed convolution of this [N, filters, OH, OW] tensor (the input gradient of <see cref="Convolution"/>,
+    /// PyTorch's <c>conv_transpose2d</c>) with <paramref name="weight"/> [filters, C / groups · KH · KW] (PyTorch's
+    /// [in, out / groups, KH, KW]) and an optional <paramref name="bias"/> [C]: [N, C, H, W], the geometry's input size,
+    /// whose windows give this tensor's OH x OW positions. One device operation each way; nothing kept beyond the operands.
     /// </summary>
-    public Tensor AvgPool(in ConvGeometry geometry, bool countIncludePad = true)
+    public Tensor ConvolutionTranspose(Tensor weight, Tensor? bias, in ConvGeometry geometry, int groups = 1)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(weight);
+        CheckSameDevice(this, weight);
+        var g0 = geometry;
+        int filters = weight.Rank > 0 ? weight._shape[0] : 0;
+        if (Rank != 4 || _shape[0] != g0.N || _shape[1] != filters || _shape[2] != g0.OH || _shape[3] != g0.OW)
+        {
+            throw new ArgumentException($"A transposed convolution of {filters} channels over the geometry's {g0.OH}x{g0.OW} windows reads [{g0.N}, {filters}, {g0.OH}, {g0.OW}]; "
+                + $"the input is {FormatShape(_shape)}.");
+        }
+
+        if (groups <= 0 || g0.C % groups != 0 || filters % groups != 0 || weight.Size != filters * (g0.PatchSize / groups) || bias is not null && bias.Size != g0.C)
+        {
+            throw new ArgumentException($"A transposed convolution to {g0.C} channels in {groups} groups with {g0.KH}x{g0.KW} windows takes weights [{filters}, "
+                + $"{(groups > 0 ? g0.C / groups : 0) * g0.KH * g0.KW}] and a bias [{g0.C}]; got {FormatShape(weight._shape)} and {(bias is null ? "no bias" : FormatShape(bias._shape))}.");
+        }
+
+        long start = Telemetry.Start(TelemetryLevel.Operations);
+        var y = Empty([g0.N, g0.C, g0.H, g0.W], Device, zeroed: true);
+        Backend.ConvolutionBackwardInput(Storage, weight.Storage, y.Storage, g0, filters, groups);
+        if (bias is not null)
+        {
+            Backend.GroupScaleShift(y.Storage, null, bias.Storage, y.Storage, y.Size, g0.C, g0.H * g0.W, accumulate: false);
+        }
+
+        if (Autograd.IsEnabled && (RequiresGrad || weight.RequiresGrad || bias?.RequiresGrad == true))
+        {
+            var x = this;
+            Tensor[] inputs = bias is null ? [x, weight] : [x, weight, bias];
+            y.Record("conv_transpose2d", g =>
+            {
+                var backend = x.Backend;
+                if (x.RequiresGrad)
+                {
+                    // The gradient of the transposed convolution is the convolution of the gradient.
+                    using var dx = Empty(x._shape, x.Device, track: false);
+                    backend.Convolution(g.Storage, weight.Storage, null, dx.Storage, g0, filters, groups, ConvActivation.None);
+                    backend.Axpy(dx.Storage, x.GradStorage(), x.Size, 1f);
+                }
+
+                if (weight.RequiresGrad)
+                {
+                    backend.ConvolutionBackwardWeight(g.Storage, x.Storage, weight.GradStorage(), g0, filters, groups);
+                }
+
+                if (bias?.RequiresGrad == true)
+                {
+                    backend.GroupReduce(g.Storage, null, bias.GradStorage(), null, g0.N, g0.C, g0.H * g0.W);
+                }
+            }, inputs);
+        }
+
+        return Traced("conv_transpose2d", y, start);
+    }
+
+    /// <summary>
+    /// 2-D average pooling of this [N, C, H, W] tensor over the windows of <paramref name="geometry"/> (no dilation): each
+    /// window's sum divided, with <paramref name="countIncludePad"/>, by its rows and columns up to the padded end, else by
+    /// the input positions it covers (PyTorch's <c>AvgPool2d</c>). <paramref name="padBottom"/> and
+    /// <paramref name="padRight"/> are the padding below and right the divisor counts (the geometry's own by default; a
+    /// ceil-mode geometry pads further for its last window, which PyTorch does not count).
+    /// </summary>
+    public Tensor AvgPool(in ConvGeometry geometry, bool countIncludePad = true, int? padBottom = null, int? padRight = null)
     {
         ThrowIfDisposed();
         var g0 = geometry;
@@ -112,11 +178,12 @@ public sealed partial class Tensor
 
         long start = Telemetry.Start(TelemetryLevel.Operations);
         var y = Empty([g0.N, g0.C, g0.OH, g0.OW], Device);
-        Backend.AvgPool(Storage, y.Storage, g0, countIncludePad);
+        int bottom = padBottom ?? g0.PadBottom, right = padRight ?? g0.PadRight;
+        Backend.AvgPool(Storage, y.Storage, g0, countIncludePad, bottom, right);
         if (WillRecord(this))
         {
             var x = this;
-            y.Record("avgpool", g => x.Backend.AvgPoolBackward(g.Storage, x.GradStorage(), g0, countIncludePad), x);
+            y.Record("avgpool", g => x.Backend.AvgPoolBackward(g.Storage, x.GradStorage(), g0, countIncludePad, bottom, right), x);
         }
 
         return Traced("avgpool", y, start);
