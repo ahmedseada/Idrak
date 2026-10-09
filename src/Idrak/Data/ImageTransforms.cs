@@ -7,13 +7,18 @@ namespace Idrak.Data;
 
 /// <summary>
 /// Flips images left to right (and, when asked, upside down), each with probability <see cref="Probability"/>. The
-/// features are [..., height, width]: every leading dimension (the channels) is flipped alike.
+/// features are [..., height, width]: every leading dimension (the channels) is flipped alike. As an
+/// <see cref="IAugmentation"/> ("flip" in <see cref="Augmentations"/>, options <c>horizontal</c>, <c>vertical</c>,
+/// <c>p</c>) it flips a detection or segmentation sample's boxes, masks and pixel classes with its pixels.
 /// </summary>
 /// <param name="horizontal">Flip left to right.</param>
 /// <param name="vertical">Flip upside down (not for digits or text).</param>
 /// <param name="probability">The chance of each flip.</param>
-public sealed class RandomFlip(bool horizontal = true, bool vertical = false, double probability = 0.5) : ISampleTransform
+public sealed class RandomFlip(bool horizontal = true, bool vertical = false, double probability = 0.5) : ISampleTransform, IAugmentation
 {
+    /// <inheritdoc />
+    public string Name => "flip";
+
     /// <summary>Whether images are flipped left to right.</summary>
     public bool Horizontal { get; } = horizontal;
 
@@ -47,16 +52,76 @@ public sealed class RandomFlip(bool horizontal = true, bool vertical = false, do
             }
         }
     }
+
+    /// <inheritdoc />
+    /// <remarks>Draws the same random numbers as the sample-transform <c>Apply</c>: the flips of a sample and of its image agree.</remarks>
+    public AnnotatedImage Apply(AnnotatedImage sample, AugmentationContext context)
+    {
+        ArgumentNullException.ThrowIfNull(sample);
+        ArgumentNullException.ThrowIfNull(context);
+        var random = context.Random;
+        bool flipX = Horizontal && random.NextDouble() < Probability, flipY = Vertical && random.NextDouble() < Probability;
+        if (!flipX && !flipY)
+        {
+            return sample;
+        }
+
+        int w = sample.Width, h = sample.Height;
+        var pixels = (float[])sample.Image.Pixels.Clone();
+        Flip<float>(pixels, w, h, flipX, flipY);
+        var boxes = sample.Boxes.Select(b => new BoundingBox(flipX ? w - b.Right : b.X, flipY ? h - b.Bottom : b.Y, b.Width, b.Height)).ToArray();
+        byte[][]? masks = sample.Masks?.Select(m =>
+        {
+            var copy = (byte[])m.Clone();
+            Flip<byte>(copy, w, h, flipX, flipY);
+            return copy;
+        }).ToArray();
+        int[]? classes = sample.PixelClasses is { } given ? (int[])given.Clone() : null;
+        if (classes is not null)
+        {
+            Flip<int>(classes, w, h, flipX, flipY);
+        }
+
+        return new AnnotatedImage(new ImageData(pixels, sample.Image.Channels, h, w), boxes, [.. sample.Labels], masks, classes);
+    }
+
+    // Flips every plane of `values` (planes of w x h, row by row) in place.
+    private static void Flip<T>(Span<T> values, int w, int h, bool flipX, bool flipY)
+    {
+        for (int p = 0; p < values.Length / (w * h); p++)
+        {
+            var plane = values.Slice(p * w * h, w * h);
+            for (int y = 0; flipX && y < h; y++)
+            {
+                plane.Slice(y * w, w).Reverse();
+            }
+
+            for (int y = 0; flipY && y < h / 2; y++)
+            {
+                Span<T> top = plane.Slice(y * w, w), bottom = plane.Slice((h - 1 - y) * w, w);
+                for (int x = 0; x < w; x++)
+                {
+                    (top[x], bottom[x]) = (bottom[x], top[x]);
+                }
+            }
+        }
+    }
 }
 
 /// <summary>
 /// Moves images by a whole number of pixels, up to <see cref="MaxPixels"/> in each direction (chosen uniformly for x
-/// and y); the uncovered border takes <see cref="Fill"/>.
+/// and y); the uncovered border takes <see cref="Fill"/>. As an <see cref="IAugmentation"/> ("shift" in
+/// <see cref="Augmentations"/>, options <c>pixels</c>, <c>fill</c>) it moves a sample's boxes, masks and pixel classes
+/// too: boxes are clipped to the image and dropped when nothing of them is left; uncovered mask pixels are 0 and
+/// uncovered pixel classes 0 (background).
 /// </summary>
 /// <param name="maxPixels">The largest move, in pixels.</param>
 /// <param name="fill">The value of the uncovered pixels (0 is black).</param>
-public sealed class RandomShift(int maxPixels, float fill = 0f) : ISampleTransform
+public sealed class RandomShift(int maxPixels, float fill = 0f) : ISampleTransform, IAugmentation
 {
+    /// <inheritdoc />
+    public string Name => "shift";
+
     /// <summary>The largest move, in pixels.</summary>
     public int MaxPixels { get; } = maxPixels >= 0 ? maxPixels : throw new ArgumentOutOfRangeException(nameof(maxPixels));
 
@@ -95,6 +160,58 @@ public sealed class RandomShift(int maxPixels, float fill = 0f) : ISampleTransfo
         {
             ArrayPool<float>.Shared.Return(scratch);
         }
+    }
+
+    /// <inheritdoc />
+    /// <remarks>Draws the same random numbers as the sample-transform <c>Apply</c>.</remarks>
+    public AnnotatedImage Apply(AnnotatedImage sample, AugmentationContext context)
+    {
+        ArgumentNullException.ThrowIfNull(sample);
+        ArgumentNullException.ThrowIfNull(context);
+        var random = context.Random;
+        int dx = random.Next(-MaxPixels, MaxPixels + 1), dy = random.Next(-MaxPixels, MaxPixels + 1);
+        if (dx == 0 && dy == 0)
+        {
+            return sample;
+        }
+
+        int w = sample.Width, h = sample.Height;
+        var pixels = Shifted(sample.Image.Pixels, w, h, dx, dy, Fill);
+        var kept = new List<int>();
+        var boxes = new List<BoundingBox>();
+        for (int i = 0; i < sample.Count; i++)
+        {
+            var box = sample.Boxes[i].Translate(dx, dy).Clip(w, h);
+            if (box.Width > 0 && box.Height > 0)
+            {
+                kept.Add(i);
+                boxes.Add(box);
+            }
+        }
+
+        byte[][]? masks = sample.Masks is { } given ? [.. kept.Select(i => Shifted(given[i], w, h, dx, dy, (byte)0))] : null;
+        int[]? classes = sample.PixelClasses is { } map ? Shifted(map, w, h, dx, dy, 0) : null;
+        return new AnnotatedImage(new ImageData(pixels, sample.Image.Channels, h, w), [.. boxes], [.. kept.Select(i => sample.Labels[i])], masks, classes);
+    }
+
+    // Every plane of `values` moved by (dx, dy), uncovered values `fill`, in a new array.
+    private static T[] Shifted<T>(T[] values, int w, int h, int dx, int dy, T fill)
+    {
+        var result = new T[values.Length];
+        for (int p = 0; p < values.Length / (w * h); p++)
+        {
+            for (int y = 0; y < h; y++)
+            {
+                int sy = y - dy;
+                for (int x = 0; x < w; x++)
+                {
+                    int sx = x - dx;
+                    result[p * w * h + y * w + x] = (uint)sy < (uint)h && (uint)sx < (uint)w ? values[p * w * h + sy * w + sx] : fill;
+                }
+            }
+        }
+
+        return result;
     }
 }
 

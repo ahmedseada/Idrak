@@ -6,11 +6,22 @@ loader transform), per-channel image statistics for normalization (`ChannelStati
 over any network (`ModelDetector` with the application's `DetectionDecoder`, `ModelSegmenter`), with the small defaults
 they build on (foreground extraction, connected components, non-maximum suppression, segmentation metrics).
 
+Training detectors and segmenters: box losses (IoU, GIoU, DIoU, CIoU as one fused operation each way; L1 and smooth L1),
+the sigmoid focal loss and soft dice (`DetectionLosses`, `SegmentationLosses`, by name in `VisionLosses`); matching
+predictions to objects by IoU thresholds or one to one by the Hungarian algorithm (`BoxMatching`, `BoxMatchers`); COCO and
+Pascal VOC mean average precision and mean IoU (`CocoAveragePrecision`, `VocAveragePrecision`, `SegmentationMetrics`, by
+name in `VisionMetrics`); augmentations that move boxes and masks with the pixels (resized crop, rotation, affine, colour
+jitter, cutout, mosaic, mixup, resize; core's flip and shift; by name in `Augmentations`), and `AugmentedImageLoader`,
+which batches augmented samples on worker threads while the model trains.
+
 ## Contracts
 
 In `Idrak.Vision.Abstractions` (add the `using` line to name them): `IObjectDetector`, `ISegmenter`, `IRegionProposer`,
-`DetectionDecoder`, and the records they speak in (`PixelBox`, `BoundingBox`, `Detection`, `SegmentationMask`,
-`ForegroundImage`).
+`DetectionDecoder`, `VisionLoss` and `VisionLosses`, `BoxMatcher` and `BoxMatchers`, `IVisionMetric` (`IDetectionMetric`,
+`ISegmentationMetric`) and `VisionMetrics`, and the records they speak in (`Detection`, `SegmentationMask`,
+`ForegroundImage`). Boxes (`BoundingBox`, `PixelBox`), training samples (`AnnotatedImage`), dataset annotations
+(`AnnotatedDataset`, `ObjectAnnotation`, `ObjectMask`) and augmentations (`IAugmentation`, `Augmentations`) are in
+`Idrak.Abstraction.Data`, which core and Idrak.Data use too.
 
 ## Install
 
@@ -21,7 +32,6 @@ dotnet add package Idrak.Vision
 ## Example
 
 ```csharp
-using Idrak.Data.Abstractions;   // ImageCodecs
 using Idrak.Vision;
 
 // Single objects on a plain background (symbols, parts, cells, characters): regions found, framed, classified in batches.

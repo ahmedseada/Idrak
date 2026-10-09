@@ -50,7 +50,7 @@ are data).
 | `Idrak.Layers.Abstractions` | `LayerTypes`, `GraphOps` (with `GraphOp`, `GraphOpContext`, `GraphNode`), `NetworkOps` and `INetworkBuilder` (network-builder steps), `ICachedModule` (layers that decode with a KV cache), `RecurrentModule` |
 | `Idrak.Models.Abstractions` | `CheckpointFormats` and `ICheckpointFormat`, `ITensorStore`, `IWeightSource`, `WeightCodec` and `WeightFormat`, `GgufTypes`, `GgufArchitectures`, `GgufPreTokenizers`, `PretrainedArchitectures` (with `PretrainedBuildContext`, `DecoderBuildOptions`), `TokenizerComponents` (`ITokenizerNormalizer`, `IPreTokenizer`, `ITokenizerDecoder`); the vision side of vision-language models: `IVisionFamily` and `VisionFamilies` (the library registers no family; `PretrainedVision` and `IVisionTuningPart` are in `Idrak.Abstraction.Generation`, since Idrak.Nlp's tuner uses them too) |
 | `Idrak.Onnx.Abstractions` | `OnnxImportOps` and `OnnxImportContext`, `OnnxExportOps` and `OnnxGraph` (with `OnnxValue`, `OnnxAttribute`) |
-| `Idrak.Data.Abstractions` | `SampleSources`, `IBatchSource` and `Batch`, `ImageCodecs` and `IImageCodec` (PNG, JPEG, BMP and Netpbm built in), `ImagePreprocessor` (in `Idrak.Data`: a `preprocessor_config.json`'s resize, rescale and normalize, as transformers does them), `IScaler` |
+| `Idrak.Data.Abstractions` | `SampleSources`, `IBatchSource` and `Batch` (core registers the PNG, JPEG, BMP and Netpbm codecs of `Idrak.Abstraction.Data`'s `ImageCodecs`), `ImagePreprocessor` (in `Idrak.Data`: a `preprocessor_config.json`'s resize, rescale and normalize, as transformers does them), `IScaler` |
 | `Idrak.Training.Abstractions` | `ITrainerCallback`, `TrainerContext`, `TrainingHistory` |
 
 ## Backends
