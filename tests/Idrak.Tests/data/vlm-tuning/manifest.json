@@ -1,0 +1,1365 @@
+{
+ "files": {
+  "gemma3/adapter-init/adapter_config.json": {
+   "bytes": 329,
+   "sha256": "da5a1f93dd9bb87dd6625516d1c23f89c9cf76e26758885078357adcc7d84a5c"
+  },
+  "gemma3/adapter-init/adapter_model.safetensors": {
+   "bytes": 5312,
+   "sha256": "e29e4aa82ab6a5253b5c930a2a3d3497eb17be648dfa8f890ad59bffb23e874b"
+  },
+  "gemma3/features/image-palette.npy": {
+   "bytes": 512,
+   "sha256": "d08618871e1bfb2409e62fee23d0b0472705abfcb7eecaa52321726fa64542b2"
+  },
+  "gemma3/features/image.npy": {
+   "bytes": 512,
+   "sha256": "46ad6dcfb1d069bd6879f8bf7460ad670de94ba322ff04c636d5fe51113cd727"
+  },
+  "gemma3/lora/adapter-step3/adapter_config.json": {
+   "bytes": 329,
+   "sha256": "da5a1f93dd9bb87dd6625516d1c23f89c9cf76e26758885078357adcc7d84a5c"
+  },
+  "gemma3/lora/adapter-step3/adapter_model.safetensors": {
+   "bytes": 5312,
+   "sha256": "ecf32a1bebab4a22ec869d8050d69265dff283f42e179c1250a59c26bf3cde79"
+  },
+  "gemma3/lora/grads-step1.safetensors": {
+   "bytes": 5312,
+   "sha256": "414f2896758e98736bf17e536a594fc121c5a5c8c60a32bd0d972d93d8cbf3e1"
+  },
+  "gemma3/projector/adapter-step3/adapter_config.json": {
+   "bytes": 329,
+   "sha256": "da5a1f93dd9bb87dd6625516d1c23f89c9cf76e26758885078357adcc7d84a5c"
+  },
+  "gemma3/projector/adapter-step3/adapter_model.safetensors": {
+   "bytes": 5312,
+   "sha256": "5ec4f00dac72edcbd71dd81cbfad8808b1e023d3b393f2f263c58b5b676e232d"
+  },
+  "gemma3/projector/grads-step1.safetensors": {
+   "bytes": 6336,
+   "sha256": "0bea3473deeb643030955fff8ccc7a202d01d7886f3a2c1a3cfad797b9bdb716"
+  },
+  "gemma3/projector/projector-step3.safetensors": {
+   "bytes": 1064,
+   "sha256": "81feeba7bb342e9ff338fad6898f9213eac4bb57e1dc3ad00d958b2792383de9"
+  },
+  "gemma3/tuning.json": {
+   "bytes": 28126,
+   "sha256": "ff9ae52ff4e1f6419ac2d773df7dcd2c5b8e953a067c83ac062cef3d437914d2"
+  },
+  "llava/adapter-init/adapter_config.json": {
+   "bytes": 328,
+   "sha256": "72ff5c68d30439e4aba353735cf9e1a643efdc6156f3ad1c95dac0e985432411"
+  },
+  "llava/adapter-init/adapter_model.safetensors": {
+   "bytes": 5824,
+   "sha256": "91f551ff71c50b7c2b71ceaaa24ad22e76317b3350923d3f52e30ed93537bee3"
+  },
+  "llava/features/image-palette.npy": {
+   "bytes": 2176,
+   "sha256": "3a77859d7b42866e18fa970c505ddb836ac560e0a0bcfbc2717ced3b1443ba66"
+  },
+  "llava/features/image.npy": {
+   "bytes": 2176,
+   "sha256": "0c9165dfe3d5ca5aebbdafa23c4ad57e2622d98765652ec0d76ebf3e2927514e"
+  },
+  "llava/lora/adapter-step3/adapter_config.json": {
+   "bytes": 328,
+   "sha256": "72ff5c68d30439e4aba353735cf9e1a643efdc6156f3ad1c95dac0e985432411"
+  },
+  "llava/lora/adapter-step3/adapter_model.safetensors": {
+   "bytes": 5824,
+   "sha256": "4089bda8a7e954757df33e25d0ea743af794f79c6ead4453efd7a4e889f6e4c1"
+  },
+  "llava/lora/grads-step1.safetensors": {
+   "bytes": 5824,
+   "sha256": "e67ae6c503d18df77c4daa7f265c713044fa92f54e8c700eb628ae173587dcd8"
+  },
+  "llava/projector/adapter-step3/adapter_config.json": {
+   "bytes": 328,
+   "sha256": "72ff5c68d30439e4aba353735cf9e1a643efdc6156f3ad1c95dac0e985432411"
+  },
+  "llava/projector/adapter-step3/adapter_model.safetensors": {
+   "bytes": 5824,
+   "sha256": "e2dd5846929a3dc853bb9fcf61d773456c88efdd9b6e7cc1c27f2f4ddb6e9720"
+  },
+  "llava/projector/grads-step1.safetensors": {
+   "bytes": 12608,
+   "sha256": "535bb3f652e52bf1253383f1af498cce5b515f03eecd927b9972362cfdbc6a01"
+  },
+  "llava/projector/projector-step3.safetensors": {
+   "bytes": 6824,
+   "sha256": "2c3690bbd684e4f6d16f41a8067d4608c0ecd0668e73b662935fd697cd85dbea"
+  },
+  "llava/tuning.json": {
+   "bytes": 18317,
+   "sha256": "271920a7cc3569ff12d3175f232c1fc36923a7542ba08774139b178845a59b58"
+  }
+ },
+ "images": "../vlm/",
+ "summary": {
+  "gemma3": {
+   "losses": {
+    "lora": [
+     6.7097954750061035,
+     6.503421783447266,
+     6.330004692077637
+    ],
+    "projector": [
+     6.7097954750061035,
+     6.498559951782227,
+     6.322425842285156
+    ]
+   }
+  },
+  "llava": {
+   "losses": {
+    "lora": [
+     6.966518402099609,
+     6.597245693206787,
+     6.337833881378174
+    ],
+    "projector": [
+     6.966518402099609,
+     6.605029106140137,
+     6.433956623077393
+    ]
+   }
+  }
+ },
+ "tensors": {
+  "gemma3/adapter-init/adapter_model.safetensors": {
+   "base_model.model.model.language_model.layers.0.self_attn.k_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     24
+    ]
+   },
+   "base_model.model.model.language_model.layers.0.self_attn.k_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     2
+    ]
+   },
+   "base_model.model.model.language_model.layers.0.self_attn.o_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.model.language_model.layers.0.self_attn.o_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     24,
+     2
+    ]
+   },
+   "base_model.model.model.language_model.layers.0.self_attn.q_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     24
+    ]
+   },
+   "base_model.model.model.language_model.layers.0.self_attn.q_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     32,
+     2
+    ]
+   },
+   "base_model.model.model.language_model.layers.0.self_attn.v_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     24
+    ]
+   },
+   "base_model.model.model.language_model.layers.0.self_attn.v_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     2
+    ]
+   },
+   "base_model.model.model.language_model.layers.1.self_attn.k_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     24
+    ]
+   },
+   "base_model.model.model.language_model.layers.1.self_attn.k_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     2
+    ]
+   },
+   "base_model.model.model.language_model.layers.1.self_attn.o_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.model.language_model.layers.1.self_attn.o_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     24,
+     2
+    ]
+   },
+   "base_model.model.model.language_model.layers.1.self_attn.q_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     24
+    ]
+   },
+   "base_model.model.model.language_model.layers.1.self_attn.q_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     32,
+     2
+    ]
+   },
+   "base_model.model.model.language_model.layers.1.self_attn.v_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     24
+    ]
+   },
+   "base_model.model.model.language_model.layers.1.self_attn.v_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     2
+    ]
+   }
+  },
+  "gemma3/lora/adapter-step3/adapter_model.safetensors": {
+   "base_model.model.model.language_model.layers.0.self_attn.k_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     24
+    ]
+   },
+   "base_model.model.model.language_model.layers.0.self_attn.k_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     2
+    ]
+   },
+   "base_model.model.model.language_model.layers.0.self_attn.o_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.model.language_model.layers.0.self_attn.o_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     24,
+     2
+    ]
+   },
+   "base_model.model.model.language_model.layers.0.self_attn.q_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     24
+    ]
+   },
+   "base_model.model.model.language_model.layers.0.self_attn.q_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     32,
+     2
+    ]
+   },
+   "base_model.model.model.language_model.layers.0.self_attn.v_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     24
+    ]
+   },
+   "base_model.model.model.language_model.layers.0.self_attn.v_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     2
+    ]
+   },
+   "base_model.model.model.language_model.layers.1.self_attn.k_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     24
+    ]
+   },
+   "base_model.model.model.language_model.layers.1.self_attn.k_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     2
+    ]
+   },
+   "base_model.model.model.language_model.layers.1.self_attn.o_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.model.language_model.layers.1.self_attn.o_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     24,
+     2
+    ]
+   },
+   "base_model.model.model.language_model.layers.1.self_attn.q_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     24
+    ]
+   },
+   "base_model.model.model.language_model.layers.1.self_attn.q_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     32,
+     2
+    ]
+   },
+   "base_model.model.model.language_model.layers.1.self_attn.v_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     24
+    ]
+   },
+   "base_model.model.model.language_model.layers.1.self_attn.v_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     2
+    ]
+   }
+  },
+  "gemma3/lora/grads-step1.safetensors": {
+   "base_model.model.model.language_model.layers.0.self_attn.k_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     24
+    ]
+   },
+   "base_model.model.model.language_model.layers.0.self_attn.k_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     2
+    ]
+   },
+   "base_model.model.model.language_model.layers.0.self_attn.o_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.model.language_model.layers.0.self_attn.o_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     24,
+     2
+    ]
+   },
+   "base_model.model.model.language_model.layers.0.self_attn.q_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     24
+    ]
+   },
+   "base_model.model.model.language_model.layers.0.self_attn.q_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     32,
+     2
+    ]
+   },
+   "base_model.model.model.language_model.layers.0.self_attn.v_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     24
+    ]
+   },
+   "base_model.model.model.language_model.layers.0.self_attn.v_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     2
+    ]
+   },
+   "base_model.model.model.language_model.layers.1.self_attn.k_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     24
+    ]
+   },
+   "base_model.model.model.language_model.layers.1.self_attn.k_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     2
+    ]
+   },
+   "base_model.model.model.language_model.layers.1.self_attn.o_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.model.language_model.layers.1.self_attn.o_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     24,
+     2
+    ]
+   },
+   "base_model.model.model.language_model.layers.1.self_attn.q_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     24
+    ]
+   },
+   "base_model.model.model.language_model.layers.1.self_attn.q_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     32,
+     2
+    ]
+   },
+   "base_model.model.model.language_model.layers.1.self_attn.v_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     24
+    ]
+   },
+   "base_model.model.model.language_model.layers.1.self_attn.v_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     2
+    ]
+   }
+  },
+  "gemma3/projector/adapter-step3/adapter_model.safetensors": {
+   "base_model.model.model.language_model.layers.0.self_attn.k_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     24
+    ]
+   },
+   "base_model.model.model.language_model.layers.0.self_attn.k_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     2
+    ]
+   },
+   "base_model.model.model.language_model.layers.0.self_attn.o_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.model.language_model.layers.0.self_attn.o_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     24,
+     2
+    ]
+   },
+   "base_model.model.model.language_model.layers.0.self_attn.q_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     24
+    ]
+   },
+   "base_model.model.model.language_model.layers.0.self_attn.q_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     32,
+     2
+    ]
+   },
+   "base_model.model.model.language_model.layers.0.self_attn.v_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     24
+    ]
+   },
+   "base_model.model.model.language_model.layers.0.self_attn.v_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     2
+    ]
+   },
+   "base_model.model.model.language_model.layers.1.self_attn.k_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     24
+    ]
+   },
+   "base_model.model.model.language_model.layers.1.self_attn.k_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     2
+    ]
+   },
+   "base_model.model.model.language_model.layers.1.self_attn.o_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.model.language_model.layers.1.self_attn.o_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     24,
+     2
+    ]
+   },
+   "base_model.model.model.language_model.layers.1.self_attn.q_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     24
+    ]
+   },
+   "base_model.model.model.language_model.layers.1.self_attn.q_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     32,
+     2
+    ]
+   },
+   "base_model.model.model.language_model.layers.1.self_attn.v_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     24
+    ]
+   },
+   "base_model.model.model.language_model.layers.1.self_attn.v_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     2
+    ]
+   }
+  },
+  "gemma3/projector/grads-step1.safetensors": {
+   "base_model.model.model.language_model.layers.0.self_attn.k_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     24
+    ]
+   },
+   "base_model.model.model.language_model.layers.0.self_attn.k_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     2
+    ]
+   },
+   "base_model.model.model.language_model.layers.0.self_attn.o_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.model.language_model.layers.0.self_attn.o_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     24,
+     2
+    ]
+   },
+   "base_model.model.model.language_model.layers.0.self_attn.q_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     24
+    ]
+   },
+   "base_model.model.model.language_model.layers.0.self_attn.q_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     32,
+     2
+    ]
+   },
+   "base_model.model.model.language_model.layers.0.self_attn.v_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     24
+    ]
+   },
+   "base_model.model.model.language_model.layers.0.self_attn.v_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     2
+    ]
+   },
+   "base_model.model.model.language_model.layers.1.self_attn.k_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     24
+    ]
+   },
+   "base_model.model.model.language_model.layers.1.self_attn.k_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     2
+    ]
+   },
+   "base_model.model.model.language_model.layers.1.self_attn.o_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.model.language_model.layers.1.self_attn.o_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     24,
+     2
+    ]
+   },
+   "base_model.model.model.language_model.layers.1.self_attn.q_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     24
+    ]
+   },
+   "base_model.model.model.language_model.layers.1.self_attn.q_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     32,
+     2
+    ]
+   },
+   "base_model.model.model.language_model.layers.1.self_attn.v_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     24
+    ]
+   },
+   "base_model.model.model.language_model.layers.1.self_attn.v_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     2
+    ]
+   },
+   "model.multi_modal_projector.mm_input_projection_weight": {
+    "dtype": "F32",
+    "shape": [
+     8,
+     24
+    ]
+   },
+   "model.multi_modal_projector.mm_soft_emb_norm.weight": {
+    "dtype": "F32",
+    "shape": [
+     8
+    ]
+   }
+  },
+  "gemma3/projector/projector-step3.safetensors": {
+   "model.multi_modal_projector.mm_input_projection_weight": {
+    "dtype": "F32",
+    "shape": [
+     8,
+     24
+    ]
+   },
+   "model.multi_modal_projector.mm_soft_emb_norm.weight": {
+    "dtype": "F32",
+    "shape": [
+     8
+    ]
+   }
+  },
+  "llava/adapter-init/adapter_model.safetensors": {
+   "base_model.model.language_model.model.layers.0.self_attn.k_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.language_model.model.layers.0.self_attn.k_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     2
+    ]
+   },
+   "base_model.model.language_model.model.layers.0.self_attn.o_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.language_model.model.layers.0.self_attn.o_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     32,
+     2
+    ]
+   },
+   "base_model.model.language_model.model.layers.0.self_attn.q_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.language_model.model.layers.0.self_attn.q_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     32,
+     2
+    ]
+   },
+   "base_model.model.language_model.model.layers.0.self_attn.v_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.language_model.model.layers.0.self_attn.v_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     2
+    ]
+   },
+   "base_model.model.language_model.model.layers.1.self_attn.k_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.language_model.model.layers.1.self_attn.k_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     2
+    ]
+   },
+   "base_model.model.language_model.model.layers.1.self_attn.o_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.language_model.model.layers.1.self_attn.o_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     32,
+     2
+    ]
+   },
+   "base_model.model.language_model.model.layers.1.self_attn.q_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.language_model.model.layers.1.self_attn.q_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     32,
+     2
+    ]
+   },
+   "base_model.model.language_model.model.layers.1.self_attn.v_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.language_model.model.layers.1.self_attn.v_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     2
+    ]
+   }
+  },
+  "llava/lora/adapter-step3/adapter_model.safetensors": {
+   "base_model.model.language_model.model.layers.0.self_attn.k_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.language_model.model.layers.0.self_attn.k_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     2
+    ]
+   },
+   "base_model.model.language_model.model.layers.0.self_attn.o_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.language_model.model.layers.0.self_attn.o_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     32,
+     2
+    ]
+   },
+   "base_model.model.language_model.model.layers.0.self_attn.q_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.language_model.model.layers.0.self_attn.q_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     32,
+     2
+    ]
+   },
+   "base_model.model.language_model.model.layers.0.self_attn.v_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.language_model.model.layers.0.self_attn.v_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     2
+    ]
+   },
+   "base_model.model.language_model.model.layers.1.self_attn.k_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.language_model.model.layers.1.self_attn.k_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     2
+    ]
+   },
+   "base_model.model.language_model.model.layers.1.self_attn.o_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.language_model.model.layers.1.self_attn.o_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     32,
+     2
+    ]
+   },
+   "base_model.model.language_model.model.layers.1.self_attn.q_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.language_model.model.layers.1.self_attn.q_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     32,
+     2
+    ]
+   },
+   "base_model.model.language_model.model.layers.1.self_attn.v_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.language_model.model.layers.1.self_attn.v_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     2
+    ]
+   }
+  },
+  "llava/lora/grads-step1.safetensors": {
+   "base_model.model.language_model.model.layers.0.self_attn.k_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.language_model.model.layers.0.self_attn.k_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     2
+    ]
+   },
+   "base_model.model.language_model.model.layers.0.self_attn.o_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.language_model.model.layers.0.self_attn.o_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     32,
+     2
+    ]
+   },
+   "base_model.model.language_model.model.layers.0.self_attn.q_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.language_model.model.layers.0.self_attn.q_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     32,
+     2
+    ]
+   },
+   "base_model.model.language_model.model.layers.0.self_attn.v_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.language_model.model.layers.0.self_attn.v_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     2
+    ]
+   },
+   "base_model.model.language_model.model.layers.1.self_attn.k_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.language_model.model.layers.1.self_attn.k_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     2
+    ]
+   },
+   "base_model.model.language_model.model.layers.1.self_attn.o_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.language_model.model.layers.1.self_attn.o_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     32,
+     2
+    ]
+   },
+   "base_model.model.language_model.model.layers.1.self_attn.q_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.language_model.model.layers.1.self_attn.q_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     32,
+     2
+    ]
+   },
+   "base_model.model.language_model.model.layers.1.self_attn.v_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.language_model.model.layers.1.self_attn.v_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     2
+    ]
+   }
+  },
+  "llava/projector/adapter-step3/adapter_model.safetensors": {
+   "base_model.model.language_model.model.layers.0.self_attn.k_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.language_model.model.layers.0.self_attn.k_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     2
+    ]
+   },
+   "base_model.model.language_model.model.layers.0.self_attn.o_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.language_model.model.layers.0.self_attn.o_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     32,
+     2
+    ]
+   },
+   "base_model.model.language_model.model.layers.0.self_attn.q_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.language_model.model.layers.0.self_attn.q_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     32,
+     2
+    ]
+   },
+   "base_model.model.language_model.model.layers.0.self_attn.v_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.language_model.model.layers.0.self_attn.v_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     2
+    ]
+   },
+   "base_model.model.language_model.model.layers.1.self_attn.k_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.language_model.model.layers.1.self_attn.k_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     2
+    ]
+   },
+   "base_model.model.language_model.model.layers.1.self_attn.o_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.language_model.model.layers.1.self_attn.o_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     32,
+     2
+    ]
+   },
+   "base_model.model.language_model.model.layers.1.self_attn.q_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.language_model.model.layers.1.self_attn.q_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     32,
+     2
+    ]
+   },
+   "base_model.model.language_model.model.layers.1.self_attn.v_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.language_model.model.layers.1.self_attn.v_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     2
+    ]
+   }
+  },
+  "llava/projector/grads-step1.safetensors": {
+   "base_model.model.language_model.model.layers.0.self_attn.k_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.language_model.model.layers.0.self_attn.k_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     2
+    ]
+   },
+   "base_model.model.language_model.model.layers.0.self_attn.o_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.language_model.model.layers.0.self_attn.o_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     32,
+     2
+    ]
+   },
+   "base_model.model.language_model.model.layers.0.self_attn.q_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.language_model.model.layers.0.self_attn.q_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     32,
+     2
+    ]
+   },
+   "base_model.model.language_model.model.layers.0.self_attn.v_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.language_model.model.layers.0.self_attn.v_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     2
+    ]
+   },
+   "base_model.model.language_model.model.layers.1.self_attn.k_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.language_model.model.layers.1.self_attn.k_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     2
+    ]
+   },
+   "base_model.model.language_model.model.layers.1.self_attn.o_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.language_model.model.layers.1.self_attn.o_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     32,
+     2
+    ]
+   },
+   "base_model.model.language_model.model.layers.1.self_attn.q_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.language_model.model.layers.1.self_attn.q_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     32,
+     2
+    ]
+   },
+   "base_model.model.language_model.model.layers.1.self_attn.v_proj.lora_A.weight": {
+    "dtype": "F32",
+    "shape": [
+     2,
+     32
+    ]
+   },
+   "base_model.model.language_model.model.layers.1.self_attn.v_proj.lora_B.weight": {
+    "dtype": "F32",
+    "shape": [
+     16,
+     2
+    ]
+   },
+   "multi_modal_projector.linear_1.bias": {
+    "dtype": "F32",
+    "shape": [
+     32
+    ]
+   },
+   "multi_modal_projector.linear_1.weight": {
+    "dtype": "F32",
+    "shape": [
+     32,
+     16
+    ]
+   },
+   "multi_modal_projector.linear_2.bias": {
+    "dtype": "F32",
+    "shape": [
+     32
+    ]
+   },
+   "multi_modal_projector.linear_2.weight": {
+    "dtype": "F32",
+    "shape": [
+     32,
+     32
+    ]
+   }
+  },
+  "llava/projector/projector-step3.safetensors": {
+   "multi_modal_projector.linear_1.bias": {
+    "dtype": "F32",
+    "shape": [
+     32
+    ]
+   },
+   "multi_modal_projector.linear_1.weight": {
+    "dtype": "F32",
+    "shape": [
+     32,
+     16
+    ]
+   },
+   "multi_modal_projector.linear_2.bias": {
+    "dtype": "F32",
+    "shape": [
+     32
+    ]
+   },
+   "multi_modal_projector.linear_2.weight": {
+    "dtype": "F32",
+    "shape": [
+     32,
+     32
+    ]
+   }
+  }
+ },
+ "versions": {
+  "llamafactory_read_from_wheel": "0.9.5",
+  "numpy": "2.5.3",
+  "pillow": "12.3.0",
+  "python": "3.13.16",
+  "safetensors": "0.8.0",
+  "tokenizers": "0.23.3",
+  "torch": "2.14.1+cu130",
+  "transformers": "5.19.0"
+ }
+}
