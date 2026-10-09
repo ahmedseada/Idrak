@@ -130,6 +130,37 @@ same fixtures through `FineTuner.Train` (`Optimizer = ps => new Sgd(ps, 0.2f)`, 
 - The training step picks the span kernel or the composed path by measurement (as `AttentionFastest`), so a backend
   without a fast kernel still trains on its own device instead of copying to the host.
 
+**Phase 3 as built (2026-10-09; built and checked on the CPU, PTX and SPIR-V checked on the host, not run on a GPU).**
+- **CUDA** (`PtxKernels.SpansBackward.cs`, `CudaBackend.Spans.cs`): `AttentionSpansBackward` on the device, float32
+  (also under `MixedPrecision`: the gradient's sums stay float32), head sizes up to 128 (the host fallback beyond), built
+  as the backward of `attention_flash_f32`: Δ = dO · O per row (`attn_bwd_d_f32`), then `attn_spans_bwd_kv_f32` (a
+  block of 4 warps owns 16 keys of a key/value head and walks every query head of its group, rows in tiles of 32 in
+  shared memory; a tile none of whose rows sees the block's keys is skipped by a warp vote) and `attn_spans_bwd_q_f32`
+  (a block owns 32 rows of a head and walks the keys from its rows' smallest start to their largest end in tiles of 32).
+  Weights recomputed from the log-sum-exp, each row's range read from the starts and ends buffers, grouped heads and
+  tables as the forward, the soft-cap's slope; every gradient element has one owner (no atomics: deterministic). In the
+  main module (PTX 6.0, sm_50): ptxas 12.9 assembles it for sm_50 … sm_120, no spills, 80-110 registers, 33 KB static
+  shared memory (as the causal backward kernels).
+- **Vulkan** (`VulkanKernels.Spans.cs`, `VulkanBackend.Spans.cs`): `attention_spans_delta`, then
+  `attention_spans_backward_dq` (a workgroup per block of rows, as `attention_spans`: R × C invocations from the width,
+  q·k and dO·v staged 64 dimensions at a time, dq kept in registers) and `attention_spans_backward_dkv` (a workgroup per
+  block of keys through every query head of its group, a tile of rows skipped when none sees the block's keys);
+  head sizes up to 256; the width measured per shape (`VulkanTuneOp.SpanAttentionBackward`), the device's own until
+  then; a device that cannot bind the kernels' 9 and 10 storages takes the host fallback. Every kernel at every width
+  passes spirv-val (SPIRV-Tools 2025.1) and the workgroup-memory bound.
+- **The measured choice with the gradient**: `Backend.PrefersComposedAttention(..., training)` (public API change; the
+  dump regenerated): while the gradient is recorded `Tensor.AttentionFastest` asks for the faster path forward and
+  backward; CUDA and Vulkan time AttentionSpans + AttentionSpansBackward against the composed pass and its gradient
+  (`Backend.ComposedAttentionTraining`: the products, the softmax's gradient) and keep it apart from the inference
+  choice (bit 2 of the key's mask field), in their tuning caches.
+- **Cases**: the kit's "attention over key ranges, the gradient" (`DeviceCases.SpansBackward.cs`): rows past several
+  blocks, keys past several tiles, head sizes 1 to 256, random ranges (empty, past the keys), bidirectional, causal,
+  windows, image blocks in a window, grouped heads, tables, a soft-cap, against plain loops and, through tensors,
+  against the composed path's gradients; replayed call by call on a device by "conformance kit" and "attention spans
+  backward". Tests: "attention spans backward" (the kit's key-range cases on the device; the gradient against the
+  CPU in float32 and under bfloat16 MixedPrecision at head sizes 4 to 256, on the device's own kernels; training
+  through the fastest path). `--bench-spans train` times the three paths forward and backward.
+
 ### Phase 4: the command line (`idrak tune`)
 
 - `idrak tune -P <plugin> --base <model> --data train.json --eval val.json --images <dir|zip>

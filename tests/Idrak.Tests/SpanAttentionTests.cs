@@ -3,6 +3,7 @@
 
 using Idrak;
 using Idrak.Abstraction.Operations;
+using Idrak.Abstraction.Testing;
 using Idrak.Layers;
 
 // Attention over one range of keys per query row (Tensor.AttentionSpans, Backend.AttentionSpans): every rule KeySpans
@@ -18,6 +19,9 @@ internal static partial class Tests
         ("attention spans: the fastest path (forced key ranges, forced composed, measured) gives AttentionSpans' result with every key and with a dense mask; the memory guard; IDRAK_ATTENTION_PATH", FastestAttention),
         ("attention spans: float32 and bfloat16 tensor cores (head sizes up to 128, rows past blocks of 64 and 128, every rule, grouped heads, tables, a soft-cap) match the CPU", SpanAttentionPrecisions),
         ("attention spans: the CUDA span modules (float32 and tensor-core, every padded head size) declare their kernels and parameters, and are judged by the shared memory a device reports", SpanModules),
+        ("attention spans backward: the conformance kit's key-range cases (forward and gradient; random ranges, bidirectional, causal, windows, image blocks, grouped heads, tables, head sizes 1 to 256, a soft-cap) replay on the device call by call", SpanGradientCases),
+        ("attention spans backward: float32 and bfloat16 (MixedPrecision): the gradient on the device matches the CPU (head sizes 4 to 256, rows and keys past several tiles, every rule, grouped heads, tables, a soft-cap), on the device's own kernels", SpanGradientPrecisions),
+        ("attention spans backward: training through the fastest path (forced key ranges, forced composed, measured with the gradient) gives the same gradients; the key-range path runs AttentionSpansBackward", SpanTrainingPaths),
     ];
 
     // The composed path for query head h: softmax(cap(scale · q kᵀ) + mask) v with the mask from the table's ranges.
@@ -394,5 +398,185 @@ internal static partial class Tests
               && Idrak.Gpu.Cuda.PtxKernels.SpanFloatDim(132) == 0, "float32 head sizes: multiples of 4 up to 128, padded to 8");
         Check(Idrak.Gpu.Cuda.PtxKernels.SpanTensorDim(72) == 80 && Idrak.Gpu.Cuda.PtxKernels.SpanTensorDim(64) == 64 && Idrak.Gpu.Cuda.PtxKernels.SpanTensorDim(6) == 0,
             "tensor-core head sizes: multiples of 4 up to 128, padded to 16");
+    }
+
+    // The kit's two key-range cases on this device: every call the CPU made (AttentionSpans, AttentionSpansBackward, and
+    // the composed path's products and softmax) made again here and compared with what the CPU wrote.
+    private static void SpanGradientCases(Device device)
+    {
+        var report = Conformance.Check(device, new DeviceCheckOptions { Filter = name => name.StartsWith("attention over key ranges", StringComparison.Ordinal) });
+        report.ThrowIfFailed();
+        foreach (string operation in new[] { "AttentionSpans", "AttentionSpansBackward" })
+        {
+            var entry = report.Entries.Single(e => e.Name == operation);
+            Check(entry.Status == CheckStatus.Passed, $"{operation} on {device}: {entry}");
+        }
+    }
+
+    // AttentionSpansBackward on the device against the CPU's, given the same forward results (the CPU's output and
+    // log-sum-exp) in float32 and under MixedPrecision (the gradient's kernels sum in float32 either way), at head sizes
+    // past the kernels' tiles; then a forward and backward pass through tensors on each, within bfloat16's error where
+    // the device's forward runs on bfloat16 tensor cores. The device's own kernels take the gradient where it has them:
+    // CUDA to head size 128, Vulkan to 256 when it binds the kernels' storages.
+    private static void SpanGradientPrecisions(Device device)
+    {
+        bool tensorCores = MixedPrecision.TensorCoresUnavailable(device) is null;
+        var random = new Random(76);
+        static double RelativeError(float[] expected, float[] actual) =>
+            Math.Sqrt(expected.Zip(actual).Sum(p => (double)(p.First - p.Second) * (p.First - p.Second)) / Math.Max(1e-12, expected.Sum(v => (double)v * v)));
+        foreach (var precision in new[] { MatMulPrecision.Float32, MatMulPrecision.BFloat16 })
+        {
+            foreach (var (dim, rows, keyRows, rule, kvHeads, tables, cap) in new[]
+                     {
+                         (72, 150, 150, "bidirectional", 2, 1, 0f), (64, 130, 200, "bidirectional", 1, 1, 0f), (128, 129, 129, "causal", 2, 4, 0f),
+                         (80, 100, 100, "image blocks", 1, 1, 0f), (4, 70, 90, "random", 2, 4, 0f), (100, 65, 65, "window", 4, 1, 0f),
+                         (72, 90, 90, "random", 1, 1, 2.5f), (13, 40, 40, "bidirectional", 1, 1, 0f), (256, 70, 70, "image blocks", 2, 2, 0f),
+                         (200, 45, 60, "random", 1, 1, 0f),
+                     })
+            {
+                const int Heads = 4;
+                float scale = 1f / MathF.Sqrt(dim);
+                var variant = new AttentionVariant(0, cap);
+                KeySpans Table() => rule switch
+                {
+                    "bidirectional" => KeySpans.Bidirectional(rows, keyRows),
+                    "causal" => KeySpans.Causal(rows),
+                    "window" => KeySpans.Causal(rows, 17),
+                    "image blocks" => KeySpans.ImageBlocks(rows, [(3, Math.Min(40, rows / 2)), (rows / 2 + 5, rows / 3)], window: 20),
+                    _ => new KeySpans([.. Enumerable.Range(0, rows).Select(_ => random.Next(0, keyRows + 2))],
+                        [.. Enumerable.Range(0, rows).Select(_ => random.Next(0, keyRows + 3))]),
+                };
+                var spans = KeySpans.Concat([.. Enumerable.Range(0, tables).Select(_ => Table())]);
+                float[] qv = RandomArray(random, Heads * rows * dim), kv = RandomArray(random, kvHeads * keyRows * dim), vv = RandomArray(random, kvHeads * keyRows * dim);
+                float[] dyv = RandomArray(random, Heads * rows * dim);
+                string what = $"{precision}, dim {dim}, {rows} rows, {keyRows} keys, {rule}, {kvHeads} key/value heads, {tables} tables, cap {cap} on {device}";
+
+                // The CPU's forward results, given to both.
+                float[] yv, lsev;
+                using (var q = Tensor.From(qv, [Heads, rows, dim], Device.Cpu))
+                using (var k = Tensor.From(kv, [kvHeads, keyRows, dim], Device.Cpu))
+                using (var v = Tensor.From(vv, [kvHeads, keyRows, dim], Device.Cpu))
+                using (var y = Tensor.Zeros([Heads * rows * dim], Device.Cpu))
+                using (var lse = Tensor.Zeros([Heads * rows], Device.Cpu))
+                {
+                    var (starts, ends) = spans.ToTensors(Device.Cpu);
+                    Device.Cpu.Backend.AttentionSpans(q.Storage, k.Storage, v.Storage, starts.Storage, ends.Storage, y.Storage, lse.Storage, Heads, kvHeads,
+                        Heads / tables, rows, keyRows, dim, scale, variant);
+                    (yv, lsev) = (y.ToArray(), lse.ToArray());
+                }
+
+                (float[] Dq, float[] Dk, float[] Dv, IReadOnlyDictionary<string, long> HostCalls) Gradient(Device on)
+                {
+                    using var q = Tensor.From(qv, [Heads, rows, dim], on);
+                    using var k = Tensor.From(kv, [kvHeads, keyRows, dim], on);
+                    using var v = Tensor.From(vv, [kvHeads, keyRows, dim], on);
+                    using var y = Tensor.From(yv, [Heads * rows * dim], on);
+                    using var lse = Tensor.From(lsev, [Heads * rows], on);
+                    using var dy = Tensor.From(dyv, [Heads * rows * dim], on);
+                    using var dq = Tensor.Zeros([Heads * rows * dim], on);
+                    using var dk = Tensor.Zeros([kvHeads * keyRows * dim], on);
+                    using var dv = Tensor.Zeros([kvHeads * keyRows * dim], on);
+                    var (starts, ends) = spans.ToTensors(on);
+                    using (var trace = Kernels.Trace(on.Backend))
+                    using (MixedPrecision.Use(precision))
+                    {
+                        on.Backend.AttentionSpansBackward(q.Storage, k.Storage, v.Storage, starts.Storage, ends.Storage, y.Storage, lse.Storage, dy.Storage,
+                            dq.Storage, dk.Storage, dv.Storage, Heads, kvHeads, Heads / tables, rows, keyRows, dim, scale, variant);
+                        on.Synchronize();
+                        return (dq.ToArray(), dk.ToArray(), dv.ToArray(), trace.HostCallsByOperation);
+                    }
+                }
+
+                var expected = Gradient(Device.Cpu);
+                var got = Gradient(device);
+                Check(RelativeError(expected.Dq, got.Dq) < 1e-4, $"{what}: dq error {RelativeError(expected.Dq, got.Dq):G3}");
+                Check(RelativeError(expected.Dk, got.Dk) < 1e-4, $"{what}: dkeys error {RelativeError(expected.Dk, got.Dk):G3}");
+                Check(RelativeError(expected.Dv, got.Dv) < 1e-4, $"{what}: dvalues error {RelativeError(expected.Dv, got.Dv):G3}");
+                bool ownKernels = device.Backend.Kind switch
+                {
+                    "cuda" => dim <= Idrak.Gpu.Cuda.PtxKernels.FlashMaxDim,
+                    "vulkan" => device.Backend is Idrak.Gpu.Vulkan.VulkanBackend vulkan && vulkan.SpanGradientOnDevice,
+                    _ => device.Type == DeviceType.Cpu,
+                };
+                Check(!ownKernels || !got.HostCalls.ContainsKey("AttentionSpansBackward"), $"{what}: the gradient ran on the device's own kernels");
+
+                // Forward and backward through tensors, in the precision.
+                (float[] Y, float[] Dq, float[] Dk, float[] Dv) Pass(Device on)
+                {
+                    using var q = Tensor.From(qv, [Heads, rows, dim], on, requiresGrad: true);
+                    using var k = Tensor.From(kv, [kvHeads, keyRows, dim], on, requiresGrad: true);
+                    using var v = Tensor.From(vv, [kvHeads, keyRows, dim], on, requiresGrad: true);
+                    using var w = Tensor.From(dyv, [Heads, rows, dim], on);
+                    var (starts, ends) = spans.ToTensors(on);
+                    using (MixedPrecision.Use(on.Type == DeviceType.Cpu ? MatMulPrecision.Float32 : precision))
+                    {
+                        var y = Tensor.AttentionSpans(q, k, v, starts, ends, scale, variant);
+                        (y * w).Sum().Backward();
+                        return (y.ToArray(), q.Grad!.ToArray(), k.Grad!.ToArray(), v.Grad!.ToArray());
+                    }
+                }
+
+                var reference = Pass(Device.Cpu);
+                var pass = Pass(device);
+                // bfloat16's error where the forward runs on tensor cores (the gradient then starts from its output and log-sum-exp).
+                bool reduced = precision != MatMulPrecision.Float32 && tensorCores && cap == 0f && dim % 4 == 0 && dim <= 128;
+                double tolerance = reduced ? 5e-2 : 1e-4;
+                Check(RelativeError(reference.Y, pass.Y) < (reduced ? 1.5e-2 : 1e-4), $"{what}, through tensors: output error {RelativeError(reference.Y, pass.Y):G3}");
+                Check(RelativeError(reference.Dq, pass.Dq) < tolerance, $"{what}, through tensors: dq error {RelativeError(reference.Dq, pass.Dq):G3}");
+                Check(RelativeError(reference.Dk, pass.Dk) < tolerance, $"{what}, through tensors: dkeys error {RelativeError(reference.Dk, pass.Dk):G3}");
+                Check(RelativeError(reference.Dv, pass.Dv) < tolerance, $"{what}, through tensors: dvalues error {RelativeError(reference.Dv, pass.Dv):G3}");
+            }
+        }
+    }
+
+    // Tensor.AttentionFastest with the gradient recorded: each path (forced key ranges, forced composed where the device
+    // reports the memory, measured with the gradient) gives the same gradients; the key-range path records
+    // AttentionSpansBackward and, on CUDA and Vulkan, runs it on the device.
+    private static void SpanTrainingPaths(Device device)
+    {
+        var random = new Random(77);
+        const int Heads = 4, Rows = 70, Dim = 16;
+        float scale = 1f / MathF.Sqrt(Dim);
+        float[] qv = RandomArray(random, Heads * Rows * Dim), kv = RandomArray(random, Heads * Rows * Dim), vv = RandomArray(random, Heads * Rows * Dim);
+        float[] wv = RandomArray(random, Heads * Rows * Dim);
+        var (starts, ends) = KeySpans.Bidirectional(Rows, Rows).ToTensors(device);
+        var previous = AttentionPaths.Forced;
+        try
+        {
+            var gradients = new List<float[][]>();
+            foreach (var path in new[] { AttentionPath.Spans, AttentionPath.Composed, AttentionPath.Measured })
+            {
+                AttentionPaths.Forced = path;
+                using var q = Tensor.From(qv, [Heads, Rows, Dim], device, requiresGrad: true);
+                using var k = Tensor.From(kv, [Heads, Rows, Dim], device, requiresGrad: true);
+                using var v = Tensor.From(vv, [Heads, Rows, Dim], device, requiresGrad: true);
+                using var w = Tensor.From(wv, [Heads, Rows, Dim], device);
+                using var trace = Kernels.Trace(device.Backend);
+                (Tensor.AttentionFastest(q, k, v, starts, ends, scale, everyKey: true) * w).Sum().Backward();
+                gradients.Add([q.Grad!.ToArray(), k.Grad!.ToArray(), v.Grad!.ToArray()]);
+                if (path == AttentionPath.Spans)
+                {
+                    Check(trace.Calls(Ops.AttentionSpansBackward) == 1 && trace.Calls(Ops.SoftmaxBackward) == 0, "the key-range path's gradient is AttentionSpansBackward");
+                    Check(device.Backend.Kind is not ("cuda" or "vulkan") || !trace.HostCallsByOperation.ContainsKey("AttentionSpansBackward"),
+                        "CUDA and Vulkan run AttentionSpansBackward on their own kernels");
+                }
+                else if (path == AttentionPath.Composed && device.Backend.AvailableMemory() is not null)
+                {
+                    Check(trace.Calls(Ops.AttentionSpansBackward) == 0, "forced composed, no key-range gradient");
+                }
+            }
+
+            for (int i = 1; i < gradients.Count; i++)
+            {
+                for (int t = 0; t < 3; t++)
+                {
+                    AssertClose(gradients[0][t], gradients[i][t], 1e-3f, $"gradient {t} of path {i} against the key ranges' on {device}");
+                }
+            }
+        }
+        finally
+        {
+            AttentionPaths.Forced = previous;
+        }
     }
 }
