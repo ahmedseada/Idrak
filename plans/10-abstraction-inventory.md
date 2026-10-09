@@ -163,16 +163,16 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 
 ## The device contract (`Backend`)
 
-`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 129 virtual methods, 6 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `HipBackend`, `VulkanBackend`. Each
-operation (111, `Ops`) is a `NameKernel` method, the device's own kernel; `Backend.Name(...)` runs the kernel registered
+`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 130 virtual methods, 6 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `HipBackend`, `VulkanBackend`. Each
+operation (112, `Ops`) is a `NameKernel` method, the device's own kernel; `Backend.Name(...)` runs the kernel registered
 for the device in `Kernels` instead, where there is one (plan 9). The rest is device plumbing: memory, copies, graphs, profiling.
 
 | Device | Methods overridden |
 |---|---|
-| `CpuBackend` | 108 of 139 |
-| `CudaBackend` | 130 of 139 |
-| `HipBackend` | 23 of 139 |
-| `VulkanBackend` | 112 of 139 |
+| `CpuBackend` | 109 of 140 |
+| `CudaBackend` | 131 of 140 |
+| `HipBackend` | 23 of 140 |
+| `VulkanBackend` | 113 of 140 |
 
 | Operation | Kind | Cpu | Cuda | Hip | Vulkan |
 |---|---|---|---|---|---|
@@ -238,6 +238,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `GatedActivationBackwardPackedKernel(8)` | virtual | ✓ | ✓ |  |  |
 | `GatedActivationKernel(5)` | virtual | ✓ | ✓ |  | ✓ |
 | `GatedActivationPackedKernel(9)` | virtual | ✓ | ✓ |  |  |
+| `GatherBFloat16ColumnsKernel(6)` | virtual | ✓ | ✓ |  | ✓ |
 | `GatherBFloat16Kernel(6)` | virtual | ✓ | ✓ |  | ✓ |
 | `GatherKernel(6)` | virtual | ✓ | ✓ |  | ✓ |
 | `GemmStridedKernel(19)` | virtual |  | ✓ |  |  |

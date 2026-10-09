@@ -69,6 +69,24 @@ internal static partial class VulkanKernels
             return k.Build();
         });
 
+        // gather of columns from a bfloat16 table [dim, vocabulary] (rows of ⌈vocabulary / 2⌉ words): y[t, d] =
+        // table[d, indices[t]], a tied head's weight read as the embedding table. The binding holds the table's rows
+        // [first, first + rows) (rows of the table are the outputs' columns d; windows as in gather).
+        yield return ("gather_bf16_columns", () =>
+        {
+            var k = new KernelBuilder("gather_bf16_columns", Block);
+            var (packed, indices, y) = (k.Buffer("packed"), k.Buffer("indices"), k.Buffer("y"));
+            var (count, dim, vocabulary) = (k.PushInt("count"), k.PushInt("dim"), k.PushInt("vocabulary"));
+            var (first, rows) = (k.PushInt("first"), k.PushInt("rows"));
+            Grid(k, count * dim, i =>
+            {
+                var (token, d) = (i / dim, i % dim - first);
+                var index = k.Clamp(indices[token].ToInt(), k.Int(0), vocabulary - 1);
+                k.If((d >= 0) & (d < rows), () => y[i] = BFloat16At(k, packed, d * ((vocabulary + 1) / 2) + (index >> 1), index));
+            });
+            return k.Build();
+        });
+
         // cache[h, position + t, :] = source[h, t, :] for [heads, steps, dim] → [heads, capacity, dim].
         yield return ("key_value_write", () =>
         {

@@ -18,8 +18,8 @@ internal static partial class Tests
         ("vulkan limits: the kernels' width is measured at start (a float32 product and one-row decoding work at each width up to the formula's), stored per device and driver, and read back; products at the measured width match the CPU", VulkanWidthMeasured),
         ("vulkan limits: the loader's file names per operating system (libvulkan.so on Android; Linux and Windows unchanged)", VulkanLoaderNames),
         ("vulkan limits: windows of a large storage are whole rows within the binding range, starting at aligned offsets", VulkanWindowRows),
-        ("vulkan limits: with a 1 MiB binding range, large weights' products (int8, int4, bfloat16), gathers, dequantizations, uploads and downloads run on the device and match the CPU", VulkanLargeStorages),
-        ("vulkan limits: with a small binding range, decoding steps whose embedding and head exceed it (int8, int4, bfloat16) match the CPU with no host fallbacks", VulkanLargeDecoder),
+        ("vulkan limits: with a 1 MiB binding range, large weights' products (int8, int4, bfloat16), gathers (by rows and by columns), dequantizations, uploads and downloads run on the device and match the CPU", VulkanLargeStorages),
+        ("vulkan limits: with a small binding range, decoding steps whose embedding and head exceed it (int8, int4, bfloat16, a tied bfloat16 head read by columns) match the CPU with no host fallbacks", VulkanLargeDecoder),
         ("vulkan limits: subgroup size control only where reported; the size measured per kernel and stored; results as without it", VulkanSubgroupSizes),
     ];
 
@@ -201,6 +201,14 @@ internal static partial class Tests
                 backend.GatherBFloat16(gp, gj, gz, ids.Length, 201, 5000);
                 cpu.GatherBFloat16(cp, cj, cz, ids.Length, 201, 5000);
                 Check(Read(backend, gz, ids.Length * 201).SequenceEqual(Read(cpu, cz, ids.Length * 201)), "gather from a large bfloat16 table");
+
+                // The same words as a [5000, 201] table read by columns (a tied head's weight as the embedding table).
+                float[] columns = [200, 0, 101, 57, 1, 199];
+                var (gc, cc) = (On(backend, columns), On(cpu, columns));
+                var (gw, cw) = (Empty(backend, columns.Length * 5000), Empty(cpu, columns.Length * 5000));
+                backend.GatherBFloat16Columns(gp, gc, gw, columns.Length, 5000, 201);
+                cpu.GatherBFloat16Columns(cp, cc, cw, columns.Length, 5000, 201);
+                Check(Read(backend, gw, columns.Length * 5000).SequenceEqual(Read(cpu, cw, columns.Length * 5000)), "column gather from a large bfloat16 table");
             }
 
             // Dequantizations whose float32 output (and int8, bfloat16 weights) exceed a binding.
@@ -260,15 +268,17 @@ internal static partial class Tests
         var counts = new ConcurrentDictionary<string, long>();
         try
         {
-            foreach (var (name, options) in new[]
+            foreach (var (name, options, tied) in new[]
             {
-                ("int8", new DecoderBuildOptions { Seed = 4, Int8 = true }),
-                ("int4", new DecoderBuildOptions { Seed = 4, Int4 = true }),
-                ("bfloat16", new DecoderBuildOptions { Seed = 4, BFloat16 = true }),
+                ("int8", new DecoderBuildOptions { Seed = 4, Int8 = true }, false),
+                ("int4", new DecoderBuildOptions { Seed = 4, Int4 = true }, false),
+                ("bfloat16", new DecoderBuildOptions { Seed = 4, BFloat16 = true }, false),
+                ("bfloat16 tied (the head's columns as the table)", new DecoderBuildOptions { Seed = 4, BFloat16 = true }, true),
             })
             {
-                using var gpu = spec.Build(null, options with { Device = device });
-                using var host = spec.Build(null, options with { Device = Device.Cpu });
+                var built = spec with { TieEmbeddings = tied };
+                using var gpu = built.Build(null, options with { Device = device });
+                using var host = built.Build(null, options with { Device = Device.Cpu });
                 gpu.Eval();
                 host.Eval();
                 using var noGrad = Autograd.NoGrad();

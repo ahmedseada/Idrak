@@ -303,6 +303,7 @@ public abstract class Idrak.Abstraction.Devices.Backend
   public virtual void GatedActivationBackwardPackedKernel(Idrak.Abstraction.Devices.Storage packedGate, Idrak.Abstraction.Devices.Storage packedUp, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dgate, Idrak.Abstraction.Devices.Storage dup, int n, int kind, int flags)
   public virtual void GatedActivationKernel(Idrak.Abstraction.Devices.Storage gate, Idrak.Abstraction.Devices.Storage up, Idrak.Abstraction.Devices.Storage y, int n, int kind)
   public virtual void GatedActivationPackedKernel(Idrak.Abstraction.Devices.Storage gate, Idrak.Abstraction.Devices.Storage up, Idrak.Abstraction.Devices.Storage packedGate, Idrak.Abstraction.Devices.Storage packedUp, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage packedY, int n, int kind, int flags)
+  public virtual void GatherBFloat16ColumnsKernel(Idrak.Abstraction.Devices.Storage packed, Idrak.Abstraction.Devices.Storage indices, Idrak.Abstraction.Devices.Storage y, int count, int dim, int vocabulary)
   public virtual void GatherBFloat16Kernel(Idrak.Abstraction.Devices.Storage packed, Idrak.Abstraction.Devices.Storage indices, Idrak.Abstraction.Devices.Storage y, int count, int dim, int vocabulary)
   public virtual void GatherKernel(Idrak.Abstraction.Devices.Storage table, Idrak.Abstraction.Devices.Storage indices, Idrak.Abstraction.Devices.Storage y, int count, int dim, int vocabulary)
   public virtual void GroupReduceKernel(Idrak.Abstraction.Devices.Storage a, Idrak.Abstraction.Devices.Storage? b, Idrak.Abstraction.Devices.Storage sumA, Idrak.Abstraction.Devices.Storage? sumAB, int outer, int groups, int inner)
@@ -401,6 +402,7 @@ public abstract class Idrak.Abstraction.Devices.Backend
   public void GatedActivationPacked(Idrak.Abstraction.Devices.Storage gate, Idrak.Abstraction.Devices.Storage up, Idrak.Abstraction.Devices.Storage packedGate, Idrak.Abstraction.Devices.Storage packedUp, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage packedY, int n, int kind, int flags)
   public void Gather(Idrak.Abstraction.Devices.Storage table, Idrak.Abstraction.Devices.Storage indices, Idrak.Abstraction.Devices.Storage y, int count, int dim, int vocabulary)
   public void GatherBFloat16(Idrak.Abstraction.Devices.Storage packed, Idrak.Abstraction.Devices.Storage indices, Idrak.Abstraction.Devices.Storage y, int count, int dim, int vocabulary)
+  public void GatherBFloat16Columns(Idrak.Abstraction.Devices.Storage packed, Idrak.Abstraction.Devices.Storage indices, Idrak.Abstraction.Devices.Storage y, int count, int dim, int vocabulary)
   public void GroupReduce(Idrak.Abstraction.Devices.Storage a, Idrak.Abstraction.Devices.Storage? b, Idrak.Abstraction.Devices.Storage sumA, Idrak.Abstraction.Devices.Storage? sumAB, int outer, int groups, int inner)
   public void GroupScaleShift(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage? scale, Idrak.Abstraction.Devices.Storage? shift, Idrak.Abstraction.Devices.Storage y, int n, int groups, int inner, bool accumulate)
   public void HistoryPush(Idrak.Abstraction.Devices.Storage ids, Idrak.Abstraction.Devices.Storage history, Idrak.Abstraction.Devices.Storage length, int rows, int capacity)
@@ -1781,6 +1783,7 @@ public static class Idrak.Abstraction.Operations.OperationKernels
   nested Idrak.Abstraction.Operations.OperationKernels.GatedActivationPacked (below)
   nested Idrak.Abstraction.Operations.OperationKernels.Gather (below)
   nested Idrak.Abstraction.Operations.OperationKernels.GatherBFloat16 (below)
+  nested Idrak.Abstraction.Operations.OperationKernels.GatherBFloat16Columns (below)
   nested Idrak.Abstraction.Operations.OperationKernels.GemmStrided (below)
   nested Idrak.Abstraction.Operations.OperationKernels.GroupReduce (below)
   nested Idrak.Abstraction.Operations.OperationKernels.GroupScaleShift (below)
@@ -1942,6 +1945,8 @@ public delegate void Idrak.Abstraction.Operations.OperationKernels.GatedActivati
 public delegate void Idrak.Abstraction.Operations.OperationKernels.Gather(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage table, Idrak.Abstraction.Devices.Storage indices, Idrak.Abstraction.Devices.Storage y, int count, int dim, int vocabulary)
 
 public delegate void Idrak.Abstraction.Operations.OperationKernels.GatherBFloat16(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage packed, Idrak.Abstraction.Devices.Storage indices, Idrak.Abstraction.Devices.Storage y, int count, int dim, int vocabulary)
+
+public delegate void Idrak.Abstraction.Operations.OperationKernels.GatherBFloat16Columns(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage packed, Idrak.Abstraction.Devices.Storage indices, Idrak.Abstraction.Devices.Storage y, int count, int dim, int vocabulary)
 
 public delegate bool Idrak.Abstraction.Operations.OperationKernels.GemmStrided(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage a, long aOffset, int lda, bool transA, Idrak.Abstraction.Devices.Storage b, long bOffset, int ldb, bool transB, Idrak.Abstraction.Devices.Storage c, long cOffset, int ldc, int m, int n, int k, float beta, Idrak.Abstraction.Devices.Storage? bias, Idrak.Abstraction.Devices.GemmEpilogue epilogue, Idrak.Abstraction.Devices.Storage? aux, long auxOffset)
 
@@ -2118,6 +2123,7 @@ public static class Idrak.Abstraction.Operations.Ops
   public static readonly Idrak.Abstraction.Operations.Operation GatedActivationPacked
   public static readonly Idrak.Abstraction.Operations.Operation Gather
   public static readonly Idrak.Abstraction.Operations.Operation GatherBFloat16
+  public static readonly Idrak.Abstraction.Operations.Operation GatherBFloat16Columns
   public static readonly Idrak.Abstraction.Operations.Operation GemmStrided
   public static readonly Idrak.Abstraction.Operations.Operation GroupReduce
   public static readonly Idrak.Abstraction.Operations.Operation GroupScaleShift
@@ -2419,6 +2425,7 @@ public sealed class Idrak.Abstraction.Tensor : System.IDisposable
   public static Idrak.Abstraction.Tensor Concat(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor> tensors, int dim = 0)
   public static Idrak.Abstraction.Tensor DecoderMask(Idrak.Abstraction.Tensor position, int rows, int capacity, bool track = true)
   public static Idrak.Abstraction.Tensor EmbeddingLookup(Idrak.Abstraction.Generation.BFloat16Weight table, Idrak.Abstraction.Tensor indices)
+  public static Idrak.Abstraction.Tensor EmbeddingLookupColumns(Idrak.Abstraction.Generation.BFloat16Weight table, Idrak.Abstraction.Tensor indices)
   public static Idrak.Abstraction.Tensor Empty(System.ReadOnlySpan<int> shape, Idrak.Abstraction.Device device, bool zeroed = false, bool track = true)
   public static Idrak.Abstraction.Tensor From(System.ReadOnlySpan<float> values, System.ReadOnlySpan<int> shape, Idrak.Abstraction.Device? device = null, bool requiresGrad = false)
   public static Idrak.Abstraction.Tensor From(float[,] values, Idrak.Abstraction.Device? device = null, bool requiresGrad = false)
