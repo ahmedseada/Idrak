@@ -29,6 +29,8 @@ public static partial class DeviceCases
         new("rotary positions: rope forward and back, normalized rope, pairs and attention heads", RotaryPositions, random: true),
         new("embeddings: gather, bfloat16 gather (rows and columns), one-hot and scatter-add", Embeddings, random: true),
         new("convolution and pooling: im2col, col2im (rectangular, strided, padded, dilated), max pooling and its gradients", ConvolutionAndPooling, random: true),
+        new("convolution: forward with a bias and each activation, input and weight gradients (groups, depthwise, dilated, rectangular, tiles past 64), average pooling and its gradient, against plain loops", Convolutions, random: true),
+        new("images: resampling with per-channel normalization, floats and Pillow's 8-bit passes (shrink, enlarge, one axis kept), against plain loops", Resampling, random: true),
         new("sequence losses: CTC loss and its gradient, against every alignment listed (both layouts, empty and repeated labels, impossible alignments)", SequenceLosses, random: true),
         new("layout: permutations, axis sums and broadcasts", Layout, random: true),
         new("optimizer steps: SGD, Adam, 8-bit Adam and fused AdamW", OptimizerSteps, random: true),

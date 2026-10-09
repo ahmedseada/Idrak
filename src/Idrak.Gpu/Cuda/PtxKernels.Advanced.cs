@@ -33,6 +33,7 @@ internal static partial class PtxKernels
         Embedding(sb);
         Convolution(sb);
         ShapeKernels(sb);
+        BuildConvolution(sb);
     }
 
     // ------------------------------------------------------------------ element-wise math
@@ -594,10 +595,10 @@ internal static partial class PtxKernels
     private static readonly (string, string)[] ConvParams =
     [
         ("u32", "C"), ("u32", "H"), ("u32", "W"), ("u32", "KW"), ("u32", "SH"), ("u32", "SW"), ("u32", "PH"), ("u32", "PW"),
-        ("u32", "OW"), ("u32", "patch"), ("u32", "khkw"), ("u32", "ohow"),
+        ("u32", "OW"), ("u32", "patch"), ("u32", "khkw"), ("u32", "ohow"), ("u32", "DH"), ("u32", "DW"),
     ];
 
-    /// <summary>Decodes column-matrix element i; leaves %p1 = inside the image and %r17 = flat input index.</summary>
+    /// <summary>Decodes column-matrix element i (window position (kh, kw) dilated by DH, DW); leaves %p1 = inside the image and %r17 = flat input index.</summary>
     private const string PatchIndex = """
         div.u32 %r5, %i, %s_patch;
         rem.u32 %r6, %i, %s_patch;
@@ -609,9 +610,11 @@ internal static partial class PtxKernels
         rem.u32 %r12, %r6, %s_khkw;
         div.u32 %r13, %r12, %s_KW;
         rem.u32 %r14, %r12, %s_KW;
-        mad.lo.s32 %r15, %r9, %s_SH, %r13;
+        mul.lo.u32 %r18, %r13, %s_DH;
+        mad.lo.s32 %r15, %r9, %s_SH, %r18;
         sub.s32 %r15, %r15, %s_PH;
-        mad.lo.s32 %r16, %r10, %s_SW, %r14;
+        mul.lo.u32 %r19, %r14, %s_DW;
+        mad.lo.s32 %r16, %r10, %s_SW, %r19;
         sub.s32 %r16, %r16, %s_PW;
         setp.lt.u32 %p1, %r15, %s_H;
         setp.lt.and.u32 %p1, %r16, %s_W, %p1;
