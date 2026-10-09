@@ -93,7 +93,7 @@ internal sealed class ServeHost
 
     /// <summary>The options of serve and ui (besides the model options).</summary>
     public static readonly string[] ValueOptions = ["--host", "--port", "--api-key", "--cors", "--max-concurrency", "--keep-alive", "--log-requests",
-        "--max-request-mb", "--max-images"];
+        "--max-request-mb", "--max-images", ModelChoices.VisionOption];
 
     /// <summary>The flags of serve and ui.</summary>
     public static readonly string[] Flags = ["--metrics", "--log-content", "--grayscale", "--allow-image-urls"];
@@ -508,7 +508,7 @@ internal sealed class ServeHost
     private Idrak.Generation.ChatImages Images(ServedModel model, TextGenerator generator)
     {
         var pretrained = _loaded.TryGetValue(generator, out var p) ? p : throw new InvalidOperationException($"{model.Name}: the loaded model is unknown.");
-        var images = ImageInputs.For(pretrained, model.Choice.Grayscale, out string? reason)
+        var images = ImageInputs.For(pretrained, model.Choice.Grayscale, model.Choice.VisionOptions, out string? reason)
             ?? throw new InvalidOperationException($"{model.Name} reads no images{(reason is null ? "" : $": {reason}")}.");
         return images.Images;
     }

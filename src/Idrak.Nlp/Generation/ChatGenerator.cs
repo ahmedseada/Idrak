@@ -69,17 +69,18 @@ public sealed class ChatGenerator(TextGenerator generator, ChatTemplate? templat
 
     /// <summary>
     /// The prompt text for a request (useful for debugging templates), its images' markers expanded to the model's image
-    /// tokens (<see cref="ChatImages.Format"/>, each image as many as its encoder's layout gives it, so its images are
-    /// decoded); throws for a message part it does not take (<see cref="PartKinds"/>).
+    /// tokens (<see cref="ChatImages.Format"/>, each image as many blocks and tokens as its encoder gives it under the
+    /// request's <see cref="ChatRequest.VisionOptions"/>, so its images are decoded); throws for a message part it does
+    /// not take (<see cref="PartKinds"/>).
     /// </summary>
     public string RenderPrompt(ChatRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
         var images = Images is null ? [] : ImagesOf(request);
-        return RenderPrompt(request, images.Count == 0 ? [] : [.. images.Select(i => Images!.Encoder.Layout(Images.Decode(i)))]);
+        return RenderPrompt(request, images.Count == 0 ? [] : [.. images.Select(i => Images!.Encoder.Blocks(Images.Decode(i), request.VisionOptions))]);
     }
 
-    private string RenderPrompt(ChatRequest request, IReadOnlyList<ImageTokenLayout> layouts)
+    private string RenderPrompt(ChatRequest request, IReadOnlyList<IReadOnlyList<ImageTokenLayout>> layouts)
     {
         ChatParts.ThrowIfUnsupported(this, request);
         string prompt = Template.Render(request.Messages, request.Tools ?? [], request.Think);
@@ -214,26 +215,27 @@ public sealed class ChatGenerator(TextGenerator generator, ChatTemplate? templat
         }
         else
         {
-            // Each image decoded once: its layout expands the prompt (template errors before the encoder runs), then the
-            // family's encoder gives its features, which must have that layout.
+            // Each image decoded once: its blocks expand the prompt (template errors before the encoder runs), then the
+            // family's encoder gives one features per block, which must have that block's layout.
             ChatParts.ThrowIfUnsupported(this, request);
             var decoded = images.Select(Images!.Decode).ToList();
-            var layouts = decoded.Select(Images.Encoder.Layout).ToList();
+            var layouts = decoded.Select(d => Images.Encoder.Blocks(d, request.VisionOptions)).ToList();
             prompt = RenderPrompt(request, layouts);
-            features = Images.Encoder.Encode(decoded);
+            var blocks = layouts.SelectMany(l => l).ToList();
+            features = Images.Encoder.Encode(decoded, request.VisionOptions);
             try
             {
-                if (features.Count != images.Count)
+                if (features.Count != blocks.Count)
                 {
-                    throw new InvalidOperationException($"The image encoder gave {features.Count} images' features for {images.Count} images.");
+                    throw new InvalidOperationException($"The image encoder gave {features.Count} blocks' features for {images.Count} images of {blocks.Count} blocks.");
                 }
 
                 for (int i = 0; i < features.Count; i++)
                 {
-                    if (!features[i].Layout.Equals(layouts[i]) || features[i].Features.Shape[^1] != Images.Encoder.Width)
+                    if (!features[i].Layout.Equals(blocks[i]) || features[i].Features.Shape[^1] != Images.Encoder.Width)
                     {
-                        throw new InvalidOperationException($"Image {i}: the encoder gave {Tensor.FormatShape(features[i].Features.Shape)} ({features[i].Layout}); "
-                            + $"its layout says {layouts[i]} of width {Images.Encoder.Width}.");
+                        throw new InvalidOperationException($"Image block {i}: the encoder gave {Tensor.FormatShape(features[i].Features.Shape)} ({features[i].Layout}); "
+                            + $"its layout says {blocks[i]} of width {Images.Encoder.Width}.");
                     }
                 }
             }

@@ -116,7 +116,8 @@ public sealed class ImagePreprocessor
     /// <summary>
     /// Reads a <c>preprocessor_config.json</c> (the file, or the model folder holding it). Keys it does not name (or names
     /// as null) take <paramref name="defaults"/>' values: the family's processor class's own defaults (null: this class's);
-    /// <c>do_pan_and_scan</c> true, a size by longest edge and nearest resampling are not supported.
+    /// a size by longest edge and nearest resampling are not supported. Keys that are not steps of this class (a family's
+    /// own, such as the views or tiles some processors make of an image) are left to the family that reads them.
     /// </summary>
     public static ImagePreprocessor FromConfig(string path, bool grayscale = false, ImagePreprocessor? defaults = null)
     {
@@ -125,7 +126,7 @@ public sealed class ImagePreprocessor
     }
 
     /// <summary>The steps of a <c>preprocessor_config.json</c>'s text (see <see cref="FromConfig"/>).</summary>
-    /// <exception cref="NotSupportedException">Pan and scan, a size by longest edge, or nearest resampling.</exception>
+    /// <exception cref="NotSupportedException">A size by longest edge, or nearest resampling.</exception>
     public static ImagePreprocessor Parse(string json, bool grayscale = false, ImagePreprocessor? defaults = null)
     {
         var d = defaults ?? new ImagePreprocessor();
@@ -134,11 +135,6 @@ public sealed class ImagePreprocessor
         if (root.ValueKind != JsonValueKind.Object)
         {
             throw new InvalidDataException("A preprocessor config is a JSON object.");
-        }
-
-        if (Flag(root, "do_pan_and_scan", false))
-        {
-            throw new NotSupportedException("do_pan_and_scan (Gemma 3's crops of tall or wide images) is not supported yet; set it to false or null.");
         }
 
         bool resize = Flag(root, "do_resize", d.Resize);

@@ -19,7 +19,7 @@ internal static partial class Tests
         ("vision contracts: a tiny LLaVA registered from outside the library (CLIP tower, vision_feature_layer, select strategy, MLP projector, causal image tokens) gives transformers' pixels, features, prompt logits and 20 greedy tokens, in both of its configurations", LlavaMatchesReference),
         ("vision contracts: the tiny LLaVA through the public chat API (ChatGenerator with the family's encoder, format and rule) answers with transformers' 20 greedy tokens", LlavaChat),
         ("vision contracts: the testing kit's vision-encoder suite passes for the Gemma 3 and LLaVA encoders (deterministic, token counts, batch equals single, device equals CPU)", VisionEncoderConformance),
-        ("vision contracts: the library registers no vision family; image token formats expand by each image's layout; images whose tokens touch are told apart by their counts; M-RoPE position ids are refused by the decoder", VisionContractRules),
+        ("vision contracts: the library registers no vision family; image token formats expand by each image's blocks (several with Join's text); images whose tokens touch are told apart by their counts; M-RoPE position ids are refused by the decoder", VisionContractRules),
     ];
 
     private static string LlavaData(string name) => TestData($"vlm-llava/{name}");
@@ -77,7 +77,7 @@ internal static partial class Tests
             var chat = model.CreateChat(KeyValueFormat.Float32, 128);
             var rendered = chat.Template.Render([new("system", "Read the scan."), new("user", [ChatImage.FromFile(TestData("vlm/image.png")), new ChatText("What is in this image?")])], [], null);
             Check(rendered == (string)facts["rendered_by_chat_template"]!, $"{folder}: rendered {rendered}");
-            var own = model.Tokenizer!.Encode(vision.PromptFormat.Expand(rendered, [vision.Layout], model.Tokenizer));
+            var own = model.Tokenizer!.Encode(vision.PromptFormat.Expand(rendered, [[vision.Layout]], model.Tokenizer));
             Check(own.SequenceEqual(ids), $"{folder}: ids {string.Join(" ", own)}");
 
             // Prompt logits (one pass and cached), then 20 greedy steps over the cache.
@@ -162,9 +162,25 @@ internal static partial class Tests
         var tokenizer = BpeTokenizer.Load(LlavaData("tiny-llava"));
         int image = tokenizer.Encode("<image>").Last();
         var llava = new ImageTokenFormat("llava", image, image);
-        string two = llava.Expand("A <image> and <image>.", [new ImageTokenLayout(2), new ImageTokenLayout(3)], tokenizer);
+        string two = llava.Expand("A <image> and <image>.", [[new ImageTokenLayout(2)], [new ImageTokenLayout(3)]], tokenizer);
         Check(two == "A <image><image> and <image><image><image>.", $"expanded by layouts: {two}");
-        Check(Fails(() => llava.Expand("<image>", [new ImageTokenLayout(1), new ImageTokenLayout(1)], tokenizer)), "one marker for two images is refused");
+        Check(Fails(() => llava.Expand("<image>", [[new ImageTokenLayout(1)], [new ImageTokenLayout(1)]], tokenizer)), "one marker for two images is refused");
+
+        // An image of several blocks: refused by a format without Join, written by Join's text otherwise (each block whole).
+        try
+        {
+            llava.Expand("A <image>.", [[new ImageTokenLayout(1), new ImageTokenLayout(2)]], tokenizer);
+            Check(false, "several blocks without Join are refused");
+        }
+        catch (NotSupportedException e)
+        {
+            Check(e.Message.Contains("2 blocks", StringComparison.Ordinal) && e.Message.Contains("Join", StringComparison.Ordinal), e.Message);
+        }
+
+        var views = new ImageTokenFormat("views", image, image, before: "[", after: "]") { Join = blocks => "whole " + blocks[0] + " parts " + string.Join(" ", blocks.Skip(1)) };
+        string several = views.Expand("A <image>, <image>.", [[new ImageTokenLayout(1), new ImageTokenLayout(2), new ImageTokenLayout(1)], [new ImageTokenLayout(2)]], tokenizer);
+        Check(several == "A whole [<image>] parts [<image><image>] [<image>], [<image><image>].", $"several blocks joined: {several}");
+        Check(views.Block(new ImageTokenLayout(3), tokenizer) == "[<image><image><image>]", "one block's text");
 
         // Two images whose tokens touch (LLaVA writes <image><image>): told apart by their counts.
         using var a = Tensor.From(new float[2 * 4], [2, 4], device);

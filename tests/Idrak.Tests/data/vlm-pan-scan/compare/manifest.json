@@ -1,0 +1,205 @@
+{
+ "kind": "idrak-vlm-reference",
+ "version": 1,
+ "model": "tests/Idrak.Tests/data/vlm/tiny-gemma3-v5",
+ "architectures": [
+  "Gemma3ForConditionalGeneration"
+ ],
+ "image": "../image-tall.png",
+ "image_size": [
+  60,
+  170
+ ],
+ "exif_orientation": 1,
+ "exif_applied": true,
+ "grayscale": false,
+ "vision_options": {
+  "do_pan_and_scan": true,
+  "pan_and_scan_min_crop_size": 32
+ },
+ "image_blocks": 4,
+ "system": "Read the scan.",
+ "prompt": "What is in this image?",
+ "rendered": "<bos><start_of_turn>user\nRead the scan.\n\n<start_of_image>What is in this image?<end_of_turn>\n<start_of_turn>model\n",
+ "prompt_tokens": 120,
+ "steps": 20,
+ "requested_steps": 20,
+ "stopped_early": false,
+ "generated_text": "RRRRRRRRRRRRRRRRRRRR",
+ "dtype": "float32",
+ "vision_dtype": "float32",
+ "logits_dtype": "float32",
+ "device": "cpu",
+ "device_name": null,
+ "offload": false,
+ "attn_implementation": "sdpa",
+ "processor_class": "Gemma3Processor",
+ "image_processor_class": "Gemma3ImageProcessorPil",
+ "use_fast": false,
+ "image_token_id": 365,
+ "generation": {
+  "do_sample": false,
+  "num_beams": 1,
+  "repetition_penalty": 1.0,
+  "max_new_tokens": 20,
+  "seconds": 0.073
+ },
+ "model_generation_config": {
+  "max_length": null,
+  "max_new_tokens": null,
+  "min_length": null,
+  "min_new_tokens": null,
+  "early_stopping": null,
+  "max_time": null,
+  "stop_strings": null,
+  "do_sample": null,
+  "num_beams": null,
+  "use_mtp": null,
+  "use_cache": true,
+  "cache_implementation": null,
+  "cache_config": null,
+  "max_cache_len": null,
+  "temperature": null,
+  "top_k": null,
+  "top_p": null,
+  "min_p": null,
+  "top_h": null,
+  "typical_p": null,
+  "epsilon_cutoff": null,
+  "eta_cutoff": null,
+  "repetition_penalty": null,
+  "encoder_repetition_penalty": null,
+  "length_penalty": null,
+  "no_repeat_ngram_size": null,
+  "bad_words_ids": null,
+  "renormalize_logits": null,
+  "forced_bos_token_id": null,
+  "forced_eos_token_id": null,
+  "remove_invalid_values": null,
+  "exponential_decay_length_penalty": null,
+  "suppress_tokens": null,
+  "begin_suppress_tokens": null,
+  "sequence_bias": null,
+  "token_healing": null,
+  "guidance_scale": null,
+  "watermarking_config": null,
+  "num_return_sequences": null,
+  "output_attentions": null,
+  "output_hidden_states": null,
+  "output_scores": null,
+  "output_logits": null,
+  "return_dict_in_generate": null,
+  "pad_token_id": 0,
+  "bos_token_id": 2,
+  "eos_token_id": [
+   1,
+   6
+  ],
+  "encoder_no_repeat_ngram_size": null,
+  "decoder_start_token_id": null,
+  "is_assistant": null,
+  "num_assistant_tokens": null,
+  "num_assistant_tokens_schedule": null,
+  "assistant_confidence_threshold": null,
+  "prompt_lookup_num_tokens": null,
+  "max_matching_ngram_size": null,
+  "assistant_early_exit": null,
+  "assistant_lookbehind": null,
+  "target_lookbehind": null,
+  "assistant_ensemble_weight": null,
+  "speculation_type": null,
+  "compile_config": null,
+  "disable_compile": null,
+  "continuous_batching_config": null,
+  "low_memory": null,
+  "penalty_alpha": null,
+  "dola_layers": null,
+  "diversity_penalty": null,
+  "num_beam_groups": null,
+  "constraints": null,
+  "force_words_ids": null,
+  "prefill_chunk_size": null,
+  "_from_model_config": true,
+  "transformers_version": "5.19.0"
+ },
+ "checks": {
+  "teacher_forced_top1_equals_generated": true,
+  "teacher_forced_disagreements": [],
+  "smallest_generate_margins": [
+   {
+    "step": 0,
+    "margin": 0.0881
+   },
+   {
+    "step": 19,
+    "margin": 0.9075
+   },
+   {
+    "step": 18,
+    "margin": 0.9274
+   },
+   {
+    "step": 17,
+    "margin": 0.9476
+   },
+   {
+    "step": 16,
+    "margin": 0.9682
+   }
+  ]
+ },
+ "versions": {
+  "python": "3.13.16",
+  "torch": "2.14.1+cu130",
+  "transformers": "5.19.0",
+  "pillow": "12.3.0",
+  "numpy": "2.5.3",
+  "cuda": "13.0",
+  "platform": "Linux-6.18.44-fc-v80-x86_64-with-glibc2.39"
+ },
+ "files": {
+  "gen_full_logits.npy": [
+   8,
+   366
+  ],
+  "gen_top_ids.npy": [
+   20,
+   5
+  ],
+  "gen_top_logits.npy": [
+   20,
+   5
+  ],
+  "generated_ids.npy": [
+   20
+  ],
+  "image_features.npy": [
+   4,
+   4,
+   24
+  ],
+  "input_ids.npy": [
+   1,
+   120
+  ],
+  "pixel_values.npy": [
+   4,
+   3,
+   56,
+   56
+  ],
+  "tf_top_ids.npy": [
+   140,
+   5
+  ],
+  "tf_top_logits.npy": [
+   140,
+   5
+  ],
+  "vision_last_hidden_state.npy": [
+   4,
+   16,
+   8
+  ]
+ }
+}

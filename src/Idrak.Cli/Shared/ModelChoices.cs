@@ -12,18 +12,29 @@ namespace Idrak.Cli.Shared;
 /// from the config ("aliases": {"qwen": {"model": "Qwen/Qwen3-0.6B", "weights": "int8", "kv": "int8"}}), with the
 /// weight format (<c>--weights</c>, <c>-w</c>), the KV cache format (<c>--kv</c>, <c>-k</c>), the context length and
 /// an adapter folder; for a vision-language model, whether its images are read in grey (<c>--grayscale</c>, or
-/// "grayscale": true in the alias).
+/// "grayscale": true in the alias) and its vision family's own options (<c>--vision-option KEY=VALUE</c>, repeatable,
+/// over the alias's "vision_options": {"KEY": VALUE}).
 /// </summary>
 internal static class ModelChoices
 {
     /// <summary>The options a command that loads a language model accepts.</summary>
     public static readonly string[] ValueOptions = ["--weights", "--kv", "--context", "--adapter"];
 
+    /// <summary>The option giving a vision family's own options, KEY=VALUE (repeatable).</summary>
+    public const string VisionOption = "--vision-option";
+
+    /// <summary>Help lines for <see cref="VisionOption"/>, aligned as the commands' options are.</summary>
+    public const string VisionOptionHelp = """
+              --vision-option K=V an option of the model's vision family for its images (repeatable; the family names
+                                 the keys it takes and refuses others; with the Gemma 3 plug-in, do_pan_and_scan=true
+                                 adds crops of a tall or wide page); an alias can keep them ("vision_options")
+        """;
+
     /// <summary>Their short forms.</summary>
     public static readonly IReadOnlyDictionary<string, string> ShortForms = new Dictionary<string, string> { ["-w"] = "--weights", ["-k"] = "--kv" };
 
     /// <summary>What an alias or the options say: the model name and its settings.</summary>
-    public sealed record ModelChoice(string Model, string? Weights, string? Kv, int? Context, string? Adapter, bool Grayscale = false);
+    public sealed record ModelChoice(string Model, string? Weights, string? Kv, int? Context, string? Adapter, bool Grayscale = false, VisionOptions? VisionOptions = null);
 
     /// <summary>The model named by <paramref name="name"/> with the command's options applied over the alias's settings.</summary>
     public static ModelChoice Choose(CommandContext context, string name)
@@ -31,17 +42,39 @@ internal static class ModelChoices
         string model = name;
         string? weights = null, kv = null;
         bool grayscale = false;
+        var vision = VisionOptions.Empty;
         if (context.Config.Object("aliases")?[name] is System.Text.Json.Nodes.JsonObject alias)
         {
             model = (string?)alias["model"] ?? name;
             weights = (string?)alias["weights"];
             kv = (string?)alias["kv"];
             grayscale = alias["grayscale"] is System.Text.Json.Nodes.JsonValue grey && grey.TryGetValue(out bool value) && value;
+            if (alias["vision_options"] is System.Text.Json.Nodes.JsonObject saved)
+            {
+                vision = Parsed(() => VisionOptions.FromJson(saved), $"the alias {name}'s \"vision_options\"");
+            }
         }
 
+        vision = vision.With(VisionOptionsOf(context));
         return new ModelChoice(model, context.Option("--weights") ?? weights, context.Option("--kv") ?? kv,
             context.Option("--context") is null ? null : context.IntOption("--context", 0), context.Option("--adapter"),
-            grayscale || context.Flag("--grayscale"));
+            grayscale || context.Flag("--grayscale"), vision.Count > 0 ? vision : null);
+    }
+
+    /// <summary>The command's <c>--vision-option KEY=VALUE</c> options (empty when none).</summary>
+    public static VisionOptions VisionOptionsOf(CommandContext context) =>
+        Parsed(() => VisionOptions.Parse(context.Options(VisionOption)), VisionOption);
+
+    private static VisionOptions Parsed(Func<VisionOptions> parse, string where)
+    {
+        try
+        {
+            return parse();
+        }
+        catch (Exception ex) when (ex is FormatException or ArgumentException)
+        {
+            throw new UsageException($"{where}: {ex.Message}");
+        }
     }
 
     /// <summary>

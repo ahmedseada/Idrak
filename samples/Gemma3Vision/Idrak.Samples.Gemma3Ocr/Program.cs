@@ -13,6 +13,7 @@
 //   -d, --device NAME     cpu (default), cuda:0, vulkan:0, ...
 //   -w, --weights FORMAT  bf16, int8, int4 or a registered packed format (default: as stored); the encoder is float32
 //   --grayscale           turn the image grey first (the OCR fine-tune's card asks for it)
+//   --pan-and-scan        also read crops of a tall or wide page (Gemma 3's pan and scan: 256 more tokens per crop)
 //   --system TEXT         a system message
 //   --prompt-file FILE    the prompt from a UTF-8 file
 //   --max-tokens N        stop after N tokens (default 2048)
@@ -32,7 +33,7 @@ using Idrak.Nlp;
 var positional = new List<string>();
 string device = "cpu", weights = "", system = "", output = "";
 string? promptFile = null;
-bool grayscale = false;
+bool grayscale = false, panAndScan = false;
 int maxTokens = 2048;
 for (int i = 0; i < args.Length; i++)
 {
@@ -41,6 +42,7 @@ for (int i = 0; i < args.Length; i++)
         case "-d" or "--device": device = args[++i]; break;
         case "-w" or "--weights": weights = args[++i]; break;
         case "--grayscale": grayscale = true; break;
+        case "--pan-and-scan": panAndScan = true; break;
         case "--system": system = args[++i]; break;
         case "--prompt-file": promptFile = args[++i]; break;
         case "--max-tokens": maxTokens = int.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture); break;
@@ -51,7 +53,7 @@ for (int i = 0; i < args.Length; i++)
 
 if (positional.Count < 2)
 {
-    Console.Error.WriteLine("usage: Idrak.Samples.Gemma3Ocr MODEL IMAGE [PROMPT] [-d DEVICE] [-w FORMAT] [--grayscale] [--system TEXT] [--prompt-file FILE] [--max-tokens N] [-o FILE]");
+    Console.Error.WriteLine("usage: Idrak.Samples.Gemma3Ocr MODEL IMAGE [PROMPT] [-d DEVICE] [-w FORMAT] [--grayscale] [--pan-and-scan] [--system TEXT] [--prompt-file FILE] [--max-tokens N] [-o FILE]");
     return 2;
 }
 
@@ -81,7 +83,12 @@ var vision = pretrained.Vision ?? throw new InvalidOperationException($"{model} 
 Console.Error.WriteLine($"loaded {model} on {pretrained.Device} in {watch.Elapsed.TotalSeconds:F1} s; vision: {vision.Describe()}");
 
 // 3. The image side: the family's encoder (its preprocessing, grey when asked), prompt format and attention rule.
-using var encoder = vision.CreateEncoder(new VisionEncoderOptions { Device = pretrained.Device, Grayscale = grayscale });
+using var encoder = vision.CreateEncoder(new VisionEncoderOptions
+{
+    Device = pretrained.Device,
+    Grayscale = grayscale,
+    VisionOptions = panAndScan ? new VisionOptions([KeyValuePair.Create(Gemma3PanAndScan.EnableKey, "true")]) : null,
+});
 var chat = pretrained.CreateChat(KeyValueFormat.Float32);
 var reader = new ChatGenerator(chat.Generator, chat.Template) { Images = new ChatImages(encoder, vision.PromptFormat, vision.Attention) };
 
