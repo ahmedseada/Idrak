@@ -333,6 +333,7 @@ public abstract class Idrak.Nlp.Abstractions.DistillationTeacher : System.IDispo
 public sealed record Idrak.Nlp.Abstractions.FeatureCacheKey : System.IEquatable<Idrak.Nlp.Abstractions.FeatureCacheKey>
   public FeatureCacheKey(string Image, string Transforms, string VisionOptions, string Family, string Checkpoint, string DType, string Stage = "tower")
   public System.Text.Json.Nodes.JsonArray ToJson()
+  public const string FeaturesStage = "features"
   public const string TowerStage = "tower"
   public static Idrak.Nlp.Abstractions.FeatureCacheKey For(Idrak.Abstraction.Generation.ChatImage image, Idrak.Nlp.TuningImages images, string family, string checkpoint, string dtype, string stage = "tower")
   public string Checkpoint { get; init; }
@@ -389,7 +390,15 @@ public abstract class Idrak.Nlp.Abstractions.TeacherDistributions : System.IDisp
   public abstract Idrak.Abstraction.Tensor Probabilities(int start, int count, float temperature, int vocabulary, Idrak.Abstraction.Device device)
   public virtual void Dispose()
 
+public sealed record Idrak.Nlp.Abstractions.TrainingImage : System.IEquatable<Idrak.Nlp.Abstractions.TrainingImage>
+  public Idrak.Abstraction.Generation.ChatImage Image { get; init; }
+  public Idrak.Nlp.TuningImages Preparation { get; init; }
+  public System.Collections.Generic.IReadOnlyList<(int, int)> Blocks { get; init; }
+  public TrainingImage(Idrak.Abstraction.Generation.ChatImage Image, Idrak.Nlp.TuningImages Preparation, System.Collections.Generic.IReadOnlyList<(int, int)> Blocks)
+  public int Tokens { get; }
+
 public sealed record Idrak.Nlp.Abstractions.TrainingSequence : System.IEquatable<Idrak.Nlp.Abstractions.TrainingSequence>
+  public System.Collections.Generic.IReadOnlyList<Idrak.Nlp.Abstractions.TrainingImage> Images { get; init; }
   public TrainingSequence(int[] Tokens, bool[] Trained)
   public bool Equals(Idrak.Nlp.Abstractions.TrainingSequence? other)
   public bool[] Trained { get; init; }
@@ -487,6 +496,7 @@ public sealed class Idrak.Nlp.ChatTranscriptEncoder
   public Idrak.Nlp.ChatTranscript? Fit(Idrak.Nlp.ChatTranscript transcript, int maxLength)
   public Idrak.Nlp.JinjaChatTemplate Template { get; }
   public Idrak.Nlp.PreferencePair? EncodePreference(System.Text.Json.Nodes.JsonObject row, int maxLength)
+  public Idrak.Nlp.TuningVision? Vision { get; init; }
   public System.Collections.Generic.IEnumerable<(System.Text.Json.Nodes.JsonObject, Idrak.Nlp.PreferencePair?)> EncodePreferences(System.Collections.Generic.IEnumerable<System.Text.Json.Nodes.JsonObject> rows, int maxLength, System.Threading.CancellationToken cancellationToken = default)
   public System.Collections.Generic.IEnumerable<(System.Text.Json.Nodes.JsonObject, System.Collections.Generic.IReadOnlyList<Idrak.Nlp.Abstractions.TrainingSequence>)> EncodeRows(System.Collections.Generic.IEnumerable<System.Text.Json.Nodes.JsonObject> rows, int maxLength, System.Threading.CancellationToken cancellationToken = default)
   public System.Collections.Generic.IEnumerable<Idrak.Nlp.Abstractions.TrainingSequence> EncodeRow(System.Text.Json.Nodes.JsonObject row, int maxLength)
@@ -524,7 +534,7 @@ public static class Idrak.Nlp.FineTuner
   public static System.Collections.Generic.IReadOnlyList<float> Train(Idrak.Models.PretrainedModel model, System.Collections.Generic.IReadOnlyList<Idrak.Nlp.PreferencePair> train, System.Collections.Generic.IReadOnlyList<Idrak.Nlp.PreferencePair>? evaluation, Idrak.Nlp.FineTuningOptions options, string? outputFolder = null, System.IProgress<Idrak.Nlp.FineTuningProgress>? progress = null, System.Threading.CancellationToken cancellationToken = default, System.Action<string>? trace = null)
   public static System.Collections.Generic.List<int[]> Batches(System.Collections.Generic.IReadOnlyList<Idrak.Nlp.Abstractions.TrainingSequence> sequences, int batchTokens, System.Random? random)
   public static System.Collections.Generic.List<int[][]> PackedBatches(System.Collections.Generic.IReadOnlyList<Idrak.Nlp.Abstractions.TrainingSequence> sequences, int length, int rows, System.Random? random)
-  public static float Evaluate(Idrak.Models.PretrainedModel model, System.Collections.Generic.IReadOnlyList<Idrak.Nlp.Abstractions.TrainingSequence> sequences, int batchTokens = 4096, int chunkRows = 512, System.Action<string>? trace = null)
+  public static float Evaluate(Idrak.Models.PretrainedModel model, System.Collections.Generic.IReadOnlyList<Idrak.Nlp.Abstractions.TrainingSequence> sequences, int batchTokens = 4096, int chunkRows = 512, System.Action<string>? trace = null, Idrak.Nlp.TuningVision? vision = null)
 
 public delegate Idrak.Abstraction.Tensor Idrak.Nlp.FineTuningLoss(Idrak.Nlp.FineTuningLossInput input)
 
@@ -559,6 +569,7 @@ public sealed record Idrak.Nlp.FineTuningOptions : System.IEquatable<Idrak.Nlp.F
   public FineTuningOptions()
   public Idrak.Nlp.Abstractions.DistillationTeacher? Teacher { get; init; }
   public Idrak.Nlp.FineTuningLoss? Loss { get; init; }
+  public Idrak.Nlp.TuningVision? Vision { get; init; }
   public System.Collections.Generic.IReadOnlyList<string> Targets { get; init; }
   public System.Func<Idrak.Abstraction.Training.Optimizer, int, Idrak.Abstraction.Training.LearningRateScheduler>? Scheduler { get; init; }
   public System.Func<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor>, Idrak.Abstraction.Training.Optimizer>? Optimizer { get; init; }
@@ -723,6 +734,28 @@ public sealed record Idrak.Nlp.TuningManifest : System.IEquatable<Idrak.Nlp.Tuni
   public static bool Exists(string folder)
   public string? System { get; init; }
   public void Save(string folder)
+
+public sealed class Idrak.Nlp.TuningVision : System.IDisposable
+  public Idrak.Abstraction.Data.ImageData Read(Idrak.Abstraction.Generation.ChatImage image, Idrak.Nlp.TuningImages? preparation = null)
+  public Idrak.Abstraction.Generation.IImageAttentionRule Attention { get; }
+  public Idrak.Abstraction.Generation.IImagePromptFormat Format { get; }
+  public Idrak.Abstraction.Generation.IVisionEncoder Encoder { get; }
+  public Idrak.Abstraction.Generation.IVisionTuningPart? Tuning { get; }
+  public Idrak.Abstraction.Generation.PretrainedVision Vision { get; }
+  public Idrak.Models.PretrainedModel Model { get; }
+  public Idrak.Nlp.Abstractions.FeatureCacheKey Key(Idrak.Abstraction.Generation.ChatImage image, Idrak.Nlp.TuningImages preparation, string stage)
+  public Idrak.Nlp.Abstractions.IFeatureCache Cache { get; }
+  public Idrak.Nlp.TuningImages Images { get; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageTokenLayout> Blocks(Idrak.Abstraction.Generation.ChatImage image, Idrak.Nlp.TuningImages? preparation = null)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor> Parameters { get; }
+  public System.Collections.Generic.IReadOnlyList<string> Parts { get; }
+  public long CacheHits { get; }
+  public long Encoded { get; }
+  public override string ToString()
+  public static Idrak.Nlp.TuningVision Create(Idrak.Models.PretrainedModel model, Idrak.Nlp.TuningImages? images = null, System.Collections.Generic.IEnumerable<string>? parts = null, Idrak.Nlp.Abstractions.IFeatureCache? cache = null)
+  public string CachedStage { get; }
+  public string Checkpoint { get; }
+  public void Dispose()
 
 public sealed record Idrak.Retrieval.Abstractions.Chunk : System.IEquatable<Idrak.Retrieval.Abstractions.Chunk>
   public Chunk(int Id, string DocumentId, int Position, string Text)

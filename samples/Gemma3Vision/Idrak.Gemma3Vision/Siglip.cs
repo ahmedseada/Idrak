@@ -260,6 +260,11 @@ public sealed class Gemma3Projector : Module
         return _projection.Forward(_norm.Forward(x));
     }
 
+    // The norm's gain (w of 1 + w) and the projection's weight [visionDim, textDim], as stored.
+    internal Tensor Gain => _norm.Gain;
+
+    internal Tensor Weight => _projection.Weight;
+
     /// <inheritdoc />
     public override IEnumerable<Module> Children() => [_norm, _projection];
 
