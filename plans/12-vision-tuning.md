@@ -1,7 +1,7 @@
 # Plan 12: fine-tuning vision-language models (images in `FineTuner` and `idrak tune`)
 
 **Status:** planned 2026-10-09, against the code at `abstraction` 4ac4fa4. Phase 0 (the reference) built 2026-10-09;
-phases 1 to 6 not yet.
+phases 1 to 3 built 2026-10-09; 4 to 6 not yet.
 
 **Goal.** Fine-tune a vision-language model on pages and their answers with LoRA (or QLoRA on an int8/int4 base),
 the way `bakrianoo/arabic-legal-documents-ocr-1.0` was trained in LlamaFactory (LoRA on the language model, the vision
@@ -120,6 +120,50 @@ same fixtures through `FineTuner.Train` (`Optimizer = ps => new Sgd(ps, 0.2f)`, 
   is phase 6.
 - Graph capture: off for steps with images until the features enter as graph inputs of a fixed shape (phase 6).
 - A family that is not registered: the tuner fails before loading any data, with the registry's message.
+
+**Phase 2, as built (2026-10-09; CPU).**
+- **Contracts moved** (decision 10: Idrak.Nlp is now their second user): `PretrainedVision`, `VisionEncoderOptions`,
+  `EncoderWeights`, `IVisionTuningPart` and `VisionTuningParts` from core's `Idrak.Models.Abstractions` to
+  `Idrak.Abstraction.Generation` (global usings: sources compile unchanged). `IVisionTuningPart` gained `Export` (the
+  part's tensors by the checkpoint's names and layout, on the CPU) and `Import`; `VisionTuningParts.FrozenTower` (pixel
+  values through `IVisionEncoderStages.Tower`, no gradients, intermediates freed) keeps `IVisionEncoderStages` in
+  Abstraction. `VisionFamilies` and `IVisionFamily` stay in core: Nlp reaches the registry through
+  `PretrainedModel.CreateVisionEncoder`, which checks it first.
+- **Core, public and narrow**: `ImagePrefill.Begin(decoder, ids, images, rule)` → `ImagePrefillScope` (`FirstBlock`,
+  `Substitute(embeddings)`, `Dispose`), for a pass run module by module; `Checkpointing` captures the image blocks at the
+  forward pass and puts them back for the recompute, so the backward pass may run after the scope closed (the test closes
+  it first; without the capture Gemma 3's gradients differ by up to 36). `PretrainedModel.CreateVisionEncoder`,
+  `TrainedVisionTensors`, `KeepTrainedVision(encoder, parts)`; `SaveAdapter` writes trained vision tensors as PEFT's
+  `modules_to_save` (`base_model.model.` + the checkpoint's name, its layout; the module they lie under listed),
+  `LoadAdapter` and `MergeAdapter` read them back (a vision part's modules only; the language model's still refused).
+  No new `InternalsVisibleTo` use.
+- **Nlp**: `TrainingSequence.Images` (`TrainingImage(ChatImage, TuningImages Preparation, Blocks (Position, Tokens))`,
+  empty for text: the text path is unchanged); `TuningVision.Create(model, images, parts, cache)` (the family's encoder on
+  the model's device, float32 weights only when a part trains, the parts' parameters marked trainable, a memory cache
+  unless one is given); `ChatTranscriptEncoder.Vision` (each marker expanded by the family's `IImagePromptFormat`, blocks
+  from `IVisionEncoder.Blocks` of the prepared image, cached per image; image runs located token by token; an image in an
+  assistant turn refused; a cut keeps whole blocks only); `FineTuningOptions.Vision` (made from the model when null and
+  the sequences hold images); `FineTuner.Evaluate(..., vision)`; `FeatureCacheKey.FeaturesStage`.
+- **The step**: per batch, each distinct image's features once: from the cache, else computed (no gradients, freed at
+  once) and put. The cache keeps the features when the projector is frozen, the tower's output when it trains or the
+  model carries a trained projector (the projector then runs each step, with gradients when trained; its parameters join
+  the optimizer). The checkpoint identity in the key hashes the weight files' names, sizes and times, config.json and the
+  trained vision tensors' names. Features live in the batch's tensor scope (released with the step). `NetworkLoss` opens
+  the image scope and substitutes before the first decoder block, in training, evaluation and DPO's reference pass.
+- **Batching**: sequences with images go into padded batches (each its own row); with packing, text-only sequences still
+  pack and both kinds are shuffled together. A packed batch with images is refused; a batch with images is never
+  recorded as a graph. The trace line per batch names the images and image tokens ("padded rows, … not recorded as a
+  graph") and, after the step, the features taken from the cache and encoded. The out-of-memory ladder is unchanged.
+- **Saving**: `FineTuner.Train` saves the trained projector with the adapters and `tuning_images.json` when images were
+  used (checkpoints too). The tower is refused for training (phase 6: it trains in the step).
+- **Tests** (CPU): "vision tuning trainer" (the four runs through `FineTuner.Train`: losses within 1e-4, saved adapters
+  and projector within 1e-5 of transformers'; the tower runs twice over three epochs, four cache hits; the folder read back
+  by `LoadAdapter` and `MergeAdapter` into a new encoder; checkpointed == stored gradients bit for bit through
+  `ImagePrefill.Begin` with the scope closed and through the tuner; the refusals), "vision tuning reference" (the encoder's
+  own sequences now equal the fixture's ids, mask and image blocks).
+- **Left**: packing images and graphs with images (phase 6), the tower in the step (phase 6), the command line (phase 4,
+  which should load images' preparation and create encoders through `PretrainedModel.CreateVisionEncoder`), and the GPU
+  runs (the owner's).
 
 ### Phase 3: image attention backward on every backend
 

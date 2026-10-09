@@ -221,7 +221,7 @@ internal static partial class Tests
         Check(pipeline.ToString() == "grayscale,max_width=64,resample=lanczos,contrast=1.5", $"the reference's transforms: {pipeline}");
         using var model = Idrak.Models.PretrainedModel.Load(TestData("vlm/tiny-gemma3"), new Idrak.Models.PretrainedOptions { Device = device });
         var vision = model.Vision!;
-        using var encoder = vision.CreateEncoder(new Idrak.Models.Abstractions.VisionEncoderOptions { Device = model.Device });
+        using var encoder = vision.CreateEncoder(new VisionEncoderOptions { Device = model.Device });
         var image = ChatImage.FromFile(TestData("vlm/image.jpg"));
 
         // Pixels and features: the transformed image as the encoder reads it, against transformers' on Pillow's.

@@ -22,6 +22,9 @@ internal static partial class Tests
     [
         ("vision tuning reference: the tiny Gemma 3 and LLaVA records render, expand and tokenize as transformers' processor does, the answer and its end of turn trained and the prompt, image tokens and their markers not (LlamaFactory's gemma3 template: the same ids, plus the \"\\n\" after <end_of_turn>)", VisionTuningRecords),
         ("vision tuning reference: three SGD steps of LoRA on q, k, v, o with images (ImagePrefill.Forward with autograd, the fixture's initial adapters, the masked mean cross-entropy) give transformers' losses, step-1 gradients and final adapters; with the Gemma 3 projector trained too, its gradients and values", VisionTuningSteps),
+        ("vision tuning trainer: FineTuner.Train on the tiny Gemma 3 and LLaVA records (LoRA alone, and with the projector) gives transformers' losses and final adapters and projector; the tower runs once per distinct image (the feature cache serves the later epochs); adapters, projector (modules_to_save) and tuning_images.json saved, read back by LoadAdapter and MergeAdapter into the vision encoder", VisionTuningTrainer),
+        ("vision tuning trainer: checkpointed blocks with images give the gradients of stored activations, bit for bit (the image blocks travel with the recompute, the scope closed before the backward pass), through ImagePrefill.Begin and through FineTuner.Train", VisionTuningCheckpointed),
+        ("vision tuning trainer: a vision family no longer registered fails with the registry's message before any step; a text model given images, and a text-only encoder given a transcript with images, fail clearly; the tower is refused for training until it trains in the step", VisionTuningRefusals),
     ];
 
     private static string TuningData(string name) => TestData($"vlm-tuning/{name}");
@@ -79,6 +82,8 @@ internal static partial class Tests
             Check(encoder.AssistantHeader == (string)settings["assistant_header"]! && encoder.AssistantEnd == (string)settings["assistant_end"]!,
                 $"{family}: the assistant's turn is '{encoder.AssistantHeader}' ... '{encoder.AssistantEnd}'");
             using var images = vision.CreateEncoder(new VisionEncoderOptions { Device = device });
+            using var tuningVision = TuningVision.Create(model);
+            var imageEncoder = new ChatTranscriptEncoder(model.JinjaTemplate!, tokenizer) { Vision = tuningVision };
             int index = 0;
             foreach (var record in tuning["records"]!.AsArray())
             {
@@ -127,9 +132,25 @@ internal static partial class Tests
                 Check(located.Select(p => p.Position).SequenceEqual(blocks.Select(b => (int)b!["position"]!)), $"{what}: image blocks at {string.Join(", ", located.Select(p => p.Position))}");
                 features.ForEach(f => f.Dispose());
 
-                // The encoder's own sequence (markers not expanded yet: phase 2) trains the same tokens.
-                var sequence = encoder.Encode(transcript, 4096)!;
-                Check(sequence.Tokens.Where((_, k) => sequence.Trained[k]).SequenceEqual(ids.Where((_, k) => trained[k])), $"{what}: the encoder trains other tokens");
+                // The encoder's own sequence with the family's vision side (phase 2): the same ids and trained mask, the images
+                // where the prefill finds them; without a vision side, a transcript with images is refused.
+                var sequence = imageEncoder.Encode(transcript, 4096)!;
+                Check(sequence.Tokens.SequenceEqual(expectedIds) && sequence.Trained.SequenceEqual(expectedTrained), $"{what}: the encoder's ids or trained mask differ");
+                var placed = sequence.Images.SelectMany(i => i.Blocks).ToList();
+                Check(placed.Select(b => b.Position).SequenceEqual(blocks.Select(b => (int)b!["position"]!)) && placed.Select(b => b.Tokens).SequenceEqual(blocks.Select(b => (int)b!["tokens"]!)),
+                    $"{what}: the encoder's image blocks at {string.Join(", ", placed)}");
+                Check(sequence.Images.Select(i => i.Image).SequenceEqual(record["images"]!.AsArray().Select(f => ChatImage.FromFile(TestData($"vlm/{(string)f!}")))),
+                    $"{what}: the encoder's images");
+                Check(Failure<InvalidOperationException>(() => encoder.Encode(transcript, 4096)).Message.Contains("ChatTranscriptEncoder.Vision", StringComparison.Ordinal),
+                    $"{what}: a text-only encoder refuses images");
+
+                // Cut inside the second image's block: the cut moves to its start (whole blocks only); nothing trainable is left.
+                if (blocks.Count > 1)
+                {
+                    int inside = (int)blocks[1]!["position"]! + 1;
+                    var cut = new ChatTranscriptEncoder(model.JinjaTemplate!, tokenizer) { Vision = tuningVision, ShortenToFit = false }.Encode(transcript, inside);
+                    Check(cut is null, $"{what}: a sequence cut inside an image keeps no trainable token");
+                }
 
                 // LlamaFactory's gemma3 template: the same ids; it trains the "\n" after <end_of_turn> too (plan 12's decision: not trained).
                 if (record["llamafactory"] is { } lf)
@@ -149,7 +170,8 @@ internal static partial class Tests
     {
         foreach (string family in new[] { "gemma3", "llava" })
         {
-            // The LLaVA plug-in's projector holds no trainable weights; its projector run waits for phase 1's IVisionTuningPart.
+            // By hand, Gemma 3's projector through its encoder's module; LLaVA's projector run goes through IVisionTuningPart
+            // in "vision tuning trainer" (FineTuner.Train).
             foreach (string run in family == "gemma3" ? new[] { "lora", "projector" } : ["lora"])
             {
                 VisionTuningRun(family, run, device);

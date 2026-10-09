@@ -113,6 +113,46 @@ public static class ImagePrefill
     }
 
     /// <summary>
+    /// The images of a pass over <paramref name="ids"/> [batch, steps] that the caller runs module by module (a fine-tuning
+    /// step that checkpoints the decoder's blocks itself), without a cache: while the scope is open on this thread the
+    /// decoder's attention layers attend by <paramref name="attention"/>, and the caller gives the module at
+    /// <see cref="ImagePrefillScope.FirstBlock"/> the embeddings through <see cref="ImagePrefillScope.Substitute"/>. A block
+    /// run through <c>ForwardCheckpointed</c> recomputes in the backward pass with these image blocks, whether the scope is
+    /// still open then or not. With autograd on, gradients reach the features. Dispose the scope on the thread that opened it.
+    /// </summary>
+    /// <param name="decoder">A decoder built from a <see cref="DecoderSpec"/> (embedding, then decoder blocks).</param>
+    /// <param name="ids">The prompts' token ids, [batch, steps] (padded rows are fine; packed rows are not).</param>
+    /// <param name="images">The images, each with its row (<see cref="PromptImage.Sequence"/>); at least one.</param>
+    /// <param name="attention">How image tokens attend: the family's rule (<c>PretrainedVision.Attention</c>).</param>
+    /// <exception cref="ArgumentException">An image lies outside its row, overlaps another, or its features do not fit.</exception>
+    /// <exception cref="NotSupportedException">The rows are packed sequences (<see cref="PackedSequences"/>).</exception>
+    /// <exception cref="InvalidOperationException">A graph is being recorded (the image blocks are uploaded from the host).</exception>
+    public static ImagePrefillScope Begin(this Sequential decoder, Tensor ids, IReadOnlyList<PromptImage> images, IImageAttentionRule attention)
+    {
+        ArgumentNullException.ThrowIfNull(decoder);
+        ArgumentNullException.ThrowIfNull(ids);
+        ArgumentNullException.ThrowIfNull(images);
+        ArgumentNullException.ThrowIfNull(attention);
+        if (images.Count == 0)
+        {
+            throw new ArgumentException("A scope of images needs at least one image; run the plain pass without one.", nameof(images));
+        }
+
+        if (ComputeGraph.IsCapturing)
+        {
+            throw new InvalidOperationException("A pass with images is not recordable (its image blocks are uploaded from the host).");
+        }
+
+        if (ids.Rank == 2 && PackedSequences.Current is { } packing && packing.Matches(ids.Shape[0], ids.Shape[1]))
+        {
+            throw new NotSupportedException("Images in packed sequences are not supported; pass each prompt as its own row.");
+        }
+
+        var (blocks, first) = Prepare(decoder, ids, images, attention);
+        return new ImagePrefillScope(blocks, first);
+    }
+
+    /// <summary>
     /// The images of one prompt from its ids: the image tokens, in order, are taken by <paramref name="features"/> in
     /// order, each image its own count of consecutive image tokens (its features' rows), so images whose tokens touch (two
     /// LLaVA images side by side) are told apart by their counts.
@@ -206,6 +246,51 @@ public static class ImagePrefill
 
         int dim = ((DecoderBlock)decoder[first]).Attention.Query.InFeatures;
         return (new ImageBlocks(ids.Shape[0], ids.Shape[1], dim, images, attention), first);
+    }
+}
+
+/// <summary>
+/// The images of a pass the caller runs module by module (<see cref="ImagePrefill.Begin"/>): while it is open on its
+/// thread, the decoder's attention layers attend by the family's rule; the embeddings going into
+/// <see cref="FirstBlock"/> take the images' features through <see cref="Substitute"/>. Checkpointed blocks keep the image
+/// blocks for their recompute, so the backward pass may run after the scope is closed.
+/// </summary>
+public sealed class ImagePrefillScope : IDisposable
+{
+    private readonly ImageBlocks _blocks;
+    private readonly ImageBlocks.Scope _scope;
+    private bool _disposed;
+
+    internal ImagePrefillScope(ImageBlocks blocks, int firstBlock)
+    {
+        _blocks = blocks;
+        FirstBlock = firstBlock;
+        _scope = blocks.Use();
+    }
+
+    /// <summary>The index in the decoder of its first decoder block: the module whose input takes the images.</summary>
+    public int FirstBlock { get; }
+
+    /// <summary>
+    /// <paramref name="embeddings"/> [batch, steps, width] (the output of the modules before <see cref="FirstBlock"/>) with
+    /// each image's rows replaced by its features (one gather; gradients reach the features).
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The embeddings are not [batch, steps, width] of the ids the scope was opened for.</exception>
+    public Tensor Substitute(Tensor embeddings)
+    {
+        ArgumentNullException.ThrowIfNull(embeddings);
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return _blocks.Substitute(embeddings);
+    }
+
+    /// <summary>Ends the image attention on this thread (what was in effect before comes back).</summary>
+    public void Dispose()
+    {
+        if (!_disposed)
+        {
+            _disposed = true;
+            _scope.Dispose();
+        }
     }
 }
 

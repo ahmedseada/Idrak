@@ -159,9 +159,11 @@ public sealed class PretrainedModel : IDisposable
             notes.Add($"{unused.Count} checkpoint tensors were not used (for example {string.Join(", ", unused.Take(3))}).");
         }
 
+        // A vision part's trained modules (modules_to_save) are kept beside the merged weights, for CreateVisionEncoder.
+        var visionTensors = adapter?.VisionTensors(vision?.StoredTensors);
         if (adapter is not null)
         {
-            notes.Add($"adapter {options.MergeAdapter} merged into {adapter.Merged} weights.");
+            notes.Add($"adapter {options.MergeAdapter} merged into {adapter.Merged} weights{(visionTensors is { Count: > 0 } ? $", {visionTensors.Count} trained vision tensors kept" : "")}.");
             if (adapter.Merged == 0)
             {
                 throw new InvalidDataException($"The adapter in {options.MergeAdapter} matches none of the model's weights.");
@@ -175,8 +177,126 @@ public sealed class PretrainedModel : IDisposable
         var tokenizer = File.Exists(Path.Combine(folder, "tokenizer.json")) ? BpeTokenizer.Load(folder) : null;
         tokenizer?.PadVocabulary(spec.Vocabulary);
         var template = ChatTemplates.Load(folder, tokenizer);
-        return new PretrainedModel(folder, config, spec, network, tokenizer, template, notes, maxPositions, architecture,
+        var model = new PretrainedModel(folder, config, spec, network, tokenizer, template, notes, maxPositions, architecture,
             options.Device ?? Idrak.Abstraction.Device.Default, vision);
+        foreach (var (stored, value) in visionTensors ?? [])
+        {
+            model._vision[stored] = value;
+        }
+
+        return model;
+    }
+
+    // The trained vision tensors (a vision part's fine-tuned modules), by their checkpoint names, in the checkpoint's layout.
+    private readonly Dictionary<string, (int[] Shape, float[] Values)> _vision = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The names (as the checkpoint stores them) of the trained vision tensors the model carries: those an adapter folder
+    /// brought (<see cref="LoadAdapter"/> or <see cref="PretrainedOptions.MergeAdapter"/>, PEFT's <c>modules_to_save</c>)
+    /// or a fine-tune kept (<see cref="KeepTrainedVision"/>). <see cref="CreateVisionEncoder"/> puts them into each
+    /// encoder it builds, and <see cref="SaveAdapter"/> writes them. Empty for most models.
+    /// </summary>
+    public IReadOnlyCollection<string> TrainedVisionTensors => _vision.Keys;
+
+    /// <summary>
+    /// The family's vision encoder (<see cref="PretrainedVision.CreateEncoder"/>) on <paramref name="options"/>' device
+    /// (the model's when not given), with the model's trained vision tensors put in (<see cref="TrainedVisionTensors"/>,
+    /// through the family's <see cref="IVisionTuningPart.Import"/>). An encoder whose trained part would hold packed
+    /// weights is built with float32 weights instead (only then). Dispose it when done.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The model has no vision part.</exception>
+    /// <exception cref="NotSupportedException">The vision family is no longer registered (the message names the registry).</exception>
+    /// <exception cref="InvalidDataException">A trained vision tensor fits no part the family offers.</exception>
+    public IVisionEncoder CreateVisionEncoder(VisionEncoderOptions? options = null)
+    {
+        var vision = Vision ?? throw new InvalidOperationException("The model has no vision part (a text-only checkpoint): it reads no images.");
+        _ = VisionFamilies.Get(vision.Family);                                  // unregistered since the model was read: the registry's message
+        options ??= new VisionEncoderOptions();
+        if (options.Device is null)
+        {
+            options = options with { Device = Device };
+        }
+
+        var encoder = vision.CreateEncoder(options);
+        if (_vision.Count == 0)
+        {
+            return encoder;
+        }
+
+        try
+        {
+            var tuning = vision as IVisionTuningPart
+                ?? throw new InvalidDataException($"The model carries {_vision.Count} trained vision tensors, but the vision family {vision.Family} offers no trainable parts.");
+            try
+            {
+                ImportVision(tuning, encoder);
+            }
+            catch (InvalidOperationException) when (options.Weights != EncoderWeights.Float32)
+            {
+                encoder.Dispose();
+                encoder = vision.CreateEncoder(options with { Weights = EncoderWeights.Float32 });   // trained values need float32 weights
+                ImportVision(tuning, encoder);
+            }
+
+            return encoder;
+        }
+        catch
+        {
+            encoder.Dispose();
+            throw;
+        }
+    }
+
+    private void ImportVision(IVisionTuningPart tuning, IVisionEncoder encoder)
+    {
+        var tensors = _vision.ToDictionary(p => p.Key, p => Tensor.From(p.Value.Values, p.Value.Shape, Idrak.Abstraction.Device.Cpu), StringComparer.Ordinal);
+        try
+        {
+            var taken = tuning.Import(encoder, tensors).ToHashSet(StringComparer.Ordinal);
+            var left = _vision.Keys.Where(k => !taken.Contains(k)).Order(StringComparer.Ordinal).ToList();
+            if (left.Count > 0)
+            {
+                throw new InvalidDataException($"{left.Count} trained vision tensors fit no part the vision family {Vision!.Family} trains (for example {string.Join(", ", left.Take(3))}).");
+            }
+        }
+        finally
+        {
+            foreach (var tensor in tensors.Values)
+            {
+                tensor.Dispose();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Keeps the values of the vision parts <paramref name="parts"/> of <paramref name="encoder"/> (a fine-tune's trained
+    /// projector) as the model's trained vision tensors (<see cref="TrainedVisionTensors"/>, copied to the host in the
+    /// checkpoint's names and layout through the family's <see cref="IVisionTuningPart.Export"/>), replacing those of the
+    /// same names: <see cref="SaveAdapter"/> then writes them beside the adapters. Returns how many tensors were kept.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The model has no vision part, or its family offers no trainable parts.</exception>
+    public int KeepTrainedVision(IVisionEncoder encoder, IEnumerable<string> parts)
+    {
+        ArgumentNullException.ThrowIfNull(encoder);
+        ArgumentNullException.ThrowIfNull(parts);
+        var vision = Vision ?? throw new InvalidOperationException("The model has no vision part (a text-only checkpoint).");
+        var asked = parts.Select(p => p?.Trim() ?? "").Where(p => p.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var tuning = VisionTuningParts.For(vision, asked);
+        int kept = 0;
+        foreach (string part in asked)
+        {
+            foreach (var (name, tensor) in tuning!.Export(encoder, part))
+            {
+                using (tensor)
+                {
+                    _vision[name] = ([.. tensor.Shape], tensor.ToArray());
+                }
+
+                kept++;
+            }
+        }
+
+        return kept;
     }
 
     /// <summary>
@@ -219,6 +339,8 @@ public sealed class PretrainedModel : IDisposable
     /// [rank, in] and B as [out, rank]; adapter_config.json), which transformers / peft / vLLM load on top of the
     /// original checkpoint, and <see cref="LoadAdapter"/> reads back. DoRA adapters add their magnitude vectors
     /// (lora_magnitude_vector, [out]) and <c>use_dora: true</c>; a model cannot mix LoRA and DoRA adapters in one folder.
+    /// The trained vision tensors (<see cref="TrainedVisionTensors"/>) are written as peft writes <c>modules_to_save</c>:
+    /// base_model.model. + their checkpoint names, as the checkpoint lays them out, and the module they lie under listed.
     /// </summary>
     public void SaveAdapter(string folder)
     {
@@ -264,6 +386,12 @@ public sealed class PretrainedModel : IDisposable
             throw new InvalidOperationException("The model has no LoRA adapters to save.");
         }
 
+        // The trained vision tensors as PEFT writes modules_to_save: base_model.model. + the checkpoint's name, as stored.
+        foreach (var (name, (shape, values)) in _vision.OrderBy(p => p.Key, StringComparer.Ordinal))
+        {
+            tensors.Add(($"base_model.model.{name}", shape, values));
+        }
+
         SafeTensorsWriter.Write(Path.Combine(folder, "adapter_model.safetensors"), tensors, SafeTensorType.F32,
             new Dictionary<string, string> { ["format"] = "pt" });
         var config = new JsonObject
@@ -273,22 +401,45 @@ public sealed class PretrainedModel : IDisposable
             ["target_modules"] = new JsonArray([.. modules.Select(m => (JsonNode)m)]),
             ["base_model_name_or_path"] = (string?)Config["_name_or_path"] ?? Path.GetFileName(Path.TrimEndingDirectorySeparator(Folder)),
         };
+        if (_vision.Count > 0)
+        {
+            config["modules_to_save"] = new JsonArray([.. SavedModules(_vision.Keys).Select(m => (JsonNode)m)]);
+        }
+
         File.WriteAllText(Path.Combine(folder, "adapter_config.json"), config.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+    }
+
+    // The modules PEFT's modules_to_save names for these tensors: the module all of them lie under (its last name, which
+    // peft matches as a suffix: "multi_modal_projector"), else each tensor's own module.
+    private static IEnumerable<string> SavedModules(IEnumerable<string> names)
+    {
+        var paths = names.Select(n => n.Split('.')[..^1]).ToList();
+        int common = 0;
+        while (paths.All(p => p.Length > common) && paths.Select(p => p[common]).Distinct(StringComparer.Ordinal).Count() == 1)
+        {
+            common++;
+        }
+
+        return common > 0 ? [paths[0][common - 1]] : paths.Where(p => p.Length > 0).Select(p => p[^1]).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal);
     }
 
     /// <summary>
     /// Reads LoRA adapters in the PEFT layout (from <see cref="SaveAdapter"/>, or trained with peft on the same base
     /// model) and attaches them to the matching projections. Returns how many layers received one. The configuration is
     /// checked first: another peft_type, or an option Idrak does not apply (per-module ranks, trained biases, modules to
-    /// save), is refused with an error, as is a file holding tensors for layers the model does not adapt; use_rslora sets
-    /// the scale to alpha / √r; use_dora loads DoRA adapters (<see cref="DoraAdapter"/>) with their magnitude vectors.
+    /// save of the language model), is refused with an error, as is a file holding tensors for layers the model does not
+    /// adapt; use_rslora sets the scale to alpha / √r; use_dora loads DoRA adapters (<see cref="DoraAdapter"/>) with their
+    /// magnitude vectors. A vision part's trained modules (modules_to_save named as its checkpoint tensors) become the
+    /// model's <see cref="TrainedVisionTensors"/>, which <see cref="CreateVisionEncoder"/> puts into its encoders.
     /// </summary>
     public int LoadAdapter(string folder)
     {
         var config = PeftAdapterConfig.Read(folder);
+        config.CheckModulesToSave(Vision?.StoredTensors);
         using var reader = SafeTensorsReader.Open(Path.Combine(folder, "adapter_model.safetensors"));
         var found = new List<(Linear Layer, string A, string B, string? Magnitude)>();
         var used = new HashSet<string>(StringComparer.Ordinal);
+        var vision = PeftAdapterConfig.VisionTensors(reader, Vision?.StoredTensors, used);
         foreach (var (path, module) in NamedModules())
         {
             if (module is Linear linear && Architecture.TensorName($"{path}.weight") is { } weight
@@ -346,6 +497,11 @@ public sealed class PretrainedModel : IDisposable
 
             down.Load(HostParallel.Transpose(reader.Read(a), rank, linear.InFeatures));
             up.Load(HostParallel.Transpose(reader.Read(b), linear.OutFeatures, rank));
+        }
+
+        foreach (var (name, value) in vision)
+        {
+            _vision[name] = value;
         }
 
         return found.Count;

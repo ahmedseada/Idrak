@@ -35,12 +35,35 @@ public sealed record TrainingSequence(int[] Tokens, bool[] Trained)
         }
     }
 
-    /// <summary>Equal when both hold the same token and trained arrays (the cached count is not compared).</summary>
+    /// <summary>
+    /// The images in the sequence's prompt (a vision-language fine-tune, <see cref="Idrak.Nlp.ChatTranscriptEncoder.Vision"/>),
+    /// in order: each image as received, how it is prepared, and where its blocks of image tokens lie in
+    /// <see cref="Tokens"/>. Empty (the default) for text: such sequences batch and train as before.
+    /// </summary>
+    public IReadOnlyList<TrainingImage> Images { get; init; } = [];
+
+    /// <summary>Equal when both hold the same token, trained and image lists (the cached count is not compared).</summary>
     public bool Equals(TrainingSequence? other) =>
-        other is not null && ReferenceEquals(Tokens, other.Tokens) && ReferenceEquals(Trained, other.Trained);
+        other is not null && ReferenceEquals(Tokens, other.Tokens) && ReferenceEquals(Trained, other.Trained) && ReferenceEquals(Images, other.Images);
 
     /// <inheritdoc />
     public override int GetHashCode() => HashCode.Combine(Tokens, Trained);
+}
+
+/// <summary>
+/// An image of a <see cref="TrainingSequence"/>: where its features come from (the image's encoded bytes and the
+/// preparation it goes through, which with the encoder's identity key its cached features, <see cref="FeatureCacheKey"/>)
+/// and where they go: each of the image's blocks of image tokens (as the family's encoder gives them, in order) with its
+/// first position in the sequence's tokens and its token count. The image tokens and the markers around them are never
+/// trained.
+/// </summary>
+/// <param name="Image">The image as received (its bytes; decoded only when its features are made).</param>
+/// <param name="Preparation">The transforms and vision options it is read with.</param>
+/// <param name="Blocks">Each block's first position in the tokens and its token count, in the order the encoder gives the blocks.</param>
+public sealed record TrainingImage(ChatImage Image, Idrak.Nlp.TuningImages Preparation, IReadOnlyList<(int Position, int Tokens)> Blocks)
+{
+    /// <summary>The image tokens of all its blocks.</summary>
+    public int Tokens => Blocks.Sum(b => b.Tokens);
 }
 
 /// <summary>

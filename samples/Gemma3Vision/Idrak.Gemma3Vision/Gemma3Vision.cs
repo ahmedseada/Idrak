@@ -339,6 +339,60 @@ public sealed class Gemma3Vision : PretrainedVision, IVisionTuningPart
         return own.Encoder.Forward(moved);
     }
 
+    /// <summary>
+    /// The projector's two tensors under the checkpoint's names (<c>…multi_modal_projector.mm_soft_emb_norm.weight</c> and
+    /// <c>…mm_input_projection_weight</c>, both as stored: the gain w of 1 + w, and W of x · W). Writing a trained tower
+    /// is not supported yet (plan 12, phase 6: the tower trains in the step).
+    /// </summary>
+    public IReadOnlyDictionary<string, Tensor> Export(IVisionEncoder encoder, string part)
+    {
+        ArgumentNullException.ThrowIfNull(part);
+        var own = Own(encoder);
+        _ = Parameters(encoder, part);                                                   // refuses an unknown part and packed weights
+        if (!string.Equals(part.Trim(), VisionTuningParts.Projector, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new NotSupportedException($"Writing Gemma 3's trained {part.Trim().ToLowerInvariant()} beside the adapters is not supported yet; the projector is.");
+        }
+
+        return new Dictionary<string, Tensor>(StringComparer.Ordinal)
+        {
+            [Tensors[NormTensor].Stored] = Tensor.From(own.Projector.Gain.ToArray(), [.. own.Projector.Gain.Shape], Device.Cpu),
+            [Tensors[ProjectionTensor].Stored] = Tensor.From(own.Projector.Weight.ToArray(), [.. own.Projector.Weight.Shape], Device.Cpu),
+        };
+    }
+
+    /// <summary>Sets the projector's gain and projection from tensors named as <see cref="Export"/> names them; returns the names taken.</summary>
+    public IReadOnlyCollection<string> Import(IVisionEncoder encoder, IReadOnlyDictionary<string, Tensor> tensors)
+    {
+        ArgumentNullException.ThrowIfNull(tensors);
+        var own = Own(encoder);
+        var taken = new List<string>();
+        foreach (var (name, target) in new[] { (Tensors[NormTensor].Stored, own.Projector.Gain), (Tensors[ProjectionTensor].Stored, own.Projector.Weight) })
+        {
+            if (!tensors.TryGetValue(name, out var value))
+            {
+                continue;
+            }
+
+            if (own.Projector.Buffers().Any())
+            {
+                throw new InvalidOperationException("Gemma 3's projector holds packed (bfloat16) weights in this encoder; build it with VisionEncoderOptions.Weights = EncoderWeights.Float32 to load trained values.");
+            }
+
+            if (!value.Shape.SequenceEqual(target.Shape))
+            {
+                throw new ArgumentException($"{name}: shape {Tensor.FormatShape(value.Shape)}, the projector's is {Tensor.FormatShape(target.Shape)}.", nameof(tensors));
+            }
+
+            target.Load(value.ToArray());
+            taken.Add(name);
+        }
+
+        return taken;
+    }
+
+    private const string NormTensor = "projector.mm_soft_emb_norm.weight", ProjectionTensor = "projector.mm_input_projection_weight";
+
     // The encoder, when this vision part built it.
     private Gemma3ImageEncoder Own(IVisionEncoder encoder)
     {
