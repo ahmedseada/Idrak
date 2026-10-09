@@ -151,7 +151,7 @@ public sealed class Gemma3VisionFamily : IVisionFamily
 
 /// <summary>
 /// The vision part of a Gemma 3 checkpoint, as data: SigLIP's configuration, the image token ids, and the encoder's and
-/// projector's tensors under one naming whatever layout the checkpoint was saved in. <see cref="CreateEncoder(Device?, ImagePreprocessor?, Gemma3PanAndScan?)"/>
+/// projector's tensors under one naming whatever layout the checkpoint was saved in. <see cref="CreateEncoder(Device?, ImagePreprocessor?, Gemma3PanAndScan?, EncoderWeights)"/>
 /// builds the encoder and the projector from it.
 /// </summary>
 /// <remarks>
@@ -248,23 +248,28 @@ public sealed class Gemma3Vision : PretrainedVision
 
     /// <inheritdoc />
     public override IVisionEncoder CreateEncoder(VisionEncoderOptions? options = null) =>
-        CreateEncoder(options?.Device, Preprocessor(options?.Grayscale ?? false), PanAndScan.With(options?.VisionOptions));
+        CreateEncoder(options?.Device, Preprocessor(options?.Grayscale ?? false), PanAndScan.With(options?.VisionOptions), options?.Weights ?? EncoderWeights.AsStored);
 
     /// <summary>
-    /// Builds the vision encoder and the projector on <paramref name="device"/> from the checkpoint's tensors (read once,
-    /// float32): a <see cref="Gemma3ImageEncoder"/> that turns images into the soft tokens' embeddings. Dispose it when done.
+    /// Builds the vision encoder and the projector on <paramref name="device"/> from the checkpoint's tensors (read once):
+    /// a <see cref="Gemma3ImageEncoder"/> that turns images into the soft tokens' embeddings, computing in float32. Its
+    /// projection weights are kept as the checkpoint stores them unless <paramref name="weights"/> says otherwise (a
+    /// bfloat16 checkpoint's in bfloat16: 0.83 GB less for gemma-3-4b's 417 M encoder and projector weights, the same
+    /// features). Dispose it when done.
     /// </summary>
     /// <param name="device">Where it runs (default <see cref="Device.Default"/>; pass the language model's device).</param>
     /// <param name="preprocessor">How images become pixel values (default <see cref="Preprocessor"/>).</param>
     /// <param name="panAndScan">Pan and scan for every image (default <see cref="PanAndScan"/>); a request's options go over it.</param>
-    public Gemma3ImageEncoder CreateEncoder(Device? device, ImagePreprocessor? preprocessor = null, Gemma3PanAndScan? panAndScan = null)
+    /// <param name="weights">The projection weights' precision (<see cref="EncoderWeights.Float32"/> forces float32).</param>
+    public Gemma3ImageEncoder CreateEncoder(Device? device, ImagePreprocessor? preprocessor = null, Gemma3PanAndScan? panAndScan = null,
+        EncoderWeights weights = EncoderWeights.AsStored)
     {
         device ??= Device.Default;
         using var tensors = OpenTensors();
-        var encoder = SiglipVisionEncoder.FromTensors(Encoder, tensors, "vision.", device);
+        var encoder = SiglipVisionEncoder.FromTensors(Encoder, tensors, "vision.", device, weights);
         try
         {
-            var projector = Gemma3Projector.FromTensors(tensors, Encoder.Dim, TextDim, PoolSize, ProjectorNormEpsilon, "projector.", device);
+            var projector = Gemma3Projector.FromTensors(tensors, Encoder.Dim, TextDim, PoolSize, ProjectorNormEpsilon, "projector.", device, weights);
             return new Gemma3ImageEncoder(this, encoder, projector, preprocessor ?? Preprocessor(), panAndScan ?? PanAndScan);
         }
         catch
@@ -296,6 +301,8 @@ public sealed class Gemma3Vision : PretrainedVision
         public float[] Read(string name) => inner.Read(Stored(name));
 
         public float[] ReadTransposed(string name) => inner.ReadTransposed(Stored(name));
+
+        public WeightFormat? FormatOf(string name) => inner.FormatOf(Stored(name));
 
         public void Dispose() => inner.Dispose();
 

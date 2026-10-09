@@ -1085,6 +1085,11 @@ public sealed record Idrak.Models.Abstractions.DecoderBuildOptions : System.IEqu
   public int? MaxPositions { get; init; }
   public string? PackedFormatName { get; init; }
 
+public enum Idrak.Models.Abstractions.EncoderWeights : int
+  AsStored = 0
+  BFloat16 = 2
+  Float32 = 1
+
 public sealed class Idrak.Models.Abstractions.GgufArchitecture
   [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public GgufArchitecture()
   public bool InterleavedQueryKeys { get; init; }
@@ -1141,6 +1146,7 @@ public interface Idrak.Models.Abstractions.IPreTokenizer
   public System.Collections.Generic.IReadOnlyList<string> PreTokenize(System.Collections.Generic.IReadOnlyList<string> pieces, bool atStart)
 
 public interface Idrak.Models.Abstractions.ITensorStore : System.IDisposable
+  public (default) Idrak.Models.Abstractions.WeightFormat? FormatOf(string name)
   public (default) float[] ReadTransposed(string name)
   public System.Collections.Generic.IEnumerable<string> Names { get; }
   public bool Contains(string name)
@@ -1232,6 +1238,7 @@ public sealed record Idrak.Models.Abstractions.VisionCheckpoint : System.IEquata
 public sealed record Idrak.Models.Abstractions.VisionEncoderOptions : System.IEquatable<Idrak.Models.Abstractions.VisionEncoderOptions>
   public Idrak.Abstraction.Device? Device { get; init; }
   public Idrak.Abstraction.Generation.VisionOptions? VisionOptions { get; init; }
+  public Idrak.Models.Abstractions.EncoderWeights Weights { get; init; }
   public VisionEncoderOptions()
   public bool Grayscale { get; init; }
 
@@ -1369,6 +1376,10 @@ public sealed class Idrak.Models.SafeTensorsReader : Idrak.Models.Abstractions.I
 
 public static class Idrak.Models.SafeTensorsWriter
   public static void Write(string path, System.Collections.Generic.IEnumerable<(string, int[], float[])> tensors, Idrak.Models.SafeTensorType type = (Idrak.Models.SafeTensorType)2, System.Collections.Generic.IReadOnlyDictionary<string, string>? metadata = null)
+
+public static class Idrak.Models.StoredWeights
+  public static Idrak.Layers.Linear Linear(float[] values, int inputs, int outputs, Idrak.Abstraction.Tensor? bias, bool bfloat16, Idrak.Abstraction.Device device)
+  public static bool KeepsBFloat16(Idrak.Models.Abstractions.ITensorStore store, Idrak.Models.Abstractions.EncoderWeights weights, params System.Collections.Generic.IEnumerable<string> names)
 
 public static class Idrak.ModuleFiles
   public static void Load(this Idrak.Abstraction.Module module, System.IO.Stream stream)

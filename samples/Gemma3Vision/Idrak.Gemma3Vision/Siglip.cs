@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using Idrak.Layers;
+using Idrak.Models;
 using Idrak.Models.Abstractions;
 
 namespace Idrak.Gemma3Vision;
@@ -42,10 +43,14 @@ public sealed class SiglipVisionEncoder : Module
     /// [dim, channels, patch, patch], <c>embeddings.position_embedding.weight</c> [patches, dim],
     /// <c>encoder.layers.N.{layer_norm1, self_attn.{q,k,v,out}_proj, layer_norm2, mlp.fc1, mlp.fc2}.{weight,bias}</c> with
     /// linear weights [out, in], <c>post_layernorm.{weight,bias}</c>), as <see cref="Gemma3Vision.OpenTensors"/> gives
-    /// them with the prefix <c>vision.</c>. Tensors are read one at a time, in float32.
+    /// them with the prefix <c>vision.</c>. Tensors are read one at a time. The projections (attention and MLP) keep the
+    /// precision <paramref name="weights"/> asks for (by default as stored: a bfloat16 checkpoint's stay bfloat16, half
+    /// the memory, computed in float32 as before: <see cref="StoredWeights"/>); the patch convolution, the position
+    /// embedding, the norms and every bias are float32.
     /// </summary>
     /// <exception cref="NotSupportedException">An activation other than GELU with the tanh approximation, or a pooling head.</exception>
-    public static SiglipVisionEncoder FromTensors(SiglipVisionConfig config, ITensorStore tensors, string prefix = "vision.", Device? device = null)
+    public static SiglipVisionEncoder FromTensors(SiglipVisionConfig config, ITensorStore tensors, string prefix = "vision.", Device? device = null,
+        EncoderWeights weights = EncoderWeights.AsStored)
     {
         ArgumentNullException.ThrowIfNull(config);
         ArgumentNullException.ThrowIfNull(tensors);
@@ -79,8 +84,24 @@ public sealed class SiglipVisionEncoder : Module
                 return tensor;
             }
 
-            Linear Dense(string name, int inputs, int outputs) =>
-                Linear.FromWeights(Read($"{name}.weight", [inputs, outputs], transposed: true), Read($"{name}.bias", [outputs]));
+            Linear Dense(string name, int inputs, int outputs)
+            {
+                string full = $"{prefix}{name}.weight";
+                if (!StoredWeights.KeepsBFloat16(tensors, weights, full))
+                {
+                    return Linear.FromWeights(Read($"{name}.weight", [inputs, outputs], transposed: true), Read($"{name}.bias", [outputs]));
+                }
+
+                var stored = tensors.ShapeOf(full);
+                if (!stored.SequenceEqual([outputs, inputs]))
+                {
+                    throw new InvalidDataException($"{full}: shape {Tensor.FormatShape(stored)}, expected {Tensor.FormatShape([outputs, inputs])} from vision_config.");
+                }
+
+                var layer = StoredWeights.Linear(tensors.ReadTransposed(full), inputs, outputs, Read($"{name}.bias", [outputs]), bfloat16: true, device);
+                built.Add(layer);
+                return layer;
+            }
 
             LayerNorm Norm(string name) => LayerNorm.FromWeights(Read($"{name}.weight", [dim]), Read($"{name}.bias", [dim]), config.LayerNormEpsilon);
 
@@ -114,11 +135,12 @@ public sealed class SiglipVisionEncoder : Module
                     tensors.Read($"{name}.bias").CopyTo(qkvBias, part * dim);
                 }
 
-                var qkvW = Tensor.Persistent(qkvWeight, [dim, 3 * dim], device, requiresGrad: true);
-                built.Add(qkvW);
                 var qkvB = Tensor.Persistent(qkvBias, [3 * dim], device, requiresGrad: true);
                 built.Add(qkvB);
-                var attention = MultiHeadAttention.FromWeights(Linear.FromWeights(qkvW, qkvB), Dense($"{l}.self_attn.out_proj", dim, dim), config.Heads);
+                var qkv = StoredWeights.Linear(qkvWeight, dim, 3 * dim, qkvB,
+                    StoredWeights.KeepsBFloat16(tensors, weights, parts.Select(part => $"{prefix}{l}.self_attn.{part}.weight")), device);
+                built.Add(qkv);
+                var attention = MultiHeadAttention.FromWeights(qkv, Dense($"{l}.self_attn.out_proj", dim, dim), config.Heads);
                 layers[i] = TransformerEncoderLayer.FromLayers(Norm($"{l}.layer_norm1"), attention, Norm($"{l}.layer_norm2"),
                     Dense($"{l}.mlp.fc1", dim, ff), Dense($"{l}.mlp.fc2", ff, dim));
             }
@@ -194,9 +216,11 @@ public sealed class Gemma3Projector : Module
     /// <summary>
     /// Builds the projector from Gemma 3's tensors (<c>mm_soft_emb_norm.weight</c> [visionDim] and
     /// <c>mm_input_projection_weight</c> [visionDim, textDim]) under <paramref name="prefix"/>, as
-    /// <see cref="Gemma3Vision.OpenTensors"/> gives them with the prefix <c>projector.</c>.
+    /// <see cref="Gemma3Vision.OpenTensors"/> gives them with the prefix <c>projector.</c>. The projection keeps the
+    /// precision <paramref name="weights"/> asks for (by default as stored, <see cref="StoredWeights"/>); the norm is float32.
     /// </summary>
-    public static Gemma3Projector FromTensors(ITensorStore tensors, int visionDim, int textDim, int poolSize, float normEpsilon, string prefix = "projector.", Device? device = null)
+    public static Gemma3Projector FromTensors(ITensorStore tensors, int visionDim, int textDim, int poolSize, float normEpsilon, string prefix = "projector.", Device? device = null,
+        EncoderWeights weights = EncoderWeights.AsStored)
     {
         ArgumentNullException.ThrowIfNull(tensors);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(poolSize);
@@ -209,8 +233,9 @@ public sealed class Gemma3Projector : Module
         }
 
         var gain = Tensor.Persistent(tensors.Read(normName), [visionDim], device, requiresGrad: true);
-        var weight = Tensor.Persistent(tensors.Read(projectionName), [visionDim, textDim], device, requiresGrad: true);   // x · W as stored
-        return new Gemma3Projector(RMSNorm.FromWeights(gain, normEpsilon, offset: 1f), Linear.FromWeights(weight), poolSize);
+        var projection = StoredWeights.Linear(tensors.Read(projectionName), visionDim, textDim, null,              // x · W as stored
+            StoredWeights.KeepsBFloat16(tensors, weights, projectionName), device);
+        return new Gemma3Projector(RMSNorm.FromWeights(gain, normEpsilon, offset: 1f), projection, poolSize);
     }
 
     /// <summary>[images, side², visionDim] to [images, (side / PoolSize)², textDim].</summary>
