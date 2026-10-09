@@ -86,6 +86,9 @@ internal sealed class ModelImages : IDisposable
     /// <summary>What the chat generator reads images with.</summary>
     public ChatImages Images { get; }
 
+    /// <summary>The family's encoder once an image has been read (it is built on first use), else null.</summary>
+    public IVisionEncoder? Encoder => _encoder.Current;
+
     public void Dispose() => _encoder.Dispose();
 
     // The family's encoder, built when an image is first read (its layout or its features), disposed with the model.
@@ -97,6 +100,17 @@ internal sealed class ModelImages : IDisposable
         public int Width => width;
 
         public Device Device => device;
+
+        public IVisionEncoder? Current
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    return _built;
+                }
+            }
+        }
 
         public IReadOnlyList<ImageTokenLayout> Blocks(ImageData image, VisionOptions? options = null) => Built().Blocks(image, options);
 

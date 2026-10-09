@@ -63,6 +63,30 @@ internal static partial class Tests
         Check(ReferenceEquals(halfEmbedding.Head, halfHead) && ReferenceEquals(halfHead.SharedTable, halfEmbedding) && halfEmbedding.BFloat16 is null
               && !halfEmbedding.Buffers().Any() && halfHead.BFloat16 is not null, "a tied bf16 head holds the only table");
         long sharedBytes = half.Buffers().Sum(b => 4L * b.Size);
+
+        // The memory breakdown: the embedding counts nothing (it reads the head), the parts add up to the model's tensors,
+        // and the KV cache formula is what a decoding context allocates.
+        var breakdown = Idrak.Diagnostics.ModelMemory.Decoder(half);
+        Check(breakdown is [{ Name: "embedding", Bytes: 0 }, { Name: "head" } headPart, { Name: "layers" }] && headPart.Bytes == halfHead.BFloat16!.Bytes
+              && breakdown.Sum(p => p.Bytes) == Idrak.Diagnostics.ModelMemory.TensorBytes(half),
+            $"breakdown {string.Join(", ", breakdown.Select(p => $"{p.Name} {p.Bytes} ({p.Note})"))}");
+        foreach (var format in new[] { KeyValueFormat.Float32, KeyValueFormat.BFloat16, KeyValueFormat.Int8 })
+        {
+            using var noGrad = Autograd.NoGrad();
+            using var context = new DecodingContext(device, 1, 16, format);
+            half.ForwardCached(sequence, context).Dispose();
+            long expected = Idrak.Diagnostics.ModelMemory.KeyValueCacheBytes(spec, 16, KeyValueLayouts.For(format));
+            Check(context.CacheBytes == expected, $"{format} KV cache: {context.CacheBytes} bytes allocated, {expected} computed");
+        }
+
+        // Generation adds the cache (and an encoder, counted apart from the decoder's storage); the activations are the
+        // device's peak beyond the parts, never negative.
+        var generation = Idrak.Diagnostics.ModelMemory.Generation(half, spec, 16, KeyValueLayouts.For(KeyValueFormat.BFloat16));
+        Check(generation[^1] is { Name: "kv cache" } kv && kv.Bytes == Idrak.Diagnostics.ModelMemory.KeyValueCacheBytes(spec, 16, KeyValueLayouts.For(KeyValueFormat.BFloat16))
+              && generation.Take(3).SequenceEqual(breakdown), "generation: the decoder's parts, then the KV cache");
+        var activations = Idrak.Diagnostics.ModelMemory.Activations(generation, ComputeResources.GetMemoryUsage(device));
+        Check(activations is { Name: "activations", Bytes: >= 0 }, $"activations {activations.Bytes}");
+
         var predicted = half.Predict(sequence).ToArray();
         AssertClose(full, predicted, 0.05f * full.Max(MathF.Abs), "bf16 build near float32");
         float[] sharedLookup;
