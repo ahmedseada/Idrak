@@ -229,6 +229,44 @@ internal static partial class Tests
             var badOptions = Post("/v1/chat/completions", VlmChatBody(DataUrlPart(dataUrl), false, "vlm", ",\"vision_options\":[1]"));
             Check(badOptions.StatusCode == HttpStatusCode.BadRequest && Text(badOptions).Contains("vision_options"), $"vision_options not an object: {Text(badOptions)}");
 
+            // Image transforms per request ("image_transforms"): the reference compare_real.py made with the same pipeline
+            // in Pillow (tests/data/vlm/compare/transformed: image.jpg, grey, 64 wide by Lanczos, contrast 1.5; no system
+            // line) gives its 20 greedy tokens on /v1 (text, and an array of steps), the upload and /api/chat.
+            int[] transformedTokens = [.. ReadNpyInt64(TestData("vlm/compare/transformed/generated_ids.npy")).Select(t => (int)t)];
+            string jpgUrl = ChatImage.FromFile(TestData("vlm/image.jpg")).ToDataUrl();
+            const string Card = "grayscale,max_width=64,contrast=1.5";
+            string TransformBody(string extra) => $$"""{"model":"vlm","messages":[{"role":"user","content":[{{DataUrlPart(jpgUrl)}},{"type":"text","text":"What is in this image?"}]}],"temperature":0,"max_tokens":20{{extra}}}""";
+            foreach (string field in new[] { $"\"{Card}\"", """["grayscale",{"name":"max_width","value":64,"resample":"lanczos"},{"name":"contrast","value":1.5}]""" })
+            {
+                sampled.Clear();
+                var transformed = WithRecordedTokens(sampled, () => Post("/v1/chat/completions", TransformBody($",\"image_transforms\":{field}")));
+                Check(transformed.StatusCode == HttpStatusCode.OK && sampled.SequenceEqual(transformedTokens), $"/v1 with image_transforms {field}: {string.Join(" ", sampled)}, expected {string.Join(" ", transformedTokens)}: {Text(transformed)}");
+            }
+
+            var transformUploadForm = new MultipartFormDataContent();
+            var jpgFile = new ByteArrayContent(File.ReadAllBytes(TestData("vlm/image.jpg")));
+            jpgFile.Headers.ContentType = new MediaTypeHeaderValue("image/jpeg");
+            transformUploadForm.Add(jpgFile, "image", "image.jpg");
+            foreach (var (key, value) in new[] { ("prompt", "What is in this image?"), ("temperature", "0"), ("max_tokens", "20"), ("model", "vlm"), ("image_transforms", Card) })
+            {
+                transformUploadForm.Add(new StringContent(value), key);
+            }
+
+            sampled.Clear();
+            var transformUpload = WithRecordedTokens(sampled, () => http.PostAsync("/v1/chat/upload", transformUploadForm).Result);
+            Check(transformUpload.StatusCode == HttpStatusCode.OK && sampled.SequenceEqual(transformedTokens), $"upload with image_transforms: {Text(transformUpload)}");
+            sampled.Clear();
+            var transformChat = WithRecordedTokens(sampled, () => Post("/api/chat", $$$"""
+                {"messages":[{"role":"user","content":"What is in this image?","images":["{{{Convert.ToBase64String(File.ReadAllBytes(TestData("vlm/image.jpg")))}}}"]}],
+                 "stream":false,"image_transforms":"{{{Card}}}","options":{"temperature":0,"num_predict":20,"repeat_penalty":1}}
+                """));
+            Check(transformChat.StatusCode == HttpStatusCode.OK && sampled.SequenceEqual(transformedTokens), $"/api/chat with image_transforms: {Text(transformChat)}");
+            var unknownTransform = Post("/v1/chat/completions", TransformBody(",\"image_transforms\":\"grayscale,blur=2\""));
+            Check(unknownTransform.StatusCode == HttpStatusCode.BadRequest && Text(unknownTransform).Contains("image_transforms") && Text(unknownTransform).Contains("max_width")
+                  && Text(unknownTransform).Contains("blur"), $"an unknown transform names the registered ones: {Text(unknownTransform)}");
+            var badTransformValue = Post("/api/chat", """{"messages":[{"role":"user","content":"x"}],"image_transforms":"contrast=high"}""");
+            Check(badTransformValue.StatusCode == HttpStatusCode.BadRequest && Text(badTransformValue).Contains("contrast takes a number"), $"/api/chat: a bad value: {Text(badTransformValue)}");
+
             // Refusals.
             var refused = Post("/v1/chat/completions", VlmChatBody(DataUrlPart(dataUrl), false, "text"));
             Check(refused.StatusCode == HttpStatusCode.BadRequest && Text(refused).Contains("\\u0027image\\u0027") && Text(refused).Contains("unsupported_content"), $"a text-only model refuses images: {Text(refused)}");
@@ -303,6 +341,43 @@ internal static partial class Tests
         (code, text, _) = RunIdrakOn(device, null, ["run", VlmModel, "--image", png, "--grayscale", "What is in this image?", .. greedy]);
         string cliGrey = (string)JsonOf(text, "run --image --grayscale")["text"]!;
         Check(code == 0 && cliAnswer.Length == expected.Length, $"run --image: '{cliAnswer}'");
+
+        // --image-transform: the 20 greedy tokens of compare_real.py --image-transform on the same pipeline in Pillow;
+        // --grayscale is the grayscale step (left out of the pipeline, the same answer); an alias keeps the pipeline.
+        string jpg = TestData("vlm/image.jpg");
+        const string Card = "grayscale,max_width=64,contrast=1.5";
+        int[] transformedTokens = [.. ReadNpyInt64(TestData("vlm/compare/transformed/generated_ids.npy")).Select(t => (int)t)];
+        string[] plainGreedy = ["What is in this image?", "--temperature", "0", "--max-tokens", "20", "-j"];
+        var recorded = new List<int>();
+        (code, text, var transformError) = WithRecordedTokens(recorded, () => RunIdrakOn(device, null, ["run", VlmModel, "--image", jpg, "--image-transform", Card, .. plainGreedy]));
+        var transformedJson = JsonOf(text, "run --image-transform");
+        string cliTransformed = (string)transformedJson["text"]!;
+        Check(code == 0 && recorded.SequenceEqual(transformedTokens) && (string?)transformedJson["image_transforms"] == Card,
+            $"run --image-transform: {string.Join(" ", recorded)}, expected {string.Join(" ", transformedTokens)}: {text} {transformError}");
+        recorded.Clear();
+        (code, text, _) = WithRecordedTokens(recorded, () => RunIdrakOn(device, null, ["run", VlmModel, "--image", jpg, "--grayscale", "--image-transform", "max_width=64", "--image-transform", "contrast=1.5", .. plainGreedy]));
+        Check(code == 0 && recorded.SequenceEqual(transformedTokens) && (string?)JsonOf(text, "--grayscale with transforms")["image_transforms"] == Card,
+            $"--grayscale and two --image-transform options: {text}");
+        string aliasConfig = Path.Combine(TempFolder(), "config.json");
+        (int, string, string) WithConfig(params string[] args)
+        {
+            var output = new StringWriter();
+            var error = new StringWriter();
+            int exit = Idrak.Cli.Shared.StandardInput.With(new StringReader(""), () => CommandLine.Run([.. args, "-d", device.ToString(), "-C", aliasConfig], output, error));
+            return (exit, output.ToString(), error.ToString());
+        }
+
+        (code, text, _) = WithConfig("alias", "set", "card", VlmModel, "--image-transform", Card);
+        Check(code == 0 && File.ReadAllText(aliasConfig).Contains($"\"image_transforms\": \"{Card}\"", StringComparison.Ordinal) && text.Contains("--image-transform " + Card, StringComparison.Ordinal),
+            $"alias set --image-transform: {text} {File.ReadAllText(aliasConfig)}");
+        recorded.Clear();
+        (code, text, _) = WithRecordedTokens(recorded, () => WithConfig(["run", "card", "--image", jpg, .. plainGreedy]));
+        Check(code == 0 && recorded.SequenceEqual(transformedTokens), $"an alias's image_transforms: {text}");
+        (code, text, _) = WithConfig(["run", "card", "--image", jpg, "--image-transform", "none", .. plainGreedy]);
+        Check(code == 0 && (string?)JsonOf(text, "--image-transform none")["image_transforms"] == "", $"--image-transform none over the alias: {text}");
+        (code, _, transformError) = RunIdrakOn(device, null, "run", VlmModel, "--image", jpg, "--image-transform", "grayscale,blur=2", "hi");
+        Check(code == 2 && transformError.Contains("--image-transform", StringComparison.Ordinal) && transformError.Contains("registered: grayscale, max_width", StringComparison.Ordinal),
+            $"an unknown transform: {code} {transformError}");
 
         string cache = TempFolder();
         int port;
@@ -408,7 +483,7 @@ internal static partial class Tests
         }
 
         url = $"http://127.0.0.1:{port}";
-        server = Task.Run(() => CommandLine.Run(["serve", VlmModel, "-p", port.ToString(), "-d", device.ToString(), "--cache", cache, "--grayscale"],
+        server = Task.Run(() => CommandLine.Run(["serve", VlmModel, "-p", port.ToString(), "-d", device.ToString(), "--cache", cache, "--grayscale", "--image-transform", "max_width=64,contrast=1.5"],
             TextWriter.Synchronized(serveOutput), TextWriter.Synchronized(serveError)));
         using var grey = new HttpClient { BaseAddress = new Uri(url), Timeout = TimeSpan.FromMinutes(5) };
         deadline = DateTime.UtcNow.AddSeconds(60);
@@ -432,8 +507,22 @@ internal static partial class Tests
 
         try
         {
-            var answer = JsonNode.Parse(grey.PostAsync("/v1/chat/upload", UploadForm(png, false)).Result.Content.ReadAsStringAsync().Result)!;
-            Check((string?)answer["choices"]?[0]?["message"]?["content"] == cliGrey, $"serve --grayscale gives run --grayscale's answer: {answer}");
+            // The server's transforms (--grayscale, then --image-transform) on every image: run --image-transform's answer;
+            // a request's own image_transforms replace them (grayscale alone: run --grayscale's answer).
+            var form = new MultipartFormDataContent();
+            var jpgFile = new ByteArrayContent(File.ReadAllBytes(jpg));
+            jpgFile.Headers.ContentType = new MediaTypeHeaderValue("image/jpeg");
+            form.Add(jpgFile, "image", "image.jpg");
+            foreach (var (key, value) in new[] { ("prompt", "What is in this image?"), ("temperature", "0"), ("max_tokens", "20") })
+            {
+                form.Add(new StringContent(value), key);
+            }
+
+            var transformed = JsonNode.Parse(grey.PostAsync("/v1/chat/upload", form).Result.Content.ReadAsStringAsync().Result)!;
+            Check((string?)transformed["choices"]?[0]?["message"]?["content"] == cliTransformed, $"serve --grayscale --image-transform gives run --image-transform's answer: {transformed}");
+            Check(serveOutput.ToString().Contains(Card, StringComparison.Ordinal), $"the announcement names the transforms: {serveOutput}");
+            var answer = JsonNode.Parse(grey.PostAsync("/v1/chat/upload", UploadForm(png, false, ("image_transforms", "grayscale"))).Result.Content.ReadAsStringAsync().Result)!;
+            Check((string?)answer["choices"]?[0]?["message"]?["content"] == cliGrey, $"a request's image_transforms replace the server's: {answer}");
         }
         finally
         {

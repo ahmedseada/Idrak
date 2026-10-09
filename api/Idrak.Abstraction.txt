@@ -79,6 +79,13 @@ public interface Idrak.Abstraction.Data.IDownloader
   public string CacheFolder { get; }
   public string PathFor(string cachePath)
 
+public interface Idrak.Abstraction.Data.IImageTransform
+  public Idrak.Abstraction.Data.ImageData Apply(Idrak.Abstraction.Data.ImageData image, Idrak.Abstraction.Data.ImageTransformStep step)
+  public System.Collections.Generic.IReadOnlyCollection<string> Keys { get; }
+  public string Name { get; }
+  public string Summary { get; }
+  public void Check(Idrak.Abstraction.Data.ImageTransformStep step)
+
 public interface Idrak.Abstraction.Data.ISampleReader : System.IDisposable
   public bool Read(System.Span<float> features, System.Span<float> targets)
 
@@ -104,6 +111,48 @@ public sealed class Idrak.Abstraction.Data.ImageData
   public int Height { get; }
   public int Width { get; }
   public void Resize(int channels, int height, int width, System.Span<float> destination)
+
+public sealed class Idrak.Abstraction.Data.ImageTransformPipeline : System.IEquatable<Idrak.Abstraction.Data.ImageTransformPipeline>
+  public Idrak.Abstraction.Data.ImageData Apply(Idrak.Abstraction.Data.ImageData image)
+  public Idrak.Abstraction.Data.ImageTransformPipeline Then(Idrak.Abstraction.Data.ImageTransformPipeline? next)
+  public ImageTransformPipeline(System.Collections.Generic.IEnumerable<Idrak.Abstraction.Data.ImageTransformStep> steps)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ImageTransformStep> Steps { get; }
+  public System.Text.Json.Nodes.JsonNode? ToJson()
+  public bool Contains(string name)
+  public bool Equals(Idrak.Abstraction.Data.ImageTransformPipeline? other)
+  public bool IsEmpty { get; }
+  public override bool Equals(object? obj)
+  public override int GetHashCode()
+  public override string ToString()
+  public static Idrak.Abstraction.Data.ImageTransformPipeline Empty { get; }
+  public static Idrak.Abstraction.Data.ImageTransformPipeline FromJson(System.Text.Json.Nodes.JsonNode? json)
+  public static Idrak.Abstraction.Data.ImageTransformPipeline Parse(string? text)
+
+public sealed class Idrak.Abstraction.Data.ImageTransformStep
+  public Idrak.Abstraction.Data.ImageTransformStep With(string key, string value)
+  public ImageTransformStep(string name, string? value = null, System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<string, string>>? options = null)
+  public System.Collections.Generic.IReadOnlyDictionary<string, string> Options { get; }
+  public double Number(double? otherwise = null)
+  public int Integer(int? otherwise = null)
+  public override bool Equals(object? obj)
+  public override int GetHashCode()
+  public override string ToString()
+  public string Name { get; }
+  public string? Option(string key, string? otherwise = null)
+  public string? Value { get; }
+  public void ThrowIfUnknownOptions(System.Collections.Generic.IReadOnlyCollection<string> keys)
+  public void ThrowIfValue()
+
+public static class Idrak.Abstraction.Data.ImageTransforms
+  public static Idrak.Abstraction.Data.IImageTransform Get(string name)
+  public static Idrak.Abstraction.Data.IImageTransform? Default(string name)
+  public static Idrak.Abstraction.Data.IImageTransform? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Data.IImageTransform transform)
+  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
 public delegate Idrak.Abstraction.Data.ISampleSource Idrak.Abstraction.Data.SampleSourceFactory(string path, System.Collections.Generic.IReadOnlyDictionary<string, string> options)
 
@@ -976,6 +1025,7 @@ public static class Idrak.Abstraction.Generation.ChatParts
 
 public sealed record Idrak.Abstraction.Generation.ChatRequest : System.IEquatable<Idrak.Abstraction.Generation.ChatRequest>
   public ChatRequest(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> Messages, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition>? Tools = null, bool? Think = null, Idrak.Abstraction.Generation.GenerationOptions? Options = null)
+  public Idrak.Abstraction.Data.ImageTransformPipeline? ImageTransforms { get; init; }
   public Idrak.Abstraction.Generation.GenerationOptions? Options { get; init; }
   public Idrak.Abstraction.Generation.VisionOptions? VisionOptions { get; init; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> Messages { get; init; }

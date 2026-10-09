@@ -55,6 +55,9 @@ internal sealed class ServeCommand : Command
               --max-images N         the most images in one request (default 8)
               --grayscale            read a vision model's images grey (some OCR fine-tunes ask for it; an alias
                                      can keep it); a request can also ask with "grayscale": true
+              --image-transform P    image transforms run on every image first, in order, as Pillow does them
+                                     (such as grayscale,max_width=1024,contrast=1.5; an alias can keep them); a
+                                     request gives its own as "image_transforms" (they replace these; "none": none)
               --vision-option K=V    an option of a vision model's family for every image (repeatable; the family
                                      names the keys it takes; with the Gemma 3 plug-in, do_pan_and_scan=true adds
                                      crops of a tall or wide page); a request gives its own as "vision_options":
@@ -84,7 +87,8 @@ internal sealed class ServeCommand : Command
                              can be served yet)
           image upload       POST /v1/chat/upload, a multipart/form-data form: image (one or more files),
                              prompt, and optionally system, stream (true: server-sent events), max_tokens,
-                             temperature, grayscale, vision_options (a JSON object), model; answers as
+                             temperature, grayscale, vision_options (a JSON object), image_transforms,
+                             model; answers as
                              /v1/chat/completions
           web chat           GET /ui
           control            GET /idrak/ps, POST /idrak/load, /idrak/unload, /idrak/stop, GET /idrak/status
@@ -108,6 +112,7 @@ internal sealed class ServeCommand : Command
           idrak s qwen phi -p 8080 --api-key $KEY        # two models on one port
           idrak serve tiny=./tiny.gguf -d vulkan:0 -k int8 --keep-alive 30m --cors http://localhost:3000
           idrak serve ocr=bakrianoo/arabic-legal-documents-ocr-1.0 -d cuda:0 -w bf16 --grayscale
+          idrak serve -P Idrak.Gemma3Vision.dll ocr --image-transform "grayscale,max_width=1024,contrast=1.5"
           idrak serve qwen --mcp --tools ./MyTools.dll  # an MCP client's configuration starts it this way
         """;
 
