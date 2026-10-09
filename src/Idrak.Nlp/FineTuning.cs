@@ -30,15 +30,20 @@ public sealed record ChatTranscript(IReadOnlyList<ChatMessage> Messages, IReadOn
     /// and a name or a tool_call_id), or ShareGPT's <c>{"conversations": [{"from": "human" | "gpt" | "system", "value"}]}</c>.
     /// Optional "enable_thinking" / "think" sets <see cref="Think"/>.
     /// </summary>
-    public static ChatTranscript FromJson(JsonObject json)
+    public static ChatTranscript FromJson(JsonObject json) => Parse(json, null);
+
+    // FromJson, with `content` reading each message's "content" and each ShareGPT turn's "value" into its parts (the
+    // tuning data formats resolve images there); null reads them as the chat JSON does (ChatParts).
+    internal static ChatTranscript Parse(JsonObject json, Func<JsonNode?, IReadOnlyList<ChatPart>>? content)
     {
+        ArgumentNullException.ThrowIfNull(json);
         var messages = new List<ChatMessage>();
         var callNames = new Dictionary<string, string>(StringComparer.Ordinal);
         if (json["messages"] is JsonArray list)
         {
             foreach (var node in list)
             {
-                messages.Add(Message(node as JsonObject ?? throw new InvalidDataException("A message is not an object."), callNames));
+                messages.Add(Message(node as JsonObject ?? throw new InvalidDataException("A message is not an object."), callNames, content));
             }
         }
         else if (json["conversations"] is JsonArray shareGpt)
@@ -54,7 +59,7 @@ public sealed record ChatTranscript(IReadOnlyList<ChatMessage> Messages, IReadOn
                     "tool" or "observation" or "function_response" => "tool",
                     _ => throw new InvalidDataException($"Unknown ShareGPT speaker '{from}'."),
                 };
-                messages.Add(new ChatMessage(role, (string?)node?["value"] ?? ""));
+                messages.Add(content is null ? new ChatMessage(role, (string?)node?["value"] ?? "") : new ChatMessage(role, content(node?["value"])));
             }
         }
         else
@@ -74,13 +79,13 @@ public sealed record ChatTranscript(IReadOnlyList<ChatMessage> Messages, IReadOn
         return new ChatTranscript(messages, tools, think);
     }
 
-    private static ChatMessage Message(JsonObject m, Dictionary<string, string> callNames)
+    private static ChatMessage Message(JsonObject m, Dictionary<string, string> callNames, Func<JsonNode?, IReadOnlyList<ChatPart>>? read)
     {
         string role = (string?)m["role"] ?? throw new InvalidDataException("A message has no role.");
         IReadOnlyList<ChatPart> content;
         try
         {
-            content = ChatParts.ContentFromJson(m["content"]);
+            content = read is null ? ChatParts.ContentFromJson(m["content"]) : read(m["content"]);
         }
         catch (Exception ex) when (ex is FormatException or NotSupportedException)
         {

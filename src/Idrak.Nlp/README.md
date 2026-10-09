@@ -12,9 +12,9 @@ The plug-in points only this package uses live beside their implementations (add
 |-----------|-----------|
 | `Idrak.Generation.Abstractions` | `ITokenSampler` (with `SamplerRequest`, `SampledToken`) and `TokenSamplers`, whose "default" is `TokenSampler` (in `Idrak.Generation`): register a sampler under "default" to override it for every generation; under `SlotPolicy.FallBack` (opted into with `TokenSamplers.SetPolicy`) it falls back to the built-in when it cannot be made, and under `SlotPolicy.Shadow` the built-in chooses while the app's is compared over whole generations. The built-in is version 2 (since 0.4.0: NaN logits never sampled, +∞ wins, a row with nothing finite reported by `Read`); `TokenSamplers.Default("default", 1)` is 0.3's, which refuses non-finite logits |
 | `Idrak.Retrieval.Abstractions` | `IVectorStore`, `IRetriever`, `IReranker` (with `Chunk`, `RetrievedChunk`, `VectorRecord`, `VectorMatch`) |
-| `Idrak.Nlp.Abstractions` | `DistillationTeacher`, `TeacherDistributions`, `TrainingSequence` |
+| `Idrak.Nlp.Abstractions` | `DistillationTeacher`, `TeacherDistributions`, `TrainingSequence`; for fine-tuning vision-language models: `ITuningDataFormat` and `TuningDataFormats` ("messages": chat JSON Lines with image parts; "sharegpt": LlamaFactory's `conversations` with `<image>` placeholders and an `images` list, JSON Lines or a JSON array, images from a folder or a zip read in place), `IFeatureCache` and `FeatureCaches` ("memory", within a budget measured from the machine's free memory; "disk", safetensors files under `IDRAK_CACHE`), keyed by `FeatureCacheKey`, and `ITuningMetric` and `TuningMetrics` ("cer", "wer": Unicode-aware error rates) |
 
-Shared contracts (tokenizers, chat templates, chat and text models, tools, `IEmbedder`) are in Idrak.Abstraction.
+Shared contracts (tokenizers, chat templates, chat and text models, tools, `IEmbedder`) are in Idrak.Abstraction. `TuningImages` (in `Idrak.Nlp`) is how a vision fine-tune prepares its images (transforms, vision options, grayscale), saved next to the adapters as `tuning_images.json`.
 
 ## Install
 

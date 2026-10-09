@@ -141,4 +141,39 @@ public static class Conformance
     public static ConformanceReport CheckChatPartKind(string name, IChatPartKind? kind = null, IReadOnlyList<System.Text.Json.Nodes.JsonObject>? samples = null,
         ContractCheckOptions? options = null) =>
         Check(kind ?? ChatParts.Get(name), new ChatPartKindSuite(name, samples), options);
+
+    /// <summary>
+    /// Checks a fine-tuning data format (Idrak.Nlp's <c>ITuningDataFormat</c>, given as its reading: a path in, each
+    /// conversation's messages out) on data files of its own (<see cref="TuningDataFormatSuite"/>): valid files read the
+    /// same every time, from several threads, and stopped early; image parts carry their bytes; the expected conversations
+    /// when given; invalid files refused with an error naming the file. Four random cases unless <paramref name="options"/>
+    /// says otherwise.
+    /// </summary>
+    /// <example>
+    /// <code>
+    /// var format = TuningDataFormats.Get("sharegpt");
+    /// Conformance.CheckTuningDataFormat(path =&gt; format.Read(path, options).Select(t =&gt; t.Messages), samples).ThrowIfFailed();
+    /// </code>
+    /// </example>
+    public static ConformanceReport CheckTuningDataFormat(Func<string, IEnumerable<IReadOnlyList<ChatMessage>>> read, IReadOnlyList<TuningDataSample> samples,
+        ContractCheckOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(read);
+        return Check(read, new TuningDataFormatSuite(samples), options ?? new ContractCheckOptions { RandomCases = 4 });
+    }
+
+    /// <summary>
+    /// Checks a feature cache (Idrak.Nlp's <c>IFeatureCache</c>, wrapped as <see cref="FeatureCacheUnderTest"/>) with
+    /// <see cref="FeatureCacheSuite"/>: misses when empty or cleared, exact values and shapes back on the device asked for,
+    /// its own copy, a miss for a key differing in any field, a put replacing the last, and many threads at once. Six random
+    /// cases unless <paramref name="options"/> says otherwise.
+    /// </summary>
+    /// <param name="cache">The cache, wrapped.</param>
+    /// <param name="device">Where values are put and hits asked for (the CPU when null).</param>
+    /// <param name="options">The cases to run.</param>
+    public static ConformanceReport CheckFeatureCache(FeatureCacheUnderTest cache, Device? device = null, ContractCheckOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(cache);
+        return Check(cache, new FeatureCacheSuite(device), options ?? new ContractCheckOptions { RandomCases = 6 });
+    }
 }
