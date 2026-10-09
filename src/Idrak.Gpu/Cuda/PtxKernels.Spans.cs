@@ -8,7 +8,7 @@ namespace Idrak.Gpu.Cuda;
 // Attention over one range of keys per query row (Backend.AttentionSpans), float32, tiled as attention_flash_f32.
 internal static partial class PtxKernels
 {
-    /// <summary>The span attention kernel's name (forward; the gradient takes the host fallback).</summary>
+    /// <summary>The span attention kernel's name (forward; the gradient: PtxKernels.SpansBackward.cs).</summary>
     public const string SpanAttentionName = "attention_spans_f32";
 
     // o[h, i] = Σ_c softmax(cap(scale · q[h, i] · k[g, c])) · v[g, c] over st[t·rows + i] ≤ c < en[t·rows + i] (clamped to
