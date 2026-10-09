@@ -9,6 +9,7 @@
   <ItemGroup>
     <PackageReference Include="Idrak" Version="$(IdrakVersion)" />
     <PackageReference Include="Idrak.Nlp" Version="$(IdrakVersion)" />
+    <PackageReference Include="Idrak.Data" Version="$(IdrakVersion)" />
     <ProjectReference Include="..\Idrak.Gemma3Vision\Idrak.Gemma3Vision.csproj" />
   </ItemGroup>
 
