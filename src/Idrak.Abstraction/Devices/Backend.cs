@@ -1512,11 +1512,14 @@ public abstract partial class Backend
     /// real operands (one table of ranges, as many key/value heads as query heads, no soft-cap), so a device measures both
     /// on itself (into scratch memory of its own), once per shape and precision, and keeps the choice as it keeps its
     /// other measured choices (per device and driver). Called only when the device's free memory holds the scores with
-    /// margin (<see cref="AvailableMemory"/>; <c>Tensor.AttentionFastest</c> checks). The default: false, AttentionSpans
-    /// (it never holds the scores, so it never runs out of memory for them).
+    /// margin (<see cref="AvailableMemory"/>; <c>Tensor.AttentionFastest</c> checks). With <paramref name="training"/>
+    /// (the gradient is recorded) the choice is the faster of the two with their gradients, forward and backward
+    /// (<see cref="AttentionSpansBackward"/> against the composed path's products and softmax gradient,
+    /// <see cref="ComposedAttentionTraining"/>), measured and kept apart from the choice for inference. The default:
+    /// false, AttentionSpans (it never holds the scores, so it never runs out of memory for them).
     /// </summary>
     public virtual bool PrefersComposedAttention(Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage? mask, int heads, int rows,
-        int keyRows, int dim, float scale) => false;
+        int keyRows, int dim, float scale, bool training = false) => false;
 
     /// <summary>
     /// Attention through the full scores: scores = q · keysᵀ ([heads, rows, keyRows]), weights = softmax(scale · scores +
@@ -1531,6 +1534,24 @@ public abstract partial class Backend
         BatchedMatMul(q, keys, scores, heads, rows, keyRows, dim, transA: false, transB: true, beta: 0f);
         ScaleMaskSoftmax(scores, mask, weights, heads * rows, keyRows, mask is null ? 1 : rows, scale);
         BatchedMatMul(weights, values, y, heads, rows, dim, keyRows, transA: false, transB: false, beta: 0f);
+    }
+
+    /// <summary>
+    /// <see cref="ComposedAttention"/> and its gradient, as a training step runs it, for measuring
+    /// (<see cref="PrefersComposedAttention"/> with training): the forward pass, then with <paramref name="dOutput"/>
+    /// [heads, rows, dim] dvalues = weightsᵀ · dOutput, dweights = dOutput · valuesᵀ (into <paramref name="scores"/>), the
+    /// softmax's gradient (into <paramref name="gradients"/>, heads · rows · keyRows floats), dq = dscores · keys and
+    /// dkeys = dscoresᵀ · q. Writes only its scratch arguments; the scale's and the mask's element-wise passes are left out.
+    /// </summary>
+    protected void ComposedAttentionTraining(Storage q, Storage keys, Storage values, Storage? mask, Storage scores, Storage weights, Storage gradients,
+        Storage y, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int rows, int keyRows, int dim, float scale)
+    {
+        ComposedAttention(q, keys, values, mask, scores, weights, y, heads, rows, keyRows, dim, scale);
+        BatchedMatMul(weights, dOutput, dvalues, heads, keyRows, dim, rows, transA: true, transB: false, beta: 0f);
+        BatchedMatMul(dOutput, values, scores, heads, rows, keyRows, dim, transA: false, transB: true, beta: 0f);
+        SoftmaxBackward(weights, scores, gradients, heads * rows, keyRows, log: false);
+        BatchedMatMul(gradients, keys, dq, heads, rows, dim, keyRows, transA: false, transB: false, beta: 0f);
+        BatchedMatMul(gradients, q, dkeys, heads, keyRows, dim, rows, transA: true, transB: false, beta: 0f);
     }
 
     /// <summary>

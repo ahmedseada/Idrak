@@ -56,6 +56,9 @@ internal enum VulkanTuneOp : byte
 
     /// <summary>Attention over key ranges (attention_spans): the workgroup width.</summary>
     SpanAttention,
+
+    /// <summary>The gradient of attention over key ranges (attention_spans_backward_dq and _dkv): the workgroup width.</summary>
+    SpanAttentionBackward,
 }
 
 /// <summary>What a measured choice is for: the operation, its variant (kernel, format) and its shape.</summary>

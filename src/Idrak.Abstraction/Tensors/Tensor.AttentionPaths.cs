@@ -62,7 +62,8 @@ public sealed partial class Tensor
     /// <summary>
     /// <see cref="AttentionSpans"/>, or the same attention through the full scores (q · keysᵀ, softmax with the mask,
     /// · values) where that is faster on the device: the device measures both once per shape and precision and keeps the
-    /// choice with its other measured choices (per device and driver; <see cref="Backend.PrefersComposedAttention"/>).
+    /// choice with its other measured choices (per device and driver; <see cref="Backend.PrefersComposedAttention"/>; while
+    /// the gradient is recorded, each path timed with its gradient).
     /// The composed path is taken only when the device reports the memory for its scores with margin
     /// (<see cref="Backend.AvailableMemory"/>), as many key/value heads as query heads, one table of ranges and no
     /// soft-cap; until measured, and on devices that measure nothing (the CPU), AttentionSpans runs.
@@ -131,7 +132,7 @@ public sealed partial class Tensor
 
         return forced == AttentionPath.Composed
                || backend.PrefersComposedAttention(q.Storage, keys.Storage, values.Storage, starts.Storage, ends.Storage, everyKey ? null : mask?.Storage,
-                   heads, rows, keyRows, dim, scale);
+                   heads, rows, keyRows, dim, scale, recording);
     }
 
     // softmax(scale · q · keysᵀ + mask) · values over the full scores: one fused softmax for inference, the differentiable

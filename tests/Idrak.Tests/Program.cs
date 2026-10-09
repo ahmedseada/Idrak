@@ -11,7 +11,7 @@
 //   … -- --bench-vulkan [sections]                                               time every Vulkan device (or those IDRAK_DEVICES names): dispatches, copies, products, attention, decoders
 //   … -- --bench-text                                                            time the text paths (tokenizer, chat template, parsing, chunking, BM25)
 //   … -- --bench-window                                                          time windowed and soft-capped attention, kernels against the composed path (IDRAK_DEVICES, default every GPU)
-//   … -- --bench-spans [spans|composed|fastest]                                  time a 4,096-token bidirectional attention pass: tiled, composed, the measured choice (default all) (IDRAK_DEVICES, default the CPU)
+//   … -- --bench-spans [spans|composed|fastest] [train]                          time a 4,096-token bidirectional attention pass: tiled, composed, the measured choice (default all); train: forward and backward (IDRAK_DEVICES, default the CPU)
 //   … -- --bench-vision                                                          time Gemma 3 4B's image encoder and projector (random weights, one 896 x 896 image; IDRAK_DEVICES, default the CPU)
 //   … -- --bench-dispatch                                                        time a million tiny operations through the dispatcher and straight to the CPU's kernel
 //   … -- --bench-offload                                                         time training steps with weights or optimizer state in system memory
@@ -66,7 +66,9 @@ if (args is ["--bench-window"])
 
 if (args is ["--bench-spans", .. var spanPath])
 {
-    return Tests.BenchSpans(spanPath is [var chosenPath] ? chosenPath : "all");
+    bool spanTraining = spanPath.Contains("train");
+    string[] spanPaths = [.. spanPath.Where(a => a != "train")];
+    return Tests.BenchSpans(spanPaths is [var chosenPath] ? chosenPath : "all", spanTraining);
 }
 
 if (args is ["--bench-vision"])
