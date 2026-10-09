@@ -289,7 +289,7 @@ timings on it.
   (the weight gradient 710 with the transposed product); depthwise 3x3 over 128 channels, 8 × 56x56: 51 / 50 / 55 where
   the batched product took 300–430 for the forward pass alone; a text line 3x3 1 → 32 on 16 × 32x400: 33 / 30 / 42 (the
   weight gradient 127 before).
-- **Inference fusion.** `Sequential` (nothing recorded, no per-layer telemetry) runs a `Conv2d` followed by a `BatchNorm`
+- **Inference fusion.** `Sequential` (nothing recorded, no per-layer telemetry, no graph being recorded) runs a `Conv2d` followed by a `BatchNorm`
   in evaluation mode and/or an activation the convolution applies (`ReLU`, `Sigmoid`, `Tanh`, `GELU`) as one convolution
   (`Conv2d.ForwardFused`): scale = γ / √(running variance + ε), weight' = weight · scale per filter, bias' = (bias -
   running mean) · scale + β (five operations of `filters` elements), the activation in the kernel's epilogue (one
