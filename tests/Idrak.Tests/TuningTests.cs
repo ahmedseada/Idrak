@@ -18,6 +18,7 @@ internal static partial class Tests
         ("tuning: measured choices are kept per GPU in the cache folder and read back instead of measured again", TuningPersisted),
         ("tuning: decoding attention reads at least a measured number of positions per block (short caches on fewer blocks): every least chunk, split count and cache format gives the one-block result; lengths 64 ... capacity and chunk candidates", DecodeMinChunks),
         ("tuning: every backend keeps one set of measured choices per power source (mains or battery, as the system reports it)", PowerSourceKeys),
+        ("tuning: sizes that follow the data are keyed by size class (exact up to 32, then four classes a doubling, each within a quarter), so convolutions over batches of every width share a few measured choices", TuneSizeClasses),
         ("kernel shapes: derived from the device's reported limits; today's cards (12.0 and 8.6) give today's PTX byte for byte, other limits valid PTX with the same kernels, or a reason they cannot run", KernelShapesFromLimits),
     ];
 
@@ -569,6 +570,50 @@ internal static partial class Tests
               && PtxKernels.DynamicSharedBytes("flash_tc_bwd_q_d128") == PtxKernels.FlashTensorBackwardQShared(128)
               && PtxKernels.DynamicSharedBytes("gemm8_s8_f32") == PtxKernels.EightBitShared && PtxKernels.DynamicSharedBytes("gemm_tc_nn_f32") == 0,
             "dynamic shared memory per kernel");
+    }
+
+    private static void TuneSizeClasses(Device device)
+    {
+        if (device.Type != DeviceType.Cpu)
+        {
+            return;                                                              // nothing device-specific: once
+        }
+
+        for (int size = 0; size <= Idrak.Gpu.TuneSizes.Exact; size++)
+        {
+            Check(Idrak.Gpu.TuneSizes.Class(size) == size, $"{size} is its own class");
+        }
+
+        int[] expected = [40, 40, 48, 56, 64, 80, 1024, 1280, 1280, 1536];
+        int[] sizes = [33, 40, 41, 50, 64, 65, 1000, 1025, 1280, 1281];
+        for (int i = 0; i < sizes.Length; i++)
+        {
+            Check(Idrak.Gpu.TuneSizes.Class(sizes[i]) == expected[i], $"class of {sizes[i]}: {Idrak.Gpu.TuneSizes.Class(sizes[i])}, expected {expected[i]}");
+        }
+
+        int classes = 0, previous = -1;
+        for (int size = 1; size <= 1 << 20; size++)
+        {
+            int c = Idrak.Gpu.TuneSizes.Class(size);
+            Check(c >= size && c <= size + Math.Max(0, size / 4), $"class of {size} ({c}) within a quarter above it");
+            Check(c >= previous, "classes never decrease");
+            Check(Idrak.Gpu.TuneSizes.Class(c) == c, $"a class ({c}) is its own class");
+            classes += c != previous ? 1 : 0;
+            previous = c;
+        }
+
+        Check(classes == Idrak.Gpu.TuneSizes.Exact + 4 * 15, $"{classes} classes up to 2^20: the exact sizes and four a doubling above them");
+
+        // Lines of text at height 48: batches 830 and 890 pixels wide (class 896) share a convolution's key (one
+        // measurement); 1100 pixels and a batch of 14 lines (small batches are exact) do not; a model's sizes (channels,
+        // filters, the window) stay exact.
+        var narrow = new ConvGeometry(16, 32, 48, 830, 3, 3, 1, 1, 1, 1);
+        Check(Idrak.Gpu.ConvolutionShapes.Key(in narrow, 64, 1, out var a), "a key");
+        Check(Idrak.Gpu.ConvolutionShapes.Key(narrow with { W = 890 }, 64, 1, out var b) && a == b, "830 and 890 wide: one key");
+        Check(Idrak.Gpu.ConvolutionShapes.Key(narrow with { N = 14 }, 64, 1, out var c0) && c0 != a, "14 lines: another key");
+        Check(Idrak.Gpu.ConvolutionShapes.Key(narrow with { W = 1100 }, 64, 1, out var c1) && c1 != a, "1100 wide: another key");
+        Check(Idrak.Gpu.ConvolutionShapes.Key(narrow with { C = 33 }, 64, 1, out var c2) && c2 != a, "another channel count: another key");
+        Check(Idrak.Gpu.ConvolutionShapes.Key(in narrow, 65, 1, out var c3) && c3 != a, "another filter count: another key");
     }
 
     private static void PowerSourceKeys(Device device)
