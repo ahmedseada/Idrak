@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Globalization;
 using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
 using Idrak.Layers;
@@ -88,7 +89,7 @@ internal sealed class EvalCommand : Command
         {
             report = ChatEvaluation.Run(chat, rows, metric, maxTokens, think, new Progress(a =>
             {
-                context.Detail($"  {++done}: score {a.Score:F2}, {a.Tokens} tokens");
+                context.Detail(string.Create(CultureInfo.InvariantCulture, $"  {++done}: score {a.Score:F2}, {a.Tokens} tokens"));
                 progress.Report(done);
             }), model.MaxPositions, batchSize: batch);
             progress.Clear();
@@ -105,7 +106,7 @@ internal sealed class EvalCommand : Command
 
         string metricName = report.Metric.ToString().ToLowerInvariant();
         context.Write($"{choice.Model} on {context.Device}: {report.Answers.Count} of {rows.Count} conversations scored ({rows.Count - report.Answers.Count} without a final assistant answer skipped)");
-        context.Write($"{metricName} {report.Score:P1} · {report.MeanTokens:F0} tokens per answer · {report.TokensPerSecond:F1} tokens/s · {report.Duration.TotalSeconds:F1} s");
+        context.Write(string.Create(CultureInfo.InvariantCulture, $"{metricName} {report.Score:P1} · {report.MeanTokens:F0} tokens per answer · {report.TokensPerSecond:F1} tokens/s · {report.Duration.TotalSeconds:F1} s"));
         if (context.Format is OutputFormat.Csv or OutputFormat.Markdown)
         {
             var invariant = System.Globalization.CultureInfo.InvariantCulture;

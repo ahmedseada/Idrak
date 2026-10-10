@@ -97,7 +97,7 @@ internal sealed class MemoryCommand : Command
             }
         }
 
-        context.Write($"{name}: {Units.Count(facts.Parameters)} parameters ({Units.Count(packed)} in projections), context {contextLength:N0}"
+        context.Write(string.Create(CultureInfo.InvariantCulture, $"{name}: {Units.Count(facts.Parameters)} parameters ({Units.Count(packed)} in projections), context {contextLength:N0}")
                       + (batch > 1 ? $" × {batch} sequences" : ""));
         var memoryColumns = devices.Select(d => (Label: d.Name, d.Bytes)).ToList();
         if (given is { } g)
@@ -136,7 +136,7 @@ internal sealed class MemoryCommand : Command
     private static string Percent(long part, long whole)
     {
         double percent = part * 100.0 / Math.Max(1, whole);
-        return percent < 0.1 ? "<0.1%" : percent < 10 ? $"{percent:0.0}%" : $"{percent:0}%";
+        return percent < 0.1 ? "<0.1%" : percent < 10 ? string.Create(CultureInfo.InvariantCulture, $"{percent:0.0}%") : string.Create(CultureInfo.InvariantCulture, $"{percent:0}%");
     }
 
     // The formats asked for (repeated or comma-separated), else the alias's, else all.

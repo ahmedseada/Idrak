@@ -49,7 +49,7 @@ internal sealed class OnnxImportCommand : Command
         using var imported = OnnxImport.Load(file, context.Device, OnnxShared.Shape(context));
         var layers = OnnxShared.Describe(imported.Model);
         context.Write($"Imported {Path.GetFileName(file)} on {context.Device}: {(imported.IsGraph ? $"a graph of {layers.Count} nodes" : $"a chain of {layers.Count} layers")}" +
-            $"{(imported.InputShape is { } shape ? $", input [{string.Join(", ", shape)}]" : "")}, {imported.Model.Parameters().Sum(p => (long)p.Size):N0} parameters");
+            string.Create(CultureInfo.InvariantCulture, $"{(imported.InputShape is { } shape ? $", input [{string.Join(", ", shape)}]" : "")}, {imported.Model.Parameters().Sum(p => (long)p.Size):N0} parameters"));
         foreach (string layer in layers)
         {
             context.Write($"  {layer}");
@@ -66,7 +66,7 @@ internal sealed class OnnxImportCommand : Command
         }
 
         imported.SavePackage(output);
-        context.Write($"Wrote {output} ({new FileInfo(output).Length:N0} bytes)");
+        context.Write(string.Create(CultureInfo.InvariantCulture, $"Wrote {output} ({new FileInfo(output).Length:N0} bytes)"));
         context.WriteJson(new JsonObject
         {
             ["file"] = file,
@@ -127,7 +127,7 @@ internal sealed class OnnxExportCommand : Command
             var exporter = OnnxExport.For(model).Input(shape).Metadata("source", Path.GetFileName(file));
             exporter.Save(output);
             context.Write($"Exported {Path.GetFileName(file)} ({OnnxShared.Describe(model).Count} layers, input [{string.Join(", ", shape)}]) to {output} " +
-                $"({new FileInfo(output).Length:N0} bytes)");
+                string.Create(CultureInfo.InvariantCulture, $"({new FileInfo(output).Length:N0} bytes)"));
             if (fromJson)
             {
                 context.Write("note: a network JSON has no weights; the file has freshly initialized ones (export a trained package for real weights).");
@@ -279,7 +279,7 @@ internal sealed class OnnxCheckCommand : Command
         context.Table(["Check", "Largest difference", "Result"],
             checks.Select(c => (IReadOnlyList<string>)[c.Name, c.Difference is { } d ? d.ToString("E2", CultureInfo.InvariantCulture) : "-", c.Note is null ? c.Status : $"{c.Status}: {c.Note}"]));
         bool ok = checks.All(c => c.Status != "mismatch");
-        context.Write(ok ? $"OK (tolerance {tolerance:E0})" : $"MISMATCH: a difference is larger than {tolerance:E0}");
+        context.Write(ok ? string.Create(CultureInfo.InvariantCulture, $"OK (tolerance {tolerance:E0})") : string.Create(CultureInfo.InvariantCulture, $"MISMATCH: a difference is larger than {tolerance:E0}"));
         context.WriteJson(new JsonObject
         {
             ["file"] = file,

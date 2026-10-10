@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Diagnostics;
+using System.Globalization;
 using System.Text.Json.Nodes;
 using Idrak.Data;
 using Idrak.Generation;
@@ -68,7 +69,7 @@ internal sealed class DemoCommand : Command
             context.Write($"Wrote:  \"{sample}\"");
         }
 
-        context.Write($"Speed:  {seconds:F2} s, {rate:N0} {result.Unit}/s{(result.Passed ? "" : "  (below the usual result)")}");
+        context.Write(string.Create(CultureInfo.InvariantCulture, $"Speed:  {seconds:F2} s, {rate:N0} {result.Unit}/s{(result.Passed ? "" : "  (below the usual result)")}"));
         context.WriteJson(new JsonObject
         {
             ["demo"] = name,
@@ -113,7 +114,7 @@ internal sealed class DemoCommand : Command
         using var outputs = model.Predict(x);
         var values = outputs.ToArray();
         int correct = Enumerable.Range(0, 4).Count(i => (values[i] >= 0.5f ? 1 : 0) == (i is 1 or 2 ? 1 : 0));
-        return new DemoResult("correct", correct, $"{correct}/4 correct, loss {loss:F4}", 4L * Steps, "samples", correct == 4);
+        return new DemoResult("correct", correct, string.Create(CultureInfo.InvariantCulture, $"{correct}/4 correct, loss {loss:F4}"), 4L * Steps, "samples", correct == 4);
     }
 
     private static DemoResult Spirals(Device device, int shift)
@@ -139,7 +140,7 @@ internal sealed class DemoCommand : Command
         var trainer = new Trainer(model, optimizer, Losses.CrossEntropy) { Metrics = { Metric.Accuracy } };
         trainer.Fit(new DataLoader(train, 64, shuffle: true, device: device, seed: 4 + shift), Epochs);
         double accuracy = trainer.Evaluate(new DataLoader(test, 512, device: device)).Metrics["accuracy"];
-        return new DemoResult("accuracy", accuracy, $"test accuracy {accuracy * 100:F1}% on {test.Count} points",
+        return new DemoResult("accuracy", accuracy, string.Create(CultureInfo.InvariantCulture, $"test accuracy {accuracy * 100:F1}% on {test.Count} points"),
             (long)train.Count * Epochs, "samples", accuracy >= 0.8);
     }
 
@@ -156,7 +157,7 @@ internal sealed class DemoCommand : Command
         var trainer = new Trainer(model, optimizer, Losses.CrossEntropy) { Metrics = { Metric.Accuracy } };
         trainer.Fit(new DataLoader(train, 64, shuffle: true, device: device, seed: 4 + shift), Epochs);
         double accuracy = trainer.Evaluate(new DataLoader(test, 200, device: device)).Metrics["accuracy"];
-        return new DemoResult("accuracy", accuracy, $"test accuracy {accuracy * 100:F1}% on {test.Count} images (4 classes)",
+        return new DemoResult("accuracy", accuracy, string.Create(CultureInfo.InvariantCulture, $"test accuracy {accuracy * 100:F1}% on {test.Count} images (4 classes)"),
             (long)train.Count * Epochs, "images", accuracy >= 0.5);
     }
 
@@ -230,6 +231,6 @@ internal sealed class DemoCommand : Command
         model.Eval();
         var options = new GenerationOptions { Temperature = 0f, TopK = 1, RepeatPenalty = 1f, NumPredict = 24 };
         string written = "idrak " + new TextGenerator(model, tokenizer, Context) { KeepCache = false }.Generate("idrak ", options).Text;
-        return new DemoResult("loss", last, $"loss {first:F3} -> {last:F3}", (long)Batch * Context * Steps, "tokens", last < 0.5f * first, written.TrimEnd());
+        return new DemoResult("loss", last, string.Create(CultureInfo.InvariantCulture, $"loss {first:F3} -> {last:F3}"), (long)Batch * Context * Steps, "tokens", last < 0.5f * first, written.TrimEnd());
     }
 }

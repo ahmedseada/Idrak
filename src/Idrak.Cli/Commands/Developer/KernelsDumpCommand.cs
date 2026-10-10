@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Globalization;
 using System.Text.Json.Nodes;
 using Idrak.Gpu.Cuda;
 using Idrak.Gpu.Hip;
@@ -82,12 +83,12 @@ internal sealed class KernelsDumpCommand : Command
             }
 
             var mine = files.Skip(before).ToList();
-            context.Write($"{kind,-6} {mine.Count,4} files  {mine.Sum(f => f.Bytes),12:N0} bytes  {Path.GetDirectoryName(mine[0].Path)}");
+            context.Write(string.Create(CultureInfo.InvariantCulture, $"{kind,-6} {mine.Count,4} files  {mine.Sum(f => f.Bytes),12:N0} bytes  {Path.GetDirectoryName(mine[0].Path)}"));
         }
 
         foreach (var file in files)
         {
-            context.Detail($"  {Path.GetRelativePath(folder, file.Path)}  {file.Bytes:N0} bytes");
+            context.Detail(string.Create(CultureInfo.InvariantCulture, $"  {Path.GetRelativePath(folder, file.Path)}  {file.Bytes:N0} bytes"));
         }
 
         context.WriteJson(new JsonObject

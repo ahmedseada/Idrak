@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Diagnostics;
+using System.Globalization;
 using Idrak.Layers;
 
 namespace Idrak.Cli.Commands.Measure;
@@ -59,11 +60,11 @@ internal static class KernelBench
 
                 double flops = 2.0 * size * size * size;
                 double us = Micros(device, Product, repeats);
-                results.Add(new BenchResult($"matmul {size}x{size}x{size} float32", flops / (us * 1e3), "GFLOP/s", true, $"{us / 1000:F2} ms"));
+                results.Add(new BenchResult($"matmul {size}x{size}x{size} float32", flops / (us * 1e3), "GFLOP/s", true, string.Create(CultureInfo.InvariantCulture, $"{us / 1000:F2} ms")));
                 using (MixedPrecision.BFloat16())
                 {
                     double mixed = Micros(device, Product, repeats);
-                    results.Add(new BenchResult($"matmul {size}x{size}x{size} mixed bfloat16", flops / (mixed * 1e3), "GFLOP/s", true, $"{mixed / 1000:F2} ms"));
+                    results.Add(new BenchResult($"matmul {size}x{size}x{size} mixed bfloat16", flops / (mixed * 1e3), "GFLOP/s", true, string.Create(CultureInfo.InvariantCulture, $"{mixed / 1000:F2} ms")));
                 }
             }
         }
@@ -83,7 +84,7 @@ internal static class KernelBench
                         using var scope = new TensorScope();
                         packed.MatMul(x);
                     }, repeats);
-                    results.Add(new BenchResult($"gemv {format} 1x{k} -> {n}", us, "µs", false, $"{packed.Bytes / (us * 1e3):F1} GB/s of weights"));
+                    results.Add(new BenchResult($"gemv {format} 1x{k} -> {n}", us, "µs", false, string.Create(CultureInfo.InvariantCulture, $"{packed.Bytes / (us * 1e3):F1} GB/s of weights")));
                 }
             }
         }

@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Globalization;
 using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
 
@@ -221,7 +222,7 @@ internal sealed class EnvSetCommand : EnvSaveCommand
                 continue;
             }
 
-            if (int.TryParse(answer, out int number))
+            if (int.TryParse(answer, NumberStyles.Integer, CultureInfo.InvariantCulture, out int number))
             {
                 if (number >= 1 && number <= Common.Length)
                 {

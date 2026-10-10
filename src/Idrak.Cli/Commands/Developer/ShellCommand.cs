@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Globalization;
 using System.Text;
 
 namespace Idrak.Cli.Commands.Developer;
@@ -87,7 +88,7 @@ internal sealed class ShellCommand : Command
                 continue;
             }
 
-            if (line.StartsWith('!') && int.TryParse(line[1..], out int number))
+            if (line.StartsWith('!') && int.TryParse(line.AsSpan(1), NumberStyles.Integer, CultureInfo.InvariantCulture, out int number))
             {
                 if (number < 1 || number > history.Count)
                 {
