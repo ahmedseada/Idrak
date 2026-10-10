@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Globalization;
 using System.Text;
 
 namespace Idrak.Gpu.Cuda;
@@ -13,11 +14,19 @@ internal static partial class PtxKernels
         "exp_f32", "exp_bwd_f32", "log_f32", "log_bwd_f32", "gelu_f32", "gelu_bwd_f32", "inv_sqrt_f32",
         "softmax_f32", "softmax_bwd_f32", "argmax_f32", "class_match_f32",
         "norm_stats_f32", "norm_apply_f32", "norm_bwd_f32", "group_scale_shift_f32", "group_reduce_f32",
+        "norm_stats_part_f32", "norm_stats_final_f32", "group_reduce_part_f32", "group_reduce_final_f32",
         "gather_f32", "gather_bf16_f32", "gather_bf16_cols_f32", "one_hot_f32", "scatter_add_f32", "im2col_f32", "col2im_f32", "maxpool_f32", "maxpool_bwd_f32",
         "permute_f32", "copy2d_f32", "sum_axis_f32", "broadcast_axis_f32",
     ];
 
     public const int MaxPermuteRank = 6;
+
+    /// <summary>
+    /// The split group kernels (norm_stats_part_f32, group_reduce_part_f32 and their final passes): threads of a block (fixed,
+    /// so the order of every sum follows the sizes alone, on every device), the elements each thread reads of its chunk,
+    /// and the chunk. A group of at least two chunks runs split (CudaBackend.Advanced.cs).
+    /// </summary>
+    public const int GroupThreads = 256, GroupPerThread = 32, GroupChunk = GroupThreads * GroupPerThread;
 
     // Constants (not static readonly): Source is built during static initialization, before other partial files'
     // static fields are guaranteed to be initialized.
@@ -264,23 +273,27 @@ internal static partial class PtxKernels
         mad.lo.u32 {idx}, %r12, %inner, %r11;
         """;
 
-    /// <summary>Block-wide sum of <paramref name="value"/> through shared array <paramref name="shared"/>; afterwards every thread can read [%sbase].</summary>
-    private static string BlockReduce(string shared, string value, string label)
+    /// <summary>
+    /// Block-wide sum of <paramref name="value"/> through shared array <paramref name="shared"/> (a tree of fixed shape over
+    /// <paramref name="threads"/> threads, BlockSize when 0); afterwards every thread can read [%sbase].
+    /// </summary>
+    private static string BlockReduce(string shared, string value, string label, int threads = 0)
     {
+        var invariant = CultureInfo.InvariantCulture;
         var sb = new StringBuilder();
-        sb.AppendLine($"mov.u32 %sbase, {shared};");
+        sb.AppendLine(invariant, $"mov.u32 %sbase, {shared};");
         sb.AppendLine("add.u32 %saddr, %sbase, %toff;");
-        sb.AppendLine($"st.shared.f32 [%saddr], {value};");
+        sb.AppendLine(invariant, $"st.shared.f32 [%saddr], {value};");
         sb.AppendLine("bar.sync 0;");
-        for (int stride = BlockSize / 2; stride > 0; stride /= 2)
+        for (int stride = (threads > 0 ? threads : BlockSize) / 2; stride > 0; stride /= 2)
         {
-            sb.AppendLine($"setp.ge.u32 %p2, %thr, {stride};");
-            sb.AppendLine($"@%p2 bra {label}{stride};");
+            sb.AppendLine(invariant, $"setp.ge.u32 %p2, %thr, {stride};");
+            sb.AppendLine(invariant, $"@%p2 bra {label}{stride};");
             sb.AppendLine("ld.shared.f32 %f20, [%saddr];");
-            sb.AppendLine($"ld.shared.f32 %f21, [%saddr+{stride * 4}];");
+            sb.AppendLine(invariant, $"ld.shared.f32 %f21, [%saddr+{stride * 4}];");
             sb.AppendLine("add.f32 %f20, %f20, %f21;");
             sb.AppendLine("st.shared.f32 [%saddr], %f20;");
-            sb.AppendLine($"{label}{stride}:");
+            sb.AppendLine(invariant, $"{label}{stride}:");
             sb.AppendLine("bar.sync 0;");
         }
 
@@ -431,6 +444,8 @@ internal static partial class PtxKernels
             }
             """);
 
+        SplitGroupKernels(sb);
+
         const string Group = """
             div.u32 %r5, %i, %s_inner;
             rem.u32 %r5, %r5, %s_groups;
@@ -497,6 +512,350 @@ internal static partial class PtxKernels
             st.global.f32 [%a_y], %f4;
             """);
     }
+
+    // ------------------------------------------------------------------ split group reductions
+
+    // A group of M = outer · inner elements in chunks of GroupChunk: block g · chunks + c reads chunk c of group g, each of
+    // its GroupThreads threads the elements c · GroupChunk + %thr + GroupThreads · k (k < GroupPerThread), every load into
+    // a register of its own (rule 80), and writes the chunk's result to `part`; a final block per group combines its chunks'
+    // results, each thread its chunks %thr, %thr + GroupThreads, ... in order, then a tree of fixed shape. Every sum's order
+    // follows the sizes alone, on every device (rule 86). part: the first results of every block, then the second.
+    private static void SplitGroupKernels(StringBuilder sb)
+    {
+        var invariant = CultureInfo.InvariantCulture;
+        (string, string)[] sizes = [("u32", "outer"), ("u32", "groups"), ("u32", "inner"), ("u32", "chunks")];
+
+        // Each chunk's mean and the sum of squares around it, from the values held in registers (two passes, no second
+        // read); the final pass merges the chunks' (count, mean, M2) in order (Chan et al.), never E[x²] − E[x]².
+        SplitGroupStart(sb, "norm_stats_part_f32", ["x", "part"], sizes, [("f32", "s1"), ("f32", "s2")]);
+        sb.Append(ChunkLoads("%rd_x", null));
+        sb.AppendLine("    mov.f32 %f1, 0f00000000;");
+        for (int k = 0; k < GroupPerThread; k++)
+        {
+            sb.AppendLine(invariant, $"    add.f32 %f1, %f1, %va{k};");
+        }
+
+        sb.Append(BlockReduce("s1", "%f1", "R1_", GroupThreads));
+        sb.AppendLine("""
+                ld.shared.f32 %f2, [%sbase];
+                cvt.rn.f32.u32 %f3, %r6;
+                div.rn.f32 %f4, %f2, %f3;
+                mov.f32 %f5, 0f00000000;
+            """);
+        for (int k = 0; k < GroupPerThread; k++)
+        {
+            sb.AppendLine(invariant, $"""
+                    add.u32 %r14, %thr, {GroupThreads * k};
+                    setp.lt.u32 %p1, %r14, %r6;
+                    sub.f32 %f6, %va{k}, %f4;
+                    selp.f32 %f6, %f6, 0f00000000, %p1;
+                    fma.rn.f32 %f5, %f6, %f6, %f5;
+                """);
+        }
+
+        sb.Append(BlockReduce("s2", "%f5", "R2_", GroupThreads));
+        sb.AppendLine("""
+                ld.shared.f32 %f7, [%sbase];
+
+            """ + PartStore("%f4", "%f7"));
+
+        // The chunks' (count, mean, M2) merged per group; then the mean, the variance and 1/sqrt(variance + eps).
+        SplitGroupStart(sb, "norm_stats_final_f32", ["part", "mean", "var", "invstd"], [.. sizes, ("f32", "eps")],
+            [("u32", "sn"), ("f32", "smean"), ("f32", "sm2")]);
+        sb.AppendLine(invariant, $$"""
+                mov.u32 %thr, %tid.x;
+                shl.b32 %toff, %thr, 2;
+                mul.lo.u32 %r1, %s_outer, %s_inner;
+                mov.u32 %r2, %ctaid.x;
+                mul.lo.u32 %r3, %r2, %s_chunks;
+                mul.lo.u32 %r4, %s_groups, %s_chunks;
+                mul.wide.u32 %rd1, %r4, 4;
+                mov.u32 %r5, 0;
+                mov.f32 %f1, 0f00000000;
+                mov.f32 %f2, 0f00000000;
+                mov.u32 %r6, %thr;
+            CHUNKS:
+                setp.ge.u32 %p1, %r6, %s_chunks;
+                @%p1 bra CHUNKS_END;
+                mul.lo.u32 %r8, %r6, {{GroupChunk}};
+                sub.u32 %r7, %r1, %r8;
+                min.u32 %r7, %r7, {{GroupChunk}};
+                add.u32 %r8, %r3, %r6;
+                mul.wide.u32 %rd2, %r8, 4;
+                add.u64 %rd3, %rd_part, %rd2;
+                ld.global.f32 %f3, [%rd3];
+                add.u64 %rd4, %rd3, %rd1;
+                ld.global.f32 %f4, [%rd4];
+            {{ChanMerge()}}
+                add.u32 %r6, %r6, {{GroupThreads}};
+                bra CHUNKS;
+            CHUNKS_END:
+                mov.u32 %r10, sn;
+                add.u32 %r10, %r10, %toff;
+                mov.u32 %r11, smean;
+                add.u32 %r11, %r11, %toff;
+                mov.u32 %r12, sm2;
+                add.u32 %r12, %r12, %toff;
+                st.shared.u32 [%r10], %r5;
+                st.shared.f32 [%r11], %f1;
+                st.shared.f32 [%r12], %f2;
+                bar.sync 0;
+            """);
+        for (int stride = GroupThreads / 2; stride > 0; stride /= 2)
+        {
+            sb.AppendLine(invariant, $"""
+                    setp.ge.u32 %p2, %thr, {stride};
+                    @%p2 bra TREE{stride};
+                    ld.shared.u32 %r7, [%r10+{stride * 4}];
+                    ld.shared.f32 %f3, [%r11+{stride * 4}];
+                    ld.shared.f32 %f4, [%r12+{stride * 4}];
+                {ChanMerge()}
+                    st.shared.u32 [%r10], %r5;
+                    st.shared.f32 [%r11], %f1;
+                    st.shared.f32 [%r12], %f2;
+                TREE{stride}:
+                    bar.sync 0;
+                """);
+        }
+
+        sb.AppendLine("""
+                setp.ne.u32 %p1, %thr, 0;
+                @%p1 bra DONE;
+                cvt.rn.f32.u32 %f5, %r1;
+                div.rn.f32 %f6, %f2, %f5;
+                add.f32 %f7, %f6, %s_eps;
+                sqrt.rn.f32 %f7, %f7;
+                rcp.rn.f32 %f7, %f7;
+                mul.wide.u32 %rd5, %r2, 4;
+                add.u64 %rd6, %rd_mean, %rd5;
+                st.global.f32 [%rd6], %f1;
+                add.u64 %rd6, %rd_var, %rd5;
+                st.global.f32 [%rd6], %f6;
+                add.u64 %rd6, %rd_invstd, %rd5;
+                st.global.f32 [%rd6], %f7;
+            DONE:
+                ret;
+            }
+
+            """);
+
+        // Each chunk's Σ a and Σ a·b (when hasb); the final pass adds each group's chunks, in order, to sumA and sumAB.
+        SplitGroupStart(sb, "group_reduce_part_f32", ["a", "b", "part"], [.. sizes, ("u32", "hasb")], [("f32", "s1"), ("f32", "s2")]);
+        sb.AppendLine("    setp.ne.u32 %p4, %s_hasb, 0;");
+        sb.Append(ChunkLoads("%rd_a", "%rd_b"));
+        sb.AppendLine("""
+                mov.f32 %f1, 0f00000000;
+                mov.f32 %f10, 0f00000000;
+            """);
+        for (int k = 0; k < GroupPerThread; k++)
+        {
+            sb.AppendLine(invariant, $"    add.f32 %f1, %f1, %va{k};");
+            sb.AppendLine(invariant, $"    fma.rn.f32 %f10, %va{k}, %vb{k}, %f10;");
+        }
+
+        sb.Append(BlockReduce("s1", "%f1", "RA_", GroupThreads));
+        sb.AppendLine("    ld.shared.f32 %f11, [%sbase];");
+        sb.Append(BlockReduce("s2", "%f10", "RB_", GroupThreads));
+        sb.AppendLine("""
+                ld.shared.f32 %f12, [%sbase];
+
+            """ + PartStore("%f11", "%f12"));
+
+        SplitGroupStart(sb, "group_reduce_final_f32", ["part", "suma", "sumab"], [("u32", "groups"), ("u32", "chunks"), ("u32", "hasb")],
+            [("f32", "s1"), ("f32", "s2")]);
+        sb.AppendLine(invariant, $"""
+                mov.u32 %thr, %tid.x;
+                shl.b32 %toff, %thr, 2;
+                mov.u32 %r1, %ctaid.x;
+                mul.lo.u32 %r2, %r1, %s_chunks;
+                mul.lo.u32 %r3, %s_groups, %s_chunks;
+                mul.wide.u32 %rd1, %r3, 4;
+                mov.f32 %f1, 0f00000000;
+                mov.f32 %f10, 0f00000000;
+                mov.u32 %r4, %thr;
+            CHUNKS:
+                setp.ge.u32 %p1, %r4, %s_chunks;
+                @%p1 bra CHUNKS_END;
+                add.u32 %r5, %r2, %r4;
+                mul.wide.u32 %rd2, %r5, 4;
+                add.u64 %rd3, %rd_part, %rd2;
+                ld.global.f32 %f2, [%rd3];
+                add.u64 %rd4, %rd3, %rd1;
+                ld.global.f32 %f3, [%rd4];
+                add.f32 %f1, %f1, %f2;
+                add.f32 %f10, %f10, %f3;
+                add.u32 %r4, %r4, {GroupThreads};
+                bra CHUNKS;
+            CHUNKS_END:
+            """);
+        sb.Append(BlockReduce("s1", "%f1", "RA_", GroupThreads));
+        sb.AppendLine("    ld.shared.f32 %f11, [%sbase];");
+        sb.Append(BlockReduce("s2", "%f10", "RB_", GroupThreads));
+        sb.AppendLine("""
+                ld.shared.f32 %f12, [%sbase];
+                setp.ne.u32 %p1, %thr, 0;
+                @%p1 bra DONE;
+                mul.wide.u32 %rd5, %r1, 4;
+                add.u64 %rd6, %rd_suma, %rd5;
+                ld.global.f32 %f13, [%rd6];
+                add.f32 %f13, %f13, %f11;
+                st.global.f32 [%rd6], %f13;
+                setp.eq.u32 %p3, %s_hasb, 0;
+                @%p3 bra DONE;
+                add.u64 %rd6, %rd_sumab, %rd5;
+                ld.global.f32 %f13, [%rd6];
+                add.f32 %f13, %f13, %f12;
+                st.global.f32 [%rd6], %f13;
+            DONE:
+                ret;
+            }
+
+            """);
+    }
+
+    /// <summary>
+    /// Header of a split group kernel: GroupThreads threads (.maxntid, rule 87), the pointers in %rd_name, the scalars in
+    /// %s_name, %thr / %toff / %sbase / %saddr for BlockReduce, the value registers %va and %vb, the shared arrays `shared`.
+    /// </summary>
+    private static void SplitGroupStart(StringBuilder sb, string name, string[] pointers, (string Type, string Name)[] scalars,
+        (string Type, string Name)[] shared)
+    {
+        var invariant = CultureInfo.InvariantCulture;
+        sb.AppendLine(invariant, $".visible .entry {name}(");
+        sb.AppendLine(string.Join(",\n", pointers.Select(p => $"    .param .u64 p_{p}").Concat(scalars.Select(s => $"    .param .{s.Type} p_{s.Name}"))));
+        sb.AppendLine(")");
+        sb.AppendLine(invariant, $".maxntid {GroupThreads}, 1, 1");
+        sb.AppendLine("{");
+        sb.AppendLine(invariant, $"""
+                .reg .pred %p<8>;
+                .reg .f32 %f<32>;
+                .reg .f32 %va<{GroupPerThread}>;
+                .reg .f32 %vb<{GroupPerThread}>;
+                .reg .b32 %r<32>;
+                .reg .b64 %rd<16>;
+                .reg .u32 %thr, %toff, %sbase, %saddr;
+            """);
+        foreach (var (type, array) in shared)
+        {
+            sb.AppendLine(invariant, $"    .shared .align 4 .{type} {array}[{GroupThreads}];");
+        }
+
+        foreach (string p in pointers)
+        {
+            sb.AppendLine(invariant, $"    .reg .u64 %rd_{p};");
+            sb.AppendLine(invariant, $"    ld.param.u64 %rd_{p}, [p_{p}];");
+            sb.AppendLine(invariant, $"    cvta.to.global.u64 %rd_{p}, %rd_{p};");
+        }
+
+        foreach (var (type, scalar) in scalars)
+        {
+            sb.AppendLine(invariant, $"    .reg .{type} %s_{scalar};");
+            sb.AppendLine(invariant, $"    ld.param.{type} %s_{scalar}, [p_{scalar}];");
+        }
+    }
+
+    /// <summary>
+    /// The chunk's elements of this thread (see SplitGroupKernels) from <paramref name="a"/> into %va0 … and, where %p4,
+    /// from <paramref name="b"/> into %vb0 … (0 past the group's end): (o, i) = (element / inner, element % inner) stepped
+    /// by GroupThreads without a division, the element at ((o · groups + g) · inner + i). Leaves %r2 = the block, %r3 = g,
+    /// %r6 = the chunk's elements.
+    /// </summary>
+    private static string ChunkLoads(string a, string? b)
+    {
+        var invariant = CultureInfo.InvariantCulture;
+        var sb = new StringBuilder();
+        sb.AppendLine(invariant, $"""
+                mov.u32 %thr, %tid.x;
+                shl.b32 %toff, %thr, 2;
+                mul.lo.u32 %r1, %s_outer, %s_inner;
+                mov.u32 %r2, %ctaid.x;
+                div.u32 %r3, %r2, %s_chunks;
+                rem.u32 %r4, %r2, %s_chunks;
+                mul.lo.u32 %r5, %r4, {GroupChunk};
+                sub.u32 %r6, %r1, %r5;
+                min.u32 %r6, %r6, {GroupChunk};
+                add.u32 %r7, %r5, %thr;
+                div.u32 %r8, %r7, %s_inner;
+                rem.u32 %r9, %r7, %s_inner;
+                mov.u32 %r10, {GroupThreads};
+                div.u32 %r11, %r10, %s_inner;
+                rem.u32 %r12, %r10, %s_inner;
+            """);
+        for (int k = 0; k < GroupPerThread; k++)
+        {
+            sb.AppendLine(invariant, $"""
+                    mad.lo.u32 %r13, %r8, %s_groups, %r3;
+                    mad.lo.u32 %r13, %r13, %s_inner, %r9;
+                    mul.wide.u32 %rd1, %r13, 4;
+                    add.u64 %rd2, {a}, %rd1;
+                    add.u32 %r14, %thr, {GroupThreads * k};
+                    setp.lt.u32 %p1, %r14, %r6;
+                    mov.f32 %va{k}, 0f00000000;
+                    @%p1 ld.global.f32 %va{k}, [%rd2];
+                """);
+            if (b is not null)
+            {
+                sb.AppendLine(invariant, $"""
+                        add.u64 %rd3, {b}, %rd1;
+                        and.pred %p5, %p1, %p4;
+                        mov.f32 %vb{k}, 0f00000000;
+                        @%p5 ld.global.f32 %vb{k}, [%rd3];
+                    """);
+            }
+
+            if (k + 1 < GroupPerThread)
+            {
+                sb.AppendLine("""
+                        add.u32 %r9, %r9, %r12;
+                        add.u32 %r8, %r8, %r11;
+                        setp.ge.u32 %p3, %r9, %s_inner;
+                        selp.u32 %r15, %s_inner, 0, %p3;
+                        sub.u32 %r9, %r9, %r15;
+                        selp.u32 %r15, 1, 0, %p3;
+                        add.u32 %r8, %r8, %r15;
+                    """);
+            }
+        }
+
+        return sb.ToString();
+    }
+
+    // Thread 0 writes the chunk's two results: part[block] = first, part[groups · chunks + block] = second.
+    private static string PartStore(string first, string second) => $$"""
+            setp.ne.u32 %p1, %thr, 0;
+            @%p1 bra DONE;
+            mul.wide.u32 %rd4, %r2, 4;
+            add.u64 %rd5, %rd_part, %rd4;
+            st.global.f32 [%rd5], {{first}};
+            mul.lo.u32 %r16, %s_groups, %s_chunks;
+            mul.wide.u32 %rd6, %r16, 4;
+            add.u64 %rd5, %rd5, %rd6;
+            st.global.f32 [%rd5], {{second}};
+        DONE:
+            ret;
+        }
+
+        """;
+
+    // Merges (count %r7, mean %f3, M2 %f4) into (count %r5, mean %f1, M2 %f2): n = na + nb, δ = mean_b − mean_a,
+    // mean = mean_a + δ · nb / n, M2 = M2_a + (M2_b + δ² · na · nb / n); nothing when n = 0. Exact for na = 0 (mean_b, M2_b).
+    private static string ChanMerge() => """
+            add.u32 %r9, %r5, %r7;
+            cvt.rn.f32.u32 %f20, %r5;
+            cvt.rn.f32.u32 %f21, %r7;
+            cvt.rn.f32.u32 %f22, %r9;
+            sub.rn.f32 %f23, %f3, %f1;
+            div.rn.f32 %f24, %f21, %f22;
+            fma.rn.f32 %f25, %f23, %f24, %f1;
+            mul.rn.f32 %f26, %f23, %f23;
+            mul.rn.f32 %f26, %f26, %f20;
+            fma.rn.f32 %f26, %f26, %f24, %f4;
+            add.rn.f32 %f26, %f2, %f26;
+            setp.ne.u32 %p6, %r9, 0;
+            selp.f32 %f1, %f25, %f1, %p6;
+            selp.f32 %f2, %f26, %f2, %p6;
+            mov.u32 %r5, %r9;
+        """;
 
     // ------------------------------------------------------------------ embeddings
 

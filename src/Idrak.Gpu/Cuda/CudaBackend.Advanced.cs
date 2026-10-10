@@ -24,12 +24,42 @@ internal sealed unsafe partial class CudaBackend
     public override void ClassMatchKernel(Storage predictions, Storage targets, Storage y, int rows, int cols, float threshold) =>
         LaunchRows(K("class_match_f32"), rows, P(predictions), P(targets), P(y), U(cols), F(threshold), U(rows));
 
+    // A group of at least two chunks (PtxKernels.GroupChunk elements; sizes alone decide) runs split: a block per chunk of
+    // every group writes its partial result to scratch, then a block per group combines its chunks in chunk order, so a
+    // few large groups (batch norm's channels over N·H·W) fill the device (rule 81). Smaller groups take one block each.
+    private static bool GroupSplit(int outer, int groups, int inner, out int chunks)
+    {
+        long m = (long)outer * inner;
+        chunks = (int)Math.Min((m + PtxKernels.GroupChunk - 1) / PtxKernels.GroupChunk, int.MaxValue);
+        return groups > 0 && m >= 2L * PtxKernels.GroupChunk && m <= int.MaxValue && (long)chunks * groups <= int.MaxValue / 2;
+    }
+
     public override void NormStatsKernel(Storage x, Storage mean, Storage variance, Storage invStd, int outer, int groups, int inner, float eps)
     {
-        if (groups > 0)
+        if (groups <= 0)
+        {
+            return;
+        }
+
+        if (!GroupSplit(outer, groups, inner, out int chunks))
         {
             Launch(K("norm_stats_f32"), (uint)groups, 1, (uint)_shapes.BlockSize, 1,
                 P(x), P(mean), P(variance), P(invStd), U(outer), U(groups), U(inner), F(eps));
+            return;
+        }
+
+        // Each chunk's mean and sum of squares around it, then their merge per group (no E[x²] − E[x]²).
+        int blocks = chunks * groups;
+        var part = Allocate(2 * blocks, zeroed: false);
+        try
+        {
+            Launch(K("norm_stats_part_f32"), (uint)blocks, 1, PtxKernels.GroupThreads, 1, P(x), P(part), U(outer), U(groups), U(inner), U(chunks));
+            Launch(K("norm_stats_final_f32"), (uint)groups, 1, PtxKernels.GroupThreads, 1,
+                P(part), P(mean), P(variance), P(invStd), U(outer), U(groups), U(inner), U(chunks), F(eps));
+        }
+        finally
+        {
+            part.Release();                                                    // reused in stream order
         }
     }
 
@@ -53,11 +83,32 @@ internal sealed unsafe partial class CudaBackend
 
     public override void GroupReduceKernel(Storage a, Storage? b, Storage sumA, Storage? sumAB, int outer, int groups, int inner)
     {
-        if (groups > 0)
+        if (groups <= 0)
         {
-            bool hasB = b is not null && sumAB is not null;
+            return;
+        }
+
+        bool hasB = b is not null && sumAB is not null;
+        if (!GroupSplit(outer, groups, inner, out int chunks))
+        {
             Launch(K("group_reduce_f32"), (uint)groups, 1, (uint)_shapes.BlockSize, 1,
                 P(a), hasB ? P(b!) : P(a), P(sumA), hasB ? P(sumAB!) : P(sumA), U(outer), U(groups), U(inner), U(hasB ? 1 : 0));
+            return;
+        }
+
+        // Each chunk's Σ a and Σ a·b, then each group's chunks added in order to sumA and sumAB.
+        int blocks = chunks * groups;
+        var part = Allocate(2 * blocks, zeroed: false);
+        try
+        {
+            Launch(K("group_reduce_part_f32"), (uint)blocks, 1, PtxKernels.GroupThreads, 1,
+                P(a), hasB ? P(b!) : P(a), P(part), U(outer), U(groups), U(inner), U(chunks), U(hasB ? 1 : 0));
+            Launch(K("group_reduce_final_f32"), (uint)groups, 1, PtxKernels.GroupThreads, 1,
+                P(part), P(sumA), hasB ? P(sumAB!) : P(sumA), U(groups), U(chunks), U(hasB ? 1 : 0));
+        }
+        finally
+        {
+            part.Release();                                                    // reused in stream order
         }
     }
 
