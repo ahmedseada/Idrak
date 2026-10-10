@@ -75,6 +75,57 @@ gains nothing OCR-specific; what the app needs from this plan comes from the ste
 **Decided 2026-10-09: both**, in one app, chosen per run. So plan 13 starts with step 3 and the parts of step 2 the
 recognizer uses (rectangular kernels and strides, bidirectional recurrent layers), then step 1; the sample follows.
 
+## The OCR sample, as built (2026-10-10)
+
+`samples/Idrak.Samples.ArabicOcr` (README there: the readers, the line folder's files, the owner's PowerShell path on the
+model card's own data). It references Idrak, Idrak.Nlp and Idrak.Vision as packages (IdrakFromSource in this clone) and
+the Gemma 3 plug-in project, which it registers itself; the library gained nothing.
+
+- **Commands.** `read` (`--reader lines|vlm`, text or `-j` per page, `-o` file or folder), `cut` (lines as
+  `NAME-line-NN.png` + an empty `.txt`; `--prefill vlm` writes `.draft.txt` instead, and with known page text, from a data
+  file given as input or `--truth` matched by image bytes, `.aligned.txt`: the draft snapped to the best span of the page's
+  text by Sellers' edit distance, in order top to bottom, word boundaries kept; a filled `.txt` is never touched), `accept`
+  (aligned drafts, or all with `--drafts`, renamed to `.txt`), `train` (corrected lines only unless `--include-drafts`),
+  `eval` (CER and WER per page and in total through `TuningMetrics`, images with `.txt` or a truth folder or data file),
+  `tune-vlm` (prints plan 12's `idrak tune` commands). Inputs are images, folders, or data files read by
+  `TuningDataFormats` (ShareGPT or chat messages, detected; images in a folder or a zip read in place); `--truth-text
+  values` compares a JSON answer's text values in order. `--limit N` pages.
+- **Lines.** `Foreground` (Otsu, polarity from the page) binarizes; the skew (within ±3°, steps of 0.2°) is the shear that
+  makes the row profile sharpest; bands of rows with ink, bands shorter than half a typical line (dots, harakat) joined to
+  the nearer neighbour; crops padded by a fifth of the line height. Touching lines stay one band (left).
+- **Recognizer.** `NetworkBuilder`: conv 3x3 + batch norm + ReLU blocks, 2x2 pooling twice, 2x1 while the height allows,
+  an average pool to height 1, `ColumnsToSequence`, a bidirectional LSTM, a linear layer to alphabet + blank; saved with
+  `ModelPackage` beside `recognizer.json` (alphabet, height, direction, sizes, the run). Lines: grey, ink made high,
+  stretched, scaled to the height keeping the width, flipped for right to left (labels in logical order; digit and Latin
+  runs reversed for the flipped columns and back after decoding), padded per batch; `Losses.Ctc` with each line's steps
+  (zero infinity); `CtcDecoders` greedy or beam. Augmentations by the `Augmentations` registry on worker threads, seeded
+  per line and epoch; the app registers its own "noise". Out of memory in training: micro-batches halved, as `idrak train`
+  for images; reading batches measured on the device (first batch one line, peak per step of width against half the
+  reported free memory, halved on `ResourceLimitExceededException`).
+- **Vision-language reader.** `PretrainedModel.Load` with `MergeAdapter`, the adapter's `TuningImages` (family checked,
+  command line over it), `CreateVisionEncoder`, a `ChatGenerator` with `ChatImages`, greedy, streamed; the data's prompt and
+  system message unless `--prompt`.
+- **Tests** (`samples/Idrak.Samples.ArabicOcr.Tests`, a plain runner like the Override sample's, `IDRAK_FILTER`,
+  `IDRAK_DEVICES`; in CI on the CPU): 13 pass on the CPU. Synthetic Arabic letters drawn as strokes with their dots; pages cut
+  into lines (dots joined, a 2° skew measured as 2.0), cut idempotent and never overwriting a filled `.txt`, reading order,
+  JSON values and alignment, training on 160 cut lines (CER 1.0 → about 0.01–0.03 within 12 epochs, 0.4 s an epoch on this
+  container's CPU), a page read back in logical order (CER ≤ 0.1), eval equal to `TuningMetrics` over the same texts and an
+  unknown letter reported, drafts left out of training unless asked and `accept`, the tiny Gemma 3 reading a page (pan and
+  scan adds its crops' tokens), eval of a ShareGPT and a messages file from a zip, `cut --prefill vlm` with truth alignment.
+- **Measured** (this container's CPU, 4 cores): the default recognizer (753 K parameters, height 48) trains at about 5 s an
+  epoch over 160 synthetic lines (30 lines a second, augmentation included); reading 40 pages (160 lines) took 3.2 s with
+  it and 0.8 s with the test's small one (57 K parameters), loading and segmentation included.
+- **Library gaps found** (reported, not added): no "noise" in the `Augmentations` registry (core's `GaussianNoise` is a
+  loader's sample transform only); the measured batching of `idrak predict` (`MeasuredBatches`) is internal to the CLI, so
+  the app has its own copy; `ChatImage` carries no source path, so pages of a data file are named by record.
+
+**For the owner (GPU, from `D:\Projects\Idrak`;** the real model's commands are in the sample's README):
+
+```powershell
+$env:IDRAK_DEVICES="cuda"; dotnet run -c Release --project samples\Idrak.Samples.ArabicOcr.Tests
+$env:IDRAK_DEVICES="vulkan"; dotnet run -c Release --project samples\Idrak.Samples.ArabicOcr.Tests
+```
+
 ## Step 7, as built (2026-10-10)
 
 The command line names registries only; families, decoders and heads come from plug-ins (`-P`), and a name no registry

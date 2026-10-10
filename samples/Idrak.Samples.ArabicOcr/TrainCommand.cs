@@ -127,7 +127,7 @@ internal static class TrainCommand
         var cer = TuningMetrics.Get(TuningMetrics.CharacterErrorRate);
         var wer = TuningMetrics.Get(TuningMetrics.WordErrorRate);
         int micro = batchSize, bestEpoch = 0;
-        double best = double.PositiveInfinity, bestCer = double.NaN, bestWer = double.NaN;
+        double best = double.PositiveInfinity, bestLoss = double.PositiveInfinity, bestCer = double.NaN, bestWer = double.NaN;
         var epochSeconds = new List<double>();
         var history = new JsonArray();
         for (int epoch = 1; epoch <= epochs; epoch++)
@@ -182,13 +182,13 @@ internal static class TrainCommand
                 epochWer = TuningScore.Sum(pairs.Select(p => wer.Score(p.Item1, p.Item2))).Value;
             }
 
-            double monitored = epochCer ?? trainLoss;
-            bool isBest = monitored < best;
+            double monitored = epochCer ?? trainLoss;                                     // CER on the held-out lines, ties broken by the loss
+            bool isBest = monitored < best || monitored == best && trainLoss < bestLoss;
             epochClock.Stop();
             epochSeconds.Add(epochClock.Elapsed.TotalSeconds);
             if (isBest)
             {
-                (best, bestEpoch, bestCer, bestWer) = (monitored, epoch, epochCer ?? double.NaN, epochWer ?? double.NaN);
+                (best, bestLoss, bestEpoch, bestCer, bestWer) = (monitored, trainLoss, epoch, epochCer ?? double.NaN, epochWer ?? double.NaN);
                 recognizer.Save(folder, Summary());
             }
 
