@@ -8,7 +8,10 @@ namespace Idrak.Gpu.Cuda;
 // PTX for decoder-only language model layers: RMS normalization and rotary position embeddings.
 internal static partial class PtxKernels
 {
-    public static readonly string[] DecoderNames = ["rms_norm_f32", "rms_norm_backward_f32", "rope_f32", "rms_norm_affine_f32", "gated_act_f32", "gated_act_bwd_f32", "gated_act_bf16_f32", "gated_act_bwd_bf16_f32", "add_rms_norm_affine_f32", "rms_norm_rope_f32", "rms_norm_rope2_f32", "softmax_ce_rows_f32", "norm_rope_heads_f32"];
+    /// <summary>Threads of a <c>softmax_ce_rows_f32</c> block (a vocabulary-wide row: more loads in flight than <see cref="RowThreads"/>).</summary>
+    public const int SoftmaxCrossEntropyThreads = RowThreads * 4;
+
+    public static readonly string[] DecoderNames =["rms_norm_f32", "rms_norm_backward_f32", "rope_f32", "rms_norm_affine_f32", "gated_act_f32", "gated_act_bwd_f32", "gated_act_bf16_f32", "gated_act_bwd_bf16_f32", "add_rms_norm_affine_f32", "rms_norm_rope_f32", "rms_norm_rope2_f32", "softmax_ce_rows_f32", "norm_rope_heads_f32"];
 
     private static void BuildDecoder(StringBuilder sb)
     {
@@ -106,7 +109,7 @@ internal static partial class PtxKernels
             @%p10 sub.f32 %f4, %f4, 0f3F800000;
             mul.f32 %f4, %f4, %f6;
             st.global.f32 [%rd5], %f4;
-            """));
+            """), maxThreads: SoftmaxCrossEntropyThreads);
 
         RowBlock(sb, "rms_norm_affine_f32", ["x", "gain", "y"], [("u32", "cols"), ("f32", "eps"), ("f32", "offset")],
             RowStart + $"""
