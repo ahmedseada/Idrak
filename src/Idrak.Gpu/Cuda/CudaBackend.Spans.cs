@@ -50,17 +50,31 @@ internal sealed unsafe partial class CudaBackend
 
         ulong lse = logSumExp is null ? 0UL : P(logSumExp);
         int td = PtxKernels.SpanTensorDim(dim);
-        if (variant.Softcap <= 0f && MixedPrecision.UsesTensorCores && td > 0 && SpanFunction(tensor: true, td, PtxKernels.SpanTensorName(td, PtxKernels.SpanTensorWarps[0])) is not null)
+        if (variant.Softcap <= 0f && MixedPrecision.UsesTensorCores && td > 0 && SpanFunction(tensor: true, td, PtxKernels.SpanTensorWarps[0]) is not null)
         {
-            var warps = PtxKernels.SpanTensorWarps.Where(w => SpanFunction(tensor: true, td, PtxKernels.SpanTensorName(td, w)) is not null).ToArray();
-            int chosen = Tune(new TuneKey(TuneOp.SpanWarps, td, heads, TuneSizes.Class(rows), TuneSizes.Class(keyRows), kvHeads, headsPerTable), warps, PtxKernels.SpanTensorWarps[0],
-                w => LaunchSpanTensor(td, w, q, keys, values, starts, ends, y, lse, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale));
+            Span<int> warps = stackalloc int[PtxKernels.SpanTensorWarps.Length];
+            int count = 0;
+            foreach (int w in PtxKernels.SpanTensorWarps)
+            {
+                if (SpanFunction(tensor: true, td, w) is not null)
+                {
+                    warps[count++] = w;
+                }
+            }
+
+            var key = new TuneKey(TuneOp.SpanWarps, td, heads, TuneSizes.Class(rows), TuneSizes.Class(keyRows), kvHeads, headsPerTable);
+            if (!TryTuned(key, warps[..count], PtxKernels.SpanTensorWarps[0], out int chosen))
+            {
+                chosen = MeasureSpanWarps(key, warps[..count].ToArray(), td, q, keys, values, starts, ends, y, lse, heads, kvHeads, headsPerTable, rows, keyRows,
+                    dim, scale);
+            }
+
             LaunchSpanTensor(td, chosen, q, keys, values, starts, ends, y, lse, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale);
             return;
         }
 
         int fd = PtxKernels.SpanFloatDim(dim);
-        if (fd > 0 && SpanFunction(tensor: false, fd, PtxKernels.SpanFloatName(fd)) is { } tiled)
+        if (fd > 0 && SpanFunction(tensor: false, fd) is { } tiled)
         {
             t_sharedBytes = (uint)PtxKernels.SpanFloatShared(fd);
             Launch(tiled, (uint)((rows + PtxKernels.SpanFloatRows - 1) / PtxKernels.SpanFloatRows), (uint)heads, 1, 128, 1,
@@ -111,21 +125,37 @@ internal sealed unsafe partial class CudaBackend
         }
     }
 
+    // The warps per block of the tensor-core span kernel, measured for this shape.
+    private int MeasureSpanWarps(TuneKey key, int[] warps, int td, Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage y, ulong lse,
+        int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale) =>
+        Tune(key, warps, PtxKernels.SpanTensorWarps[0],
+            w => LaunchSpanTensor(td, w, q, keys, values, starts, ends, y, lse, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale));
+
     private void LaunchSpanTensor(int td, int warps, Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage y, ulong lse, int heads,
         int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale)
     {
         int rowsPerBlock = 16 * warps;
-        Launch(SpanFunction(tensor: true, td, PtxKernels.SpanTensorName(td, warps))!.Value, (uint)((rows + rowsPerBlock - 1) / rowsPerBlock), (uint)heads, 1,
+        Launch(SpanFunction(tensor: true, td, warps)!.Value, (uint)((rows + rowsPerBlock - 1) / rowsPerBlock), (uint)heads, 1,
             (uint)(32 * warps), 1,
             P(q), P(keys), P(values), P(starts), P(ends), P(y), lse, U(rows), U(keyRows), U(dim), F(scale * Log2E), U(heads / kvHeads), U(headsPerTable));
     }
 
-    // A span kernel of the module for (kind, padded head size), loading the module on first use; null when it cannot run.
-    private IntPtr? SpanFunction(bool tensor, int d, string kernel)
+    // Span kernels resolved so far by kind, padded head size and warps per block (0 for the float32 kernel), null when one
+    // cannot run: a launch formats no name and looks up no module.
+    private readonly Dictionary<(bool Tensor, int D, int Warps), IntPtr?> _spanFunctions = [];
+
+    // A span kernel of the module for (kind, padded head size): the tensor-core one with `warps` warps per block, else the
+    // float32 one. Loads the module on first use; null when it cannot run.
+    private IntPtr? SpanFunction(bool tensor, int d, int warps = 0)
     {
-        string key = $"{(tensor ? "tc" : "f32")} {d}";
         lock (_spanModules)
         {
+            if (_spanFunctions.TryGetValue((tensor, d, warps), out var resolved))
+            {
+                return resolved;
+            }
+
+            string key = $"{(tensor ? "tc" : "f32")} {d}";
             if (!_spanModules.TryGetValue(key, out var kernels))
             {
                 kernels = LoadSpanModule(tensor, d, out string? reason);
@@ -136,7 +166,10 @@ internal sealed unsafe partial class CudaBackend
                 }
             }
 
-            return kernels is not null && kernels.TryGetValue(kernel, out var function) ? function : null;
+            string kernel = tensor ? PtxKernels.SpanTensorName(d, warps) : PtxKernels.SpanFloatName(d);
+            resolved = kernels is not null && kernels.TryGetValue(kernel, out var function) ? function : null;
+            _spanFunctions[(tensor, d, warps)] = resolved;
+            return resolved;
         }
     }
 
