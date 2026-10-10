@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The OCR app's tests: the app's commands run in process on generated data (no fonts, no downloads). -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Idrak.Samples.ArabicOcr\Idrak.Samples.ArabicOcr.csproj" />
+  </ItemGroup>
+
+</Project>
