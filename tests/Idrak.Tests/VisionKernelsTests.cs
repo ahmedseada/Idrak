@@ -21,6 +21,7 @@ internal static partial class Tests
         ("vision kernels: ConvTranspose2d through the convolution's input gradient matches the products and fold, forward and gradients", TransposedConvolutionMatches),
         ("vision kernels: every convolution path on the device (composed, implicit tiled and blocked, splits, depthwise; groups, dilation, asymmetric padding) matches the CPU, forward and both gradients, with no host fallback", DeviceConvolutionPaths),
         ("vision kernels: average pooling (ceil mode), interpolation, adaptive pooling, resize-normalize and CTC run as device kernels and match the CPU with no host fallback", DeviceImageKernels),
+        ("vision kernels: batch-norm statistics and per-channel sums over groups of many chunks (split across blocks, combined in chunk order) match the CPU with no host fallback", DeviceLargeGroups),
     ];
 
     private static void FusedConvolutionMatches(Device device)
@@ -227,10 +228,52 @@ internal static partial class Tests
             var large = new ConvGeometry(8, 8, 40, 40, 3, 3, 1, 1, 1, 1);
             OnBoth(device, "weight gradient over 12,800 positions", [R(8 * 8 * 1600), R(8 * 16 * 1600), R(16 * 72)],
                 (b, s) => b.ConvolutionBackwardWeight(s[0], s[1], s[2], large, 16, 1), tolerance: 2e-3f);
+
+            // CUDA: every split count of the weight gradient on both implicit tiles, 1 to 1,024 splits of 262,144 positions
+            // into one channel's 3 x 3 patches (a first layer: the wide splits' partial sums fit in the input's size).
+            if (device.Type == DeviceType.Cuda)
+            {
+                var first = new ConvGeometry(4, 1, 256, 256, 3, 3, 1, 1, 1, 1);
+                foreach (int path in new[] { 1, 2 })
+                {
+                    foreach (int splits in new[] { 1, 4, 16, 64, 256, 1024 })
+                    {
+                        ForceConvolutionPath(path);
+                        CudaBackend.ConvolutionSplits = splits;
+                        OnBoth(device, $"weight gradient, path {path}, {splits} splits of 262,144 positions", [R(4 * 65536), R(4 * 4 * 65536), R(4 * 9)],
+                            (b, s) => b.ConvolutionBackwardWeight(s[0], s[1], s[2], first, 4, 1), tolerance: 2e-3f);
+                    }
+                }
+            }
         }
         finally
         {
             ForceConvolutionPath(null);
+            CudaBackend.ConvolutionSplits = null;
+        }
+    }
+
+    // Groups of at least two chunks of the split kernels (CUDA: 8,192 elements): batch-norm shapes (N, C, H·W), a last
+    // chunk partly filled, a group of rows of 37 (its elements wrap rows within a step) and one of single elements (inner
+    // 1); the statistics, and the sums with and without the products.
+    private static void DeviceLargeGroups(Device device)
+    {
+        if (device.Type is not (DeviceType.Cuda or DeviceType.Vulkan))
+        {
+            return;
+        }
+
+        var random = new Random(13);
+        float[] R(int n, float scale = 1f) => RandomArray(random, n, scale);
+        foreach (var (outer, groups, inner) in new[] { (16, 8, 48 * 64), (3, 2, 6007), (700, 3, 37), (20000, 3, 1) })
+        {
+            int n = outer * groups * inner;
+            string shape = $"[{outer}, {groups}, {inner}]";
+            OnBoth(device, $"batch-norm statistics {shape}", [R(n, 3f), new float[groups], new float[groups], new float[groups]],
+                (b, s) => b.NormStats(s[0], s[1], s[2], s[3], outer, groups, inner, 1e-5f), tolerance: 1e-4f);
+            OnBoth(device, $"group sums and products {shape}", [R(n), R(n), R(groups), R(groups)],
+                (b, s) => b.GroupReduce(s[0], s[1], s[2], s[3], outer, groups, inner), tolerance: 1e-4f);
+            OnBoth(device, $"group sums {shape}", [R(n), R(groups)], (b, s) => b.GroupReduce(s[0], null, s[1], null, outer, groups, inner), tolerance: 1e-4f);
         }
     }
 
