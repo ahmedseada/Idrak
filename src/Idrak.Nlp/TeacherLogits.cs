@@ -104,6 +104,7 @@ public sealed class TeacherLogitsWriter : IDisposable
         var rowIds = new int[n * k];
         var rowValues = new Half[n * k];
         float[] values = logits.ToArray();
+        Comparison<int> descending = (a, b) => values[b].CompareTo(values[a]);   // made once, not per row (the same sort)
         for (int r = 0; r < n; r++)
         {
             for (int j = 0; j < k; j++)
@@ -111,7 +112,7 @@ public sealed class TeacherLogitsWriter : IDisposable
                 order[j] = r * k + j;
             }
 
-            Array.Sort(order, (a, b) => values[b].CompareTo(values[a]));
+            order.AsSpan().Sort(descending);
             float max = values[order[0]];
             for (int j = 0; j < k; j++)
             {
