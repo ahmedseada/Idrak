@@ -114,6 +114,15 @@ internal ref struct ProtoReader(ReadOnlySpan<byte> data)
         }
 
         var packed = Bytes();
+        if (BitConverter.IsLittleEndian)
+        {
+            // The values as stored, in one copy (the machine's byte order is the file's, rule 48): the list grown once.
+            int count = packed.Length / 4, start = into.Count;
+            CollectionsMarshal.SetCount(into, start + count);
+            MemoryMarshal.Cast<byte, float>(packed[..(count * 4)]).CopyTo(CollectionsMarshal.AsSpan(into)[start..]);
+            return;
+        }
+
         for (int i = 0; i + 4 <= packed.Length; i += 4)
         {
             into.Add(BinaryPrimitives.ReadSingleLittleEndian(packed.Slice(i, 4)));

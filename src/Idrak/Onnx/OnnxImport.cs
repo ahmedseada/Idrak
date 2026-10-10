@@ -705,14 +705,25 @@ internal sealed class Importer(OnnxModel model, Device device, int[]? sampleShap
         return null;
     }
 
+    // In tiles of 32 x 32, so the reads and the strided writes of a tile stay in cache (a large weight matrix walked
+    // whole would miss on every write).
     private static float[] Transpose(float[] values, int rows, int columns)
     {
+        const int Tile = 32;
         var result = new float[values.Length];
-        for (int r = 0; r < rows; r++)
+        for (int r0 = 0; r0 < rows; r0 += Tile)
         {
-            for (int c = 0; c < columns; c++)
+            int r1 = Math.Min(r0 + Tile, rows);
+            for (int c0 = 0; c0 < columns; c0 += Tile)
             {
-                result[c * rows + r] = values[r * columns + c];
+                int c1 = Math.Min(c0 + Tile, columns);
+                for (int r = r0; r < r1; r++)
+                {
+                    for (int c = c0; c < c1; c++)
+                    {
+                        result[c * rows + r] = values[r * columns + c];
+                    }
+                }
             }
         }
 
