@@ -128,6 +128,11 @@ internal sealed unsafe partial class CudaBackend : Backend
     [ThreadStatic]
     private static uint t_sharedBytes;
 
+    // Whether the next launch on this thread is cooperative (cuLaunchCooperativeKernel: every block resident at once;
+    // consumed by Launch).
+    [ThreadStatic]
+    private static bool t_cooperative;
+
     // Kernel times per name while GpuProfiler runs (null otherwise); matrix products are keyed by kernel and shape.
     private Dictionary<string, (long Calls, long Ticks, double Flops)>? _profile;
     private (IntPtr Start, IntPtr End) _profileEvents;
@@ -319,6 +324,7 @@ internal sealed unsafe partial class CudaBackend : Backend
         _matmul = Fn("matmul_f32");
         _kernels = PtxKernels.AdvancedNames.Concat(PtxKernels.DecodingNames).Concat(PtxKernels.QuantizedNames).Concat(PtxKernels.DecoderNames).Concat(PtxKernels.RowNames).Concat(PtxKernels.ConvolutionNames).Concat(PtxKernels.ResamplingNames).Concat(PtxKernels.CtcNames).Concat(PtxKernels.RecurrentNames).Concat(PtxKernels.PointwiseNames).Append("add_dropout_f32").ToDictionary(k => k, Fn);
         CtcOptIn();
+        SequenceBarrier();
     }
 
     public static int DeviceCount => Probe.Value.Count;
@@ -1798,7 +1804,8 @@ internal sealed unsafe partial class CudaBackend : Backend
         }
 
         uint shared = t_sharedBytes;
-        t_sharedBytes = 0;
+        bool cooperative = t_cooperative;
+        (t_sharedBytes, t_cooperative) = (0, false);
         MakeCurrent();
 
         // The values, then a pointer to each: on the stack up to StackArguments (a plug-in's PTX decides how many it
@@ -1813,12 +1820,12 @@ internal sealed unsafe partial class CudaBackend : Backend
                 pointers[i] = &values[i];
             }
 
-            LaunchStaged(function, gridX, gridY, gridZ, blockX, blockY, blockZ, shared, pointers, args);
+            LaunchStaged(function, gridX, gridY, gridZ, blockX, blockY, blockZ, shared, cooperative, pointers, args);
         }
     }
 
-    private void LaunchStaged(IntPtr function, uint gridX, uint gridY, uint gridZ, uint blockX, uint blockY, uint blockZ, uint shared, void** pointers,
-        ReadOnlySpan<ulong> args)
+    private void LaunchStaged(IntPtr function, uint gridX, uint gridY, uint gridZ, uint blockX, uint blockY, uint blockZ, uint shared, bool cooperative,
+        void** pointers, ReadOnlySpan<ulong> args)
     {
         using var use = UseStream();
         if (_profile is { } profile && _captureFree is null)
@@ -1832,7 +1839,9 @@ internal sealed unsafe partial class CudaBackend : Backend
             }
 
             Check(cuEventRecord(_profileEvents.Start, _stream), nameof(cuEventRecord));
-            Check(cuLaunchKernel(function, gridX, gridY, gridZ, blockX, blockY, blockZ, shared, _stream, pointers, null), nameof(cuLaunchKernel));
+            Check(cooperative
+                ? cuLaunchCooperativeKernel(function, gridX, gridY, gridZ, blockX, blockY, blockZ, shared, _stream, pointers)
+                : cuLaunchKernel(function, gridX, gridY, gridZ, blockX, blockY, blockZ, shared, _stream, pointers, null), nameof(cuLaunchKernel));
             Check(cuEventRecord(_profileEvents.End, _stream), nameof(cuEventRecord));
             Check(cuEventSynchronize(_profileEvents.End), nameof(cuEventSynchronize));
             Check(cuEventElapsedTime(out float elapsed, _profileEvents.Start, _profileEvents.End), nameof(cuEventElapsedTime));
@@ -1849,7 +1858,9 @@ internal sealed unsafe partial class CudaBackend : Backend
             return;
         }
 
-        Check(cuLaunchKernel(function, gridX, gridY, gridZ, blockX, blockY, blockZ, shared, _stream, pointers, null), nameof(cuLaunchKernel));
+        Check(cooperative
+                ? cuLaunchCooperativeKernel(function, gridX, gridY, gridZ, blockX, blockY, blockZ, shared, _stream, pointers)
+                : cuLaunchKernel(function, gridX, gridY, gridZ, blockX, blockY, blockZ, shared, _stream, pointers, null), nameof(cuLaunchKernel));
         if (DebugLaunches && _captureFree is null)
         {
             // Debugging aid: wait for every kernel so a fault is reported by the kernel that caused it.

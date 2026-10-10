@@ -177,6 +177,21 @@ internal static unsafe partial class CudaDriver
         uint blockX, uint blockY, uint blockZ,
         uint sharedMemBytes, IntPtr stream, void** kernelParams, void** extra);
 
+    /// <summary>
+    /// A launch whose blocks are all resident at once (or the launch fails), so they may wait on each other: a grid
+    /// barrier. The grid must fit what <see cref="cuOccupancyMaxActiveBlocksPerMultiprocessor"/> reports.
+    /// </summary>
+    [LibraryImport(Library)]
+    public static partial int cuLaunchCooperativeKernel(
+        IntPtr function,
+        uint gridX, uint gridY, uint gridZ,
+        uint blockX, uint blockY, uint blockZ,
+        uint sharedMemBytes, IntPtr stream, void** kernelParams);
+
+    /// <summary>How many blocks of <paramref name="blockSize"/> threads of a kernel one multiprocessor holds at once.</summary>
+    [LibraryImport(Library)]
+    public static partial int cuOccupancyMaxActiveBlocksPerMultiprocessor(out int blocks, IntPtr function, int blockSize, nuint dynamicSharedBytes);
+
     [LibraryImport(Library)]
     public static partial int cuGetErrorName(int error, out byte* text);
 

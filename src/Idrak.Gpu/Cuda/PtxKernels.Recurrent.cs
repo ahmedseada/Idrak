@@ -22,14 +22,21 @@ namespace Idrak.Gpu.Cuda;
 // first warp runs the cell's arithmetic, the same as the cell kernels'. The forward product reads the previous hidden
 // state from the output sequence (another row, so no thread writes what another reads) against U [H, G·H]; the gradient
 // reads the later step's gate gradient against Uᵀ [G·H, H].
+//
+// The sequence kernels (Backend.LstmSequence, GruSequence and their gradients) run the step kernels' product and body for
+// every step in one launch (RecurrentSequence below): the blocks take the step's (row, 32 units) items in turn, then meet
+// at a grid barrier before the next step.
 internal static partial class PtxKernels
 {
     /// <summary>The kernels of this file (in the main module).</summary>
     public static readonly string[] RecurrentNames = ["lstm_cell_f32", "lstm_cell_bwd_f32", "gru_cell_f32", "gru_cell_bwd_f32", "lstm_step_f32",
-        "lstm_step_bwd_f32", "gru_step_f32", "gru_step_bwd_f32"];
+        "lstm_step_bwd_f32", "gru_step_f32", "gru_step_bwd_f32", "lstm_seq_f32", "lstm_seq_bwd_f32", "gru_seq_f32", "gru_seq_bwd_f32"];
 
     /// <summary>The most slices of the recurrent product's sum a step kernel's block takes (a warp each, 32 units a warp).</summary>
     public const int MaxStepSlices = 32;
+
+    /// <summary>The sequence kernels' flag bit: the steps taken from the last to the first.</summary>
+    public const int SequenceReverse = 256;
 
     private static readonly (string, string)[] StepScalars = [("u32", "step"), ("u32", "previous"), ("u32", "steps"), ("u32", "h"), ("u32", "flags")];
 
@@ -215,8 +222,8 @@ internal static partial class PtxKernels
             """);
 
         // flags: 1 = save the gates, 2 = save the cells, 4 = a previous step (the product; else the zero initial state).
-        RecurrentStep(sb, "lstm_step_f32", ["projected", "weights", "cell", "output", "gates", "cells"], StepScalars, 4, 4,
-            StepProduct("lstm_step_f32", 4, "%b_output", "%s_previous", 4, "%s_h", "%r4", "%b_weights"),
+        StepAndSequence(sb, "lstm_step_f32", "lstm_seq_f32", ["projected", "weights", "cell", "output", "gates", "cells"], false, 4, 4,
+            ("%b_output", "%s_previous", "%s_h", "%r4", "%b_weights"),
             $"""
             mul.wide.u32 %rd1, %r5, 4;
             add.u64 %rd1, %b_projected, %rd1;
@@ -250,8 +257,8 @@ internal static partial class PtxKernels
 
         // flags: 1 = dOutput given, 2 = a previous step, 4 = a later step (the product of its gate gradient; else dh's
         // recurrent part is 0).
-        RecurrentStep(sb, "lstm_step_bwd_f32", ["gates", "cells", "doutput", "weightst", "dcell", "dgates"], StepBackwardScalars, 4, 1,
-            StepProduct("lstm_step_bwd_f32", 1, "%b_dgates", "%s_next", 4, "%r4", "%s_h", "%b_weightst"),
+        StepAndSequence(sb, "lstm_step_bwd_f32", "lstm_seq_bwd_f32", ["gates", "cells", "doutput", "weightst", "dcell", "dgates"], true, 4, 1,
+            ("%b_dgates", "%s_next", "%r4", "%s_h", "%b_weightst"),
             $"""
             mul.wide.u32 %rd1, %r5, 4;
             add.u64 %rd1, %b_gates, %rd1;
@@ -296,8 +303,8 @@ internal static partial class PtxKernels
             """);
 
         // flags: 1 = the candidate bias given, 2 = save the gates, 4 = a previous step.
-        RecurrentStep(sb, "gru_step_f32", ["projected", "weights", "hbias", "output", "gates"], StepScalars, 3, 3,
-            StepProduct("gru_step_f32", 3, "%b_output", "%s_previous", 4, "%s_h", "%r4", "%b_weights"),
+        StepAndSequence(sb, "gru_step_f32", "gru_seq_f32", ["projected", "weights", "hbias", "output", "gates"], false, 3, 3,
+            ("%b_output", "%s_previous", "%s_h", "%r4", "%b_weights"),
             $"""
             mul.wide.u32 %rd1, %r5, 4;
             add.u64 %rd1, %b_projected, %rd1;
@@ -334,8 +341,8 @@ internal static partial class PtxKernels
             """);
 
         // flags: 1 = dOutput given, 2 = a previous step, 4 = a later step (the product of its recurrent gradient).
-        RecurrentStep(sb, "gru_step_bwd_f32", ["gates", "output", "doutput", "weightst", "dhidden", "dgates", "drecurrent"], StepBackwardScalars, 3, 1,
-            StepProduct("gru_step_bwd_f32", 1, "%b_drecurrent", "%s_next", 4, "%r4", "%s_h", "%b_weightst"),
+        StepAndSequence(sb, "gru_step_bwd_f32", "gru_seq_bwd_f32", ["gates", "output", "doutput", "weightst", "dhidden", "dgates", "drecurrent"], true, 3, 1,
+            ("%b_drecurrent", "%s_next", "%r4", "%s_h", "%b_weightst"),
             $"""
             {GateIndex(4, "%r8")}
             mul.wide.u32 %rd1, %r8, 4;
@@ -454,6 +461,186 @@ internal static partial class PtxKernels
             """);
     }
 
+    // A step kernel and its sequence kernel: the same product (`product`: source, row, width, weights' width, weights; see
+    // StepProduct) and `body`, one step a launch and every step in one launch.
+    private static void StepAndSequence(StringBuilder sb, string name, string sequence, string[] pointers, bool backward, int gates, int terms,
+        (string Source, string Row, string Width, string WeightsWidth, string Weights) product, string body)
+    {
+        RecurrentStep(sb, name, pointers, backward ? StepBackwardScalars : StepScalars, gates, terms,
+            StepProduct(name, terms, product.Source, product.Row, 4, product.Width, product.WeightsWidth, product.Weights, "ld.global.f32"), body);
+        RecurrentSequence(sb, sequence, pointers, backward, gates, terms,
+            StepProduct(sequence, terms, product.Source, product.Row, 4, product.Width, product.WeightsWidth, product.Weights, "ld.global.cg.f32"), body);
+    }
+
+    // A sequence kernel (Backend.LstmSequence, GruSequence and their gradients): the step kernel's work for every step in
+    // one launch. Parameters: the storages, the grid barrier (two u32 words: arrivals and generation, both 0 between
+    // launches), then steps, h, flags (the step kernel's own bits 1 and 2 as given; SequenceReverse: the steps taken from
+    // the last; the bits of the previous and the later step are set here) and batch. The items of a step are the step
+    // kernel's blocks (row n, 32 units), item = n·⌈H/32⌉ + chunk; block b takes items b, b + grid, … in turn, so each
+    // item's sums are the step kernel's, in its order. Between steps every block meets at a grid barrier: the launch is
+    // cooperative (all blocks resident), the host sizes the grid from the occupancy the device reports. The rows other
+    // blocks wrote (the previous output, the later gate gradient) are read past the multiprocessor's own cache.
+    private static void RecurrentSequence(StringBuilder sb, string name, string[] pointers, bool backward, int gates, int terms, string product, string body)
+    {
+        var invariant = CultureInfo.InvariantCulture;
+        sb.Append(invariant, $".visible .entry {name}(\n");
+        foreach (string pointer in pointers)
+        {
+            sb.Append(invariant, $"    .param .u64 p_{pointer},\n");
+        }
+
+        sb.Append(invariant, $$"""
+                .param .u64 p_barrier,
+                .param .u32 p_steps,
+                .param .u32 p_h,
+                .param .u32 p_flags,
+                .param .u32 p_batch
+            )
+            .maxntid {{32 * MaxStepSlices}}, 1, 1
+            {
+                .reg .pred %p<16>;
+                .reg .f32 %f<48>;
+                .reg .b32 %r<32>;
+                .reg .b64 %rd<26>;
+                .reg .u32 %i, %lane, %slice, %slices;
+                .reg .u32 %s_steps, %s_h, %s_flags, %s_step, %s_previous, %s_next;
+                .reg .u32 %base, %batch, %k, %last, %item, %items, %chunks;
+                .reg .u64 %off, %barrier;
+                .shared .align 4 .f32 {{name}}_part[{{MaxStepSlices * terms * 32}}];
+                .shared .align 4 .f32 {{name}}_sum[{{terms * 32}}];
+
+            """);
+        foreach (string pointer in pointers)
+        {
+            sb.Append(invariant, $"    .reg .u64 %a_{pointer}, %b_{pointer};\n");
+            sb.Append(invariant, $"    ld.param.u64 %b_{pointer}, [p_{pointer}];\n");
+            sb.Append(invariant, $"    cvta.to.global.u64 %b_{pointer}, %b_{pointer};\n");
+        }
+
+        sb.Append(invariant, $$"""
+                ld.param.u64 %barrier, [p_barrier];
+                cvta.to.global.u64 %barrier, %barrier;
+                ld.param.u32 %s_steps, [p_steps];
+                ld.param.u32 %s_h, [p_h];
+                ld.param.u32 %base, [p_flags];
+                ld.param.u32 %batch, [p_batch];
+                mov.u32 %r20, %tid.x;
+                and.b32 %lane, %r20, 31;
+                shr.u32 %slice, %r20, 5;
+                mov.u32 %slices, %ntid.x;
+                shr.u32 %slices, %slices, 5;
+                add.u32 %chunks, %s_h, 31;
+                shr.u32 %chunks, %chunks, 5;
+                mul.lo.u32 %items, %batch, %chunks;
+                sub.u32 %last, %s_steps, 1;
+                mov.u32 %k, 0;
+            STEP:
+                and.b32 %r28, %base, {{SequenceReverse}};
+                setp.ne.u32 %p13, %r28, 0;
+                sub.u32 %r29, %last, %k;
+
+            """);
+
+        // The step taken k-th, its neighbours and flags. Forward: t = k (reverse: T-1-k), the previous step t∓1 when k > 0
+        // (flag 4). Backward, the steps from the last taken: t = T-1-k (reverse: k), the previous step t∓1 unless it is the
+        // first taken (flag 2), the later step t±1 unless it is the last taken (flag 4).
+        AppendIndented(sb, backward
+            ? """
+              selp.u32 %s_step, %k, %r29, %p13;
+              add.u32 %r29, %s_step, 1;
+              sub.u32 %r30, %s_step, 1;
+              selp.u32 %s_previous, %r29, %r30, %p13;
+              selp.u32 %s_next, %r30, %r29, %p13;
+              setp.eq.u32 %p14, %k, %last;
+              setp.eq.u32 %p15, %k, 0;
+              selp.u32 %s_previous, 0, %s_previous, %p14;
+              selp.u32 %s_next, 0, %s_next, %p15;
+              and.b32 %s_flags, %base, 1;
+              or.b32 %r29, %s_flags, 2;
+              selp.u32 %s_flags, %s_flags, %r29, %p14;
+              or.b32 %r29, %s_flags, 4;
+              selp.u32 %s_flags, %s_flags, %r29, %p15;
+              """
+            : """
+              selp.u32 %s_step, %r29, %k, %p13;
+              add.u32 %r29, %s_step, 1;
+              sub.u32 %r30, %s_step, 1;
+              selp.u32 %s_previous, %r29, %r30, %p13;
+              mov.u32 %s_next, 0;
+              setp.eq.u32 %p14, %k, 0;
+              selp.u32 %s_previous, 0, %s_previous, %p14;
+              and.b32 %s_flags, %base, 3;
+              or.b32 %r29, %s_flags, 4;
+              selp.u32 %s_flags, %s_flags, %r29, %p14;
+              """);
+
+        // The block's items of this step: the step kernel's block preamble from the item.
+        sb.Append("""
+                mov.u32 %item, %ctaid.x;
+            ITEM:
+                setp.ge.u32 %p12, %item, %items;
+                @%p12 bra STEP_END;
+                div.u32 %r1, %item, %chunks;
+                rem.u32 %r20, %item, %chunks;
+                shl.b32 %r20, %r20, 5;
+                add.u32 %r2, %r20, %lane;
+                setp.lt.u32 %p8, %r2, %s_h;
+                mad.lo.u32 %i, %r1, %s_h, %r2;
+                mul.wide.u32 %off, %i, 4;
+
+            """);
+        foreach (string pointer in pointers)
+        {
+            sb.Append(invariant, $"    add.u64 %a_{pointer}, %b_{pointer}, %off;\n");
+        }
+
+        AppendIndented(sb, RecurrentRowIndices(gates));
+        AppendIndented(sb, product.Replace("bra DONE;", "bra ITEM_END;", StringComparison.Ordinal));
+        AppendIndented(sb, body.Replace("bra DONE;", "bra ITEM_END;", StringComparison.Ordinal));
+
+        // The next item; after the last step's, the end. Between steps the grid barrier: the block's threads meet, its
+        // first thread makes the block's writes visible to the device and arrives (the last to arrive clears the count and
+        // advances the generation), then waits for the generation to move; the block's threads meet again.
+        sb.Append("""
+            ITEM_END:
+                mov.u32 %r20, %nctaid.x;
+                add.u32 %item, %item, %r20;
+                bra ITEM;
+            STEP_END:
+                setp.ge.u32 %p12, %k, %last;
+                @%p12 bra EXIT;
+                bar.sync 0;
+                mov.u32 %r28, %tid.x;
+                setp.ne.u32 %p12, %r28, 0;
+                @%p12 bra GRID_PASSED;
+                membar.gl;
+                ld.volatile.global.u32 %r29, [%barrier+4];
+                atom.global.add.u32 %r30, [%barrier], 1;
+                mov.u32 %r31, %nctaid.x;
+                sub.u32 %r31, %r31, 1;
+                setp.ne.u32 %p12, %r30, %r31;
+                @%p12 bra GRID_WAIT;
+                atom.global.exch.b32 %r30, [%barrier], 0;
+                membar.gl;
+                atom.global.add.u32 %r30, [%barrier+4], 1;
+                bra GRID_FENCE;
+            GRID_WAIT:
+                ld.volatile.global.u32 %r30, [%barrier+4];
+                setp.eq.u32 %p12, %r30, %r29;
+                @%p12 bra GRID_WAIT;
+            GRID_FENCE:
+                membar.gl;
+            GRID_PASSED:
+                bar.sync 0;
+                add.u32 %k, %k, 1;
+                bra STEP;
+            EXIT:
+                ret;
+            }
+
+            """);
+    }
+
     // Each line of `text` into `sb`, indented four spaces, its trailing spaces dropped (spans: no line strings).
     private static void AppendIndented(StringBuilder sb, string text)
     {
@@ -467,9 +654,11 @@ internal static partial class PtxKernels
     // `row` of sequence n, `width` floats wide; the weights `weightsWidth` floats a row; nothing without the flag bit
     // `flag`, every sum 0). Slice s of S (%slices) takes m = s, s + S, …, two m a pass (every value in a register of its
     // own), each term's sum in m order; the slices' sums meet in shared memory and warp g adds term g's in slice order. Then
-    // the first warp's valid threads hold term g in %f{30 + g} (the others go to DONE). Uses %r20 … %r27, %rd16 … %rd25,
-    // %f30 … %f47, %p8 … %p11; %rd3 (H·4: a term's stride in the weights) from RecurrentRowIndices.
-    private static string StepProduct(string name, int terms, string source, string row, int flag, string width, string weightsWidth, string weights)
+    // the first warp's valid threads hold term g in %f{30 + g} (the others go to DONE). `load` reads the source (ld.global.cg
+    // where other blocks of the same launch wrote it: past the multiprocessor's own cache). Uses %r20 … %r27, %rd16 …
+    // %rd25, %f30 … %f47, %p8 … %p11; %rd3 (H·4: a term's stride in the weights) from RecurrentRowIndices.
+    private static string StepProduct(string name, int terms, string source, string row, int flag, string width, string weightsWidth, string weights,
+        string load)
     {
         var invariant = CultureInfo.InvariantCulture;
         var s = new StringBuilder();
@@ -499,9 +688,9 @@ internal static partial class PtxKernels
             add.u32 %r24, %r23, %slices;
             setp.ge.u32 %p9, %r24, {width};
             @%p9 bra PRODUCT1;
-            ld.global.f32 %f38, [%rd16];
+            {load} %f38, [%rd16];
             add.u64 %rd25, %rd16, %rd24;
-            ld.global.f32 %f39, [%rd25];
+            {load} %f39, [%rd25];
             add.u64 %rd19, %rd17, %rd18;
 
             """);
@@ -530,10 +719,10 @@ internal static partial class PtxKernels
             PRODUCT1:
             setp.ge.u32 %p9, %r23, %s_width_placeholder;
             @%p9 bra PRODUCT_END;
-            ld.global.f32 %f38, [%rd16];
+            %load_placeholder %f38, [%rd16];
             mov.u64 %rd20, %rd17;
 
-            """.Replace("%s_width_placeholder", width, StringComparison.Ordinal));
+            """.Replace("%s_width_placeholder", width, StringComparison.Ordinal).Replace("%load_placeholder", load, StringComparison.Ordinal));
         for (int g = 0; g < terms; g++)
         {
             if (g > 0)
