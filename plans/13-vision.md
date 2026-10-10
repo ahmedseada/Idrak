@@ -7,8 +7,9 @@ pooling and padding below and right); step 1 (convolution, pooling, resampling a
 kernels of their own on CUDA and Vulkan, measured per shape; inference fusion; resize and normalize on the device);
 steps 4 and 5 (detection and segmentation losses, matching and metrics; augmentations that move boxes and masks, run off
 the training thread; COCO, YOLO and Pascal VOC formats); step 6 (image model families as plug-ins, `ImageModels.Load`,
-`DetectionDecoders`). Left: step 7 (the command line). Every GPU kernel is written and compiled, not yet run on a GPU
-(the owner's commands are in each "as built" section). See "as built" below.
+`DetectionDecoders`); step 7 (the command line: `idrak predict` and `idrak train` for image models from any registered
+family). **Plan 13 is complete** on the CPU. Left for the owner: the GPU runs (every GPU kernel is written and compiled,
+not yet run on a GPU; the commands are in each "as built" section). See "as built" below.
 
 **Goal.** `Idrak.Vision` and the core layers under it are general building blocks for any image application
 (classification, detection, segmentation, document reading), fast and lean on every device. Applications are not the
@@ -70,6 +71,90 @@ gains nothing OCR-specific; what the app needs from this plan comes from the ste
 
 **Decided 2026-10-09: both**, in one app, chosen per run. So plan 13 starts with step 3 and the parts of step 2 the
 recognizer uses (rectangular kernels and strides, bidirectional recurrent layers), then step 1; the sample follows.
+
+## Step 7, as built (2026-10-10)
+
+The command line names registries only; families, decoders and heads come from plug-ins (`-P`), and a name no registry
+holds exits 1 with the registry's message and "Load its plug-in with -P (--plugin)." (Arabic too). Code in
+`src/Idrak.Cli/Commands/Train/` (`ImagePredict.cs`, `ImageTraining.cs`, `ImageModelSupport.cs`; the commands in
+`TrainingCommands.cs`); the CLI now references Idrak.Vision.
+
+- **`idrak predict MODEL IMAGE|FOLDER|GLOB...`** (or `-i`, repeatable). MODEL is a checkpoint read by
+  `ImageModels.Load` (a folder, a .safetensors or an .onnx file) with its family's preprocessing, or a package `idrak
+  train` wrote for a detector or segmenter (its `training.json` names the task, classes and decoder; resized to its
+  input as trained). Classification: best class, probability, `--top N` (default 5). Detection: `ModelDetector` with the
+  model's decoder or `--decoder NAME` (`DetectionDecoders`), `--threshold` (0.25), `--iou` (0.5), `--max` (100); boxes in
+  the image's pixels. Segmentation: pixels and share per class; `-o DIR` writes one mask PNG per image (grey level = class)
+  through `ImageEncoders`. Features: shape, size and norm; `-o DIR` writes one .npy per image (float32, NumPy format 1.0),
+  `-j` without `-o` gives the values. Classes and boxes go to rows with `-o FILE` (.csv, .jsonl, .json; one row per box).
+  `--weights FILE` reads an .ikw over the checkpoint's weights. `--format csv|md`, `-j`, `-d` as everywhere; the package
+  path on rows is unchanged.
+- **Batches measured, not set.** Images are grouped by the size their preprocessing gives (from the file headers, nothing
+  decoded twice); each group runs in batches (`MeasuredBatches`): the first batch is one image, its peak device memory
+  (the backend's peak counter) against half the free memory the device reports sets the batch size; a batch the device
+  has no room for (`ResourceLimitExceededException`) is halved and run again (said with `-v`). `--batch N` is a ceiling
+  instead. No size, card or memory budget appears anywhere.
+- **`idrak train SPEC.json|MODEL --data PATH`.** An image run when MODEL is a checkpoint (fine-tuned through its family,
+  float32 weights), an image option is given, the builder network's output is [classes, h, w], or the data is image and
+  mask folders or annotations a format reads. Data: class folders (classification), `images/` + `masks/` with
+  `classes.txt` (segmentation), or an `AnnotationFormats` dataset (`--data-format auto|folder|masks|coco|yolo|voc|...`;
+  segmentation paints each object's mask, or its box, as its class + 1 over background 0). `--eval PATH` (else
+  `--validation` is held out with `--seed`). Samples are decoded, augmented (`--augment "<pipeline>"`, `Augmentations`;
+  mosaic and mixup refused for a classifier) and stretched to the network's input on worker threads by
+  `AugmentedImageLoader` (workers and batches ahead from the CPU threads and free memory, as step 5 built it). A family's
+  rescale and normalization are applied on the device to the loader's [0, 1] pixels (one `GroupAffine`).
+  `--loss` (cross-entropy, or any `VisionLosses` name: dice on the softmax, focal; giou for boxes), `--matcher`
+  (`BoxMatchers`), `--metric` (accuracy, or `VisionMetrics`: miou by default for segmentation, coco for detection; scored on
+  the evaluation data with the best epoch's weights, in the summary, `training.json` and `-j`), `--decoder` (detection).
+  A builder network writes a package (.ikm); a fine-tuned family its weights (.ikw, for `predict --weights`). run.json
+  keeps the image options under "image", so `idrak resume` continues the run (with `-P` again); `runs show` reads its log.
+- **Detection training** (Idrak.Vision, new): `DetectionHeads` (`Idrak.Vision.Abstractions`, a `SlotTable`, unguarded: a
+  head is its decoder's training side, registered under the decoder's name by the plug-in that brings the family; the
+  library registers none) turns the network's outputs into `DetectionCandidates` (corner boxes [N, P, 4], class logits
+  [N, P, C], objectness [N, P] or none) that carry gradients. `DetectionObjective.Loss` matches each image's candidates to
+  its truths with a `BoxMatchers` entry (IoU, or for "hungarian" the set-prediction quality; a truth no candidate overlaps
+  is scored by GIoU - 1 so the low-quality rule still finds its nearest candidate), then sums a `VisionLosses` box loss
+  over the matched candidates and a class loss (focal by default, one-hot targets) over the matched ones (with
+  objectness) or every candidate not ignored (without), each divided by the matched count, plus a binary cross-entropy
+  on the objectness over matched and background candidates. Matching runs on the host on the candidates' values; the
+  losses are the step-4 kernels.
+- **Out of device memory in training**: the step is split into micro-batches whose gradients add up (each scaled by its
+  share of the batch), halved again while the device has no room, said once on the console; `-j` reports the
+  micro-batch the run settled on.
+- **`ImageEncoders`** (core, `Idrak.Data.Abstractions`, decision 10: core is its only library user): the writing side of
+  `ImageCodecs`, "png" (8-bit grey or RGB, deflated with .NET's zlib) and "netpbm" (P5/P6), a `SlotTable` with Throw /
+  FallBack / Shadow (Shadow compares the bytes); `ImageEncoders.Save(path, image)` picks the encoder by extension.
+- **`explain` / `viz`** describe every builder step (the `normalize` step added, with its FLOPs); every op in
+  `LibraryNetworkOps` is known. **`idrak kernels`** lists the operations of steps 1 to 4 (convolution and its gradients,
+  average and adaptive pooling, interpolation, resize-normalize, CTC, box and focal losses).
+- **The test plug-in** (`tests/Idrak.PluginTests/ImagePlugin.cs`, loaded with `-P` as an app's plug-in is):
+  `RegisterIdrakPlugin` registers step 6's two families, an ONNX segmenter family ("OutsideOnnxSegmenter"), an ONNX
+  backbone family ("OutsideOnnxBackbone", features), the grid decoder and its head (`GridHead`: the decoder's reading as
+  tensors).
+- **Tests** (CPU): `IDRAK_FILTER="cli vision:"` 4: predict with the classifier (PyTorch's classes and probabilities, `--top`,
+  `-j`, `--format csv`, `-o` rows from a pattern), the grid detector (PyTorch's boxes, `--threshold`, `--iou`, `--decoder`
+  by name), the segmenter (mask PNGs equal to the library's `ModelSegmenter`, pixels per class, `--format md`), the
+  backbone (.npy files equal to the network's outputs); unregistered family and decoder exit 1 naming the registry and
+  `-P`; train a classifier from builder JSON with `--augment` (accuracy at least 0.8, run.json, log, the package predicts
+  a class folder right), fine-tune the plug-in's classifier (.ikw changes `predict --weights`), train a segmenter on image
+  and mask folders (mean IoU above 0.6, `--loss dice`, the package's mask PNGs at least 90% right), fine-tune the grid
+  detector on a 12-image COCO set evaluated on a 6-image YOLO set (`--metric coco`: map, map50; `--matcher hungarian
+  --loss ciou`), predict with the tuned weights; an unregistered family, head and loss refused. `"vision detection:
+  DetectionObjective"` 1: the loss as written with and without objectness, ignored candidates, an image without objects,
+  Hungarian, finite differences on boxes, logits and objectness.
+- **Left:** a measured choice between micro-batches and activation recomputation for image training (fine-tuning's
+  automatic memory settings are Nlp's and transformer-shaped); letterboxed training (the loader can, the CLI stretches,
+  as the families' resize does); segmentation families checked against a PyTorch reference (the ONNX test family is
+  checked against the library); the GPU runs below.
+
+**For the owner (GPU, from `D:\Projects\Idrak`):**
+
+```powershell
+$env:IDRAK_DEVICES="cuda"; $env:IDRAK_FILTER="cli vision:"; dotnet run -c Release --project tests/Idrak.Tests
+$env:IDRAK_DEVICES="vulkan"; $env:IDRAK_FILTER="cli vision:"; dotnet run -c Release --project tests/Idrak.Tests
+$env:IDRAK_DEVICES="cuda"; $env:IDRAK_FILTER="vision detection"; dotnet run -c Release --project tests/Idrak.Tests
+$env:IDRAK_DEVICES="vulkan"; $env:IDRAK_FILTER="vision detection"; dotnet run -c Release --project tests/Idrak.Tests
+```
 
 ## Step 3, as built (2026-10-09)
 
@@ -564,7 +649,6 @@ $env:IDRAK_DEVICES="cuda"; $env:IDRAK_FILTER="vision detection"; dotnet run -c R
 $env:IDRAK_DEVICES="vulkan"; $env:IDRAK_FILTER="conformance kit"; dotnet run -c Release --project tests/Idrak.Tests
 $env:IDRAK_DEVICES="vulkan"; $env:IDRAK_FILTER="vision detection"; dotnet run -c Release --project tests/Idrak.Tests
 $env:IDRAK_DEVICES="cuda"; $env:IDRAK_FILTER="vision augment"; dotnet run -c Release --project tests/Idrak.Tests
-```
 $env:IDRAK_DEVICES="cuda"; $env:IDRAK_FILTER="vision kernels"; dotnet run -c Release --project tests/Idrak.Tests
 $env:IDRAK_DEVICES="cuda"; $env:IDRAK_FILTER="conformance kit"; dotnet run -c Release --project tests/Idrak.Tests
 $env:IDRAK_DEVICES="cuda"; $env:IDRAK_FILTER="vision"; dotnet run -c Release --project tests/Idrak.Tests
