@@ -198,9 +198,18 @@ internal sealed partial class VulkanBackend
             return choice;
         }
 
+        return MeasureMixedPrompt(key, choice, mixed, format, x, weights, scales, y, m, n, k) == 1 ? mixed : choice;
+    }
+
+    // Measures the float32 choice (0) against the reduced-precision kernel (1) on a scratch output, apart from
+    // PromptChoice so its usual calls make no closure.
+    private int MeasureMixedPrompt(VulkanTuneKey key, int choice, int mixed, VulkanKernels.PackedFormat format, Storage x, Storage weights, Storage? scales,
+        Storage y, int m, int n, int k)
+    {
+        int decided = 0;
         WithScratch([y.Length], scratch =>
             decided = Tune(key, [0, 1], 0, c => RunPrompt(c == 1 ? mixed : choice, format, x, weights, scales, scratch[0], m, n, k)));
-        return decided == 1 ? mixed : choice;
+        return decided;
     }
 
     // PromptChoice as float32 products choose it (the reduced-precision kernel aside).
@@ -236,8 +245,16 @@ internal sealed partial class VulkanBackend
             return fallback;
         }
 
-        // The other paths' own choices (k splits, product kernels) are settled first, outside the timing; every
-        // candidate writes a scratch output.
+        return MeasurePrompt(key, candidates, fallback, format, x, weights, scales, y, m, n, k);
+    }
+
+    // Measures a prompt-sized packed product's candidates, apart from Float32PromptChoice so its usual calls make no
+    // closure. The other paths' own choices (k splits, product kernels) are settled first, outside the timing; every
+    // candidate writes a scratch output.
+    private int MeasurePrompt(VulkanTuneKey key, int[] candidates, int fallback, VulkanKernels.PackedFormat format, Storage x, Storage weights, Storage? scales,
+        Storage y, int m, int n, int k)
+    {
+        int choice = fallback;
         WithScratch([y.Length], scratch =>
         {
             foreach (int c in candidates)

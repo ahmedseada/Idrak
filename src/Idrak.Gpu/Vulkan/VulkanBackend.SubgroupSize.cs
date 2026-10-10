@@ -161,12 +161,17 @@ internal sealed unsafe partial class VulkanBackend
             return kernel;                                                     // measured on a later run
         }
 
-        // Candidates: the device's default (0), then each size it may require.
+        return Remember(kernel, MeasureSized(key, kernel, sizes, groupsX, groupsY, groupsZ, storages, push));
+    }
+
+    // Measures the candidates: the device's default (0), then each size it may require. Kept apart from Sized so a
+    // dispatch that finds its choice makes no closure.
+    private int MeasureSized(VulkanTuneKey key, VulkanKernel kernel, int[] sizes, uint groupsX, uint groupsY, uint groupsZ, ReadOnlySpan<Storage> storages,
+        ReadOnlySpan<byte> push)
+    {
         var pushed = push.ToArray();
-        (uint gx, uint gy, uint gz) = (groupsX, groupsY, groupsZ);
-        choice = TuneWithScratch(key, [0, .. sizes], 0, storages.ToArray(), kernel.Writes,
-            (size, bound) => Dispatch(Variant(kernel, size), gx, gy, gz, bound, pushed));
-        return Remember(kernel, choice);
+        return TuneWithScratch(key, [0, .. sizes], 0, storages.ToArray(), kernel.Writes,
+            (size, bound) => Dispatch(Variant(kernel, size), groupsX, groupsY, groupsZ, bound, pushed));
     }
 
     private VulkanKernel Remember(VulkanKernel kernel, int size)

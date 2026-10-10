@@ -731,13 +731,20 @@ internal sealed unsafe partial class VulkanBackend : Backend
 
             if (_capture is { } capture)
             {
-                var values = source.ToArray();                                 // at once, outside the graph being recorded
-                OutsideCapture(capture, () => UploadThroughStaging(values, block));
+                UploadOutsideCapture(capture, source, block);
                 return;
             }
 
             UploadThroughStaging(source, block);
         }
+    }
+
+    // An upload while a graph is recorded: at once, outside the graph being recorded. Kept apart from Upload so its
+    // usual calls make no closure.
+    private void UploadOutsideCapture(Capture capture, ReadOnlySpan<float> source, VulkanBlock block)
+    {
+        var values = source.ToArray();
+        OutsideCapture(capture, () => UploadThroughStaging(values, block));
     }
 
     private void UploadThroughStaging(ReadOnlySpan<float> source, VulkanBlock block)
