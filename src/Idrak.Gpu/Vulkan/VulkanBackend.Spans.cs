@@ -38,11 +38,21 @@ internal sealed partial class VulkanBackend
         }
         else if (CanTune && CandidateWidths.Length > 1)
         {
-            WithScratch([y.Length, lse ? logSumExp!.Length : 0], scratch => width = Tune(key, CandidateWidths, Width,
-                w => RunSpans(w, q, keys, values, starts, ends, scratch[0], lse ? scratch[1] : null, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant)));
+            width = MeasureSpans(key, q, keys, values, starts, ends, y, logSumExp, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
         }
 
         RunSpans(width, q, keys, values, starts, ends, y, logSumExp, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+    }
+
+    // Measures the candidate widths on scratch outputs, apart from the operation so its usual calls make no closure.
+    private int MeasureSpans(VulkanTuneKey key, Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage y, Storage? logSumExp, int heads,
+        int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant)
+    {
+        bool lse = logSumExp is not null;
+        int width = Width;
+        WithScratch([y.Length, lse ? logSumExp!.Length : 0], scratch => width = Tune(key, CandidateWidths, Width,
+            w => RunSpans(w, q, keys, values, starts, ends, scratch[0], lse ? scratch[1] : null, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant)));
+        return width;
     }
 
     private void RunSpans(int width, Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage y, Storage? logSumExp, int heads,
@@ -99,10 +109,8 @@ internal sealed partial class VulkanBackend
             }
             else if (CanTune && CandidateWidths.Length > 1)
             {
-                // The candidates add into scratch gradients.
-                WithScratch([dq.Length, dkeys.Length, dvalues.Length], scratch => width = Tune(key, CandidateWidths, Width,
-                    w => RunSpansBackward(w, q, keys, values, starts, ends, logSumExp, dOutput, delta, scratch[0], scratch[1], scratch[2], heads, kvHeads,
-                        headsPerTable, rows, keyRows, dim, scale, variant)));
+                width = MeasureSpansBackward(key, q, keys, values, starts, ends, logSumExp, dOutput, delta, dq, dkeys, dvalues, heads, kvHeads, headsPerTable,
+                    rows, keyRows, dim, scale, variant);
             }
 
             RunSpansBackward(width, q, keys, values, starts, ends, logSumExp, dOutput, delta, dq, dkeys, dvalues, heads, kvHeads, headsPerTable, rows, keyRows,
@@ -112,6 +120,19 @@ internal sealed partial class VulkanBackend
         {
             delta.Release();                                                   // reused in queue order
         }
+    }
+
+    // Measures the candidate widths, adding into scratch gradients; apart from the operation so its usual calls make no
+    // closure.
+    private int MeasureSpansBackward(VulkanTuneKey key, Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage logSumExp,
+        Storage dOutput, Storage delta, Storage dq, Storage dkeys, Storage dvalues, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim,
+        float scale, AttentionVariant variant)
+    {
+        int width = Width;
+        WithScratch([dq.Length, dkeys.Length, dvalues.Length], scratch => width = Tune(key, CandidateWidths, Width,
+            w => RunSpansBackward(w, q, keys, values, starts, ends, logSumExp, dOutput, delta, scratch[0], scratch[1], scratch[2], heads, kvHeads,
+                headsPerTable, rows, keyRows, dim, scale, variant)));
+        return width;
     }
 
     private void RunSpansBackward(int width, Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage logSumExp, Storage dOutput,
@@ -143,14 +164,22 @@ internal sealed partial class VulkanBackend
             return false;
         }
 
+        return MeasureAttentionPath(key, q, keys, values, starts, ends, mask, heads, rows, keyRows, dim, scale, training, (int)scores, (int)outputs, (int)keyFloats);
+    }
+
+    // Measures AttentionSpans against the composed scores (true: composed faster), apart from PrefersComposedAttention so
+    // its usual calls (a stored choice) make no closure.
+    private bool MeasureAttentionPath(VulkanTuneKey key, Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage? mask, int heads,
+        int rows, int keyRows, int dim, float scale, bool training, int scores, int outputs, int keyFloats)
+    {
         int chosen = 0;
         try
         {
             // Scratch: the scores, the weights, the output (also dOutput in the gradient); with the gradient the softmax's
             // gradient, the log-sum-exp, dq, dkeys and dvalues.
             int[] lengths = training
-                ? [(int)scores, (int)scores, (int)outputs, (int)scores, heads * rows, (int)outputs, (int)keyFloats, (int)keyFloats]
-                : [(int)scores, (int)scores, (int)outputs];
+                ? [scores, scores, outputs, scores, heads * rows, outputs, keyFloats, keyFloats]
+                : [scores, scores, outputs];
             WithScratch(lengths, scratch =>
             {
                 void Run(int c)

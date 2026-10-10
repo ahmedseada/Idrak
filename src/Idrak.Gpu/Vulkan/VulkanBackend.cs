@@ -48,6 +48,13 @@ internal sealed unsafe partial class VulkanBackend : Backend
     // Cached blocks by length (floats); their memory stays carved from its page until ReleaseCachedMemory.
     private readonly Dictionary<int, Stack<VulkanBlock>> _pool = [];
 
+    // Lengths with cached blocks, for best-fit reuse when no block of the exact length is cached (as the CUDA pool).
+    private readonly SortedSet<int> _poolSizes = [];
+
+    // A cached block up to this fraction longer than a request (of at least BestFitMinimum floats) may serve it.
+    private const int BestFitSlack = 4;                                          // 1 / 4: at most 25% longer
+    private const int BestFitMinimum = 1024;
+
     // The staging buffer, created on first use; copies larger than it go in chunks.
     private VulkanBlock? _staging;
 
@@ -616,14 +623,10 @@ internal sealed unsafe partial class VulkanBackend : Backend
         {
             // While this thread records a graph, blocks the recording freed come first (VulkanBackend.Graphs.cs).
             block = _capture is not null ? TakeCaptured(length) : null;
-            if (block is null && _pool.TryGetValue(length, out var bucket) && bucket.Count > 0)
-            {
-                block = bucket.Pop();
-            }
-
+            block ??= TakeCached(length);
             if (block is not null)
             {
-                _memory.Reused(bytes);
+                _memory.Reused(BlockBytes(block.Capacity));
             }
         }
 
@@ -646,6 +649,36 @@ internal sealed unsafe partial class VulkanBackend : Backend
         return new VulkanStorage(this, block, length);
     }
 
+    // A cached block for `length` floats: the exact length, else the smallest cached length at most 25% longer (varying
+    // shapes, e.g. batches or prompts of other sizes, then reuse blocks instead of caching one of every length). Under
+    // the pool lock.
+    private VulkanBlock? TakeCached(int length)
+    {
+        if (!_pool.TryGetValue(length, out var bucket) || bucket.Count == 0)
+        {
+            if (length < BestFitMinimum || length == int.MaxValue || _poolSizes.Count == 0)
+            {
+                return null;
+            }
+
+            var fitting = _poolSizes.GetViewBetween(length + 1, (int)Math.Min(int.MaxValue, (long)length + length / BestFitSlack));
+            if (fitting.Count == 0)
+            {
+                return null;
+            }
+
+            bucket = _pool[fitting.Min];
+        }
+
+        var block = bucket.Pop();
+        if (bucket.Count == 0)
+        {
+            _poolSizes.Remove(block.Capacity);
+        }
+
+        return block;
+    }
+
     // Called when the last reference is released, possibly from the finalizer thread, so it only touches the pool
     // (queued work may still use the block: it is reused in queue order, and freed only after a wait).
     public override void Return(Storage storage)
@@ -661,9 +694,14 @@ internal sealed unsafe partial class VulkanBackend : Backend
             // Freed while this thread records a graph: the graph owns it (VulkanBackend.Graphs.cs), so other work does
             // not reuse memory the graph uses on every replay.
             var bucket = _capture is not null ? CaptureFreeFor(block.Capacity) : null;
-            if (bucket is null && !_pool.TryGetValue(block.Capacity, out bucket))
+            if (bucket is null)
             {
-                _pool[block.Capacity] = bucket = new Stack<VulkanBlock>();
+                if (!_pool.TryGetValue(block.Capacity, out bucket))
+                {
+                    _pool[block.Capacity] = bucket = new Stack<VulkanBlock>();
+                }
+
+                _poolSizes.Add(block.Capacity);
             }
 
             bucket.Push(block);
@@ -698,6 +736,7 @@ internal sealed unsafe partial class VulkanBackend : Backend
                 }
 
                 _pool.Clear();
+                _poolSizes.Clear();
             }
 
             FreeEmptyPages();
@@ -731,13 +770,20 @@ internal sealed unsafe partial class VulkanBackend : Backend
 
             if (_capture is { } capture)
             {
-                var values = source.ToArray();                                 // at once, outside the graph being recorded
-                OutsideCapture(capture, () => UploadThroughStaging(values, block));
+                UploadOutsideCapture(capture, source, block);
                 return;
             }
 
             UploadThroughStaging(source, block);
         }
+    }
+
+    // An upload while a graph is recorded: at once, outside the graph being recorded. Kept apart from Upload so its
+    // usual calls make no closure.
+    private void UploadOutsideCapture(Capture capture, ReadOnlySpan<float> source, VulkanBlock block)
+    {
+        var values = source.ToArray();
+        OutsideCapture(capture, () => UploadThroughStaging(values, block));
     }
 
     private void UploadThroughStaging(ReadOnlySpan<float> source, VulkanBlock block)
