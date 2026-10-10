@@ -326,7 +326,8 @@ internal sealed class Recognizer : IDisposable
 /// How many lines go through the network at once, measured on the running device as the library's image commands do: the
 /// first batch is one line (the widest), whose peak memory per step of width sets the rest (as many steps as fit in half
 /// the memory the device reports free); a batch the device has no room for is halved and run again. A ceiling may be
-/// given instead (<c>--batch</c>). No card or memory size is assumed.
+/// given instead (<c>--batch</c>). A batch takes only items within an eighth of its first's width (items come widest
+/// first), so little of it is padding. No card or memory size is assumed.
 /// </summary>
 internal sealed class MeasuredBatches(Device device, int? ceiling = null)
 {
@@ -370,24 +371,40 @@ internal sealed class MeasuredBatches(Device device, int? ceiling = null)
         }
     }
 
-    // The next batch: one item until measured; then as many as fit (each padded to the first's width, the widest).
+    // The next batch: one item until measured; then as many as fit (each padded to the first's width, the widest), of
+    // those only the items within an eighth of the first's width (Similar).
     private int Next(int start, int count, Func<int, int> steps)
     {
         int left = count - start;
         int limit = Math.Min(left, Math.Min(_halvedTo, ceiling ?? int.MaxValue));
         if (!_measured)
         {
-            return ceiling is null ? 1 : limit;
+            return ceiling is null ? 1 : Similar(start, limit, steps);
         }
 
         if (_perStep is not { } perStep || device.Backend.AvailableMemory() is not { } free)
         {
-            return limit;
+            return Similar(start, limit, steps);
         }
 
         long budget = free / 2;
         long width = steps(start);
-        return (int)Math.Clamp(budget / Math.Max(1, perStep * width), 1, limit);
+        return Similar(start, (int)Math.Clamp(budget / Math.Max(1, perStep * width), 1, limit), steps);
+    }
+
+    // Of `n` items from `start` (widest first), the leading ones at least seven eighths of the first's width. A line in a
+    // batch is padded to the widest, and the recognizer's reverse LSTM reads that padding before the line: training's
+    // batches (lines of similar width) hardly have any, so a reading with much more drifts; and padding is work for nothing.
+    private static int Similar(int start, int n, Func<int, int> steps)
+    {
+        long first = steps(start);
+        int similar = 1;
+        while (similar < n && steps(start + similar) * 8L >= first * 7)
+        {
+            similar++;
+        }
+
+        return similar;
     }
 }
 
