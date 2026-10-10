@@ -742,28 +742,6 @@ internal sealed class TuneTool(ToolConsole console)
         return transcripts;
     }
 
-    // Conversations tokenized into training sequences (their images' blocks of tokens from the family's encoder).
-    private List<TrainingSequence> EncodeTranscripts(ChatTranscriptEncoder encoder, IReadOnlyList<ChatTranscript> transcripts, string what)
-    {
-        var watch = Stopwatch.StartNew();
-        var sequences = new List<TrainingSequence>();
-        string label = $"tokenizing {what}";                                    // made once, not per conversation
-        for (int i = 0; i < transcripts.Count; i++)
-        {
-            if (encoder.Encode(transcripts[i], tuning.MaxLength) is { } sequence)
-            {
-                sequences.Add(sequence);
-            }
-
-            console.Progress(label, i + 1, transcripts.Count, watch.Elapsed, unit: "conversations");
-        }
-
-        console.Finish();
-        _out.WriteLine($"{what}: {sequences.Count:N0} sequences, {sequences.Sum(q => (long)q.Tokens.Length):N0} tokens, {sequences.Sum(q => (long)q.TrainedTokens):N0} trained; "
-                       + $"{transcripts.Count - sequences.Count:N0} conversations without trainable tokens skipped ({watch.Elapsed.TotalSeconds:F1} s)");
-        return sequences;
-    }
-
     // The run plan's image line: images, distinct ones, blocks per image, image tokens.
     private void ShowImages(IReadOnlyList<TrainingSequence> sequences, string what)
     {
@@ -814,7 +792,9 @@ internal sealed class TuneTool(ToolConsole console)
     private static string Score(TuningAnswerReport report) =>
         FormattableString.Invariant($"{report.Metric} {report.Score.Value:F4} on {report.Answers.Count} answers ({(report.LowerIsBetter ? "lower" : "higher")} is better)");
 
-    // train on conversation files (messages or ShareGPT), with their images through the model's vision family.
+    // train on conversation files (messages or ShareGPT), with their images through the model's vision family: the
+    // library's ConversationTuning prepares and trains; the command keeps its extras between the two (balancing, profiling,
+    // distill's hook, the memory report).
     private int TrainOnTranscripts(PretrainedModel model, IReadOnlyList<string> files)
     {
         if (rowKind == RowKind.Preference)
@@ -823,111 +803,88 @@ internal sealed class TuneTool(ToolConsole console)
             return 1;
         }
 
-        // The adapter being continued keeps its preparation unless the command line gives one.
-        var images = !preparation.IsEmpty || adapterFolder is null ? preparation : TuningImages.Read(adapterFolder) ?? preparation;
-        var (vision, cache) = CreateVision(model, images with { Family = null }, parts);
-        using var ownedCache = cache;
-        using var ownedVision = vision;
-        if (vision is not null)
+        if (model.Vision is null && ImageOptionsGiven)
         {
-            _out.WriteLine($"images: {vision}");
+            throw new InvalidOperationException($"{baseModel} has no vision part (a text-only checkpoint): --images, --image-transform, --vision, --grayscale, "
+                                                + "--train-projector and --feature-cache are for a vision-language model.");
         }
 
-        var encoder = new ChatTranscriptEncoder(model.JinjaTemplate ?? throw new InvalidOperationException("The model has no chat template."),
-            model.Tokenizer ?? throw new InvalidOperationException("The model has no tokenizer.")) { Vision = vision };
-        var trainTranscripts = ReadTranscripts(files, "training");
-        var evaluationTranscripts = evalFile is not null ? ReadTranscripts([evalFile], "evaluation") : null;
-        if (evaluationTranscripts is null && evalFraction > 0 && trainTranscripts.Count > 1)
+        if (tuningMetric is not null && evalFile is null && evalFraction <= 0)
         {
-            // A seeded part of the conversations held out (at least one, never all).
-            int held = Math.Clamp((int)Math.Round(trainTranscripts.Count * evalFraction), 1, trainTranscripts.Count - 1);
-            var order = Enumerable.Range(0, trainTranscripts.Count).ToArray();
-            new Random(seed).Shuffle(order);
-            var heldOut = order.Take(held).ToHashSet();
-            evaluationTranscripts = [.. heldOut.Order().Select(i => trainTranscripts[i])];
-            trainTranscripts = [.. trainTranscripts.Where((_, i) => !heldOut.Contains(i))];
-            _out.WriteLine($"evaluation: {held:N0} conversations held out ({evalFraction:P1})");
-        }
-
-        var train = EncodeTranscripts(encoder, trainTranscripts, "training");
-        var evaluation = evaluationTranscripts is null ? null : EncodeTranscripts(encoder, evaluationTranscripts, "evaluation");
-        if (train.Count == 0)
-        {
-            _error.WriteLine("error: nothing to train on (no conversation with an assistant turn).");
+            _error.WriteLine($"error: --metric {tuningMetric} scores answers on evaluation data: give --eval FILE or --eval-fraction F.");
             return 1;
         }
 
-        if (vision is not null)
+        // The adapter being continued keeps its preparation unless the command line gives one.
+        var images = !preparation.IsEmpty || adapterFolder is null ? preparation : TuningImages.Read(adapterFolder) ?? preparation;
+        using var run = ConversationTuning.Prepare(model, files, new ConversationTuningOptions
         {
-            ShowImages(train, "training");
-            ShowImages(evaluation ?? [], "evaluation");
-        }
-
-        TuningAnswerScorer? scorer = null;
-        if (tuningMetric is not null)
+            Evaluation = evalFile, EvaluationFraction = evalFraction, Seed = seed, DataFormat = DataFormat, Images = imagesRoot, System = systemPrompt,
+            Preparation = model.Vision is null ? TuningImages.None : images, VisionParts = parts, FeatureCache = featureCache ?? FeatureCaches.Memory, FeatureFolder = FeatureFolder,
+            Metric = tuningMetric, MetricEvery = metricEvery, MetricSamples = metricSamples, MaxNewTokens = maxNew, Think = noThink ? false : null, Tuning = tuning,
+        }, new Reporter<TuningStage>(stage =>
         {
-            if (evaluationTranscripts is not { Count: > 0 })
+            console.Progress(stage.Name, stage.Done, stage.Total, stage.Elapsed, unit: "conversations");
+            if (stage.Done == stage.Total)
             {
-                _error.WriteLine($"error: --metric {tuningMetric} scores answers on evaluation data: give --eval FILE or --eval-fraction F.");
-                return 1;
+                console.Finish();
             }
+        }), _out.WriteLine);
 
-            scorer = new TuningAnswerScorer(evaluationTranscripts, tuningMetric, metricSamples)
-            {
-                Every = metricEvery, MaxNewTokens = maxNew, ContextLength = Math.Min(model.MaxPositions, tuning.MaxLength + maxNew), Think = noThink ? false : null,
-            };
+        if (run.Vision is not null)
+        {
+            ShowImages(run.TrainingSequences, "training");
+            ShowImages(run.EvaluationSequences ?? [], "evaluation");
         }
 
         if (balance > 1)
         {
-            var (balanced, answers) = FineTuner.BalanceAnswers(train, balance, seed: seed);
+            var (balanced, answers) = FineTuner.BalanceAnswers(run.TrainingSequences, balance, seed: seed);
             _out.WriteLine(answers.Count is > 1 and <= 64 ? $"balanced {answers.Count} answers (at most {balance}×)"
                 : $"--balance: {answers.Count:N0} distinct answers (free text, or one): the data is used as it is");
-            train = answers.Count is > 1 and <= 64 ? balanced : train;
+            if (answers.Count is > 1 and <= 64)
+            {
+                run.TrainingSequences = balanced;
+            }
         }
 
-        tuning = tuning with { Vision = vision, Answers = scorer };
+        tuning = run.Tuning;
         if (profileTraining)
         {
-            return Profile(model, train);
+            return Profile(model, [.. run.TrainingSequences]);
         }
 
         if (BeforeTraining is { } prepare)
         {
-            if (prepare(model, train, evaluation, tuning) is not { } prepared)
+            if (prepare(model, run.TrainingSequences, run.EvaluationSequences, tuning) is not { } prepared)
             {
                 return 0;
             }
 
-            tuning = prepared;
+            run.Tuning = tuning = prepared;
         }
 
-        _out.WriteLine($"assistant turns start with {JsonValue.Create(encoder.AssistantHeader).ToJsonString(readable)} and end with {JsonValue.Create(encoder.AssistantEnd).ToJsonString(readable)}");
-        if (evaluation is { Count: > 0 })
+        _out.WriteLine($"assistant turns start with {JsonValue.Create(run.Encoder.AssistantHeader).ToJsonString(readable)} and end with {JsonValue.Create(run.Encoder.AssistantEnd).ToJsonString(readable)}");
+        if (run.EvaluationLoss() is { } before)
         {
-            _out.WriteLine($"evaluation loss before training: {FineTuner.Evaluate(model, evaluation, tuning.BatchTokens, tuning.LossChunkRows, vision: vision):F4}");
+            _out.WriteLine($"evaluation loss before training: {before:F4}");
         }
 
-        if (scorer is not null)
+        if (run.Scorer is not null)
         {
             var clock = Stopwatch.StartNew();
-            var before = scorer.Score(model, vision, new Reporter<TuningAnswer>(_ => { }));
-            _out.WriteLine($"before training: {Score(before)}, {before.MeanTokens:F0} tokens per answer ({clock.Elapsed.TotalSeconds:F1} s)");
+            var scored = run.ScoreAnswers()!;
+            _out.WriteLine($"before training: {Score(scored)}, {scored.MeanTokens:F0} tokens per answer ({clock.Elapsed.TotalSeconds:F1} s)");
         }
 
-        return RunTraining(model, (progress, cancel, trace) => FineTuner.Train(model, train, evaluation, tuning, output, progress, cancel, trace), folder =>
+        // Stopped: the library saved the adapter so far; RunTraining reports it.
+        return RunTraining(model, (progress, cancel, trace) =>
         {
-            if (vision is { Parts.Count: > 0 })
+            if (run.Train(output!, baseModel, progress, cancel, trace).Stopped)
             {
-                model.KeepTrainedVision(vision.Encoder, vision.Parts);
+                throw new OperationCanceledException(cancel);
             }
-
-            model.SaveAdapter(folder);
-            if (vision is not null && train.Any(s => s.Images.Count > 0))
-            {
-                (vision.Images with { Family = vision.Vision.Family }).Save(folder);
-            }
-        }, vision);
+        }, _ => { }, run.Vision);
     }
 
     // evaluate on conversation files (with images): the loss and answers generated and scored by a metric

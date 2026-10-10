@@ -101,6 +101,12 @@ public sealed class TuningAnswerScorer
     /// <summary>The reasoning mode passed to the template, when the conversation sets none (null: the template's default).</summary>
     public bool? Think { get; init; }
 
+    /// <summary>
+    /// Receives each answer as it is scored when <see cref="Score"/> is given no progress of its own (as when the tuner
+    /// scores while training), or null.
+    /// </summary>
+    public IProgress<TuningAnswer>? Progress { get; set; }
+
     /// <summary>The conversations scored: each prompt and reference answer.</summary>
     public IReadOnlyList<(IReadOnlyList<ChatMessage> Prompt, string Reference, IReadOnlyList<ToolDefinition> Tools, bool? Think)> Items { get; }
 
@@ -116,12 +122,13 @@ public sealed class TuningAnswerScorer
     /// </summary>
     /// <param name="model">The model (a chat template and a tokenizer).</param>
     /// <param name="vision">The image side the training sequences were encoded with; null: one made from the model when a prompt holds images.</param>
-    /// <param name="progress">Receives each answer as it is scored.</param>
+    /// <param name="progress">Receives each answer as it is scored (<see cref="Progress"/> when null).</param>
     /// <param name="cancellationToken">Stops between tokens.</param>
     /// <exception cref="InvalidOperationException">The model has no chat template, or a prompt holds images and the model has no vision part.</exception>
     public TuningAnswerReport Score(PretrainedModel model, TuningVision? vision = null, IProgress<TuningAnswer>? progress = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(model);
+        progress ??= Progress;
         if (vision is not null && !ReferenceEquals(vision.Model, model))
         {
             throw new ArgumentException("The vision side was made for another model (TuningVision.Create with this model).", nameof(vision));

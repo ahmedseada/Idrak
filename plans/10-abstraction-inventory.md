@@ -152,7 +152,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Nlp.Abstractions.ITuningMetric` | interface | public | — | ErrorRateMetric, TuningMetrics.GuardedMetric |  | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.JsonRepairs` | registry | public | — |  | lenient | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.TeacherDistributions` | abstract class | public | Device, Tensor | ModelTeacher.Batch, StoredTeacher.Batch |  | Nlp | Nlp |
-| `Idrak.Nlp.Abstractions.TuningDataFormats` | registry | public | — |  | messages, sharegpt | — | Nlp |
+| `Idrak.Nlp.Abstractions.TuningDataFormats` | registry | public | — |  | messages, sharegpt | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.TuningMetrics` | registry | public | — |  | cer, wer | Nlp | Nlp |
 | `Idrak.Retrieval.Abstractions.IReranker` | interface | public | — | CrossEncoder |  | Nlp | Nlp |
 | `Idrak.Retrieval.Abstractions.IRetriever` | interface | public | — | RetrievalIndex |  | Nlp | Nlp |
