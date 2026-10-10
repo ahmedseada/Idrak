@@ -194,7 +194,7 @@ internal sealed class RunLogWriter(string path, TrainingStarted started, int epo
         history.Epochs.Count > 0 ? history.Epochs[^1].Loss : double.NaN, history.BestEpoch + epochOffset, history.BestLoss, history.StoppedEarly,
         context.CancellationToken.IsCancellationRequested));
 
-    private void Append(object record)
+    internal void Append(object record)
     {
         using var stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read);
         using (var writer = new Utf8JsonWriter(stream))
