@@ -246,7 +246,7 @@ public sealed partial class Linear
     /// </summary>
     internal static (Tensor Sum, Tensor Normalized)? MatMulPackedAddRmsNorm(Tensor x, Layers.Linear layer, Tensor residual, Layers.RMSNorm norm)
     {
-        using var offload = Offloading.EnterMany([layer, norm], x);
+        using var offload = x.Device.Backend.Offload is null ? default : Offloading.EnterMany([layer, norm], x);   // no array without offloading
         x.ThrowIfDisposed();
         residual.ThrowIfDisposed();
         int k = x.Shape[^1], m = x.Size / Math.Max(1, k), n = layer.OutFeatures;
@@ -286,7 +286,7 @@ public sealed partial class Linear
     /// </summary>
     internal static Tensor? MatMulPackedGatedPair(Tensor input, Layers.Linear gate, Layers.Linear up, int activation)
     {
-        using var offload = Offloading.EnterMany([gate, up], input);
+        using var offload = input.Device.Backend.Offload is null ? default : Offloading.EnterMany([gate, up], input);   // no array without offloading
         input.ThrowIfDisposed();
         int k = input.Shape[^1], m = input.Size / Math.Max(1, k), n = gate.OutFeatures;
         if (gate.PackedWeight is not { Format: { } format } gateWeight || up.PackedWeight is not { } upWeight || upWeight.Format != format
@@ -394,8 +394,20 @@ public sealed partial class Linear
             }
         }
 
-        var parameters = layers.SelectMany(l => l.Bias is null ? new[] { l.Weight } : [l.Weight, l.Bias]).ToList();
-        if (Autograd.IsEnabled && (x.RequiresGrad || parameters.Any(p => p.RequiresGrad)))
+        var parameters = new List<Tensor>(2 * layers.Count);
+        bool trains = false;
+        foreach (var layer in layers)
+        {
+            parameters.Add(layer.Weight);
+            trains |= layer.Weight.RequiresGrad;
+            if (layer.Bias is { } bias)
+            {
+                parameters.Add(bias);
+                trains |= bias.RequiresGrad;
+            }
+        }
+
+        if (Autograd.IsEnabled && (x.RequiresGrad || trains))
         {
             y.Record("project_packed", g =>
             {
@@ -436,8 +448,14 @@ public sealed partial class Linear
         int d = x.Shape[^1], m = x.Size / Math.Max(1, d), f = up.OutFeatures;
         Tensor wu = up.Weight, wd = down.Weight;
         Tensor? bu = up.Bias, bd = down.Bias;
-        var parameters = new[] { wu, bu, wd, bd }.OfType<Tensor>().ToList();
-        bool record = Autograd.IsEnabled && (x.RequiresGrad || parameters.Any(p => p.RequiresGrad));
+        Tensor[] parameters = (bu, bd) switch
+        {
+            (null, null) => [wu, wd],
+            ({ } b, null) => [wu, b, wd],
+            (null, { } b) => [wu, wd, b],
+            ({ } b1, { } b2) => [wu, b1, wd, b2],
+        };
+        bool record = Autograd.IsEnabled && (x.RequiresGrad || wu.RequiresGrad || wd.RequiresGrad || bu is { RequiresGrad: true } || bd is { RequiresGrad: true });
         long start = Telemetry.Start(TelemetryLevel.Operations);
         var backend = x.Backend;
         var act = Tensor.Empty([m, f], x.Device, track: false);
