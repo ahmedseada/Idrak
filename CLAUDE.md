@@ -21,6 +21,9 @@ These are the owner's standing rules. They hold in every session, after every co
 - **Tests.** Never run the full test suite, anywhere, by anyone but the owner. Only targeted runs: always
   `IDRAK_DEVICES=cpu` with an `IDRAK_FILTER` group or name for the code changed (sample test projects with their own
   filter). GPU tests, apps and training runs are the owner's: give the exact commands.
+- **Builds.** Build only after a code change, and only the projects that changed; then run every filtered CPU test
+  with `--no-build` on that one build. A merge without conflicts gets no build and no tests (its branch was built and
+  tested already). At most two agents at a time, so builds do not compete for the machine.
 - **Keep the owner informed.** Before each step, say in a line what you are about to do and why; never go quiet while
   working. The same for the software: long work shows live progress (what it is doing, how far, how fast, time left).
 - **Commands for the owner** are exact PowerShell commands for Windows, with the repo at `D:\Projects\Idrak`.
