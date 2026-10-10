@@ -1302,6 +1302,43 @@ public abstract partial class Backend
         int step, int next, int previous, int steps, int batch, int hiddenSize) => false;
 
     /// <summary>
+    /// Every step of <see cref="LstmStepKernel"/> in one call: for i = 0, 1, …, <paramref name="steps"/> - 1 the step t = i
+    /// (<paramref name="reverse"/>: t = steps - 1 - i) after the step taken before it (none for the first), the same values
+    /// as those calls in that order, the cell state carried in cell[n, j] (the zero initial state when the caller zeroes
+    /// it). One launch a sequence, where the step kernel takes one a step. With <paramref name="batch"/> 0 nothing is read or
+    /// written. Returns false when the device has no such kernel for these sizes (callers then take the step kernels).
+    /// </summary>
+    public virtual bool LstmSequenceKernel(Storage projected, Storage weights, Storage cell, Storage output, Storage? gates, Storage? cells, int steps, int batch,
+        int hiddenSize, bool reverse) => false;
+
+    /// <summary>
+    /// Every step of <see cref="LstmStepBackwardKernel"/> in one call, the steps from the last taken by
+    /// <see cref="LstmSequenceKernel"/> to the first, each with the step taken before it and after it (none at the ends):
+    /// the same values as those calls in that order. dCell starts as the caller gives it (zero for the loss's end). With
+    /// <paramref name="batch"/> 0 nothing is read or written. Returns false when the device has no such kernel for these
+    /// sizes.
+    /// </summary>
+    public virtual bool LstmSequenceBackwardKernel(Storage gates, Storage cells, Storage? dOutput, Storage weightsT, Storage dCell, Storage dGates, int steps,
+        int batch, int hiddenSize, bool reverse) => false;
+
+    /// <summary>
+    /// Every step of <see cref="GruStepKernel"/> in one call, the steps taken as <see cref="LstmSequenceKernel"/> takes
+    /// them: the same values as those calls in that order. With <paramref name="batch"/> 0 nothing is read or written.
+    /// Returns false when the device has no such kernel for these sizes.
+    /// </summary>
+    public virtual bool GruSequenceKernel(Storage projected, Storage weights, Storage? hiddenBias, Storage output, Storage? gates, int steps, int batch,
+        int hiddenSize, bool reverse) => false;
+
+    /// <summary>
+    /// Every step of <see cref="GruStepBackwardKernel"/> in one call, the steps taken as
+    /// <see cref="LstmSequenceBackwardKernel"/> takes them: the same values as those calls in that order. dHidden starts as
+    /// the caller gives it (zero for the loss's end). With <paramref name="batch"/> 0 nothing is read or written. Returns
+    /// false when the device has no such kernel for these sizes.
+    /// </summary>
+    public virtual bool GruSequenceBackwardKernel(Storage gates, Storage output, Storage? dOutput, Storage weightsT, Storage dHidden, Storage dGates,
+        Storage dRecurrent, int steps, int batch, int hiddenSize, bool reverse) => false;
+
+    /// <summary>
     /// Box overlap losses, torchvision's formulas: for each of <paramref name="count"/> pairs of boxes given by their corners
     /// (x1, y1, x2, y2; predicted and target are [count, 4]), losses[i] = 1 - IoU (<see cref="BoxOverlap.IoU"/>), plus the
     /// enclosing box's empty share (GIoU), plus the centres' squared distance over the enclosing box's squared diagonal

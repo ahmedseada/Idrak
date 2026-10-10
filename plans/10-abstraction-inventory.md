@@ -187,16 +187,16 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 
 ## The device contract (`Backend`)
 
-`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 156 virtual methods, 6 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `HipBackend`, `VulkanBackend`. Each
-operation (138, `Ops`) is a `NameKernel` method, the device's own kernel; `Backend.Name(...)` runs the kernel registered
+`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 160 virtual methods, 6 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `HipBackend`, `VulkanBackend`. Each
+operation (142, `Ops`) is a `NameKernel` method, the device's own kernel; `Backend.Name(...)` runs the kernel registered
 for the device in `Kernels` instead, where there is one (plan 9). The rest is device plumbing: memory, copies, graphs, profiling.
 
 | Device | Methods overridden |
 |---|---|
-| `CpuBackend` | 130 of 166 |
-| `CudaBackend` | 161 of 166 |
-| `HipBackend` | 23 of 166 |
-| `VulkanBackend` | 128 of 166 |
+| `CpuBackend` | 130 of 170 |
+| `CudaBackend` | 165 of 170 |
+| `HipBackend` | 23 of 170 |
+| `VulkanBackend` | 128 of 170 |
 
 | Operation | Kind | Cpu | Cuda | Hip | Vulkan |
 |---|---|---|---|---|---|
@@ -284,6 +284,8 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `GroupScaleShiftKernel(8)` | virtual | ✓ | ✓ |  | ✓ |
 | `GruCellBackwardKernel(12)` | virtual | ✓ | ✓ |  |  |
 | `GruCellKernel(10)` | virtual | ✓ | ✓ |  |  |
+| `GruSequenceBackwardKernel(11)` | virtual |  | ✓ |  |  |
+| `GruSequenceKernel(9)` | virtual |  | ✓ |  |  |
 | `GruStepBackwardKernel(13)` | virtual |  | ✓ |  |  |
 | `GruStepKernel(10)` | virtual |  | ✓ |  |  |
 | `HistoryPushKernel(5)` | virtual | ✓ | ✓ |  | ✓ |
@@ -303,6 +305,8 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `LayerNormTrainKernel(8)` | virtual | ✓ | ✓ |  | ✓ |
 | `LstmCellBackwardKernel(12)` | virtual | ✓ | ✓ |  |  |
 | `LstmCellKernel(11)` | virtual | ✓ | ✓ |  |  |
+| `LstmSequenceBackwardKernel(10)` | virtual |  | ✓ |  |  |
+| `LstmSequenceKernel(10)` | virtual |  | ✓ |  |  |
 | `LstmStepBackwardKernel(12)` | virtual |  | ✓ |  |  |
 | `LstmStepKernel(11)` | virtual |  | ✓ |  |  |
 | `MatMulBiasKernel(7)` | virtual |  | ✓ |  | ✓ |

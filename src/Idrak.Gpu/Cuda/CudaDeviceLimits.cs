@@ -33,6 +33,9 @@ internal sealed record CudaDeviceLimits
     public int MemoryBusWidth { get; init; }
     public int ClockKhz { get; init; }
     public int MemoryClockKhz { get; init; }
+    /// <summary>Whether the device runs cooperative launches (every block resident at once: grid barriers).</summary>
+    public bool CooperativeLaunch { get; init; }
+
     public required int MaxGridY { get; init; }
     public required int MaxGridZ { get; init; }
     public long MemoryBytes { get; init; }
@@ -44,7 +47,7 @@ internal sealed record CudaDeviceLimits
     private const int MaxThreadsPerBlockAttribute = 1, MaxGridDimYAttribute = 6, MaxGridDimZAttribute = 7, MaxSharedPerBlockAttribute = 8,
         WarpSizeAttribute = 10, MaxRegistersPerBlockAttribute = 12, ClockRateAttribute = 13, MemoryClockRateAttribute = 36,
         BusWidthAttribute = 37, L2SizeAttribute = 38, MaxThreadsPerMultiprocessorAttribute = 39, MaxSharedPerMultiprocessorAttribute = 81,
-        MaxRegistersPerMultiprocessorAttribute = 82, MaxSharedPerBlockOptinAttribute = 97, MaxBlocksPerMultiprocessorAttribute = 106;
+        MaxRegistersPerMultiprocessorAttribute = 82, MaxSharedPerBlockOptinAttribute = 97, MaxBlocksPerMultiprocessorAttribute = 106, CooperativeLaunchAttribute = 95;
 
     /// <summary>Reads the limits of device <paramref name="device"/> (an attribute the driver does not know reads as 0).</summary>
     public static CudaDeviceLimits Read(int device, long memoryBytes)
@@ -69,6 +72,7 @@ internal sealed record CudaDeviceLimits
             MemoryBusWidth = Get(BusWidthAttribute),
             ClockKhz = Get(ClockRateAttribute),
             MemoryClockKhz = Get(MemoryClockRateAttribute),
+            CooperativeLaunch = Get(CooperativeLaunchAttribute) != 0,
             MaxGridY = Get(MaxGridDimYAttribute),
             MaxGridZ = Get(MaxGridDimZAttribute),
             MemoryBytes = memoryBytes,
@@ -110,6 +114,7 @@ internal sealed record CudaDeviceLimits
             RegistersPerBlock = 65536,
             RegistersPerMultiprocessor = 65536,
             L2Bytes = l2Bytes,
+            CooperativeLaunch = cc >= 60,                                                // compute 6.0 on
             MaxGridY = 65535,
             MaxGridZ = 65535,
             MemoryBytes = memoryBytes,

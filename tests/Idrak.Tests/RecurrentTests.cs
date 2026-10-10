@@ -17,6 +17,7 @@ internal static partial class Tests
         ("recurrent: gradient: the fused LSTM and GRU against finite differences (inputs and weights, both directions, the candidate bias)", RecurrentFusedGradients),
         ("recurrent: the device's LSTM and GRU cell kernels and their gradients match the CPU's (forward and reverse steps, the first step, with and without saved gates and the candidate bias, units past a vector width)", RecurrentCellKernelsMatchCpu),
         ("recurrent: the device's LSTM and GRU step kernels (the recurrent product inside) and their gradients match the CPU's product and cell kernels (forward and reverse steps, the first and last steps, with and without saved gates, dOutput and the candidate bias, units past a warp)", RecurrentStepKernelsMatchCpu),
+        ("recurrent: the device's LSTM and GRU sequence kernels (every step in one launch) and their gradients give its step kernels' values bit for bit (forward and reverse, with and without saved gates, dOutput and the candidate bias, units past a warp, more rows than one round of resident blocks)", RecurrentSequenceKernelsMatchSteps),
     ];
 
     private static RecurrentModule RecurrentLayer(bool gru, int inputs, int hidden, bool sequences, bool bidirectional, int layers, Device device, int seed)
@@ -58,7 +59,8 @@ internal static partial class Tests
                 var weights = Tensor.From(RandomArray(new Random(y.Size), y.Size), y.Shape, device);
                 (y * weights).Sum().Backward();
                 calls = trace.Calls(Ops.LstmCell) + trace.Calls(Ops.GruCell) + trace.Calls(Ops.LstmCellBackward) + trace.Calls(Ops.GruCellBackward)
-                        + trace.Calls(Ops.LstmStep) + trace.Calls(Ops.GruStep) + trace.Calls(Ops.LstmStepBackward) + trace.Calls(Ops.GruStepBackward);
+                        + trace.Calls(Ops.LstmStep) + trace.Calls(Ops.GruStep) + trace.Calls(Ops.LstmStepBackward) + trace.Calls(Ops.GruStepBackward)
+                        + trace.Calls(Ops.LstmSequence) + trace.Calls(Ops.GruSequence) + trace.Calls(Ops.LstmSequenceBackward) + trace.Calls(Ops.GruSequenceBackward);
             }
 
             return (y.ToArray(), x.Grad!.ToArray(), [.. module.Parameters().Select(p => p.Grad!.ToArray())], calls);
@@ -130,17 +132,19 @@ internal static partial class Tests
             using var scope = new TensorScope();
             var x = Tensor.From(RandomArray(new Random(91), 2 * 9 * 3), [2, 9, 3], device);
             float[] inference;
-            long calls;
+            long calls, sequences;
             using (Autograd.NoGrad())
             using (var trace = Kernels.Trace(device.Backend))
             {
                 inference = module.Forward(x).ToArray();
                 calls = trace.Calls(gru ? Ops.GruCell : Ops.LstmCell) + trace.Calls(gru ? Ops.GruStep : Ops.LstmStep);
-                Check(trace.Calls(Ops.LstmCellBackward) + trace.Calls(Ops.GruCellBackward) + trace.Calls(Ops.LstmStepBackward) + trace.Calls(Ops.GruStepBackward) == 0,
-                    "inference asks for no gradient kernel");
+                sequences = trace.Calls(gru ? Ops.GruSequence : Ops.LstmSequence);
+                Check(trace.Calls(Ops.LstmCellBackward) + trace.Calls(Ops.GruCellBackward) + trace.Calls(Ops.LstmStepBackward) + trace.Calls(Ops.GruStepBackward)
+                      + trace.Calls(Ops.LstmSequenceBackward) + trace.Calls(Ops.GruSequenceBackward) == 0, "inference asks for no gradient kernel");
             }
 
-            Check(!HasCellKernels(device.Backend, gru) || calls >= 2 * 2 * 9, $"{device}: {calls} cell kernel calls for 2 layers x 2 directions x 9 steps");
+            Check(!HasCellKernels(device.Backend, gru) || sequences >= 2 * 2 || calls >= 2 * 2 * 9,
+                $"{device}: {sequences} sequence kernel calls (one a layer and direction: 2 layers x 2 directions) and {calls} cell kernel calls (a step each: 2 x 2 x 9)");
             var training = module.Forward(x).ToArray();
             AssertClose(training, inference, 0f, $"{(gru ? "GRU" : "LSTM")}: inference and training give the same output");
             RecurrentModule.ComposedOnly = true;
@@ -360,6 +364,157 @@ internal static partial class Tests
                             }, 1e-4f);
                     }
                 }
+            }
+        }
+    }
+
+    // The device's sequence kernels against its step kernels called a step at a time: the same values bit for bit (the same
+    // sums in the same order; only the launches differ). 40 rows of 300 units are 400 blocks' work a step, more than one
+    // round of resident blocks, so blocks take several in turn.
+    private static void RecurrentSequenceKernelsMatchSteps(Device device)
+    {
+        var backend = device.Backend;
+        var any = backend.Allocate(1, zeroed: true);
+        bool lstm = backend.LstmSequence(any, any, any, any, null, null, 4, 0, 1, false) && backend.LstmSequenceBackward(any, any, null, any, any, any, 4, 0, 1, false);
+        bool gru = backend.GruSequence(any, any, null, any, null, 4, 0, 1, false) && backend.GruSequenceBackward(any, any, null, any, any, any, any, 4, 0, 1, false);
+        any.Release();
+        if (!lstm && !gru)
+        {
+            return;                                                                       // the device has no sequence kernels
+        }
+
+        var random = new Random(103);
+        float[] R(int n, float scale = 1f) => RandomArray(random, n, scale);
+        foreach (var (batch, steps, h) in new[] { (3, 5, 3), (3, 6, 37), (40, 4, 300) })
+        {
+            foreach (bool reverse in new[] { false, true })
+            {
+                // The step taken i-th, and the steps taken before and after it (-1: none), as the layer's loop takes them.
+                int T(int i) => reverse ? steps - 1 - i : i;
+                int Before(int i) => i == 0 ? -1 : T(i - 1);
+                int After(int i) => i == steps - 1 ? -1 : T(i + 1);
+                string label = $"{batch} rows, {steps} steps, {h} units{(reverse ? ", reverse" : "")}";
+                if (lstm)
+                {
+                    // [0] projected, [1] U [H, 4H], [2] cell (the zero initial state), [3] output, [4] gates, [5] cells.
+                    foreach (bool save in new[] { true, false })
+                    {
+                        SameOnDevice(backend, $"LSTM sequence, {label}{(save ? "" : ", no saved gates")}",
+                            [R(batch * steps * 4 * h, 2f), R(h * 4 * h, 0.5f), new float[batch * h], R(batch * steps * h), R(batch * steps * 4 * h), R(batch * steps * h)],
+                            s => Check(backend.LstmSequence(s[0], s[1], s[2], s[3], save ? s[4] : null, save ? s[5] : null, steps, batch, h, reverse), "the LSTM sequence runs"),
+                            s =>
+                            {
+                                for (int i = 0; i < steps; i++)
+                                {
+                                    Check(backend.LstmStep(s[0], s[1], s[2], s[3], save ? s[4] : null, save ? s[5] : null, T(i), Before(i), steps, batch, h), "the LSTM step runs");
+                                }
+                            });
+                    }
+
+                    // [0] gates (activated), [1] cells, [2] dOutput, [3] Uᵀ [4H, H], [4] dCell (zero at the loss's end), [5] dGates.
+                    var gates = R(batch * steps * 4 * h).Select(v => 0.5f + 0.49f * v).ToArray();
+                    foreach (bool output in new[] { true, false })
+                    {
+                        SameOnDevice(backend, $"LSTM sequence gradient, {label}{(output ? "" : ", no dOutput")}",
+                            [gates, R(batch * steps * h), R(batch * steps * h), R(4 * h * h, 0.5f), new float[batch * h], R(batch * steps * 4 * h)],
+                            s => Check(backend.LstmSequenceBackward(s[0], s[1], output ? s[2] : null, s[3], s[4], s[5], steps, batch, h, reverse),
+                                "the LSTM sequence gradient runs"),
+                            s =>
+                            {
+                                for (int i = steps - 1; i >= 0; i--)
+                                {
+                                    Check(backend.LstmStepBackward(s[0], s[1], output ? s[2] : null, s[3], s[4], s[5], T(i), After(i), Before(i), steps, batch, h),
+                                        "the LSTM step gradient runs");
+                                }
+                            });
+                    }
+                }
+
+                if (gru)
+                {
+                    // [0] projected, [1] U [H, 3H], [2] candidate bias, [3] output, [4] gates.
+                    foreach (bool bias in new[] { true, false })
+                    {
+                        SameOnDevice(backend, $"GRU sequence, {label}{(bias ? "" : ", no candidate bias")}",
+                            [R(batch * steps * 3 * h, 2f), R(h * 3 * h, 0.5f), R(h), R(batch * steps * h), R(batch * steps * 4 * h)],
+                            s => Check(backend.GruSequence(s[0], s[1], bias ? s[2] : null, s[3], s[4], steps, batch, h, reverse), "the GRU sequence runs"),
+                            s =>
+                            {
+                                for (int i = 0; i < steps; i++)
+                                {
+                                    Check(backend.GruStep(s[0], s[1], bias ? s[2] : null, s[3], s[4], T(i), Before(i), steps, batch, h), "the GRU step runs");
+                                }
+                            });
+                    }
+
+                    // [0] gates (r, u, c in range; the recurrent term any value), [1] output, [2] dOutput, [3] Uᵀ [3H, H], [4] dHidden (zero at the
+                    // loss's end), [5] dGates, [6] dRecurrent.
+                    var gates = R(batch * steps * 4 * h);
+                    for (int i = 0; i < gates.Length; i++)
+                    {
+                        gates[i] = i / h % 4 == 3 ? 2f * gates[i] : 0.5f + 0.49f * gates[i];
+                    }
+
+                    foreach (bool output in new[] { true, false })
+                    {
+                        SameOnDevice(backend, $"GRU sequence gradient, {label}{(output ? "" : ", no dOutput")}",
+                            [gates, R(batch * steps * h), R(batch * steps * h), R(3 * h * h, 0.5f), new float[batch * h], R(batch * steps * 3 * h), R(batch * steps * 3 * h)],
+                            s => Check(backend.GruSequenceBackward(s[0], s[1], output ? s[2] : null, s[3], s[4], s[5], s[6], steps, batch, h, reverse),
+                                "the GRU sequence gradient runs"),
+                            s =>
+                            {
+                                for (int i = steps - 1; i >= 0; i--)
+                                {
+                                    Check(backend.GruStepBackward(s[0], s[1], output ? s[2] : null, s[3], s[4], s[5], s[6], T(i), After(i), Before(i), steps, batch, h),
+                                        "the GRU step gradient runs");
+                                }
+                            });
+                    }
+                }
+            }
+        }
+    }
+
+    // `first` and `second` on copies of the same inputs on the device: every storage must end the same, bit for bit, with
+    // no operation on the host.
+    private static void SameOnDevice(Backend backend, string what, float[][] inputs, Action<Storage[]> first, Action<Storage[]> second)
+    {
+        Storage[] Upload() => [.. inputs.Select(d =>
+        {
+            var s = backend.Allocate(Math.Max(1, d.Length), false);
+            backend.Upload(d, s);
+            return s;
+        })];
+
+        Storage[] a = Upload(), b = Upload();
+        try
+        {
+            using (var trace = Kernels.Trace(backend))
+            {
+                first(a);
+                second(b);
+                backend.Synchronize();
+                Check(trace.HostCalls == 0, $"{backend.Name}: {what} took the host fallback ({string.Join(", ", trace.HostCallsByOperation.Select(p => $"{p.Key} ×{p.Value}"))})");
+            }
+
+            for (int i = 0; i < inputs.Length; i++)
+            {
+                var (x, y) = (new float[inputs[i].Length], new float[inputs[i].Length]);
+                backend.Download(a[i], x);
+                backend.Download(b[i], y);
+                int at = -1;
+                for (int k = 0; k < x.Length && at < 0; k++)
+                {
+                    at = BitConverter.SingleToInt32Bits(x[k]) != BitConverter.SingleToInt32Bits(y[k]) ? k : -1;
+                }
+                Check(at < 0, $"{backend.Name}: {what}, storage {i}: element {at} is {(at < 0 ? 0 : x[at])} in one launch, {(at < 0 ? 0 : y[at])} a step at a time");
+            }
+        }
+        finally
+        {
+            foreach (var s in a.Concat(b))
+            {
+                s.Release();
             }
         }
     }

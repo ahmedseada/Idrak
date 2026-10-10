@@ -3399,6 +3399,83 @@ public abstract partial class Backend
     }
 
     /// <summary>
+    /// Every step of <see cref="LstmStepKernel"/> in one call: for i = 0, 1, …, <paramref name="steps"/> - 1 the step t = i
+    /// (<paramref name="reverse"/>: t = steps - 1 - i) after the step taken before it (none for the first), the same values
+    /// as those calls in that order, the cell state carried in cell[n, j] (the zero initial state when the caller zeroes
+    /// it). One launch a sequence, where the step kernel takes one a step. With <paramref name="batch"/> 0 nothing is read or
+    /// written. Returns false when the device has no such kernel for these sizes (callers then take the step kernels).
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.LstmSequence"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>LstmSequenceKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool LstmSequence(Storage projected, Storage weights, Storage cell, Storage output, Storage? gates, Storage? cells, int steps, int batch, int hiddenSize, bool reverse)
+    {
+        return _kernels is null ? LstmSequenceKernel(projected, weights, cell, output, gates, cells, steps, batch, hiddenSize, reverse) : LstmSequenceRegistered(projected, weights, cell, output, gates, cells, steps, batch, hiddenSize, reverse);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool LstmSequenceRegistered(Storage projected, Storage weights, Storage cell, Storage output, Storage? gates, Storage? cells, int steps, int batch, int hiddenSize, bool reverse)
+    {
+        return Kernel(OperationIndex.LstmSequence) is OperationKernels.LstmSequence kernel ? kernel(this, projected, weights, cell, output, gates, cells, steps, batch, hiddenSize, reverse) : LstmSequenceKernel(projected, weights, cell, output, gates, cells, steps, batch, hiddenSize, reverse);
+    }
+
+    /// <summary>
+    /// Every step of <see cref="LstmStepBackwardKernel"/> in one call, the steps from the last taken by
+    /// <see cref="LstmSequenceKernel"/> to the first, each with the step taken before it and after it (none at the ends):
+    /// the same values as those calls in that order. dCell starts as the caller gives it (zero for the loss's end). With
+    /// <paramref name="batch"/> 0 nothing is read or written. Returns false when the device has no such kernel for these
+    /// sizes.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.LstmSequenceBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>LstmSequenceBackwardKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool LstmSequenceBackward(Storage gates, Storage cells, Storage? dOutput, Storage weightsT, Storage dCell, Storage dGates, int steps, int batch, int hiddenSize, bool reverse)
+    {
+        return _kernels is null ? LstmSequenceBackwardKernel(gates, cells, dOutput, weightsT, dCell, dGates, steps, batch, hiddenSize, reverse) : LstmSequenceBackwardRegistered(gates, cells, dOutput, weightsT, dCell, dGates, steps, batch, hiddenSize, reverse);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool LstmSequenceBackwardRegistered(Storage gates, Storage cells, Storage? dOutput, Storage weightsT, Storage dCell, Storage dGates, int steps, int batch, int hiddenSize, bool reverse)
+    {
+        return Kernel(OperationIndex.LstmSequenceBackward) is OperationKernels.LstmSequenceBackward kernel ? kernel(this, gates, cells, dOutput, weightsT, dCell, dGates, steps, batch, hiddenSize, reverse) : LstmSequenceBackwardKernel(gates, cells, dOutput, weightsT, dCell, dGates, steps, batch, hiddenSize, reverse);
+    }
+
+    /// <summary>
+    /// Every step of <see cref="GruStepKernel"/> in one call, the steps taken as <see cref="LstmSequenceKernel"/> takes
+    /// them: the same values as those calls in that order. With <paramref name="batch"/> 0 nothing is read or written.
+    /// Returns false when the device has no such kernel for these sizes.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.GruSequence"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>GruSequenceKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool GruSequence(Storage projected, Storage weights, Storage? hiddenBias, Storage output, Storage? gates, int steps, int batch, int hiddenSize, bool reverse)
+    {
+        return _kernels is null ? GruSequenceKernel(projected, weights, hiddenBias, output, gates, steps, batch, hiddenSize, reverse) : GruSequenceRegistered(projected, weights, hiddenBias, output, gates, steps, batch, hiddenSize, reverse);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool GruSequenceRegistered(Storage projected, Storage weights, Storage? hiddenBias, Storage output, Storage? gates, int steps, int batch, int hiddenSize, bool reverse)
+    {
+        return Kernel(OperationIndex.GruSequence) is OperationKernels.GruSequence kernel ? kernel(this, projected, weights, hiddenBias, output, gates, steps, batch, hiddenSize, reverse) : GruSequenceKernel(projected, weights, hiddenBias, output, gates, steps, batch, hiddenSize, reverse);
+    }
+
+    /// <summary>
+    /// Every step of <see cref="GruStepBackwardKernel"/> in one call, the steps taken as
+    /// <see cref="LstmSequenceBackwardKernel"/> takes them: the same values as those calls in that order. dHidden starts as
+    /// the caller gives it (zero for the loss's end). With <paramref name="batch"/> 0 nothing is read or written. Returns
+    /// false when the device has no such kernel for these sizes.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.GruSequenceBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>GruSequenceBackwardKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool GruSequenceBackward(Storage gates, Storage output, Storage? dOutput, Storage weightsT, Storage dHidden, Storage dGates, Storage dRecurrent, int steps, int batch, int hiddenSize, bool reverse)
+    {
+        return _kernels is null ? GruSequenceBackwardKernel(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, steps, batch, hiddenSize, reverse) : GruSequenceBackwardRegistered(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, steps, batch, hiddenSize, reverse);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool GruSequenceBackwardRegistered(Storage gates, Storage output, Storage? dOutput, Storage weightsT, Storage dHidden, Storage dGates, Storage dRecurrent, int steps, int batch, int hiddenSize, bool reverse)
+    {
+        return Kernel(OperationIndex.GruSequenceBackward) is OperationKernels.GruSequenceBackward kernel ? kernel(this, gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, steps, batch, hiddenSize, reverse) : GruSequenceBackwardKernel(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, steps, batch, hiddenSize, reverse);
+    }
+
+    /// <summary>
     /// Box overlap losses, torchvision's formulas: for each of <paramref name="count"/> pairs of boxes given by their corners
     /// (x1, y1, x2, y2; predicted and target are [count, 4]), losses[i] = 1 - IoU (<see cref="BoxOverlap.IoU"/>), plus the
     /// enclosing box's empty share (GIoU), plus the centres' squared distance over the enclosing box's squared diagonal
