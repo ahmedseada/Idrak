@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Buffers;
+using System.Numerics;
 
 namespace Idrak.Vision.Abstractions;
 
@@ -55,12 +57,20 @@ public sealed class SegmentationMask
     public SegmentationMask Resize(int width, int height)
     {
         var labels = new int[width * height];
+        var columns = new int[width];                               // the source column of each output column, found once
+        for (int x = 0; x < width; x++)
+        {
+            columns[x] = Math.Min(Width - 1, (int)((x + 0.5) * Width / width));
+        }
+
         for (int y = 0; y < height; y++)
         {
             int sy = Math.Min(Height - 1, (int)((y + 0.5) * Height / height));
-            for (int x = 0; x < width; x++)
+            var source = _labels.AsSpan(sy * Width, Width);
+            var row = labels.AsSpan(y * width, width);
+            for (int x = 0; x < row.Length; x++)
             {
-                labels[y * width + x] = _labels[sy * Width + Math.Min(Width - 1, (int)((x + 0.5) * Width / width))];
+                row[x] = source[columns[x]];
             }
         }
 
@@ -76,21 +86,44 @@ public sealed class SegmentationMask
             throw new ArgumentException($"{logits.Length} logits for {classes} x {height} x {width}.", nameof(logits));
         }
 
+        // Class plane by class plane, in memory order: each pixel keeps its largest logit so far and its class (the first
+        // of equals, as a strict comparison per pixel in class order gives), vectors where the hardware has them.
         var labels = new int[plane];
-        for (int i = 0; i < plane; i++)
+        var best = ArrayPool<float>.Shared.Rent(plane);
+        try
         {
-            int best = 0;
-            float max = logits[i];
+            var max = best.AsSpan(0, plane);
+            logits[..plane].CopyTo(max);
             for (int c = 1; c < classes; c++)
             {
-                float v = logits[c * plane + i];
-                if (v > max)
+                var values = logits.Slice(c * plane, plane);
+                int i = 0;
+                if (Vector.IsHardwareAccelerated && plane >= Vector<float>.Count)
                 {
-                    (max, best) = (v, c);
+                    var label = new Vector<int>(c);
+                    var classOf = labels.AsSpan();
+                    for (; i <= plane - Vector<float>.Count; i += Vector<float>.Count)
+                    {
+                        var v = new Vector<float>(values[i..]);
+                        var m = new Vector<float>(max[i..]);
+                        var greater = Vector.GreaterThan(v, m);
+                        Vector.ConditionalSelect(greater, v, m).CopyTo(max[i..]);
+                        Vector.ConditionalSelect(greater, label, new Vector<int>(classOf[i..])).CopyTo(classOf[i..]);
+                    }
+                }
+
+                for (; i < plane; i++)
+                {
+                    if (values[i] > max[i])
+                    {
+                        (max[i], labels[i]) = (values[i], c);
+                    }
                 }
             }
-
-            labels[i] = best;
+        }
+        finally
+        {
+            ArrayPool<float>.Shared.Return(best);
         }
 
         return new SegmentationMask(labels, width, height, classes);
