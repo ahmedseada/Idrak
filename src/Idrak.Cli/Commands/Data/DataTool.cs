@@ -208,7 +208,7 @@ internal sealed class DataTool(ToolConsole console)
             {
                 var recipe = specs is [var single] && single.EndsWith(".json", StringComparison.OrdinalIgnoreCase) && File.Exists(single)
                                                     && JsonNode.Parse(File.ReadAllText(single)) is JsonObject json && json.ContainsKey("sources")
-                    ? DatasetRecipe.Load(single) is var loaded && evalFraction > 0 ? loaded with { EvaluationFraction = evalFraction } : DatasetRecipe.Load(single)
+                    ? evalFraction > 0 ? DatasetRecipe.Load(single) with { EvaluationFraction = evalFraction } : DatasetRecipe.Load(single)
                     : new DatasetRecipe
                     {
                         Sources = [.. specs.Select(DatasetSpec.Parse)],
