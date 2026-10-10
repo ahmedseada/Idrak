@@ -3,6 +3,7 @@
 
 using System.Buffers;
 using System.Runtime.CompilerServices;
+using System.Runtime.ExceptionServices;
 using Idrak.Abstraction.Devices.Cpu;
 
 namespace Idrak.Abstraction.Devices;
@@ -49,11 +50,20 @@ internal sealed class HostCall : IDisposable
             }
 
             var mirror = CpuBackend.Instance.Allocate(storage.Length, zeroed: false);
-            var values = CpuBackend.D(mirror).AsSpan(0, storage.Length);
-            _device.Download(storage, values);
-            var before = ArrayPool<float>.Shared.Rent(storage.Length);
-            values.CopyTo(before);
-            _mirrors.Add((storage, mirror, before));
+            try
+            {
+                var values = CpuBackend.D(mirror).AsSpan(0, storage.Length);
+                _device.Download(storage, values);
+                var before = ArrayPool<float>.Shared.Rent(storage.Length);
+                values.CopyTo(before);
+                _mirrors.Add((storage, mirror, before));
+            }
+            catch
+            {
+                mirror.Release();                                          // a failed download keeps no mirror
+                throw;
+            }
+
             return mirror;
         }
     }
@@ -64,18 +74,33 @@ internal sealed class HostCall : IDisposable
     /// <summary>Copies the mirrors the operation changed back to the device and frees them.</summary>
     public void Dispose()
     {
+        // Every mirror is freed and its snapshot returned even when a copy back fails; the first failure is rethrown.
+        Exception? failure = null;
         foreach (var (device, host, before) in _mirrors)
         {
-            var values = CpuBackend.D(host).AsSpan(0, device.Length);
-            if (!values.SequenceEqual(before.AsSpan(0, device.Length)))
+            try
             {
-                _device.Upload(values, device);
+                var values = CpuBackend.D(host).AsSpan(0, device.Length);
+                if (!values.SequenceEqual(before.AsSpan(0, device.Length)))
+                {
+                    _device.Upload(values, device);
+                }
             }
-
-            ArrayPool<float>.Shared.Return(before);
-            host.Release();
+            catch (Exception e)
+            {
+                failure ??= e;
+            }
+            finally
+            {
+                ArrayPool<float>.Shared.Return(before);
+                host.Release();
+            }
         }
 
         _mirrors.Clear();
+        if (failure is not null)
+        {
+            ExceptionDispatchInfo.Throw(failure);
+        }
     }
 }
