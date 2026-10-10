@@ -2,7 +2,6 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Text;
-using System.Text.RegularExpressions;
 using Idrak.Abstraction.Operations;
 
 namespace Idrak.Gpu.Cuda;
@@ -91,28 +90,59 @@ public sealed class CudaKernel
     /// <summary>A function of this kernel loaded on a device.</summary>
     internal sealed record LoadedFunction(CudaBackend Owner, IntPtr Function);
 
-    // The letters of the parameters of .entry `entry`, or null when the text declares none of that name.
+    // The letters of the parameters of .entry `entry`, or null when the text declares none of that name: the first
+    // ".entry", white space, `entry`, white space, "(" … ")" in the text, read with span searches (no regular expressions).
     internal static string? ReadParameters(string ptx, string entry)
     {
-        var match = Regex.Match(ptx, $@"\.entry\s+{Regex.Escape(entry)}\s*\(([^)]*)\)");
-        if (!match.Success)
+        ReadOnlySpan<char> text = ptx;
+        ReadOnlySpan<char> list = default;
+        bool found = false;
+        int position = 0;
+        while (!found && text[position..].IndexOf(".entry", StringComparison.Ordinal) is >= 0 and var at)
+        {
+            int end = position + at + ".entry".Length;
+            position += at + 1;
+            int name = PtxKernels.SkipWhiteSpace(text, end);
+            if (name == end || !text[name..].StartsWith(entry, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            int open = PtxKernels.SkipWhiteSpace(text, name + entry.Length);
+            if (open < text.Length && text[open] == '(' && text[(open + 1)..].IndexOf(')') is >= 0 and var close)
+            {
+                list = text.Slice(open + 1, close);
+                found = true;
+            }
+        }
+
+        if (!found)
         {
             return null;
         }
 
         var letters = new StringBuilder();
-        foreach (string declaration in match.Groups[1].Value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        foreach (Range part in list.Split(','))
         {
-            string[] tokens = declaration.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
-            if (tokens.Length == 0 || tokens[0] != ".param")
+            ReadOnlySpan<char> declaration = list[part].Trim();
+            if (declaration.IsEmpty || !FirstToken(declaration, out ReadOnlySpan<char> first, out ReadOnlySpan<char> rest) || !first.SequenceEqual(".param"))
             {
                 continue;
             }
 
-            bool array = declaration.Contains('[', StringComparison.Ordinal);
-            bool pointer = tokens.Any(t => t.StartsWith(".ptr", StringComparison.Ordinal));
-            string? type = tokens.Skip(1).FirstOrDefault(t => t is ".u64" or ".s64" or ".b64" or ".u32" or ".s32" or ".b32" or ".f32"
-                or ".u8" or ".s8" or ".b8" or ".u16" or ".s16" or ".b16" or ".f16" or ".f64");
+            bool array = declaration.Contains('[');
+            bool pointer = false;
+            ReadOnlySpan<char> type = default;
+            while (FirstToken(rest, out ReadOnlySpan<char> token, out rest))
+            {
+                pointer |= token.StartsWith(".ptr", StringComparison.Ordinal);
+                if (type.IsEmpty && token is ".u64" or ".s64" or ".b64" or ".u32" or ".s32" or ".b32" or ".f32"
+                        or ".u8" or ".s8" or ".b8" or ".u16" or ".s16" or ".b16" or ".f16" or ".f64")
+                {
+                    type = token;
+                }
+            }
+
             letters.Append(array ? '?' : type switch
             {
                 ".u64" or ".s64" or ".b64" => pointer ? 'p' : 'x',
@@ -124,6 +154,21 @@ public sealed class CudaKernel
         }
 
         return letters.ToString();
+    }
+
+    // The first white-space-separated token of `text` and what follows it; false when there is none.
+    private static bool FirstToken(ReadOnlySpan<char> text, out ReadOnlySpan<char> token, out ReadOnlySpan<char> rest)
+    {
+        int start = PtxKernels.SkipWhiteSpace(text, 0);
+        int end = start;
+        while (end < text.Length && !char.IsWhiteSpace(text[end]))
+        {
+            end++;
+        }
+
+        token = text[start..end];
+        rest = text[end..];
+        return end > start;
     }
 
     /// <inheritdoc />

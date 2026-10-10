@@ -552,6 +552,48 @@ internal static partial class Tests
             "the same kernels with the same parameters");
         Check(PtxKernels.Fits(source, large) is null, "and they fit");
 
+        // The module parsers (span searches) read what the regular expressions they replaced read, on every module.
+        foreach (string module in (string[])[PtxKernels.Source, source, .. PtxKernels.TensorCoreModules.Select(m => m.Source)])
+        {
+            var expected = new Dictionary<string, int>();
+            var entries = System.Text.RegularExpressions.Regex.Matches(module, @"\.entry\s+(\w+)\s*\(");
+            for (int i = 0; i < entries.Count; i++)
+            {
+                int end = i + 1 < entries.Count ? entries[i + 1].Index : module.Length;
+                expected[entries[i].Groups[1].Value] = System.Text.RegularExpressions.Regex.Matches(module[entries[i].Index..end], @"\.shared\s+(?:\.align\s+\d+\s+)?\.(\w+)\s+\w+\[(\d+)\]")
+                    .Sum(a => (a.Groups[1].Value switch { "b8" or "u8" or "s8" => 1, "b16" or "u16" or "s16" or "f16" => 2, "b64" or "u64" or "s64" or "f64" => 8, _ => 4 })
+                              * int.Parse(a.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture));
+            }
+
+            var read = PtxKernels.StaticSharedBytes(module);
+            var wrong = expected.Where(e => !read.TryGetValue(e.Key, out int b) || b != e.Value).Select(e => $"{e.Key}: {(read.TryGetValue(e.Key, out int b) ? b : -1)} read, {e.Value} declared").ToList();
+            Check(read.Count == expected.Count && wrong.Count == 0, $"static shared memory per kernel as declared ({read.Count} kernels read, {expected.Count} declared): {string.Join("; ", wrong.Take(5))}");
+            var counts = PtxKernels.ParameterCountsOf(module);
+            Check(counts.Count == entries.Count && counts.All(c => CudaKernel.ReadParameters(module, c.Key)?.Length == c.Value),
+                $"every kernel's parameters read alike by the module's counts and the launch check ({counts.Count} kernels)");
+        }
+
+        // Kernels written for a block larger than the row kernels' declare it (.maxntid, between the parameters and the
+        // body), so ptxas keeps their registers within what that block may use; the sampler's follows the shapes.
+        static int MaxThreads(string ptx, string kernel)
+        {
+            var entry = PtxKernels.Entries(ptx).Single(e => e.Name == kernel);
+            var after = ptx.AsSpan(entry.Parameters!.Value.End.Value + 1).TrimStart();
+            return after.StartsWith(".maxntid ", StringComparison.Ordinal)
+                ? int.Parse(after[".maxntid ".Length..after.IndexOf(',')], System.Globalization.CultureInfo.InvariantCulture)
+                : 0;
+        }
+
+        var declared = new (string Kernel, string Ptx, int Threads)[]
+        {
+            ("gemv_nn_f32", PtxKernels.Source, PtxKernels.GemvThreads), ("gemv_multi_f32", PtxKernels.Source, PtxKernels.GemvThreads),
+            ("int8_gemv_f32", PtxKernels.Source, PtxKernels.Int8GemvThreads), ("int4_gemv_multi_act_f32", PtxKernels.Source, PtxKernels.Int8GemvThreads),
+            ("softmax_ce_rows_f32", PtxKernels.Source, PtxKernels.SoftmaxCrossEntropyThreads),
+            ("sample_rows_f32", PtxKernels.Source, defaults.SamplerThreads), ("sample_rows_f32", source, wide!.SamplerThreads),
+        };
+        var undeclared = declared.Where(d => MaxThreads(d.Ptx, d.Kernel) != d.Threads).Select(d => $"{d.Kernel}: .maxntid {MaxThreads(d.Ptx, d.Kernel)}, launched with {d.Threads}").ToList();
+        Check(undeclared.Count == 0, $"kernels written for a fixed block declare it: {string.Join("; ", undeclared)}");
+
         // Devices the kernels cannot run on: a reason, no shapes.
         Check(KernelShapes.Derive(large with { MaxThreadsPerBlock = 512 }, out string? small) is null && small!.Contains("1024", StringComparison.Ordinal), $"512 threads per block: {small}");
         Check(KernelShapes.Derive(large with { WarpSize = 64 }, out string? warp) is null && warp!.Contains("32-lane", StringComparison.Ordinal), $"64-lane warps: {warp}");

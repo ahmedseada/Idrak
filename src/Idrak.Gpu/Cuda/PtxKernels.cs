@@ -60,12 +60,127 @@ internal static partial class PtxKernels
         }
     })).Value;
 
-    private static readonly Lazy<IReadOnlyDictionary<string, int>> LazyParameterCounts = new(() =>
-        System.Text.RegularExpressions.Regex.Matches(Source, @"\.entry\s+(\w+)\s*\(([^)]*)\)")
-            .ToDictionary(m => m.Groups[1].Value, m => System.Text.RegularExpressions.Regex.Count(m.Groups[2].Value, @"\.param\b")));
+    private static readonly Lazy<IReadOnlyDictionary<string, int>> LazyParameterCounts = new(() => ParameterCountsOf(Source));
 
     /// <summary>Number of parameters each kernel declares, read from <see cref="Source"/>; every launch must pass exactly this many.</summary>
     public static IReadOnlyDictionary<string, int> ParameterCounts => LazyParameterCounts.Value;
+
+    /// <summary>Parameters each kernel of <paramref name="source"/> declares (its <c>.param</c>s).</summary>
+    public static Dictionary<string, int> ParameterCountsOf(string source)
+    {
+        var counts = new Dictionary<string, int>();
+        foreach (var entry in Entries(source))
+        {
+            if (entry.Parameters is { } parameters)
+            {
+                counts.Add(entry.Name, CountParams(source.AsSpan(parameters)));
+            }
+        }
+
+        return counts;
+    }
+
+    /// <summary>The names of the kernels <paramref name="source"/> declares, in order.</summary>
+    private static string[] KernelNames(string source)
+    {
+        var entries = Entries(source);
+        var names = new string[entries.Count];
+        for (int i = 0; i < names.Length; i++)
+        {
+            names[i] = entries[i].Name;
+        }
+
+        return names;
+    }
+
+    /// <summary>A kernel declared in PTX text: its name, where its <c>.entry</c> starts, and its parameter list (the text
+    /// between the parentheses; null when the declaration has no closing one).</summary>
+    internal readonly record struct PtxEntry(string Name, int Start, Range? Parameters);
+
+    /// <summary>
+    /// The <c>.entry</c> declarations of <paramref name="ptx"/> in order (".entry", white space, the name's word
+    /// characters, white space, "(" and the parameters up to ")"), found by searching the text once: the module text is
+    /// read this way on every load, so no regular expressions.
+    /// </summary>
+    internal static List<PtxEntry> Entries(string ptx)
+    {
+        var entries = new List<PtxEntry>();
+        ReadOnlySpan<char> text = ptx;
+        int position = 0;
+        while (text[position..].IndexOf(".entry", StringComparison.Ordinal) is >= 0 and var found)
+        {
+            int start = position + found;
+            int end = start + ".entry".Length;
+            int name = SkipWhiteSpace(text, end);
+            int nameEnd = SkipWord(text, name);
+            if (name == end || nameEnd == name)
+            {
+                position = start + 1;                               // no white space or no name: not a declaration
+                continue;
+            }
+
+            position = nameEnd;
+            int open = SkipWhiteSpace(text, nameEnd);
+            Range? parameters = null;
+            if (open < text.Length && text[open] == '(')
+            {
+                int close = text[(open + 1)..].IndexOf(')');
+                if (close >= 0)
+                {
+                    parameters = new Range(open + 1, open + 1 + close);
+                    position = open + 2 + close;
+                }
+            }
+
+            entries.Add(new PtxEntry(ptx[name..nameEnd], start, parameters));
+        }
+
+        return entries;
+    }
+
+    // The ".param"s of a parameter list (".param" not followed by a word character).
+    private static int CountParams(ReadOnlySpan<char> parameters)
+    {
+        int count = 0, position = 0;
+        while (parameters[position..].IndexOf(".param", StringComparison.Ordinal) is >= 0 and var found)
+        {
+            position += found + ".param".Length;
+            if (position == parameters.Length || !IsWordChar(parameters[position]))
+            {
+                count++;
+            }
+        }
+
+        return count;
+    }
+
+    // The first position at or after `position` that is not white space.
+    internal static int SkipWhiteSpace(ReadOnlySpan<char> text, int position)
+    {
+        while (position < text.Length && char.IsWhiteSpace(text[position]))
+        {
+            position++;
+        }
+
+        return position;
+    }
+
+    // The first position at or after `position` that is not a word character.
+    internal static int SkipWord(ReadOnlySpan<char> text, int position)
+    {
+        while (position < text.Length && IsWordChar(text[position]))
+        {
+            position++;
+        }
+
+        return position;
+    }
+
+    // A regular expression's \w: letters, decimal digits, connector punctuation (the underscore) and non-spacing marks.
+    private static bool IsWordChar(char c) => char.IsAsciiLetterOrDigit(c) || c == '_'
+        || (c > 127 && CharUnicodeInfo.GetUnicodeCategory(c) is UnicodeCategory.UppercaseLetter or UnicodeCategory.LowercaseLetter
+            or UnicodeCategory.TitlecaseLetter or UnicodeCategory.ModifierLetter or UnicodeCategory.OtherLetter
+            or UnicodeCategory.NonSpacingMark or UnicodeCategory.DecimalDigitNumber or UnicodeCategory.ConnectorPunctuation);
 
     private static string Build()
     {
@@ -393,12 +508,8 @@ internal static partial class PtxKernels
     /// </summary>
     private static void Elementwise(StringBuilder sb, string name, string[] pointers, (string Type, string Name)[] scalars, string body)
     {
-        var parameters = pointers.Select(p => $"    .param .u64 p_{p}")
-            .Concat(scalars.Select(s => $"    .param .{s.Type} p_{s.Name}"))
-            .Append("    .param .u32 p_n");
-
         sb.AppendLine($".visible .entry {name}(");
-        sb.AppendLine(string.Join(",\n", parameters));
+        AppendParameters(sb, pointers, scalars);
         sb.AppendLine(")");
         sb.AppendLine("{");
         sb.AppendLine("    .reg .pred %p<16>;");
@@ -439,15 +550,40 @@ internal static partial class PtxKernels
             sb.AppendLine($"    ld.param.{s.Type} %s_{s.Name}, [p_{s.Name}];");
         }
 
-        foreach (var line in body.Split('\n'))
-        {
-            sb.Append("    ").AppendLine(line.TrimEnd());
-        }
-
+        AppendBody(sb, body);
         sb.AppendLine("DONE:");
         sb.AppendLine("    ret;");
         sb.AppendLine("}");
         sb.AppendLine();
+    }
+
+    /// <summary>
+    /// The parameter lines of an <see cref="Elementwise"/> or <see cref="RowBlock"/> kernel: a <c>.u64</c> per pointer, the
+    /// scalars, then <c>.u32 p_n</c>, separated by ",\n" (the last line ends the builder's way).
+    /// </summary>
+    private static void AppendParameters(StringBuilder sb, string[] pointers, (string Type, string Name)[] scalars)
+    {
+        foreach (string p in pointers)
+        {
+            sb.Append("    .param .u64 p_").Append(p).Append(",\n");
+        }
+
+        foreach (var (type, name) in scalars)
+        {
+            sb.Append("    .param .").Append(type).Append(" p_").Append(name).Append(",\n");
+        }
+
+        sb.AppendLine("    .param .u32 p_n");
+    }
+
+    /// <summary>A kernel body's lines, each indented by four spaces with its trailing white space removed.</summary>
+    private static void AppendBody(StringBuilder sb, string body)
+    {
+        ReadOnlySpan<char> text = body;
+        foreach (Range line in text.Split('\n'))
+        {
+            sb.Append("    ").Append(text[line].TrimEnd()).AppendLine();
+        }
     }
 
     /// <summary>y[j] += sum over rows of x[r, j]; one thread per column so reads are coalesced.</summary>
@@ -505,7 +641,7 @@ internal static partial class PtxKernels
     /// </summary>
     private static void Sum(StringBuilder sb)
     {
-        sb.AppendLine($$"""
+        sb.AppendLine(CultureInfo.InvariantCulture, $$"""
             .visible .entry sum_f32(
                 .param .u64 p_x,
                 .param .u64 p_out,
@@ -547,7 +683,7 @@ internal static partial class PtxKernels
 
         for (int stride = BlockSize / 2; stride > 0; stride /= 2)
         {
-            sb.AppendLine($$"""
+            sb.AppendLine(CultureInfo.InvariantCulture, $$"""
                     setp.ge.u32 %p2, %r3, {{stride}};
                     @%p2 bra SKIP{{stride}};
                     ld.shared.f32 %f3, [%r9];
@@ -582,7 +718,7 @@ internal static partial class PtxKernels
     /// </summary>
     private static void MatMul(StringBuilder sb)
     {
-        sb.AppendLine($$"""
+        sb.AppendLine(CultureInfo.InvariantCulture, $$"""
             .visible .entry matmul_f32(
                 .param .u64 p_a,
                 .param .u64 p_b,
@@ -689,12 +825,12 @@ internal static partial class PtxKernels
 
         for (int kk = 0; kk < Tile; kk++)
         {
-            sb.AppendLine($"    ld.shared.f32 %f3, [%sarow+{kk * 4}];");
-            sb.AppendLine($"    ld.shared.f32 %f4, [%sbcol+{kk * Tile * 4}];");
+            sb.AppendLine(CultureInfo.InvariantCulture, $"    ld.shared.f32 %f3, [%sarow+{kk * 4}];");
+            sb.AppendLine(CultureInfo.InvariantCulture, $"    ld.shared.f32 %f4, [%sbcol+{kk * Tile * 4}];");
             sb.AppendLine("    fma.rn.f32 %acc, %f3, %f4, %acc;");
         }
 
-        sb.AppendLine($$"""
+        sb.AppendLine(CultureInfo.InvariantCulture, $$"""
                 bar.sync 0;
                 add.u32 %t, %t, {{Tile}};
                 bra TILE;
