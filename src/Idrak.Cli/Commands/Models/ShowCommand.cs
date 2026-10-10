@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Globalization;
 using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
 using Idrak.Models;
@@ -47,7 +48,7 @@ internal sealed class ShowCommand : Command
         {
             ("Model", $"{name}{(name == (local.File ?? local.Folder) ? "" : $" ({local.File ?? local.Folder})")}"),
             ("Family", $"{info.Architecture}{(info.ModelType is null ? "" : $" ({info.ModelType})")}{(info.Loadable ? "" : $"  (not loadable: {info.Problem})")}"),
-            ("Parameters", $"{Units.Count(info.Parameters)} ({info.Parameters:N0})"),
+            ("Parameters", string.Create(CultureInfo.InvariantCulture, $"{Units.Count(info.Parameters)} ({info.Parameters:N0})")),
         };
         if (info.Spec is { } spec)
         {
@@ -58,8 +59,8 @@ internal sealed class ShowCommand : Command
             }
 
             fields.Add(("Attention", $"{spec.Heads} heads, {spec.KvHeads} key/value heads, head size {spec.HeadDim}{(spec.QkNorm ? ", query/key norms" : "")}"));
-            fields.Add(("Context", $"{spec.MaxPositions:N0} positions"));
-            fields.Add(("Vocabulary", $"{spec.Vocabulary:N0}{(spec.TieEmbeddings ? " (embeddings tied to the output head)" : "")}"));
+            fields.Add(("Context", string.Create(CultureInfo.InvariantCulture, $"{spec.MaxPositions:N0} positions")));
+            fields.Add(("Vocabulary", string.Create(CultureInfo.InvariantCulture, $"{spec.Vocabulary:N0}{(spec.TieEmbeddings ? " (embeddings tied to the output head)" : "")}")));
             fields.Add(("RoPE", info.Rope));
             fields.Add(("Windows", info.Windows));
         }

@@ -184,7 +184,7 @@ internal sealed class DataTool(ToolConsole console)
                     var watch = Stopwatch.StartNew();
                     var spec = DatasetSpec.Parse(text);
                     long rows = console.Track(spec.Open(downloads), "counting").LongCount();
-                    _out.WriteLine($"{spec}: {rows:N0} rows ({watch.Elapsed.TotalSeconds:F1} s)");
+                    _out.WriteLine(string.Create(CultureInfo.InvariantCulture, $"{spec}: {rows:N0} rows ({watch.Elapsed.TotalSeconds:F1} s)"));
                 }
 
                 return 0;
@@ -195,7 +195,7 @@ internal sealed class DataTool(ToolConsole console)
                     var watch = Stopwatch.StartNew();
                     var spec = DatasetSpec.Parse(text);
                     var files = spec.Download(downloads);
-                    _out.WriteLine($"{spec}: {files.Count} file{(files.Count == 1 ? "" : "s")}, {Downloader.Size(files.Sum(f => new FileInfo(f).Length))} ({watch.Elapsed.TotalSeconds:F1} s)");
+                    _out.WriteLine(string.Create(CultureInfo.InvariantCulture, $"{spec}: {files.Count} file{(files.Count == 1 ? "" : "s")}, {Downloader.Size(files.Sum(f => new FileInfo(f).Length))} ({watch.Elapsed.TotalSeconds:F1} s)"));
                     foreach (var file in files)
                     {
                         _out.WriteLine($"  {Downloader.Size(new FileInfo(file).Length),10}  {file}");
@@ -208,7 +208,7 @@ internal sealed class DataTool(ToolConsole console)
             {
                 var recipe = specs is [var single] && single.EndsWith(".json", StringComparison.OrdinalIgnoreCase) && File.Exists(single)
                                                     && JsonNode.Parse(File.ReadAllText(single)) is JsonObject json && json.ContainsKey("sources")
-                    ? DatasetRecipe.Load(single) is var loaded && evalFraction > 0 ? loaded with { EvaluationFraction = evalFraction } : DatasetRecipe.Load(single)
+                    ? evalFraction > 0 ? DatasetRecipe.Load(single) with { EvaluationFraction = evalFraction } : DatasetRecipe.Load(single)
                     : new DatasetRecipe
                     {
                         Sources = [.. specs.Select(DatasetSpec.Parse)],
@@ -232,16 +232,16 @@ internal sealed class DataTool(ToolConsole console)
                 _out.WriteLine($"  {recipe.Kind.ToString().ToLowerInvariant()} rows, "
                                + $"{(recipe.MixByWeight ?? recipe.Sources.Any(x => x.Options.ContainsKey("weight")) ? "mixed by weight" : "one source after another")}, "
                                + $"{(recipe.Deduplicate ? "duplicates removed" : "duplicates kept")}, {(recipe.Shuffle ? $"shuffled (seed {recipe.Seed})" : "in order")}"
-                               + (recipe.EvaluationFraction > 0 ? $", {recipe.EvaluationFraction:P1} held out for evaluation" : ""));
+                               + (recipe.EvaluationFraction > 0 ? string.Create(CultureInfo.InvariantCulture, $", {recipe.EvaluationFraction:P1} held out for evaluation") : ""));
                 var (train, evaluation) = recipe.Build(downloads);
                 var buildWatch = Stopwatch.StartNew();
                 long written = new DatasetRows(() => console.Track(train, "writing")).WriteJsonLines(output!);
-                _out.WriteLine($"{written:N0} rows written to {output} ({buildWatch.Elapsed.TotalSeconds:F1} s)");
+                _out.WriteLine(string.Create(CultureInfo.InvariantCulture, $"{written:N0} rows written to {output} ({buildWatch.Elapsed.TotalSeconds:F1} s)"));
                 if (evaluation is not null)
                 {
                     string evalFile = evalOutput ?? Path.ChangeExtension(output!, null) + ".eval.jsonl";
                     long held = new DatasetRows(() => console.Track(evaluation, "evaluation")).WriteJsonLines(evalFile);
-                    _out.WriteLine($"{held:N0} evaluation rows written to {evalFile}");
+                    _out.WriteLine(string.Create(CultureInfo.InvariantCulture, $"{held:N0} evaluation rows written to {evalFile}"));
                 }
 
                 return 0;

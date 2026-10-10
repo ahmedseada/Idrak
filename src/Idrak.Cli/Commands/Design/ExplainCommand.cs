@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Globalization;
 using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
 
@@ -51,9 +52,9 @@ internal sealed class ExplainCommand : Command
         context.Write($"{(string?)description["name"] ?? Path.GetFileName(path)}: {analysis.Kind} input {NetworkAnalysis.Shape(analysis.Input)} -> {NetworkAnalysis.Shape(analysis.Output)}, {analysis.Layers.Count} layers");
         context.Write("");
         context.Table(["#", "Layer", "Output", "Parameters", "FLOPs"],
-            analysis.Layers.Select(l => (IReadOnlyList<string>)[l.Index.ToString(), l.Description, NetworkAnalysis.Shape(l.Output), l.Parameters.ToString("N0"), Units.Short(l.Flops)]));
+            analysis.Layers.Select(l => (IReadOnlyList<string>)[l.Index.ToString(CultureInfo.InvariantCulture), l.Description, NetworkAnalysis.Shape(l.Output), l.Parameters.ToString("N0", CultureInfo.InvariantCulture), Units.Short(l.Flops)]));
         context.Write("");
-        context.Write($"Parameters    {analysis.Parameters:N0} ({Units.Bytes(analysis.Parameters * 4.0)} as float32)");
+        context.Write(string.Create(CultureInfo.InvariantCulture, $"Parameters    {analysis.Parameters:N0} ({Units.Bytes(analysis.Parameters * 4.0)} as float32)"));
         context.Write($"FLOPs         {Units.Short(analysis.Flops)} per sample forward, about {Units.Short(3.0 * analysis.Flops)} per sample to train");
         context.Write($"Inference     {Units.Bytes(inferenceOne)} at batch 1, {Units.Bytes(inferenceBatch)} at batch {batch}");
         context.Write($"Training      {Units.Bytes(training)} at batch {batch} (AdamW)");

@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Globalization;
 using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
 
@@ -77,7 +78,7 @@ internal sealed class ConvertCommand : Command
         }
 
         long bytes = ModelCache.FolderBytes(output);
-        context.Write($"Converted {input} ({from}) to {output}: {Units.Bytes(bytes)}, {type}, in {clock.Elapsed.TotalSeconds:F1} s.");
+        context.Write(string.Create(CultureInfo.InvariantCulture, $"Converted {input} ({from}) to {output}: {Units.Bytes(bytes)}, {type}, in {clock.Elapsed.TotalSeconds:F1} s."));
         context.WriteJson(new JsonObject
         {
             ["in"] = input,

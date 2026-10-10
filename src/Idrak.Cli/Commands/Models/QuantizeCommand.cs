@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Globalization;
 using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
 
@@ -86,8 +87,8 @@ internal sealed class QuantizeCommand : Command
         context.Write($"{name} in {format} on {context.Device}");
         context.Table(["Weights", "Size", "Perplexity"],
         [
-            ["float32", Units.Bytes(floatBytes), $"{floatPerplexity:F3}"],
-            [format, $"{Units.Bytes(packedBytes)} ({packedBytes * 100.0 / floatBytes:F0}%)", $"{packedPerplexity:F3} ({change:+0.00;-0.00}%)"],
+            ["float32", Units.Bytes(floatBytes), string.Create(CultureInfo.InvariantCulture, $"{floatPerplexity:F3}")],
+            [format, string.Create(CultureInfo.InvariantCulture, $"{Units.Bytes(packedBytes)} ({packedBytes * 100.0 / floatBytes:F0}%)"), string.Create(CultureInfo.InvariantCulture, $"{packedPerplexity:F3} ({change:+0.00;-0.00}%)")],
         ]);
         context.Write($"Perplexity of {tokens.Length} tokens of {(context.Option("--text") ?? "the built-in text")}: the change is what the format costs (a few percent is usual for 4-bit weights).");
 

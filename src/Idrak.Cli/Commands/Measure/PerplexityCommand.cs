@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Diagnostics;
+using System.Globalization;
 using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
 using Idrak.Models;
@@ -81,8 +82,8 @@ internal sealed class PerplexityCommand : Command
         }
 
         var result = Measure(model, ids, window, context.Device, (done, total) => context.Detail($"  {done} of {total} tokens"));
-        context.Write($"{choice.Model} on {context.Device}, weights {choice.Weights ?? "as stored"}: perplexity {result.Perplexity:F3}");
-        context.Write($"{result.Scored} tokens scored in {result.Windows} window(s) of up to {window} · mean negative log-likelihood {result.MeanNll:F4} · {result.Seconds:F1} s");
+        context.Write(string.Create(CultureInfo.InvariantCulture, $"{choice.Model} on {context.Device}, weights {choice.Weights ?? "as stored"}: perplexity {result.Perplexity:F3}"));
+        context.Write(string.Create(CultureInfo.InvariantCulture, $"{result.Scored} tokens scored in {result.Windows} window(s) of up to {window} · mean negative log-likelihood {result.MeanNll:F4} · {result.Seconds:F1} s"));
         context.WriteJson(new JsonObject
         {
             ["model"] = choice.Model,

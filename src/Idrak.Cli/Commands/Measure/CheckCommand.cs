@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Diagnostics;
+using System.Globalization;
 using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
 using Idrak.Generation;
@@ -75,7 +76,7 @@ internal sealed class CheckCommand : Command
     {
         var device = context.Device;
         var tokenizer = model.Tokenizer ?? throw new InvalidOperationException($"{choice.Model} has no tokenizer (tokenizer.json).");
-        string TokenOf(int id) => tokenizer is BpeTokenizer bpe ? bpe.TokenOf(id) : id.ToString();
+        string TokenOf(int id) => tokenizer is BpeTokenizer bpe ? bpe.TokenOf(id) : id.ToString(CultureInfo.InvariantCulture);
         int failures = 0;
         string kv = choice.Kv ?? "float32";
         bool approximate = choice.Weights is not null and not ("float32" or "f32") || kv != "float32";
@@ -189,9 +190,9 @@ internal sealed class CheckCommand : Command
             bool logitsClose = packedWeights || maxDiff <= 2e-3f * Math.Max(1f, scale);
             bool ok = encodes && top1 && logitsClose && (greedySame || approximate);
             failures += ok ? 0 : 1;
-            context.Write($"  {(ok ? "ok  " : "DIFF")} {ids.Length,4} ids: max |Δlogit| {maxDiff:G3} (largest logit {scale:F1}), top-1 {(top1 ? "same" : "DIFFERENT")}, "
-                          + $"top-10 overlap {overlap}/10, forward {forwardMs:F0} ms; greedy {(greedySame ? "identical" : $"first {agree} of {expectedText.Length} characters agree")} "
-                          + $"({stats.TokensPerSecond:F1} tokens/s){(encodes ? "" : "; the prompt text encodes to different ids")}");
+            context.Write(string.Create(CultureInfo.InvariantCulture, $"  {(ok ? "ok  " : "DIFF")} {ids.Length,4} ids: max |Δlogit| {maxDiff:G3} (largest logit {scale:F1}), top-1 {(top1 ? "same" : "DIFFERENT")}, ")
+                          + string.Create(CultureInfo.InvariantCulture, $"top-10 overlap {overlap}/10, forward {forwardMs:F0} ms; greedy {(greedySame ? "identical" : $"first {agree} of {expectedText.Length} characters agree")} ")
+                          + string.Create(CultureInfo.InvariantCulture, $"({stats.TokensPerSecond:F1} tokens/s){(encodes ? "" : "; the prompt text encodes to different ids")}"));
             if (!greedySame)
             {
                 context.Write($"       reference: {Shorten(expectedText)}\n       Idrak:     {Shorten(text)}");

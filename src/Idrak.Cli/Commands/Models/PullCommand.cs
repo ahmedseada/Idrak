@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Globalization;
 using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
 using Idrak.Data;
@@ -241,7 +242,7 @@ internal sealed class PullCommand : Command
         context.Write(downloaded == 0
             ? $"{model} is already in the cache: {files.Count} files, {Units.Bytes(bytes)} in {path}"
             : $"Pulled {model}{(commit is null ? "" : $" ({commit[..Math.Min(12, commit.Length)]})")}: {downloaded} of {files.Count} files downloaded "
-              + $"({Units.Bytes(fetched)} in {elapsed.TotalSeconds:F1} s), {Units.Bytes(bytes)} in {path}");
+              + string.Create(CultureInfo.InvariantCulture, $"({Units.Bytes(fetched)} in {elapsed.TotalSeconds:F1} s), {Units.Bytes(bytes)} in {path}"));
         context.Detail(string.Join(Environment.NewLine, files.Select(f => $"  {f.Name}  {Units.Bytes(f.Bytes)}{(f.Downloaded ? "" : "  (cached)")}")));
         context.WriteJson(new JsonObject
         {
