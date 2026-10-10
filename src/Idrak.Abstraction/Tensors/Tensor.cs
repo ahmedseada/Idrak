@@ -385,7 +385,24 @@ public sealed partial class Tensor : IDisposable
     }
 
     /// <summary>A shape as messages show it: [2, 3].</summary>
-    public static string FormatShape(ReadOnlySpan<int> shape) => "[" + string.Join(", ", shape.ToArray()) + "]";
+    public static string FormatShape(ReadOnlySpan<int> shape)
+    {
+        // Written once into a stack buffer (one string allocated), not copied to an array and joined.
+        var text = new DefaultInterpolatedStringHandler(2 * shape.Length + 2, shape.Length, CultureInfo.InvariantCulture, stackalloc char[64]);
+        text.AppendLiteral("[");
+        for (int i = 0; i < shape.Length; i++)
+        {
+            if (i > 0)
+            {
+                text.AppendLiteral(", ");
+            }
+
+            text.AppendFormatted(shape[i]);
+        }
+
+        text.AppendLiteral("]");
+        return text.ToStringAndClear();
+    }
 
     /// <summary>
     /// Releases the memory of this tensor's values while it stays in the autograd graph (its gradient still flows through
