@@ -367,3 +367,39 @@ handwritten pages in the CNN samples' MultiLanguageOcr (an RTX 5050 laptop and a
     library.
 79. **Spread independent work, then check it paid.** Rows of an image, regions of a batch: `Parallel.For` where the
     pieces are independent and large enough, measured on a machine with few cores too.
+
+---
+
+## 11. PTX kernel rules (learned from measured work)
+
+The library's GPU kernels are PTX generated in C# (`src/Idrak.Gpu/Cuda/PtxKernels*.cs`). Each rule came from a profile
+of the ArabicOcr line recognizer's training step (`train --profile`, the library's GpuProfiler), October 2026. They hold
+for every kernel, on every card: nothing below names or assumes a card.
+
+80. **Keep a pass's loads independent.** Give every loaded value a register of its own. A register written under
+    different predicates cannot be renamed, so each load waits for the instruction that used the last one. (gemv_nt's
+    8 row loads shared one predicated register: 36 µs a call; a register per row and two k a pass: 11.4 µs.)
+81. **Fill the device.** A launch needs enough blocks and warps to cover every multiprocessor and hide memory latency:
+    split long reductions and dot products across blocks or warps (k slices, chunks of a group), then combine the parts.
+    (A 16 × 128 × 512 product on the 16 × 16 kernel ran on 8 blocks at 0.1 TFLOPS; a per-channel reduction with one
+    block per channel took 0.56 ms a call.)
+82. **Count launches.** Where the work per launch is small (one time step of a recurrent layer, one row), the launch
+    floor is the cost: fuse dependent small kernels so a step is one launch. (The LSTM loop ran four launches a time
+    step, ~1,600 a training step, about 60% of its GPU time.)
+83. **Read coalesced.** Consecutive threads read consecutive addresses. When a kernel walks an operand across its rows,
+    copy it transposed once per call (one pass over a small matrix), not strided reads on every step.
+84. **Choose by the device's reported limits.** Shared memory, block size and the variant that uses them follow what the
+    device reports at run time (`CudaDeviceLimits`, `KernelShapes`), never a fixed width. Dynamic shared memory is
+    declared once at module scope (ptxas takes no `.extern` inside a kernel) and opted in to when it passes the default.
+    (CTC chose its shared-memory rows only when the states fit the block width, so OCR lines ran the global-memory
+    variant: 55 ms a gradient call; chosen by the shared memory the device allows: under 1 ms.)
+85. **Do per-call work once, not per step.** What does not change between a kernel's steps (label groups, indices,
+    offsets) is computed once at its start and kept in shared memory. (CTC's gradient re-scanned the labels for every
+    label at every step: O(L²) dependent loads a step.)
+86. **Sum in a fixed order.** Parts are added in an order fixed by the sizes (slice order, chunk order, a tree of a
+    fixed shape), never by the device's multiprocessor count or by atomics, so a result does not change run to run or
+    card to card beyond float rounding. An optimization that changes the order is checked against the CPU (rule 71).
+87. **Declare the block a kernel is written for.** A kernel written for a fixed block (1,024 threads, say) states it
+    (`.maxntid`) so ptxas keeps its registers within what that block may use; static shared memory stays within the
+    default per block (`CudaDeviceLimits.SharedPerBlock`).
+
