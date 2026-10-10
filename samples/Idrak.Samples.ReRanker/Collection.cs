@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Runtime.InteropServices;
 using Idrak.Generation;
 
 namespace Idrak.Samples.ReRanker;
@@ -79,6 +80,7 @@ public sealed class Collection
 public sealed class Bm25
 {
     private readonly List<string[]> _documents;
+    private readonly Dictionary<string, int>[] _counts;                                    // each document's term counts, made once
     private readonly Dictionary<string, double> _idf = [];
     private readonly double _averageLength;
 
@@ -88,6 +90,16 @@ public sealed class Bm25
         B = b;
         _documents = [.. documents.Select(d => WordTokenizer.Split(d).ToArray())];
         _averageLength = _documents.Average(d => d.Length);
+        _counts = new Dictionary<string, int>[_documents.Count];
+        for (int d = 0; d < _documents.Count; d++)
+        {
+            var counts = _counts[d] = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (string word in _documents[d])
+            {
+                CollectionsMarshal.GetValueRefOrAddDefault(counts, word, out _)++;
+            }
+        }
+
         foreach (var group in _documents.SelectMany(d => d.Distinct()).GroupBy(w => w))
         {
             int n = group.Count();
@@ -109,7 +121,7 @@ public sealed class Bm25
             var doc = _documents[d];
             foreach (var term in terms)
             {
-                int tf = doc.Count(w => w == term);
+                int tf = _counts[d].GetValueOrDefault(term);
                 if (tf > 0)
                 {
                     scores[d] += _idf[term] * tf * (K1 + 1) / (tf + K1 * (1 - B + B * doc.Length / _averageLength));
