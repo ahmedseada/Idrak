@@ -444,11 +444,20 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
             int outputs = output.Size / batch.Size;
             result ??= new float[data.Count, outputs];
             int row0 = batch.Index * batchSize;
-            for (int r = 0; r < batch.Size; r++)
+            int count = batch.Size * outputs;
+            if (count > 0 && outputs == result.GetLength(1) && row0 + batch.Size <= result.GetLength(0))
             {
-                for (int c = 0; c < outputs; c++)
+                // The batch's rows, in order: one copy into the result's row-major memory (the rows checked to lie inside it).
+                values.AsSpan(0, count).CopyTo(System.Runtime.InteropServices.MemoryMarshal.CreateSpan(ref result[row0, 0], count));
+            }
+            else
+            {
+                for (int r = 0; r < batch.Size; r++)
                 {
-                    result[row0 + r, c] = values[r * outputs + c];
+                    for (int c = 0; c < outputs; c++)
+                    {
+                        result[row0 + r, c] = values[r * outputs + c];
+                    }
                 }
             }
         }
