@@ -180,6 +180,7 @@ internal static class TrainCommand
         int profile = a.Integer("--profile", 0, 0);
         const int ProfileWarm = 20;
         long profileStart = 0, profiledLines = 0;
+        TimeSpan profileData = default, profileCompute = default;
         Telemetry.TrainingStarted(new TrainingStarted("ArabicOcr line recognizer", "AdamW", context.Device, epochs, train.Count, evaluation.Count, batchSize,
             stepsPerEpoch, recognizer.Network.ParameterCount, learningRate, Environment.ProcessorCount));
         for (int epoch = 1; epoch <= epochs; epoch++)
@@ -202,6 +203,7 @@ internal static class TrainCommand
                     context.Device.Synchronize();
                     double wallMs = Stopwatch.GetElapsedTime(profileStart).TotalMilliseconds / profile;
                     Say(FormattableString.Invariant($"Profile   {wallMs:F1} ms a step as it runs ({profiledLines / (double)profile * 1000 / wallMs:F0} lines/s), steps {ProfileWarm + 1}-{ProfileWarm + profile}"));
+                    Say(FormattableString.Invariant($"          data {profileData.TotalMilliseconds / profile:F1} ms (the batch augmented on the CPU) + step {profileCompute.TotalMilliseconds / profile:F1} ms (forward, CTC, backward, optimizer: host and device)"));
                     GpuProfiler.Start(context.Device);
                 }
                 else if (profile > 0 && step == ProfileWarm + 2 * profile)
@@ -264,6 +266,11 @@ internal static class TrainCommand
                 var preparing = Stopwatch.GetElapsedTime(started, prepared);
                 var compute = Stopwatch.GetElapsedTime(prepared);
                 (dataTime, computeTime) = (dataTime + preparing, computeTime + compute);
+                if (profile > 0 && step >= ProfileWarm && step < ProfileWarm + profile)
+                {
+                    (profileData, profileCompute) = (profileData + preparing, profileCompute + compute);
+                }
+
                 done++;
                 step++;
                 if (Telemetry.IsEnabled(TelemetryLevel.Batches))

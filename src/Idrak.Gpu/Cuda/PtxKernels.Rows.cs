@@ -2226,9 +2226,10 @@ internal static partial class PtxKernels
     /// <summary>Threads of a <c>gemv_nn_f32</c> block: 32 columns × 32 slices of k.</summary>
     public const int GemvThreads = 1024;
 
-    // c[b][r, j] = Σ_k a[b][r, k] · w[b][k, j] (+ beta · c) for m ≤ 8 rows. Block: 32 columns × 32 slices of k (slice s
+    // c[b][r, j] = Σ_k a[b][r, k] · w[b][k, j] (+ beta · c), 8 rows a block. Block: 32 columns × 32 slices of k (slice s
     // takes k = s, s + 32, …, four at a time so several loads are in flight); each thread keeps 8 row sums, the slices
-    // are added in shared memory and warp r writes row r. Grid: x = ⌈n / 32⌉, z = batch. Reads of w are coalesced.
+    // are added in shared memory and warp r writes row r. Grid: x = ⌈n / 32⌉, y = ⌈m / 8⌉ (rows 8·y on: each group reads
+    // w again, from cache), z = batch. Reads of w are coalesced. A row's sum does not depend on m.
     //
     // gemv_multi_f32: up to three products sharing the input a [m, k] (the query/key/value or gate/up projections):
     // y_j = a · w_j (+ bias_j) with w_j [k, n_j]; grid y selects j (blocks beyond n_j return at once).
@@ -2337,6 +2338,16 @@ internal static partial class PtxKernels
                     shl.b64 %rd8, %rd8, 2;
                     add.u64 %rd2, %rd2, %rd8;
                     mul.lo.u64 %rd8, %rd7, %rd6;
+                    shl.b64 %rd8, %rd8, 2;
+                    add.u64 %rd3, %rd3, %rd8;
+                    mov.u32 %r4, %ctaid.y;
+                    shl.b32 %r4, %r4, 3;
+                    sub.u32 %r1, %r1, %r4;
+                    min.u32 %r1, %r1, 8;
+                    mul.wide.u32 %rd8, %r4, %r3;
+                    shl.b64 %rd8, %rd8, 2;
+                    add.u64 %rd1, %rd1, %rd8;
+                    mul.wide.u32 %rd8, %r4, %r2;
                     shl.b64 %rd8, %rd8, 2;
                     add.u64 %rd3, %rd3, %rd8;
                     mov.u32 %r5, %tid.x;
@@ -2489,8 +2500,8 @@ internal static partial class PtxKernels
     }
 
     // c[b][r, j] = Σ_k a[b][r, k] · w[b][j, k] (+ beta · c), w given as [n, k] (a product with a transposed matrix,
-    // such as queries times keys), for m ≤ 8 rows. One warp per column: lanes stride over k (coalesced), then a warp
-    // reduction per row. Grid: x = ⌈n / 8⌉ (8 warps per block), z = batch.
+    // such as queries times keys), 8 rows a block. One warp per column: lanes stride over k (coalesced), then a warp
+    // reduction per row. Grid: x = ⌈n / 8⌉ (8 warps per block), y = ⌈m / 8⌉ (rows 8·y on), z = batch.
     private static void GemvNT(StringBuilder sb)
     {
         var s = new StringBuilder();
@@ -2527,6 +2538,16 @@ internal static partial class PtxKernels
                 shl.b64 %rd8, %rd8, 2;
                 add.u64 %rd2, %rd2, %rd8;
                 mul.lo.u64 %rd8, %rd7, %rd6;
+                shl.b64 %rd8, %rd8, 2;
+                add.u64 %rd3, %rd3, %rd8;
+                mov.u32 %r4, %ctaid.y;
+                shl.b32 %r4, %r4, 3;
+                sub.u32 %r1, %r1, %r4;
+                min.u32 %r1, %r1, 8;
+                mul.wide.u32 %rd8, %r4, %r3;
+                shl.b64 %rd8, %rd8, 2;
+                add.u64 %rd1, %rd1, %rd8;
+                mul.wide.u32 %rd8, %r4, %r2;
                 shl.b64 %rd8, %rd8, 2;
                 add.u64 %rd3, %rd3, %rd8;
                 mov.u32 %r5, %tid.x;
