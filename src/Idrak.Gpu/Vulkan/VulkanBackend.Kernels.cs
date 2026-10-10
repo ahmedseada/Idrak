@@ -994,15 +994,9 @@ internal sealed partial class VulkanBackend
         // Formula: the device's width, 32 words, the most splits allowed. Measured: every candidate (GemvCandidates).
         int most = LargestPowerOfTwo(maxSplits);
         int fallback = WithWidth(Width, most * 8);
-        if (!GemvValid(fallback, perWord, n))
+        if (!GemvValid(fallback, perWord, n) && (fallback = LastGemvCandidate(perWord, n, maxSplits)) < 0)
         {
-            var all = GemvCandidates(perWord, n, maxSplits);
-            if (all.Length == 0)
-            {
-                return -1;
-            }
-
-            fallback = all[^1];
+            return -1;
         }
 
         var counts = VulkanKernels.GemvWordCounts;
@@ -1058,6 +1052,26 @@ internal sealed partial class VulkanBackend
         }
 
         return [.. candidates];
+    }
+
+    // The last of GemvCandidates(perWord, n, maxSplits), or -1 when there are none, without building them (the formulas
+    // read it on every call where the device's own width cannot run their choice). Validity does not depend on the
+    // splits, so the last candidate is the last valid width and word variant with the most splits, LargestPowerOfTwo.
+    private int LastGemvCandidate(int perWord, int n, int maxSplits)
+    {
+        int last = -1, most = LargestPowerOfTwo(maxSplits);
+        foreach (int width in CandidateWidths)
+        {
+            for (int v = 0; v < VulkanKernels.GemvWordCounts.Length; v++)
+            {
+                if (GemvValid(WithWidth(width, most * 8 + v), perWord, n))
+                {
+                    last = WithWidth(width, most * 8 + v);
+                }
+            }
+        }
+
+        return last;
     }
 
     // Whether a choice (a stored one too) can run here: a candidate width, a word variant whose slices fit a scale group
