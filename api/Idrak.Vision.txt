@@ -29,6 +29,16 @@ public sealed record Idrak.Vision.Abstractions.Detection : System.IEquatable<Idr
   public int Class { get; init; }
   public string? Label { get; init; }
 
+public sealed record Idrak.Vision.Abstractions.DetectionCandidates : System.IDisposable, System.IEquatable<Idrak.Vision.Abstractions.DetectionCandidates>
+  public DetectionCandidates(Idrak.Abstraction.Tensor Boxes, Idrak.Abstraction.Tensor ClassLogits, Idrak.Abstraction.Tensor? Objectness)
+  public Idrak.Abstraction.Tensor Boxes { get; init; }
+  public Idrak.Abstraction.Tensor ClassLogits { get; init; }
+  public Idrak.Abstraction.Tensor? Objectness { get; init; }
+  public int Candidates { get; }
+  public int Classes { get; }
+  public int Images { get; }
+  public void Dispose()
+
 public delegate System.Collections.Generic.IEnumerable<Idrak.Vision.Abstractions.Detection> Idrak.Vision.Abstractions.DetectionDecoder(System.ReadOnlySpan<float> outputs, System.Collections.Generic.IReadOnlyList<int> outputShape)
 
 public sealed record Idrak.Vision.Abstractions.DetectionDecoderContext : System.IEquatable<Idrak.Vision.Abstractions.DetectionDecoderContext>
@@ -55,6 +65,20 @@ public static class Idrak.Vision.Abstractions.DetectionDecoders
   public static string? Origin(string name)
   public static void Register(string name, Idrak.Vision.Abstractions.DetectionDecoderFactory factory)
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
+public delegate Idrak.Vision.Abstractions.DetectionCandidates Idrak.Vision.Abstractions.DetectionHead(Idrak.Abstraction.Tensor outputs)
+
+public delegate Idrak.Vision.Abstractions.DetectionHead Idrak.Vision.Abstractions.DetectionHeadFactory(Idrak.Vision.Abstractions.DetectionDecoderContext context)
+
+public static class Idrak.Vision.Abstractions.DetectionHeads
+  public static Idrak.Vision.Abstractions.DetectionHead Create(string name, Idrak.Vision.Abstractions.DetectionDecoderContext context)
+  public static Idrak.Vision.Abstractions.DetectionHeadFactory Get(string name)
+  public static Idrak.Vision.Abstractions.DetectionHeadFactory? Default(string name)
+  public static Idrak.Vision.Abstractions.DetectionHeadFactory? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string? Origin(string name)
+  public static void Register(string name, Idrak.Vision.Abstractions.DetectionHeadFactory factory)
 
 public sealed class Idrak.Vision.Abstractions.ForegroundImage
   public ForegroundImage(float[] values, int width, int height, float threshold, bool inverted = false)
@@ -233,6 +257,21 @@ public static class Idrak.Vision.DetectionLosses
   public static Idrak.Abstraction.Tensor BoxIou(Idrak.Abstraction.Tensor predicted, Idrak.Abstraction.Tensor target, Idrak.Abstraction.BoxOverlap overlap = (Idrak.Abstraction.BoxOverlap)1, Idrak.LossReduction reduction = (Idrak.LossReduction)0, float eps = 1E-07f)
   public static Idrak.Abstraction.Tensor Focal(Idrak.Abstraction.Tensor logits, Idrak.Abstraction.Tensor targets, float alpha = 0.25f, float gamma = 2f, Idrak.LossReduction reduction = (Idrak.LossReduction)0)
   public static Idrak.Abstraction.Tensor SmoothL1(Idrak.Abstraction.Tensor predicted, Idrak.Abstraction.Tensor target, float beta = 1f, Idrak.LossReduction reduction = (Idrak.LossReduction)0)
+
+public static class Idrak.Vision.DetectionObjective
+  public static Idrak.Abstraction.Tensor Loss(Idrak.Vision.Abstractions.DetectionCandidates candidates, System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.BoundingBox>> boxes, System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyList<int>> labels, Idrak.Vision.DetectionObjectiveOptions? options = null)
+
+public sealed record Idrak.Vision.DetectionObjectiveOptions : System.IEquatable<Idrak.Vision.DetectionObjectiveOptions>
+  public DetectionObjectiveOptions()
+  public Idrak.Vision.Abstractions.BoxMatchOptions Match { get; init; }
+  public Idrak.Vision.Abstractions.VisionLossOptions Losses { get; init; }
+  public float BoxWeight { get; init; }
+  public float ClassWeight { get; init; }
+  public float ObjectnessWeight { get; init; }
+  public float Scale { get; init; }
+  public string BoxLoss { get; init; }
+  public string ClassLoss { get; init; }
+  public string Matcher { get; init; }
 
 public sealed record Idrak.Vision.DetectorOptions : System.IEquatable<Idrak.Vision.DetectorOptions>
   public DetectorOptions()
