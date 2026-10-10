@@ -16,6 +16,7 @@ internal static partial class Tests
         ("recurrent: inference through the fused time loop matches training's output and the composed steps'; the device runs the cell kernels, not the steps", RecurrentFusedInference),
         ("recurrent: gradient: the fused LSTM and GRU against finite differences (inputs and weights, both directions, the candidate bias)", RecurrentFusedGradients),
         ("recurrent: the device's LSTM and GRU cell kernels and their gradients match the CPU's (forward and reverse steps, the first step, with and without saved gates and the candidate bias, units past a vector width)", RecurrentCellKernelsMatchCpu),
+        ("recurrent: the device's LSTM and GRU step kernels (the recurrent product inside) and their gradients match the CPU's product and cell kernels (forward and reverse steps, the first and last steps, with and without saved gates, dOutput and the candidate bias, units past a warp)", RecurrentStepKernelsMatchCpu),
     ];
 
     private static RecurrentModule RecurrentLayer(bool gru, int inputs, int hidden, bool sequences, bool bidirectional, int layers, Device device, int seed)
@@ -56,7 +57,8 @@ internal static partial class Tests
                 y = module.Forward(x);
                 var weights = Tensor.From(RandomArray(new Random(y.Size), y.Size), y.Shape, device);
                 (y * weights).Sum().Backward();
-                calls = trace.Calls(Ops.LstmCell) + trace.Calls(Ops.GruCell) + trace.Calls(Ops.LstmCellBackward) + trace.Calls(Ops.GruCellBackward);
+                calls = trace.Calls(Ops.LstmCell) + trace.Calls(Ops.GruCell) + trace.Calls(Ops.LstmCellBackward) + trace.Calls(Ops.GruCellBackward)
+                        + trace.Calls(Ops.LstmStep) + trace.Calls(Ops.GruStep) + trace.Calls(Ops.LstmStepBackward) + trace.Calls(Ops.GruStepBackward);
             }
 
             return (y.ToArray(), x.Grad!.ToArray(), [.. module.Parameters().Select(p => p.Grad!.ToArray())], calls);
@@ -133,8 +135,9 @@ internal static partial class Tests
             using (var trace = Kernels.Trace(device.Backend))
             {
                 inference = module.Forward(x).ToArray();
-                calls = trace.Calls(gru ? Ops.GruCell : Ops.LstmCell);
-                Check(trace.Calls(Ops.LstmCellBackward) + trace.Calls(Ops.GruCellBackward) == 0, "inference asks for no gradient kernel");
+                calls = trace.Calls(gru ? Ops.GruCell : Ops.LstmCell) + trace.Calls(gru ? Ops.GruStep : Ops.LstmStep);
+                Check(trace.Calls(Ops.LstmCellBackward) + trace.Calls(Ops.GruCellBackward) + trace.Calls(Ops.LstmStepBackward) + trace.Calls(Ops.GruStepBackward) == 0,
+                    "inference asks for no gradient kernel");
             }
 
             Check(!HasCellKernels(device.Backend, gru) || calls >= 2 * 2 * 9, $"{device}: {calls} cell kernel calls for 2 layers x 2 directions x 9 steps");
@@ -215,6 +218,147 @@ internal static partial class Tests
                         (b, s) => b.GruCellBackward(s[0], s[1], s[2], s[3], s[4], s[5], s[6], step, previous, steps, batch, h), 1e-5f);
                     OnBoth(device, label + " gradient without dOutput", [gates, R(batch * steps * h), R(batch * h), R(batch * steps * 3 * h), R(batch * steps * 3 * h), R(batch * 3 * h)],
                         (b, s) => b.GruCellBackward(s[0], s[1], null, s[2], s[3], s[4], s[5], step, previous, steps, batch, h), 1e-5f);
+                }
+            }
+        }
+    }
+
+    // The step kernels against the CPU's two kernels: the previous step's hidden rows (or the later step's gate gradient
+    // rows) through U (or Uᵀ) by a product, then the cell kernel. The device runs only its step kernel.
+    private static void RecurrentStepKernelsMatchCpu(Device device)
+    {
+        var any = device.Backend.Allocate(1, zeroed: true);
+        bool lstm = device.Backend.LstmStep(any, any, any, any, null, null, 0, -1, 4, 0, 1) && device.Backend.LstmStepBackward(any, any, null, any, any, any, 0, -1, -1, 4, 0, 1);
+        bool gru = device.Backend.GruStep(any, any, null, any, null, 0, -1, 4, 0, 1) && device.Backend.GruStepBackward(any, any, null, any, any, any, any, 0, -1, -1, 4, 0, 1);
+        any.Release();
+        if (!lstm && !gru)
+        {
+            return;                                                                       // the device has no step kernels
+        }
+
+        var random = new Random(101);
+        float[] R(int n, float scale = 1f) => RandomArray(random, n, scale);
+        const int batch = 3, steps = 4;
+
+        // rows[n, ·] = sequence[n, row, ·] (width floats a row), or 0 without a row.
+        static Storage Rows(Backend b, Storage sequence, int row, int width)
+        {
+            var rows = b.Allocate(batch * width, zeroed: true);
+            if (row >= 0)
+            {
+                b.Copy2D(sequence, row * width, steps * width, rows, 0, width, batch, width, accumulate: false);
+            }
+
+            return rows;
+        }
+
+        foreach (int h in new[] { 3, 37 })
+        {
+            foreach (var (step, previous, next) in new[] { (2, 1, 3), (1, 2, 0), (0, -1, 1), (3, 2, -1) })
+            {
+                if (lstm)
+                {
+                    string label = $"LSTM step, {h} units, step {step} after {previous}";
+
+                    // [0] projected, [1] U [H, 4H], [2] cell, [3] output, [4] gates, [5] cells.
+                    OnBoth(device, label, [R(batch * steps * 4 * h, 2f), R(h * 4 * h, 0.5f), R(batch * h), R(batch * steps * h), R(batch * steps * 4 * h), R(batch * steps * h)],
+                        (b, s) =>
+                        {
+                            if (b != CpuBackend.Instance)
+                            {
+                                Check(b.LstmStep(s[0], s[1], s[2], s[3], s[4], s[5], step, previous, steps, batch, h), "the LSTM step runs");
+                                return;
+                            }
+
+                            var hidden = Rows(b, s[3], previous, h);
+                            var recurrent = b.Allocate(batch * 4 * h, zeroed: false);
+                            b.MatMul(hidden, s[1], recurrent, batch, 4 * h, h, false, false, 0f);
+                            b.LstmCell(s[0], recurrent, s[2], hidden, s[3], s[4], s[5], step, steps, batch, h);
+                            hidden.Release();
+                            recurrent.Release();
+                        }, 1e-4f);
+
+                    // [0] gates (activated), [1] cells, [2] dOutput, [3] Uᵀ [4H, H], [4] dCell, [5] dGates (the later step's row read).
+                    var gates = R(batch * steps * 4 * h).Select(v => 0.5f + 0.49f * v).ToArray();
+                    foreach (bool output in new[] { true, false })
+                    {
+                        OnBoth(device, label + " gradient" + (output ? "" : " without dOutput"),
+                            [gates, R(batch * steps * h), R(batch * steps * h), R(4 * h * h, 0.5f), R(batch * h), R(batch * steps * 4 * h)],
+                            (b, s) =>
+                            {
+                                if (b != CpuBackend.Instance)
+                                {
+                                    Check(b.LstmStepBackward(s[0], s[1], output ? s[2] : null, s[3], s[4], s[5], step, next, previous, steps, batch, h),
+                                        "the LSTM step gradient runs");
+                                    return;
+                                }
+
+                                var later = Rows(b, s[5], next, 4 * h);
+                                var dHidden = b.Allocate(batch * h, zeroed: true);
+                                var dStep = b.Allocate(batch * 4 * h, zeroed: false);
+                                b.MatMul(later, s[3], dHidden, batch, h, 4 * h, false, false, 0f);
+                                b.LstmCellBackward(s[0], s[1], output ? s[2] : null, dHidden, s[4], s[5], dStep, step, previous, steps, batch, h);
+                                later.Release();
+                                dHidden.Release();
+                                dStep.Release();
+                            }, 1e-4f);
+                    }
+                }
+
+                if (gru)
+                {
+                    string label = $"GRU step, {h} units, step {step} after {previous}";
+                    foreach (bool bias in new[] { true, false })
+                    {
+                        // [0] projected, [1] U [H, 3H], [2] candidate bias, [3] output, [4] gates.
+                        OnBoth(device, label + (bias ? "" : " without the candidate bias"),
+                            [R(batch * steps * 3 * h, 2f), R(h * 3 * h, 0.5f), R(h), R(batch * steps * h), R(batch * steps * 4 * h)],
+                            (b, s) =>
+                            {
+                                if (b != CpuBackend.Instance)
+                                {
+                                    Check(b.GruStep(s[0], s[1], bias ? s[2] : null, s[3], s[4], step, previous, steps, batch, h), "the GRU step runs");
+                                    return;
+                                }
+
+                                var hidden = Rows(b, s[3], previous, h);
+                                var recurrent = b.Allocate(batch * 3 * h, zeroed: false);
+                                b.MatMul(hidden, s[1], recurrent, batch, 3 * h, h, false, false, 0f);
+                                b.GruCell(s[0], recurrent, bias ? s[2] : null, hidden, s[3], s[4], step, steps, batch, h);
+                                hidden.Release();
+                                recurrent.Release();
+                            }, 1e-4f);
+                    }
+
+                    // [0] gates (r, u, c in range; the recurrent term any value), [1] output, [2] dOutput, [3] Uᵀ [3H, H], [4] dHidden (the
+                    // direct part), [5] dGates, [6] dRecurrent (the later step's row read).
+                    var gates = R(batch * steps * 4 * h);
+                    for (int i = 0; i < gates.Length; i++)
+                    {
+                        gates[i] = i / h % 4 == 3 ? 2f * gates[i] : 0.5f + 0.49f * gates[i];
+                    }
+
+                    foreach (bool output in new[] { true, false })
+                    {
+                        OnBoth(device, label + " gradient" + (output ? "" : " without dOutput"),
+                            [gates, R(batch * steps * h), R(batch * steps * h), R(3 * h * h, 0.5f), R(batch * h), R(batch * steps * 3 * h), R(batch * steps * 3 * h)],
+                            (b, s) =>
+                            {
+                                if (b != CpuBackend.Instance)
+                                {
+                                    Check(b.GruStepBackward(s[0], s[1], output ? s[2] : null, s[3], s[4], s[5], s[6], step, next, previous, steps, batch, h),
+                                        "the GRU step gradient runs");
+                                    return;
+                                }
+
+                                var later = Rows(b, s[6], next, 3 * h);
+                                var dStep = b.Allocate(batch * 3 * h, zeroed: false);
+                                b.MatMul(later, s[3], s[4], batch, h, 3 * h, false, false, 1f);
+                                b.GruCellBackward(s[0], s[1], output ? s[2] : null, s[4], s[5], s[6], dStep, step, previous, steps, batch, h);
+                                later.Release();
+                                dStep.Release();
+                            }, 1e-4f);
+                    }
                 }
             }
         }

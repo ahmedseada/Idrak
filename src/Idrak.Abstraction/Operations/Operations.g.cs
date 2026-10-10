@@ -88,68 +88,72 @@ internal static class OperationIndex
     public const int LstmCellBackward = 72;
     public const int GruCell = 73;
     public const int GruCellBackward = 74;
-    public const int BoxIouLoss = 75;
-    public const int BoxIouLossBackward = 76;
-    public const int SigmoidFocalLoss = 77;
-    public const int SigmoidFocalLossBackward = 78;
-    public const int Permute = 79;
-    public const int SumAxis = 80;
-    public const int BroadcastAxis = 81;
-    public const int SgdStep = 82;
-    public const int AdamStep = 83;
-    public const int AdamStep8Bit = 84;
-    public const int SumSquares = 85;
-    public const int FusedAdamW = 86;
-    public const int ClipFactor = 87;
-    public const int Dropout = 88;
-    public const int DropoutBackward = 89;
-    public const int ScaleMaskSoftmax = 90;
-    public const int LayerNormFused = 91;
-    public const int LayerNormTrain = 92;
-    public const int LayerNormBackward = 93;
-    public const int BiasGelu = 94;
-    public const int Int8MatMul = 95;
-    public const int BFloat16MatMul = 96;
-    public const int BFloat16Dequantize = 97;
-    public const int PackBFloat16 = 98;
-    public const int Int8Dequantize = 99;
-    public const int Int4MatMul = 100;
-    public const int Int4Dequantize = 101;
-    public const int RmsNorm = 102;
-    public const int RmsNormBackward = 103;
-    public const int Rope = 104;
-    public const int RmsNormAffine = 105;
-    public const int AddRmsNormAffine = 106;
-    public const int RmsNormRope = 107;
-    public const int RmsNormRopePair = 108;
-    public const int NormRopeHeads = 109;
-    public const int SoftmaxCrossEntropyRows = 110;
-    public const int GatedActivation = 111;
-    public const int GatedActivationBackward = 112;
-    public const int GatedActivationPacked = 113;
-    public const int GatedActivationBackwardPacked = 114;
-    public const int KeyValueWriteInt8 = 115;
-    public const int AttentionScoresInt8 = 116;
-    public const int AttentionContextInt8 = 117;
-    public const int AttentionDecode = 118;
-    public const int AttentionInt8 = 119;
-    public const int AttentionBFloat16 = 120;
-    public const int KeyValueWriteBFloat16 = 121;
-    public const int AttentionTiledBackward = 122;
-    public const int AttentionSegmented = 123;
-    public const int AttentionRows = 124;
-    public const int AttentionSegmentedBackward = 125;
-    public const int AttentionTiled = 126;
-    public const int AttentionSpans = 127;
-    public const int AttentionSpansBackward = 128;
-    public const int DecoderMask = 129;
-    public const int KeyValueWrite = 130;
-    public const int SampleRows = 131;
-    public const int PenalizeRows = 132;
-    public const int HistoryPush = 133;
+    public const int LstmStep = 75;
+    public const int LstmStepBackward = 76;
+    public const int GruStep = 77;
+    public const int GruStepBackward = 78;
+    public const int BoxIouLoss = 79;
+    public const int BoxIouLossBackward = 80;
+    public const int SigmoidFocalLoss = 81;
+    public const int SigmoidFocalLossBackward = 82;
+    public const int Permute = 83;
+    public const int SumAxis = 84;
+    public const int BroadcastAxis = 85;
+    public const int SgdStep = 86;
+    public const int AdamStep = 87;
+    public const int AdamStep8Bit = 88;
+    public const int SumSquares = 89;
+    public const int FusedAdamW = 90;
+    public const int ClipFactor = 91;
+    public const int Dropout = 92;
+    public const int DropoutBackward = 93;
+    public const int ScaleMaskSoftmax = 94;
+    public const int LayerNormFused = 95;
+    public const int LayerNormTrain = 96;
+    public const int LayerNormBackward = 97;
+    public const int BiasGelu = 98;
+    public const int Int8MatMul = 99;
+    public const int BFloat16MatMul = 100;
+    public const int BFloat16Dequantize = 101;
+    public const int PackBFloat16 = 102;
+    public const int Int8Dequantize = 103;
+    public const int Int4MatMul = 104;
+    public const int Int4Dequantize = 105;
+    public const int RmsNorm = 106;
+    public const int RmsNormBackward = 107;
+    public const int Rope = 108;
+    public const int RmsNormAffine = 109;
+    public const int AddRmsNormAffine = 110;
+    public const int RmsNormRope = 111;
+    public const int RmsNormRopePair = 112;
+    public const int NormRopeHeads = 113;
+    public const int SoftmaxCrossEntropyRows = 114;
+    public const int GatedActivation = 115;
+    public const int GatedActivationBackward = 116;
+    public const int GatedActivationPacked = 117;
+    public const int GatedActivationBackwardPacked = 118;
+    public const int KeyValueWriteInt8 = 119;
+    public const int AttentionScoresInt8 = 120;
+    public const int AttentionContextInt8 = 121;
+    public const int AttentionDecode = 122;
+    public const int AttentionInt8 = 123;
+    public const int AttentionBFloat16 = 124;
+    public const int KeyValueWriteBFloat16 = 125;
+    public const int AttentionTiledBackward = 126;
+    public const int AttentionSegmented = 127;
+    public const int AttentionRows = 128;
+    public const int AttentionSegmentedBackward = 129;
+    public const int AttentionTiled = 130;
+    public const int AttentionSpans = 131;
+    public const int AttentionSpansBackward = 132;
+    public const int DecoderMask = 133;
+    public const int KeyValueWrite = 134;
+    public const int SampleRows = 135;
+    public const int PenalizeRows = 136;
+    public const int HistoryPush = 137;
 
     /// <summary>The number of operations.</summary>
-    public const int Count = 134;
+    public const int Count = 138;
 }
 
 /// <summary>
@@ -726,6 +730,50 @@ public static class OperationKernels
     /// <paramref name="batch"/> 0 nothing is read or written. Returns false when the device has no such kernel.
     /// </summary>
     public delegate bool GruCellBackward(Backend backend, Storage gates, Storage output, Storage? dOutput, Storage dHidden, Storage dGates, Storage dRecurrent, Storage dStep, int step, int previous, int steps, int batch, int hiddenSize);
+
+    /// <summary>
+    /// A kernel for <see cref="Ops.LstmStep"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// One time step of <see cref="Backend.LstmCellKernel"/> with the recurrent product inside: recurrent[n, k·H + j] = Σ_m h[m] ·
+    /// weights[m, k·H + j] (weights U [H, 4H] row-major; the device fixes the order of the sum, the same on every call) with
+    /// h = output[n, <paramref name="previous"/>, ·], the
+    /// previous step's hidden state (no product when <paramref name="previous"/> is negative: the zero initial state). The
+    /// cell state is read from and written to cell[n, j] in place; h goes to output[n, step, j]; gates and cells as in
+    /// <see cref="Backend.LstmCellKernel"/>. One launch a step, where the cell kernel needs a product before it. With
+    /// <paramref name="batch"/> 0 nothing is read or written. Returns false when the device has no such kernel (callers
+    /// then use <see cref="Backend.LstmCellKernel"/> after a product).
+    /// </summary>
+    public delegate bool LstmStep(Backend backend, Storage projected, Storage weights, Storage cell, Storage output, Storage? gates, Storage? cells, int step, int previous, int steps, int batch, int hiddenSize);
+
+    /// <summary>
+    /// A kernel for <see cref="Ops.LstmStepBackward"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// The gradient of one step of <see cref="Backend.LstmStepKernel"/>, the steps taken from the last to the first: as
+    /// <see cref="Backend.LstmCellBackwardKernel"/> with dHidden[n, j] = Σ_g dGates[n, <paramref name="next"/>, g] ·
+    /// weightsT[g, j] (weightsT = Uᵀ [4H, H] row-major: the recurrent part of this step's dh, from the gradient the later
+    /// step wrote; 0 when <paramref name="next"/> is negative, the last step taken), summed as <see cref="Backend.LstmStepKernel"/>
+    /// sums its product. Writes dGates[n, step, ·] and dCell[n, j] (in place) only. With <paramref name="batch"/> 0 nothing
+    /// is read or written. Returns false when the device has no such kernel.
+    /// </summary>
+    public delegate bool LstmStepBackward(Backend backend, Storage gates, Storage cells, Storage? dOutput, Storage weightsT, Storage dCell, Storage dGates, int step, int next, int previous, int steps, int batch, int hiddenSize);
+
+    /// <summary>
+    /// A kernel for <see cref="Ops.GruStep"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// One time step of <see cref="Backend.GruCellKernel"/> with the recurrent product inside, summed as
+    /// <see cref="Backend.LstmStepKernel"/> sums it (weights U [H, 3H]); the previous hidden state is output[n,
+    /// <paramref name="previous"/>, ·] (0 when <paramref name="previous"/> is negative), and h goes to output[n, step, j]
+    /// only. With <paramref name="batch"/> 0 nothing is read or written. Returns false when the device has no such kernel.
+    /// </summary>
+    public delegate bool GruStep(Backend backend, Storage projected, Storage weights, Storage? hiddenBias, Storage output, Storage? gates, int step, int previous, int steps, int batch, int hiddenSize);
+
+    /// <summary>
+    /// A kernel for <see cref="Ops.GruStepBackward"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// The gradient of one step of <see cref="Backend.GruStepKernel"/>, the steps taken from the last to the first: as
+    /// <see cref="Backend.GruCellBackwardKernel"/> with the incoming dh = (Σ_g dRecurrent[n, <paramref name="next"/>, g] ·
+    /// weightsT[g, j] + dHidden[n, j]) + dOutput[n, step, j] (weightsT = Uᵀ [3H, H]; no sum when <paramref name="next"/> is
+    /// negative) and dHidden[n, j] overwritten with this step's direct part dh · u. Writes dGates and dRecurrent at the
+    /// step's row and dHidden only. With <paramref name="batch"/> 0 nothing is read or written. Returns false when the
+    /// device has no such kernel.
+    /// </summary>
+    public delegate bool GruStepBackward(Backend backend, Storage gates, Storage output, Storage? dOutput, Storage weightsT, Storage dHidden, Storage dGates, Storage dRecurrent, int step, int next, int previous, int steps, int batch, int hiddenSize);
 
     /// <summary>
     /// A kernel for <see cref="Ops.BoxIouLoss"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
@@ -1743,6 +1791,50 @@ public static partial class Ops
         new("GruCellBackward", "GruCellBackwardKernel", "Storage,Storage,Storage,Storage,Storage,Storage,Storage,Int32,Int32,Int32,Int32,Int32", OperationIndex.GruCellBackward, typeof(OperationKernels.GruCellBackward), KernelSource.None);
 
     /// <summary>
+    /// One time step of <see cref="Backend.LstmCellKernel"/> with the recurrent product inside: recurrent[n, k·H + j] = Σ_m h[m] ·
+    /// weights[m, k·H + j] (weights U [H, 4H] row-major; the device fixes the order of the sum, the same on every call) with
+    /// h = output[n, <c>previous</c>, ·], the
+    /// previous step's hidden state (no product when <c>previous</c> is negative: the zero initial state). The
+    /// cell state is read from and written to cell[n, j] in place; h goes to output[n, step, j]; gates and cells as in
+    /// <see cref="Backend.LstmCellKernel"/>. One launch a step, where the cell kernel needs a product before it. With
+    /// <c>batch</c> 0 nothing is read or written. Returns false when the device has no such kernel (callers
+    /// then use <see cref="Backend.LstmCellKernel"/> after a product).
+    /// </summary>
+    public static readonly Operation LstmStep =
+        new("LstmStep", "LstmStepKernel", "Storage,Storage,Storage,Storage,Storage,Storage,Int32,Int32,Int32,Int32,Int32", OperationIndex.LstmStep, typeof(OperationKernels.LstmStep), KernelSource.None);
+
+    /// <summary>
+    /// The gradient of one step of <see cref="Backend.LstmStepKernel"/>, the steps taken from the last to the first: as
+    /// <see cref="Backend.LstmCellBackwardKernel"/> with dHidden[n, j] = Σ_g dGates[n, <c>next</c>, g] ·
+    /// weightsT[g, j] (weightsT = Uᵀ [4H, H] row-major: the recurrent part of this step's dh, from the gradient the later
+    /// step wrote; 0 when <c>next</c> is negative, the last step taken), summed as <see cref="Backend.LstmStepKernel"/>
+    /// sums its product. Writes dGates[n, step, ·] and dCell[n, j] (in place) only. With <c>batch</c> 0 nothing
+    /// is read or written. Returns false when the device has no such kernel.
+    /// </summary>
+    public static readonly Operation LstmStepBackward =
+        new("LstmStepBackward", "LstmStepBackwardKernel", "Storage,Storage,Storage,Storage,Storage,Storage,Int32,Int32,Int32,Int32,Int32,Int32", OperationIndex.LstmStepBackward, typeof(OperationKernels.LstmStepBackward), KernelSource.None);
+
+    /// <summary>
+    /// One time step of <see cref="Backend.GruCellKernel"/> with the recurrent product inside, summed as
+    /// <see cref="Backend.LstmStepKernel"/> sums it (weights U [H, 3H]); the previous hidden state is output[n,
+    /// <c>previous</c>, ·] (0 when <c>previous</c> is negative), and h goes to output[n, step, j]
+    /// only. With <c>batch</c> 0 nothing is read or written. Returns false when the device has no such kernel.
+    /// </summary>
+    public static readonly Operation GruStep =
+        new("GruStep", "GruStepKernel", "Storage,Storage,Storage,Storage,Storage,Int32,Int32,Int32,Int32,Int32", OperationIndex.GruStep, typeof(OperationKernels.GruStep), KernelSource.None);
+
+    /// <summary>
+    /// The gradient of one step of <see cref="Backend.GruStepKernel"/>, the steps taken from the last to the first: as
+    /// <see cref="Backend.GruCellBackwardKernel"/> with the incoming dh = (Σ_g dRecurrent[n, <c>next</c>, g] ·
+    /// weightsT[g, j] + dHidden[n, j]) + dOutput[n, step, j] (weightsT = Uᵀ [3H, H]; no sum when <c>next</c> is
+    /// negative) and dHidden[n, j] overwritten with this step's direct part dh · u. Writes dGates and dRecurrent at the
+    /// step's row and dHidden only. With <c>batch</c> 0 nothing is read or written. Returns false when the
+    /// device has no such kernel.
+    /// </summary>
+    public static readonly Operation GruStepBackward =
+        new("GruStepBackward", "GruStepBackwardKernel", "Storage,Storage,Storage,Storage,Storage,Storage,Storage,Int32,Int32,Int32,Int32,Int32,Int32", OperationIndex.GruStepBackward, typeof(OperationKernels.GruStepBackward), KernelSource.None);
+
+    /// <summary>
     /// Box overlap losses, torchvision's formulas: for each of <c>count</c> pairs of boxes given by their corners
     /// (x1, y1, x2, y2; predicted and target are [count, 4]), losses[i] = 1 - IoU (<see cref="BoxOverlap.IoU"/>), plus the
     /// enclosing box's empty share (GIoU), plus the centres' squared distance over the enclosing box's squared diagonal
@@ -2259,6 +2351,10 @@ public static partial class Ops
         LstmCellBackward,
         GruCell,
         GruCellBackward,
+        LstmStep,
+        LstmStepBackward,
+        GruStep,
+        GruStepBackward,
         BoxIouLoss,
         BoxIouLossBackward,
         SigmoidFocalLoss,
