@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Text;
 using Idrak.Nlp.Abstractions;
 
@@ -66,11 +67,12 @@ internal sealed class ErrorRateMetric(bool words) : ITuningMetric
         if (strip)
         {
             var kept = new StringBuilder(text.Length);
+            Span<char> units = stackalloc char[2];                         // a rune's UTF-16 (no string per rune)
             foreach (var rune in text.Normalize(NormalizationForm.FormD).EnumerateRunes())
             {
                 if (Rune.GetUnicodeCategory(rune) != UnicodeCategory.NonSpacingMark)
                 {
-                    kept.Append(rune.ToString());
+                    kept.Append(units[..rune.EncodeToUtf16(units)]);
                 }
             }
 
@@ -92,9 +94,11 @@ internal sealed class ErrorRateMetric(bool words) : ITuningMetric
         return [.. values];
     }
 
-    // Each word as an id shared by both texts (equal words, equal ids).
+    // Each word as an id shared by both texts (equal words, equal ids); a word is looked up by its span, a string kept
+    // only for a new word.
     private static int[] Words(string text, Dictionary<string, int> ids)
     {
+        var lookup = ids.GetAlternateLookup<ReadOnlySpan<char>>();
         var result = new List<int>();
         int start = -1;
         for (int i = 0; i <= text.Length; i++)
@@ -102,10 +106,10 @@ internal sealed class ErrorRateMetric(bool words) : ITuningMetric
             bool space = i == text.Length || char.IsWhiteSpace(text[i]);
             if (space && start >= 0)
             {
-                string word = text[start..i];
-                if (!ids.TryGetValue(word, out int id))
+                ref int id = ref CollectionsMarshal.GetValueRefOrAddDefault(lookup, text.AsSpan(start, i - start), out bool exists);
+                if (!exists)
                 {
-                    ids[word] = id = ids.Count;
+                    id = ids.Count - 1;
                 }
 
                 result.Add(id);
