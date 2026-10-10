@@ -128,6 +128,16 @@ def main() -> None:
     pipelines_invert = ["invert", "grayscale,invert", "invert,contrast=1.5"]
     cases = [(i, p) for i in small for p in pipelines_small] + [("image-transforms/scan.jpg", p) for p in pipelines_scan]
     cases += [(i, p) for i in small for p in pipelines_invert] + [("image-transforms/scan.jpg", "grayscale,max_width=1024,contrast=1.5,invert")]
+    # Poor scans: enlarge, pad, equalize, gamma, blur, unsharp, rank filters, black and white (appended: numbers kept).
+    pipelines_scans = [
+        "scale=1.5", "scale=0.5,resample=bicubic", "scale=2,resample=bilinear", "pad=16", "pad=7,fill=0", "equalize", "gamma=0.6",
+        "gamma=1.8", "blur=1", "blur=2.5", "unsharp=2", "unsharp=1.5,percent=250,threshold=6", "median=3", "median=5",
+        "min_filter=3", "max_filter=5", "binarize", "binarize=140", "grayscale,scale=1.5,median=3,unsharp=2,binarize",
+        "grayscale,invert,min_filter=3,equalize,gamma=0.7",
+    ]
+    cases += [(i, p) for i in small for p in pipelines_scans]
+    cases += [("image-transforms/scan.jpg", p) for p in ["grayscale,max_width=1024,median=3,unsharp=2,percent=150,threshold=3,contrast=1.5",
+                                                         "grayscale,max_width=1024,binarize", "grayscale,max_width=800,scale=1.25,min_filter=3"]]
 
     manifest = {"pillow": pillow_version, "libjpeg_turbo": features.version("libjpeg_turbo"), "transforms": [], "jpeg": []}
     for index, (name, pipeline) in enumerate(cases):

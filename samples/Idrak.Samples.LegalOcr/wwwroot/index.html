@@ -104,6 +104,27 @@
   .evaluation { max-height: 220px; overflow: auto; font-variant-numeric: tabular-nums; font-size: 12px; }
   .evaluation table { width: 100%; border-collapse: collapse; }
   .evaluation td, .evaluation th { padding: 3px 6px; border-bottom: 1px solid var(--line); text-align: left; }
+  .readbar { position: sticky; top: 0; z-index: 3; background: var(--panel); padding: 2px 0 8px; margin-top: 0 !important; }
+  .readbar .btn { width: 100%; padding: 12px; font-size: 15px; }
+  .readbar .btn.stop { background: var(--bad); border-color: var(--bad); color: #fff; }
+  .steps > .step { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  .steps > .step + .step { margin-top: 6px; }
+  .steps > .step.off { opacity: .55; }
+  .step-head { display: flex; align-items: center; gap: 8px; }
+  .step-head b { flex: 1; font-weight: 600; font-size: 13px; }
+  .step-head button { border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 6px; width: 28px; height: 26px; cursor: pointer; font: inherit; line-height: 1; }
+  .step-head button:disabled { opacity: .35; cursor: default; }
+  .step-inputs { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-top: 8px; }
+  .step-inputs:empty { display: none; }
+  .step-inputs label { margin-bottom: 2px; }
+  .step-inputs .pair { display: flex; gap: 6px; align-items: center; }
+  .step-inputs .pair input[type=range] { flex: 1; min-width: 60px; }
+  .step-inputs .pair input[type=number] { width: 84px; flex: none; }
+  .mono { font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; word-break: break-all; }
+  .preview { position: relative; }
+  .preview img { width: 100%; border: 1px solid var(--line); border-radius: 6px; background: var(--soft); display: block; max-height: 520px; object-fit: contain; }
+  .preview svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  .preview rect { fill: none; stroke: var(--warn); stroke-width: 2; vector-effect: non-scaling-stroke; stroke-dasharray: 6 4; }
   .hidden { display: none !important; }
 </style>
 </head>
@@ -132,6 +153,10 @@
         <div id="dropText">Drop a scan here, or click to choose one</div>
         <input type="file" id="file" accept="image/*" class="hidden">
       </div>
+      <div id="previewBox" class="hidden">
+        <label>As the model will see it <span id="previewInfo"></span></label>
+        <div class="preview"><img id="previewImage" alt=""><svg id="previewCrops" preserveAspectRatio="none"></svg></div>
+      </div>
       <div id="pagesBox" class="hidden">
         <label>Or an evaluation page (<span id="pagesSource"></span>)</label>
         <div class="error hidden" id="pagesError" style="margin-bottom:6px;word-break:break-word"></div>
@@ -141,22 +166,32 @@
     </div>
 
     <div class="card stack">
-      <h2>Settings</h2>
-      <div>
-        <label for="preset">Preprocessing</label>
-        <select id="preset">
-          <option value="card">Model card: grayscale, max width 1024, contrast 1.5</option>
-          <option value="vllm">Model card, vLLM route: the same, sent as JPEG quality 95</option>
-          <option value="none">None (the image as it is)</option>
-          <option value="custom">Custom pipeline…</option>
-        </select>
-        <input type="text" id="pipeline" style="margin-top:6px" spellcheck="false">
-        <label class="check" style="margin-top:6px"><input type="checkbox" id="invert"> Invert colours (light text on a dark page becomes dark on light)</label>
-        <label class="check" style="margin-top:4px"><input type="checkbox" id="panAndScan"> Pan and scan (a tall or wide page is also read as 2 to 4 crops, each its own image: finer detail, more prompt tokens)</label>
+      <div class="readbar">
+        <button class="btn primary" id="read" disabled>Read</button>
+        <div class="note" id="readNote" style="margin-top:4px"></div>
       </div>
+      <h2>Preprocessing</h2>
       <div>
-        <label for="prompt">Prompt</label>
-        <textarea id="prompt" rows="2"></textarea>
+        <label for="preset">Start from</label>
+        <select id="preset">
+          <option value="model">This model's own steps</option>
+          <option value="card">Model card: grayscale, max width 1024, contrast 1.5</option>
+          <option value="vllm">Model card, vLLM route: the same, then JPEG quality 95</option>
+          <option value="none">No steps (the image as it is)</option>
+          <option value="custom">Custom (your steps)</option>
+        </select>
+      </div>
+      <div class="steps" id="steps"></div>
+      <div>
+        <select id="addStep"><option value="">+ Add a step…</option></select>
+        <div class="note" style="margin-top:4px">Steps run top to bottom. Untick one to try the page without it; the preview follows every change.</div>
+      </div>
+      <div class="note">Sent as: <span class="mono" id="pipelineText"></span></div>
+      <h2>Model options</h2>
+      <label class="check"><input type="checkbox" id="panAndScan"> Pan and scan (a tall or wide page is also read as 2 to 4 crops, each its own image: finer detail, more prompt tokens)</label>
+      <h2>Prompt</h2>
+      <div>
+        <textarea id="prompt" rows="2" aria-label="Prompt"></textarea>
         <div class="row" style="margin-top:4px">
           <button class="btn" id="dataPrompt" type="button" disabled>Use the page's own prompt</button>
           <button class="btn" id="modelPrompt" type="button">Model's prompt</button>
@@ -165,11 +200,6 @@
       <div>
         <label for="maxTokens">Most tokens in the answer</label>
         <input type="number" id="maxTokens" min="1" max="8000" step="64">
-      </div>
-      <div class="row">
-        <button class="btn primary" id="read" disabled>Read</button>
-        <button class="btn" id="stop" disabled>Stop</button>
-        <span class="note" id="readNote"></span>
       </div>
     </div>
 
@@ -227,7 +257,7 @@
         <div><label for="tName">Adapter name</label><input type="text" id="tName" spellcheck="false"></div>
         <div><label for="tBase">Tune on</label><select id="tBase"></select></div>
       </div>
-      <div><label for="tPre">Preprocessing of every page (saved with the adapter, used when reading with it)</label><input type="text" id="tPre" spellcheck="false"></div>
+      <div><label for="tPre">Preprocessing of every page (saved with the adapter, used when reading with it) <button class="btn" id="tPreFromRead" type="button" style="padding:2px 8px;margin-left:6px">Use the Read tab's steps</button></label><input type="text" id="tPre" spellcheck="false"></div>
       <div class="grid3">
         <div><label for="tWeights">Base weights</label><select id="tWeights"><option value="bf16">bf16</option><option value="int8">int8</option><option value="int4">int4 (QLoRA)</option></select></div>
         <div><label for="tEpochs">Epochs</label><input type="number" id="tEpochs" min="1" step="1"></div>
@@ -319,7 +349,7 @@ async function refresh() {
   $("memory").textContent = s.memory ? `${s.device}: ${size(s.memory.inUse)} in use, peak ${size(s.memory.peak)}` : s.device;
   const seen = s.state + "|" + s.model;
   if (seen !== lastSeen) { lastSeen = seen; await loadModels(); }
-  $("read").disabled = !(s.state === "Ready" && (imageData || pageIndex != null)) || reading != null;
+  if (!reading) $("read").disabled = !(s.state === "Ready" && (imageData || pageIndex != null)) || evaluating != null;
   $("evaluate").disabled = !(s.state === "Ready" && pages.length) || evaluating != null || reading != null;
   for (const b of $("switch").querySelectorAll("button")) b.disabled = s.state === "Busy" || !models.find(m => m.name === b.textContent)?.usable;
   setTimeout(refresh, ["Downloading", "Loading", "Reading", "Busy"].includes(s.state) ? 700 : 2500);
@@ -354,29 +384,165 @@ async function pick(m) {
 function useSettings(m) {
   $("prompt").value = m.prompt;
   $("maxTokens").value = m.maxTokens;
-  setPipeline(withInvert(m.preprocessing, $("invert").checked));     // the invert choice stays across models
+  // Your own steps stay across models; any other choice follows the model.
+  if ($("preset").value !== "custom") setSteps($("preset").value === "model" ? m.preprocessing : presets[$("preset").value] ?? "", $("preset").value);
 }
 
-// The pipeline's text, the preset it matches (leaving out an invert step) and the invert box kept in step.
-function setPipeline(text) {
-  const plain = withInvert(text, false);
-  const preset = Object.entries(presets).find(([, v]) => v === plain);
-  $("preset").value = preset ? preset[0] : "custom";
-  $("invert").checked = plain !== steps(text).join(",");
-  $("pipeline").value = text;
-}
-function steps(text) { return (text ?? "").split(",").map(s => s.trim()).filter(s => s.length); }
-// The pipeline with its invert step taken out, or put in before a closing jpeg step (the JPEG stays what is sent).
-function withInvert(text, on) {
-  const list = steps(text).filter(s => s.toLowerCase() !== "invert");
-  if (on) {
-    const jpeg = list.findIndex(s => s.toLowerCase().startsWith("jpeg="));
-    list.splice(jpeg < 0 ? list.length : jpeg, 0, "invert");
+// ---------------------------------------------------------------- the preprocessing steps (one row each, its own inputs)
+let transforms = [], byName = {}, steps = [];     // steps: { name, on, values: { key: text } }; key "" is the step's value
+
+async function loadTransforms() {
+  transforms = await fetch("/api/transforms").then(r => r.json()).catch(() => []);
+  byName = Object.fromEntries(transforms.map(t => [t.name, t]));
+  const add = $("addStep");
+  for (const t of [...transforms].sort((a, b) => a.label.localeCompare(b.label))) {
+    const o = document.createElement("option"); o.value = t.name; o.textContent = t.label; o.title = t.summary; add.appendChild(o);
   }
-  return list.join(",");
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem("legal-ocr-steps") ?? "null"); } catch { }
+  if (saved?.preset === "custom" && Array.isArray(saved.steps)) { $("preset").value = "custom"; steps = saved.steps.filter(s => byName[s.name]); renderSteps(); update(false); }
+  else setSteps(current?.preprocessing ?? presets.card, "model");
 }
-$("preset").onchange = () => { if ($("preset").value !== "custom") $("pipeline").value = withInvert(presets[$("preset").value], $("invert").checked); };
-$("pipeline").oninput = () => setPipeline($("pipeline").value);
+
+// The steps of a pipeline's text: a registered name starts a step, a key of the step's inputs is one of its options.
+function parse(text) {
+  const list = [];
+  for (const raw of (text ?? "").split(",")) {
+    const item = raw.trim(); if (!item) continue;
+    const at = item.indexOf("="), name = (at < 0 ? item : item.slice(0, at)).trim().toLowerCase(), value = at < 0 ? null : item.slice(at + 1).trim();
+    if (byName[name]) list.push({ name, on: true, values: value == null ? {} : { "": value } });
+    else if (list.length && value != null) list[list.length - 1].values[name] = value;
+  }
+  return list;
+}
+
+function pipelineOf(list) {
+  return list.filter(s => s.on).map(s => {
+    const t = byName[s.name], v = s.values[""];
+    const parts = [v != null && v !== "" ? `${s.name}=${v}` : s.name];
+    for (const input of t?.inputs ?? []) if (input.key && s.values[input.key] != null && s.values[input.key] !== "") parts.push(`${input.key}=${s.values[input.key]}`);
+    return parts.join(",");
+  }).join(",");
+}
+
+// A new step with the app's suggested values (appsettings.json: PreprocessingDefaults).
+function newStep(name) {
+  const values = {};
+  for (const input of byName[name].inputs) if (input.default != null) values[input.key] = input.default;
+  return { name, on: true, values };
+}
+
+function setSteps(text, preset) {
+  if (!transforms.length) return;
+  steps = parse(text);
+  $("preset").value = preset;
+  renderSteps(); update(false);
+}
+
+function changed() { $("preset").value = "custom"; update(true); }
+
+function update(save) {
+  $("pipelineText").textContent = pipelineOf(steps) || "none";
+  if (save !== false || $("preset").value === "custom") {
+    try { localStorage.setItem("legal-ocr-steps", JSON.stringify({ preset: $("preset").value, steps })); } catch { }
+  }
+  schedulePreview();
+}
+
+function renderSteps() {
+  const box = $("steps"); box.innerHTML = "";
+  steps.forEach((step, i) => {
+    const t = byName[step.name];
+    const row = document.createElement("div"); row.className = "step" + (step.on ? "" : " off");
+    const head = document.createElement("div"); head.className = "step-head";
+    const on = document.createElement("input"); on.type = "checkbox"; on.checked = step.on; on.title = "Run this step";
+    on.onchange = () => { step.on = on.checked; row.classList.toggle("off", !step.on); changed(); };
+    const title = document.createElement("b"); title.textContent = t.label; title.title = t.summary;
+    const button = (text, label, disabled, action) => { const b = document.createElement("button"); b.type = "button"; b.textContent = text; b.title = label; b.setAttribute("aria-label", label); b.disabled = disabled; b.onclick = action; return b; };
+    head.append(on, title,
+      button("▲", "Move up", i === 0, () => { [steps[i - 1], steps[i]] = [steps[i], steps[i - 1]]; renderSteps(); changed(); }),
+      button("▼", "Move down", i === steps.length - 1, () => { [steps[i + 1], steps[i]] = [steps[i], steps[i + 1]]; renderSteps(); changed(); }),
+      button("✕", "Remove", false, () => { steps.splice(i, 1); renderSteps(); changed(); }));
+    const inputs = document.createElement("div"); inputs.className = "step-inputs";
+    for (const input of t.inputs) inputs.appendChild(control(step, input));
+    row.append(head, inputs);
+    box.appendChild(row);
+  });
+}
+
+// One input's control: a slider with a number for a number, a list for a choice; an optional one may stay empty.
+function control(step, input) {
+  const wrap = document.createElement("div");
+  const label = document.createElement("label"); label.textContent = input.label + (input.optional ? " (optional)" : ""); if (input.help) label.title = input.help;
+  wrap.appendChild(label);
+  const value = step.values[input.key] ?? "";
+  const set = v => { if (v === "" || v == null) delete step.values[input.key]; else step.values[input.key] = String(v); changed(); };
+  if (input.input === "choice") {
+    const select = document.createElement("select");
+    if (input.optional) { const o = document.createElement("option"); o.value = ""; o.textContent = "(not set)"; select.appendChild(o); }
+    for (const c of input.choices) { const o = document.createElement("option"); o.value = c; o.textContent = c; select.appendChild(o); }
+    select.value = value; select.onchange = () => set(select.value);
+    wrap.appendChild(select);
+  } else {
+    const pair = document.createElement("div"); pair.className = "pair";
+    const number = document.createElement("input"); number.type = "number";
+    if (input.min != null) number.min = input.min; if (input.max != null) number.max = input.max;
+    number.step = input.step ?? (input.input === "integer" ? 1 : 0.01);
+    number.value = value; number.placeholder = input.optional ? "auto" : ""; if (input.help) number.title = input.help;
+    if (input.min != null && input.max != null) {
+      const range = document.createElement("input"); range.type = "range"; range.min = input.min;
+      // Sliders over very wide ranges stay usable: they span up to 20 times the suggested value.
+      range.max = input.default != null && Number(input.default) > 0 ? Math.min(input.max, Math.max(Number(input.default) * 20, input.min + (input.step ?? 1) * 20)) : input.max;
+      range.step = number.step; range.value = value === "" ? (input.default ?? input.min) : value; range.setAttribute("aria-label", input.label);
+      range.oninput = () => { number.value = range.value; set(range.value); };
+      number.oninput = () => { if (number.value !== "") range.value = number.value; set(number.value); };
+      pair.append(range, number);
+    } else {
+      number.oninput = () => set(number.value);
+      pair.append(number);
+    }
+    wrap.appendChild(pair);
+  }
+  return wrap;
+}
+
+$("addStep").onchange = () => {
+  const name = $("addStep").value; $("addStep").value = "";
+  if (!name) return;
+  // A new step goes before a closing JPEG step, so what is sent stays the JPEG.
+  const jpeg = steps.length && steps[steps.length - 1].name === "jpeg" && name !== "jpeg" ? steps.length - 1 : steps.length;
+  steps.splice(jpeg, 0, newStep(name));
+  renderSteps(); changed();
+};
+$("preset").onchange = () => {
+  const p = $("preset").value;
+  if (p === "custom") { update(true); return; }
+  setSteps(p === "model" ? current?.preprocessing ?? "" : presets[p], p);
+};
+$("tPreFromRead").onclick = () => { $("tPre").value = pipelineOf(steps); };
+
+// ---------------------------------------------------------------- the live preview (the steps on the page, no model needed)
+let previewTimer = null, previewSeq = 0;
+function schedulePreview() { clearTimeout(previewTimer); previewTimer = setTimeout(preview, 300); }
+async function preview() {
+  if (imageData == null && pageIndex == null) return;
+  const seq = ++previewSeq;
+  const body = { preprocessing: pipelineOf(steps), panAndScan: $("panAndScan").checked };
+  if (pageIndex != null) body.page = pageIndex; else body.image = imageData;
+  $("previewBox").classList.remove("hidden");
+  $("previewInfo").className = "note"; $("previewInfo").textContent = "· working…";
+  const r = await fetch("/api/preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).catch(() => null);
+  if (seq !== previewSeq) return;
+  const d = r ? await r.json().catch(() => null) : null;
+  if (!r || !r.ok || !d) { $("previewInfo").className = "error"; $("previewInfo").textContent = "· " + (d?.detail ?? "the preview failed"); return; }
+  $("previewImage").src = d.image;
+  const svg = $("previewCrops");
+  svg.setAttribute("viewBox", `0 0 ${d.width} ${d.height}`);
+  svg.innerHTML = (d.crops ?? []).map(c => `<rect x="${c.left}" y="${c.top}" width="${c.width}" height="${c.height}"/>`).join("");
+  $("previewInfo").textContent = `· ${d.width}×${d.height}${d.channels === 1 ? " grey" : ""} (from ${d.originalWidth}×${d.originalHeight}), steps took ${d.milliseconds} ms`
+    + (d.panAndScan ? (d.crops?.length ? `, pan and scan: ${d.crops.length} crops` : ", pan and scan: no crops") : "");
+}
+
 // The crops pan and scan reads, outlined on the page as the model sees it.
 function showCrops(data) {
   const svg = $("crops");
@@ -384,13 +550,8 @@ function showCrops(data) {
   svg.innerHTML = (data.crops ?? []).map((c, i) => `<rect x="${c.left}" y="${c.top}" width="${c.width}" height="${c.height}"/>`
     + `<text x="${c.left + 6}" y="${c.top + Math.max(14, data.height / 30)}" font-size="${Math.max(12, data.height / 40)}">${i + 1}</text>`).join("");
 }
-$("panAndScan").onchange = () => { try { localStorage.setItem("legal-ocr-pan-and-scan", $("panAndScan").checked ? "1" : ""); } catch { } };
+$("panAndScan").onchange = () => { try { localStorage.setItem("legal-ocr-pan-and-scan", $("panAndScan").checked ? "1" : ""); } catch { } schedulePreview(); };
 try { $("panAndScan").checked = localStorage.getItem("legal-ocr-pan-and-scan") === "1"; } catch { }
-$("invert").onchange = () => {
-  $("pipeline").value = withInvert($("pipeline").value, $("invert").checked);
-  try { localStorage.setItem("legal-ocr-invert", $("invert").checked ? "1" : ""); } catch { }
-};
-try { $("invert").checked = localStorage.getItem("legal-ocr-invert") === "1"; } catch { }
 $("modelPrompt").onclick = () => { if (current) $("prompt").value = current.prompt; };
 $("dataPrompt").onclick = () => { if (page && page.prompt) $("prompt").value = page.prompt; };
 
@@ -409,7 +570,7 @@ function useFile(file) {
     showDrop(imageData, file.name);
     for (const el of document.querySelectorAll(".pages div")) el.classList.remove("on");
     $("dataPrompt").disabled = true;
-    refreshRead();
+    refreshRead(); schedulePreview();
   };
   reader.readAsDataURL(file);
 }
@@ -454,16 +615,19 @@ function usePage(p, div) {
   div.classList.add("on");
   showDrop(`/api/pages/${p.index}/image`, p.name);
   $("dataPrompt").disabled = !p.prompt;
-  refreshRead();
+  refreshRead(); schedulePreview();
 }
 
-function refreshRead() { $("read").disabled = !(current && current.loaded && (imageData || pageIndex != null)) || reading != null || evaluating != null; }
+function refreshRead() {
+  if (reading) { $("read").disabled = false; return; }
+  $("read").disabled = !(current && current.loaded && (imageData || pageIndex != null)) || evaluating != null;
+}
 
 // ---------------------------------------------------------------- evaluating N pages in a row
 $("evaluate").onclick = evaluate;
 $("evaluateStop").onclick = () => evaluating && evaluating.abort();
 async function evaluate() {
-  const body = { prompt: $("prompt").value, preprocessing: $("pipeline").value, maxTokens: Number($("maxTokens").value) || null, panAndScan: $("panAndScan").checked };
+  const body = { prompt: $("prompt").value, preprocessing: pipelineOf(steps), maxTokens: Number($("maxTokens").value) || null, panAndScan: $("panAndScan").checked };
   const count = Math.max(0, Number($("evaluateCount").value) || 0);
   evaluating = new AbortController();
   $("evaluate").disabled = true; $("evaluateStop").disabled = false; refreshRead();
@@ -493,15 +657,14 @@ async function evaluate() {
 }
 
 // ---------------------------------------------------------------- reading (server-sent events over a POST)
-$("read").onclick = read;
-$("stop").onclick = () => reading && reading.abort();
+$("read").onclick = () => reading ? reading.abort() : read();
 
 async function read() {
-  const body = { prompt: $("prompt").value, preprocessing: $("pipeline").value, maxTokens: Number($("maxTokens").value) || null, panAndScan: $("panAndScan").checked };
+  const body = { prompt: $("prompt").value, preprocessing: pipelineOf(steps), maxTokens: Number($("maxTokens").value) || null, panAndScan: $("panAndScan").checked };
   if (pageIndex == null) body.image = imageData;
   const url = pageIndex == null ? "/api/read" : `/api/pages/${pageIndex}/read`;
   reading = new AbortController();
-  $("read").disabled = true; $("stop").disabled = false;
+  $("read").textContent = "Stop reading"; $("read").classList.add("stop"); $("read").disabled = false;
   $("answer").textContent = ""; $("json").textContent = ""; $("readNote").textContent = "";
   $("compareTab").classList.toggle("hidden", pageIndex == null);
   showTab("answer");
@@ -528,7 +691,7 @@ async function read() {
     else $("readNote").textContent = "Stopped.";
   } finally {
     if (ticker) clearInterval(ticker);
-    reading = null; $("stop").disabled = true; refreshRead();
+    reading = null; $("read").textContent = "Read"; $("read").classList.remove("stop"); refreshRead();
   }
 }
 
@@ -751,6 +914,7 @@ async function loadAdapters() {
 
 refresh();
 loadPages();
+loadTransforms();
 loadTuning();
 followTuning();
 try { const v = localStorage.getItem("legal-ocr-view"); if (v === "tune") showView("tune"); } catch { }

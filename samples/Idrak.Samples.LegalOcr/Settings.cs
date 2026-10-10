@@ -75,6 +75,12 @@ public sealed record LegalOcrSettings
 
     /// <summary>The Fine-tune tab's defaults.</summary>
     public TuningDefaults Tuning { get; init; } = new();
+
+    /// <summary>
+    /// The values the Read tab's preprocessing steps start from, by transform: a step in the pipeline syntax
+    /// (<c>"unsharp": "unsharp=2,percent=150,threshold=3"</c>). A transform without one starts empty.
+    /// </summary>
+    public Dictionary<string, string> PreprocessingDefaults { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 }
 
 /// <summary>The Fine-tune tab's settings, each one the page can change for a run.</summary>

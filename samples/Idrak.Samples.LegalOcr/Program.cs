@@ -27,6 +27,7 @@ builder.Services.AddSingleton(new AdapterStore(settings, builder.Environment.Con
 builder.Services.AddSingleton<ReaderService>();
 builder.Services.AddSingleton<TuningService>();
 builder.Services.AddSingleton<EvaluationPages>();
+builder.Services.AddSingleton<Preprocessing>();
 builder.Services.ConfigureHttpJsonOptions(o =>
 {
     o.SerializerOptions.Converters.Add(new JsonStringEnumConverter());
@@ -92,6 +93,47 @@ public static class LegalOcrApi
             }
 
             return TypedResults.ServerSentEvents(host.ReadAsync(image, request, null, cancellationToken));
+        });
+
+        // The preprocessing editor: the transforms with their inputs and the app's suggested values; a preview without a model.
+        api.MapGet("/transforms", (Preprocessing preprocessing) => preprocessing.Transforms());
+
+        api.MapPost("/preview", IResult (PreviewRequest request, Preprocessing preprocessing, EvaluationPages pages) =>
+        {
+            ChatImage image;
+            if (request.Page is { } index)
+            {
+                if (pages.Get(index) is not { } page)
+                {
+                    return TypedResults.NotFound();
+                }
+
+                image = page.Image;
+            }
+            else if (request.Image is { Length: > 0 } data)
+            {
+                try
+                {
+                    image = data.StartsWith("data:", StringComparison.Ordinal) ? ChatImage.FromDataUrl(data) : ChatImage.FromBytes(Convert.FromBase64String(data));
+                }
+                catch (FormatException ex)
+                {
+                    return TypedResults.Problem($"The image is not a data URL or base64: {ex.Message}", statusCode: StatusCodes.Status400BadRequest);
+                }
+            }
+            else
+            {
+                return TypedResults.Problem("No image: send \"image\" (a data URL or base64) or \"page\" (an evaluation page).", statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            try
+            {
+                return TypedResults.Ok(preprocessing.Preview(image, request.Preprocessing, request.PanAndScan == true));
+            }
+            catch (Exception ex) when (ex is ArgumentException or InvalidDataException or NotSupportedException)
+            {
+                return TypedResults.Problem(ex.Message, statusCode: StatusCodes.Status400BadRequest);
+            }
         });
 
         api.MapGet("/pages", (EvaluationPages pages) =>

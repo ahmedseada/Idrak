@@ -11,14 +11,14 @@ namespace Idrak.Data;
 /// image prepared here is the image prepared there. Each takes and gives decoded pixels (<see cref="ImageData"/>, values
 /// in [0, 1]), read as the 8-bit bytes Pillow holds (<see cref="ImagePreprocessor"/>'s rounding) and given back as
 /// byte / 255. Grey images stay one channel and colour ones three. They are the library's image transforms
-/// (<see cref="ImageTransforms"/>: grayscale, max_width, max_height, contrast, brightness, sharpness, autocontrast, invert, jpeg).
+/// (<see cref="ImageTransforms"/>; the filters, scaling, padding and thresholds in PillowImageOps.Filters.cs).
 /// <para>
 /// Floating-point steps (the enhancers' blend, the smoothing filter) copy Pillow's C: float32 arithmetic in its order,
 /// truncated to a byte; Pillow built for x86-64 (its wheels) does not fuse multiply-adds there, and neither does .NET.
 /// A Pillow compiled to fuse them (some ARM builds) can differ by 1 at a few pixels.
 /// </para>
 /// </summary>
-public static class PillowImageOps
+public static partial class PillowImageOps
 {
     /// <summary>
     /// The image shrunk, keeping its aspect ratio, so it is at most <paramref name="maxWidth"/> wide and

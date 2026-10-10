@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import io
 
-from PIL import Image, ImageEnhance, ImageOps
+from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
 RESAMPLE = {
     "lanczos": Image.Resampling.LANCZOS, "antialias": Image.Resampling.LANCZOS, "1": Image.Resampling.LANCZOS,
@@ -33,6 +33,8 @@ RESAMPLE = {
 KEYS = {
     "grayscale": [], "max_width": ["resample"], "max_height": ["resample"], "contrast": [], "brightness": [],
     "sharpness": [], "autocontrast": ["ignore", "preserve_tone"], "jpeg": ["subsampling"], "invert": [],
+    "scale": ["resample"], "pad": ["fill"], "equalize": [], "gamma": [], "blur": [], "unsharp": ["percent", "threshold"],
+    "median": [], "min_filter": [], "max_filter": [], "binarize": [],
 }
 
 
@@ -55,6 +57,30 @@ def parse(text: str | None) -> list[tuple[str, str | None, dict[str, str]]]:
         else:
             raise ValueError(f"unknown image transform '{name}' (known: {', '.join(KEYS)})")
     return steps
+
+
+def otsu(grey: Image.Image) -> int:
+    """Otsu's level: the t maximizing the between-class variance of [0, t] and (t, 255] (the first on a tie)."""
+    hist = grey.histogram()
+    total = sum(hist)
+    sum_all = sum(i * h for i, h in enumerate(hist))
+    weight_back = sum_back = 0
+    best, level = -1.0, 0
+    for t in range(256):
+        weight_back += hist[t]
+        if weight_back == 0:
+            continue
+        weight_fore = total - weight_back
+        if weight_fore == 0:
+            break
+        sum_back += t * hist[t]
+        mean_back = sum_back / weight_back
+        mean_fore = (sum_all - sum_back) / weight_fore
+        difference = mean_back - mean_fore
+        between = float(weight_back) * weight_fore * (difference * difference)
+        if between > best:
+            best, level = between, t
+    return level
 
 
 def as_decoded(image: Image.Image) -> Image.Image:
@@ -93,6 +119,35 @@ def apply(image: Image.Image, text: str | None) -> Image.Image:
             image = ImageOps.autocontrast(image, cutoff=cutoff, ignore=ignore, preserve_tone=tone)
         elif name == "invert":
             image = ImageOps.invert(image)
+        elif name == "scale":
+            f = float(value)
+            resample = RESAMPLE[options.get("resample", "lanczos").lower()]
+            w, h = image.size
+            image = image.resize((max(1, int(w * f + 0.5)), max(1, int(h * f + 0.5))), resample)
+        elif name == "pad":
+            fill = int(options.get("fill", "255"))
+            image = ImageOps.expand(image, border=int(value), fill=fill if image.mode == "L" else (fill,) * len(image.getbands()))
+        elif name == "equalize":
+            image = ImageOps.equalize(image)
+        elif name == "gamma":
+            g = float(value)
+            table = [int(((i / 255.0) ** (1.0 / g)) * 255 + 0.5) for i in range(256)]
+            image = image.point(table * len(image.getbands()))
+        elif name == "blur":
+            image = image.filter(ImageFilter.GaussianBlur(float(value)))
+        elif name == "unsharp":
+            radius = float(value) if value else 2.0
+            image = image.filter(ImageFilter.UnsharpMask(radius, int(options.get("percent", "150")), int(options.get("threshold", "3"))))
+        elif name == "median":
+            image = image.filter(ImageFilter.MedianFilter(int(value) if value else 3))
+        elif name == "min_filter":
+            image = image.filter(ImageFilter.MinFilter(int(value) if value else 3))
+        elif name == "max_filter":
+            image = image.filter(ImageFilter.MaxFilter(int(value) if value else 3))
+        elif name == "binarize":
+            grey = image.convert("L")
+            t = int(value) if value else otsu(grey) + 1
+            image = grey.point([255 if i >= t else 0 for i in range(256)])
         elif name == "jpeg":
             buffer = io.BytesIO()
             sampling = {"4:2:0": 2, "420": 2, "2": 2, "4:2:2": 1, "422": 1, "1": 1, "4:4:4": 0, "444": 0, "0": 0}
