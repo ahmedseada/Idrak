@@ -376,16 +376,17 @@ internal static partial class Messages
         ["Remove an API key (servers started afterwards no longer accept it)"] = "إزالة مفتاح API (الخوادم التي تبدأ بعد ذلك لا تقبله)",
         ["Serve models over the chat API and the OpenAI-style API on one port"] = "تقديم النماذج عبر واجهة المحادثة والواجهة بأسلوب OpenAI على منفذ واحد",
         ["Serve models and open a small web chat page in the browser"] = "تقديم النماذج وفتح صفحة محادثة صغيرة في المتصفح",
-        ["Train a network from a builder JSON on a CSV or an image folder; writes a model package (.ikm)"] =
-            "تدريب شبكة من ملف JSON للبناء على ملف CSV أو مجلد صور؛ وكتابة حزمة نموذج (.ikm)",
+        ["Train a network from a builder JSON, or fine-tune an image model, on a CSV, image folders or annotated images"] =
+            "تدريب شبكة من ملف JSON للبناء، أو ضبط نموذج صور ضبطا دقيقا، على ملف CSV أو مجلدات صور أو صور موسومة",
+        ["{0} Load its plug-in with -P (--plugin)."] = "{0} حمل الإضافة التي تسجله بالخيار -P (--plugin).",
         ["Continue a training run from its last checkpoint (the remaining epochs, or --epochs N more)"] =
             "متابعة تدريب من آخر نقطة حفظ (الحقب المتبقية، أو --epochs N إضافية)",
         ["Training runs (from their JSON Lines logs): epochs, best epoch and loss, time, status"] = "عمليات التدريب (من سجلاتها بصيغة JSON Lines): الحقب وأفضل حقبة والخسارة والوقت والحالة",
         ["One training run: settings, loss curves (text plot), the epochs, best epoch and time"] = "عملية تدريب واحدة: الإعدادات ومنحنيات الخسارة (رسم نصي) والحقب وأفضل حقبة والوقت",
         ["Training runs side by side: settings, best epoch and loss, time, and their validation curves"] =
             "عمليات تدريب جنبا إلى جنب: الإعدادات وأفضل حقبة والخسارة والوقت ومنحنيات التحقق",
-        ["Run a model package (.ikm) on new rows (CSV, JSON Lines, Parquet) or images and write the predictions"] =
-            "تشغيل حزمة نموذج (.ikm) على صفوف جديدة (CSV أو JSON Lines أو Parquet) أو صور وكتابة التنبؤات",
+        ["Run a model package (.ikm) or an image model (classes, boxes, masks, features) on new rows or images and write the predictions"] =
+            "تشغيل حزمة نموذج (.ikm) أو نموذج صور (أصناف أو مربعات أو أقنعة أو سمات) على صفوف أو صور جديدة وكتابة التنبؤات",
         ["Bundle a network, its weights, scalers and tokenizer from a folder into one model package (.ikm)"] =
             "جمع شبكة وأوزانها ومقاييسها ومقطع رموزها من مجلد في حزمة نموذج واحدة (.ikm)",
         ["Distil a teacher model into a student: its token probabilities (on the fly or precomputed) or its answers"] =

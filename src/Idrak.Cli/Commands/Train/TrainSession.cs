@@ -53,7 +53,21 @@ internal sealed record RunSettings
 
     public bool Scale { get; init; } = true;
 
-    public JsonObject ToJson() => new()
+    /// <summary>An image run's own settings (<see cref="ImageRunOptions"/>), or null for a run on a table or class folders.</summary>
+    public JsonObject? Image { get; init; }
+
+    public JsonObject ToJson()
+    {
+        var json = Common();
+        if (Image is not null)
+        {
+            json["image"] = Image.DeepClone();
+        }
+
+        return json;
+    }
+
+    private JsonObject Common() => new()
     {
         ["format"] = "idrak-run/1",
         ["network"] = Network.DeepClone(),
@@ -90,6 +104,7 @@ internal sealed record RunSettings
         Optimizer = (string?)json["optimizer"] ?? "adamw",
         WeightDecay = (float?)json["weight_decay"],
         Scale = (bool?)json["scale"] ?? true,
+        Image = json["image"] is JsonObject image ? (JsonObject)image.DeepClone() : null,
     };
 }
 
