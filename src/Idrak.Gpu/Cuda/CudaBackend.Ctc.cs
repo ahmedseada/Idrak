@@ -5,8 +5,10 @@ namespace Idrak.Gpu.Cuda;
 
 // CTC loss and its gradient (PtxKernels.Ctc.cs): a block per sequence. The rows of α and β stay in shared memory when the
 // longest sequence's 2L + 1 states fit the block (KernelShapes.BlockSize, derived from the device's limits), else in a
-// scratch buffer; the gradient keeps α of every step in another ([batch, steps, states]). The lengths and offsets go up
-// with the call (3 ints a sequence). The labels are not checked on the device (the CPU checks them).
+// scratch buffer; the gradient keeps α of every step in another ([batch, steps, states], each row less the earlier rows'
+// maxima, then those maxima, [batch, steps]: the kernels keep the rows near zero and sum the offsets in double). The
+// lengths and offsets go up with the call (3 ints a sequence). The labels are not checked on the device (the CPU checks
+// them).
 internal sealed unsafe partial class CudaBackend
 {
     public override void CtcLossKernel(Storage logProbs, Storage targets, Storage losses, ReadOnlySpan<int> inputLengths, ReadOnlySpan<int> targetLengths,
@@ -38,7 +40,7 @@ internal sealed unsafe partial class CudaBackend
         ReadOnlySpan<int> targetLengths, ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
     {
         int states = CtcStates(targetLengths);
-        long alphaFloats = (long)batch * steps * states;
+        long alphaFloats = (long)batch * steps * (states + 1);
         if (batch <= 0 || (long)steps * batch * classes > int.MaxValue || alphaFloats > int.MaxValue || (long)batch * 3 * states > int.MaxValue)
         {
             base.CtcLossBackwardKernel(logProbs, targets, lossGrads, dLogProbs, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst,

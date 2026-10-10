@@ -9,11 +9,20 @@ namespace Idrak.Gpu.Cuda;
 // for the gradient β) over the S = 2L + 1 extended states in log space, in float, the block's threads over the states (a
 // fixed stride) with a barrier between steps. The rows of α and β live in shared memory when S fits the block (2 rows and
 // a row of terms of BlockSize floats each), else ("_global") in a scratch buffer; the gradient keeps α of every step in
-// global memory ([batch, steps, states]). Per-class sums of the gradient go in a fixed order (the blank's through the
-// block's tree, each label's over its occurrences in label order), so the bits do not change run to run. Labels are
-// clamped to the classes (the CPU checks them). Parameters: logprobs, targets, meta (per sequence: input length, target
-// length, target offset as ints), the outputs and scratch; steps, batch, classes, blank, batchfirst, zeroinf, states (the
-// scratch rows' stride: the longest sequence's 2L + 1).
+// global memory ([batch, steps, states], then each step's row maximum, [batch, steps]). Per-class sums of the gradient go
+// in a fixed order (the blank's through the block's tree, each label's over its occurrences in label order), so the bits
+// do not change run to run. Labels are clamped to the classes (the CPU checks them). Parameters: logprobs, targets, meta
+// (per sequence: input length, target length, target offset as ints), the outputs and scratch; steps, batch, classes,
+// blank, batchfirst, zeroinf, states (the scratch rows' stride: the longest sequence's 2L + 1).
+//
+// The rows stay near zero so float keeps its precision over long sequences (over hundreds of steps α itself falls to
+// about -1,500, where a float holds ~1e-4 and the rounding piles up). Row t is kept as a_t = α_t - P_t: each step
+// subtracts the previous row's maximum m_{t-1} (one block reduction, folded into the step's barrier) and the offset
+// P_t = m_0 + … + m_{t-1} is summed in double. β likewise: b_t = β_t - R_t, R_t = n_{t+1} + … + n_{T-1} (n: b's row
+// maximum). An all -∞ row counts as maximum 0, so it changes no offset. The loss is -(log(e^a_{T-1}(S-1) + e^a_{T-1}(S-2))
+// + P_{T-1}) in double, rounded once. The gradient's per-state shares e^(a + b - top) do not see the offsets; its scale
+// e^(top_α·β + nll - logprob) takes top_α·β + nll = top_{a+b} + R_t - (P_{T-1} - P_t) - lse_end, with P_{T-1} - P_t =
+// m_t + … + m_{T-2} summed in double from the stored maxima (floats, exactly the values the forward subtracted).
 internal static partial class PtxKernels
 {
     /// <summary>The kernels of this file (in the main module).</summary>
@@ -39,12 +48,13 @@ internal static partial class PtxKernels
         p.AppendLine(string.Join(",\n", pointers.Select(q => $"    .param .u64 p_{q}").Concat(CtcScalars.Select(s => $"    .param .u32 p_{s}"))));
         p.AppendLine(")");
         p.AppendLine("{");
-        p.AppendLine("    .reg .pred %p<16>;");
-        p.AppendLine("    .reg .f32 %f<40>;");
+        p.AppendLine("    .reg .pred %p<20>;");
+        p.AppendLine("    .reg .f32 %f<48>;");
+        p.AppendLine("    .reg .f64 %d<8>;");
         p.AppendLine("    .reg .b32 %r<64>;");
         p.AppendLine("    .reg .b64 %rd<16>;");
         p.AppendLine("    .reg .u32 " + string.Join(", ", CtcScalars.Select(s => $"%s_{s}")) + ";");
-        p.AppendLine("    .reg .u32 %n, %len, %labels, %offset, %S, %lane, %nt, %stride, %t;");
+        p.AppendLine("    .reg .u32 %n, %len, %labels, %offset, %S, %lane, %nt, %stride, %t, %wlane, %warp;");
         p.AppendLine("    .reg .u64 %rows, " + string.Join(", ", pointers.Select(q => $"%g_{q}")) + ";");
         if (shared)
         {
@@ -52,6 +62,7 @@ internal static partial class PtxKernels
         }
 
         p.AppendLine($"    .shared .align 4 .f32 red[{threads}];");
+        p.AppendLine($"    .shared .align 4 .f32 wmax[{2 * (threads / 32)}];");
         foreach (string s in CtcScalars)
         {
             p.AppendLine($"    ld.param.u32 %s_{s}, [p_{s}];");
@@ -67,6 +78,8 @@ internal static partial class PtxKernels
                 mov.u32 %n, %ctaid.x;
                 mov.u32 %lane, %tid.x;
                 mov.u32 %nt, %ntid.x;
+                and.b32 %wlane, %lane, 31;
+                shr.u32 %warp, %lane, 5;
                 setp.ge.u32 %p0, %n, %s_batch;
                 @%p0 bra DONE;
                 mul.lo.u32 %r1, %n, 12;
@@ -158,9 +171,9 @@ internal static partial class PtxKernels
         ex2.approx.ftz.f32 {target}, %f35;
         """;
 
-    // α of step %t at state `s` (a register) from the row at element offset `from` into %f1: the shared or scratch row,
-    // or (alphaGlobal) the alpha buffer row. Uses %r40 … %r45, %f2 … %f6.
-    private static string AlphaStep(bool shared, string s, string from, string label) => $"""
+    // α of step %t at state `s` (a register) from the row at element offset `from` into %f1, less the previous row's
+    // maximum `shift`: the shared or scratch row, or (AlphaStepAlpha) the alpha buffer row. Uses %r40 … %r45, %f2 … %f6.
+    private static string AlphaStep(bool shared, string s, string from, string shift, string label) => $"""
         {StateClass(s, "%r40", label + "_C")}
         add.u32 %r41, {from}, {s};
         {RowAddress(shared, "%r41")}
@@ -188,6 +201,7 @@ internal static partial class PtxKernels
         setp.eq.f32 %p13, %f5, {NegInf};
         @%p13 bra {label}_DONE;
         {LogProb("%t", "%r40", "%f6")}
+        sub.f32 %f5, %f5, {shift};
         add.f32 %f1, %f5, %f6;
         {label}_DONE:
         """;
@@ -214,6 +228,47 @@ internal static partial class PtxKernels
         bra {label}_LOOP;
         {label}_END:
         """;
+
+    // The block's maximum of `value` into `target`, the same in every thread, 0 when it is -∞ (a row's offset): the warp's
+    // lanes by shuffles, then each warp's maximum in its slot of `wmax` and the slots by shuffles again. One barrier, which
+    // also stands for the step's barrier; the slots alternate halves with the parity of %t, so the next step's writes never
+    // meet this step's reads. No branches: every thread runs it. Uses %f46, %r55, %r56, %rd12, %rd13, %p16; `value` changes.
+    private static string BlockMax(string value, string target)
+    {
+        int warps = BlockSize / 32;
+        var s = new StringBuilder();
+        foreach (int offset in new[] { 16, 8, 4, 2, 1 })
+        {
+            s.AppendLine($"shfl.sync.bfly.b32 %f46, {value}, {offset}, 31, 0xffffffff;");
+            s.AppendLine($"max.f32 {value}, {value}, %f46;");
+        }
+
+        s.AppendLine($"""
+            and.b32 %r55, %t, 1;
+            mul.lo.u32 %r55, %r55, {warps};
+            add.u32 %r56, %r55, %warp;
+            mov.u64 %rd12, wmax;
+            mul.wide.u32 %rd13, %r56, 4;
+            add.u64 %rd13, %rd12, %rd13;
+            setp.eq.u32 %p16, %wlane, 0;
+            @%p16 st.shared.f32 [%rd13], {value};
+            bar.sync 0;
+            and.b32 %r56, %wlane, {warps - 1};
+            add.u32 %r56, %r56, %r55;
+            mul.wide.u32 %rd13, %r56, 4;
+            add.u64 %rd13, %rd12, %rd13;
+            ld.shared.f32 {target}, [%rd13];
+            """);
+        for (int offset = warps / 2; offset >= 1; offset /= 2)
+        {
+            s.AppendLine($"shfl.sync.bfly.b32 %f46, {target}, {offset}, 31, 0xffffffff;");
+            s.AppendLine($"max.f32 {target}, {target}, %f46;");
+        }
+
+        s.AppendLine($"setp.eq.f32 %p16, {target}, {NegInf};");
+        s.Append($"@%p16 mov.f32 {target}, {Zero};");
+        return s.ToString();
+    }
 
     // The block's reduction of `value` (max or sum) into `target`, the same in every thread (a tree over shared `red`).
     private static string BlockReduce(string value, string target, bool max, string label) => $"""
@@ -272,29 +327,38 @@ internal static partial class PtxKernels
                 bra DONE;
             RUN:
             """);
+        // %f40: the thread's largest of the row; %f41: the row's maximum (the next step subtracts it); %d0: the offset P_t.
+        p.AppendLine($"    mov.f32 %f40, {NegInf};");
         p.AppendLine(StateLoop("INIT", $"""
             {AlphaStart("%r30", "I")}
             {RowAddress(shared, "%r30")}
             st.{Space(shared)}.f32 [%rd2], %f1;
+            max.f32 %f40, %f40, %f1;
             """));
-        p.AppendLine("    bar.sync 0;");
+        p.AppendLine("    mov.u32 %t, 0;");
+        p.AppendLine(BlockMax("%f40", "%f41"));
         p.AppendLine($$"""
+                mov.f64 %d0, 0d0000000000000000;
                 mov.u32 %t, 1;
             STEP:
                 setp.ge.u32 %p1, %t, %len;
                 @%p1 bra STEPS_END;
+                cvt.f64.f32 %d1, %f41;
+                add.f64 %d0, %d0, %d1;
                 sub.u32 %r20, %t, 1;
                 and.b32 %r20, %r20, 1;
                 mul.lo.u32 %r20, %r20, %stride;
                 and.b32 %r21, %t, 1;
                 mul.lo.u32 %r21, %r21, %stride;
+                mov.f32 %f40, {{NegInf}};
                 {{StateLoop("ADV", $"""
-                    {AlphaStep(shared, "%r30", "%r20", "A")}
+                    {AlphaStep(shared, "%r30", "%r20", "%f41", "A")}
                     add.u32 %r41, %r21, %r30;
                     {RowAddress(shared, "%r41")}
                     st.{Space(shared)}.f32 [%rd2], %f1;
+                    max.f32 %f40, %f40, %f1;
                     """)}}
-                bar.sync 0;
+                {{BlockMax("%f40", "%f41")}}
                 add.u32 %t, %t, 1;
                 bra STEP;
             STEPS_END:
@@ -312,7 +376,10 @@ internal static partial class PtxKernels
                 @!%p2 ld.{{Space(shared)}}.f32 %f11, [%rd2+-4];
                 mov.f32 %f12, {{NegInf}};
                 {{LogSum3("%f10", "%f11", "%f12", "%f13", "END")}}
-                neg.f32 %f13, %f13;
+                cvt.f64.f32 %d1, %f13;
+                add.f64 %d1, %d1, %d0;
+                neg.f64 %d1, %d1;
+                cvt.rn.f32.f64 %f13, %d1;
                 setp.eq.f32 %p3, %f13, 0f7F800000;
                 setp.ne.and.u32 %p3, %s_zeroinf, 0, %p3;
                 @%p3 mov.f32 %f13, {{Zero}};
@@ -333,7 +400,9 @@ internal static partial class PtxKernels
         var p = CtcHeader(name, ["logprobs", "targets", "meta", "lossgrads", "dlogprobs", "alpha", "work"], shared, 3);
 
         // %rows: β's two rows then the terms (shared, stride BlockSize; or the scratch, stride states); %r9: the alpha rows'
-        // first element of this sequence; %f21: the scale.
+        // first element of this sequence; %r10: its row maxima's first; %f21: the scale; %f22: the end states' log-sum of
+        // the last α row (the nll is -(that + P_{T-1})); %f41: α's row maximum, %f43 β's; %d2: R_t; %d3: P_{T-1} - P_t;
+        // %f45: top + nll of step t in float, from those in double.
         p.AppendLine(shared
             ? $"    mov.u32 %stride, {BlockSize};"
             : """
@@ -353,14 +422,22 @@ internal static partial class PtxKernels
                 @%p1 bra DONE;
                 mul.lo.u32 %r9, %n, %s_steps;
                 mul.lo.u32 %r9, %r9, %s_states;
+                mul.lo.u32 %r10, %s_batch, %s_steps;
+                mul.lo.u32 %r10, %r10, %s_states;
+                mad.lo.u32 %r10, %n, %s_steps, %r10;
+                setp.eq.u32 %p17, %lane, 0;
+                mov.f32 %f40, {{NegInf}};
                 {{StateLoop("INIT", $"""
                     {AlphaStart("%r30", "I")}
                     add.u32 %r41, %r9, %r30;
                     mul.wide.u32 %rd10, %r41, 4;
                     add.u64 %rd10, %g_alpha, %rd10;
                     st.global.f32 [%rd10], %f1;
+                    max.f32 %f40, %f40, %f1;
                     """)}}
-                bar.sync 0;
+                mov.u32 %t, 0;
+                {{BlockMax("%f40", "%f41")}}
+                {{RowMaximum("st", "%f41")}}
                 mov.u32 %t, 1;
             ASTEP:
                 setp.ge.u32 %p1, %t, %len;
@@ -368,14 +445,17 @@ internal static partial class PtxKernels
                 sub.u32 %r20, %t, 1;
                 mad.lo.u32 %r20, %r20, %s_states, %r9;
                 mad.lo.u32 %r21, %t, %s_states, %r9;
+                mov.f32 %f40, {{NegInf}};
                 {{StateLoop("ADV", $"""
-                    {AlphaStepAlpha("%r30", "%r20", "A")}
+                    {AlphaStepAlpha("%r30", "%r20", "%f41", "A")}
                     add.u32 %r41, %r21, %r30;
                     mul.wide.u32 %rd10, %r41, 4;
                     add.u64 %rd10, %g_alpha, %rd10;
                     st.global.f32 [%rd10], %f1;
+                    max.f32 %f40, %f40, %f1;
                     """)}}
-                bar.sync 0;
+                {{BlockMax("%f40", "%f41")}}
+                {{RowMaximum("st", "%f41")}}
                 add.u32 %t, %t, 1;
                 bra ASTEP;
             ASTEPS_END:
@@ -391,10 +471,13 @@ internal static partial class PtxKernels
                 @!%p2 ld.global.f32 %f11, [%rd10+-4];
                 mov.f32 %f12, {{NegInf}};
                 {{LogSum3("%f10", "%f11", "%f12", "%f22", "NLL")}}
-                neg.f32 %f22, %f22;
-                setp.eq.f32 %p3, %f22, 0f7F800000;
+                setp.eq.f32 %p3, %f22, {{NegInf}};
                 setp.ne.and.u32 %p3, %s_zeroinf, 0, %p3;
                 @%p3 bra DONE;
+                bar.sync 0;
+                mov.f64 %d2, 0d0000000000000000;
+                mov.f64 %d3, 0d0000000000000000;
+                mov.f32 %f43, {{Zero}};
                 sub.u32 %t, %len, 1;
             BSTEP:
                 setp.lt.s32 %p1, %t, 0;
@@ -406,8 +489,16 @@ internal static partial class PtxKernels
                 mul.lo.u32 %r23, %r23, %stride;
                 sub.u32 %r24, %len, 1;
                 setp.eq.u32 %p4, %t, %r24;
-                {{StateLoop("BETA", BetaState(shared))}}
-                bar.sync 0;
+                @%p4 bra OFFSETS_END;
+                cvt.f64.f32 %d1, %f43;
+                add.f64 %d2, %d2, %d1;
+                {{RowMaximum("ld", "%f47")}}
+                cvt.f64.f32 %d1, %f47;
+                add.f64 %d3, %d3, %d1;
+            OFFSETS_END:
+                mov.f32 %f44, {{NegInf}};
+                {{StateLoop("BETA", BetaState(shared) + "\n    max.f32 %f44, %f44, %f7;")}}
+                {{BlockMax("%f44", "%f43")}}
                 mad.lo.u32 %r25, %t, %s_states, %r9;
                 mov.f32 %f23, {{NegInf}};
                 {{StateLoop("TOP", $"""
@@ -422,6 +513,12 @@ internal static partial class PtxKernels
                     max.f32 %f23, %f23, %f24;
                     """)}}
                 {{BlockReduce("%f23", "%f26", max: true, "RMAX")}}
+                cvt.f64.f32 %d4, %f26;
+                cvt.f64.f32 %d1, %f22;
+                sub.f64 %d4, %d4, %d1;
+                add.f64 %d4, %d4, %d2;
+                sub.f64 %d4, %d4, %d3;
+                cvt.rn.f32.f64 %f45, %d4;
                 setp.eq.f32 %p5, %f26, {{NegInf}};
                 shl.b32 %r26, %stride, 1;
                 {{StateLoop("TERM", $"""
@@ -509,9 +606,20 @@ internal static partial class PtxKernels
     }
 
     // α of step %t at state `s` from the alpha buffer's row at element `from` (the gradient keeps every row there) into %f1.
-    private static string AlphaStepAlpha(string s, string from, string label) => AlphaStep(false, s, from, label).Replace("%rows", "%g_alpha", StringComparison.Ordinal);
+    private static string AlphaStepAlpha(string s, string from, string shift, string label) =>
+        AlphaStep(false, s, from, shift, label).Replace("%rows", "%g_alpha", StringComparison.Ordinal);
 
-    // β of step %t at state %r30 into row %r22 from row %r23 (%p4: the last step). Uses %r40 … %r46, %f2 … %f8.
+    // Step %t's α row maximum m_t, kept after all the α rows (element %r10 + t of the alpha buffer, %r10 = batch · steps ·
+    // states + n · steps): "st" writes `reg` there (thread 0, %p17), "ld" reads it into `reg` (every thread). Uses %r54, %rd11.
+    private static string RowMaximum(string op, string reg) => $"""
+        add.u32 %r54, %r10, %t;
+        mul.wide.u32 %rd11, %r54, 4;
+        add.u64 %rd11, %g_alpha, %rd11;
+        {(op == "st" ? $"@%p17 st.global.f32 [%rd11], {reg};" : $"ld.global.f32 {reg}, [%rd11];")}
+        """;
+
+    // β of step %t at state %r30 into row %r22 from row %r23 (%p4: the last step), less the later row's maximum %f43; the
+    // value stays in %f7. Uses %r40 … %r46, %f2 … %f8.
     private static string BetaState(bool shared) => $"""
         {StateClass("%r30", "%r40", "B_C")}
         mov.f32 %f7, {NegInf};
@@ -548,6 +656,7 @@ internal static partial class PtxKernels
         setp.eq.f32 %p13, %f5, {NegInf};
         @%p13 bra B_STORE;
         {LogProb("%t", "%r40", "%f6")}
+        sub.f32 %f5, %f5, %f43;
         add.f32 %f7, %f5, %f6;
         B_STORE:
         add.u32 %r41, %r22, %r30;
@@ -555,11 +664,11 @@ internal static partial class PtxKernels
         st.{Space(shared)}.f32 [%rd2], %f7;
         """;
 
-    // dlogprobs[t, class] -= scale · sum · e^(top + nll - logprobs[t, class]) (scale %f21, top %f26, nll %f22). Uses %r50, %rd4, %f8, %f9.
+    // dlogprobs[t, class] -= scale · sum · e^(top + nll - logprobs[t, class]) (scale %f21; top + nll %f45, the true α·β's
+    // with the offsets put back). Uses %r50, %rd4, %f8, %f9.
     private static string ClassGradient(string c, string sum, string label) => $"""
         {LogProb("%t", c, "%f8")}
-        add.f32 %f9, %f26, %f22;
-        sub.f32 %f9, %f9, %f8;
+        sub.f32 %f9, %f45, %f8;
         {Exp("%f9", "%f9")}
         mul.f32 %f9, %f9, {sum};
         mul.f32 %f9, %f9, %f21;
