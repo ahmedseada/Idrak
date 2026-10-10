@@ -99,7 +99,7 @@ internal static class ImageRequests
 
             // Sized by the announced length when there is one (its bytes are then not copied again at the end); the read
             // buffer is pooled and returned in finally.
-            using var data = new MemoryStream(response.Content.Headers.ContentLength is long announced && announced > 0 ? (int)announced : 0);
+            using var data = new MemoryStream(response.Content.Headers.ContentLength is long announced && announced > 0 ? (int)Math.Min(announced, Array.MaxLength) : 0);
             byte[] buffer = ArrayPool<byte>.Shared.Rent(81920);
             try
             {
