@@ -192,7 +192,7 @@ public sealed class GgufFile : IDisposable
         int blocks = values.Length / blockValues;
         if (type == 0)
         {
-            MemoryMarshal.Cast<byte, float>(raw)[..values.Length].CopyTo(values);
+            StoredFloats.ReadFloat32(raw, values);                     // little-endian on every machine
             return;
         }
 
@@ -217,14 +217,8 @@ public sealed class GgufFile : IDisposable
                     return;
                 case 30:
                     Idrak.Abstraction.Devices.HostParallel.For(values.Length, 1 << 16, (first, last) =>
-                    {
-                        var from = new ReadOnlySpan<byte>((byte*)source + 2L * first, 2 * (last - first));
-                        var to = new Span<float>((float*)target + first, last - first);
-                        for (int i = 0; i < to.Length; i++)
-                        {
-                            to[i] = BitConverter.Int32BitsToSingle(BinaryPrimitives.ReadUInt16LittleEndian(from[(2 * i)..]) << 16);
-                        }
-                    });
+                        StoredFloats.WidenBFloat16(new ReadOnlySpan<byte>((byte*)source + 2L * first, 2 * (last - first)),
+                            new Span<float>((float*)target + first, last - first)));
                     return;
             }
 
@@ -366,6 +360,11 @@ public sealed class GgufFile : IDisposable
                 aux[3] = ((aux[1] >> 4) & kmask2) | (((tmp >> 6) & kmask1) << 4);
                 aux[0] = (aux[0] & kmask2) | (((tmp >> 0) & kmask1) << 4);
                 aux[1] = (aux[1] & kmask2) | (((tmp >> 2) & kmask1) << 4);
+                if (!BitConverter.IsLittleEndian)
+                {
+                    BinaryPrimitives.ReverseEndianness(aux, aux);               // the scales are the words' little-endian bytes
+                }
+
                 var scales = MemoryMarshal.Cast<uint, sbyte>(aux);
                 int o = 0, s = 0;
                 byte m = 1;

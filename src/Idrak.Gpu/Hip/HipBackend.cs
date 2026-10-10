@@ -5,9 +5,12 @@ using static Idrak.Gpu.Hip.HipRuntime;
 
 namespace Idrak.Gpu.Hip;
 
-internal sealed class HipStorage(HipBackend backend, ulong pointer, int length) : Storage(backend, length)
+internal sealed class HipStorage(HipBackend backend, ulong pointer, int length, int capacity) : Storage(backend, length)
 {
     public ulong Pointer = pointer;                                     // 0 while evicted (Backend.Evict)
+
+    // The floats its block holds: the length, or more when a longer cached block served it (HipBackend.TakeCached).
+    public int Capacity = capacity;
 }
 
 /// <summary>
@@ -35,6 +38,13 @@ internal sealed unsafe partial class HipBackend : Backend
     // Freed blocks by length, reused before new memory is asked for (as on the other GPUs: a training loop stops
     // calling hipMalloc after its first step).
     private readonly Dictionary<int, Stack<ulong>> _pool = [];
+
+    // Lengths with cached blocks, for best-fit reuse when no block of the exact length is cached (as the CUDA pool).
+    private readonly SortedSet<int> _poolSizes = [];
+
+    // A cached block up to this fraction longer than a request (of at least BestFitMinimum floats) may serve it.
+    private const int BestFitSlack = 4;                                          // 1 / 4: at most 25% longer
+    private const int BestFitMinimum = 1024;
 
     /// <summary>A device the probe found: its runtime ordinal and what it reports.</summary>
     internal sealed record HipDevice(int RuntimeOrdinal, HipDeviceLimits Limits, int RuntimeVersion, int DriverVersion);
@@ -172,12 +182,13 @@ internal sealed unsafe partial class HipBackend : Backend
         long bytes = BlockBytes(length);
         bool releaseCache = _memory.MustReleaseCacheFor(bytes);              // throws when over the in-use limit
         ulong pointer = 0;
+        int capacity = length;
         lock (_pool)
         {
-            if (_pool.TryGetValue(length, out var bucket) && bucket.Count > 0)
+            if (TakeCached(length, out capacity) is var cached && cached != 0)
             {
-                pointer = bucket.Pop();
-                _memory.Reused(bytes);
+                pointer = cached;
+                _memory.Reused(BlockBytes(capacity));
             }
         }
 
@@ -197,7 +208,38 @@ internal sealed unsafe partial class HipBackend : Backend
             Check(hipMemsetD32Async(pointer, 0, (nuint)length, _stream), nameof(hipMemsetD32Async));
         }
 
-        return new HipStorage(this, pointer, length);
+        return new HipStorage(this, pointer, length, capacity);
+    }
+
+    // A cached block for `length` floats: the exact length, else the smallest cached length at most 25% longer (varying
+    // shapes then reuse blocks instead of caching one of every length); 0 when none. Under the pool lock.
+    private ulong TakeCached(int length, out int capacity)
+    {
+        capacity = length;
+        if (!_pool.TryGetValue(length, out var bucket) || bucket.Count == 0)
+        {
+            if (length < BestFitMinimum || length == int.MaxValue || _poolSizes.Count == 0)
+            {
+                return 0;
+            }
+
+            var fitting = _poolSizes.GetViewBetween(length + 1, (int)Math.Min(int.MaxValue, (long)length + length / BestFitSlack));
+            if (fitting.Count == 0)
+            {
+                return 0;
+            }
+
+            capacity = fitting.Min;
+            bucket = _pool[capacity];
+        }
+
+        ulong pointer = bucket.Pop();
+        if (bucket.Count == 0)
+        {
+            _poolSizes.Remove(capacity);
+        }
+
+        return pointer;
     }
 
     // New device memory; a block fits when the GPU keeps MemoryReserve free afterwards. Full: give back the cache and
@@ -241,17 +283,18 @@ internal sealed unsafe partial class HipBackend : Backend
     public override void Return(Storage storage)
     {
         var s = (HipStorage)storage;
-        long bytes = BlockBytes(s.Length);
+        long bytes = BlockBytes(s.Capacity);
         lock (_pool)
         {
             if (s.Pointer != 0)
             {
-                if (!_pool.TryGetValue(s.Length, out var bucket))
+                if (!_pool.TryGetValue(s.Capacity, out var bucket))
                 {
-                    _pool[s.Length] = bucket = new Stack<ulong>();
+                    _pool[s.Capacity] = bucket = new Stack<ulong>();
                 }
 
                 bucket.Push(s.Pointer);
+                _poolSizes.Add(s.Capacity);
             }
         }
 
@@ -260,7 +303,8 @@ internal sealed unsafe partial class HipBackend : Backend
 
     protected override void Detach(Storage storage) => ((HipStorage)storage).Pointer = 0;
 
-    protected override void Attach(Storage storage, Storage fresh) => ((HipStorage)storage).Pointer = ((HipStorage)fresh).Pointer;
+    protected override void Attach(Storage storage, Storage fresh) =>
+        (((HipStorage)storage).Pointer, ((HipStorage)storage).Capacity) = (((HipStorage)fresh).Pointer, ((HipStorage)fresh).Capacity);
 
     public override MemoryUsage GetMemoryUsage() => _memory.Usage;
 
@@ -281,6 +325,8 @@ internal sealed unsafe partial class HipBackend : Backend
                     _memory.Freed(BlockBytes(length));
                 }
             }
+
+            _poolSizes.Clear();
         }
     }
 

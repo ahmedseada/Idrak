@@ -3,6 +3,7 @@
 
 using System.Diagnostics;
 using System.Globalization;
+using System.Numerics;
 
 namespace Idrak.Gpu.Vulkan;
 
@@ -269,6 +270,9 @@ internal sealed unsafe partial class VulkanBackend
 
         return [.. values];
     }
+
+    // The largest of PowersOfTwo(max) (1 when max < 2), without building them: the formulas run on every call.
+    private static int LargestPowerOfTwo(int max) => 1 << BitOperations.Log2((uint)Math.Max(1, max));
 
     // Storages of `lengths` floats for candidates to write (none where a length is 0), released after `body`.
     private void WithScratch(ReadOnlySpan<int> lengths, Action<Storage[]> body)
