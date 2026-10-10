@@ -7,7 +7,9 @@ namespace Idrak.Gpu.Cuda;
 
 // Choices that depend on the card (how many ways to split k, which of two kernels, which tile) are measured on the card
 // in use, not set from one card's benchmarks: the first time a shape needs one, every candidate runs on the real inputs
-// and is timed with events, and the fastest is kept. Candidates write either the caller's output (which the chosen
+// and is timed with events, and the fastest is kept. Sizes that follow the data (batches, rows, lengths, an image's
+// height and width) are keyed by their size class (TuneSizes), so work whose sizes change every step measures a few
+// classes, not nearly every step; a kept choice is used for a shape only when it is one of that shape's candidates. Candidates write either the caller's output (which the chosen
 // kernel then writes again) or scratch memory (outputs that are added to). The formula from the device's own counts
 // (SMs, tiles) is the default: it is used while measuring is impossible (a graph is being recorded, the profiler runs,
 // no device memory for scratch) and with IDRAK_AUTOTUNE=0, and a candidate replaces it only when its median time is
@@ -191,7 +193,7 @@ internal sealed unsafe partial class CudaBackend
         {
             if (_tuned.TryGetValue(key, out int known))
             {
-                return known;
+                return candidates.Contains(known) ? known : fallback;      // another shape of the class may offer other candidates
             }
 
             if (candidates.Length > 1 && TryPersistedLocked(key, candidates, out int kept))

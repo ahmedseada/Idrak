@@ -53,7 +53,7 @@ internal sealed unsafe partial class CudaBackend
         if (variant.Softcap <= 0f && MixedPrecision.UsesTensorCores && td > 0 && SpanFunction(tensor: true, td, PtxKernels.SpanTensorName(td, PtxKernels.SpanTensorWarps[0])) is not null)
         {
             var warps = PtxKernels.SpanTensorWarps.Where(w => SpanFunction(tensor: true, td, PtxKernels.SpanTensorName(td, w)) is not null).ToArray();
-            int chosen = Tune(new TuneKey(TuneOp.SpanWarps, td, heads, rows, keyRows, kvHeads, headsPerTable), warps, PtxKernels.SpanTensorWarps[0],
+            int chosen = Tune(new TuneKey(TuneOp.SpanWarps, td, heads, TuneSizes.Class(rows), TuneSizes.Class(keyRows), kvHeads, headsPerTable), warps, PtxKernels.SpanTensorWarps[0],
                 w => LaunchSpanTensor(td, w, q, keys, values, starts, ends, y, lse, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale));
             LaunchSpanTensor(td, chosen, q, keys, values, starts, ends, y, lse, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale);
             return;
@@ -207,7 +207,8 @@ internal sealed unsafe partial class CudaBackend
     {
         // Candidates: 0 = AttentionSpans (the default, also while nothing can be measured), 1 = composed. Keyed by the
         // precision too (each path's kernels change with it) and by whether the gradient is timed with the forward pass.
-        var key = new TuneKey(TuneOp.AttentionPath, (int)MixedPrecision.Current, heads, rows, keyRows, dim, (mask is null ? 0 : 1) | (training ? 2 : 0));
+        var key = new TuneKey(TuneOp.AttentionPath, (int)MixedPrecision.Current, heads, TuneSizes.Class(rows), TuneSizes.Class(keyRows), dim,
+            (mask is null ? 0 : 1) | (training ? 2 : 0));
         ReadOnlySpan<int> candidates = [0, 1];
         if (KnownChoice(key, candidates) is { } known)
         {
@@ -294,7 +295,7 @@ internal sealed unsafe partial class CudaBackend
         {
             if (_tuned.TryGetValue(key, out int known))
             {
-                return known;
+                return candidates.Contains(known) ? known : null;
             }
 
             if (TryPersistedLocked(key, candidates, out int kept))

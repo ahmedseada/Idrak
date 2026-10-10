@@ -266,21 +266,14 @@ internal sealed class Recognizer : IDisposable
     /// <summary>A line as the network reads it.</summary>
     public PreparedLine Prepare(ImageData line) => PreparedLine.From(line, Settings.Height, Settings.RightToLeft);
 
-    /// <summary>A batch's width in steps is a multiple of this (64 pixels at the stride of 4).</summary>
-    public const int StepBucket = 16;
-
     /// <summary>
-    /// A batch of lines as one tensor [N, 1, height, width] (each padded on the right with 0 to the widest, rounded up to
-    /// whole <see cref="StepBucket"/>s of the stride) and each line's steps.
+    /// A batch of lines as one tensor [N, 1, height, widest] (each padded on the right with 0 to the widest, rounded up to
+    /// the stride) and each line's steps.
     /// </summary>
     public (Tensor Images, int[] Steps) Batch(IReadOnlyList<PreparedLine> lines)
     {
         int height = Settings.Height;
-        // The width rounded up to whole buckets of steps: a device measures its kernels per shape the first time it meets
-        // one (and keeps the choice), so batches of every possible width would be measured nearly every step; in buckets
-        // only a few shapes ever occur. The extra columns are blank and each line's own steps go to CTC and decoding.
-        int steps = (lines.Max(l => l.Steps) + StepBucket - 1) / StepBucket * StepBucket;
-        int width = steps * RecognizerSettings.Stride;
+        int width = lines.Max(l => l.Steps) * RecognizerSettings.Stride;
         var values = new float[lines.Count * height * width];
         for (int n = 0; n < lines.Count; n++)
         {

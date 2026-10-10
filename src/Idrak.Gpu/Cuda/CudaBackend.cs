@@ -1050,7 +1050,7 @@ internal sealed unsafe partial class CudaBackend : Backend
                         Launch(K(tile == 128 ? "gemm128_f32" : "gemm64_f32"), (uint)((n + tile - 1) / tile), (uint)((rows + tile - 1) / tile),
                             (uint)blocks, PtxKernels.GemmThreads, 1, aAt, bAt, target,
                             U(rows), U(n), U(k), U(transA ? 1 : 0), U(transB ? 1 : 0), F(beta), mk, kn, mn);
-                    var key = new TuneKey(TuneOp.FloatTile, (transA ? 2 : 0) + (transB ? 1 : 0), rows, n, k, count, beta == 0f ? 0 : 1);
+                    var key = new TuneKey(TuneOp.FloatTile, (transA ? 2 : 0) + (transB ? 1 : 0), TuneSizes.Class(rows), n, k, TuneSizes.Class(count), beta == 0f ? 0 : 1);
                     int tile = gemmTile;
                     if (beta == 0f)
                     {
@@ -1230,7 +1230,7 @@ internal sealed unsafe partial class CudaBackend : Backend
                 run(count, target);
             }
 
-            var key = new TuneKey(TuneOp.TensorSplits, variant * 2 + (beta == 0f ? 0 : 1), m, n, k, ldc, extra, extra2);
+            var key = new TuneKey(TuneOp.TensorSplits, variant * 2 + (beta == 0f ? 0 : 1), TuneSizes.Class(m), n, k, ldc, extra, extra2);
             if (beta == 0f)
             {
                 splits = Tune(key, candidates, formula, count => Run(count, c));
