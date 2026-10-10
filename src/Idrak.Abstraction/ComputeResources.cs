@@ -21,10 +21,10 @@ public readonly record struct MemoryUsage(long InUse, long Cached, long? Limit, 
 
     private static string Format(long bytes) => bytes switch
     {
-        >= 1L << 30 => $"{bytes / (double)(1L << 30):F2} GiB",
-        >= 1L << 20 => $"{bytes / (double)(1L << 20):F1} MiB",
-        >= 1L << 10 => $"{bytes / (double)(1L << 10):F1} KiB",
-        _ => $"{bytes} B",
+        >= 1L << 30 => string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{bytes / (double)(1L << 30):F2} GiB"),
+        >= 1L << 20 => string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{bytes / (double)(1L << 20):F1} MiB"),
+        >= 1L << 10 => string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{bytes / (double)(1L << 10):F1} KiB"),
+        _ => string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{bytes} B"),
     };
 }
 
