@@ -162,16 +162,21 @@ internal sealed partial class VulkanBackend
             choice = fallback;
             if (CanTune)
             {
-                // Candidates: an invocation per row, a workgroup per row (with subgroup reductions where reported, and
-                // through workgroup memory alone).
-                var saved = storages.ToArray();
-                var pushed = push.ToArray();
-                choice = TuneWithScratch(key, [RowsNarrow, .. ReductionFlags], fallback, saved, VulkanKernels.Get(kernel, Width).Writes | VulkanKernels.Get(narrowName, Width).Writes,
-                    (candidate, bound) => RunRows(kernel, narrowName, candidate, rows, bound, pushed));
+                choice = MeasureRows(key, kernel, narrowName, fallback, rows, storages, push);
             }
         }
 
         RunRows(kernel, narrowName, choice, rows, storages, push);
+    }
+
+    // Measures a row kernel's candidates: an invocation per row, a workgroup per row (with subgroup reductions where
+    // reported, and through workgroup memory alone). Kept apart from Rows so its usual calls make no closure.
+    private int MeasureRows(VulkanTuneKey key, string kernel, string narrowName, int fallback, int rows, ReadOnlySpan<Storage> storages, ReadOnlySpan<byte> push)
+    {
+        var saved = storages.ToArray();
+        var pushed = push.ToArray();
+        return TuneWithScratch(key, [RowsNarrow, .. ReductionFlags], fallback, saved, VulkanKernels.Get(kernel, Width).Writes | VulkanKernels.Get(narrowName, Width).Writes,
+            (candidate, bound) => RunRows(kernel, narrowName, candidate, rows, bound, pushed));
     }
 
     private const int RowsNarrow = 1;
@@ -796,9 +801,7 @@ internal sealed partial class VulkanBackend
                 chosen = fallback;
                 if (CanTune)
                 {
-                    var pushed = push.ToArray();
-                    chosen = TuneWithScratch(key, MatCandidates(m, n), fallback, [a, b, c], 1UL << 2,
-                        (choice, s) => RunMatMul(choice, s[0], s[1], s[2], batch, m, n, pushed));
+                    chosen = MeasureMatMul(key, fallback, a, b, c, batch, m, n, push);
                 }
             }
 
@@ -806,6 +809,15 @@ internal sealed partial class VulkanBackend
         }
 
         RunMatMul(chosen, a, b, c, batch, m, n, push);
+    }
+
+    // Measures a float32 product's candidates (MatCandidates) on a scratch output. Kept apart from the operation so its
+    // usual calls make no closure.
+    private int MeasureMatMul(VulkanTuneKey key, int fallback, Storage a, Storage b, Storage c, int batch, int m, int n, ReadOnlySpan<byte> push)
+    {
+        var pushed = push.ToArray();
+        return TuneWithScratch(key, MatCandidates(m, n), fallback, [a, b, c], 1UL << 2,
+            (choice, s) => RunMatMul(choice, s[0], s[1], s[2], batch, m, n, pushed));
     }
 
     // Reduced precision (MixedPrecision, VulkanBackend.Matrix.cs): the float32 choice or the single-pass cooperative-matrix
@@ -825,13 +837,20 @@ internal sealed partial class VulkanBackend
             decided = 0;
             if (CanTune)
             {
-                var pushed = push.ToArray();
-                decided = TuneWithScratch(key, [0, 1], 0, [a, b, c], 1UL << 2,
-                    (choice, s) => RunMatMul(choice == 1 ? mixed : chosen, s[0], s[1], s[2], batch, m, n, pushed));
+                decided = MeasureMixedMatMul(key, chosen, mixed, a, b, c, batch, m, n, push);
             }
         }
 
         return decided == 1 ? mixed : chosen;
+    }
+
+    // Measures the float32 choice (0) against the reduced-precision kernel (1) on a scratch output, apart from the
+    // operation so its usual calls make no closure.
+    private int MeasureMixedMatMul(VulkanTuneKey key, int chosen, int mixed, Storage a, Storage b, Storage c, int batch, int m, int n, ReadOnlySpan<byte> push)
+    {
+        var pushed = push.ToArray();
+        return TuneWithScratch(key, [0, 1], 0, [a, b, c], 1UL << 2,
+            (choice, s) => RunMatMul(choice == 1 ? mixed : chosen, s[0], s[1], s[2], batch, m, n, pushed));
     }
 
     // At each candidate width: the small kernel (an invocation per output, any shape), the tiled one and the
@@ -973,17 +992,11 @@ internal sealed partial class VulkanBackend
         double weightBytes = (double)k * n * (format switch { VulkanKernels.PackedFormat.Int8 => 1, VulkanKernels.PackedFormat.Int4 => 0.5, _ => 2 });
         int maxSplits = (int)Math.Clamp(Math.Min((k + GemvMinChunk - 1) / GemvMinChunk, weightBytes / (4.0 * m * n)), 1, Limits.MaxGroupsY);
         // Formula: the device's width, 32 words, the most splits allowed. Measured: every candidate (GemvCandidates).
-        int most = PowersOfTwo(maxSplits)[^1];
+        int most = LargestPowerOfTwo(maxSplits);
         int fallback = WithWidth(Width, most * 8);
-        if (!GemvValid(fallback, perWord, n))
+        if (!GemvValid(fallback, perWord, n) && (fallback = LastGemvCandidate(perWord, n, maxSplits)) < 0)
         {
-            var all = GemvCandidates(perWord, n, maxSplits);
-            if (all.Length == 0)
-            {
-                return -1;
-            }
-
-            fallback = all[^1];
+            return -1;
         }
 
         var counts = VulkanKernels.GemvWordCounts;
@@ -1002,14 +1015,22 @@ internal sealed partial class VulkanBackend
                 chosen = fallback;
                 if (CanTune)
                 {
-                    Storage[] storages = scales is null ? [x, weights, y] : [x, weights, scales, y];
-                    chosen = TuneWithScratch(key, GemvCandidates(perWord, n, maxSplits), fallback, storages, 1UL << (storages.Length - 1),
-                        (c, s) => RunPacked(format, block, c, s[0], s[1], scales is null ? null : s[2], s[^1], m, n, k));
+                    chosen = MeasureGemv(key, format, block, perWord, maxSplits, fallback, x, weights, scales, y, m, n, k);
                 }
             }
         }
 
         return chosen;
+    }
+
+    // Measures a packed product's candidates (GemvCandidates) on a scratch output, apart from GemvChoice so its usual
+    // calls make no closure.
+    private int MeasureGemv(VulkanTuneKey key, VulkanKernels.PackedFormat format, int block, int perWord, int maxSplits, int fallback, Storage x, Storage weights,
+        Storage? scales, Storage y, int m, int n, int k)
+    {
+        Storage[] storages = scales is null ? [x, weights, y] : [x, weights, scales, y];
+        return TuneWithScratch(key, GemvCandidates(perWord, n, maxSplits), fallback, storages, 1UL << (storages.Length - 1),
+            (c, s) => RunPacked(format, block, c, s[0], s[1], scales is null ? null : s[2], s[^1], m, n, k));
     }
 
     // At each candidate width, each valid word variant with 1, 2, 4, … splits up to maxSplits.
@@ -1031,6 +1052,26 @@ internal sealed partial class VulkanBackend
         }
 
         return [.. candidates];
+    }
+
+    // The last of GemvCandidates(perWord, n, maxSplits), or -1 when there are none, without building them (the formulas
+    // read it on every call where the device's own width cannot run their choice). Validity does not depend on the
+    // splits, so the last candidate is the last valid width and word variant with the most splits, LargestPowerOfTwo.
+    private int LastGemvCandidate(int perWord, int n, int maxSplits)
+    {
+        int last = -1, most = LargestPowerOfTwo(maxSplits);
+        foreach (int width in CandidateWidths)
+        {
+            for (int v = 0; v < VulkanKernels.GemvWordCounts.Length; v++)
+            {
+                if (GemvValid(WithWidth(width, most * 8 + v), perWord, n))
+                {
+                    last = WithWidth(width, most * 8 + v);
+                }
+            }
+        }
+
+        return last;
     }
 
     // Whether a choice (a stored one too) can run here: a candidate width, a word variant whose slices fit a scale group
@@ -1338,11 +1379,11 @@ internal sealed partial class VulkanBackend
         // shorter than the capacity counts as the positions each row reads.
         bool windowed = variant.Window > 0 && variant.Window < capacity;
         int span = windowed ? variant.Window : capacity;
-        int fallback = WithWidth(Width, PowersOfTwo(Math.Min(Math.Max(1, span / Width), AttentionMaxSplits(Width, rows, span, dim)))[^1]);
+        int fallback = WithWidth(Width, LargestPowerOfTwo(Math.Min(Math.Max(1, span / Width), AttentionMaxSplits(Width, rows, span, dim))));
         int choice;
         if (AttentionSplits is int forced)
         {
-            choice = WithWidth(Width, PowersOfTwo(Math.Min(Math.Max(1, forced), AttentionMaxSplits(Width, rows, span, dim)))[^1]);
+            choice = WithWidth(Width, LargestPowerOfTwo(Math.Min(Math.Max(1, forced), AttentionMaxSplits(Width, rows, span, dim))));
         }
         else
         {
@@ -1355,28 +1396,35 @@ internal sealed partial class VulkanBackend
                 choice = fallback;
                 if (CanTune)
                 {
-                    // At each candidate width, 1, 2, 4, … splits; timed over a full cache: the position read from a
-                    // scratch storage holding capacity - 1.
-                    var candidates = CandidateWidths.SelectMany(w => PowersOfTwo(AttentionMaxSplits(w, rows, span, dim))
-                        .SelectMany(s => ReductionFlags.Select(f => WithWidth(w, s | f)))).ToArray();
-                    var saved = storages.ToArray();
-                    var full = Allocate(1, zeroed: false);
-                    try
-                    {
-                        Fill(full, 1, capacity - 1);
-                        saved[^2] = full;
-                        choice = TuneWithScratch(key, candidates, fallback, saved, 1UL << (saved.Length - 1),
-                            (c, bound) => RunAttention(kernel, bound, rows, c, heads, rowsPerHead, steps, capacity, dim, scale, variant));
-                    }
-                    finally
-                    {
-                        full.Release();
-                    }
+                    choice = MeasureAttention(key, kernel, fallback, storages, rows, span, heads, rowsPerHead, steps, capacity, dim, scale, variant);
                 }
             }
         }
 
         RunAttention(kernel, storages, rows, choice, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+    }
+
+    // Measures decoding attention's candidates: at each candidate width, 1, 2, 4, … splits; timed over a full cache (the
+    // position read from a scratch storage holding capacity - 1). Kept apart from Attend so its usual calls make no
+    // closure.
+    private int MeasureAttention(VulkanTuneKey key, string kernel, int fallback, Span<Storage> storages, int rows, int span, int heads, int rowsPerHead,
+        int steps, int capacity, int dim, float scale, AttentionVariant variant)
+    {
+        var candidates = CandidateWidths.SelectMany(w => PowersOfTwo(AttentionMaxSplits(w, rows, span, dim))
+            .SelectMany(s => ReductionFlags.Select(f => WithWidth(w, s | f)))).ToArray();
+        var saved = storages.ToArray();
+        var full = Allocate(1, zeroed: false);
+        try
+        {
+            Fill(full, 1, capacity - 1);
+            saved[^2] = full;
+            return TuneWithScratch(key, candidates, fallback, saved, 1UL << (saved.Length - 1),
+                (c, bound) => RunAttention(kernel, bound, rows, c, heads, rowsPerHead, steps, capacity, dim, scale, variant));
+        }
+        finally
+        {
+            full.Release();
+        }
     }
 
     // Most splits at a width: one per AttentionMinChunk(width) positions of capacity, fewer when the partial results would

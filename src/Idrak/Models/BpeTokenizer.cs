@@ -371,24 +371,28 @@ public sealed class BpeTokenizer : ITokenizer
 
             byte[]? rented = null;
             Span<byte> bytes = count <= 1024 ? stackalloc byte[count] : (rented = System.Buffers.ArrayPool<byte>.Shared.Rent(count));
-            int at = 0;
-            foreach (int id in ids)
+            try
             {
-                if ((uint)id < (uint)starts.Length - 1)
+                int at = 0;
+                foreach (int id in ids)
                 {
-                    var source = all.AsSpan(starts[id], starts[id + 1] - starts[id]);
-                    source.CopyTo(bytes[at..]);
-                    at += source.Length;
+                    if ((uint)id < (uint)starts.Length - 1)
+                    {
+                        var source = all.AsSpan(starts[id], starts[id + 1] - starts[id]);
+                        source.CopyTo(bytes[at..]);
+                        at += source.Length;
+                    }
+                }
+
+                return Encoding.UTF8.GetString(bytes[..count]);
+            }
+            finally
+            {
+                if (rented is not null)
+                {
+                    System.Buffers.ArrayPool<byte>.Shared.Return(rented);
                 }
             }
-
-            string text = Encoding.UTF8.GetString(bytes[..count]);
-            if (rented is not null)
-            {
-                System.Buffers.ArrayPool<byte>.Shared.Return(rented);
-            }
-
-            return text;
         }
 
         if (_fusedDecoders >= 0 && (_decodeTable ??= BuildDecodeTable()) is { Text: not null } table)
@@ -464,7 +468,7 @@ public sealed class BpeTokenizer : ITokenizer
             {
                 if (char.IsAsciiHexDigit(token[3]) && char.IsAsciiHexDigit(token[4]))
                 {
-                    return (token, byte.Parse(token.AsSpan(3, 2), System.Globalization.NumberStyles.AllowHexSpecifier));
+                    return (token, byte.Parse(token.AsSpan(3, 2), System.Globalization.NumberStyles.AllowHexSpecifier, System.Globalization.CultureInfo.InvariantCulture));
                 }
 
                 hex = false;                                                     // left to the list stages (as they read it)
@@ -502,36 +506,43 @@ public sealed class BpeTokenizer : ITokenizer
 
         char[]? rentedChars = null;
         byte[]? rentedBytes = null;
-        Span<char> chars = most <= 1024 ? stackalloc char[1024] : (rentedChars = System.Buffers.ArrayPool<char>.Shared.Rent(most));
+        Span<char> chars = most <= StackChars ? stackalloc char[StackChars] : (rentedChars = System.Buffers.ArrayPool<char>.Shared.Rent(most));
         Span<byte> run = ids.Length <= StackChars ? stackalloc byte[StackChars] : (rentedBytes = System.Buffers.ArrayPool<byte>.Shared.Rent(ids.Length));
-        int at = 0, pending = 0;
-        foreach (int id in ids)
+        string text;
+        try
         {
-            bool known = (uint)id < (uint)texts.Length;
-            int b = known ? tokenBytes[id] : table.EmptyByte;
-            if (b >= 0)
+            int at = 0, pending = 0;
+            foreach (int id in ids)
             {
-                run[pending++] = (byte)b;
-                continue;
+                bool known = (uint)id < (uint)texts.Length;
+                int b = known ? tokenBytes[id] : table.EmptyByte;
+                if (b >= 0)
+                {
+                    run[pending++] = (byte)b;
+                    continue;
+                }
+
+                at += DecodeRun(run[..pending], chars[at..]);
+                pending = 0;
+                string token = known ? texts[id] : table.EmptyText;
+                token.CopyTo(chars[at..]);
+                at += token.Length;
             }
 
             at += DecodeRun(run[..pending], chars[at..]);
-            pending = 0;
-            string token = known ? texts[id] : table.EmptyText;
-            token.CopyTo(chars[at..]);
-            at += token.Length;
+            text = new(chars[..at]);
         }
-
-        at += DecodeRun(run[..pending], chars[at..]);
-        string text = new(chars[..at]);
-        if (rentedChars is not null)
+        finally
         {
-            System.Buffers.ArrayPool<char>.Shared.Return(rentedChars);
-        }
+            if (rentedChars is not null)
+            {
+                System.Buffers.ArrayPool<char>.Shared.Return(rentedChars);
+            }
 
-        if (rentedBytes is not null)
-        {
-            System.Buffers.ArrayPool<byte>.Shared.Return(rentedBytes);
+            if (rentedBytes is not null)
+            {
+                System.Buffers.ArrayPool<byte>.Shared.Return(rentedBytes);
+            }
         }
 
         List<string>? pieces = null;
@@ -625,25 +636,31 @@ public sealed class BpeTokenizer : ITokenizer
             char[]? rented = null;
             Span<char> buffer = total <= StackChars ? stackalloc char[StackChars] : (rented = System.Buffers.ArrayPool<char>.Shared.Rent(total));
             buffer = buffer[..total];
-            int at = total - length;
-            text.AsSpan(start, length).CopyTo(buffer[at..]);
-            foreach (var (prepend, from, to) in steps)
+            try
             {
-                if (prepend is not null)
+                int at = total - length;
+                text.AsSpan(start, length).CopyTo(buffer[at..]);
+                foreach (var (prepend, from, to) in steps)
                 {
-                    at -= prepend.Length;
-                    prepend.CopyTo(buffer[at..]);
+                    if (prepend is not null)
+                    {
+                        at -= prepend.Length;
+                        prepend.CopyTo(buffer[at..]);
+                    }
+                    else
+                    {
+                        buffer[at..].Replace(from, to);
+                    }
                 }
-                else
-                {
-                    buffer[at..].Replace(from, to);
-                }
-            }
 
-            EncodeNormalized(buffer, null, ids, atStart);
-            if (rented is not null)
+                EncodeNormalized(buffer, null, ids, atStart);
+            }
+            finally
             {
-                System.Buffers.ArrayPool<char>.Shared.Return(rented);
+                if (rented is not null)
+                {
+                    System.Buffers.ArrayPool<char>.Shared.Return(rented);
+                }
             }
 
             return;
@@ -696,51 +713,56 @@ public sealed class BpeTokenizer : ITokenizer
         int most = replacement.Length + segment.Length + spaces * (replacement.Length - 1);
         char[]? rented = null;
         Span<char> buffer = most <= StackChars ? stackalloc char[StackChars] : (rented = System.Buffers.ArrayPool<char>.Shared.Rent(most));
-        int at = replacement.Length;
-        for (var rest = segment; ;)
+        try
         {
-            int space = rest.IndexOf(' ');
-            if (space < 0)
+            int at = replacement.Length;
+            for (var rest = segment; ;)
             {
-                rest.CopyTo(buffer[at..]);
-                at += rest.Length;
-                break;
+                int space = rest.IndexOf(' ');
+                if (space < 0)
+                {
+                    rest.CopyTo(buffer[at..]);
+                    at += rest.Length;
+                    break;
+                }
+
+                rest[..space].CopyTo(buffer[at..]);
+                at += space;
+                replacement.CopyTo(buffer[at..]);
+                at += replacement.Length;
+                rest = rest[(space + 1)..];
             }
 
-            rest[..space].CopyTo(buffer[at..]);
-            at += space;
-            replacement.CopyTo(buffer[at..]);
-            at += replacement.Length;
-            rest = rest[(space + 1)..];
-        }
-
-        int start = replacement.Length;
-        if (prepend && !buffer[start..at].StartsWith(replacement, StringComparison.Ordinal))
-        {
-            start = 0;
-            replacement.CopyTo(buffer);
-        }
-
-        ReadOnlySpan<char> s = buffer[start..at];
-        if (!split)
-        {
-            EncodePiece(s, ids, mapBytes: false);
-        }
-        else
-        {
-            int from = 0;
-            while (from < s.Length)
+            int start = replacement.Length;
+            if (prepend && !buffer[start..at].StartsWith(replacement, StringComparison.Ordinal))
             {
-                int next = from + 1 >= s.Length ? -1 : s[(from + 1)..].IndexOf(replacement, StringComparison.Ordinal);
-                int to = next < 0 ? s.Length : from + 1 + next;
-                EncodePiece(s[from..to], ids, mapBytes: false);
-                from = to;
+                start = 0;
+                replacement.CopyTo(buffer);
+            }
+
+            ReadOnlySpan<char> s = buffer[start..at];
+            if (!split)
+            {
+                EncodePiece(s, ids, mapBytes: false);
+            }
+            else
+            {
+                int from = 0;
+                while (from < s.Length)
+                {
+                    int next = from + 1 >= s.Length ? -1 : s[(from + 1)..].IndexOf(replacement, StringComparison.Ordinal);
+                    int to = next < 0 ? s.Length : from + 1 + next;
+                    EncodePiece(s[from..to], ids, mapBytes: false);
+                    from = to;
+                }
             }
         }
-
-        if (rented is not null)
+        finally
         {
-            System.Buffers.ArrayPool<char>.Shared.Return(rented);
+            if (rented is not null)
+            {
+                System.Buffers.ArrayPool<char>.Shared.Return(rented);
+            }
         }
     }
 
@@ -751,29 +773,34 @@ public sealed class BpeTokenizer : ITokenizer
         char[]? rented = null;
         scoped ReadOnlySpan<char> piece = segment;
         Span<char> buffer = segment.Length < StackChars ? stackalloc char[StackChars] : default;
-        if (!segment.StartsWith(' '))
+        try
         {
-            buffer = buffer.IsEmpty ? (rented = System.Buffers.ArrayPool<char>.Shared.Rent(segment.Length + 1)) : buffer;
-            buffer[0] = ' ';
-            segment.CopyTo(buffer[1..]);
-            piece = buffer[..(segment.Length + 1)];
-        }
-
-        if (pattern is null)
-        {
-            EncodePiece(piece, ids, mapBytes: true);
-        }
-        else
-        {
-            foreach (var m in pattern.EnumerateMatches(piece))
+            if (!segment.StartsWith(' '))
             {
-                EncodePiece(piece.Slice(m.Index, m.Length), ids, mapBytes: true);
+                buffer = buffer.IsEmpty ? (rented = System.Buffers.ArrayPool<char>.Shared.Rent(segment.Length + 1)) : buffer;
+                buffer[0] = ' ';
+                segment.CopyTo(buffer[1..]);
+                piece = buffer[..(segment.Length + 1)];
+            }
+
+            if (pattern is null)
+            {
+                EncodePiece(piece, ids, mapBytes: true);
+            }
+            else
+            {
+                foreach (var m in pattern.EnumerateMatches(piece))
+                {
+                    EncodePiece(piece.Slice(m.Index, m.Length), ids, mapBytes: true);
+                }
             }
         }
-
-        if (rented is not null)
+        finally
         {
-            System.Buffers.ArrayPool<char>.Shared.Return(rented);
+            if (rented is not null)
+            {
+                System.Buffers.ArrayPool<char>.Shared.Return(rented);
+            }
         }
     }
 
@@ -820,11 +847,17 @@ public sealed class BpeTokenizer : ITokenizer
             int most = Encoding.UTF8.GetMaxByteCount(piece.Length);
             byte[]? rented = null;
             Span<byte> bytes = most <= StackChars ? stackalloc byte[StackChars] : (rented = System.Buffers.ArrayPool<byte>.Shared.Rent(most));
-            int count = Encoding.UTF8.GetBytes(piece, bytes);
-            encoded = BpeBytes(bytes[..count]);
-            if (rented is not null)
+            try
             {
-                System.Buffers.ArrayPool<byte>.Shared.Return(rented);
+                int count = Encoding.UTF8.GetBytes(piece, bytes);
+                encoded = BpeBytes(bytes[..count]);
+            }
+            finally
+            {
+                if (rented is not null)
+                {
+                    System.Buffers.ArrayPool<byte>.Shared.Return(rented);
+                }
             }
         }
         else
@@ -845,42 +878,48 @@ public sealed class BpeTokenizer : ITokenizer
     {
         int[]? rented = null;
         Span<int> symbols = bytes.Length <= StackChars ? stackalloc int[StackChars] : (rented = System.Buffers.ArrayPool<int>.Shared.Rent(bytes.Length));
-        symbols = symbols[..bytes.Length];
-        bool known = _pairs is not null;
-        for (int i = 0; i < bytes.Length && known; i++)
+        try
         {
-            symbols[i] = _byteIds[bytes[i]];
-            known = symbols[i] >= 0;
-        }
+            symbols = symbols[..bytes.Length];
+            bool known = _pairs is not null;
+            for (int i = 0; i < bytes.Length && known; i++)
+            {
+                symbols[i] = _byteIds[bytes[i]];
+                known = symbols[i] >= 0;
+            }
 
-        int[] result;
-        if (known && !_ignoreMerges)
-        {
-            result = Merge(symbols);
-        }
-        else
-        {
+            if (known && !_ignoreMerges)
+            {
+                return Merge(symbols);
+            }
+
             // The general path, on the mapped characters.
             char[]? rentedChars = null;
             Span<char> chars = bytes.Length <= StackChars ? stackalloc char[StackChars] : (rentedChars = System.Buffers.ArrayPool<char>.Shared.Rent(bytes.Length));
-            for (int i = 0; i < bytes.Length; i++)
+            try
             {
-                chars[i] = ByteToChar[bytes[i]];
-            }
+                for (int i = 0; i < bytes.Length; i++)
+                {
+                    chars[i] = ByteToChar[bytes[i]];
+                }
 
-            result = Bpe(chars[..bytes.Length]);
-            if (rentedChars is not null)
+                return Bpe(chars[..bytes.Length]);
+            }
+            finally
             {
-                System.Buffers.ArrayPool<char>.Shared.Return(rentedChars);
+                if (rentedChars is not null)
+                {
+                    System.Buffers.ArrayPool<char>.Shared.Return(rentedChars);
+                }
             }
         }
-
-        if (rented is not null)
+        finally
         {
-            System.Buffers.ArrayPool<int>.Shared.Return(rented);
+            if (rented is not null)
+            {
+                System.Buffers.ArrayPool<int>.Shared.Return(rented);
+            }
         }
-
-        return result;
     }
 
     // Byte-pair merges over one piece (characters of the token alphabet), best (lowest-rank) pair first, leftmost among equals.
@@ -895,24 +934,28 @@ public sealed class BpeTokenizer : ITokenizer
         {
             int[]? rented = null;
             Span<int> symbols = piece.Length <= StackChars ? stackalloc int[StackChars] : (rented = System.Buffers.ArrayPool<int>.Shared.Rent(piece.Length));
-            int n = 0;
-            bool known = true;
-            for (int i = 0; i < piece.Length && known;)
+            try
             {
-                int width = i + 1 < piece.Length && char.IsSurrogatePair(piece[i], piece[i + 1]) ? 2 : 1;
-                known = _vocabularySpans.TryGetValue(piece.Slice(i, width), out symbols[n++]);
-                i += width;
-            }
+                int n = 0;
+                bool known = true;
+                for (int i = 0; i < piece.Length && known;)
+                {
+                    int width = i + 1 < piece.Length && char.IsSurrogatePair(piece[i], piece[i + 1]) ? 2 : 1;
+                    known = _vocabularySpans.TryGetValue(piece.Slice(i, width), out symbols[n++]);
+                    i += width;
+                }
 
-            // Every merge joins two tokens into a token, so a character that is not one never merges: the runs of known
-            // characters between such characters merge on their own.
-            int[] merged = known ? Merge(symbols[..n]) : MergeAround(piece, symbols);
-            if (rented is not null)
+                // Every merge joins two tokens into a token, so a character that is not one never merges: the runs of known
+                // characters between such characters merge on their own.
+                return known ? Merge(symbols[..n]) : MergeAround(piece, symbols);
+            }
+            finally
             {
-                System.Buffers.ArrayPool<int>.Shared.Return(rented);
+                if (rented is not null)
+                {
+                    System.Buffers.ArrayPool<int>.Shared.Return(rented);
+                }
             }
-
-            return merged;
         }
 
         return BpeStrings(piece.ToString());
@@ -1491,20 +1534,24 @@ public sealed class BpeTokenizer : ITokenizer
         char[]? rentedChars = null;
         Span<byte> bytes = count <= StackChars ? stackalloc byte[StackChars] : (rented = System.Buffers.ArrayPool<byte>.Shared.Rent(count));
         Span<char> chars = count <= StackChars ? stackalloc char[StackChars] : (rentedChars = System.Buffers.ArrayPool<char>.Shared.Rent(count));
-        Encoding.UTF8.GetBytes(text, bytes);
-        for (int i = 0; i < count; i++)
+        try
         {
-            chars[i] = ByteToChar[bytes[i]];
-        }
+            Encoding.UTF8.GetBytes(text, bytes);
+            for (int i = 0; i < count; i++)
+            {
+                chars[i] = ByteToChar[bytes[i]];
+            }
 
-        string mapped = new(chars[..count]);
-        if (rented is not null)
+            return new string(chars[..count]);
+        }
+        finally
         {
-            System.Buffers.ArrayPool<byte>.Shared.Return(rented);
-            System.Buffers.ArrayPool<char>.Shared.Return(rentedChars!);
+            if (rented is not null)
+            {
+                System.Buffers.ArrayPool<byte>.Shared.Return(rented);
+                System.Buffers.ArrayPool<char>.Shared.Return(rentedChars!);
+            }
         }
-
-        return mapped;
     }
 
     private void AddDecoder(JsonNode? node)
@@ -1644,7 +1691,7 @@ public sealed class BpeTokenizer : ITokenizer
             if (IsByteToken(token))
             {
                 bytes.Add(char.IsAsciiHexDigit(token[3]) && char.IsAsciiHexDigit(token[4])
-                    ? byte.Parse(token.AsSpan(3, 2), System.Globalization.NumberStyles.AllowHexSpecifier)
+                    ? byte.Parse(token.AsSpan(3, 2), System.Globalization.NumberStyles.AllowHexSpecifier, System.Globalization.CultureInfo.InvariantCulture)
                     : Convert.ToByte(token[3..5], 16));
             }
             else
