@@ -6,7 +6,9 @@ using System.Net.ServerSentEvents;
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
 using Idrak.Data;
+using Idrak.Abstraction.Generation;
 using Idrak.Data.Abstractions;
+using Idrak.Gemma3Vision;
 using Idrak.Generation;
 using Idrak.Models;
 using Idrak.Nlp;
@@ -51,14 +53,15 @@ public sealed record ReaderStatus(ReaderState State, string Message, string? Mod
 
 /// <summary>A model of the switch as the page shows it.</summary>
 public sealed record ModelInfo(string Id, string Name, string? About, string Source, string? Adapter, bool Usable, string? Unusable, string Preprocessing,
-    string Prompt, int MaxTokens, bool Loaded);
+    string Prompt, int MaxTokens, bool Loaded, bool PanAndScan);
 
 /// <summary>A page to read: the image (a data URL or base64), and what replaces the model's own settings.</summary>
 /// <param name="Image">The scan as a data URL ("data:image/png;base64,…") or plain base64.</param>
 /// <param name="Prompt">The instruction; the model's own when null or empty.</param>
 /// <param name="Preprocessing">The image transforms (the library's pipeline syntax, "" for none); the model's own when null.</param>
 /// <param name="MaxTokens">The most tokens the answer may take; the model's own when null.</param>
-public sealed record ReadRequest(string? Image = null, string? Prompt = null, string? Preprocessing = null, int? MaxTokens = null);
+/// <param name="PanAndScan">Gemma 3's pan and scan (<c>do_pan_and_scan</c>: an elongated page also read as crops, each its own image); the model's own when null.</param>
+public sealed record ReadRequest(string? Image = null, string? Prompt = null, string? Preprocessing = null, int? MaxTokens = null, bool? PanAndScan = null);
 
 /// <summary>
 /// The app's readers: the models of the settings, one on the device at a time (the library's
@@ -113,7 +116,7 @@ public sealed class ReaderService : IDisposable
     {
         string? unusable = Unusable(m);
         return new ModelInfo(m.Id, m.Name, m.About, m.Folder ?? m.Repo ?? "", m.Adapter, unusable is null, unusable, m.Preprocessing, m.Prompt, m.MaxTokens,
-            string.Equals(_loaded, m.Id, StringComparison.OrdinalIgnoreCase));
+            string.Equals(_loaded, m.Id, StringComparison.OrdinalIgnoreCase), m.PanAndScan);
     });
 
     /// <summary>Starts loading <paramref name="id"/> in the background (downloading it first when its files are missing); the status reports it.</summary>
@@ -455,17 +458,24 @@ public sealed class ReaderService : IDisposable
         var pipeline = ImageTransformPipeline.Parse(request.Preprocessing ?? model.Preprocessing);
         string prompt = string.IsNullOrWhiteSpace(request.Prompt) ? model.Prompt : request.Prompt;
         int maxTokens = Math.Clamp(request.MaxTokens ?? model.MaxTokens, 1, Math.Max(1, _settings.Context - 256));
-        var read = new ImageReadRequest(image, prompt) { MaxTokens = maxTokens, Transforms = pipeline };
+        // Pan and scan as the read asks (else the model's setting; an adapter's tuned vision options otherwise stand).
+        bool? pan = request.PanAndScan ?? (model.PanAndScan ? true : null);
+        var vision = pan is { } on ? VisionOptions.Parse([$"{Gemma3PanAndScan.EnableKey}={(on ? "true" : "false")}"]) : null;
+        var read = new ImageReadRequest(image, prompt) { MaxTokens = maxTokens, Transforms = pipeline, VisionOptions = vision };
         if (output is not null)
         {
             SetStatus(ReaderState.Reading, $"{model.Name} is reading a page…", model.Id);
             var original = ChatImageDecoder.Decode(image);
             var seen = loaded.Reader.Prepared(read);
+            // The crops Gemma 3's pan and scan reads beside the whole page (as rectangles of the page the model sees).
+            var crops = pan == true && loaded.Reader.Vision.Family == Gemma3VisionFamily.Architecture
+                ? Gemma3PanAndScan.Default.With(vision).Crops(seen.Height, seen.Width).Select(c => new { top = c.Top, left = c.Left, height = c.Height, width = c.Width }).ToList()
+                : null;
             output.TryWrite(new SseItem<object>(new
             {
                 image = "data:image/png;base64," + Convert.ToBase64String(ImageEncoders.Get("png").Encode(seen)),
                 width = seen.Width, height = seen.Height, originalWidth = original.Width, originalHeight = original.Height,
-                preprocessing = pipeline.ToString(), prompt, maxTokens,
+                preprocessing = pipeline.ToString(), prompt, maxTokens, panAndScan = pan == true, crops,
             }, "image"));
         }
 

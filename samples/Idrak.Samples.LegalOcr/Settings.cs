@@ -32,6 +32,9 @@ public sealed record ReaderModel
 
     /// <summary>The most tokens the answer may take.</summary>
     public int MaxTokens { get; init; } = 2048;
+
+    /// <summary>Gemma 3's pan and scan by default (an elongated page also read as crops); off, as transformers' processor has it.</summary>
+    public bool PanAndScan { get; init; }
 }
 
 /// <summary>The app's settings (the "LegalOcr" section of appsettings.json, or --LegalOcr:Key=value on the command line).</summary>

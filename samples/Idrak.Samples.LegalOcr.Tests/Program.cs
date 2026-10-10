@@ -63,6 +63,15 @@ string tinyGemma = Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data"
         var inverted = Read(service, Page(30, 50), new ReadRequest(Preprocessing: "grayscale,max_width=16,invert,jpeg=95", MaxTokens: 2), null);
         Check(inverted[0].Data["preprocessing"]!.GetValue<string>() == "grayscale,max_width=16,invert,jpeg=95" && inverted[^1].Event == "done", inverted[0].Data.ToJsonString());
 
+        // Pan and scan: a tall page is also read as crops (two of 300 x 260 here), each its own image.
+        var tall = Page(600, 260);
+        var whole = Read(service, tall, new ReadRequest(Preprocessing: "grayscale", MaxTokens: 2, PanAndScan: false), null);
+        var panned = Read(service, tall, new ReadRequest(Preprocessing: "grayscale", MaxTokens: 2, PanAndScan: true), null);
+        Check(whole[0].Data["crops"] is null && panned[0].Data["panAndScan"]!.GetValue<bool>() && panned[0].Data["crops"]!.AsArray().Count == 2
+              && panned[0].Data["crops"]![1]!["top"]!.GetValue<int>() == 300, panned[0].Data["crops"]?.ToJsonString() ?? "no crops");
+        Check(panned[^1].Data["promptTokens"]!.GetValue<int>() > whole[^1].Data["promptTokens"]!.GetValue<int>(),
+            $"prompt tokens {whole[^1].Data["promptTokens"]} without, {panned[^1].Data["promptTokens"]} with pan and scan");
+
         Load(service, "b");
         var loaded = service.Models().Where(m => m.Loaded).Select(m => m.Id).ToList();
         Check(loaded.SequenceEqual(["b"]), $"loaded: {string.Join(", ", loaded)}");
