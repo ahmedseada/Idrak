@@ -161,7 +161,11 @@ internal sealed unsafe partial class HipBackend
             pointers[i] = &values[i];
         }
 
-        Check(hipModuleLaunchKernel(function, gridX, gridY, 1, (uint)_blockSize, 1, 1, 0, _stream, pointers, null), $"hipModuleLaunchKernel({name})");
+        int result = hipModuleLaunchKernel(function, gridX, gridY, 1, (uint)_blockSize, 1, 1, 0, _stream, pointers, null);
+        if (result != Success)
+        {
+            Check(result, $"hipModuleLaunchKernel({name})");                    // the message built only on failure
+        }
     }
 
     // An element-wise kernel over n values (grid-stride, so the grid stays within the reported limit). False: no kernels.

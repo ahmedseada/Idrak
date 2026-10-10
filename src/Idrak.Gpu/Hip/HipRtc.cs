@@ -129,10 +129,12 @@ internal static unsafe class HipRtc
         byte[] sourceBytes = Encoding.UTF8.GetBytes(source + "\0");
         byte[] nameBytes = Encoding.UTF8.GetBytes(name + "\0");
         var optionBytes = options.Select(o => Encoding.UTF8.GetBytes(o + "\0")).ToArray();
-        var pins = optionBytes.Select(o => GCHandle.Alloc(o, GCHandleType.Pinned)).ToArray();
+        // The options' addresses on the heap, not the stack: a plug-in's options decide how many there are.
+        var optionAddresses = new nint[Math.Max(1, optionBytes.Length)];
+        var pins = optionBytes.Select(o => GCHandle.Alloc(o, GCHandleType.Pinned)).Append(GCHandle.Alloc(optionAddresses, GCHandleType.Pinned)).ToArray();
         try
         {
-            byte** optionPointers = stackalloc byte*[Math.Max(1, optionBytes.Length)];
+            byte** optionPointers = (byte**)pins[^1].AddrOfPinnedObject();
             for (int i = 0; i < optionBytes.Length; i++)
             {
                 optionPointers[i] = (byte*)pins[i].AddrOfPinnedObject();
