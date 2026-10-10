@@ -40,7 +40,7 @@ internal sealed unsafe partial class CudaBackend
                 $"CUDA kernel '{kernel.Name}': {sharedBytes} bytes of shared memory; {Name} allows {sharedLimit} a block.");
         }
 
-        Span<ulong> values = stackalloc ulong[arguments.Length];
+        Span<ulong> values = arguments.Length <= StackArguments ? stackalloc ulong[arguments.Length] : new ulong[arguments.Length];
         for (int i = 0; i < arguments.Length; i++)
         {
             values[i] = arguments[i].Kind == KernelArgumentKind.Pointer ? PluginPointer(kernel, i, arguments[i]) : arguments[i].Bits;
