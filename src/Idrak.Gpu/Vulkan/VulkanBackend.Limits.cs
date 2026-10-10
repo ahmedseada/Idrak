@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Globalization;
+
 namespace Idrak.Gpu.Vulkan;
 
 // What the kernels are shaped from: the limits the device reports (VulkanDeviceFacts; never its vendor or name). The
@@ -39,7 +41,7 @@ internal sealed record DeviceLimits(int MaxInvocations, int MaxSizeX, int Shared
     /// <summary>Tests: the kernel width every backend created afterwards uses (a power of two within the device's
     /// limits), instead of the formula's; IDRAK_VULKAN_WIDTH sets it for a process.</summary>
     internal static int? WidthOverride { get; set; } =
-        int.TryParse(Environment.GetEnvironmentVariable("IDRAK_VULKAN_WIDTH"), out int width) ? width : null;
+        int.TryParse(Environment.GetEnvironmentVariable("IDRAK_VULKAN_WIDTH"), NumberStyles.Integer, CultureInfo.InvariantCulture, out int width) ? width : null;
 
     /// <summary>Tests: false makes backends created afterwards reduce through workgroup memory alone, as on devices
     /// without subgroup arithmetic; IDRAK_VULKAN_SUBGROUPS=0 sets it for a process.</summary>

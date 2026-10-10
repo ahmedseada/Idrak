@@ -30,11 +30,16 @@ internal sealed partial class VulkanBackend
             return;
         }
 
-        var geometry = g;
         int flags = (bias is null ? 0 : 1) | (int)activation << 1;
-        Storage[] storages = [x, weight, bias ?? weight, y];
-        int choice = ConvChoice(ConvolutionShapes.Forward, in g, filters, groups, activation, storages, 1UL << 3,
-            (c, s) => RunConvolution(c, s, geometry, filters, groups, flags, activation));
+        ReadOnlySpan<Storage> storages = [x, weight, bias ?? weight, y];
+        Span<int> buffer = stackalloc int[ConvCandidatesMost];
+        var candidates = ConvCandidates(ConvolutionShapes.Forward, in g, filters, groups, buffer);
+        int choice = ConvChoice(ConvolutionShapes.Forward, in g, filters, groups, activation, candidates, out var key, out bool measure);
+        if (measure)
+        {
+            choice = MeasureConvolution(key, candidates.ToArray(), choice, storages, g, filters, groups, flags, activation);
+        }
+
         RunConvolution(choice, storages, g, filters, groups, flags, activation);
     }
 
@@ -46,10 +51,15 @@ internal sealed partial class VulkanBackend
             return;
         }
 
-        var geometry = g;
-        Storage[] storages = [dy, weight, dx];
-        int choice = ConvChoice(ConvolutionShapes.Input, in g, filters, groups, ConvActivation.None, storages, 1UL << 2,
-            (c, s) => RunConvolutionInput(c, s, geometry, filters, groups));
+        ReadOnlySpan<Storage> storages = [dy, weight, dx];
+        Span<int> buffer = stackalloc int[ConvCandidatesMost];
+        var candidates = ConvCandidates(ConvolutionShapes.Input, in g, filters, groups, buffer);
+        int choice = ConvChoice(ConvolutionShapes.Input, in g, filters, groups, ConvActivation.None, candidates, out var key, out bool measure);
+        if (measure)
+        {
+            choice = MeasureConvolutionInput(key, candidates.ToArray(), choice, storages, g, filters, groups);
+        }
+
         RunConvolutionInput(choice, storages, g, filters, groups);
     }
 
@@ -61,12 +71,30 @@ internal sealed partial class VulkanBackend
             return;
         }
 
-        var geometry = g;
-        Storage[] storages = [x, dy, dweight];
-        int choice = ConvChoice(ConvolutionShapes.Weight, in g, filters, groups, ConvActivation.None, storages, 1UL << 2,
-            (c, s) => RunConvolutionWeight(c, s, geometry, filters, groups));
+        ReadOnlySpan<Storage> storages = [x, dy, dweight];
+        Span<int> buffer = stackalloc int[ConvCandidatesMost];
+        var candidates = ConvCandidates(ConvolutionShapes.Weight, in g, filters, groups, buffer);
+        int choice = ConvChoice(ConvolutionShapes.Weight, in g, filters, groups, ConvActivation.None, candidates, out var key, out bool measure);
+        if (measure)
+        {
+            choice = MeasureConvolutionWeight(key, candidates.ToArray(), choice, storages, g, filters, groups);
+        }
+
         RunConvolutionWeight(choice, storages, g, filters, groups);
     }
+
+    // Measuring each pass, kept apart from the operations so their usual calls make no closure.
+    private int MeasureConvolution(VulkanTuneKey key, int[] candidates, int fallback, ReadOnlySpan<Storage> storages, ConvGeometry g, int filters, int groups,
+        int flags, ConvActivation activation) =>
+        ConvMeasure(key, candidates, fallback, storages.ToArray(), 1UL << 3, (c, s) => RunConvolution(c, s, g, filters, groups, flags, activation));
+
+    private int MeasureConvolutionInput(VulkanTuneKey key, int[] candidates, int fallback, ReadOnlySpan<Storage> storages, ConvGeometry g, int filters,
+        int groups) =>
+        ConvMeasure(key, candidates, fallback, storages.ToArray(), 1UL << 2, (c, s) => RunConvolutionInput(c, s, g, filters, groups));
+
+    private int MeasureConvolutionWeight(VulkanTuneKey key, int[] candidates, int fallback, ReadOnlySpan<Storage> storages, ConvGeometry g, int filters,
+        int groups) =>
+        ConvMeasure(key, candidates, fallback, storages.ToArray(), 1UL << 2, (c, s) => RunConvolutionWeight(c, s, g, filters, groups));
 
     // Whether the kernels index every operand within an int (the storages' lengths are ints; the sums of positions too).
     private static bool ConvFits(in ConvGeometry g, int filters, int groups) =>
@@ -82,15 +110,26 @@ internal sealed partial class VulkanBackend
         _ => (filters / groups, g.PatchSize / groups, groups),
     };
 
-    // The path of one pass for this shape: measured, stored, forced, or the formula's (see the file's comment).
-    private int ConvChoice(int pass, in ConvGeometry g, int filters, int groups, ConvActivation activation, Storage[] storages, ulong writes, Action<int, Storage[]> run)
+    // The path of one pass for this shape among `candidates` (ConvCandidates): stored, forced, or the formula's (see the
+    // file's comment). `measure` is set when the shape should be measured now (ConvMeasure, under `key`; the formula's
+    // choice is returned then).
+    private int ConvChoice(int pass, in ConvGeometry g, int filters, int groups, ConvActivation activation, ReadOnlySpan<int> candidates, out VulkanTuneKey key,
+        out bool measure)
     {
-        var candidates = ConvCandidates(pass, in g, filters, groups);
+        key = default;
+        measure = false;
         int fallback = ConvFormula(pass, in g, filters, groups, candidates);
         if (ConvolutionPath is int forced)
         {
-            int at = Array.FindIndex(candidates, c => (c & 15) == forced && (WidthOf(c) == Width || forced == ConvComposed));
-            return at >= 0 ? candidates[at] : fallback;
+            foreach (int c in candidates)
+            {
+                if ((c & 15) == forced && (WidthOf(c) == Width || forced == ConvComposed))
+                {
+                    return c;
+                }
+            }
+
+            return fallback;
         }
 
         if (!ConvolutionShapes.Key(in g, filters, groups, out var shape))
@@ -98,17 +137,20 @@ internal sealed partial class VulkanBackend
             return fallback;
         }
 
-        var key = new VulkanTuneKey(VulkanTuneOp.Convolution, ConvolutionShapes.Variant(pass, activation, groups), shape.A, shape.B, shape.C, shape.D, shape.E, shape.F);
-        if (TryTuned(key, out int known) && Array.IndexOf(candidates, known) >= 0)
+        key = new VulkanTuneKey(VulkanTuneOp.Convolution, ConvolutionShapes.Variant(pass, activation, groups), shape.A, shape.B, shape.C, shape.D, shape.E, shape.F);
+        if (TryTuned(key, out int known) && candidates.IndexOf(known) >= 0)
         {
             return known;
         }
 
-        if (!CanTune || candidates.Length <= 1)
-        {
-            return fallback;
-        }
+        measure = CanTune && candidates.Length > 1;
+        return fallback;
+    }
 
+    // Measures a pass's candidates on scratch copies of what it writes (bit i of `writes`: storage i); the formula's
+    // choice where memory runs short.
+    private int ConvMeasure(VulkanTuneKey key, int[] candidates, int fallback, Storage[] storages, ulong writes, Action<int, Storage[]> run)
+    {
         int chosen = fallback;
         var lengths = new int[storages.Length];
         for (int i = 0; i < storages.Length; i++)
@@ -143,24 +185,31 @@ internal sealed partial class VulkanBackend
         return chosen;
     }
 
-    // The candidates of a pass: the composed path where its patches fit the device (a binding, and half the memory it
-    // reports free), the implicit product tiled and blocked at each candidate width where the workgroup counts take it
-    // (the weight gradient at each split count), the depthwise kernels where every group reads one channel.
-    private int[] ConvCandidates(int pass, in ConvGeometry g, int filters, int groups)
+    // Candidates of a pass at most: the composed path, the depthwise kernels, and the implicit product tiled and blocked
+    // at each split count (ConvolutionShapes.SplitChoices) and each candidate width (at most three: CandidateWidths).
+    private const int ConvCandidatesMost = 2 + 2 * 4 * 3;
+
+    // The candidates of a pass, written to `into` (ConvCandidatesMost long): the composed path where its patches fit the
+    // device (a binding, and half the memory it reports free), the implicit product tiled and blocked at each candidate
+    // width where the workgroup counts take it (the weight gradient at each split count), the depthwise kernels where
+    // every group reads one channel.
+    private ReadOnlySpan<int> ConvCandidates(int pass, in ConvGeometry g, int filters, int groups, Span<int> into)
     {
-        var candidates = new List<int>();
+        int count = 0;
         long patches = (long)g.Positions * g.PatchSize;
         long free = AvailableMemory() ?? long.MaxValue;
         if (patches <= int.MaxValue && BlockBytes((int)Math.Min(patches, int.MaxValue)) <= MaxStorageBytes && 4 * patches <= free / 2)
         {
-            candidates.Add(WithWidth(Width, ConvComposed));
+            into[count++] = WithWidth(Width, ConvComposed);
         }
 
         var (rows, columns, _) = ConvProduct(pass, in g, filters, groups);
-        int[] splits = pass == ConvolutionShapes.Weight ? ConvolutionShapes.SplitCounts((long)g.N * g.OH * g.OW) : [1];
+        long positions = (long)g.N * g.OH * g.OW;
+        ReadOnlySpan<int> splits = pass == ConvolutionShapes.Weight ? ConvolutionShapes.SplitChoices : [1];
+        ReadOnlySpan<int> variants = [ConvTile, ConvBlocked];
         foreach (int width in CandidateWidths)
         {
-            foreach (int variant in new[] { ConvTile, ConvBlocked })
+            foreach (int variant in variants)
             {
                 int edge = VulkanKernels.MatSide(width) * (variant == ConvBlocked ? VulkanKernels.MatPer : 1);
                 if (!MatFits(edge, rows, columns))
@@ -170,9 +219,14 @@ internal sealed partial class VulkanBackend
 
                 foreach (int s in splits)
                 {
+                    if (!ConvolutionShapes.SplitTried(s, positions))
+                    {
+                        continue;
+                    }
+
                     if (s == 1 || (long)s * filters * (g.PatchSize / groups) <= int.MaxValue && BlockBytes(s * filters * (g.PatchSize / groups)) <= MaxStorageBytes)
                     {
-                        candidates.Add(WithWidth(width, variant | System.Numerics.BitOperations.Log2((uint)s) << 4));
+                        into[count++] = WithWidth(width, variant | System.Numerics.BitOperations.Log2((uint)s) << 4);
                     }
                 }
             }
@@ -180,17 +234,16 @@ internal sealed partial class VulkanBackend
 
         if (ConvolutionShapes.Depthwise(in g, groups))
         {
-            candidates.Add(WithWidth(Width, ConvDepthwise));
+            into[count++] = WithWidth(Width, ConvDepthwise);
         }
 
-        return [.. candidates];
+        return into[..count];
     }
 
     // The formula's choice among the candidates (see the file's comment).
-    private int ConvFormula(int pass, in ConvGeometry g, int filters, int groups, int[] candidates)
+    private int ConvFormula(int pass, in ConvGeometry g, int filters, int groups, ReadOnlySpan<int> candidates)
     {
-        int Find(int variant) => Array.IndexOf(candidates, WithWidth(Width, variant)) >= 0 ? WithWidth(Width, variant) : -1;
-        if (Find(ConvDepthwise) is int depthwise and >= 0)
+        if (ConvFind(candidates, ConvDepthwise) is int depthwise and >= 0)
         {
             return depthwise;
         }
@@ -199,9 +252,10 @@ internal sealed partial class VulkanBackend
         int edge = VulkanKernels.MatPer * VulkanKernels.MatSide(Width);
         int splitBits = pass == ConvolutionShapes.Weight ? System.Numerics.BitOperations.Log2((uint)ConvolutionShapes.FormulaSplits((long)g.N * g.OH * g.OW)) << 4 : 0;
         int variant = rows >= edge / 2 && columns >= edge / 2 ? ConvBlocked : ConvTile;
-        foreach (int v in new[] { variant | splitBits, variant, ConvTile | splitBits, ConvTile, ConvComposed })
+        ReadOnlySpan<int> order = [variant | splitBits, variant, ConvTile | splitBits, ConvTile, ConvComposed];
+        foreach (int v in order)
         {
-            if (Find(v) is int found and >= 0)
+            if (ConvFind(candidates, v) is int found and >= 0)
             {
                 return found;
             }
@@ -210,23 +264,27 @@ internal sealed partial class VulkanBackend
         return candidates.Length > 0 ? candidates[0] : WithWidth(Width, ConvComposed);
     }
 
+    // `variant` at the device's width when it is among the candidates, else -1.
+    private int ConvFind(ReadOnlySpan<int> candidates, int variant) =>
+        candidates.IndexOf(WithWidth(Width, variant)) >= 0 ? WithWidth(Width, variant) : -1;
+
     // The 72 bytes of push constants of every convolution kernel.
     private static ReadOnlySpan<byte> ConvPush(Span<byte> bytes, in ConvGeometry g, int filters, int groups, int flags, int splits) =>
         new Push(bytes).I(g.N).I(g.C).I(g.H).I(g.W).I(g.KH).I(g.KW).I(g.SH).I(g.SW).I(g.PH).I(g.PW).I(g.OH).I(g.OW).I(g.DH).I(g.DW)
             .I(filters).I(groups).I(flags).I(splits).Bytes;
 
-    // Dispatches an implicit product: blocks of the tile along x (columns) and y (rows), the batch entries along z (the
-    // kernels loop over those past the device's count).
-    private void RunConvProduct(string kernel, int choice, int rows, int columns, int batch, ReadOnlySpan<Storage> storages, ReadOnlySpan<byte> push)
+    // Dispatches an implicit product (`kernel` blocked, `tile` its tiled variant): blocks of the tile along x (columns)
+    // and y (rows), the batch entries along z (the kernels loop over those past the device's count).
+    private void RunConvProduct(string kernel, string tile, int choice, int rows, int columns, int batch, ReadOnlySpan<Storage> storages, ReadOnlySpan<byte> push)
     {
         int width = WidthOf(choice), variant = choice & 15;
         int edge = VulkanKernels.MatSide(width) * (variant == ConvBlocked ? VulkanKernels.MatPer : 1);
-        RunAt(variant == ConvBlocked ? kernel : kernel + "_tile", width, (uint)((columns + edge - 1) / edge), (uint)((rows + edge - 1) / edge),
+        RunAt(variant == ConvBlocked ? kernel : tile, width, (uint)((columns + edge - 1) / edge), (uint)((rows + edge - 1) / edge),
             (uint)Math.Clamp(batch, 1, Limits.MaxGroupsZ), storages, push);
     }
 
     // storages: x, weight, bias (the weight when none), y.
-    private void RunConvolution(int choice, Storage[] s, ConvGeometry g, int filters, int groups, int flags, ConvActivation activation)
+    private void RunConvolution(int choice, ReadOnlySpan<Storage> s, ConvGeometry g, int filters, int groups, int flags, ConvActivation activation)
     {
         switch (choice & 15)
         {
@@ -244,14 +302,14 @@ internal sealed partial class VulkanBackend
             {
                 Span<byte> b = stackalloc byte[72];
                 var (rows, columns, batch) = ConvProduct(ConvolutionShapes.Forward, in g, filters, groups);
-                RunConvProduct("conv_forward", choice, rows, columns, batch, s, ConvPush(b, g, filters, groups, flags, 1));
+                RunConvProduct("conv_forward", "conv_forward_tile", choice, rows, columns, batch, s, ConvPush(b, g, filters, groups, flags, 1));
                 return;
             }
         }
     }
 
     // storages: dy, weight, dx.
-    private void RunConvolutionInput(int choice, Storage[] s, ConvGeometry g, int filters, int groups)
+    private void RunConvolutionInput(int choice, ReadOnlySpan<Storage> s, ConvGeometry g, int filters, int groups)
     {
         Span<byte> b = stackalloc byte[72];
         switch (choice & 15)
@@ -264,14 +322,14 @@ internal sealed partial class VulkanBackend
                 return;
             default:
                 var (rows, columns, batch) = ConvProduct(ConvolutionShapes.Input, in g, filters, groups);
-                RunConvProduct("conv_backward_input", choice, rows, columns, batch, s, ConvPush(b, g, filters, groups, 0, 1));
+                RunConvProduct("conv_backward_input", "conv_backward_input_tile", choice, rows, columns, batch, s, ConvPush(b, g, filters, groups, 0, 1));
                 return;
         }
     }
 
     // storages: x, dy, dweight. Several splits write their partial sums to a temporary [splits, filters, patch] that
     // conv_split_reduce adds to dweight in split order.
-    private void RunConvolutionWeight(int choice, Storage[] s, ConvGeometry g, int filters, int groups)
+    private void RunConvolutionWeight(int choice, ReadOnlySpan<Storage> s, ConvGeometry g, int filters, int groups)
     {
         Span<byte> b = stackalloc byte[72];
         switch (choice & 15)
@@ -289,14 +347,14 @@ internal sealed partial class VulkanBackend
         int count = filters * (g.PatchSize / groups);
         if (splits == 1)
         {
-            RunConvProduct("conv_backward_weight", choice, rows, columns, groups, [s[0], s[1], s[2], s[2]], ConvPush(b, g, filters, groups, 0, 1));
+            RunConvProduct("conv_backward_weight", "conv_backward_weight_tile", choice, rows, columns, groups, [s[0], s[1], s[2], s[2]], ConvPush(b, g, filters, groups, 0, 1));
             return;
         }
 
         var part = Allocate(splits * count, zeroed: false);
         try
         {
-            RunConvProduct("conv_backward_weight", choice, rows, columns, groups * splits, [s[0], s[1], s[2], part], ConvPush(b, g, filters, groups, 0, splits));
+            RunConvProduct("conv_backward_weight", "conv_backward_weight_tile", choice, rows, columns, groups * splits, [s[0], s[1], s[2], part], ConvPush(b, g, filters, groups, 0, splits));
             Span<byte> r = stackalloc byte[8];
             Grid("conv_split_reduce", count, [part, s[2]], new Push(r).I(count).I(splits).Bytes);
         }

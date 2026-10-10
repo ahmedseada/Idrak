@@ -159,11 +159,11 @@ internal sealed partial class VulkanBackend
             most /= 2;
         }
 
-        return PowersOfTwo((int)most)[^1];
+        return LargestPowerOfTwo((int)most);
     }
 
     // The largest power of two at most `value` within [1, most].
-    private static int PowerOfTwoWithin(long value, int most) => PowersOfTwo((int)Math.Clamp(value, 1, most))[^1];
+    private static int PowerOfTwoWithin(long value, int most) => LargestPowerOfTwo((int)Math.Clamp(value, 1, most));
 
     // Column sums of a [rows, cols] block (element (r, j) at offset + r·ld + j) with `mode` (see group_partials_columns),
     // the first sums added to out0 (flags bit 0) and the second to out1 (bit 1). Splits: as many as give the dispatch a

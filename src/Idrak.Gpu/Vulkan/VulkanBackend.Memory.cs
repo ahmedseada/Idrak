@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Globalization;
 using static Idrak.Gpu.Vulkan.VulkanDriver;
 
 namespace Idrak.Gpu.Vulkan;
@@ -45,7 +46,7 @@ internal sealed unsafe partial class VulkanBackend
     private static int MemoryAllocationCap(uint driver, int? cap)
     {
         int limit = driver == 0 ? int.MaxValue : (int)Math.Min(driver, int.MaxValue);
-        if (cap is null && int.TryParse(Environment.GetEnvironmentVariable("IDRAK_VULKAN_MAX_ALLOCATIONS"), out int value))
+        if (cap is null && int.TryParse(Environment.GetEnvironmentVariable("IDRAK_VULKAN_MAX_ALLOCATIONS"), NumberStyles.Integer, CultureInfo.InvariantCulture, out int value))
         {
             cap = value;
         }
