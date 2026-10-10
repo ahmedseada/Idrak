@@ -7,13 +7,16 @@ namespace Idrak.Gpu.Cuda;
 
 // PTX for connectionist temporal classification (Backend.CtcLoss and CtcLossBackward): a block per sequence runs α (and
 // for the gradient β) over the S = 2L + 1 extended states in log space, in float, the block's threads over the states (a
-// fixed stride) with a barrier between steps. The rows of α and β live in shared memory when S fits the block (2 rows and
-// a row of terms of BlockSize floats each), else ("_global") in a scratch buffer; the gradient keeps α of every step in
-// global memory ([batch, steps, states], then each step's row maximum, [batch, steps]). Per-class sums of the gradient go
-// in a fixed order (the blank's through the block's tree, each label's over its occurrences in label order), so the bits
-// do not change run to run. Labels are clamped to the classes (the CPU checks them). Parameters: logprobs, targets, meta
+// fixed stride) with a barrier between steps. The rows (stride `states`: the forward's 2 rows of α; the gradient's 2 rows
+// of β, a row of terms and the label groups below) live in dynamic shared memory sized at launch when they fit the
+// block's shared memory, else ("_global") in a scratch buffer; the gradient keeps α of every step in global memory
+// ([batch, steps, states], then each step's row maximum, [batch, steps]). Per-class sums of the gradient go in a fixed
+// order (the blank's through the block's tree, each label's over its occurrences in label order), so the bits do not
+// change run to run. The gradient groups the labels once per call (each label's class, and its next occurrence of the
+// same class with a flag on all but the first), so a step sums each class by walking its chain, not by scanning the
+// labels for every label. Labels are clamped to the classes (the CPU checks them). Parameters: logprobs, targets, meta
 // (per sequence: input length, target length, target offset as ints), the outputs and scratch; steps, batch, classes,
-// blank, batchfirst, zeroinf, states (the scratch rows' stride: the longest sequence's 2L + 1).
+// blank, batchfirst, zeroinf, states (the rows' stride: the longest sequence's 2L + 1).
 //
 // The rows stay near zero so float keeps its precision over long sequences (over hundreds of steps α itself falls to
 // about -1,500, where a float holds ~1e-4 and the rounding piles up). Row t is kept as a_t = α_t - P_t: each step
@@ -30,6 +33,12 @@ internal static partial class PtxKernels
 
     private static readonly string[] CtcScalars = ["steps", "batch", "classes", "blank", "batchfirst", "zeroinf", "states"];
 
+    /// <summary>The CTC kernels' static shared memory (bytes): the reduction tree and the two maxima's warp slots.</summary>
+    public static int CtcStaticShared => 4 * (BlockSize + 2 * 2 * (BlockSize / 32));
+
+    /// <summary>Rows (floats, stride states) a sequence keeps: the forward's 2, the gradient's 3 and the label groups (≤ states).</summary>
+    public static int CtcRows(bool backward) => backward ? 4 : 2;
+
     private static void BuildCtc(StringBuilder sb)
     {
         foreach (bool shared in new[] { true, false })
@@ -40,7 +49,7 @@ internal static partial class PtxKernels
     }
 
     // The common start of a CTC kernel: parameters, registers, the sequence's lengths and offset, its states.
-    private static StringBuilder CtcHeader(string name, string[] pointers, bool shared, int sharedRows)
+    private static StringBuilder CtcHeader(string name, string[] pointers, bool shared)
     {
         int threads = BlockSize;
         var p = new StringBuilder();
@@ -58,11 +67,12 @@ internal static partial class PtxKernels
         p.AppendLine("    .reg .u64 %rows, " + string.Join(", ", pointers.Select(q => $"%g_{q}")) + ";");
         if (shared)
         {
-            p.AppendLine($"    .shared .align 4 .f32 srows[{sharedRows * threads}];");
+            p.AppendLine("    .extern .shared .align 4 .f32 srows[];");                  // CtcRows · states floats, sized at launch
         }
 
         p.AppendLine($"    .shared .align 4 .f32 red[{threads}];");
         p.AppendLine($"    .shared .align 4 .f32 wmax[{2 * (threads / 32)}];");
+        p.AppendLine($"    .shared .align 4 .f32 wtop[{2 * (threads / 32)}];");
         foreach (string s in CtcScalars)
         {
             p.AppendLine($"    ld.param.u32 %s_{s}, [p_{s}];");
@@ -94,7 +104,7 @@ internal static partial class PtxKernels
         return p;
     }
 
-    // The address of row element `index` (a register) into %rd2: shared rows (stride BlockSize) or the scratch rows at %rows.
+    // The address of row element `index` (a register) into %rd2: the shared rows or the scratch rows at %rows (stride states).
     private static string RowAddress(bool shared, string index) => shared
         ? $"""
             mov.u64 %rd2, srows;
@@ -229,11 +239,12 @@ internal static partial class PtxKernels
         {label}_END:
         """;
 
-    // The block's maximum of `value` into `target`, the same in every thread, 0 when it is -∞ (a row's offset): the warp's
-    // lanes by shuffles, then each warp's maximum in its slot of `wmax` and the slots by shuffles again. One barrier, which
-    // also stands for the step's barrier; the slots alternate halves with the parity of %t, so the next step's writes never
-    // meet this step's reads. No branches: every thread runs it. Uses %f46, %r55, %r56, %rd12, %rd13, %p16; `value` changes.
-    private static string BlockMax(string value, string target)
+    // The block's maximum of `value` into `target`, the same in every thread, 0 when it is -∞ (a row's offset; with
+    // `keepInfinity` it stays -∞): the warp's lanes by shuffles, then each warp's maximum in its slot of `slots` and the
+    // slots by shuffles again. One barrier, which also stands for the step's barrier; the slots alternate halves with the
+    // parity of %t, so the next step's writes never meet this step's reads. No branches: every thread runs it. Uses %f46,
+    // %r55, %r56, %rd12, %rd13, %p16; `value` changes.
+    private static string BlockMax(string value, string target, string slots = "wmax", bool keepInfinity = false)
     {
         int warps = BlockSize / 32;
         var s = new StringBuilder();
@@ -247,7 +258,7 @@ internal static partial class PtxKernels
             and.b32 %r55, %t, 1;
             mul.lo.u32 %r55, %r55, {warps};
             add.u32 %r56, %r55, %warp;
-            mov.u64 %rd12, wmax;
+            mov.u64 %rd12, {slots};
             mul.wide.u32 %rd13, %r56, 4;
             add.u64 %rd13, %rd12, %rd13;
             setp.eq.u32 %p16, %wlane, 0;
@@ -265,8 +276,12 @@ internal static partial class PtxKernels
             s.AppendLine($"max.f32 {target}, {target}, %f46;");
         }
 
-        s.AppendLine($"setp.eq.f32 %p16, {target}, {NegInf};");
-        s.Append($"@%p16 mov.f32 {target}, {Zero};");
+        if (!keepInfinity)
+        {
+            s.AppendLine($"setp.eq.f32 %p16, {target}, {NegInf};");
+            s.Append($"@%p16 mov.f32 {target}, {Zero};");
+        }
+
         return s.ToString();
     }
 
@@ -302,11 +317,11 @@ internal static partial class PtxKernels
     private static void CtcLossKernel(StringBuilder sb, bool shared)
     {
         string name = shared ? "ctc_loss_f32" : "ctc_loss_global_f32";
-        var p = CtcHeader(name, ["logprobs", "targets", "meta", "losses", "work"], shared, 2);
+        var p = CtcHeader(name, ["logprobs", "targets", "meta", "losses", "work"], shared);
+        p.AppendLine("    mov.u32 %stride, %s_states;");
         p.AppendLine(shared
-            ? $"    mov.u32 %stride, {BlockSize};"
+            ? ""
             : """
-                  mov.u32 %stride, %s_states;
                   mul.lo.u32 %r1, %n, %s_states;
                   shl.b32 %r1, %r1, 1;
                   mul.wide.u32 %rd1, %r1, 4;
@@ -397,18 +412,19 @@ internal static partial class PtxKernels
     private static void CtcBackwardKernel(StringBuilder sb, bool shared)
     {
         string name = shared ? "ctc_loss_bwd_f32" : "ctc_loss_bwd_global_f32";
-        var p = CtcHeader(name, ["logprobs", "targets", "meta", "lossgrads", "dlogprobs", "alpha", "work"], shared, 3);
+        var p = CtcHeader(name, ["logprobs", "targets", "meta", "lossgrads", "dlogprobs", "alpha", "work"], shared);
 
-        // %rows: β's two rows then the terms (shared, stride BlockSize; or the scratch, stride states); %r9: the alpha rows'
+        // %rows: β's two rows, the terms, then each label's class (from element %r2) and its next occurrence of that class
+        // (from %r3; the top bit set on all but a class's first occurrence) (shared, or the scratch); %r9: the alpha rows'
         // first element of this sequence; %r10: its row maxima's first; %f21: the scale; %f22: the end states' log-sum of
         // the last α row (the nll is -(that + P_{T-1})); %f41: α's row maximum, %f43 β's; %d2: R_t; %d3: P_{T-1} - P_t;
         // %f45: top + nll of step t in float, from those in double.
+        p.AppendLine("    mov.u32 %stride, %s_states;");
         p.AppendLine(shared
-            ? $"    mov.u32 %stride, {BlockSize};"
-            : """
-                  mov.u32 %stride, %s_states;
+            ? ""
+            : $"""
                   mul.lo.u32 %r1, %n, %s_states;
-                  mul.lo.u32 %r1, %r1, 3;
+                  mul.lo.u32 %r1, %r1, {CtcRows(backward: true)};
                   mul.wide.u32 %rd1, %r1, 4;
                   add.u64 %rows, %g_work, %rd1;
               """);
@@ -420,6 +436,7 @@ internal static partial class PtxKernels
                 @%p1 bra DONE;
                 setp.eq.u32 %p1, %len, 0;
                 @%p1 bra DONE;
+                {{LabelGroups(shared)}}
                 mul.lo.u32 %r9, %n, %s_steps;
                 mul.lo.u32 %r9, %r9, %s_states;
                 mul.lo.u32 %r10, %s_batch, %s_steps;
@@ -512,7 +529,7 @@ internal static partial class PtxKernels
                     add.f32 %f24, %f24, %f25;
                     max.f32 %f23, %f23, %f24;
                     """)}}
-                {{BlockReduce("%f23", "%f26", max: true, "RMAX")}}
+                {{BlockMax("%f23", "%f26", "wtop", keepInfinity: true)}}
                 cvt.f64.f32 %d4, %f26;
                 cvt.f64.f32 %d1, %f22;
                 sub.f64 %d4, %d4, %d1;
@@ -560,35 +577,30 @@ internal static partial class PtxKernels
             LABEL:
                 setp.ge.u32 %p7, %r31, %labels;
                 @%p7 bra LABELS_END;
-                {{TargetLabel("%r31", "%r32")}}
-                mov.u32 %r33, 0;
-            EARLIER:
-                setp.ge.u32 %p8, %r33, %r31;
-                @%p8 bra FIRST;
-                {{TargetLabel("%r33", "%r34")}}
-                setp.eq.u32 %p8, %r34, %r32;
+                add.u32 %r41, %r3, %r31;
+                {{RowAddress(shared, "%r41")}}
+                ld.{{Space(shared)}}.u32 %r33, [%rd2];
+                and.b32 %r34, %r33, 0x80000000;
+                setp.ne.u32 %p8, %r34, 0;
                 @%p8 bra LABEL_NEXT;
-                add.u32 %r33, %r33, 1;
-                bra EARLIER;
-            FIRST:
+                add.u32 %r41, %r2, %r31;
+                {{RowAddress(shared, "%r41")}}
+                ld.{{Space(shared)}}.u32 %r32, [%rd2];
                 mov.f32 %f29, {{Zero}};
-                mov.u32 %r33, %r31;
+                mov.u32 %r37, %r31;
             OCCURRENCE:
-                setp.ge.u32 %p8, %r33, %labels;
-                @%p8 bra OCCURRENCES_END;
-                {{TargetLabel("%r33", "%r34")}}
-                setp.ne.u32 %p8, %r34, %r32;
-                @%p8 bra OCCURRENCE_NEXT;
-                shl.b32 %r35, %r33, 1;
+                shl.b32 %r35, %r37, 1;
                 add.u32 %r35, %r35, 1;
                 add.u32 %r41, %r26, %r35;
                 {{RowAddress(shared, "%r41")}}
                 ld.{{Space(shared)}}.f32 %f24, [%rd2];
                 add.f32 %f29, %f29, %f24;
-            OCCURRENCE_NEXT:
-                add.u32 %r33, %r33, 1;
-                bra OCCURRENCE;
-            OCCURRENCES_END:
+                add.u32 %r41, %r3, %r37;
+                {{RowAddress(shared, "%r41")}}
+                ld.{{Space(shared)}}.u32 %r37, [%rd2];
+                and.b32 %r37, %r37, 0x7FFFFFFF;
+                setp.lt.u32 %p8, %r37, %labels;
+                @%p8 bra OCCURRENCE;
                 {{ClassGradient("%r32", "%f29", "GL")}}
             LABEL_NEXT:
                 add.u32 %r31, %r31, %nt;
@@ -604,6 +616,67 @@ internal static partial class PtxKernels
             """);
         sb.Append(p);
     }
+
+    // The label groups, once per call: each label's class at element %r2 = 3 · states of the rows, then its next occurrence
+    // of the same class (or the label count) at %r3 = %r2 + labels, the top bit set when an earlier label has the class.
+    // Uses %r31 … %r36, %r41, %p18 (and TargetLabel's, RowAddress's registers).
+    private static string LabelGroups(bool shared) => $"""
+        mul.lo.u32 %r2, %stride, 3;
+        add.u32 %r3, %r2, %labels;
+        mov.u32 %r31, %lane;
+        GCLASS:
+        setp.ge.u32 %p18, %r31, %labels;
+        @%p18 bra GCLASS_END;
+        {TargetLabel("%r31", "%r32")}
+        add.u32 %r41, %r2, %r31;
+        {RowAddress(shared, "%r41")}
+        st.{Space(shared)}.u32 [%rd2], %r32;
+        add.u32 %r31, %r31, %nt;
+        bra GCLASS;
+        GCLASS_END:
+        bar.sync 0;
+        mov.u32 %r31, %lane;
+        GNEXT:
+        setp.ge.u32 %p18, %r31, %labels;
+        @%p18 bra GNEXT_END;
+        add.u32 %r41, %r2, %r31;
+        {RowAddress(shared, "%r41")}
+        ld.{Space(shared)}.u32 %r32, [%rd2];
+        mov.u32 %r36, 0;
+        mov.u32 %r33, 0;
+        GEARLIER:
+        setp.ge.u32 %p18, %r33, %r31;
+        @%p18 bra GEARLIER_END;
+        add.u32 %r41, %r2, %r33;
+        {RowAddress(shared, "%r41")}
+        ld.{Space(shared)}.u32 %r34, [%rd2];
+        setp.eq.u32 %p18, %r34, %r32;
+        @%p18 mov.u32 %r36, 0x80000000;
+        @%p18 bra GEARLIER_END;
+        add.u32 %r33, %r33, 1;
+        bra GEARLIER;
+        GEARLIER_END:
+        add.u32 %r33, %r31, 1;
+        GLATER:
+        setp.ge.u32 %p18, %r33, %labels;
+        @%p18 bra GLATER_END;
+        add.u32 %r41, %r2, %r33;
+        {RowAddress(shared, "%r41")}
+        ld.{Space(shared)}.u32 %r34, [%rd2];
+        setp.eq.u32 %p18, %r34, %r32;
+        @%p18 bra GLATER_END;
+        add.u32 %r33, %r33, 1;
+        bra GLATER;
+        GLATER_END:
+        or.b32 %r33, %r33, %r36;
+        add.u32 %r41, %r3, %r31;
+        {RowAddress(shared, "%r41")}
+        st.{Space(shared)}.u32 [%rd2], %r33;
+        add.u32 %r31, %r31, %nt;
+        bra GNEXT;
+        GNEXT_END:
+        bar.sync 0;
+        """;
 
     // α of step %t at state `s` from the alpha buffer's row at element `from` (the gradient keeps every row there) into %f1.
     private static string AlphaStepAlpha(string s, string from, string shift, string label) =>

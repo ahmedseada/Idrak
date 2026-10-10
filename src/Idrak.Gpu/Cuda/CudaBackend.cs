@@ -318,6 +318,7 @@ internal sealed unsafe partial class CudaBackend : Backend
         _adam = Fn("adam_f32");
         _matmul = Fn("matmul_f32");
         _kernels = PtxKernels.AdvancedNames.Concat(PtxKernels.DecodingNames).Concat(PtxKernels.QuantizedNames).Concat(PtxKernels.DecoderNames).Concat(PtxKernels.RowNames).Concat(PtxKernels.ConvolutionNames).Concat(PtxKernels.ResamplingNames).Concat(PtxKernels.CtcNames).Concat(PtxKernels.RecurrentNames).Concat(PtxKernels.PointwiseNames).Append("add_dropout_f32").ToDictionary(k => k, Fn);
+        CtcOptIn();
     }
 
     public static int DeviceCount => Probe.Value.Count;
@@ -923,6 +924,9 @@ internal sealed unsafe partial class CudaBackend : Backend
         Launch(K("gemv_multi_f32"), (uint)((widest + 31) / 32), (uint)products.Length, 1, PtxKernels.GemvThreads, 1, args);
     }
 
+    // Row groups of GemvRows one few-row launch takes (grid y).
+    private const int FewRowGroups = 2;
+
     public override void BatchedMatMulKernel(Storage a, Storage b, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
     {
         if (m == 0 || n == 0 || batch == 0)
@@ -954,9 +958,11 @@ internal sealed unsafe partial class CudaBackend : Backend
             return;
         }
         ulong mk = (ulong)m * (ulong)k, kn = (ulong)k * (ulong)n, mn = (ulong)m * (ulong)n;
-        // Token-by-token decoding: few rows through a large matrix read each weight once. (Smaller products keep the
-        // tiled kernel, whose sums do not depend on the number of rows, so small models predict identically in any batch.)
-        bool few = m <= PtxKernels.GemvRows && !transA && (long)n * k >= 1 << 16;
+        // Token-by-token decoding and a recurrent layer's steps: few rows through a large matrix, in groups of GemvRows
+        // (grid y; up to FewRowGroups, each reading the weights once more from cache), where the 16 × 16 kernel would give
+        // the device n / 16 blocks walking all of k. (Smaller products keep the tiled kernel, whose sums do not depend on
+        // the number of rows, so small models predict identically in any batch; neither do the few-row kernels' sums.)
+        bool few = m <= FewRowGroups * PtxKernels.GemvRows && !transA && (long)n * k >= 1 << 16;
 
         // Larger products: register-blocked tiles, 128 × 128 when that still gives every multiprocessor a block, else
         // 64 × 64 (then measured per shape, see below). (Small ones keep the 16 × 16 kernel; all add k terms in the same order, so results are identical.)
@@ -1026,7 +1032,8 @@ internal sealed unsafe partial class CudaBackend : Backend
                 if (few)
                 {
                     uint columnsPerBlock = transB ? 8u : 32u;
-                    Launch(K(transB ? "gemv_nt_f32" : "gemv_nn_f32"), (uint)((n + columnsPerBlock - 1) / columnsPerBlock), 1, (uint)count,
+                    Launch(K(transB ? "gemv_nt_f32" : "gemv_nn_f32"), (uint)((n + columnsPerBlock - 1) / columnsPerBlock),
+                        (uint)((rows + PtxKernels.GemvRows - 1) / PtxKernels.GemvRows), (uint)count,
                         (uint)(transB ? PtxKernels.RowThreads : PtxKernels.GemvThreads), 1, P(a) + offset * mk + aRow, P(b) + offset * kn, P(c) + offset * mn + cRow, U(rows), U(n), U(k), F(beta), mk, kn, mn);
                     continue;
                 }

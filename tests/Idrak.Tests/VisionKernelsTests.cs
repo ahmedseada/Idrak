@@ -297,9 +297,15 @@ internal static partial class Tests
         OnBoth(device, "resize-normalize, floats", [R(6 * 17 * 23), coefficients, R(6), new float[6 * 30 * 11]],
             (b, s) => b.ResizeNormalize(s[0], s[1], s[2], s[3], 6, 3, 17, 23, 30, 11, xTaps, yTaps, bytes: false), 1e-5f);
 
-        // CTC: a short label sequence (rows in workgroup or shared memory) and a long one (rows in the scratch buffer), both layouts.
-        foreach (int labels in new[] { 5, 400 })
+        // CTC: a short label sequence and a long one (repeated classes: the gradient's label groups), both layouts; the rows
+        // in shared memory, and on CUDA the long one again with the rows in the scratch buffer.
+        foreach (var (labels, scratch) in new[] { (5, false), (400, false), (400, true) })
         {
+            if (scratch && device.Type != DeviceType.Cuda)
+            {
+                continue;
+            }
+
             foreach (bool batchFirst in new[] { false, true })
             {
                 int steps = labels * 2 + 10, batch = 3, classes = 7;
@@ -317,11 +323,19 @@ internal static partial class Tests
 
                 int[] lengths = [labels, labels / 2, 0], inputs = [steps, steps - 3, steps / 2], offsets = [0, labels, labels + labels / 2];
                 var targets = Enumerable.Range(0, lengths.Sum()).Select(_ => (float)(1 + random.Next(classes - 1))).ToArray();
-                string label = $"CTC, {labels} labels{(batchFirst ? ", batch first" : "")}";
-                OnBoth(device, label, [logProbs, targets, new float[batch]],
-                    (b, s) => b.CtcLoss(s[0], s[1], s[2], inputs, lengths, offsets, steps, batch, classes, 0, batchFirst, zeroInfinity: false), 1e-4f);
-                OnBoth(device, label + " gradient", [logProbs, targets, [1f, 0.5f, 2f], R(logProbs.Length)],
-                    (b, s) => b.CtcLossBackward(s[0], s[1], s[2], s[3], inputs, lengths, offsets, steps, batch, classes, 0, batchFirst, zeroInfinity: false), 1e-3f);
+                string label = $"CTC, {labels} labels{(batchFirst ? ", batch first" : "")}{(scratch ? ", scratch rows" : "")}";
+                CudaBackend.t_ctcScratchRows = scratch;
+                try
+                {
+                    OnBoth(device, label, [logProbs, targets, new float[batch]],
+                        (b, s) => b.CtcLoss(s[0], s[1], s[2], inputs, lengths, offsets, steps, batch, classes, 0, batchFirst, zeroInfinity: false), 1e-4f);
+                    OnBoth(device, label + " gradient", [logProbs, targets, [1f, 0.5f, 2f], R(logProbs.Length)],
+                        (b, s) => b.CtcLossBackward(s[0], s[1], s[2], s[3], inputs, lengths, offsets, steps, batch, classes, 0, batchFirst, zeroInfinity: false), 1e-3f);
+                }
+                finally
+                {
+                    CudaBackend.t_ctcScratchRows = false;
+                }
             }
         }
 
