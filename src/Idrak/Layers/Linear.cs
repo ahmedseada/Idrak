@@ -162,7 +162,7 @@ public sealed partial class Linear : Module, ILinearLayer
             return Tensor.MatMulBias(input, _weight, Bias);                 // one pass on tensor cores
         }
 
-        if (Bias is { RequiresGrad: false } && Lora is not null && Linear.LoraProducts(input, [this]) is [var withBias])
+        if (Bias is { RequiresGrad: false } && Lora is not null && Linear.LoraProducts(input, Alone) is [var withBias])
         {
             return withBias;                                            // the frozen bias added inside the fused product
         }
@@ -314,10 +314,15 @@ public sealed partial class Linear : Module, ILinearLayer
         return true;
     }
 
+    // This layer as a list of one, for the products over several layers: made once, not on every adapted forward.
+    private Linear[] Alone => _alone ??= [this];
+
+    private Linear[]? _alone;
+
     /// <summary>x·W, adapted by the adapter when one is attached.</summary>
     internal Tensor ProjectWithoutBias(Tensor input)
     {
-        if (Lora is not null && Linear.LoraProducts(input, [this], withBias: false) is [var fused])
+        if (Lora is not null && Linear.LoraProducts(input, Alone, withBias: false) is [var fused])
         {
             return fused;
         }

@@ -246,7 +246,7 @@ public sealed partial class Linear
     /// </summary>
     internal static (Tensor Sum, Tensor Normalized)? MatMulPackedAddRmsNorm(Tensor x, Layers.Linear layer, Tensor residual, Layers.RMSNorm norm)
     {
-        using var offload = Offloading.EnterMany([layer, norm], x);
+        using var offload = x.Device.Backend.Offload is null ? default : Offloading.EnterMany([layer, norm], x);   // no array without offloading
         x.ThrowIfDisposed();
         residual.ThrowIfDisposed();
         int k = x.Shape[^1], m = x.Size / Math.Max(1, k), n = layer.OutFeatures;
@@ -286,7 +286,7 @@ public sealed partial class Linear
     /// </summary>
     internal static Tensor? MatMulPackedGatedPair(Tensor input, Layers.Linear gate, Layers.Linear up, int activation)
     {
-        using var offload = Offloading.EnterMany([gate, up], input);
+        using var offload = input.Device.Backend.Offload is null ? default : Offloading.EnterMany([gate, up], input);   // no array without offloading
         input.ThrowIfDisposed();
         int k = input.Shape[^1], m = input.Size / Math.Max(1, k), n = gate.OutFeatures;
         if (gate.PackedWeight is not { Format: { } format } gateWeight || up.PackedWeight is not { } upWeight || upWeight.Format != format
