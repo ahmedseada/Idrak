@@ -495,6 +495,7 @@ internal sealed class HarmonyToolCallParser : IToolCallParser
 {
     private const string Start = "<|start|>", Channel = "<|channel|>", Message = "<|message|>";
     private static readonly string[] Ends = ["<|end|>", "<|call|>", "<|return|>"];
+    private static readonly int EndReach = Ends.Max(e => e.Length) - 1;      // how far back an end tag can start before new text
     private static readonly System.Buffers.SearchValues<char> WordEnd = System.Buffers.SearchValues.Create(" \t\n<");
 
     private enum Mode { Header, Plain, Thinking, Content, Call }
@@ -503,6 +504,7 @@ internal sealed class HarmonyToolCallParser : IToolCallParser
     private readonly StringBuilder _content = new(), _thinking = new();
     private Mode _mode;
     private string _recipient = "";
+    private int _searched;                                      // leading characters of _call known not to hold an end tag
 
     public ChatDelta Feed(string text)
     {
@@ -583,9 +585,15 @@ internal sealed class HarmonyToolCallParser : IToolCallParser
                     _call.Append(p);
                     _pending.Clear();
                     var all = _call.Span;
-                    var (end, length) = FirstEnd(all);
+
+                    // Only the new text (and an end tag's length before it) can hold the first end: the call is not
+                    // searched again from its start at every piece.
+                    int from = Math.Max(0, _searched - EndReach);
+                    var (end, length) = FirstEnd(all[from..]);
+                    end = end < 0 ? -1 : end + from;
                     if (end < 0 && !final)
                     {
+                        _searched = all.Length;
                         return Result();
                     }
 
@@ -606,6 +614,7 @@ internal sealed class HarmonyToolCallParser : IToolCallParser
                     }
 
                     _call.Clear();
+                    _searched = 0;
                     _mode = Mode.Header;
                     continue;
                 }

@@ -257,8 +257,14 @@ public sealed class ChatMLTemplate : ChatTemplate
             _writer!.Flush();
             var bytes = _buffer.WrittenSpan;
             char[] chars = System.Buffers.ArrayPool<char>.Shared.Rent(Encoding.UTF8.GetMaxCharCount(bytes.Length));
-            sb.Append(chars, 0, Encoding.UTF8.GetChars(bytes, chars));
-            System.Buffers.ArrayPool<char>.Shared.Return(chars);
+            try
+            {
+                sb.Append(chars, 0, Encoding.UTF8.GetChars(bytes, chars));
+            }
+            finally
+            {
+                System.Buffers.ArrayPool<char>.Shared.Return(chars);
+            }
         }
 
         public static void Write(Utf8JsonWriter writer, JsonNode? node)
@@ -307,6 +313,7 @@ public sealed class ChatOutputParser
     private readonly StringBuilder _content = new(), _thinking = new();
     private Mode _mode = Mode.Start;
     private bool _afterThinking;
+    private string? _fed;                                      // the piece being drained, when it alone is pending (passed on uncopied)
 
     /// <summary>A parser for one reply rendered with <paramref name="template"/>.</summary>
     /// <param name="template">The template the prompt was rendered with.</param>
@@ -341,12 +348,17 @@ public sealed class ChatOutputParser
     /// <summary>Processes new text.</summary>
     public ChatDelta Feed(string text)
     {
+        _fed = _pending.Length == 0 ? text : null;
         _pending.Append(text);
         return Drain(final: false);
     }
 
     /// <summary>Flushes everything held back at the end of the stream.</summary>
-    public ChatDelta Finish() => Drain(final: true);
+    public ChatDelta Finish()
+    {
+        _fed = null;
+        return Drain(final: true);
+    }
 
     private ChatDelta Drain(bool final)
     {
@@ -410,8 +422,10 @@ public sealed class ChatOutputParser
                 p = _pending.Span;
             }
 
-            // The answer: the tool-call parser decides what is text and what is a call.
-            Add(_calls.Feed(p.ToString()));
+            // The answer: the tool-call parser decides what is text and what is a call. The pending text only shrinks from
+            // the front while draining, so when it is as long as the piece fed alone, it is that piece: no copy is made.
+            Add(_calls.Feed(_fed is { } fed && fed.Length == p.Length ? fed : p.ToString()));
+            _fed = null;
             _pending.Clear();
         }
 

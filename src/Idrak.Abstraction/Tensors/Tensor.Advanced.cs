@@ -269,8 +269,11 @@ public sealed partial class Tensor
             seen[perm[k]] = true;
         }
 
-        var strides = Strides(_shape);
-        int[] outShape = [.. perm.Select(p => _shape[p])];
+        var outShape = new int[Rank];
+        for (int k = 0; k < Rank; k++)
+        {
+            outShape[k] = _shape[perm[k]];
+        }
 
         // Moving only size-1 dimensions keeps the memory order: a reshape (a view) instead of a copy. Common when
         // decoding one token at a time, where the step and batch dimensions have size 1.
@@ -290,7 +293,13 @@ public sealed partial class Tensor
             return Reshape(outShape);
         }
 
-        int[] inStrides = [.. perm.Select(p => strides[p])];
+        var strides = Strides(_shape);
+        var inStrides = new int[Rank];
+        for (int k = 0; k < Rank; k++)
+        {
+            inStrides[k] = strides[perm[k]];
+        }
+
         long start = Telemetry.Start(TelemetryLevel.Operations);
         var y = Empty(outShape, Device);
         Backend.Permute(Storage, y.Storage, outShape, inStrides, accumulate: false);
@@ -304,7 +313,12 @@ public sealed partial class Tensor
                 inverse[perm[k]] = k;
             }
 
-            int[] backStrides = [.. inverse.Select(k => yStrides[k])];
+            var backStrides = new int[Rank];
+            for (int k = 0; k < Rank; k++)
+            {
+                backStrides[k] = yStrides[inverse[k]];
+            }
+
             y.Record("permute", g => x.Backend.Permute(g.Storage, x.GradStorage(), x._shape, backStrides, accumulate: true), x);
         }
 

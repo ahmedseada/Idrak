@@ -1,6 +1,9 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Buffers;
+using System.Numerics;
+
 namespace Idrak.Abstraction.Data;
 
 /// <summary>
@@ -54,47 +57,115 @@ public sealed class ImageData
             throw new ArgumentException($"The destination holds {destination.Length} values, not {channels} x {height} x {width}.", nameof(destination));
         }
 
-        int c = Channels, h = Height, w = Width;
+        // In two passes with the same arithmetic as the two-axis sum: each source row along x first (its value at every
+        // output column), then each output row as the weighted sum of its source rows, in the same order. Output channels
+        // that read the same source (grey repeated, colour averaged) are computed once and copied.
+        int c = Channels, h = Height, w = Width, plane = height * width;
         var pixels = Pixels;
         var rows = Taps(h, height);
         var columns = Taps(w, width);
-        for (int oc = 0; oc < channels; oc++)
+        bool shared = c == 1 || channels != c;
+        float[] across = ArrayPool<float>.Shared.Rent(h * width);
+        try
         {
-            for (int y = 0; y < height; y++)
+            for (int oc = 0; oc < channels; oc++)
             {
-                for (int x = 0; x < width; x++)
+                var output = destination.Slice(oc * plane, plane);
+                if (shared && oc > 0)
                 {
-                    float value = 0;
+                    destination[..plane].CopyTo(output);
+                    continue;
+                }
+
+                if (shared && c > 1)
+                {
+                    AcrossGrey(pixels, c, h, w, columns, across.AsSpan(0, h * width));
+                }
+                else
+                {
+                    Across(pixels.AsSpan((c == 1 ? 0 : oc) * h * w, h * w), w, columns, across.AsSpan(0, h * width));
+                }
+
+                for (int y = 0; y < height; y++)
+                {
+                    var line = output.Slice(y * width, width);
+                    line.Clear();
                     foreach (var (yy, wy) in rows[y])
                     {
-                        float row = 0;
-                        foreach (var (xx, wx) in columns[x])
-                        {
-                            row += Sample(yy, xx) * wx;
-                        }
-
-                        value += row * wy;
-                    }
-
-                    destination[oc * height * width + y * width + x] = value;
-
-                    float Sample(int yy, int xx)
-                    {
-                        if (channels == c || c == 1)
-                        {
-                            return pixels[(c == 1 ? 0 : oc) * h * w + yy * w + xx];
-                        }
-
-                        float sum = 0;                                                  // colour to grey: the mean of the channels
-                        for (int ic = 0; ic < c; ic++)
-                        {
-                            sum += pixels[ic * h * w + yy * w + xx];
-                        }
-
-                        return sum / c;
+                        AddScaled(line, across.AsSpan(yy * width, width), wy);
                     }
                 }
             }
+        }
+        finally
+        {
+            ArrayPool<float>.Shared.Return(across);
+        }
+    }
+
+    // Each row of one source plane resampled along x: rows of `columns.Length` values.
+    private static void Across(ReadOnlySpan<float> source, int w, (int Index, float Weight)[][] columns, Span<float> across)
+    {
+        int width = columns.Length;
+        for (int yy = 0; yy < source.Length / w; yy++)
+        {
+            var pixelRow = source.Slice(yy * w, w);
+            var line = across.Slice(yy * width, width);
+            for (int x = 0; x < line.Length; x++)
+            {
+                float row = 0;
+                foreach (var (xx, wx) in columns[x])
+                {
+                    row += pixelRow[xx] * wx;
+                }
+
+                line[x] = row;
+            }
+        }
+    }
+
+    // As Across, on the grey of a colour image: each sample the mean of its channels.
+    private static void AcrossGrey(float[] pixels, int c, int h, int w, (int Index, float Weight)[][] columns, Span<float> across)
+    {
+        int width = columns.Length, size = h * w;
+        for (int yy = 0; yy < h; yy++)
+        {
+            var line = across.Slice(yy * width, width);
+            for (int x = 0; x < line.Length; x++)
+            {
+                float row = 0;
+                foreach (var (xx, wx) in columns[x])
+                {
+                    float sum = 0;
+                    for (int ic = 0, at = yy * w + xx; ic < c; ic++, at += size)
+                    {
+                        sum += pixels[at];
+                    }
+
+                    row += sum / c * wx;
+                }
+
+                line[x] = row;
+            }
+        }
+    }
+
+    // target += source · scale, element by element (vectors and a scalar tail compute the same values).
+    private static void AddScaled(Span<float> target, ReadOnlySpan<float> source, float scale)
+    {
+        int i = 0;
+        if (Vector.IsHardwareAccelerated && target.Length >= Vector<float>.Count)
+        {
+            var s = new Vector<float>(scale);
+            for (; i <= target.Length - Vector<float>.Count; i += Vector<float>.Count)
+            {
+                (new Vector<float>(target[i..]) + new Vector<float>(source[i..]) * s).CopyTo(target[i..]);
+            }
+        }
+
+        for (; i < target.Length; i++)
+        {
+            target[i] += source[i] * scale;
         }
     }
 

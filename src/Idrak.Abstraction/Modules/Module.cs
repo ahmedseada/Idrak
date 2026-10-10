@@ -180,7 +180,7 @@ public abstract class Module : IDisposable
         {
             long own = m.Children().Any() ? 0 : m.ParameterCount;
             sb.Append(new string(' ', depth * 2)).Append(m.DisplayName);
-            sb.Append(own > 0 ? $"  [{own:N0} params]" : "").AppendLine();
+            sb.Append(own > 0 ? string.Create(System.Globalization.CultureInfo.InvariantCulture, $"  [{own:N0} params]") : "").AppendLine();
             foreach (var child in m.Children())
             {
                 Walk(child, depth + 1);
@@ -188,7 +188,7 @@ public abstract class Module : IDisposable
         }
 
         Walk(this, 0);
-        sb.Append($"Total trainable parameters: {ParameterCount:N0}");
+        sb.Append(System.Globalization.CultureInfo.InvariantCulture, $"Total trainable parameters: {ParameterCount:N0}");
         return sb.ToString();
     }
 
