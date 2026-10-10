@@ -24,29 +24,36 @@ internal sealed partial class CpuBackend
         For(blocks, (long)m * n * k, (first, last) =>
         {
             var weights = Bytes(q, k * stride);                          // spans cannot be captured; re-derive per worker
-            var acc = new float[blockSize];
-            for (int block = first; block < last; block++)
+            var acc = ArrayPool<float>.Shared.Rent(blockSize);
+            try
             {
-                int j0 = block * blockSize, width = Math.Min(blockSize, n - j0);
-                for (int r = 0; r < m; r++)
+                for (int block = first; block < last; block++)
                 {
-                    Array.Clear(acc);
-                    int xo = r * k;
-                    for (int kk = 0; kk < k; kk++)
+                    int j0 = block * blockSize, width = Math.Min(blockSize, n - j0);
+                    for (int r = 0; r < m; r++)
                     {
-                        float xk = xv[xo + kk];
-                        if (xk != 0f)
+                        acc.AsSpan(0, width).Clear();
+                        int xo = r * k;
+                        for (int kk = 0; kk < k; kk++)
                         {
-                            AddScaled(acc.AsSpan(0, width), weights.Slice(kk * stride + j0, width), xk);
+                            float xk = xv[xo + kk];
+                            if (xk != 0f)
+                            {
+                                AddScaled(acc.AsSpan(0, width), weights.Slice(kk * stride + j0, width), xk);
+                            }
+                        }
+
+                        int yo = r * n + j0;
+                        for (int j = 0; j < width; j++)
+                        {
+                            yv[yo + j] = acc[j] * sv[j0 + j];
                         }
                     }
-
-                    int yo = r * n + j0;
-                    for (int j = 0; j < width; j++)
-                    {
-                        yv[yo + j] = acc[j] * sv[j0 + j];
-                    }
                 }
+            }
+            finally
+            {
+                ArrayPool<float>.Shared.Return(acc);
             }
         });
     }
@@ -76,29 +83,37 @@ internal sealed partial class CpuBackend
         int blocks = (n + blockSize - 1) / blockSize;
         For(blocks, (long)m * n * k, (first, last) =>
         {
-            var acc = new float[m * blockSize];
-            var row = new float[blockSize];
-            for (int block = first; block < last; block++)
+            var acc = ArrayPool<float>.Shared.Rent(m * blockSize);
+            var row = ArrayPool<float>.Shared.Rent(blockSize);
+            try
             {
-                int j0 = block * blockSize, width = Math.Min(blockSize, n - j0);
-                Array.Clear(acc);
-                for (int kk = 0; kk < k; kk++)
+                for (int block = first; block < last; block++)
                 {
-                    Int4Row(q, scales, kk, n, j0, row.AsSpan(0, width));
-                    for (int r = 0; r < m; r++)
+                    int j0 = block * blockSize, width = Math.Min(blockSize, n - j0);
+                    acc.AsSpan(0, m * blockSize).Clear();
+                    for (int kk = 0; kk < k; kk++)
                     {
-                        float xk = xv[r * k + kk];
-                        if (xk != 0f)
+                        Int4Row(q, scales, kk, n, j0, row.AsSpan(0, width));
+                        for (int r = 0; r < m; r++)
                         {
-                            AddScaled(acc.AsSpan(r * blockSize, width), row.AsSpan(0, width), xk);
+                            float xk = xv[r * k + kk];
+                            if (xk != 0f)
+                            {
+                                AddScaled(acc.AsSpan(r * blockSize, width), row.AsSpan(0, width), xk);
+                            }
                         }
                     }
-                }
 
-                for (int r = 0; r < m; r++)
-                {
-                    acc.AsSpan(r * blockSize, width).CopyTo(yv.AsSpan(r * n + j0, width));
+                    for (int r = 0; r < m; r++)
+                    {
+                        acc.AsSpan(r * blockSize, width).CopyTo(yv.AsSpan(r * n + j0, width));
+                    }
                 }
+            }
+            finally
+            {
+                ArrayPool<float>.Shared.Return(row);
+                ArrayPool<float>.Shared.Return(acc);
             }
         });
     }
@@ -182,54 +197,61 @@ internal sealed partial class CpuBackend
         For(blocks, (long)m * n * k, (first, last) =>
         {
             var halves = MemoryMarshal.Cast<float, ushort>(D(packed).AsSpan());
-            var acc = new float[m * blockSize];
-            int w = Vector<float>.Count;
-            for (int block = first; block < last; block++)
+            var acc = ArrayPool<float>.Shared.Rent(m * blockSize);
+            try
             {
-                int j0 = block * blockSize, width = Math.Min(blockSize, n - j0), whole = width / (2 * w) * (2 * w);
-                Array.Clear(acc);
-                for (int kk = 0; kk < k; kk++)
+                int w = Vector<float>.Count;
+                for (int block = first; block < last; block++)
                 {
-                    // Each bfloat16 vector is widened once (two float vectors: bits moved to the high half) and multiplied into
-                    // every input row's sums.
-                    var row = halves.Slice(kk * stride + j0, width);
-                    ref ushort rw = ref MemoryMarshal.GetReference(row);
-                    ref float ra = ref MemoryMarshal.GetArrayDataReference(acc);
-                    int j = 0;
-                    for (; j < whole; j += 2 * w)
+                    int j0 = block * blockSize, width = Math.Min(blockSize, n - j0), whole = width / (2 * w) * (2 * w);
+                    acc.AsSpan(0, m * blockSize).Clear();
+                    for (int kk = 0; kk < k; kk++)
                     {
-                        Vector.Widen(Vector.LoadUnsafe(ref rw, (nuint)j), out var low, out var high);
-                        var w0 = Vector.AsVectorSingle(low << 16);
-                        var w1 = Vector.AsVectorSingle(high << 16);
-                        for (int r = 0; r < m; r++)
+                        // Each bfloat16 vector is widened once (two float vectors: bits moved to the high half) and multiplied into
+                        // every input row's sums.
+                        var row = halves.Slice(kk * stride + j0, width);
+                        ref ushort rw = ref MemoryMarshal.GetReference(row);
+                        ref float ra = ref MemoryMarshal.GetArrayDataReference(acc);
+                        int j = 0;
+                        for (; j < whole; j += 2 * w)
                         {
-                            float xk = xv[r * k + kk];
-                            if (xk == 0f)
+                            Vector.Widen(Vector.LoadUnsafe(ref rw, (nuint)j), out var low, out var high);
+                            var w0 = Vector.AsVectorSingle(low << 16);
+                            var w1 = Vector.AsVectorSingle(high << 16);
+                            for (int r = 0; r < m; r++)
                             {
-                                continue;
+                                float xk = xv[r * k + kk];
+                                if (xk == 0f)
+                                {
+                                    continue;
+                                }
+
+                                var xs = new Vector<float>(xk);
+                                nuint at = (nuint)(r * blockSize + j);
+                                Vector.FusedMultiplyAdd(w0, xs, Vector.LoadUnsafe(ref ra, at)).StoreUnsafe(ref ra, at);
+                                Vector.FusedMultiplyAdd(w1, xs, Vector.LoadUnsafe(ref ra, at + (nuint)w)).StoreUnsafe(ref ra, at + (nuint)w);
                             }
-
-                            var xs = new Vector<float>(xk);
-                            nuint at = (nuint)(r * blockSize + j);
-                            Vector.FusedMultiplyAdd(w0, xs, Vector.LoadUnsafe(ref ra, at)).StoreUnsafe(ref ra, at);
-                            Vector.FusedMultiplyAdd(w1, xs, Vector.LoadUnsafe(ref ra, at + (nuint)w)).StoreUnsafe(ref ra, at + (nuint)w);
                         }
-                    }
 
-                    for (; j < width; j++)
-                    {
-                        float weight = BitConverter.Int32BitsToSingle(row[j] << 16);
-                        for (int r = 0; r < m; r++)
+                        for (; j < width; j++)
                         {
-                            acc[r * blockSize + j] = MathF.FusedMultiplyAdd(weight, xv[r * k + kk], acc[r * blockSize + j]);
+                            float weight = BitConverter.Int32BitsToSingle(row[j] << 16);
+                            for (int r = 0; r < m; r++)
+                            {
+                                acc[r * blockSize + j] = MathF.FusedMultiplyAdd(weight, xv[r * k + kk], acc[r * blockSize + j]);
+                            }
                         }
                     }
-                }
 
-                for (int r = 0; r < m; r++)
-                {
-                    acc.AsSpan(r * blockSize, width).CopyTo(yv.AsSpan(r * n + j0, width));
+                    for (int r = 0; r < m; r++)
+                    {
+                        acc.AsSpan(r * blockSize, width).CopyTo(yv.AsSpan(r * n + j0, width));
+                    }
                 }
+            }
+            finally
+            {
+                ArrayPool<float>.Shared.Return(acc);
             }
         });
     }
@@ -329,36 +351,42 @@ internal sealed partial class CpuBackend
         For(heads * rowsPerHead, (long)heads * rowsPerHead * dim * Math.Max(1, position0), (first, last) =>
         {
             var scores = ArrayPool<float>.Shared.Rent(capacity);
-            for (int row = first; row < last; row++)
+            try
             {
-                int h = row / rowsPerHead, end = Math.Min(position0 + row % rowsPerHead % steps, capacity - 1) + 1;
-                int begin = variant.Start(end), count = end - begin;
-                var query = qv.AsSpan(row * dim, dim);
-                float max = float.NegativeInfinity;
-                for (int c = 0; c < count; c++)
+                for (int row = first; row < last; row++)
                 {
-                    float dot = Dot(query, kv.AsSpan((int)(((long)h * capacity + begin + c) * dim), dim));
+                    int h = row / rowsPerHead, end = Math.Min(position0 + row % rowsPerHead % steps, capacity - 1) + 1;
+                    int begin = variant.Start(end), count = end - begin;
+                    var query = qv.AsSpan(row * dim, dim);
+                    float max = float.NegativeInfinity;
+                    for (int c = 0; c < count; c++)
+                    {
+                        float dot = Dot(query, kv.AsSpan((int)(((long)h * capacity + begin + c) * dim), dim));
 
-                    scores[c] = variant.Cap(dot * scale);
-                    max = MathF.Max(max, scores[c]);
-                }
+                        scores[c] = variant.Cap(dot * scale);
+                        max = MathF.Max(max, scores[c]);
+                    }
 
-                float sum = CpuMath.ExpShifted(scores.AsSpan(0, count), max);
+                    float sum = CpuMath.ExpShifted(scores.AsSpan(0, count), max);
 
-                if (lv is not null)
-                {
-                    lv[row] = max + MathF.Log(sum);
-                }
+                    if (lv is not null)
+                    {
+                        lv[row] = max + MathF.Log(sum);
+                    }
 
-                var output = yv.AsSpan(row * dim, dim);
-                output.Clear();
-                for (int c = 0; c < count; c++)
-                {
-                    float weight = scores[c] / sum;
-                    AddScaled(output, vv.AsSpan((int)(((long)h * capacity + begin + c) * dim), dim), weight);
+                    var output = yv.AsSpan(row * dim, dim);
+                    output.Clear();
+                    for (int c = 0; c < count; c++)
+                    {
+                        float weight = scores[c] / sum;
+                        AddScaled(output, vv.AsSpan((int)(((long)h * capacity + begin + c) * dim), dim), weight);
+                    }
                 }
             }
-            ArrayPool<float>.Shared.Return(scores);
+            finally
+            {
+                ArrayPool<float>.Shared.Return(scores);
+            }
         });
     }
 
@@ -403,35 +431,41 @@ internal sealed partial class CpuBackend
         For(heads * rowsPerHead, (long)heads * rowsPerHead * dim * Math.Max(1, position0), (first, last) =>
         {
             var scores = ArrayPool<float>.Shared.Rent(capacity);
-            for (int row = first; row < last; row++)
+            try
             {
-                int h = row / rowsPerHead, t = row % rowsPerHead % steps;
-                int end = Math.Min(position0 + t, capacity - 1) + 1, begin = Math.Max((int)sv[h / headsPerRow * steps + t], variant.Start(end)), count = end - begin;
-                var output = yv.AsSpan(row * dim, dim);
-                output.Clear();
-                if (count <= 0)
+                for (int row = first; row < last; row++)
                 {
-                    continue;                                                    // padding: sees nothing
-                }
+                    int h = row / rowsPerHead, t = row % rowsPerHead % steps;
+                    int end = Math.Min(position0 + t, capacity - 1) + 1, begin = Math.Max((int)sv[h / headsPerRow * steps + t], variant.Start(end)), count = end - begin;
+                    var output = yv.AsSpan(row * dim, dim);
+                    output.Clear();
+                    if (count <= 0)
+                    {
+                        continue;                                                    // padding: sees nothing
+                    }
 
-                var query = qv.AsSpan(row * dim, dim);
-                float max = float.NegativeInfinity;
-                for (int c = 0; c < count; c++)
-                {
-                    float dot = Dot(query, kv.AsSpan((int)(((long)h * capacity + begin + c) * dim), dim));
+                    var query = qv.AsSpan(row * dim, dim);
+                    float max = float.NegativeInfinity;
+                    for (int c = 0; c < count; c++)
+                    {
+                        float dot = Dot(query, kv.AsSpan((int)(((long)h * capacity + begin + c) * dim), dim));
 
-                    scores[c] = variant.Cap(dot * scale);
-                    max = MathF.Max(max, scores[c]);
-                }
+                        scores[c] = variant.Cap(dot * scale);
+                        max = MathF.Max(max, scores[c]);
+                    }
 
-                float sum = CpuMath.ExpShifted(scores.AsSpan(0, count), max);
-                for (int c = 0; c < count; c++)
-                {
-                    float weight = scores[c] / sum;
-                    AddScaled(output, vv.AsSpan((int)(((long)h * capacity + begin + c) * dim), dim), weight);
+                    float sum = CpuMath.ExpShifted(scores.AsSpan(0, count), max);
+                    for (int c = 0; c < count; c++)
+                    {
+                        float weight = scores[c] / sum;
+                        AddScaled(output, vv.AsSpan((int)(((long)h * capacity + begin + c) * dim), dim), weight);
+                    }
                 }
             }
-            ArrayPool<float>.Shared.Return(scores);
+            finally
+            {
+                ArrayPool<float>.Shared.Return(scores);
+            }
         });
         return true;
     }
@@ -444,35 +478,41 @@ internal sealed partial class CpuBackend
         For(heads * rowsPerHead, (long)heads * rowsPerHead * dim * steps / 2, (first, last) =>
         {
             var scores = ArrayPool<float>.Shared.Rent(steps);
-            for (int row = first; row < last; row++)
+            try
             {
-                int h = row / rowsPerHead, t = row % rowsPerHead % steps, begin = Math.Max((int)sv[h / headsPerRow * steps + t], variant.Start(t + 1));
-                int count = t + 1 - begin;
-                var query = qv.AsSpan(row * dim, dim);
-                float max = float.NegativeInfinity;
-                for (int c = 0; c < count; c++)
+                for (int row = first; row < last; row++)
                 {
-                    float dot = Dot(query, kv.AsSpan((int)(((long)h * steps + begin + c) * dim), dim));
+                    int h = row / rowsPerHead, t = row % rowsPerHead % steps, begin = Math.Max((int)sv[h / headsPerRow * steps + t], variant.Start(t + 1));
+                    int count = t + 1 - begin;
+                    var query = qv.AsSpan(row * dim, dim);
+                    float max = float.NegativeInfinity;
+                    for (int c = 0; c < count; c++)
+                    {
+                        float dot = Dot(query, kv.AsSpan((int)(((long)h * steps + begin + c) * dim), dim));
 
-                    scores[c] = variant.Cap(dot * scale);
-                    max = MathF.Max(max, scores[c]);
-                }
+                        scores[c] = variant.Cap(dot * scale);
+                        max = MathF.Max(max, scores[c]);
+                    }
 
-                float sum = CpuMath.ExpShifted(scores.AsSpan(0, count), max);
-                if (lv is not null)
-                {
-                    lv[row] = max + MathF.Log(sum);
-                }
+                    float sum = CpuMath.ExpShifted(scores.AsSpan(0, count), max);
+                    if (lv is not null)
+                    {
+                        lv[row] = max + MathF.Log(sum);
+                    }
 
-                var output = yv.AsSpan(row * dim, dim);
-                output.Clear();
-                for (int c = 0; c < count; c++)
-                {
-                    float weight = scores[c] / sum;
-                    AddScaled(output, vv.AsSpan((int)(((long)h * steps + begin + c) * dim), dim), weight);
+                    var output = yv.AsSpan(row * dim, dim);
+                    output.Clear();
+                    for (int c = 0; c < count; c++)
+                    {
+                        float weight = scores[c] / sum;
+                        AddScaled(output, vv.AsSpan((int)(((long)h * steps + begin + c) * dim), dim), weight);
+                    }
                 }
             }
-            ArrayPool<float>.Shared.Return(scores);
+            finally
+            {
+                ArrayPool<float>.Shared.Return(scores);
+            }
         });
         return true;
     }
@@ -520,32 +560,38 @@ internal sealed partial class CpuBackend
             var kb = MemoryMarshal.Cast<float, sbyte>(D(keys).AsSpan());
             var vb = MemoryMarshal.Cast<float, sbyte>(D(values).AsSpan());
             var scores = ArrayPool<float>.Shared.Rent(capacity);
-            for (int row = first; row < last; row++)
+            try
             {
-                int h = row / rowsPerHead, end = Math.Min(position0 + row % rowsPerHead % steps, capacity - 1) + 1;
-                int begin = variant.Start(end), count = end - begin;
-                var query = qv.AsSpan(row * dim, dim);
-                float max = float.NegativeInfinity;
-                for (int c = 0; c < count; c++)
+                for (int row = first; row < last; row++)
                 {
-                    float dot = Dot(query, kb.Slice((h * capacity + begin + c) * stride, dim));
+                    int h = row / rowsPerHead, end = Math.Min(position0 + row % rowsPerHead % steps, capacity - 1) + 1;
+                    int begin = variant.Start(end), count = end - begin;
+                    var query = qv.AsSpan(row * dim, dim);
+                    float max = float.NegativeInfinity;
+                    for (int c = 0; c < count; c++)
+                    {
+                        float dot = Dot(query, kb.Slice((h * capacity + begin + c) * stride, dim));
 
-                    scores[c] = variant.Cap(dot * ks[h * capacity + begin + c] * scale);
-                    max = MathF.Max(max, scores[c]);
+                        scores[c] = variant.Cap(dot * ks[h * capacity + begin + c] * scale);
+                        max = MathF.Max(max, scores[c]);
+                    }
+
+                    float sum = CpuMath.ExpShifted(scores.AsSpan(0, count), max);
+
+                    var output = yv.AsSpan(row * dim, dim);
+                    output.Clear();
+                    for (int c = 0; c < count; c++)
+                    {
+                        float weight = scores[c] / sum * vs[h * capacity + begin + c];
+                        AddScaled(output, vb.Slice((h * capacity + begin + c) * stride, dim), weight);
+                    }
+
                 }
-
-                float sum = CpuMath.ExpShifted(scores.AsSpan(0, count), max);
-
-                var output = yv.AsSpan(row * dim, dim);
-                output.Clear();
-                for (int c = 0; c < count; c++)
-                {
-                    float weight = scores[c] / sum * vs[h * capacity + begin + c];
-                    AddScaled(output, vb.Slice((h * capacity + begin + c) * stride, dim), weight);
-                }
-
             }
-            ArrayPool<float>.Shared.Return(scores);
+            finally
+            {
+                ArrayPool<float>.Shared.Return(scores);
+            }
         });
     }
 
@@ -600,14 +646,7 @@ internal sealed partial class CpuBackend
 
     public override void AddRmsNormAffineKernel(Storage a, Storage b, Storage sum, Storage gain, Storage y, int rows, int cols, float eps, float offset)
     {
-        float[] av = D(a), bv = D(b), sv = D(sum);
-        For(rows * cols, (long)rows * cols, (first, last) =>
-        {
-            for (int i = first; i < last; i++)
-            {
-                sv[i] = av[i] + bv[i];
-            }
-        });
+        Run(new AddLoop(D(a), D(b), D(sum)), rows * cols);                 // whole vectors, the same sums
         RmsNormAffine(sum, gain, y, rows, cols, eps, offset);
     }
 

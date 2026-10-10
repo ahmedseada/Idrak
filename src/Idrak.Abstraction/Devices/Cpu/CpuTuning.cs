@@ -383,7 +383,8 @@ internal static class CpuTuning
     internal static string CacheKey(int threads)
     {
         var c = Machine;
-        return $"v3|{c.Model}|{c.InstructionSets}|{c.LogicalProcessors}/{c.PhysicalCores}|L1 {c.L1}|L2 {c.L2}|L3 {c.L3}|.NET {Environment.Version}|{threads} threads|power {PowerSource.Current}";
+        return string.Create(CultureInfo.InvariantCulture,
+            $"v3|{c.Model}|{c.InstructionSets}|{c.LogicalProcessors}/{c.PhysicalCores}|L1 {c.L1}|L2 {c.L2}|L3 {c.L3}|.NET {Environment.Version}|{threads} threads|power {PowerSource.Current}");
     }
 
     private static Cutovers LoadOrMeasure(int threads)

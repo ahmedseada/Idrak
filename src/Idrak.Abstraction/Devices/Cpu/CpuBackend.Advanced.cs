@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Buffers;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -61,43 +62,64 @@ internal sealed partial class CpuBackend
         float[] xv = D(x), yv = D(y);
         For(rows, (long)rows * cols * 8, (start, end) =>
         {
-            for (int r = start; r < end; r++)
+            float[]? scratch = null;                                       // in place: one pooled row for the worker's rows
+            try
             {
-                var xs = xv.AsSpan(r * cols, cols);
-                var ys = yv.AsSpan(r * cols, cols);
-                float max = CpuMath.Max(xs);
-                if (log && xs.Overlaps(ys))
+                for (int r = start; r < end; r++)
                 {
-                    // In place: the exponentials go to scratch, so the log-probabilities still read the inputs.
-                    var scratch = System.Buffers.ArrayPool<float>.Shared.Rent(cols);
-                    xs.CopyTo(scratch);
-                    float inPlace = (float)Math.Log(CpuMath.ExpShifted(scratch.AsSpan(0, cols), max)) + max;
-                    System.Buffers.ArrayPool<float>.Shared.Return(scratch);
-                    for (int j = 0; j < cols; j++)
+                    var xs = xv.AsSpan(r * cols, cols);
+                    var ys = yv.AsSpan(r * cols, cols);
+                    float max = CpuMath.Max(xs);
+                    if (log && xs.Overlaps(ys))
                     {
-                        ys[j] = xs[j] - inPlace;
+                        // In place: the exponentials go to scratch, so the log-probabilities still read the inputs.
+                        scratch ??= ArrayPool<float>.Shared.Rent(cols);
+                        xs.CopyTo(scratch);
+                        float inPlace = (float)Math.Log(CpuMath.ExpShifted(scratch.AsSpan(0, cols), max)) + max;
+                        Shift(xs, ys, inPlace);
+                        continue;
                     }
 
-                    continue;
-                }
+                    xs.CopyTo(ys);
+                    double sum = CpuMath.ExpShifted(ys, max);
 
-                xs.CopyTo(ys);
-                double sum = CpuMath.ExpShifted(ys, max);
-
-                if (log)
-                {
-                    float logSum = (float)Math.Log(sum) + max;
-                    for (int j = 0; j < cols; j++)
+                    if (log)
                     {
-                        ys[j] = xs[j] - logSum;
+                        Shift(xs, ys, (float)Math.Log(sum) + max);
+                    }
+                    else
+                    {
+                        CpuMath.Scale(ys, (float)(1.0 / sum));
                     }
                 }
-                else
+            }
+            finally
+            {
+                if (scratch is not null)
                 {
-                    CpuMath.Scale(ys, (float)(1.0 / sum));
+                    ArrayPool<float>.Shared.Return(scratch);
                 }
             }
         });
+    }
+
+    // y = x - shift, whole vectors then the rest (in place too: each value is read before it is written).
+    private static void Shift(ReadOnlySpan<float> x, Span<float> y, float shift)
+    {
+        int i = 0;
+        if (Vector.IsHardwareAccelerated)
+        {
+            var s = new Vector<float>(shift);
+            for (; i <= x.Length - Vector<float>.Count; i += Vector<float>.Count)
+            {
+                (new Vector<float>(x.Slice(i)) - s).CopyTo(y.Slice(i));
+            }
+        }
+
+        for (; i < x.Length; i++)
+        {
+            y[i] = x[i] - shift;
+        }
     }
 
     public override void SoftmaxBackwardKernel(Storage y, Storage dy, Storage dx, int rows, int cols, bool log)
@@ -231,23 +253,34 @@ internal sealed partial class CpuBackend
         var gate = new Lock();
         For(outer, (long)outer * row * 2, (start, end) =>
         {
-            var acc1 = new float[row];
-            var acc2 = new float[row];
-            for (int o = start; o < end; o++)
+            float[] rented1 = ArrayPool<float>.Shared.Rent(row), rented2 = ArrayPool<float>.Shared.Rent(row);
+            try
             {
-                var ra = a.AsSpan(o * row, row);
-                var rb = b is null ? ra : b.AsSpan(o * row, row);
-                AddInPlace(acc1, ra);
-                MultiplyAddInPlace(acc2, ra, rb);
-            }
-
-            lock (gate)
-            {
-                for (int i = 0; i < row; i++)
+                var acc1 = rented1.AsSpan(0, row);
+                var acc2 = rented2.AsSpan(0, row);
+                acc1.Clear();
+                acc2.Clear();
+                for (int o = start; o < end; o++)
                 {
-                    s1[i / inner] += acc1[i];
-                    s2[i / inner] += acc2[i];
+                    var ra = a.AsSpan(o * row, row);
+                    var rb = b is null ? ra : b.AsSpan(o * row, row);
+                    AddInPlace(acc1, ra);
+                    MultiplyAddInPlace(acc2, ra, rb);
                 }
+
+                lock (gate)
+                {
+                    for (int i = 0; i < row; i++)
+                    {
+                        s1[i / inner] += acc1[i];
+                        s2[i / inner] += acc2[i];
+                    }
+                }
+            }
+            finally
+            {
+                ArrayPool<float>.Shared.Return(rented2);
+                ArrayPool<float>.Shared.Return(rented1);
             }
         }, chunksSummed: true);
     }
@@ -744,24 +777,50 @@ internal sealed partial class CpuBackend
         }
     }
 
+    // Floats a kernel keeps on the stack (1 KB); larger scratch is pooled.
+    private const int StackFloats = 256;
+
     public override void SumAxisKernel(Storage x, Storage y, int outer, int dim, int inner, float scale, bool accumulate)
     {
         float[] xv = D(x), yv = D(y);
         For(outer, (long)outer * dim * inner, (start, end) =>
         {
-            Span<float> acc = inner <= 4096 ? stackalloc float[inner] : new float[inner];
-            for (int o = start; o < end; o++)
+            float[]? rented = inner > StackFloats ? ArrayPool<float>.Shared.Rent(inner) : null;
+            Span<float> acc = (rented is null ? stackalloc float[StackFloats] : rented)[..inner];
+            try
             {
-                acc.Clear();
-                for (int d = 0; d < dim; d++)
+                for (int o = start; o < end; o++)
                 {
-                    AddInPlace(acc, xv.AsSpan((o * dim + d) * inner, inner));
-                }
+                    acc.Clear();
+                    if (inner < Vector<float>.Count)
+                    {
+                        // Runs shorter than a vector (a sum along the last axis: one value each) add in place, in the same
+                        // order, without a call and two spans per value.
+                        for (int d = 0; d < dim; d++)
+                        {
+                            var run = xv.AsSpan((o * dim + d) * inner, inner);
+                            for (int i = 0; i < run.Length; i++)
+                            {
+                                acc[i] += run[i];
+                            }
+                        }
+                    }
+                    else
+                    {
+                        for (int d = 0; d < dim; d++)
+                        {
+                            AddInPlace(acc, xv.AsSpan((o * dim + d) * inner, inner));
+                        }
+                    }
 
-                var target = yv.AsSpan(o * inner, inner);
-                for (int i = 0; i < inner; i++)
+                    ScaleInto(yv.AsSpan(o * inner, inner), acc, scale, accumulate);
+                }
+            }
+            finally
+            {
+                if (rented is not null)
                 {
-                    target[i] = accumulate ? target[i] + scale * acc[i] : scale * acc[i];
+                    ArrayPool<float>.Shared.Return(rented);
                 }
             }
         });
@@ -777,14 +836,38 @@ internal sealed partial class CpuBackend
                 var source = gv.AsSpan(o * inner, inner);
                 for (int d = 0; d < dim; d++)
                 {
-                    var target = dv.AsSpan((o * dim + d) * inner, inner);
-                    for (int i = 0; i < inner; i++)
-                    {
-                        target[i] += scale * source[i];
-                    }
+                    ScaleInto(dv.AsSpan((o * dim + d) * inner, inner), source, scale, accumulate: true);
                 }
             }
         });
+    }
+
+    // target = scale · source, or target + scale · source: whole vectors, then the rest; every value rounds the product
+    // and then the sum, as the scalar expression does (no fused multiply-add).
+    private static void ScaleInto(Span<float> target, ReadOnlySpan<float> source, float scale, bool accumulate)
+    {
+        var tv = MemoryMarshal.Cast<float, Vector<float>>(target);
+        var sv = MemoryMarshal.Cast<float, Vector<float>>(source);
+        var s = new Vector<float>(scale);
+        if (accumulate)
+        {
+            for (int i = 0; i < tv.Length; i++)
+            {
+                tv[i] += s * sv[i];
+            }
+        }
+        else
+        {
+            for (int i = 0; i < tv.Length; i++)
+            {
+                tv[i] = s * sv[i];
+            }
+        }
+
+        for (int i = tv.Length * Vector<float>.Count; i < target.Length; i++)
+        {
+            target[i] = accumulate ? target[i] + scale * source[i] : scale * source[i];
+        }
     }
 
     // ------------------------------------------------------------ element-wise kernels
