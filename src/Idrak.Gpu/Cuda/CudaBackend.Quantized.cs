@@ -810,7 +810,7 @@ internal sealed unsafe partial class CudaBackend
     // A short filled length split as many ways reads a few positions per block and merges many parts: on an RTX 5070 Ti
     // 200 positions took 9.0 µs with the 24 splits measured at 4096, 7.6 with 16. So each block also takes at least
     // `minChunk` positions (the blocks past the filled length then add an empty part), measured per shape after the
-    // splits over the same lengths; 1, the plain chunks, is the reference and stays unless another is faster. `launch(splits, minChunk, part, counters, position)` launches the kernel with that position address.
+    // splits over the same lengths; 1, the plain chunks, is the reference and stays unless another is faster. `attention`: the kernel's operands (RunDecode).
     private void DecodeSplit(int variant, in DecodeAttention attention, Storage position)
     {
         int rows = attention.Rows, capacity = attention.Capacity, dim = attention.Dim;
