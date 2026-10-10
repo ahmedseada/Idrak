@@ -11,8 +11,11 @@ These are the owner's standing rules. They hold in every session, after every co
   library defaults. Defaults are for things meant to work together (GPU falls back to CPU), not one family for another.
 - **Versions and releases.** Do not bump the version (`VersionPrefix` stays as it is), do not touch `CHANGELOG`, and do
   not publish or package.
-- **Tests.** Never run the full test suite; the owner runs it. Run only targeted tests with `IDRAK_FILTER`, and only
-  when necessary.
+- **Tests.** The owner runs the tests, the training and the apps. Do not run them; build to check the code compiles,
+  then give the exact commands. (Agents working on library code may run targeted `IDRAK_FILTER` tests only when the
+  owner asks for it; never the full suite.)
+- **Keep the owner informed.** Before each step, say in a line what you are about to do and why; never go quiet while
+  working. The same for the software: long work shows live progress (what it is doing, how far, how fast, time left).
 - **Commands for the owner** are exact PowerShell commands for Windows, with the repo at `D:\Projects\Idrak`.
 - **"Just answer"** means answer the question without writing or changing code.
 - **Stay on the owner's current task.** Do not steer to a different feature or conclusion; report results and offer

@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using System.Text.Json.Nodes;
+using Idrak.Abstraction.Diagnostics;
 using Idrak.Inference.Abstractions;
 using Idrak.Nlp;
 
@@ -17,7 +18,9 @@ namespace Idrak.Samples.ArabicOcr;
 /// (<see cref="Augmentations"/>, plus the app's "noise"), seeded per line and epoch, run in parallel off the step. A step
 /// the device has no room for is split into micro-batches whose gradients add up (halved again as needed), as the library's
 /// image training does. Each epoch reports the loss and, on <c>--eval</c>, CER and WER (<see cref="TuningMetrics"/>);
-/// the best epoch is kept.
+/// the best epoch is kept. On the console a live line shows the epoch's progress (steps, loss, lines a second, data and
+/// step time, device memory, time left); every step and epoch also goes to the library's telemetry (<see cref="Telemetry"/>),
+/// which <c>--log FILE</c> writes as JSON Lines.
 /// </summary>
 internal static class TrainCommand
 {
@@ -34,6 +37,8 @@ internal static class TrainCommand
           --height N           line height, a multiple of 4 (48)    --channels A,B,C  (32,64,128)
           --hidden N           LSTM size each way (128)              --layers N        (2)
           --direction rtl|ltr  (rtl: lines are flipped so columns run in reading order)
+          --log FILE           every step and epoch as JSON Lines (the library's telemetry: loss, data and step time,
+                               epoch summaries with CER, WER, lines a second and device memory)
           --augment PIPELINE   the Augmentations registry's names ("none" for none); default:
                                shift(pixels=2), affine(degrees=1, translate=0.01, scale=0.95:1.05, shear=3),
                                color-jitter(brightness=0.2, contrast=0.3), noise(std=0.03)
@@ -42,7 +47,7 @@ internal static class TrainCommand
     public static int Run(string[] args, TextWriter output, TextWriter error)
     {
         if (OcrApp.Context(args, output, error,
-                ["--data", "--eval", "--out", "--epochs", "--batch", "--lr", "--seed", "--height", "--channels", "--hidden", "--layers", "--direction", "--augment"],
+                ["--data", "--eval", "--out", "--epochs", "--batch", "--lr", "--seed", "--height", "--channels", "--hidden", "--layers", "--direction", "--augment", "--log"],
                 ["--include-drafts"], Help) is not { } context)
         {
             return 0;
@@ -122,6 +127,15 @@ internal static class TrainCommand
         context.Say($"Network   {recognizer.Network.ParameterCount:N0} parameters on {context.Device} · height {settings.Height} · {(settings.RightToLeft ? "right to left" : "left to right")} · "
                     + $"batch {batchSize} · AdamW {learningRate.ToString("G", CultureInfo.InvariantCulture)} · {epochs} epochs · augment {settings.Augment}");
 
+        using var log = a.Option("--log") is { } logFile ? new JsonLinesLogger(logFile, TelemetryLevel.Training | TelemetryLevel.Batches | TelemetryLevel.Devices) : null;
+        using var subscription = log is null ? null : Telemetry.Subscribe(log);
+        var live = new LiveLine(error);
+        void Say(string line)
+        {
+            live.Clear();
+            context.Say(line);
+        }
+
         using var optimizer = new AdamW(recognizer.Network.Parameters(), learningRate, weightDecay: 1e-4f);
         var measured = new MeasuredBatches(context.Device);
         var cer = TuningMetrics.Get(TuningMetrics.CharacterErrorRate);
@@ -130,15 +144,24 @@ internal static class TrainCommand
         double best = double.PositiveInfinity, bestLoss = double.PositiveInfinity, bestCer = double.NaN, bestWer = double.NaN;
         var epochSeconds = new List<double>();
         var history = new JsonArray();
+        var runClock = Stopwatch.StartNew();
+        long step = 0;
+        double lastLoss = double.NaN;
+        int stepsPerEpoch = Batches(trainLines, batchSize, seed, 1).Count();
+        Telemetry.TrainingStarted(new TrainingStarted("ArabicOcr line recognizer", "AdamW", context.Device, epochs, train.Count, evaluation.Count, batchSize,
+            stepsPerEpoch, recognizer.Network.ParameterCount, learningRate, Environment.ProcessorCount));
         for (int epoch = 1; epoch <= epochs; epoch++)
         {
             var epochClock = Stopwatch.StartNew();
             recognizer.Network.Train();
-            double lossSum = 0;
-            int seen = 0;
+            double lossSum = 0, stepLoss = double.NaN;
+            int seen = 0, done = 0;
+            TimeSpan dataTime = default, computeTime = default;
             foreach (var batch in Batches(trainLines, batchSize, seed, epoch))
             {
+                long started = Stopwatch.GetTimestamp();
                 var lines = Augment(trainLines, batch, augment, settings.Height, seed, epoch);
+                long prepared = Stopwatch.GetTimestamp();
                 while (true)
                 {
                     try
@@ -162,20 +185,49 @@ internal static class TrainCommand
                         optimizer.Step();
                         lossSum += batchLoss;
                         seen += batch.Length;
+                        stepLoss = batchLoss / batch.Length;
                         break;
                     }
                     catch (ResourceLimitExceededException e) when (micro > 1)
                     {
                         micro = (micro + 1) / 2;
-                        context.Say($"  out of device memory ({e.Message.Split(':')[0]}): micro-batches of {micro} lines from this step, their gradients added up");
+                        Say($"  out of device memory ({e.Message.Split(':')[0]}): micro-batches of {micro} lines from this step, their gradients added up");
                     }
                 }
+
+                var preparing = Stopwatch.GetElapsedTime(started, prepared);
+                var compute = Stopwatch.GetElapsedTime(prepared);
+                (dataTime, computeTime) = (dataTime + preparing, computeTime + compute);
+                done++;
+                step++;
+                if (Telemetry.IsEnabled(TelemetryLevel.Batches))
+                {
+                    Telemetry.BatchCompleted(new BatchCompleted(epoch, done, stepsPerEpoch, step, batch.Length, stepLoss, learningRate, null, preparing, compute));
+                }
+
+                int epochNow = epoch, doneNow = done, seenNow = seen;
+                double sumNow = lossSum, lastNow = stepLoss;
+                live.Show(() =>
+                {
+                    double fraction = doneNow / (double)Math.Max(1, stepsPerEpoch);
+                    var elapsed = epochClock.Elapsed;
+                    var memory = ComputeResources.GetMemoryUsage(context.Device);
+                    var left = TimeSpan.FromSeconds(elapsed.TotalSeconds / Math.Max(fraction, 1e-9) * (1 - fraction));
+                    // Most important first: a narrow console cuts the end of the line.
+                    return FormattableString.Invariant($"epoch {epochNow}/{epochs} {LiveLine.Bar(fraction, 10)} {fraction * 100:F1}% {doneNow:N0}/{stepsPerEpoch:N0}")
+                           + FormattableString.Invariant($" | loss {sumNow / Math.Max(1, seenNow):F4} (step {lastNow:F4})")
+                           + $" | {LiveLine.Time(elapsed)}, {LiveLine.Time(left)} left"
+                           + FormattableString.Invariant($" | {seenNow / Math.Max(1e-9, elapsed.TotalSeconds):F0} lines/s")
+                           + FormattableString.Invariant($" | data {dataTime.TotalMilliseconds / doneNow:F0} + step {computeTime.TotalMilliseconds / doneNow:F0} ms")
+                           + $" | memory {LiveLine.Bytes(memory.InUse)}" + (memory.Peak > 0 ? $", peak {LiveLine.Bytes(memory.Peak)}" : "");
+                });
             }
 
             double trainLoss = lossSum / Math.Max(1, seen);
             double? epochCer = null, epochWer = null;
             if (evaluation.Count > 0)
             {
+                live.Show(() => $"epoch {epoch}/{epochs}  reading the {evaluation.Count:N0} held-out lines for CER and WER ...", now: true);
                 var readings = recognizer.Read(evalLines, CtcDecoders.Greedy, new CtcDecodeOptions(), measured);
                 var pairs = readings.Zip(evaluation).Select(p => (p.First.Text, p.Second.Text)).ToArray();
                 epochCer = TuningScore.Sum(pairs.Select(p => cer.Score(p.Item1, p.Item2))).Value;
@@ -192,11 +244,18 @@ internal static class TrainCommand
                 recognizer.Save(folder, Summary());
             }
 
+            lastLoss = trainLoss;
+            var validation = epochCer is null ? null : new Dictionary<string, double> { ["cer"] = epochCer.Value, ["wer"] = epochWer!.Value };
+            Telemetry.EpochCompleted(new EpochCompleted(epoch, epochs, trainLoss, new Dictionary<string, double>(), null, validation, learningRate, epochClock.Elapsed,
+                seen / Math.Max(1e-9, epochClock.Elapsed.TotalSeconds), ComputeResources.GetMemoryUsage(context.Device), isBest));
             history.Add(new JsonObject { ["epoch"] = epoch, ["loss"] = Round(trainLoss), ["cer"] = epochCer is null ? null : Round(epochCer.Value), ["wer"] = epochWer is null ? null : Round(epochWer.Value), ["seconds"] = Round(epochClock.Elapsed.TotalSeconds) });
-            context.Say(FormattableString.Invariant($"epoch {epoch,3}/{epochs}  loss {trainLoss,8:F4}")
+            Say(FormattableString.Invariant($"epoch {epoch,3}/{epochs}  loss {trainLoss,8:F4}")
                         + (epochCer is null ? "" : FormattableString.Invariant($"  cer {epochCer:F4}  wer {epochWer:F4}"))
-                        + FormattableString.Invariant($"  {epochClock.Elapsed.TotalSeconds,6:F1} s") + (isBest ? "  best" : ""));
+                        + FormattableString.Invariant($"  {epochClock.Elapsed.TotalSeconds,6:F1} s  {seen / Math.Max(1e-9, epochClock.Elapsed.TotalSeconds),6:F0} lines/s") + (isBest ? "  best" : ""));
         }
+
+        live.Clear();
+        Telemetry.TrainingCompleted(new TrainingCompleted(epochs, runClock.Elapsed, lastLoss, bestEpoch, bestLoss, false, false));
 
         // The settings file keeps the whole run (every epoch), beside the best epoch's weights.
         var summary = Summary();
