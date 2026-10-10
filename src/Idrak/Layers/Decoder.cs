@@ -874,15 +874,18 @@ public sealed class DecoderBlock : Module, ICachedModule
         new Module?[] { AttentionNorm, Attention, FeedForwardNorm, FeedForward, PostAttentionNorm, PostFeedForwardNorm, ResidualDropout }.OfType<Module>();
 
     /// <inheritdoc />
-    protected override Tensor ForwardCore(Tensor input) => Run(input, x => Attention.Forward(x));
+    protected override Tensor ForwardCore(Tensor input) => Run(input, null);
 
     /// <inheritdoc />
-    public Tensor ForwardCached(Tensor input, DecodingContext context) =>
-        Run(input, x => Attention.ForwardCached(x, context), x => Attention.HeadsCached(x, context));
+    public Tensor ForwardCached(Tensor input, DecodingContext context) => Run(input, context);
 
-    // attendHeads: attention without its output projection, which inference then runs together with the residual
-    // addition and the next normalization where the device can (few rows, packed weights).
-    private Tensor Run(Tensor input, Func<Tensor, Tensor> attend, Func<Tensor, Tensor>? attendHeads = null)
+    // Attention, cached when there is a context (the context passed along rather than captured in delegates: no
+    // allocation per block and step).
+    private Tensor Attended(Tensor x, DecodingContext? context) => context is null ? Attention.Forward(x) : Attention.ForwardCached(x, context);
+
+    // With a context, the attention's heads without its output projection, which inference then runs together with the
+    // residual addition and the next normalization where the device can (few rows, packed weights).
+    private Tensor Run(Tensor input, DecodingContext? context)
     {
         var normalized = AttentionNorm.Forward(input);
         using var compressNormalized = new CompressAfter(normalized);
@@ -890,9 +893,9 @@ public sealed class DecoderBlock : Module, ICachedModule
         Tensor x, fed;
         if (!Parallel && inference && FeedForwardNorm is RMSNorm norm)
         {
-            var (sum, fedInput) = attendHeads is not null && PostAttentionNorm is null
-                ? AddProjected(attendHeads(normalized), Attention.Output, input, norm)
-                : Tensor.AddRmsNormAffine(input, Attend(normalized, attend), norm.Gain, norm.Epsilon, norm.Offset);   // one pass
+            var (sum, fedInput) = context is not null && PostAttentionNorm is null
+                ? AddProjected(Attention.HeadsCached(normalized, context), Attention.Output, input, norm)
+                : Tensor.AddRmsNormAffine(input, Attend(normalized, context), norm.Gain, norm.Epsilon, norm.Offset);   // one pass
             x = sum;
             if (PostFeedForwardNorm is null && NextNorm is { } following && FeedForward is Layers.FeedForward { DownFusable: true } dense)
             {
@@ -905,7 +908,7 @@ public sealed class DecoderBlock : Module, ICachedModule
         }
         else
         {
-            var attended = Attend(normalized, attend);
+            var attended = Attend(normalized, context);
             if (Parallel)
             {
                 var parallel = FeedForward.Forward(normalized);
@@ -946,9 +949,9 @@ public sealed class DecoderBlock : Module, ICachedModule
         return result;
     }
 
-    private Tensor Attend(Tensor normalized, Func<Tensor, Tensor> attend)
+    private Tensor Attend(Tensor normalized, DecodingContext? context)
     {
-        var attended = attend(normalized);
+        var attended = Attended(normalized, context);
         if (PostAttentionNorm is null)
         {
             return attended;
