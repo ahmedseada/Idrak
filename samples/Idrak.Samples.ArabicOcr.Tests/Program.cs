@@ -256,6 +256,23 @@ var timings = new List<string>();
         (code, output, error) = App("cut", data, "--images", zip, "-o", lines, "--prefill", "vlm", "--model", tinyGemma, "--max-tokens", "4", "-j");
         Check(code == 0 && (int)JsonNode.Parse(output)!["aligned"]! + (int)JsonNode.Parse(output)!["drafts"]! == 0, $"second run: {output} {error}");
     }),
+    ("ocr cut: --prefill lines drafts with the trained recognizer (a page's lines read together), snapped to the page's text", () =>
+    {
+        string folder = Fresh("prefill-lines"), lines = Path.Combine(folder, "lines");
+        var (data, zip, answers) = ShareGpt(folder, 1);
+        var (code, output, error) = App("cut", data, "--images", zip, "-o", lines, "--prefill", "lines", "--model", TrainedModel(), "--max-error", "1", "-j");
+        Check(code == 0, error);
+        var json = JsonNode.Parse(output)!;
+        Check((int)json["lines"]! == 3 && (int)json["aligned"]! + (int)json["drafts"]! == 3 && (int)json["aligned"]! >= 1, $"cut: {output}");
+        string truth = OcrText.Normalize(OcrText.AnswerText(answers[0], "values"));
+        foreach (string file in Directory.GetFiles(lines, "*.aligned.txt"))
+        {
+            Check(truth.Contains(OcrText.ReadTranscription(file), StringComparison.Ordinal), $"{Path.GetFileName(file)} is not a span of the page's text");
+        }
+
+        (code, _, error) = App("cut", data, "--images", zip, "-o", lines, "--prefill", "other", "--model", "m");
+        Check(code == 2 && error.Contains("lines") && error.Contains("vlm"), error);
+    }),
     ("ocr tune-vlm prints the idrak tune commands; bad options exit 2", () =>
     {
         var (code, output, error) = App("tune-vlm", "--model", "m", "--data", "train.json", "--eval", "val.json", "--images", "downloaded_images.zip", "--grayscale");
