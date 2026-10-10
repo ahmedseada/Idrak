@@ -111,7 +111,7 @@ public sealed class ToolRegistry : IToolRegistry
                 }
                 catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
                 {
-                    error = $"'{call.Name}' timed out after {_timeout!.Value.TotalSeconds:0.###} s";
+                    error = string.Create(System.Globalization.CultureInfo.InvariantCulture, $"'{call.Name}' timed out after {_timeout!.Value.TotalSeconds:0.###} s");   // read by the model
                     content = "";
                 }
             }

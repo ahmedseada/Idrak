@@ -29,10 +29,9 @@ public sealed class ConsoleLogger(TelemetryLevel levels = TelemetryLevel.Trainin
     public void OnTrainingStarted(in TrainingStarted e)
     {
         _out.WriteLine(e.Model);
-        _out.WriteLine(
-            $"Training on {e.Device} ({e.Device.Name}) | {e.TrainingSamples:N0} samples" +
-            (e.ValidationSamples is { } v ? $", {v:N0} validation" : "") +
-            $" | batch {e.BatchSize}, {e.BatchesPerEpoch} steps/epoch | {e.Optimizer} lr={e.LearningRate:G4} | {e.ParameterCount:N0} parameters | {e.CpuThreads} CPU threads");
+        _out.WriteLine(string.Create(CultureInfo.InvariantCulture,
+            $"Training on {e.Device} ({e.Device.Name}) | {e.TrainingSamples:N0} samples{(e.ValidationSamples is { } v ? string.Create(CultureInfo.InvariantCulture, $", {v:N0} validation") : "")}" +
+            $" | batch {e.BatchSize}, {e.BatchesPerEpoch} steps/epoch | {e.Optimizer} lr={e.LearningRate:G4} | {e.ParameterCount:N0} parameters | {e.CpuThreads} CPU threads"));
     }
 
     /// <inheritdoc />
@@ -43,10 +42,9 @@ public sealed class ConsoleLogger(TelemetryLevel levels = TelemetryLevel.Trainin
             return;
         }
 
-        _out.WriteLine(
-            $"  epoch {e.Epoch} batch {e.Batch}/{e.BatchesPerEpoch}  loss {e.Loss:F6}" +
-            (e.GradientNorm is { } g ? $"  |grad| {g:F4}" : "") +
-            $"  data {e.DataTime.TotalMilliseconds:F2} ms  compute {e.ComputeTime.TotalMilliseconds:F2} ms");
+        _out.WriteLine(string.Create(CultureInfo.InvariantCulture,
+            $"  epoch {e.Epoch} batch {e.Batch}/{e.BatchesPerEpoch}  loss {e.Loss:F6}{(e.GradientNorm is { } g ? string.Create(CultureInfo.InvariantCulture, $"  |grad| {g:F4}") : "")}" +
+            $"  data {e.DataTime.TotalMilliseconds:F2} ms  compute {e.ComputeTime.TotalMilliseconds:F2} ms"));
     }
 
     /// <inheritdoc />
@@ -58,7 +56,7 @@ public sealed class ConsoleLogger(TelemetryLevel levels = TelemetryLevel.Trainin
         }
 
         var line = new StringBuilder();
-        line.Append(CultureInfo.InvariantCulture, $"Epoch {e.Epoch.ToString().PadLeft(e.Epochs.ToString().Length)}/{e.Epochs}  loss {e.Loss:F6}");
+        line.Append(CultureInfo.InvariantCulture, $"Epoch {e.Epoch.ToString(CultureInfo.InvariantCulture).PadLeft(e.Epochs.ToString(CultureInfo.InvariantCulture).Length)}/{e.Epochs}  loss {e.Loss:F6}");
         foreach (var (name, value) in e.Metrics)
         {
             line.Append(CultureInfo.InvariantCulture, $"  {name} {value:F4}");
@@ -84,34 +82,33 @@ public sealed class ConsoleLogger(TelemetryLevel levels = TelemetryLevel.Trainin
 
     /// <inheritdoc />
     public void OnTrainingCompleted(in TrainingCompleted e) =>
-        _out.WriteLine(
-            $"Finished {e.EpochsRun} epochs in {e.Duration.TotalSeconds:F2} s" +
-            (e.StoppedEarly ? " (early stop)" : e.Cancelled ? " (cancelled)" : "") +
-            $" | best epoch {e.BestEpoch} loss {e.BestLoss:F6}");
+        _out.WriteLine(string.Create(CultureInfo.InvariantCulture,
+            $"Finished {e.EpochsRun} epochs in {e.Duration.TotalSeconds:F2} s{(e.StoppedEarly ? " (early stop)" : e.Cancelled ? " (cancelled)" : "")}" +
+            $" | best epoch {e.BestEpoch} loss {e.BestLoss:F6}"));
 
     /// <inheritdoc />
     public void OnLayerForward(in LayerForward e) =>
-        _out.WriteLine(
-            $"  {new string(' ', e.Depth * 2)}{e.Layer}: {Tensor.FormatShape(e.InputShape)} -> {Tensor.FormatShape(e.OutputShape)}  {e.Duration.TotalMicroseconds:F1} µs");
+        _out.WriteLine(string.Create(CultureInfo.InvariantCulture,
+            $"  {new string(' ', e.Depth * 2)}{e.Layer}: {Tensor.FormatShape(e.InputShape)} -> {Tensor.FormatShape(e.OutputShape)}  {e.Duration.TotalMicroseconds:F1} µs"));
 
     /// <inheritdoc />
     public void OnOperation(in OperationCompleted e) =>
-        _out.WriteLine($"    {(e.Backward ? "∇" : " ")}{e.Operation} {Tensor.FormatShape(e.Shape)} on {e.Device}  {e.Duration.TotalMicroseconds:F1} µs");
+        _out.WriteLine(string.Create(CultureInfo.InvariantCulture, $"    {(e.Backward ? "∇" : " ")}{e.Operation} {Tensor.FormatShape(e.Shape)} on {e.Device}  {e.Duration.TotalMicroseconds:F1} µs"));
 
     /// <inheritdoc />
     public void OnInference(in InferenceCompleted e) =>
-        _out.WriteLine($"Inference {e.Model}: {e.Samples:N0} samples on {e.Device} in {e.Latency.TotalMilliseconds:F3} ms ({e.SamplesPerSecond:N0} samples/s)");
+        _out.WriteLine(string.Create(CultureInfo.InvariantCulture, $"Inference {e.Model}: {e.Samples:N0} samples on {e.Device} in {e.Latency.TotalMilliseconds:F3} ms ({e.SamplesPerSecond:N0} samples/s)"));
 
     /// <inheritdoc />
     public void OnToolCall(in ToolCallCompleted e) =>
-        _out.WriteLine($"Tool {e.Tool}({e.Arguments}): {(e.Succeeded ? "ok" : "failed: " + e.Error)} in {e.Duration.TotalMilliseconds:F1} ms");
+        _out.WriteLine(string.Create(CultureInfo.InvariantCulture, $"Tool {e.Tool}({e.Arguments}): {(e.Succeeded ? "ok" : "failed: " + e.Error)} in {e.Duration.TotalMilliseconds:F1} ms"));
 
     /// <inheritdoc />
     public void OnEngine(in EngineEvent e) => _out.WriteLine(e.Kind switch
     {
-        EngineEventKind.ModelLoaded => $"Engine: loaded {e.Model} in {e.Duration.TotalMilliseconds:F1} ms",
+        EngineEventKind.ModelLoaded => string.Create(CultureInfo.InvariantCulture, $"Engine: loaded {e.Model} in {e.Duration.TotalMilliseconds:F1} ms"),
         EngineEventKind.ModelUnloaded => $"Engine: unloaded {e.Model}",
-        EngineEventKind.RequestCompleted => $"Engine: {e.Model} request in {e.Duration.TotalMilliseconds:F2} ms (queued {e.QueueWait.TotalMilliseconds:F2} ms, batch {e.BatchSize})",
+        EngineEventKind.RequestCompleted => string.Create(CultureInfo.InvariantCulture, $"Engine: {e.Model} request in {e.Duration.TotalMilliseconds:F2} ms (queued {e.QueueWait.TotalMilliseconds:F2} ms, batch {e.BatchSize})"),
         _ => $"Engine: {e.Model} request rejected: {e.Reason}",
     });
 
@@ -128,7 +125,8 @@ public sealed class ConsoleLogger(TelemetryLevel levels = TelemetryLevel.Trainin
     /// <inheritdoc />
     public void OnOverrideCompared(in OverrideCompared e) =>
         _out.WriteLine($"Shadow {e.Registry}/{e.Slot} ({e.Implementation}): {(e.Agreed ? "agrees" : "differs: " + e.Difference)}; "
-                       + $"library {e.LibraryTime.TotalMilliseconds:F3} ms, {e.LibraryBytes:N0} B; override {e.OverrideTime.TotalMilliseconds:F3} ms, {e.OverrideBytes:N0} B");
+                       + string.Create(CultureInfo.InvariantCulture, $"library {e.LibraryTime.TotalMilliseconds:F3} ms, {e.LibraryBytes:N0} B; override {e.OverrideTime.TotalMilliseconds:F3} ms, {e.OverrideBytes:N0} B"));
+
 }
 
 /// <summary>Keeps every epoch (and optionally batch) event in memory, for charts, reports or CSV export.</summary>
@@ -362,14 +360,13 @@ public sealed class JsonLinesLogger : ITelemetryHook, IDisposable, IAsyncDisposa
         await using (stream)
         {
             var buffer = new System.Buffers.ArrayBufferWriter<byte>(4096);
+            await using var json = new Utf8JsonWriter(buffer);                    // one writer for every record, reset per line
             await foreach (var record in _channel.Reader.ReadAllAsync())
             {
                 buffer.ResetWrittenCount();
-                using (var json = new Utf8JsonWriter(buffer))
-                {
-                    TelemetryJson.Write(json, record);
-                }
-
+                json.Reset(buffer);
+                TelemetryJson.Write(json, record);
+                json.Flush();
                 "\n"u8.CopyTo(buffer.GetSpan(1));
                 buffer.Advance(1);
                 await stream.WriteAsync(buffer.WrittenMemory);

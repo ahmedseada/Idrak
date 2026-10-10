@@ -46,8 +46,8 @@ public static class Comparisons
         }
 
         return count == 0 ? null
-            : $"element {first} is {Format(actual[first])}, expected {Format(expected[first])} (tolerance {tolerance:G3}); "
-              + $"{count} of {expected.Length} differ, by up to {Format(largest)}";
+            : string.Create(System.Globalization.CultureInfo.InvariantCulture, $"element {first} is {Format(actual[first])}, expected {Format(expected[first])} (tolerance {tolerance:G3}); "
+              + $"{count} of {expected.Length} differ, by up to {Format(largest)}");
     }
 
     /// <summary>The same as <see cref="Difference(ReadOnlySpan{float}, ReadOnlySpan{float}, float)"/> for doubles.</summary>
@@ -63,7 +63,7 @@ public static class Comparisons
             bool close = expected[i].Equals(actual[i]) || Math.Abs(expected[i] - actual[i]) <= tolerance * Math.Max(1.0, Math.Abs(expected[i]));
             if (!close)
             {
-                return $"element {i} is {actual[i]:R}, expected {expected[i]:R} (tolerance {tolerance:G3})";
+                return string.Create(System.Globalization.CultureInfo.InvariantCulture, $"element {i} is {actual[i]:R}, expected {expected[i]:R} (tolerance {tolerance:G3})");
             }
         }
 
@@ -77,7 +77,7 @@ public static class Comparisons
         {
             if (expected[i] != actual[i])
             {
-                return $"id {i} is {actual[i]}, expected {expected[i]}";
+                return string.Create(System.Globalization.CultureInfo.InvariantCulture, $"id {i} is {actual[i]}, expected {expected[i]}");
             }
         }
 
