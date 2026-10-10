@@ -53,78 +53,83 @@ internal sealed partial class CpuBackend
         {
             var scores = ArrayPool<float>.Shared.Rent(SpanRows * SpanKeys);
             var outputs = ArrayPool<float>.Shared.Rent(SpanRows * dim);
-            Span<float> max = stackalloc float[SpanRows], total = stackalloc float[SpanRows];
-            for (int item = first; item < last; item++)
+            try
             {
-                int h = item / blocks, r0 = item % blocks * SpanRows, count = Math.Min(SpanRows, rows - r0);
-                int table = h / headsPerTable * rows, keyBase = h / group * keyRows;
-                var (from, to) = BlockSpan(sv, ev, table + r0, count, keyRows);
-                max.Fill(float.NegativeInfinity);
-                total.Clear();
-                Array.Clear(outputs, 0, count * dim);
-                for (int c0 = from; c0 < to; c0 += SpanKeys)
+                Span<float> max = stackalloc float[SpanRows], total = stackalloc float[SpanRows];
+                for (int item = first; item < last; item++)
                 {
-                    int width = Math.Min(SpanKeys, to - c0);
-                    SpanProduct(qv, (h * rows + r0) * dim, kv, (keyBase + c0) * dim, scores, 0, count, width, dim, false, true, 0f);
+                    int h = item / blocks, r0 = item % blocks * SpanRows, count = Math.Min(SpanRows, rows - r0);
+                    int table = h / headsPerTable * rows, keyBase = h / group * keyRows;
+                    var (from, to) = BlockSpan(sv, ev, table + r0, count, keyRows);
+                    max.Fill(float.NegativeInfinity);
+                    total.Clear();
+                    Array.Clear(outputs, 0, count * dim);
+                    for (int c0 = from; c0 < to; c0 += SpanKeys)
+                    {
+                        int width = Math.Min(SpanKeys, to - c0);
+                        SpanProduct(qv, (h * rows + r0) * dim, kv, (keyBase + c0) * dim, scores, 0, count, width, dim, false, true, 0f);
+                        for (int i = 0; i < count; i++)
+                        {
+                            var (s, e) = SpanOf(sv, ev, table + r0 + i, keyRows);
+                            int a = Math.Max(s, c0) - c0, b = Math.Min(e, c0 + width) - c0;
+                            var row = scores.AsSpan(i * width, width);
+                            if (b <= a)
+                            {
+                                row.Clear();                                          // nothing seen here: weights 0, sums unchanged
+                                continue;
+                            }
+
+                            row[..a].Clear();
+                            row[b..].Clear();
+                            var seen = row[a..b];
+                            float tileMax = float.NegativeInfinity;
+                            for (int c = 0; c < seen.Length; c++)
+                            {
+                                seen[c] = variant.Cap(seen[c] * scale);
+                                tileMax = MathF.Max(tileMax, seen[c]);
+                            }
+
+                            float updated = MathF.Max(max[i], tileMax), alpha = MathF.Exp(max[i] - updated);
+                            total[i] = total[i] * alpha + CpuMath.ExpShifted(seen, updated);
+                            max[i] = updated;
+                            if (alpha != 1f)
+                            {
+                                CpuMath.Scale(outputs.AsSpan(i * dim, dim), alpha);
+                            }
+                        }
+
+                        SpanProduct(scores, 0, vv, (keyBase + c0) * dim, outputs, 0, count, dim, width, false, false, 1f);
+                    }
+
                     for (int i = 0; i < count; i++)
                     {
-                        var (s, e) = SpanOf(sv, ev, table + r0 + i, keyRows);
-                        int a = Math.Max(s, c0) - c0, b = Math.Min(e, c0 + width) - c0;
-                        var row = scores.AsSpan(i * width, width);
-                        if (b <= a)
+                        int row = h * rows + r0 + i;
+                        var output = yv.AsSpan(row * dim, dim);
+                        if (total[i] > 0f)
                         {
-                            row.Clear();                                          // nothing seen here: weights 0, sums unchanged
-                            continue;
+                            float inverse = 1f / total[i];
+                            for (int d = 0; d < dim; d++)
+                            {
+                                output[d] = outputs[i * dim + d] * inverse;
+                            }
+                        }
+                        else
+                        {
+                            output.Clear();                                           // an empty range: zeros
                         }
 
-                        row[..a].Clear();
-                        row[b..].Clear();
-                        var seen = row[a..b];
-                        float tileMax = float.NegativeInfinity;
-                        for (int c = 0; c < seen.Length; c++)
+                        if (lv is not null)
                         {
-                            seen[c] = variant.Cap(seen[c] * scale);
-                            tileMax = MathF.Max(tileMax, seen[c]);
+                            lv[row] = total[i] > 0f ? max[i] + MathF.Log(total[i]) : float.NegativeInfinity;
                         }
-
-                        float updated = MathF.Max(max[i], tileMax), alpha = MathF.Exp(max[i] - updated);
-                        total[i] = total[i] * alpha + CpuMath.ExpShifted(seen, updated);
-                        max[i] = updated;
-                        if (alpha != 1f)
-                        {
-                            CpuMath.Scale(outputs.AsSpan(i * dim, dim), alpha);
-                        }
-                    }
-
-                    SpanProduct(scores, 0, vv, (keyBase + c0) * dim, outputs, 0, count, dim, width, false, false, 1f);
-                }
-
-                for (int i = 0; i < count; i++)
-                {
-                    int row = h * rows + r0 + i;
-                    var output = yv.AsSpan(row * dim, dim);
-                    if (total[i] > 0f)
-                    {
-                        float inverse = 1f / total[i];
-                        for (int d = 0; d < dim; d++)
-                        {
-                            output[d] = outputs[i * dim + d] * inverse;
-                        }
-                    }
-                    else
-                    {
-                        output.Clear();                                           // an empty range: zeros
-                    }
-
-                    if (lv is not null)
-                    {
-                        lv[row] = total[i] > 0f ? max[i] + MathF.Log(total[i]) : float.NegativeInfinity;
                     }
                 }
             }
-
-            ArrayPool<float>.Shared.Return(outputs);
-            ArrayPool<float>.Shared.Return(scores);
+            finally
+            {
+                ArrayPool<float>.Shared.Return(outputs);
+                ArrayPool<float>.Shared.Return(scores);
+            }
         });
     }
 
@@ -137,113 +142,131 @@ internal sealed partial class CpuBackend
         int group = heads / kvHeads, rowBlocks = (rows + SpanRows - 1) / SpanRows, keyBlocks = (keyRows + SpanKeys - 1) / SpanKeys;
         long work = (long)heads * rows * Math.Max(1, keyRows) * dim;
 
-        // Δ per row: dOutput · output.
-        var delta = new float[heads * rows];
-        For(heads * rows, (long)heads * rows * dim, (first, last) =>
-        {
-            for (int row = first; row < last; row++)
-            {
-                delta[row] = Dot(gv.AsSpan(row * dim, dim), ov.AsSpan(row * dim, dim));
-            }
-        });
-
-        // The keys each block of rows of each table sees (tables × row blocks).
+        // Δ per row (dOutput · output) and the keys each block of rows of each table sees (tables × row blocks): pooled, as
+        // they are as large as the rows of every head.
         int tables = heads / headsPerTable;
-        var blockSpans = new (int Start, int End)[tables * rowBlocks];
-        for (int t = 0; t < tables; t++)
+        var delta = ArrayPool<float>.Shared.Rent(heads * rows);
+        var blockSpans = ArrayPool<(int Start, int End)>.Shared.Rent(tables * rowBlocks);
+        try
         {
-            for (int rb = 0; rb < rowBlocks; rb++)
+            For(heads * rows, (long)heads * rows * dim, (first, last) =>
             {
-                int r0 = rb * SpanRows;
-                blockSpans[t * rowBlocks + rb] = BlockSpan(sv, ev, t * rows + r0, Math.Min(SpanRows, rows - r0), keyRows);
-            }
-        }
-
-        // dS for (head h, rows r0.., keys c0..) into `ds` [count, width], scaled by `scale`; P into `p`. False when no
-        // row of the block sees any of the keys.
-        bool Gradients(int h, int r0, int count, int c0, int width, float[] p, float[] ds)
-        {
-            int table = h / headsPerTable * rows, keyBase = h / group * keyRows;
-            SpanProduct(qv, (h * rows + r0) * dim, kv, (keyBase + c0) * dim, p, 0, count, width, dim, false, true, 0f);
-            SpanProduct(gv, (h * rows + r0) * dim, vv, (keyBase + c0) * dim, ds, 0, count, width, dim, false, true, 0f);
-            bool any = false;
-            for (int i = 0; i < count; i++)
-            {
-                int row = h * rows + r0 + i;
-                var (s, e) = SpanOf(sv, ev, table + r0 + i, keyRows);
-                int a = Math.Max(s, c0) - c0, b = Math.Min(e, c0 + width) - c0;
-                var pr = p.AsSpan(i * width, width);
-                var dr = ds.AsSpan(i * width, width);
-                for (int c = 0; c < width; c++)
+                for (int row = first; row < last; row++)
                 {
-                    if (c < a || c >= b)
-                    {
-                        pr[c] = 0f;
-                        dr[c] = 0f;
-                        continue;
-                    }
-
-                    float score = variant.Cap(pr[c] * scale), weight = MathF.Exp(score - lv[row]);
-                    pr[c] = weight;
-                    dr[c] = scale * weight * (dr[c] - delta[row]) * variant.Slope(score);
+                    delta[row] = Dot(gv.AsSpan(row * dim, dim), ov.AsSpan(row * dim, dim));
                 }
+            });
 
-                any |= b > a;
+            for (int t = 0; t < tables; t++)
+            {
+                for (int rb = 0; rb < rowBlocks; rb++)
+                {
+                    int r0 = rb * SpanRows;
+                    blockSpans[t * rowBlocks + rb] = BlockSpan(sv, ev, t * rows + r0, Math.Min(SpanRows, rows - r0), keyRows);
+                }
             }
 
-            return any;
-        }
-
-        // dkeys and dvalues: a worker per key/value head and block of keys, through every query head of its group.
-        For(kvHeads * keyBlocks, work, (first, last) =>
-        {
-            var p = ArrayPool<float>.Shared.Rent(SpanRows * SpanKeys);
-            var ds = ArrayPool<float>.Shared.Rent(SpanRows * SpanKeys);
-            for (int item = first; item < last; item++)
+            // dS for (head h, rows r0.., keys c0..) into `ds` [count, width], scaled by `scale`; P into `p`. False when no
+            // row of the block sees any of the keys.
+            bool Gradients(int h, int r0, int count, int c0, int width, float[] p, float[] ds)
             {
-                int g = item / keyBlocks, c0 = item % keyBlocks * SpanKeys, width = Math.Min(SpanKeys, keyRows - c0);
-                for (int h = g * group; h < (g + 1) * group; h++)
+                int table = h / headsPerTable * rows, keyBase = h / group * keyRows;
+                SpanProduct(qv, (h * rows + r0) * dim, kv, (keyBase + c0) * dim, p, 0, count, width, dim, false, true, 0f);
+                SpanProduct(gv, (h * rows + r0) * dim, vv, (keyBase + c0) * dim, ds, 0, count, width, dim, false, true, 0f);
+                bool any = false;
+                for (int i = 0; i < count; i++)
                 {
-                    for (int rb = 0; rb < rowBlocks; rb++)
+                    int row = h * rows + r0 + i;
+                    var (s, e) = SpanOf(sv, ev, table + r0 + i, keyRows);
+                    int a = Math.Max(s, c0) - c0, b = Math.Min(e, c0 + width) - c0;
+                    var pr = p.AsSpan(i * width, width);
+                    var dr = ds.AsSpan(i * width, width);
+                    for (int c = 0; c < width; c++)
                     {
-                        var (from, to) = blockSpans[h / headsPerTable * rowBlocks + rb];
-                        int r0 = rb * SpanRows, count = Math.Min(SpanRows, rows - r0);
-                        if (to <= c0 || from >= c0 + width || !Gradients(h, r0, count, c0, width, p, ds))
+                        if (c < a || c >= b)
                         {
+                            pr[c] = 0f;
+                            dr[c] = 0f;
                             continue;
                         }
 
-                        SpanProduct(p, 0, gv, (h * rows + r0) * dim, dvv, (g * keyRows + c0) * dim, width, dim, count, true, false, 1f);
-                        SpanProduct(ds, 0, qv, (h * rows + r0) * dim, dkv, (g * keyRows + c0) * dim, width, dim, count, true, false, 1f);
+                        float score = variant.Cap(pr[c] * scale), weight = MathF.Exp(score - lv[row]);
+                        pr[c] = weight;
+                        dr[c] = scale * weight * (dr[c] - delta[row]) * variant.Slope(score);
                     }
+
+                    any |= b > a;
                 }
+
+                return any;
             }
 
-            ArrayPool<float>.Shared.Return(ds);
-            ArrayPool<float>.Shared.Return(p);
-        });
-
-        // dq: a worker per query head and block of rows, through the keys its rows see.
-        For(heads * rowBlocks, work, (first, last) =>
-        {
-            var p = ArrayPool<float>.Shared.Rent(SpanRows * SpanKeys);
-            var ds = ArrayPool<float>.Shared.Rent(SpanRows * SpanKeys);
-            for (int item = first; item < last; item++)
+            // dkeys and dvalues: a worker per key/value head and block of keys, through every query head of its group.
+            For(kvHeads * keyBlocks, work, (first, last) =>
             {
-                int h = item / rowBlocks, rb = item % rowBlocks, r0 = rb * SpanRows, count = Math.Min(SpanRows, rows - r0);
-                var (from, to) = blockSpans[h / headsPerTable * rowBlocks + rb];
-                for (int c0 = from; c0 < to; c0 += SpanKeys)
+                var p = ArrayPool<float>.Shared.Rent(SpanRows * SpanKeys);
+                var ds = ArrayPool<float>.Shared.Rent(SpanRows * SpanKeys);
+                try
                 {
-                    int width = Math.Min(SpanKeys, to - c0);
-                    if (Gradients(h, r0, count, c0, width, p, ds))
+                    for (int item = first; item < last; item++)
                     {
-                        SpanProduct(ds, 0, kv, (h / group * keyRows + c0) * dim, dqv, (h * rows + r0) * dim, count, dim, width, false, false, 1f);
+                        int g = item / keyBlocks, c0 = item % keyBlocks * SpanKeys, width = Math.Min(SpanKeys, keyRows - c0);
+                        for (int h = g * group; h < (g + 1) * group; h++)
+                        {
+                            for (int rb = 0; rb < rowBlocks; rb++)
+                            {
+                                var (from, to) = blockSpans[h / headsPerTable * rowBlocks + rb];
+                                int r0 = rb * SpanRows, count = Math.Min(SpanRows, rows - r0);
+                                if (to <= c0 || from >= c0 + width || !Gradients(h, r0, count, c0, width, p, ds))
+                                {
+                                    continue;
+                                }
+
+                                SpanProduct(p, 0, gv, (h * rows + r0) * dim, dvv, (g * keyRows + c0) * dim, width, dim, count, true, false, 1f);
+                                SpanProduct(ds, 0, qv, (h * rows + r0) * dim, dkv, (g * keyRows + c0) * dim, width, dim, count, true, false, 1f);
+                            }
+                        }
                     }
                 }
-            }
+                finally
+                {
+                    ArrayPool<float>.Shared.Return(ds);
+                    ArrayPool<float>.Shared.Return(p);
+                }
+            });
 
-            ArrayPool<float>.Shared.Return(ds);
-            ArrayPool<float>.Shared.Return(p);
-        });
+            // dq: a worker per query head and block of rows, through the keys its rows see.
+            For(heads * rowBlocks, work, (first, last) =>
+            {
+                var p = ArrayPool<float>.Shared.Rent(SpanRows * SpanKeys);
+                var ds = ArrayPool<float>.Shared.Rent(SpanRows * SpanKeys);
+                try
+                {
+                    for (int item = first; item < last; item++)
+                    {
+                        int h = item / rowBlocks, rb = item % rowBlocks, r0 = rb * SpanRows, count = Math.Min(SpanRows, rows - r0);
+                        var (from, to) = blockSpans[h / headsPerTable * rowBlocks + rb];
+                        for (int c0 = from; c0 < to; c0 += SpanKeys)
+                        {
+                            int width = Math.Min(SpanKeys, to - c0);
+                            if (Gradients(h, r0, count, c0, width, p, ds))
+                            {
+                                SpanProduct(ds, 0, kv, (h / group * keyRows + c0) * dim, dqv, (h * rows + r0) * dim, count, dim, width, false, false, 1f);
+                            }
+                        }
+                    }
+                }
+                finally
+                {
+                    ArrayPool<float>.Shared.Return(ds);
+                    ArrayPool<float>.Shared.Return(p);
+                }
+            });
+        }
+        finally
+        {
+            ArrayPool<float>.Shared.Return(delta);
+            ArrayPool<(int Start, int End)>.Shared.Return(blockSpans);
+        }
     }
 }
