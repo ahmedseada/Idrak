@@ -329,36 +329,42 @@ internal sealed partial class CpuBackend
         For(heads * rowsPerHead, (long)heads * rowsPerHead * dim * Math.Max(1, position0), (first, last) =>
         {
             var scores = ArrayPool<float>.Shared.Rent(capacity);
-            for (int row = first; row < last; row++)
+            try
             {
-                int h = row / rowsPerHead, end = Math.Min(position0 + row % rowsPerHead % steps, capacity - 1) + 1;
-                int begin = variant.Start(end), count = end - begin;
-                var query = qv.AsSpan(row * dim, dim);
-                float max = float.NegativeInfinity;
-                for (int c = 0; c < count; c++)
+                for (int row = first; row < last; row++)
                 {
-                    float dot = Dot(query, kv.AsSpan((int)(((long)h * capacity + begin + c) * dim), dim));
+                    int h = row / rowsPerHead, end = Math.Min(position0 + row % rowsPerHead % steps, capacity - 1) + 1;
+                    int begin = variant.Start(end), count = end - begin;
+                    var query = qv.AsSpan(row * dim, dim);
+                    float max = float.NegativeInfinity;
+                    for (int c = 0; c < count; c++)
+                    {
+                        float dot = Dot(query, kv.AsSpan((int)(((long)h * capacity + begin + c) * dim), dim));
 
-                    scores[c] = variant.Cap(dot * scale);
-                    max = MathF.Max(max, scores[c]);
-                }
+                        scores[c] = variant.Cap(dot * scale);
+                        max = MathF.Max(max, scores[c]);
+                    }
 
-                float sum = CpuMath.ExpShifted(scores.AsSpan(0, count), max);
+                    float sum = CpuMath.ExpShifted(scores.AsSpan(0, count), max);
 
-                if (lv is not null)
-                {
-                    lv[row] = max + MathF.Log(sum);
-                }
+                    if (lv is not null)
+                    {
+                        lv[row] = max + MathF.Log(sum);
+                    }
 
-                var output = yv.AsSpan(row * dim, dim);
-                output.Clear();
-                for (int c = 0; c < count; c++)
-                {
-                    float weight = scores[c] / sum;
-                    AddScaled(output, vv.AsSpan((int)(((long)h * capacity + begin + c) * dim), dim), weight);
+                    var output = yv.AsSpan(row * dim, dim);
+                    output.Clear();
+                    for (int c = 0; c < count; c++)
+                    {
+                        float weight = scores[c] / sum;
+                        AddScaled(output, vv.AsSpan((int)(((long)h * capacity + begin + c) * dim), dim), weight);
+                    }
                 }
             }
-            ArrayPool<float>.Shared.Return(scores);
+            finally
+            {
+                ArrayPool<float>.Shared.Return(scores);
+            }
         });
     }
 
@@ -403,35 +409,41 @@ internal sealed partial class CpuBackend
         For(heads * rowsPerHead, (long)heads * rowsPerHead * dim * Math.Max(1, position0), (first, last) =>
         {
             var scores = ArrayPool<float>.Shared.Rent(capacity);
-            for (int row = first; row < last; row++)
+            try
             {
-                int h = row / rowsPerHead, t = row % rowsPerHead % steps;
-                int end = Math.Min(position0 + t, capacity - 1) + 1, begin = Math.Max((int)sv[h / headsPerRow * steps + t], variant.Start(end)), count = end - begin;
-                var output = yv.AsSpan(row * dim, dim);
-                output.Clear();
-                if (count <= 0)
+                for (int row = first; row < last; row++)
                 {
-                    continue;                                                    // padding: sees nothing
-                }
+                    int h = row / rowsPerHead, t = row % rowsPerHead % steps;
+                    int end = Math.Min(position0 + t, capacity - 1) + 1, begin = Math.Max((int)sv[h / headsPerRow * steps + t], variant.Start(end)), count = end - begin;
+                    var output = yv.AsSpan(row * dim, dim);
+                    output.Clear();
+                    if (count <= 0)
+                    {
+                        continue;                                                    // padding: sees nothing
+                    }
 
-                var query = qv.AsSpan(row * dim, dim);
-                float max = float.NegativeInfinity;
-                for (int c = 0; c < count; c++)
-                {
-                    float dot = Dot(query, kv.AsSpan((int)(((long)h * capacity + begin + c) * dim), dim));
+                    var query = qv.AsSpan(row * dim, dim);
+                    float max = float.NegativeInfinity;
+                    for (int c = 0; c < count; c++)
+                    {
+                        float dot = Dot(query, kv.AsSpan((int)(((long)h * capacity + begin + c) * dim), dim));
 
-                    scores[c] = variant.Cap(dot * scale);
-                    max = MathF.Max(max, scores[c]);
-                }
+                        scores[c] = variant.Cap(dot * scale);
+                        max = MathF.Max(max, scores[c]);
+                    }
 
-                float sum = CpuMath.ExpShifted(scores.AsSpan(0, count), max);
-                for (int c = 0; c < count; c++)
-                {
-                    float weight = scores[c] / sum;
-                    AddScaled(output, vv.AsSpan((int)(((long)h * capacity + begin + c) * dim), dim), weight);
+                    float sum = CpuMath.ExpShifted(scores.AsSpan(0, count), max);
+                    for (int c = 0; c < count; c++)
+                    {
+                        float weight = scores[c] / sum;
+                        AddScaled(output, vv.AsSpan((int)(((long)h * capacity + begin + c) * dim), dim), weight);
+                    }
                 }
             }
-            ArrayPool<float>.Shared.Return(scores);
+            finally
+            {
+                ArrayPool<float>.Shared.Return(scores);
+            }
         });
         return true;
     }
@@ -444,35 +456,41 @@ internal sealed partial class CpuBackend
         For(heads * rowsPerHead, (long)heads * rowsPerHead * dim * steps / 2, (first, last) =>
         {
             var scores = ArrayPool<float>.Shared.Rent(steps);
-            for (int row = first; row < last; row++)
+            try
             {
-                int h = row / rowsPerHead, t = row % rowsPerHead % steps, begin = Math.Max((int)sv[h / headsPerRow * steps + t], variant.Start(t + 1));
-                int count = t + 1 - begin;
-                var query = qv.AsSpan(row * dim, dim);
-                float max = float.NegativeInfinity;
-                for (int c = 0; c < count; c++)
+                for (int row = first; row < last; row++)
                 {
-                    float dot = Dot(query, kv.AsSpan((int)(((long)h * steps + begin + c) * dim), dim));
+                    int h = row / rowsPerHead, t = row % rowsPerHead % steps, begin = Math.Max((int)sv[h / headsPerRow * steps + t], variant.Start(t + 1));
+                    int count = t + 1 - begin;
+                    var query = qv.AsSpan(row * dim, dim);
+                    float max = float.NegativeInfinity;
+                    for (int c = 0; c < count; c++)
+                    {
+                        float dot = Dot(query, kv.AsSpan((int)(((long)h * steps + begin + c) * dim), dim));
 
-                    scores[c] = variant.Cap(dot * scale);
-                    max = MathF.Max(max, scores[c]);
-                }
+                        scores[c] = variant.Cap(dot * scale);
+                        max = MathF.Max(max, scores[c]);
+                    }
 
-                float sum = CpuMath.ExpShifted(scores.AsSpan(0, count), max);
-                if (lv is not null)
-                {
-                    lv[row] = max + MathF.Log(sum);
-                }
+                    float sum = CpuMath.ExpShifted(scores.AsSpan(0, count), max);
+                    if (lv is not null)
+                    {
+                        lv[row] = max + MathF.Log(sum);
+                    }
 
-                var output = yv.AsSpan(row * dim, dim);
-                output.Clear();
-                for (int c = 0; c < count; c++)
-                {
-                    float weight = scores[c] / sum;
-                    AddScaled(output, vv.AsSpan((int)(((long)h * steps + begin + c) * dim), dim), weight);
+                    var output = yv.AsSpan(row * dim, dim);
+                    output.Clear();
+                    for (int c = 0; c < count; c++)
+                    {
+                        float weight = scores[c] / sum;
+                        AddScaled(output, vv.AsSpan((int)(((long)h * steps + begin + c) * dim), dim), weight);
+                    }
                 }
             }
-            ArrayPool<float>.Shared.Return(scores);
+            finally
+            {
+                ArrayPool<float>.Shared.Return(scores);
+            }
         });
         return true;
     }
@@ -520,32 +538,38 @@ internal sealed partial class CpuBackend
             var kb = MemoryMarshal.Cast<float, sbyte>(D(keys).AsSpan());
             var vb = MemoryMarshal.Cast<float, sbyte>(D(values).AsSpan());
             var scores = ArrayPool<float>.Shared.Rent(capacity);
-            for (int row = first; row < last; row++)
+            try
             {
-                int h = row / rowsPerHead, end = Math.Min(position0 + row % rowsPerHead % steps, capacity - 1) + 1;
-                int begin = variant.Start(end), count = end - begin;
-                var query = qv.AsSpan(row * dim, dim);
-                float max = float.NegativeInfinity;
-                for (int c = 0; c < count; c++)
+                for (int row = first; row < last; row++)
                 {
-                    float dot = Dot(query, kb.Slice((h * capacity + begin + c) * stride, dim));
+                    int h = row / rowsPerHead, end = Math.Min(position0 + row % rowsPerHead % steps, capacity - 1) + 1;
+                    int begin = variant.Start(end), count = end - begin;
+                    var query = qv.AsSpan(row * dim, dim);
+                    float max = float.NegativeInfinity;
+                    for (int c = 0; c < count; c++)
+                    {
+                        float dot = Dot(query, kb.Slice((h * capacity + begin + c) * stride, dim));
 
-                    scores[c] = variant.Cap(dot * ks[h * capacity + begin + c] * scale);
-                    max = MathF.Max(max, scores[c]);
+                        scores[c] = variant.Cap(dot * ks[h * capacity + begin + c] * scale);
+                        max = MathF.Max(max, scores[c]);
+                    }
+
+                    float sum = CpuMath.ExpShifted(scores.AsSpan(0, count), max);
+
+                    var output = yv.AsSpan(row * dim, dim);
+                    output.Clear();
+                    for (int c = 0; c < count; c++)
+                    {
+                        float weight = scores[c] / sum * vs[h * capacity + begin + c];
+                        AddScaled(output, vb.Slice((h * capacity + begin + c) * stride, dim), weight);
+                    }
+
                 }
-
-                float sum = CpuMath.ExpShifted(scores.AsSpan(0, count), max);
-
-                var output = yv.AsSpan(row * dim, dim);
-                output.Clear();
-                for (int c = 0; c < count; c++)
-                {
-                    float weight = scores[c] / sum * vs[h * capacity + begin + c];
-                    AddScaled(output, vb.Slice((h * capacity + begin + c) * stride, dim), weight);
-                }
-
             }
-            ArrayPool<float>.Shared.Return(scores);
+            finally
+            {
+                ArrayPool<float>.Shared.Return(scores);
+            }
         });
     }
 

@@ -62,43 +62,62 @@ internal sealed partial class CpuBackend
         float[] xv = D(x), yv = D(y);
         For(rows, (long)rows * cols * 8, (start, end) =>
         {
-            for (int r = start; r < end; r++)
+            float[]? scratch = null;                                       // in place: one pooled row for the worker's rows
+            try
             {
-                var xs = xv.AsSpan(r * cols, cols);
-                var ys = yv.AsSpan(r * cols, cols);
-                float max = CpuMath.Max(xs);
-                if (log && xs.Overlaps(ys))
+                for (int r = start; r < end; r++)
                 {
-                    // In place: the exponentials go to scratch, so the log-probabilities still read the inputs.
-                    var scratch = System.Buffers.ArrayPool<float>.Shared.Rent(cols);
-                    xs.CopyTo(scratch);
-                    float inPlace = (float)Math.Log(CpuMath.ExpShifted(scratch.AsSpan(0, cols), max)) + max;
-                    System.Buffers.ArrayPool<float>.Shared.Return(scratch);
-                    for (int j = 0; j < cols; j++)
+                    var xs = xv.AsSpan(r * cols, cols);
+                    var ys = yv.AsSpan(r * cols, cols);
+                    float max = CpuMath.Max(xs);
+                    if (log && xs.Overlaps(ys))
                     {
-                        ys[j] = xs[j] - inPlace;
+                        // In place: the exponentials go to scratch, so the log-probabilities still read the inputs.
+                        scratch ??= ArrayPool<float>.Shared.Rent(cols);
+                        xs.CopyTo(scratch);
+                        float inPlace = (float)Math.Log(CpuMath.ExpShifted(scratch.AsSpan(0, cols), max)) + max;
+                        Shift(xs, ys, inPlace);
+                        continue;
                     }
 
-                    continue;
-                }
+                    xs.CopyTo(ys);
+                    double sum = CpuMath.ExpShifted(ys, max);
 
-                xs.CopyTo(ys);
-                double sum = CpuMath.ExpShifted(ys, max);
-
-                if (log)
-                {
-                    float logSum = (float)Math.Log(sum) + max;
-                    for (int j = 0; j < cols; j++)
+                    if (log)
                     {
-                        ys[j] = xs[j] - logSum;
+                        Shift(xs, ys, (float)Math.Log(sum) + max);
+                    }
+                    else
+                    {
+                        CpuMath.Scale(ys, (float)(1.0 / sum));
                     }
                 }
-                else
+            }
+            finally
+            {
+                if (scratch is not null)
                 {
-                    CpuMath.Scale(ys, (float)(1.0 / sum));
+                    ArrayPool<float>.Shared.Return(scratch);
                 }
             }
         });
+    }
+
+    // y = x - shift, whole vectors then the rest (in place too: each value is read before it is written).
+    private static void Shift(ReadOnlySpan<float> x, Span<float> y, float shift)
+    {
+        var xv = MemoryMarshal.Cast<float, Vector<float>>(x);
+        var yv = MemoryMarshal.Cast<float, Vector<float>>(y);
+        var s = new Vector<float>(shift);
+        for (int i = 0; i < xv.Length; i++)
+        {
+            yv[i] = xv[i] - s;
+        }
+
+        for (int i = xv.Length * Vector<float>.Count; i < x.Length; i++)
+        {
+            y[i] = x[i] - shift;
+        }
     }
 
     public override void SoftmaxBackwardKernel(Storage y, Storage dy, Storage dx, int rows, int cols, bool log)
