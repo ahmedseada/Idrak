@@ -21,6 +21,8 @@ These are the owner's standing rules. They hold in every session, after every co
 - **Tests.** Never run the full test suite, anywhere, by anyone but the owner. Only targeted runs: always
   `IDRAK_DEVICES=cpu` with an `IDRAK_FILTER` group or name for the code changed (sample test projects with their own
   filter). GPU tests, apps and training runs are the owner's: give the exact commands.
+- **Fix all, then test once.** Make every fix of a task first; never run tests after individual fixes. When all are
+  written: one build, then the targeted filtered tests once with `--no-build`.
 - **Builds.** Build only after a code change, and only the projects that changed; then run every filtered CPU test
   with `--no-build` on that one build. A merge without conflicts gets no build and no tests (its branch was built and
   tested already). At most two agents at a time, so builds do not compete for the machine.
