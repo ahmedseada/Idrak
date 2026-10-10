@@ -658,6 +658,7 @@ public abstract class Idrak.Layers.Abstractions.RecurrentModule : Idrak.Abstract
   protected override void MoveTo(Idrak.Abstraction.Device device)
   protected sealed override Idrak.Abstraction.Tensor ForwardCore(Idrak.Abstraction.Tensor input)
   protected string Options { get; }
+  protected virtual Idrak.Abstraction.Tensor? Sequence(Idrak.Abstraction.Tensor projected, Idrak.Layers.Abstractions.RecurrentWeights weights, bool reverse)
   protected virtual bool ScalesLastHiddenBias { get; }
   protected virtual float[] InitialBias(int gates, int hiddenSize)
   public Idrak.Abstraction.Tensor Bias { get; }
