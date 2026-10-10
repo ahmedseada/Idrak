@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Globalization;
 using System.Text;
 using Idrak.Data;
 using Idrak.Data.Abstractions;
@@ -35,11 +36,14 @@ internal static class Pgm
     public static void Write(string path, float[] pixels, int width, int height, bool inkIsDark = true)
     {
         using var stream = File.Create(path);
-        stream.Write(Encoding.ASCII.GetBytes($"P5\n{width} {height}\n255\n"));
-        foreach (float v in pixels)
+        stream.Write(Encoding.ASCII.GetBytes(string.Create(CultureInfo.InvariantCulture, $"P5\n{width} {height}\n255\n")));
+        var bytes = new byte[pixels.Length];                                              // one write, not a call a pixel
+        for (int i = 0; i < pixels.Length; i++)
         {
-            int value = Math.Clamp((int)MathF.Round(v * 255), 0, 255);
-            stream.WriteByte((byte)(inkIsDark ? 255 - value : value));
+            int value = Math.Clamp((int)MathF.Round(pixels[i] * 255), 0, 255);
+            bytes[i] = (byte)(inkIsDark ? 255 - value : value);
         }
+
+        stream.Write(bytes);
     }
 }

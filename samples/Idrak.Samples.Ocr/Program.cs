@@ -128,7 +128,7 @@ void MeasureLines()
     for (int i = 0; i < Lines; i++)
     {
         string truth = string.Join(' ', Enumerable.Range(0, random.Next(2, 5)).Select(_ => random.Next(4) == 0
-            ? random.Next(10, 99999).ToString()
+            ? random.Next(10, 99999).ToString(System.Globalization.CultureInfo.InvariantCulture)
             : words[random.Next(words.Length)]));
         var (pixels, width) = Renderer.RenderLine(truth, random);
         string read = Read(pixels, width, Cell);
@@ -233,16 +233,16 @@ static void Preview(float[] pixels, int width, int height)
 static int EditDistance(string a, string b)
 {
     var previous = Enumerable.Range(0, b.Length + 1).ToArray();
+    var current = new int[b.Length + 1];                                                 // two rows, swapped: none made a character
     for (int i = 1; i <= a.Length; i++)
     {
-        var current = new int[b.Length + 1];
         current[0] = i;
         for (int j = 1; j <= b.Length; j++)
         {
             current[j] = Math.Min(Math.Min(current[j - 1] + 1, previous[j] + 1), previous[j - 1] + (a[i - 1] == b[j - 1] ? 0 : 1));
         }
 
-        previous = current;
+        (previous, current) = (current, previous);
     }
 
     return previous[b.Length];

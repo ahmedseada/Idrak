@@ -27,6 +27,12 @@ public sealed class TownTokenizer(WordTokenizer words, int placeholders, int has
 
     public WordTokenizer Words { get; } = words;
 
+    // The ids Encode gives, looked up once (the vocabulary does not change): no string made a token.
+    private readonly int _number = words["<num>"], _unknown = words["<unk>"];
+    private readonly int[] _digits = [.. Enumerable.Range(0, 10).Select(d => words[d.ToString(System.Globalization.CultureInfo.InvariantCulture)])];
+    private readonly int[] _buckets = [.. Enumerable.Range(0, Math.Max(0, hashBuckets)).Select(b => words[string.Create(System.Globalization.CultureInfo.InvariantCulture, $"<h{b}>")])];
+    private readonly int[] _placeholders = [.. Enumerable.Range(0, Math.Max(0, placeholders)).Select(k => words[string.Create(System.Globalization.CultureInfo.InvariantCulture, $"<w{k}>")])];
+
     public int VocabularySize => Words.VocabularySize;
 
     public static string[] Placeholders(int count) => [.. Enumerable.Range(0, count).Select(i => $"<w{i}>")];
@@ -42,24 +48,27 @@ public sealed class TownTokenizer(WordTokenizer words, int placeholders, int has
         {
             if (word.All(char.IsAsciiDigit))
             {
-                ids.Add(Words["<num>"]);
-                ids.AddRange(word.Select(d => Words[d.ToString()]));
+                ids.Add(_number);
+                foreach (char d in word)
+                {
+                    ids.Add(_digits[d - '0']);
+                }
             }
-            else if (Words[word] != Words["<unk>"])
+            else if (Words[word] is var id && id != _unknown)
             {
-                ids.Add(Words[word]);
+                ids.Add(id);
             }
-            else if (hashBuckets > 0)
+            else if (_buckets.Length > 0)
             {
-                ids.Add(Words[$"<h{Hash(word) % (uint)hashBuckets}>"]);
+                ids.Add(_buckets[Hash(word) % (uint)_buckets.Length]);
             }
-            else if (seen.TryGetValue(word, out int k) || seen.Count < placeholders)
+            else if (seen.TryGetValue(word, out int k) || seen.Count < _placeholders.Length)
             {
-                ids.Add(Words[$"<w{(seen.TryGetValue(word, out k) ? k : seen[word] = seen.Count)}>"]);
+                ids.Add(_placeholders[seen.TryGetValue(word, out k) ? k : seen[word] = seen.Count]);
             }
             else
             {
-                ids.Add(Words["<unk>"]);
+                ids.Add(_unknown);
             }
         }
 
