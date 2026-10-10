@@ -39,7 +39,8 @@ internal sealed partial class VulkanBackend
         }
 
         bool lse = logSumExp is not null;
-        Storage[] storages = lse ? [q, keys, values, position, y, logSumExp!] : [q, keys, values, position, y];
+        Span<Storage> all = [q, keys, values, position, y, logSumExp ?? y];
+        var storages = lse ? all : all[..5];
         int fallback = WithWidth(Width, TiledKernel);
         int choice;
         if (TiledAttentionKernel is bool forced)
@@ -58,7 +59,7 @@ internal sealed partial class VulkanBackend
                 choice = fallback;
                 if (Autotune && !t_timing)
                 {
-                    choice = TuneTiledAttention(key, storages, fallback, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+                    choice = TuneTiledAttention(key, storages.ToArray(), fallback, heads, rowsPerHead, steps, capacity, dim, scale, variant);
                 }
             }
         }
@@ -112,12 +113,12 @@ internal sealed partial class VulkanBackend
 
     // Runs attention for many rows with `choice`: the decoding kernel, or the tiled kernel at its width (a workgroup per
     // block of TiledAttentionRows rows of a head, at most what the device takes; the kernel loops over the rest).
-    private void RunTiledAttention(int choice, Storage[] storages, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale,
+    private void RunTiledAttention(int choice, Span<Storage> storages, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale,
         AttentionVariant variant)
     {
         if ((choice & Rest) == TiledDecode)
         {
-            Attend("attention_decode", 0, storages.AsSpan(0, 5), heads, rowsPerHead, steps, capacity, dim, scale, variant);
+            Attend("attention_decode", 0, storages[..5], heads, rowsPerHead, steps, capacity, dim, scale, variant);
             return;
         }
 
@@ -198,22 +199,32 @@ internal sealed partial class VulkanBackend
             return choice;
         }
 
+        return MeasureMixedPrompt(key, choice, mixed, format, x, weights, scales, y, m, n, k) == 1 ? mixed : choice;
+    }
+
+    // Measures the float32 choice (0) against the reduced-precision kernel (1) on a scratch output, apart from
+    // PromptChoice so its usual calls make no closure.
+    private int MeasureMixedPrompt(VulkanTuneKey key, int choice, int mixed, VulkanKernels.PackedFormat format, Storage x, Storage weights, Storage? scales,
+        Storage y, int m, int n, int k)
+    {
+        int decided = 0;
         WithScratch([y.Length], scratch =>
             decided = Tune(key, [0, 1], 0, c => RunPrompt(c == 1 ? mixed : choice, format, x, weights, scales, scratch[0], m, n, k)));
-        return decided == 1 ? mixed : choice;
+        return decided;
     }
 
     // PromptChoice as float32 products choose it (the reduced-precision kernel aside).
     private int Float32PromptChoice(VulkanKernels.PackedFormat format, Storage x, Storage weights, Storage? scales, Storage y, int m, int n, int k)
     {
-        var candidates = PromptCandidates(format, m, n, k);
+        Span<int> buffer = stackalloc int[PromptCandidatesMost];
+        var candidates = PromptCandidates(format, m, n, k, buffer);
         if (candidates.Length == 0)
         {
             return 0;
         }
 
-        int fallback = Array.IndexOf(candidates, WithWidth(Width, PromptFewRows)) >= 0 ? WithWidth(Width, PromptFewRows)
-            : Array.IndexOf(candidates, WithWidth(Width, PromptTiled)) >= 0 ? WithWidth(Width, PromptTiled) : candidates[0];
+        int fallback = candidates.IndexOf(WithWidth(Width, PromptFewRows)) >= 0 ? WithWidth(Width, PromptFewRows)
+            : candidates.IndexOf(WithWidth(Width, PromptTiled)) >= 0 ? WithWidth(Width, PromptTiled) : candidates[0];
         if (PackedPromptKernel is int forced)
         {
             if (forced == 4)
@@ -222,11 +233,11 @@ internal sealed partial class VulkanBackend
             }
 
             int wanted = WithWidth(Width, forced switch { 0 => PromptFewRows, 1 => PromptExpand, 2 => PromptTiled, _ => PromptCoop });
-            return Array.IndexOf(candidates, wanted) >= 0 ? wanted : fallback;
+            return candidates.IndexOf(wanted) >= 0 ? wanted : fallback;
         }
 
         var key = new VulkanTuneKey(VulkanTuneOp.PackedPrompt, (int)format, m, n, k);
-        if (TryTuned(key, out int choice) && Array.IndexOf(candidates, choice) >= 0)
+        if (TryTuned(key, out int choice) && candidates.IndexOf(choice) >= 0)
         {
             return choice;
         }
@@ -236,8 +247,16 @@ internal sealed partial class VulkanBackend
             return fallback;
         }
 
-        // The other paths' own choices (k splits, product kernels) are settled first, outside the timing; every
-        // candidate writes a scratch output.
+        return MeasurePrompt(key, candidates.ToArray(), fallback, format, x, weights, scales, y, m, n, k);
+    }
+
+    // Measures a prompt-sized packed product's candidates, apart from Float32PromptChoice so its usual calls make no
+    // closure. The other paths' own choices (k splits, product kernels) are settled first, outside the timing; every
+    // candidate writes a scratch output.
+    private int MeasurePrompt(VulkanTuneKey key, int[] candidates, int fallback, VulkanKernels.PackedFormat format, Storage x, Storage weights, Storage? scales,
+        Storage y, int m, int n, int k)
+    {
+        int choice = fallback;
         WithScratch([y.Length], scratch =>
         {
             foreach (int c in candidates)
@@ -255,36 +274,59 @@ internal sealed partial class VulkanBackend
 
     // Candidates of a prompt-sized packed product that can run here: the tiled kernel at each candidate width whose
     // blocks the device's workgroup counts take, the few-rows kernels when their row blocks fit, expanding the weights
-    // when a float copy fits one storage, the cooperative-matrix kernel where the device has one and its blocks fit.
-    private int[] PromptCandidates(VulkanKernels.PackedFormat format, int m, int n, int k)
+    // when a float copy fits one storage, the cooperative-matrix kernel where the device has one and its blocks fit;
+    // written to `into` (PromptCandidatesMost long).
+    private ReadOnlySpan<int> PromptCandidates(VulkanKernels.PackedFormat format, int m, int n, int k, Span<int> into)
     {
-        var candidates = new List<int>();
+        int count = 0;
         foreach (int width in CandidateWidths)
         {
             int edge = VulkanKernels.PackedGemmEdge(width);
             if ((n + edge - 1) / edge <= Limits.MaxGroupsX && (m + edge - 1) / edge <= Limits.MaxGroupsY)
             {
-                candidates.Add(WithWidth(width, PromptTiled));
+                into[count++] = WithWidth(width, PromptTiled);
             }
         }
 
-        if ((m + 7) / 8 <= Limits.MaxGroupsZ && GemvCandidates(VulkanKernels.ColumnsPerWord(format), n, 1).Length > 0)
+        if ((m + 7) / 8 <= Limits.MaxGroupsZ && AnyGemv(VulkanKernels.ColumnsPerWord(format), n))
         {
-            candidates.Add(WithWidth(Width, PromptFewRows));
+            into[count++] = WithWidth(Width, PromptFewRows);
         }
 
         if ((long)k * n <= int.MaxValue && BlockBytes(k * n) <= MaxStorageBytes)
         {
-            candidates.Add(WithWidth(Width, PromptExpand));
+            into[count++] = WithWidth(Width, PromptExpand);
         }
 
         const int Block = VulkanKernels.CoopBlock;
         if ((n + Block - 1) / Block <= Limits.MaxGroupsX && (m + Block - 1) / Block <= Limits.MaxGroupsY && CoopKernel(format) is not null)
         {
-            candidates.Add(WithWidth(Width, PromptCoop));
+            into[count++] = WithWidth(Width, PromptCoop);
         }
 
-        return [.. candidates];
+        return into[..count];
+    }
+
+    // Candidates of a prompt-sized packed product at most: the tiled kernel at each candidate width (at most three:
+    // CandidateWidths), the few-rows kernels, expanding the weights, the cooperative-matrix kernel.
+    private const int PromptCandidatesMost = 3 + 3;
+
+    // Whether a packed product of n columns has a variant without splits that runs here (GemvCandidates(perWord, n, 1)
+    // is not empty), without building them.
+    private bool AnyGemv(int perWord, int n)
+    {
+        foreach (int width in CandidateWidths)
+        {
+            for (int v = 0; v < VulkanKernels.GemvWordCounts.Length; v++)
+            {
+                if (GemvValid(WithWidth(width, 8 + v), perWord, n))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     // Runs a prompt-sized packed product with `choice`; false when the few-rows kernels cannot take it.
