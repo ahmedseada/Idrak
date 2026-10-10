@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Buffers;
 using System.Text;
 using Idrak.Generation;
 using Idrak.Layers;
@@ -54,38 +55,48 @@ internal static class TopKLogits
     // entries below `vocabulary`.
     internal static Tensor Dense(int[] ids, float[] logits, int k, int start, int count, float temperature, int vocabulary, Device device)
     {
-        var values = new float[count * vocabulary];
-        for (int r = 0; r < count; r++)
+        // The rows are built in a pooled buffer (cleared: every entry not in a row's top k is 0), uploaded, and returned in finally.
+        int size = count * vocabulary;
+        float[] values = ArrayPool<float>.Shared.Rent(Math.Max(size, 1));
+        try
         {
-            int at = (start + r) * k;
-            float max = float.NegativeInfinity;
-            for (int j = 0; j < k; j++)
+            values.AsSpan(0, size).Clear();
+            for (int r = 0; r < count; r++)
             {
-                if (ids[at + j] < vocabulary && logits[at + j] > max)
+                int at = (start + r) * k;
+                float max = float.NegativeInfinity;
+                for (int j = 0; j < k; j++)
                 {
-                    max = logits[at + j];
+                    if (ids[at + j] < vocabulary && logits[at + j] > max)
+                    {
+                        max = logits[at + j];
+                    }
+                }
+
+                double sum = 0;
+                for (int j = 0; j < k; j++)
+                {
+                    if (ids[at + j] < vocabulary)
+                    {
+                        sum += Math.Exp((logits[at + j] - max) / temperature);
+                    }
+                }
+
+                for (int j = 0; j < k; j++)
+                {
+                    if (ids[at + j] < vocabulary)
+                    {
+                        values[r * vocabulary + ids[at + j]] += (float)(Math.Exp((logits[at + j] - max) / temperature) / sum);
+                    }
                 }
             }
 
-            double sum = 0;
-            for (int j = 0; j < k; j++)
-            {
-                if (ids[at + j] < vocabulary)
-                {
-                    sum += Math.Exp((logits[at + j] - max) / temperature);
-                }
-            }
-
-            for (int j = 0; j < k; j++)
-            {
-                if (ids[at + j] < vocabulary)
-                {
-                    values[r * vocabulary + ids[at + j]] += (float)(Math.Exp((logits[at + j] - max) / temperature) / sum);
-                }
-            }
+            return Tensor.From(values.AsSpan(0, size), [count, vocabulary], device);
         }
-
-        return Tensor.From(values, [count, vocabulary], device);
+        finally
+        {
+            ArrayPool<float>.Shared.Return(values);
+        }
     }
 
     // The k largest values of a row, largest first, with their indices.
@@ -118,6 +129,7 @@ internal static class TopKLogits
 internal sealed class ModelTeacher(PretrainedModel model, int topK, int batchTokens) : DistillationTeacher
 {
     private string? _fingerprint;
+    private Linear? _head;
 
     public override int Vocabulary => model.Spec.Vocabulary;
 
@@ -228,8 +240,8 @@ internal sealed class ModelTeacher(PretrainedModel model, int topK, int batchTok
     private Tensor Logits(Tensor hidden, int start, int count)
     {
         using var noGrad = Autograd.NoGrad();
-        var head = (Linear)model.Network.ToList()[^1];
-        return head.Forward(hidden.Narrow(0, start, count));
+        _head ??= (Linear)model.Network.ToList()[^1];                           // found once, not per chunk
+        return _head.Forward(hidden.Narrow(0, start, count));
     }
 
     // The k largest logits (and their ids) of every trained position, for storing.
@@ -246,11 +258,20 @@ internal sealed class ModelTeacher(PretrainedModel model, int topK, int batchTok
         {
             int n = Math.Min(chunk, rows - r0);
             using var inner = new TensorScope();
-            var values = Logits(hidden, r0, n).ToArray();
-            int width = values.Length / n;
-            for (int r = 0; r < n; r++)
+            var chunkLogits = Logits(hidden, r0, n);
+            int size = chunkLogits.Size, width = size / n;
+            float[] values = ArrayPool<float>.Shared.Rent(size);                  // one chunk's logits, returned in finally
+            try
             {
-                TopKLogits.Top(values.AsSpan(r * width, width), k, ids.AsSpan((r0 + r) * k, k), logits.AsSpan((r0 + r) * k, k));
+                chunkLogits.CopyTo(values.AsSpan(0, size));
+                for (int r = 0; r < n; r++)
+                {
+                    TopKLogits.Top(values.AsSpan(r * width, width), k, ids.AsSpan((r0 + r) * k, k), logits.AsSpan((r0 + r) * k, k));
+                }
+            }
+            finally
+            {
+                ArrayPool<float>.Shared.Return(values);
             }
         }
 
@@ -268,13 +289,21 @@ internal sealed class ModelTeacher(PretrainedModel model, int topK, int batchTok
                 int width = logits.Shape[^1];
                 if (teacher.TopK > 0 && teacher.TopK < width)
                 {
-                    var values = logits.ToArray();
-                    int k = teacher.TopK;
+                    int k = teacher.TopK, size = logits.Size;
                     var ids = new int[count * k];
                     var top = new float[count * k];
-                    for (int r = 0; r < count; r++)
+                    float[] values = ArrayPool<float>.Shared.Rent(size);          // the logits, returned in finally
+                    try
                     {
-                        TopKLogits.Top(values.AsSpan(r * width, width), k, ids.AsSpan(r * k, k), top.AsSpan(r * k, k));
+                        logits.CopyTo(values.AsSpan(0, size));
+                        for (int r = 0; r < count; r++)
+                        {
+                            TopKLogits.Top(values.AsSpan(r * width, width), k, ids.AsSpan(r * k, k), top.AsSpan(r * k, k));
+                        }
+                    }
+                    finally
+                    {
+                        ArrayPool<float>.Shared.Return(values);
                     }
 
                     return scope.Keep(TopKLogits.Dense(ids, top, k, 0, count, temperature, vocabulary, device));
