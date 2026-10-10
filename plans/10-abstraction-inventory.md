@@ -48,7 +48,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Data.ImageCodecs` | registry | public | — |  | bmp, jpeg, netpbm, png | Data, Idrak, Vision | Abstraction |
 | `Idrak.Abstraction.Data.ImageTransforms` | registry | public | — |  | autocontrast, brightness, contrast, grayscale, jpeg, max_height, max_width, sharpness | Abstraction, AspNetCore, Idrak, Mcp, Nlp | Abstraction |
 | `Idrak.Abstraction.Devices.Backend` | abstract class | public | Storage | CpuBackend, CudaBackend, HipBackend, VulkanBackend |  | Abstraction, AspNetCore, Data, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
-| `Idrak.Abstraction.Devices.Cpu.CpuBackend.IRangeKernel` | interface | internal | — | CpuBackend.AbsBackwardLoop, CpuBackend.AbsLoop, CpuBackend.AdamLoop, CpuBackend.AddLoop, CpuBackend.AffineLoop, CpuBackend.AxpyLoop, +29 |  | Abstraction, AspNetCore, Data, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
+| `Idrak.Abstraction.Devices.Cpu.CpuBackend.IRangeKernel` | interface | internal | — | CpuBackend.AbsBackwardLoop, CpuBackend.AbsLoop, CpuBackend.AdamLoop, CpuBackend.AddLoop, CpuBackend.AffineLoop, CpuBackend.AxpyLoop, +33 |  | Abstraction, AspNetCore, Data, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
 | `Idrak.Abstraction.Devices.DeviceProvider` | abstract class | public | Backend | HipProvider, LibraryRegistrations.CudaProvider, VulkanProvider |  | Abstraction, AspNetCore, Data, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
 | `Idrak.Abstraction.Devices.DeviceProviders` | registry | public | — |  | — | Abstraction, AspNetCore, Data, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
 | `Idrak.Abstraction.Devices.IBackwardStaging` | interface | public | — | Offloading.BackwardStaging |  | Abstraction, AspNetCore, Data, Gpu, Idrak, Mcp, Nlp, Onnx.Runtime, Vision | Abstraction |
@@ -187,16 +187,16 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 
 ## The device contract (`Backend`)
 
-`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 148 virtual methods, 6 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `HipBackend`, `VulkanBackend`. Each
-operation (130, `Ops`) is a `NameKernel` method, the device's own kernel; `Backend.Name(...)` runs the kernel registered
+`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 152 virtual methods, 6 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `HipBackend`, `VulkanBackend`. Each
+operation (134, `Ops`) is a `NameKernel` method, the device's own kernel; `Backend.Name(...)` runs the kernel registered
 for the device in `Kernels` instead, where there is one (plan 9). The rest is device plumbing: memory, copies, graphs, profiling.
 
 | Device | Methods overridden |
 |---|---|
-| `CpuBackend` | 126 of 158 |
-| `CudaBackend` | 146 of 158 |
-| `HipBackend` | 23 of 158 |
-| `VulkanBackend` | 128 of 158 |
+| `CpuBackend` | 130 of 162 |
+| `CudaBackend` | 150 of 162 |
+| `HipBackend` | 23 of 162 |
+| `VulkanBackend` | 128 of 162 |
 
 | Operation | Kind | Cpu | Cuda | Hip | Vulkan |
 |---|---|---|---|---|---|
@@ -282,6 +282,8 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `GetMemoryUsage(0)` | abstract | ✓ | ✓ | ✓ | ✓ |
 | `GroupReduceKernel(7)` | virtual | ✓ | ✓ |  | ✓ |
 | `GroupScaleShiftKernel(8)` | virtual | ✓ | ✓ |  | ✓ |
+| `GruCellBackwardKernel(12)` | virtual | ✓ | ✓ |  |  |
+| `GruCellKernel(10)` | virtual | ✓ | ✓ |  |  |
 | `HistoryPushKernel(5)` | virtual | ✓ | ✓ |  | ✓ |
 | `Im2ColKernel(3)` | virtual | ✓ | ✓ |  | ✓ |
 | `Int4DequantizeKernel(5)` | virtual | ✓ | ✓ |  | ✓ |
@@ -297,6 +299,8 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `LayerNormBackwardKernel(9)` | virtual | ✓ | ✓ |  | ✓ |
 | `LayerNormFusedKernel(7)` | virtual | ✓ | ✓ |  | ✓ |
 | `LayerNormTrainKernel(8)` | virtual | ✓ | ✓ |  | ✓ |
+| `LstmCellBackwardKernel(12)` | virtual | ✓ | ✓ |  |  |
+| `LstmCellKernel(11)` | virtual | ✓ | ✓ |  |  |
 | `MatMulBiasKernel(7)` | virtual |  | ✓ |  | ✓ |
 | `MatMulLowRankKernel(11)` | virtual |  | ✓ |  |  |
 | `MatMulManyKernel(4)` | virtual |  | ✓ |  |  |
