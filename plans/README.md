@@ -22,11 +22,12 @@ Decisions and hardware checks waiting for the maintainer: [open-questions.md](op
 One command-line tool for everything (`idrak doctor`, `chat`, `serve`, `bench`, ...): [idrak-cli.md](idrak-cli.md).
 Images into language models, Gemma 3 first (to run Arabic document OCR models such as
 `bakrianoo/arabic-legal-documents-ocr-1.0`; planned, after plan 10's wave 4): [11-vision-language.md](11-vision-language.md).
-Fine-tuning vision-language models (images in `FineTuner` and `idrak tune`, families as plug-ins; planned):
+Fine-tuning vision-language models (images in `FineTuner` and `idrak tune`, families as plug-ins; built, CPU-checked):
 [12-vision-tuning.md](12-vision-tuning.md).
 `Idrak.Vision` as general image building blocks, fast on every device (convolution kernels, backbone layers, CTC,
 detection and segmentation training, augmentation, image model families as plug-ins; OCR is an application on top;
-planned): [13-vision.md](13-vision.md).
+built, CPU-checked): [13-vision.md](13-vision.md).
+GPU runs left for the owner after plans 12 and 13 (one PowerShell list): [gpu-checks.md](gpu-checks.md).
 
 ## Not supported yet
 
