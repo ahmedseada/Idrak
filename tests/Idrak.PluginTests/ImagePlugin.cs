@@ -11,12 +11,16 @@ namespace Idrak.PluginTests;
 /// <summary>
 /// This assembly as a command-line plug-in for image models (<c>idrak predict -P</c>, <c>idrak train -P</c>, plan 13 step 7):
 /// <see cref="RegisterIdrakPlugin"/> registers the two families of <see cref="ImageFamilyPluginTests"/>, an ONNX segmenter
-/// family, the grid detector's decoder and its training head. The library registers none of them.
+/// family, an ONNX backbone family (features), the grid detector's decoder and its training head. The library registers
+/// none of them.
 /// </summary>
 public static class ImageFamilyPlugin
 {
     /// <summary>The segmenter family's architecture name.</summary>
     public const string Segmenter = "OutsideOnnxSegmenter";
+
+    /// <summary>The backbone family's architecture name.</summary>
+    public const string Backbone = "OutsideOnnxBackbone";
 
     /// <summary>Registers the families, the decoder and the head (what <c>-P</c> runs after loading the assembly).</summary>
     public static void RegisterIdrakPlugin()
@@ -24,6 +28,7 @@ public static class ImageFamilyPlugin
         ImageModelFamilies.Register(new TinyResNetFamily());
         ImageModelFamilies.Register(new GridDetectorFamily());
         ImageModelFamilies.Register(new OnnxSegmenterFamily());
+        ImageModelFamilies.Register(new OnnxBackboneFamily());
         DetectionDecoders.Register(ImageFamilyPluginTests.Decoder, GridDecoder.Create);
         DetectionHeads.Register(ImageFamilyPluginTests.Decoder, GridHead.Create);
     }
@@ -34,6 +39,7 @@ public static class ImageFamilyPlugin
         ImageModelFamilies.Unregister(ImageFamilyPluginTests.Classifier);
         ImageModelFamilies.Unregister(ImageFamilyPluginTests.Detector);
         ImageModelFamilies.Unregister(Segmenter);
+        ImageModelFamilies.Unregister(Backbone);
         DetectionDecoders.Unregister(ImageFamilyPluginTests.Decoder);
         DetectionHeads.Unregister(ImageFamilyPluginTests.Decoder);
     }
@@ -50,7 +56,10 @@ public sealed class OnnxSegmenterFamily : IImageModelFamily
     public string Name => ImageFamilyPlugin.Segmenter;
 
     /// <inheritdoc />
-    public ImageModel Read(ImageCheckpoint checkpoint)
+    public ImageModel Read(ImageCheckpoint checkpoint) => Describe(checkpoint, ImageTask.Segmentation);
+
+    // An ONNX network over images resized to config.json's image_size, for the task given.
+    internal static ImageModel Describe(ImageCheckpoint checkpoint, ImageTask task)
     {
         ArgumentNullException.ThrowIfNull(checkpoint);
         var size = checkpoint.Config["image_size"]?.AsArray() ?? throw new InvalidDataException("config.json has no image_size [height, width].");
@@ -64,13 +73,26 @@ public sealed class OnnxSegmenterFamily : IImageModelFamily
         return new ImageModel
         {
             Architecture = checkpoint.Architecture,
-            Task = ImageTask.Segmentation,
+            Task = task,
             Network = network.Model,
             Preprocessor = preprocessor,
             Channels = channels,
             Labels = labels,
         };
     }
+}
+
+/// <summary>
+/// A backbone family read from ONNX (<see cref="ImageTask.Features"/>): the network's outputs are the image's features;
+/// config.json as <see cref="OnnxSegmenterFamily"/> reads it (no labels needed).
+/// </summary>
+public sealed class OnnxBackboneFamily : IImageModelFamily
+{
+    /// <inheritdoc />
+    public string Name => ImageFamilyPlugin.Backbone;
+
+    /// <inheritdoc />
+    public ImageModel Read(ImageCheckpoint checkpoint) => OnnxSegmenterFamily.Describe(checkpoint, ImageTask.Features);
 }
 
 /// <summary>
