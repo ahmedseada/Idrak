@@ -249,6 +249,7 @@ public static class Idrak.Data.PillowImageOps
   public static Idrak.Abstraction.Data.ImageData Autocontrast(Idrak.Abstraction.Data.ImageData image, double cutoffLow = 0, double cutoffHigh = 0, int? ignore = null, bool preserveTone = false)
   public static Idrak.Abstraction.Data.ImageData Brightness(Idrak.Abstraction.Data.ImageData image, double factor)
   public static Idrak.Abstraction.Data.ImageData Contrast(Idrak.Abstraction.Data.ImageData image, double factor)
+  public static Idrak.Abstraction.Data.ImageData Invert(Idrak.Abstraction.Data.ImageData image)
   public static Idrak.Abstraction.Data.ImageData JpegRoundTrip(Idrak.Abstraction.Data.ImageData image, int quality, Idrak.Data.JpegSubsampling subsampling = (Idrak.Data.JpegSubsampling)0)
   public static Idrak.Abstraction.Data.ImageData Resize(Idrak.Abstraction.Data.ImageData image, int width, int height, Idrak.Data.ImageResampling resampling = (Idrak.Data.ImageResampling)1)
   public static Idrak.Abstraction.Data.ImageData ScaleDown(Idrak.Abstraction.Data.ImageData image, int maxWidth, int maxHeight, Idrak.Data.ImageResampling resampling = (Idrak.Data.ImageResampling)1)

@@ -124,7 +124,10 @@ def main() -> None:
         "jpeg=95",
         "grayscale,jpeg=95",
     ]
+    # Appended after the first cases, so their outputs keep their numbers.
+    pipelines_invert = ["invert", "grayscale,invert", "invert,contrast=1.5"]
     cases = [(i, p) for i in small for p in pipelines_small] + [("image-transforms/scan.jpg", p) for p in pipelines_scan]
+    cases += [(i, p) for i in small for p in pipelines_invert] + [("image-transforms/scan.jpg", "grayscale,max_width=1024,contrast=1.5,invert")]
 
     manifest = {"pillow": pillow_version, "libjpeg_turbo": features.version("libjpeg_turbo"), "transforms": [], "jpeg": []}
     for index, (name, pipeline) in enumerate(cases):

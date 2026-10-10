@@ -59,6 +59,10 @@ string tinyGemma = Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data"
         Check(streamed.Trim() == done["text"]!.GetValue<string>(), $"streamed \"{streamed}\", read \"{done["text"]}\"");
         Check(done["generatedTokens"]!.GetValue<int>() is > 0 and <= 5 && done["cer"] is null && done["model"]!.GetValue<string>() == "a", done.ToJsonString());
 
+        // The page's invert box: an invert step in the pipeline (before a closing jpeg).
+        var inverted = Read(service, Page(30, 50), new ReadRequest(Preprocessing: "grayscale,max_width=16,invert,jpeg=95", MaxTokens: 2), null);
+        Check(inverted[0].Data["preprocessing"]!.GetValue<string>() == "grayscale,max_width=16,invert,jpeg=95" && inverted[^1].Event == "done", inverted[0].Data.ToJsonString());
+
         Load(service, "b");
         var loaded = service.Models().Where(m => m.Loaded).Select(m => m.Id).ToList();
         Check(loaded.SequenceEqual(["b"]), $"loaded: {string.Join(", ", loaded)}");

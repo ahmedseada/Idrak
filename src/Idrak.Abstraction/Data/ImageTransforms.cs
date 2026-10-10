@@ -14,7 +14,7 @@ namespace Idrak.Abstraction.Data;
 /// re-encode it): decoded pixels in, decoded pixels out. Register one with <see cref="ImageTransforms.Register"/>; a
 /// pipeline (<see cref="ImageTransformPipeline"/>) names transforms in the order they run. The library's are Pillow's
 /// operations, byte for byte (core registers them): <c>grayscale</c>, <c>max_width</c>, <c>max_height</c>,
-/// <c>contrast</c>, <c>brightness</c>, <c>sharpness</c>, <c>autocontrast</c>, <c>jpeg</c>. A transform knows nothing of
+/// <c>contrast</c>, <c>brightness</c>, <c>sharpness</c>, <c>autocontrast</c>, <c>invert</c>, <c>jpeg</c>. A transform knows nothing of
 /// models: a fine-tune that wants its scans prepared a certain way is given a pipeline by the application.
 /// </summary>
 public interface IImageTransform
@@ -310,7 +310,7 @@ public sealed class ImageTransformPipeline : IEquatable<ImageTransformPipeline>
 /// <summary>
 /// The image transforms a pipeline can name, by name (ignoring case). The library's (core registers them as library
 /// defaults, Pillow's operations byte for byte): <c>grayscale</c>, <c>max_width</c>, <c>max_height</c>,
-/// <c>contrast</c>, <c>brightness</c>, <c>sharpness</c>, <c>autocontrast</c>, <c>jpeg</c>. Register another with
+/// <c>contrast</c>, <c>brightness</c>, <c>sharpness</c>, <c>autocontrast</c>, <c>invert</c>, <c>jpeg</c>. Register another with
 /// <see cref="Register"/>; one of a library name shadows the library's, which <see cref="Unregister"/> brings back.
 /// </summary>
 public static class ImageTransforms

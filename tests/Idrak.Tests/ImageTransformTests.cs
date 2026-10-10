@@ -14,7 +14,7 @@ internal static partial class Tests
 {
     private static readonly (string Name, Action<Device> Run)[] ImageTransformGroup =
     [
-        ("image transforms: grayscale, max_width/max_height (every resample), contrast, brightness, sharpness, autocontrast and jpeg give Pillow 12.3's bytes exactly (fixtures and a scan-like page)", TransformsMatchPillow),
+        ("image transforms: grayscale, max_width/max_height (every resample), contrast, brightness, sharpness, autocontrast, invert and jpeg give Pillow 12.3's bytes exactly (fixtures and a scan-like page)", TransformsMatchPillow),
         ("image transforms: the JPEG encoder's files decode to the pixels of Pillow's at the same quality (grey, 4:2:0, 4:2:2, 4:4:4, odd sizes, qualities 10 to 100)", JpegEncoderMatchesPillow),
         ("image transforms: pipelines parse from text and JSON in the user's order; unknown names, options and bad values name what is registered", TransformPipelineParsing),
         ("image transforms: the library's are library defaults; an app's transform registers from outside, runs in a pipeline and unregisters", TransformRegistry),
@@ -271,9 +271,9 @@ internal static partial class Tests
               && own.Images.Read(image, request with { ImageTransforms = null }) is { Width: 64, Height: 48, Channels: 1 }, "an empty pipeline on the request: no transforms");
     }
 
-    private sealed class InvertTransform : IImageTransform
+    private sealed class NegativeTransform : IImageTransform
     {
-        public string Name => "invert";
+        public string Name => "negative";
 
         public string Summary => "invert: 1 - value (a test's own)";
 
@@ -288,24 +288,24 @@ internal static partial class Tests
     private static void TransformRegistry(Device device)
     {
         _ = device;
-        string[] library = ["grayscale", "max_width", "max_height", "contrast", "brightness", "sharpness", "autocontrast", "jpeg"];
+        string[] library = ["grayscale", "max_width", "max_height", "contrast", "brightness", "sharpness", "autocontrast", "invert", "jpeg"];
         Check(library.All(n => ImageTransforms.Origin(n) == Overrides.Library && ImageTransforms.Default(n) is not null), $"library defaults: {string.Join(", ", ImageTransforms.Names)}");
         Check(ImageTransforms.Describe().Contains("contrast: contrast=F", StringComparison.Ordinal), "Describe");
         Check(ImageTransforms.Find("nope") is null, "Find");
-        ImageTransforms.Register(new InvertTransform());
+        ImageTransforms.Register(new NegativeTransform());
         try
         {
-            Check(ImageTransforms.Origin("invert") != Overrides.Library && ImageTransforms.Names.Contains("invert"), "registered from outside");
-            var pipeline = ImageTransformPipeline.Parse("grayscale,invert,strength=1");
+            Check(ImageTransforms.Origin("negative") != Overrides.Library && ImageTransforms.Names.Contains("negative"), "registered from outside");
+            var pipeline = ImageTransformPipeline.Parse("grayscale,negative,strength=1");
             var grey = new ImageData([0f, 1f, 0.2f, 0.6f], 1, 2, 2);
             var output = pipeline.Apply(grey);
             Check(PlanarBytes(output).SequenceEqual(PlanarBytes(new ImageData([1f, 0f, 0.8f, 0.4f], 1, 2, 2))), "the app's transform runs");
         }
         finally
         {
-            Check(ImageTransforms.Unregister("invert"), "unregistered");
+            Check(ImageTransforms.Unregister("negative"), "unregistered");
         }
 
-        Check(ImageTransforms.Find("invert") is null && !ImageTransforms.Unregister("contrast"), "a library default is never removed");
+        Check(ImageTransforms.Find("negative") is null && !ImageTransforms.Unregister("contrast"), "a library default is never removed");
     }
 }
