@@ -285,18 +285,7 @@ public sealed class SafeTensorsReader : IDisposable, ITensorStore
         switch (type)
         {
             case SafeTensorType.F32:
-                if (BitConverter.IsLittleEndian)
-                {
-                    MemoryMarshal.Cast<byte, float>(bytes.AsSpan(0, count * 4)).CopyTo(values.AsSpan(offset, count));
-                }
-                else
-                {
-                    for (int i = 0; i < count; i++)
-                    {
-                        values[offset + i] = BinaryPrimitives.ReadSingleLittleEndian(bytes.AsSpan(i * 4));
-                    }
-                }
-
+                StoredFloats.ReadFloat32(bytes.AsSpan(0, count * 4), values.AsSpan(offset, count));
                 break;
             case SafeTensorType.F16:
                 Idrak.Abstraction.Devices.HostParallel.For(count, 1 << 16, (first, last) =>
@@ -310,14 +299,7 @@ public sealed class SafeTensorsReader : IDisposable, ITensorStore
             default:
                 // bfloat16 is the top half of a float32.
                 Idrak.Abstraction.Devices.HostParallel.For(count, 1 << 16, (first, last) =>
-                {
-                    var halves = MemoryMarshal.Cast<byte, ushort>(bytes.AsSpan(first * 2, (last - first) * 2));
-                    var bits = MemoryMarshal.Cast<float, uint>(values.AsSpan(offset + first, last - first));
-                    for (int i = 0; i < halves.Length; i++)
-                    {
-                        bits[i] = (uint)(BitConverter.IsLittleEndian ? halves[i] : BinaryPrimitives.ReverseEndianness(halves[i])) << 16;
-                    }
-                });
+                    StoredFloats.WidenBFloat16(bytes.AsSpan(first * 2, (last - first) * 2), values.AsSpan(offset + first, last - first)));
                 break;
         }
     }
@@ -450,6 +432,47 @@ public static class SafeTensorsWriter
                     BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(i * 2), b16);
                     break;
             }
+        }
+    }
+}
+
+// Stored little-endian floats read into float32 (the checkpoint readers and the weight codecs): on a little-endian machine
+// float32 bytes are copied as they are and bfloat16 is widened whole vectors at a time (its bits are the high half of a
+// float32) with a scalar tail; elsewhere value by value. The same values either way.
+internal static class StoredFloats
+{
+    public static void ReadFloat32(ReadOnlySpan<byte> bytes, Span<float> values)
+    {
+        if (BitConverter.IsLittleEndian)
+        {
+            MemoryMarshal.Cast<byte, float>(bytes[..(values.Length * 4)]).CopyTo(values);
+            return;
+        }
+
+        for (int i = 0; i < values.Length; i++)
+        {
+            values[i] = BinaryPrimitives.ReadSingleLittleEndian(bytes[(i * 4)..]);
+        }
+    }
+
+    public static void WidenBFloat16(ReadOnlySpan<byte> bytes, Span<float> values)
+    {
+        int i = 0;
+        if (BitConverter.IsLittleEndian && System.Numerics.Vector.IsHardwareAccelerated)
+        {
+            var halves = MemoryMarshal.Cast<byte, ushort>(bytes[..(values.Length * 2)]);
+            var bits = MemoryMarshal.Cast<float, uint>(values);
+            for (; i <= values.Length - System.Numerics.Vector<ushort>.Count; i += System.Numerics.Vector<ushort>.Count)
+            {
+                System.Numerics.Vector.Widen(new System.Numerics.Vector<ushort>(halves[i..]), out var low, out var high);
+                (low << 16).CopyTo(bits[i..]);
+                (high << 16).CopyTo(bits[(i + System.Numerics.Vector<uint>.Count)..]);
+            }
+        }
+
+        for (; i < values.Length; i++)
+        {
+            values[i] = BitConverter.UInt32BitsToSingle((uint)BinaryPrimitives.ReadUInt16LittleEndian(bytes[(i * 2)..]) << 16);
         }
     }
 }
