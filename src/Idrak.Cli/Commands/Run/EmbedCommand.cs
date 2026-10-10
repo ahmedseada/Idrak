@@ -5,6 +5,7 @@ using System.Buffers;
 using System.Buffers.Binary;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
 using Idrak.Layers;
@@ -102,33 +103,68 @@ internal sealed class EmbedCommand : Command
         {
             Npy.Write(output, vectors, dimensions);
         }
+        else if (output is not null)
+        {
+            using var file = File.Create(output);
+            WriteJson(file, default, choice.Model, texts, vectors, dimensions);
+        }
         else
         {
-            var json = new JsonObject
+            // The vectors are the result: printed as JSON with or without --json.
+            var buffer = new ArrayBufferWriter<byte>();
+            var options = CommandContext.JsonOutput;
+            WriteJson(buffer, new JsonWriterOptions
             {
-                ["model"] = choice.Model,
-                ["dimensions"] = dimensions,
-                ["embeddings"] = new JsonArray([.. texts.Select((t, i) => (JsonNode)new JsonObject
-                {
-                    ["text"] = t,
-                    ["vector"] = new JsonArray([.. vectors[i].Select(v => (JsonNode)v)]),
-                })]),
-            };
-            if (output is not null)
-            {
-                File.WriteAllText(output, json.ToJsonString());
-            }
-            else
-            {
-                // The vectors are the result: printed as JSON with or without --json.
-                context.Output.WriteLine(json.ToJsonString(CommandContext.JsonOutput));
-                return ExitCodes.Ok;
-            }
+                Indented = options.WriteIndented, Encoder = options.Encoder, IndentCharacter = options.IndentCharacter, IndentSize = options.IndentSize,
+                NewLine = options.NewLine,
+            }, choice.Model, texts, vectors, dimensions);
+            context.Output.WriteLine(Encoding.UTF8.GetString(buffer.WrittenSpan));
+            return ExitCodes.Ok;
         }
 
         context.Write($"Wrote {texts.Count} vectors of {dimensions} dimensions to {output}.");
         context.WriteJson(new JsonObject { ["model"] = choice.Model, ["count"] = texts.Count, ["dimensions"] = dimensions, ["out"] = output });
         return ExitCodes.Ok;
+    }
+
+    /// <summary>
+    /// The embeddings document (<c>{"model", "dimensions", "embeddings": [{"text", "vector"}]}</c>) written as it goes:
+    /// the same bytes a JSON tree gave with the same writer options, without a node for every number.
+    /// </summary>
+    internal static void WriteJson(Stream stream, JsonWriterOptions options, string model, IReadOnlyList<string> texts, IReadOnlyList<float[]> vectors, int dimensions)
+    {
+        using var writer = new Utf8JsonWriter(stream, options);
+        Write(writer, model, texts, vectors, dimensions);
+    }
+
+    private static void WriteJson(IBufferWriter<byte> buffer, JsonWriterOptions options, string model, IReadOnlyList<string> texts, IReadOnlyList<float[]> vectors, int dimensions)
+    {
+        using var writer = new Utf8JsonWriter(buffer, options);
+        Write(writer, model, texts, vectors, dimensions);
+    }
+
+    private static void Write(Utf8JsonWriter writer, string model, IReadOnlyList<string> texts, IReadOnlyList<float[]> vectors, int dimensions)
+    {
+        writer.WriteStartObject();
+        writer.WriteString("model", model);
+        writer.WriteNumber("dimensions", dimensions);
+        writer.WriteStartArray("embeddings");
+        for (int i = 0; i < texts.Count; i++)
+        {
+            writer.WriteStartObject();
+            writer.WriteString("text", texts[i]);
+            writer.WriteStartArray("vector");
+            foreach (float value in vectors[i])
+            {
+                writer.WriteNumberValue(value);
+            }
+
+            writer.WriteEndArray();
+            writer.WriteEndObject();
+        }
+
+        writer.WriteEndArray();
+        writer.WriteEndObject();
     }
 }
 
