@@ -182,37 +182,12 @@ internal sealed unsafe partial class CudaBackend
     // `part` and `parts`: the operation is timed as `parts` separate runs (`part(candidate, i)`, which `run` runs all of),
     // and a candidate's time is the geometric mean of its parts' times, so each part counts alike however long it takes
     // (decoding attention at filled lengths 64 ... capacity).
-    private int Tune(TuneKey key, ReadOnlySpan<int> candidates, int fallback, Action<int> run, bool cold = false, Action<int, int>? part = null, int parts = 0)
+    private int Tune(TuneKey key, ReadOnlySpan<int> candidates, int fallback, Action<int> run, bool cold = false, Action<int, int>? part = null, int parts = 0) =>
+        TryTuned(key, candidates, fallback, out int settled) ? settled : TuneMeasured(key, candidates, fallback, run, cold, part, parts);
+
+    // Tune's measuring part (its closure is created here, not on every call).
+    private int TuneMeasured(TuneKey key, ReadOnlySpan<int> candidates, int fallback, Action<int> run, bool cold, Action<int, int>? part, int parts)
     {
-        if (!Autotune)
-        {
-            return fallback;                                               // IDRAK_AUTOTUNE=0: the formulas only
-        }
-
-        lock (_tuned)
-        {
-            if (_tuned.TryGetValue(key, out int known))
-            {
-                return candidates.Contains(known) ? known : fallback;      // another shape of the class may offer other candidates
-            }
-
-            if (candidates.Length > 1 && TryPersistedLocked(key, candidates, out int kept))
-            {
-                _tuned[key] = kept;
-                return kept;
-            }
-        }
-
-        if (candidates.Length <= 1)
-        {
-            return candidates.Length == 1 ? candidates[0] : fallback;
-        }
-
-        if (!CanMeasure)
-        {
-            return fallback;
-        }
-
         MakeCurrent();
         using var use = UseStream();
         if (_tuneEvents.Start == IntPtr.Zero)
@@ -242,6 +217,43 @@ internal sealed unsafe partial class CudaBackend
         }
 
         return Measure(key, candidates.ToArray(), fallback, run, 0, 0, part, parts);
+    }
+
+    // What Tune returns without measuring: the formula's choice with IDRAK_AUTOTUNE=0, a choice measured before or read
+    // from the cache file (when one of `candidates`), the only candidate, or the formula's choice while nothing can be
+    // measured. False when Tune would measure: per-token callers ask this first and prepare the candidates' runs (their
+    // closures, scratch memory) only then.
+    private bool TryTuned(TuneKey key, ReadOnlySpan<int> candidates, int fallback, out int choice)
+    {
+        choice = fallback;
+        if (!Autotune)
+        {
+            return true;                                                   // IDRAK_AUTOTUNE=0: the formulas only
+        }
+
+        lock (_tuned)
+        {
+            if (_tuned.TryGetValue(key, out int known))
+            {
+                choice = candidates.Contains(known) ? known : fallback;    // another shape of the class may offer other candidates
+                return true;
+            }
+
+            if (candidates.Length > 1 && TryPersistedLocked(key, candidates, out int kept))
+            {
+                _tuned[key] = kept;
+                choice = kept;
+                return true;
+            }
+        }
+
+        if (candidates.Length <= 1)
+        {
+            choice = candidates.Length == 1 ? candidates[0] : fallback;
+            return true;
+        }
+
+        return !CanMeasure;
     }
 
     // Times `list` (after the warm-up) and keeps the choice. `flush`: the address of `flushFloats` floats (and one more for
@@ -376,18 +388,28 @@ internal sealed unsafe partial class CudaBackend
     // up to `max` (the measured best on prompt-sized products was often 3 or 6).
     internal static int[] SplitCounts(int max)
     {
-        var values = new List<int>();
+        Span<int> values = stackalloc int[64];                            // 12 counts up to 64, 58 up to 2^29
+        return values[..SplitCounts(max, values)].ToArray();
+    }
+
+    // The same into `values` (SplitCountsLength long, enough for any max up to 64), without allocating; returns how many.
+    internal static int SplitCounts(int max, Span<int> values)
+    {
+        int count = 0;
         for (int s = 1; s <= Math.Max(1, max); s *= 2)
         {
-            values.Add(s);
+            values[count++] = s;
             if (s >= 2 && s + s / 2 <= max)
             {
-                values.Add(s + s / 2);
+                values[count++] = s + s / 2;
             }
         }
 
-        return [.. values];
+        return count;
     }
+
+    // Room for the split counts up to 64 (12 of them) and one more value (DecodeSplit adds the formula's).
+    internal const int SplitCountsLength = 16;
 
     // Runs `body` with a device scratch block of `floats` (its address), then frees it; false when there is no room (the
     // caller then keeps the formula). Never falls back to system memory, where timings would mislead.

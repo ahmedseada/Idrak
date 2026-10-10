@@ -76,15 +76,9 @@ internal sealed partial class VulkanBackend
         maxSplits = (int)Math.Clamp(Math.Min((k + GemvMinChunk - 1) / GemvMinChunk, k * bytes / (4.0 * m)), 1, Limits.MaxGroupsY);
         int most = 1 << BitOperations.Log2((uint)maxSplits);
         int fallback = WithWidth(Width, most * 8);
-        if (!GemvValid(fallback, perWord, nmax))
+        if (!GemvValid(fallback, perWord, nmax) && (fallback = LastGemvCandidate(perWord, nmax, maxSplits)) < 0)
         {
-            var all = GemvCandidates(perWord, nmax, maxSplits);
-            if (all.Length == 0)
-            {
-                return -1;
-            }
-
-            fallback = all[^1];
+            return -1;
         }
 
         if (GemvSplits is not null || GemvWords is not null)
