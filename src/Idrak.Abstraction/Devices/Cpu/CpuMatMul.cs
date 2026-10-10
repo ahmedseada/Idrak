@@ -52,15 +52,32 @@ internal static class CpuMatMul
         }
 
         float[]? rented = null;
-        if (transB)
+        try
         {
-            // B is stored [n, k]; transpose it once into [k, n] so the kernel always streams contiguous B rows.
-            rented = ArrayPool<float>.Shared.Rent(k * n);
-            Transpose(b, bOffset, rented, n, k, CpuTuning.TransposeSide, options);
-            b = rented;
-            bOffset = 0;
-        }
+            if (transB)
+            {
+                // B is stored [n, k]; transpose it once into [k, n] so the kernel always streams contiguous B rows.
+                rented = ArrayPool<float>.Shared.Rent(k * n);
+                Transpose(b, bOffset, rented, n, k, CpuTuning.TransposeSide, options);
+                b = rented;
+                bOffset = 0;
+            }
 
+            Product(a, aOffset, b, bOffset, c, cOffset, m, n, k, transA, beta, parallel, options);
+        }
+        finally
+        {
+            if (rented is not null)
+            {
+                ArrayPool<float>.Shared.Return(rented);
+            }
+        }
+    }
+
+    // The product with B stored [k, n] (transposed already when it was not).
+    private static void Product(float[] a, int aOffset, float[] b, int bOffset, float[] c, int cOffset, int m, int n, int k, bool transA, float beta,
+        bool parallel, ParallelOptions options)
+    {
         // Element (i, p) of op(A) lives at a[i * rowStride + p * colStride].
         nint rowStride = transA ? 1 : k;
         nint colStride = transA ? m : 1;
@@ -80,11 +97,6 @@ internal static class CpuMatMul
             // Few rows (token-by-token decoding): a single row block would leave most threads idle, so split the columns
             // instead and stream B row by row (contiguous reads; each weight is read once).
             FewRows(a, aOffset, b, bOffset, c, cOffset, m, n, k, rowStride, colStride, beta, columnBlock, options);
-            if (rented is not null)
-            {
-                ArrayPool<float>.Shared.Return(rented);
-            }
-
             return;
         }
 
@@ -106,11 +118,6 @@ internal static class CpuMatMul
             int bo = bOffset;
             Parallel.For(0, blocks, options, block => RunBlock(a, aOffset, bb, bo, c, cOffset, block, m, n, k, rowStride, colStride, beta));
         }
-
-        if (rented is not null)
-        {
-            ArrayPool<float>.Shared.Return(rented);
-        }
     }
 
     private static void FewRowsTransposedB(float[] a, int aOffset, float[] b, int bOffset, float[] c, int cOffset, int m, int n, int k, bool transA, float beta,
@@ -120,35 +127,41 @@ internal static class CpuMatMul
         float[]? rows = null;
         float[] ar = a;
         int ao = aOffset;
-        if (transA)
+        try
         {
-            rows = ArrayPool<float>.Shared.Rent(m * k);
-            for (int i = 0; i < m; i++)
+            if (transA)
             {
+                // Read in A's own order (row p of [k, m] holds column p of every A row), written to the m rows.
+                rows = ArrayPool<float>.Shared.Rent(m * k);
                 for (int p = 0; p < k; p++)
                 {
-                    rows[i * k + p] = a[aOffset + p * m + i];
+                    for (int i = 0; i < m; i++)
+                    {
+                        rows[i * k + p] = a[aOffset + p * m + i];
+                    }
                 }
+
+                ar = rows;
+                ao = 0;
             }
 
-            ar = rows;
-            ao = 0;
+            int Chunk = CpuTuning.ColumnBlock;                             // columns per work item (each a dot product over k)
+            int chunks = (n + Chunk - 1) / Chunk;
+            if (parallel && chunks > 1)
+            {
+                Parallel.For(0, chunks, options, index => DotColumns(ar, ao, b, bOffset, c, cOffset, m, n, k, beta, index * Chunk, Math.Min(n, (index + 1) * Chunk)));
+            }
+            else
+            {
+                DotColumns(ar, ao, b, bOffset, c, cOffset, m, n, k, beta, 0, n);
+            }
         }
-
-        int Chunk = CpuTuning.ColumnBlock;                                 // columns per work item (each a dot product over k)
-        int chunks = (n + Chunk - 1) / Chunk;
-        if (parallel && chunks > 1)
+        finally
         {
-            Parallel.For(0, chunks, options, index => DotColumns(ar, ao, b, bOffset, c, cOffset, m, n, k, beta, index * Chunk, Math.Min(n, (index + 1) * Chunk)));
-        }
-        else
-        {
-            DotColumns(ar, ao, b, bOffset, c, cOffset, m, n, k, beta, 0, n);
-        }
-
-        if (rows is not null)
-        {
-            ArrayPool<float>.Shared.Return(rows);
+            if (rows is not null)
+            {
+                ArrayPool<float>.Shared.Return(rows);
+            }
         }
     }
 
@@ -201,48 +214,53 @@ internal static class CpuMatMul
         {
             int j0 = index * chunk, width = Math.Min(chunk, n - j0);
             float[] acc = ArrayPool<float>.Shared.Rent(m * width);
-            Array.Clear(acc, 0, m * width);
-            ref float rb = ref MemoryMarshal.GetArrayDataReference(b);
-            ref float rs = ref MemoryMarshal.GetArrayDataReference(acc);
-
-            // Each weight row is read once and feeds every input row (per element: the same FMA chain over k).
-            for (int p = 0; p < k; p++)
+            try
             {
-                ref float row = ref Unsafe.Add(ref rb, bOffset + (nint)p * n + j0);
+                Array.Clear(acc, 0, m * width);
+                ref float rb = ref MemoryMarshal.GetArrayDataReference(b);
+                ref float rs = ref MemoryMarshal.GetArrayDataReference(acc);
+
+                // Each weight row is read once and feeds every input row (per element: the same FMA chain over k).
+                for (int p = 0; p < k; p++)
+                {
+                    ref float row = ref Unsafe.Add(ref rb, bOffset + (nint)p * n + j0);
+                    for (int i = 0; i < m; i++)
+                    {
+                        float x = a[aOffset + i * rowStride + p * colStride];
+                        if (x == 0f)
+                        {
+                            continue;
+                        }
+
+                        var xv = new Vector<float>(x);
+                        ref float sum = ref Unsafe.Add(ref rs, i * width);
+                        int j = 0;
+                        for (; j <= width - w; j += w)
+                        {
+                            Vector.FusedMultiplyAdd(xv, Vector.LoadUnsafe(ref row, (nuint)j), Vector.LoadUnsafe(ref sum, (nuint)j)).StoreUnsafe(ref sum, (nuint)j);
+                        }
+
+                        for (; j < width; j++)
+                        {
+                            Unsafe.Add(ref sum, j) = MathF.FusedMultiplyAdd(x, Unsafe.Add(ref row, j), Unsafe.Add(ref sum, j));
+                        }
+                    }
+                }
+
                 for (int i = 0; i < m; i++)
                 {
-                    float x = a[aOffset + i * rowStride + p * colStride];
-                    if (x == 0f)
+                    var dst = c.AsSpan(cOffset + i * n + j0, width);
+                    var sums = acc.AsSpan(i * width, width);
+                    for (int j = 0; j < width; j++)
                     {
-                        continue;
-                    }
-
-                    var xv = new Vector<float>(x);
-                    ref float sum = ref Unsafe.Add(ref rs, i * width);
-                    int j = 0;
-                    for (; j <= width - w; j += w)
-                    {
-                        Vector.FusedMultiplyAdd(xv, Vector.LoadUnsafe(ref row, (nuint)j), Vector.LoadUnsafe(ref sum, (nuint)j)).StoreUnsafe(ref sum, (nuint)j);
-                    }
-
-                    for (; j < width; j++)
-                    {
-                        Unsafe.Add(ref sum, j) = MathF.FusedMultiplyAdd(x, Unsafe.Add(ref row, j), Unsafe.Add(ref sum, j));
+                        dst[j] = beta == 0f ? sums[j] : sums[j] + beta * dst[j];
                     }
                 }
             }
-
-            for (int i = 0; i < m; i++)
+            finally
             {
-                var dst = c.AsSpan(cOffset + i * n + j0, width);
-                var sums = acc.AsSpan(i * width, width);
-                for (int j = 0; j < width; j++)
-                {
-                    dst[j] = beta == 0f ? sums[j] : sums[j] + beta * dst[j];
-                }
+                ArrayPool<float>.Shared.Return(acc);
             }
-
-            ArrayPool<float>.Shared.Return(acc);
         });
     }
 
@@ -268,59 +286,64 @@ internal static class CpuMatMul
             int fullRows = (i1 - i0) / mr * mr;
             float[] packedA = ArrayPool<float>.Shared.Rent(Math.Max(1, fullRows * k));
             float[] packedB = ArrayPool<float>.Shared.Rent(k * nr);
-            ref float pa = ref MemoryMarshal.GetArrayDataReference(packedA);
-            ref float pb = ref MemoryMarshal.GetArrayDataReference(packedB);
-            for (int block = 0; block < fullRows / mr; block++)
+            try
             {
-                ref float target = ref Unsafe.Add(ref pa, (nint)block * k * mr);
-                nint row0 = (i0 + block * mr) * rowStride;
-                for (int p = 0; p < k; p++)
-                {
-                    nint at = row0 + p * colStride;
-                    for (int r = 0; r < mr; r++, at += rowStride)
-                    {
-                        Unsafe.Add(ref target, p * mr + r) = Unsafe.Add(ref ra, at);
-                    }
-                }
-            }
-
-            int j = j0;
-            for (; j + nr <= j1; j += nr)
-            {
-                for (int p = 0; p < k; p++)
-                {
-                    Unsafe.CopyBlockUnaligned(ref Unsafe.As<float, byte>(ref Unsafe.Add(ref pb, p * nr)),
-                        ref Unsafe.As<float, byte>(ref Unsafe.Add(ref rb, (nint)p * n + j)), (uint)(nr * sizeof(float)));
-                }
-
+                ref float pa = ref MemoryMarshal.GetArrayDataReference(packedA);
+                ref float pb = ref MemoryMarshal.GetArrayDataReference(packedB);
                 for (int block = 0; block < fullRows / mr; block++)
                 {
-                    ref float cBlock = ref Unsafe.Add(ref rc, (nint)(i0 + block * mr) * n + j);
-                    ref float aBlock = ref Unsafe.Add(ref pa, (nint)block * k * mr);
-                    switch (kernel)
+                    ref float target = ref Unsafe.Add(ref pa, (nint)block * k * mr);
+                    nint row0 = (i0 + block * mr) * rowStride;
+                    for (int p = 0; p < k; p++)
                     {
-                        case TiledKernel.Avx512: Kernel8x32(ref aBlock, ref pb, ref cBlock, n, k, beta); break;
-                        case TiledKernel.Avx2: Kernel6x16(ref aBlock, ref pb, ref cBlock, n, k, beta); break;
-                        default: Kernel8x8(ref aBlock, ref pb, ref cBlock, n, k, beta); break;
+                        nint at = row0 + p * colStride;
+                        for (int r = 0; r < mr; r++, at += rowStride)
+                        {
+                            Unsafe.Add(ref target, p * mr + r) = Unsafe.Add(ref ra, at);
+                        }
                     }
                 }
 
-                for (int i = i0 + fullRows; i < i1; i++)
+                int j = j0;
+                for (; j + nr <= j1; j += nr)
                 {
-                    Row(ref ra, ref rb, ref rc, i, j, j + nr, k, n, rowStride, colStride, beta);
+                    for (int p = 0; p < k; p++)
+                    {
+                        Unsafe.CopyBlockUnaligned(ref Unsafe.As<float, byte>(ref Unsafe.Add(ref pb, p * nr)),
+                            ref Unsafe.As<float, byte>(ref Unsafe.Add(ref rb, (nint)p * n + j)), (uint)(nr * sizeof(float)));
+                    }
+
+                    for (int block = 0; block < fullRows / mr; block++)
+                    {
+                        ref float cBlock = ref Unsafe.Add(ref rc, (nint)(i0 + block * mr) * n + j);
+                        ref float aBlock = ref Unsafe.Add(ref pa, (nint)block * k * mr);
+                        switch (kernel)
+                        {
+                            case TiledKernel.Avx512: Kernel8x32(ref aBlock, ref pb, ref cBlock, n, k, beta); break;
+                            case TiledKernel.Avx2: Kernel6x16(ref aBlock, ref pb, ref cBlock, n, k, beta); break;
+                            default: Kernel8x8(ref aBlock, ref pb, ref cBlock, n, k, beta); break;
+                        }
+                    }
+
+                    for (int i = i0 + fullRows; i < i1; i++)
+                    {
+                        Row(ref ra, ref rb, ref rc, i, j, j + nr, k, n, rowStride, colStride, beta);
+                    }
+                }
+
+                if (j < j1)
+                {
+                    for (int i = i0; i < i1; i++)
+                    {
+                        Row(ref ra, ref rb, ref rc, i, j, j1, k, n, rowStride, colStride, beta);
+                    }
                 }
             }
-
-            if (j < j1)
+            finally
             {
-                for (int i = i0; i < i1; i++)
-                {
-                    Row(ref ra, ref rb, ref rc, i, j, j1, k, n, rowStride, colStride, beta);
-                }
+                ArrayPool<float>.Shared.Return(packedA);
+                ArrayPool<float>.Shared.Return(packedB);
             }
-
-            ArrayPool<float>.Shared.Return(packedA);
-            ArrayPool<float>.Shared.Return(packedB);
         }
 
         int tiles = mTiles * nTiles;

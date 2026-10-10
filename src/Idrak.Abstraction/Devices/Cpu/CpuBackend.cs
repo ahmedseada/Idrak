@@ -452,35 +452,49 @@ internal sealed partial class CpuBackend : Backend
         float[] ps = D(p), gs = D(g), ms = D(m), vs = D(v), scales = D(absMax), codes = D(map);
         const int B = EightBitMoments.BlockSize;
         int blocks = (n + B - 1) / B;
-        Parallel.For(0, blocks, ComputeResources.ParallelOptions, block =>
+        // Blocks are independent: on the threads from the measured cut-over (about 32 operations an element with the two
+        // code searches), each worker with one pooled pair of block buffers (2 KB: more than the stack should hold).
+        For(blocks, 32L * n, (first, last) =>
         {
             var mb = MemoryMarshal.AsBytes(ms.AsSpan());
             var vb = MemoryMarshal.AsBytes(vs.AsSpan());
             var signedMap = codes.AsSpan(0, 256);
             var unsignedMap = codes.AsSpan(256, 256);
-            int start = block * B, end = Math.Min(n, start + B);
-            Span<float> mNew = stackalloc float[B], vNew = stackalloc float[B];
-            float mScale = scales[block], vScale = scales[blocks + block], mMax = 0f, vMax = 0f;
-            for (int i = start; i < end; i++)
+            float[] buffers = System.Buffers.ArrayPool<float>.Shared.Rent(2 * B);
+            try
             {
-                float grad = gs[i] * gradientScale;
-                float mom = MathF.FusedMultiplyAdd(beta1, signedMap[mb[i]] * mScale, (1f - beta1) * grad);
-                float vel = MathF.FusedMultiplyAdd(beta2, unsignedMap[vb[i]] * vScale, grad * grad * (1f - beta2));
-                ps[i] = ps[i] * decay - mom / (MathF.Sqrt(vel) + eps) * lr;
-                mNew[i - start] = mom;
-                vNew[i - start] = vel;
-                mMax = MathF.Max(mMax, MathF.Abs(mom));
-                vMax = MathF.Max(vMax, vel);
-            }
+                var mNew = buffers.AsSpan(0, B);
+                var vNew = buffers.AsSpan(B, B);
+                for (int block = first; block < last; block++)
+                {
+                    int start = block * B, end = Math.Min(n, start + B);
+                    float mScale = scales[block], vScale = scales[blocks + block], mMax = 0f, vMax = 0f;
+                    for (int i = start; i < end; i++)
+                    {
+                        float grad = gs[i] * gradientScale;
+                        float mom = MathF.FusedMultiplyAdd(beta1, signedMap[mb[i]] * mScale, (1f - beta1) * grad);
+                        float vel = MathF.FusedMultiplyAdd(beta2, unsignedMap[vb[i]] * vScale, grad * grad * (1f - beta2));
+                        ps[i] = ps[i] * decay - mom / (MathF.Sqrt(vel) + eps) * lr;
+                        mNew[i - start] = mom;
+                        vNew[i - start] = vel;
+                        mMax = MathF.Max(mMax, MathF.Abs(mom));
+                        vMax = MathF.Max(vMax, vel);
+                    }
 
-            for (int i = start; i < end; i++)
+                    for (int i = start; i < end; i++)
+                    {
+                        mb[i] = EightBitMoments.Nearest(signedMap, mMax > 0f ? mNew[i - start] / mMax : 0f);
+                        vb[i] = EightBitMoments.Nearest(unsignedMap, vMax > 0f ? vNew[i - start] / vMax : 0f);
+                    }
+
+                    scales[block] = mMax;
+                    scales[blocks + block] = vMax;
+                }
+            }
+            finally
             {
-                mb[i] = EightBitMoments.Nearest(signedMap, mMax > 0f ? mNew[i - start] / mMax : 0f);
-                vb[i] = EightBitMoments.Nearest(unsignedMap, vMax > 0f ? vNew[i - start] / vMax : 0f);
+                System.Buffers.ArrayPool<float>.Shared.Return(buffers);
             }
-
-            scales[block] = mMax;
-            scales[blocks + block] = vMax;
         });
     }
 
