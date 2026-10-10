@@ -526,13 +526,14 @@ internal sealed unsafe partial class CudaBackend : Backend
                 return 0;
             }
 
-            var fitting = _poolSizes.GetViewBetween(length + 1, length + length / BestFitSlack);
-            if (fitting.Count == 0)
+            // The smallest size in range (Min of an empty view is 0; its Count would walk the range).
+            int fitting = _poolSizes.GetViewBetween(length + 1, length + length / BestFitSlack).Min;
+            if (fitting == 0)
             {
                 return 0;
             }
 
-            capacity = fitting.Min;
+            capacity = fitting;
             bucket = _pool[capacity];
         }
 
@@ -699,7 +700,8 @@ internal sealed unsafe partial class CudaBackend : Backend
             }
 
             bool recording = _captureFree is not null && Environment.CurrentManagedThreadId == _captureThread;
-            if (_hostBlocks.ContainsKey(s.Pointer) && recording)
+            bool host = _hostBlocks.Count > 0 && _hostBlocks.ContainsKey(s.Pointer);
+            if (host && recording)
             {
                 // Freed while a graph is recorded: the graph owns it (see TakeCaptureBlocks).
                 if (!_captureFree!.TryGetValue(s.Capacity, out var captured))
@@ -712,14 +714,9 @@ internal sealed unsafe partial class CudaBackend : Backend
                 return;
             }
 
-            if (_hostBlocks.ContainsKey(s.Pointer))
+            if (host)
             {
-                if (!_hostPool.TryGetValue(s.Capacity, out var hostBucket))
-                {
-                    _hostPool[s.Capacity] = hostBucket = new Stack<ulong>();
-                }
-
-                hostBucket.Push(s.Pointer);
+                PushHostBlockLocked(s.Pointer, s.Capacity);
                 _memory.Offloaded(-BlockBytes(s.Capacity));
                 return;
             }

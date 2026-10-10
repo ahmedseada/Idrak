@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Runtime.InteropServices;
 using static Idrak.Gpu.Cuda.CudaDriver;
 
 namespace Idrak.Gpu.Cuda;
@@ -604,29 +605,18 @@ internal sealed unsafe partial class CudaBackend : IMemoryOffload
         return pointer;
     }
 
-    private void PushHostBlockLocked(ulong pointer, int capacity)
-    {
-        if (!_hostPool.TryGetValue(capacity, out var bucket))
-        {
-            _hostPool[capacity] = bucket = new Stack<ulong>();
-        }
-
-        bucket.Push(pointer);
-    }
+    private void PushHostBlockLocked(ulong pointer, int capacity) =>
+        (CollectionsMarshal.GetValueRefOrAddDefault(_hostPool, capacity, out _) ??= new Stack<ulong>()).Push(pointer);
 
     // A GPU block back to the cache (or, while this thread records a graph, to the graph's blocks). Under the pool lock.
     private void ReturnDeviceBlockLocked(ulong pointer, int capacity)
     {
         var target = _captureFree is not null && Environment.CurrentManagedThreadId == _captureThread ? _captureFree : _pool;
-        if (!target.TryGetValue(capacity, out var bucket))
-        {
-            target[capacity] = bucket = new Stack<ulong>();
-        }
-
+        var bucket = CollectionsMarshal.GetValueRefOrAddDefault(target, capacity, out _) ??= new Stack<ulong>();
         bucket.Push(pointer);
-        if (ReferenceEquals(target, _pool))
+        if (bucket.Count == 1 && ReferenceEquals(target, _pool))
         {
-            _poolSizes.Add(capacity);
+            _poolSizes.Add(capacity);                                      // a size with cached blocks again (TakeCached removes emptied ones)
         }
 
         _memory.Returned(BlockBytes(capacity));
