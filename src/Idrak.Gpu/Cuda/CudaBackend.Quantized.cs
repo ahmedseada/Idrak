@@ -149,16 +149,25 @@ internal sealed unsafe partial class CudaBackend
     // formula's choice (GemvSplitCount) is always one of them.
     internal static int[] GemvSplitCandidates(int k, int align)
     {
-        var values = new List<int>();
-        var byCount = new Dictionary<int, int>();                      // splits that run → index in values
-        foreach (int wanted in SplitCounts(GemvMaxSplits(k)))
+        Span<int> values = stackalloc int[SplitCountsLength];
+        return values[..GemvSplitCandidates(k, align, values)].ToArray();
+    }
+
+    // The same into `values` (SplitCountsLength long), without allocating (the per-token path); returns how many.
+    internal static int GemvSplitCandidates(int k, int align, Span<int> values)
+    {
+        Span<int> counts = stackalloc int[SplitCountsLength];
+        Span<int> runs = stackalloc int[SplitCountsLength];               // splits that run, per value kept
+        int found = 0;
+        foreach (int wanted in counts[..SplitCounts(GemvMaxSplits(k), counts)])
         {
             int chunk = ((k + wanted - 1) / wanted + align - 1) / align * align;
             int count = (k + chunk - 1) / chunk;
-            if (!byCount.TryGetValue(count, out int at))
+            int at = runs[..found].IndexOf(count);
+            if (at < 0)
             {
-                byCount[count] = values.Count;
-                values.Add(wanted);
+                runs[found] = count;
+                values[found++] = wanted;
             }
             else if (int.IsPow2(wanted))
             {
@@ -166,7 +175,7 @@ internal sealed unsafe partial class CudaBackend
             }
         }
 
-        return [.. values];
+        return found;
     }
 
     // Few rows (decoding) through packed weights: read each weight word once, with enough blocks to keep every
@@ -175,28 +184,10 @@ internal sealed unsafe partial class CudaBackend
     // `up`: the gated kernels' second input; `tail`: further arguments (the addnorm kernels').
     // `variant`: format * 4 + GemvPlain / GemvSilu / GemvGelu / GemvAddNorm (an index into GemvKernels).
     private void PackedFewRows(int variant, Storage x, Storage q, Storage scales, Storage y, int m, int n, int k, int words, int align = 1,
-        Storage? up = null, ulong[]? tail = null)
+        Storage? up = null, ReadOnlySpan<ulong> tail = default)
     {
-        string kernel = GemvKernels[variant];
         int columnBlocks = (words + 31) / 32;
-        var counters = SplitCounters(columnBlocks + 1);
-        void Run(string name, ulong output, ulong[] extra, int wanted)
-        {
-            int chunk = ((k + wanted - 1) / wanted + align - 1) / align * align;
-            int count = (k + chunk - 1) / chunk;
-            var part = count > 1 ? Allocate(count * m * n, zeroed: false) : null;
-            try
-            {
-                ulong[] args = [P(x), P(q), P(scales), output, part is null ? output : P(part), U(m), U(n), U(k), U(words), U(chunk), U(count),
-                    P(counters), .. up is null ? [] : new[] { P(up) }, .. extra];
-                Launch(K(name), (uint)columnBlocks, (uint)count, 1, PtxKernels.Int8GemvThreads, 1, args);
-            }
-            finally
-            {
-                part?.Release();
-            }
-        }
-
+        var rows = new FewRows(GemvKernels[variant], x, q, scales, up, SplitCounters(columnBlocks + 1), m, n, k, words, align);
         int splits;
         if (GemvSplits is int forced)
         {
@@ -209,27 +200,80 @@ internal sealed unsafe partial class CudaBackend
             // normalization by the last block included, with their three outputs (y, sum, normalized) in scratch memory,
             // since the sum may be the residual itself. (Before, they took the plain kernel's choice for the shape, timed
             // without that last step: --bench-gemv showed 8 splits chosen where 16 was 15% faster on an RTX 5070 Ti.)
+            // Once known, the choice is read without allocating (no candidate array, no closure).
             int formula = GemvSplitCount(columnBlocks, k);
-            int[] candidates = GemvSplitCandidates(k, align);
+            Span<int> candidates = stackalloc int[SplitCountsLength];
+            candidates = candidates[..GemvSplitCandidates(k, align, candidates)];
             var key = GemvSplitsKey(variant, m, n, k);
-            splits = formula;
-            if (tail is null)
+            if (!TryTuned(key, candidates, formula, out splits))
             {
-                splits = Tune(key, candidates, formula, c => Run(kernel, P(y), [], c), cold: true);
-            }
-            else if (!TunedKnown(key))
-            {
-                long size = (long)m * n * sizeof(float);
-                WithScratch(3L * m * n, scratch => splits = Tune(key, candidates, formula,
-                    c => Run(kernel, scratch, [tail[0], scratch + (ulong)size, tail[2], scratch + 2 * (ulong)size, .. tail[4..]], c), cold: true));
-            }
-            else
-            {
-                splits = KnownChoice(key, candidates) ?? formula;
+                splits = MeasureFewRows(rows, key, candidates.ToArray(), formula, P(y), tail.IsEmpty ? null : tail.ToArray());
             }
         }
 
-        Run(kernel, P(y), tail ?? [], splits);
+        RunFewRows(rows, P(y), tail, splits);
+    }
+
+    // A few-row packed product but for its output, further arguments and split count (PackedFewRows).
+    private readonly record struct FewRows(string Kernel, Storage X, Storage Q, Storage Scales, Storage? Up, Storage Counters, int M, int N, int K,
+        int Words, int Align)
+    {
+        public int ColumnBlocks => (Words + 31) / 32;
+    }
+
+    // The arguments of a few-row product: twelve, `up` and the add-and-normalize kernels' six.
+    private const int FewRowsArguments = 19;
+
+    private void RunFewRows(in FewRows rows, ulong output, ReadOnlySpan<ulong> extra, int wanted)
+    {
+        int k = rows.K, align = rows.Align;
+        int chunk = ((k + wanted - 1) / wanted + align - 1) / align * align;
+        int count = (k + chunk - 1) / chunk;
+        var part = count > 1 ? Allocate(count * rows.M * rows.N, zeroed: false) : null;
+        try
+        {
+            Span<ulong> args = stackalloc ulong[FewRowsArguments];
+            args[0] = P(rows.X);
+            args[1] = P(rows.Q);
+            args[2] = P(rows.Scales);
+            args[3] = output;
+            args[4] = part is null ? output : P(part);
+            args[5] = U(rows.M);
+            args[6] = U(rows.N);
+            args[7] = U(k);
+            args[8] = U(rows.Words);
+            args[9] = U(chunk);
+            args[10] = U(count);
+            args[11] = P(rows.Counters);
+            int used = 12;
+            if (rows.Up is not null)
+            {
+                args[used++] = P(rows.Up);
+            }
+
+            extra.CopyTo(args[used..]);
+            Launch(K(rows.Kernel), (uint)rows.ColumnBlocks, (uint)count, 1, PtxKernels.Int8GemvThreads, 1, args[..(used + extra.Length)]);
+        }
+        finally
+        {
+            part?.Release();
+        }
+    }
+
+    // Measures the split count of a few-row product: writing its output, or with `tail` (the add-and-normalize kernels)
+    // their three outputs in scratch memory. The formula's choice when there is no room for the scratch.
+    private int MeasureFewRows(FewRows rows, TuneKey key, int[] candidates, int formula, ulong output, ulong[]? tail)
+    {
+        if (tail is null)
+        {
+            return Tune(key, candidates, formula, c => RunFewRows(rows, output, [], c), cold: true);
+        }
+
+        int splits = formula;
+        long size = (long)rows.M * rows.N * sizeof(float);
+        WithScratch(3L * rows.M * rows.N, scratch => splits = Tune(key, candidates, formula,
+            c => RunFewRows(rows, scratch, [tail[0], scratch + (ulong)size, tail[2], scratch + 2 * (ulong)size, .. tail.AsSpan(4)], c), cold: true));
+        return splits;
     }
 
     /// <summary>
@@ -254,6 +298,18 @@ internal sealed unsafe partial class CudaBackend
             return m >= 4 && (long)k * n >= threshold;
         }
 
+        // Once known, read without building the runs' closure.
+        var key = new TuneKey(TuneOp.Int8FewRows, 0, m, n, k);
+        if (!TryTuned(key, [0, 1], 0, out int choice))
+        {
+            choice = MeasureInt8FewRows(key, x, packed, scales, y, m, n, k);
+        }
+
+        return choice == 1;
+    }
+
+    private int MeasureInt8FewRows(TuneKey key, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k)
+    {
         void Run(int choice)
         {
             if (choice == 0 || !PackedMatMulLarge(0, x, packed, scales, y, m, n, k))
@@ -262,7 +318,7 @@ internal sealed unsafe partial class CudaBackend
             }
         }
 
-        return Tune(new TuneKey(TuneOp.Int8FewRows, 0, m, n, k), [0, 1], 0, Run, cold: true) == 1;
+        return Tune(key, [0, 1], 0, Run, cold: true);
     }
 
     /// <summary>Benchmarks only: the row tile (64 or 128) of prompt-sized packed products instead of the heuristic's.</summary>
@@ -503,32 +559,44 @@ internal sealed unsafe partial class CudaBackend
         // The activation computed per input value inside the product (fused), or by its own pass first (separate): which
         // is faster depends on the card and the format (eight int4 columns per word repay the extra work sooner than four
         // int8 or two bfloat16 ones), so it is measured per shape; both write all of y.
-        int cpw = format.ValuesPerWord();
-        int words = (n + cpw - 1) / cpw, align = format.SplitAlignment();
-        int fused = (int)format * 4 + (activation == 0 ? GemvSilu : GemvGelu);
-        void Run(int separate)
+        // Before measuring: fused for int4, separate for the others. Once known, read without building the runs' closure.
+        var key = new TuneKey(TuneOp.GatedActivation, (int)format * 4 + (activation == 0 ? GemvSilu : GemvGelu), m, n, k);
+        int fallback = format == PackedFormat.Int4 ? 0 : 1;
+        if (!TryTuned(key, [0, 1], fallback, out int separate))
         {
-            if (separate == 0)
-            {
-                PackedFewRows(fused, gate, packed, scales ?? packed, y, m, n, k, words, align, up);
-                return;
-            }
-
-            var hidden = Allocate(m * k, zeroed: false);
-            try
-            {
-                GatedActivation(gate, up, hidden, m * k, activation);
-                PackedFewRows((int)format * 4 + GemvPlain, hidden, packed, scales ?? packed, y, m, n, k, words, align);
-            }
-            finally
-            {
-                hidden.Release();
-            }
+            separate = MeasureGated(key, fallback, format, activation, gate, up, packed, scales, y, m, n, k);
         }
 
-        // Before measuring: fused for int4, separate for the others.
-        Run(Tune(new TuneKey(TuneOp.GatedActivation, fused, m, n, k), [0, 1], format == PackedFormat.Int4 ? 0 : 1, Run, cold: true));
+        RunGated(separate, format, activation, gate, up, packed, scales, y, m, n, k);
         return true;
+    }
+
+    private int MeasureGated(TuneKey key, int fallback, PackedFormat format, int activation, Storage gate, Storage up, Storage packed, Storage? scales,
+        Storage y, int m, int n, int k) =>
+        Tune(key, [0, 1], fallback, separate => RunGated(separate, format, activation, gate, up, packed, scales, y, m, n, k), cold: true);
+
+    // The gated product with the activation fused into it (separate = 0) or computed by its own pass first.
+    private void RunGated(int separate, PackedFormat format, int activation, Storage gate, Storage up, Storage packed, Storage? scales, Storage y,
+        int m, int n, int k)
+    {
+        int cpw = format.ValuesPerWord();
+        int words = (n + cpw - 1) / cpw, align = format.SplitAlignment();
+        if (separate == 0)
+        {
+            PackedFewRows((int)format * 4 + (activation == 0 ? GemvSilu : GemvGelu), gate, packed, scales ?? packed, y, m, n, k, words, align, up);
+            return;
+        }
+
+        var hidden = Allocate(m * k, zeroed: false);
+        try
+        {
+            GatedActivation(gate, up, hidden, m * k, activation);
+            PackedFewRows((int)format * 4 + GemvPlain, hidden, packed, scales ?? packed, y, m, n, k, words, align);
+        }
+        finally
+        {
+            hidden.Release();
+        }
     }
 
     public override bool PackedMatMulAddRmsNormKernel(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k,
@@ -581,43 +649,7 @@ internal sealed unsafe partial class CudaBackend
         int columnBlocks = ((nmax + cpw - 1) / cpw + 31) / 32;
         int align = format.SplitAlignment();
         var counters = SplitCounters(columnBlocks * (products.Length + (hidden is null ? 0 : 1)));
-        void Run(ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products, int wanted)
-        {
-            int chunk = ((k + wanted - 1) / wanted + align - 1) / align * align;
-            int splits = (k + chunk - 1) / chunk;
-            var part = splits > 1 ? Allocate(products.Length * splits * m * nmax, zeroed: false) : null;
-            try
-            {
-                Span<ulong> args = stackalloc ulong[9 + 3 * 5 + 2];
-                args[0] = P(x);
-                args[1] = part is null ? P(products[0].Output) : P(part);
-                args[2] = U(m);
-                args[3] = U(k);
-                args[4] = U(chunk);
-                args[5] = U(splits);
-                args[6] = P(counters);
-                args[7] = U(columnBlocks);
-                args[8] = U(nmax);
-                for (int j = 0; j < 3; j++)
-                {
-                    var product = j < products.Length ? products[j] : products[0];
-                    args[9 + 5 * j] = P(product.Packed);
-                    args[10 + 5 * j] = P(product.Scales ?? product.Packed);
-                    args[11 + 5 * j] = P(product.Output);
-                    args[12 + 5 * j] = product.Bias is null ? 0UL : P(product.Bias);
-                    args[13 + 5 * j] = U(j < products.Length ? product.Columns : 0);
-                }
-
-                args[24] = U(activation);
-                args[25] = hidden is null ? 0UL : P(hidden);
-                Launch(K(kernel), (uint)columnBlocks, (uint)splits, (uint)products.Length, PtxKernels.Int8GemvThreads, 1, hidden is null ? args[..24] : args);
-            }
-            finally
-            {
-                part?.Release();
-            }
-        }
-
+        var rows = new ManyRows(kernel, x, counters, hidden, m, k, nmax, align, columnBlocks, activation);
         int wanted;
         if (GemvSplits is int forced)
         {
@@ -625,7 +657,8 @@ internal sealed unsafe partial class CudaBackend
         }
         else
         {
-            // Measured once per shape (every output, and the activation's, is written again by the run that follows).
+            // Measured once per shape (every output, and the activation's, is written again by the run that follows); once
+            // known, read without allocating (no candidate array, no copy of the products, no closure).
             int biases = 0;
             for (int j = 0; j < products.Length; j++)
             {
@@ -635,12 +668,63 @@ internal sealed unsafe partial class CudaBackend
             var name = new TuneKey(TuneOp.GemvMultiSplits, multiGemv, m, k, products[0].Columns, products.Length > 1 ? products[1].Columns : 0,
                 products.Length > 2 ? products[2].Columns : 0, biases);
             int formula = GemvSplitCount(totalBlocks, k);
-            var copy = TunedKnown(name) ? null : products.ToArray();
-            wanted = copy is null ? KnownChoice(name, GemvSplitCandidates(k, align)) ?? formula : Tune(name, GemvSplitCandidates(k, align), formula, c => Run(copy, c), cold: true);
+            Span<int> candidates = stackalloc int[SplitCountsLength];
+            candidates = candidates[..GemvSplitCandidates(k, align, candidates)];
+            if (!TryTuned(name, candidates, formula, out wanted))
+            {
+                wanted = MeasureMany(rows, name, candidates.ToArray(), formula, products.ToArray());
+            }
         }
 
-        Run(products, wanted);
+        RunMany(rows, products, wanted);
         return true;
+    }
+
+    // A multi-output few-row product but for its products and split count (PackedMany).
+    private readonly record struct ManyRows(string Kernel, Storage X, Storage Counters, Storage? Hidden, int M, int K, int Nmax, int Align, int ColumnBlocks,
+        int Activation);
+
+    private int MeasureMany(ManyRows rows, TuneKey name, int[] candidates, int formula,
+        (Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)[] products) =>
+        Tune(name, candidates, formula, c => RunMany(rows, products, c), cold: true);
+
+    private void RunMany(in ManyRows rows, ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products, int wanted)
+    {
+        int m = rows.M, k = rows.K, nmax = rows.Nmax, align = rows.Align, columnBlocks = rows.ColumnBlocks;
+        var hidden = rows.Hidden;
+        int chunk = ((k + wanted - 1) / wanted + align - 1) / align * align;
+        int splits = (k + chunk - 1) / chunk;
+        var part = splits > 1 ? Allocate(products.Length * splits * m * nmax, zeroed: false) : null;
+        try
+        {
+            Span<ulong> args = stackalloc ulong[9 + 3 * 5 + 2];
+            args[0] = P(rows.X);
+            args[1] = part is null ? P(products[0].Output) : P(part);
+            args[2] = U(m);
+            args[3] = U(k);
+            args[4] = U(chunk);
+            args[5] = U(splits);
+            args[6] = P(rows.Counters);
+            args[7] = U(columnBlocks);
+            args[8] = U(nmax);
+            for (int j = 0; j < 3; j++)
+            {
+                var product = j < products.Length ? products[j] : products[0];
+                args[9 + 5 * j] = P(product.Packed);
+                args[10 + 5 * j] = P(product.Scales ?? product.Packed);
+                args[11 + 5 * j] = P(product.Output);
+                args[12 + 5 * j] = product.Bias is null ? 0UL : P(product.Bias);
+                args[13 + 5 * j] = U(j < products.Length ? product.Columns : 0);
+            }
+
+            args[24] = U(rows.Activation);
+            args[25] = hidden is null ? 0UL : P(hidden);
+            Launch(K(rows.Kernel), (uint)columnBlocks, (uint)splits, (uint)products.Length, PtxKernels.Int8GemvThreads, 1, hidden is null ? args[..24] : args);
+        }
+        finally
+        {
+            part?.Release();
+        }
     }
 
     private Storage? _splitCounters;
@@ -703,10 +787,8 @@ internal sealed unsafe partial class CudaBackend
             throw new NotSupportedException($"Decoding attention supports head sizes up to {PtxKernels.DecodeMaxDim} on CUDA.");
         }
 
-        int rows = heads * rowsPerHead;
-        DecodeSplit(WindowedTuning(0, variant, capacity), rows, capacity, dim, position, y, (splits, minChunk, part, counters, at) => Launch(K("attention_decode_f32"), (uint)rows, (uint)splits, 1, PtxKernels.RowThreads, 1,
-            P(q), P(keys), P(values), at, P(y), P(part), P(counters), U(rowsPerHead), U(steps), U(capacity), U(dim), F(scale), U(minChunk),
-            U(variant.Window), F(variant.Softcap), U(rows)));
+        DecodeSplit(WindowedTuning(0, variant, capacity),
+            new DecodeAttention(0, q, keys, values, null, null, y, rowsPerHead, steps, capacity, dim, scale, 0, variant, heads * rowsPerHead), position);
     }
 
     // The tuning variant of a decoding attention kernel (0 float32, 1 int8, 2 bfloat16): a window shorter than the
@@ -729,28 +811,10 @@ internal sealed unsafe partial class CudaBackend
     // 200 positions took 9.0 µs with the 24 splits measured at 4096, 7.6 with 16. So each block also takes at least
     // `minChunk` positions (the blocks past the filled length then add an empty part), measured per shape after the
     // splits over the same lengths; 1, the plain chunks, is the reference and stays unless another is faster. `launch(splits, minChunk, part, counters, position)` launches the kernel with that position address.
-    private void DecodeSplit(int variant, int rows, int capacity, int dim, Storage position, Storage y, Action<int, int, Storage, Storage, ulong> launch)
+    private void DecodeSplit(int variant, in DecodeAttention attention, Storage position)
     {
+        int rows = attention.Rows, capacity = attention.Capacity, dim = attention.Dim;
         var counters = SplitCounters(rows);
-        void Run(int splits, int minChunk, ulong at)
-        {
-            if (splits == 1)
-            {
-                launch(1, 1, y, counters, at);
-                return;
-            }
-
-            var part = Allocate(rows * splits * (dim + 2), zeroed: false);
-            try
-            {
-                launch(splits, minChunk, part, counters, at);
-            }
-            finally
-            {
-                part.Release();
-            }
-        }
-
         int limit = Math.Clamp(capacity / 64, 1, 64);
         int splits, minChunk = 1;
         if (DecodeSplits is int forced)
@@ -760,51 +824,135 @@ internal sealed unsafe partial class CudaBackend
         }
         else
         {
+            // Once both are known, they are read without allocating (no candidate arrays, no closures).
             int formula = Math.Clamp((5 * Math.Max(1, _multiprocessors) + rows - 1) / rows, 1, Math.Min(32, limit));
-            int[] candidates = SplitCounts(limit);
-            if (!candidates.Contains(formula))
+            Span<int> candidates = stackalloc int[SplitCountsLength];
+            candidates = candidates[..DecodeSplitCandidates(limit, formula, candidates)];
+            Span<int> chunks = stackalloc int[DecodeChunksLength];
+            bool known = TryTuned(new TuneKey(TuneOp.DecodeSplits, variant, rows, capacity, dim), candidates, formula, out splits);
+            if (known && DecodeMinChunk is int forcedChunk)
             {
-                candidates = [.. candidates.Append(formula).Order()];
+                minChunk = forcedChunk;
+            }
+            else if (known)
+            {
+                chunks = chunks[..(splits > 1 ? DecodeMinChunks(capacity, splits, chunks) : 0)];
+                known = TryTuned(new TuneKey(TuneOp.DecodeMinChunk, variant, rows, capacity, dim, splits), chunks, 1, out minChunk);
             }
 
-            int[] lengths = DecodeTuneLengths(capacity);
-            Storage? positions = null;
-            ulong At(int i)
+            if (!known)
             {
-                if (positions is null)
-                {
-                    positions = Allocate(lengths.Length, zeroed: false);
-                    Upload([.. lengths.Select(n => n - 1f)], positions);     // every row then reads that many positions
-                }
-
-                return P(positions) + (ulong)(4 * i);
-            }
-
-            try
-            {
-                splits = Tune(new TuneKey(TuneOp.DecodeSplits, variant, rows, capacity, dim), candidates, formula, c =>
-                {
-                    for (int i = 0; i < lengths.Length; i++)
-                    {
-                        Run(c, 1, At(i));                               // writes y, which the launch below writes again
-                    }
-                }, part: (c, i) => Run(c, 1, At(i)), parts: lengths.Length);
-                int[] chunks = splits > 1 ? DecodeMinChunks(capacity, splits) : [];
-                minChunk = DecodeMinChunk ?? Tune(new TuneKey(TuneOp.DecodeMinChunk, variant, rows, capacity, dim, splits), chunks, 1, c =>
-                {
-                    for (int i = 0; i < lengths.Length; i++)
-                    {
-                        Run(splits, c, At(i));
-                    }
-                }, part: (c, i) => Run(splits, c, At(i)), parts: lengths.Length);
-            }
-            finally
-            {
-                positions?.Release();
+                (splits, minChunk) = MeasureDecode(variant, attention, counters, candidates.ToArray(), formula);
             }
         }
 
-        Run(splits, minChunk, P(position));
+        RunDecode(attention, counters, splits, minChunk, P(position));
+    }
+
+    // Split counts decoding attention is measured with: SplitCounts up to `limit`, and the formula's choice in order.
+    private static int DecodeSplitCandidates(int limit, int formula, Span<int> values)
+    {
+        int count = SplitCounts(limit, values);
+        if (!values[..count].Contains(formula))
+        {
+            int at = count++;
+            for (; at > 0 && values[at - 1] > formula; at--)
+            {
+                values[at] = values[at - 1];
+            }
+
+            values[at] = formula;
+        }
+
+        return count;
+    }
+
+    // Measures the split count, then the least chunk, over the filled lengths of DecodeTuneLengths (scratch positions).
+    private (int Splits, int MinChunk) MeasureDecode(int variant, DecodeAttention attention, Storage counters, int[] candidates, int formula)
+    {
+        int rows = attention.Rows, capacity = attention.Capacity, dim = attention.Dim;
+        int[] lengths = DecodeTuneLengths(capacity);
+        Storage? positions = null;
+        ulong At(int i)
+        {
+            if (positions is null)
+            {
+                positions = Allocate(lengths.Length, zeroed: false);
+                Upload([.. lengths.Select(n => n - 1f)], positions);     // every row then reads that many positions
+            }
+
+            return P(positions) + (ulong)(4 * i);
+        }
+
+        try
+        {
+            int splits = Tune(new TuneKey(TuneOp.DecodeSplits, variant, rows, capacity, dim), candidates, formula, c =>
+            {
+                for (int i = 0; i < lengths.Length; i++)
+                {
+                    RunDecode(attention, counters, c, 1, At(i));             // writes y, which the launch after writes again
+                }
+            }, part: (c, i) => RunDecode(attention, counters, c, 1, At(i)), parts: lengths.Length);
+            int[] chunks = splits > 1 ? DecodeMinChunks(capacity, splits) : [];
+            int minChunk = DecodeMinChunk ?? Tune(new TuneKey(TuneOp.DecodeMinChunk, variant, rows, capacity, dim, splits), chunks, 1, c =>
+            {
+                for (int i = 0; i < lengths.Length; i++)
+                {
+                    RunDecode(attention, counters, splits, c, At(i));
+                }
+            }, part: (c, i) => RunDecode(attention, counters, splits, c, At(i)), parts: lengths.Length);
+            return (splits, minChunk);
+        }
+        finally
+        {
+            positions?.Release();
+        }
+    }
+
+    // A decoding attention launch but for its split count, least chunk, partial results, counters and position: the
+    // cache format (0 float32, 1 int8, 2 bfloat16) and its operands (DecodeSplit).
+    private readonly record struct DecodeAttention(int Format, Storage Q, Storage Keys, Storage Values, Storage? KeyScales, Storage? ValueScales,
+        Storage Y, int RowsPerHead, int Steps, int Capacity, int Dim, float Scale, int Words, AttentionVariant Variant, int Rows);
+
+    private void RunDecode(in DecodeAttention a, Storage counters, int splits, int minChunk, ulong at)
+    {
+        if (splits == 1)
+        {
+            LaunchDecode(a, 1, 1, a.Y, counters, at);
+            return;
+        }
+
+        var part = Allocate(a.Rows * splits * (a.Dim + 2), zeroed: false);
+        try
+        {
+            LaunchDecode(a, splits, minChunk, part, counters, at);
+        }
+        finally
+        {
+            part.Release();
+        }
+    }
+
+    private void LaunchDecode(in DecodeAttention a, int splits, int minChunk, Storage part, Storage counters, ulong at)
+    {
+        switch (a.Format)
+        {
+            case 0:
+                Launch(K("attention_decode_f32"), (uint)a.Rows, (uint)splits, 1, PtxKernels.RowThreads, 1,
+                    P(a.Q), P(a.Keys), P(a.Values), at, P(a.Y), P(part), P(counters), U(a.RowsPerHead), U(a.Steps), U(a.Capacity), U(a.Dim), F(a.Scale), U(minChunk),
+                    U(a.Variant.Window), F(a.Variant.Softcap), U(a.Rows));
+                break;
+            case 1:
+                Launch(K("attention_decode_int8"), (uint)a.Rows, (uint)splits, 1, PtxKernels.RowThreads, 1,
+                    P(a.Q), P(a.Keys), P(a.Values), P(a.KeyScales!), P(a.ValueScales!), at, P(a.Y), P(part), P(counters),
+                    U(a.RowsPerHead), U(a.Steps), U(a.Capacity), U(a.Dim), F(a.Scale), U(a.Words), U(minChunk), U(a.Variant.Window), F(a.Variant.Softcap), U(a.Rows));
+                break;
+            default:
+                Launch(K("attention_decode_bf16"), (uint)a.Rows, (uint)splits, 1, PtxKernels.RowThreads, 1,
+                    P(a.Q), P(a.Keys), P(a.Values), at, P(a.Y), P(part), P(counters), U(a.RowsPerHead), U(a.Steps), U(a.Capacity), U(a.Dim), F(a.Scale), U(a.Words),
+                    U(minChunk), U(a.Variant.Window), F(a.Variant.Softcap), U(a.Rows));
+                break;
+        }
     }
 
     /// <summary>Tests and benchmarks: the least positions per block of decoding attention, instead of the measured one.</summary>
@@ -828,14 +976,25 @@ internal sealed unsafe partial class CudaBackend
     // measured best).
     internal static int[] DecodeMinChunks(int capacity, int splits)
     {
-        var chunks = new List<int> { 1 };
+        Span<int> chunks = stackalloc int[DecodeChunksLength];
+        return chunks[..DecodeMinChunks(capacity, splits, chunks)].ToArray();
+    }
+
+    // The same into `chunks` (DecodeChunksLength long), without allocating; returns how many.
+    private static int DecodeMinChunks(int capacity, int splits, Span<int> chunks)
+    {
+        int count = 0;
+        chunks[count++] = 1;
         for (int c = 8; c * splits < capacity; c *= 2)
         {
-            chunks.Add(c);
+            chunks[count++] = c;
         }
 
-        return [.. chunks];
+        return count;
     }
+
+    // 1, then 8 and its doublings below any int capacity: at most 29.
+    private const int DecodeChunksLength = 32;
 
     public override void RmsNormAffineKernel(Storage x, Storage gain, Storage y, int rows, int cols, float eps, float offset) =>
         LaunchRows(K("rms_norm_affine_f32"), rows, P(x), P(gain), P(y), U(cols), F(eps), F(offset), U(rows));
@@ -1085,10 +1244,9 @@ internal sealed unsafe partial class CudaBackend
             throw new NotSupportedException($"Int8 cache attention supports head sizes up to {PtxKernels.DecodeMaxDim} on CUDA.");
         }
 
-        int rows = heads * rowsPerHead;
-        DecodeSplit(WindowedTuning(1, variant, capacity), rows, capacity, dim, position, y, (splits, minChunk, part, counters, at) => Launch(K("attention_decode_int8"), (uint)rows, (uint)splits, 1, PtxKernels.RowThreads, 1,
-            P(q), P(keys), P(values), P(keyScales), P(valueScales), at, P(y), P(part), P(counters),
-            U(rowsPerHead), U(steps), U(capacity), U(dim), F(scale), U(words), U(minChunk), U(variant.Window), F(variant.Softcap), U(rows)));
+        DecodeSplit(WindowedTuning(1, variant, capacity),
+            new DecodeAttention(1, q, keys, values, keyScales, valueScales, y, rowsPerHead, steps, capacity, dim, scale, words, variant, heads * rowsPerHead),
+            position);
     }
 
     public override void SoftmaxCrossEntropyRowsKernel(Storage logits, Storage targets, Storage weights, Storage losses, int rows, int vocabulary, float scale) =>
@@ -1111,11 +1269,8 @@ internal sealed unsafe partial class CudaBackend
             throw new NotSupportedException($"bfloat16 cache attention supports head sizes up to {PtxKernels.DecodeMaxDim} on CUDA.");
         }
 
-        int rows = heads * rowsPerHead;
-        DecodeSplit(WindowedTuning(2, variant, capacity), rows, capacity, dim, position, y, (splits, minChunk, part, counters, at) => Launch(K("attention_decode_bf16"), (uint)rows, (uint)splits, 1, PtxKernels.RowThreads, 1,
-            P(q), P(keys), P(values), at, P(y), P(part), P(counters), U(rowsPerHead), U(steps), U(capacity), U(dim), F(scale), U(words), U(minChunk),
-            U(variant.Window), F(variant.Softcap), U(rows)));
-
+        DecodeSplit(WindowedTuning(2, variant, capacity),
+            new DecodeAttention(2, q, keys, values, null, null, y, rowsPerHead, steps, capacity, dim, scale, words, variant, heads * rowsPerHead), position);
     }
 
     public override void KeyValueWriteBFloat16Kernel(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)

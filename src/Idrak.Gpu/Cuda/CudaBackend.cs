@@ -888,7 +888,7 @@ internal sealed unsafe partial class CudaBackend : Backend
         }
 
         // One launch for all of them: grid y picks the product (up to three), x covers the widest.
-        var args = new ulong[3 + 4 * 3];
+        Span<ulong> args = stackalloc ulong[3 + 4 * 3];
         args[0] = P(a);
         args[1] = U(m);
         args[2] = U(k);
@@ -1569,6 +1569,7 @@ internal sealed unsafe partial class CudaBackend : Backend
     {
         public int[] Sizes = [];
         public ulong[] Pointers = [];
+        public ulong[] Spare = [];                                         // the next step's pointers, compared with Pointers
         public Storage? Chunks, Table, Factor;
         public int ChunkCount;
 
@@ -1636,7 +1637,12 @@ internal sealed unsafe partial class CudaBackend : Backend
             state.Pointers = [];
         }
 
-        var pointers = new ulong[tensors.Length * 5];
+        if (state.Spare.Length != tensors.Length * 5)
+        {
+            state.Spare = new ulong[tensors.Length * 5];
+        }
+
+        var pointers = state.Spare;
         for (int t = 0; t < tensors.Length; t++)
         {
             (pointers[5 * t], pointers[5 * t + 1], pointers[5 * t + 2], pointers[5 * t + 3], pointers[5 * t + 4]) =
@@ -1645,7 +1651,7 @@ internal sealed unsafe partial class CudaBackend : Backend
 
         if (!pointers.AsSpan().SequenceEqual(state.Pointers))
         {
-            state.Pointers = pointers;
+            (state.Pointers, state.Spare) = (pointers, state.Pointers);
             state.Table ??= Allocate(tensors.Length * 10, zeroed: false);
             if (state.Table.Length != tensors.Length * 10)
             {
