@@ -82,11 +82,11 @@ using (gpt)
 {
     bool On(string name) => options.Get(name, "on") is "on" or "true" or "1";
     var settings = new GenerationSettings(
-        Length: int.Parse(options.Get("length", "400")!),
+        Length: int.Parse(options.Get("length", "400")!, System.Globalization.CultureInfo.InvariantCulture),
         Temperature: float.Parse(options.Get("temperature", "0.7")!, System.Globalization.CultureInfo.InvariantCulture),
-        TopK: int.Parse(options.Get("top-k", "0")!),
+        TopK: int.Parse(options.Get("top-k", "0")!, System.Globalization.CultureInfo.InvariantCulture),
         Seed: 6,
-        Samples: int.Parse(options.Get("samples", "1")!),
+        Samples: int.Parse(options.Get("samples", "1")!, System.Globalization.CultureInfo.InvariantCulture),
         UseCache: On("cache"),
         UseGraph: On("graph"));
 

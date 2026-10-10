@@ -226,18 +226,20 @@ internal sealed class Recognizer : IDisposable
     /// <summary>The label ids of a transcription (logical order) in column order; characters outside the alphabet are left out and returned.</summary>
     public (int[] Labels, IReadOnlyList<string> Unknown) Encode(string transcription)
     {
-        var index = Index();
+        var index = Index().GetAlternateLookup<ReadOnlySpan<char>>();                  // looked up by the rune's chars: no string a character
         var labels = new List<int>();
         var unknown = new List<string>();
+        Span<char> pair = stackalloc char[2];
         foreach (var rune in ReadingOrder.ToColumns(OcrText.Normalize(transcription)).EnumerateRunes())
         {
-            if (index.TryGetValue(rune.ToString(), out int id))
+            var chars = pair[..rune.EncodeToUtf16(pair)];
+            if (index.TryGetValue(chars, out int id))
             {
                 labels.Add(id);
             }
             else
             {
-                unknown.Add(rune.ToString());
+                unknown.Add(chars.ToString());
             }
         }
 

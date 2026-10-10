@@ -155,7 +155,7 @@ internal static class TrainCommand
         var runClock = Stopwatch.StartNew();
         long step = 0;
         double lastLoss = double.NaN;
-        int stepsPerEpoch = Batches(trainLines, batchSize, seed, 1).Count();
+        int stepsPerEpoch = (trainLines.Length + batchSize - 1) / batchSize;             // Batches makes ceil(lines / size) of them
         int profile = a.Integer("--profile", 0, 0);
         const int ProfileWarm = 20;
         long profileStart = 0, profiledLines = 0;

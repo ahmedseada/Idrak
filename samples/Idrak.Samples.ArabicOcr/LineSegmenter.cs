@@ -33,10 +33,16 @@ internal static class LineSegmenter
     {
         settings ??= new SegmentationSettings();
         int width = page.Width, height = page.Height;
-        var grey = Foreground.Grey(page);
-        var foreground = Foreground.Extract(page);
-        var ink = foreground.Values.ToArray();
-        float lo = ink.Min(), hi = ink.Max();
+        var grey = Foreground.Grey(page);                                             // grey once: the foreground is made from it
+        var foreground = Foreground.Extract(page.Channels == 1 ? page : new ImageData(grey, 1, height, width));
+        ReadOnlySpan<float> ink = foreground.Values;
+        float lo = float.PositiveInfinity, hi = float.NegativeInfinity;
+        foreach (float v in ink)
+        {
+            lo = Math.Min(lo, v);
+            hi = Math.Max(hi, v);
+        }
+
         if (hi - lo < 0.1f)
         {
             return ([], 0);                                                       // a blank page: no contrast, no ink
@@ -170,38 +176,62 @@ internal static class LineSegmenter
 
     // The shear (in degrees) whose row profile of the ink is sharpest (the largest sum of squared row counts), in steps of
     // a fifth of a degree; 0 unless another angle is clearly sharper. Ink pixels only, at most about 200,000 of them.
-    private static double MeasureSkew(float[] ink, int width, int height, float threshold, double maxDegrees)
+    private static double MeasureSkew(ReadOnlySpan<float> ink, int width, int height, float threshold, double maxDegrees)
     {
-        var xs = new List<int>();
-        var ys = new List<int>();
-        int total = ink.Count(v => v > threshold);
-        int step = Math.Max(1, total / 200_000);
-        for (int i = 0, seen = 0; i < ink.Length; i++)
+        int total = 0;
+        foreach (float v in ink)
         {
-            if (ink[i] > threshold && seen++ % step == 0)
-            {
-                xs.Add(i % width);
-                ys.Add(i / width);
-            }
+            total += v > threshold ? 1 : 0;
         }
 
-        if (xs.Count == 0)
+        if (total == 0)
         {
             return 0;
         }
 
+        // Every step-th ink pixel, row by row: ceil(total / step) of them.
+        int step = Math.Max(1, total / 200_000);
+        var xs = new int[(total + step - 1) / step];
+        var ys = new int[xs.Length];
+        for (int y = 0, seen = 0, n = 0; y < height; y++)
+        {
+            var row = ink.Slice(y * width, width);
+            for (int x = 0; x < width; x++)
+            {
+                if (row[x] > threshold && seen++ % step == 0)
+                {
+                    (xs[n], ys[n]) = (x, y);
+                    n++;
+                }
+            }
+        }
+
+        var rows = new int[height];                                                   // one buffer for every angle, grown as the margin needs
         double Score(double degrees)
         {
             double slope = Math.Tan(degrees * Math.PI / 180);
             int margin = (int)Math.Ceiling(Math.Abs(slope) * width) + 1;
-            var rows = new int[height + 2 * margin];
-            for (int i = 0; i < xs.Count; i++)
+            int length = height + 2 * margin;
+            if (rows.Length < length)
             {
-                int row = (int)Math.Round(ys[i] - (xs[i] - width / 2.0) * slope) + margin;
-                rows[Math.Clamp(row, 0, rows.Length - 1)]++;
+                rows = new int[length];
             }
 
-            return rows.Sum(c => (double)c * c);
+            var counts = rows.AsSpan(0, length);
+            counts.Clear();
+            for (int i = 0; i < xs.Length; i++)
+            {
+                int row = (int)Math.Round(ys[i] - (xs[i] - width / 2.0) * slope) + margin;
+                counts[Math.Clamp(row, 0, length - 1)]++;
+            }
+
+            double sum = 0;
+            foreach (int c in counts)
+            {
+                sum += (double)c * c;
+            }
+
+            return sum;
         }
 
         double flat = Score(0), best = flat, bestAngle = 0;
@@ -217,22 +247,29 @@ internal static class LineSegmenter
         return best > flat * 1.02 ? bestAngle : 0;
     }
 
-    // dest(y, x) = src(y + (x - width / 2) · tan(angle), x), linearly between rows; outside the page: fill.
-    private static float[] Shear(float[] source, int width, int height, double degrees, float fill)
+    // dest(y, x) = src(y + (x - width / 2) · tan(angle), x), linearly between rows; outside the page: fill. Row by row (the
+    // arrays' order): each column's shift is worked out once.
+    private static float[] Shear(ReadOnlySpan<float> source, int width, int height, double degrees, float fill)
     {
         double slope = Math.Tan(degrees * Math.PI / 180);
-        var result = new float[source.Length];
+        var shifts = new double[width];
         for (int x = 0; x < width; x++)
         {
-            double shift = (x - width / 2.0) * slope;
-            for (int y = 0; y < height; y++)
+            shifts[x] = (x - width / 2.0) * slope;
+        }
+
+        var result = new float[source.Length];
+        for (int y = 0; y < height; y++)
+        {
+            var row = result.AsSpan(y * width, width);
+            for (int x = 0; x < width; x++)
             {
-                double sy = y + shift;
+                double sy = y + shifts[x];
                 int y0 = (int)Math.Floor(sy);
                 double t = sy - y0;
                 float a = y0 >= 0 && y0 < height ? source[y0 * width + x] : fill;
                 float b = y0 + 1 >= 0 && y0 + 1 < height ? source[(y0 + 1) * width + x] : fill;
-                result[y * width + x] = (float)(a * (1 - t) + b * t);
+                row[x] = (float)(a * (1 - t) + b * t);
             }
         }
 

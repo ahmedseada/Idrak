@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Buffers;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
@@ -182,12 +183,13 @@ internal static class ReadingOrder
     private static string ReverseLeftToRightRuns(string text)
     {
         var runes = text.EnumerateRunes().ToArray();
-        var result = new List<Rune>(runes.Length);
+        var builder = new StringBuilder(text.Length);
+        Span<char> pair = stackalloc char[2];
         for (int i = 0; i < runes.Length;)
         {
             if (!IsLeftToRight(runes[i]))
             {
-                result.Add(runes[i++]);
+                builder.Append(pair[..runes[i++].EncodeToUtf16(pair)]);
                 continue;
             }
 
@@ -204,16 +206,10 @@ internal static class ReadingOrder
 
             for (int k = end; k >= i; k--)
             {
-                result.Add(runes[k]);
+                builder.Append(pair[..runes[k].EncodeToUtf16(pair)]);
             }
 
             i = end + 1;
-        }
-
-        var builder = new StringBuilder(text.Length);
-        foreach (var rune in result)
-        {
-            builder.Append(rune.ToString());
         }
 
         return builder.ToString();
@@ -239,79 +235,105 @@ internal static class TextAlignment
     /// </summary>
     public static TextSpan? Best(string draft, string text, int from)
     {
-        var d = draft.EnumerateRunes().Select(r => r.Value).ToArray();
-        if (d.Length == 0 || from >= text.Length)
+        if (from >= text.Length || draft.Length == 0)
         {
             return null;
         }
 
-        // The text's scalars from `from`, with each one's char index.
-        var t = new List<int>();
-        var index = new List<int>();
-        for (int i = from; i < text.Length;)
+        // One rented buffer: the draft's scalars, the text's scalars from `from` with each one's char index, and two rows
+        // of the table (only the last row is read, so the rows before it are not kept).
+        int size = text.Length - from + 1;
+        int[] buffer = ArrayPool<int>.Shared.Rent(draft.Length + 6 * size);
+        try
         {
-            var rune = Rune.GetRuneAt(text, i);
-            t.Add(rune.Value);
-            index.Add(i);
-            i += rune.Utf16SequenceLength;
-        }
-
-        int n = d.Length, m = t.Count;
-        // cost[i, j]: distance of d[..i] to the best span ending at t[j - 1]; start[i, j]: where that span starts.
-        var cost = new int[n + 1, m + 1];
-        var start = new int[n + 1, m + 1];
-        for (int j = 0; j <= m; j++)
-        {
-            start[0, j] = j;
-        }
-
-        for (int i = 1; i <= n; i++)
-        {
-            cost[i, 0] = i;
-            start[i, 0] = 0;
-            for (int j = 1; j <= m; j++)
+            var d = buffer.AsSpan(0, draft.Length);
+            int n = 0;
+            foreach (var rune in draft.EnumerateRunes())
             {
-                int substitute = cost[i - 1, j - 1] + (d[i - 1] == t[j - 1] ? 0 : 1);
-                int delete = cost[i - 1, j] + 1;
-                int insert = cost[i, j - 1] + 1;
-                if (substitute <= delete && substitute <= insert)
+                d[n++] = rune.Value;
+            }
+
+            int m = 0;
+            var t = buffer.AsSpan(draft.Length, size);
+            var index = buffer.AsSpan(draft.Length + size, size);
+            for (int i = from; i < text.Length;)
+            {
+                var rune = Rune.GetRuneAt(text, i);
+                (t[m], index[m]) = (rune.Value, i);
+                m++;
+                i += rune.Utf16SequenceLength;
+            }
+
+            // cost[j]: distance of d[..i] to the best span ending at t[j - 1]; start[j]: where that span starts. Row i - 1
+            // in the previous pair, row i in the current one.
+            var cost = buffer.AsSpan(draft.Length + 2 * size, m + 1);
+            var start = buffer.AsSpan(draft.Length + 3 * size, m + 1);
+            var nextCost = buffer.AsSpan(draft.Length + 4 * size, m + 1);
+            var nextStart = buffer.AsSpan(draft.Length + 5 * size, m + 1);
+            for (int j = 0; j <= m; j++)
+            {
+                (cost[j], start[j]) = (0, j);
+            }
+
+            for (int i = 1; i <= n; i++)
+            {
+                (nextCost[0], nextStart[0]) = (i, 0);
+                int letter = d[i - 1];
+                for (int j = 1; j <= m; j++)
                 {
-                    (cost[i, j], start[i, j]) = (substitute, start[i - 1, j - 1]);
+                    int substitute = cost[j - 1] + (letter == t[j - 1] ? 0 : 1);
+                    int delete = cost[j] + 1;
+                    int insert = nextCost[j - 1] + 1;
+                    if (substitute <= delete && substitute <= insert)
+                    {
+                        (nextCost[j], nextStart[j]) = (substitute, start[j - 1]);
+                    }
+                    else if (delete <= insert)
+                    {
+                        (nextCost[j], nextStart[j]) = (delete, start[j]);
+                    }
+                    else
+                    {
+                        (nextCost[j], nextStart[j]) = (insert, nextStart[j - 1]);
+                    }
                 }
-                else if (delete <= insert)
+
+                var swap = cost;
+                cost = nextCost;
+                nextCost = swap;
+                swap = start;
+                start = nextStart;
+                nextStart = swap;
+            }
+
+            int bestEnd = 1;
+            for (int j = 2; j <= m; j++)
+            {
+                if (cost[j] < cost[bestEnd])
                 {
-                    (cost[i, j], start[i, j]) = (delete, start[i - 1, j]);
-                }
-                else
-                {
-                    (cost[i, j], start[i, j]) = (insert, start[i, j - 1]);
+                    bestEnd = j;
                 }
             }
-        }
 
-        int bestEnd = 1;
-        for (int j = 2; j <= m; j++)
-        {
-            if (cost[n, j] < cost[n, bestEnd])
+            int first = index[start[bestEnd]], last = bestEnd >= m ? text.Length : index[bestEnd];
+            first = Math.Min(first, last);
+            // Out to word boundaries: a line breaks between words.
+            while (first > from && !char.IsWhiteSpace(text[first - 1]) && first < last)
             {
-                bestEnd = j;
+                first--;
             }
-        }
 
-        int first = index[start[n, bestEnd]], last = bestEnd >= m ? text.Length : index[bestEnd];
-        first = Math.Min(first, last);
-        // Out to word boundaries: a line breaks between words.
-        while (first > from && !char.IsWhiteSpace(text[first - 1]) && first < last)
+            while (last < text.Length && !char.IsWhiteSpace(text[last]))
+            {
+                last++;
+            }
+
+            return new TextSpan(first, last - first, cost[bestEnd]);
+        }
+        finally
         {
-            first--;
+            ArrayPool<int>.Shared.Return(buffer);
         }
-
-        while (last < text.Length && !char.IsWhiteSpace(text[last]))
-        {
-            last++;
-        }
-
-        return new TextSpan(first, last - first, cost[n, bestEnd]);
     }
 
     /// <summary>

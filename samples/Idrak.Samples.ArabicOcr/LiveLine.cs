@@ -74,9 +74,9 @@ internal sealed class LiveLine(TextWriter error)
     /// <summary>Bytes as KB, MB or GB.</summary>
     public static string Bytes(long bytes) => bytes switch
     {
-        >= 1L << 30 => $"{bytes / (double)(1L << 30):F2} GB",
-        >= 1L << 20 => $"{bytes / (double)(1L << 20):F0} MB",
-        _ => $"{bytes / 1024.0:F0} KB",
+        >= 1L << 30 => FormattableString.Invariant($"{bytes / (double)(1L << 30):F2} GB"),
+        >= 1L << 20 => FormattableString.Invariant($"{bytes / (double)(1L << 20):F0} MB"),
+        _ => FormattableString.Invariant($"{bytes / 1024.0:F0} KB"),
     };
 
     private static int Width()
