@@ -219,7 +219,7 @@ internal static class DataPreparation
         int count = 0;
         // Words are looked up as spans of one reused buffer (the "words" tokenizer's split), not a string per word.
         var lookup = vocabulary.GetAlternateLookup<ReadOnlySpan<char>>();
-        var word = new char[64];
+        var letters = new char[64];
         foreach (var row in rows)
         {
             if (!targetSpec.Append(row[targetSpec.Column], y))
@@ -233,16 +233,16 @@ internal static class DataPreparation
             {
                 if (i < text.Length && char.IsLetterOrDigit(text[i]))
                 {
-                    if (used == word.Length)
+                    if (used == letters.Length)
                     {
-                        Array.Resize(ref word, word.Length * 2);
+                        Array.Resize(ref letters, letters.Length * 2);
                     }
 
-                    word[used++] = lowercase ? char.ToLowerInvariant(text[i]) : text[i];
+                    letters[used++] = lowercase ? char.ToLowerInvariant(text[i]) : text[i];
                 }
                 else if (used > 0)
                 {
-                    x.Add(lookup.TryGetValue(word.AsSpan(0, used), out int found) ? found : 1);
+                    x.Add(lookup.TryGetValue(letters.AsSpan(0, used), out int found) ? found : 1);
                     ids++;
                     used = 0;
                 }
