@@ -34,6 +34,9 @@ internal sealed unsafe partial class VulkanBackend
     private readonly Dictionary<VulkanKernel, VulkanKernel> _sized = [];
     private readonly Dictionary<(VulkanKernel, int), VulkanKernel> _sizeVariants = [];
 
+    // The sizes a kernel of each workgroup width may require (SizeCandidatesAt). Guarded by itself.
+    private readonly Dictionary<int, int[]> _sizeCandidates = [];
+
     /// <summary>Whether subgroup size control is enabled on this device.</summary>
     internal bool SubgroupSizeControl => _sizeControl.Enabled;
 
@@ -97,6 +100,21 @@ internal sealed unsafe partial class VulkanBackend
         return [.. sizes];
     }
 
+    // SubgroupSizeCandidates(width), built once per width (they follow from the device's fixed facts): a dispatch whose
+    // size is not measured (IDRAK_AUTOTUNE=0, or inside another measurement) looks them up on every call.
+    private int[] SizeCandidatesAt(int width)
+    {
+        lock (_sizeCandidates)
+        {
+            if (!_sizeCandidates.TryGetValue(width, out var sizes))
+            {
+                _sizeCandidates[width] = sizes = SubgroupSizeCandidates(width);
+            }
+
+            return sizes;
+        }
+    }
+
     /// <summary>The subgroup size chosen for kernel <paramref name="name"/> (0: the device's default), or null when none
     /// was chosen for it (for tests and diagnostics).</summary>
     internal int? ChosenSubgroupSize(string name)
@@ -144,7 +162,7 @@ internal sealed unsafe partial class VulkanBackend
         }
 
         int width = kernel.LocalSizeX;
-        int[] sizes = SubgroupSizeCandidates(width);
+        int[] sizes = SizeCandidatesAt(width);
         if (sizes.Length == 0)
         {
             return Remember(kernel, 0);
@@ -161,12 +179,17 @@ internal sealed unsafe partial class VulkanBackend
             return kernel;                                                     // measured on a later run
         }
 
-        // Candidates: the device's default (0), then each size it may require.
+        return Remember(kernel, MeasureSized(key, kernel, sizes, groupsX, groupsY, groupsZ, storages, push));
+    }
+
+    // Measures the candidates: the device's default (0), then each size it may require. Kept apart from Sized so a
+    // dispatch that finds its choice makes no closure.
+    private int MeasureSized(VulkanTuneKey key, VulkanKernel kernel, int[] sizes, uint groupsX, uint groupsY, uint groupsZ, ReadOnlySpan<Storage> storages,
+        ReadOnlySpan<byte> push)
+    {
         var pushed = push.ToArray();
-        (uint gx, uint gy, uint gz) = (groupsX, groupsY, groupsZ);
-        choice = TuneWithScratch(key, [0, .. sizes], 0, storages.ToArray(), kernel.Writes,
-            (size, bound) => Dispatch(Variant(kernel, size), gx, gy, gz, bound, pushed));
-        return Remember(kernel, choice);
+        return TuneWithScratch(key, [0, .. sizes], 0, storages.ToArray(), kernel.Writes,
+            (size, bound) => Dispatch(Variant(kernel, size), groupsX, groupsY, groupsZ, bound, pushed));
     }
 
     private VulkanKernel Remember(VulkanKernel kernel, int size)

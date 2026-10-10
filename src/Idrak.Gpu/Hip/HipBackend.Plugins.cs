@@ -40,24 +40,37 @@ internal sealed unsafe partial class HipBackend
                 $"HIP kernel '{kernel.Name}': {sharedBytes} bytes of shared memory; {Name} allows {limits.SharedMemoryPerBlock} a block.");
         }
 
-        ulong* values = stackalloc ulong[Math.Max(arguments.Length, 1)];
-        void** pointers = stackalloc void*[Math.Max(arguments.Length, 1)];
-        for (int i = 0; i < arguments.Length; i++)
+        // The arguments' slots and their addresses: on the stack, unless a plug-in declares more parameters than
+        // StackArguments (its source decides the count).
+        int count = Math.Max(arguments.Length, 1);
+        Span<ulong> slots = count <= StackArguments ? stackalloc ulong[count] : new ulong[count];
+        Span<nint> addresses = count <= StackArguments ? stackalloc nint[count] : new nint[count];
+        fixed (ulong* values = slots)
+        fixed (nint* pointers = addresses)
         {
-            values[i] = arguments[i].Kind == KernelArgumentKind.Pointer ? PluginPointer(kernel, i, arguments[i]) : arguments[i].Bits;
-            pointers[i] = &values[i];
-        }
+            for (int i = 0; i < arguments.Length; i++)
+            {
+                values[i] = arguments[i].Kind == KernelArgumentKind.Pointer ? PluginPointer(kernel, i, arguments[i]) : arguments[i].Bits;
+                pointers[i] = (nint)(values + i);
+            }
 
-        if (gridX == 0 || gridY == 0 || gridZ == 0)
-        {
-            return;
-        }
+            if (gridX == 0 || gridY == 0 || gridZ == 0)
+            {
+                return;
+            }
 
-        IntPtr function = PluginFunction(kernel);
-        MakeCurrent();
-        Check(hipModuleLaunchKernel(function, gridX, gridY, gridZ, blockX, blockY, blockZ, sharedBytes, _stream, pointers, null),
-            $"hipModuleLaunchKernel({kernel.Name})");
+            IntPtr function = PluginFunction(kernel);
+            MakeCurrent();
+            int result = hipModuleLaunchKernel(function, gridX, gridY, gridZ, blockX, blockY, blockZ, sharedBytes, _stream, (void**)pointers, null);
+            if (result != Success)
+            {
+                Check(result, $"hipModuleLaunchKernel({kernel.Name})");            // the message built only on failure
+            }
+        }
     }
+
+    // Arguments a plug-in launch keeps on the stack (64 slots and 64 addresses: 1 KiB); more go to the heap.
+    private const int StackArguments = 64;
 
     // The device address argument i stands for: a live storage of this device, at its offset.
     private ulong PluginPointer(HipKernel kernel, int i, KernelArgument argument)
