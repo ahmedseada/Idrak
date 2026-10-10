@@ -128,7 +128,7 @@ public sealed class RetrievalIndex : IRetriever
         {
             foreach (var (id, rank) in ranks)
             {
-                fused[id] = fused.GetValueOrDefault(id) + 1.0 / (fk + rank);
+                System.Runtime.InteropServices.CollectionsMarshal.GetValueRefOrAddDefault(fused, id, out _) += 1.0 / (fk + rank);
             }
         }
 

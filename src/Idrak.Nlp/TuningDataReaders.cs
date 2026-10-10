@@ -1,7 +1,9 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Buffers;
 using System.IO.Compression;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization.Metadata;
@@ -47,23 +49,12 @@ internal static class TuningRecords
 
     private static IEnumerable<(JsonObject, string)> FromLines(string path)
     {
-        int number = 0;
-        foreach (string line in File.ReadLines(path))
+        foreach (var (node, number) in JsonLines.Read(path))
         {
-            number++;
-            if (string.IsNullOrWhiteSpace(line))
+            if (node is not JsonObject record)
             {
-                continue;
-            }
-
-            JsonObject record;
-            try
-            {
-                record = JsonNode.Parse(line) as JsonObject ?? throw new InvalidDataException("the line is not a JSON object");
-            }
-            catch (Exception ex) when (ex is JsonException or InvalidDataException)
-            {
-                throw new InvalidDataException($"{path}, line {number}: {ex.Message}", ex);
+                var notObject = new InvalidDataException("the line is not a JSON object");
+                throw new InvalidDataException($"{path}, line {number}: {notObject.Message}", notObject);
             }
 
             yield return (record, Where($"{path}, line {number}", record));
@@ -97,6 +88,165 @@ internal static class TuningRecords
             }
 
             yield return (record, Where($"{path}, record {number}", record));
+        }
+    }
+}
+
+// The values of a JSON Lines file, each with its line number: the file read as UTF-8 bytes in blocks into one pooled
+// buffer, each line parsed from its bytes (no string per line). Lines are numbered and blank ones skipped as
+// File.ReadLines and string.IsNullOrWhiteSpace do (a line ends at "\n", "\r\n" or "\r"; a UTF-8 byte order mark is
+// skipped); a line that is not valid UTF-8, or starts with white space beyond ASCII's, is decoded as File.ReadLines
+// decodes it, and a file with a UTF-16 or UTF-32 byte order mark is read through File.ReadLines. A line that is not
+// valid JSON throws InvalidDataException("{path}, line {number}: ...") over the JsonException.
+internal static class JsonLines
+{
+    private static readonly SearchValues<byte> LineEnds = SearchValues.Create("\r\n"u8);
+    private static readonly SearchValues<byte> AsciiWhiteSpace = SearchValues.Create("\t\n\v\f\r "u8);
+
+    public static IEnumerable<(JsonNode? Node, int Line)> Read(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1, FileOptions.SequentialScan);
+        int skip = ByteOrderMark(stream);
+        if (skip < 0)
+        {
+            foreach (var line in FromText(path))
+            {
+                yield return line;
+            }
+
+            yield break;
+        }
+
+        stream.Position = skip;
+        byte[] buffer = ArrayPool<byte>.Shared.Rent(1 << 16);
+        int start = 0, filled = 0, number = 0;
+        bool end = false;
+        try
+        {
+            while (true)
+            {
+                if (NextLine(buffer.AsSpan(start, filled - start), end, out int length, out int next))
+                {
+                    number++;
+                    var node = Parse(buffer.AsSpan(start, length), path, number, out bool blank);
+                    start += next;
+                    if (!blank)
+                    {
+                        yield return (node, number);
+                    }
+
+                    continue;
+                }
+
+                if (end)
+                {
+                    yield break;
+                }
+
+                // The unfinished line moves to the front (into a larger buffer when it fills this one), then more is read.
+                if (start == 0 && filled == buffer.Length)
+                {
+                    byte[] larger = ArrayPool<byte>.Shared.Rent(buffer.Length * 2);
+                    buffer.AsSpan(0, filled).CopyTo(larger);
+                    ArrayPool<byte>.Shared.Return(buffer);
+                    buffer = larger;
+                }
+                else if (start > 0)
+                {
+                    buffer.AsSpan(start, filled - start).CopyTo(buffer);
+                    filled -= start;
+                    start = 0;
+                }
+
+                int read = stream.Read(buffer, filled, buffer.Length - filled);
+                filled += read;
+                end = read == 0;
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
+    }
+
+    // The bytes of a UTF-8 byte order mark to skip (3 or 0), or -1 for a UTF-16 or UTF-32 one (as StreamReader detects them).
+    private static int ByteOrderMark(FileStream stream)
+    {
+        Span<byte> head = stackalloc byte[4];
+        ReadOnlySpan<byte> bytes = head[..stream.ReadAtLeast(head, head.Length, throwOnEndOfStream: false)];
+        return bytes.StartsWith((ReadOnlySpan<byte>)[0xEF, 0xBB, 0xBF]) ? 3
+            : bytes.StartsWith((ReadOnlySpan<byte>)[0xFE, 0xFF]) || bytes.StartsWith((ReadOnlySpan<byte>)[0xFF, 0xFE])
+              || bytes.StartsWith((ReadOnlySpan<byte>)[0x00, 0x00, 0xFE, 0xFF]) ? -1
+            : 0;
+    }
+
+    // The first line of `data`: its length without the line end, and the bytes it takes with it. Not found while more
+    // can come (no line end yet, or a "\r" last whose "\n" may follow); at the end, the rest is the last line.
+    private static bool NextLine(ReadOnlySpan<byte> data, bool end, out int length, out int consumed)
+    {
+        int at = data.IndexOfAny(LineEnds);
+        if (at >= 0 && (data[at] == (byte)'\n' || at + 1 < data.Length || end))
+        {
+            length = at;
+            consumed = at + (data[at] == (byte)'\r' && at + 1 < data.Length && data[at + 1] == (byte)'\n' ? 2 : 1);
+            return true;
+        }
+
+        length = consumed = data.Length;
+        return end && data.Length > 0;
+    }
+
+    // A line's value; blank (and null) for a line of white space only.
+    private static JsonNode? Parse(ReadOnlySpan<byte> line, string path, int number, out bool blank)
+    {
+        int first = line.IndexOfAnyExcept(AsciiWhiteSpace);
+        blank = first < 0;
+        if (blank)
+        {
+            return null;
+        }
+
+        try
+        {
+            if (line[first] < 0x80 && System.Text.Unicode.Utf8.IsValid(line))
+            {
+                return JsonNode.Parse(line);
+            }
+
+            // Other white space, or bytes that are not UTF-8: the text File.ReadLines reads (invalid bytes as U+FFFD).
+            string text = Encoding.UTF8.GetString(line);
+            blank = string.IsNullOrWhiteSpace(text);
+            return blank ? null : JsonNode.Parse(text);
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidDataException($"{path}, line {number}: {ex.Message}", ex);
+        }
+    }
+
+    // A file in another encoding than UTF-8, read as text.
+    private static IEnumerable<(JsonNode? Node, int Line)> FromText(string path)
+    {
+        int number = 0;
+        foreach (string line in File.ReadLines(path))
+        {
+            number++;
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                continue;
+            }
+
+            JsonNode? node;
+            try
+            {
+                node = JsonNode.Parse(line);
+            }
+            catch (JsonException ex)
+            {
+                throw new InvalidDataException($"{path}, line {number}: {ex.Message}", ex);
+            }
+
+            yield return (node, number);
         }
     }
 }

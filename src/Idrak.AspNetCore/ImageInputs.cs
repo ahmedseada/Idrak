@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Buffers;
+using System.Globalization;
 using System.Net.Http.Headers;
 using System.Text.Json.Nodes;
 using Idrak.Data;
@@ -84,26 +86,38 @@ internal static class ImageRequests
             using var response = await Downloads.Value.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
             if (!response.IsSuccessStatusCode)
             {
-                throw new ArgumentException($"image_url: {Shorten(url)} answered {(int)response.StatusCode} {response.ReasonPhrase}.");
+                throw new ArgumentException(string.Create(CultureInfo.InvariantCulture, $"image_url: {Shorten(url)} answered {(int)response.StatusCode} {response.ReasonPhrase}."));
             }
 
             if (response.Content.Headers.ContentLength > options.MaxUrlBytes)
             {
-                throw new ArgumentException($"image_url: {Shorten(url)} holds {response.Content.Headers.ContentLength} bytes, more than the {options.MaxUrlBytes} this server downloads.");
+                throw new ArgumentException(string.Create(CultureInfo.InvariantCulture,
+                    $"image_url: {Shorten(url)} holds {response.Content.Headers.ContentLength} bytes, more than the {options.MaxUrlBytes} this server downloads."));
             }
 
             await using var stream = await response.Content.ReadAsStreamAsync(timeout.Token);
-            using var data = new MemoryStream();
-            var buffer = new byte[81920];
-            int read;
-            while ((read = await stream.ReadAsync(buffer, timeout.Token)) > 0)
-            {
-                if (data.Length + read > options.MaxUrlBytes)
-                {
-                    throw new ArgumentException($"image_url: {Shorten(url)} holds more than the {options.MaxUrlBytes} bytes this server downloads.");
-                }
 
-                data.Write(buffer, 0, read);
+            // Sized by the announced length when there is one (its bytes are then not copied again at the end); the read
+            // buffer is pooled and returned in finally.
+            using var data = new MemoryStream(response.Content.Headers.ContentLength is long announced && announced > 0 ? (int)Math.Min(announced, Array.MaxLength) : 0);
+            byte[] buffer = ArrayPool<byte>.Shared.Rent(81920);
+            try
+            {
+                int read;
+                while ((read = await stream.ReadAsync(buffer, timeout.Token)) > 0)
+                {
+                    if (data.Length + read > options.MaxUrlBytes)
+                    {
+                        throw new ArgumentException(string.Create(CultureInfo.InvariantCulture,
+                            $"image_url: {Shorten(url)} holds more than the {options.MaxUrlBytes} bytes this server downloads."));
+                    }
+
+                    data.Write(buffer, 0, read);
+                }
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
             }
 
             if (data.Length == 0)
@@ -111,11 +125,12 @@ internal static class ImageRequests
                 throw new ArgumentException($"image_url: {Shorten(url)} answered no bytes.");
             }
 
-            return ChatImage.FromBytes(data.ToArray(), MediaType(response.Content.Headers.ContentType));
+            byte[] bytes = data.Length == data.Capacity ? data.GetBuffer() : data.ToArray();
+            return ChatImage.FromBytes(bytes, MediaType(response.Content.Headers.ContentType));
         }
         catch (OperationCanceledException) when (!token.IsCancellationRequested)
         {
-            throw new ArgumentException($"image_url: {Shorten(url)} did not answer within {options.UrlTimeout.TotalSeconds:0.#} s.");
+            throw new ArgumentException(string.Create(CultureInfo.InvariantCulture, $"image_url: {Shorten(url)} did not answer within {options.UrlTimeout.TotalSeconds:0.#} s."));
         }
         catch (HttpRequestException ex)
         {

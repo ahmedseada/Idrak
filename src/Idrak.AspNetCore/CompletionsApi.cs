@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Buffers;
 using System.Diagnostics;
 using System.Globalization;
 using System.Security.Cryptography;
@@ -235,6 +236,8 @@ public static class CompletionsApiEndpoints
         return Results.Stream(async output =>
         {
             await using var _ = chunks;
+            var (buffer, writer) = EventWriter();
+            using var __ = writer;
             bool sawCalls = false, opening = true;
             int index = 0;
             do
@@ -277,23 +280,23 @@ public static class CompletionsApiEndpoints
                     if (delta.Count > 0 && chunk.Done)
                     {
                         // The last piece's text first, then the finish reason on its own (as the wire format's clients expect).
-                        await Event(output, ChatChunkJson(id, created, name, delta, null), token);
+                        await Event(output, buffer, writer, ChatChunkJson(id, created, name, delta, null), token);
                         delta = [];
                     }
 
-                    await Event(output, ChatChunkJson(id, created, name, delta, reason), token);
+                    await Event(output, buffer, writer, ChatChunkJson(id, created, name, delta, reason), token);
                 }
 
                 if (chunk.Done && usage)
                 {
                     var json = ChatChunkJson(id, created, name, null, null);
                     json["usage"] = Usage(chunk.Stats);
-                    await Event(output, json, token);
+                    await Event(output, buffer, writer, json, token);
                 }
             }
             while (await chunks.MoveNextAsync());
 
-            await output.WriteAsync("data: [DONE]\n\n"u8.ToArray(), token);
+            await output.WriteAsync(Done, token);
             await output.FlushAsync(token);
         }, "text/event-stream");
     }
@@ -379,12 +382,14 @@ public static class CompletionsApiEndpoints
         return Results.Stream(async output =>
         {
             await using var _ = chunks;
+            var (buffer, writer) = EventWriter();
+            using var __ = writer;
             do
             {
                 var chunk = chunks.Current;
                 if (chunk.Text.Length > 0 || chunk.Done)
                 {
-                    await Event(output, new JsonObject
+                    await Event(output, buffer, writer, new JsonObject
                     {
                         ["id"] = id,
                         ["object"] = "text_completion",
@@ -399,7 +404,7 @@ public static class CompletionsApiEndpoints
 
                 if (chunk.Done && usage)
                 {
-                    await Event(output, new JsonObject
+                    await Event(output, buffer, writer, new JsonObject
                     {
                         ["id"] = id, ["object"] = "text_completion", ["created"] = created, ["model"] = name, ["choices"] = new JsonArray(), ["usage"] = Usage(chunk.Stats),
                     }, token);
@@ -407,7 +412,7 @@ public static class CompletionsApiEndpoints
             }
             while (await chunks.MoveNextAsync());
 
-            await output.WriteAsync("data: [DONE]\n\n"u8.ToArray(), token);
+            await output.WriteAsync(Done, token);
             await output.FlushAsync(token);
         }, "text/event-stream");
     }
@@ -455,20 +460,60 @@ public static class CompletionsApiEndpoints
             return Error(400, ex.Message);
         }
 
-        var data = new JsonArray();
-        for (int i = 0; i < vectors.Length; i++)
+        int tokens = inputs.Sum(Words);                                      // words: the embedder reports no token counts
+        return Results.Text(EmbeddingsJson(vectors, name, tokens), "application/json", Encoding.UTF8);
+    }
+
+    // The /embeddings answer, {"object": "list", "data": [{"object": "embedding", "index", "embedding": [...]}], "model",
+    // "usage"}, written as UTF-8 at once rather than through a node per number (the same text ToJsonString() gives).
+    private static string EmbeddingsJson(float[][] vectors, string model, int tokens)
+    {
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(buffer))
         {
-            data.Add(new JsonObject { ["object"] = "embedding", ["index"] = i, ["embedding"] = new JsonArray([.. vectors[i].Select(v => (JsonNode)v)]) });
+            writer.WriteStartObject();
+            writer.WriteString("object", "list");
+            writer.WriteStartArray("data");
+            for (int i = 0; i < vectors.Length; i++)
+            {
+                writer.WriteStartObject();
+                writer.WriteString("object", "embedding");
+                writer.WriteNumber("index", i);
+                writer.WriteStartArray("embedding");
+                foreach (float value in vectors[i])
+                {
+                    writer.WriteNumberValue(value);
+                }
+
+                writer.WriteEndArray();
+                writer.WriteEndObject();
+            }
+
+            writer.WriteEndArray();
+            writer.WriteString("model", model);
+            writer.WriteStartObject("usage");
+            writer.WriteNumber("prompt_tokens", tokens);
+            writer.WriteNumber("total_tokens", tokens);
+            writer.WriteEndObject();
+            writer.WriteEndObject();
         }
 
-        int tokens = inputs.Sum(s => s.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length);     // words: the embedder reports no token counts
-        return JsonResult(new JsonObject
+        return Encoding.UTF8.GetString(buffer.WrittenSpan);
+    }
+
+    // The runs of characters that are not white space, as string.Split(null, RemoveEmptyEntries) counts them.
+    private static int Words(string text)
+    {
+        int count = 0;
+        bool inWord = false;
+        foreach (char c in text)
         {
-            ["object"] = "list",
-            ["data"] = data,
-            ["model"] = name,
-            ["usage"] = new JsonObject { ["prompt_tokens"] = tokens, ["total_tokens"] = tokens },
-        });
+            bool space = char.IsWhiteSpace(c);
+            count += !space && !inWord ? 1 : 0;
+            inWord = !space;
+        }
+
+        return count;
     }
 
     // ------------------------------------------------------------------ helpers
@@ -510,9 +555,26 @@ public static class CompletionsApiEndpoints
         ["total_tokens"] = (stats?.PromptTokens ?? 0) + (stats?.GeneratedTokens ?? 0),
     };
 
-    private static async Task Event(Stream output, JsonObject json, CancellationToken token)
+    // The end of a stream of events.
+    private static readonly ReadOnlyMemory<byte> Done = "data: [DONE]\n\n"u8.ToArray();
+
+    // A buffer reused for each event of a stream, and a JSON writer over it with the options ToJsonString() writes with
+    // (the defaults), so an event is the same bytes as "data: " + json.ToJsonString() + "\n\n", built as UTF-8 at once.
+    private static (ArrayBufferWriter<byte> Buffer, Utf8JsonWriter Writer) EventWriter()
     {
-        await output.WriteAsync(Encoding.UTF8.GetBytes("data: " + json.ToJsonString() + "\n\n"), token);
+        var buffer = new ArrayBufferWriter<byte>();
+        return (buffer, new Utf8JsonWriter(buffer));
+    }
+
+    private static async Task Event(Stream output, ArrayBufferWriter<byte> buffer, Utf8JsonWriter writer, JsonObject json, CancellationToken token)
+    {
+        buffer.ResetWrittenCount();
+        buffer.Write("data: "u8);
+        writer.Reset(buffer);
+        json.WriteTo(writer);
+        writer.Flush();
+        buffer.Write("\n\n"u8);
+        await output.WriteAsync(buffer.WrittenMemory, token);
         await output.FlushAsync(token);
     }
 

@@ -380,7 +380,7 @@ public sealed class JinjaChatTemplate : ChatTemplate
         {
             var value = ToValue(message, () =>
             {
-                string id = $"call{next++:D5}";
+                string id = string.Create(CultureInfo.InvariantCulture, $"call{next++:D5}");
                 pending.Enqueue(id);
                 return id;
             });

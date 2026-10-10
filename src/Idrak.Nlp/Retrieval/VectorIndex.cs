@@ -113,13 +113,15 @@ public sealed class VectorIndex
         writer.Write(Dimensions);
         writer.Write((int)Metric);
         writer.Write(Count);
-        var data = _data.ToArray();
-        if (!BitConverter.IsLittleEndian)
+        if (BitConverter.IsLittleEndian)
         {
-            var bits = MemoryMarshal.Cast<float, int>(data.AsSpan());
-            BinaryPrimitives.ReverseEndianness(bits, bits);
+            writer.Write(MemoryMarshal.AsBytes(CollectionsMarshal.AsSpan(_data)));    // the file's byte order: no copy
+            return;
         }
 
+        var data = _data.ToArray();
+        var bits = MemoryMarshal.Cast<float, int>(data.AsSpan());
+        BinaryPrimitives.ReverseEndianness(bits, bits);
         writer.Write(MemoryMarshal.AsBytes(data.AsSpan()));
     }
 
@@ -133,28 +135,35 @@ public sealed class VectorIndex
         }
 
         var index = new VectorIndex(reader.ReadInt32(), (VectorMetric)reader.ReadInt32());
-        var data = new float[reader.ReadInt32() * index.Dimensions];
-        reader.BaseStream.ReadExactly(MemoryMarshal.AsBytes(data.AsSpan()));
+        int length = reader.ReadInt32() * index.Dimensions;
+        CollectionsMarshal.SetCount(index._data, length);                     // read straight into the index's list
+        var data = CollectionsMarshal.AsSpan(index._data);
+        reader.BaseStream.ReadExactly(MemoryMarshal.AsBytes(data));
         if (!BitConverter.IsLittleEndian)
         {
-            var bits = MemoryMarshal.Cast<float, int>(data.AsSpan());
+            var bits = MemoryMarshal.Cast<float, int>(data);
             BinaryPrimitives.ReverseEndianness(bits, bits);
         }
 
-        index._data.AddRange(data);
         return index;
     }
 
+    // SIMD lanes of the machine's width when the hardware runs them, then a scalar tail (all scalar without SIMD).
     private static double Dot(ReadOnlySpan<float> a, ReadOnlySpan<float> b)
     {
-        var sum = Vector<float>.Zero;
         int i = 0;
-        for (; i <= a.Length - Vector<float>.Count; i += Vector<float>.Count)
+        float total = 0;
+        if (Vector.IsHardwareAccelerated && a.Length >= Vector<float>.Count)
         {
-            sum += new Vector<float>(a[i..]) * new Vector<float>(b[i..]);
+            var sum = Vector<float>.Zero;
+            for (; i <= a.Length - Vector<float>.Count; i += Vector<float>.Count)
+            {
+                sum += new Vector<float>(a[i..]) * new Vector<float>(b[i..]);
+            }
+
+            total = Vector.Sum(sum);
         }
 
-        float total = Vector.Sum(sum);
         for (; i < a.Length; i++)
         {
             total += a[i] * b[i];

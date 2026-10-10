@@ -47,33 +47,38 @@ public static partial class WebTools
     internal static string CollapseSpaces(string text, int max)
     {
         char[] buffer = System.Buffers.ArrayPool<char>.Shared.Rent(Math.Min(text.Length, max));
-        int length = 0;
-        bool space = false;
-        foreach (char c in text)
+        try
         {
-            if (char.IsWhiteSpace(c))
+            int length = 0;
+            bool space = false;
+            foreach (char c in text)
             {
-                space = length > 0;
-                continue;
+                if (char.IsWhiteSpace(c))
+                {
+                    space = length > 0;
+                    continue;
+                }
+
+                if (space && length < max)
+                {
+                    buffer[length++] = ' ';
+                }
+
+                if (length == max)
+                {
+                    break;
+                }
+
+                buffer[length++] = c;
+                space = false;
             }
 
-            if (space && length < max)
-            {
-                buffer[length++] = ' ';
-            }
-
-            if (length == max)
-            {
-                break;
-            }
-
-            buffer[length++] = c;
-            space = false;
+            return new string(buffer, 0, length);
         }
-
-        string result = new(buffer, 0, length);
-        System.Buffers.ArrayPool<char>.Shared.Return(buffer);
-        return result;
+        finally
+        {
+            System.Buffers.ArrayPool<char>.Shared.Return(buffer);
+        }
     }
 
     [GeneratedRegex(@"<(script|style)[^>]*>.*?</\1>", RegexOptions.Singleline | RegexOptions.IgnoreCase)]

@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Buffers;
 using System.Runtime.CompilerServices;
 
 namespace Idrak.Nlp.Abstractions;
@@ -159,27 +160,36 @@ public static class TuningMetrics
             b = swap;
         }
 
-        // One row over the shorter sequence: row[j] is the distance between a[..i] and b[..j].
-        int[] row = new int[b.Length + 1];
-        for (int j = 0; j <= b.Length; j++)
+        // One row over the shorter sequence (pooled: a metric scores every record): row[j] is the distance between a[..i]
+        // and b[..j].
+        int[] rented = ArrayPool<int>.Shared.Rent(b.Length + 1);
+        try
         {
-            row[j] = j;
-        }
-
-        for (int i = 1; i <= a.Length; i++)
-        {
-            int diagonal = row[0];
-            row[0] = i;
-            for (int j = 1; j <= b.Length; j++)
+            var row = rented.AsSpan(0, b.Length + 1);
+            for (int j = 0; j <= b.Length; j++)
             {
-                int above = row[j];
-                int cost = a[i - 1].Equals(b[j - 1]) ? 0 : 1;
-                row[j] = Math.Min(Math.Min(above + 1, row[j - 1] + 1), diagonal + cost);
-                diagonal = above;
+                row[j] = j;
             }
-        }
 
-        return row[b.Length];
+            for (int i = 1; i <= a.Length; i++)
+            {
+                int diagonal = row[0];
+                row[0] = i;
+                for (int j = 1; j <= b.Length; j++)
+                {
+                    int above = row[j];
+                    int cost = a[i - 1].Equals(b[j - 1]) ? 0 : 1;
+                    row[j] = Math.Min(Math.Min(above + 1, row[j - 1] + 1), diagonal + cost);
+                    diagonal = above;
+                }
+            }
+
+            return row[b.Length];
+        }
+        finally
+        {
+            ArrayPool<int>.Shared.Return(rented);
+        }
     }
 
     private sealed class GuardedMetric(Slot slot, ITuningMetric app, ITuningMetric library) : ITuningMetric
