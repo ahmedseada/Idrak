@@ -439,6 +439,10 @@ internal sealed class ImageBlocks
     private List<(int Start, int Length)>[] _blocks = [];
     private IReadOnlyList<IReadOnlyList<int>>? _segments;
 
+    // The key ranges last computed for each window (with the offset and row starts they were for): every attention layer of
+    // a pass with that window asks for the same ones, so the host computes them once per pass, not once per layer.
+    private readonly Dictionary<int, (int Offset, int[]? RowStarts, float[] Starts, float[] Ends)> _spanValues = [];
+
     public ImageBlocks(int batch, int steps, int dim, IReadOnlyList<PromptImage> images, IImageAttentionRule rule, IReadOnlyList<IReadOnlyList<int>>? segments,
         Buffers? buffers = null)
     {
@@ -517,6 +521,7 @@ internal sealed class ImageBlocks
         }
 
         (_images, _blocks, _segments) = (list, blocks, segments);
+        _spanValues.Clear();
     }
 
     // The packed sequence of a row (its first position and length) holding `position`; length 0 in the padding.
@@ -562,8 +567,37 @@ internal sealed class ImageBlocks
             return spans;
         }
 
-        var (starts, ends) = SpanValues(window, offset, rowStarts);
-        return (Tensor.From(starts, device), Tensor.From(ends, device));
+        if (!_spanValues.TryGetValue(window, out var cached) || cached.Offset != offset || !SameStarts(cached.RowStarts, rowStarts))
+        {
+            var (starts, ends) = SpanValues(window, offset, rowStarts);
+            cached = (offset, rowStarts is null ? null : [.. rowStarts], starts, ends);
+            _spanValues[window] = cached;
+        }
+
+        return (Tensor.From(cached.Starts, device), Tensor.From(cached.Ends, device));    // copied to the device: the arrays stay as computed
+    }
+
+    private static bool SameStarts(int[]? cached, IReadOnlyList<int>? rowStarts)
+    {
+        if (cached is null || rowStarts is null)
+        {
+            return cached is null && rowStarts is null;
+        }
+
+        if (cached.Length != rowStarts.Count)
+        {
+            return false;
+        }
+
+        for (int b = 0; b < cached.Length; b++)
+        {
+            if (cached[b] != rowStarts[b])
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private (float[] Starts, float[] Ends) SpanValues(int window, int offset, IReadOnlyList<int>? rowStarts)
