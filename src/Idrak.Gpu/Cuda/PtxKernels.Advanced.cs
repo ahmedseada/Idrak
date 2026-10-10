@@ -37,6 +37,7 @@ internal static partial class PtxKernels
         BuildResampling(sb);
         BuildCtc(sb);
         BuildRecurrent(sb);
+        BuildPointwise(sb);
     }
 
     // ------------------------------------------------------------------ element-wise math
