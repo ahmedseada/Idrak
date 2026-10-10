@@ -380,7 +380,7 @@ internal static class ImagePredict
                 default:
                     row["shape"] = new JsonArray([.. r.FeatureShape!.Select(d => (JsonNode)d)]);
                     row["size"] = r.Features!.Length;
-                    row["file_out"] = r.Written;
+                    row["npy"] = r.Written;
                     if (nested && r.Written is null)
                     {
                         row["values"] = new JsonArray([.. r.Features.Select(v => (JsonNode)Math.Round(v, 6))]);

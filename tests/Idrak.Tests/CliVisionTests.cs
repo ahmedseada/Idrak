@@ -23,7 +23,7 @@ internal static partial class Tests
     private static readonly (string Name, Action<Device> Run)[] CliVisionGroup =
     [
         ("cli vision: ImageEncoders write PNG and PGM that the codecs read back exactly (an unknown extension refused naming the registry); explain knows every step; kernels lists the vision operations", CliVisionBasics),
-        ("cli vision: predict -P with the plug-in's families: the classifier's classes and probabilities as PyTorch's (--top, -j, --format csv, -o rows), the grid detector's boxes as PyTorch's (--threshold, --iou, --decoder by name), a segmenter's pixels and mask PNGs (--out) as the library's; an unregistered family or decoder exits 1 with its registry's message and -P", CliVisionPredict),
+        ("cli vision: predict -P with the plug-in's families: the classifier's classes and probabilities as PyTorch's (--top, -j, --format csv, -o rows), the grid detector's boxes as PyTorch's (--threshold, --iou, --decoder by name), a segmenter's pixels and mask PNGs (--out) as the library's, a backbone's .npy features; an unregistered family or decoder exits 1 with its registry's message and -P", CliVisionPredict),
         ("cli vision: train a classifier on class folders with --augment (accuracy, run.json, log, the package predicted), fine-tune the plug-in's classifier (.ikw read by predict --weights); a segmenter on image and mask folders (--metric miou, --loss dice, mask PNGs predicted from the package)", CliVisionTrainClassesMasks),
         ("cli vision: fine-tune the plug-in's grid detector on a tiny COCO set evaluated on YOLO files (--metric coco reported, --matcher hungarian with --loss ciou, predict --weights); an unregistered family, head or loss refused", CliVisionTrainDetector),
     ];
@@ -156,6 +156,37 @@ internal static partial class Tests
 
             var markdown = TrainCli("predict", "-P", plugin, segmenter, images[0], "--format", "md", "-d", d);
             Check(markdown.Code == 0 && markdown.Out.Contains("| File | Class | Pixels | Share |", StringComparison.Ordinal), $"--format md: {markdown.Out}");
+
+            // A backbone (the plug-in's ONNX features family): .npy files with the network's outputs, or the values in -j.
+            string backbone = Path.Combine(folder, "backbone");
+            Directory.CreateDirectory(backbone);
+            using (var network = Network.Image(3, 16, 16).OnDevice(Device.Cpu).Seed(6).Conv2d(4, 3, stride: 2, padding: 1).ReLU().Build())
+            {
+                network.ExportOnnx(Path.Combine(backbone, "model.onnx"), 3, 16, 16);
+            }
+
+            File.WriteAllText(Path.Combine(backbone, "config.json"), new JsonObject
+            {
+                ["architectures"] = new JsonArray(ImageFamilyPlugin.Backbone), ["image_size"] = new JsonArray(16, 16),
+            }.ToJsonString());
+            string features = Path.Combine(folder, "features");
+            var described = TrainCliJson(["predict", "-P", plugin, backbone, .. images, "-o", features, "-d", d]);
+            using var backboneModel = ImageModels.Load(backbone, new ImageModelOptions { Device = device });
+            for (int i = 0; i < 3; i++)
+            {
+                var row = described["predictions"]![i]!;
+                using var x = Tensor.From(backboneModel.Preprocessor.Pixels(ImageCodecs.Decode(images[i])), [1, 3, 16, 16], device);
+                using var y = backboneModel.Network.Predict(x);
+                float[] expected = y.ToArray();
+                var (shape, values) = ReadNpy((string)row["npy"]!);
+                Check((string?)described["task"] == "features" && shape.SequenceEqual([4, 8, 8]) && values.Length == expected.Length
+                      && values.Zip(expected).All(p => MathF.Abs(p.First - p.Second) < 1e-5f), $"{images[i]}: the .npy file holds the network's features ({string.Join(", ", shape)})");
+            }
+
+            var inline = TrainCliJson("predict", "-P", plugin, backbone, images[0], "-d", d);
+            Check(inline["predictions"]![0]!["values"]!.AsArray().Count == 4 * 8 * 8, "-j without --out gives the values");
+            var featureCsv = TrainCli("predict", "-P", plugin, backbone, images[0], "--format", "csv", "-d", d);
+            Check(featureCsv.Code == 0 && featureCsv.Out.ReplaceLineEndings("\n").Split('\n')[0] == "File,Shape,Size,Norm", $"features as CSV: {featureCsv.Out}");
         }
         finally
         {
@@ -163,6 +194,22 @@ internal static partial class Tests
             DetectionDecoders.Unregister("cli-test-grid");
             Directory.Delete(folder, true);
         }
+    }
+
+    // A NumPy .npy file of float32 values (format 1.0, little-endian, C order): its shape and values.
+    private static (int[] Shape, float[] Values) ReadNpy(string path)
+    {
+        var bytes = File.ReadAllBytes(path);
+        Check(bytes.AsSpan(0, 8).SequenceEqual(new byte[] { 0x93, (byte)'N', (byte)'U', (byte)'M', (byte)'P', (byte)'Y', 1, 0 }), $"{path}: the .npy magic and version 1.0");
+        int length = BitConverter.ToUInt16(bytes, 8);
+        string header = System.Text.Encoding.ASCII.GetString(bytes, 10, length);
+        Check(header.Contains("'descr': '<f4'", StringComparison.Ordinal) && header.Contains("'fortran_order': False", StringComparison.Ordinal) && (10 + length) % 64 == 0,
+            $"{path}: header {header}");
+        var dims = System.Text.RegularExpressions.Regex.Match(header, @"'shape': \(([^)]*)\)").Groups[1].Value;
+        int[] shape = [.. dims.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(int.Parse)];
+        var values = new float[(bytes.Length - 10 - length) / 4];
+        Buffer.BlockCopy(bytes, 10 + length, values, 0, values.Length * 4);
+        return (shape, values);
     }
 
     // A predict -j document's boxes against the reference's (x, y, width, height, class, score per box).
