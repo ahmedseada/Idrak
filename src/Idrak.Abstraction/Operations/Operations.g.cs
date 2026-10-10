@@ -84,68 +84,72 @@ internal static class OperationIndex
     public const int AdaptiveMaxPoolBackward = 68;
     public const int CtcLoss = 69;
     public const int CtcLossBackward = 70;
-    public const int BoxIouLoss = 71;
-    public const int BoxIouLossBackward = 72;
-    public const int SigmoidFocalLoss = 73;
-    public const int SigmoidFocalLossBackward = 74;
-    public const int Permute = 75;
-    public const int SumAxis = 76;
-    public const int BroadcastAxis = 77;
-    public const int SgdStep = 78;
-    public const int AdamStep = 79;
-    public const int AdamStep8Bit = 80;
-    public const int SumSquares = 81;
-    public const int FusedAdamW = 82;
-    public const int ClipFactor = 83;
-    public const int Dropout = 84;
-    public const int DropoutBackward = 85;
-    public const int ScaleMaskSoftmax = 86;
-    public const int LayerNormFused = 87;
-    public const int LayerNormTrain = 88;
-    public const int LayerNormBackward = 89;
-    public const int BiasGelu = 90;
-    public const int Int8MatMul = 91;
-    public const int BFloat16MatMul = 92;
-    public const int BFloat16Dequantize = 93;
-    public const int PackBFloat16 = 94;
-    public const int Int8Dequantize = 95;
-    public const int Int4MatMul = 96;
-    public const int Int4Dequantize = 97;
-    public const int RmsNorm = 98;
-    public const int RmsNormBackward = 99;
-    public const int Rope = 100;
-    public const int RmsNormAffine = 101;
-    public const int AddRmsNormAffine = 102;
-    public const int RmsNormRope = 103;
-    public const int RmsNormRopePair = 104;
-    public const int NormRopeHeads = 105;
-    public const int SoftmaxCrossEntropyRows = 106;
-    public const int GatedActivation = 107;
-    public const int GatedActivationBackward = 108;
-    public const int GatedActivationPacked = 109;
-    public const int GatedActivationBackwardPacked = 110;
-    public const int KeyValueWriteInt8 = 111;
-    public const int AttentionScoresInt8 = 112;
-    public const int AttentionContextInt8 = 113;
-    public const int AttentionDecode = 114;
-    public const int AttentionInt8 = 115;
-    public const int AttentionBFloat16 = 116;
-    public const int KeyValueWriteBFloat16 = 117;
-    public const int AttentionTiledBackward = 118;
-    public const int AttentionSegmented = 119;
-    public const int AttentionRows = 120;
-    public const int AttentionSegmentedBackward = 121;
-    public const int AttentionTiled = 122;
-    public const int AttentionSpans = 123;
-    public const int AttentionSpansBackward = 124;
-    public const int DecoderMask = 125;
-    public const int KeyValueWrite = 126;
-    public const int SampleRows = 127;
-    public const int PenalizeRows = 128;
-    public const int HistoryPush = 129;
+    public const int LstmCell = 71;
+    public const int LstmCellBackward = 72;
+    public const int GruCell = 73;
+    public const int GruCellBackward = 74;
+    public const int BoxIouLoss = 75;
+    public const int BoxIouLossBackward = 76;
+    public const int SigmoidFocalLoss = 77;
+    public const int SigmoidFocalLossBackward = 78;
+    public const int Permute = 79;
+    public const int SumAxis = 80;
+    public const int BroadcastAxis = 81;
+    public const int SgdStep = 82;
+    public const int AdamStep = 83;
+    public const int AdamStep8Bit = 84;
+    public const int SumSquares = 85;
+    public const int FusedAdamW = 86;
+    public const int ClipFactor = 87;
+    public const int Dropout = 88;
+    public const int DropoutBackward = 89;
+    public const int ScaleMaskSoftmax = 90;
+    public const int LayerNormFused = 91;
+    public const int LayerNormTrain = 92;
+    public const int LayerNormBackward = 93;
+    public const int BiasGelu = 94;
+    public const int Int8MatMul = 95;
+    public const int BFloat16MatMul = 96;
+    public const int BFloat16Dequantize = 97;
+    public const int PackBFloat16 = 98;
+    public const int Int8Dequantize = 99;
+    public const int Int4MatMul = 100;
+    public const int Int4Dequantize = 101;
+    public const int RmsNorm = 102;
+    public const int RmsNormBackward = 103;
+    public const int Rope = 104;
+    public const int RmsNormAffine = 105;
+    public const int AddRmsNormAffine = 106;
+    public const int RmsNormRope = 107;
+    public const int RmsNormRopePair = 108;
+    public const int NormRopeHeads = 109;
+    public const int SoftmaxCrossEntropyRows = 110;
+    public const int GatedActivation = 111;
+    public const int GatedActivationBackward = 112;
+    public const int GatedActivationPacked = 113;
+    public const int GatedActivationBackwardPacked = 114;
+    public const int KeyValueWriteInt8 = 115;
+    public const int AttentionScoresInt8 = 116;
+    public const int AttentionContextInt8 = 117;
+    public const int AttentionDecode = 118;
+    public const int AttentionInt8 = 119;
+    public const int AttentionBFloat16 = 120;
+    public const int KeyValueWriteBFloat16 = 121;
+    public const int AttentionTiledBackward = 122;
+    public const int AttentionSegmented = 123;
+    public const int AttentionRows = 124;
+    public const int AttentionSegmentedBackward = 125;
+    public const int AttentionTiled = 126;
+    public const int AttentionSpans = 127;
+    public const int AttentionSpansBackward = 128;
+    public const int DecoderMask = 129;
+    public const int KeyValueWrite = 130;
+    public const int SampleRows = 131;
+    public const int PenalizeRows = 132;
+    public const int HistoryPush = 133;
 
     /// <summary>The number of operations.</summary>
-    public const int Count = 130;
+    public const int Count = 134;
 }
 
 /// <summary>
@@ -668,6 +672,60 @@ public static class OperationKernels
     /// sequence of infinite loss gets nothing either).
     /// </summary>
     public delegate void CtcLossBackward(Backend backend, Storage logProbs, Storage targets, Storage lossGrads, Storage dLogProbs, ReadOnlySpan<int> inputLengths, ReadOnlySpan<int> targetLengths, ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity);
+
+    /// <summary>
+    /// A kernel for <see cref="Ops.LstmCell"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// One time step of a long short-term memory cell (PyTorch's gate order: input, forget, cell, output), for every row n
+    /// &lt; <paramref name="batch"/> and unit j &lt; H = <paramref name="hiddenSize"/>. The sequences are [batch, steps,
+    /// width] row-major and the step reads and writes their row (n, <paramref name="step"/>); the states are [batch, width].
+    /// With z_k = projected[n, step, k·H + j] + recurrent[n, k·H + j] (the step's input through the input weights and bias,
+    /// and the previous hidden state through the recurrent weights): i = σ(z_0), f = σ(z_1), g = tanh(z_2), o = σ(z_3);
+    /// c = f · cell[n, j] + i · g and h = o · tanh(c). Writes c into cell[n, j] (in place) and, when given, cells[n, step,
+    /// j]; h into hidden[n, j] and output[n, step, j]; and, when given, i, f, g and o into gates[n, step, k·H + j] (what
+    /// <see cref="Backend.LstmCellBackwardKernel"/> reads, with the cells). With <paramref name="batch"/> 0 nothing is read or
+    /// written: callers ask that way whether the device has the kernel. Returns false when the device has none (callers
+    /// then compose the step from products and element-wise operations).
+    /// </summary>
+    public delegate bool LstmCell(Backend backend, Storage projected, Storage recurrent, Storage cell, Storage hidden, Storage output, Storage? gates, Storage? cells, int step, int steps, int batch, int hiddenSize);
+
+    /// <summary>
+    /// A kernel for <see cref="Ops.LstmCellBackward"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// The gradient of one step of <see cref="Backend.LstmCellKernel"/>, the steps taken from the last to the first. From the saved
+    /// gates (i, f, g, o) and cells of the step, the previous step's cell c_prev = cells[n, previous, j] (0 when
+    /// <paramref name="previous"/> is negative: the zero initial state), and the incoming dh = dHidden[n, j] + dOutput[n,
+    /// step, j] (no dOutput: 0) and dc = dCell[n, j]: with t = tanh(c), dc' = dc + dh · o · (1 - t²), the pre-activation
+    /// gradients dz = (dc'·g · i(1 - i), dc'·c_prev · f(1 - f), dc'·i · (1 - g²), dh·t · o(1 - o)) are written (not added)
+    /// into dGates[n, step, k·H + j] and dStep[n, k·H + j], and dc'·f into dCell[n, j] (the cell gradient the previous step
+    /// takes). dHidden is only read: the caller sets it to dStep · Uᵀ, the recurrent part of the previous step's dh. With
+    /// <paramref name="batch"/> 0 nothing is read or written. Returns false when the device has no such kernel.
+    /// </summary>
+    public delegate bool LstmCellBackward(Backend backend, Storage gates, Storage cells, Storage? dOutput, Storage dHidden, Storage dCell, Storage dGates, Storage dStep, int step, int previous, int steps, int batch, int hiddenSize);
+
+    /// <summary>
+    /// A kernel for <see cref="Ops.GruCell"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// One time step of a gated recurrent unit (PyTorch's gate order: reset, update, candidate; the reset gate scales the
+    /// candidate's recurrent term after its product, PyTorch's GRU and ONNX's linear_before_reset), for every row n &lt;
+    /// <paramref name="batch"/> and unit j &lt; H = <paramref name="hiddenSize"/>, with the layouts of
+    /// <see cref="Backend.LstmCellKernel"/>. With p_k = projected[n, step, k·H + j] and q_k = recurrent[n, k·H + j]: r = σ(p_0 +
+    /// q_0), u = σ(p_1 + q_1), a = q_2 + hiddenBias[j] (no hiddenBias: q_2), c = tanh(p_2 + r · a) and h = (1 - u) · c + u
+    /// · hidden[n, j]. Writes h into hidden[n, j] (in place) and output[n, step, j] and, when given, r, u, c and a into
+    /// gates[n, step, k·H + j] (a [batch, steps, 4H] sequence, what <see cref="Backend.GruCellBackwardKernel"/> reads). With
+    /// <paramref name="batch"/> 0 nothing is read or written. Returns false when the device has no such kernel.
+    /// </summary>
+    public delegate bool GruCell(Backend backend, Storage projected, Storage recurrent, Storage? hiddenBias, Storage hidden, Storage output, Storage? gates, int step, int steps, int batch, int hiddenSize);
+
+    /// <summary>
+    /// A kernel for <see cref="Ops.GruCellBackward"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// The gradient of one step of <see cref="Backend.GruCellKernel"/>, the steps taken from the last to the first. From the saved
+    /// r, u, c and a of the step, the previous hidden state h_prev = output[n, previous, j] (0 when
+    /// <paramref name="previous"/> is negative) and the incoming dh = dHidden[n, j] + dOutput[n, step, j] (no dOutput: 0):
+    /// with dc = dh · (1 - u) · (1 - c²), the input part dp = (dc·a · r(1 - r), dh·(h_prev - c) · u(1 - u), dc) is written
+    /// (not added) into dGates[n, step, k·H + j], the recurrent part dq = (dp_0, dp_1, dc · r) (the gradient of the hidden
+    /// product, and of the candidate bias in its last third) into dRecurrent[n, step, k·H + j] and dStep[n, k·H + j], and
+    /// dh · u into dHidden[n, j] (the direct part of the previous step's dh; the caller adds dStep · Uᵀ to it). With
+    /// <paramref name="batch"/> 0 nothing is read or written. Returns false when the device has no such kernel.
+    /// </summary>
+    public delegate bool GruCellBackward(Backend backend, Storage gates, Storage output, Storage? dOutput, Storage dHidden, Storage dGates, Storage dRecurrent, Storage dStep, int step, int previous, int steps, int batch, int hiddenSize);
 
     /// <summary>
     /// A kernel for <see cref="Ops.BoxIouLoss"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
@@ -1631,6 +1689,60 @@ public static partial class Ops
         new("CtcLossBackward", "CtcLossBackwardKernel", "Storage,Storage,Storage,Storage,ReadOnlySpan`1,ReadOnlySpan`1,ReadOnlySpan`1,Int32,Int32,Int32,Int32,Boolean,Boolean", OperationIndex.CtcLossBackward, typeof(OperationKernels.CtcLossBackward), KernelSource.Host);
 
     /// <summary>
+    /// One time step of a long short-term memory cell (PyTorch's gate order: input, forget, cell, output), for every row n
+    /// &lt; <c>batch</c> and unit j &lt; H = <c>hiddenSize</c>. The sequences are [batch, steps,
+    /// width] row-major and the step reads and writes their row (n, <c>step</c>); the states are [batch, width].
+    /// With z_k = projected[n, step, k·H + j] + recurrent[n, k·H + j] (the step's input through the input weights and bias,
+    /// and the previous hidden state through the recurrent weights): i = σ(z_0), f = σ(z_1), g = tanh(z_2), o = σ(z_3);
+    /// c = f · cell[n, j] + i · g and h = o · tanh(c). Writes c into cell[n, j] (in place) and, when given, cells[n, step,
+    /// j]; h into hidden[n, j] and output[n, step, j]; and, when given, i, f, g and o into gates[n, step, k·H + j] (what
+    /// <see cref="Backend.LstmCellBackwardKernel"/> reads, with the cells). With <c>batch</c> 0 nothing is read or
+    /// written: callers ask that way whether the device has the kernel. Returns false when the device has none (callers
+    /// then compose the step from products and element-wise operations).
+    /// </summary>
+    public static readonly Operation LstmCell =
+        new("LstmCell", "LstmCellKernel", "Storage,Storage,Storage,Storage,Storage,Storage,Storage,Int32,Int32,Int32,Int32", OperationIndex.LstmCell, typeof(OperationKernels.LstmCell), KernelSource.None);
+
+    /// <summary>
+    /// The gradient of one step of <see cref="Backend.LstmCellKernel"/>, the steps taken from the last to the first. From the saved
+    /// gates (i, f, g, o) and cells of the step, the previous step's cell c_prev = cells[n, previous, j] (0 when
+    /// <c>previous</c> is negative: the zero initial state), and the incoming dh = dHidden[n, j] + dOutput[n,
+    /// step, j] (no dOutput: 0) and dc = dCell[n, j]: with t = tanh(c), dc' = dc + dh · o · (1 - t²), the pre-activation
+    /// gradients dz = (dc'·g · i(1 - i), dc'·c_prev · f(1 - f), dc'·i · (1 - g²), dh·t · o(1 - o)) are written (not added)
+    /// into dGates[n, step, k·H + j] and dStep[n, k·H + j], and dc'·f into dCell[n, j] (the cell gradient the previous step
+    /// takes). dHidden is only read: the caller sets it to dStep · Uᵀ, the recurrent part of the previous step's dh. With
+    /// <c>batch</c> 0 nothing is read or written. Returns false when the device has no such kernel.
+    /// </summary>
+    public static readonly Operation LstmCellBackward =
+        new("LstmCellBackward", "LstmCellBackwardKernel", "Storage,Storage,Storage,Storage,Storage,Storage,Storage,Int32,Int32,Int32,Int32,Int32", OperationIndex.LstmCellBackward, typeof(OperationKernels.LstmCellBackward), KernelSource.None);
+
+    /// <summary>
+    /// One time step of a gated recurrent unit (PyTorch's gate order: reset, update, candidate; the reset gate scales the
+    /// candidate's recurrent term after its product, PyTorch's GRU and ONNX's linear_before_reset), for every row n &lt;
+    /// <c>batch</c> and unit j &lt; H = <c>hiddenSize</c>, with the layouts of
+    /// <see cref="Backend.LstmCellKernel"/>. With p_k = projected[n, step, k·H + j] and q_k = recurrent[n, k·H + j]: r = σ(p_0 +
+    /// q_0), u = σ(p_1 + q_1), a = q_2 + hiddenBias[j] (no hiddenBias: q_2), c = tanh(p_2 + r · a) and h = (1 - u) · c + u
+    /// · hidden[n, j]. Writes h into hidden[n, j] (in place) and output[n, step, j] and, when given, r, u, c and a into
+    /// gates[n, step, k·H + j] (a [batch, steps, 4H] sequence, what <see cref="Backend.GruCellBackwardKernel"/> reads). With
+    /// <c>batch</c> 0 nothing is read or written. Returns false when the device has no such kernel.
+    /// </summary>
+    public static readonly Operation GruCell =
+        new("GruCell", "GruCellKernel", "Storage,Storage,Storage,Storage,Storage,Storage,Int32,Int32,Int32,Int32", OperationIndex.GruCell, typeof(OperationKernels.GruCell), KernelSource.None);
+
+    /// <summary>
+    /// The gradient of one step of <see cref="Backend.GruCellKernel"/>, the steps taken from the last to the first. From the saved
+    /// r, u, c and a of the step, the previous hidden state h_prev = output[n, previous, j] (0 when
+    /// <c>previous</c> is negative) and the incoming dh = dHidden[n, j] + dOutput[n, step, j] (no dOutput: 0):
+    /// with dc = dh · (1 - u) · (1 - c²), the input part dp = (dc·a · r(1 - r), dh·(h_prev - c) · u(1 - u), dc) is written
+    /// (not added) into dGates[n, step, k·H + j], the recurrent part dq = (dp_0, dp_1, dc · r) (the gradient of the hidden
+    /// product, and of the candidate bias in its last third) into dRecurrent[n, step, k·H + j] and dStep[n, k·H + j], and
+    /// dh · u into dHidden[n, j] (the direct part of the previous step's dh; the caller adds dStep · Uᵀ to it). With
+    /// <c>batch</c> 0 nothing is read or written. Returns false when the device has no such kernel.
+    /// </summary>
+    public static readonly Operation GruCellBackward =
+        new("GruCellBackward", "GruCellBackwardKernel", "Storage,Storage,Storage,Storage,Storage,Storage,Storage,Int32,Int32,Int32,Int32,Int32", OperationIndex.GruCellBackward, typeof(OperationKernels.GruCellBackward), KernelSource.None);
+
+    /// <summary>
     /// Box overlap losses, torchvision's formulas: for each of <c>count</c> pairs of boxes given by their corners
     /// (x1, y1, x2, y2; predicted and target are [count, 4]), losses[i] = 1 - IoU (<see cref="BoxOverlap.IoU"/>), plus the
     /// enclosing box's empty share (GIoU), plus the centres' squared distance over the enclosing box's squared diagonal
@@ -2143,6 +2255,10 @@ public static partial class Ops
         AdaptiveMaxPoolBackward,
         CtcLoss,
         CtcLossBackward,
+        LstmCell,
+        LstmCellBackward,
+        GruCell,
+        GruCellBackward,
         BoxIouLoss,
         BoxIouLossBackward,
         SigmoidFocalLoss,
