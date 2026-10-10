@@ -141,7 +141,10 @@ holds exits 1 with the registry's message and "Load its plug-in with -P (--plugi
   detector on a 12-image COCO set evaluated on a 6-image YOLO set (`--metric coco`: map, map50; `--matcher hungarian
   --loss ciou`), predict with the tuned weights; an unregistered family, head and loss refused. `"vision detection:
   DetectionObjective"` 1: the loss as written with and without objectness, ignored candidates, an image without objects,
-  Hungarian, finite differences on boxes, logits and objectness.
+  Hungarian, finite differences on boxes, logits and objectness. Filters run on the CPU after the step: "cli" 105 ("cli
+  arabic" 7, "cli health" 15, "cli polish" 6 among them), "image famil" 5, "vision" 80, "data" 50, "operation" 26,
+  "outside plug-in" 19, "abstraction inventory" 4, "public API" 1 (inventory and api/*.txt regenerated: Idrak +1
+  interface +1 registry, Vision +1 registry).
 - **Left:** a measured choice between micro-batches and activation recomputation for image training (fine-tuning's
   automatic memory settings are Nlp's and transformer-shaped); letterboxed training (the loader can, the CLI stretches,
   as the families' resize does); segmentation families checked against a PyTorch reference (the ONNX test family is
