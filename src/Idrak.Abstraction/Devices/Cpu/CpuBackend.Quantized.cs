@@ -646,14 +646,7 @@ internal sealed partial class CpuBackend
 
     public override void AddRmsNormAffineKernel(Storage a, Storage b, Storage sum, Storage gain, Storage y, int rows, int cols, float eps, float offset)
     {
-        float[] av = D(a), bv = D(b), sv = D(sum);
-        For(rows * cols, (long)rows * cols, (first, last) =>
-        {
-            for (int i = first; i < last; i++)
-            {
-                sv[i] = av[i] + bv[i];
-            }
-        });
+        Run(new AddLoop(D(a), D(b), D(sum)), rows * cols);                 // whole vectors, the same sums
         RmsNormAffine(sum, gain, y, rows, cols, eps, offset);
     }
 
