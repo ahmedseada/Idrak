@@ -24,6 +24,8 @@ internal static class CutCommand
                                       a data file given as input is its own truth): each draft is snapped to the best-matching
                                       span of its page's text, top to bottom, and written as NAME-line-NN.aligned.txt
           --truth-text raw|values     the truth as it is, or the text values of a JSON answer, in order (values)
+          --max-error X               the share of a draft's characters that may differ from the span it is snapped to
+                                      (0.5); a draft further from every span is written as a .draft.txt, not snapped
           --images DIR|ZIP            where a data file's images are (a zip is read in place)
           --max-skew DEGREES          the largest skew corrected (3; 0: none)
         Accept a draft by renaming it to NAME-line-NN.txt (after correcting it), or with: accept DIR [--drafts]
@@ -38,7 +40,7 @@ internal static class CutCommand
     public static int Run(string[] args, TextWriter output, TextWriter error)
     {
         if (OcrApp.Context(args, output, error,
-                ["--out", "--prefill", "--model", "--truth", "--truth-text", "--images", "--max-skew", .. Readers.VlmValues],
+                ["--out", "--prefill", "--model", "--truth", "--truth-text", "--images", "--max-skew", "--max-error", .. Readers.VlmValues],
                 [.. Readers.VlmFlags], Help) is not { } context)
         {
             return 0;
@@ -57,6 +59,7 @@ internal static class CutCommand
         _ = OcrText.AnswerText("", truthMode);                                         // checks the mode
         string? images = a.Option("--images");
         var truths = truthFile is null ? null : Pages.ByImage(truthFile, images);
+        double maxError = a.Number("--max-error", 0.5, 0);
         var segmentation = new SegmentationSettings { MaxSkew = a.Number("--max-skew", 3, 0) };
         using var reader = prefill is null ? null : Readers.Create(Readers.Vlm, context);
         Directory.CreateDirectory(folder);
@@ -105,7 +108,7 @@ internal static class CutCommand
             }
 
             // Snapped to the page's known text: every line's text (corrected ones too) anchors the order.
-            var snapped = truth is null || fresh.Count == 0 ? null : TextAlignment.Align(texts, OcrText.Normalize(OcrText.AnswerText(truth, truthMode)));
+            var snapped = truth is null || fresh.Count == 0 ? null : TextAlignment.Align(texts, OcrText.Normalize(OcrText.AnswerText(truth, truthMode)), maxError);
             int pageAligned = 0;
             foreach (int i in fresh)
             {
