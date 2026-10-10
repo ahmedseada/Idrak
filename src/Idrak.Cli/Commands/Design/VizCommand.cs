@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Globalization;
 using System.Net;
 using System.Text;
 using System.Text.Json.Nodes;
@@ -70,7 +71,7 @@ internal sealed class VizCommand : Command
             sb.Append(nodes[i].Title.PadRight(width)).Append("  -> ").Append(nodes[i].Detail).Append('\n');
         }
 
-        return sb.Append($"\n{analysis.Parameters:N0} parameters, {Units.Short(analysis.Flops)} FLOPs per sample\n").ToString();
+        return sb.Append(string.Create(CultureInfo.InvariantCulture, $"\n{analysis.Parameters:N0} parameters, {Units.Short(analysis.Flops)} FLOPs per sample\n")).ToString();
     }
 
     private static string Mermaid(List<(string Title, string Detail)> nodes)

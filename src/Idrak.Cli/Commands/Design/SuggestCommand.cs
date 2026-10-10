@@ -223,14 +223,14 @@ internal sealed class SuggestCommand : Command
         int epochs = DesignSearch.Epochs(design, prepared);
         context.Detail($"search: {candidates.Count} candidates x {epochs} epochs on {context.Device} ({prepared.Train.Count} training, {prepared.Validation.Count} held-out rows)");
         var results = DesignSearch.Run(design, prepared, candidates, context.Device,
-            r => context.Detail($"  {r.Index}. {r.Variant}: " + (r.Error ?? $"{r.Metric} {Score(r)} in {r.Seconds:F1} s")));
+            r => context.Detail($"  {r.Index}. {r.Variant}: " + (r.Error ?? string.Create(CultureInfo.InvariantCulture, $"{r.Metric} {Score(r)} in {r.Seconds:F1} s"))));
         var best = DesignSearch.Best(results);
         var first = results[0];
         double seconds = results.Sum(r => r.Seconds);
         string widths = string.Join("/", candidates.Select(c => c.Width).Distinct());
         string depths = string.Join("/", candidates.Select(c => c.Depth).Distinct());
         string dropouts = string.Join("/", candidates.Select(c => c.Dropout.ToString("0.##", CultureInfo.InvariantCulture)).Distinct());
-        var line = new StringBuilder($"{candidates.Count} candidates x {epochs} epochs on {context.Device} ({seconds:F0} s): width {widths} · depth {depths} · dropout {dropouts}");
+        var line = new StringBuilder(string.Create(CultureInfo.InvariantCulture, $"{candidates.Count} candidates x {epochs} epochs on {context.Device} ({seconds:F0} s): width {widths} · depth {depths} · dropout {dropouts}"));
         if (best is not null)
         {
             line.Append($"\n{"",-9} best: {best.Variant} -> validation {best.Metric} {Score(best)}");

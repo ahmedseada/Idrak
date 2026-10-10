@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Globalization;
 using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
 
@@ -69,7 +70,7 @@ internal sealed class MergeCommand : Command
         string? merged = model.Notes.FirstOrDefault(n => n.StartsWith("adapter ", StringComparison.Ordinal));
         long bytes = ModelCache.FolderBytes(output);
         context.Write($"Merged the {kind} adapter into {name}: {merged ?? "done"}");
-        context.Write($"Wrote {output} ({Units.Bytes(bytes)}, {type}) in {clock.Elapsed.TotalSeconds:F1} s. Try it: idrak run {output} \"Hello\"");
+        context.Write(string.Create(CultureInfo.InvariantCulture, $"Wrote {output} ({Units.Bytes(bytes)}, {type}) in {clock.Elapsed.TotalSeconds:F1} s. Try it: idrak run {output} \"Hello\""));
         context.WriteJson(new JsonObject
         {
             ["model"] = name,

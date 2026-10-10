@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Globalization;
 using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
 using Idrak.Models;
@@ -81,7 +82,7 @@ internal sealed class DiffCommand : Command
         var differing = rows.Where(r => r.ShapeMismatch || r.Relative > tolerance).OrderByDescending(r => r.ShapeMismatch ? double.MaxValue : r.Relative).ToList();
         bool same = differing.Count == 0 && onlyA.Count == 0 && onlyB.Count == 0;
         context.Write(same
-            ? $"{a} and {b}: all {rows.Count} tensors equal{(tolerance > 0 ? $" within {tolerance:G3}" : "")}."
+            ? $"{a} and {b}: all {rows.Count} tensors equal{(tolerance > 0 ? string.Create(CultureInfo.InvariantCulture, $" within {tolerance:G3}") : "")}."
             : $"{a} vs {b}: {rows.Count} shared tensors, {differing.Count} differ; {onlyA.Count} only in A, {onlyB.Count} only in B.");
         if (differing.Count > 0)
         {

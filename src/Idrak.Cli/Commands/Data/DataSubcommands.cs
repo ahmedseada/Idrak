@@ -50,8 +50,8 @@ internal sealed class DataPreviewCommand : Command
         }
 
         var columns = RowFiles.Columns(sample);
-        context.Write($"{path}: {RowFiles.FormatName(path)}, {count:N0} rows, {columns.Count} columns");
-        context.Table(["Column", "Type", "Missing"], columns.Select(c => (IReadOnlyList<string>)[c.Name, c.Type, c.Missing == 0 ? "" : $"{c.Missing:N0}"]));
+        context.Write(string.Create(CultureInfo.InvariantCulture, $"{path}: {RowFiles.FormatName(path)}, {count:N0} rows, {columns.Count} columns"));
+        context.Table(["Column", "Type", "Missing"], columns.Select(c => (IReadOnlyList<string>)[c.Name, c.Type, c.Missing == 0 ? "" : string.Create(CultureInfo.InvariantCulture, $"{c.Missing:N0}")]));
         if (show > 0 && sample.Count > 0)
         {
             context.Write("");
@@ -145,7 +145,7 @@ internal sealed class DataValidateCommand : Command
             }
         }
 
-        context.Write($"{path}: {rows.Count:N0} rows as {kind}: {rows.Count - badCount:N0} valid, {badCount:N0} invalid");
+        context.Write(string.Create(CultureInfo.InvariantCulture, $"{path}: {rows.Count:N0} rows as {kind}: {rows.Count - badCount:N0} valid, {badCount:N0} invalid"));
         foreach (var (line, reason, row) in bad)
         {
             context.Write($"  row {line}: {reason}");
@@ -154,7 +154,7 @@ internal sealed class DataValidateCommand : Command
 
         if (badCount > bad.Count)
         {
-            context.Write($"  ... and {badCount - bad.Count:N0} more (--show N for more)");
+            context.Write(string.Create(CultureInfo.InvariantCulture, $"  ... and {badCount - bad.Count:N0} more (--show N for more)"));
         }
 
         context.WriteJson(new JsonObject
@@ -337,7 +337,7 @@ internal sealed class DataStatsCommand : Command
             var lengths = tokens.Count > 0 ? tokens : characters;
             string unit = tokens.Count > 0 ? "tokens" : "characters";
             long over = contextLength is { } limit && tokens.Count > 0 ? tokens.Count(t => t > limit) : 0;
-            context.Write($"{path}: {rows.Count:N0} rows{(conversations > 0 ? $" ({conversations:N0} conversations)" : "")}");
+            context.Write(string.Create(CultureInfo.InvariantCulture, $"{path}: {rows.Count:N0} rows{(conversations > 0 ? string.Create(CultureInfo.InvariantCulture, $" ({conversations:N0} conversations)") : "")}"));
             context.Table(["", "Mean", "Median", "p95", "Max", "Total"],
             [
                 Row("characters", characters),
@@ -351,13 +351,13 @@ internal sealed class DataStatsCommand : Command
                 int most = histogram.Max(h => h.Count);
                 foreach (var (from, to, count) in histogram)
                 {
-                    context.Write($"  {from,8:N0} - {to,-8:N0} {new string('#', (int)Math.Ceiling(30.0 * count / Math.Max(1, most))),-30} {count:N0}");
+                    context.Write(string.Create(CultureInfo.InvariantCulture, $"  {from,8:N0} - {to,-8:N0} {new string('#', (int)Math.Ceiling(30.0 * count / Math.Max(1, most))),-30} {count:N0}"));
                 }
             }
 
             if (contextLength is { } length && tokens.Count > 0)
             {
-                context.Write($"\n{over:N0} rows ({over / (double)Math.Max(1, rows.Count):P1}) are longer than {length:N0} tokens");
+                context.Write(string.Create(CultureInfo.InvariantCulture, $"\n{over:N0} rows ({over / (double)Math.Max(1, rows.Count):P1}) are longer than {length:N0} tokens"));
             }
 
             context.WriteJson(new JsonObject
@@ -510,10 +510,10 @@ internal sealed class DataConvertCommand : Command
             return converted;
         }).OfType<JsonObject>();
         long written = RowFiles.Write(rows, output);
-        context.Write($"{written:N0} rows written to {output} ({RowFiles.FormatName(input)} to {RowFiles.FormatName(output)}{(kind is null ? "" : $", as {kind}")})");
+        context.Write(string.Create(CultureInfo.InvariantCulture, $"{written:N0} rows written to {output} ({RowFiles.FormatName(input)} to {RowFiles.FormatName(output)}{(kind is null ? "" : $", as {kind}")})"));
         if (dropped > 0)
         {
-            context.Write($"{dropped:N0} of {read:N0} rows dropped: not readable as {kind} (idrak data validate {input} --as {kind} shows why)");
+            context.Write(string.Create(CultureInfo.InvariantCulture, $"{dropped:N0} of {read:N0} rows dropped: not readable as {kind} (idrak data validate {input} --as {kind} shows why)"));
         }
 
         context.WriteJson(new JsonObject { ["input"] = input, ["output"] = output, ["read"] = read, ["written"] = written, ["dropped"] = dropped });
@@ -571,7 +571,7 @@ internal sealed class DataDedupeCommand : Command
             RowFiles.Write(kept, output);
         }
 
-        context.Write($"{path}: {rows.Count:N0} rows, {removed:N0} {(near ? "near " : "")}duplicates{(dryRun ? " (dry run: nothing written)" : $" removed, {kept.Count:N0} written to {output}")}");
+        context.Write(string.Create(CultureInfo.InvariantCulture, $"{path}: {rows.Count:N0} rows, {removed:N0} {(near ? "near " : "")}duplicates{(dryRun ? " (dry run: nothing written)" : string.Create(CultureInfo.InvariantCulture, $" removed, {kept.Count:N0} written to {output}"))}"));
         context.WriteJson(new JsonObject { ["file"] = path, ["rows"] = rows.Count, ["duplicates"] = removed, ["kept"] = kept.Count, ["output"] = dryRun ? null : output, ["near"] = near });
         return ExitCodes.Ok;
     }
@@ -660,7 +660,7 @@ internal sealed class DataSplitCommand : Command
         double validation = Fraction(context, "--validation", 0.1), test = Fraction(context, "--test", 0.1);
         if (validation + test >= 1)
         {
-            throw new UsageException($"--validation {validation} and --test {test} leave nothing to train on.");
+            throw new UsageException(string.Create(CultureInfo.InvariantCulture, $"--validation {validation} and --test {test} leave nothing to train on."));
         }
 
         int seed = context.Seed ?? 1;
@@ -691,7 +691,7 @@ internal sealed class DataSplitCommand : Command
             string file = $"{prefix}.{name}.{extension}";
             RowFiles.Write(part, file);
             written[name] = new JsonObject { ["file"] = file, ["rows"] = part.Count };
-            context.Write($"{name,-10} {part.Count,8:N0} rows  {file}");
+            context.Write(string.Create(CultureInfo.InvariantCulture, $"{name,-10} {part.Count,8:N0} rows  {file}"));
         }
 
         context.WriteJson(new JsonObject { ["file"] = path, ["rows"] = rows.Count, ["seed"] = seed, ["stratifiedBy"] = target, ["parts"] = written });
@@ -771,7 +771,7 @@ internal sealed class DataSampleCommand : Command
         if (context.Option("--out") is { } output)
         {
             RowFiles.Write(sample, output);
-            context.Write($"{sample.Count:N0} of {rows.Count:N0} rows written to {output}");
+            context.Write(string.Create(CultureInfo.InvariantCulture, $"{sample.Count:N0} of {rows.Count:N0} rows written to {output}"));
         }
         else if (!context.Json && !context.Quiet)
         {
@@ -840,15 +840,15 @@ internal sealed class DataMixCommand : Command
         var counts = new RecipeCounts();
         var (train, evaluation) = recipe.Build(downloads, counts);
         long written = RowFiles.Write(train, output);
-        context.Write($"{written:N0} rows from {recipe.Sources.Count} source{(recipe.Sources.Count == 1 ? "" : "s")} written to {output}"
-                      + (recipe.Deduplicate ? $" ({counts.Duplicates:N0} repeats dropped)" : ""));
+        context.Write(string.Create(CultureInfo.InvariantCulture, $"{written:N0} rows from {recipe.Sources.Count} source{(recipe.Sources.Count == 1 ? "" : "s")} written to {output}")
+                      + (recipe.Deduplicate ? string.Create(CultureInfo.InvariantCulture, $" ({counts.Duplicates:N0} repeats dropped)") : ""));
         string? evalFile = null;
         long held = 0;
         if (evaluation is not null)
         {
             evalFile = context.Option("--eval") ?? Path.ChangeExtension(output, null) + ".eval.jsonl";
             held = RowFiles.Write(evaluation, evalFile);
-            context.Write($"{held:N0} evaluation rows written to {evalFile}");
+            context.Write(string.Create(CultureInfo.InvariantCulture, $"{held:N0} evaluation rows written to {evalFile}"));
         }
 
         context.WriteJson(new JsonObject

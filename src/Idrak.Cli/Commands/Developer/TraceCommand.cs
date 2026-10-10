@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Globalization;
 using System.Text.Json.Nodes;
 using Idrak.Diagnostics;
 
@@ -119,7 +120,7 @@ internal sealed class TraceCommand : Command
             session.Dispose();
         }
 
-        string counts = string.Join(", ", counter.Counts.Where(c => c.Value > 0).Select(c => $"{c.Value:N0} {c.Key}"));
+        string counts = string.Join(", ", counter.Counts.Where(c => c.Value > 0).Select(c => string.Create(CultureInfo.InvariantCulture, $"{c.Value:N0} {c.Key}")));
         context.Write($"trace: {inner.Name} exited with {exit}; {(counts.Length == 0 ? "no events" : counts)}{(path is null ? "" : $"; events in {path}")}");
         if (context.Json)
         {
