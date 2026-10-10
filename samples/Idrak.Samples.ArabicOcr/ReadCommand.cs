@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Diagnostics;
 using System.Text.Json.Nodes;
 
 namespace Idrak.Samples.ArabicOcr;
@@ -38,15 +39,45 @@ internal static class ReadCommand
         bool toFile = outPath is not null && onePage && Path.HasExtension(outPath) && !Directory.Exists(outPath);
         using var reader = Readers.Create(context.Args.Required("--reader", "lines or vlm"), context);
         var pages = new JsonArray();
-        foreach (var page in Pages.Read(inputs, context.Args.Option("--images")).Take(context.Args.Integer("--limit", int.MaxValue, 1)))
+        bool stream = !context.Json && outPath is null;
+        int limit = context.Args.Integer("--limit", int.MaxValue, 1), done = 0;
+        int? total = Pages.Count(inputs) is { } count ? Math.Min(count, limit) : null;
+        var live = new LiveLine(context.Error);
+        var clock = Stopwatch.StartNew();
+
+        // Streamed to the console a page at a time (the text as it is produced); to files, a reader's batch of pages at once.
+        foreach (var chunk in Pages.Read(inputs, context.Args.Option("--images")).Take(limit).Chunk(stream ? 1 : reader.PagesAtOnce))
         {
-            bool stream = !context.Json && outPath is null;
+            var readings = stream ? [] : reader.ReadMany(chunk);
+            for (int k = 0; k < chunk.Length; k++)
+            {
+                Write(chunk[k], stream ? null : readings[k]);
+            }
+
+            done += chunk.Length;
+            if (!stream)
+            {
+                live.Show(() => EvalCommand.Progress("reading", done, total, clock.Elapsed));
+            }
+        }
+
+        live.Clear();
+        if (context.Json && outPath is null)
+        {
+            context.WriteJson(new JsonObject { ["reader"] = reader.Name, ["pages"] = pages });
+        }
+
+        return 0;
+
+        // A page's reading: streamed (read now), or given, then kept and written where asked.
+        void Write(Page page, PageReading? given)
+        {
             if (stream && !onePage)
             {
                 context.Output.WriteLine($"==> {page.Source} <==");
             }
 
-            var reading = reader.Read(page, stream ? context.Output : null);
+            var reading = given ?? reader.Read(page, stream ? context.Output : null);
             var json = new JsonObject { ["name"] = page.Name, ["source"] = page.Source, ["text"] = reading.Text };
             foreach (var (key, value) in reading.Details)
             {
@@ -58,6 +89,7 @@ internal static class ReadCommand
             {
                 string file = Path.Combine(outPath, page.Name + (context.Json ? ".json" : ".txt"));
                 OcrText.Write(file, (context.Json ? json.ToJsonString(Json.Indented) : reading.Text) + "\n");
+                live.Clear();
                 context.Say($"{page.Source}: {file}");
             }
             else if (toFile)
@@ -65,12 +97,5 @@ internal static class ReadCommand
                 OcrText.Write(outPath!, (context.Json ? json.ToJsonString(Json.Indented) : reading.Text) + "\n");
             }
         }
-
-        if (context.Json && outPath is null)
-        {
-            context.WriteJson(new JsonObject { ["reader"] = reader.Name, ["pages"] = pages });
-        }
-
-        return 0;
     }
 }

@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Buffers;
+using System.Text.Json;
 using Idrak.Data;
 using Idrak.Nlp;
 
@@ -64,6 +66,90 @@ internal static class Pages
                 yield return new Page(Path.GetFileNameWithoutExtension(file), file, ChatImage.FromFile(file));
             }
         }
+    }
+
+    /// <summary>
+    /// How many pages the inputs hold, for progress, without reading an image: image files, and a data file's records (a
+    /// .json array's elements, a .jsonl file's non-blank lines; a record without an image is skipped later). Null when a
+    /// data file is neither.
+    /// </summary>
+    public static int? Count(IReadOnlyList<string> inputs)
+    {
+        int total = 0;
+        foreach (string input in inputs)
+        {
+            if (!IsDataFile(input))
+            {
+                total += ImageFiles(input).Count();
+                continue;
+            }
+
+            if (Records(input) is not { } records)
+            {
+                return null;
+            }
+
+            total += records;
+        }
+
+        return total;
+    }
+
+    // The records of a data file, counted over its bytes (rule 74: bytes, not strings).
+    private static int? Records(string path)
+    {
+        if (!File.Exists(path))
+        {
+            return null;
+        }
+
+        if (Path.GetExtension(path).Equals(".jsonl", StringComparison.OrdinalIgnoreCase))
+        {
+            int lines = 0;
+            bool content = false;
+            byte[] buffer = ArrayPool<byte>.Shared.Rent(64 * 1024);
+            try
+            {
+                using var stream = File.OpenRead(path);
+                int read;
+                while ((read = stream.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    foreach (byte b in buffer.AsSpan(0, read))
+                    {
+                        if (b == (byte)'\n')
+                        {
+                            lines += content ? 1 : 0;
+                            content = false;
+                        }
+                        else if (b is not ((byte)' ' or (byte)'\r' or (byte)'\t'))
+                        {
+                            content = true;
+                        }
+                    }
+                }
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
+            }
+
+            return lines + (content ? 1 : 0);
+        }
+
+        var reader = new Utf8JsonReader(File.ReadAllBytes(path), new JsonReaderOptions { CommentHandling = JsonCommentHandling.Skip });
+        if (!reader.Read() || reader.TokenType != JsonTokenType.StartArray)
+        {
+            return null;
+        }
+
+        int elements = 0;
+        while (reader.Read() && reader.TokenType != JsonTokenType.EndArray)
+        {
+            elements++;
+            reader.Skip();
+        }
+
+        return elements;
     }
 
     /// <summary>The records of a fine-tuning data file as pages: each record's first image, its prompt and its answer.</summary>

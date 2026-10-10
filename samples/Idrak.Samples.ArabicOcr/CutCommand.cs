@@ -20,6 +20,9 @@ internal static class CutCommand
           --prefill vlm --model DIR   instead of an empty .txt, a draft: the vision-language reader's reading of the line
                                       (NAME-line-NN.draft.txt); with the reader's options (--adapter, --image-transform,
                                       --grayscale, --pan-and-scan, --vision-option, --prompt, --max-tokens)
+          --prefill lines --model DIR the same with the trained line recognizer (train's folder; a page's lines read
+                                      together; --decoder, --beam-width, --batch): with --truth, lines cut as the line
+                                      reader cuts them and labelled from the pages' known text, to train on
           --truth data.json           the pages' known text (ShareGPT or messages; a scan finds its page by its image's bytes;
                                       a data file given as input is its own truth): each draft is snapped to the best-matching
                                       span of its page's text, top to bottom, and written as NAME-line-NN.aligned.txt
@@ -41,7 +44,8 @@ internal static class CutCommand
     public static int Run(string[] args, TextWriter output, TextWriter error)
     {
         if (OcrApp.Context(args, output, error,
-                ["--out", "--prefill", "--model", "--truth", "--truth-text", "--images", "--limit", "--max-skew", "--max-error", .. Readers.VlmValues],
+                ["--out", "--prefill", "--model", "--truth", "--truth-text", "--images", "--limit", "--max-skew", "--max-error", .. Readers.VlmValues,
+                    "--decoder", "--beam-width", "--batch"],
                 [.. Readers.VlmFlags], Help) is not { } context)
         {
             return 0;
@@ -50,9 +54,9 @@ internal static class CutCommand
         var a = context.Args;
         string folder = a.Required("--out", "the folder for the line images");
         string? prefill = a.Option("--prefill");
-        if (prefill is not (null or Readers.Vlm))
+        if (prefill is not (null or Readers.Vlm or Readers.Lines))
         {
-            throw new UsageException($"--prefill takes {Readers.Vlm} (the vision-language reader), not '{prefill}'.");
+            throw new UsageException($"--prefill takes {Readers.Vlm} (the vision-language reader) or {Readers.Lines} (the trained line recognizer), not '{prefill}'.");
         }
 
         string? truthFile = a.Option("--truth");
@@ -62,7 +66,7 @@ internal static class CutCommand
         var truths = truthFile is null ? null : Pages.ByImage(truthFile, images);
         double maxError = a.Number("--max-error", 0.5, 0);
         var segmentation = new SegmentationSettings { MaxSkew = a.Number("--max-skew", 3, 0) };
-        using var reader = prefill is null ? null : Readers.Create(Readers.Vlm, context);
+        using var reader = prefill is null ? null : Readers.Create(prefill, context);
         Directory.CreateDirectory(folder);
 
         var report = new JsonArray();
@@ -105,9 +109,25 @@ internal static class CutCommand
                     continue;
                 }
 
-                var reading = reader.Read(new Page(Path.GetFileNameWithoutExtension(files[i]), files[i], ChatImage.FromFile(files[i])));
-                texts[i] = OcrText.Normalize(OcrText.AnswerText(reading.Text, "values"));
                 fresh.Add(i);
+            }
+
+            // The drafts: the line recognizer reads the page's new lines together, the vision-language reader one by one.
+            if (reader is LinesReader lineReader)
+            {
+                var read = lineReader.ReadLines([.. fresh.Select(i => lines[i].Image)]);
+                for (int k = 0; k < fresh.Count; k++)
+                {
+                    texts[fresh[k]] = OcrText.Normalize(read[k]);
+                }
+            }
+            else if (reader is not null)
+            {
+                foreach (int i in fresh)
+                {
+                    var reading = reader.Read(new Page(Path.GetFileNameWithoutExtension(files[i]), files[i], ChatImage.FromFile(files[i])));
+                    texts[i] = OcrText.Normalize(OcrText.AnswerText(reading.Text, "values"));
+                }
             }
 
             // Snapped to the page's known text: every line's text (corrected ones too) anchors the order.

@@ -79,7 +79,10 @@ internal sealed partial class CpuBackend : Backend
 
         if (data is null)
         {
-            if (releaseCache)
+            // A miss while the pool holds at least as much in other sizes: those blocks go first (rule 77). Shapes that
+            // repeat (a training step) keep hitting their sizes; shapes that change (lines of other widths, page after
+            // page) would otherwise leave every earlier size cached and grow the process until the machine runs out.
+            if (releaseCache || _memory.Usage.Cached >= bytes)
             {
                 ReleaseCachedMemory();
             }

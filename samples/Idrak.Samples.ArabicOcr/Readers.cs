@@ -21,6 +21,12 @@ internal interface IPageReader : IDisposable
 
     /// <summary>Reads <paramref name="page"/>; <paramref name="stream"/>, when given, gets the text as it is produced.</summary>
     PageReading Read(Page page, TextWriter? stream = null);
+
+    /// <summary>How many pages <see cref="ReadMany"/> takes at once (1: a page at a time).</summary>
+    int PagesAtOnce => 1;
+
+    /// <summary>Reads <paramref name="pages"/> (at most <see cref="PagesAtOnce"/>) in order; by default one by one.</summary>
+    IReadOnlyList<PageReading> ReadMany(IReadOnlyList<Page> pages) => [.. pages.Select(p => Read(p))];
 }
 
 /// <summary>The two readers by name, and the options each takes.</summary>
@@ -88,21 +94,58 @@ internal sealed class LinesReader : IPageReader
     /// <summary>Batches run so far: the largest, and how often one was halved for memory.</summary>
     public MeasuredBatches Batches => _batches;
 
+    /// <summary>The texts of <paramref name="lines"/> (each one line, already cut), through the network together.</summary>
+    public IReadOnlyList<string> ReadLines(IReadOnlyList<ImageData> lines) =>
+        lines.Count == 0 ? [] : [.. _recognizer.Read(lines, _decoder, _options, _batches).Select(r => r.Text)];
+
     public PageReading Read(Page page, TextWriter? stream = null)
     {
+        var reading = ReadMany([page])[0];
+        stream?.WriteLine(OcrText.EndLines(reading.Text));
+        return reading;
+    }
+
+    /// <summary>Single lines go 256 at a time, pages 8: enough lines for the network's batches, few pages held at once.</summary>
+    public int PagesAtOnce => _singleLine ? 256 : 8;
+
+    /// <summary>
+    /// The pages decoded and their lines found in parallel (independent pages, rule 79), then every line of them through
+    /// the network together (the batches of <see cref="Recognizer.Read"/>), the readings handed back page by page. A page's
+    /// seconds are the call's, shared evenly.
+    /// </summary>
+    public IReadOnlyList<PageReading> ReadMany(IReadOnlyList<Page> pages)
+    {
         var clock = Stopwatch.StartNew();
-        var image = page.Decode();
-        var (lines, skew) = _singleLine
-            ? ([new TextLine(1, 0, 0, image.Width, image.Height, image)], 0.0)
-            : LineSegmenter.Find(image, _segmentation);
-        var readings = lines.Count == 0 ? [] : _recognizer.Read([.. lines.Select(l => l.Image)], _decoder, _options, _batches);
+        var found = new (IReadOnlyList<TextLine> Lines, double Skew)[pages.Count];
+        Parallel.For(0, pages.Count, i =>
+        {
+            var image = pages[i].Decode();
+            found[i] = _singleLine ? ([new TextLine(1, 0, 0, image.Width, image.Height, image)], 0.0) : LineSegmenter.Find(image, _segmentation);
+        });
+
+        var all = found.SelectMany(f => f.Lines.Select(l => l.Image)).ToArray();
+        var readings = all.Length == 0 ? [] : _recognizer.Read(all, _decoder, _options, _batches);
+        double seconds = Math.Round(clock.Elapsed.TotalSeconds / Math.Max(1, pages.Count), 3);
+        var result = new PageReading[pages.Count];
+        int first = 0;
+        for (int i = 0; i < pages.Count; i++)
+        {
+            var (lines, skew) = found[i];
+            result[i] = Reading(lines, readings.Skip(first).Take(lines.Count).ToArray(), skew, seconds);
+            first += lines.Count;
+        }
+
+        return result;
+    }
+
+    private PageReading Reading(IReadOnlyList<TextLine> lines, IReadOnlyList<LineReading> readings, double skew, double seconds)
+    {
         string text = string.Join("\n", readings.Select(r => r.Text));
-        stream?.WriteLine(OcrText.EndLines(text));
         var details = new JsonObject
         {
             ["reader"] = Name,
             ["skew_degrees"] = skew,
-            ["seconds"] = Math.Round(clock.Elapsed.TotalSeconds, 3),
+            ["seconds"] = seconds,
             ["lines"] = new JsonArray([.. lines.Zip(readings).Select(p => (JsonNode)new JsonObject
             {
                 ["index"] = p.First.Index,
