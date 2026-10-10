@@ -1,6 +1,9 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Buffers;
+using System.Buffers.Binary;
+using System.Runtime.InteropServices;
 using System.Text;
 using Idrak.Models;
 using Idrak.Nlp.Abstractions;
@@ -123,14 +126,23 @@ public sealed class TeacherLogitsWriter : IDisposable
             }
         }
 
-        foreach (int id in rowIds)
+        if (BitConverter.IsLittleEndian)
         {
-            _writer.Write(id);
+            // The file's byte order: the arrays' bytes as they are, written at once.
+            _writer.Write(MemoryMarshal.AsBytes(rowIds.AsSpan()));
+            _writer.Write(MemoryMarshal.AsBytes(rowValues.AsSpan()));
         }
-
-        foreach (var value in rowValues)
+        else
         {
-            _writer.Write(value);
+            foreach (int id in rowIds)
+            {
+                _writer.Write(id);
+            }
+
+            foreach (var value in rowValues)
+            {
+                _writer.Write(value);
+            }
         }
 
         return true;
@@ -332,14 +344,27 @@ public sealed class TeacherLogitsFile : IDisposable
             int count = n * TopK;
             var ids = new int[count];
             var logits = new float[count];
-            for (int i = 0; i < count; i++)
+
+            // Both arrays read at once (little-endian in the file), the logits' halves through a pooled buffer.
+            _stream.ReadExactly(MemoryMarshal.AsBytes(ids.AsSpan()));
+            if (!BitConverter.IsLittleEndian)
             {
-                ids[i] = _reader.ReadInt32();
+                BinaryPrimitives.ReverseEndianness(ids, ids);
             }
 
-            for (int i = 0; i < count; i++)
+            byte[] halves = ArrayPool<byte>.Shared.Rent(count * sizeof(ushort));
+            try
             {
-                logits[i] = (float)_reader.ReadHalf();
+                var bytes = halves.AsSpan(0, count * sizeof(ushort));
+                _stream.ReadExactly(bytes);
+                for (int i = 0; i < count; i++)
+                {
+                    logits[i] = (float)BinaryPrimitives.ReadHalfLittleEndian(bytes[(i * sizeof(ushort))..]);
+                }
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(halves);
             }
 
             return (ids, logits);
