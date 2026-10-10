@@ -41,8 +41,10 @@ internal static class TrainCommand
           --height N           line height, a multiple of 4 (48)    --channels A,B,C  (32,64,128)
           --hidden N           LSTM size each way (128)              --layers N        (2)
           --direction rtl|ltr  (rtl: lines are flipped so columns run in reading order)
-          --profile N          time N steps after 20 warm ones, then every CUDA kernel of N more (the library's
+          --profile N          time N steps after the warm ones, then every CUDA kernel of N more (the library's
                                GpuProfiler: calls, ms, TFLOPS), print where a step's time goes, and stop
+          --profile-after N    the warm steps before --profile times (20); lines of new widths keep the first epoch
+                               cold (new memory blocks, new shapes measured), so a later step shows the warm cost
           --log FILE           every step and epoch as JSON Lines (the library's telemetry: loss, data and step time,
                                epoch summaries with CER, WER, lines a second and device memory)
           --augment PIPELINE   the Augmentations registry's names ("none" for none); default:
@@ -53,7 +55,7 @@ internal static class TrainCommand
     public static int Run(string[] args, TextWriter output, TextWriter error)
     {
         if (OcrApp.Context(args, output, error,
-                ["--data", "--eval", "--out", "--epochs", "--batch", "--lr", "--seed", "--height", "--channels", "--hidden", "--layers", "--direction", "--augment", "--log", "--profile",
+                ["--data", "--eval", "--out", "--epochs", "--batch", "--lr", "--seed", "--height", "--channels", "--hidden", "--layers", "--direction", "--augment", "--log", "--profile", "--profile-after",
                     "--schedule", "--warmup", "--min-lr"],
                 ["--include-drafts"], Help) is not { } context)
         {
@@ -189,7 +191,7 @@ internal static class TrainCommand
         double lastLoss = double.NaN;
         int stepsPerEpoch = (trainLines.Length + batchSize - 1) / batchSize;             // Batches makes ceil(lines / size) of them
         int profile = a.Integer("--profile", 0, 0);
-        const int ProfileWarm = 20;
+        int profileWarm = a.Integer("--profile-after", 20, 1);
         long profileStart = 0, profiledLines = 0;
         TimeSpan profileData = default, profileCompute = default;
         // The learning rate follows the schedule over every step of the run (warm-up, then the decay), stepped after each
@@ -206,21 +208,21 @@ internal static class TrainCommand
             TimeSpan dataTime = default, computeTime = default;
             foreach (var batch in Batches(trainLines, batchSize, seed, epoch))
             {
-                // --profile: steps ProfileWarm + 1 ... + N timed as they run; the N after them with every kernel timed.
-                if (profile > 0 && step == ProfileWarm)
+                // --profile: steps profileWarm + 1 ... + N timed as they run; the N after them with every kernel timed.
+                if (profile > 0 && step == profileWarm)
                 {
                     context.Device.Synchronize();
                     profileStart = Stopwatch.GetTimestamp();
                 }
-                else if (profile > 0 && step == ProfileWarm + profile)
+                else if (profile > 0 && step == profileWarm + profile)
                 {
                     context.Device.Synchronize();
                     double wallMs = Stopwatch.GetElapsedTime(profileStart).TotalMilliseconds / profile;
-                    Say(FormattableString.Invariant($"Profile   {wallMs:F1} ms a step as it runs ({profiledLines / (double)profile * 1000 / wallMs:F0} lines/s), steps {ProfileWarm + 1}-{ProfileWarm + profile}"));
+                    Say(FormattableString.Invariant($"Profile   {wallMs:F1} ms a step as it runs ({profiledLines / (double)profile * 1000 / wallMs:F0} lines/s), steps {profileWarm + 1}-{profileWarm + profile}"));
                     Say(FormattableString.Invariant($"          data {profileData.TotalMilliseconds / profile:F1} ms (the batch augmented on the CPU) + step {profileCompute.TotalMilliseconds / profile:F1} ms (forward, CTC, backward, optimizer: host and device)"));
                     GpuProfiler.Start(context.Device);
                 }
-                else if (profile > 0 && step == ProfileWarm + 2 * profile)
+                else if (profile > 0 && step == profileWarm + 2 * profile)
                 {
                     var kernels = GpuProfiler.Stop(context.Device);
                     if (kernels.Count == 0)
@@ -264,7 +266,7 @@ internal static class TrainCommand
                         lossSum += batchLoss;
                         seen += batch.Length;
                         stepLoss = batchLoss / batch.Length;
-                        if (profile > 0 && step >= ProfileWarm && step < ProfileWarm + profile)
+                        if (profile > 0 && step >= profileWarm && step < profileWarm + profile)
                         {
                             profiledLines += batch.Length;
                         }
@@ -281,7 +283,7 @@ internal static class TrainCommand
                 var preparing = Stopwatch.GetElapsedTime(started, prepared);
                 var compute = Stopwatch.GetElapsedTime(prepared);
                 (dataTime, computeTime) = (dataTime + preparing, computeTime + compute);
-                if (profile > 0 && step >= ProfileWarm && step < ProfileWarm + profile)
+                if (profile > 0 && step >= profileWarm && step < profileWarm + profile)
                 {
                     (profileData, profileCompute) = (profileData + preparing, profileCompute + compute);
                 }
