@@ -223,6 +223,41 @@ public sealed class Idrak.Generation.FakeChatModel : Idrak.Abstraction.Generatio
   public static Idrak.Abstraction.Generation.ChatMessage ToolCall(string name, System.Text.Json.Nodes.JsonObject arguments)
   public static Idrak.Generation.FakeChatModel Script(params Idrak.Abstraction.Generation.ChatMessage[] replies)
 
+public sealed record Idrak.Generation.ImageReadRequest : System.IEquatable<Idrak.Generation.ImageReadRequest>
+  public Idrak.Abstraction.Data.ImageTransformPipeline? Transforms { get; init; }
+  public Idrak.Abstraction.Generation.ChatImage Image { get; init; }
+  public Idrak.Abstraction.Generation.VisionOptions? VisionOptions { get; init; }
+  public ImageReadRequest(Idrak.Abstraction.Generation.ChatImage Image, string Prompt)
+  public int MaxTokens { get; init; }
+  public string Prompt { get; init; }
+  public string? System { get; init; }
+
+public sealed class Idrak.Generation.ImageReader : System.IDisposable
+  public Idrak.Abstraction.Data.ImageData Prepared(Idrak.Generation.ImageReadRequest request)
+  public Idrak.Abstraction.Generation.PretrainedVision Vision { get; }
+  public Idrak.Generation.ImageReaderOptions Options { get; }
+  public Idrak.Generation.ImageReading Read(Idrak.Generation.ImageReadRequest request, System.Action<string>? onText = null, System.Threading.CancellationToken cancellationToken = default)
+  public Idrak.Models.PretrainedModel Model { get; }
+  public ImageReader(Idrak.Models.PretrainedModel model, Idrak.Generation.ImageReaderOptions? options = null)
+  public System.Collections.Generic.IEnumerable<Idrak.Abstraction.Generation.ChatChunk> Stream(Idrak.Generation.ImageReadRequest request, System.Threading.CancellationToken cancellationToken = default)
+  public void Dispose()
+
+public sealed record Idrak.Generation.ImageReaderOptions : System.IEquatable<Idrak.Generation.ImageReaderOptions>
+  public Idrak.Abstraction.Data.ImageTransformPipeline Transforms { get; init; }
+  public Idrak.Abstraction.Generation.KeyValueFormat CacheFormat { get; init; }
+  public Idrak.Abstraction.Generation.VisionOptions? VisionOptions { get; init; }
+  public ImageReaderOptions()
+  public System.Func<Idrak.Models.PretrainedModel, Idrak.Abstraction.Generation.VisionEncoderOptions, Idrak.Abstraction.Generation.IVisionEncoder>? EncoderFactory { get; init; }
+  public int? ContextLength { get; init; }
+
+public sealed record Idrak.Generation.ImageReading : System.IEquatable<Idrak.Generation.ImageReading>
+  public Idrak.Abstraction.Generation.GenerationStats? Stats { get; init; }
+  public ImageReading(string Text, Idrak.Abstraction.Generation.GenerationStats? Stats, System.TimeSpan Elapsed)
+  public System.TimeSpan Elapsed { get; init; }
+  public System.TimeSpan? FirstText { get; init; }
+  public bool Truncated { get; init; }
+  public string Text { get; init; }
+
 public sealed record Idrak.Generation.LoadedModel : System.IEquatable<Idrak.Generation.LoadedModel>
   public LoadedModel(string Name, System.DateTimeOffset LoadedAt, System.DateTimeOffset? ExpiresAt, int ActiveUsers)
   public System.DateTimeOffset LoadedAt { get; init; }
@@ -237,6 +272,7 @@ public sealed class Idrak.Generation.ModelHost<TModel> : System.IDisposable wher
   public ModelHost.Lease Acquire(string name, System.TimeSpan? keepAlive)
   public System.Collections.Generic.IReadOnlyList<Idrak.Generation.LoadedModel> Loaded { get; }
   public bool Unload(string name)
+  public int? MaxLoaded { get; init; }
   public void Dispose()
 
 public sealed class Idrak.Generation.ModelHost<TModel>.Lease : System.IDisposable
@@ -244,6 +280,13 @@ public sealed class Idrak.Generation.ModelHost<TModel>.Lease : System.IDisposabl
   public System.TimeSpan? KeepAlive { get; set; }
   public TModel Model { get; }
   public string Name { get; }
+  public void Dispose()
+
+public sealed class Idrak.Generation.ModelImages : System.IDisposable
+  public Idrak.Abstraction.Generation.IVisionEncoder? Encoder { get; }
+  public Idrak.Abstraction.Generation.VisionEncoderOptions Options { get; }
+  public Idrak.Generation.ChatImages Images { get; }
+  public static Idrak.Generation.ModelImages? For(Idrak.Models.PretrainedModel model, Idrak.Abstraction.Data.ImageTransformPipeline? transforms = null, Idrak.Abstraction.Generation.VisionOptions? visionOptions = null, System.Func<Idrak.Models.PretrainedModel, Idrak.Abstraction.Generation.VisionEncoderOptions, Idrak.Abstraction.Generation.IVisionEncoder>? encoderFactory = null)
   public void Dispose()
 
 public sealed class Idrak.Generation.TextGenerator : Idrak.Abstraction.Generation.ITextModel
@@ -317,6 +360,21 @@ public static class Idrak.Inference.GenerativeModels
 public static class Idrak.Inference.ModelPackageReaderExtensions
   public static Idrak.Generation.TextGenerator TextGenerator(this Idrak.Inference.ModelPackageReader package, string tokenizer, string model = "model", Idrak.Abstraction.Device? device = null)
 
+public static class Idrak.Nlp.Abstractions.AnswerTexts
+  public const string Raw = "raw"
+  public const string Values = "values"
+  public static Idrak.Nlp.Abstractions.IAnswerText Get(string name)
+  public static Idrak.Nlp.Abstractions.IAnswerText? Default(string name)
+  public static Idrak.Nlp.Abstractions.IAnswerText? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string Normalize(string? text)
+  public static string Of(string answer, string name = "raw")
+  public static string? Origin(string name)
+  public static void Register(Idrak.Nlp.Abstractions.IAnswerText text)
+  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
 public abstract class Idrak.Nlp.Abstractions.DistillationTeacher : System.IDisposable
   protected DistillationTeacher()
   protected virtual void Dispose(bool disposing)
@@ -364,6 +422,11 @@ public static class Idrak.Nlp.Abstractions.FeatureCaches
   public static void Register(string name, System.Func<Idrak.Nlp.Abstractions.FeatureCacheOptions, Idrak.Nlp.Abstractions.IFeatureCache> create)
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
+public interface Idrak.Nlp.Abstractions.IAnswerText
+  public string Name { get; }
+  public string Summary { get; }
+  public string Text(string answer)
+
 public interface Idrak.Nlp.Abstractions.IFeatureCache : System.IDisposable
   public bool Contains(Idrak.Nlp.Abstractions.FeatureCacheKey key)
   public bool Put(Idrak.Nlp.Abstractions.FeatureCacheKey key, Idrak.Abstraction.Tensor value)
@@ -372,6 +435,11 @@ public interface Idrak.Nlp.Abstractions.IFeatureCache : System.IDisposable
   public long Bytes { get; }
   public string Name { get; }
   public void Clear()
+
+public interface Idrak.Nlp.Abstractions.IJsonRepair
+  public Idrak.Nlp.Abstractions.JsonRepairResult? Repair(string text)
+  public string Name { get; }
+  public string Summary { get; }
 
 public interface Idrak.Nlp.Abstractions.ITuningDataFormat
   public System.Collections.Generic.IEnumerable<Idrak.Nlp.ChatTranscript> Read(string path, Idrak.Nlp.Abstractions.TuningDataOptions? options = null)
@@ -385,6 +453,24 @@ public interface Idrak.Nlp.Abstractions.ITuningMetric
   public bool LowerIsBetter { get; }
   public string Name { get; }
   public string Summary { get; }
+
+public sealed record Idrak.Nlp.Abstractions.JsonRepairResult : System.IEquatable<Idrak.Nlp.Abstractions.JsonRepairResult>
+  public JsonRepairResult(System.Text.Json.Nodes.JsonNode? Json, bool Repaired)
+  public System.Text.Json.Nodes.JsonNode? Json { get; init; }
+  public bool Repaired { get; init; }
+
+public static class Idrak.Nlp.Abstractions.JsonRepairs
+  public const string Lenient = "lenient"
+  public static Idrak.Nlp.Abstractions.IJsonRepair Get(string name)
+  public static Idrak.Nlp.Abstractions.IJsonRepair? Default(string name)
+  public static Idrak.Nlp.Abstractions.IJsonRepair? Find(string name)
+  public static Idrak.Nlp.Abstractions.JsonRepairResult? Parse(string text, string name = "lenient")
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Nlp.Abstractions.IJsonRepair repair)
+  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
 public abstract class Idrak.Nlp.Abstractions.TeacherDistributions : System.IDisposable
   protected TeacherDistributions()

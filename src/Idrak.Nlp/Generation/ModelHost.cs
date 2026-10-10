@@ -35,6 +35,13 @@ public sealed class ModelHost<TModel> : IDisposable where TModel : class, IDispo
         _sweeper = _time.CreateTimer(_ => Sweep(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
     }
 
+    /// <summary>
+    /// The most models kept loaded at once (null: no limit). Loading another first unloads idle ones, the longest unused
+    /// first, until it fits: large models (one a device) then replace each other instead of filling its memory. A model in
+    /// use is never unloaded for it.
+    /// </summary>
+    public int? MaxLoaded { get; init; }
+
     /// <summary>Models currently loaded.</summary>
     public IReadOnlyList<LoadedModel> Loaded
     {
@@ -61,6 +68,7 @@ public sealed class ModelHost<TModel> : IDisposable where TModel : class, IDispo
             TimeSpan loadTime = TimeSpan.Zero;
             if (!_models.TryGetValue(name, out var entry))
             {
+                MakeRoomLocked();
                 long start = _time.GetTimestamp();
                 entry = new Entry(_load(name), _time.GetUtcNow());
                 loadTime = _time.GetElapsedTime(start);
@@ -98,12 +106,33 @@ public sealed class ModelHost<TModel> : IDisposable where TModel : class, IDispo
             }
 
             entry.Users--;
+            entry.LastUsed = _time.GetUtcNow();
             entry.ExpiresAt = keepAlive is { } k ? _time.GetUtcNow() + k : null;
             if (entry.Users == 0 && keepAlive == TimeSpan.Zero)
             {
                 _models.Remove(name);
                 entry.Model.Dispose();
             }
+        }
+    }
+
+    // Unloads idle models, the longest unused first, until one more fits under MaxLoaded. Called under the lock.
+    private void MakeRoomLocked()
+    {
+        if (MaxLoaded is not { } most)
+        {
+            return;
+        }
+
+        foreach (var (name, entry) in _models.Where(p => p.Value.Users == 0).OrderBy(p => p.Value.LastUsed ?? p.Value.LoadedAt).ToList())
+        {
+            if (_models.Count < Math.Max(1, most))
+            {
+                return;
+            }
+
+            _models.Remove(name);
+            entry.Model.Dispose();
         }
     }
 
@@ -140,6 +169,7 @@ public sealed class ModelHost<TModel> : IDisposable where TModel : class, IDispo
         public TModel Model { get; } = model;
         public DateTimeOffset LoadedAt { get; } = loadedAt;
         public DateTimeOffset? ExpiresAt { get; set; }
+        public DateTimeOffset? LastUsed { get; set; }
         public int Users { get; set; }
     }
 

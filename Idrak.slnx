@@ -3,6 +3,8 @@
     <Project Path="samples/Gemma3Vision/Idrak.Gemma3Vision/Idrak.Gemma3Vision.csproj" />
     <Project Path="samples/Idrak.Samples.ArabicOcr/Idrak.Samples.ArabicOcr.csproj" />
     <Project Path="samples/Idrak.Samples.ArabicOcr.Tests/Idrak.Samples.ArabicOcr.Tests.csproj" />
+    <Project Path="samples/Idrak.Samples.LegalOcr/Idrak.Samples.LegalOcr.csproj" />
+    <Project Path="samples/Idrak.Samples.LegalOcr.Tests/Idrak.Samples.LegalOcr.Tests.csproj" />
     <Project Path="samples/Idrak.Samples.Chat/Idrak.Samples.Chat.csproj" />
     <Project Path="samples/Idrak.Samples.CodingAgent/Idrak.Samples.CodingAgent.csproj" />
     <Project Path="samples/Idrak.Samples.GptApi/Idrak.Samples.GptApi.csproj" />

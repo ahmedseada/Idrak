@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Arabic Legal OCR</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #1d2330; --muted: #5d6677; --line: #dde1e8; --accent: #1f6feb; --accent-ink: #ffffff;
+    --good: #1a7f37; --warn: #9a6700; --bad: #cf222e; --soft: #eef2f8; --code: #f3f5f8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f1218; --panel: #171b23; --ink: #e6e9ef; --muted: #9aa3b2; --line: #2a303b; --accent: #4c8dff; --accent-ink: #0b0e14;
+      --good: #3fb950; --warn: #d29922; --bad: #f85149; --soft: #1e2430; --code: #12161d;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1218; --panel: #171b23; --ink: #e6e9ef; --muted: #9aa3b2; --line: #2a303b; --accent: #4c8dff; --accent-ink: #0b0e14;
+    --good: #3fb950; --warn: #d29922; --bad: #f85149; --soft: #1e2430; --code: #12161d;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 "Segoe UI", system-ui, -apple-system, sans-serif; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; padding: 14px 20px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  header h1 { font-size: 17px; margin: 0; font-weight: 600; }
+  .switch { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .switch button { border: 0; background: transparent; color: var(--ink); padding: 7px 14px; cursor: pointer; font: inherit; border-right: 1px solid var(--line); }
+  .switch button:last-child { border-right: 0; }
+  .switch button.on { background: var(--accent); color: var(--accent-ink); }
+  .switch button:disabled { color: var(--muted); cursor: not-allowed; }
+  .status { display: flex; align-items: center; gap: 10px; min-width: 260px; flex: 1; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
+  .dot.Ready { background: var(--good); } .dot.Reading, .dot.Loading, .dot.Downloading { background: var(--warn); } .dot.Failed { background: var(--bad); }
+  .bar { height: 6px; background: var(--soft); border-radius: 3px; overflow: hidden; width: 160px; flex: none; }
+  .bar > div { height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+  .memory { color: var(--muted); font-variant-numeric: tabular-nums; }
+  main { display: grid; grid-template-columns: minmax(300px, 420px) 1fr; gap: 16px; padding: 16px 20px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; padding: 12px 16px; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
+  .stack > * + * { margin-top: 12px; }
+  .drop { border: 2px dashed var(--line); border-radius: 10px; padding: 18px; text-align: center; color: var(--muted); cursor: pointer; }
+  .drop.over { border-color: var(--accent); color: var(--ink); }
+  .drop img { max-width: 100%; max-height: 220px; display: block; margin: 0 auto 8px; border-radius: 6px; }
+  label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  input[type=text], input[type=number], textarea, select { width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); color: var(--ink); font: inherit; }
+  textarea { resize: vertical; min-height: 54px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .btn { border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 8px 14px; border-radius: 7px; cursor: pointer; font: inherit; }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .pages { max-height: 300px; overflow: auto; border: 1px solid var(--line); border-radius: 7px; }
+  .pages div { padding: 7px 9px; border-bottom: 1px solid var(--line); cursor: pointer; }
+  .pages div:last-child { border-bottom: 0; }
+  .pages div.on { background: var(--soft); }
+  .pages small { display: block; color: var(--muted); direction: rtl; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .images { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .images figure { margin: 0; }
+  .images img { width: 100%; border: 1px solid var(--line); border-radius: 6px; background: var(--soft); min-height: 60px; }
+  .images figcaption { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .metrics { display: flex; flex-wrap: wrap; gap: 8px; }
+  .metric { background: var(--soft); border-radius: 7px; padding: 6px 10px; font-variant-numeric: tabular-nums; }
+  .metric b { display: block; font-size: 15px; }
+  .metric span { font-size: 11px; color: var(--muted); }
+  .metric.good b { color: var(--good); } .metric.warn b { color: var(--warn); } .metric.bad b { color: var(--bad); }
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 10px; }
+  .tabs button { border: 0; background: none; color: var(--muted); padding: 7px 10px; cursor: pointer; font: inherit; border-bottom: 2px solid transparent; }
+  .tabs button.on { color: var(--ink); border-bottom-color: var(--accent); }
+  pre { margin: 0; background: var(--code); border: 1px solid var(--line); border-radius: 7px; padding: 10px; white-space: pre-wrap; word-break: break-word;
+        max-height: 520px; overflow: auto; font: 13px/1.6 "Cascadia Mono", Consolas, "Noto Naskh Arabic", monospace; }
+  .rtl { direction: rtl; text-align: right; font-family: "Noto Naskh Arabic", "Segoe UI", Tahoma, sans-serif; font-size: 15px; }
+  .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .note { color: var(--muted); font-size: 12px; }
+  .error { color: var(--bad); }
+  .badge { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 10px; background: var(--soft); color: var(--muted); margin-left: 6px; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Arabic Legal OCR</h1>
+  <div class="switch" id="switch"></div>
+  <div class="status">
+    <div class="dot" id="dot"></div>
+    <div id="statusText">Starting…</div>
+    <div class="bar hidden" id="bar"><div id="barFill"></div></div>
+  </div>
+  <div class="memory" id="memory"></div>
+</header>
+
+<main>
+  <section class="stack">
+    <div class="card stack">
+      <h2>Page</h2>
+      <div class="drop" id="drop">
+        <img id="dropImage" class="hidden" alt="">
+        <div id="dropText">Drop a scan here, or click to choose one</div>
+        <input type="file" id="file" accept="image/*" class="hidden">
+      </div>
+      <div id="pagesBox" class="hidden">
+        <label>Or an evaluation page (<span id="pagesSource"></span>)</label>
+        <input type="text" id="pagesFilter" placeholder="Filter by name or text">
+        <div class="pages" id="pages" style="margin-top:6px"></div>
+      </div>
+    </div>
+
+    <div class="card stack">
+      <h2>Settings</h2>
+      <div>
+        <label for="preset">Preprocessing</label>
+        <select id="preset">
+          <option value="card">Model card: grayscale, max width 1024, contrast 1.5</option>
+          <option value="vllm">Model card, vLLM route: the same, sent as JPEG quality 95</option>
+          <option value="none">None (the image as it is)</option>
+          <option value="custom">Custom pipeline…</option>
+        </select>
+        <input type="text" id="pipeline" style="margin-top:6px" spellcheck="false">
+      </div>
+      <div>
+        <label for="prompt">Prompt</label>
+        <textarea id="prompt" rows="2"></textarea>
+        <div class="row" style="margin-top:4px">
+          <button class="btn" id="dataPrompt" type="button" disabled>Use the page's own prompt</button>
+          <button class="btn" id="modelPrompt" type="button">Model's prompt</button>
+        </div>
+      </div>
+      <div>
+        <label for="maxTokens">Most tokens in the answer</label>
+        <input type="number" id="maxTokens" min="1" max="8000" step="64">
+      </div>
+      <div class="row">
+        <button class="btn primary" id="read" disabled>Read</button>
+        <button class="btn" id="stop" disabled>Stop</button>
+        <span class="note" id="readNote"></span>
+      </div>
+    </div>
+  </section>
+
+  <section class="stack">
+    <div class="card">
+      <h2>Result</h2>
+      <div class="metrics" id="metrics"><span class="note">Pick a model and a page, then Read.</span></div>
+    </div>
+    <div class="card">
+      <div class="tabs" id="tabs">
+        <button data-tab="answer" class="on">Answer</button>
+        <button data-tab="json">JSON</button>
+        <button data-tab="compare" id="compareTab" class="hidden">Expected</button>
+        <button data-tab="images">As the model sees it</button>
+      </div>
+      <div data-pane="answer"><pre id="answer" class="rtl"></pre></div>
+      <div data-pane="json" class="hidden"><pre id="json" class="rtl"></pre></div>
+      <div data-pane="compare" class="hidden">
+        <div class="compare">
+          <div><label>Read</label><pre id="compareRead" class="rtl"></pre></div>
+          <div><label>Expected</label><pre id="compareExpected" class="rtl"></pre></div>
+        </div>
+      </div>
+      <div data-pane="images" class="hidden">
+        <div class="images">
+          <figure><img id="originalImage" alt=""><figcaption id="originalCaption">The page</figcaption></figure>
+          <figure><img id="seenImage" alt=""><figcaption id="seenCaption">After the preprocessing</figcaption></figure>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const presets = { card: "grayscale,max_width=1024,contrast=1.5", vllm: "grayscale,max_width=1024,contrast=1.5,jpeg=95", none: "" };
+let models = [], current = null, imageData = null, pageIndex = null, page = null, reading = null, pages = [], lastSeen = null;
+
+// ---------------------------------------------------------------- status and the model switch
+async function refresh() {
+  const s = await fetch("/api/status").then(r => r.json()).catch(() => null);
+  if (!s) { $("statusText").textContent = "The app is not answering."; return; }
+  $("dot").className = "dot " + s.state;
+  let text = s.message;
+  const bar = $("bar");
+  if (s.state === "Downloading" && s.download) {
+    const d = s.download;
+    const pct = d.total ? Math.round(100 * d.received / d.total) : null;
+    text = `${s.message} — ${size(d.received)}${d.total ? " of " + size(d.total) : ""}`;
+    bar.classList.remove("hidden"); $("barFill").style.width = (pct ?? 5) + "%";
+  } else if (s.state === "Loading") {
+    bar.classList.remove("hidden"); $("barFill").style.width = "100%";
+    if (s.seconds != null) text += ` (${Math.round(s.seconds)} s)`;
+  } else bar.classList.add("hidden");
+  $("statusText").textContent = text;
+  $("memory").textContent = s.memory ? `${s.device}: ${size(s.memory.inUse)} in use, peak ${size(s.memory.peak)}` : s.device;
+  const seen = s.state + "|" + s.model;
+  if (seen !== lastSeen) { lastSeen = seen; await loadModels(); }
+  $("read").disabled = !(s.state === "Ready" && (imageData || pageIndex != null)) || reading != null;
+  setTimeout(refresh, ["Downloading", "Loading", "Reading"].includes(s.state) ? 700 : 2500);
+}
+
+async function loadModels() {
+  models = await fetch("/api/models").then(r => r.json());
+  const sw = $("switch");
+  sw.innerHTML = "";
+  for (const m of models) {
+    const b = document.createElement("button");
+    b.textContent = m.name;
+    b.title = m.usable ? (m.about ?? m.source) : m.unusable;
+    b.disabled = !m.usable;
+    if (m.loaded) b.classList.add("on");
+    b.onclick = () => pick(m);
+    sw.appendChild(b);
+  }
+  const loaded = models.find(m => m.loaded);
+  if (loaded && (!current || current.id !== loaded.id)) useSettings(loaded);
+  current = loaded ?? current;
+}
+
+async function pick(m) {
+  if (m.loaded) return;
+  useSettings(m);
+  current = m;
+  const r = await fetch(`/api/models/${encodeURIComponent(m.id)}/load`, { method: "POST" });
+  if (!r.ok) { const p = await r.json().catch(() => ({})); $("statusText").textContent = p.detail ?? "Could not load."; }
+}
+
+function useSettings(m) {
+  $("prompt").value = m.prompt;
+  $("maxTokens").value = m.maxTokens;
+  setPipeline(m.preprocessing);
+}
+
+function setPipeline(text) {
+  const preset = Object.entries(presets).find(([, v]) => v === text);
+  $("preset").value = preset ? preset[0] : "custom";
+  $("pipeline").value = text;
+}
+$("preset").onchange = () => { if ($("preset").value !== "custom") $("pipeline").value = presets[$("preset").value]; };
+$("pipeline").oninput = () => setPipeline($("pipeline").value);
+$("modelPrompt").onclick = () => { if (current) $("prompt").value = current.prompt; };
+$("dataPrompt").onclick = () => { if (page && page.prompt) $("prompt").value = page.prompt; };
+
+// ---------------------------------------------------------------- the page: a file, or an evaluation page
+const drop = $("drop");
+drop.onclick = () => $("file").click();
+drop.ondragover = e => { e.preventDefault(); drop.classList.add("over"); };
+drop.ondragleave = () => drop.classList.remove("over");
+drop.ondrop = e => { e.preventDefault(); drop.classList.remove("over"); if (e.dataTransfer.files[0]) useFile(e.dataTransfer.files[0]); };
+$("file").onchange = () => { if ($("file").files[0]) useFile($("file").files[0]); };
+
+function useFile(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    imageData = reader.result; pageIndex = null; page = null;
+    showDrop(imageData, file.name);
+    for (const el of document.querySelectorAll(".pages div")) el.classList.remove("on");
+    $("dataPrompt").disabled = true;
+    refreshRead();
+  };
+  reader.readAsDataURL(file);
+}
+
+function showDrop(src, name) {
+  $("dropImage").src = src; $("dropImage").classList.remove("hidden");
+  $("dropText").textContent = name + " — drop or click for another";
+  $("originalImage").src = src;
+}
+
+async function loadPages() {
+  const r = await fetch("/api/pages").then(r => r.json()).catch(() => null);
+  if (!r || !r.configured) return;
+  pages = r.pages;
+  $("pagesSource").textContent = `${pages.length} in ${r.source}`;
+  $("pagesBox").classList.remove("hidden");
+  renderPages();
+}
+
+function renderPages() {
+  const filter = $("pagesFilter").value.trim();
+  const list = $("pages");
+  list.innerHTML = "";
+  for (const p of pages.filter(p => !filter || p.name.includes(filter) || p.preview.includes(filter)).slice(0, 400)) {
+    const div = document.createElement("div");
+    div.innerHTML = `<b></b><small></small>`;
+    div.querySelector("b").textContent = p.name;
+    div.querySelector("small").textContent = p.preview;
+    if (p.index === pageIndex) div.classList.add("on");
+    div.onclick = () => usePage(p, div);
+    list.appendChild(div);
+  }
+}
+$("pagesFilter").oninput = renderPages;
+
+function usePage(p, div) {
+  pageIndex = p.index; page = p; imageData = null;
+  for (const el of document.querySelectorAll(".pages div")) el.classList.remove("on");
+  div.classList.add("on");
+  showDrop(`/api/pages/${p.index}/image`, p.name);
+  $("dataPrompt").disabled = !p.prompt;
+  refreshRead();
+}
+
+function refreshRead() { $("read").disabled = !(current && current.loaded && (imageData || pageIndex != null)) || reading != null; }
+
+// ---------------------------------------------------------------- reading (server-sent events over a POST)
+$("read").onclick = read;
+$("stop").onclick = () => reading && reading.abort();
+
+async function read() {
+  const body = { prompt: $("prompt").value, preprocessing: $("pipeline").value, maxTokens: Number($("maxTokens").value) || null };
+  if (pageIndex == null) body.image = imageData;
+  const url = pageIndex == null ? "/api/read" : `/api/pages/${pageIndex}/read`;
+  reading = new AbortController();
+  $("read").disabled = true; $("stop").disabled = false;
+  $("answer").textContent = ""; $("json").textContent = ""; $("readNote").textContent = "";
+  $("compareTab").classList.toggle("hidden", pageIndex == null);
+  showTab("answer");
+  metrics([{ label: "status", value: "starting…" }]);
+  const started = performance.now();
+  let tokens = 0, ticker = setInterval(() => metrics([{ label: "seconds", value: ((performance.now() - started) / 1000).toFixed(1) }, { label: "pieces", value: tokens }]), 250);
+  try {
+    const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: reading.signal });
+    if (!r.ok) { const p = await r.json().catch(() => ({})); throw new Error(p.detail ?? r.statusText); }
+    for await (const [event, data] of events(r.body)) {
+      if (event === "image") {
+        $("seenImage").src = data.image;
+        $("seenCaption").textContent = `After "${data.preprocessing || "no preprocessing"}": ${data.width}×${data.height}`;
+        $("originalCaption").textContent = `The page: ${data.originalWidth}×${data.originalHeight}`;
+      } else if (event === "token") { $("answer").textContent += data.text; tokens++; }
+      else if (event === "queued") $("readNote").textContent = data.message;
+      else if (event === "error") throw new Error(data.error);
+      else if (event === "done") { clearInterval(ticker); ticker = null; done(data); }
+    }
+  } catch (e) {
+    if (e.name !== "AbortError") { $("readNote").innerHTML = ""; const s = document.createElement("span"); s.className = "error"; s.textContent = e.message; $("readNote").appendChild(s); }
+    else $("readNote").textContent = "Stopped.";
+  } finally {
+    if (ticker) clearInterval(ticker);
+    reading = null; $("stop").disabled = true; refreshRead();
+  }
+}
+
+function done(d) {
+  $("answer").textContent = d.text;
+  $("json").textContent = d.json ?? "(no JSON in the answer)";
+  $("compareRead").textContent = d.json ?? d.text;
+  $("compareExpected").textContent = d.expected ?? "";
+  const list = [
+    { label: "seconds", value: d.seconds },
+    { label: "first token, s", value: d.firstTokenSeconds ?? "–" },
+    { label: "tokens a second", value: d.tokensPerSecond ?? "–" },
+    { label: "prompt tokens", value: d.promptTokens ?? "–" },
+    { label: "answer tokens", value: d.generatedTokens },
+  ];
+  if (d.cer != null) list.unshift({ label: "CER", value: (100 * d.cer).toFixed(2) + " %", tone: d.cer < 0.02 ? "good" : d.cer < 0.1 ? "warn" : "bad" });
+  if (d.json && d.repaired) list.push({ label: "JSON", value: "repaired", tone: "warn" });
+  if (!d.json) list.push({ label: "JSON", value: "none", tone: "bad" });
+  if (d.truncated) list.push({ label: "answer", value: "cut at the limit", tone: "warn" });
+  metrics(list);
+  showTab(pageIndex != null ? "compare" : d.json ? "json" : "answer");
+}
+
+function metrics(list) {
+  const box = $("metrics");
+  box.innerHTML = "";
+  for (const m of list) {
+    const div = document.createElement("div");
+    div.className = "metric" + (m.tone ? " " + m.tone : "");
+    div.innerHTML = "<b></b><span></span>";
+    div.querySelector("b").textContent = m.value;
+    div.querySelector("span").textContent = m.label;
+    box.appendChild(div);
+  }
+}
+
+// The server-sent events of a response body: [event, data] pairs.
+async function* events(body) {
+  const reader = body.getReader(), decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+    let at;
+    while ((at = buffer.indexOf("\n\n")) >= 0) {
+      const block = buffer.slice(0, at); buffer = buffer.slice(at + 2);
+      let event = "message", data = "";
+      for (const line of block.split("\n")) {
+        if (line.startsWith("event:")) event = line.slice(6).trim();
+        else if (line.startsWith("data:")) data += (data ? "\n" : "") + line.slice(5).replace(/^ /, "");
+      }
+      if (data) yield [event, JSON.parse(data)];
+    }
+  }
+}
+
+// ---------------------------------------------------------------- tabs and helpers
+for (const b of document.querySelectorAll("#tabs button")) b.onclick = () => showTab(b.dataset.tab);
+function showTab(name) {
+  for (const b of document.querySelectorAll("#tabs button")) b.classList.toggle("on", b.dataset.tab === name);
+  for (const p of document.querySelectorAll("[data-pane]")) p.classList.toggle("hidden", p.dataset.pane !== name);
+}
+function size(bytes) {
+  if (bytes == null) return "";
+  const units = ["B", "KB", "MB", "GB"]; let i = 0;
+  while (bytes >= 1024 && i < units.length - 1) { bytes /= 1024; i++; }
+  return (i ? bytes.toFixed(i > 2 ? 2 : 0) : bytes) + " " + units[i];
+}
+
+refresh();
+loadPages();
+</script>
+</body>
+</html>
