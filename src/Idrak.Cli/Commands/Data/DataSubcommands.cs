@@ -118,6 +118,7 @@ internal sealed class DataValidateCommand : Command
             return filled.Count > 0 && filled.Count(v => RowFiles.Number(v) is not null) * 2 > filled.Count;
         }).ToHashSet(StringComparer.Ordinal);
         var expected = rows.Count > 0 ? rows[0].Select(p => p.Key).ToList() : [];
+        var expectedSet = expected.ToHashSet(StringComparer.Ordinal);
         if (kind == "table" && target is not null && rows.Count > 0 && !columns.Any(c => c.Name == target))
         {
             context.Error($"{path} has no column '{target}' (columns: {string.Join(", ", columns.Select(c => c.Name))}).");
@@ -132,7 +133,7 @@ internal sealed class DataValidateCommand : Command
             {
                 "chat" => Chat(rows[i]),
                 "preference" => Preference(rows[i]),
-                _ => Table(rows[i], expected, numeric, target),
+                _ => Table(rows[i], expected, expectedSet, numeric, target),
             };
             if (reason is not null)
             {
@@ -204,14 +205,14 @@ internal sealed class DataValidateCommand : Command
         return JsonNode.DeepEquals(pair["chosen"], pair["rejected"]) ? "chosen and rejected are the same" : null;
     }
 
-    private static string? Table(JsonObject row, List<string> expected, HashSet<string> numeric, string? target)
+    private static string? Table(JsonObject row, List<string> expected, HashSet<string> expectedSet, HashSet<string> numeric, string? target)
     {
         if (expected.FirstOrDefault(c => !row.ContainsKey(c)) is { } missing)
         {
             return $"column '{missing}' is missing";
         }
 
-        if (row.Select(p => p.Key).FirstOrDefault(c => !expected.Contains(c)) is { } extra)
+        if (row.Select(p => p.Key).FirstOrDefault(c => !expectedSet.Contains(c)) is { } extra)
         {
             return $"column '{extra}' is not in the first row";
         }
@@ -322,13 +323,17 @@ internal sealed class DataStatsCommand : Command
                 }
 
                 characters.Add(text.Length);
-                words.Add(text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length);
+                words.Add(Words(text));
                 if (tokenizer is not null)
                 {
                     tokens.Add(tokenizer.Encode(text).Count);
                 }
             }
 
+            // Sorted once, in place: the table, the JSON and the histogram read them in any order.
+            characters.Sort();
+            words.Sort();
+            tokens.Sort();
             var lengths = tokens.Count > 0 ? tokens : characters;
             string unit = tokens.Count > 0 ? "tokens" : "characters";
             long over = contextLength is { } limit && tokens.Count > 0 ? tokens.Count(t => t > limit) : 0;
@@ -375,38 +380,61 @@ internal sealed class DataStatsCommand : Command
         }
     }
 
-    private static IReadOnlyList<string> Row(string name, List<int> values)
+    // Words as string.Split(null, RemoveEmptyEntries) counts them (runs of characters that are not white space),
+    // without the array of words per row.
+    private static int Words(ReadOnlySpan<char> text)
     {
-        if (values.Count == 0)
+        int count = 0;
+        bool word = false;
+        foreach (char c in text)
+        {
+            bool white = char.IsWhiteSpace(c);
+            if (!white && !word)
+            {
+                count++;
+            }
+
+            word = !white;
+        }
+
+        return count;
+    }
+
+    // values sorted.
+    private static IReadOnlyList<string> Row(string name, List<int> sorted)
+    {
+        if (sorted.Count == 0)
         {
             return [name, "", "", "", "", ""];
         }
 
-        var sorted = values.Order().ToList();
         string F(double v) => v.ToString("N0", CultureInfo.InvariantCulture);
-        return [name, F(values.Average()), F(sorted[sorted.Count / 2]), F(sorted[Math.Min(sorted.Count - 1, (int)(sorted.Count * 0.95))]), F(sorted[^1]), F(values.Sum(v => (long)v))];
+        return [name, F(sorted.Average()), F(sorted[sorted.Count / 2]), F(sorted[Math.Min(sorted.Count - 1, (int)(sorted.Count * 0.95))]), F(sorted[^1]), F(sorted.Sum(v => (long)v))];
     }
 
-    private static JsonObject Json(List<int> values)
+    // values sorted.
+    private static JsonObject Json(List<int> sorted) => sorted.Count == 0 ? [] : new JsonObject
     {
-        var sorted = values.Order().ToList();
-        return sorted.Count == 0 ? [] : new JsonObject
-        {
-            ["mean"] = Math.Round(values.Average(), 2), ["median"] = sorted[sorted.Count / 2], ["max"] = sorted[^1], ["total"] = values.Sum(v => (long)v),
-        };
-    }
+        ["mean"] = Math.Round(sorted.Average(), 2), ["median"] = sorted[sorted.Count / 2], ["max"] = sorted[^1], ["total"] = sorted.Sum(v => (long)v),
+    };
 
-    // Ten equal buckets from the shortest to the longest.
-    private static List<(int From, int To, int Count)> Histogram(List<int> values)
+    // Ten equal buckets from the shortest to the longest (values sorted), counted in one pass.
+    private static List<(int From, int To, int Count)> Histogram(List<int> sorted)
     {
-        if (values.Count == 0)
+        if (sorted.Count == 0)
         {
             return [];
         }
 
-        int min = values.Min(), max = values.Max();
+        int min = sorted[0], max = sorted[^1];
         int buckets = Math.Min(10, max - min + 1), width = (int)Math.Ceiling((max - min + 1) / (double)buckets);
-        return [.. Enumerable.Range(0, buckets).Select(b => (min + b * width, min + (b + 1) * width - 1, values.Count(v => (v - min) / width == b)))];
+        var counts = new int[buckets];
+        foreach (int v in sorted)
+        {
+            counts[(v - min) / width]++;
+        }
+
+        return [.. Enumerable.Range(0, buckets).Select(b => (min + b * width, min + (b + 1) * width - 1, counts[b]))];
     }
 }
 
@@ -535,7 +563,8 @@ internal sealed class DataDedupeCommand : Command
         var columns = context.Option("--columns")?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         var rows = RowFiles.Read(path).ToList();
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        var kept = rows.Where(row => seen.Add(Key(row, columns, near))).ToList();
+        var key = new StringBuilder();
+        var kept = rows.Where(row => seen.Add(Key(row, columns, near, key))).ToList();
         int removed = rows.Count - kept.Count;
         if (!dryRun)
         {
@@ -547,9 +576,10 @@ internal sealed class DataDedupeCommand : Command
         return ExitCodes.Ok;
     }
 
-    private static string Key(JsonObject row, string[]? columns, bool near)
+    // The row's key, built in key (one builder reused for every row).
+    private static string Key(JsonObject row, string[]? columns, bool near, StringBuilder key)
     {
-        var key = new StringBuilder();
+        key.Clear();
         foreach (var (name, value) in row)
         {
             if (columns is not null && !columns.Contains(name))
@@ -561,14 +591,41 @@ internal sealed class DataDedupeCommand : Command
             string text = RowFiles.Raw(value);
             if (near)
             {
-                text = string.Join(' ', new string([.. text.ToLowerInvariant().Select(c => char.IsLetterOrDigit(c) ? c : ' ')])
-                    .Split(' ', StringSplitOptions.RemoveEmptyEntries));
+                AppendNear(key, text);
+            }
+            else
+            {
+                key.Append(text);
             }
 
-            key.Append(text).Append('\u0002');
+            key.Append('\u0002');
         }
 
         return key.ToString();
+    }
+
+    // The text lower-cased with letters and digits only, each run of other characters one space, none at the ends: the
+    // words of text.ToLowerInvariant() with the others as spaces, split on spaces and joined by one, in one pass.
+    private static void AppendNear(StringBuilder key, string text)
+    {
+        bool word = false, any = false;
+        foreach (char c in text)
+        {
+            char lower = char.ToLowerInvariant(c);
+            if (!char.IsLetterOrDigit(lower))
+            {
+                word = false;
+                continue;
+            }
+
+            if (!word && any)
+            {
+                key.Append(' ');
+            }
+
+            key.Append(lower);
+            word = any = true;
+        }
     }
 }
 
