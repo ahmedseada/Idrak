@@ -121,10 +121,21 @@
   .step-inputs .pair input[type=range] { flex: 1; min-width: 60px; }
   .step-inputs .pair input[type=number] { width: 84px; flex: none; }
   .mono { font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; word-break: break-all; }
-  .preview { position: relative; }
-  .preview img { width: 100%; border: 1px solid var(--line); border-radius: 6px; background: var(--soft); display: block; max-height: 520px; object-fit: contain; }
-  .preview svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
-  .preview rect { fill: none; stroke: var(--warn); stroke-width: 2; vector-effect: non-scaling-stroke; stroke-dasharray: 6 4; }
+  .rightColumn.sticky { position: sticky; top: 12px; align-self: start; }
+  .paneTabs { padding: 4px 14px 0; }
+  .paneTabs .tabs button { font-size: 14px; padding: 9px 12px; }
+  .previewFrame { border: 1px solid var(--line); border-radius: 8px; background: var(--soft); overflow: auto; height: calc(100vh - 190px); min-height: 320px;
+                  display: flex; align-items: flex-start; justify-content: center; }
+  .previewImage { position: relative; display: inline-block; line-height: 0; }
+  .previewImage img { display: block; image-rendering: auto; }
+  .previewFrame.fit .previewImage { width: 100%; height: 100%; }
+  .previewFrame.fit .previewImage img { width: 100%; height: 100%; object-fit: contain; }
+  .previewFrame.actual .previewImage img { max-width: none; image-rendering: pixelated; }
+  .previewFrame.actual { justify-content: flex-start; }
+  .previewImage svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  .previewImage rect { fill: none; stroke: var(--warn); stroke-width: 2; vector-effect: non-scaling-stroke; stroke-dasharray: 6 4; }
+  .previewPane .views button { padding: 4px 10px; font-size: 12px; }
+  @media (max-width: 900px) { .rightColumn.sticky { position: static; } .previewFrame { height: 70vh; } }
   .hidden { display: none !important; }
 </style>
 </head>
@@ -152,10 +163,6 @@
         <img id="dropImage" class="hidden" alt="">
         <div id="dropText">Drop a scan here, or click to choose one</div>
         <input type="file" id="file" accept="image/*" class="hidden">
-      </div>
-      <div id="previewBox" class="hidden">
-        <label>As the model will see it <span id="previewInfo"></span></label>
-        <div class="preview"><img id="previewImage" alt=""><svg id="previewCrops" preserveAspectRatio="none"></svg></div>
       </div>
       <div id="pagesBox" class="hidden">
         <label>Or an evaluation page (<span id="pagesSource"></span>)</label>
@@ -218,7 +225,30 @@
     </div>
   </section>
 
-  <section class="stack">
+  <section class="stack rightColumn sticky" id="rightColumn">
+    <div class="card paneTabs">
+      <div class="tabs" id="paneTabs" style="margin:0;border:0">
+        <button data-pane-tab="preview" class="on">As the model will see it</button>
+        <button data-pane-tab="result">Result</button>
+      </div>
+    </div>
+    <div class="card stack" id="previewPane">
+      <div class="row" style="justify-content:space-between">
+        <div class="note" id="previewInfo">Pick a scan or an evaluation page: every change to the steps shows here.</div>
+        <div class="row">
+          <div class="views" id="previewShow" role="group" aria-label="Show">
+            <button data-show="processed" class="on">Processed</button><button data-show="original">Original</button>
+          </div>
+          <div class="views" id="previewZoom" role="group" aria-label="Zoom">
+            <button data-zoom="fit" class="on">Fit</button><button data-zoom="actual">Actual pixels</button>
+          </div>
+        </div>
+      </div>
+      <div class="previewFrame fit" id="previewFrame">
+        <div class="previewImage"><img id="previewImage" alt=""><svg id="previewCrops" preserveAspectRatio="xMidYMid meet"></svg></div>
+      </div>
+    </div>
+    <div class="stack hidden" id="resultPane">
     <div class="card">
       <h2>Result</h2>
       <div class="metrics" id="metrics"><span class="note">Pick a model and a page, then Read.</span></div>
@@ -244,6 +274,7 @@
           <figure><div class="seen"><img id="seenImage" alt=""><svg id="crops" preserveAspectRatio="none"></svg></div><figcaption id="seenCaption">After the preprocessing</figcaption></figure>
         </div>
       </div>
+    </div>
     </div>
   </section>
 </main>
@@ -522,24 +553,46 @@ $("preset").onchange = () => {
 $("tPreFromRead").onclick = () => { $("tPre").value = pipelineOf(steps); };
 
 // ---------------------------------------------------------------- the live preview (the steps on the page, no model needed)
-let previewTimer = null, previewSeq = 0;
-function schedulePreview() { clearTimeout(previewTimer); previewTimer = setTimeout(preview, 300); }
+let previewTimer = null, previewSeq = 0, processedImage = null, previewShows = "processed";
+// Any change to the steps or the page brings the preview back to the right column (the last result stays a click away).
+function schedulePreview() { showPane("preview"); clearTimeout(previewTimer); previewTimer = setTimeout(preview, 300); }
+function showPane(which) {
+  if (reading && which === "preview") return;                       // a read in progress keeps its result in view
+  $("previewPane").classList.toggle("hidden", which !== "preview");
+  $("resultPane").classList.toggle("hidden", which !== "result");
+  for (const b of document.querySelectorAll("#paneTabs button")) b.classList.toggle("on", b.dataset.paneTab === which);
+  $("rightColumn").classList.toggle("sticky", which === "preview");    // the preview stays in view while the steps scroll
+}
+for (const b of document.querySelectorAll("#paneTabs button")) b.onclick = () => showPane(b.dataset.paneTab);
+function originalImage() { return pageIndex != null ? `/api/pages/${pageIndex}/image` : imageData; }
+for (const b of document.querySelectorAll("#previewShow button")) b.onclick = () => {
+  previewShows = b.dataset.show;
+  for (const x of document.querySelectorAll("#previewShow button")) x.classList.toggle("on", x === b);
+  $("previewImage").src = previewShows === "original" ? originalImage() : processedImage ?? "";
+  $("previewCrops").classList.toggle("hidden", previewShows === "original");
+};
+for (const b of document.querySelectorAll("#previewZoom button")) b.onclick = () => {
+  for (const x of document.querySelectorAll("#previewZoom button")) x.classList.toggle("on", x === b);
+  $("previewFrame").className = "previewFrame " + b.dataset.zoom;
+};
+
 async function preview() {
   if (imageData == null && pageIndex == null) return;
   const seq = ++previewSeq;
   const body = { preprocessing: pipelineOf(steps), panAndScan: $("panAndScan").checked };
   if (pageIndex != null) body.page = pageIndex; else body.image = imageData;
-  $("previewBox").classList.remove("hidden");
-  $("previewInfo").className = "note"; $("previewInfo").textContent = "· working…";
+  $("previewInfo").className = "note"; $("previewInfo").textContent = "Working…";
   const r = await fetch("/api/preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).catch(() => null);
   if (seq !== previewSeq) return;
   const d = r ? await r.json().catch(() => null) : null;
-  if (!r || !r.ok || !d) { $("previewInfo").className = "error"; $("previewInfo").textContent = "· " + (d?.detail ?? "the preview failed"); return; }
-  $("previewImage").src = d.image;
+  if (!r || !r.ok || !d) { $("previewInfo").className = "error"; $("previewInfo").textContent = d?.detail ?? "The preview failed."; return; }
+  processedImage = d.image;
+  $("previewImage").src = previewShows === "original" ? originalImage() : d.image;
   const svg = $("previewCrops");
   svg.setAttribute("viewBox", `0 0 ${d.width} ${d.height}`);
   svg.innerHTML = (d.crops ?? []).map(c => `<rect x="${c.left}" y="${c.top}" width="${c.width}" height="${c.height}"/>`).join("");
-  $("previewInfo").textContent = `· ${d.width}×${d.height}${d.channels === 1 ? " grey" : ""} (from ${d.originalWidth}×${d.originalHeight}), steps took ${d.milliseconds} ms`
+  $("previewCrops").classList.toggle("hidden", previewShows === "original");
+  $("previewInfo").textContent = `${d.width}×${d.height}${d.channels === 1 ? " grey" : ""} (from ${d.originalWidth}×${d.originalHeight}), steps took ${d.milliseconds} ms`
     + (d.panAndScan ? (d.crops?.length ? `, pan and scan: ${d.crops.length} crops` : ", pan and scan: no crops") : "");
 }
 
@@ -665,6 +718,7 @@ async function read() {
   const url = pageIndex == null ? "/api/read" : `/api/pages/${pageIndex}/read`;
   reading = new AbortController();
   $("read").textContent = "Stop reading"; $("read").classList.add("stop"); $("read").disabled = false;
+  showPane("result");
   $("answer").textContent = ""; $("json").textContent = ""; $("readNote").textContent = "";
   $("compareTab").classList.toggle("hidden", pageIndex == null);
   showTab("answer");
