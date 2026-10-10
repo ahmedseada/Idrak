@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Buffers;
 using System.Globalization;
 using System.Text;
 
@@ -83,7 +84,7 @@ internal static class VisualText
     public static bool NeedsRendering(string text)
     {
         // Below U+0590 nothing needs it (surrogates are above it): a line of Latin text is one vectorized search.
-        int first = text.AsSpan().IndexOfAnyInRange('֐', '￿');
+        int first = text.AsSpan().IndexOfAnyInRange('\u0590', '\uFFFF');
         if (first < 0)
         {
             return false;
@@ -513,12 +514,67 @@ internal sealed class VisualWriter(TextWriter inner, int width = 0, bool rightAl
         }
     }
 
-    public override void Write(string? value)
+    public override void Write(string? value) => Write(value.AsSpan());
+
+    public override void Write(char[] buffer, int index, int count) => Write(buffer.AsSpan(index, count));
+
+    // While nothing is held and no escape sequence is open, a run of plain characters goes through in one write (a
+    // console writer flushes every write: one per character was a system call per character); every other character
+    // takes the character path, which decides what to hold.
+    public override void Write(ReadOnlySpan<char> buffer)
     {
-        foreach (char c in value ?? "")
+        while (buffer.Length > 0)
         {
-            Write(c);
+            if (_held.Length == 0 && _escape == 0 && !rightAlign)
+            {
+                int run = buffer.IndexOfAnyExcept(Plain);
+                run = run < 0 ? buffer.Length : run;
+                if (run > 0)
+                {
+                    PassRun(buffer[..run]);
+                    buffer = buffer[run..];
+                    continue;
+                }
+            }
+
+            Write(buffer[0]);
+            buffer = buffer[1..];
         }
+    }
+
+    // Characters that pass through as they are when nothing is held: below U+0590 (no right-to-left letter, no
+    // surrogate) but the line break and the escape character, which change the writer's state.
+    private static readonly SearchValues<char> Plain = SearchValues.Create(string.Create(0x0590 - 2, 0, (chars, _) =>
+    {
+        int k = 0;
+        for (char c = '\0'; c < '֐'; c++)
+        {
+            if (c is not '\n' and not '\u001b')
+            {
+                chars[k++] = c;
+            }
+        }
+    }));
+
+    // Writes a run of plain characters through, counting columns as Pass does for each (a carriage return goes back to
+    // the first column, control characters take none).
+    private void PassRun(ReadOnlySpan<char> run)
+    {
+        inner.Write(run);
+        int carriage = run.LastIndexOf('\r');
+        if (carriage >= 0)
+        {
+            _column = 0;
+            run = run[(carriage + 1)..];
+        }
+
+        int controls = 0;
+        foreach (char c in run)
+        {
+            controls += char.IsControl(c) ? 1 : 0;
+        }
+
+        _column += run.Length - controls;
     }
 
     public override void WriteLine(string? value)
