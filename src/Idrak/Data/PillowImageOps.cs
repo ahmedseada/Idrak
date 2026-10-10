@@ -11,7 +11,7 @@ namespace Idrak.Data;
 /// image prepared here is the image prepared there. Each takes and gives decoded pixels (<see cref="ImageData"/>, values
 /// in [0, 1]), read as the 8-bit bytes Pillow holds (<see cref="ImagePreprocessor"/>'s rounding) and given back as
 /// byte / 255. Grey images stay one channel and colour ones three. They are the library's image transforms
-/// (<see cref="ImageTransforms"/>: grayscale, max_width, max_height, contrast, brightness, sharpness, autocontrast, jpeg).
+/// (<see cref="ImageTransforms"/>: grayscale, max_width, max_height, contrast, brightness, sharpness, autocontrast, invert, jpeg).
 /// <para>
 /// Floating-point steps (the enhancers' blend, the smoothing filter) copy Pillow's C: float32 arithmetic in its order,
 /// truncated to a byte; Pillow built for x86-64 (its wheels) does not fuse multiply-adds there, and neither does .NET.
@@ -140,6 +140,35 @@ public static class PillowImageOps
 
             return hist;
         }
+    }
+
+    /// <summary><c>ImageOps.invert(image)</c>: every byte of every channel v becomes 255 - v (a dark page on light text turns light on dark, and back).</summary>
+    public static ImageData Invert(ImageData image)
+    {
+        ArgumentNullException.ThrowIfNull(image);
+        var planes = Bytes(image);
+        foreach (var plane in planes)
+        {
+            var span = plane.AsSpan(0, image.Height * image.Width);
+            int i = 0;
+            if (System.Numerics.Vector.IsHardwareAccelerated)
+            {
+                var bytes = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, System.Numerics.Vector<byte>>(span);
+                for (int v = 0; v < bytes.Length; v++)
+                {
+                    bytes[v] = ~bytes[v];                                      // 255 - v for a byte
+                }
+
+                i = bytes.Length * System.Numerics.Vector<byte>.Count;
+            }
+
+            for (; i < span.Length; i++)
+            {
+                span[i] = (byte)~span[i];
+            }
+        }
+
+        return FromBytes(planes, image.Height, image.Width);
     }
 
     /// <summary>

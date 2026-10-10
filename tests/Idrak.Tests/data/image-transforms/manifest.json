@@ -2137,6 +2137,230 @@
    "width": 1654,
    "height": 2339,
    "sha256": "506e3573e57a16bdedc72341ece2c0c7327502a427b0eabf4699123e21712862"
+  },
+  {
+   "input": "vlm/image.png",
+   "pipeline": "invert",
+   "mode": "RGB",
+   "width": 100,
+   "height": 75,
+   "sha256": "c0498c20fc0e5bef4f5e2d4bf8f9881ec43aaaab82939713f9f6d2637726bf03",
+   "png": "out-238.png"
+  },
+  {
+   "input": "vlm/image.png",
+   "pipeline": "grayscale,invert",
+   "mode": "L",
+   "width": 100,
+   "height": 75,
+   "sha256": "14fe6ac5de69b6fa2e812584527868dbb292da7fdc993617cf5a6c0d3b4cf779",
+   "png": "out-239.png"
+  },
+  {
+   "input": "vlm/image.png",
+   "pipeline": "invert,contrast=1.5",
+   "mode": "RGB",
+   "width": 100,
+   "height": 75,
+   "sha256": "61ac9c6001b4de229528b6b1c9292a4839d049492786bfd35a716525a08c740e",
+   "png": "out-240.png"
+  },
+  {
+   "input": "vlm/image-gray.jpg",
+   "pipeline": "invert",
+   "mode": "L",
+   "width": 100,
+   "height": 75,
+   "sha256": "974e81d4fb334691c70c06bec3f012aa921dc1eccf66be82075fd6435702c785",
+   "png": "out-241.png"
+  },
+  {
+   "input": "vlm/image-gray.jpg",
+   "pipeline": "grayscale,invert",
+   "mode": "L",
+   "width": 100,
+   "height": 75,
+   "sha256": "974e81d4fb334691c70c06bec3f012aa921dc1eccf66be82075fd6435702c785",
+   "png": "out-242.png"
+  },
+  {
+   "input": "vlm/image-gray.jpg",
+   "pipeline": "invert,contrast=1.5",
+   "mode": "L",
+   "width": 100,
+   "height": 75,
+   "sha256": "a8a8d9267dcd3d879c09ae565d2caae86702626309fccefc62bc3f2a3d33cb29",
+   "png": "out-243.png"
+  },
+  {
+   "input": "vlm/image-rgba.png",
+   "pipeline": "invert",
+   "mode": "RGB",
+   "width": 100,
+   "height": 75,
+   "sha256": "2dea1cde45b48ea00fdc980bb3f96cfde3ff6add0781576faa9ced02dcc3e6b8",
+   "png": "out-244.png"
+  },
+  {
+   "input": "vlm/image-rgba.png",
+   "pipeline": "grayscale,invert",
+   "mode": "L",
+   "width": 100,
+   "height": 75,
+   "sha256": "e317b0feac07392e945102b41f77ba101ed8193a3fad94294b829d8cba7680f9",
+   "png": "out-245.png"
+  },
+  {
+   "input": "vlm/image-rgba.png",
+   "pipeline": "invert,contrast=1.5",
+   "mode": "RGB",
+   "width": 100,
+   "height": 75,
+   "sha256": "6ef3395dffa4429145344bf78b35898513845e0a0f7b0790560697d7c87db0c1",
+   "png": "out-246.png"
+  },
+  {
+   "input": "jpeg/baseline-420-odd.jpg",
+   "pipeline": "invert",
+   "mode": "RGB",
+   "width": 17,
+   "height": 13,
+   "sha256": "d8d4922f4ed0905c8844289f24f60892f4d066035441ce1933ab38cbea2acece",
+   "png": "out-247.png"
+  },
+  {
+   "input": "jpeg/baseline-420-odd.jpg",
+   "pipeline": "grayscale,invert",
+   "mode": "L",
+   "width": 17,
+   "height": 13,
+   "sha256": "ec7669d270c3a0b3b387ef1723a8cf73d37546fb862c215cb00e545d797bef4c",
+   "png": "out-248.png"
+  },
+  {
+   "input": "jpeg/baseline-420-odd.jpg",
+   "pipeline": "invert,contrast=1.5",
+   "mode": "RGB",
+   "width": 17,
+   "height": 13,
+   "sha256": "60d16defccea855eb1d469a9d99be9f0e51fa12aec8580a97458757c771bed0f",
+   "png": "out-249.png"
+  },
+  {
+   "input": "jpeg/grey-progressive-odd.jpg",
+   "pipeline": "invert",
+   "mode": "L",
+   "width": 17,
+   "height": 13,
+   "sha256": "bd790faa6094860d0d8bae06ba7b205afb89aa243a075eacde0fe5379f6c88f6",
+   "png": "out-250.png"
+  },
+  {
+   "input": "jpeg/grey-progressive-odd.jpg",
+   "pipeline": "grayscale,invert",
+   "mode": "L",
+   "width": 17,
+   "height": 13,
+   "sha256": "bd790faa6094860d0d8bae06ba7b205afb89aa243a075eacde0fe5379f6c88f6",
+   "png": "out-251.png"
+  },
+  {
+   "input": "jpeg/grey-progressive-odd.jpg",
+   "pipeline": "invert,contrast=1.5",
+   "mode": "L",
+   "width": 17,
+   "height": 13,
+   "sha256": "1dc68f8e17b342a91e611d2d627a58d0875c8213ea740b659f13560ed8904a2f",
+   "png": "out-252.png"
+  },
+  {
+   "input": "jpeg/exif-comment.jpg",
+   "pipeline": "invert",
+   "mode": "RGB",
+   "width": 45,
+   "height": 37,
+   "sha256": "4d7edd8d685dccaecae31e1566e9163d345bd670c0ff1e218991d778ba2eb303",
+   "png": "out-253.png"
+  },
+  {
+   "input": "jpeg/exif-comment.jpg",
+   "pipeline": "grayscale,invert",
+   "mode": "L",
+   "width": 45,
+   "height": 37,
+   "sha256": "84f9b8d3f5bc839c79cb9a368cfbbd94904baa655e26bd3bc927d14e33817c41",
+   "png": "out-254.png"
+  },
+  {
+   "input": "jpeg/exif-comment.jpg",
+   "pipeline": "invert,contrast=1.5",
+   "mode": "RGB",
+   "width": 45,
+   "height": 37,
+   "sha256": "e4844729a8549ef3d824877003001fe81359a75e61148ed72c43daac93097b3c",
+   "png": "out-255.png"
+  },
+  {
+   "input": "image-transforms/odd.png",
+   "pipeline": "invert",
+   "mode": "RGB",
+   "width": 37,
+   "height": 23,
+   "sha256": "9a99047610fb2c7ff2d72a47cb52f7c1970e3bbc7d44aa7437936b66c6b6c02a",
+   "png": "out-256.png"
+  },
+  {
+   "input": "image-transforms/odd.png",
+   "pipeline": "grayscale,invert",
+   "mode": "L",
+   "width": 37,
+   "height": 23,
+   "sha256": "6731af97fe2e4c33a43789f34b2a7b789864ac8f5b6fdda977f83bd242e6b47d",
+   "png": "out-257.png"
+  },
+  {
+   "input": "image-transforms/odd.png",
+   "pipeline": "invert,contrast=1.5",
+   "mode": "RGB",
+   "width": 37,
+   "height": 23,
+   "sha256": "a7b86ed853585b2d6bd5842d7fc57acc7878dce3f073f900755e432efb64c14d",
+   "png": "out-258.png"
+  },
+  {
+   "input": "image-transforms/tall.png",
+   "pipeline": "invert",
+   "mode": "RGB",
+   "width": 61,
+   "height": 203,
+   "sha256": "b89776d32a883dcc92856202bf071e0126b376f11ea773a0fde3e6f8522a5a9c",
+   "png": "out-259.png"
+  },
+  {
+   "input": "image-transforms/tall.png",
+   "pipeline": "grayscale,invert",
+   "mode": "L",
+   "width": 61,
+   "height": 203,
+   "sha256": "b72bb82d7d6aa44477722f1173c4176b54d2b359f5530c4d3106cb468d13087c",
+   "png": "out-260.png"
+  },
+  {
+   "input": "image-transforms/tall.png",
+   "pipeline": "invert,contrast=1.5",
+   "mode": "RGB",
+   "width": 61,
+   "height": 203,
+   "sha256": "11e0e27c0339e5d0e079026d2cb4612535a3aa8d079f4bef1261e0b3a52258cd",
+   "png": "out-261.png"
+  },
+  {
+   "input": "image-transforms/scan.jpg",
+   "pipeline": "grayscale,max_width=1024,contrast=1.5,invert",
+   "mode": "L",
+   "width": 1024,
+   "height": 1448,
+   "sha256": "b60afcd19e1ee0c902df4d776878d14e6e2e3362e83eb21446d36129086f6c06"
   }
  ],
  "jpeg": [

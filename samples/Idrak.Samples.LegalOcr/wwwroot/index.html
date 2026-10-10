@@ -146,6 +146,7 @@
           <option value="custom">Custom pipeline…</option>
         </select>
         <input type="text" id="pipeline" style="margin-top:6px" spellcheck="false">
+        <label class="check" style="margin-top:6px"><input type="checkbox" id="invert"> Invert colours (light text on a dark page becomes dark on light)</label>
       </div>
       <div>
         <label for="prompt">Prompt</label>
@@ -347,16 +348,34 @@ async function pick(m) {
 function useSettings(m) {
   $("prompt").value = m.prompt;
   $("maxTokens").value = m.maxTokens;
-  setPipeline(m.preprocessing);
+  setPipeline(withInvert(m.preprocessing, $("invert").checked));     // the invert choice stays across models
 }
 
+// The pipeline's text, the preset it matches (leaving out an invert step) and the invert box kept in step.
 function setPipeline(text) {
-  const preset = Object.entries(presets).find(([, v]) => v === text);
+  const plain = withInvert(text, false);
+  const preset = Object.entries(presets).find(([, v]) => v === plain);
   $("preset").value = preset ? preset[0] : "custom";
+  $("invert").checked = plain !== steps(text).join(",");
   $("pipeline").value = text;
 }
-$("preset").onchange = () => { if ($("preset").value !== "custom") $("pipeline").value = presets[$("preset").value]; };
+function steps(text) { return (text ?? "").split(",").map(s => s.trim()).filter(s => s.length); }
+// The pipeline with its invert step taken out, or put in before a closing jpeg step (the JPEG stays what is sent).
+function withInvert(text, on) {
+  const list = steps(text).filter(s => s.toLowerCase() !== "invert");
+  if (on) {
+    const jpeg = list.findIndex(s => s.toLowerCase().startsWith("jpeg="));
+    list.splice(jpeg < 0 ? list.length : jpeg, 0, "invert");
+  }
+  return list.join(",");
+}
+$("preset").onchange = () => { if ($("preset").value !== "custom") $("pipeline").value = withInvert(presets[$("preset").value], $("invert").checked); };
 $("pipeline").oninput = () => setPipeline($("pipeline").value);
+$("invert").onchange = () => {
+  $("pipeline").value = withInvert($("pipeline").value, $("invert").checked);
+  try { localStorage.setItem("legal-ocr-invert", $("invert").checked ? "1" : ""); } catch { }
+};
+try { $("invert").checked = localStorage.getItem("legal-ocr-invert") === "1"; } catch { }
 $("modelPrompt").onclick = () => { if (current) $("prompt").value = current.prompt; };
 $("dataPrompt").onclick = () => { if (page && page.prompt) $("prompt").value = page.prompt; };
 

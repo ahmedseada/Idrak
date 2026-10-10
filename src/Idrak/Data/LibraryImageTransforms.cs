@@ -31,6 +31,8 @@ internal static class LibraryImageTransforms
             new Transform("autocontrast", "autocontrast[=CUTOFF]: ImageOps.autocontrast (CUTOFF percent cut at each end, 0 unless given); "
                                           + "ignore=V, preserve_tone=true",
                 ["ignore", "preserve_tone"], s => Autocontrast(s, null), (i, s) => Autocontrast(s, i)),
+            new Transform("invert", "ImageOps.invert: every channel's byte v becomes 255 - v (light text on a dark page to dark on light; no value)", [],
+                s => s.ThrowIfValue(), (i, _) => PillowImageOps.Invert(i)),
             new Transform("jpeg", "jpeg=Q: save as JPEG at quality Q (1 to 100; optimize=True, 4:2:0 for colour) and decode again, as a base64 upload of a Pillow-saved file",
                 ["subsampling"], s => Jpeg(s, null), (i, s) => Jpeg(s, i)),
         ])

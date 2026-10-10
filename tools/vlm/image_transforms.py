@@ -32,7 +32,7 @@ RESAMPLE = {
 # Each transform's option keys (besides its value).
 KEYS = {
     "grayscale": [], "max_width": ["resample"], "max_height": ["resample"], "contrast": [], "brightness": [],
-    "sharpness": [], "autocontrast": ["ignore", "preserve_tone"], "jpeg": ["subsampling"],
+    "sharpness": [], "autocontrast": ["ignore", "preserve_tone"], "jpeg": ["subsampling"], "invert": [],
 }
 
 
@@ -91,6 +91,8 @@ def apply(image: Image.Image, text: str | None) -> Image.Image:
             ignore = int(options["ignore"]) if "ignore" in options else None
             tone = options.get("preserve_tone", "false").lower() in ("true", "1", "yes", "on")
             image = ImageOps.autocontrast(image, cutoff=cutoff, ignore=ignore, preserve_tone=tone)
+        elif name == "invert":
+            image = ImageOps.invert(image)
         elif name == "jpeg":
             buffer = io.BytesIO()
             sampling = {"4:2:0": 2, "420": 2, "2": 2, "4:2:2": 1, "422": 1, "1": 1, "4:4:4": 0, "444": 0, "0": 0}
