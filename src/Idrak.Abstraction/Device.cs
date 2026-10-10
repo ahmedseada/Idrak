@@ -36,6 +36,7 @@ public sealed class Device
     private static readonly ConcurrentDictionary<(string Kind, int Ordinal), Device> Devices = new();
 
     private readonly DeviceProvider? _provider;
+    private string? _text;
 
     private Device(DeviceType type, int ordinal, DeviceProvider? provider)
     {
@@ -163,7 +164,8 @@ public sealed class Device
     public void Synchronize() => Backend.Synchronize();
 
     /// <inheritdoc />
-    public override string ToString() => _provider is null ? "cpu" : $"{_provider.Kind}:{Ordinal}";
+    public override string ToString() =>
+        _text ??= _provider is null ? "cpu" : string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{_provider.Kind}:{Ordinal}");   // made once: telemetry events name it each time
 
     // The listed device ranked highest by its backend (CUDA before Vulkan), else the CPU.
     private static Device Best()

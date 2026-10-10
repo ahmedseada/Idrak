@@ -39,12 +39,12 @@ public sealed class TensorScope : IDisposable
     internal static void Track(Tensor tensor) => t_current?._tensors.Add(tensor);
 
     /// <summary>Whether <paramref name="tensor"/> was created in this scope (and is still to be disposed by it).</summary>
-    public bool Owns(Tensor tensor) => _tensors.FindLastIndex(t => ReferenceEquals(t, tensor)) >= 0;
+    public bool Owns(Tensor tensor) => LastIndex(_tensors, tensor) >= 0;
 
     /// <summary>Keeps <paramref name="tensor"/> alive past this scope (it moves to the enclosing scope, if any).</summary>
     public Tensor Keep(Tensor tensor)
     {
-        int index = _tensors.FindLastIndex(t => ReferenceEquals(t, tensor));
+        int index = LastIndex(_tensors, tensor);
         if (index >= 0)
         {
             _tensors.RemoveAt(index);
@@ -62,7 +62,7 @@ public sealed class TensorScope : IDisposable
     {
         for (var scope = t_current; scope is not null; scope = scope._parent)
         {
-            int index = scope._tensors.FindLastIndex(t => ReferenceEquals(t, tensor));
+            int index = LastIndex(scope._tensors, tensor);
             if (index >= 0)
             {
                 scope._tensors.RemoveAt(index);
@@ -70,6 +70,21 @@ public sealed class TensorScope : IDisposable
         }
 
         return tensor;
+    }
+
+    // The last position of `tensor` in `tensors` (by reference), or -1: a plain scan, no closure allocated per call.
+    private static int LastIndex(List<Tensor> tensors, Tensor tensor)
+    {
+        var items = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(tensors);
+        for (int i = items.Length - 1; i >= 0; i--)
+        {
+            if (ReferenceEquals(items[i], tensor))
+            {
+                return i;
+            }
+        }
+
+        return -1;
     }
 
     /// <summary>

@@ -36,13 +36,18 @@ public interface ITokenizer
 public sealed class CharTokenizer : ITokenizer
 {
     private readonly Dictionary<char, int> _index;
+    private readonly int _unknownId = -1;                      // the id of UnknownCharacter (-1: none), looked up once
 
     /// <summary>Creates the tokenizer for the characters of <paramref name="vocabulary"/> (id = position).</summary>
     public CharTokenizer(string vocabulary, char? unknownCharacter = null)
     {
         Vocabulary = vocabulary;
         _index = vocabulary.Select((c, i) => (c, i)).ToDictionary(p => p.c, p => p.i);
-        UnknownCharacter = unknownCharacter is { } u && _index.ContainsKey(u) ? u : null;
+        if (unknownCharacter is { } u && _index.TryGetValue(u, out int unknownId))
+        {
+            UnknownCharacter = u;
+            _unknownId = unknownId;
+        }
     }
 
     /// <summary>The alphabet; character i has id i.</summary>
@@ -67,9 +72,9 @@ public sealed class CharTokenizer : ITokenizer
             {
                 ids.Add(id);
             }
-            else if (UnknownCharacter is { } u)
+            else if (_unknownId >= 0)
             {
-                ids.Add(_index[u]);
+                ids.Add(_unknownId);
             }
         }
 
@@ -77,7 +82,40 @@ public sealed class CharTokenizer : ITokenizer
     }
 
     /// <inheritdoc />
-    public string Decode(IEnumerable<int> ids) => string.Concat(ids.Select(i => (uint)i < (uint)Vocabulary.Length ? Vocabulary[i] : '�'));
+    public string Decode(IEnumerable<int> ids) => ids switch
+    {
+        int[] array => DecodeSpan(array),
+        List<int> list => DecodeSpan(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(list)),
+        _ => string.Concat(ids.Select(i => (uint)i < (uint)Vocabulary.Length ? Vocabulary[i] : '�')),
+    };
+
+    string ITokenizer.Decode(ReadOnlySpan<int> ids) => DecodeSpan(ids);
+
+    // One character per id, gathered in a stack or pooled buffer and copied once into the result.
+    private string DecodeSpan(ReadOnlySpan<int> ids)
+    {
+        string vocabulary = Vocabulary;
+        char[]? rented = null;
+        Span<char> chars = ids.Length <= 256 ? stackalloc char[256] : (rented = System.Buffers.ArrayPool<char>.Shared.Rent(ids.Length));
+        try
+        {
+            chars = chars[..ids.Length];
+            for (int i = 0; i < chars.Length; i++)
+            {
+                int id = ids[i];
+                chars[i] = (uint)id < (uint)vocabulary.Length ? vocabulary[id] : '�';
+            }
+
+            return new string(chars);
+        }
+        finally
+        {
+            if (rented is not null)
+            {
+                System.Buffers.ArrayPool<char>.Shared.Return(rented);
+            }
+        }
+    }
 
     /// <summary>Saves the alphabet and unknown character as JSON.</summary>
     public void Save(string path)
@@ -113,7 +151,11 @@ public sealed class CharTokenizer : ITokenizer
 /// </summary>
 public sealed partial class WordTokenizer : ITokenizer
 {
+    private static readonly System.Buffers.SearchValues<char> ClosingPunctuation = System.Buffers.SearchValues.Create(".,!?;:%)'");
+
     private readonly Dictionary<string, int> _index;
+    private readonly Dictionary<string, int>.AlternateLookup<ReadOnlySpan<char>> _lookup;   // created once: words looked up by span
+    private readonly int _unknownId;
 
     /// <summary>Creates the tokenizer for <paramref name="vocabulary"/> (id = position); the unknown token is added if missing.</summary>
     public WordTokenizer(IEnumerable<string> vocabulary, string unknownToken = "<unk>", bool lowercase = true)
@@ -126,6 +168,8 @@ public sealed partial class WordTokenizer : ITokenizer
 
         Vocabulary = words;
         _index = words.Select((w, i) => (w, i)).ToDictionary(p => p.w, p => p.i);
+        _lookup = _index.GetAlternateLookup<ReadOnlySpan<char>>();
+        _unknownId = _index[unknownToken];
         UnknownToken = unknownToken;
         Lowercase = lowercase;
     }
@@ -161,7 +205,7 @@ public sealed partial class WordTokenizer : ITokenizer
     public int VocabularySize => Vocabulary.Count;
 
     /// <summary>The id of a word (or of the unknown token).</summary>
-    public int this[string word] => _index.TryGetValue(word, out int id) ? id : _index[UnknownToken];
+    public int this[string word] => _index.TryGetValue(word, out int id) ? id : _unknownId;
 
     /// <summary>Splits text into the tokenizer's units without looking them up.</summary>
     public static IEnumerable<string> Split(string text, bool lowercase = true) =>
@@ -177,10 +221,9 @@ public sealed partial class WordTokenizer : ITokenizer
     public IReadOnlyList<int> Encode(string text)
     {
         var ids = new List<int>();
-        var lookup = _index.GetAlternateLookup<ReadOnlySpan<char>>();
         foreach (var word in SplitSpans(text, Lowercase))
         {
-            ids.Add(lookup.TryGetValue(word, out int id) ? id : _index[UnknownToken]);
+            ids.Add(_lookup.TryGetValue(word, out int id) ? id : _unknownId);
         }
 
         return ids;
@@ -192,16 +235,33 @@ public sealed partial class WordTokenizer : ITokenizer
         var text = new System.Text.StringBuilder();
         foreach (int id in ids)
         {
-            string word = (uint)id < (uint)Vocabulary.Count ? Vocabulary[id] : UnknownToken;
-            if (!(word.Length == 1 && ".,!?;:%)'".Contains(word[0])))
-            {
-                text.Append(' ');
-            }
-
-            text.Append(word);
+            Append(text, id);
         }
 
         return text.ToString();
+    }
+
+    // The ids read in place (the interface's default would copy them to an array first).
+    string ITokenizer.Decode(ReadOnlySpan<int> ids)
+    {
+        var text = new System.Text.StringBuilder();
+        foreach (int id in ids)
+        {
+            Append(text, id);
+        }
+
+        return text.ToString();
+    }
+
+    private void Append(System.Text.StringBuilder text, int id)
+    {
+        string word = (uint)id < (uint)Vocabulary.Count ? Vocabulary[id] : UnknownToken;
+        if (!(word.Length == 1 && ClosingPunctuation.Contains(word[0])))
+        {
+            text.Append(' ');
+        }
+
+        text.Append(word);
     }
 
     /// <summary>Saves the vocabulary, unknown token and lower-casing setting as JSON.</summary>

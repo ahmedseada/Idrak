@@ -119,16 +119,26 @@ public sealed class ObjectMask
                 throw new ArgumentException($"A {Width} x {Height} run-length mask on a {width} x {height} image.");
             }
 
+            // Only the object runs are walked (background runs are skipped whole), down a column and on at the top of the next.
             int at = 0;
             for (int i = 0; i < _counts.Length; i++)
             {
-                for (int k = 0; k < _counts[i]; k++, at++)
+                int count = _counts[i];
+                if ((i & 1) == 1 && count > 0)
                 {
-                    if ((i & 1) == 1)
+                    int x = at / height, y = at % height;
+                    for (int k = 0; k < count; k++)
                     {
-                        pixels[at % height * width + at / height] = 1;
+                        pixels[y * width + x] = 1;
+                        if (++y == height)
+                        {
+                            y = 0;
+                            x++;
+                        }
                     }
                 }
+
+                at += count;
             }
 
             return pixels;
@@ -157,9 +167,9 @@ public sealed class ObjectMask
             {
                 // Pixels whose centre lies in [from, to).
                 int from = Math.Max(0, (int)MathF.Ceiling(crossings[k] - 0.5f)), to = Math.Min(width, (int)MathF.Ceiling(crossings[k + 1] - 0.5f));
-                for (int x = from; x < to; x++)
+                if (to > from)
                 {
-                    pixels[y * width + x] = 1;
+                    pixels.AsSpan(y * width + from, to - from).Fill(1);
                 }
             }
         }

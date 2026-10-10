@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Buffers;
 using System.Runtime.CompilerServices;
 
 namespace Idrak.Abstraction.Data;
@@ -102,28 +103,55 @@ public static class ImageCodecs
     /// <summary>The size and channels of an image file, or null when no registered codec knows its format.</summary>
     public static ImageInfo? ReadInfo(string path)
     {
-        var head = new byte[HeaderBytes];
-        int length;
-        using (var stream = File.OpenRead(path))
+        byte[] head = ArrayPool<byte>.Shared.Rent(HeaderBytes);              // one per file of a folder: pooled, not allocated
+        try
         {
-            length = stream.ReadAtLeast(head, head.Length, throwOnEndOfStream: false);
-        }
-
-        foreach (var codec in Codecs())
-        {
-            if (codec.ReadInfo(head.AsSpan(0, length)) is { } info)
+            int length;
+            using (var stream = File.OpenRead(path))
             {
-                // The size lies past the first bytes (a JPEG's frame header after long EXIF and ICC segments): ask with all of them.
-                return info.Width == 0 && length == head.Length ? codec.ReadInfo(File.ReadAllBytes(path)) : info;
+                length = stream.ReadAtLeast(head.AsSpan(0, HeaderBytes), HeaderBytes, throwOnEndOfStream: false);
             }
-        }
 
-        return null;
+            foreach (var codec in Codecs())
+            {
+                if (codec.ReadInfo(head.AsSpan(0, length)) is { } info)
+                {
+                    // The size lies past the first bytes (a JPEG's frame header after long EXIF and ICC segments): ask with all of them.
+                    return info.Width == 0 && length == HeaderBytes ? codec.ReadInfo(File.ReadAllBytes(path)) : info;
+                }
+            }
+
+            return null;
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(head);
+        }
     }
 
     /// <summary>Decodes an image file with the codec that knows its format.</summary>
     /// <exception cref="InvalidDataException">No registered codec reads the file; the message names the file and the codecs.</exception>
-    public static ImageData Decode(string path) => Decode(File.ReadAllBytes(path), path);
+    public static ImageData Decode(string path)
+    {
+        // The file's bytes in a pooled buffer: a data loader decodes one file per sample, most past the large-object size.
+        using var stream = File.OpenRead(path);
+        long size = stream.Length;
+        if (size > Array.MaxLength)
+        {
+            throw new IOException($"{path}: {size} bytes is too large for an image file.");
+        }
+
+        byte[] bytes = ArrayPool<byte>.Shared.Rent((int)size);
+        try
+        {
+            int length = stream.ReadAtLeast(bytes.AsSpan(0, (int)size), (int)size, throwOnEndOfStream: false);
+            return Decode(bytes.AsSpan(0, length), path);
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(bytes);
+        }
+    }
 
     /// <summary>Decodes an image file held in memory (a chat message's image, a download) with the codec that knows its format.</summary>
     /// <exception cref="InvalidDataException">No registered codec reads the bytes, or they are damaged.</exception>
