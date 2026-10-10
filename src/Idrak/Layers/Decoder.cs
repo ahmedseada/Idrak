@@ -108,6 +108,9 @@ public sealed class CausalSelfAttention : Module, ICachedModule
     private readonly Dictionary<int, Tensor> _masks = [];
     private Tensor? _iota;
 
+    // The query, key and value projections, built once: read by every forward without a new array per call.
+    private readonly Linear[] _projections;
+
     /// <summary>Creates the layer with random projections.</summary>
     /// <param name="dim">Model width.</param>
     /// <param name="heads">Query heads.</param>
@@ -146,6 +149,7 @@ public sealed class CausalSelfAttention : Module, ICachedModule
         }
 
         (Query, Key, Value, Output, QueryNorm, KeyNorm) = (query, key, value, output, queryNorm, keyNorm);
+        _projections = [query, key, value];
         query.Name = "q";
         key.Name = "k";
         value.Name = "v";
@@ -312,7 +316,7 @@ public sealed class CausalSelfAttention : Module, ICachedModule
         if (packing is null && !composed && Rope is null && QueryNorm is null && KeyNorm is null && FusedTraining.Enabled && input.Backend.Capabilities.MatrixUnitAttentionHeadDim(HeadDim)
             && input.Backend.Capabilities.MatrixUnits && MixedPrecision.UsesTensorCores
             && Linear.PlainFloat(Query) && Linear.PlainFloat(Key) && Linear.PlainFloat(Value)
-            && Linear.ProjectPacked(input, [Query, Key, Value]) is { } packed)
+            && Linear.ProjectPacked(input, _projections) is { } packed)
         {
             // Queries, keys and values side by side per position, read in place by the attention kernels, which write
             // [n, t, heads·dim] for the output projection: no head rearrangement either way.
@@ -501,7 +505,7 @@ public sealed class CausalSelfAttention : Module, ICachedModule
     private (Tensor Q, Tensor? K, Tensor? V) Project(Tensor input, Tensor positions, KeyValueCache? cache = null, Tensor? position = null, bool packed = false)
     {
         int n = input.Shape[0], t = input.Shape[1], d = HeadDim;
-        var projected = Linear.ForwardMany(input, Query, Key, Value);
+        var projected = Linear.ForwardMany(input, _projections);
         if (!Autograd.IsEnabled && !packed && RMSNorm.NormRopeHeads(projected[0], projected[1], projected[2], Heads, KvHeads, d, QueryNorm, KeyNorm,
                 Rope is null ? null : _cos, Rope is null ? null : _sin, positions, Rope?.Interleaved ?? false,
                 cache is { Layout.FusedWrite: true } ? cache : null, cache is { Layout.FusedWrite: true } ? position : null) is { } heads)
@@ -665,6 +669,7 @@ public sealed class FeedForward : Module
     public FeedForward(Linear? gate, Linear up, Linear down, FeedForwardActivation activation)
     {
         (Gate, Up, Down, Activation) = (gate, up, down, activation);
+        _gateUp = gate is null ? [] : [gate, up];
         if (gate is not null)
         {
             gate.Name = "gate";
@@ -673,6 +678,9 @@ public sealed class FeedForward : Module
         up.Name = "up";
         down.Name = "down";
     }
+
+    // The gate and up projections (empty without a gate), built once: read by every forward without a new array per call.
+    private readonly Linear[] _gateUp;
 
     /// <summary>The gate projection ("gate"), or null for a plain block.</summary>
     public Linear? Gate { get; }
@@ -710,7 +718,7 @@ public sealed class FeedForward : Module
         }
         else
         {
-            var projected = Linear.ForwardMany(input, Gate, Up);
+            var projected = Linear.ForwardMany(input, _gateUp);
             if (!Autograd.IsEnabled && Down.Adapter is null && Activation is FeedForwardActivation.Silu or FeedForwardActivation.Gelu
                 && Linear.MatMulPackedGated(projected[0], projected[1], (int)Activation, Down) is { } fused)
             {
@@ -775,7 +783,7 @@ public sealed class FeedForward : Module
             return pair;                                            // act(gate) · up written by the gate/up product
         }
 
-        var projected = Linear.ForwardMany(input, Gate, Up);
+        var projected = Linear.ForwardMany(input, _gateUp);
         return Tensor.GatedActivation(projected[0], projected[1], Activation);
     }
 
@@ -874,15 +882,18 @@ public sealed class DecoderBlock : Module, ICachedModule
         new Module?[] { AttentionNorm, Attention, FeedForwardNorm, FeedForward, PostAttentionNorm, PostFeedForwardNorm, ResidualDropout }.OfType<Module>();
 
     /// <inheritdoc />
-    protected override Tensor ForwardCore(Tensor input) => Run(input, x => Attention.Forward(x));
+    protected override Tensor ForwardCore(Tensor input) => Run(input, null);
 
     /// <inheritdoc />
-    public Tensor ForwardCached(Tensor input, DecodingContext context) =>
-        Run(input, x => Attention.ForwardCached(x, context), x => Attention.HeadsCached(x, context));
+    public Tensor ForwardCached(Tensor input, DecodingContext context) => Run(input, context);
 
-    // attendHeads: attention without its output projection, which inference then runs together with the residual
-    // addition and the next normalization where the device can (few rows, packed weights).
-    private Tensor Run(Tensor input, Func<Tensor, Tensor> attend, Func<Tensor, Tensor>? attendHeads = null)
+    // Attention, cached when there is a context (the context passed along rather than captured in delegates: no
+    // allocation per block and step).
+    private Tensor Attended(Tensor x, DecodingContext? context) => context is null ? Attention.Forward(x) : Attention.ForwardCached(x, context);
+
+    // With a context, the attention's heads without its output projection, which inference then runs together with the
+    // residual addition and the next normalization where the device can (few rows, packed weights).
+    private Tensor Run(Tensor input, DecodingContext? context)
     {
         var normalized = AttentionNorm.Forward(input);
         using var compressNormalized = new CompressAfter(normalized);
@@ -890,9 +901,9 @@ public sealed class DecoderBlock : Module, ICachedModule
         Tensor x, fed;
         if (!Parallel && inference && FeedForwardNorm is RMSNorm norm)
         {
-            var (sum, fedInput) = attendHeads is not null && PostAttentionNorm is null
-                ? AddProjected(attendHeads(normalized), Attention.Output, input, norm)
-                : Tensor.AddRmsNormAffine(input, Attend(normalized, attend), norm.Gain, norm.Epsilon, norm.Offset);   // one pass
+            var (sum, fedInput) = context is not null && PostAttentionNorm is null
+                ? AddProjected(Attention.HeadsCached(normalized, context), Attention.Output, input, norm)
+                : Tensor.AddRmsNormAffine(input, Attend(normalized, context), norm.Gain, norm.Epsilon, norm.Offset);   // one pass
             x = sum;
             if (PostFeedForwardNorm is null && NextNorm is { } following && FeedForward is Layers.FeedForward { DownFusable: true } dense)
             {
@@ -905,7 +916,7 @@ public sealed class DecoderBlock : Module, ICachedModule
         }
         else
         {
-            var attended = Attend(normalized, attend);
+            var attended = Attend(normalized, context);
             if (Parallel)
             {
                 var parallel = FeedForward.Forward(normalized);
@@ -946,9 +957,9 @@ public sealed class DecoderBlock : Module, ICachedModule
         return result;
     }
 
-    private Tensor Attend(Tensor normalized, Func<Tensor, Tensor> attend)
+    private Tensor Attend(Tensor normalized, DecodingContext? context)
     {
-        var attended = attend(normalized);
+        var attended = Attended(normalized, context);
         if (PostAttentionNorm is null)
         {
             return attended;

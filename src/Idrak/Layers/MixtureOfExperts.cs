@@ -240,7 +240,11 @@ public sealed class MixtureOfExperts : Module
     {
         var choices = new int[tokens * k];
         var weights = new float[tokens * k];
-        Span<int> best = stackalloc int[k];
+        // k comes from the model: on the stack only while small (rule 45). Each row's choices are sorted in place, as
+        // the next row reads only the entries it has written.
+        const int StackExperts = 64;
+        Span<int> best = k <= StackExperts ? stackalloc int[StackExperts] : new int[k];
+        best = best[..k];
         for (int i = 0; i < tokens; i++)
         {
             var row = probabilities.AsSpan(i * experts, experts);
@@ -268,8 +272,8 @@ public sealed class MixtureOfExperts : Module
                 count = Math.Min(count + 1, k);
             }
 
-            var chosen = best[..k].ToArray();
-            Array.Sort(chosen);
+            best.Sort();
+            ReadOnlySpan<int> chosen = best;
             float sum = 0f;
             foreach (int e in chosen)
             {

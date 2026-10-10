@@ -73,8 +73,8 @@ public static class GgufModel
             throw new FileNotFoundException($"{path} does not exist.", path);
         }
 
-        string fingerprint = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(
-            $"{FormatVersion}|{path}|{info.Length}|{info.LastWriteTimeUtc.Ticks}")))[..12];
+        string fingerprint = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(string.Create(System.Globalization.CultureInfo.InvariantCulture,
+            $"{FormatVersion}|{path}|{info.Length}|{info.LastWriteTimeUtc.Ticks}"))))[..12];
         string name = Path.GetFileNameWithoutExtension(path);
         name = name.StartsWith("sha256-", StringComparison.Ordinal) ? name[..Math.Min(name.Length, 19)] : name;   // blobs of the local model store
         cacheRoot ??= Environment.GetEnvironmentVariable("IDRAK_CACHE")                                 // the downloads' cache root
@@ -439,7 +439,8 @@ public static class GgufModel
                 case ["blk", var layer, var part, var kind] when part.EndsWith("_shexp", StringComparison.Ordinal) && Projection(part[4..^6]) is { } projection:
                     Add($"layers.{layer}.mlp.shared.{projection}.{kind}", -1, shape);
                     break;
-                case ["blk", var layer, var part, var expert, var kind] when part.StartsWith("ffn_", StringComparison.Ordinal) && int.TryParse(expert, out _)
+                case ["blk", var layer, var part, var expert, var kind] when part.StartsWith("ffn_", StringComparison.Ordinal)
+                                                                            && int.TryParse(expert, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out _)
                                                                             && Projection(part[4..]) is { } projection:
                     Add($"layers.{layer}.mlp.experts.{expert}.{projection}.{kind}", -1, shape);
                     break;
