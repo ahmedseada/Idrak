@@ -91,11 +91,38 @@ public sealed class OnnxModule : Module
         NamedOnnxValue value = _inputType == typeof(float)
             ? NamedOnnxValue.CreateFromTensor(InputName, new DenseTensor<float>(values, shape))
             : _inputType == typeof(long)
-                ? NamedOnnxValue.CreateFromTensor(InputName, new DenseTensor<long>(values.Select(v => (long)v).ToArray(), shape))
-                : NamedOnnxValue.CreateFromTensor(InputName, new DenseTensor<int>(values.Select(v => (int)v).ToArray(), shape));
+                ? NamedOnnxValue.CreateFromTensor(InputName, new DenseTensor<long>(Longs(values), shape))
+                : NamedOnnxValue.CreateFromTensor(InputName, new DenseTensor<int>(Ints(values), shape));
         using var results = _session.Run([value], [OutputName]);
         var output = results[0].AsTensor<float>();
-        return Tensor.From(output.ToArray(), output.Dimensions.ToArray(), input.Device);
+
+        // A dense output is read where it lies (one copy, onto the device), not copied to an array first.
+        return output is DenseTensor<float> dense
+            ? Tensor.From(dense.Buffer.Span, output.Dimensions, input.Device)
+            : Tensor.From(output.ToArray(), output.Dimensions.ToArray(), input.Device);
+    }
+
+    // Token ids as the model's integer type, cast in one loop each.
+    private static long[] Longs(float[] values)
+    {
+        var result = new long[values.Length];
+        for (int i = 0; i < values.Length; i++)
+        {
+            result[i] = (long)values[i];
+        }
+
+        return result;
+    }
+
+    private static int[] Ints(float[] values)
+    {
+        var result = new int[values.Length];
+        for (int i = 0; i < values.Length; i++)
+        {
+            result[i] = (int)values[i];
+        }
+
+        return result;
     }
 
     /// <inheritdoc />
