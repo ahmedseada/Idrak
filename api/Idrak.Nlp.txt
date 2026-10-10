@@ -592,6 +592,54 @@ public sealed class Idrak.Nlp.ChatTranscriptEncoder
   public string AssistantEnd { get; }
   public string AssistantHeader { get; }
 
+public sealed class Idrak.Nlp.ConversationTuning : System.IDisposable
+  public Idrak.Models.PretrainedModel Model { get; }
+  public Idrak.Nlp.ChatTranscriptEncoder Encoder { get; }
+  public Idrak.Nlp.ConversationTuningOptions Options { get; }
+  public Idrak.Nlp.ConversationTuningResult Train(string folder, string baseModel, System.IProgress<Idrak.Nlp.FineTuningProgress>? progress = null, System.Threading.CancellationToken cancellationToken = default, System.Action<string>? trace = null)
+  public Idrak.Nlp.FineTuningOptions Tuning { get; set; }
+  public Idrak.Nlp.TuningAnswerReport? ScoreAnswers(System.IProgress<Idrak.Nlp.TuningAnswer>? progress = null, System.Threading.CancellationToken cancellationToken = default)
+  public Idrak.Nlp.TuningAnswerScorer? Scorer { get; }
+  public Idrak.Nlp.TuningVision? Vision { get; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Nlp.Abstractions.TrainingSequence> TrainingSequences { get; set; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Nlp.Abstractions.TrainingSequence>? EvaluationSequences { get; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Nlp.ChatTranscript> TrainingConversations { get; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Nlp.ChatTranscript>? EvaluationConversations { get; }
+  public float? EvaluationLoss()
+  public static Idrak.Nlp.ConversationTuning Prepare(Idrak.Models.PretrainedModel model, System.Collections.Generic.IReadOnlyList<string> data, Idrak.Nlp.ConversationTuningOptions? options = null, System.IProgress<Idrak.Nlp.TuningStage>? progress = null, System.Action<string>? log = null, System.Threading.CancellationToken cancellationToken = default)
+  public void Dispose()
+  public void Save(string folder)
+
+public sealed record Idrak.Nlp.ConversationTuningOptions : System.IEquatable<Idrak.Nlp.ConversationTuningOptions>
+  public ConversationTuningOptions()
+  public Idrak.Nlp.FineTuningOptions Tuning { get; init; }
+  public Idrak.Nlp.TuningImages Preparation { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> VisionParts { get; init; }
+  public bool? Think { get; init; }
+  public double EvaluationFraction { get; init; }
+  public int MaxConversations { get; init; }
+  public int MaxNewTokens { get; init; }
+  public int MetricEvery { get; init; }
+  public int MetricSamples { get; init; }
+  public int Seed { get; init; }
+  public string FeatureCache { get; init; }
+  public string? DataFormat { get; init; }
+  public string? Evaluation { get; init; }
+  public string? EvaluationImages { get; init; }
+  public string? FeatureFolder { get; init; }
+  public string? Images { get; init; }
+  public string? Metric { get; init; }
+  public string? System { get; init; }
+
+public sealed record Idrak.Nlp.ConversationTuningResult : System.IEquatable<Idrak.Nlp.ConversationTuningResult>
+  public ConversationTuningResult(string Folder, bool Stopped, System.TimeSpan Elapsed, System.Collections.Generic.IReadOnlyList<float> EvaluationLosses, Idrak.Nlp.FineTuningProgress? Last, Idrak.Nlp.TuningAnswerReport? Answers)
+  public Idrak.Nlp.FineTuningProgress? Last { get; init; }
+  public Idrak.Nlp.TuningAnswerReport? Answers { get; init; }
+  public System.Collections.Generic.IReadOnlyList<float> EvaluationLosses { get; init; }
+  public System.TimeSpan Elapsed { get; init; }
+  public bool Stopped { get; init; }
+  public string Folder { get; init; }
+
 public static class Idrak.Nlp.DistillationTeachers
   public static Idrak.Nlp.Abstractions.DistillationTeacher FromFile(string path)
   public static Idrak.Nlp.Abstractions.DistillationTeacher FromModel(Idrak.Models.PretrainedModel teacher, int topK = 0, int batchTokens = 4096)
@@ -816,6 +864,7 @@ public sealed class Idrak.Nlp.TuningAnswerScorer
   public Idrak.Nlp.TuningAnswerReport Score(Idrak.Models.PretrainedModel model, Idrak.Nlp.TuningVision? vision = null, System.IProgress<Idrak.Nlp.TuningAnswer>? progress = null, System.Threading.CancellationToken cancellationToken = default)
   public System.Collections.Generic.IReadOnlyDictionary<string, string>? MetricOptions { get; init; }
   public System.Collections.Generic.IReadOnlyList<(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage>, string, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition>, bool?)> Items { get; }
+  public System.IProgress<Idrak.Nlp.TuningAnswer>? Progress { get; set; }
   public TuningAnswerScorer(System.Collections.Generic.IEnumerable<Idrak.Nlp.ChatTranscript> transcripts, string metric = "cer", int samples = 0)
   public bool IsDue(int step, bool lastOfEpoch)
   public bool LowerIsBetter { get; }
@@ -859,6 +908,13 @@ public sealed record Idrak.Nlp.TuningManifest : System.IEquatable<Idrak.Nlp.Tuni
   public static bool Exists(string folder)
   public string? System { get; init; }
   public void Save(string folder)
+
+public sealed record Idrak.Nlp.TuningStage : System.IEquatable<Idrak.Nlp.TuningStage>
+  public System.TimeSpan Elapsed { get; init; }
+  public TuningStage(string Name, int Done, int Total, System.TimeSpan Elapsed)
+  public int Done { get; init; }
+  public int Total { get; init; }
+  public string Name { get; init; }
 
 public sealed class Idrak.Nlp.TuningVision : System.IDisposable
   public Idrak.Abstraction.Data.ImageData Read(Idrak.Abstraction.Generation.ChatImage image, Idrak.Nlp.TuningImages? preparation = null)

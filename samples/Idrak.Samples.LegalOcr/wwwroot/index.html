@@ -74,12 +74,42 @@
   .note { color: var(--muted); font-size: 12px; }
   .error { color: var(--bad); }
   .badge { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 10px; background: var(--soft); color: var(--muted); margin-left: 6px; }
+  .views { display: inline-flex; gap: 2px; background: var(--soft); border-radius: 8px; padding: 2px; }
+  .views button { border: 0; background: none; color: var(--muted); padding: 6px 12px; border-radius: 6px; cursor: pointer; font: inherit; }
+  .views button.on { background: var(--panel); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+  .dot.Busy, .dot.Preparing, .dot.Training, .dot.Stopping { background: var(--warn); } .dot.Finished { background: var(--good); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  @media (max-width: 520px) { .grid3 { grid-template-columns: 1fr 1fr; } }
+  .check { display: flex; gap: 6px; align-items: center; font-size: 13px; color: var(--ink); margin: 0; }
+  .wide { height: 8px; background: var(--soft); border-radius: 4px; overflow: hidden; }
+  .wide > div { height: 100%; width: 0; background: var(--accent); transition: width .4s; }
+  .chart { width: 100%; height: 220px; display: block; }
+  .chart .axis { stroke: var(--line); stroke-width: 1; }
+  .chart text { fill: var(--muted); font-size: 11px; }
+  .chart .loss { fill: none; stroke: var(--accent); stroke-width: 1.6; }
+  .chart .eval { fill: var(--warn); }
+  .chart .cer { fill: var(--good); }
+  .legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+  .log { max-height: 260px; font-size: 12px; direction: ltr; text-align: left; }
+  .adapters > div { border: 1px solid var(--line); border-radius: 7px; padding: 8px 10px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .adapters > div + div { margin-top: 6px; }
+  .adapters b { flex: 1; min-width: 160px; }
+  .adapters small { color: var(--muted); display: block; font-weight: normal; }
+  .evaluation { max-height: 220px; overflow: auto; font-variant-numeric: tabular-nums; font-size: 12px; }
+  .evaluation table { width: 100%; border-collapse: collapse; }
+  .evaluation td, .evaluation th { padding: 3px 6px; border-bottom: 1px solid var(--line); text-align: left; }
   .hidden { display: none !important; }
 </style>
 </head>
 <body>
 <header>
   <h1>Arabic Legal OCR</h1>
+  <div class="views" id="views">
+    <button data-view="read" class="on">Read</button>
+    <button data-view="tune">Fine-tune</button>
+  </div>
   <div class="switch" id="switch"></div>
   <div class="status">
     <div class="dot" id="dot"></div>
@@ -89,7 +119,7 @@
   <div class="memory" id="memory"></div>
 </header>
 
-<main>
+<main id="readView">
   <section class="stack">
     <div class="card stack">
       <h2>Page</h2>
@@ -135,6 +165,20 @@
         <span class="note" id="readNote"></span>
       </div>
     </div>
+
+    <div class="card stack hidden" id="evaluateCard">
+      <h2>Evaluate the model</h2>
+      <div class="note">Reads the first evaluation pages in a row with the settings above and scores each by CER, to compare the models.</div>
+      <div class="row">
+        <label for="evaluateCount" style="margin:0">Pages</label>
+        <input type="number" id="evaluateCount" min="0" value="20" style="width:90px"> <span class="note">0: all</span>
+        <button class="btn primary" id="evaluate" disabled>Evaluate</button>
+        <button class="btn" id="evaluateStop" disabled>Stop</button>
+      </div>
+      <div class="wide hidden" id="evaluateBar"><div id="evaluateFill"></div></div>
+      <div class="note" id="evaluateNote"></div>
+      <div class="evaluation hidden" id="evaluation"><table><thead><tr><th>Page</th><th>CER</th><th>s</th><th>tokens</th><th></th></tr></thead><tbody id="evaluationRows"></tbody></table></div>
+    </div>
   </section>
 
   <section class="stack">
@@ -167,10 +211,86 @@
   </section>
 </main>
 
+<main id="tuneView" class="hidden">
+  <section class="stack">
+    <div class="card stack">
+      <h2>Fine-tune a LoRA adapter</h2>
+      <div class="note" id="tuneData"></div>
+      <div class="grid2">
+        <div><label for="tName">Adapter name</label><input type="text" id="tName" spellcheck="false"></div>
+        <div><label for="tBase">Tune on</label><select id="tBase"></select></div>
+      </div>
+      <div><label for="tPre">Preprocessing of every page (saved with the adapter, used when reading with it)</label><input type="text" id="tPre" spellcheck="false"></div>
+      <div class="grid3">
+        <div><label for="tWeights">Base weights</label><select id="tWeights"><option value="bf16">bf16</option><option value="int8">int8</option><option value="int4">int4 (QLoRA)</option></select></div>
+        <div><label for="tEpochs">Epochs</label><input type="number" id="tEpochs" min="1" step="1"></div>
+        <div><label for="tLr">Learning rate</label><input type="number" id="tLr" min="0" step="0.00001"></div>
+        <div><label for="tRank">Rank</label><input type="number" id="tRank" min="1" step="1"></div>
+        <div><label for="tAlpha">Alpha</label><input type="number" id="tAlpha" min="1" step="1"></div>
+        <div><label for="tMaxLength">Longest sequence</label><input type="number" id="tMaxLength" min="64" step="64"></div>
+        <div><label for="tBatch">Tokens per batch</label><input type="number" id="tBatch" min="256" step="256"></div>
+        <div><label for="tAccumulate">Accumulate batches</label><input type="number" id="tAccumulate" min="1" step="1"></div>
+        <div><label for="tMaxPages">Train on first N pages</label><input type="number" id="tMaxPages" min="0" step="1"></div>
+        <div><label for="tCerPages">CER pages</label><input type="number" id="tCerPages" min="0" step="1"></div>
+        <div><label for="tCerEvery">CER every N steps</label><input type="number" id="tCerEvery" min="0" step="1"></div>
+        <div><label for="tAnswerTokens">CER answer tokens</label><input type="number" id="tAnswerTokens" min="16" step="64"></div>
+        <div><label for="tEvalEvery">Eval loss every N steps</label><input type="number" id="tEvalEvery" min="0" step="1"></div>
+        <div><label for="tSaveEvery">Save every N steps</label><input type="number" id="tSaveEvery" min="0" step="1"></div>
+      </div>
+      <div class="row">
+        <label class="check"><input type="checkbox" id="tCerBefore"> Score the base model's CER first</label>
+        <label class="check"><input type="checkbox" id="tProjector"> Train the vision projector too</label>
+      </div>
+      <div class="note">0 in "every N steps": at the end of each epoch. 0 pages: all of them; 0 CER pages: the evaluation loss only.</div>
+      <div class="row">
+        <button class="btn primary" id="tStart">Start training</button>
+        <button class="btn" id="tStop" disabled>Stop and save</button>
+        <span class="note" id="tNote"></span>
+      </div>
+    </div>
+
+    <div class="card stack">
+      <h2>Adapters</h2>
+      <div class="note" id="adaptersFolder"></div>
+      <div class="adapters" id="adapters"></div>
+    </div>
+  </section>
+
+  <section class="stack">
+    <div class="card stack">
+      <h2>Progress</h2>
+      <div class="row"><div class="dot" id="tDot"></div><div id="tMessage">No run yet.</div></div>
+      <div class="hidden" id="tStageBox"><label id="tStage"></label><div class="wide"><div id="tStageFill"></div></div></div>
+      <div><label id="tStepLabel">Steps</label><div class="wide"><div id="tStepFill"></div></div></div>
+      <div class="metrics" id="tMetrics"></div>
+    </div>
+    <div class="card stack">
+      <h2>Loss</h2>
+      <svg class="chart" id="chart" viewBox="0 0 600 220" preserveAspectRatio="none"></svg>
+      <div class="legend"><span><i style="background:var(--accent)"></i>training loss</span><span><i style="background:var(--warn)"></i>evaluation loss</span><span><i style="background:var(--good)"></i>CER (right axis)</span></div>
+    </div>
+    <div class="card">
+      <h2>Log</h2>
+      <pre class="log" id="tLog"></pre>
+    </div>
+  </section>
+</main>
+
 <script>
 const $ = id => document.getElementById(id);
 const presets = { card: "grayscale,max_width=1024,contrast=1.5", vllm: "grayscale,max_width=1024,contrast=1.5,jpeg=95", none: "" };
-let models = [], current = null, imageData = null, pageIndex = null, page = null, reading = null, pages = [], lastSeen = null;
+let models = [], current = null, imageData = null, pageIndex = null, page = null, reading = null, pages = [], lastSeen = null, evaluating = null;
+
+// ---------------------------------------------------------------- the two views
+for (const b of document.querySelectorAll("#views button")) b.onclick = () => showView(b.dataset.view);
+function showView(name) {
+  for (const b of document.querySelectorAll("#views button")) b.classList.toggle("on", b.dataset.view === name);
+  $("readView").classList.toggle("hidden", name !== "read");
+  $("tuneView").classList.toggle("hidden", name !== "tune");
+  $("switch").classList.toggle("hidden", name !== "read");
+  try { localStorage.setItem("legal-ocr-view", name); } catch { }
+  if (name === "tune") loadAdapters();
+}
 
 // ---------------------------------------------------------------- status and the model switch
 async function refresh() {
@@ -193,7 +313,9 @@ async function refresh() {
   const seen = s.state + "|" + s.model;
   if (seen !== lastSeen) { lastSeen = seen; await loadModels(); }
   $("read").disabled = !(s.state === "Ready" && (imageData || pageIndex != null)) || reading != null;
-  setTimeout(refresh, ["Downloading", "Loading", "Reading"].includes(s.state) ? 700 : 2500);
+  $("evaluate").disabled = !(s.state === "Ready" && pages.length) || evaluating != null || reading != null;
+  for (const b of $("switch").querySelectorAll("button")) b.disabled = s.state === "Busy" || !models.find(m => m.name === b.textContent)?.usable;
+  setTimeout(refresh, ["Downloading", "Loading", "Reading", "Busy"].includes(s.state) ? 700 : 2500);
 }
 
 async function loadModels() {
@@ -270,6 +392,7 @@ async function loadPages() {
   pages = r.pages;
   $("pagesSource").textContent = `${pages.length} in ${r.source}`;
   $("pagesBox").classList.remove("hidden");
+  $("evaluateCard").classList.remove("hidden");
   renderPages();
 }
 
@@ -298,7 +421,40 @@ function usePage(p, div) {
   refreshRead();
 }
 
-function refreshRead() { $("read").disabled = !(current && current.loaded && (imageData || pageIndex != null)) || reading != null; }
+function refreshRead() { $("read").disabled = !(current && current.loaded && (imageData || pageIndex != null)) || reading != null || evaluating != null; }
+
+// ---------------------------------------------------------------- evaluating N pages in a row
+$("evaluate").onclick = evaluate;
+$("evaluateStop").onclick = () => evaluating && evaluating.abort();
+async function evaluate() {
+  const body = { prompt: $("prompt").value, preprocessing: $("pipeline").value, maxTokens: Number($("maxTokens").value) || null };
+  const count = Math.max(0, Number($("evaluateCount").value) || 0);
+  evaluating = new AbortController();
+  $("evaluate").disabled = true; $("evaluateStop").disabled = false; refreshRead();
+  $("evaluationRows").innerHTML = ""; $("evaluation").classList.remove("hidden"); $("evaluateBar").classList.remove("hidden");
+  $("evaluateFill").style.width = "0"; $("evaluateNote").textContent = "starting…";
+  try {
+    const r = await fetch(`/api/pages/evaluate?count=${count}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: evaluating.signal });
+    if (!r.ok) { const p = await r.json().catch(() => ({})); throw new Error(p.detail ?? r.statusText); }
+    for await (const [event, d] of events(r.body)) {
+      if (event === "page") {
+        const tr = document.createElement("tr");
+        for (const v of [d.name, (100 * d.cer).toFixed(2) + " %", d.seconds, d.tokens, d.truncated ? "cut" : !d.json ? "no JSON" : d.repaired ? "repaired" : ""]) {
+          const td = document.createElement("td"); td.textContent = v; tr.appendChild(td);
+        }
+        $("evaluationRows").appendChild(tr);
+        $("evaluateFill").style.width = (100 * d.done / d.total) + "%";
+        $("evaluateNote").textContent = `${d.done} of ${d.total} pages, mean CER ${(100 * d.meanCer).toFixed(2)} %, about ${duration(d.secondsLeft)} left`;
+      } else if (event === "queued") $("evaluateNote").textContent = d.message;
+      else if (event === "error") throw new Error(d.error);
+      else if (event === "done") $("evaluateNote").textContent = `${d.model}: mean CER ${(100 * d.meanCer).toFixed(2)} %, median ${(100 * d.medianCer).toFixed(2)} % on ${d.pages} pages in ${duration(d.seconds)}`;
+    }
+  } catch (e) {
+    $("evaluateNote").textContent = e.name === "AbortError" ? "Stopped." : e.message;
+  } finally {
+    evaluating = null; $("evaluateStop").disabled = true; refreshRead();
+  }
+}
 
 // ---------------------------------------------------------------- reading (server-sent events over a POST)
 $("read").onclick = read;
@@ -398,6 +554,13 @@ function showTab(name) {
   for (const b of document.querySelectorAll("#tabs button")) b.classList.toggle("on", b.dataset.tab === name);
   for (const p of document.querySelectorAll("[data-pane]")) p.classList.toggle("hidden", p.dataset.pane !== name);
 }
+function duration(seconds) {
+  if (seconds == null || !isFinite(seconds)) return "–";
+  seconds = Math.round(seconds);
+  if (seconds < 60) return seconds + " s";
+  if (seconds < 3600) return Math.floor(seconds / 60) + " min " + (seconds % 60) + " s";
+  return Math.floor(seconds / 3600) + " h " + Math.floor(seconds % 3600 / 60) + " min";
+}
 function size(bytes) {
   if (bytes == null) return "";
   const units = ["B", "KB", "MB", "GB"]; let i = 0;
@@ -405,8 +568,154 @@ function size(bytes) {
   return (i ? bytes.toFixed(i > 2 ? 2 : 0) : bytes) + " " + units[i];
 }
 
+// ---------------------------------------------------------------- fine-tuning
+const fields = { tEpochs: "epochs", tLr: "learningRate", tRank: "rank", tAlpha: "alpha", tMaxLength: "maxLength", tBatch: "batchTokens", tAccumulate: "accumulate",
+  tMaxPages: "maxPages", tCerPages: "cerPages", tCerEvery: "cerEvery", tAnswerTokens: "answerTokens", tEvalEvery: "evaluateEvery", tSaveEvery: "saveEvery" };
+let tune = { run: -1, points: [], log: 0, status: null };
+
+async function loadTuning() {
+  const d = await fetch("/api/tuning/defaults").then(r => r.json()).catch(() => null);
+  if (!d) return;
+  const s = d.settings;
+  $("tName").value = d.name;
+  $("tBase").innerHTML = "";
+  for (const b of d.bases) {
+    const o = document.createElement("option");
+    o.value = b.id; o.textContent = b.name + (b.usable ? "" : " — " + b.unusable); o.disabled = !b.usable;
+    $("tBase").appendChild(o);
+  }
+  $("tBase").value = s.base;
+  $("tPre").value = s.preprocessing; $("tWeights").value = s.weights;
+  for (const [id, key] of Object.entries(fields)) $(id).value = s[key];
+  $("tCerBefore").checked = s.cerBefore; $("tProjector").checked = s.trainProjector;
+  $("tuneData").innerHTML = "";
+  const line = (label, file, found) => { const div = document.createElement("div"); div.textContent = `${label}: ${file ?? "(not set)"}${file && !found ? " — not found" : ""}`; if (file && !found || !file) div.className = "error"; return div; };
+  $("tuneData").append(line("Training pages", d.trainingData, d.trainingDataFound), line("Evaluation pages", d.evaluationData, d.evaluationDataFound));
+  $("adaptersFolder").textContent = "In " + d.adaptersFolder;
+}
+
+$("tStart").onclick = async () => {
+  const body = { name: $("tName").value.trim(), base: $("tBase").value, weights: $("tWeights").value, preprocessing: $("tPre").value,
+    cerBefore: $("tCerBefore").checked, trainProjector: $("tProjector").checked };
+  for (const [id, key] of Object.entries(fields)) { const v = Number($(id).value); if ($(id).value !== "" && isFinite(v)) body[key] = v; }
+  $("tNote").textContent = "";
+  const r = await fetch("/api/tuning/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!r.ok) { const p = await r.json().catch(() => ({})); $("tNote").innerHTML = ""; const e = document.createElement("span"); e.className = "error"; e.textContent = p.detail ?? r.statusText; $("tNote").appendChild(e); }
+};
+$("tStop").onclick = () => fetch("/api/tuning/stop", { method: "POST" });
+
+// The run's live events, reconnecting when the stream ends.
+async function followTuning() {
+  while (true) {
+    try {
+      const r = await fetch(`/api/tuning/events?run=${tune.run}&points=${tune.points.length}&log=${tune.log}`);
+      for await (const [event, d] of events(r.body)) {
+        if (event === "status") showTuning(d);
+        else if (event === "points") { if (d.from === tune.points.length) { tune.points.push(...d.points); drawChart(); } }
+        else if (event === "log") { if (d.from === tune.log) { appendLog(d.lines); tune.log += d.lines.length; } }
+      }
+    } catch { }
+    await new Promise(r => setTimeout(r, 2000));
+  }
+}
+
+function showTuning(s) {
+  if (s.run !== tune.run) { tune = { run: s.run, points: [], log: 0, status: null, ended: tune.ended }; $("tLog").textContent = ""; drawChart(); }
+  tune.status = s;
+  const running = ["Preparing", "Training", "Stopping"].includes(s.state);
+  $("tDot").className = "dot " + s.state;
+  $("tMessage").textContent = s.message;
+  $("tStart").disabled = running; $("tStop").disabled = !running || s.state === "Stopping";
+  const stage = s.stage ? `${s.stage}: ${s.stageDone} of ${s.stageTotal}` : s.download ? `downloading ${s.download.file}: ${size(s.download.received)}${s.download.total ? " of " + size(s.download.total) : ""}` : null;
+  $("tStageBox").classList.toggle("hidden", !stage);
+  if (stage) { $("tStage").textContent = stage; $("tStageFill").style.width = (s.stage ? 100 * s.stageDone / Math.max(1, s.stageTotal) : s.download?.total ? 100 * s.download.received / s.download.total : 5) + "%"; }
+  $("tStepLabel").textContent = s.totalSteps ? `Step ${s.step} of ${s.totalSteps}, epoch ${s.epoch} of ${s.epochs}` : "Steps";
+  $("tStepFill").style.width = (s.totalSteps ? 100 * s.step / s.totalSteps : 0) + "%";
+  const pct = v => v == null ? "–" : (100 * v).toFixed(2) + " %";
+  const list = [
+    { label: "training loss", value: s.loss?.toFixed(4) ?? "–" },
+    { label: "evaluation loss" + (s.evaluationLossBefore != null ? ` (before ${s.evaluationLossBefore.toFixed(4)})` : ""), value: s.evaluationLoss?.toFixed(4) ?? "–" },
+    { label: "CER" + (s.cerBefore != null ? ` (before ${pct(s.cerBefore)})` : ""), value: pct(s.cer), tone: s.cer == null ? null : s.cerBefore != null && s.cer < s.cerBefore ? "good" : "warn" },
+    { label: "learning rate", value: s.learningRate != null ? s.learningRate.toExponential(2) : "–" },
+    { label: "tokens a second", value: s.tokensPerSecond ?? "–" },
+    { label: "elapsed", value: duration(s.seconds) },
+    { label: "time left", value: s.state === "Training" ? duration(s.secondsLeft) : "–" },
+  ];
+  if (s.memory) list.push({ label: "device memory (peak)", value: `${size(s.memory.inUse)} (${size(s.memory.peak)})` });
+  const box = $("tMetrics"); box.innerHTML = "";
+  for (const m of list) {
+    const div = document.createElement("div"); div.className = "metric" + (m.tone ? " " + m.tone : ""); div.innerHTML = "<b></b><span></span>";
+    div.querySelector("b").textContent = m.value; div.querySelector("span").textContent = m.label; box.appendChild(div);
+  }
+  // A run that ended (once per run): its adapter joins the list and the switch, and the form gets a fresh name.
+  if (!running && s.run > 0 && tune.ended !== s.run + s.state) { const first = tune.ended === undefined; tune.ended = s.run + s.state; loadAdapters(); if (!first) { lastSeen = null; loadTuning(); } }
+}
+
+function appendLog(lines) {
+  const pre = $("tLog");
+  const atEnd = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 20;
+  pre.textContent += lines.join("\n") + "\n";
+  if (pre.textContent.length > 200000) pre.textContent = pre.textContent.slice(-150000);
+  if (atEnd) pre.scrollTop = pre.scrollHeight;
+}
+
+function drawChart() {
+  const svg = $("chart"), W = 600, H = 220, L = 44, R = 44, T = 10, B = 22;
+  const pts = tune.points;
+  if (!pts.length) { svg.innerHTML = `<text x="${W / 2}" y="${H / 2}" text-anchor="middle">The loss appears here once training starts.</text>`; return; }
+  const every = Math.max(1, Math.ceil(pts.length / 600));
+  const shown = pts.filter((_, i) => i % every === 0 || i === pts.length - 1);
+  const losses = pts.map(p => p.loss).concat(pts.filter(p => p.evaluationLoss != null).map(p => p.evaluationLoss));
+  let lo = Math.min(...losses), hi = Math.max(...losses); if (hi - lo < 1e-6) { hi += 0.5; lo = Math.max(0, lo - 0.5); }
+  const last = pts[pts.length - 1].step, total = Math.max(last, tune.status?.totalSteps || last);
+  const x = step => L + (W - L - R) * (step / Math.max(1, total));
+  const y = v => T + (H - T - B) * (1 - (v - lo) / (hi - lo));
+  const cers = pts.filter(p => p.cer != null).map(p => p.cer).concat(tune.status?.cerBefore != null ? [tune.status.cerBefore] : []);
+  const cerHi = cers.length ? Math.max(0.05, ...cers) : 1;
+  const yc = v => T + (H - T - B) * (1 - v / cerHi);
+  let out = `<line class="axis" x1="${L}" y1="${H - B}" x2="${W - R}" y2="${H - B}"/><line class="axis" x1="${L}" y1="${T}" x2="${L}" y2="${H - B}"/>`;
+  for (const v of [lo, (lo + hi) / 2, hi]) out += `<text x="${L - 4}" y="${y(v) + 4}" text-anchor="end">${v.toFixed(2)}</text>`;
+  out += `<text x="${W - R}" y="${H - 6}" text-anchor="end">step ${total}</text><text x="${L}" y="${H - 6}">0</text>`;
+  out += `<polyline class="loss" points="${shown.map(p => `${x(p.step).toFixed(1)},${y(p.loss).toFixed(1)}`).join(" ")}"/>`;
+  for (const p of pts.filter(p => p.evaluationLoss != null)) out += `<circle class="eval" cx="${x(p.step).toFixed(1)}" cy="${y(p.evaluationLoss).toFixed(1)}" r="3.5"><title>step ${p.step}: evaluation loss ${p.evaluationLoss.toFixed(4)}</title></circle>`;
+  if (cers.length) {
+    out += `<line class="axis" x1="${W - R}" y1="${T}" x2="${W - R}" y2="${H - B}"/><text x="${W - R + 4}" y="${T + 10}">${(100 * cerHi).toFixed(0)}%</text><text x="${W - R + 4}" y="${H - B}">0%</text>`;
+    if (tune.status?.cerBefore != null) out += `<rect class="cer" x="${L - 3}" y="${(yc(tune.status.cerBefore) - 3).toFixed(1)}" width="6" height="6"><title>before training: CER ${(100 * tune.status.cerBefore).toFixed(2)} %</title></rect>`;
+    for (const p of pts.filter(p => p.cer != null)) out += `<rect class="cer" x="${(x(p.step) - 3).toFixed(1)}" y="${(yc(p.cer) - 3).toFixed(1)}" width="6" height="6"><title>step ${p.step}: CER ${(100 * p.cer).toFixed(2)} %</title></rect>`;
+  }
+  svg.innerHTML = out;
+}
+
+async function loadAdapters() {
+  const d = await fetch("/api/adapters").then(r => r.json()).catch(() => null);
+  if (!d) return;
+  const box = $("adapters"); box.innerHTML = "";
+  if (!d.adapters.length) { box.innerHTML = `<div class="note">None yet: start a run.</div>`; return; }
+  for (const a of d.adapters) {
+    const r = a.record, div = document.createElement("div"), b = document.createElement("b"), small = document.createElement("small");
+    b.textContent = r.name;
+    const parts = [r.base ?? r.baseModel];
+    if (r.steps) parts.push(`${r.steps}${r.stopped ? " of " + r.totalSteps : ""} steps`);
+    if (r.seconds) parts.push(duration(r.seconds));
+    if (r.cer != null) parts.push(`CER ${(100 * r.cer).toFixed(2)} %` + (r.cerBefore != null ? ` (base ${(100 * r.cerBefore).toFixed(2)} %)` : ""));
+    if (r.evaluationLoss != null) parts.push(`eval loss ${r.evaluationLoss.toFixed(4)}`);
+    if (r.stopped) parts.push("stopped early");
+    small.textContent = parts.join(" · ");
+    b.appendChild(small);
+    const use = document.createElement("button"); use.className = "btn"; use.textContent = "Read with it";
+    use.onclick = async () => { showView("read"); lastSeen = null; await loadModels(); const m = models.find(m => m.id === a.id); if (m) pick(m); };
+    const more = document.createElement("button"); more.className = "btn"; more.textContent = "Continue tuning";
+    more.onclick = () => { $("tBase").value = a.id; $("tPre").value = r.preprocessing ?? $("tPre").value; $("tName").value = r.name + "-more"; };
+    div.append(b, use, more);
+    box.appendChild(div);
+  }
+}
+
 refresh();
 loadPages();
+loadTuning();
+followTuning();
+try { const v = localStorage.getItem("legal-ocr-view"); if (v === "tune") showView("tune"); } catch { }
 </script>
 </body>
 </html>

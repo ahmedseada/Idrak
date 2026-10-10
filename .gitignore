@@ -12,3 +12,4 @@ __pycache__/
 artifacts/
 *.nupkg
 *.snupkg
+samples/Idrak.Samples.LegalOcr/adapters/

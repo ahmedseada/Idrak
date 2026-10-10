@@ -41,6 +41,8 @@ string tinyGemma = Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data"
         Check(ImageTransformPipeline.Parse(bakrianoo.Preprocessing).ToString() == "grayscale,max_width=1024,contrast=1.5", bakrianoo.Preprocessing);
         Check(bakrianoo.Prompt == "Extract details to JSON." && bakrianoo.MaxTokens == 2048, $"{bakrianoo.Prompt}, {bakrianoo.MaxTokens}");
         Check(settings.Weights == "bf16", settings.Weights);
+        Check(settings.Models.Any(m => m.Id == settings.Tuning.Base) && ImageTransformPipeline.Parse(settings.Tuning.Preprocessing).ToString() == bakrianoo.Preprocessing
+              && settings.TrainingData is not null && settings.AdaptersFolder.Length > 0, $"tuning on {settings.Tuning.Base} with {settings.Tuning.Preprocessing}");
     }),
     ("legal reader: a model loads, reads a page as events (the page as it sees it, its text, then the result), and the next one replaces it", () =>
     {
@@ -65,7 +67,7 @@ string tinyGemma = Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data"
     {
         var settings = Settings(("a", tinyGemma)) with
         {
-            Models = [new ReaderModel { Id = "a", Name = "a", Folder = tinyGemma }, new ReaderModel { Id = "ours", Name = "ours", Repo = "google/gemma-3-4b-it" }],
+            Models = [new ReaderModel { Id = "a", Name = "a", Folder = tinyGemma }, new ReaderModel { Id = "ours", Name = "ours", Repo = "google/gemma-3-4b-it", Adapter = Path.Combine(root, "missing") }],
         };
         using var service = Service(settings);
         var ours = service.Models().Single(m => m.Id == "ours");
@@ -100,15 +102,122 @@ string tinyGemma = Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data"
         Check(done.Data["cer"] is { } cer && cer.GetValue<double>() >= 0 && done.Data["expected"]!.GetValue<string>().Contains("محكمة", StringComparison.Ordinal),
             done.Data.ToJsonString());
     }),
-    ("legal api: status, models, pages, a page's image and a read over HTTP, with the JSON the page reads", () =>
+    ("legal tuning: a run on the base model reports its stages and steps, scores CER before and while training, writes the adapter with its preparation, manifest and record; the switch lists it and reads with it", () =>
+    {
+        var settings = TuningSettings("tune-a");
+        using var readers = Service(settings);
+        using var tuning = new TuningService(settings, readers, Adapters(settings), NullLogger<TuningService>.Instance);
+        Load(readers, "a");
+        var started = tuning.Start(new TuneRequest { Name = "first", Base = "a" });
+        Check(started.State == TuningState.Preparing && started.Name == "first", $"{started.State}: {started.Message}");
+        tuning.WaitAsync().GetAwaiter().GetResult();
+        var status = tuning.Status;
+        Check(status.State == TuningState.Finished, $"{status.State}: {status.Message}\n{string.Join("\n", tuning.Log())}");
+        Check(status.Step == status.TotalSteps && status.TotalSteps >= 2 && status.TotalSteps % 2 == 0 && tuning.Points().Count == status.TotalSteps && tuning.Points()[^1].Step == status.TotalSteps,
+            $"{status.Step} of {status.TotalSteps}, {tuning.Points().Count} points");
+        Check(status.CerBefore is >= 0 && status.Cer is >= 0 && status.EvaluationLossBefore is > 0 && status.EvaluationLoss is > 0 && status.Loss is > 0,
+            $"cer {status.CerBefore} -> {status.Cer}, evaluation loss {status.EvaluationLossBefore} -> {status.EvaluationLoss}");
+        Check(tuning.Log().Any(l => l.Contains("training: 3 conversations (", StringComparison.Ordinal)) && tuning.Log().Any(l => l.Contains("before training: CER", StringComparison.Ordinal)),
+            string.Join("\n", tuning.Log()));
+        Check(readers.Status.State == ReaderState.Idle, $"the device given back: {readers.Status.State} {readers.Status.Message}");
+
+        string folder = Path.Combine(root, "tune-a", "first");
+        var record = AdapterStore.Read(folder)!;
+        Check(File.Exists(Path.Combine(folder, "adapter_model.safetensors")) && Idrak.Nlp.TuningManifest.Read(folder)!.BaseModel == Path.GetFullPath(tinyGemma)
+              && Idrak.Nlp.TuningImages.Read(folder)!.Pipeline.ToString() == "grayscale,max_width=16",
+            "the adapter, its manifest and preparation");
+        Check(record is { Base: "a", Prompt: "Extract details to JSON.", Preprocessing: "grayscale,max_width=16", Stopped: false, Steps: > 0, Cer: not null, CerBefore: not null },
+            System.Text.Json.JsonSerializer.Serialize(record));
+
+        var listed = readers.Models().SingleOrDefault(m => m.Id == "adapter:first");
+        Check(listed is { Usable: true, Adapter: not null } && listed.Preprocessing == "grayscale,max_width=16" && listed.About!.Contains("CER", StringComparison.Ordinal),
+            listed?.ToString() ?? "not listed");
+        Load(readers, "adapter:first");
+        var done = Read(readers, Page(24, 32), new ReadRequest(MaxTokens: 3), null)[^1];
+        Check(done.Event == "done" && done.Data["model"]!.GetValue<string>() == "adapter:first", done.Data.ToJsonString());
+
+        // Continue tuning the adapter: its base checkpoint, the adapter trained on.
+        tuning.Start(new TuneRequest { Name = "second", Base = "adapter:first", Epochs = 1, CerPages = 0 });
+        tuning.WaitAsync().GetAwaiter().GetResult();
+        Check(tuning.Status.State == TuningState.Finished && tuning.Log().Any(l => l.Contains("continuing the adapter", StringComparison.Ordinal))
+              && AdapterStore.Read(Path.Combine(root, "tune-a", "second")) is { Base: "adapter:first" } second && second.Steps == status.TotalSteps / 2,
+            $"{tuning.Status.State}: {tuning.Status.Message}");
+    }),
+    ("legal tuning: reading waits while it runs, a second run and a bad setting are refused, stop saves the adapter so far", () =>
+    {
+        var settings = TuningSettings("tune-b") with { Tuning = TuningSettings("tune-b").Tuning with { Epochs = 200, CerPages = 0, CerBefore = false } };
+        using var readers = Service(settings);
+        using var tuning = new TuningService(settings, readers, Adapters(settings), NullLogger<TuningService>.Instance);
+        foreach (var bad in new[] { new TuneRequest { LearningRate = -1, Base = "a" }, new TuneRequest { Name = "a/b", Base = "a" }, new TuneRequest { Base = "nope" },
+                     new TuneRequest { Weights = "fp7", Base = "a" } })
+        {
+            try
+            {
+                tuning.Start(bad);
+                Check(false, $"refused: {bad}");
+            }
+            catch (ArgumentException)
+            {
+            }
+        }
+
+        tuning.Start(new TuneRequest { Name = "long", Base = "a" });
+        var clock = Stopwatch.StartNew();
+        while (tuning.Points().Count == 0 && clock.Elapsed < TimeSpan.FromMinutes(2) && tuning.Running)
+        {
+            Thread.Sleep(10);
+        }
+
+        Check(tuning.Status.State == TuningState.Training && readers.Status.State == ReaderState.Busy, $"{tuning.Status.State}, reader {readers.Status.State}: {tuning.Status.Message}");
+        try
+        {
+            readers.StartLoad("a");
+            Check(false, "loading while tuning must be refused");
+        }
+        catch (InvalidOperationException ex)
+        {
+            Check(ex.Message.Contains("Fine-tuning", StringComparison.Ordinal), ex.Message);
+        }
+
+        var refused = Read(readers, Page(20, 20), new ReadRequest(), null);
+        Check(refused.Count == 1 && refused[0].Data["error"]!.GetValue<string>().Contains("Fine-tuning", StringComparison.Ordinal), refused[0].Data.ToJsonString());
+        try
+        {
+            tuning.Start(new TuneRequest { Name = "other", Base = "a" });
+            Check(false, "a second run must be refused");
+        }
+        catch (InvalidOperationException ex)
+        {
+            Check(ex.Message.Contains("A run is going", StringComparison.Ordinal), ex.Message);
+        }
+
+        Check(tuning.Stop().State == TuningState.Stopping, tuning.Status.State.ToString());
+        tuning.WaitAsync().GetAwaiter().GetResult();
+        var record = AdapterStore.Read(Path.Combine(root, "tune-b", "long"));
+        Check(tuning.Status.State == TuningState.Stopped && record is { Stopped: true, Steps: >= 1 } && record.Steps < record.TotalSteps,
+            $"{tuning.Status.State}: {tuning.Status.Message}, {record?.Steps} of {record?.TotalSteps}");
+        Check(readers.Status.State == ReaderState.Idle, readers.Status.Message);
+        try
+        {
+            tuning.Start(new TuneRequest { Name = "long", Base = "a" });
+            Check(false, "an adapter name taken must be refused");
+        }
+        catch (InvalidOperationException ex)
+        {
+            Check(ex.Message.Contains("exists", StringComparison.Ordinal), ex.Message);
+        }
+    }),
+    ("legal api: status, models, pages, a page's image, a read, an evaluation and the tuning endpoints over HTTP, with the JSON the page reads", () =>
     {
         string data = EvaluationData(2);
-        var settings = Settings(("a", tinyGemma)) with { EvaluationData = data, EvaluationImages = Path.Combine(root, "images.zip") };
+        var settings = Settings(("a", tinyGemma)) with { EvaluationData = data, EvaluationImages = Path.Combine(root, "images.zip"), AdaptersFolder = Path.Combine(root, "api-adapters") };
         var builder = WebApplication.CreateSlimBuilder();
         builder.WebHost.UseUrls("http://127.0.0.1:0");
         builder.Logging.ClearProviders();
         builder.Services.AddSingleton(settings);
+        builder.Services.AddSingleton(Adapters(settings));
         builder.Services.AddSingleton<ReaderService>();
+        builder.Services.AddSingleton<TuningService>();
         builder.Services.AddSingleton<EvaluationPages>();
         builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter()));
         using var app = builder.Build();
@@ -142,6 +251,29 @@ string tinyGemma = Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data"
             Check(body.Contains("event: image", StringComparison.Ordinal) && body.Contains("event: done", StringComparison.Ordinal), body.Length > 400 ? body[..400] : body);
             var bad = http.PostAsJsonAsync("/api/read", new { prompt = "x" }).GetAwaiter().GetResult();
             Check(bad.StatusCode == System.Net.HttpStatusCode.BadRequest, bad.StatusCode.ToString());
+
+            using var evaluated = http.PostAsJsonAsync("/api/pages/evaluate?count=2", new { maxTokens = 2 }).GetAwaiter().GetResult();
+            string evaluation = evaluated.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+            Check(evaluation.Split("event: page").Length == 3 && evaluation.Contains("event: done", StringComparison.Ordinal) && evaluation.Contains("\"meanCer\"", StringComparison.Ordinal),
+                evaluation.Length > 600 ? evaluation[..600] : evaluation);
+
+            var defaults = http.GetFromJsonAsync<JsonObject>("/api/tuning/defaults").GetAwaiter().GetResult()!;
+            Check(defaults["settings"]!["base"]!.GetValue<string>() == "gemma" && defaults["bases"]!.AsArray().Count == 1 && defaults["name"] is not null, defaults.ToJsonString());
+            var run = http.GetFromJsonAsync<JsonObject>("/api/tuning").GetAwaiter().GetResult()!;
+            Check(run["status"]!["state"]!.GetValue<string>() == "Idle" && run["points"]!.AsArray().Count == 0, run.ToJsonString());
+            var adapters = http.GetFromJsonAsync<JsonObject>("/api/adapters").GetAwaiter().GetResult()!;
+            Check(adapters["adapters"]!.AsArray().Count == 0, adapters.ToJsonString());
+            var start = http.PostAsJsonAsync("/api/tuning/start", new { @base = "a" }).GetAwaiter().GetResult();
+            Check(start.StatusCode == System.Net.HttpStatusCode.Conflict && start.Content.ReadAsStringAsync().GetAwaiter().GetResult().Contains("training data", StringComparison.Ordinal),
+                $"no training data: {start.StatusCode}");
+            var badStart = http.PostAsJsonAsync("/api/tuning/start", new { @base = "a", epochs = 0 }).GetAwaiter().GetResult();
+            Check(badStart.StatusCode == System.Net.HttpStatusCode.BadRequest, $"epochs 0: {badStart.StatusCode}");
+
+            using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            using var stream = http.GetAsync("/api/tuning/events?run=-1", HttpCompletionOption.ResponseHeadersRead, cancel.Token).GetAwaiter().GetResult();
+            using var reader = new StreamReader(stream.Content.ReadAsStream(cancel.Token));
+            string first = reader.ReadLine() + "\n" + reader.ReadLine();
+            Check(first.StartsWith("event: status", StringComparison.Ordinal) && first.Contains("\"state\":\"Idle\"", StringComparison.Ordinal), first);
         }
         finally
         {
@@ -184,7 +316,26 @@ LegalOcrSettings Settings(params (string Id, string Folder)[] models) => new()
     Models = [.. models.Select(m => new ReaderModel { Id = m.Id, Name = m.Id, Folder = m.Folder, Preprocessing = "grayscale", MaxTokens = 4 })],
 };
 
-ReaderService Service(LegalOcrSettings settings) => new(settings, NullLogger<ReaderService>.Instance);
+ReaderService Service(LegalOcrSettings settings) => new(settings, Adapters(settings), NullLogger<ReaderService>.Instance);
+
+AdapterStore Adapters(LegalOcrSettings settings) => new(settings, root);
+
+// A tiny run: three training pages, two evaluation pages, two epochs of single-page steps.
+LegalOcrSettings TuningSettings(string adapters)
+{
+    string train = EvaluationData(3, "train.json");
+    string evaluation = EvaluationData(2, "val.json", zipName: "val-images.zip");
+    return Settings(("a", tinyGemma)) with
+    {
+        TrainingData = train, TrainingImages = Path.Combine(root, "images.zip"), EvaluationData = evaluation, EvaluationImages = Path.Combine(root, "val-images.zip"),
+        AdaptersFolder = adapters,
+        Tuning = new TuningDefaults
+        {
+            Base = "a", Weights = "f32", Preprocessing = "grayscale,max_width=16", Epochs = 2, LearningRate = 0.05f, Rank = 2, Alpha = 4, MaxLength = 128, BatchTokens = 32,
+            CerPages = 1, AnswerTokens = 3, CerBefore = true,
+        },
+    };
+}
 
 // Starts loading `id` and waits until the service is ready (or failed).
 void Load(ReaderService service, string id)
@@ -244,9 +395,9 @@ byte[] PageBytes(int height, int width, int seed)
 
 // A ShareGPT data file of `count` pages (LLaMA-Factory's layout: messages with an <image> marker, an "images" list)
 // and their images in images.zip; returns the data file.
-string EvaluationData(int count)
+string EvaluationData(int count, string name = "val.json", string zipName = "images.zip")
 {
-    string zip = Path.Combine(root, "images.zip");
+    string zip = Path.Combine(root, zipName);
     File.Delete(zip);
     using (var archive = ZipFile.Open(zip, ZipArchiveMode.Create))
     {
@@ -269,7 +420,7 @@ string EvaluationData(int count)
         });
     }
 
-    string file = Path.Combine(root, "val.json");
+    string file = Path.Combine(root, name);
     File.WriteAllText(file, records.ToJsonString(), new UTF8Encoding(false));
     return file;
 }
