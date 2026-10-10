@@ -225,7 +225,7 @@ internal sealed unsafe partial class CudaBackend
             }
             else
             {
-                splits = Tune(key, [], formula, _ => { });
+                splits = KnownChoice(key, candidates) ?? formula;
             }
         }
 
@@ -636,7 +636,7 @@ internal sealed unsafe partial class CudaBackend
                 products.Length > 2 ? products[2].Columns : 0, biases);
             int formula = GemvSplitCount(totalBlocks, k);
             var copy = TunedKnown(name) ? null : products.ToArray();
-            wanted = copy is null ? Tune(name, [], formula, _ => { }) : Tune(name, GemvSplitCandidates(k, align), formula, c => Run(copy, c), cold: true);
+            wanted = copy is null ? KnownChoice(name, GemvSplitCandidates(k, align)) ?? formula : Tune(name, GemvSplitCandidates(k, align), formula, c => Run(copy, c), cold: true);
         }
 
         Run(products, wanted);

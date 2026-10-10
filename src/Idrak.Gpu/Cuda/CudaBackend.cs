@@ -1058,7 +1058,7 @@ internal sealed unsafe partial class CudaBackend : Backend
                     }
                     else
                     {
-                        tile = Tune(key, [], gemmTile, _ => { });
+                        tile = KnownChoice(key, [64, 128]) ?? gemmTile;
                     }
 
                     RunTile(tile, cAt);
@@ -1237,7 +1237,7 @@ internal sealed unsafe partial class CudaBackend : Backend
             }
             else
             {
-                splits = Tune(key, [], formula, _ => { });
+                splits = KnownChoice(key, candidates) ?? formula;
             }
         }
 
