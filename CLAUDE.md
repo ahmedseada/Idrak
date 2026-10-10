@@ -2,6 +2,8 @@
 
 These are the owner's standing rules. They hold in every session, after every compaction, and for every agent.
 
+- **Speed and memory first.** They are the library's main goal. A slow or memory-heavy path found in the library is
+  fixed in the library, without asking whether to; an app or sample never works around it.
 - **Card-agnostic.** Nothing is tuned for, or assumes, a specific GPU, card or memory size. Measure the device at run
   time; never hardcode a card, a vendor path or a GB budget in code, comments, tests, docs or advice.
 - **Abstraction always.** New behaviour goes through a contract plus a `SlotTable` registry (decision 10). Keep the
