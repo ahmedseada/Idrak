@@ -146,6 +146,7 @@ internal sealed class NetworkAnalysis
             "groupnorm" => $"group norm, {I("groups")} groups" + ((bool?)step["affine"] == false ? ", no affine" : ""),
             "columnsToSequence" => "columns to a sequence",
             "globalavgpool2d" => "global average pool",
+            "normalize" => "normalize (mean and std per channel)",
             "batchnorm" => "batch norm",
             "layernorm" => "layer norm",
             "dropout" => $"dropout {F("p", 0.5f):0.##}",
@@ -236,7 +237,7 @@ internal sealed class NetworkAnalysis
                 long candidate = op == "gru" && (bool?)step["candidateBias"] == true ? hidden : 0;   // the candidate gate's own recurrent bias
                 return RecurrentInputs(step, d).Sum(x => x * gates * hidden + hidden * gates * hidden + gates * hidden + candidate);
             case "relu" or "tanh" or "sigmoid" or "gelu" or "softmax" or "dropout" or "maxpool2d" or "avgpool2d" or "columnsToSequence" or "globalavgpool2d" or "flatten"
-                or "positional" or "meanOverTime" or "lastStep" or "firstStep" or "reshape" or "upsample" or "adaptiveavgpool2d" or "adaptivemaxpool2d":
+                or "positional" or "meanOverTime" or "lastStep" or "firstStep" or "reshape" or "upsample" or "adaptiveavgpool2d" or "adaptivemaxpool2d" or "normalize":
                 return 0;
             default:
                 return null;
@@ -283,6 +284,8 @@ internal sealed class NetworkAnalysis
                 return RecurrentInputs(step, d).Sum(x => t * (2 * (x + hidden) * gates * hidden + 10 * hidden));
             case "globalavgpool2d" or "meanOverTime":
                 return inElements;
+            case "normalize":
+                return 2 * inElements;                                          // a subtraction and a division per value
             case "flatten" or "reshape" or "lastStep" or "firstStep" or "dropout" or "columnsToSequence":
                 return 0;
             case "relu" or "tanh" or "sigmoid" or "gelu" or "softmax" or "positional":

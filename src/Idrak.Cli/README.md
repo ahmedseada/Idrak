@@ -282,12 +282,12 @@ Fine-tuning language models (`tune`) and training networks from the builder's JS
 |---|---|
 | `idrak tune` | Fine-tune language models (LoRA, QLoRA, DoRA, DPO/ORPO/SimPO); evaluate, chat, export, download, info |
 | `idrak tune init` | Write a commented tune.json (model, data, adapter and training settings) for idrak tune --config |
-| `idrak train` | Train a network from a builder JSON on a CSV or an image folder; writes a model package (.ikm) |
+| `idrak train` | Train a builder JSON network, or fine-tune an image model, on a CSV, image folders or annotated images |
 | `idrak resume` | Continue a training run from its last checkpoint (the remaining epochs, or --epochs N more) |
 | `idrak runs list` (`runs`) | Training runs (from their JSON Lines logs): epochs, best epoch and loss, time, status |
 | `idrak runs show` | One training run: settings, loss curves (text plot), the epochs, best epoch and time |
 | `idrak runs compare` | Training runs side by side: settings, best epoch and loss, time, and their validation curves |
-| `idrak predict` | Run a model package (.ikm) on new rows (CSV, JSON Lines, Parquet) or images and write the predictions |
+| `idrak predict` | Run a model package (.ikm) or an image model on new rows or images: classes, boxes, masks or features |
 | `idrak package` | Bundle a network, its weights, scalers and tokenizer from a folder into one model package (.ikm) |
 | `idrak distill` | Distil a teacher model into a student: its token probabilities (on the fly, or precomputed as top-k logits with `--precompute`) or its written answers (`--generate`) |
 
@@ -297,9 +297,20 @@ idrak tune train qwen chats.jsonl -o adapters/chat -w int4
 idrak train network.json --data houses.csv -t price -o houses.ikm
 idrak train cnn.json --data ./shapes -d vulkan:0    # a folder of class folders of images
 idrak predict houses.ikm -i new-houses.csv -o priced.csv
+idrak predict -P MyFamilies.dll ./detector street/*.jpg --threshold 0.4 -o boxes.csv
+idrak train -P MyFamilies.dll ./detector --data ./coco/train.json --eval ./coco/val.json --augment "flip" --metric coco
 idrak runs list && idrak runs show NAME && idrak resume NAME --epochs 20
 idrak distill --teacher Qwen/Qwen3-8B --teacher-weights int4 --student Qwen/Qwen3-0.6B --data chats.jsonl --alpha 0.8 -o adapters/distilled
 ```
+
+Image models (classifiers, detectors, segmenters, backbones) come from an image model family, which a plug-in registers
+(`-P`); the tool and the library register none, and a family, decoder or head no plug-in registered is refused with its
+registry's message. `idrak predict` reads a model folder, a .safetensors or .onnx file and prints classes (`--top`),
+boxes (`--decoder`, `--threshold`, `--iou`, `--max`), pixels per class (`-o DIR`: mask PNGs) or features (`-o DIR`:
+.npy files); how many images run at once is measured on the device (`--batch N` caps it). `idrak train` reads class
+folders, `images/` and `masks/`, or COCO, YOLO and Pascal VOC annotations (`--data-format`), augments on worker
+threads (`--augment "flip, rotation(degrees=10)"`), and takes `--loss`, `--matcher`, `--metric` (accuracy, miou, coco,
+voc) and `--eval`; a fine-tuned model's weights go to an .ikw that `idrak predict --weights` reads.
 
 #### Fine-tuning with `idrak tune`
 
