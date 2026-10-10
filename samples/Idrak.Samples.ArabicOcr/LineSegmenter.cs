@@ -28,12 +28,10 @@ internal sealed record SegmentationSettings
 /// </summary>
 internal static class LineSegmenter
 {
-    public static readonly double[] Zz = new double[4];
     /// <summary>The lines of <paramref name="page"/>, top to bottom, and the skew undone (degrees).</summary>
     public static (IReadOnlyList<TextLine> Lines, double Skew) Find(ImageData page, SegmentationSettings? settings = null)
     {
         settings ??= new SegmentationSettings();
-        long zt = System.Diagnostics.Stopwatch.GetTimestamp();
         int width = page.Width, height = page.Height;
         var grey = Foreground.Grey(page);                                             // grey once: the foreground is made from it
         var foreground = Foreground.Extract(page.Channels == 1 ? page : new ImageData(grey, 1, height, width));
@@ -51,17 +49,14 @@ internal static class LineSegmenter
         }
 
         float threshold = foreground.Threshold;
-        Zz[0] += System.Diagnostics.Stopwatch.GetElapsedTime(zt).TotalMilliseconds; zt = System.Diagnostics.Stopwatch.GetTimestamp();
         double skew = settings.MaxSkew > 0 ? MeasureSkew(ink, width, height, threshold, settings.MaxSkew) : 0;
         float paper = foreground.Inverted ? 1f : 0f;
-        Zz[1] += System.Diagnostics.Stopwatch.GetElapsedTime(zt).TotalMilliseconds; zt = System.Diagnostics.Stopwatch.GetTimestamp();
         if (skew != 0)
         {
             grey = Shear(grey, width, height, skew, paper);
             ink = Shear(ink, width, height, skew, 0f);
         }
 
-        Zz[2] += System.Diagnostics.Stopwatch.GetElapsedTime(zt).TotalMilliseconds; zt = System.Diagnostics.Stopwatch.GetTimestamp();
         // Rows with ink: at least one pixel in a thousand of the width.
         int minRow = Math.Max(1, width / 1000);
         var rowInk = new int[height];
@@ -137,7 +132,6 @@ internal static class LineSegmenter
             lines.Add(new TextLine(lines.Count + 1, x0, y0, x1 - x0, y1 - y0, new ImageData(crop, 1, y1 - y0, x1 - x0)));
         }
 
-        Zz[3] += System.Diagnostics.Stopwatch.GetElapsedTime(zt).TotalMilliseconds;
         return (lines, skew);
     }
 
