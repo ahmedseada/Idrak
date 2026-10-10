@@ -973,7 +973,7 @@ internal sealed partial class VulkanBackend
         double weightBytes = (double)k * n * (format switch { VulkanKernels.PackedFormat.Int8 => 1, VulkanKernels.PackedFormat.Int4 => 0.5, _ => 2 });
         int maxSplits = (int)Math.Clamp(Math.Min((k + GemvMinChunk - 1) / GemvMinChunk, weightBytes / (4.0 * m * n)), 1, Limits.MaxGroupsY);
         // Formula: the device's width, 32 words, the most splits allowed. Measured: every candidate (GemvCandidates).
-        int most = PowersOfTwo(maxSplits)[^1];
+        int most = LargestPowerOfTwo(maxSplits);
         int fallback = WithWidth(Width, most * 8);
         if (!GemvValid(fallback, perWord, n))
         {
@@ -1338,11 +1338,11 @@ internal sealed partial class VulkanBackend
         // shorter than the capacity counts as the positions each row reads.
         bool windowed = variant.Window > 0 && variant.Window < capacity;
         int span = windowed ? variant.Window : capacity;
-        int fallback = WithWidth(Width, PowersOfTwo(Math.Min(Math.Max(1, span / Width), AttentionMaxSplits(Width, rows, span, dim)))[^1]);
+        int fallback = WithWidth(Width, LargestPowerOfTwo(Math.Min(Math.Max(1, span / Width), AttentionMaxSplits(Width, rows, span, dim))));
         int choice;
         if (AttentionSplits is int forced)
         {
-            choice = WithWidth(Width, PowersOfTwo(Math.Min(Math.Max(1, forced), AttentionMaxSplits(Width, rows, span, dim)))[^1]);
+            choice = WithWidth(Width, LargestPowerOfTwo(Math.Min(Math.Max(1, forced), AttentionMaxSplits(Width, rows, span, dim))));
         }
         else
         {
