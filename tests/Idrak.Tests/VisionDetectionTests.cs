@@ -21,6 +21,7 @@ internal static partial class Tests
         ("vision detection: Hungarian matching matches SciPy's linear_sum_assignment, threshold matching torchvision's Matcher (with and without low-quality matches); the kit's matcher suites pass", MatchingMatchesReferences),
         ("vision detection: COCO mAP (0.5:0.95, 50, 75, small, medium, large, AR100) matches pycocotools, VOC AP (all points and 11) the devkit's voc_eval, mean IoU numpy's confusion matrix; the kit's metric suites pass", MetricsMatchReferences),
         ("vision detection: registries: VisionLosses, BoxMatchers and VisionMetrics name their built-ins and refuse unknown names; an app's loss falls back or is shadowed; RLE counts match pycocotools'", VisionDetectionRegistries),
+        ("vision detection: DetectionObjective: matched, background and ignored candidates scored as written (with and without objectness), gradients against finite differences, Hungarian matching, an image without objects; DetectionHeads refuses an unregistered head", DetectionObjectiveScores),
     ];
 
     private static readonly Lazy<JsonObject> DetectionReference = new(() => JsonNode.Parse(File.ReadAllText(
@@ -439,5 +440,60 @@ internal static partial class Tests
             Check(ObjectMask.DecodeCounts((string)c["counts"]!).SequenceEqual(runs), $"{w} x {h}: decoding pycocotools' counts");
             Check(mask.Rasterize(w, h).SequenceEqual(pixels) && mask.Rasterize(w, h).Count(v => v != 0) == (int)c["area"]!, $"{w} x {h}: rasterized");
         }
+    }
+
+    // One image, one truth (0, 0, 10, 10) of class 1 and three candidates: (0, 0, 10, 9) matched (IoU 0.9), (20, 20, 30, 30)
+    // background (IoU 0), (0, 0, 10, 4.5) ignored (IoU 0.45, between the thresholds 0.4 and 0.5).
+    private static void DetectionObjectiveScores(Device device)
+    {
+        float[] boxes = [0, 0, 10, 9, 20, 20, 30, 30, 0, 0, 10, 4.5f];
+        float[] logits = [0.3f, -0.2f, 1.1f, 0.4f, -0.7f, 0.9f];
+        float[] objectness = [0.5f, -0.25f, 2f];
+        IReadOnlyList<IReadOnlyList<BoundingBox>> truths = [[BoundingBox.FromCorners(0, 0, 10, 10)]];
+        IReadOnlyList<IReadOnlyList<int>> labels = [[1]];
+        static double Bce(float x, float target) => target > 0 ? Math.Log(1 + Math.Exp(-x)) : Math.Log(1 + Math.Exp(x));
+        double FocalRow(int row, bool background = false)
+        {
+            using var scope = new TensorScope();
+            float[] target = row == 0 && !background ? [0, 1] : [0, 0];
+            return VisionLosses.Compute("focal", Tensor.From(logits[(2 * row)..(2 * row + 2)], [1, 2], device), Tensor.From(target, [1, 2], device),
+                new VisionLossOptions { Reduction = LossReduction.Sum }).Item();
+        }
+
+        double box = 1 - 0.9;                                                   // GIoU = IoU: the enclosing box is the union
+        double withObject = box + FocalRow(0) + (Bce(objectness[0], 1) + Bce(objectness[1], 0)) / 2;
+        double without = box + FocalRow(0) + FocalRow(1);
+        using (var scope = new TensorScope())
+        {
+            var candidates = new DetectionCandidates(Tensor.From(boxes, [1, 3, 4], device), Tensor.From(logits, [1, 3, 2], device), Tensor.From(objectness, [1, 3], device));
+            double got = DetectionObjective.Loss(candidates, truths, labels).Item();
+            Check(Math.Abs(got - withObject) < 1e-5, $"with objectness: {got}, expected {withObject}");
+            var bare = new DetectionCandidates(Tensor.From(boxes, [1, 3, 4], device), Tensor.From(logits, [1, 3, 2], device), null);
+            got = DetectionObjective.Loss(bare, truths, labels).Item();
+            Check(Math.Abs(got - without) < 1e-5, $"without objectness: {got}, expected {without}");
+
+            // No objects: every candidate is background, nothing matched (the normalizer is 1).
+            got = DetectionObjective.Loss(bare, [[]], [[]]).Item();
+            double background = Enumerable.Range(0, 3).Sum(r => FocalRow(r, background: true));
+            Check(Math.Abs(got - background) < 1e-5, $"an image without objects: {got}, expected {background}");
+
+            // Hungarian: one candidate per truth, finite.
+            got = DetectionObjective.Loss(candidates, truths, labels, new DetectionObjectiveOptions { Matcher = BoxMatchers.Hungarian, Scale = 30 }).Item();
+            Check(double.IsFinite(got) && got > 0, $"Hungarian matching: {got}");
+
+            ExpectRefusal<ArgumentException>(() => DetectionObjective.Loss(candidates, truths, [[2]]), "each a class below 2", "a label past the classes");
+            ExpectRefusal<ArgumentException>(() => DetectionObjective.Loss(candidates, [.. truths, .. truths], [.. labels, .. labels]), "1 images of candidates", "images disagree");
+        }
+
+        // Gradients reach the boxes, the class logits and the objectness (matching stays put under the small steps).
+        GradCheckAt(device, boxes, [1, 3, 4], b => DetectionObjective.Loss(new DetectionCandidates(b, Tensor.From(logits, [1, 3, 2], device), Tensor.From(objectness, [1, 3], device)),
+            truths, labels), "the objective's gradient on the boxes");
+        GradCheckAt(device, logits, [1, 3, 2], l => DetectionObjective.Loss(new DetectionCandidates(Tensor.From(boxes, [1, 3, 4], device), l, Tensor.From(objectness, [1, 3], device)),
+            truths, labels), "the objective's gradient on the class logits");
+        GradCheckAt(device, objectness, [1, 3], o => DetectionObjective.Loss(new DetectionCandidates(Tensor.From(boxes, [1, 3, 4], device), Tensor.From(logits, [1, 3, 2], device), o),
+            truths, labels), "the objective's gradient on the objectness");
+
+        ExpectRefusal<NotSupportedException>(() => DetectionHeads.Get("nobody"), "Detection head 'nobody' is not registered", "an unregistered head");
+        Check(DetectionHeads.Default("anything") is null, "the library registers no head");
     }
 }
