@@ -317,7 +317,7 @@ internal sealed unsafe partial class CudaBackend : Backend
         _sgdMomentum = Fn("sgd_momentum_f32");
         _adam = Fn("adam_f32");
         _matmul = Fn("matmul_f32");
-        _kernels = PtxKernels.AdvancedNames.Concat(PtxKernels.DecodingNames).Concat(PtxKernels.QuantizedNames).Concat(PtxKernels.DecoderNames).Concat(PtxKernels.RowNames).Concat(PtxKernels.ConvolutionNames).Concat(PtxKernels.ResamplingNames).Concat(PtxKernels.CtcNames).Append("add_dropout_f32").ToDictionary(k => k, Fn);
+        _kernels = PtxKernels.AdvancedNames.Concat(PtxKernels.DecodingNames).Concat(PtxKernels.QuantizedNames).Concat(PtxKernels.DecoderNames).Concat(PtxKernels.RowNames).Concat(PtxKernels.ConvolutionNames).Concat(PtxKernels.ResamplingNames).Concat(PtxKernels.CtcNames).Concat(PtxKernels.RecurrentNames).Append("add_dropout_f32").ToDictionary(k => k, Fn);
     }
 
     public static int DeviceCount => Probe.Value.Count;
