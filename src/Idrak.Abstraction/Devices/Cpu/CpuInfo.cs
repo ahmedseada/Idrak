@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Globalization;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
@@ -188,7 +189,7 @@ internal sealed record CpuInfo
             foreach (var dir in Directory.EnumerateDirectories(Root, "cpu*"))
             {
                 string name = Path.GetFileName(dir);
-                if (!int.TryParse(name.AsSpan(3), out int cpu))
+                if (!int.TryParse(name.AsSpan(3), NumberStyles.Integer, CultureInfo.InvariantCulture, out int cpu))
                 {
                     continue;
                 }
@@ -212,7 +213,7 @@ internal sealed record CpuInfo
             {
                 string Read(string file) => File.Exists(Path.Combine(index, file)) ? File.ReadAllText(Path.Combine(index, file)).Trim() : "";
                 string type = Read("type");
-                if (type == "Instruction" || !int.TryParse(Read("level"), out int level))
+                if (type == "Instruction" || !int.TryParse(Read("level"), NumberStyles.Integer, CultureInfo.InvariantCulture, out int level))
                 {
                     continue;
                 }
@@ -224,7 +225,7 @@ internal sealed record CpuInfo
                     caches.Add(level, bytes, (shared + smt - 1) / smt);
                 }
 
-                if (int.TryParse(Read("coherency_line_size"), out int line) && line > 0)
+                if (int.TryParse(Read("coherency_line_size"), NumberStyles.Integer, CultureInfo.InvariantCulture, out int line) && line > 0)
                 {
                     caches.Line = Math.Max(caches.Line, line);
                 }
@@ -255,7 +256,7 @@ internal sealed record CpuInfo
         foreach (var part in list.Trim().Split(',', StringSplitOptions.RemoveEmptyEntries))
         {
             int dash = part.IndexOf('-');
-            count += dash < 0 ? 1 : int.Parse(part[(dash + 1)..]) - int.Parse(part[..dash]) + 1;
+            count += dash < 0 ? 1 : int.Parse(part[(dash + 1)..], CultureInfo.InvariantCulture) - int.Parse(part[..dash], CultureInfo.InvariantCulture) + 1;
         }
 
         return Math.Max(1, count);
@@ -271,7 +272,7 @@ internal sealed record CpuInfo
             end++;
         }
 
-        if (end == 0 || !long.TryParse(text.AsSpan(0, end), out long value))
+        if (end == 0 || !long.TryParse(text.AsSpan(0, end), NumberStyles.Integer, CultureInfo.InvariantCulture, out long value))
         {
             return 0;
         }
