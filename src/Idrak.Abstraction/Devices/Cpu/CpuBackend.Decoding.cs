@@ -95,27 +95,46 @@ internal sealed partial class CpuBackend
         if (dgamma is not null || dbeta is not null)
         {
             float[]? dg = dgamma is null ? null : D(dgamma), db = dbeta is null ? null : D(dbeta);
+            // Each worker's columns walked row by row (memory order), each column's sums still over the rows in order.
             For(cols, (long)rows * cols * 2, (start, end) =>
             {
-                for (int j = start; j < end; j++)
+                int width = end - start;
+                var sums = ArrayPool<double>.Shared.Rent(2 * width);
+                try
                 {
-                    double sg = 0, sb = 0;
+                    var sg = sums.AsSpan(0, width);
+                    var sb = sums.AsSpan(width, width);
+                    sg.Clear();
+                    sb.Clear();
                     for (int r = 0; r < rows; r++)
                     {
-                        float d = dyv[r * cols + j];
-                        sg += d * ((xv[r * cols + j] - sv[r]) * sv[rows + r]);
-                        sb += d;
+                        var ds = dyv.AsSpan(r * cols + start, width);
+                        var xs = xv.AsSpan(r * cols + start, width);
+                        float mean = sv[r], rstd = sv[rows + r];
+                        for (int j = 0; j < width; j++)
+                        {
+                            float d = ds[j];
+                            sg[j] += d * ((xs[j] - mean) * rstd);
+                            sb[j] += d;
+                        }
                     }
 
-                    if (dg is not null)
+                    for (int j = 0; j < width; j++)
                     {
-                        dg[j] += (float)sg;
-                    }
+                        if (dg is not null)
+                        {
+                            dg[start + j] += (float)sg[j];
+                        }
 
-                    if (db is not null)
-                    {
-                        db[j] += (float)sb;
+                        if (db is not null)
+                        {
+                            db[start + j] += (float)sb[j];
+                        }
                     }
+                }
+                finally
+                {
+                    ArrayPool<double>.Shared.Return(sums);
                 }
             });
         }
