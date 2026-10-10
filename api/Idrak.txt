@@ -13,9 +13,26 @@ public interface Idrak.Data.Abstractions.IBatchSource : System.Collections.Gener
   public (default) int? BatchSize { get; }
   public (default) int? SampleCount { get; }
 
+public interface Idrak.Data.Abstractions.IImageEncoder
+  public System.Collections.Generic.IReadOnlyCollection<string> Extensions { get; }
+  public byte[] Encode(Idrak.Abstraction.Data.ImageData image)
+  public string Name { get; }
+
 public interface Idrak.Data.Abstractions.IScaler
   public void InverseTransform(System.Span<float> data, int columns)
   public void Transform(System.Span<float> data, int columns)
+
+public static class Idrak.Data.Abstractions.ImageEncoders
+  public static Idrak.Data.Abstractions.IImageEncoder For(string path)
+  public static Idrak.Data.Abstractions.IImageEncoder Get(string name)
+  public static Idrak.Data.Abstractions.IImageEncoder? Default(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Extensions { get; }
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string? Origin(string name)
+  public static void Register(Idrak.Data.Abstractions.IImageEncoder encoder)
+  public static void Save(string path, Idrak.Abstraction.Data.ImageData image)
+  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
 public static class Idrak.Data.Abstractions.SampleSources
   public static Idrak.Abstraction.Data.ISampleSource Open(string name, string path, System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null)
