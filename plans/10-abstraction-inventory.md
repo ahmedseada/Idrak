@@ -187,16 +187,16 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 
 ## The device contract (`Backend`)
 
-`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 152 virtual methods, 6 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `HipBackend`, `VulkanBackend`. Each
-operation (134, `Ops`) is a `NameKernel` method, the device's own kernel; `Backend.Name(...)` runs the kernel registered
+`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 156 virtual methods, 6 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `HipBackend`, `VulkanBackend`. Each
+operation (138, `Ops`) is a `NameKernel` method, the device's own kernel; `Backend.Name(...)` runs the kernel registered
 for the device in `Kernels` instead, where there is one (plan 9). The rest is device plumbing: memory, copies, graphs, profiling.
 
 | Device | Methods overridden |
 |---|---|
-| `CpuBackend` | 130 of 162 |
-| `CudaBackend` | 150 of 162 |
-| `HipBackend` | 23 of 162 |
-| `VulkanBackend` | 128 of 162 |
+| `CpuBackend` | 130 of 166 |
+| `CudaBackend` | 161 of 166 |
+| `HipBackend` | 23 of 166 |
+| `VulkanBackend` | 128 of 166 |
 
 | Operation | Kind | Cpu | Cuda | Hip | Vulkan |
 |---|---|---|---|---|---|
@@ -244,8 +244,8 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `BoxIouLossBackwardKernel(7)` | virtual | ✓ |  |  |  |
 | `BoxIouLossKernel(6)` | virtual | ✓ |  |  |  |
 | `BroadcastAxisKernel(6)` | virtual | ✓ | ✓ |  | ✓ |
-| `ClampBackwardKernel(6)` | virtual | ✓ |  |  | ✓ |
-| `ClampKernel(5)` | virtual | ✓ |  |  | ✓ |
+| `ClampBackwardKernel(6)` | virtual | ✓ | ✓ |  | ✓ |
+| `ClampKernel(5)` | virtual | ✓ | ✓ |  | ✓ |
 | `ClassMatchKernel(6)` | virtual | ✓ | ✓ |  |  |
 | `ClipFactorKernel(3)` | virtual | ✓ | ✓ |  | ✓ |
 | `Col2ImKernel(3)` | virtual | ✓ | ✓ |  | ✓ |
@@ -265,7 +265,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `DropoutBackwardKernel(5)` | virtual | ✓ | ✓ |  | ✓ |
 | `DropoutKernel(5)` | virtual | ✓ | ✓ |  | ✓ |
 | `EndCapture(0)` | virtual |  | ✓ |  | ✓ |
-| `ExtremumBackwardKernel(7)` | virtual | ✓ |  |  | ✓ |
+| `ExtremumBackwardKernel(7)` | virtual | ✓ | ✓ |  | ✓ |
 | `FillKernel(3)` | virtual | ✓ | ✓ | ✓ | ✓ |
 | `Float8MatMulKernel(8)` | virtual |  | ✓ |  |  |
 | `Float8PaddedK(1)` | virtual |  | ✓ |  |  |
@@ -284,6 +284,8 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `GroupScaleShiftKernel(8)` | virtual | ✓ | ✓ |  | ✓ |
 | `GruCellBackwardKernel(12)` | virtual | ✓ | ✓ |  |  |
 | `GruCellKernel(10)` | virtual | ✓ | ✓ |  |  |
+| `GruStepBackwardKernel(13)` | virtual |  | ✓ |  |  |
+| `GruStepKernel(10)` | virtual |  | ✓ |  |  |
 | `HistoryPushKernel(5)` | virtual | ✓ | ✓ |  | ✓ |
 | `Im2ColKernel(3)` | virtual | ✓ | ✓ |  | ✓ |
 | `Int4DequantizeKernel(5)` | virtual | ✓ | ✓ |  | ✓ |
@@ -301,6 +303,8 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `LayerNormTrainKernel(8)` | virtual | ✓ | ✓ |  | ✓ |
 | `LstmCellBackwardKernel(12)` | virtual | ✓ | ✓ |  |  |
 | `LstmCellKernel(11)` | virtual | ✓ | ✓ |  |  |
+| `LstmStepBackwardKernel(12)` | virtual |  | ✓ |  |  |
+| `LstmStepKernel(11)` | virtual |  | ✓ |  |  |
 | `MatMulBiasKernel(7)` | virtual |  | ✓ |  | ✓ |
 | `MatMulLowRankKernel(11)` | virtual |  | ✓ |  |  |
 | `MatMulManyKernel(4)` | virtual |  | ✓ |  |  |
@@ -322,8 +326,8 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `PackedMatMulManyKernel(5)` | virtual |  | ✓ |  | ✓ |
 | `PenalizeRowsKernel(13)` | virtual | ✓ | ✓ |  | ✓ |
 | `PermuteKernel(5)` | virtual | ✓ | ✓ |  | ✓ |
-| `PowBackwardKernel(5)` | virtual | ✓ |  |  | ✓ |
-| `PowKernel(4)` | virtual | ✓ |  |  | ✓ |
+| `PowBackwardKernel(5)` | virtual | ✓ | ✓ |  | ✓ |
+| `PowKernel(4)` | virtual | ✓ | ✓ |  | ✓ |
 | `PrefersComposedAttention(12)` | virtual |  | ✓ |  | ✓ |
 | `PrefersPackedMatMul(8)` | virtual |  | ✓ |  |  |
 | `ReleaseCachedMemory(0)` | abstract | ✓ | ✓ | ✓ | ✓ |
@@ -360,8 +364,8 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `UnaryBackwardKernel(6)` | virtual | ✓ | ✓ |  | ✓ |
 | `UnaryKernel(4)` | virtual | ✓ | ✓ | ✓ | ✓ |
 | `Upload(2)` | abstract | ✓ | ✓ | ✓ | ✓ |
-| `WhereBackwardKernel(5)` | virtual | ✓ |  |  | ✓ |
-| `WhereKernel(5)` | virtual | ✓ |  |  | ✓ |
+| `WhereBackwardKernel(5)` | virtual | ✓ | ✓ |  | ✓ |
+| `WhereKernel(5)` | virtual | ✓ | ✓ |  | ✓ |
 
 
 ## Internals of `Idrak` other assemblies use

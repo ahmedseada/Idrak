@@ -7,10 +7,12 @@ using Idrak.Diagnostics;
 namespace Idrak.Layers.Abstractions;
 
 /// <summary>
-/// The time loop of one layer and direction of an LSTM or a GRU as one autograd operation, on the device's fused cell
-/// kernels (<see cref="Backend.LstmCell"/>, <see cref="Backend.GruCell"/> and their gradients). Per step the forward pass
-/// launches two kernels, the recurrent product h_{t-1}·U and the cell, and the backward pass two, the cell's gradient and
-/// dz_t·Uᵀ; the hidden weights' gradient is one product over every step at the end. The composed path (a step of
+/// The time loop of one layer and direction of an LSTM or a GRU as one autograd operation, on the device's step kernels
+/// (<see cref="Backend.LstmStep"/>, <see cref="Backend.GruStep"/> and their gradients: one launch a step, the recurrent
+/// product inside; the gradient reads Uᵀ, copied once a backward pass) or else its fused cell kernels
+/// (<see cref="Backend.LstmCell"/>, <see cref="Backend.GruCell"/> and their gradients: per step the forward pass launches
+/// two kernels, the recurrent product h_{t-1}·U and the cell, and the backward pass two, the cell's gradient and
+/// dz_t·Uᵀ). The hidden weights' gradient is one product over every step at the end. The composed path (a step of
 /// <see cref="RecurrentModule"/>'s cell, about 13 operations, each an autograd node, and twice as many in the backward
 /// pass) stays the reference and the path of devices without the kernels.
 /// </summary>
@@ -44,9 +46,14 @@ internal static class RecurrentSequence
         Tensor? candidateBias = gru ? weights.HiddenBias : null;
         bool record = Autograd.IsEnabled && (projected.RequiresGrad || u.RequiresGrad || candidateBias?.RequiresGrad == true);
 
-        // With batch 0 the kernels only say whether the device has them.
+        // With batch 0 the kernels only say whether the device has them: the step kernels first, then the cell kernels.
         var any = projected.Storage;
-        bool fused = gru
+        bool stepped = gru
+            ? backend.GruStep(any, any, null, any, null, 0, -1, steps, 0, h)
+              && (!record || backend.GruStepBackward(any, any, null, any, any, any, any, 0, -1, -1, steps, 0, h))
+            : backend.LstmStep(any, any, any, any, null, null, 0, -1, steps, 0, h)
+              && (!record || backend.LstmStepBackward(any, any, null, any, any, any, 0, -1, -1, steps, 0, h));
+        bool fused = stepped || gru
             ? backend.GruCell(any, any, null, any, any, null, 0, steps, 0, h)
               && (!record || backend.GruCellBackward(any, any, null, any, any, any, any, 0, -1, steps, 0, h))
             : backend.LstmCell(any, any, any, any, any, null, null, 0, steps, 0, h)
@@ -62,6 +69,23 @@ internal static class RecurrentSequence
         var y = Tensor.Empty([batch, steps, h], device);
         var gates = record ? Tensor.Empty([batch, steps, 4 * h], device, track: false) : null;
         var cells = record && !gru ? Tensor.Empty([batch, steps, h], device, track: false) : null;
+        if (stepped)
+        {
+            using var state = gru ? null : Tensor.Empty([batch, h], device, zeroed: true, track: false);
+            for (int i = 0; i < steps; i++)
+            {
+                int t = reverse ? steps - 1 - i : i;
+                int previous = i == 0 ? -1 : reverse ? t + 1 : t - 1;
+                bool ran = gru
+                    ? backend.GruStep(projected.Storage, u.Storage, candidateBias?.Storage, y.Storage, gates?.Storage, t, previous, steps, batch, h)
+                    : backend.LstmStep(projected.Storage, u.Storage, state!.Storage, y.Storage, gates?.Storage, cells?.Storage, t, previous, steps, batch, h);
+                if (!ran)
+                {
+                    throw new InvalidOperationException($"{backend.Name}: the {(gru ? "GRU" : "LSTM")} step kernel stopped running after it said it runs.");
+                }
+            }
+        }
+        else
         using (var hidden = Tensor.Empty([batch, h], device, zeroed: true, track: false))
         using (var recurrent = Tensor.Empty([batch, width], device, zeroed: true, track: false))
         using (var cell = gru ? null : Tensor.Empty([batch, h], device, zeroed: true, track: false))
@@ -99,14 +123,15 @@ internal static class RecurrentSequence
         }
 
         Tensor[] inputs = candidateBias is null ? [projected, u] : [projected, u, candidateBias];
-        y.Record(name, g => Backward(g, y, projected, u, candidateBias, gates!, cells, h, gru, reverse), inputs);
+        y.Record(name, g => Backward(g, y, projected, u, candidateBias, gates!, cells, h, gru, reverse, stepped), inputs);
         return Tensor.Traced(name, y, start);
     }
 
     // The gradient of the whole loop: the steps from the last taken to the first, each the cell's gradient (dz_t, written
-    // into the projected input's gradient) and dz_t·Uᵀ into the previous step's dh; then dU in one product and a GRU's
-    // candidate bias as column sums.
-    private static void Backward(Tensor g, Tensor y, Tensor projected, Tensor u, Tensor? candidateBias, Tensor gates, Tensor? cells, int h, bool gru, bool reverse)
+    // into the projected input's gradient) and dz_t·Uᵀ into the previous step's dh (`stepped`: one step kernel each, the
+    // later step's dz against Uᵀ inside it); then dU in one product and a GRU's candidate bias as column sums.
+    private static void Backward(Tensor g, Tensor y, Tensor projected, Tensor u, Tensor? candidateBias, Tensor gates, Tensor? cells, int h, bool gru, bool reverse,
+        bool stepped)
     {
         var backend = projected.Backend;
         var device = projected.Device;
@@ -119,16 +144,37 @@ internal static class RecurrentSequence
             using var dzBuffer = projectedGrad is null || projectedBeta != 0f ? Tensor.Empty([batch, steps, width], device, track: false) : null;
             var dz = dzBuffer?.Storage ?? projectedGrad!;
             using var dRecurrent = gru ? Tensor.Empty([batch, steps, width], device, track: false) : null;
-            using var dStep = Tensor.Empty([batch, width], device, track: false);
+            using var dStep = stepped ? null : Tensor.Empty([batch, width], device, track: false);
             using var dHidden = Tensor.Empty([batch, h], device, zeroed: true, track: false);
             using var dCell = gru ? null : Tensor.Empty([batch, h], device, zeroed: true, track: false);
-            for (int i = steps - 1; i >= 0; i--)
+            using var uT = stepped ? Tensor.Empty([width, h], device, track: false) : null;
+            if (uT is not null)
+            {
+                backend.Permute(u.Storage, uT.Storage, [width, h], [1, width], accumulate: false);       // Uᵀ [G·H, H], once
+            }
+
+            for (int i = steps - 1; stepped && i >= 0; i--)
+            {
+                int t = reverse ? steps - 1 - i : i;
+                int previous = i == 0 ? -1 : reverse ? t + 1 : t - 1;
+                int next = i == steps - 1 ? -1 : reverse ? t - 1 : t + 1;
+                bool ran = gru
+                    ? backend.GruStepBackward(gates.Storage, y.Storage, g.Storage, uT!.Storage, dHidden.Storage, dz, dRecurrent!.Storage, t, next, previous, steps,
+                        batch, h)
+                    : backend.LstmStepBackward(gates.Storage, cells!.Storage, g.Storage, uT!.Storage, dCell!.Storage, dz, t, next, previous, steps, batch, h);
+                if (!ran)
+                {
+                    throw new InvalidOperationException($"{backend.Name}: the {(gru ? "GRU" : "LSTM")} step gradient kernel stopped running after it said it runs.");
+                }
+            }
+
+            for (int i = steps - 1; !stepped && i >= 0; i--)
             {
                 int t = reverse ? steps - 1 - i : i;
                 int previous = i == 0 ? -1 : reverse ? t + 1 : t - 1;
                 bool ran = gru
-                    ? backend.GruCellBackward(gates.Storage, y.Storage, g.Storage, dHidden.Storage, dz, dRecurrent!.Storage, dStep.Storage, t, previous, steps, batch, h)
-                    : backend.LstmCellBackward(gates.Storage, cells!.Storage, g.Storage, dHidden.Storage, dCell!.Storage, dz, dStep.Storage, t, previous, steps, batch, h);
+                    ? backend.GruCellBackward(gates.Storage, y.Storage, g.Storage, dHidden.Storage, dz, dRecurrent!.Storage, dStep!.Storage, t, previous, steps, batch, h)
+                    : backend.LstmCellBackward(gates.Storage, cells!.Storage, g.Storage, dHidden.Storage, dCell!.Storage, dz, dStep!.Storage, t, previous, steps, batch, h);
                 if (!ran)
                 {
                     throw new InvalidOperationException($"{backend.Name}: the {(gru ? "GRU" : "LSTM")} cell gradient kernel stopped running after it said it runs.");
@@ -137,7 +183,7 @@ internal static class RecurrentSequence
                 if (i > 0)
                 {
                     // The previous step's dh: dz_t·Uᵀ (a GRU's kernel left its direct part dh·u there to add to).
-                    backend.MatMul(dStep.Storage, u.Storage, dHidden.Storage, batch, h, width, false, true, gru ? 1f : 0f);
+                    backend.MatMul(dStep!.Storage, u.Storage, dHidden.Storage, batch, h, width, false, true, gru ? 1f : 0f);
                 }
             }
 

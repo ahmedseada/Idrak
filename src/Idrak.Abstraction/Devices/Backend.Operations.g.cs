@@ -3315,6 +3315,90 @@ public abstract partial class Backend
     }
 
     /// <summary>
+    /// One time step of <see cref="LstmCellKernel"/> with the recurrent product inside: recurrent[n, k·H + j] = Σ_m h[m] ·
+    /// weights[m, k·H + j] (weights U [H, 4H] row-major; the device fixes the order of the sum, the same on every call) with
+    /// h = output[n, <paramref name="previous"/>, ·], the
+    /// previous step's hidden state (no product when <paramref name="previous"/> is negative: the zero initial state). The
+    /// cell state is read from and written to cell[n, j] in place; h goes to output[n, step, j]; gates and cells as in
+    /// <see cref="LstmCellKernel"/>. One launch a step, where the cell kernel needs a product before it. With
+    /// <paramref name="batch"/> 0 nothing is read or written. Returns false when the device has no such kernel (callers
+    /// then use <see cref="LstmCellKernel"/> after a product).
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.LstmStep"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>LstmStepKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool LstmStep(Storage projected, Storage weights, Storage cell, Storage output, Storage? gates, Storage? cells, int step, int previous, int steps, int batch, int hiddenSize)
+    {
+        return _kernels is null ? LstmStepKernel(projected, weights, cell, output, gates, cells, step, previous, steps, batch, hiddenSize) : LstmStepRegistered(projected, weights, cell, output, gates, cells, step, previous, steps, batch, hiddenSize);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool LstmStepRegistered(Storage projected, Storage weights, Storage cell, Storage output, Storage? gates, Storage? cells, int step, int previous, int steps, int batch, int hiddenSize)
+    {
+        return Kernel(OperationIndex.LstmStep) is OperationKernels.LstmStep kernel ? kernel(this, projected, weights, cell, output, gates, cells, step, previous, steps, batch, hiddenSize) : LstmStepKernel(projected, weights, cell, output, gates, cells, step, previous, steps, batch, hiddenSize);
+    }
+
+    /// <summary>
+    /// The gradient of one step of <see cref="LstmStepKernel"/>, the steps taken from the last to the first: as
+    /// <see cref="LstmCellBackwardKernel"/> with dHidden[n, j] = Σ_g dGates[n, <paramref name="next"/>, g] ·
+    /// weightsT[g, j] (weightsT = Uᵀ [4H, H] row-major: the recurrent part of this step's dh, from the gradient the later
+    /// step wrote; 0 when <paramref name="next"/> is negative, the last step taken), summed as <see cref="LstmStepKernel"/>
+    /// sums its product. Writes dGates[n, step, ·] and dCell[n, j] (in place) only. With <paramref name="batch"/> 0 nothing
+    /// is read or written. Returns false when the device has no such kernel.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.LstmStepBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>LstmStepBackwardKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool LstmStepBackward(Storage gates, Storage cells, Storage? dOutput, Storage weightsT, Storage dCell, Storage dGates, int step, int next, int previous, int steps, int batch, int hiddenSize)
+    {
+        return _kernels is null ? LstmStepBackwardKernel(gates, cells, dOutput, weightsT, dCell, dGates, step, next, previous, steps, batch, hiddenSize) : LstmStepBackwardRegistered(gates, cells, dOutput, weightsT, dCell, dGates, step, next, previous, steps, batch, hiddenSize);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool LstmStepBackwardRegistered(Storage gates, Storage cells, Storage? dOutput, Storage weightsT, Storage dCell, Storage dGates, int step, int next, int previous, int steps, int batch, int hiddenSize)
+    {
+        return Kernel(OperationIndex.LstmStepBackward) is OperationKernels.LstmStepBackward kernel ? kernel(this, gates, cells, dOutput, weightsT, dCell, dGates, step, next, previous, steps, batch, hiddenSize) : LstmStepBackwardKernel(gates, cells, dOutput, weightsT, dCell, dGates, step, next, previous, steps, batch, hiddenSize);
+    }
+
+    /// <summary>
+    /// One time step of <see cref="GruCellKernel"/> with the recurrent product inside, summed as
+    /// <see cref="LstmStepKernel"/> sums it (weights U [H, 3H]); the previous hidden state is output[n,
+    /// <paramref name="previous"/>, ·] (0 when <paramref name="previous"/> is negative), and h goes to output[n, step, j]
+    /// only. With <paramref name="batch"/> 0 nothing is read or written. Returns false when the device has no such kernel.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.GruStep"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>GruStepKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool GruStep(Storage projected, Storage weights, Storage? hiddenBias, Storage output, Storage? gates, int step, int previous, int steps, int batch, int hiddenSize)
+    {
+        return _kernels is null ? GruStepKernel(projected, weights, hiddenBias, output, gates, step, previous, steps, batch, hiddenSize) : GruStepRegistered(projected, weights, hiddenBias, output, gates, step, previous, steps, batch, hiddenSize);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool GruStepRegistered(Storage projected, Storage weights, Storage? hiddenBias, Storage output, Storage? gates, int step, int previous, int steps, int batch, int hiddenSize)
+    {
+        return Kernel(OperationIndex.GruStep) is OperationKernels.GruStep kernel ? kernel(this, projected, weights, hiddenBias, output, gates, step, previous, steps, batch, hiddenSize) : GruStepKernel(projected, weights, hiddenBias, output, gates, step, previous, steps, batch, hiddenSize);
+    }
+
+    /// <summary>
+    /// The gradient of one step of <see cref="GruStepKernel"/>, the steps taken from the last to the first: as
+    /// <see cref="GruCellBackwardKernel"/> with the incoming dh = (Σ_g dRecurrent[n, <paramref name="next"/>, g] ·
+    /// weightsT[g, j] + dHidden[n, j]) + dOutput[n, step, j] (weightsT = Uᵀ [3H, H]; no sum when <paramref name="next"/> is
+    /// negative) and dHidden[n, j] overwritten with this step's direct part dh · u. Writes dGates and dRecurrent at the
+    /// step's row and dHidden only. With <paramref name="batch"/> 0 nothing is read or written. Returns false when the
+    /// device has no such kernel.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.GruStepBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>GruStepBackwardKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool GruStepBackward(Storage gates, Storage output, Storage? dOutput, Storage weightsT, Storage dHidden, Storage dGates, Storage dRecurrent, int step, int next, int previous, int steps, int batch, int hiddenSize)
+    {
+        return _kernels is null ? GruStepBackwardKernel(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, step, next, previous, steps, batch, hiddenSize) : GruStepBackwardRegistered(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, step, next, previous, steps, batch, hiddenSize);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool GruStepBackwardRegistered(Storage gates, Storage output, Storage? dOutput, Storage weightsT, Storage dHidden, Storage dGates, Storage dRecurrent, int step, int next, int previous, int steps, int batch, int hiddenSize)
+    {
+        return Kernel(OperationIndex.GruStepBackward) is OperationKernels.GruStepBackward kernel ? kernel(this, gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, step, next, previous, steps, batch, hiddenSize) : GruStepBackwardKernel(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, step, next, previous, steps, batch, hiddenSize);
+    }
+
+    /// <summary>
     /// Box overlap losses, torchvision's formulas: for each of <paramref name="count"/> pairs of boxes given by their corners
     /// (x1, y1, x2, y2; predicted and target are [count, 4]), losses[i] = 1 - IoU (<see cref="BoxOverlap.IoU"/>), plus the
     /// enclosing box's empty share (GIoU), plus the centres' squared distance over the enclosing box's squared diagonal
