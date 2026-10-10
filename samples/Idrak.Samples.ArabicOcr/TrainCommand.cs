@@ -79,13 +79,25 @@ internal static class TrainCommand
             throw new UsageException($"--augment: {e.Message}");
         }
 
-        var train = LineFiles.Read(data, drafts);
+        // Loading shows where it is: reading tens of thousands of transcriptions and decoding as many images takes a while.
+        var live = new LiveLine(error);
+        var loading = Stopwatch.StartNew();
+        Action<int, int> Phase(string what, string unit) => (done, total) => live.Show(() =>
+        {
+            double seconds = loading.Elapsed.TotalSeconds, rate = done / Math.Max(1e-9, seconds);
+            var left = TimeSpan.FromSeconds(rate > 0 ? (total - done) / rate : 0);
+            return FormattableString.Invariant($"{what} {LiveLine.Bar(done / (double)Math.Max(1, total), 10)} {done:N0}/{total:N0} {unit}")
+                   + FormattableString.Invariant($" | {rate:F0} {unit}/s | {LiveLine.Time(loading.Elapsed)}, {LiveLine.Time(left)} left");
+        }, now: done == total);
+
+        var train = LineFiles.Read(data, drafts, Phase("reading the training transcriptions", "files"));
         if (train.Count == 0)
         {
             throw new UsageException($"{data} has no line images with a transcription ({(drafts ? ".txt, .aligned.txt or .draft.txt" : "a filled .txt; drafts need --include-drafts")}).");
         }
 
-        var evaluation = a.Option("--eval") is { } evalFolder ? LineFiles.Read(evalFolder, drafts: false) : [];
+        loading.Restart();
+        var evaluation = a.Option("--eval") is { } evalFolder ? LineFiles.Read(evalFolder, drafts: false, Phase("reading the held-out transcriptions", "files")) : [];
         var alphabet = train.SelectMany(s => s.Text.EnumerateRunes()).Select(r => r.ToString()).Distinct().Order(StringComparer.Ordinal).ToArray();
         var settings = new RecognizerSettings
         {
@@ -100,8 +112,18 @@ internal static class TrainCommand
 
         using var recognizer = Recognizer.Create(settings, context.Device, seed);
         var clock = Stopwatch.StartNew();
-        var trainLines = Prepare(recognizer, train);
-        var evalLines = evaluation.Select(s => ImageCodecs.Decode(s.Image)).ToArray();
+        loading.Restart();
+        var trainLines = Prepare(recognizer, train, Phase("decoding and preparing the training lines", "lines"));
+        loading.Restart();
+        var evalLines = new ImageData[evaluation.Count];
+        var evalProgress = Phase("decoding the held-out lines", "lines");
+        int decoded = 0;
+        Parallel.For(0, evalLines.Length, ComputeResources.ParallelOptions, i =>
+        {
+            evalLines[i] = ImageCodecs.Decode(evaluation[i].Image);
+            evalProgress(Interlocked.Increment(ref decoded), evalLines.Length);
+        });
+        live.Clear();
         var labels = train.Select(s => recognizer.Encode(s.Text).Labels).ToArray();
         var unknown = new SortedDictionary<string, int>(StringComparer.Ordinal);
         foreach (var sample in evaluation)
@@ -137,7 +159,6 @@ internal static class TrainCommand
 
         using var log = a.Option("--log") is { } logFile ? new JsonLinesLogger(logFile, TelemetryLevel.Training | TelemetryLevel.Batches | TelemetryLevel.Devices) : null;
         using var subscription = log is null ? null : Telemetry.Subscribe(log);
-        var live = new LiveLine(error);
         void Say(string line)
         {
             live.Clear();
@@ -361,9 +382,10 @@ internal static class TrainCommand
     }
 
     // The lines decoded and prepared once (in parallel), kept as bytes (a quarter of the floats).
-    private static StoredLine[] Prepare(Recognizer recognizer, IReadOnlyList<LineSample> samples)
+    private static StoredLine[] Prepare(Recognizer recognizer, IReadOnlyList<LineSample> samples, Action<int, int> progress)
     {
         var lines = new StoredLine[samples.Count];
+        int done = 0;
         Parallel.For(0, samples.Count, ComputeResources.ParallelOptions, i =>
         {
             var prepared = recognizer.Prepare(ImageCodecs.Decode(samples[i].Image));
@@ -374,6 +396,7 @@ internal static class TrainCommand
             }
 
             lines[i] = new StoredLine(bytes, prepared.Width);
+            progress(Interlocked.Increment(ref done), samples.Count);
         });
         return lines;
     }
