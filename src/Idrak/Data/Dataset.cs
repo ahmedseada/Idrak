@@ -2,7 +2,9 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Globalization;
+using System.Numerics;
 using System.Runtime.InteropServices;
+using System.Text;
 using Idrak.Data.Abstractions;
 
 namespace Idrak.Data;
@@ -226,23 +228,38 @@ public sealed class Dataset : ISampleSource
     /// <exception cref="FormatException">A value is not a number; the message names the line and column.</exception>
     public static Dataset LoadCsv(string path, CsvOptions options)
     {
-        string text = File.ReadAllText(path);
-        return ParseCsv(text, Lines(text, alsoCarriageReturn: true), options, path);
+        // The file's bytes, parsed as bytes (rule 74); a UTF-16 or UTF-32 file (a byte order mark says so) is decoded
+        // first, as File.ReadAllText decodes it.
+        byte[] bytes = File.ReadAllBytes(path);
+        if (bytes is [0xFE, 0xFF, ..] or [0xFF, 0xFE, ..] or [0, 0, 0xFE, 0xFF, ..])
+        {
+            using var reader = new StreamReader(new MemoryStream(bytes), Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+            string text = reader.ReadToEnd();
+            return ParseCsv(text, Lines(text.AsSpan(), alsoCarriageReturn: true), options, path);
+        }
+
+        var utf8 = new ArraySegment<byte>(bytes, bytes is [0xEF, 0xBB, 0xBF, ..] ? 3 : 0, bytes is [0xEF, 0xBB, 0xBF, ..] ? bytes.Length - 3 : bytes.Length);
+        return ParseCsv(null, utf8, Lines<byte>(utf8, alsoCarriageReturn: true), options, path);
     }
 
     /// <summary>Parses CSV text already in memory (see <see cref="LoadCsv"/>).</summary>
-    public static Dataset ParseCsv(string text, CsvOptions options) => ParseCsv(text, Lines(text, alsoCarriageReturn: false), options, "text");
+    public static Dataset ParseCsv(string text, CsvOptions options) => ParseCsv(text, Lines(text.AsSpan(), alsoCarriageReturn: false), options, "text");
+
+    private static Dataset ParseCsv(string text, List<Range> lines, CsvOptions options, string source) => ParseCsv(text, default, lines, options, source);
 
     // Where each line starts and ends, rather than a string per line. Lines end at \r\n or \n, as string.Split(["\r\n", "\n"]) splits
-    // them, or also at a lone \r with no empty line after the last break, as File.ReadAllLines splits them.
-    private static List<Range> Lines(string text, bool alsoCarriageReturn)
+    // them, or also at a lone \r with no empty line after the last break, as File.ReadAllLines splits them. The text is
+    // characters or UTF-8 bytes (a line break is the same unit in both).
+    private static List<Range> Lines<T>(ReadOnlySpan<T> text, bool alsoCarriageReturn)
+        where T : unmanaged, IEquatable<T>, IBinaryInteger<T>
     {
+        T cr = T.CreateTruncating('\r'), lf = T.CreateTruncating('\n');
         var lines = new List<Range>();
         int start = 0;
         while (true)
         {
-            var rest = text.AsSpan(start);
-            int found = alsoCarriageReturn ? rest.IndexOfAny('\r', '\n') : rest.IndexOf('\n');
+            var rest = text[start..];
+            int found = alsoCarriageReturn ? rest.IndexOfAny(cr, lf) : rest.IndexOf(lf);
             if (found < 0)
             {
                 if (!alsoCarriageReturn || start < text.Length)
@@ -254,7 +271,7 @@ public sealed class Dataset : ISampleSource
             }
 
             int end = start + found;
-            if (!alsoCarriageReturn && end > start && text[end - 1] == '\r')
+            if (!alsoCarriageReturn && end > start && text[end - 1] == cr)
             {
                 lines.Add(start..(end - 1));
             }
@@ -264,17 +281,20 @@ public sealed class Dataset : ISampleSource
             }
 
             start = end + 1;
-            if (alsoCarriageReturn && text[end] == '\r' && start < text.Length && text[start] == '\n')
+            if (alsoCarriageReturn && text[end] == cr && start < text.Length && text[start] == lf)
             {
                 start++;
             }
         }
     }
 
-    private static Dataset ParseCsv(string text, List<Range> lines, CsvOptions options, string source)
+    // The CSV in `text`, or (when it is null) in the UTF-8 bytes `utf8`; `lines` are ranges of either.
+    private static Dataset ParseCsv(string? text, ArraySegment<byte> utf8, List<Range> lines, CsvOptions options, string source)
     {
+        bool Blank(int line) => text is not null ? text.AsSpan()[lines[line]].IsWhiteSpace() : CsvRow.IsBlank(utf8.AsSpan()[lines[line]]);
+
         int first = 0;
-        while (first < lines.Count && text.AsSpan()[lines[first]].IsWhiteSpace())
+        while (first < lines.Count && Blank(first))
         {
             first++;
         }
@@ -284,7 +304,7 @@ public sealed class Dataset : ISampleSource
             throw new FormatException($"{source} is empty.");
         }
 
-        string[] header = SplitLine(text[lines[first]], options.Delimiter);
+        string[] header = SplitLine(text is not null ? text[lines[first]] : Encoding.UTF8.GetString(utf8.AsSpan()[lines[first]]), options.Delimiter);
         if (options.HasHeader)
         {
             first++;
@@ -297,7 +317,7 @@ public sealed class Dataset : ISampleSource
         int Resolve(string column)
         {
             int index = Array.FindIndex(header, h => string.Equals(h, column, StringComparison.OrdinalIgnoreCase));
-            if (index < 0 && int.TryParse(column, out int numeric) && numeric >= 0 && numeric < header.Length)
+            if (index < 0 && int.TryParse(column, NumberStyles.Integer, CultureInfo.InvariantCulture, out int numeric) && numeric >= 0 && numeric < header.Length)
             {
                 index = numeric;
             }
@@ -323,7 +343,7 @@ public sealed class Dataset : ISampleSource
         var rows = new List<int>(lines.Count - first);
         for (int i = first; i < lines.Count; i++)
         {
-            if (!text.AsSpan()[lines[i]].IsWhiteSpace())
+            if (!Blank(i))
             {
                 rows.Add(i);
             }
@@ -347,30 +367,13 @@ public sealed class Dataset : ISampleSource
         void ParseRows() => Parallel.For(0, count, ComputeResources.ParallelOptions, () => new float[header.Length], (row, _, values) =>
         {
             int lineIndex = rows[row];
-            var line = text.AsSpan()[lines[lineIndex]];
-            int column = 0;
-            foreach (var range in line.Split(options.Delimiter))
+            if (text is not null)
             {
-                if (column >= values.Length)
-                {
-                    throw new FormatException($"{source} line {lineIndex + 1}: more than {values.Length} fields.");
-                }
-
-                var field = line[range].Trim().Trim('"');
-                if (parsed[column])
-                {
-                    if (!float.TryParse(field, NumberStyles.Float, options.Culture, out values[column]))
-                    {
-                        throw new FormatException($"{source} line {lineIndex + 1}, column '{header[column]}': '{field}' is not a number.");
-                    }
-                }
-
-                column++;
+                CsvRow.Parse(text.AsSpan()[lines[lineIndex]], options.Delimiter, options.Culture, parsed, header, values, source, "line", lineIndex + 1);
             }
-
-            if (column != values.Length)
+            else
             {
-                throw new FormatException($"{source} line {lineIndex + 1}: expected {values.Length} fields, found {column}.");
+                CsvRow.Parse(utf8.AsSpan()[lines[lineIndex]], options.Delimiter, options.Culture, parsed, header, values, source, "line", lineIndex + 1);
             }
 
             for (int j = 0; j < f; j++)

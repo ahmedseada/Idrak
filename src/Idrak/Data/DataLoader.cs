@@ -293,9 +293,10 @@ public sealed class DataLoader : IBatchSource
         }
 
         var random = new Random(SampleSeed(_transformSeed, epoch, sample));
-        foreach (var transform in Transforms)
+        var transforms = Transforms;
+        for (int i = 0; i < transforms.Count; i++)                                   // per sample: no enumerator
         {
-            transform.Apply(features, targets, _featureShape, random);
+            transforms[i].Apply(features, targets, _featureShape, random);
         }
     }
 

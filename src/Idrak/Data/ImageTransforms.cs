@@ -145,15 +145,7 @@ public sealed class RandomShift(int maxPixels, float fill = 0f) : ISampleTransfo
             {
                 var plane = features.Slice(p * h * w, h * w);
                 plane.CopyTo(scratch);
-                for (int y = 0; y < h; y++)
-                {
-                    int sy = y - dy;
-                    for (int x = 0; x < w; x++)
-                    {
-                        int sx = x - dx;
-                        plane[y * w + x] = (uint)sy < (uint)h && (uint)sx < (uint)w ? scratch[sy * w + sx] : Fill;
-                    }
-                }
+                ShiftPlane<float>(scratch.AsSpan(0, h * w), plane, w, h, dx, dy, Fill);
             }
         }
         finally
@@ -200,18 +192,31 @@ public sealed class RandomShift(int maxPixels, float fill = 0f) : ISampleTransfo
         var result = new T[values.Length];
         for (int p = 0; p < values.Length / (w * h); p++)
         {
-            for (int y = 0; y < h; y++)
-            {
-                int sy = y - dy;
-                for (int x = 0; x < w; x++)
-                {
-                    int sx = x - dx;
-                    result[p * w * h + y * w + x] = (uint)sy < (uint)h && (uint)sx < (uint)w ? values[p * w * h + sy * w + sx] : fill;
-                }
-            }
+            ShiftPlane<T>(values.AsSpan(p * w * h, w * h), result.AsSpan(p * w * h, w * h), w, h, dx, dy, fill);
         }
 
         return result;
+    }
+
+    // One plane moved by (dx, dy) from `source` into `target`, uncovered values `fill`: each row is one copy of the
+    // source row's covered part and a fill on either side (not a bounds test per pixel).
+    private static void ShiftPlane<T>(ReadOnlySpan<T> source, Span<T> target, int w, int h, int dx, int dy, T fill)
+    {
+        int from = Math.Clamp(dx, 0, w), to = Math.Clamp(w + dx, 0, w);                   // the x with x - dx inside the row
+        for (int y = 0; y < h; y++)
+        {
+            var row = target.Slice(y * w, w);
+            int sy = y - dy;
+            if ((uint)sy >= (uint)h || from >= to)
+            {
+                row.Fill(fill);
+                continue;
+            }
+
+            row[..from].Fill(fill);
+            source.Slice(sy * w + from - dx, to - from).CopyTo(row[from..to]);
+            row[to..].Fill(fill);
+        }
     }
 }
 
