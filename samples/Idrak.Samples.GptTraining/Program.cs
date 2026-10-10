@@ -26,6 +26,7 @@
 // (<out>/last.ikw and best.ikw with a .json beside each). Text cleaning (clean_corpus.py) is not reproduced: pass the
 // cleaned text the script wrote (--clean-out) with --skip-clean.
 
+using System.Buffers.Binary;
 using System.Diagnostics;
 using System.IO.MemoryMappedFiles;
 using System.Text;
@@ -670,11 +671,12 @@ internal sealed unsafe class TokenFile : IDisposable
     /// <summary>x = ids[offset .. offset + n), y = ids[offset + 1 .. offset + n + 1).</summary>
     public void Read(long offset, Span<float> x, Span<float> y)
     {
+        // The file is little-endian (EncodeCorpus writes the low byte first); a big-endian machine swaps each id.
         var ids = new ReadOnlySpan<ushort>(_base + offset * 2, x.Length + 1);
         for (int i = 0; i < x.Length; i++)
         {
-            x[i] = ids[i];
-            y[i] = ids[i + 1];
+            x[i] = BitConverter.IsLittleEndian ? ids[i] : BinaryPrimitives.ReverseEndianness(ids[i]);
+            y[i] = BitConverter.IsLittleEndian ? ids[i + 1] : BinaryPrimitives.ReverseEndianness(ids[i + 1]);
         }
     }
 
@@ -697,9 +699,11 @@ internal sealed class RuneTokenizer(List<string> itos) : ITokenizer
     {
         int unknown = _stoi.TryGetValue(" ", out int space) ? space : 0;
         var ids = new List<int>(text.Length);
+        var lookup = _stoi.GetAlternateLookup<ReadOnlySpan<char>>();                      // by the rune's chars: no string a character
+        Span<char> pair = stackalloc char[2];
         foreach (var rune in text.EnumerateRunes())
         {
-            ids.Add(_stoi.TryGetValue(rune.ToString(), out int id) ? id : unknown);
+            ids.Add(lookup.TryGetValue(pair[..rune.EncodeToUtf16(pair)], out int id) ? id : unknown);
         }
 
         return ids;
