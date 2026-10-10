@@ -624,8 +624,10 @@ public sealed record Idrak.Nlp.FineTuningProgress : System.IEquatable<Idrak.Nlp.
   public int TotalSteps { get; init; }
 
 public static class Idrak.Nlp.FineTuningSchedules
+  public static System.Collections.Generic.IReadOnlyList<string> Names { get; }
   public static System.Func<Idrak.Abstraction.Training.Optimizer, int, Idrak.Abstraction.Training.LearningRateScheduler> Constant(float warmupFraction = 0f)
   public static System.Func<Idrak.Abstraction.Training.Optimizer, int, Idrak.Abstraction.Training.LearningRateScheduler> Cosine(float warmupFraction = 0.03f, float minLearningRate = 0f)
+  public static System.Func<Idrak.Abstraction.Training.Optimizer, int, Idrak.Abstraction.Training.LearningRateScheduler> Create(string name, float warmupFraction = 0.03f, float minLearningRate = 0f, float decayFraction = 0.2f)
   public static System.Func<Idrak.Abstraction.Training.Optimizer, int, Idrak.Abstraction.Training.LearningRateScheduler> Linear(float warmupFraction = 0.03f, float minLearningRate = 0f)
   public static System.Func<Idrak.Abstraction.Training.Optimizer, int, Idrak.Abstraction.Training.LearningRateScheduler> WarmupStableDecay(float warmupFraction = 0.03f, float decayFraction = 0.2f, float minLearningRate = 0f)
 
