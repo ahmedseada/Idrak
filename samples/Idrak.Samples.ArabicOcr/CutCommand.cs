@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Diagnostics;
 using System.Text.Json.Nodes;
 
 namespace Idrak.Samples.ArabicOcr;
@@ -70,8 +71,11 @@ internal static class CutCommand
         Directory.CreateDirectory(folder);
 
         var report = new JsonArray();
-        int linesTotal = 0, created = 0, drafted = 0, aligned = 0, kept = 0;
-        foreach (var page in Pages.Read(a.Words, images).Take(a.Integer("--limit", int.MaxValue, 1)))
+        int linesTotal = 0, created = 0, drafted = 0, aligned = 0, kept = 0, done = 0, limit = a.Integer("--limit", int.MaxValue, 1);
+        int? total = Pages.Count(a.Words) is { } count ? Math.Min(count, limit) : null;
+        var live = new LiveLine(context.Error);
+        var clock = Stopwatch.StartNew();
+        foreach (var page in Pages.Read(a.Words, images).Take(limit))
         {
             string? truth = page.Truth ?? (truths is not null && truths.TryGetValue(page.Image.Hash, out var known) ? known.Truth : null);
             var (lines, skew) = LineSegmenter.Find(page.Decode(), segmentation);
@@ -155,7 +159,11 @@ internal static class CutCommand
                              + (pageKept > 0 ? $", {pageKept} corrected kept" : "")
                              + (fresh.Count > 0 ? $", {fresh.Count} drafts ({pageAligned} aligned to the page's text)" : "")
                              + (truth is null && reader is not null && truthFile is not null ? ", no known text for this page" : "");
+            live.Clear();
             context.Say(summary);
+            done++;
+            live.Show(() => EvalCommand.Progress("cutting", done, total, clock.Elapsed)
+                            + (aligned + drafted > 0 ? FormattableString.Invariant($" | {aligned / (double)(aligned + drafted):P0} of the drafts aligned so far") : ""));
             report.Add(new JsonObject
             {
                 ["name"] = page.Name, ["source"] = page.Source, ["lines"] = files.Count, ["skew_degrees"] = skew, ["corrected_kept"] = pageKept,
@@ -163,6 +171,7 @@ internal static class CutCommand
             });
         }
 
+        live.Clear();
         context.Say($"{linesTotal} lines in {Path.GetFullPath(folder)}: {kept} corrected kept, {created} new empty .txt, {aligned} aligned drafts, {drafted} drafts");
         if (context.Json)
         {
