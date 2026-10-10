@@ -29,7 +29,7 @@ public static partial class PowerSource
                 return GetSystemPowerStatus(out var status) && status.ACLineStatus == 0 ? "battery" : "ac";
             }
 
-            if (OperatingSystem.IsLinux())
+            if (OperatingSystem.IsLinux() || OperatingSystem.IsAndroid())
             {
                 return Linux("/sys/class/power_supply");
             }
