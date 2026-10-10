@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Buffers;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -744,24 +745,50 @@ internal sealed partial class CpuBackend
         }
     }
 
+    // Floats a kernel keeps on the stack (1 KB); larger scratch is pooled.
+    private const int StackFloats = 256;
+
     public override void SumAxisKernel(Storage x, Storage y, int outer, int dim, int inner, float scale, bool accumulate)
     {
         float[] xv = D(x), yv = D(y);
         For(outer, (long)outer * dim * inner, (start, end) =>
         {
-            Span<float> acc = inner <= 4096 ? stackalloc float[inner] : new float[inner];
-            for (int o = start; o < end; o++)
+            float[]? rented = inner > StackFloats ? ArrayPool<float>.Shared.Rent(inner) : null;
+            Span<float> acc = (rented is null ? stackalloc float[StackFloats] : rented)[..inner];
+            try
             {
-                acc.Clear();
-                for (int d = 0; d < dim; d++)
+                for (int o = start; o < end; o++)
                 {
-                    AddInPlace(acc, xv.AsSpan((o * dim + d) * inner, inner));
-                }
+                    acc.Clear();
+                    if (inner < Vector<float>.Count)
+                    {
+                        // Runs shorter than a vector (a sum along the last axis: one value each) add in place, in the same
+                        // order, without a call and two spans per value.
+                        for (int d = 0; d < dim; d++)
+                        {
+                            var run = xv.AsSpan((o * dim + d) * inner, inner);
+                            for (int i = 0; i < run.Length; i++)
+                            {
+                                acc[i] += run[i];
+                            }
+                        }
+                    }
+                    else
+                    {
+                        for (int d = 0; d < dim; d++)
+                        {
+                            AddInPlace(acc, xv.AsSpan((o * dim + d) * inner, inner));
+                        }
+                    }
 
-                var target = yv.AsSpan(o * inner, inner);
-                for (int i = 0; i < inner; i++)
+                    ScaleInto(yv.AsSpan(o * inner, inner), acc, scale, accumulate);
+                }
+            }
+            finally
+            {
+                if (rented is not null)
                 {
-                    target[i] = accumulate ? target[i] + scale * acc[i] : scale * acc[i];
+                    ArrayPool<float>.Shared.Return(rented);
                 }
             }
         });
@@ -777,14 +804,38 @@ internal sealed partial class CpuBackend
                 var source = gv.AsSpan(o * inner, inner);
                 for (int d = 0; d < dim; d++)
                 {
-                    var target = dv.AsSpan((o * dim + d) * inner, inner);
-                    for (int i = 0; i < inner; i++)
-                    {
-                        target[i] += scale * source[i];
-                    }
+                    ScaleInto(dv.AsSpan((o * dim + d) * inner, inner), source, scale, accumulate: true);
                 }
             }
         });
+    }
+
+    // target = scale · source, or target + scale · source: whole vectors, then the rest; every value rounds the product
+    // and then the sum, as the scalar expression does (no fused multiply-add).
+    private static void ScaleInto(Span<float> target, ReadOnlySpan<float> source, float scale, bool accumulate)
+    {
+        var tv = MemoryMarshal.Cast<float, Vector<float>>(target);
+        var sv = MemoryMarshal.Cast<float, Vector<float>>(source);
+        var s = new Vector<float>(scale);
+        if (accumulate)
+        {
+            for (int i = 0; i < tv.Length; i++)
+            {
+                tv[i] += s * sv[i];
+            }
+        }
+        else
+        {
+            for (int i = 0; i < tv.Length; i++)
+            {
+                tv[i] = s * sv[i];
+            }
+        }
+
+        for (int i = tv.Length * Vector<float>.Count; i < target.Length; i++)
+        {
+            target[i] = accumulate ? target[i] + scale * source[i] : scale * source[i];
+        }
     }
 
     // ------------------------------------------------------------ element-wise kernels
