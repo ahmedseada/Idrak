@@ -276,10 +276,10 @@ and call `ModelCache.Touch` so `idrak list` shows the last use by chat, run and 
 |---|---|---|
 | `idrak tune ...` | The former `idrak-tune` as a subcommand: LoRA, QLoRA, DoRA, DPO/ORPO/SimPO, optimizers and schedules | 2 |
 | `idrak tune init` | Writes a commented `tune.json` for a model and dataset (from `suggest` when available) | 2 |
-| `idrak train SPEC.json --data FILE` | Trains a network from a builder JSON and a CSV, image folder or (later) a dataset loader; writes a model package (`.ikm`) | 2 |
+| `idrak train SPEC.json\|MODEL --data FILE` | Trains a network from a builder JSON on a CSV, class folders, image and mask folders or annotated images (COCO, YOLO, VOC), or fine-tunes an image model from a plug-in's family; writes a model package (`.ikm`) or the fine-tuned weights (`.ikw`) | 2 |
 | `idrak resume RUN` | Continues a run from its checkpoint | 3 |
 | `idrak runs list/show/compare` | Training runs from their JSON Lines logs: loss curves (text plot), best epoch, settings, time | 3 |
-| `idrak predict MODEL.ikm --input FILE` | Runs a trained package on new rows (CSV or JSON Lines) and writes predictions | 2 |
+| `idrak predict MODEL IMAGES... \| --input FILE` | Runs a trained package on new rows (CSV or JSON Lines), or an image model (a package or a plug-in's family) on images: classes, boxes, masks or features | 2 |
 | `idrak package --model DIR --out MODEL.ikm` | Bundles a network, its scalers and tokenizer into one model package | 3 |
 | `idrak distill --teacher A --student B --data FILE` | Knowledge distillation (plans/plug-in.md, "Teacher pattern"): the teacher's token probabilities on the fly, or precomputed as top-k logits (`--precompute FILE`, then `--teacher FILE`), or its written answers (`--generate`); `--temperature`, `--alpha`, `--top-k` and tune's options. Done (feature-distillation) | 3 |
 
@@ -332,8 +332,50 @@ grayscale, vision options) unless the command line gives its own; an adapter tun
 error before any weight is read. An unregistered family stops `idrak tune` with the registry's message (and "load its
 plug-in with -P") before the data is read.
 
+Image models in `idrak predict` and `idrak train` (plan 13, step 7; `Commands/Train/ImagePredict.cs`,
+`ImageTraining.cs`, `ImageModelSupport.cs`). The tool names registries only (`ImageModelFamilies`, `DetectionDecoders`,
+`DetectionHeads`, `VisionLosses`, `BoxMatchers`, `VisionMetrics`, `Augmentations`, `AnnotationFormats`, `ImageEncoders`);
+every family, decoder and head comes from a plug-in (`-P`), and a name no registry holds exits 1 with the registry's
+message and "Load its plug-in with -P (--plugin)."
+
+- `idrak predict MODEL IMAGE|FOLDER|GLOB...` (or `-i`, repeatable): MODEL is a folder (config.json with safetensors, or
+  one .onnx file), a .safetensors or .onnx file, read through `ImageModels.Load` and its family's preprocessing; or a
+  package `idrak train` wrote for a detector or segmenter (resized to its input, as trained). Folders are searched with
+  their subfolders for the registered codecs' extensions. Per task: classification (best class, probability and `--top
+  N`, default 5), detection (`--decoder NAME`, `--threshold` 0.25, `--iou` 0.5, `--max` 100; boxes in the image's
+  pixels), segmentation (pixels and share per class; `-o DIR` writes a mask PNG per image, its grey level the class),
+  features (shape, size and norm; `-o DIR` writes a .npy per image, `-j` without `-o` gives the values). `-o FILE` for
+  classes and boxes writes rows (.csv, .jsonl, .json; one per box). `--weights FILE` reads the .ikw `idrak train` wrote
+  over the checkpoint's. Images whose preprocessing gives one size run as one batch; how many at once is measured on the
+  device (the first batch is one image; its peak memory against half the free memory the device reports sets the rest,
+  and a batch the device has no room for is halved and run again); `--batch N` is a ceiling instead. `--format csv|md`
+  and `-j` as everywhere; the existing package path (rows) is unchanged.
+- `idrak train SPEC.json|MODEL --data PATH`: an image run when MODEL is a checkpoint, when an image option is given, when
+  the network's output is [classes, h, w], or when the data is image and mask folders or annotations a format reads.
+  `--data-format auto|folder|masks|coco|yolo|voc|...` (any `AnnotationFormats` name), `--eval PATH` (read as `--data`;
+  otherwise `--validation` is held out), `--augment "flip, rotation(degrees=10), ..."` (an `Augmentations` pipeline, run
+  on worker threads by `AugmentedImageLoader`, whose workers and batches ahead are measured from the CPU threads and the
+  free memory), `--task classify|segment|detect` (default from the model or the output shape; `--decoder` detects),
+  `--loss NAME` (cross-entropy or a `VisionLosses` name; giou for boxes), `--matcher NAME` (`BoxMatchers`; detection),
+  `--metric NAME` (accuracy for classes, else a `VisionMetrics` name: miou, coco, voc, voc07; scored on the evaluation
+  data at the end, in the summary, `training.json` and `-j`), `--decoder NAME` (the `DetectionDecoders` entry and its
+  `DetectionHeads` training side, which reads the outputs as differentiable candidates; `DetectionObjective` matches and
+  scores them). Classification reads class folders; segmentation image and mask folders (`classes.txt`) or annotations
+  (masks or boxes painted as pixel classes, background 0); detection annotations. A fine-tuned family keeps its own
+  normalization (applied on the device to the loader's [0, 1] pixels) and writes its weights (.ikw); a builder network
+  writes a package whose `training.json` names the task, classes and decoder. Out of device memory, the step is split into
+  micro-batches whose gradients add up, halved again as needed. run.json keeps the image options ("image"), so `idrak
+  resume` continues an image run (with its plug-in given again).
+- New in the library for it: `ImageEncoders` (core, `Idrak.Data.Abstractions`: "png" and "netpbm" writers, the pair of
+  `ImageCodecs`), `DetectionHeads` and `DetectionObjective` (Idrak.Vision). `explain`/`viz` describe every builder step
+  (`normalize` added); `idrak kernels` lists the convolution, pooling, resampling, CTC and detection-loss operations.
+- Tests: "cli vision" (4: predict with the test plug-in's classifier, grid detector, ONNX segmenter and backbone against
+  PyTorch's references and the library; train a classifier with `--augment`, fine-tune the plug-in's classifier, train a
+  segmenter with `--metric miou` and `--loss dice`, fine-tune the grid detector on COCO with YOLO evaluation data and
+  `--metric coco`, `--matcher hungarian`; refusals) and "vision detection: DetectionObjective".
+
 Gaps (library): the optimizer state and learning-rate schedule are not checkpointed, so `resume` continues from the
-weights with a fresh optimizer; there is no image decoding in the library (the tool reads 8-bit PNG, BMP and Netpbm itself, with one decoder shared with suggest);
+weights with a fresh optimizer; image files are read and written through the library's `ImageCodecs` and `ImageEncoders` (the tool's own decoder is gone);
 writing Parquet is not in the library (`data convert` reads it, writes JSON Lines, JSON, CSV or TSV); `distill` has no
 vocabulary mapping (teacher and student must share a tokenizer for logits; `--generate` works across them); `tune init` writes the
 library's defaults until `idrak suggest` can size them; idrak tune loads base weights as int8, int4 or bf16 only (not

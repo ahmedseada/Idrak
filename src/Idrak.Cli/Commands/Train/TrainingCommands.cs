@@ -17,7 +17,7 @@ internal sealed class TrainCommand : Command
 {
     public override string Name => "train";
 
-    public override string Summary => "Train a network from a builder JSON, or fine-tune an image model, on a CSV, image folders or annotated images";
+    public override string Summary => "Train a builder JSON network, or fine-tune an image model, on a CSV, image folders or annotated images";
 
     public override string Usage => """
         SPEC.json|MODEL --data FILE|FOLDER [-t COL]... [-o OUT] [options]
@@ -478,7 +478,7 @@ internal sealed class PredictCommand : Command
 {
     public override string Name => "predict";
 
-    public override string Summary => "Run a model package (.ikm) or an image model (classes, boxes, masks, features) on new rows or images and write the predictions";
+    public override string Summary => "Run a model package (.ikm) or an image model on new rows or images: classes, boxes, masks or features";
 
     public override string Usage => """
         MODEL [IMAGE|FOLDER|GLOB...] [-i FILE|FOLDER] [-o OUT] [options]
