@@ -609,7 +609,9 @@ var transformer = new Sequential
 ```
 
 Use `LSTM(..., returnSequences: true)` or `GRU` for per-step outputs, with `bidirectional: true` and `layers` for both
-directions and stacked layers. `Losses.Ctc` trains a sequence reader without aligned labels, and `CtcDecoders` reads its
+directions and stacked layers. On the CPU and CUDA their time loop runs as one operation on fused cell kernels (two
+launches per step forward and two backward, only the gates kept for training); other devices compose each step.
+`Losses.Ctc` trains a sequence reader without aligned labels, and `CtcDecoders` reads its
 outputs (best path or prefix beam search). `MultiHeadAttention(dim, heads, causal: true)`
 masks future positions for autoregressive models. Setting `Trainer.MaxGradientNorm` clips gradients,
 which recurrent networks usually need.

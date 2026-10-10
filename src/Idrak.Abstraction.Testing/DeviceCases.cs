@@ -33,6 +33,7 @@ public static partial class DeviceCases
         new("images: resampling with per-channel normalization, floats and Pillow's 8-bit passes (shrink, enlarge, one axis kept), against plain loops", ResizeNormalizeCase, random: true),
         new("image resampling: nearest and bilinear interpolation (corners aligned or not, up, down and odd ratios), adaptive average and max pooling, their gradients, against plain loops", Resampling, random: true),
         new("sequence losses: CTC loss and its gradient, against every alignment listed (both layouts, empty and repeated labels, impossible alignments)", SequenceLosses, random: true),
+        new("recurrent cells: an LSTM and a GRU step and their gradients (forward and reverse steps, the first step, with and without saved gates, dOutput and the candidate bias), against plain loops", RecurrentCells, random: true),
         new("detection losses: IoU, GIoU, DIoU and CIoU box losses and the sigmoid focal loss against torchvision's formulas, and their gradients against central differences", DetectionLosses, random: true),
         new("layout: permutations, axis sums and broadcasts", Layout, random: true),
         new("optimizer steps: SGD, Adam, 8-bit Adam and fused AdamW", OptimizerSteps, random: true),
