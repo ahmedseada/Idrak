@@ -107,6 +107,29 @@ internal static partial class Tests
             Check(fromZip.Messages[0].Parts is [ChatImage first, ChatText { Text: " and " }, ChatImage second] && first.Equals(a) && second.Equals(b),
                 $"images from the zip, by full name and under its one top folder: {string.Join(", ", fromZip.Messages[0].Parts)}");
             Check(Directory.GetFileSystemEntries(folder, "*", SearchOption.AllDirectories).Order().SequenceEqual(before), "nothing unpacked to disk");
+            // Paths from the machine the data was made on: found by their longest trailing part naming one entry or file.
+            string pages = Path.Combine(folder, "pages.zip");
+            using (var archive = ZipFile.Open(pages, ZipArchiveMode.Create))
+            {
+                archive.CreateEntryFromFile(Path.Combine(images, "a.png"), "downloaded_images/pdf_images/0012/page_013.png");
+                archive.CreateEntryFromFile(Path.Combine(images, "b.jpg"), "downloaded_images/pdf_images/0013/page_013.png");
+            }
+
+            string foreign = Path.Combine(data, "foreign.jsonl");
+            File.WriteAllLines(foreign, [Record("<image> <image>", "two", ["/workspace/pdf_images/0012/page_013.png", "C:\\work\\pdf_images\\0013\\page_013.png"]).ToJsonString()]);
+            var fromPages = format.Read(foreign, new TuningDataOptions { Images = pages }).Single();
+            Check(fromPages.Messages[0].Parts is [ChatImage p1, ChatText, ChatImage p2] && p1.Equals(a) && p2.Equals(b), $"other machines' paths in a zip: {string.Join(", ", fromPages.Messages[0].Parts)}");
+            string folderRoot = Path.Combine(folder, "unzipped");
+            Directory.CreateDirectory(Path.Combine(folderRoot, "pdf_images", "0012"));
+            File.Copy(Path.Combine(images, "a.png"), Path.Combine(folderRoot, "pdf_images", "0012", "page_013.png"));
+            string foreignOne = Path.Combine(data, "foreign-one.jsonl");
+            File.WriteAllLines(foreignOne, [Record("<image>", "one", ["/workspace/pdf_images/0012/page_013.png"]).ToJsonString()]);
+            Check(format.Read(foreignOne, new TuningDataOptions { Images = folderRoot }).Single().Messages[0].Parts[0] is ChatImage f1 && f1.Equals(a), "another machine's path under a folder");
+            string vague = Path.Combine(data, "vague.jsonl");
+            File.WriteAllLines(vague, [Record("<image>", "x", ["/elsewhere/page_013.png"]).ToJsonString()]);
+            var several = Failure<FileNotFoundException>(() => format.Read(vague, new TuningDataOptions { Images = pages }).ToList());
+            Check(several.Message.Contains("'/page_013.png' (in several entries)", StringComparison.Ordinal), $"a name several entries end in finds none: {several.Message}");
+
             string pickled = Path.Combine(data, "pickled.jsonl");
             File.WriteAllLines(pickled, [Record("<image>", "x", ["downloaded_images/model.pkl"]).ToJsonString()]);
             var refused = Failure<InvalidDataException>(() => format.Read(pickled, new TuningDataOptions { Images = zip }).ToList());

@@ -19,7 +19,8 @@ public sealed record EvaluationPageInfo(int Index, string Name, string? Prompt, 
 /// </summary>
 public sealed class EvaluationPages(LegalOcrSettings settings)
 {
-    private readonly Lazy<IReadOnlyList<EvaluationPage>> _pages = new(() => Read(settings), LazyThreadSafetyMode.ExecutionAndPublication);
+    private readonly Lock _lock = new();
+    private IReadOnlyList<EvaluationPage>? _pages;
 
     /// <summary>Whether the settings name a data file that exists.</summary>
     public bool Configured => settings.EvaluationData is { } file && File.Exists(file);
@@ -27,8 +28,42 @@ public sealed class EvaluationPages(LegalOcrSettings settings)
     /// <summary>Where the pages come from, for the page.</summary>
     public string? Source => settings.EvaluationData;
 
-    /// <summary>The pages (empty when none are configured).</summary>
-    public IReadOnlyList<EvaluationPage> All => Configured ? _pages.Value : [];
+    /// <summary>Why the data file could not be read (a missing image, a bad record), or null.</summary>
+    public string? Error { get; private set; }
+
+    /// <summary>
+    /// The pages (empty when none are configured, or when the file could not be read: <see cref="Error"/> says why, and
+    /// the next call reads it again).
+    /// </summary>
+    public IReadOnlyList<EvaluationPage> All
+    {
+        get
+        {
+            if (!Configured)
+            {
+                return [];
+            }
+
+            lock (_lock)
+            {
+                if (_pages is null)
+                {
+                    try
+                    {
+                        _pages = Read(settings);
+                        Error = null;
+                    }
+                    catch (Exception ex) when (ex is IOException or InvalidDataException or NotSupportedException or UnauthorizedAccessException)
+                    {
+                        Error = ex.Message;
+                        return [];
+                    }
+                }
+
+                return _pages;
+            }
+        }
+    }
 
     /// <summary>The page at <paramref name="index"/>, or null.</summary>
     public EvaluationPage? Get(int index) => index >= 0 && index < All.Count ? All[index] : null;

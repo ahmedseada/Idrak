@@ -134,6 +134,7 @@
       </div>
       <div id="pagesBox" class="hidden">
         <label>Or an evaluation page (<span id="pagesSource"></span>)</label>
+        <div class="error hidden" id="pagesError" style="margin-bottom:6px;word-break:break-word"></div>
         <input type="text" id="pagesFilter" placeholder="Filter by name or text">
         <div class="pages" id="pages" style="margin-top:6px"></div>
       </div>
@@ -425,6 +426,8 @@ async function loadPages() {
   pages = r.pages;
   $("pagesSource").textContent = `${pages.length} in ${r.source}`;
   $("pagesBox").classList.remove("hidden");
+  $("pagesError").classList.toggle("hidden", !r.error);
+  $("pagesError").textContent = r.error ? "The evaluation pages could not be read: " + r.error : "";
   $("evaluateCard").classList.remove("hidden");
   renderPages();
 }
