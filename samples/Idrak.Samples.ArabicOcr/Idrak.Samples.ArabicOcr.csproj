@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Reading document images into text (Arabic first, any script): an application on Idrak's public API. As an app
+       references Idrak: the packages (in this repository they come from the clone itself, IdrakFromSource in
+       samples/Directory.Build.props). The vision-language reader's family is the Gemma 3 plug-in, which the app registers
+       itself; the line recognizer is the app's own network. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Idrak.Samples.ArabicOcr</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Idrak" Version="$(IdrakVersion)" />
+    <PackageReference Include="Idrak.Nlp" Version="$(IdrakVersion)" />
+    <PackageReference Include="Idrak.Vision" Version="$(IdrakVersion)" />
+    <ProjectReference Include="..\Gemma3Vision\Idrak.Gemma3Vision\Idrak.Gemma3Vision.csproj" />
+  </ItemGroup>
+
+  <!-- The app's tests drive its commands in process. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Idrak.Samples.ArabicOcr.Tests" />
+  </ItemGroup>
+
+</Project>
