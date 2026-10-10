@@ -426,7 +426,12 @@ public static partial class DeviceCases
     private static void Normalization(DeviceCaseContext c)
     {
         var b = c.Backend;
-        foreach (var (outer, groups, inner) in new[] { (2, 1, 1), (2, 3, 5), (c.Size(2, 8), c.Size(1, 16), c.Size(1, 64)) })
+
+        // Small groups, then groups of tens of thousands of elements (batch norm over N·H·W: devices may split a group
+        // across blocks), rows of 37 and single elements among them; (Large) a group of half a million.
+        (int, int, int)[] shapes = [(2, 1, 1), (2, 3, 5), (c.Size(2, 8), c.Size(1, 16), c.Size(1, 64)), (3, 2, 6007), (700, 3, 37), (20000, 2, 1),
+            .. c.Large ? [(16, 3, 1 << 15)] : Array.Empty<(int, int, int)>()];
+        foreach (var (outer, groups, inner) in shapes)
         {
             int n = outer * groups * inner;
             var x = Random(c, n, 3f);

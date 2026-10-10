@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Globalization;
 using System.Text;
 
 namespace Idrak.Gpu.Cuda;
@@ -60,12 +61,36 @@ internal static partial class PtxKernels
 
         var conv = ConvScalars.Select(s => ("u32", s)).ToArray();
 
-        // dw[i] += Σ_s part[s · count + i], splits in order.
-        Elementwise(sb, "conv_split_reduce_f32", ["part", "dw"], [("u32", "count"), ("u32", "splits")], """
+        // dw[i] += Σ_s part[s · count + i], splits in order: eight splits' loads at a time, each into its own register (rule
+        // 80), then the rest one by one.
+        var eight = new StringBuilder();
+        for (int u = 0; u < 8; u++)
+        {
+            eight.AppendLine(CultureInfo.InvariantCulture, $"""
+                mul.wide.u32 %rd{1 + u}, %r6, 4;
+                add.u64 %rd{1 + u}, %b_part, %rd{1 + u};
+                ld.global.f32 %f{2 + u}, [%rd{1 + u}];
+                add.u32 %r6, %r6, %s_count;
+                """);
+        }
+
+        for (int u = 0; u < 8; u++)
+        {
+            eight.AppendLine(CultureInfo.InvariantCulture, $"add.f32 %f1, %f1, %f{2 + u};");
+        }
+
+        Elementwise(sb, "conv_split_reduce_f32", ["part", "dw"], [("u32", "count"), ("u32", "splits")], $"""
             ld.global.f32 %f1, [%a_dw];
             mov.u32 %r5, 0;
             mov.u32 %r6, %i;
-            SPLIT:
+            and.b32 %r7, %s_splits, 0xFFFFFFF8;
+            EIGHT:
+            setp.ge.u32 %p1, %r5, %r7;
+            @%p1 bra ONE;
+            {eight}
+            add.u32 %r5, %r5, 8;
+            bra EIGHT;
+            ONE:
             setp.ge.u32 %p1, %r5, %s_splits;
             @%p1 bra SPLIT_END;
             mul.wide.u32 %rd1, %r6, 4;
@@ -74,7 +99,7 @@ internal static partial class PtxKernels
             add.f32 %f1, %f1, %f2;
             add.u32 %r6, %r6, %s_count;
             add.u32 %r5, %r5, 1;
-            bra SPLIT;
+            bra ONE;
             SPLIT_END:
             st.global.f32 [%a_dw], %f1;
             """);
@@ -669,45 +694,57 @@ internal static partial class PtxKernels
     // ------------------------------------------------------------------ the implicit products
 
     // One implicit product kernel (see the file's comment): blocked (4 × 4 outputs a thread, 64 × 64 tiles) or tiled (one
-    // output a thread, 16 × 16 tiles); 256 threads, (tx, ty) = (tid % 16, tid / 16).
+    // output a thread, 16 × 16 tiles); 256 threads, (tx, ty) = (tid % 16, tid / 16). A step stages 16 terms of the sum of
+    // both operands: each thread loads its elements into registers of their own, then stores them (rule 80). A thread
+    // keeps one term of each operand's sum: A's rows ty + 16·j at term tx; B's columns tx + 16·j at term ty, except the
+    // weight gradient's, whose columns ty + 16·j at term tx let consecutive threads read consecutive positions (rule 83;
+    // its tiled B tile is stored [term][column] with rows of 17, so those stores fall in different banks). What a thread's
+    // rows and columns need of the indices is worked out once (rule 85); a step decomposes each operand's term once.
     private static void ConvProduct(StringBuilder sb, string name, ConvPass pass, bool blocked)
     {
+        var invariant = CultureInfo.InvariantCulture;
         string[] pointers = pass switch
         {
             ConvPass.Forward => ["x", "w", "bias", "y"],
             ConvPass.Input => ["dy", "w", "dx"],
             _ => ["x", "dy", "dw", "part"],
         };
-        int edge = blocked ? ConvBlockedEdge : ConvTileEdge, per = blocked ? 4 : 1, sharedLength = blocked ? ConvStep * ConvStride : ConvTileEdge * ConvTileEdge;
+        bool weight = pass == ConvPass.Weight;
+        int edge = blocked ? ConvBlockedEdge : ConvTileEdge, per = blocked ? 4 : 1, slots = blocked ? 4 : 1;
+        int bStride = blocked ? ConvStride : weight ? ConvTileEdge + 1 : ConvTileEdge;
+        int aLength = blocked ? ConvStep * ConvStride : ConvTileEdge * ConvTileEdge, bLength = blocked ? ConvStep * ConvStride : ConvStep * bStride;
         var p = new StringBuilder();
-        p.AppendLine($".visible .entry {name}(");
+        p.AppendLine(invariant, $".visible .entry {name}(");
         p.AppendLine(string.Join(",\n", pointers.Select(q => $"    .param .u64 p_{q}").Concat(ConvScalars.Select(s => $"    .param .u32 p_{s}"))));
         p.AppendLine(")");
         p.AppendLine("{");
         p.AppendLine("    .reg .pred %p<16>;");
+        p.AppendLine("    .reg .pred %unit;");
         p.AppendLine("    .reg .f32 %f<32>;");
         p.AppendLine("    .reg .f32 %acc<16>;");
+        p.AppendLine("    .reg .f32 %va<4>, %vb<4>;");
         p.AppendLine("    .reg .b32 %r<64>;");
         p.AppendLine("    .reg .b64 %rd<16>;");
+        p.AppendLine("    .reg .b64 %ra<4>, %rb<4>;");
         p.AppendLine("    .reg .u32 " + string.Join(", ", ConvScalars.Select(s => $"%s_{s}")) + ";");
         p.AppendLine("    .reg .u32 %area, %ohow, %hw, %fg, %cg, %patch, %batch, %bi, %n, %q, %sp, %rows, %cols, %k0, %k1, %t, %me, %tx, %ty, %rowBase, %colBase;");
-        p.AppendLine("    .reg .u32 %sA, %sB, %aRead, %bRead;");
-        p.AppendLine("    .reg .u32 %lr<4>, %lka<4>, %lcol<4>, %lkb<4>, %lsa<4>, %lsb<4>;");
+        p.AppendLine("    .reg .u32 %sA, %sB, %aRead, %bRead, %lka, %lkb, %kka, %kkb, %qa, %xb, %abase, %bbase, %khd, %kwd, %ohs, %ows;");
+        p.AppendLine("    .reg .u32 %lr<4>, %lcol<4>, %lsa<4>, %lsb<4>, %ar<4>, %ao<4>, %bc<4>, %bh<4>, %bw<4>, %bo<4>;");
         p.AppendLine("    .reg .u64 " + string.Join(", ", pointers.Select(q => $"%g_{q}")) + ";");
-        p.AppendLine($"    .shared .align 4 .f32 As[{sharedLength}];");
-        p.AppendLine($"    .shared .align 4 .f32 Bs[{sharedLength}];");
+        p.AppendLine(invariant, $"    .shared .align 4 .f32 As[{aLength}];");
+        p.AppendLine(invariant, $"    .shared .align 4 .f32 Bs[{bLength}];");
         foreach (string s in ConvScalars)
         {
-            p.AppendLine($"    ld.param.u32 %s_{s}, [p_{s}];");
+            p.AppendLine(invariant, $"    ld.param.u32 %s_{s}, [p_{s}];");
         }
 
         foreach (string q in pointers)
         {
-            p.AppendLine($"    ld.param.u64 %g_{q}, [p_{q}];");
-            p.AppendLine($"    cvta.to.global.u64 %g_{q}, %g_{q};");
+            p.AppendLine(invariant, $"    ld.param.u64 %g_{q}, [p_{q}];");
+            p.AppendLine(invariant, $"    cvta.to.global.u64 %g_{q}, %g_{q};");
         }
 
-        p.AppendLine($"""
+        p.AppendLine(invariant, $"""
                 mul.lo.u32 %area, %s_KH, %s_KW;
                 mul.lo.u32 %ohow, %s_OH, %s_OW;
                 mul.lo.u32 %hw, %s_H, %s_W;
@@ -723,102 +760,80 @@ internal static partial class PtxKernels
                 mul.lo.u32 %colBase, %r1, {edge};
                 mov.u32 %sA, As;
                 mov.u32 %sB, Bs;
+                setp.eq.u32 %unit, %s_SH, 1;
+                setp.eq.and.u32 %unit, %s_SW, 1, %unit;
             """);
 
-        // Where each thread's staged elements come from and go: blocked, element l = tid + 256·j of each tile; tiled, (ty, tx).
-        if (blocked)
-        {
-            for (int j = 0; j < 4; j++)
-            {
-                p.AppendLine($"""
-                        add.u32 %r1, %me, {j * ConvThreads};
-                        shr.u32 %lr{j}, %r1, 4;
-                        and.b32 %lka{j}, %r1, 15;
-                        and.b32 %lcol{j}, %r1, 63;
-                        shr.u32 %lkb{j}, %r1, 6;
-                        mad.lo.u32 %r2, %lka{j}, {ConvStride}, %lr{j};
-                        shl.b32 %r2, %r2, 2;
-                        add.u32 %lsa{j}, %sA, %r2;
-                        mad.lo.u32 %r2, %lkb{j}, {ConvStride}, %lcol{j};
-                        shl.b32 %r2, %r2, 2;
-                        add.u32 %lsb{j}, %sB, %r2;
-                    """);
-            }
-
-            p.AppendLine("""
-                    shl.b32 %r2, %ty, 2;
-                    add.u32 %aRead, %sA, %r2;
-                    shl.b32 %r2, %tx, 2;
-                    add.u32 %bRead, %sB, %r2;
-                """);
-        }
-        else
-        {
-            p.AppendLine($"""
-                    mov.u32 %lr0, %ty;
-                    mov.u32 %lka0, %tx;
-                    mov.u32 %lcol0, %tx;
-                    mov.u32 %lkb0, %ty;
-                    shl.b32 %r2, %me, 2;
-                    add.u32 %lsa0, %sA, %r2;
-                    add.u32 %lsb0, %sB, %r2;
-                    mul.lo.u32 %r2, %ty, {ConvTileEdge * 4};
-                    add.u32 %aRead, %sA, %r2;
-                    shl.b32 %r2, %tx, 2;
-                    add.u32 %bRead, %sB, %r2;
-                """);
-        }
-
-        p.AppendLine(pass switch
-        {
-            ConvPass.Weight => "    mul.lo.u32 %batch, %s_G, %s_splits;",
-            _ => "    mul.lo.u32 %batch, %s_N, %s_G;",
-        });
-        p.AppendLine("""
-                mov.u32 %bi, %ctaid.z;
-            BATCH:
-                setp.ge.u32 %p1, %bi, %batch;
-                @%p1 bra DONE;
-            """);
+        // The product's rows and columns (and, but for the weight gradient's splits, its sum) are the same for every entry.
         p.AppendLine(pass switch
         {
             ConvPass.Forward => """
-                    div.u32 %n, %bi, %s_G;
-                    rem.u32 %q, %bi, %s_G;
                     mov.u32 %rows, %fg;
                     mov.u32 %cols, %ohow;
                     mov.u32 %k0, 0;
                     mov.u32 %k1, %patch;
                 """,
             ConvPass.Input => """
-                    div.u32 %n, %bi, %s_G;
-                    rem.u32 %q, %bi, %s_G;
                     mov.u32 %rows, %cg;
                     mov.u32 %cols, %hw;
                     mov.u32 %k0, 0;
                     mul.lo.u32 %k1, %fg, %area;
                 """,
-            _ => $"""
-                    div.u32 %q, %bi, %s_splits;
-                    rem.u32 %sp, %bi, %s_splits;
+            _ => """
                     mov.u32 %rows, %fg;
                     mov.u32 %cols, %patch;
-                    mul.lo.u32 %r1, %ohow, %s_N;
-                    add.u32 %r2, %r1, %s_splits;
-                    sub.u32 %r2, %r2, 1;
-                    div.u32 %r2, %r2, %s_splits;
-                    add.u32 %r2, %r2, {ConvStep - 1};
-                    and.b32 %r2, %r2, 0xFFFFFFF0;
-                    mul.lo.u32 %k0, %sp, %r2;
-                    min.u32 %k0, %k0, %r1;
-                    add.u32 %k1, %k0, %r2;
-                    min.u32 %k1, %k1, %r1;
                 """,
         });
 
+        // The staged elements of this thread: A's rows %lr at term %lka, B's columns %lcol at term %lkb, and their places in
+        // shared memory (A [term][row], B [term][column]; the tiled A [row][term]).
+        string termB = weight ? "%tx" : "%ty", columnB = weight ? "%ty" : "%tx";
+        p.AppendLine(invariant, $"""
+                mov.u32 %lka, %tx;
+                mov.u32 %lkb, {termB};
+            """);
+        for (int j = 0; j < slots; j++)
+        {
+            string aPlace = blocked ? string.Create(invariant, $"mad.lo.u32 %r2, %lka, {ConvStride}, %lr{j};")
+                : string.Create(invariant, $"mad.lo.u32 %r2, %lr{j}, {ConvTileEdge}, %lka;");
+            p.AppendLine(invariant, $"""
+                    add.u32 %lr{j}, %ty, {16 * j};
+                    add.u32 %lcol{j}, {columnB}, {16 * j};
+                    {aPlace}
+                    shl.b32 %r2, %r2, 2;
+                    add.u32 %lsa{j}, %sA, %r2;
+                    mad.lo.u32 %r2, %lkb, {bStride}, %lcol{j};
+                    shl.b32 %r2, %r2, 2;
+                    add.u32 %lsb{j}, %sB, %r2;
+                """);
+        }
+
+        string aRow = blocked ? "shl.b32 %r2, %ty, 2;" : string.Create(invariant, $"mul.lo.u32 %r2, %ty, {ConvTileEdge * 4};");
+        p.AppendLine(invariant, $"""
+                {aRow}
+                add.u32 %aRead, %sA, %r2;
+                shl.b32 %r2, %tx, 2;
+                add.u32 %bRead, %sB, %r2;
+            """);
+
+        // Once per thread: each staged row's and column's part of the operands' indices.
+        for (int j = 0; j < slots; j++)
+        {
+            p.AppendLine(RowSetup(pass, j));
+            p.AppendLine(ColumnSetup(pass, j));
+        }
+
+        p.AppendLine(weight ? "    mul.lo.u32 %batch, %s_G, %s_splits;" : "    mul.lo.u32 %batch, %s_N, %s_G;");
+        p.AppendLine("""
+                mov.u32 %bi, %ctaid.z;
+            BATCH:
+                setp.ge.u32 %p1, %bi, %batch;
+                @%p1 bra DONE;
+            """);
+        p.AppendLine(EntrySetup(pass));
         for (int i = 0; i < per * per; i++)
         {
-            p.AppendLine($"    mov.f32 %acc{i}, {Zero};");
+            p.AppendLine(invariant, $"    mov.f32 %acc{i}, {Zero};");
         }
 
         int step = blocked ? ConvStep : ConvTileEdge;
@@ -827,34 +842,35 @@ internal static partial class PtxKernels
             STEP:
                 setp.ge.u32 %p2, %t, %k1;
                 @%p2 bra STORE;
+                add.u32 %kka, %t, %lka;
+                setp.lt.u32 %p10, %kka, %k1;
             """);
-        int loads = blocked ? 4 : 1;
-        for (int j = 0; j < loads; j++)
+        p.AppendLine(TermSetup(pass));
+
+        // Every load first, each into its own register, then the stores.
+        string aPointer = weight ? "%g_dy" : "%g_w";
+        for (int j = 0; j < slots; j++)
         {
-            p.AppendLine($"""
-                    add.u32 %r40, %rowBase, %lr{j};
-                    add.u32 %r41, %t, %lka{j};
-                    mov.f32 %f1, {Zero};
-                    setp.lt.u32 %p3, %r40, %rows;
-                    setp.lt.and.u32 %p3, %r41, %k1, %p3;
-                    @!%p3 bra A_SKIP_{j};
+            p.AppendLine(invariant, $"""
+                    setp.lt.u32 %p3, %ar{j}, %rows;
+                    and.pred %p3, %p3, %p10;
+                    add.u32 %r40, %abase, %ao{j};
+                    mul.wide.u32 %ra{j}, %r40, 4;
+                    add.u64 %ra{j}, {aPointer}, %ra{j};
+                    mov.f32 %va{j}, {Zero};
+                    @%p3 ld.global.f32 %va{j}, [%ra{j}];
                 """);
-            p.AppendLine(LoadA(pass));
-            p.AppendLine($"""
-                A_SKIP_{j}:
-                    st.shared.f32 [%lsa{j}], %f1;
-                    add.u32 %r40, %t, %lkb{j};
-                    add.u32 %r41, %colBase, %lcol{j};
-                    mov.f32 %f1, {Zero};
-                    setp.lt.u32 %p3, %r40, %k1;
-                    setp.lt.and.u32 %p3, %r41, %cols, %p3;
-                    @!%p3 bra B_SKIP_{j};
-                """);
-            p.AppendLine(LoadB(pass, $"B_SKIP_{j}"));
-            p.AppendLine($"""
-                B_SKIP_{j}:
-                    st.shared.f32 [%lsb{j}], %f1;
-                """);
+        }
+
+        for (int j = 0; j < slots; j++)
+        {
+            p.AppendLine(LoadB(pass, j));
+        }
+
+        for (int j = 0; j < slots; j++)
+        {
+            p.AppendLine(invariant, $"    st.shared.f32 [%lsa{j}], %va{j};");
+            p.AppendLine(invariant, $"    st.shared.f32 [%lsb{j}], %vb{j};");
         }
 
         p.AppendLine("    bar.sync 0;");
@@ -864,27 +880,27 @@ internal static partial class PtxKernels
             {
                 for (int i = 0; i < 4; i++)
                 {
-                    p.AppendLine($"    ld.shared.f32 %f{2 + i}, [%aRead+{4 * (e * ConvStride + 16 * i)}];");
-                    p.AppendLine($"    ld.shared.f32 %f{6 + i}, [%bRead+{4 * (e * ConvStride + 16 * i)}];");
+                    p.AppendLine(invariant, $"    ld.shared.f32 %f{2 + i}, [%aRead+{4 * (e * ConvStride + 16 * i)}];");
+                    p.AppendLine(invariant, $"    ld.shared.f32 %f{6 + i}, [%bRead+{4 * (e * ConvStride + 16 * i)}];");
                 }
 
                 for (int i = 0; i < 4; i++)
                 {
                     for (int j = 0; j < 4; j++)
                     {
-                        p.AppendLine($"    fma.rn.f32 %acc{i * 4 + j}, %f{2 + i}, %f{6 + j}, %acc{i * 4 + j};");
+                        p.AppendLine(invariant, $"    fma.rn.f32 %acc{i * 4 + j}, %f{2 + i}, %f{6 + j}, %acc{i * 4 + j};");
                     }
                 }
             }
             else
             {
-                p.AppendLine($"    ld.shared.f32 %f2, [%aRead+{4 * e}];");
-                p.AppendLine($"    ld.shared.f32 %f3, [%bRead+{4 * e * ConvTileEdge}];");
+                p.AppendLine(invariant, $"    ld.shared.f32 %f2, [%aRead+{4 * e}];");
+                p.AppendLine(invariant, $"    ld.shared.f32 %f3, [%bRead+{4 * e * bStride}];");
                 p.AppendLine("    fma.rn.f32 %acc0, %f2, %f3, %acc0;");
             }
         }
 
-        p.AppendLine($"""
+        p.AppendLine(invariant, $"""
                 bar.sync 0;
                 add.u32 %t, %t, {step};
                 bra STEP;
@@ -894,7 +910,7 @@ internal static partial class PtxKernels
         {
             for (int j = 0; j < per; j++)
             {
-                p.AppendLine($"""
+                p.AppendLine(invariant, $"""
                         add.u32 %r40, %rowBase, %ty;
                         add.u32 %r40, %r40, {16 * i};
                         add.u32 %r41, %colBase, %tx;
@@ -905,7 +921,7 @@ internal static partial class PtxKernels
                         mov.f32 %f10, %acc{i * per + j};
                     """);
                 p.AppendLine(Store(pass, $"S_{i}_{j}"));
-                p.AppendLine($"S_SKIP_{i}_{j}:");
+                p.AppendLine(invariant, $"S_SKIP_{i}_{j}:");
             }
         }
 
@@ -921,138 +937,224 @@ internal static partial class PtxKernels
         sb.Append(p);
     }
 
-    // The left operand at row %r40, sum index %r41 (both in range) into %f1.
-    private static string LoadA(ConvPass pass) => pass switch
+    // Staged row j of the left operand: %ar = its row, %ao = its part of the left operand's index.
+    private static string RowSetup(ConvPass pass, int j)
     {
-        // weight[(q·Fg + row)·patch + kk]
+        string scale = pass switch { ConvPass.Forward => "%patch", ConvPass.Input => "%area", _ => "%ohow" };
+        return string.Create(CultureInfo.InvariantCulture, $"""
+                add.u32 %ar{j}, %rowBase, %lr{j};
+                mul.lo.u32 %ao{j}, %ar{j}, {scale};
+            """);
+    }
+
+    // Staged column j of the right operand: %bc = its column; %bh, %bw and %bo its parts of the right operand's place.
+    private static string ColumnSetup(ConvPass pass, int j) => pass switch
+    {
+        // column (oh, ow): %bh = oh·SH - PH, %bw = ow·SW - PW, %bo = %bh·W + %bw (x's row and column before the window's)
+        ConvPass.Forward => string.Create(CultureInfo.InvariantCulture, $"""
+                add.u32 %bc{j}, %colBase, %lcol{j};
+                div.u32 %r3, %bc{j}, %s_OW;
+                rem.u32 %r4, %bc{j}, %s_OW;
+                mul.lo.u32 %bh{j}, %r3, %s_SH;
+                sub.u32 %bh{j}, %bh{j}, %s_PH;
+                mul.lo.u32 %bw{j}, %r4, %s_SW;
+                sub.u32 %bw{j}, %bw{j}, %s_PW;
+                mad.lo.u32 %bo{j}, %bh{j}, %s_W, %bw{j};
+            """),
+
+        // column (ih, iw): %bh = ih + PH, %bw = iw + PW
+        ConvPass.Input => string.Create(CultureInfo.InvariantCulture, $"""
+                add.u32 %bc{j}, %colBase, %lcol{j};
+                div.u32 %r3, %bc{j}, %s_W;
+                rem.u32 %r4, %bc{j}, %s_W;
+                add.u32 %bh{j}, %r3, %s_PH;
+                add.u32 %bw{j}, %r4, %s_PW;
+            """),
+
+        // column (c, kh, kw): %bh = kh·DH, %bw = kw·DW, %bo = c·HW + %bh·W + %bw (x's place past the position's)
+        _ => string.Create(CultureInfo.InvariantCulture, $"""
+                add.u32 %bc{j}, %colBase, %lcol{j};
+                div.u32 %r3, %bc{j}, %area;
+                rem.u32 %r4, %bc{j}, %area;
+                div.u32 %r5, %r4, %s_KW;
+                rem.u32 %r6, %r4, %s_KW;
+                mul.lo.u32 %bh{j}, %r5, %s_DH;
+                mul.lo.u32 %bw{j}, %r6, %s_DW;
+                mul.lo.u32 %bo{j}, %r3, %hw;
+                mad.lo.u32 %bo{j}, %bh{j}, %s_W, %bo{j};
+                add.u32 %bo{j}, %bo{j}, %bw{j};
+            """),
+    };
+
+    // Batch entry %bi: (n, q) or (q, split) and the sum's range, %qa (the left operand's part) and %xb (the right one's).
+    private static string EntrySetup(ConvPass pass) => pass switch
+    {
+        // qa = q·Fg·patch; xb = (n·C + q·Cg)·HW
         ConvPass.Forward => """
-                mad.lo.u32 %r42, %q, %fg, %r40;
-                mad.lo.u32 %r42, %r42, %patch, %r41;
-                mul.wide.u32 %rd1, %r42, 4;
-                add.u64 %rd1, %g_w, %rd1;
-                ld.global.f32 %f1, [%rd1];
+                div.u32 %n, %bi, %s_G;
+                rem.u32 %q, %bi, %s_G;
+                mul.lo.u32 %qa, %q, %fg;
+                mul.lo.u32 %qa, %qa, %patch;
+                mul.lo.u32 %r2, %q, %cg;
+                mad.lo.u32 %r2, %n, %s_C, %r2;
+                mul.lo.u32 %xb, %r2, %hw;
             """,
 
-        // weight[(q·Fg + f)·patch + c·area + r], kk = (f, r)
+        // qa = q·Fg·patch; xb = (n·F + q·Fg)·OHOW
         ConvPass.Input => """
-                div.u32 %r42, %r41, %area;
-                rem.u32 %r43, %r41, %area;
-                mad.lo.u32 %r44, %q, %fg, %r42;
-                mul.lo.u32 %r44, %r44, %patch;
-                mad.lo.u32 %r44, %r40, %area, %r44;
-                add.u32 %r44, %r44, %r43;
-                mul.wide.u32 %rd1, %r44, 4;
-                add.u64 %rd1, %g_w, %rd1;
-                ld.global.f32 %f1, [%rd1];
+                div.u32 %n, %bi, %s_G;
+                rem.u32 %q, %bi, %s_G;
+                mul.lo.u32 %qa, %q, %fg;
+                mul.lo.u32 %qa, %qa, %patch;
+                mul.lo.u32 %r2, %q, %fg;
+                mad.lo.u32 %r2, %n, %s_F, %r2;
+                mul.lo.u32 %xb, %r2, %ohow;
             """,
 
-        // dy[(n·F + q·Fg + row)·OHOW + p], kk = (n, p)
+        // split sp's positions [k0, k1) (whole steps of 16); qa = q·Fg; xb = q·Cg·HW
+        _ => string.Create(CultureInfo.InvariantCulture, $"""
+                div.u32 %q, %bi, %s_splits;
+                rem.u32 %sp, %bi, %s_splits;
+                mul.lo.u32 %r1, %ohow, %s_N;
+                add.u32 %r2, %r1, %s_splits;
+                sub.u32 %r2, %r2, 1;
+                div.u32 %r2, %r2, %s_splits;
+                add.u32 %r2, %r2, {ConvStep - 1};
+                and.b32 %r2, %r2, 0xFFFFFFF0;
+                mul.lo.u32 %k0, %sp, %r2;
+                min.u32 %k0, %k0, %r1;
+                add.u32 %k1, %k0, %r2;
+                min.u32 %k1, %k1, %r1;
+                mul.lo.u32 %qa, %q, %fg;
+                mul.lo.u32 %xb, %q, %cg;
+                mul.lo.u32 %xb, %xb, %hw;
+            """),
+    };
+
+    // A step's terms: the left operand's %kka (in range: %p10) and the right one's %kkb (%p11), decomposed once into
+    // %abase (the left operand's index but for its row) and %bbase (the right one's but for its column) and what the
+    // right operand's columns still need (%khd, %kwd, or %ohs, %ows).
+    private static string TermSetup(ConvPass pass) => pass switch
+    {
+        // A: weight[qa + row·patch + kk]; B: kk = (c, kh, kw), bbase = xb + c·HW + kh·DH·W + kw·DW
+        ConvPass.Forward => """
+                add.u32 %abase, %qa, %kka;
+                add.u32 %kkb, %t, %lkb;
+                setp.lt.u32 %p11, %kkb, %k1;
+                div.u32 %r3, %kkb, %area;
+                rem.u32 %r4, %kkb, %area;
+                div.u32 %r5, %r4, %s_KW;
+                rem.u32 %r6, %r4, %s_KW;
+                mul.lo.u32 %khd, %r5, %s_DH;
+                mul.lo.u32 %kwd, %r6, %s_DW;
+                mad.lo.u32 %bbase, %r3, %hw, %xb;
+                mad.lo.u32 %bbase, %khd, %s_W, %bbase;
+                add.u32 %bbase, %bbase, %kwd;
+            """,
+
+        // A: kk = (f, r), weight[qa + f·patch + row·area + r]; B: kk = (f, kh, kw), bbase = xb + f·OHOW
+        ConvPass.Input => """
+                div.u32 %r3, %kka, %area;
+                rem.u32 %r4, %kka, %area;
+                mad.lo.u32 %abase, %r3, %patch, %qa;
+                add.u32 %abase, %abase, %r4;
+                add.u32 %kkb, %t, %lkb;
+                setp.lt.u32 %p11, %kkb, %k1;
+                div.u32 %r3, %kkb, %area;
+                rem.u32 %r4, %kkb, %area;
+                div.u32 %r5, %r4, %s_KW;
+                rem.u32 %r6, %r4, %s_KW;
+                mul.lo.u32 %khd, %r5, %s_DH;
+                mul.lo.u32 %kwd, %r6, %s_DW;
+                mad.lo.u32 %bbase, %r3, %ohow, %xb;
+            """,
+
+        // both operands' term kk = (n, oh, ow): A dy[(n·F + qa)·OHOW + p + row·OHOW];
+        // B x at bbase = n·C·HW + xb + ohs·W + ows (ohs = oh·SH - PH, ows = ow·SW - PW)
         _ => """
-                div.u32 %r42, %r41, %ohow;
-                rem.u32 %r43, %r41, %ohow;
-                mad.lo.u32 %r44, %q, %fg, %r40;
-                mad.lo.u32 %r44, %r42, %s_F, %r44;
-                mad.lo.u32 %r44, %r44, %ohow, %r43;
-                mul.wide.u32 %rd1, %r44, 4;
-                add.u64 %rd1, %g_dy, %rd1;
-                ld.global.f32 %f1, [%rd1];
+                div.u32 %r3, %kka, %ohow;
+                rem.u32 %r4, %kka, %ohow;
+                mad.lo.u32 %abase, %r3, %s_F, %qa;
+                mad.lo.u32 %abase, %abase, %ohow, %r4;
+                div.u32 %r5, %r4, %s_OW;
+                rem.u32 %r6, %r4, %s_OW;
+                mul.lo.u32 %ohs, %r5, %s_SH;
+                sub.u32 %ohs, %ohs, %s_PH;
+                mul.lo.u32 %ows, %r6, %s_SW;
+                sub.u32 %ows, %ows, %s_PW;
+                mul.lo.u32 %bbase, %r3, %s_C;
+                mad.lo.u32 %bbase, %bbase, %hw, %xb;
+                mad.lo.u32 %bbase, %ohs, %s_W, %bbase;
+                add.u32 %bbase, %bbase, %ows;
+                mov.pred %p11, %p10;
             """,
     };
 
-    // The right operand at sum index %r40, column %r41 (both in range) into %f1, skipping to `skip` (leaving 0) outside the data.
-    private static string LoadB(ConvPass pass, string skip) => pass switch
+    // The right operand's staged element j into %vb{j} (0 outside the data or the product).
+    private static string LoadB(ConvPass pass, int j) => pass switch
     {
-        // x[n, q·Cg + c, oh·SH - PH + kh·DH, ow·SW - PW + kw·DW], kk = (c, kh, kw), column = (oh, ow)
-        ConvPass.Forward => $"""
-                div.u32 %r42, %r40, %area;
-                rem.u32 %r43, %r40, %area;
-                div.u32 %r44, %r43, %s_KW;
-                rem.u32 %r45, %r43, %s_KW;
-                div.u32 %r46, %r41, %s_OW;
-                rem.u32 %r47, %r41, %s_OW;
-                mul.lo.u32 %r48, %r44, %s_DH;
-                mad.lo.u32 %r48, %r46, %s_SH, %r48;
-                sub.u32 %r48, %r48, %s_PH;
-                mul.lo.u32 %r49, %r45, %s_DW;
-                mad.lo.u32 %r49, %r47, %s_SW, %r49;
-                sub.u32 %r49, %r49, %s_PW;
-                setp.lt.u32 %p5, %r48, %s_H;
-                setp.lt.and.u32 %p5, %r49, %s_W, %p5;
-                @!%p5 bra {skip};
-                mad.lo.u32 %r50, %q, %cg, %r42;
-                mad.lo.u32 %r50, %n, %s_C, %r50;
-                mad.lo.u32 %r50, %r50, %s_H, %r48;
-                mad.lo.u32 %r50, %r50, %s_W, %r49;
-                mul.wide.u32 %rd2, %r50, 4;
-                add.u64 %rd2, %g_x, %rd2;
-                ld.global.f32 %f1, [%rd2];
-            """,
+        // x[n, q·Cg + c, oh·SH - PH + kh·DH, ow·SW - PW + kw·DW]
+        ConvPass.Forward => string.Create(CultureInfo.InvariantCulture, $"""
+                add.u32 %r41, %bh{j}, %khd;
+                add.u32 %r42, %bw{j}, %kwd;
+                setp.lt.u32 %p4, %r41, %s_H;
+                setp.lt.and.u32 %p4, %r42, %s_W, %p4;
+                setp.lt.and.u32 %p4, %bc{j}, %cols, %p4;
+                and.pred %p4, %p4, %p11;
+                add.u32 %r43, %bbase, %bo{j};
+                mul.wide.u32 %rb{j}, %r43, 4;
+                add.u64 %rb{j}, %g_x, %rb{j};
+                mov.f32 %vb{j}, {Zero};
+                @%p4 ld.global.f32 %vb{j}, [%rb{j}];
+            """),
 
-        // dy[n, q·Fg + f, oh, ow] with oh·SH = ih + PH - kh·DH, ow·SW = iw + PW - kw·DW; kk = (f, kh, kw), column = (ih, iw)
-        ConvPass.Input => $"""
-                div.u32 %r42, %r40, %area;
-                rem.u32 %r43, %r40, %area;
-                div.u32 %r44, %r43, %s_KW;
-                rem.u32 %r45, %r43, %s_KW;
-                div.u32 %r46, %r41, %s_W;
-                rem.u32 %r47, %r41, %s_W;
-                add.u32 %r48, %r46, %s_PH;
-                mul.lo.u32 %r51, %r44, %s_DH;
-                sub.u32 %r48, %r48, %r51;
-                setp.lt.s32 %p5, %r48, 0;
-                @%p5 bra {skip};
-                add.u32 %r49, %r47, %s_PW;
-                mul.lo.u32 %r51, %r45, %s_DW;
-                sub.u32 %r49, %r49, %r51;
-                setp.lt.s32 %p5, %r49, 0;
-                @%p5 bra {skip};
-                rem.u32 %r51, %r48, %s_SH;
-                rem.u32 %r52, %r49, %s_SW;
-                or.b32 %r51, %r51, %r52;
-                setp.ne.u32 %p5, %r51, 0;
-                @%p5 bra {skip};
-                div.u32 %r48, %r48, %s_SH;
-                div.u32 %r49, %r49, %s_SW;
-                setp.ge.u32 %p5, %r48, %s_OH;
-                @%p5 bra {skip};
-                setp.ge.u32 %p5, %r49, %s_OW;
-                @%p5 bra {skip};
-                mad.lo.u32 %r50, %q, %fg, %r42;
-                mad.lo.u32 %r50, %n, %s_F, %r50;
-                mad.lo.u32 %r50, %r50, %s_OH, %r48;
-                mad.lo.u32 %r50, %r50, %s_OW, %r49;
-                mul.wide.u32 %rd2, %r50, 4;
-                add.u64 %rd2, %g_dy, %rd2;
-                ld.global.f32 %f1, [%rd2];
-            """,
+        // dy[n, q·Fg + f, oh, ow] with oh·SH = ih + PH - kh·DH, ow·SW = iw + PW - kw·DW (unit strides: no division)
+        ConvPass.Input => string.Create(CultureInfo.InvariantCulture, $"""
+                mov.f32 %vb{j}, {Zero};
+                setp.lt.u32 %p4, %bc{j}, %cols;
+                and.pred %p4, %p4, %p11;
+                @!%p4 bra B_SKIP_{j};
+                sub.u32 %r41, %bh{j}, %khd;
+                sub.u32 %r42, %bw{j}, %kwd;
+                @%unit bra B_UNIT_{j};
+                setp.lt.s32 %p5, %r41, 0;
+                setp.lt.or.s32 %p5, %r42, 0, %p5;
+                @%p5 bra B_SKIP_{j};
+                div.u32 %r44, %r41, %s_SH;
+                mul.lo.u32 %r45, %r44, %s_SH;
+                setp.ne.u32 %p5, %r45, %r41;
+                div.u32 %r46, %r42, %s_SW;
+                mul.lo.u32 %r47, %r46, %s_SW;
+                setp.ne.or.u32 %p5, %r47, %r42, %p5;
+                @%p5 bra B_SKIP_{j};
+                mov.u32 %r41, %r44;
+                mov.u32 %r42, %r46;
+            B_UNIT_{j}:
+                setp.lt.u32 %p5, %r41, %s_OH;
+                setp.lt.and.u32 %p5, %r42, %s_OW, %p5;
+                @!%p5 bra B_SKIP_{j};
+                mad.lo.u32 %r43, %r41, %s_OW, %r42;
+                add.u32 %r43, %r43, %bbase;
+                mul.wide.u32 %rb{j}, %r43, 4;
+                add.u64 %rb{j}, %g_dy, %rb{j};
+                ld.global.f32 %vb{j}, [%rb{j}];
+            B_SKIP_{j}:
+            """),
 
-        // x[n, q·Cg + c, ih, iw]; kk = (n, oh, ow), column = (c, kh, kw)
-        _ => $"""
-                div.u32 %r42, %r40, %ohow;
-                rem.u32 %r43, %r40, %ohow;
-                div.u32 %r46, %r43, %s_OW;
-                rem.u32 %r47, %r43, %s_OW;
-                div.u32 %r52, %r41, %area;
-                rem.u32 %r43, %r41, %area;
-                div.u32 %r44, %r43, %s_KW;
-                rem.u32 %r45, %r43, %s_KW;
-                mul.lo.u32 %r48, %r44, %s_DH;
-                mad.lo.u32 %r48, %r46, %s_SH, %r48;
-                sub.u32 %r48, %r48, %s_PH;
-                mul.lo.u32 %r49, %r45, %s_DW;
-                mad.lo.u32 %r49, %r47, %s_SW, %r49;
-                sub.u32 %r49, %r49, %s_PW;
-                setp.lt.u32 %p5, %r48, %s_H;
-                setp.lt.and.u32 %p5, %r49, %s_W, %p5;
-                @!%p5 bra {skip};
-                mad.lo.u32 %r50, %q, %cg, %r52;
-                mad.lo.u32 %r50, %r42, %s_C, %r50;
-                mad.lo.u32 %r50, %r50, %s_H, %r48;
-                mad.lo.u32 %r50, %r50, %s_W, %r49;
-                mul.wide.u32 %rd2, %r50, 4;
-                add.u64 %rd2, %g_x, %rd2;
-                ld.global.f32 %f1, [%rd2];
-            """,
+        // x[n, q·Cg + c, ih, iw] at ih = oh·SH - PH + kh·DH, iw = ow·SW - PW + kw·DW
+        _ => string.Create(CultureInfo.InvariantCulture, $"""
+                add.u32 %r41, %ohs, %bh{j};
+                add.u32 %r42, %ows, %bw{j};
+                setp.lt.u32 %p4, %r41, %s_H;
+                setp.lt.and.u32 %p4, %r42, %s_W, %p4;
+                setp.lt.and.u32 %p4, %bc{j}, %cols, %p4;
+                and.pred %p4, %p4, %p11;
+                add.u32 %r43, %bbase, %bo{j};
+                mul.wide.u32 %rb{j}, %r43, 4;
+                add.u64 %rb{j}, %g_x, %rb{j};
+                mov.f32 %vb{j}, {Zero};
+                @%p4 ld.global.f32 %vb{j}, [%rb{j}];
+            """),
     };
 
     // Stores the sum %f10 for row %r40, column %r41.

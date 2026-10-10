@@ -8,13 +8,14 @@ namespace Idrak.Gpu.Cuda;
 // A convolution or one of its gradients runs one of: the composed path (patches unfolded by im2col and the measured
 // products, on bfloat16 tensor cores under MixedPrecision where the products go there: Backend.Convolution.cs), an
 // implicit product reading the operands where they lie (64 × 64 tiles with 4 × 4 outputs a thread, or 16 × 16 tiles;
-// the weight gradient also at 1, 4, 16 or 64 splits of its sum over positions), or the depthwise kernels (one input
-// channel per group). Which is fastest is measured per shape on first use (TuneOp.Convolution, keyed by the shape, the
-// pass, the precision, the activation and the groups; CudaBackend.Tuning.cs) and kept in the tuning cache. While nothing
-// can be measured (a graph being recorded, the profiler, IDRAK_AUTOTUNE=0) the formula's choice runs: the depthwise
-// kernels where they apply, else the implicit product, on 64 × 64 tiles when they would be at least half full, with the
-// splits of ConvolutionShapes.FormulaSplits. The implicit products and the depthwise kernels keep nothing beyond their
-// output (and the weight gradient's partial sums).
+// the weight gradient also at 1, 4, 16, 64, 256 or 1,024 splits of its sum over positions: ConvWeightSplits), or the
+// depthwise kernels (one input channel per group). Which is fastest is measured per shape on first use
+// (TuneOp.Convolution, keyed by the shape, the pass, the precision, the activation and the groups; CudaBackend.Tuning.cs)
+// and kept in the tuning cache. While nothing can be measured (a graph being recorded, the profiler, IDRAK_AUTOTUNE=0)
+// the formula's choice runs: the depthwise kernels where they apply, else the implicit product, on 64 × 64 tiles when
+// they would be at least half full, with the most splits of ConvWeightSplits that leave each at least 4,096 positions.
+// The implicit products and the depthwise kernels keep nothing beyond their output (and the weight gradient's partial
+// sums).
 internal sealed unsafe partial class CudaBackend
 {
     private const int ConvComposed = 0, ConvTile = 1, ConvBlocked = 2, ConvDepthwise = 3;
@@ -22,6 +23,12 @@ internal sealed unsafe partial class CudaBackend
     // Tests and benchmarks: forces one path (ConvComposed, ConvTile, ConvBlocked or ConvDepthwise; the formula's splits)
     // where it can run.
     internal static int? ConvolutionPath { get; set; }
+
+    // Tests: with ConvolutionPath, the weight gradient's split count where it is a candidate (else the path's first).
+    internal static int? ConvolutionSplits { get; set; }
+
+    // The split counts past ConvolutionShapes.SplitChoices tried on CUDA, for sums over many positions with few tiles.
+    private static ReadOnlySpan<int> WideSplits => [256, 1024];
 
     public override void ConvolutionKernel(Storage x, Storage weight, Storage? bias, Storage y, in ConvGeometry g, int filters, int groups, ConvActivation activation)
     {
@@ -89,7 +96,8 @@ internal sealed unsafe partial class CudaBackend
         int fallback = ConvFormula(pass, in g, filters, groups, candidates);
         if (ConvolutionPath is int forced)
         {
-            int at = Array.FindIndex(candidates, c => (c & 15) == forced);
+            int at = Array.FindIndex(candidates, c => (c & 15) == forced && (ConvolutionSplits is not int s || 1 << ((c >> 4) & 15) == s));
+            at = at >= 0 ? at : Array.FindIndex(candidates, c => (c & 15) == forced);
             return at >= 0 ? candidates[at] : fallback;
         }
 
@@ -132,7 +140,7 @@ internal sealed unsafe partial class CudaBackend
             candidates.Add(ConvComposed);
         }
 
-        int[] splits = pass == ConvolutionShapes.Weight ? ConvolutionShapes.SplitCounts((long)g.N * g.OH * g.OW) : [1];
+        int[] splits = pass == ConvolutionShapes.Weight ? ConvWeightSplits(in g, filters, groups) : [1];
         var (rows, _, _) = ConvProduct(pass, in g, filters, groups);
         foreach (int variant in new[] { ConvTile, ConvBlocked })
         {
@@ -166,7 +174,7 @@ internal sealed unsafe partial class CudaBackend
 
         var (rows, columns, _) = ConvProduct(pass, in g, filters, groups);
         int edge = PtxKernels.ConvBlockedEdge;
-        int splitBits = pass == ConvolutionShapes.Weight ? System.Numerics.BitOperations.Log2((uint)ConvolutionShapes.FormulaSplits((long)g.N * g.OH * g.OW)) << 4 : 0;
+        int splitBits = pass == ConvolutionShapes.Weight ? System.Numerics.BitOperations.Log2((uint)ConvWeightFormulaSplits(in g, filters, groups)) << 4 : 0;
         int variant = rows >= edge / 2 && columns >= edge / 2 ? ConvBlocked : ConvTile;
         foreach (int v in new[] { variant | splitBits, variant, ConvTile | splitBits, ConvTile, ConvComposed })
         {
@@ -177,6 +185,41 @@ internal sealed unsafe partial class CudaBackend
         }
 
         return candidates.Length > 0 ? candidates[0] : ConvComposed;
+    }
+
+    // The weight gradient's split counts: ConvolutionShapes.SplitCounts, and WideSplits where each split keeps at least 256
+    // positions and the partial sums take no more memory than the input (sizes alone decide: rules 77, 81). A sum over a
+    // million positions into a few tiles (a first layer: one input channel, 32 filters) otherwise runs on 64 blocks.
+    private static int[] ConvWeightSplits(in ConvGeometry g, int filters, int groups)
+    {
+        long positions = (long)g.N * g.OH * g.OW, count = (long)filters * (g.PatchSize / groups), input = (long)g.N * g.C * g.H * g.W;
+        var splits = new List<int>(ConvolutionShapes.SplitCounts(positions));
+        foreach (int s in WideSplits)
+        {
+            if (positions / s >= 256 && s * count <= input)
+            {
+                splits.Add(s);
+            }
+        }
+
+        return [.. splits];
+    }
+
+    // The splits while nothing is measured: the most of ConvWeightSplits that leave each split at least 4,096 positions
+    // (ConvolutionShapes.FormulaSplits over the wider counts).
+    private static int ConvWeightFormulaSplits(in ConvGeometry g, int filters, int groups)
+    {
+        long positions = (long)g.N * g.OH * g.OW;
+        int most = 1;
+        foreach (int s in ConvWeightSplits(in g, filters, groups))
+        {
+            if (s == 1 || positions / s >= 4096)
+            {
+                most = Math.Max(most, s);
+            }
+        }
+
+        return most;
     }
 
     // The 18 geometry arguments every convolution kernel takes after its pointers.
@@ -278,7 +321,7 @@ internal sealed unsafe partial class CudaBackend
             return;
         }
 
-        int splits = 1 << ((choice >> 4) & 7);
+        int splits = 1 << ((choice >> 4) & 15);
         var (rows, columns, _) = ConvProduct(ConvolutionShapes.Weight, in g, filters, groups);
         int count = filters * (g.PatchSize / groups);
         if (splits == 1)
