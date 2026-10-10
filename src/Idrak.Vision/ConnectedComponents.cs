@@ -81,41 +81,24 @@ public static class ConnectedComponents
                 }
 
                 int label = 0;
-                void Join(int neighbour)
-                {
-                    if (neighbour == 0)
-                    {
-                        return;
-                    }
-
-                    if (label == 0)
-                    {
-                        label = neighbour;
-                    }
-                    else if (neighbour != label)
-                    {
-                        Union(parent, label, neighbour);
-                    }
-                }
-
                 if (x > 0)
                 {
-                    Join(labels[i - 1]);
+                    Join(parent, ref label, labels[i - 1]);
                 }
 
                 if (y > 0)
                 {
-                    Join(labels[i - width]);
+                    Join(parent, ref label, labels[i - width]);
                     if (connectivity == Connectivity.Eight)
                     {
                         if (x > 0)
                         {
-                            Join(labels[i - width - 1]);
+                            Join(parent, ref label, labels[i - width - 1]);
                         }
 
                         if (x < width - 1)
                         {
-                            Join(labels[i - width + 1]);
+                            Join(parent, ref label, labels[i - width + 1]);
                         }
                     }
                 }
@@ -130,46 +113,66 @@ public static class ConnectedComponents
             }
         }
 
-        // Pass 2: each pixel takes its set's final label (1, 2, ... in raster order of the sets' first pixels) and adds to its region's statistics.
-        var final = new int[parent.Count];
-        var stats = new List<(int MinX, int MinY, int MaxX, int MaxY, long SumX, long SumY, int Area)>();
-        for (int i = 0; i < labels.Length; i++)
+        // Each set's final label, in one sweep over the provisional labels: a root (its own parent, the smallest label of
+        // its set, made at the set's first pixel) takes the next number, so sets are numbered in raster order of their
+        // first pixels; any other label has a smaller parent, already resolved.
+        int provisional = parent.Count, count = 0;
+        var final = new int[provisional];
+        for (int k = 1; k < provisional; k++)
         {
-            if (labels[i] == 0)
-            {
-                continue;
-            }
+            final[k] = parent[k] == k ? ++count : final[parent[k]];
+        }
 
-            int root = Find(parent, labels[i]);
-            if (final[root] == 0)
+        // Pass 2, row by row: each pixel takes its set's final label and adds to its region's statistics.
+        var minX = new int[count];
+        var minY = new int[count];
+        var maxX = new int[count];
+        var maxY = new int[count];
+        var sumX = new long[count];
+        var sumY = new long[count];
+        var area = new int[count];
+        minX.AsSpan().Fill(int.MaxValue);
+        minY.AsSpan().Fill(int.MaxValue);
+        maxX.AsSpan().Fill(-1);
+        maxY.AsSpan().Fill(-1);
+        for (int y = 0; y < height; y++)
+        {
+            var row = labels.AsSpan(y * width, width);
+            for (int x = 0; x < row.Length; x++)
             {
-                stats.Add((int.MaxValue, int.MaxValue, -1, -1, 0, 0, 0));
-                final[root] = stats.Count;
-            }
+                if (row[x] == 0)
+                {
+                    continue;
+                }
 
-            int label = final[root], x = i % width, y = i / width;
-            labels[i] = label;
-            var s = stats[label - 1];
-            stats[label - 1] = (Math.Min(s.MinX, x), Math.Min(s.MinY, y), Math.Max(s.MaxX, x), Math.Max(s.MaxY, y), s.SumX + x, s.SumY + y, s.Area + 1);
+                int label = final[row[x]], k = label - 1;
+                row[x] = label;
+                minX[k] = Math.Min(minX[k], x);
+                minY[k] = Math.Min(minY[k], y);
+                maxX[k] = Math.Max(maxX[k], x);
+                maxY[k] = Math.Max(maxY[k], y);
+                sumX[k] += x;
+                sumY[k] += y;
+                area[k]++;
+            }
         }
 
         // Small regions out; the others renumbered 1..n.
-        var renumber = new int[stats.Count + 1];
+        var renumber = new int[count + 1];
         var regions = new List<Region>();
-        for (int k = 0; k < stats.Count; k++)
+        for (int k = 0; k < count; k++)
         {
-            var s = stats[k];
-            if (s.Area < minArea)
+            if (area[k] < minArea)
             {
                 continue;
             }
 
             renumber[k + 1] = regions.Count + 1;
-            regions.Add(new Region(regions.Count + 1, new PixelBox(s.MinX, s.MinY, s.MaxX - s.MinX + 1, s.MaxY - s.MinY + 1), s.Area,
-                (float)s.SumX / s.Area + 0.5f, (float)s.SumY / s.Area + 0.5f));
+            regions.Add(new Region(regions.Count + 1, new PixelBox(minX[k], minY[k], maxX[k] - minX[k] + 1, maxY[k] - minY[k] + 1), area[k],
+                (float)sumX[k] / area[k] + 0.5f, (float)sumY[k] / area[k] + 0.5f));
         }
 
-        if (regions.Count != stats.Count)
+        if (regions.Count != count)
         {
             for (int i = 0; i < labels.Length; i++)
             {
@@ -178,6 +181,24 @@ public static class ConnectedComponents
         }
 
         return new RegionMap(width, height, labels, regions);
+    }
+
+    // A neighbour's label joins the pixel's: the first one seen becomes it, later different ones are merged with it.
+    private static void Join(List<int> parent, ref int label, int neighbour)
+    {
+        if (neighbour == 0)
+        {
+            return;
+        }
+
+        if (label == 0)
+        {
+            label = neighbour;
+        }
+        else if (neighbour != label)
+        {
+            Union(parent, label, neighbour);
+        }
     }
 
     private static int Find(List<int> parent, int label)
