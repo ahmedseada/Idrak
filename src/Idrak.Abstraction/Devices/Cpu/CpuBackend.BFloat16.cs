@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Buffers;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -26,62 +27,69 @@ internal sealed partial class CpuBackend
         For(blocks, (long)m * n * k, (first, last) =>
         {
             ref ushort halves = ref Unsafe.As<float, ushort>(ref MemoryMarshal.GetArrayDataReference(packed));
-            var sums = new float[m * blockSize];
-            ref float acc = ref MemoryMarshal.GetArrayDataReference(sums);
-            for (int block = first; block < last; block++)
+            var sums = ArrayPool<float>.Shared.Rent(m * blockSize);
+            try
             {
-                int j0 = block * blockSize, width = Math.Min(blockSize, n - j0), whole = width / (2 * w) * (2 * w);
-                int wideWhole = wide ? whole / (2 * Vector512<float>.Count) * (2 * Vector512<float>.Count) : 0;
-                Array.Clear(sums);
-                for (int k0 = 0; k0 < k; k0 += chunk)
+                ref float acc = ref MemoryMarshal.GetArrayDataReference(sums);
+                for (int block = first; block < last; block++)
                 {
-                    int k1 = Math.Min(k, k0 + chunk);
-                    int j = 0;
-                    for (; j < wideWhole; j += 2 * Vector512<float>.Count)
+                    int j0 = block * blockSize, width = Math.Min(blockSize, n - j0), whole = width / (2 * w) * (2 * w);
+                    int wideWhole = wide ? whole / (2 * Vector512<float>.Count) * (2 * Vector512<float>.Count) : 0;
+                    sums.AsSpan(0, m * blockSize).Clear();
+                    for (int k0 = 0; k0 < k; k0 += chunk)
                     {
-                        for (int r0 = 0; r0 < m; r0 += 8)
+                        int k1 = Math.Min(k, k0 + chunk);
+                        int j = 0;
+                        for (; j < wideWhole; j += 2 * Vector512<float>.Count)
                         {
-                            Panel512(ref halves, stride, xv, ref Unsafe.Add(ref acc, r0 * blockSize + j), blockSize, k, r0, Math.Min(8, m - r0), j0 + j, k0, k1);
+                            for (int r0 = 0; r0 < m; r0 += 8)
+                            {
+                                Panel512(ref halves, stride, xv, ref Unsafe.Add(ref acc, r0 * blockSize + j), blockSize, k, r0, Math.Min(8, m - r0), j0 + j, k0, k1);
+                            }
+                        }
+
+                        for (; j < whole; j += 2 * w)
+                        {
+                            for (int r0 = 0; r0 < m; r0 += rowsPerPass)
+                            {
+                                ref float target = ref Unsafe.Add(ref acc, r0 * blockSize + j);
+                                if (rowsPerPass == 8)
+                                {
+                                    Panel8(ref halves, stride, xv, ref target, blockSize, k, r0, Math.Min(8, m - r0), j0 + j, k0, k1);
+                                }
+                                else
+                                {
+                                    Panel4(ref halves, stride, xv, ref target, blockSize, k, r0, Math.Min(4, m - r0), j0 + j, k0, k1);
+                                }
+                            }
                         }
                     }
 
-                    for (; j < whole; j += 2 * w)
+                    for (int j = whole; j < width; j++)
                     {
-                        for (int r0 = 0; r0 < m; r0 += rowsPerPass)
+                        int col = j0 + j;
+                        for (int r = 0; r < m; r++)
                         {
-                            ref float target = ref Unsafe.Add(ref acc, r0 * blockSize + j);
-                            if (rowsPerPass == 8)
+                            float sum = 0f;
+                            for (int kk = 0; kk < k; kk++)
                             {
-                                Panel8(ref halves, stride, xv, ref target, blockSize, k, r0, Math.Min(8, m - r0), j0 + j, k0, k1);
+                                float weight = BitConverter.Int32BitsToSingle(Unsafe.Add(ref halves, (nint)kk * stride + col) << 16);
+                                sum = MathF.FusedMultiplyAdd(weight, xv[r * k + kk], sum);
                             }
-                            else
-                            {
-                                Panel4(ref halves, stride, xv, ref target, blockSize, k, r0, Math.Min(4, m - r0), j0 + j, k0, k1);
-                            }
+
+                            sums[r * blockSize + j] = sum;
                         }
                     }
-                }
 
-                for (int j = whole; j < width; j++)
-                {
-                    int col = j0 + j;
                     for (int r = 0; r < m; r++)
                     {
-                        float sum = 0f;
-                        for (int kk = 0; kk < k; kk++)
-                        {
-                            float weight = BitConverter.Int32BitsToSingle(Unsafe.Add(ref halves, (nint)kk * stride + col) << 16);
-                            sum = MathF.FusedMultiplyAdd(weight, xv[r * k + kk], sum);
-                        }
-
-                        sums[r * blockSize + j] = sum;
+                        sums.AsSpan(r * blockSize, width).CopyTo(yv.AsSpan(r * n + j0, width));
                     }
                 }
-
-                for (int r = 0; r < m; r++)
-                {
-                    sums.AsSpan(r * blockSize, width).CopyTo(yv.AsSpan(r * n + j0, width));
-                }
+            }
+            finally
+            {
+                ArrayPool<float>.Shared.Return(sums);
             }
         });
     }
