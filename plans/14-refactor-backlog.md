@@ -18,6 +18,8 @@ otherwise.
 | 7 | R1's CUDA leftovers: `CtcMeta` per CTC call, closures and copies on prompt-sized packed products and tensor-core `Run` delegates, invariant formatting in the PTX generators | 2, CUDA |
 | 8 | Card names in CUDA code comments (`CudaBackend.Quantized.cs`, `CudaDeviceLimits.cs`, `TuningCache.cs`) | 1.3 |
 | 9 | The CUDA runs of `plans/gpu-checks.md`, plan 12 phase 5 on the real Gemma 3 (CUDA), and docs/performance-notes.md next steps 1-9 (all CUDA) | 4 |
+| 10a | CUDA CTC precision on long sequences: α and β in float log space reach ~-1,500 over 810 steps, so the 400-label gradient is ~0.1% off the CPU's double (test "vision kernels: ... CTC, 400 labels, batch first gradient"). Fix: rescale α and β every step (subtract the row's maximum), offsets accumulated in double; the per-state shares are unchanged and only the offsets enter the final term | 2, CUDA |
+| 10b | CUDA does not pack image-model sequences (Gemma 3, LLaVA: "cuda:0 does not pack this model's sequences (FineTuner pads them)"; LLaVA: no packed causal attention): padded rows waste work in vision fine-tuning | 4 |
 | 10 | A training-step profile on the CUDA path beyond kernel times (per operation and layer: the CLI's internal `Recorder` as a library hook) | 2, gaps |
 
 Set aside (not CUDA): 1.1 Vulkan CTC, 1.2 GGUF fallback, 1.4 card names in docs, 1.6 Vulkan recurrent, 1.7 the

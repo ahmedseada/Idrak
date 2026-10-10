@@ -798,6 +798,13 @@ public sealed partial class Tensor
             }
         }
 
+        // The CPU's kernel checks the labels as it reads them; a device's kernels read them unchecked (clamped to the
+        // classes), so off the CPU they are checked here, from one copy of the targets (a few numbers per sequence).
+        if (Device.Type != DeviceType.Cpu)
+        {
+            CheckCtcLabels(targets.ToArray(), lengths, offsets, classes, blank);
+        }
+
         long start = Telemetry.Start(TelemetryLevel.Operations);
         var y = Empty([batch], Device);
         Backend.CtcLoss(Storage, targets.Storage, y.Storage, inputs, lengths, offsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
@@ -812,6 +819,23 @@ public sealed partial class Tensor
     }
 
     // ---------------------------------------------------------------- helpers
+
+    // Every label a whole number in [0, classes) other than the blank, with the CPU kernel's message.
+    private static void CheckCtcLabels(ReadOnlySpan<float> targets, int[] lengths, int[] offsets, int classes, int blank)
+    {
+        for (int n = 0; n < lengths.Length; n++)
+        {
+            for (int i = 0; i < lengths[n]; i++)
+            {
+                float value = targets[offsets[n] + i];
+                int label = (int)value;
+                if (label != value || (uint)label >= (uint)classes || label == blank)
+                {
+                    throw new ArgumentException($"CTC target {i} of sequence {n} is {value.ToString(System.Globalization.CultureInfo.InvariantCulture)}: labels are whole numbers in [0, {classes}) other than the blank ({blank}).");
+                }
+            }
+        }
+    }
 
     internal int NormalizeDim(int dim)
     {

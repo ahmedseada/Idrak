@@ -647,7 +647,8 @@ public sealed class LlavaImageEncoder : IVisionEncoder, IVisionEncoderStages
     public Tensor Tower(Tensor pixelValues)
     {
         using var noGrad = Autograd.NoGrad();
-        return ClipTower.HiddenStates(pixelValues, [.. Vision.HiddenLayers]);
+        using var moved = OnDevice(pixelValues);
+        return ClipTower.HiddenStates(moved ?? pixelValues, [.. Vision.HiddenLayers]);
     }
 
     /// <inheritdoc />
@@ -655,13 +656,22 @@ public sealed class LlavaImageEncoder : IVisionEncoder, IVisionEncoderStages
     {
         using var noGrad = Autograd.NoGrad();
         using var scope = new TensorScope();
-        var selected = ClipTower.HiddenStates(pixelValues, [.. Vision.HiddenLayers]);
+        using var moved = OnDevice(pixelValues);
+        var selected = ClipTower.HiddenStates(moved ?? pixelValues, [.. Vision.HiddenLayers]);
         if (!Vision.Full)
         {
             selected = selected.Narrow(1, 1, Vision.Clip.Patches);                         // "default": the class token dropped
         }
 
         return scope.Keep(Projector.Forward(selected));
+    }
+
+    // Pixel values come from PixelValues on the CPU (the contract); the stages run on the encoder's device. Null when
+    // they are there already.
+    private Tensor? OnDevice(Tensor pixelValues)
+    {
+        ArgumentNullException.ThrowIfNull(pixelValues);
+        return pixelValues.Device == Device ? null : pixelValues.To(Device);
     }
 
     /// <inheritdoc />
