@@ -6,6 +6,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json.Nodes;
 using Idrak.Abstraction.Diagnostics;
+using Idrak.Diagnostics;
 using Idrak.Inference.Abstractions;
 using Idrak.Nlp;
 
@@ -37,6 +38,8 @@ internal static class TrainCommand
           --height N           line height, a multiple of 4 (48)    --channels A,B,C  (32,64,128)
           --hidden N           LSTM size each way (128)              --layers N        (2)
           --direction rtl|ltr  (rtl: lines are flipped so columns run in reading order)
+          --profile N          time N steps after 20 warm ones, then every CUDA kernel of N more (the library's
+                               GpuProfiler: calls, ms, TFLOPS), print where a step's time goes, and stop
           --log FILE           every step and epoch as JSON Lines (the library's telemetry: loss, data and step time,
                                epoch summaries with CER, WER, lines a second and device memory)
           --augment PIPELINE   the Augmentations registry's names ("none" for none); default:
@@ -47,7 +50,7 @@ internal static class TrainCommand
     public static int Run(string[] args, TextWriter output, TextWriter error)
     {
         if (OcrApp.Context(args, output, error,
-                ["--data", "--eval", "--out", "--epochs", "--batch", "--lr", "--seed", "--height", "--channels", "--hidden", "--layers", "--direction", "--augment", "--log"],
+                ["--data", "--eval", "--out", "--epochs", "--batch", "--lr", "--seed", "--height", "--channels", "--hidden", "--layers", "--direction", "--augment", "--log", "--profile"],
                 ["--include-drafts"], Help) is not { } context)
         {
             return 0;
@@ -153,6 +156,9 @@ internal static class TrainCommand
         long step = 0;
         double lastLoss = double.NaN;
         int stepsPerEpoch = Batches(trainLines, batchSize, seed, 1).Count();
+        int profile = a.Integer("--profile", 0, 0);
+        const int ProfileWarm = 20;
+        long profileStart = 0, profiledLines = 0;
         Telemetry.TrainingStarted(new TrainingStarted("ArabicOcr line recognizer", "AdamW", context.Device, epochs, train.Count, evaluation.Count, batchSize,
             stepsPerEpoch, recognizer.Network.ParameterCount, learningRate, Environment.ProcessorCount));
         for (int epoch = 1; epoch <= epochs; epoch++)
@@ -164,6 +170,35 @@ internal static class TrainCommand
             TimeSpan dataTime = default, computeTime = default;
             foreach (var batch in Batches(trainLines, batchSize, seed, epoch))
             {
+                // --profile: steps ProfileWarm + 1 ... + N timed as they run; the N after them with every kernel timed.
+                if (profile > 0 && step == ProfileWarm)
+                {
+                    context.Device.Synchronize();
+                    profileStart = Stopwatch.GetTimestamp();
+                }
+                else if (profile > 0 && step == ProfileWarm + profile)
+                {
+                    context.Device.Synchronize();
+                    double wallMs = Stopwatch.GetElapsedTime(profileStart).TotalMilliseconds / profile;
+                    Say(FormattableString.Invariant($"Profile   {wallMs:F1} ms a step as it runs ({profiledLines / (double)profile * 1000 / wallMs:F0} lines/s), steps {ProfileWarm + 1}-{ProfileWarm + profile}"));
+                    GpuProfiler.Start(context.Device);
+                }
+                else if (profile > 0 && step == ProfileWarm + 2 * profile)
+                {
+                    var kernels = GpuProfiler.Stop(context.Device);
+                    if (kernels.Count == 0)
+                    {
+                        Say($"          {context.Device} does not time kernels");
+                    }
+                    else
+                    {
+                        Say(FormattableString.Invariant($"          GPU time {kernels.Sum(k => k.Milliseconds) / profile:F1} ms a step in {kernels.Sum(k => k.Calls) / profile:N0} kernel launches (each kernel waited for)"));
+                        Say(GpuProfiler.Format(kernels, 30));
+                    }
+
+                    return 0;
+                }
+
                 long started = Stopwatch.GetTimestamp();
                 var lines = Augment(trainLines, batch, augment, settings.Height, seed, epoch);
                 long prepared = Stopwatch.GetTimestamp();
@@ -191,6 +226,11 @@ internal static class TrainCommand
                         lossSum += batchLoss;
                         seen += batch.Length;
                         stepLoss = batchLoss / batch.Length;
+                        if (profile > 0 && step >= ProfileWarm && step < ProfileWarm + profile)
+                        {
+                            profiledLines += batch.Length;
+                        }
+
                         break;
                     }
                     catch (ResourceLimitExceededException e) when (micro > 1)
