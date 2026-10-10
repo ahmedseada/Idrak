@@ -317,7 +317,7 @@ internal sealed unsafe partial class CudaBackend : Backend
         _sgdMomentum = Fn("sgd_momentum_f32");
         _adam = Fn("adam_f32");
         _matmul = Fn("matmul_f32");
-        _kernels = PtxKernels.AdvancedNames.Concat(PtxKernels.DecodingNames).Concat(PtxKernels.QuantizedNames).Concat(PtxKernels.DecoderNames).Concat(PtxKernels.RowNames).Concat(PtxKernels.ConvolutionNames).Concat(PtxKernels.ResamplingNames).Concat(PtxKernels.CtcNames).Concat(PtxKernels.RecurrentNames).Append("add_dropout_f32").ToDictionary(k => k, Fn);
+        _kernels = PtxKernels.AdvancedNames.Concat(PtxKernels.DecodingNames).Concat(PtxKernels.QuantizedNames).Concat(PtxKernels.DecoderNames).Concat(PtxKernels.RowNames).Concat(PtxKernels.ConvolutionNames).Concat(PtxKernels.ResamplingNames).Concat(PtxKernels.CtcNames).Concat(PtxKernels.RecurrentNames).Concat(PtxKernels.PointwiseNames).Append("add_dropout_f32").ToDictionary(k => k, Fn);
     }
 
     public static int DeviceCount => Probe.Value.Count;
@@ -776,6 +776,11 @@ internal sealed unsafe partial class CudaBackend : Backend
             UnaryOp.Exp => _kernels["exp_f32"],
             UnaryOp.Log => _kernels["log_f32"],
             UnaryOp.Gelu => _kernels["gelu_f32"],
+            UnaryOp.Sqrt => K("sqrt_f32"),
+            UnaryOp.Sin => K("sin_f32"),
+            UnaryOp.Cos => K("cos_f32"),
+            UnaryOp.Silu => K("silu_f32"),
+            UnaryOp.Sign => K("sign_f32"),
             _ => IntPtr.Zero,
         };
         if (fn == IntPtr.Zero)
@@ -789,6 +794,11 @@ internal sealed unsafe partial class CudaBackend : Backend
 
     public override void UnaryBackwardKernel(UnaryOp op, Storage x, Storage y, Storage dy, Storage dx, int n)
     {
+        if (op == UnaryOp.Sign)
+        {
+            return;                                                                 // sign's gradient is zero: dx stays as it is
+        }
+
         IntPtr fn = op switch
         {
             UnaryOp.Sigmoid => _sigmoidBwd,
@@ -799,6 +809,10 @@ internal sealed unsafe partial class CudaBackend : Backend
             UnaryOp.Exp => _kernels["exp_bwd_f32"],
             UnaryOp.Log => _kernels["log_bwd_f32"],
             UnaryOp.Gelu => _kernels["gelu_bwd_f32"],
+            UnaryOp.Sqrt => K("sqrt_bwd_f32"),
+            UnaryOp.Sin => K("sin_bwd_f32"),
+            UnaryOp.Cos => K("cos_bwd_f32"),
+            UnaryOp.Silu => K("silu_bwd_f32"),
             _ => IntPtr.Zero,
         };
         if (fn == IntPtr.Zero)
@@ -817,6 +831,8 @@ internal sealed unsafe partial class CudaBackend : Backend
             BinaryOp.Add => _add,
             BinaryOp.Sub => _sub,
             BinaryOp.Mul => _mul,
+            BinaryOp.Maximum => K("max_f32"),
+            BinaryOp.Minimum => K("min_f32"),
             _ => IntPtr.Zero,
         };
         if (fn == IntPtr.Zero)

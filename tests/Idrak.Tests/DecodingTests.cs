@@ -319,7 +319,8 @@ internal static partial class Tests
         var counts = Idrak.Gpu.Cuda.PtxKernels.ParameterCounts;
         string[] all = [.. Idrak.Gpu.Cuda.PtxKernels.Names, .. Idrak.Gpu.Cuda.PtxKernels.AdvancedNames,
             .. Idrak.Gpu.Cuda.PtxKernels.DecodingNames, .. Idrak.Gpu.Cuda.PtxKernels.QuantizedNames, .. Idrak.Gpu.Cuda.PtxKernels.DecoderNames, .. Idrak.Gpu.Cuda.PtxKernels.RowNames,
-            .. Idrak.Gpu.Cuda.PtxKernels.ConvolutionNames, .. Idrak.Gpu.Cuda.PtxKernels.ResamplingNames, .. Idrak.Gpu.Cuda.PtxKernels.CtcNames, .. Idrak.Gpu.Cuda.PtxKernels.RecurrentNames];
+            .. Idrak.Gpu.Cuda.PtxKernels.ConvolutionNames, .. Idrak.Gpu.Cuda.PtxKernels.ResamplingNames, .. Idrak.Gpu.Cuda.PtxKernels.CtcNames, .. Idrak.Gpu.Cuda.PtxKernels.RecurrentNames,
+            .. Idrak.Gpu.Cuda.PtxKernels.PointwiseNames];
         Check(counts.Count == all.Length && all.All(k => counts.TryGetValue(k, out int n) && n > 0), $"{counts.Count} kernels parsed, {all.Length} expected");
         // Parameter names must be unique within a kernel (a duplicate makes the whole module fail to load on the GPU).
         foreach (var entry in System.Text.RegularExpressions.Regex.Matches(Idrak.Gpu.Cuda.PtxKernels.Source, @"\.entry (\w+)\(([^)]*)\)"))

@@ -10,7 +10,7 @@ internal static partial class Tests
 {
     private static readonly (string Name, Action<Device> Run)[] TensorOpsGroup =
     [
-        ("tensor ops: sqrt, sin, cos (also far from zero), silu, sign, pow, clamp, maximum, minimum and where match the host's math; on Vulkan as kernels, without the host fallback", TensorOpsForward),
+        ("tensor ops: sqrt, sin, cos (also far from zero), silu, sign, pow, clamp, maximum, minimum and where match the host's math; on Vulkan and CUDA as kernels, without the host fallback", TensorOpsForward),
         ("gradient: sqrt, sin, cos, silu, sign", TensorOpsUnaryGradients),
         ("gradient: pow (fractional, odd, negative and zero exponents), clamp, scalar maximum and minimum", TensorOpsParameterGradients),
         ("gradient: element-wise maximum and minimum (both inputs, and one tensor on both sides), where", TensorOpsSelectionGradients),
@@ -68,9 +68,9 @@ internal static partial class Tests
             Check(g.Grad is not null, "the backward steps ran");
         }
 
-        if (device.Type == DeviceType.Vulkan)
+        if (device.Type is DeviceType.Vulkan or DeviceType.Cuda)
         {
-            Check(device.Backend.HostCalls == hostCalls, $"every operation ran as a Vulkan kernel ({device.Backend.HostCalls - hostCalls} host fallbacks)");
+            Check(device.Backend.HostCalls == hostCalls, $"every operation ran as a {device.Type} kernel ({device.Backend.HostCalls - hostCalls} host fallbacks)");
         }
 
         try
