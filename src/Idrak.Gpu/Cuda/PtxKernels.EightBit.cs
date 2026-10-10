@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Globalization;
 using System.Text;
 
 namespace Idrak.Gpu.Cuda;
@@ -165,7 +166,7 @@ internal static partial class PtxKernels
             QUANT:
                 setp.ge.u32 %p2, %r12, %r4;
                 @%p2 bra DONE;
-            {{string.Concat(Enumerable.Range(0, 4).Select(j => $"""
+            {{string.Concat(Enumerable.Range(0, 4).Select(j => string.Create(CultureInfo.InvariantCulture, $"""
                 add.u32 %r13, %r12, {j};
                 setp.lt.u32 %p6, %r13, %r5;
                 mov.f32 %x{j}, 0f00000000;
@@ -174,7 +175,7 @@ internal static partial class PtxKernels
                 @%p6 ld.global.f32 %x{j}, [%rd8];
                 mul.f32 %x{j}, %x{j}, %f4;
 
-            """))}}
+            """)))}}
             {{PackFour(fp8)}}
                 cvt.u64.u32 %rd9, %r12;
                 add.u64 %rd9, %rd9, %rd7;
@@ -311,7 +312,7 @@ internal static partial class PtxKernels
 
         for (int i = 0; i < 4; i++)
         {
-            s.AppendLine($"""
+            s.AppendLine(CultureInfo.InvariantCulture, $"""
                     add.u32 %r10, %r6, {8 * i};
                     add.u32 %r11, %r8, %r10;
                     add.u32 %r12, %r7, %r5;
@@ -376,7 +377,7 @@ internal static partial class PtxKernels
 
         for (int j = 0; j < 4; j++)
         {
-            s.AppendLine($"""
+            s.AppendLine(CultureInfo.InvariantCulture, $"""
                     add.u32 %r17, %r16, {j};
                     mul.lo.u32 %r17, %r17, 33;
                     add.u32 %r17, %r17, %r5;
@@ -491,7 +492,7 @@ internal static partial class PtxKernels
             """);
         for (int i = 0; i < 64; i++)
         {
-            s.AppendLine(fp8 ? $"    mov.f32 %c{i}, 0f00000000;" : $"    mov.b32 %ci{i}, 0;");
+            s.AppendLine(fp8 ? string.Create(CultureInfo.InvariantCulture, $"    mov.f32 %c{i}, 0f00000000;") : string.Create(CultureInfo.InvariantCulture, $"    mov.b32 %ci{i}, 0;"));
         }
 
         // Copy coordinates: chunk (16 bytes) %r12 of rows (tid >> 2) and (tid >> 2) + 64 of each operand's tile.
@@ -502,7 +503,7 @@ internal static partial class PtxKernels
             """);
         for (int i = 0; i < 2; i++)
         {
-            s.AppendLine($"""
+            s.AppendLine(CultureInfo.InvariantCulture, $"""
                     add.u32 %r20, %r13, {64 * i};
                     add.u32 %r21, %r9, %r20;
                     setp.lt.u32 %pa{i}, %r21, %r1;
@@ -531,7 +532,7 @@ internal static partial class PtxKernels
                 """);
             for (int i = 0; i < 2; i++)
             {
-                s.AppendLine($"""
+                s.AppendLine(CultureInfo.InvariantCulture, $"""
                         and.pred %p2, %p1, %pa{i};
                         selp.u32 %r28, 16, 0, %p2;
                         add.u64 %rd16, %rd{10 + i}, %rd15;
@@ -547,7 +548,7 @@ internal static partial class PtxKernels
         }
 
         // ldmatrix lane offsets: A rows (l & 15) at byte 16 (l >> 4); B rows (l & 7) + 8 (l >> 4) at byte 16 ((l >> 3) & 1).
-        s.AppendLine($"""
+        s.AppendLine(CultureInfo.InvariantCulture, $"""
                 and.b32 %r30, %r5, 15;
                 shl.b32 %r31, %r7, 6;
                 add.u32 %r30, %r30, %r31;
@@ -574,7 +575,7 @@ internal static partial class PtxKernels
         // Prologue: stages 0 and 1.
         s.AppendLine("    setp.lt.u32 %p3, 0, %r14;\n    @!%p3 bra PRO0;");
         Issue("0");
-        s.AppendLine($"""
+        s.AppendLine(CultureInfo.InvariantCulture, $"""
                 PRO0:
                     cp.async.commit_group;
                     mov.u32 %r17, {EightK};
@@ -582,7 +583,7 @@ internal static partial class PtxKernels
                     @!%p3 bra PRO1;
                 """);
         Issue(EightStageBytes.ToString(System.Globalization.CultureInfo.InvariantCulture));
-        s.AppendLine($"""
+        s.AppendLine(CultureInfo.InvariantCulture, $"""
                 PRO1:
                     cp.async.commit_group;
                     mov.u32 %r15, 0;
@@ -610,12 +611,12 @@ internal static partial class PtxKernels
         {
             for (int mt = 0; mt < 4; mt++)
             {
-                s.AppendLine($"    ldmatrix.sync.aligned.m8n8.x4.shared.b16 {{%fa{4 * mt}, %fa{4 * mt + 1}, %fa{4 * mt + 2}, %fa{4 * mt + 3}}}, [%r35+{mt * 16 * EightStride + ks * 32}];");
+                s.AppendLine(CultureInfo.InvariantCulture, $"    ldmatrix.sync.aligned.m8n8.x4.shared.b16 {{%fa{4 * mt}, %fa{4 * mt + 1}, %fa{4 * mt + 2}, %fa{4 * mt + 3}}}, [%r35+{mt * 16 * EightStride + ks * 32}];");
             }
 
             for (int np = 0; np < 2; np++)
             {
-                s.AppendLine($"    ldmatrix.sync.aligned.m8n8.x4.shared.b16 {{%fb{4 * np}, %fb{4 * np + 1}, %fb{4 * np + 2}, %fb{4 * np + 3}}}, [%r36+{np * 16 * EightStride + ks * 32}];");
+                s.AppendLine(CultureInfo.InvariantCulture, $"    ldmatrix.sync.aligned.m8n8.x4.shared.b16 {{%fb{4 * np}, %fb{4 * np + 1}, %fb{4 * np + 2}, %fb{4 * np + 3}}}, [%r36+{np * 16 * EightStride + ks * 32}];");
             }
 
             for (int mt = 0; mt < 4; mt++)
@@ -623,14 +624,14 @@ internal static partial class PtxKernels
                 for (int nt = 0; nt < 4; nt++)
                 {
                     int c = (mt * 4 + nt) * 4, fb = (nt / 2) * 4 + (nt % 2) * 2;
-                    s.AppendLine($"    {mma} {{{acc}{c}, {acc}{c + 1}, {acc}{c + 2}, {acc}{c + 3}}}, "
-                                 + $"{{%fa{4 * mt}, %fa{4 * mt + 1}, %fa{4 * mt + 2}, %fa{4 * mt + 3}}}, {{%fb{fb}, %fb{fb + 1}}}, "
-                                 + $"{{{acc}{c}, {acc}{c + 1}, {acc}{c + 2}, {acc}{c + 3}}};");
+                    s.AppendLine(string.Create(CultureInfo.InvariantCulture, $"    {mma} {{{acc}{c}, {acc}{c + 1}, {acc}{c + 2}, {acc}{c + 3}}}, ")
+                                 + string.Create(CultureInfo.InvariantCulture, $"{{%fa{4 * mt}, %fa{4 * mt + 1}, %fa{4 * mt + 2}, %fa{4 * mt + 3}}}, {{%fb{fb}, %fb{fb + 1}}}, ")
+                                 + string.Create(CultureInfo.InvariantCulture, $"{{{acc}{c}, {acc}{c + 1}, {acc}{c + 2}, {acc}{c + 3}}};"));
                 }
             }
         }
 
-        s.AppendLine($"""
+        s.AppendLine(CultureInfo.InvariantCulture, $"""
                 add.u32 %r15, %r15, {EightStageBytes};
                 setp.eq.u32 %p6, %r15, {EightBitShared};
                 selp.u32 %r15, 0, %r15, %p6;
@@ -652,7 +653,7 @@ internal static partial class PtxKernels
             {
                 for (int i = 0; i < 64; i++)
                 {
-                    e.AppendLine($"    cvt.rn.f32.s32 %c{i}, %ci{i};");
+                    e.AppendLine(CultureInfo.InvariantCulture, $"    cvt.rn.f32.s32 %c{i}, %ci{i};");
                 }
             }
 
@@ -664,7 +665,7 @@ internal static partial class PtxKernels
                 """);
             for (int r = 0; r < 8; r++)
             {
-                e.AppendLine($"""
+                e.AppendLine(CultureInfo.InvariantCulture, $"""
                         mov.f32 %h{r}, 0f00000000;
                         add.u32 %r46, %r42, {r * 8};
                         setp.lt.u32 %p9, %r46, %r1;
@@ -676,7 +677,7 @@ internal static partial class PtxKernels
 
             for (int col = 0; col < 8; col++)
             {
-                e.AppendLine($"""
+                e.AppendLine(CultureInfo.InvariantCulture, $"""
                         mov.f32 %e{col}, 0f00000000;
                         add.u32 %r46, %r43, {(col / 2) * 8 + col % 2};
                         setp.lt.u32 %p9, %r46, %r2;
@@ -693,8 +694,8 @@ internal static partial class PtxKernels
                     for (int v = 0; v < 4; v++)
                     {
                         int c = (mt * 4 + nt) * 4 + v, row = mt * 2 + v / 2, col = nt * 2 + v % 2;
-                        e.AppendLine($"    mul.f32 %c{c}, %c{c}, %h{row};");
-                        e.AppendLine($"    mul.f32 %c{c}, %c{c}, %e{col};");
+                        e.AppendLine(CultureInfo.InvariantCulture, $"    mul.f32 %c{c}, %c{c}, %h{row};");
+                        e.AppendLine(CultureInfo.InvariantCulture, $"    mul.f32 %c{c}, %c{c}, %e{col};");
                     }
                 }
             }

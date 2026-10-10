@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Globalization;
 using System.Text;
 
 namespace Idrak.Gpu.Cuda;
@@ -57,7 +58,17 @@ internal static partial class PtxKernels
         int threads = BlockSize;
         var p = new StringBuilder();
         p.AppendLine($".visible .entry {name}(");
-        p.AppendLine(string.Join(",\n", pointers.Select(q => $"    .param .u64 p_{q}").Concat(CtcScalars.Select(s => $"    .param .u32 p_{s}"))));
+        foreach (string q in pointers)
+        {
+            p.Append("    .param .u64 p_").Append(q).Append(",\n");
+        }
+
+        for (int i = 0; i < CtcScalars.Length; i++)
+        {
+            p.Append("    .param .u32 p_").Append(CtcScalars[i]).Append(i + 1 < CtcScalars.Length ? ",\n" : "");
+        }
+
+        p.AppendLine();
         p.AppendLine(")");
         p.AppendLine("{");
         p.AppendLine("    .reg .pred %p<20>;");
@@ -65,12 +76,24 @@ internal static partial class PtxKernels
         p.AppendLine("    .reg .f64 %d<8>;");
         p.AppendLine("    .reg .b32 %r<64>;");
         p.AppendLine("    .reg .b64 %rd<16>;");
-        p.AppendLine("    .reg .u32 " + string.Join(", ", CtcScalars.Select(s => $"%s_{s}")) + ";");
+        p.Append("    .reg .u32 ");
+        for (int i = 0; i < CtcScalars.Length; i++)
+        {
+            p.Append(i > 0 ? ", %s_" : "%s_").Append(CtcScalars[i]);
+        }
+
+        p.AppendLine(";");
         p.AppendLine("    .reg .u32 %n, %len, %labels, %offset, %S, %lane, %nt, %stride, %t, %wlane, %warp;");
-        p.AppendLine("    .reg .u64 %rows, " + string.Join(", ", pointers.Select(q => $"%g_{q}")) + ";");
-        p.AppendLine($"    .shared .align 4 .f32 red[{threads}];");
-        p.AppendLine($"    .shared .align 4 .f32 wmax[{2 * (threads / 32)}];");
-        p.AppendLine($"    .shared .align 4 .f32 wtop[{2 * (threads / 32)}];");
+        p.Append("    .reg .u64 %rows");
+        foreach (string q in pointers)
+        {
+            p.Append(", %g_").Append(q);
+        }
+
+        p.AppendLine(";");
+        p.AppendLine(CultureInfo.InvariantCulture, $"    .shared .align 4 .f32 red[{threads}];");
+        p.AppendLine(CultureInfo.InvariantCulture, $"    .shared .align 4 .f32 wmax[{2 * (threads / 32)}];");
+        p.AppendLine(CultureInfo.InvariantCulture, $"    .shared .align 4 .f32 wtop[{2 * (threads / 32)}];");
         foreach (string s in CtcScalars)
         {
             p.AppendLine($"    ld.param.u32 %s_{s}, [p_{s}];");
@@ -102,8 +125,9 @@ internal static partial class PtxKernels
         return p;
     }
 
-    // The address of row element `index` (a register) into %rd2: the shared rows or the scratch rows at %rows (stride states).
-    private static string RowAddress(bool shared, string index) => shared
+    // The address of row element `index` (a register) into %rd2: the shared rows or the scratch rows at `rows` (%rows,
+    // stride states).
+    private static string RowAddress(bool shared, string index, string rows = "%rows") => shared
         ? $"""
             mov.u64 %rd2, ctc_rows;
             mul.wide.u32 %rd3, {index}, 4;
@@ -111,7 +135,7 @@ internal static partial class PtxKernels
             """
         : $"""
             mul.wide.u32 %rd3, {index}, 4;
-            add.u64 %rd2, %rows, %rd3;
+            add.u64 %rd2, {rows}, %rd3;
             """;
 
     private static string Space(bool shared) => shared ? "shared" : "global";
@@ -180,11 +204,12 @@ internal static partial class PtxKernels
         """;
 
     // α of step %t at state `s` (a register) from the row at element offset `from` into %f1, less the previous row's
-    // maximum `shift`: the shared or scratch row, or (AlphaStepAlpha) the alpha buffer row. Uses %r40 … %r45, %f2 … %f6.
-    private static string AlphaStep(bool shared, string s, string from, string shift, string label) => $"""
+    // maximum `shift`: the shared or scratch row, or (AlphaStepAlpha, `rows` %g_alpha) the alpha buffer row. Uses %r40 …
+    // %r45, %f2 … %f6.
+    private static string AlphaStep(bool shared, string s, string from, string shift, string label, string rows = "%rows") => $"""
         {StateClass(s, "%r40", label + "_C")}
         add.u32 %r41, {from}, {s};
-        {RowAddress(shared, "%r41")}
+        {RowAddress(shared, "%r41", rows)}
         ld.{Space(shared)}.f32 %f2, [%rd2];
         mov.f32 %f3, {NegInf};
         setp.eq.u32 %p13, {s}, 0;
@@ -201,7 +226,7 @@ internal static partial class PtxKernels
         setp.eq.u32 %p13, %r43, %r40;
         @%p13 bra {label}_NOSKIP;
         add.u32 %r41, {from}, {s};
-        {RowAddress(shared, "%r41")}
+        {RowAddress(shared, "%r41", rows)}
         ld.{Space(shared)}.f32 %f4, [%rd2+-8];
         {label}_NOSKIP:
         {LogSum3("%f2", "%f3", "%f4", "%f5", label + "_LS")}
@@ -248,11 +273,11 @@ internal static partial class PtxKernels
         var s = new StringBuilder();
         foreach (int offset in new[] { 16, 8, 4, 2, 1 })
         {
-            s.AppendLine($"shfl.sync.bfly.b32 %f46, {value}, {offset}, 31, 0xffffffff;");
+            s.AppendLine(CultureInfo.InvariantCulture, $"shfl.sync.bfly.b32 %f46, {value}, {offset}, 31, 0xffffffff;");
             s.AppendLine($"max.f32 {value}, {value}, %f46;");
         }
 
-        s.AppendLine($"""
+        s.AppendLine(CultureInfo.InvariantCulture, $"""
             and.b32 %r55, %t, 1;
             mul.lo.u32 %r55, %r55, {warps};
             add.u32 %r56, %r55, %warp;
@@ -270,7 +295,7 @@ internal static partial class PtxKernels
             """);
         for (int offset = warps / 2; offset >= 1; offset /= 2)
         {
-            s.AppendLine($"shfl.sync.bfly.b32 %f46, {target}, {offset}, 31, 0xffffffff;");
+            s.AppendLine(CultureInfo.InvariantCulture, $"shfl.sync.bfly.b32 %f46, {target}, {offset}, 31, 0xffffffff;");
             s.AppendLine($"max.f32 {target}, {target}, %f46;");
         }
 
@@ -420,12 +445,12 @@ internal static partial class PtxKernels
         p.AppendLine("    mov.u32 %stride, %s_states;");
         p.AppendLine(shared
             ? ""
-            : $"""
+            : string.Create(CultureInfo.InvariantCulture, $"""
                   mul.lo.u32 %r1, %n, %s_states;
                   mul.lo.u32 %r1, %r1, {CtcRows(backward: true)};
                   mul.wide.u32 %rd1, %r1, 4;
                   add.u64 %rows, %g_work, %rd1;
-              """);
+              """));
         p.AppendLine($$"""
                 mul.wide.u32 %rd9, %n, 4;
                 add.u64 %rd9, %g_lossgrads, %rd9;
@@ -678,7 +703,7 @@ internal static partial class PtxKernels
 
     // α of step %t at state `s` from the alpha buffer's row at element `from` (the gradient keeps every row there) into %f1.
     private static string AlphaStepAlpha(string s, string from, string shift, string label) =>
-        AlphaStep(false, s, from, shift, label).Replace("%rows", "%g_alpha", StringComparison.Ordinal);
+        AlphaStep(false, s, from, shift, label, rows: "%g_alpha");
 
     // Step %t's α row maximum m_t, kept after all the α rows (element %r10 + t of the alpha buffer, %r10 = batch · steps ·
     // states + n · steps): "st" writes `reg` there (thread 0, %p17), "ld" reads it into `reg` (every thread). Uses %r54, %rd11.

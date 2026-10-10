@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Globalization;
 using System.Text;
 
 namespace Idrak.Gpu.Cuda;
@@ -383,7 +384,7 @@ internal static partial class PtxKernels
     // special cases (flags = PowFlags(p)): |x| = 1 gives 1 (for an infinite p too) unless p is NaN and x is not 1; a negative
     // x (-0 and -∞ too) to an odd integer power is negative; a finite negative x to a fractional power is NaN; p = 0, 1
     // and 2 give 1, x and x·x exactly. 0 and ∞ follow from log2 (±∞) and 2^±∞. Uses %f15-%f18, %r15-%r16, %p7-%p9.
-    private static string PowOf(string target, string x, string p, string flags) => $"""
+    private static string PowOf(string target, string x, string p, string flags) => string.Create(CultureInfo.InvariantCulture, $"""
         abs.f32 %f15, {x};
         lg2.approx.f32 %f16, %f15;
         mul.rn.f32 %f17, %f16, {p};
@@ -421,5 +422,5 @@ internal static partial class PtxKernels
         and.b32 %r16, {flags}, {PowTwo};
         setp.ne.u32 %p7, %r16, 0;
         @%p7 mul.rn.f32 {target}, {x}, {x};
-        """;
+        """);
 }
