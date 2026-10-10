@@ -164,6 +164,11 @@ runs are reversed in the labels for training and back after decoding, and the ou
 
 ## Training details
 
+- Progress: on the console a live line shows the epoch's bar, steps done, the average and last step's loss, the time
+  spent and left, lines a second, data and step milliseconds and the device's memory (and its peak); each epoch ends
+  with its loss, CER, WER and lines a second. `--log FILE` writes every step and epoch as JSON Lines through the
+  library's telemetry (`JsonLinesLogger`).
+
 - Data: line images (PNG, JPEG, BMP, PGM) with UTF-8 `.txt` beside them; drafts only with `--include-drafts`.
 - Alphabet: the training transcriptions' characters (Unicode scalars, NFC), saved with the model; a held-out or `eval`
   text with characters the model has never seen is reported (and counted as errors), not a crash.
