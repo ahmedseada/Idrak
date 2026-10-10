@@ -419,12 +419,11 @@ internal sealed unsafe partial class CudaBackend : Backend
     {
         const int LogSize = 16 * 1024;
         byte[] image = Encoding.ASCII.GetBytes(ptx + "\0");
-        byte* log = stackalloc byte[LogSize];
-        log[0] = 0;
+        byte[] errors = new byte[LogSize];                                // the JIT's error log: too large for the stack
         int* options = stackalloc int[] { JitErrorLogBuffer, JitErrorLogBufferSizeBytes };
-        void** values = stackalloc void*[] { log, (void*)LogSize };
-        fixed (byte* p = image)
+        fixed (byte* p = image, log = errors)
         {
+            void** values = stackalloc void*[] { log, (void*)LogSize };
             int result = cuModuleLoadDataEx(out IntPtr module, p, 2, options, values);
             if (result != 0)
             {
@@ -1742,14 +1741,26 @@ internal sealed unsafe partial class CudaBackend : Backend
         uint shared = t_sharedBytes;
         t_sharedBytes = 0;
         MakeCurrent();
-        ulong* values = stackalloc ulong[args.Length];
-        void** pointers = stackalloc void*[args.Length];
-        for (int i = 0; i < args.Length; i++)
-        {
-            values[i] = args[i];
-            pointers[i] = &values[i];
-        }
 
+        // The values, then a pointer to each: on the stack up to StackArguments (a plug-in's PTX decides how many it
+        // declares), else on the heap, pinned while the launch reads them.
+        Span<ulong> slots = args.Length <= StackArguments ? stackalloc ulong[2 * args.Length] : new ulong[2 * args.Length];
+        fixed (ulong* values = slots)
+        {
+            void** pointers = (void**)(values + args.Length);
+            for (int i = 0; i < args.Length; i++)
+            {
+                values[i] = args[i];
+                pointers[i] = &values[i];
+            }
+
+            LaunchStaged(function, gridX, gridY, gridZ, blockX, blockY, blockZ, shared, pointers, args);
+        }
+    }
+
+    private void LaunchStaged(IntPtr function, uint gridX, uint gridY, uint gridZ, uint blockX, uint blockY, uint blockZ, uint shared, void** pointers,
+        ReadOnlySpan<ulong> args)
+    {
         using var use = UseStream();
         if (_profile is { } profile && _captureFree is null)
         {
@@ -1798,6 +1809,9 @@ internal sealed unsafe partial class CudaBackend : Backend
             }
         }
     }
+
+    // Kernel arguments staged on the stack at most (two 8-byte slots each: 1 KiB); more go to pinned memory.
+    private const int StackArguments = 64;
 
     // IDRAK_CUDA_DEBUG=1: synchronize after every kernel launch and name the kernel that failed (slow).
     private static readonly bool DebugLaunches = Environment.GetEnvironmentVariable("IDRAK_CUDA_DEBUG") is "1" or "true";
