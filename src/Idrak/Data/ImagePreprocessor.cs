@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Numerics;
 using System.Text.Json;
 using Idrak.Abstraction.Devices;
 using Idrak.Data.Abstractions;
@@ -595,12 +596,7 @@ public sealed class ImagePreprocessor
                 Array.Fill(sums, 1 << (PrecisionBits - 1));
                 for (int i = 0; i < k.Length; i++)
                 {
-                    var input = plane.AsSpan((start + i) * outWidth, outWidth);
-                    int weight = k[i];
-                    for (int x = 0; x < outWidth; x++)
-                    {
-                        sums[x] += input[x] * weight;                                   // integer sums: the order does not matter
-                    }
+                    AddWeighted(plane.AsSpan((start + i) * outWidth, outWidth), k[i], sums);
                 }
 
                 var output = result.AsSpan(y * outWidth, outWidth);
@@ -611,6 +607,34 @@ public sealed class ImagePreprocessor
             }
         });
         return result;
+    }
+
+    // sums[x] += input[x] * weight for a row: a vector loop (bytes widened to 32-bit lanes) and a scalar tail. Integer sums
+    // wrap alike in either, so the order does not matter.
+    private static void AddWeighted(ReadOnlySpan<byte> input, int weight, Span<int> sums)
+    {
+        int x = 0;
+        if (Vector.IsHardwareAccelerated && input.Length >= Vector<byte>.Count)
+        {
+            var w = new Vector<int>(weight);
+            int quarter = Vector<int>.Count;
+            for (; x <= input.Length - Vector<byte>.Count; x += Vector<byte>.Count)
+            {
+                Vector.Widen(new Vector<byte>(input[x..]), out var low, out var high);
+                Vector.Widen(low, out var a, out var b);
+                Vector.Widen(high, out var c, out var d);
+                var s = sums[x..];
+                (new Vector<int>(s) + Vector.AsVectorInt32(a) * w).CopyTo(s);
+                (new Vector<int>(s[quarter..]) + Vector.AsVectorInt32(b) * w).CopyTo(s[quarter..]);
+                (new Vector<int>(s[(2 * quarter)..]) + Vector.AsVectorInt32(c) * w).CopyTo(s[(2 * quarter)..]);
+                (new Vector<int>(s[(3 * quarter)..]) + Vector.AsVectorInt32(d) * w).CopyTo(s[(3 * quarter)..]);
+            }
+        }
+
+        for (; x < input.Length; x++)
+        {
+            sums[x] += input[x] * weight;
+        }
     }
 
     private static byte Clip8(int value) => value >= 1 << PrecisionBits << 8 ? (byte)255 : value <= 0 ? (byte)0 : (byte)(value >> PrecisionBits);

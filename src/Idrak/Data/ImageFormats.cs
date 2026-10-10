@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Buffers;
 using System.Buffers.Binary;
 using System.IO.Compression;
 using System.Numerics;
@@ -104,55 +105,80 @@ internal sealed class PngCodec : IImageCodec
             total += pw == 0 ? 0 : ph * (1 + (pw * bitsPerPixel + 7) / 8);
         }
 
-        var raw = new byte[checked((int)total)];
-        compressed.Position = 0;
-        using (var inflate = new ZLibStream(compressed, CompressionMode.Decompress))
-        {
-            inflate.ReadExactly(raw);
-        }
-
+        // The inflated rows, in a pooled buffer (returned in finally, used only before).
+        int rawLength = checked((int)total);
+        byte[] raw = ArrayPool<byte>.Shared.Rent(rawLength);
         int channels = color is 2 or 3 or 6 ? 3 : 1;
         var pixels = new float[checked(channels * h * w)];
-        float max = (1 << depth) - 1;
-        int offset = 0;
-        foreach (var (x0, y0, dx, dy) in passes)
+        try
         {
-            int pw = (w - x0 + dx - 1) / dx, ph = (h - y0 + dy - 1) / dy;
-            if (pw == 0 || ph == 0)
+            compressed.Position = 0;
+            using (var inflate = new ZLibStream(compressed, CompressionMode.Decompress))
             {
-                continue;
+                inflate.ReadExactly(raw.AsSpan(0, rawLength));
             }
 
-            int stride = (pw * bitsPerPixel + 7) / 8;
-            Span<byte> previous = new byte[stride];
-            for (int py = 0; py < ph; py++)
+            float max = (1 << depth) - 1;
+            int offset = 0;
+            foreach (var (x0, y0, dx, dy) in passes)
             {
-                var line = raw.AsSpan(offset + 1, stride);
-                Unfilter(raw[offset], line, previous, bpp);
-                offset += 1 + stride;
-                int y = y0 + py * dy;
-                for (int px = 0; px < pw; px++)
+                int pw = (w - x0 + dx - 1) / dx, ph = (h - y0 + dy - 1) / dy;
+                if (pw == 0 || ph == 0)
                 {
-                    int at = y * w + x0 + px * dx;
-                    if (color == 3)
-                    {
-                        int index = SampleAt(line, px, 0, 1, depth);
-                        for (int ch = 0; ch < 3; ch++)
-                        {
-                            pixels[ch * h * w + at] = palette![Math.Min(index * 3 + ch, palette.Length - 1)] / 255f;
-                        }
-                    }
-                    else
-                    {
-                        for (int ch = 0; ch < channels; ch++)
-                        {
-                            pixels[ch * h * w + at] = SampleAt(line, px, ch, samples, depth) / max;
-                        }
-                    }
+                    continue;
                 }
 
-                previous = line;
+                int stride = (pw * bitsPerPixel + 7) / 8;
+                Span<byte> previous = new byte[stride];
+                for (int py = 0; py < ph; py++)
+                {
+                    var line = raw.AsSpan(offset + 1, stride);
+                    Unfilter(raw[offset], line, previous, bpp);
+                    offset += 1 + stride;
+                    int y = y0 + py * dy;
+                    if (depth == 8 && color != 3 && dx == 1)
+                    {
+                        // A whole row of 8-bit samples (not interlaced): each channel's row written in order.
+                        for (int ch = 0; ch < channels; ch++)
+                        {
+                            var target = pixels.AsSpan(ch * h * w + y * w + x0, pw);
+                            for (int px = 0, at = ch; px < target.Length; px++, at += samples)
+                            {
+                                target[px] = line[at] / max;
+                            }
+                        }
+
+                        previous = line;
+                        continue;
+                    }
+
+                    for (int px = 0; px < pw; px++)
+                    {
+                        int at = y * w + x0 + px * dx;
+                        if (color == 3)
+                        {
+                            int index = SampleAt(line, px, 0, 1, depth);
+                            for (int ch = 0; ch < 3; ch++)
+                            {
+                                pixels[ch * h * w + at] = palette![Math.Min(index * 3 + ch, palette.Length - 1)] / 255f;
+                            }
+                        }
+                        else
+                        {
+                            for (int ch = 0; ch < channels; ch++)
+                            {
+                                pixels[ch * h * w + at] = SampleAt(line, px, ch, samples, depth) / max;
+                            }
+                        }
+                    }
+
+                    previous = line;
+                }
             }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(raw);
         }
 
         return new ImageData(pixels, channels, h, w);
@@ -178,18 +204,39 @@ internal sealed class PngCodec : IImageCodec
             throw new InvalidDataException($"PNG filter {filter} does not exist.");
         }
 
-        for (int i = 0; i < line.Length; i++)
+        // One loop per filter, each byte as the filter defines it (the first bpp bytes have no left neighbour).
+        switch (filter)
         {
-            int left = i >= bpp ? line[i - bpp] : 0, up = previous[i], upLeft = i >= bpp ? previous[i - bpp] : 0;
-            int predicted = filter switch
-            {
-                1 => left,
-                2 => up,
-                3 => (left + up) / 2,
-                4 => Paeth(left, up, upLeft),
-                _ => 0,
-            };
-            line[i] = (byte)(line[i] + predicted);
+            case 1:
+                for (int i = bpp; i < line.Length; i++)
+                {
+                    line[i] = (byte)(line[i] + line[i - bpp]);
+                }
+
+                break;
+            case 2:
+                for (int i = 0; i < line.Length; i++)
+                {
+                    line[i] = (byte)(line[i] + previous[i]);
+                }
+
+                break;
+            case 3:
+                for (int i = 0; i < line.Length; i++)
+                {
+                    int left = i >= bpp ? line[i - bpp] : 0;
+                    line[i] = (byte)(line[i] + (left + previous[i]) / 2);
+                }
+
+                break;
+            case 4:
+                for (int i = 0; i < line.Length; i++)
+                {
+                    int left = i >= bpp ? line[i - bpp] : 0, upLeft = i >= bpp ? previous[i - bpp] : 0;
+                    line[i] = (byte)(line[i] + Paeth(left, previous[i], upLeft));
+                }
+
+                break;
         }
     }
 

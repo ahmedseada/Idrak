@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Buffers;
 using System.Globalization;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
@@ -64,7 +65,7 @@ public sealed class CsvSource : ISampleSource, IDisposable
             int Resolve(string column)
             {
                 int index = Array.FindIndex(header, h => string.Equals(h, column, StringComparison.OrdinalIgnoreCase));
-                if (index < 0 && int.TryParse(column, out int numeric) && numeric >= 0 && numeric < header.Length)
+                if (index < 0 && int.TryParse(column, NumberStyles.Integer, CultureInfo.InvariantCulture, out int numeric) && numeric >= 0 && numeric < header.Length)
                 {
                     index = numeric;
                 }
@@ -136,7 +137,21 @@ public sealed class CsvSource : ISampleSource, IDisposable
             throw new ArgumentOutOfRangeException(nameof(index));
         }
 
-        Parse(Text(starts[index], lengths[index]), $"{Path} row {index + 1}", features, targets);
+        int length = lengths[index];
+        byte[]? rented = length <= 1024 ? null : ArrayPool<byte>.Shared.Rent(length);
+        try
+        {
+            Span<byte> bytes = rented is null ? stackalloc byte[length] : rented.AsSpan(0, length);
+            ReadAt(starts[index], bytes);
+            Parse(bytes, index + 1, features, targets);
+        }
+        finally
+        {
+            if (rented is not null)
+            {
+                ArrayPool<byte>.Shared.Return(rented);
+            }
+        }
     }
 
     /// <summary>The rows in file order, read front to back on every pass (no scan, nothing kept).</summary>
@@ -145,39 +160,30 @@ public sealed class CsvSource : ISampleSource, IDisposable
     /// <summary>Closes the file.</summary>
     public void Dispose() => _file.Dispose();
 
-    private void Parse(ReadOnlySpan<char> line, string where, Span<float> features, Span<float> targets)
+    // Row `row` (counted from 1) parsed from its UTF-8 bytes; the error messages name it.
+    private void Parse(ReadOnlySpan<byte> line, int row, Span<float> features, Span<float> targets)
     {
-        Span<float> values = _header.Length <= 256 ? stackalloc float[_header.Length] : new float[_header.Length];
-        int column = 0;
-        foreach (var range in line.Split(_options.Delimiter))
+        float[]? rented = _header.Length <= 256 ? null : ArrayPool<float>.Shared.Rent(_header.Length);
+        try
         {
-            if (column >= _header.Length)
+            Span<float> values = rented is null ? stackalloc float[_header.Length] : rented.AsSpan(0, _header.Length);
+            CsvRow.Parse(line, _options.Delimiter, _options.Culture, _parsed, _header, values, Path, "row", row);
+            for (int j = 0; j < _featureColumns.Length; j++)
             {
-                throw new FormatException($"{where}: more than {_header.Length} fields.");
+                features[j] = values[_featureColumns[j]];
             }
 
-            var field = line[range].Trim().Trim('"');
-            if (_parsed[column] && !float.TryParse(field, NumberStyles.Float, _options.Culture, out values[column]))
+            for (int j = 0; j < _targetColumns.Length; j++)
             {
-                throw new FormatException($"{where}, column '{_header[column]}': '{field}' is not a number.");
+                targets[j] = values[_targetColumns[j]];
             }
-
-            column++;
         }
-
-        if (column != _header.Length)
+        finally
         {
-            throw new FormatException($"{where}: expected {_header.Length} fields, found {column}.");
-        }
-
-        for (int j = 0; j < _featureColumns.Length; j++)
-        {
-            features[j] = values[_featureColumns[j]];
-        }
-
-        for (int j = 0; j < _targetColumns.Length; j++)
-        {
-            targets[j] = values[_targetColumns[j]];
+            if (rented is not null)
+            {
+                ArrayPool<float>.Shared.Return(rented);
+            }
         }
     }
 
@@ -282,7 +288,7 @@ public sealed class CsvSource : ISampleSource, IDisposable
             return false;
         }
 
-        Span<byte> buffer = stackalloc byte[4096];
+        Span<byte> buffer = stackalloc byte[1024];
         while (true)
         {
             int read = RandomAccess.Read(_file, buffer, position);
@@ -305,7 +311,7 @@ public sealed class CsvSource : ISampleSource, IDisposable
             position = end + 1;
             if (buffer[found] == '\r')
             {
-                Span<byte> next = stackalloc byte[1];
+                var next = buffer[..1];                                            // the line is found: the buffer is free
                 if (RandomAccess.Read(_file, next, position) == 1 && next[0] == '\n')
                 {
                     position++;
@@ -326,8 +332,15 @@ public sealed class CsvSource : ISampleSource, IDisposable
         }
 
         var bytes = length <= 1024 ? stackalloc byte[length] : new byte[length];
+        ReadAt(start, bytes);
+        return Encoding.UTF8.GetString(bytes);
+    }
+
+    // Fills `bytes` from the file at `start`.
+    private void ReadAt(long start, Span<byte> bytes)
+    {
         int read = 0;
-        while (read < length)
+        while (read < bytes.Length)
         {
             int n = RandomAccess.Read(_file, bytes[read..], start + read);
             if (n == 0)
@@ -337,8 +350,6 @@ public sealed class CsvSource : ISampleSource, IDisposable
 
             read += n;
         }
-
-        return Encoding.UTF8.GetString(bytes);
     }
 
     private sealed class Stream(CsvSource csv) : ISampleStream
@@ -350,27 +361,30 @@ public sealed class CsvSource : ISampleSource, IDisposable
         public ISampleReader Open() => new Reader(csv);
     }
 
+    // The rows front to back as UTF-8 bytes, read in blocks into a pooled buffer (grown for a row longer than it).
     private sealed class Reader : ISampleReader
     {
         private readonly CsvSource _csv;
-        private readonly StreamReader _reader;
-        private int _row;
+        private readonly FileStream _file;
+        private byte[]? _buffer = ArrayPool<byte>.Shared.Rent(1 << 16);
+        private int _start, _end, _row;
+        private bool _ended, _afterReturn;
 
         public Reader(CsvSource csv)
         {
             _csv = csv;
-            _reader = new StreamReader(new FileStream(csv.Path, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16, FileOptions.SequentialScan), Encoding.UTF8);
-            _reader.BaseStream.Position = csv._bodyStart;
-            _reader.DiscardBufferedData();
+            _file = new FileStream(csv.Path, FileMode.Open, FileAccess.Read, FileShare.Read, 1, FileOptions.SequentialScan);
+            _file.Position = csv._bodyStart;
         }
 
         public bool Read(Span<float> features, Span<float> targets)
         {
-            while (_reader.ReadLine() is { } line)
+            while (NextLine(out int start, out int length))
             {
-                if (!string.IsNullOrWhiteSpace(line))
+                var line = _buffer.AsSpan(start, length);
+                if (!CsvRow.IsBlank(line))
                 {
-                    _csv.Parse(line, $"{_csv.Path} row {++_row}", features, targets);
+                    _csv.Parse(line, ++_row, features, targets);
                     return true;
                 }
             }
@@ -378,6 +392,221 @@ public sealed class CsvSource : ISampleSource, IDisposable
             return false;
         }
 
-        public void Dispose() => _reader.Dispose();
+        public void Dispose()
+        {
+            _file.Dispose();
+            if (_buffer is { } buffer)
+            {
+                _buffer = null;
+                ArrayPool<byte>.Shared.Return(buffer);
+            }
+        }
+
+        // The next line in the buffer: it ends at \r, \n or \r\n, as StreamReader.ReadLine splits them (the last one may
+        // end at the end of the file); more of the file is read as needed.
+        private bool NextLine(out int start, out int length)
+        {
+            ObjectDisposedException.ThrowIf(_buffer is null, this);
+            int searched = 0;                                                      // bytes after _start known to hold no break
+            while (true)
+            {
+                if (_afterReturn)
+                {
+                    if (_start == _end && !_ended)
+                    {
+                        Fill();
+                        continue;
+                    }
+
+                    _afterReturn = false;
+                    if (_start < _end && _buffer[_start] == '\n')
+                    {
+                        _start++;
+                    }
+                }
+
+                int found = _buffer.AsSpan(_start + searched, _end - _start - searched).IndexOfAny((byte)'\r', (byte)'\n');
+                if (found >= 0)
+                {
+                    start = _start;
+                    length = searched + found;
+                    _afterReturn = _buffer[start + length] == '\r';
+                    _start = start + length + 1;
+                    return true;
+                }
+
+                searched = _end - _start;
+                if (_ended)
+                {
+                    start = _start;
+                    length = _end - _start;
+                    _start = _end;
+                    return length > 0;
+                }
+
+                Fill();
+            }
+        }
+
+        // Moves the unfinished line to the front of the buffer (a larger one when it fills the buffer) and reads more.
+        private void Fill()
+        {
+            int kept = _end - _start;
+            if (_start > 0)
+            {
+                _buffer.AsSpan(_start, kept).CopyTo(_buffer);
+            }
+            else if (kept == _buffer!.Length)
+            {
+                var larger = ArrayPool<byte>.Shared.Rent(2 * _buffer.Length);
+                _buffer.AsSpan(0, kept).CopyTo(larger);
+                ArrayPool<byte>.Shared.Return(_buffer);
+                _buffer = larger;
+            }
+
+            _start = 0;
+            _end = kept;
+            int read = _file.Read(_buffer!, _end, _buffer!.Length - _end);
+            if (read == 0)
+            {
+                _ended = true;
+            }
+            else
+            {
+                _end += read;
+            }
+        }
     }
+}
+
+// One CSV row split at the delimiter and parsed, for Dataset.LoadCsv and CsvSource alike: each field trimmed of white
+// space and then of quotes, the parsed columns read as numbers in the options' culture. A row of ASCII bytes is parsed
+// from its bytes; any other row is decoded first, so both read what the row's text says.
+internal static class CsvRow
+{
+    /// <summary>Parses <paramref name="line"/> into <paramref name="values"/> (one per column); errors name "{source} {unit} {number}".</summary>
+    public static void Parse(ReadOnlySpan<char> line, char delimiter, IFormatProvider culture, bool[] parsed, string[] header, Span<float> values,
+        string source, string unit, int number)
+    {
+        int column = 0;
+        foreach (var range in line.Split(delimiter))
+        {
+            if (column >= values.Length)
+            {
+                throw TooMany(source, unit, number, values.Length);
+            }
+
+            var field = line[range].Trim().Trim('"');
+            if (parsed[column] && !float.TryParse(field, NumberStyles.Float, culture, out values[column]))
+            {
+                throw NotANumber(source, unit, number, header[column], field.ToString());
+            }
+
+            column++;
+        }
+
+        if (column != values.Length)
+        {
+            throw Fields(source, unit, number, values.Length, column);
+        }
+    }
+
+    /// <summary>The same for a row of UTF-8 bytes.</summary>
+    public static void Parse(ReadOnlySpan<byte> line, char delimiter, IFormatProvider culture, bool[] parsed, string[] header, Span<float> values,
+        string source, string unit, int number)
+    {
+        if (delimiter > 0x7F || !Ascii.IsValid(line))
+        {
+            char[] text = ArrayPool<char>.Shared.Rent(Encoding.UTF8.GetMaxCharCount(line.Length));
+            try
+            {
+                int length = Encoding.UTF8.GetChars(line, text);
+                Parse(text.AsSpan(0, length), delimiter, culture, parsed, header, values, source, unit, number);
+            }
+            finally
+            {
+                ArrayPool<char>.Shared.Return(text);
+            }
+
+            return;
+        }
+
+        int column = 0;
+        foreach (var range in line.Split((byte)delimiter))
+        {
+            if (column >= values.Length)
+            {
+                throw TooMany(source, unit, number, values.Length);
+            }
+
+            var field = TrimWhiteSpace(line[range]).Trim((byte)'"');
+            if (parsed[column] && !float.TryParse(field, NumberStyles.Float, culture, out values[column]))
+            {
+                throw NotANumber(source, unit, number, header[column], Encoding.ASCII.GetString(field));
+            }
+
+            column++;
+        }
+
+        if (column != values.Length)
+        {
+            throw Fields(source, unit, number, values.Length, column);
+        }
+    }
+
+    /// <summary>Whether a row of UTF-8 bytes is empty or white space only (as <see cref="MemoryExtensions.IsWhiteSpace"/> on its text).</summary>
+    public static bool IsBlank(ReadOnlySpan<byte> line)
+    {
+        int i = 0;
+        while (i < line.Length && line[i] < 0x80 && char.IsWhiteSpace((char)line[i]))
+        {
+            i++;
+        }
+
+        if (i == line.Length)
+        {
+            return true;
+        }
+
+        if (line[i] < 0x80)
+        {
+            return false;                                                          // an ASCII character that is not white space
+        }
+
+        char[] text = ArrayPool<char>.Shared.Rent(Encoding.UTF8.GetMaxCharCount(line.Length - i));
+        try
+        {
+            return text.AsSpan(0, Encoding.UTF8.GetChars(line[i..], text)).IsWhiteSpace();
+        }
+        finally
+        {
+            ArrayPool<char>.Shared.Return(text);
+        }
+    }
+
+    // An ASCII field without the white space at either end (char.IsWhiteSpace, as string.Trim).
+    private static ReadOnlySpan<byte> TrimWhiteSpace(ReadOnlySpan<byte> field)
+    {
+        int start = 0, end = field.Length;
+        while (start < end && char.IsWhiteSpace((char)field[start]))
+        {
+            start++;
+        }
+
+        while (end > start && char.IsWhiteSpace((char)field[end - 1]))
+        {
+            end--;
+        }
+
+        return field[start..end];
+    }
+
+    private static FormatException TooMany(string source, string unit, int number, int columns) =>
+        new($"{source} {unit} {number}: more than {columns} fields.");
+
+    private static FormatException NotANumber(string source, string unit, int number, string column, string field) =>
+        new($"{source} {unit} {number}, column '{column}': '{field}' is not a number.");
+
+    private static FormatException Fields(string source, string unit, int number, int columns, int found) =>
+        new($"{source} {unit} {number}: expected {columns} fields, found {found}.");
 }

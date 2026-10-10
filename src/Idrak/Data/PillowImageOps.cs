@@ -160,12 +160,7 @@ public static class PillowImageOps
         var pixels = new float[planes.Length * size];
         for (int c = 0; c < planes.Length; c++)
         {
-            var plane = planes[c];
-            var target = pixels.AsSpan(c * size, size);
-            for (int i = 0; i < size; i++)
-            {
-                target[i] = plane[i] * (1f / 255f);
-            }
+            ImageLevels.ToUnit(planes[c].AsSpan(0, size), pixels.AsSpan(c * size, size));
         }
 
         return new ImageData(pixels, planes.Length, height, width);

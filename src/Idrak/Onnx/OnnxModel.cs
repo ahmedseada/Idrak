@@ -2,6 +2,8 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Buffers.Binary;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace Idrak.Onnx;
@@ -112,6 +114,15 @@ internal ref struct ProtoReader(ReadOnlySpan<byte> data)
         }
 
         var packed = Bytes();
+        if (BitConverter.IsLittleEndian)
+        {
+            // The values as stored, in one copy (the machine's byte order is the file's, rule 48): the list grown once.
+            int count = packed.Length / 4, start = into.Count;
+            CollectionsMarshal.SetCount(into, start + count);
+            MemoryMarshal.Cast<byte, float>(packed[..(count * 4)]).CopyTo(CollectionsMarshal.AsSpan(into)[start..]);
+            return;
+        }
+
         for (int i = 0; i + 4 <= packed.Length; i += 4)
         {
             into.Add(BinaryPrimitives.ReadSingleLittleEndian(packed.Slice(i, 4)));
@@ -145,7 +156,8 @@ internal sealed class OnnxTensor
         var doubles = new List<double>();
         int type = 0;
         string name = "";
-        byte[]? raw = null;
+        ReadOnlySpan<byte> raw = default;
+        bool hasRaw = false;
         while (r.Next(out int field, out int wire))
         {
             switch (field)
@@ -155,7 +167,7 @@ internal sealed class OnnxTensor
                 case 4: r.Floats(wire, floats); break;
                 case 5 or 7: r.Ints(wire, longs); break;                  // int32_data (also float16 bits) / int64_data
                 case 8: name = r.String(); break;
-                case 9: raw = r.Bytes().ToArray(); break;
+                case 9: raw = r.Bytes(); hasRaw = true; break;                 // read in place: no copy of the weights
                 case 10:
                     if (wire == 1)
                     {
@@ -186,30 +198,67 @@ internal sealed class OnnxTensor
         int count = shape.Aggregate(1, (a, b) => a * b);
         return type switch
         {
-            1 => new OnnxTensor { Name = name, Dims = shape, Floats = raw is null ? [.. floats] : Decode(raw, 4, count, b => BinaryPrimitives.ReadSingleLittleEndian(b)) },
-            11 => new OnnxTensor { Name = name, Dims = shape, Floats = raw is null ? [.. doubles.Select(d => (float)d)] : Decode(raw, 8, count, b => (float)BinaryPrimitives.ReadDoubleLittleEndian(b)) },
-            10 => new OnnxTensor { Name = name, Dims = shape, Floats = raw is null ? [.. longs.Select(v => (float)BitConverter.UInt16BitsToHalf((ushort)v))] : Decode(raw, 2, count, b => (float)BinaryPrimitives.ReadHalfLittleEndian(b)) },
-            16 => new OnnxTensor { Name = name, Dims = shape, Floats = raw is null ? [.. longs.Select(v => BitConverter.Int32BitsToSingle((int)v << 16))] : Decode(raw, 2, count, b => BitConverter.Int32BitsToSingle(BinaryPrimitives.ReadUInt16LittleEndian(b) << 16)) },
-            7 => new OnnxTensor { Name = name, Dims = shape, Longs = raw is null ? [.. longs] : Decode(raw, 8, count, b => BinaryPrimitives.ReadInt64LittleEndian(b)) },
-            6 or 5 or 3 or 2 or 4 or 12 or 13 => new OnnxTensor { Name = name, Dims = shape, Longs = raw is null ? [.. longs] : DecodeInt(raw, type, count) },
+            1 => new OnnxTensor { Name = name, Dims = shape, Floats = !hasRaw ? [.. floats] : Copy(raw, count, b => BinaryPrimitives.ReadSingleLittleEndian(b)) },
+            11 => new OnnxTensor { Name = name, Dims = shape, Floats = !hasRaw ? [.. doubles.Select(d => (float)d)] : Decode(raw, 8, count, b => (float)BinaryPrimitives.ReadDoubleLittleEndian(b)) },
+            10 => new OnnxTensor { Name = name, Dims = shape, Floats = !hasRaw ? [.. longs.Select(v => (float)BitConverter.UInt16BitsToHalf((ushort)v))] : Halves(raw, count) },
+            16 => new OnnxTensor { Name = name, Dims = shape, Floats = !hasRaw ? [.. longs.Select(v => BitConverter.Int32BitsToSingle((int)v << 16))] : BFloat16s(raw, count) },
+            7 => new OnnxTensor { Name = name, Dims = shape, Longs = !hasRaw ? [.. longs] : Copy(raw, count, b => BinaryPrimitives.ReadInt64LittleEndian(b)) },
+            6 or 5 or 3 or 2 or 4 or 12 or 13 => new OnnxTensor { Name = name, Dims = shape, Longs = !hasRaw ? [.. longs] : DecodeInt(raw, type, count) },
             _ => throw new NotSupportedException($"Tensor '{name}' has ONNX data type {type}, which the importer does not read."),
         };
     }
 
     private delegate T Reader<T>(ReadOnlySpan<byte> bytes);
 
-    private static T[] Decode<T>(byte[] raw, int size, int count, Reader<T> read)
+    private static T[] Decode<T>(ReadOnlySpan<byte> raw, int size, int count, Reader<T> read)
     {
         var values = new T[count];
         for (int i = 0; i < count; i++)
         {
-            values[i] = read(raw.AsSpan(i * size, size));
+            values[i] = read(raw.Slice(i * size, size));
         }
 
         return values;
     }
 
-    private static long[] DecodeInt(byte[] raw, int type, int count) => type switch
+    // Little-endian values as stored: one copy of the bytes where the machine's byte order is the file's (rule 48), else
+    // read one by one.
+    private static T[] Copy<T>(ReadOnlySpan<byte> raw, int count, Reader<T> read)
+        where T : unmanaged
+    {
+        if (!BitConverter.IsLittleEndian)
+        {
+            return Decode(raw, Unsafe.SizeOf<T>(), count, read);
+        }
+
+        var values = new T[count];
+        raw[..(count * Unsafe.SizeOf<T>())].CopyTo(MemoryMarshal.AsBytes(values.AsSpan()));
+        return values;
+    }
+
+    private static float[] Halves(ReadOnlySpan<byte> raw, int count)
+    {
+        var values = new float[count];
+        for (int i = 0; i < values.Length; i++)
+        {
+            values[i] = (float)BinaryPrimitives.ReadHalfLittleEndian(raw.Slice(i * 2, 2));
+        }
+
+        return values;
+    }
+
+    private static float[] BFloat16s(ReadOnlySpan<byte> raw, int count)
+    {
+        var values = new float[count];
+        for (int i = 0; i < values.Length; i++)
+        {
+            values[i] = BitConverter.Int32BitsToSingle(BinaryPrimitives.ReadUInt16LittleEndian(raw.Slice(i * 2, 2)) << 16);
+        }
+
+        return values;
+    }
+
+    private static long[] DecodeInt(ReadOnlySpan<byte> raw, int type, int count) => type switch
     {
         6 => Decode(raw, 4, count, b => (long)BinaryPrimitives.ReadInt32LittleEndian(b)),
         12 => Decode(raw, 4, count, b => (long)BinaryPrimitives.ReadUInt32LittleEndian(b)),
