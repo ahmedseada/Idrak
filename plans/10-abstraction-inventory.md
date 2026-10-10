@@ -12,11 +12,11 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 | Assembly | Interfaces | Abstract classes | Registries | Total | Misplaced (decision 10) |
 |---|---|---|---|---|---|
 | `Idrak.Abstraction` | 34 | 13 | 14 | 60 | 0 |
-| `Idrak` | 13 | 4 | 15 | 32 | 0 |
+| `Idrak` | 14 | 4 | 16 | 34 | 0 |
 | `Idrak.Gpu` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Nlp` | 7 | 2 | 4 | 13 | 0 |
 | `Idrak.Data` | 6 | 0 | 4 | 10 | 0 |
-| `Idrak.Vision` | 6 | 0 | 4 | 10 | 0 |
+| `Idrak.Vision` | 6 | 0 | 5 | 11 | 0 |
 | `Idrak.Onnx.Runtime` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.AspNetCore` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Mcp` | 0 | 0 | 0 | 0 | 0 |
@@ -102,7 +102,9 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | Type | Kind | Visibility | Mentions | Implementations | Registered | Users | Belongs in |
 |---|---|---|---|---|---|---|---|
 | `Idrak.Data.Abstractions.IBatchSource` | interface | public | — | DataLoader |  | Idrak | Idrak |
+| `Idrak.Data.Abstractions.IImageEncoder` | interface | public | — | ImageEncoders.GuardedEncoder, NetpbmEncoder, PngEncoder |  | Idrak | Idrak |
 | `Idrak.Data.Abstractions.IScaler` | interface | public | — | MinMaxScaler, StandardScaler |  | Idrak | Idrak |
+| `Idrak.Data.Abstractions.ImageEncoders` | registry | public | — |  | netpbm, png | — | Idrak |
 | `Idrak.Data.Abstractions.SampleSources` | registry | public | — |  | csv, images, npy, tokens | Idrak | Idrak |
 | `Idrak.Inference.Abstractions.CtcDecoders` | registry | public | Tensor |  | beam, greedy | — | Idrak |
 | `Idrak.Layers.Abstractions.GraphOps` | registry | public | — |  | abs, add, cast, clip, concat, div, elu, exp, +28 | Idrak | Idrak |
@@ -171,15 +173,16 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 
 | Type | Kind | Visibility | Mentions | Implementations | Registered | Users | Belongs in |
 |---|---|---|---|---|---|---|---|
-| `Idrak.Vision.Abstractions.BoxMatchers` | registry | public | — |  | hungarian, iou-threshold | — | Vision |
+| `Idrak.Vision.Abstractions.BoxMatchers` | registry | public | — |  | hungarian, iou-threshold | Vision | Vision |
 | `Idrak.Vision.Abstractions.DetectionDecoders` | registry | public | — |  | boxes-scores | Vision | Vision |
+| `Idrak.Vision.Abstractions.DetectionHeads` | registry | public | — |  | — | — | Vision |
 | `Idrak.Vision.Abstractions.IDetectionMetric` | interface | public | — | CocoAveragePrecision, VisionMetrics.GuardedDetection, VocAveragePrecision |  | Vision | Vision |
 | `Idrak.Vision.Abstractions.IObjectDetector` | interface | public | — | ModelDetector |  | Vision | Vision |
 | `Idrak.Vision.Abstractions.IRegionProposer` | interface | public | — | ComponentProposer |  | Vision | Vision |
 | `Idrak.Vision.Abstractions.ISegmentationMetric` | interface | public | — | SegmentationMetrics, VisionMetrics.GuardedSegmentation |  | Vision | Vision |
 | `Idrak.Vision.Abstractions.ISegmenter` | interface | public | — | ModelSegmenter |  | Vision | Vision |
 | `Idrak.Vision.Abstractions.IVisionMetric` | interface | public | — | CocoAveragePrecision, SegmentationMetrics, VisionMetrics.GuardedDetection, VisionMetrics.GuardedSegmentation, VocAveragePrecision |  | Vision | Vision |
-| `Idrak.Vision.Abstractions.VisionLosses` | registry | public | Tensor |  | ciou, dice, diou, focal, giou, iou, l1, smooth-l1 | — | Vision |
+| `Idrak.Vision.Abstractions.VisionLosses` | registry | public | Tensor |  | ciou, dice, diou, focal, giou, iou, l1, smooth-l1 | Vision | Vision |
 | `Idrak.Vision.Abstractions.VisionMetrics` | registry | public | — |  | coco, miou, voc, voc07 | — | Vision |
 
 ## The device contract (`Backend`)

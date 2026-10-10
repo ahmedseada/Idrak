@@ -17,41 +17,70 @@ internal sealed class TrainCommand : Command
 {
     public override string Name => "train";
 
-    public override string Summary => "Train a network from a builder JSON on a CSV or an image folder; writes a model package (.ikm)";
+    public override string Summary => "Train a builder JSON network, or fine-tune an image model, on a CSV, image folders or annotated images";
 
     public override string Usage => """
-        SPEC.json --data FILE|FOLDER [-t COL]... [-o MODEL.ikm] [options]
+        SPEC.json|MODEL --data FILE|FOLDER [-t COL]... [-o OUT] [options]
 
         Arguments:
           SPEC.json  the network as the builder writes it (NetworkBuilder.ToJson, idrak suggest's network.json):
                      {"format": "idrak-network/1", "input": "Features", "shape": [9], "steps": [...]}
+          MODEL      an image model to fine-tune, read through its family (a folder with config.json and safetensors or
+                     an .onnx file; the family from a plug-in, -P PLUGIN.dll); its weights are written as .ikw
 
         Options:
-              --data FILE        a CSV with a header (numbers; a class column may hold names), or a folder with a folder of
-                                 images per class (PNG, BMP, PGM, PPM, or a --plugin's codec; fitted to the image input)
+              --data FILE        a CSV with a header (numbers; a class column may hold names), a folder with a folder of
+                                 images per class (PNG, BMP, PGM, PPM, JPEG, or a --plugin's codec; fitted to the image
+                                 input), a folder of images/ and masks/ (segmentation; a mask's grey level is the class,
+                                 names in classes.txt), or an annotated dataset (COCO, YOLO, Pascal VOC, ...)
+              --data-format F    auto (default), folder, masks, or an AnnotationFormats name (coco, yolo, voc, ...)
+              --eval PATH        image models: evaluation data, read as --data (instead of holding out --validation)
           -t, --target COL       the target column (repeatable; default: the last column)
               --ignore A,B       columns that are not features (an id, ...)
-              --task T           regression or classify (default: classify when the network has several outputs)
+              --task T           regression or classify; for images classify, segment or detect (default: from the
+                                 network's output: [classes] classifies, [classes, h, w] segments, --decoder detects)
+              --augment P        image models: an augmentation pipeline (Augmentations), as text, run off the training
+                                 thread: "flip, rotation(degrees=10), resized-crop(width=64, height=64, scale=0.5:1)"
+              --loss NAME        image models: a VisionLosses name (focal, dice, giou, ...); default cross-entropy for
+                                 classes and pixels, giou for a detector's boxes
+              --matcher NAME     detection: a BoxMatchers name (iou-threshold, the default, or hungarian)
+              --metric NAME      image models: scored on the evaluation data at the end: accuracy (classification), or a
+                                 VisionMetrics name (miou for segmentation, coco, voc or voc07 for detection; the defaults)
+              --decoder NAME     detection: the decoder (DetectionDecoders) whose head (DetectionHeads) trains the network;
+                                 default the model's
               --epochs N         at most N epochs (default 100); --patience N: stop after N epochs without a better
                                  validation loss (default 20, 0: never)
-              --lr F, --batch N  learning rate (default 0.001) and batch size (default 32)
+              --lr F, --batch N  learning rate (default 0.001) and batch size (default 32); a batch the device has no room
+                                 for is split into micro-batches whose gradients add up
               --optimizer NAME   adamw (default), adam or sgd; --weight-decay F
               --validation F     the fraction held out for validation (default 0.2, 0: none); --seed N (default 1)
               --no-scale         keep the features (and a regression target) unscaled
-          -o, --out FILE         the model package (default: the network's name, or SPEC's, .ikm)
+          -o, --out FILE         the model package (default: the network's name, or SPEC's, .ikm); a fine-tuned image
+                                 model's weights (.ikw, read with idrak predict MODEL --weights FILE)
               --run DIR          the run folder (default CACHE/runs/TIME-NAME): run.json, network.json, scalers, the
                                  checkpoints last.ikw and best.ikw, and log.jsonl (idrak runs, idrak resume read them)
           -C, --config FILE      a train.json (from idrak suggest): the options above without the dashes
                                  ("target", "epochs", "lr", "batch", ...); options on the command line win
 
+        Image runs (an image model, --augment, --loss, --metric, --eval, --decoder, annotations or a [classes, h, w]
+        output) read and augment samples on worker threads, stretched to the network's input; a fine-tuned family's
+        normalization is applied as its preprocessing gives it. A family, decoder or head no plug-in registered is
+        refused with its registry's message.
+
         Examples:
           idrak train network.json --data houses.csv -t price -o houses.ikm
           idrak train cnn.json --data ./shapes --epochs 40 -d vulkan:0
           idrak train network.json --data houses.csv --config train.json
+          idrak train cnn.json --data ./shapes --augment "flip, rotation(degrees=10)" --eval ./shapes-test
+          idrak train unet.json --data ./scans --data-format masks --loss dice -o scans.ikm
+          idrak train -P MyFamilies.dll ./detector --data ./coco/train.json --eval ./coco/val.json --metric coco -o tuned.ikw
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } =
-        ["--data", "--target", "--ignore", "--task", "--epochs", "--lr", "--batch", "--patience", "--validation", "--optimizer", "--weight-decay", "--out", "--run"];
+    [
+        "--data", "--target", "--ignore", "--task", "--epochs", "--lr", "--batch", "--patience", "--validation", "--optimizer", "--weight-decay", "--out", "--run",
+        "--data-format", "--eval", "--augment", "--loss", "--matcher", "--metric", "--decoder",
+    ];
 
     public override IReadOnlyCollection<string> Flags { get; } = ["--no-scale"];
 
@@ -59,9 +88,15 @@ internal sealed class TrainCommand : Command
 
     public override int Run(CommandContext context)
     {
-        string specPath = context.Argument(0, "SPEC.json (the network, as the builder's JSON)");
-        var network = JsonNode.Parse(File.ReadAllText(specPath), documentOptions: CliConfig.ReadOptions) as JsonObject
-            ?? throw new UsageException($"{specPath} is not a JSON object.");
+        string specPath = context.Argument(0, "SPEC.json (the network, as the builder's JSON) or MODEL (an image model to fine-tune)");
+        bool checkpoint = ImageModelFiles.IsCheckpoint(specPath);
+        if (!checkpoint && !File.Exists(specPath))
+        {
+            throw new UsageException($"{specPath} not found: give the network as the builder's JSON, or an image model to fine-tune.");
+        }
+
+        var network = checkpoint ? []
+            : JsonNode.Parse(File.ReadAllText(specPath), documentOptions: CliConfig.ReadOptions) as JsonObject ?? throw new UsageException($"{specPath} is not a JSON object.");
         if ((string?)network["format"] != "idrak-network/1" && network["network"] is JsonObject inner)
         {
             network = (JsonObject)inner.DeepClone();                              // a file that holds the network under "network"
@@ -115,18 +150,33 @@ internal sealed class TrainCommand : Command
             : double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double v) ? v : throw new UsageException($"{option} needs a number, not '{text}'.");
 
         string data = Value("--data", "dataset") ?? throw new UsageException("Give --data FILE (a CSV) or --data FOLDER (a folder of class folders of images).");
-        string name = (string?)network["name"] ?? Path.GetFileNameWithoutExtension(specPath);
+        string name = (string?)network["name"] ?? (checkpoint ? Path.GetFileName(Path.TrimEndingDirectorySeparator(Path.GetFullPath(specPath))) : Path.GetFileNameWithoutExtension(specPath));
         double validation = Real("--validation", 0.2, "validation_fraction", "validationFraction");
         if (validation is < 0 or >= 1)
         {
             throw new UsageException("--validation needs a fraction from 0 to 1.");
         }
 
+        // An image run: a model read through its family, the image options, a segmenter's output or annotated images.
+        var image = new ImageRunOptions
+        {
+            Model = checkpoint ? Path.GetFullPath(specPath) : null,
+            Task = Value("--task") is { } t && t is not ("regression" or "regress") ? ImageRunOptions.ParseTask(t)?.ToString().ToLowerInvariant() : null,
+            DataFormat = Value("--data-format", "data_format") ?? "auto",
+            Augment = Value("--augment"),
+            Loss = Value("--loss"),
+            Matcher = Value("--matcher"),
+            Metric = Value("--metric"),
+            Eval = Value("--eval") is { } eval ? Path.GetFullPath(eval) : null,
+            Decoder = Value("--decoder"),
+        };
+        bool imageRun = checkpoint || ImageRun(network, image, Path.GetFullPath(data));
         var settings = new RunSettings
         {
             Network = network,
             Data = Path.GetFullPath(data),
-            Output = Path.GetFullPath(Value("--out") ?? $"{name}.ikm"),
+            Output = Path.GetFullPath(Value("--out") ?? $"{name}{(checkpoint ? ".ikw" : ".ikm")}"),
+            Image = imageRun ? image.ToJson() : null,
             Targets = List("--target", "targets"),
             Ignore = List("--ignore"),
             Task = Value("--task"),
@@ -146,7 +196,24 @@ internal sealed class TrainCommand : Command
         }
 
         string folder = context.Option("--run") ?? NewRunFolder(context, name);
-        return TrainSession.Run(context, settings, folder);
+        return imageRun ? ImageTraining.Run(context, settings, folder) : TrainSession.Run(context, settings, folder);
+    }
+
+    // Whether a builder network trains as an image model (augmentations, a vision loss or metric, evaluation data, a
+    // decoder, a segmenter's [classes, h, w] output, or annotated images) rather than on a table or plain class folders.
+    private static bool ImageRun(JsonObject network, ImageRunOptions image, string data)
+    {
+        bool options = image.Augment is not null || image.Loss is not null || image.Matcher is not null || image.Metric is not null || image.Eval is not null
+                       || image.Decoder is not null || image.DataFormat != "auto" || image.Task is "segmentation" or "detection";
+        var builder = Network.FromJson(network);
+        if (builder.InputKind != InputKind.Image)
+        {
+            return options ? throw new UsageException("The image options (--augment, --loss, --matcher, --metric, --eval, --decoder, --data-format) need a network with an image input.") : false;
+        }
+
+        return options || builder.CurrentShape.Count == 3
+               || Directory.Exists(Path.Combine(data, "images")) && Directory.Exists(Path.Combine(data, "masks"))
+               || (File.Exists(data) || Directory.Exists(data)) && AnnotationFormats.Find(data) is not null;
     }
 
     private static string NewRunFolder(CommandContext context, string name)
@@ -180,7 +247,8 @@ internal sealed class ResumeCommand : Command
           -o, --out FILE  the model package (default: the run's)
 
         The run's data, split, scalers and settings are reused and its log continues. The checkpoint holds the weights
-        only: the optimizer's moments and the learning-rate schedule start again (the library does not save them).
+        only: the optimizer's moments and the learning-rate schedule start again (the library does not save them). An
+        image run that fine-tunes a model needs its family's plug-in again (-P).
 
         Examples:
           idrak resume 20261003-101500-houses
@@ -226,7 +294,8 @@ internal sealed class ResumeCommand : Command
         }
 
         context.Write($"Resuming  {run.Name} after epoch {done}");
-        return TrainSession.Run(context, settings, run.Folder, checkpoint, done, more);
+        return settings.Image is not null ? ImageTraining.Run(context, settings, run.Folder, checkpoint, done, more)
+            : TrainSession.Run(context, settings, run.Folder, checkpoint, done, more);
     }
 }
 
@@ -409,29 +478,72 @@ internal sealed class PredictCommand : Command
 {
     public override string Name => "predict";
 
-    public override string Summary => "Run a model package (.ikm) on new rows (CSV, JSON Lines, Parquet) or images and write the predictions";
+    public override string Summary => "Run a model package (.ikm) or an image model on new rows or images: classes, boxes, masks or features";
 
     public override string Usage => """
-        MODEL.ikm -i FILE|FOLDER [-o OUT]
+        MODEL [IMAGE|FOLDER|GLOB...] [-i FILE|FOLDER] [-o OUT] [options]
+
+        Arguments:
+          MODEL   a model package (.ikm) written by idrak train or Predictor.Save; or an image model read through its
+                  family: a folder (config.json with safetensors, or one .onnx file), a .safetensors or an .onnx file.
+                  The family (ImageModelFamilies) and its decoder (DetectionDecoders) come from a plug-in: -P PLUGIN.dll
+          IMAGE   images, folders of images (searched with their subfolders) or patterns such as photos/*.png
 
         Options:
-          -i, --input FILE  rows with the training's feature columns (by name; a target column is ignored), or an image
-                            or a folder of images for an image model
-          -o, --out FILE    write the rows with the predictions added (.csv, .jsonl, .json); without it they are shown
-              --top N       classification: also give the N most likely classes (default 1)
+          -i, --input FILE   rows with the training's feature columns (by name; a target column is ignored), or an image
+                             or a folder of images (repeatable for image models)
+          -o, --out PATH     rows with the predictions added (.csv, .jsonl, .json; one row per box for a detector); for a
+                             segmenter a folder of mask PNGs (one per image, its grey level the class), for a backbone a
+                             folder of .npy feature files
+              --top N        classification: the N most likely classes (default 1 for a package, 5 for an image model)
+              --decoder NAME detection: the decoder (a DetectionDecoders name) instead of the one the model names
+              --threshold F  detection: the lowest score kept (default 0.25)
+              --iou F        detection: a box overlapping a better one of its class by more is dropped (default 0.5)
+              --max N        detection: the most boxes per image (default 100)
+              --weights FILE an image model: weights idrak train wrote (.ikw), read over the checkpoint's
+              --batch N      an image model: at most N images at once (default: measured on the device; images whose
+                             preprocessing gives the same size run together, as many as fit in half its free memory)
+
+        Image models run their family's preprocessing (resize, crop, normalization) on each image. A family or a decoder
+        no plug-in registered is refused with its registry's message. Tables follow --format (csv, md); -j gives JSON.
 
         Examples:
           idrak predict houses.ikm -i new-houses.csv
           idrak predict shapes.ikm -i ./unlabelled -o predictions.csv --top 3
+          idrak predict -P MyFamilies.dll ./resnet-tiny photo.png ./more --top 3
+          idrak predict -P MyFamilies.dll ./detector street/*.jpg --threshold 0.4 -o boxes.csv
+          idrak predict -P MyFamilies.dll ./detector street.jpg --decoder boxes-scores -j
+          idrak predict -P MyFamilies.dll ./segmenter ./scans -o ./masks --format md
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions { get; } = ["--input", "--out", "--top"];
+    public override IReadOnlyCollection<string> ValueOptions { get; } =
+        ["--input", "--out", "--top", "--decoder", "--threshold", "--iou", "--max", "--weights", "--batch"];
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } = new Dictionary<string, string> { ["-i"] = "--input", ["-o"] = "--out" };
 
     public override int Run(CommandContext context)
     {
-        string modelPath = context.Argument(0, "MODEL.ikm (a package written by idrak train or Predictor.Save)");
+        string modelPath = context.Argument(0, "MODEL (a model package written by idrak train or Predictor.Save, or an image model)");
+        if (ImageModelFiles.IsCheckpoint(modelPath))
+        {
+            // An image model read through its family (a plug-in's).
+            List<string> images = [.. context.Positional.Skip(1), .. context.Options("--input")];
+            if (images.Count == 0)
+            {
+                throw new UsageException("Give the images to predict: files, folders or patterns after the model (or -i).");
+            }
+
+            try
+            {
+                using var imageModel = ImageModelFiles.Load(context, modelPath, context.Option("--weights"), trainable: false);
+                return ImagePredict.Run(context, modelPath, imageModel, images);
+            }
+            catch (Exception e) when (ImageModelFiles.NotRegistered(e))
+            {
+                return ImageModelFiles.Refuse(context, e);
+            }
+        }
+
         string input = context.Option("--input") ?? (context.Positional.Count > 1 ? context.Positional[1] : throw new UsageException("Give -i, --input FILE with the rows to predict."));
         int top = context.IntOption("--top", 1);
         if (!File.Exists(modelPath))
@@ -439,8 +551,26 @@ internal sealed class PredictCommand : Command
             throw new UsageException($"{modelPath} not found.");
         }
 
+        if (context.Option("--weights") is not null)
+        {
+            throw new UsageException("--weights is for an image model read through its family; a package holds its weights.");
+        }
+
         using var package = ModelPackage.Open(modelPath);
         var meta = package.Contains(PackageEntryKind.Json, "training") ? package.Json("training") as JsonObject : null;
+        if ((string?)meta?["task"] is "detection" or "segmentation" or "features")
+        {
+            // A detector, segmenter or backbone idrak train wrote: the image path, with the package's resize.
+            try
+            {
+                using var imageModel = ImageModelFiles.FromPackage(package, meta!, context.Device);
+                return ImagePredict.Run(context, modelPath, imageModel, [.. context.Positional.Skip(1), .. context.Options("--input")]);
+            }
+            catch (Exception e) when (ImageModelFiles.NotRegistered(e))
+            {
+                return ImageModelFiles.Refuse(context, e);
+            }
+        }
         // A package saved by Predictor.Save has no training entry; its predictor entry names the classes (and its
         // softmax setting matches what the classification output below applies).
         var predictor = meta is null && package.Contains(PackageEntryKind.Json, "predictor") ? package.Json("predictor") as JsonObject : null;
