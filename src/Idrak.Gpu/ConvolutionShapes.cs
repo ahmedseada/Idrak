@@ -42,11 +42,41 @@ internal static class ConvolutionShapes
     public static bool Depthwise(in ConvGeometry g, int groups) => groups > 1 && g.C == groups;
 
     /// <summary>The split counts of the weight gradient's sum over positions tried: 1, 4, 16 and 64, each at least 256 positions a split.</summary>
-    public static int[] SplitCounts(long positions) => [.. new[] { 1, 4, 16, 64 }.Where(s => s == 1 || positions / s >= 256)];
+    public static int[] SplitCounts(long positions)
+    {
+        var counts = new List<int>(SplitChoices.Length);
+        foreach (int s in SplitChoices)
+        {
+            if (SplitTried(s, positions))
+            {
+                counts.Add(s);
+            }
+        }
+
+        return [.. counts];
+    }
+
+    /// <summary>The split counts <see cref="SplitCounts"/> picks from, in its order (the choices run per pass read them without an array).</summary>
+    public static ReadOnlySpan<int> SplitChoices => [1, 4, 16, 64];
+
+    /// <summary>Whether <see cref="SplitCounts"/> tries <paramref name="splits"/> for <paramref name="positions"/>: at least 256 positions a split.</summary>
+    public static bool SplitTried(int splits, long positions) => splits == 1 || positions / splits >= 256;
 
     /// <summary>
     /// The splits of the weight gradient while nothing is measured: the most of <see cref="SplitCounts"/> that leave each
     /// split at least 4,096 positions (the product's blocks alone are few where filters and patches are small).
     /// </summary>
-    public static int FormulaSplits(long positions) => SplitCounts(positions).Where(s => s == 1 || positions / s >= 4096).Max();
+    public static int FormulaSplits(long positions)
+    {
+        int most = 1;
+        foreach (int s in SplitChoices)
+        {
+            if (SplitTried(s, positions) && (s == 1 || positions / s >= 4096))
+            {
+                most = Math.Max(most, s);
+            }
+        }
+
+        return most;
+    }
 }
