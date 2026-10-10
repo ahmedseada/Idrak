@@ -253,23 +253,34 @@ internal sealed partial class CpuBackend
         var gate = new Lock();
         For(outer, (long)outer * row * 2, (start, end) =>
         {
-            var acc1 = new float[row];
-            var acc2 = new float[row];
-            for (int o = start; o < end; o++)
+            float[] rented1 = ArrayPool<float>.Shared.Rent(row), rented2 = ArrayPool<float>.Shared.Rent(row);
+            try
             {
-                var ra = a.AsSpan(o * row, row);
-                var rb = b is null ? ra : b.AsSpan(o * row, row);
-                AddInPlace(acc1, ra);
-                MultiplyAddInPlace(acc2, ra, rb);
-            }
-
-            lock (gate)
-            {
-                for (int i = 0; i < row; i++)
+                var acc1 = rented1.AsSpan(0, row);
+                var acc2 = rented2.AsSpan(0, row);
+                acc1.Clear();
+                acc2.Clear();
+                for (int o = start; o < end; o++)
                 {
-                    s1[i / inner] += acc1[i];
-                    s2[i / inner] += acc2[i];
+                    var ra = a.AsSpan(o * row, row);
+                    var rb = b is null ? ra : b.AsSpan(o * row, row);
+                    AddInPlace(acc1, ra);
+                    MultiplyAddInPlace(acc2, ra, rb);
                 }
+
+                lock (gate)
+                {
+                    for (int i = 0; i < row; i++)
+                    {
+                        s1[i / inner] += acc1[i];
+                        s2[i / inner] += acc2[i];
+                    }
+                }
+            }
+            finally
+            {
+                ArrayPool<float>.Shared.Return(rented2);
+                ArrayPool<float>.Shared.Return(rented1);
             }
         }, chunksSummed: true);
     }
