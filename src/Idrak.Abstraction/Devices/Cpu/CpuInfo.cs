@@ -12,7 +12,7 @@ namespace Idrak.Abstraction.Devices.Cpu;
 
 /// <summary>
 /// What the machine reports about its processor: logical and physical cores, the vector instructions the runtime
-/// accelerates, and the cache sizes. Read once, from the operating system (Linux: /sys/devices/system/cpu; Windows:
+/// accelerates, and the cache sizes. Read once, from the operating system (Linux and Android: /sys/devices/system/cpu; Windows:
 /// GetLogicalProcessorInformationEx; macOS: sysctl), with a fallback per value when it cannot be read. Every CPU tiling,
 /// blocking and threading choice is derived from these (see <see cref="CpuTuning"/>); no processor name or vendor is
 /// read for a decision.
@@ -93,7 +93,7 @@ internal sealed record CpuInfo
         string model = "";
         try
         {
-            if (OperatingSystem.IsLinux())
+            if (OperatingSystem.IsLinux() || OperatingSystem.IsAndroid())
             {
                 (physical, model) = ReadLinux(caches);
             }
