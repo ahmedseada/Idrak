@@ -139,6 +139,8 @@ internal static class ImagePredict
             context.Write($"{results.Count(r => r.Written is not null):N0} {(model.Task == ImageTask.Segmentation ? "masks" : ".npy files")} written to {output}");
         }
 
+        context.Detail($"{runs} batch{(runs == 1 ? "" : "es")}; up to {batches.Size?.ToString(CultureInfo.InvariantCulture) ?? "all the"} images at once "
+                       + (ceiling is null ? $"(measured on {device}: the first image's peak memory against half the free memory)" : $"(--batch {ceiling})"));
         if (batches.Halvings > 0)
         {
             context.Detail($"out of device memory {batches.Halvings} time(s): batches halved to {batches.Size} images");
