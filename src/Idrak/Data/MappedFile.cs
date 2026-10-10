@@ -4,6 +4,8 @@
 using System.Buffers.Binary;
 using System.Globalization;
 using System.IO.MemoryMappedFiles;
+using System.Numerics;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -79,11 +81,19 @@ internal static class Elements
     };
 
     /// <summary>Converts little-endian values of <paramref name="type"/> to float32.</summary>
+    /// <remarks>
+    /// Runs for every sample read: one copy of float32 where the machine's byte order is the file's (rule 48), vector
+    /// loops for bytes, 16-bit and 32-bit integers (whole numbers convert as the scalar code does) with a scalar tail,
+    /// and one loop per type for the rest.
+    /// </remarks>
     public static void ToFloat(ReadOnlySpan<byte> bytes, ElementType type, Span<float> destination)
     {
         int n = destination.Length;
         switch (type)
         {
+            case ElementType.Float32 when BitConverter.IsLittleEndian:
+                MemoryMarshal.Cast<byte, float>(bytes[..(n * 4)]).CopyTo(destination);
+                break;
             case ElementType.Float32:
                 for (int i = 0; i < n; i++)
                 {
@@ -92,44 +102,130 @@ internal static class Elements
 
                 break;
             case ElementType.UInt16:
-                for (int i = 0; i < n; i++)
-                {
-                    destination[i] = BinaryPrimitives.ReadUInt16LittleEndian(bytes[(i * 2)..]);
-                }
-
+                FromUInt16(bytes[..(n * 2)], destination);
                 break;
             case ElementType.Int32:
+                FromInt32(bytes[..(n * 4)], destination);
+                break;
+            case ElementType.UInt8 or ElementType.Bool:
+                FromBytes(bytes[..n], destination);
+                break;
+            case ElementType.Float64:
                 for (int i = 0; i < n; i++)
                 {
-                    destination[i] = BinaryPrimitives.ReadInt32LittleEndian(bytes[(i * 4)..]);
+                    destination[i] = (float)BinaryPrimitives.ReadDoubleLittleEndian(bytes[(i * 8)..]);
                 }
 
                 break;
-            case ElementType.UInt8 or ElementType.Bool:
+            case ElementType.Float16:
                 for (int i = 0; i < n; i++)
                 {
-                    destination[i] = bytes[i];
+                    destination[i] = (float)BinaryPrimitives.ReadHalfLittleEndian(bytes[(i * 2)..]);
+                }
+
+                break;
+            case ElementType.Int8:
+                for (int i = 0; i < n; i++)
+                {
+                    destination[i] = (sbyte)bytes[i];
+                }
+
+                break;
+            case ElementType.Int16:
+                for (int i = 0; i < n; i++)
+                {
+                    destination[i] = BinaryPrimitives.ReadInt16LittleEndian(bytes[(i * 2)..]);
+                }
+
+                break;
+            case ElementType.UInt32:
+                for (int i = 0; i < n; i++)
+                {
+                    destination[i] = BinaryPrimitives.ReadUInt32LittleEndian(bytes[(i * 4)..]);
+                }
+
+                break;
+            case ElementType.Int64:
+                for (int i = 0; i < n; i++)
+                {
+                    destination[i] = BinaryPrimitives.ReadInt64LittleEndian(bytes[(i * 8)..]);
                 }
 
                 break;
             default:
-                int size = Size(type);
                 for (int i = 0; i < n; i++)
                 {
-                    var b = bytes.Slice(i * size, size);
-                    destination[i] = type switch
-                    {
-                        ElementType.Float64 => (float)BinaryPrimitives.ReadDoubleLittleEndian(b),
-                        ElementType.Float16 => (float)BinaryPrimitives.ReadHalfLittleEndian(b),
-                        ElementType.Int8 => (sbyte)b[0],
-                        ElementType.Int16 => BinaryPrimitives.ReadInt16LittleEndian(b),
-                        ElementType.UInt32 => BinaryPrimitives.ReadUInt32LittleEndian(b),
-                        ElementType.Int64 => BinaryPrimitives.ReadInt64LittleEndian(b),
-                        _ => BinaryPrimitives.ReadUInt64LittleEndian(b),
-                    };
+                    destination[i] = BinaryPrimitives.ReadUInt64LittleEndian(bytes[(i * 8)..]);
                 }
 
                 break;
+        }
+    }
+
+    // Bytes widened to 32-bit whole numbers (exact as floats), four vectors of floats per vector of bytes.
+    private static void FromBytes(ReadOnlySpan<byte> bytes, Span<float> destination)
+    {
+        int i = 0;
+        if (Vector.IsHardwareAccelerated && bytes.Length >= Vector<byte>.Count)
+        {
+            int quarter = Vector<int>.Count;
+            for (; i <= bytes.Length - Vector<byte>.Count; i += Vector<byte>.Count)
+            {
+                Vector.Widen(new Vector<byte>(bytes[i..]), out var low, out var high);
+                Vector.Widen(low, out var a, out var b);
+                Vector.Widen(high, out var c, out var d);
+                Vector.ConvertToSingle(Vector.AsVectorInt32(a)).CopyTo(destination[i..]);
+                Vector.ConvertToSingle(Vector.AsVectorInt32(b)).CopyTo(destination[(i + quarter)..]);
+                Vector.ConvertToSingle(Vector.AsVectorInt32(c)).CopyTo(destination[(i + 2 * quarter)..]);
+                Vector.ConvertToSingle(Vector.AsVectorInt32(d)).CopyTo(destination[(i + 3 * quarter)..]);
+            }
+        }
+
+        for (; i < bytes.Length; i++)
+        {
+            destination[i] = bytes[i];
+        }
+    }
+
+    // Little-endian 16-bit ids widened to 32-bit whole numbers (exact as floats); read one by one on a big-endian machine.
+    private static void FromUInt16(ReadOnlySpan<byte> bytes, Span<float> destination)
+    {
+        int i = 0, n = bytes.Length / 2;
+        if (BitConverter.IsLittleEndian && Vector.IsHardwareAccelerated && n >= Vector<ushort>.Count)
+        {
+            var values = MemoryMarshal.Cast<byte, ushort>(bytes);
+            int half = Vector<int>.Count;
+            for (; i <= n - Vector<ushort>.Count; i += Vector<ushort>.Count)
+            {
+                Vector.Widen(new Vector<ushort>(values[i..]), out var low, out var high);
+                Vector.ConvertToSingle(Vector.AsVectorInt32(low)).CopyTo(destination[i..]);
+                Vector.ConvertToSingle(Vector.AsVectorInt32(high)).CopyTo(destination[(i + half)..]);
+            }
+        }
+
+        for (; i < n; i++)
+        {
+            destination[i] = BinaryPrimitives.ReadUInt16LittleEndian(bytes[(i * 2)..]);
+        }
+    }
+
+    // Little-endian 32-bit integers to floats (rounded to nearest, as the scalar conversion rounds); one by one on a
+    // big-endian machine.
+    private static void FromInt32(ReadOnlySpan<byte> bytes, Span<float> destination)
+    {
+        int i = 0, n = bytes.Length / 4;
+        if (BitConverter.IsLittleEndian && Vector.IsHardwareAccelerated && n >= Vector<int>.Count)
+        {
+            var values = MemoryMarshal.Cast<byte, int>(bytes);
+            for (; i <= n - Vector<int>.Count; i += Vector<int>.Count)
+            {
+                Vector.ConvertToSingle(new Vector<int>(values[i..])).CopyTo(destination[i..]);
+            }
+        }
+
+        for (; i < n; i++)
+        {
+            destination[i] = BinaryPrimitives.ReadInt32LittleEndian(bytes[(i * 4)..]);
         }
     }
 }
