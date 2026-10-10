@@ -126,7 +126,6 @@ public sealed class ConsoleLogger(TelemetryLevel levels = TelemetryLevel.Trainin
     public void OnOverrideCompared(in OverrideCompared e) =>
         _out.WriteLine($"Shadow {e.Registry}/{e.Slot} ({e.Implementation}): {(e.Agreed ? "agrees" : "differs: " + e.Difference)}; "
                        + string.Create(CultureInfo.InvariantCulture, $"library {e.LibraryTime.TotalMilliseconds:F3} ms, {e.LibraryBytes:N0} B; override {e.OverrideTime.TotalMilliseconds:F3} ms, {e.OverrideBytes:N0} B"));
-
 }
 
 /// <summary>Keeps every epoch (and optionally batch) event in memory, for charts, reports or CSV export.</summary>
