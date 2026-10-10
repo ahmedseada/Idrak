@@ -38,19 +38,19 @@ public abstract class WeightCodec
 
         public override void Encode(ReadOnlySpan<float> values, Span<byte> bytes)
         {
+            if (BitConverter.IsLittleEndian)
+            {
+                System.Runtime.InteropServices.MemoryMarshal.AsBytes(values).CopyTo(bytes);   // the stored bytes as they are
+                return;
+            }
+
             for (int i = 0; i < values.Length; i++)
             {
                 BinaryPrimitives.WriteSingleLittleEndian(bytes[(i * 4)..], values[i]);
             }
         }
 
-        public override void Decode(ReadOnlySpan<byte> bytes, Span<float> values)
-        {
-            for (int i = 0; i < values.Length; i++)
-            {
-                values[i] = BinaryPrimitives.ReadSingleLittleEndian(bytes[(i * 4)..]);
-            }
-        }
+        public override void Decode(ReadOnlySpan<byte> bytes, Span<float> values) => StoredFloats.ReadFloat32(bytes, values);
     }
 
     private sealed class Float16Codec : WeightCodec
@@ -89,13 +89,7 @@ public abstract class WeightCodec
             }
         }
 
-        public override void Decode(ReadOnlySpan<byte> bytes, Span<float> values)
-        {
-            for (int i = 0; i < values.Length; i++)
-            {
-                values[i] = BitConverter.UInt32BitsToSingle((uint)BinaryPrimitives.ReadUInt16LittleEndian(bytes[(i * 2)..]) << 16);
-            }
-        }
+        public override void Decode(ReadOnlySpan<byte> bytes, Span<float> values) => StoredFloats.WidenBFloat16(bytes, values);
     }
 }
 
