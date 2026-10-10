@@ -419,7 +419,7 @@ public sealed class ReaderService : IDisposable
         catch (Exception ex)
         {
             _logger.LogError(ex, "Loading {Model} failed", model.Id);
-            SetStatus(ReaderState.Failed, $"{model.Name} could not be loaded: {ex.Message}", _loaded);
+            SetStatus(ReaderState.Failed, $"{model.Name} could not be loaded: {ex.Message}{AccessHint(model, ex)}", _loaded);
         }
     }
 
@@ -495,6 +495,13 @@ public sealed class ReaderService : IDisposable
             _status = new ReaderStatus(state, message, model, loading, download, seconds, Device.ToString(), null);
         }
     }
+
+    // What to do when Hugging Face refuses a gated model's files.
+    internal static string AccessHint(ReaderModel model, Exception ex) =>
+        model.Repo is { } repo && ex is HttpRequestException { StatusCode: System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden }
+            ? $" To use it: accept its license at https://huggingface.co/{repo} with your account, make a read token at https://huggingface.co/settings/tokens, "
+              + "and start the app with HF_TOKEN set (or LegalOcr:HuggingFaceToken in appsettings.json)."
+            : "";
 
     // "auto" → the best device found; else the device named.
     internal static Device ParseDevice(string? text) => text?.Trim().ToLowerInvariant() switch

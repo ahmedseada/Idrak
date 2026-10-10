@@ -94,7 +94,11 @@ public static class LegalOcrApi
             return TypedResults.ServerSentEvents(host.ReadAsync(image, request, null, cancellationToken));
         });
 
-        api.MapGet("/pages", (EvaluationPages pages) => new { source = pages.Source, configured = pages.Configured, pages = pages.List() });
+        api.MapGet("/pages", (EvaluationPages pages) =>
+        {
+            var list = pages.List().ToList();
+            return new { source = pages.Source, configured = pages.Configured, error = pages.Error, pages = list };
+        });
 
         api.MapGet("/pages/{index:int}/image", IResult (int index, EvaluationPages pages) =>
             pages.Get(index) is { } page ? TypedResults.Bytes(page.Image.Data, page.Image.MediaType ?? "image/png") : TypedResults.NotFound());
@@ -105,8 +109,10 @@ public static class LegalOcrApi
                 : TypedResults.NotFound());
 
         // The first `count` evaluation pages (0: all) read and scored in a row.
-        api.MapPost("/pages/evaluate", (ReadRequest request, int? count, EvaluationPages pages, ReaderService host, CancellationToken cancellationToken) =>
-            TypedResults.ServerSentEvents(host.EvaluateAsync(pages.All, request, count ?? 0, cancellationToken)));
+        api.MapPost("/pages/evaluate", IResult (ReadRequest request, int? count, EvaluationPages pages, ReaderService host, CancellationToken cancellationToken) =>
+            pages.All is var all && pages.Error is { } error
+                ? TypedResults.Problem($"The evaluation pages could not be read: {error}", statusCode: StatusCodes.Status409Conflict)
+                : TypedResults.ServerSentEvents(host.EvaluateAsync(all, request, count ?? 0, cancellationToken)));
 
         // Fine-tuning: the defaults, start, stop, the run's state and its live events.
         api.MapGet("/tuning/defaults", (TuningService tuning) => tuning.Defaults());

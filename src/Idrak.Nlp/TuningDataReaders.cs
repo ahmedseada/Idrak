@@ -252,8 +252,9 @@ internal static class JsonLines
 }
 
 // Where a data file's images come from: a folder (the data file's, or the one given) or a zip opened read-only, of
-// which only the image entries the data names are read. Absolute paths are read from disk; data URLs are decoded;
-// remote URLs are refused.
+// which only the image entries the data names are read. Absolute paths are read from disk (one that is not there, a path
+// from the machine the data was made on, by its longest trailing part under the root); data URLs are decoded; remote
+// URLs are refused.
 internal sealed class TuningImageSource : IDisposable
 {
     private static readonly HashSet<string> ImageExtensions = new(StringComparer.OrdinalIgnoreCase)
@@ -267,6 +268,7 @@ internal sealed class TuningImageSource : IDisposable
     private readonly Dictionary<string, ZipArchiveEntry>? _entries;
     private readonly string? _top;        // the zip's one top-level folder, when everything is in one
     private readonly string? _stem;       // the zip's file name without its extension
+    private readonly Dictionary<string, ZipArchiveEntry?>? _endings;   // every trailing part of every entry's path; null: several entries end so
 
     /// <summary>Throws when <paramref name="images"/> is given and is neither a folder nor a .zip file.</summary>
     public static void CheckRoot(string? images)
@@ -290,6 +292,17 @@ internal sealed class TuningImageSource : IDisposable
             foreach (var entry in _zip.Entries.Where(e => e.FullName.Length > 0 && !e.FullName.EndsWith('/')))
             {
                 _entries.TryAdd(Normalize(entry.FullName), entry);
+            }
+
+            // Each entry under its trailing parts too (a/b/c.png as b/c.png and c.png), made once for every lookup.
+            _endings = new Dictionary<string, ZipArchiveEntry?>(StringComparer.Ordinal);
+            foreach (var (key, entry) in _entries)
+            {
+                for (int at = key.IndexOf('/', StringComparison.Ordinal); at >= 0; at = key.IndexOf('/', at + 1))
+                {
+                    string ending = key[(at + 1)..];
+                    _endings[ending] = _endings.ContainsKey(ending) ? null : entry;
+                }
             }
 
             var tops = _entries.Keys.Select(k => k.IndexOf('/', StringComparison.Ordinal) is var at and > 0 ? k[..at] : null).Distinct().ToList();
@@ -328,12 +341,14 @@ internal sealed class TuningImageSource : IDisposable
             throw new InvalidDataException($"{where}: the image {text} is remote; Idrak reads local images only (download them, then give their folder or zip as the images root).");
         }
 
-        if (Path.IsPathFullyQualified(text))
+        if (Path.IsPathFullyQualified(text) && (File.Exists(text) || _zip is null && !Trailing(Normalize(text)).Any(p => File.Exists(Path.Combine(_folder, p)))))
         {
             return FromFile(text, where);
         }
 
-        return _zip is null ? FromFile(Path.Combine(_folder, text), where) : FromZip(text, where);
+        // A path from the machine the data was made on (/workspace/pdf_images/0012/page_013.jpg) is found by its longest
+        // trailing part under the images root (pdf_images/0012/page_013.jpg, else 0012/page_013.jpg, ...).
+        return _zip is null ? FromFolder(text, where) : FromZip(text, where);
     }
 
     public void Dispose() => _zip?.Dispose();
@@ -350,11 +365,46 @@ internal sealed class TuningImageSource : IDisposable
             : throw new InvalidDataException($"{where}: {path} is not an image (no image file extension and no PNG, JPEG, GIF, BMP, WebP or TIFF signature).");
     }
 
+    // A relative path under the folder; else its longest trailing part that is a file there.
+    private ChatImage FromFolder(string reference, string where)
+    {
+        string direct = Path.Combine(_folder, reference);
+        if (File.Exists(direct))
+        {
+            return FromFile(direct, where);
+        }
+
+        foreach (string part in Trailing(Normalize(reference)).Skip(1))
+        {
+            string path = Path.Combine(_folder, part);
+            if (File.Exists(path))
+            {
+                return FromFile(path, where);
+            }
+        }
+
+        return FromFile(direct, where);                                         // names the path as given
+    }
+
+    // The path and its trailing parts, longest first: a/b/c.png, b/c.png, c.png.
+    private static IEnumerable<string> Trailing(string path)
+    {
+        for (int at = -1; ; at = path.IndexOf('/', at + 1))
+        {
+            yield return path[(at + 1)..];
+            if (path.IndexOf('/', at + 1) < 0)
+            {
+                yield break;
+            }
+        }
+    }
+
     private ChatImage FromZip(string reference, string where)
     {
         string name = Normalize(reference);
         var entry = Find(name) ?? throw new FileNotFoundException(
-            $"{where}: the image {reference} is not in {_zipPath} (looked for '{name}'{(_top is null ? "" : $" and '{_top}/{name}'")}, and an entry ending in '/{name}').", reference);
+            $"{where}: the image {reference} is not in {_zipPath} (looked for '{name}'{(_top is null ? "" : $" and '{_top}/{name}'")}, and for an entry ending in "
+            + $"each trailing part of it: {string.Join(", ", Trailing(name).Select(p => $"'/{p}'" + (_endings!.TryGetValue(p, out var e) && e is null ? " (in several entries)" : "")))}).", reference);
         if (!ImageExtensions.Contains(Path.GetExtension(entry.FullName)))
         {
             throw new InvalidDataException($"{where}: the entry {entry.FullName} of {_zipPath} is not an image file ({string.Join(", ", ImageExtensions.Order(StringComparer.Ordinal))}); only images are read from the zip.");
@@ -380,7 +430,9 @@ internal sealed class TuningImageSource : IDisposable
     }
 
     // The entry a relative path names: exactly; under the zip's one top folder; without a first folder named as the zip
-    // (images/a.png in images.zip holding a.png); or the one entry ending in "/path".
+    // (images/a.png in images.zip holding a.png); or the one entry ending in the path's longest trailing part that some
+    // entry ends in (/workspace/pdf_images/1/p.jpg finds downloaded_images/pdf_images/1/p.jpg; a part several entries end
+    // in finds none).
     private ZipArchiveEntry? Find(string name)
     {
         if (_entries!.TryGetValue(name, out var entry)
@@ -390,13 +442,30 @@ internal sealed class TuningImageSource : IDisposable
             return entry;
         }
 
-        var ending = _entries.Where(e => e.Key.EndsWith("/" + name, StringComparison.Ordinal)).Take(2).ToList();
-        return ending is [var one] ? one.Value : null;
+        foreach (string part in Trailing(name))
+        {
+            if (_entries.TryGetValue(part, out entry))
+            {
+                return entry;
+            }
+
+            if (_endings!.TryGetValue(part, out var ending))
+            {
+                return ending;                                                  // null when several entries end so
+            }
+        }
+
+        return null;
     }
 
     private static string Normalize(string path)
     {
         string name = path.Replace('\\', '/');
+        if (name.Length >= 2 && name[1] == ':' && char.IsAsciiLetter(name[0]))
+        {
+            name = name[2..];                                                   // a drive (C:/data/a.png) is the other machine's
+        }
+
         while (name.StartsWith("./", StringComparison.Ordinal))
         {
             name = name[2..];

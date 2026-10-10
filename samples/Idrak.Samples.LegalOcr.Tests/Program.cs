@@ -109,6 +109,13 @@ string tinyGemma = Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data"
         Check(first.Prompt == "Extract details to JSON." && first.Expected.Contains("محكمة", StringComparison.Ordinal), $"{first.Prompt}: {first.Expected}");
         Check(pages.List().First().Preview.StartsWith("محكمة", StringComparison.Ordinal), pages.List().First().Preview);
 
+        // A data file naming an image the zip lacks: no pages and the reason, not a failed request.
+        string broken = Path.Combine(root, "broken.json");
+        File.WriteAllText(broken, """[{"messages": [{"role": "user", "content": "<image>Read."}, {"role": "assistant", "content": "x"}], "images": ["/workspace/missing/page_9.png"]}]""");
+        var unreadable = new EvaluationPages(settings with { EvaluationData = broken });
+        Check(unreadable.All.Count == 0 && unreadable.Error is { } why && why.Contains("page_9.png", StringComparison.Ordinal) && !unreadable.List().Any(),
+            unreadable.Error ?? "no error");
+
         using var service = Service(settings);
         Load(service, "a");
         var done = Read(service, first.Image, new ReadRequest(MaxTokens: 4), first.Expected)[^1];

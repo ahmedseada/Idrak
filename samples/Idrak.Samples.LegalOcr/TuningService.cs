@@ -464,7 +464,7 @@ public sealed class TuningService : IDisposable
             _logger.LogError(ex, "Tuning {Name} failed", name);
             bool expected = ex is InvalidOperationException or ArgumentException or InvalidDataException or NotSupportedException or IOException or HttpRequestException
                 or ResourceLimitExceededException;
-            string message = expected ? ex.Message : $"{ex.GetType().Name}: {ex.Message}";
+            string message = (expected ? ex.Message : $"{ex.GetType().Name}: {ex.Message}") + ReaderService.AccessHint(model, ex);
             Add("error: " + message);
             Update(s => s with { State = TuningState.Failed, Message = $"The run failed: {message}", Stage = null, Download = null });
         }
