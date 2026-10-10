@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Buffers;
 using Idrak.Generation.Abstractions;
 
 namespace Idrak.Generation;
@@ -149,12 +150,31 @@ public sealed class TokenSampler : ITokenSampler
 
         if (RejectNonFinite)
         {
-            var values = logits.ToArray();
-            int bad = Array.FindIndex(values, v => !float.IsFinite(v));
-            if (bad >= 0)
+            // The logits are read into a pooled buffer each step (they are rows × steps × vocabulary), returned in finally.
+            int size = logits.Size;
+            float[] values = ArrayPool<float>.Shared.Rent(size);
+            try
             {
-                throw new ArgumentException($"Logit {bad % vocabulary} of row {bad / (steps * vocabulary)} is {values[bad]}: this sampler (version 1) "
-                    + "refuses logits that are not finite. The default sampler (version 2) never samples NaN and lets +∞ win.", nameof(logits));
+                logits.CopyTo(values.AsSpan(0, size));
+                int bad = -1;
+                for (int i = 0; i < size; i++)
+                {
+                    if (!float.IsFinite(values[i]))
+                    {
+                        bad = i;
+                        break;
+                    }
+                }
+
+                if (bad >= 0)
+                {
+                    throw new ArgumentException($"Logit {bad % vocabulary} of row {bad / (steps * vocabulary)} is {values[bad]}: this sampler (version 1) "
+                        + "refuses logits that are not finite. The default sampler (version 2) never samples NaN and lets +∞ win.", nameof(logits));
+                }
+            }
+            finally
+            {
+                ArrayPool<float>.Shared.Return(values);
             }
         }
 
@@ -193,8 +213,22 @@ public sealed class TokenSampler : ITokenSampler
     public SampledToken[][] Read(int fromStep, int toStep)
     {
         int count = toStep - fromStep;
-        var raw = new float[count * Rows * StatsPerToken];
-        _stats.CopyTo(raw, fromStep * Rows * StatsPerToken);
+        int length = count * Rows * StatsPerToken;
+        float[] raw = ArrayPool<float>.Shared.Rent(Math.Max(length, 1));      // returned in finally; tokens copy their values out
+        try
+        {
+            _stats.CopyTo(raw.AsSpan(0, length), fromStep * Rows * StatsPerToken);
+            return Tokens(raw, count, fromStep);
+        }
+        finally
+        {
+            ArrayPool<float>.Shared.Return(raw);
+        }
+    }
+
+    // The [step][row] tokens of the downloaded statistics.
+    private SampledToken[][] Tokens(float[] raw, int count, int fromStep)
+    {
         var result = new SampledToken[count][];
         for (int s = 0; s < count; s++)
         {
