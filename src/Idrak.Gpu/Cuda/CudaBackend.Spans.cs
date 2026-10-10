@@ -254,6 +254,13 @@ internal sealed unsafe partial class CudaBackend
             return false;
         }
 
+        return MeasureAttentionPath(key, q, keys, values, starts, ends, mask, heads, rows, keyRows, dim, scale, training, scores, outputs, keyFloats);
+    }
+
+    // Times both attention paths for `key` (PrefersComposedAttention); true when the composed one won.
+    private bool MeasureAttentionPath(TuneKey key, Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage? mask, int heads, int rows,
+        int keyRows, int dim, float scale, bool training, long scores, long outputs, long keyFloats)
+    {
         // Scratch: the scores and weights (and with the gradient the softmax's gradient, the log-sum-exp and dq, dkeys,
         // dvalues); the output doubles as dOutput in the gradient.
         var scratch = new List<Storage>();
@@ -278,7 +285,7 @@ internal sealed unsafe partial class CudaBackend
                 return false;                                            // in system memory the timing would mislead
             }
 
-            return Tune(key, candidates, 0, c =>
+            return Tune(key, [0, 1], 0, c =>
             {
                 if (!training)
                 {

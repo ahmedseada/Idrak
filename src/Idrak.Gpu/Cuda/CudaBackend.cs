@@ -1025,43 +1025,16 @@ internal sealed unsafe partial class CudaBackend : Backend
                 if (tensorCore is not null)
                 {
                     string kernel = transA ? (transB ? "gemm_tc_tt_f32" : "gemm_tc_tn_f32") : (transB ? "gemm_tc_nt_f32" : "gemm_tc_nn_f32");
-                    var function = tensorCore[kernel];
-                    ulong aAt = P(a) + offset * mk + aRow, bAt = P(b) + offset * kn;
-                    void Run(int splits, ulong target) =>
-                        Launch(function, (uint)((n + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile), (uint)((rows + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile),
-                            (uint)(splits > 1 ? splits : count), PtxKernels.TensorThreads, 1, aAt, bAt, target,
-                            U(rows), U(n), U(k), F(beta), splits > 1 ? 0UL : mk, splits > 1 ? 0UL : kn, splits > 1 ? 0UL : mn, 0UL, U(transA ? m : k), U(transB ? k : n), U(n), 0UL);
-                    ulong cAt = P(c) + offset * mn + cRow;
-                    Run(count == 1 ? TensorSplits(rows, n, k, beta, cAt, n, (transA ? 2 : 0) + (transB ? 1 : 0), Run) : 1, cAt);
+                    TensorCoreRows(tensorCore[kernel], new FloatProduct(P(a) + offset * mk + aRow, P(b) + offset * kn, rows, m, n, k, count, transA, transB, beta, mk, kn, mn),
+                        P(c) + offset * mn + cRow);
                     Interlocked.Increment(ref TensorCoreLaunches);
                     continue;
                 }
 
                 if (gemmTile > 0)
                 {
-                    // The tile from the SM count, then measured once per shape (both tiles add k terms in the same order).
-                    ulong aAt = P(a) + offset * mk + aRow, bAt = P(b) + offset * kn, cAt = P(c) + offset * mn + cRow;
-                    int blocks = count;
-                    void RunTile(int tile, ulong target) =>
-                        Launch(K(tile == 128 ? "gemm128_f32" : "gemm64_f32"), (uint)((n + tile - 1) / tile), (uint)((rows + tile - 1) / tile),
-                            (uint)blocks, PtxKernels.GemmThreads, 1, aAt, bAt, target,
-                            U(rows), U(n), U(k), U(transA ? 1 : 0), U(transB ? 1 : 0), F(beta), mk, kn, mn);
-                    var key = new TuneKey(TuneOp.FloatTile, (transA ? 2 : 0) + (transB ? 1 : 0), TuneSizes.Class(rows), n, k, TuneSizes.Class(count), beta == 0f ? 0 : 1);
-                    int tile = gemmTile;
-                    if (beta == 0f)
-                    {
-                        tile = Tune(key, [64, 128], gemmTile, t => RunTile(t, cAt));
-                    }
-                    else if (!TunedKnown(key))
-                    {
-                        WithScratch((long)count * rows * n, scratch => tile = Tune(key, [64, 128], gemmTile, t => RunTile(t, scratch)));
-                    }
-                    else
-                    {
-                        tile = KnownChoice(key, [64, 128]) ?? gemmTile;
-                    }
-
-                    RunTile(tile, cAt);
+                    FloatTileRows(gemmTile, new FloatProduct(P(a) + offset * mk + aRow, P(b) + offset * kn, rows, m, n, k, count, transA, transB, beta, mk, kn, mn),
+                        P(c) + offset * mn + cRow);
                     continue;
                 }
 
@@ -1071,6 +1044,58 @@ internal sealed unsafe partial class CudaBackend : Backend
             }
         }
     }
+
+    // One launch's rows of a float32 product (BatchedMatMulKernel) but for its output: the operands' addresses, `rows` of
+    // the `m` rows, `count` batch entries `mk`, `kn` and `mn` floats apart.
+    private readonly record struct FloatProduct(ulong A, ulong B, int Rows, int M, int N, int K, int Count, bool TransA, bool TransB, float Beta,
+        ulong Mk, ulong Kn, ulong Mn);
+
+    // The tensor-core product of `p` into `cAt`. A method of its own: the closure TensorSplits needs is created only when
+    // it runs (inside BatchedMatMulKernel it was created on every call, the few-row and 16 × 16 products included).
+    private void TensorCoreRows(IntPtr function, FloatProduct p, ulong cAt)
+    {
+        void Run(int splits, ulong target) =>
+            Launch(function, (uint)((p.N + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile), (uint)((p.Rows + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile),
+                (uint)(splits > 1 ? splits : p.Count), PtxKernels.TensorThreads, 1, p.A, p.B, target,
+                U(p.Rows), U(p.N), U(p.K), F(p.Beta), splits > 1 ? 0UL : p.Mk, splits > 1 ? 0UL : p.Kn, splits > 1 ? 0UL : p.Mn, 0UL, U(p.TransA ? p.M : p.K),
+                U(p.TransB ? p.K : p.N), U(p.N), 0UL);
+        Run(p.Count == 1 ? TensorSplits(p.Rows, p.N, p.K, p.Beta, cAt, p.N, (p.TransA ? 2 : 0) + (p.TransB ? 1 : 0), Run) : 1, cAt);
+    }
+
+    // The register-blocked product of `p` into `cAt`: the tile from the SM count, then measured once per shape (both
+    // tiles add k terms in the same order). Once known, read without allocating (no candidate array, no closure).
+    private void FloatTileRows(int gemmTile, in FloatProduct p, ulong cAt)
+    {
+        var key = new TuneKey(TuneOp.FloatTile, (p.TransA ? 2 : 0) + (p.TransB ? 1 : 0), TuneSizes.Class(p.Rows), p.N, p.K, TuneSizes.Class(p.Count),
+            p.Beta == 0f ? 0 : 1);
+        if (!TryTuned(key, FloatTiles, gemmTile, out int tile))
+        {
+            tile = MeasureFloatTile(key, gemmTile, p, cAt);
+        }
+
+        LaunchFloatTile(p, tile, cAt);
+    }
+
+    private static ReadOnlySpan<int> FloatTiles => [64, 128];
+
+    // Measures the tile into `cAt` (written again by the launch after), or with beta != 0 into scratch memory; the
+    // formula's tile when there is no room for the scratch.
+    private int MeasureFloatTile(TuneKey key, int gemmTile, FloatProduct p, ulong cAt)
+    {
+        if (p.Beta == 0f)
+        {
+            return Tune(key, FloatTiles, gemmTile, t => LaunchFloatTile(p, t, cAt));
+        }
+
+        int tile = gemmTile;
+        WithScratch((long)p.Count * p.Rows * p.N, scratch => tile = Tune(key, FloatTiles, gemmTile, t => LaunchFloatTile(p, t, scratch)));
+        return tile;
+    }
+
+    private void LaunchFloatTile(in FloatProduct p, int tile, ulong target) =>
+        Launch(K(tile == 128 ? "gemm128_f32" : "gemm64_f32"), (uint)((p.N + tile - 1) / tile), (uint)((p.Rows + tile - 1) / tile),
+            (uint)p.Count, PtxKernels.GemmThreads, 1, p.A, p.B, target,
+            U(p.Rows), U(p.N), U(p.K), U(p.TransA ? 1 : 0), U(p.TransB ? 1 : 0), F(p.Beta), p.Mk, p.Kn, p.Mn);
 
     internal void TransposeForBenchmark(Storage x, Storage y, int rows, int cols) => TransposeBatched(x, y, 1, rows, cols);
 
@@ -1214,30 +1239,14 @@ internal sealed unsafe partial class CudaBackend : Backend
         int splits = Math.Clamp(wanted, 1, Math.Max(1, limit));
         if (TensorSplitsOverride is null && tiles < 4 * sms)
         {
+            // Once known, read without allocating (no candidate array, no closure).
             int formula = splits;
-            int[] candidates = SplitCounts(Math.Min(64, k / 128));
-            void Run(int count, ulong target)
-            {
-                if (count > 1 && beta == 0f)
-                {
-                    Check(cuMemsetD32Async(target, 0, (nuint)((long)m * n), _stream), nameof(cuMemsetD32Async));
-                }
-
-                run(count, target);
-            }
-
+            Span<int> candidates = stackalloc int[SplitCountsLength];
+            candidates = candidates[..SplitCounts(Math.Min(64, k / 128), candidates)];
             var key = new TuneKey(TuneOp.TensorSplits, variant * 2 + (beta == 0f ? 0 : 1), TuneSizes.Class(m), n, k, ldc, extra, extra2);
-            if (beta == 0f)
+            if (!TryTuned(key, candidates, formula, out splits))
             {
-                splits = Tune(key, candidates, formula, count => Run(count, c));
-            }
-            else if (!TunedKnown(key))
-            {
-                WithScratch((long)(m - 1) * ldc + n, scratch => splits = Tune(key, candidates, formula, count => Run(count, scratch)));
-            }
-            else
-            {
-                splits = KnownChoice(key, candidates) ?? formula;
+                splits = MeasureTensorSplits(key, candidates.ToArray(), formula, m, n, beta, c, ldc, run);
             }
         }
 
@@ -1246,6 +1255,30 @@ internal sealed unsafe partial class CudaBackend : Backend
             Check(cuMemsetD32Async(c, 0, (nuint)((long)m * n), _stream), nameof(cuMemsetD32Async));
         }
 
+        return splits;
+    }
+
+    // Measures TensorSplits' count: with beta 0 into c (zeroed first when split; the final launch writes it again), with
+    // beta 1 into scratch memory (the formula's count when there is no room for it).
+    private int MeasureTensorSplits(TuneKey key, int[] candidates, int formula, int m, int n, float beta, ulong c, int ldc, Action<int, ulong> run)
+    {
+        void Run(int count, ulong target)
+        {
+            if (count > 1 && beta == 0f)
+            {
+                Check(cuMemsetD32Async(target, 0, (nuint)((long)m * n), _stream), nameof(cuMemsetD32Async));
+            }
+
+            run(count, target);
+        }
+
+        if (beta == 0f)
+        {
+            return Tune(key, candidates, formula, count => Run(count, c));
+        }
+
+        int splits = formula;
+        WithScratch((long)(m - 1) * ldc + n, scratch => splits = Tune(key, candidates, formula, count => Run(count, scratch)));
         return splits;
     }
 
