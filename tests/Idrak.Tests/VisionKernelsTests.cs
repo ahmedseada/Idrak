@@ -154,11 +154,14 @@ internal static partial class Tests
         var gpu = inputs.Select(d => { var s = backend.Allocate(Math.Max(1, d.Length), false); backend.Upload(d, s); return s; }).ToArray();
         try
         {
-            long fallbacks = Idrak.Abstraction.Operations.Kernels.HostCalls(backend);
             op(cpu, host);
-            op(backend, gpu);
-            backend.Synchronize();
-            Check(Idrak.Abstraction.Operations.Kernels.HostCalls(backend) == fallbacks, $"{device}: {what} took the host fallback");
+            using (var trace = Idrak.Abstraction.Operations.Kernels.Trace(backend))
+            {
+                op(backend, gpu);
+                backend.Synchronize();
+                // Named by operation, so a failure says which one left the device.
+                Check(trace.HostCalls == 0, $"{device}: {what} took the host fallback ({string.Join(", ", trace.HostCallsByOperation.Select(p => $"{p.Key} ×{p.Value}"))})");
+            }
             for (int i = 0; i < inputs.Length; i++)
             {
                 var (expected, actual) = (new float[inputs[i].Length], new float[inputs[i].Length]);

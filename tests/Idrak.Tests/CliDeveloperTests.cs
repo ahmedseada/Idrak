@@ -243,12 +243,13 @@ internal static partial class Tests
 
         Check(DevJson("kernels", "-d", name, "--source", "registered", "-j")["operations"]!.AsArray().Count == 0, "removed again");
 
-        // The kernels of the outside plug-ins (tests/Idrak.PluginTests): "plug-in" rows, registered on the CPU and Vulkan.
+        // The kernels of the outside plug-ins (tests/Idrak.PluginTests): "plug-in" rows, registered on the CPU, Vulkan and
+        // CUDA (and HIP where its compiler is found).
         using (Idrak.PluginTests.PluginKernels.Install())
         {
             var rows = DevJson("kernels", "-d", name, "-j")["operations"]!.AsArray()
                 .Where(o => (bool)o!["plugin"]!).ToDictionary(o => (string)o!["name"]!, o => (string)o!["kernel"]!);
-            bool own = device.Backend.Kind is "cpu" or "vulkan";
+            bool own = device.Backend.Kind is "cpu" or "vulkan" or "cuda" || device.Backend.Kind == "hip" && Idrak.Gpu.Hip.HipKernel.UnavailableReason(device.Backend) is null;
             Check(rows.GetValueOrDefault("Outside.UnpackPairs") == (own ? "registered" : "host") && rows.GetValueOrDefault("Outside.ScaleRows") == (own ? "registered" : "composed")
                   && rows.GetValueOrDefault("Outside.Softplus") == (device.Type == DeviceType.Cpu ? "registered" : "composed"), $"plug-in rows: {string.Join(", ", rows)}");
             var (code, output, _) = DevRun("kernels", "-d", name, "--source", "registered");
