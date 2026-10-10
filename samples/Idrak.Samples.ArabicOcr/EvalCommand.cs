@@ -23,13 +23,14 @@ internal static class EvalCommand
           --truth-text raw|values   compare the texts as they are (raw), or a JSON answer's text values in order (values;
                                     applied to the reading too when it is JSON)
           -o FILE                   the report (JSON with -j, else the table) to FILE as well
+          --limit N                 the first N pages only
           The readers' options are read's (see read --help).
         """;
 
     public static int Run(string[] args, TextWriter output, TextWriter error)
     {
         if (OcrApp.Context(args, output, error,
-                ["--reader", "--model", "--truth", "--truth-text", "--images", "--out", .. Readers.LineValues, .. Readers.VlmValues],
+                ["--reader", "--model", "--truth", "--truth-text", "--images", "--limit", "--out", .. Readers.LineValues, .. Readers.VlmValues],
                 [.. Readers.LineFlags, .. Readers.VlmFlags], Help) is not { } context)
         {
             return 0;
@@ -49,7 +50,7 @@ internal static class EvalCommand
         var table = new List<string> { $"{"page",-32} {"CER",8} {"WER",8} {"chars",7} {"words",6}" };
         TuningScore totalCer = default, totalWer = default;
         int skipped = 0;
-        foreach (var page in Pages.Read(a.Words, images))
+        foreach (var page in Pages.Read(a.Words, images).Take(a.Integer("--limit", int.MaxValue, 1)))
         {
             string? expected = page.Truth ?? Expected(page, truth, truthPages);
             if (expected is null)

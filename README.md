@@ -306,6 +306,9 @@ samples/
   Idrak.Samples.Spirals             multi-class: 3 spirals, softmax + cross-entropy, BatchNorm
   Idrak.Samples.ShapeRecognition    CNN: classify drawn shapes (Conv2d, MaxPool2d, BatchNorm) from an image folder, augmented
   Idrak.Samples.Ocr                 OCR: CNN character recognizer + line segmentation, trained from an image folder, reads PNG/BMP/PGM
+  Idrak.Samples.ArabicOcr           document OCR, Arabic first: a Gemma 3 vision-language reader (plug-in) and a trained line
+                                    recognizer (CNN + bidirectional LSTM + CTC); read, cut lines with drafts, train, eval
+  Idrak.Samples.ArabicOcr.Tests     its tests on generated pages and the tiny Gemma 3 fixture (CPU)
   Idrak.Samples.Sentiment           sentiment with negation: bag-of-words vs LSTM, GRU, Transformer
   Idrak.Samples.TextGeneration      small GPT: character-level causal transformer that generates text
   Idrak.Samples.GptApi              ASP.NET Core Web API + browser UI serving the GPT (Scalar docs, streaming, the chat API on /api/chat)

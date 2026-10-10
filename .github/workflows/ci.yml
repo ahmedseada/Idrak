@@ -20,6 +20,10 @@ jobs:
           IDRAK_DEVICES: cpu
       # An app's own tests of its override, with the testing kit (samples/Idrak.Samples.Override).
       - run: dotnet run -c Release --no-build --project samples/Idrak.Samples.Override.Tests
+      # The OCR app's tests (samples/Idrak.Samples.ArabicOcr): generated pages and the tiny Gemma 3, on the CPU.
+      - run: dotnet run -c Release --no-build --project samples/Idrak.Samples.ArabicOcr.Tests
+        env:
+          IDRAK_DEVICES: cpu
       - name: Pack (every project under src/)
         run: for p in src/*/*.csproj; do dotnet pack "$p" -c Release --no-build -o artifacts; done
       - uses: actions/upload-artifact@v4

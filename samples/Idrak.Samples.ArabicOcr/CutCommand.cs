@@ -27,6 +27,7 @@ internal static class CutCommand
           --max-error X               the share of a draft's characters that may differ from the span it is snapped to
                                       (0.5); a draft further from every span is written as a .draft.txt, not snapped
           --images DIR|ZIP            where a data file's images are (a zip is read in place)
+          --limit N                   the first N pages only
           --max-skew DEGREES          the largest skew corrected (3; 0: none)
         Accept a draft by renaming it to NAME-line-NN.txt (after correcting it), or with: accept DIR [--drafts]
         """;
@@ -40,7 +41,7 @@ internal static class CutCommand
     public static int Run(string[] args, TextWriter output, TextWriter error)
     {
         if (OcrApp.Context(args, output, error,
-                ["--out", "--prefill", "--model", "--truth", "--truth-text", "--images", "--max-skew", "--max-error", .. Readers.VlmValues],
+                ["--out", "--prefill", "--model", "--truth", "--truth-text", "--images", "--limit", "--max-skew", "--max-error", .. Readers.VlmValues],
                 [.. Readers.VlmFlags], Help) is not { } context)
         {
             return 0;
@@ -66,7 +67,7 @@ internal static class CutCommand
 
         var report = new JsonArray();
         int linesTotal = 0, created = 0, drafted = 0, aligned = 0, kept = 0;
-        foreach (var page in Pages.Read(a.Words, images))
+        foreach (var page in Pages.Read(a.Words, images).Take(a.Integer("--limit", int.MaxValue, 1)))
         {
             string? truth = page.Truth ?? (truths is not null && truths.TryGetValue(page.Image.Hash, out var known) ? known.Truth : null);
             var (lines, skew) = LineSegmenter.Find(page.Decode(), segmentation);

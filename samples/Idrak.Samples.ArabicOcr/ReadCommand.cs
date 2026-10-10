@@ -19,13 +19,14 @@ internal static class ReadCommand
                            --max-tokens N (2048), --context N (8192); greedy; the text streams as it is generated
           -o FILE|DIR      one image: the text (or with -j the JSON) to FILE; several: NAME.txt (NAME.json) per page in DIR
           --images DIR|ZIP where a data file's images are (default: beside it)
+          --limit N        the first N pages only
           -j               JSON: per page its text and the reader's details (lines: boxes and scores)
         """;
 
     public static int Run(string[] args, TextWriter output, TextWriter error)
     {
         if (OcrApp.Context(args, output, error,
-                ["--reader", "--model", "--out", "--images", .. Readers.LineValues, .. Readers.VlmValues],
+                ["--reader", "--model", "--out", "--images", "--limit", .. Readers.LineValues, .. Readers.VlmValues],
                 [.. Readers.LineFlags, .. Readers.VlmFlags], Help) is not { } context)
         {
             return 0;
@@ -37,7 +38,7 @@ internal static class ReadCommand
         bool toFile = outPath is not null && onePage && Path.HasExtension(outPath) && !Directory.Exists(outPath);
         using var reader = Readers.Create(context.Args.Required("--reader", "lines or vlm"), context);
         var pages = new JsonArray();
-        foreach (var page in Pages.Read(inputs, context.Args.Option("--images")))
+        foreach (var page in Pages.Read(inputs, context.Args.Option("--images")).Take(context.Args.Integer("--limit", int.MaxValue, 1)))
         {
             bool stream = !context.Json && outPath is null;
             if (stream && !onePage)
