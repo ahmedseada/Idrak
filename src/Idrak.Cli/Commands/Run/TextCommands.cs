@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Globalization;
 using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
 using Idrak.Generation;
@@ -91,7 +92,7 @@ internal sealed class TokenizeCommand : Command
             return ExitCodes.Ok;
         }
 
-        context.Table(["#", "ID", "Token"], ids.Select((id, i) => (IReadOnlyList<string>)[i.ToString(), id.ToString(), Show(model.Tokenizer.TokenOf(id))]));
+        context.Table(["#", "ID", "Token"], ids.Select((id, i) => (IReadOnlyList<string>)[i.ToString(CultureInfo.InvariantCulture), id.ToString(CultureInfo.InvariantCulture), Show(model.Tokenizer.TokenOf(id))]));
         context.Write($"{ids.Count} tokens");
         context.WriteJson(new JsonObject
         {
