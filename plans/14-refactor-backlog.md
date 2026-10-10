@@ -1,5 +1,29 @@
 # Plan 14: the refactor backlog
 
+## Scope from now: CUDA first
+
+The owner's decision: **CUDA is the most important target from now. Anything not related to CUDA is set aside**
+(Vulkan, HIP, CPU-only kernel work, the CLI, samples other than what CUDA training needs, the unfinished audit areas
+outside the CUDA path). The sections below keep those items for later; work only from this list until the owner says
+otherwise.
+
+| Order | CUDA item | Where (section below) |
+|---|---|---|
+| 1 | Verify the fused LSTM/GRU cell kernels on CUDA (the `recurrent` filter) and measure the OCR training step with `train --profile 10` against the 411 ms step | 1.5, 4 |
+| 2 | Regression check of the CUDA path against the library's starting numbers (`--bench-gemm`, `--bench-gemv`, the Chat sample's `profile ... --cuda --int8 --kv16`) | 4 |
+| 3 | Size classes for the CUDA keys still keyed by exact data sizes: PackedSplits/PackedTile/PackedMulti/Gated (`m`), DecodeSplits/DecodeMinChunk (`capacity`) | 2, Tuning |
+| 4 | Convolution choice per call: candidacy that does not depend on free memory at the moment, so a known choice is a lookup (no candidate list and `cuMemGetInfo` per convolution) | 2, Tuning |
+| 5 | Cheaper measuring on CUDA (shorter warm-up once the GPU is busy, fewer rounds for far-apart candidates) | 2, Tuning |
+| 6 | Library paths that cost CUDA time on every step: graph constants and BatchNorm eval read back or recomputed per forward (a GPU sync per node; needs a buffer invalidation hook), `ActivationMemory` arrays per layer per step, `Conv2d.ForwardFused` refolding per inference call, `ExactGELU` as ~20 launches (a fused CUDA kernel) | 2, Layers and models |
+| 7 | R1's CUDA leftovers: `CtcMeta` per CTC call, closures and copies on prompt-sized packed products and tensor-core `Run` delegates, invariant formatting in the PTX generators | 2, CUDA |
+| 8 | Card names in CUDA code comments (`CudaBackend.Quantized.cs`, `CudaDeviceLimits.cs`, `TuningCache.cs`) | 1.3 |
+| 9 | The CUDA runs of `plans/gpu-checks.md`, plan 12 phase 5 on the real Gemma 3 (CUDA), and docs/performance-notes.md next steps 1-9 (all CUDA) | 4 |
+| 10 | A training-step profile on the CUDA path beyond kernel times (per operation and layer: the CLI's internal `Recorder` as a library hook) | 2, gaps |
+
+Set aside (not CUDA): 1.1 Vulkan CTC, 1.2 GGUF fallback, 1.4 card names in docs, 1.6 Vulkan recurrent, 1.7 the
+sample's non-finite loss message, the Vulkan/HIP and CPU backend items, the CLI items, the sample gaps that are not on
+the CUDA training path, and the unfinished audit areas (section 3) except where a file is on the CUDA path.
+
 Everything left unfinished by plans 12 and 13, the fused recurrent work and the optimization-rules audit
 (`docs/optimization.md`, eleven areas R1-R11), in one place, so the refactor can be planned from it. Each item says
 where it is, why it was left, and what a fix needs. Nothing here is guessed: every entry comes from an agent's report,
@@ -144,7 +168,7 @@ project will list what the review missed (warnings are errors, so fix in the sam
   decoding GEMVs, int8 prefill on int8 tensor cores, prompt-pass fusions, training step outside the products, decoding
   attention at short contexts, cached CUDA modules, prompt-pass graphs) are all still open.
 
-## 5. Suggested order
+## 5. Suggested order (before the CUDA-first decision; see the top for the order now)
 
 1. Correctness: 1.1 (Vulkan CTC), 1.2 (GGUF fallback), 1.3 (card names in code), 1.7.
 2. Measure before refactoring: the owner's GPU runs of section 4 (recurrent on CUDA, the OCR profile, the
