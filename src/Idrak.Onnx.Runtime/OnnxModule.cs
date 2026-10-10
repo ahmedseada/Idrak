@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Buffers;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 using Idrak.Layers;
@@ -86,43 +87,63 @@ public sealed class OnnxModule : Module
     /// <inheritdoc />
     protected override Tensor ForwardCore(Tensor input)
     {
-        int[] shape = input.Shape.ToArray();
-        var values = input.ToArray();
-        NamedOnnxValue value = _inputType == typeof(float)
-            ? NamedOnnxValue.CreateFromTensor(InputName, new DenseTensor<float>(values, shape))
-            : _inputType == typeof(long)
-                ? NamedOnnxValue.CreateFromTensor(InputName, new DenseTensor<long>(Longs(values), shape))
-                : NamedOnnxValue.CreateFromTensor(InputName, new DenseTensor<int>(Ints(values), shape));
-        using var results = _session.Run([value], [OutputName]);
-        var output = results[0].AsTensor<float>();
-
-        // A dense output is read where it lies (one copy, onto the device), not copied to an array first.
-        return output is DenseTensor<float> dense
-            ? Tensor.From(dense.Buffer.Span, output.Dimensions, input.Device)
-            : Tensor.From(output.ToArray(), output.Dimensions.ToArray(), input.Device);
-    }
-
-    // Token ids as the model's integer type, cast in one loop each.
-    private static long[] Longs(float[] values)
-    {
-        var result = new long[values.Length];
-        for (int i = 0; i < values.Length; i++)
+        // The input is read into pooled buffers (returned in finally) and handed to ONNX Runtime as views of them.
+        int size = input.Size;
+        float[] values = ArrayPool<float>.Shared.Rent(size);
+        long[]? longs = null;
+        int[]? ints = null;
+        try
         {
-            result[i] = (long)values[i];
+            input.CopyTo(values.AsSpan(0, size));
+            NamedOnnxValue value;
+            if (_inputType == typeof(float))
+            {
+                value = NamedOnnxValue.CreateFromTensor(InputName, new DenseTensor<float>(values.AsMemory(0, size), input.Shape));
+            }
+            else if (_inputType == typeof(long))
+            {
+                // Token ids as the model's integer type, cast in one loop.
+                longs = ArrayPool<long>.Shared.Rent(size);
+                for (int i = 0; i < size; i++)
+                {
+                    longs[i] = (long)values[i];
+                }
+
+                value = NamedOnnxValue.CreateFromTensor(InputName, new DenseTensor<long>(longs.AsMemory(0, size), input.Shape));
+            }
+            else
+            {
+                ints = ArrayPool<int>.Shared.Rent(size);
+                for (int i = 0; i < size; i++)
+                {
+                    ints[i] = (int)values[i];
+                }
+
+                value = NamedOnnxValue.CreateFromTensor(InputName, new DenseTensor<int>(ints.AsMemory(0, size), input.Shape));
+            }
+
+            using var results = _session.Run([value], [OutputName]);
+            var output = results[0].AsTensor<float>();
+
+            // A dense output is read where it lies (one copy, onto the device) before the results are disposed,
+            // not copied to an array first.
+            return output is DenseTensor<float> dense
+                ? Tensor.From(dense.Buffer.Span[..(int)dense.Length], output.Dimensions, input.Device)
+                : Tensor.From(output.ToArray(), output.Dimensions.ToArray(), input.Device);
         }
-
-        return result;
-    }
-
-    private static int[] Ints(float[] values)
-    {
-        var result = new int[values.Length];
-        for (int i = 0; i < values.Length; i++)
+        finally
         {
-            result[i] = (int)values[i];
-        }
+            ArrayPool<float>.Shared.Return(values);
+            if (longs is not null)
+            {
+                ArrayPool<long>.Shared.Return(longs);
+            }
 
-        return result;
+            if (ints is not null)
+            {
+                ArrayPool<int>.Shared.Return(ints);
+            }
+        }
     }
 
     /// <inheritdoc />
