@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -117,8 +118,9 @@ internal sealed class ColumnProfile(string name)
                 return;
             case JsonValue v when v.GetValueKind() == JsonValueKind.Number:
                 Numbers++;
-                _numbers.Add(DataPreparation.ParseNumber(v));
-                Count(DataPreparation.Key(v)!);
+                double number = DataPreparation.ParseNumber(v);                  // parsed once, for the moments and the count
+                _numbers.Add(number);
+                Count(number);
                 return;
             case JsonValue v when v.GetValueKind() is JsonValueKind.True or JsonValueKind.False:
                 Booleans++;
@@ -154,13 +156,40 @@ internal sealed class ColumnProfile(string name)
 
     private void Count(string value)
     {
-        if (Distinct.TryGetValue(value, out int count))
+        if (Distinct.Count < DistinctCap)
+        {
+            CollectionsMarshal.GetValueRefOrAddDefault(Distinct, value, out _)++;   // one lookup, seen before or not
+        }
+        else if (Distinct.TryGetValue(value, out int count))
         {
             Distinct[value] = count + 1;
         }
-        else if (Distinct.Count < DistinctCap)
+        else
         {
-            Distinct[value] = 1;
+            ManyDistinct = true;
+        }
+    }
+
+    // A number counted by its invariant text (DataPreparation.Key's), looked up as characters: a string is made only
+    // for a value not counted before.
+    private void Count(double number)
+    {
+        Span<char> text = stackalloc char[32];
+        if (!number.TryFormat(text, out int written, provider: CultureInfo.InvariantCulture))
+        {
+            Count(number.ToString(CultureInfo.InvariantCulture));
+            return;
+        }
+
+        var lookup = Distinct.GetAlternateLookup<ReadOnlySpan<char>>();
+        var key = text[..written];
+        if (Distinct.Count < DistinctCap)
+        {
+            CollectionsMarshal.GetValueRefOrAddDefault(lookup, key, out _)++;
+        }
+        else if (lookup.TryGetValue(key, out int count))
+        {
+            lookup[key] = count + 1;
         }
         else
         {
@@ -319,9 +348,16 @@ internal sealed class DataProfile
         if (kind == DataKind.Table)
         {
             var names = new List<string>();
+            var named = new HashSet<string>(StringComparer.Ordinal);              // first appearance order, one lookup per key
             foreach (var row in rows.Take(1000))
             {
-                names.AddRange(row.Select(p => p.Key).Where(k => !names.Contains(k)));
+                foreach (var (key, _) in row)
+                {
+                    if (named.Add(key))
+                    {
+                        names.Add(key);
+                    }
+                }
             }
 
             foreach (string name in names)

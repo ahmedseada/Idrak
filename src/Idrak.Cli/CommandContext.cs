@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Buffers;
 using System.Globalization;
 using System.Reflection;
 using System.Runtime.CompilerServices;
@@ -34,6 +35,9 @@ internal sealed class CommandContext : IDisposable
 
     /// <summary>One JSON document per line (JSON Lines rows printed or written), with the same escaping as <see cref="JsonOutput"/>.</summary>
     internal static readonly JsonSerializerOptions JsonLine = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+
+    // The characters that put a CSV table cell in quotes.
+    private static readonly SearchValues<char> CsvQuoted = SearchValues.Create(",\"\n");
 
     private readonly Dictionary<string, List<string>> _options;
     private readonly HashSet<string> _flags;
@@ -237,7 +241,7 @@ internal sealed class CommandContext : IDisposable
         var all = rows.ToList();
         if (Format is OutputFormat.Csv or OutputFormat.Markdown)
         {
-            string Csv(string cell) => cell.IndexOfAny([',', '"', '\n']) >= 0 ? $"\"{cell.Replace("\"", "\"\"", StringComparison.Ordinal)}\"" : cell;
+            string Csv(string cell) => cell.AsSpan().ContainsAny(CsvQuoted) ? $"\"{cell.Replace("\"", "\"\"", StringComparison.Ordinal)}\"" : cell;
             string Md(string cell) => cell.Replace("|", "\\|", StringComparison.Ordinal);
             var lines = Format == OutputFormat.Csv
                 ? all.Prepend(headers).Select(r => string.Join(',', r.Select(Csv)))
@@ -289,15 +293,18 @@ internal sealed class CommandContext : IDisposable
     /// <summary>The command's JSON result, printed only with <c>--json</c> (one document per command).</summary>
     public void WriteJson(JsonNode node)
     {
-        if (Json)
+        if (!Json && _log is null)
         {
-            Output.WriteLine(node.ToJsonString(JsonOutput));
+            return;
         }
 
-        if (_log is not null)
+        string text = node.ToJsonString(JsonOutput);                           // written once for the output and the log
+        if (Json)
         {
-            Log(node.ToJsonString(JsonOutput));
+            Output.WriteLine(text);
         }
+
+        Log(text);
     }
 
     /// <summary>
