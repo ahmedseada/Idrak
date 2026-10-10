@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Buffers;
+using System.Globalization;
 using System.Text;
 
 namespace Idrak.Nlp.Abstractions;
@@ -152,17 +154,34 @@ public abstract class DistillationTeacher : IDisposable
         ArgumentNullException.ThrowIfNull(tokenizer);
         int count = Tokens(tokenizer);
         ulong hash = 14695981039346656037UL;                                    // FNV-1a, 64 bits
-        for (int id = 0; id < count; id++)
+        byte[] utf8 = ArrayPool<byte>.Shared.Rent(256);                         // each token's UTF-8, in one reused buffer
+        try
         {
-            foreach (byte b in Encoding.UTF8.GetBytes(TokenText(tokenizer, id)))
+            for (int id = 0; id < count; id++)
             {
-                hash = (hash ^ b) * 1099511628211UL;
-            }
+                string text = TokenText(tokenizer, id);
+                int most = Encoding.UTF8.GetMaxByteCount(text.Length);
+                if (most > utf8.Length)
+                {
+                    byte[] larger = ArrayPool<byte>.Shared.Rent(most);
+                    ArrayPool<byte>.Shared.Return(utf8);
+                    utf8 = larger;
+                }
 
-            hash = (hash ^ 0xFF) * 1099511628211UL;                             // a separator no UTF-8 text contains
+                foreach (byte b in utf8.AsSpan(0, Encoding.UTF8.GetBytes(text, utf8)))
+                {
+                    hash = (hash ^ b) * 1099511628211UL;
+                }
+
+                hash = (hash ^ 0xFF) * 1099511628211UL;                         // a separator no UTF-8 text contains
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(utf8);
         }
 
-        return $"{count}-{hash:x16}";
+        return string.Create(CultureInfo.InvariantCulture, $"{count}-{hash:x16}");
     }
 
     /// <inheritdoc />

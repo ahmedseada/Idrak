@@ -360,11 +360,26 @@ internal static class Hash
         return hash;
     }
 
-    // A sequence's key: its tokens and which of them train.
+    // A sequence's key: its tokens and which of them train. The integers are hashed as little-endian bytes (the file's
+    // byte order), so a key is the same on every machine.
     public static ulong Of(TrainingSequence sequence)
     {
-        ulong hash = Add(Start, BitConverter.GetBytes(sequence.Tokens.Length));
-        hash = Add(hash, System.Runtime.InteropServices.MemoryMarshal.AsBytes(sequence.Tokens.AsSpan()));
+        Span<byte> bytes = stackalloc byte[sizeof(int)];
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(bytes, sequence.Tokens.Length);
+        ulong hash = Add(Start, bytes);
+        if (BitConverter.IsLittleEndian)
+        {
+            hash = Add(hash, System.Runtime.InteropServices.MemoryMarshal.AsBytes(sequence.Tokens.AsSpan()));
+        }
+        else
+        {
+            foreach (int token in sequence.Tokens)
+            {
+                System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(bytes, token);
+                hash = Add(hash, bytes);
+            }
+        }
+
         foreach (bool trained in sequence.Trained)
         {
             hash = (hash ^ (trained ? 1UL : 2UL)) * 1099511628211UL;
