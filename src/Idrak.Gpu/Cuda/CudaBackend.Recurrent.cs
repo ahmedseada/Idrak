@@ -202,11 +202,23 @@ internal sealed unsafe partial class CudaBackend
     // The blocks of a sequence kernel resident at once (the occupancy the device reports for its block, times the
     // multiprocessors), asked once a kernel: the most its cooperative launch may take.
     private int SequenceBlocks(string kernel) => _sequenceBlocks.GetOrAdd(kernel, name =>
-        cuOccupancyMaxActiveBlocksPerMultiprocessor(out int perMultiprocessor, K(name), 32 * StepSlices, 0) == 0
-            ? perMultiprocessor * _limits.Multiprocessors
-            : 0);
+    {
+        MakeCurrent();
+        int result = cuOccupancyMaxActiveBlocksPerMultiprocessor(out int perMultiprocessor, K(name), 32 * StepSlices, 0);
+        _occupancyError = result;
+        return result == 0 ? perMultiprocessor * _limits.Multiprocessors : 0;
+    });
 
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> _sequenceBlocks = new();
+    private int _occupancyError;
+
+    /// <summary>Why the sequence kernels do not run on this device (null when they do): for tests and diagnostics.</summary>
+    internal string? SequenceUnavailable =>
+        !_limits.CooperativeLaunch ? "the device does not report cooperative launches"
+        : _gridBarrier == 0 ? "the grid barrier's two words could not be allocated"
+        : SequenceBlocks("lstm_seq_f32") is var blocks && blocks <= 0
+            ? $"the occupancy query gives {blocks} resident blocks of {32 * StepSlices} threads ({(_occupancyError == 0 ? "no error" : CudaDriver.Describe(_occupancyError))})"
+            : null;
 
     // The sequence kernels' grid barrier: two words (arrivals, generation) the kernels leave at 0 and the generation
     // they advance; one launch at a time on the backend's stream, so one barrier serves every launch. 0 when the device
