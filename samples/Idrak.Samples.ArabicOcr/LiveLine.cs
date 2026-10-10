@@ -15,6 +15,7 @@ internal sealed class LiveLine(TextWriter error)
     private readonly bool _console = ReferenceEquals(error, Console.Error);
     private readonly bool _interactive = ReferenceEquals(error, Console.Error) && !Console.IsErrorRedirected;
     private readonly Stopwatch _sinceDraw = Stopwatch.StartNew();
+    private readonly Lock _gate = new();                                                // loaders report from several threads
     private bool _drawn;
     private int _shown;
 
@@ -24,6 +25,19 @@ internal sealed class LiveLine(TextWriter error)
         if (!_console || (!now && _drawn && _sinceDraw.ElapsedMilliseconds < (_interactive ? 250 : 60_000)))
         {
             return;
+        }
+
+        lock (_gate)
+        {
+            Draw(text, now);
+        }
+    }
+
+    private void Draw(Func<string> text, bool now)
+    {
+        if (!now && _drawn && _sinceDraw.ElapsedMilliseconds < (_interactive ? 250 : 60_000))
+        {
+            return;                                                                     // another thread drew meanwhile
         }
 
         _sinceDraw.Restart();
@@ -49,6 +63,14 @@ internal sealed class LiveLine(TextWriter error)
 
     /// <summary>Erases the line, so the next output starts on a clean one.</summary>
     public void Clear()
+    {
+        lock (_gate)
+        {
+            ClearLocked();
+        }
+    }
+
+    private void ClearLocked()
     {
         if (_interactive && _shown > 0)
         {

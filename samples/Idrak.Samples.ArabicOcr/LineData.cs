@@ -28,34 +28,53 @@ internal static class LineFiles
 
     /// <summary>
     /// The lines of <paramref name="folder"/> (and its subfolders) with a transcription: the corrected one, or with
-    /// <paramref name="drafts"/> the aligned draft, else the draft, for lines not corrected yet. Lines without any are left out.
+    /// <paramref name="drafts"/> the aligned draft, else the draft, for lines not corrected yet. Lines without any are left
+    /// out. The transcriptions are read in parallel (tens of thousands of small files); <paramref name="progress"/> gets
+    /// (read, total) as they come in. The order is the folder's.
     /// </summary>
-    public static IReadOnlyList<LineSample> Read(string folder, bool drafts)
+    public static IReadOnlyList<LineSample> Read(string folder, bool drafts, Action<int, int>? progress = null)
     {
         if (!Directory.Exists(folder))
         {
             throw new UsageException($"No folder {folder}: give a folder of line images with their .txt transcriptions (cut writes one).");
         }
 
-        var samples = new List<LineSample>();
-        foreach (string image in Pages.ImageFiles(folder, recursive: true))
+        string[] images = [.. Pages.ImageFiles(folder, recursive: true)];
+        var found = new LineSample?[images.Length];
+        int read = 0;
+        progress?.Invoke(0, images.Length);
+        Parallel.For(0, images.Length, ComputeResources.ParallelOptions, i =>
         {
-            foreach (var (kind, name) in new[] { (Corrected, "corrected"), (Aligned, "aligned"), (Draft, "draft") })
+            foreach (var (kind, name) in Kinds)
             {
                 if (kind != Corrected && !drafts)
                 {
                     break;
                 }
 
-                string text = OcrText.ReadTranscription(Of(image, kind));
+                string text = OcrText.ReadTranscription(Of(images[i], kind));
                 if (text.Length > 0)
                 {
-                    samples.Add(new LineSample(image, text, name));
+                    found[i] = new LineSample(images[i], text, name);
                     break;
                 }
+            }
+
+            int done = Interlocked.Increment(ref read);
+            progress?.Invoke(done, images.Length);
+        });
+
+        var samples = new List<LineSample>(images.Length);
+        foreach (var sample in found)
+        {
+            if (sample is not null)
+            {
+                samples.Add(sample);
             }
         }
 
         return samples;
     }
+
+    private static readonly (string Kind, string Name)[] Kinds = [(Corrected, "corrected"), (Aligned, "aligned"), (Draft, "draft")];
 }
