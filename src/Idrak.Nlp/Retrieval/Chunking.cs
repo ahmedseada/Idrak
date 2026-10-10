@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Buffers;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using Idrak.Generation;
@@ -175,8 +176,8 @@ internal sealed class TopHits(int keep)
 public sealed class Bm25Index
 {
     private readonly int[] _lengths;
-    private readonly Dictionary<string, double> _idf = [];
-    private readonly Dictionary<string, (int[] Documents, int[] Counts)> _postings = [];   // the texts holding each word, in id order
+    // Each word's idf and the texts holding it (in id order), found with one lookup.
+    private readonly Dictionary<string, (double Idf, int[] Documents, int[] Counts)> _terms = [];
     private readonly double _averageLength;
 
     /// <summary>Indexes <paramref name="texts"/> (their ids are their positions).</summary>
@@ -233,8 +234,7 @@ public sealed class Bm25Index
         {
             var list = postings[id];
             int n = list.Documents.Count;
-            _idf[word] = Math.Log(1 + (lengths.Count - n + 0.5) / (n + 0.5));
-            _postings[word] = ([.. list.Documents], [.. list.Counts]);
+            _terms[word] = (Math.Log(1 + (lengths.Count - n + 0.5) / (n + 0.5)), [.. list.Documents], [.. list.Counts]);
         }
     }
 
@@ -251,39 +251,49 @@ public sealed class Bm25Index
     public IReadOnlyList<SearchHit> Search(string query, int top)
     {
         // The indexed words of the query, each once, in query order (the index's own strings: none is allocated).
-        var terms = new List<(string Word, double Idf)>();
+        var terms = new List<(double Idf, int[] Documents, int[] Counts)>();
         var seen = new HashSet<string>();
-        var idfs = _idf.GetAlternateLookup<ReadOnlySpan<char>>();
+        var lookup = _terms.GetAlternateLookup<ReadOnlySpan<char>>();
         foreach (var word in WordTokenizer.SplitSpans(query))
         {
-            if (idfs.TryGetValue(word, out string? term, out double idf) && seen.Add(term))
+            if (lookup.TryGetValue(word, out string? term, out var postings) && seen.Add(term))
             {
-                terms.Add((term, idf));
+                terms.Add(postings);
             }
         }
 
-        var scores = new double[_lengths.Length];
-
-        // Only the texts holding a query word are scored (term by term in query order, as a full scan would add them).
-        foreach (var (term, idf) in terms)
+        // The scores live in a pooled buffer (one per query would be as long as the corpus), returned in finally.
+        int count = _lengths.Length;
+        double[] pooled = ArrayPool<double>.Shared.Rent(count);
+        try
         {
-            var (documents, counts) = _postings[term];
-            for (int i = 0; i < documents.Length; i++)
-            {
-                int d = documents[i], tf = counts[i];
-                scores[d] += idf * tf * (K1 + 1) / (tf + K1 * (1 - B + B * _lengths[d] / _averageLength));
-            }
-        }
+            var scores = pooled.AsSpan(0, count);
+            scores.Clear();
 
-        var best = new TopHits(top);
-        for (int d = 0; d < scores.Length; d++)
+            // Only the texts holding a query word are scored (term by term in query order, as a full scan would add them).
+            foreach (var (idf, documents, counts) in terms)
+            {
+                for (int i = 0; i < documents.Length; i++)
+                {
+                    int d = documents[i], tf = counts[i];
+                    scores[d] += idf * tf * (K1 + 1) / (tf + K1 * (1 - B + B * _lengths[d] / _averageLength));
+                }
+            }
+
+            var best = new TopHits(top);
+            for (int d = 0; d < scores.Length; d++)
+            {
+                if (scores[d] > 0)
+                {
+                    best.Offer(d, scores[d]);
+                }
+            }
+
+            return best.ToArray();
+        }
+        finally
         {
-            if (scores[d] > 0)
-            {
-                best.Offer(d, scores[d]);
-            }
+            ArrayPool<double>.Shared.Return(pooled);
         }
-
-        return best.ToArray();
     }
 }

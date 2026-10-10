@@ -153,16 +153,22 @@ public sealed class InMemoryVectorStore : IVectorStore
         return norm > 0 ? [.. vector.Select(v => (float)(v / norm))] : [.. vector];
     }
 
+    // SIMD lanes of the machine's width when the hardware runs them, then a scalar tail (all scalar without SIMD).
     private static double Dot(ReadOnlySpan<float> a, ReadOnlySpan<float> b)
     {
-        var sum = Vector<float>.Zero;
         int i = 0;
-        for (; i <= a.Length - Vector<float>.Count; i += Vector<float>.Count)
+        float total = 0;
+        if (Vector.IsHardwareAccelerated && a.Length >= Vector<float>.Count)
         {
-            sum += new Vector<float>(a[i..]) * new Vector<float>(b[i..]);
+            var sum = Vector<float>.Zero;
+            for (; i <= a.Length - Vector<float>.Count; i += Vector<float>.Count)
+            {
+                sum += new Vector<float>(a[i..]) * new Vector<float>(b[i..]);
+            }
+
+            total = Vector.Sum(sum);
         }
 
-        float total = Vector.Sum(sum);
         for (; i < a.Length; i++)
         {
             total += a[i] * b[i];

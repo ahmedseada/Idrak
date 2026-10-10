@@ -3,6 +3,7 @@
 
 using System.Buffers;
 using System.Diagnostics;
+using System.Globalization;
 using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -446,7 +447,11 @@ public static class IdrakEndpointExtensions
         context_resets = s.ContextResets,
     };
 
-    private static string FormatCount(long n) => n >= 1_000_000_000 ? $"{n / 1e9:0.#}B" : n >= 1_000_000 ? $"{n / 1e6:0.#}M" : $"{n / 1e3:0}K";
+    // The parameter count as the wire format writes it ("1.5B", "270M"): the same text on every machine, whatever its culture.
+    private static string FormatCount(long n) =>
+        n >= 1_000_000_000 ? string.Create(CultureInfo.InvariantCulture, $"{n / 1e9:0.#}B")
+        : n >= 1_000_000 ? string.Create(CultureInfo.InvariantCulture, $"{n / 1e6:0.#}M")
+        : string.Create(CultureInfo.InvariantCulture, $"{n / 1e3:0}K");
 
     private static string? NullIfEmpty(string text) => text.Length == 0 ? null : text;
 

@@ -140,19 +140,12 @@ public sealed record ChatTranscript(IReadOnlyList<ChatMessage> Messages, IReadOn
     /// <summary>Reads one transcript per non-empty line of a JSON Lines file (see <see cref="FromJson"/>).</summary>
     public static IEnumerable<ChatTranscript> ReadJsonLines(string path)
     {
-        int number = 0;
-        foreach (string line in File.ReadLines(path))
+        foreach (var (node, number) in JsonLines.Read(path))
         {
-            number++;
-            if (string.IsNullOrWhiteSpace(line))
-            {
-                continue;
-            }
-
             ChatTranscript transcript;
             try
             {
-                transcript = FromJson(JsonNode.Parse(line) as JsonObject ?? throw new InvalidDataException("The line is not a JSON object."));
+                transcript = FromJson(node as JsonObject ?? throw new InvalidDataException("The line is not a JSON object."));
             }
             catch (Exception ex) when (ex is JsonException or InvalidDataException or InvalidOperationException or FormatException)
             {
