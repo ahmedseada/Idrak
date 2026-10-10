@@ -171,10 +171,9 @@ internal sealed class VlmReader : IPageReader
     public const string DefaultPrompt = "Extract the text of this image.";
 
     private readonly PretrainedModel _model;
-    private readonly IVisionEncoder _encoder;
-    private readonly ChatGenerator _chat;
+    private readonly ImageReader _reader;
     private readonly string? _prompt, _system;
-    private readonly GenerationOptions _generation;
+    private readonly int _maxTokens;
 
     public VlmReader(OcrContext context, string folder)
     {
@@ -208,10 +207,10 @@ internal sealed class VlmReader : IPageReader
             var family = _model.Vision ?? throw new UsageException($"--model {folder} reads text only (no vision encoder): give a vision-language checkpoint.");
             tuned?.ThrowIfOtherFamily(family.Family, $"the adapter {adapter}");
             vision.ThrowIfUnknown(family.Family, family.VisionOptionKeys);
-            _encoder = _model.CreateVisionEncoder(new VisionEncoderOptions { Device = _model.Device, VisionOptions = vision.Count > 0 ? vision : null });
-            int contextLength = Math.Min(args.Integer("--context", 8192, 256), _model.MaxPositions);
-            var chat = _model.CreateChat(KeyValueFormat.Float32, contextLength);
-            _chat = new ChatGenerator(chat.Generator, chat.Template) { Images = new ChatImages(_encoder, family.PromptFormat, family.Attention) { Transforms = transforms } };
+            _reader = new ImageReader(_model, new ImageReaderOptions
+            {
+                Transforms = transforms, VisionOptions = vision.Count > 0 ? vision : null, ContextLength = Math.Min(args.Integer("--context", 8192, 256), _model.MaxPositions),
+            });
         }
         catch
         {
@@ -221,11 +220,7 @@ internal sealed class VlmReader : IPageReader
 
         _prompt = args.Option("--prompt");
         _system = args.Option("--system");
-        _generation = new GenerationOptions
-        {
-            Temperature = 1f, TopK = 1, TopP = 1f, RepeatPenalty = 1f, Seed = 0,                          // greedy
-            NumCtx = _model.MaxPositions, NumPredict = args.Integer("--max-tokens", 2048, 1),
-        };
+        _maxTokens = args.Integer("--max-tokens", 2048, 1);
     }
 
     public string Name => Readers.Vlm;
@@ -238,33 +233,16 @@ internal sealed class VlmReader : IPageReader
 
     public PageReading Read(Page page, TextWriter? stream = null)
     {
-        var clock = Stopwatch.StartNew();
         string prompt = _prompt ?? page.Prompt ?? DefaultPrompt;
-        var messages = new List<ChatMessage>();
-        if ((_system ?? page.System) is { Length: > 0 } system)
+        var reading = _reader.Read(new ImageReadRequest(page.Image, prompt) { System = _system ?? page.System, MaxTokens = _maxTokens }, stream is null ? null : text =>
         {
-            messages.Add(new ChatMessage("system", system));
-        }
-
-        messages.Add(new ChatMessage("user", [page.Image, new ChatText(prompt)]));
-        string text = "";
-        GenerationStats? stats = null;
-        foreach (var chunk in _chat.Stream(new ChatRequest(messages, Options: _generation)))
-        {
-            if (stream is not null && chunk.Delta.Content.Length > 0)
-            {
-                stream.Write(chunk.Delta.Content);
-                stream.Flush();
-            }
-
-            if (chunk.Done)
-            {
-                text = chunk.Message?.Content ?? text;
-                stats = chunk.Stats;
-            }
-        }
-
+            stream.Write(text);
+            stream.Flush();
+        });
         stream?.WriteLine();
+        string text = reading.Text;
+        var stats = reading.Stats;
+        var clock = reading.Elapsed;
         var details = new JsonObject
         {
             ["reader"] = Name,
@@ -273,14 +251,14 @@ internal sealed class VlmReader : IPageReader
             ["vision_options"] = VisionOptions.ToJson(),
             ["prompt_tokens"] = stats?.PromptTokens,
             ["generated_tokens"] = stats?.GeneratedTokens,
-            ["seconds"] = Math.Round(clock.Elapsed.TotalSeconds, 3),
+            ["seconds"] = Math.Round(clock.TotalSeconds, 3),
         };
         return new PageReading(text.Trim(), details);
     }
 
     public void Dispose()
     {
-        _encoder.Dispose();
+        _reader.Dispose();
         _model.Dispose();
     }
 }

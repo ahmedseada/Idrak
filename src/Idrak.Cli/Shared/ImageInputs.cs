@@ -50,87 +50,13 @@ internal static class ImageInputs
     {
         ArgumentNullException.ThrowIfNull(model);
         reason = null;
-        if (model.Vision is not { } vision)
-        {
-            return null;
-        }
-
         try
         {
-            visionOptions?.ThrowIfUnknown(vision.Family, vision.VisionOptionKeys);
+            return ModelImages.For(model, transforms, visionOptions, EncoderFactory);
         }
         catch (ArgumentException ex)
         {
             throw new UsageException($"{ModelChoices.VisionOption}: {ex.Message}");
-        }
-
-        return new ModelImages(model, vision, new VisionEncoderOptions { Device = model.Device, VisionOptions = visionOptions }, transforms);
-    }
-}
-
-/// <summary>A model's image reading for chat (<see cref="Images"/>), owning the encoder it builds on first use.</summary>
-internal sealed class ModelImages : IDisposable
-{
-    private readonly LazyEncoder _encoder;
-
-    public ModelImages(PretrainedModel model, PretrainedVision vision, VisionEncoderOptions options, ImageTransformPipeline? transforms = null)
-    {
-        Options = options;
-        _encoder = new LazyEncoder(() => (ImageInputs.EncoderFactory ?? ((m, o) => m.CreateVisionEncoder(o)))(model, options), vision.Width, model.Device);
-        Images = new ChatImages(_encoder, vision.PromptFormat, vision.Attention) { Decode = ImageInputs.Decode, Transforms = transforms ?? ImageTransformPipeline.Empty, Owner = this };   // the engine disposes it with the model it serves
-    }
-
-    /// <summary>The device and vision options its encoder is built with.</summary>
-    public VisionEncoderOptions Options { get; }
-
-    /// <summary>What the chat generator reads images with.</summary>
-    public ChatImages Images { get; }
-
-    /// <summary>The family's encoder once an image has been read (it is built on first use), else null.</summary>
-    public IVisionEncoder? Encoder => _encoder.Current;
-
-    public void Dispose() => _encoder.Dispose();
-
-    // The family's encoder, built when an image is first read (its layout or its features), disposed with the model.
-    private sealed class LazyEncoder(Func<IVisionEncoder> create, int width, Device device) : IVisionEncoder
-    {
-        private readonly Lock _lock = new();
-        private IVisionEncoder? _built;
-
-        public int Width => width;
-
-        public Device Device => device;
-
-        public IVisionEncoder? Current
-        {
-            get
-            {
-                lock (_lock)
-                {
-                    return _built;
-                }
-            }
-        }
-
-        public IReadOnlyList<ImageTokenLayout> Blocks(ImageData image, VisionOptions? options = null) => Built().Blocks(image, options);
-
-        public IReadOnlyList<ImageFeatures> Encode(IReadOnlyList<ImageData> images, VisionOptions? options = null) => Built().Encode(images, options);
-
-        public void Dispose()
-        {
-            lock (_lock)
-            {
-                _built?.Dispose();
-                _built = null;
-            }
-        }
-
-        private IVisionEncoder Built()
-        {
-            lock (_lock)
-            {
-                return _built ??= create();
-            }
         }
     }
 }

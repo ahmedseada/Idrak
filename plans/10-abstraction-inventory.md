@@ -14,7 +14,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 | `Idrak.Abstraction` | 34 | 13 | 14 | 60 | 0 |
 | `Idrak` | 14 | 4 | 16 | 34 | 0 |
 | `Idrak.Gpu` | 0 | 0 | 0 | 0 | 0 |
-| `Idrak.Nlp` | 7 | 2 | 4 | 13 | 0 |
+| `Idrak.Nlp` | 9 | 2 | 6 | 17 | 0 |
 | `Idrak.Data` | 6 | 0 | 4 | 10 | 0 |
 | `Idrak.Vision` | 6 | 0 | 5 | 11 | 0 |
 | `Idrak.Onnx.Runtime` | 0 | 0 | 0 | 0 | 0 |
@@ -71,7 +71,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Generation.IToolCallParser` | interface | public | — | DeepSeekToolCallParser, HarmonyToolCallParser, JsonToolCallParser, MistralToolCallParser, PythonicToolCallParser, Qwen3CoderToolCallParser |  | Abstraction, Idrak, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.IToolChatModel` | interface | public | — | ChatEngineModel |  | AspNetCore, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.IToolRegistry` | interface | public | — | ToolRegistry |  | Abstraction, AspNetCore, Mcp, Nlp | Abstraction |
-| `Idrak.Abstraction.Generation.IVisionEncoder` | interface | public | Device | — |  | Abstraction, Idrak, Nlp | Abstraction |
+| `Idrak.Abstraction.Generation.IVisionEncoder` | interface | public | Device | ModelImages.LazyEncoder |  | Abstraction, Idrak, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.IVisionEncoderStages` | interface | public | Tensor | — |  | Abstraction, Idrak, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.IVisionTuningPart` | interface | public | Tensor | — |  | Abstraction, Idrak, Nlp | Abstraction |
 | `Idrak.Abstraction.Generation.ImageAttentionRules` | registry | public | — |  | causal | — | Abstraction |
@@ -142,11 +142,15 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 |---|---|---|---|---|---|---|---|
 | `Idrak.Generation.Abstractions.ITokenSampler` | interface | public | Tensor | TokenSampler, TokenSamplers.ShadowSampler |  | Nlp | Nlp |
 | `Idrak.Generation.Abstractions.TokenSamplers` | registry | public | — |  | default | Nlp | Nlp |
+| `Idrak.Nlp.Abstractions.AnswerTexts` | registry | public | — |  | raw, values | — | Nlp |
 | `Idrak.Nlp.Abstractions.DistillationTeacher` | abstract class | public | — | ModelTeacher, StoredTeacher |  | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.FeatureCaches` | registry | public | — |  | disk, memory | Nlp | Nlp |
+| `Idrak.Nlp.Abstractions.IAnswerText` | interface | public | — | AnswerTexts.GuardedText, JsonValuesAnswerText, RawAnswerText |  | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.IFeatureCache` | interface | public | Device, Tensor | DiskFeatureCache, MemoryFeatureCache |  | Nlp | Nlp |
+| `Idrak.Nlp.Abstractions.IJsonRepair` | interface | public | — | JsonRepairs.GuardedRepair, LenientJsonRepair |  | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.ITuningDataFormat` | interface | public | — | MessagesDataFormat, ShareGptDataFormat |  | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.ITuningMetric` | interface | public | — | ErrorRateMetric, TuningMetrics.GuardedMetric |  | Nlp | Nlp |
+| `Idrak.Nlp.Abstractions.JsonRepairs` | registry | public | — |  | lenient | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.TeacherDistributions` | abstract class | public | Device, Tensor | ModelTeacher.Batch, StoredTeacher.Batch |  | Nlp | Nlp |
 | `Idrak.Nlp.Abstractions.TuningDataFormats` | registry | public | — |  | messages, sharegpt | — | Nlp |
 | `Idrak.Nlp.Abstractions.TuningMetrics` | registry | public | — |  | cer, wer | Nlp | Nlp |

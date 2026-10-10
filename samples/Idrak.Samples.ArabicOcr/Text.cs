@@ -22,39 +22,7 @@ internal static class OcrText
     /// A transcription as the app keeps it: NFC, a byte order mark dropped, every run of white space (line breaks
     /// included) one space, trimmed.
     /// </summary>
-    public static string Normalize(string? text)
-    {
-        if (string.IsNullOrEmpty(text))
-        {
-            return "";
-        }
-
-        var builder = new StringBuilder(text.Length);
-        bool space = false;
-        foreach (char c in text.Normalize(NormalizationForm.FormC))
-        {
-            if (c == '﻿')
-            {
-                continue;
-            }
-
-            if (char.IsWhiteSpace(c))
-            {
-                space = builder.Length > 0;
-                continue;
-            }
-
-            if (space)
-            {
-                builder.Append(' ');
-                space = false;
-            }
-
-            builder.Append(c);
-        }
-
-        return builder.ToString();
-    }
+    public static string Normalize(string? text) => AnswerTexts.Normalize(text);
 
     /// <summary>A text file's transcription (<see cref="Normalize"/>), "" when the file is missing.</summary>
     public static string ReadTranscription(string path) => File.Exists(path) ? Normalize(File.ReadAllText(path, Encoding.UTF8)) : "";
@@ -83,77 +51,9 @@ internal static class OcrText
     /// </summary>
     public static string AnswerText(string answer, string mode) => mode switch
     {
-        "raw" => answer,
-        "values" => JsonValues(answer) ?? answer,
+        "raw" or "values" => AnswerTexts.Get(mode).Text(answer),
         _ => throw new UsageException($"--truth-text is raw or values, not '{mode}'."),
     };
-
-    // The values of a JSON answer, or null when it is not JSON.
-    private static string? JsonValues(string answer)
-    {
-        string text = answer.Trim();
-        if (text.StartsWith("```", StringComparison.Ordinal))
-        {
-            int start = text.IndexOf('\n');
-            int end = text.LastIndexOf("```", StringComparison.Ordinal);
-            if (start < 0 || end <= start)
-            {
-                return null;
-            }
-
-            text = text[(start + 1)..end].Trim();
-        }
-
-        if (text.Length == 0 || text[0] is not ('{' or '['))
-        {
-            return null;
-        }
-
-        JsonNode? node;
-        try
-        {
-            node = JsonNode.Parse(text);
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
-
-        var values = new List<string>();
-        Collect(node, values);
-        return string.Join("\n", values);
-    }
-
-    private static void Collect(JsonNode? node, List<string> values)
-    {
-        switch (node)
-        {
-            case JsonObject obj:
-                foreach (var (_, value) in obj)
-                {
-                    Collect(value, values);
-                }
-
-                break;
-            case JsonArray array:
-                foreach (var item in array)
-                {
-                    Collect(item, values);
-                }
-
-                break;
-            case JsonValue value when value.GetValueKind() is JsonValueKind.String:
-                if (value.GetValue<string>() is { Length: > 0 } s)
-                {
-                    values.Add(s);
-                }
-
-                break;
-            case JsonValue value when value.GetValueKind() is JsonValueKind.Number:
-                values.Add(value.ToJsonString());
-                break;
-        }
-    }
 }
 
 /// <summary>

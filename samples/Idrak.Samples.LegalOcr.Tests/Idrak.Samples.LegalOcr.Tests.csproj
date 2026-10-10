@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The legal OCR app's tests: its reader service and HTTP API in process, on the CPU, with the repository's tiny
+       Gemma 3 fixture (random weights: the plumbing, not the text) and generated pages (no downloads). -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="..\Idrak.Samples.LegalOcr\Idrak.Samples.LegalOcr.csproj" />
+  </ItemGroup>
+
+</Project>
