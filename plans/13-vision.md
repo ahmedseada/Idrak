@@ -27,6 +27,9 @@ library holds nothing OCR-specific. Every step keeps the rules of `CLAUDE.md`:
 
 ## What Idrak has, and what is missing
 
+As it was when the plan was written (2026-10-09); every row is built now (see the status above and the "as built"
+sections below).
+
 | Part | Today |
 |---|---|
 | `Idrak.Vision` (about 1,400 lines) | `RegionClassifier` + `ComponentProposer`, `ContentFrame`, foreground and connected components, non-maximum suppression, `ModelDetector` (the app writes its `DetectionDecoder`), `ModelSegmenter`, segmentation metrics, `ChannelStatistics` |
