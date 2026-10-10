@@ -24,29 +24,36 @@ internal sealed partial class CpuBackend
         For(blocks, (long)m * n * k, (first, last) =>
         {
             var weights = Bytes(q, k * stride);                          // spans cannot be captured; re-derive per worker
-            var acc = new float[blockSize];
-            for (int block = first; block < last; block++)
+            var acc = ArrayPool<float>.Shared.Rent(blockSize);
+            try
             {
-                int j0 = block * blockSize, width = Math.Min(blockSize, n - j0);
-                for (int r = 0; r < m; r++)
+                for (int block = first; block < last; block++)
                 {
-                    Array.Clear(acc);
-                    int xo = r * k;
-                    for (int kk = 0; kk < k; kk++)
+                    int j0 = block * blockSize, width = Math.Min(blockSize, n - j0);
+                    for (int r = 0; r < m; r++)
                     {
-                        float xk = xv[xo + kk];
-                        if (xk != 0f)
+                        acc.AsSpan(0, width).Clear();
+                        int xo = r * k;
+                        for (int kk = 0; kk < k; kk++)
                         {
-                            AddScaled(acc.AsSpan(0, width), weights.Slice(kk * stride + j0, width), xk);
+                            float xk = xv[xo + kk];
+                            if (xk != 0f)
+                            {
+                                AddScaled(acc.AsSpan(0, width), weights.Slice(kk * stride + j0, width), xk);
+                            }
+                        }
+
+                        int yo = r * n + j0;
+                        for (int j = 0; j < width; j++)
+                        {
+                            yv[yo + j] = acc[j] * sv[j0 + j];
                         }
                     }
-
-                    int yo = r * n + j0;
-                    for (int j = 0; j < width; j++)
-                    {
-                        yv[yo + j] = acc[j] * sv[j0 + j];
-                    }
                 }
+            }
+            finally
+            {
+                ArrayPool<float>.Shared.Return(acc);
             }
         });
     }
@@ -76,29 +83,37 @@ internal sealed partial class CpuBackend
         int blocks = (n + blockSize - 1) / blockSize;
         For(blocks, (long)m * n * k, (first, last) =>
         {
-            var acc = new float[m * blockSize];
-            var row = new float[blockSize];
-            for (int block = first; block < last; block++)
+            var acc = ArrayPool<float>.Shared.Rent(m * blockSize);
+            var row = ArrayPool<float>.Shared.Rent(blockSize);
+            try
             {
-                int j0 = block * blockSize, width = Math.Min(blockSize, n - j0);
-                Array.Clear(acc);
-                for (int kk = 0; kk < k; kk++)
+                for (int block = first; block < last; block++)
                 {
-                    Int4Row(q, scales, kk, n, j0, row.AsSpan(0, width));
-                    for (int r = 0; r < m; r++)
+                    int j0 = block * blockSize, width = Math.Min(blockSize, n - j0);
+                    acc.AsSpan(0, m * blockSize).Clear();
+                    for (int kk = 0; kk < k; kk++)
                     {
-                        float xk = xv[r * k + kk];
-                        if (xk != 0f)
+                        Int4Row(q, scales, kk, n, j0, row.AsSpan(0, width));
+                        for (int r = 0; r < m; r++)
                         {
-                            AddScaled(acc.AsSpan(r * blockSize, width), row.AsSpan(0, width), xk);
+                            float xk = xv[r * k + kk];
+                            if (xk != 0f)
+                            {
+                                AddScaled(acc.AsSpan(r * blockSize, width), row.AsSpan(0, width), xk);
+                            }
                         }
                     }
-                }
 
-                for (int r = 0; r < m; r++)
-                {
-                    acc.AsSpan(r * blockSize, width).CopyTo(yv.AsSpan(r * n + j0, width));
+                    for (int r = 0; r < m; r++)
+                    {
+                        acc.AsSpan(r * blockSize, width).CopyTo(yv.AsSpan(r * n + j0, width));
+                    }
                 }
+            }
+            finally
+            {
+                ArrayPool<float>.Shared.Return(row);
+                ArrayPool<float>.Shared.Return(acc);
             }
         });
     }
@@ -182,54 +197,61 @@ internal sealed partial class CpuBackend
         For(blocks, (long)m * n * k, (first, last) =>
         {
             var halves = MemoryMarshal.Cast<float, ushort>(D(packed).AsSpan());
-            var acc = new float[m * blockSize];
-            int w = Vector<float>.Count;
-            for (int block = first; block < last; block++)
+            var acc = ArrayPool<float>.Shared.Rent(m * blockSize);
+            try
             {
-                int j0 = block * blockSize, width = Math.Min(blockSize, n - j0), whole = width / (2 * w) * (2 * w);
-                Array.Clear(acc);
-                for (int kk = 0; kk < k; kk++)
+                int w = Vector<float>.Count;
+                for (int block = first; block < last; block++)
                 {
-                    // Each bfloat16 vector is widened once (two float vectors: bits moved to the high half) and multiplied into
-                    // every input row's sums.
-                    var row = halves.Slice(kk * stride + j0, width);
-                    ref ushort rw = ref MemoryMarshal.GetReference(row);
-                    ref float ra = ref MemoryMarshal.GetArrayDataReference(acc);
-                    int j = 0;
-                    for (; j < whole; j += 2 * w)
+                    int j0 = block * blockSize, width = Math.Min(blockSize, n - j0), whole = width / (2 * w) * (2 * w);
+                    acc.AsSpan(0, m * blockSize).Clear();
+                    for (int kk = 0; kk < k; kk++)
                     {
-                        Vector.Widen(Vector.LoadUnsafe(ref rw, (nuint)j), out var low, out var high);
-                        var w0 = Vector.AsVectorSingle(low << 16);
-                        var w1 = Vector.AsVectorSingle(high << 16);
-                        for (int r = 0; r < m; r++)
+                        // Each bfloat16 vector is widened once (two float vectors: bits moved to the high half) and multiplied into
+                        // every input row's sums.
+                        var row = halves.Slice(kk * stride + j0, width);
+                        ref ushort rw = ref MemoryMarshal.GetReference(row);
+                        ref float ra = ref MemoryMarshal.GetArrayDataReference(acc);
+                        int j = 0;
+                        for (; j < whole; j += 2 * w)
                         {
-                            float xk = xv[r * k + kk];
-                            if (xk == 0f)
+                            Vector.Widen(Vector.LoadUnsafe(ref rw, (nuint)j), out var low, out var high);
+                            var w0 = Vector.AsVectorSingle(low << 16);
+                            var w1 = Vector.AsVectorSingle(high << 16);
+                            for (int r = 0; r < m; r++)
                             {
-                                continue;
+                                float xk = xv[r * k + kk];
+                                if (xk == 0f)
+                                {
+                                    continue;
+                                }
+
+                                var xs = new Vector<float>(xk);
+                                nuint at = (nuint)(r * blockSize + j);
+                                Vector.FusedMultiplyAdd(w0, xs, Vector.LoadUnsafe(ref ra, at)).StoreUnsafe(ref ra, at);
+                                Vector.FusedMultiplyAdd(w1, xs, Vector.LoadUnsafe(ref ra, at + (nuint)w)).StoreUnsafe(ref ra, at + (nuint)w);
                             }
-
-                            var xs = new Vector<float>(xk);
-                            nuint at = (nuint)(r * blockSize + j);
-                            Vector.FusedMultiplyAdd(w0, xs, Vector.LoadUnsafe(ref ra, at)).StoreUnsafe(ref ra, at);
-                            Vector.FusedMultiplyAdd(w1, xs, Vector.LoadUnsafe(ref ra, at + (nuint)w)).StoreUnsafe(ref ra, at + (nuint)w);
                         }
-                    }
 
-                    for (; j < width; j++)
-                    {
-                        float weight = BitConverter.Int32BitsToSingle(row[j] << 16);
-                        for (int r = 0; r < m; r++)
+                        for (; j < width; j++)
                         {
-                            acc[r * blockSize + j] = MathF.FusedMultiplyAdd(weight, xv[r * k + kk], acc[r * blockSize + j]);
+                            float weight = BitConverter.Int32BitsToSingle(row[j] << 16);
+                            for (int r = 0; r < m; r++)
+                            {
+                                acc[r * blockSize + j] = MathF.FusedMultiplyAdd(weight, xv[r * k + kk], acc[r * blockSize + j]);
+                            }
                         }
                     }
-                }
 
-                for (int r = 0; r < m; r++)
-                {
-                    acc.AsSpan(r * blockSize, width).CopyTo(yv.AsSpan(r * n + j0, width));
+                    for (int r = 0; r < m; r++)
+                    {
+                        acc.AsSpan(r * blockSize, width).CopyTo(yv.AsSpan(r * n + j0, width));
+                    }
                 }
+            }
+            finally
+            {
+                ArrayPool<float>.Shared.Return(acc);
             }
         });
     }
