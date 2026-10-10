@@ -347,8 +347,10 @@ public sealed class CodingTools
             return result.Output;
         }
 
-        string status = result.TimedOut ? $"timed out after {result.Duration.TotalSeconds:0} s (stopped)" : $"exit code {result.ExitCode}";
-        return $"$ {command}\n{status}, {result.Duration.TotalSeconds:0.0} s\n{(result.Output.Length == 0 ? "(no output)" : result.Output)}";
+        // The text the model reads: the same digits and decimal point on every machine, whatever its culture.
+        var invariant = System.Globalization.CultureInfo.InvariantCulture;
+        string status = result.TimedOut ? string.Create(invariant, $"timed out after {result.Duration.TotalSeconds:0} s (stopped)") : string.Create(invariant, $"exit code {result.ExitCode}");
+        return string.Create(invariant, $"$ {command}\n{status}, {result.Duration.TotalSeconds:0.0} s\n{(result.Output.Length == 0 ? "(no output)" : result.Output)}");
     }
 
     /// <summary>
