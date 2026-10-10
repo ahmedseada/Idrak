@@ -1,8 +1,11 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Buffers;
 using System.Diagnostics;
 using System.Globalization;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Idrak.Generation;
@@ -147,39 +150,93 @@ public static partial class ChatEvaluation
         return decimal.TryParse(value, NumberStyles.Number, CultureInfo.InvariantCulture, out var number) ? number : null;
     }
 
-    private static string Normalize(string text) =>
-        string.Join(' ', text.ToLowerInvariant().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)).Trim().TrimEnd('.', '!', '?');
-
-    private static double F1(string answer, string reference)
+    // string.Join(' ', text.ToLowerInvariant().Split(null, RemoveEmptyEntries)).Trim().TrimEnd('.', '!', '?') in one
+    // buffer (the same casing, white space and trimming), with a string only for the result.
+    private static string Normalize(string text)
     {
-        var a = Words(answer);
-        var r = Words(reference);
-        if (a.Count == 0 || r.Count == 0)
+        char[]? rented = null;
+        Span<char> buffer = text.Length <= 256 ? stackalloc char[256] : (rented = ArrayPool<char>.Shared.Rent(text.Length));
+        try
         {
-            return a.Count == r.Count ? 1 : 0;
-        }
-
-        var counts = r.GroupBy(w => w).ToDictionary(g => g.Key, g => g.Count());
-        int common = 0;
-        foreach (var word in a)
-        {
-            if (counts.TryGetValue(word, out int n) && n > 0)
+            var lowered = buffer[..text.AsSpan().ToLowerInvariant(buffer)];
+            int length = 0;
+            for (int i = 0; i < lowered.Length; i++)
             {
-                counts[word] = n - 1;
-                common++;
+                if (char.IsWhiteSpace(lowered[i]))
+                {
+                    continue;
+                }
+
+                if (length > 0)
+                {
+                    lowered[length++] = ' ';                                  // one space between runs of other characters
+                }
+
+                while (i < lowered.Length && !char.IsWhiteSpace(lowered[i]))
+                {
+                    lowered[length++] = lowered[i++];
+                }
+            }
+
+            return new string(lowered[..length].TrimEnd(".!?"));
+        }
+        finally
+        {
+            if (rented is not null)
+            {
+                ArrayPool<char>.Shared.Return(rented);
             }
         }
-
-        if (common == 0)
-        {
-            return 0;
-        }
-
-        double precision = (double)common / a.Count, recall = (double)common / r.Count;
-        return 2 * precision * recall / (precision + recall);
     }
 
-    private static List<string> Words(string text) => [.. WordPattern().Matches(text.ToLowerInvariant()).Select(m => m.Value)];
+    // SQuAD's F1 of the lowered words ([\p{L}\p{N}]+), counted by span: no string per word, a key only per distinct
+    // reference word.
+    private static double F1(string answer, string reference)
+    {
+        char[] rented = ArrayPool<char>.Shared.Rent(Math.Max(1, answer.Length + reference.Length));
+        try
+        {
+            var a = rented.AsSpan(0, answer.AsSpan().ToLowerInvariant(rented));
+            var r = rented.AsSpan(a.Length, reference.AsSpan().ToLowerInvariant(rented.AsSpan(a.Length)));
+            var counts = new Dictionary<string, int>();
+            var lookup = counts.GetAlternateLookup<ReadOnlySpan<char>>();
+            int referenceWords = 0;
+            foreach (var match in WordPattern().EnumerateMatches(r))
+            {
+                referenceWords++;
+                CollectionsMarshal.GetValueRefOrAddDefault(lookup, r.Slice(match.Index, match.Length), out _)++;
+            }
+
+            int answerWords = 0, common = 0;
+            foreach (var match in WordPattern().EnumerateMatches(a))
+            {
+                answerWords++;
+                ref int n = ref CollectionsMarshal.GetValueRefOrNullRef(lookup, a.Slice(match.Index, match.Length));
+                if (!Unsafe.IsNullRef(ref n) && n > 0)
+                {
+                    n--;
+                    common++;
+                }
+            }
+
+            if (answerWords == 0 || referenceWords == 0)
+            {
+                return answerWords == referenceWords ? 1 : 0;
+            }
+
+            if (common == 0)
+            {
+                return 0;
+            }
+
+            double precision = (double)common / answerWords, recall = (double)common / referenceWords;
+            return 2 * precision * recall / (precision + recall);
+        }
+        finally
+        {
+            ArrayPool<char>.Shared.Return(rented);
+        }
+    }
 
     [GeneratedRegex(@"####\s*(.+)$", RegexOptions.Multiline)]
     private static partial Regex FinalMarker();
