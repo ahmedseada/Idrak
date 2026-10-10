@@ -116,15 +116,41 @@ public sealed class GraphModule : Module
     internal Dictionary<string, object> Trace(Tensor input)
     {
         var values = new Dictionary<string, object> { [Input] = input };
+        Func<string, object?> lookup = name => values.TryGetValue(name, out var v) ? v           // one delegate for every node
+            : _constants.TryGetValue(name, out var c) ? c
+            : _integers.TryGetValue(name, out var h) ? h
+            : null;
+        var reader = new NodeInputs(lookup);                                // one input reader for every node, not one per node
         foreach (var node in _nodes)
         {
-            values[node.Output] = RunNode(node, name => values.TryGetValue(name, out var v) ? v
-                : _constants.TryGetValue(name, out var c) ? c
-                : _integers.TryGetValue(name, out var h) ? h
-                : null);
+            reader.Node = node;
+            values[node.Output] = RunNode(reader);
         }
 
         return values;
+    }
+
+    // Reads the inputs of the node being run, by position, through a lookup by name: one instance and one delegate serve a
+    // whole pass (each node is run before the next is set).
+    private sealed class NodeInputs
+    {
+        private readonly Func<string, object?> _lookup;
+
+        public NodeInputs(Func<string, object?> lookup)
+        {
+            _lookup = lookup;
+            Arg = Read;
+        }
+
+        public GraphNode Node { get; set; } = null!;
+
+        public Func<int, object> Arg { get; }
+
+        private object Read(int i)
+        {
+            string name = Node.Inputs[i];
+            return _lookup(name) ?? throw new InvalidOperationException($"Value '{name}' is not available.");
+        }
     }
 
     // The float constants in order, and the integer constants.
@@ -133,17 +159,14 @@ public sealed class GraphModule : Module
     internal IReadOnlyList<(string Name, long[] Values, int[] Dims)> IntegerConstants => [.. _integers.Select(p => (p.Key, p.Value.Values, p.Value.Dims))];
 
     // Runs one node, reading its inputs through `lookup` (null for a value that is not available).
-    internal static object RunNode(GraphNode node, Func<string, object?> lookup)
-    {
-        object Arg(int i)
-        {
-            string name = node.Inputs[i];
-            return lookup(name) ?? throw new InvalidOperationException($"Value '{name}' is not available.");
-        }
+    internal static object RunNode(GraphNode node, Func<string, object?> lookup) => RunNode(new NodeInputs(lookup) { Node = node });
 
+    private static object RunNode(NodeInputs inputs)
+    {
+        var node = inputs.Node;
         try
         {
-            return Run(node, Arg, node.Inputs.Count);
+            return Run(node, inputs.Arg, node.Inputs.Count);
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or NotSupportedException)
         {
