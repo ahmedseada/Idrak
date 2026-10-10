@@ -8,6 +8,7 @@
 //
 //   IDRAK_DEVICES=cpu dotnet run -c Release --project samples/Idrak.Samples.ArabicOcr.Tests
 //   IDRAK_DEVICES=cpu IDRAK_FILTER="ocr train" dotnet run -c Release --project samples/Idrak.Samples.ArabicOcr.Tests
+//   IDRAK_OCR_KEEP=1 …   keeps the generated pages, lines and model (the folder is printed)
 
 using System.Diagnostics;
 using System.Globalization;
@@ -288,12 +289,19 @@ foreach (string line in timings)
     Console.WriteLine($"  {line}");
 }
 
-try
+if (Environment.GetEnvironmentVariable("IDRAK_OCR_KEEP") is "1")
 {
-    Directory.Delete(root, recursive: true);
+    Console.WriteLine($"  kept {root} (IDRAK_OCR_KEEP=1): the generated pages, lines and model");
 }
-catch (IOException)
+else
 {
+    try
+    {
+        Directory.Delete(root, recursive: true);
+    }
+    catch (IOException)
+    {
+    }
 }
 
 Console.WriteLine($"{ran - failed} passed, {failed} failed (device {device})");
