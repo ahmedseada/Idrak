@@ -35,13 +35,15 @@ param(
     [int]$MaxPages = 0,
     [int]$CharsPerBatch = 12000,
     [int]$ValEvery = 20,
-    [int]$Parallel = 4,
+    [int]$Parallel = 0,
     [int]$Seed = 1,
     [switch]$Clean,
     [switch]$NoLines
 )
 
 $ErrorActionPreference = "Stop"
+# Browsers at once: half the machine's logical processors unless given (each headless browser runs several processes).
+if ($Parallel -le 0) { $Parallel = [Math]::Max(1, [int]([Environment]::ProcessorCount / 2)) }
 $utf8 = New-Object System.Text.UTF8Encoding($false)
 if (-not $Text -and -not $Html) { throw "Give -Text FILE or -Html FILE." }
 $source = if ($Text) { $Text } else { $Html }
@@ -105,7 +107,7 @@ foreach ($doc in $docs) {
 }
 if ($batch.Count -gt 0) { $batches.Add($batch.ToArray()) }
 $chars = ($docs | ForEach-Object { $_ } | Measure-Object -Property Length -Sum).Sum
-Write-Host ("{0:N0} documents, {1:N0} characters, {2:N0} batches; browser {3}" -f $docs.Count, $chars, $batches.Count, $Browser)
+Write-Host ("{0:N0} documents, {1:N0} characters, {2:N0} batches, {3} at once; browser {4}" -f $docs.Count, $chars, $batches.Count, $Parallel, $Browser)
 
 function Quote([string]$s) {
     $b = New-Object System.Text.StringBuilder($s.Length + 2)
@@ -204,7 +206,13 @@ while ($next -lt $batches.Count -or $running.Count -gt 0) {
         $next++
     }
     if ($running.Count -eq 0) { break }
-    $run = $running[0]; $running.RemoveAt(0)
+    # Whichever browser finishes first is saved first, so a slow batch does not hold the others' slots.
+    $at = -1
+    while ($at -lt 0) {
+        for ($i = 0; $i -lt $running.Count; $i++) { if ($running[$i].process.HasExited) { $at = $i; break } }
+        if ($at -lt 0) { Start-Sleep -Milliseconds 20 }
+    }
+    $run = $running[$at]; $running.RemoveAt($at)
     $total += Complete-Batch $run
     Write-Host ("batch {0}/{1}: {2:N0} pages so far, {3:N0} s" -f ($run.index + 1), $batches.Count, $total, $clock.Elapsed.TotalSeconds)
 }
