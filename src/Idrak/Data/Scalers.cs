@@ -175,13 +175,19 @@ public sealed class MinMaxScaler : IScaler
     /// <inheritdoc />
     public void Transform(Span<float> data, int columns)
     {
-        int width = Width(columns, data.Length);
+        int width = StandardScaler.RowWidth(columns, data.Length), fitted = Math.Min(width, _min.Length);
         for (int start = 0; start < data.Length; start += width)
         {
-            var row = data.Slice(start, Math.Min(width, data.Length - start));
+            int length = Math.Min(width, data.Length - start);
+            var row = data.Slice(start, Math.Min(length, fitted));
             for (int c = 0; c < row.Length; c++)
             {
                 row[c] = (row[c] - _min[c]) / _range[c];
+            }
+
+            if (row.Length < length)
+            {
+                throw PastFitted();
             }
         }
     }
@@ -189,13 +195,19 @@ public sealed class MinMaxScaler : IScaler
     /// <inheritdoc />
     public void InverseTransform(Span<float> data, int columns)
     {
-        int width = Width(columns, data.Length);
+        int width = StandardScaler.RowWidth(columns, data.Length), fitted = Math.Min(width, _min.Length);
         for (int start = 0; start < data.Length; start += width)
         {
-            var row = data.Slice(start, Math.Min(width, data.Length - start));
+            int length = Math.Min(width, data.Length - start);
+            var row = data.Slice(start, Math.Min(length, fitted));
             for (int c = 0; c < row.Length; c++)
             {
                 row[c] = row[c] * _range[c] + _min[c];
+            }
+
+            if (row.Length < length)
+            {
+                throw PastFitted();
             }
         }
     }
@@ -221,13 +233,9 @@ public sealed class MinMaxScaler : IScaler
     /// <summary>Reads ranges written by <see cref="Save(TextWriter)"/>.</summary>
     public static MinMaxScaler Load(TextReader reader) => Parse(reader.ReadToEnd().Split('\n'));
 
-    // StandardScaler.RowWidth, with the error a column past the fitted ones gave when each value was looked up in the lists.
-    private int Width(int columns, int length)
-    {
-        int width = StandardScaler.RowWidth(columns, length);
-        return Math.Min(width, length) <= _min.Length ? width
-            : throw new ArgumentOutOfRangeException("index", "Index was out of range. Must be non-negative and less than the size of the collection.");
-    }
+    // A column past the fitted ones: the error (and the values changed before it) of looking each value up in the lists.
+    private static ArgumentOutOfRangeException PastFitted() =>
+        new("index", "Index was out of range. Must be non-negative and less than the size of the collection.");
 
     private static MinMaxScaler Parse(IEnumerable<string> lines)
     {
