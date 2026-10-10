@@ -28,6 +28,7 @@ var timings = new List<string>();
 
 (string Name, Action Run)[] tests =
 [
+    ("zz identity", ZzIdentity.Run),
     ("ocr segment: four lines found top to bottom, dots joined to their line", () =>
     {
         string[] text = [Theh + Teh + Dal + " " + Beh + Seen, Alef + Reh + Meem, Teh + Theh + " " + Theh + Teh, Seen + Beh + Dal + Reh];
