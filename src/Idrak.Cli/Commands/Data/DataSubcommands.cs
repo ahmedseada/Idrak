@@ -109,43 +109,51 @@ internal sealed class DataValidateCommand : Command
 
         string? target = context.Option("--target");
         int show = context.IntOption("--show", 5);
-        var rows = RowFiles.Read(path).ToList();
-        var columns = RowFiles.Columns(rows.Take(1000).ToList());
+        // The first 1,000 rows give the columns and their types; the rest are streamed, checked and let go.
+        using var reader = RowFiles.Read(path).GetEnumerator();
+        var head = new List<JsonObject>();
+        while (head.Count < 1000 && reader.MoveNext())
+        {
+            head.Add(reader.Current);
+        }
+
+        var columns = RowFiles.Columns(head);
         // A column holds numbers when most of its filled values are numbers; the others are then bad rows.
         var numeric = columns.Select(c => c.Name).Where(name =>
         {
-            var filled = rows.Take(1000).Select(r => r[name]).Where(v => v is not null).ToList();
+            var filled = head.Select(r => r[name]).Where(v => v is not null).ToList();
             return filled.Count > 0 && filled.Count(v => RowFiles.Number(v) is not null) * 2 > filled.Count;
         }).ToHashSet(StringComparer.Ordinal);
-        var expected = rows.Count > 0 ? rows[0].Select(p => p.Key).ToList() : [];
+        var expected = head.Count > 0 ? head[0].Select(p => p.Key).ToList() : [];
         var expectedSet = expected.ToHashSet(StringComparer.Ordinal);
-        if (kind == "table" && target is not null && rows.Count > 0 && !columns.Any(c => c.Name == target))
+        if (kind == "table" && target is not null && head.Count > 0 && !columns.Any(c => c.Name == target))
         {
             context.Error($"{path} has no column '{target}' (columns: {string.Join(", ", columns.Select(c => c.Name))}).");
             return ExitCodes.Failed;
         }
 
         var bad = new List<(long Line, string Reason, JsonObject Row)>();
-        long badCount = 0;
-        for (int i = 0; i < rows.Count; i++)
+        long badCount = 0, count = 0;
+        foreach (var row in HeadThenRest(head, reader))
         {
+            count++;
             string? reason = kind switch
             {
-                "chat" => Chat(rows[i]),
-                "preference" => Preference(rows[i]),
-                _ => Table(rows[i], expected, expectedSet, numeric, target),
+                "chat" => Chat(row),
+                "preference" => Preference(row),
+                _ => Table(row, expected, expectedSet, numeric, target),
             };
             if (reason is not null)
             {
                 badCount++;
                 if (bad.Count < show)
                 {
-                    bad.Add((i + 1, reason, rows[i]));
+                    bad.Add((count, reason, row));
                 }
             }
         }
 
-        context.Write(string.Create(CultureInfo.InvariantCulture, $"{path}: {rows.Count:N0} rows as {kind}: {rows.Count - badCount:N0} valid, {badCount:N0} invalid"));
+        context.Write(string.Create(CultureInfo.InvariantCulture, $"{path}: {count:N0} rows as {kind}: {count - badCount:N0} valid, {badCount:N0} invalid"));
         foreach (var (line, reason, row) in bad)
         {
             context.Write($"  row {line}: {reason}");
@@ -161,12 +169,26 @@ internal sealed class DataValidateCommand : Command
         {
             ["file"] = path,
             ["as"] = kind,
-            ["rows"] = rows.Count,
-            ["valid"] = rows.Count - badCount,
+            ["rows"] = count,
+            ["valid"] = count - badCount,
             ["invalid"] = badCount,
             ["bad"] = new JsonArray([.. bad.Select(b => (JsonNode)new JsonObject { ["row"] = b.Line, ["reason"] = b.Reason, ["data"] = b.Row.DeepClone() })]),
         });
         return badCount == 0 ? ExitCodes.Ok : ExitCodes.Failed;
+    }
+
+    // The rows already read, then the ones the reader has left.
+    private static IEnumerable<JsonObject> HeadThenRest(List<JsonObject> head, IEnumerator<JsonObject> rest)
+    {
+        foreach (var row in head)
+        {
+            yield return row;
+        }
+
+        while (rest.MoveNext())
+        {
+            yield return rest.Current;
+        }
     }
 
     private static readonly string[] Roles = ["system", "user", "assistant", "tool"];
@@ -269,7 +291,7 @@ internal sealed class DataStatsCommand : Command
         string path = context.Argument(0, "FILE");
         string? column = context.Option("--column");
         int? contextLength = context.Option("--context") is null ? null : context.IntOption("--context", 0);
-        var rows = RowFiles.Read(path).ToList();
+        var rows = RowFiles.Read(path);                                  // streamed: each row is measured, then let go
         ITokenizer? tokenizer = null;
         JinjaChatTemplate? template = null;
         PretrainedModel? loaded = null;
@@ -302,9 +324,10 @@ internal sealed class DataStatsCommand : Command
             var characters = new List<int>();
             var words = new List<int>();
             var tokens = new List<int>();
-            int conversations = 0;
+            int conversations = 0, rowCount = 0;
             foreach (var row in rows)
             {
+                rowCount++;
                 string text;
                 if (column is not null)
                 {
@@ -337,7 +360,7 @@ internal sealed class DataStatsCommand : Command
             var lengths = tokens.Count > 0 ? tokens : characters;
             string unit = tokens.Count > 0 ? "tokens" : "characters";
             long over = contextLength is { } limit && tokens.Count > 0 ? tokens.Count(t => t > limit) : 0;
-            context.Write(string.Create(CultureInfo.InvariantCulture, $"{path}: {rows.Count:N0} rows{(conversations > 0 ? string.Create(CultureInfo.InvariantCulture, $" ({conversations:N0} conversations)") : "")}"));
+            context.Write(string.Create(CultureInfo.InvariantCulture, $"{path}: {rowCount:N0} rows{(conversations > 0 ? string.Create(CultureInfo.InvariantCulture, $" ({conversations:N0} conversations)") : "")}"));
             context.Table(["", "Mean", "Median", "p95", "Max", "Total"],
             [
                 Row("characters", characters),
@@ -357,13 +380,13 @@ internal sealed class DataStatsCommand : Command
 
             if (contextLength is { } length && tokens.Count > 0)
             {
-                context.Write(string.Create(CultureInfo.InvariantCulture, $"\n{over:N0} rows ({over / (double)Math.Max(1, rows.Count):P1}) are longer than {length:N0} tokens"));
+                context.Write(string.Create(CultureInfo.InvariantCulture, $"\n{over:N0} rows ({over / (double)Math.Max(1, rowCount):P1}) are longer than {length:N0} tokens"));
             }
 
             context.WriteJson(new JsonObject
             {
                 ["file"] = path,
-                ["rows"] = rows.Count,
+                ["rows"] = rowCount,
                 ["conversations"] = conversations,
                 ["characters"] = Json(characters),
                 ["words"] = Json(words),
@@ -561,18 +584,28 @@ internal sealed class DataDedupeCommand : Command
         }
 
         var columns = context.Option("--columns")?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        var rows = RowFiles.Read(path).ToList();
+        // Streamed: only the rows kept are held (all of them are read before FILE is written over).
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var key = new StringBuilder();
-        var kept = rows.Where(row => seen.Add(Key(row, columns, near, key))).ToList();
-        int removed = rows.Count - kept.Count;
+        var kept = new List<JsonObject>();
+        long count = 0;
+        foreach (var row in RowFiles.Read(path))
+        {
+            count++;
+            if (seen.Add(Key(row, columns, near, key)))
+            {
+                kept.Add(row);
+            }
+        }
+
+        long removed = count - kept.Count;
         if (!dryRun)
         {
             RowFiles.Write(kept, output);
         }
 
-        context.Write(string.Create(CultureInfo.InvariantCulture, $"{path}: {rows.Count:N0} rows, {removed:N0} {(near ? "near " : "")}duplicates{(dryRun ? " (dry run: nothing written)" : string.Create(CultureInfo.InvariantCulture, $" removed, {kept.Count:N0} written to {output}"))}"));
-        context.WriteJson(new JsonObject { ["file"] = path, ["rows"] = rows.Count, ["duplicates"] = removed, ["kept"] = kept.Count, ["output"] = dryRun ? null : output, ["near"] = near });
+        context.Write(string.Create(CultureInfo.InvariantCulture, $"{path}: {count:N0} rows, {removed:N0} {(near ? "near " : "")}duplicates{(dryRun ? " (dry run: nothing written)" : string.Create(CultureInfo.InvariantCulture, $" removed, {kept.Count:N0} written to {output}"))}"));
+        context.WriteJson(new JsonObject { ["file"] = path, ["rows"] = count, ["duplicates"] = removed, ["kept"] = kept.Count, ["output"] = dryRun ? null : output, ["near"] = near });
         return ExitCodes.Ok;
     }
 
