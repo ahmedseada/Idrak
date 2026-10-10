@@ -1,6 +1,9 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Globalization;
+using System.Numerics;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
@@ -135,9 +138,9 @@ internal sealed class VerifyCommand : Command
                 long length = new FileInfo(file.Key).Length, end = file.Max(t => t.Offset + t.Length);
                 bool sizesMatch = file.All(t => t.Length == t.Count * (t.Type == SafeTensorType.F32 ? 4 : 2));
                 add(Path.GetFileName(file.Key), end == length && sizesMatch,
-                    end > length ? $"truncated: the header needs {end:N0} bytes, the file has {length:N0}"
+                    end > length ? string.Create(CultureInfo.InvariantCulture, $"truncated: the header needs {end:N0} bytes, the file has {length:N0}")
                     : !sizesMatch ? "a tensor's byte range does not match its shape"
-                    : end < length ? $"{length - end:N0} bytes after the last tensor" : $"{file.Count()} tensors, {Units.Bytes(length)}");
+                    : end < length ? string.Create(CultureInfo.InvariantCulture, $"{length - end:N0} bytes after the last tensor") : $"{file.Count()} tensors, {Units.Bytes(length)}");
             }
 
             if (read)
@@ -193,10 +196,10 @@ internal sealed class VerifyCommand : Command
                 return false;
             }
 
-            int bad = Array.FindIndex(data, v => !float.IsFinite(v));
+            int bad = FirstNotFinite(data);
             if (bad >= 0)
             {
-                detail = $"{name}: value {bad} is {data[bad]}";
+                detail = string.Create(CultureInfo.InvariantCulture, $"{name}: value {bad} is {data[bad]}");
                 return false;
             }
 
@@ -206,6 +209,35 @@ internal sealed class VerifyCommand : Command
 
         detail = $"all {count} tensors read, {Units.Count(values)} values finite";
         return true;
+    }
+
+    // The index of the first NaN or infinity (all exponent bits set), or -1: whole vectors checked at once, then the
+    // scalar loop finds the exact index from the first vector that holds one (and checks the tail).
+    private static int FirstNotFinite(ReadOnlySpan<float> values)
+    {
+        var bits = MemoryMarshal.Cast<float, int>(values);
+        int i = 0;
+        if (Vector.IsHardwareAccelerated && bits.Length >= Vector<int>.Count)
+        {
+            var exponent = new Vector<int>(0x7F800000);
+            for (; i <= bits.Length - Vector<int>.Count; i += Vector<int>.Count)
+            {
+                if (Vector.EqualsAny(new Vector<int>(bits.Slice(i)) & exponent, exponent))
+                {
+                    break;
+                }
+            }
+        }
+
+        for (; i < values.Length; i++)
+        {
+            if (!float.IsFinite(values[i]))
+            {
+                return i;
+            }
+        }
+
+        return -1;
     }
 
     // The hub's sizes and LFS hashes against the local files (Idrak's downloads of hub models).
@@ -243,7 +275,7 @@ internal sealed class VerifyCommand : Command
             long size = new FileInfo(file).Length;
             if (size != remote.Size)
             {
-                add($"hub: {relative}", false, $"{size:N0} bytes, the hub has {remote.Size:N0}");
+                add($"hub: {relative}", false, string.Create(CultureInfo.InvariantCulture, $"{size:N0} bytes, the hub has {remote.Size:N0}"));
                 continue;
             }
 

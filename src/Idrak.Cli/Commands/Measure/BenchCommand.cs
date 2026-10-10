@@ -252,7 +252,7 @@ internal sealed class BenchCommand : Command
             TopK = 1, Temperature = 1f, RepeatPenalty = 1f, Seed = 0, NumPredict = tokens, NumCtx = promptTokens + tokens + 1,
         };
 
-        context.Write($"{choice.Model} on {device} ({device.Name}): {model.Spec.ParameterCount / 1e6:F1}M parameters, weights {choice.Weights ?? "as stored"}, KV cache {kv}");
+        context.Write(string.Create(CultureInfo.InvariantCulture, $"{choice.Model} on {device} ({device.Name}): {model.Spec.ParameterCount / 1e6:F1}M parameters, weights {choice.Weights ?? "as stored"}, KV cache {kv}"));
         context.Write($"  prompt {promptTokens} tokens, {tokens} generated, {repeats} run(s) after a warm-up");
         generator.Generate(prompt, options with { NumPredict = Math.Min(4, tokens) });     // warm-up: kernels built, choices measured
         var prompts = new List<double>();
@@ -268,7 +268,7 @@ internal sealed class BenchCommand : Command
             prompts.Add(stats.PromptDuration.TotalSeconds > 0 ? stats.PromptTokens / stats.PromptDuration.TotalSeconds : 0);
             generated.Add(stats.TokensPerSecond);
             progress.Erase();
-            context.Detail($"  run {i + 1}: prompt {prompts[^1]:F1} tokens/s, generation {generated[^1]:F1} tokens/s");
+            context.Detail(string.Create(CultureInfo.InvariantCulture, $"  run {i + 1}: prompt {prompts[^1]:F1} tokens/s, generation {generated[^1]:F1} tokens/s"));
         }
 
         progress.Clear();
@@ -300,7 +300,7 @@ internal sealed class BenchCommand : Command
             new BenchResult("generation GFLOP/s", generationRate * flopsPerToken / 1e9, "GFLOP/s", true, "2 x parameters per token"),
             new BenchResult("weights memory", weights / 1048576.0, "MiB", false, "on the device after loading"),
             new BenchResult("memory in use", memory.InUse / 1048576.0, "MiB", false,
-                memory.Limit is { } limit ? $"of {limit / 1048576.0:F0} MiB" : "after the runs"),
+                memory.Limit is { } limit ? string.Create(CultureInfo.InvariantCulture, $"of {limit / 1048576.0:F0} MiB") : "after the runs"),
         ];
     }
 
@@ -391,7 +391,7 @@ internal sealed class BenchCommand : Command
                 ["better"] = better,
             });
             table.Add([shown, Format(r.Value), Format(old), r.Unit,
-                change is null ? "" : $"{change.Value:+0.0%;-0.0%;0.0%}{(better is null ? "" : better.Value ? " better" : " worse")}"]);
+                change is null ? "" : string.Create(CultureInfo.InvariantCulture, $"{change.Value:+0.0%;-0.0%;0.0%}{(better is null ? "" : better.Value ? " better" : " worse")}")]);
         }
 
         context.Write($"\nAgainst '{name}' ({saved["device"] ?? "several devices"}, {saved["date"]}):");

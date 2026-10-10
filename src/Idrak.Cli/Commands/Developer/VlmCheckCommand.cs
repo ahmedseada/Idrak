@@ -197,8 +197,8 @@ internal sealed class VlmCheckCommand : Command
 
             var p = Compare(refPixels, ownPixels);
             pixelDifference = p.MaxAbs;
-            int differing = refPixels.Where((v, i) => Math.Abs(v - ownPixels[i]) > 1e-5f).Count();
-            context.Write($"  {Mark(p.MaxAbs <= 1e-5f)} {imagePath} ({decoded.Width} x {decoded.Height}) -> [{string.Join(", ", pixelShape)}]: max |Δ| {p.MaxAbs:G3}, "
+            int differing = p.Differing;
+            context.Write(string.Create(CultureInfo.InvariantCulture, $"  {Mark(p.MaxAbs <= 1e-5f)} {imagePath} ({decoded.Width} x {decoded.Height}) -> [{string.Join(", ", pixelShape)}]: max |Δ| {p.MaxAbs:G3}, ")
                           + $"{differing} of {refPixels.Length} values differ by more than 1e-5");
             json["pixels"] = new JsonObject { ["image"] = imagePath, ["max_abs"] = p.MaxAbs, ["differing"] = differing };
         }
@@ -221,14 +221,14 @@ internal sealed class VlmCheckCommand : Command
         }
 
         double encodeMs = watch.Elapsed.TotalMilliseconds;
-        context.Detail($"vision encoder built in {buildMs:F0} ms");
+        context.Detail(string.Create(CultureInfo.InvariantCulture, $"vision encoder built in {buildMs:F0} ms"));
         // The reference may keep only the first rows of each block's output (--vision-rows): compare those, block by block.
         int hiddenBlocks = hiddenShape.Length == 3 ? hiddenShape[0] : 1, refBlock = refHidden.Length / hiddenBlocks, ownBlock = hidden.Length / hiddenBlocks;
         float[] ownHidden = refBlock == ownBlock ? hidden
             : [.. Enumerable.Range(0, hiddenBlocks).SelectMany(b => hidden.AsSpan(b * ownBlock, Math.Min(refBlock, ownBlock)).ToArray())];
         var hiddenCompare = Compare(refHidden.AsSpan(0, Math.Min(refHidden.Length, ownHidden.Length)), ownHidden.AsSpan(0, Math.Min(refHidden.Length, ownHidden.Length)));
         var featureCompare = Compare(refFeatures, features);
-        context.Write($"  {Mark(hiddenCompare.Cosine >= 0.999)} encoder output [{string.Join(", ", hiddenShape)}]: {Describe(hiddenCompare)} ({encodeMs:F0} ms with the projector)");
+        context.Write(string.Create(CultureInfo.InvariantCulture, $"  {Mark(hiddenCompare.Cosine >= 0.999)} encoder output [{string.Join(", ", hiddenShape)}]: {Describe(hiddenCompare)} ({encodeMs:F0} ms with the projector)"));
         context.Write($"  {Mark(featureCompare.Cosine >= 0.999)} image features [{string.Join(", ", featureShape)}]: {Describe(featureCompare)}");
         json["encoder"] = CompareJson(hiddenCompare);
         json["features"] = CompareJson(featureCompare);
@@ -330,7 +330,7 @@ internal sealed class VlmCheckCommand : Command
                 {
                     using var next = Tensor.From([(float)generated[i]], [1, 1], model.Device);
                     using var logits = model.Network.ForwardCached(next, decoding);
-                    last = logits.ToArray();
+                    last = Read(logits, last);
                 }
             }
 
@@ -341,7 +341,7 @@ internal sealed class VlmCheckCommand : Command
         var idrakPass = Force("Idrak's features", idrakFeatures, promptRows: true);
         double forcedMs = watch.Elapsed.TotalMilliseconds;
         var referencePass = Force("the reference's features", refFeatures, promptRows: false);
-        context.Write($"\nTeacher forcing: transformers' {steps} tokens fed back ({forcedMs:F0} ms)");
+        context.Write(string.Create(CultureInfo.InvariantCulture, $"\nTeacher forcing: transformers' {steps} tokens fed back ({forcedMs:F0} ms)"));
         foreach (var pass in new[] { idrakPass, referencePass })
         {
             Report(context, tokenizer, pass, tie, show);
@@ -374,7 +374,7 @@ internal sealed class VlmCheckCommand : Command
                 {
                     using var next = Tensor.From([(float)greedy[^1]], [1, 1], model.Device);
                     using var logits = model.Network.ForwardCached(next, decoding);
-                    last = logits.ToArray();
+                    last = Read(logits, last);
                 }
             }
         }
@@ -436,12 +436,12 @@ internal sealed class VlmCheckCommand : Command
         int ties = wrong.Count(s => NearTie(s, tie));
         float worst = pass.Steps.Max(s => s.TopFiveDifference);
         context.Write($"  {Mark(wrong.Count == 0)} {pass.Name}: top-1 agrees at {pass.Steps.Count - wrong.Count} of {pass.Steps.Count} steps"
-                      + (wrong.Count == 0 ? "" : $"; {wrong.Count} disagreements ({ties} near-ties, {wrong.Count - ties} beyond --tie {tie}), the first at step {wrong[0].Index}")
-                      + $"; max |Δ| over the reference's top-5 logits {worst:G3}");
+                      + (wrong.Count == 0 ? "" : string.Create(CultureInfo.InvariantCulture, $"; {wrong.Count} disagreements ({ties} near-ties, {wrong.Count - ties} beyond --tie {tie}), the first at step {wrong[0].Index}"))
+                      + string.Create(CultureInfo.InvariantCulture, $"; max |Δ| over the reference's top-5 logits {worst:G3}"));
         foreach (var s in wrong.Take(show))
         {
-            context.Write($"       step {s.Index}: reference {s.Expected} {Quote(tokenizer, s.Expected)} (margin {s.RefMargin:F3}), Idrak {s.Ids[0]} {Quote(tokenizer, s.Ids[0])} "
-                          + $"(margin {s.Margin:F3}): {(NearTie(s, tie) ? "near-tie" : "REAL DIFFERENCE")}");
+            context.Write(string.Create(CultureInfo.InvariantCulture, $"       step {s.Index}: reference {s.Expected} {Quote(tokenizer, s.Expected)} (margin {s.RefMargin:F3}), Idrak {s.Ids[0]} {Quote(tokenizer, s.Ids[0])} ")
+                          + string.Create(CultureInfo.InvariantCulture, $"(margin {s.Margin:F3}): {(NearTie(s, tie) ? "near-tie" : "REAL DIFFERENCE")}"));
             context.Write($"         reference top-5: {TopList(tokenizer, s.RefIds, s.RefLogits)}");
             context.Write($"         Idrak     top-5: {TopList(tokenizer, s.Ids, s.Logits)}");
         }
@@ -462,7 +462,7 @@ internal sealed class VlmCheckCommand : Command
 
         if (pixelDifference > 1e-5f)
         {
-            parts.Add($"the pixels differ (max |Δ| {pixelDifference:G3}): the image is read or preprocessed differently.");
+            parts.Add(string.Create(CultureInfo.InvariantCulture, $"the pixels differ (max |Δ| {pixelDifference:G3}): the image is read or preprocessed differently."));
         }
 
         var wrong = idrak.Steps.Where(s => !s.Agrees).ToList();
@@ -476,15 +476,15 @@ internal sealed class VlmCheckCommand : Command
         {
             var first = wrong[0];
             string firstKind = NearTie(first, tie)
-                ? $"a near-tie (margins {first.RefMargin:F3} in transformers, {first.Margin:F3} in Idrak, below {tie}): precision, not a bug"
-                : $"NOT a near-tie (margins {first.RefMargin:F3} and {first.Margin:F3}): a real difference";
+                ? string.Create(CultureInfo.InvariantCulture, $"a near-tie (margins {first.RefMargin:F3} in transformers, {first.Margin:F3} in Idrak, below {tie}): precision, not a bug")
+                : string.Create(CultureInfo.InvariantCulture, $"NOT a near-tie (margins {first.RefMargin:F3} and {first.Margin:F3}): a real difference");
             parts.Add($"the first disagreement, at step {first.Index}, is {firstKind}.");
             bool allTies = wrong.All(s => NearTie(s, tie));
             bool referenceClean = referenceWrong.All(s => NearTie(s, tie));
             if (!allTies && referenceClean)
             {
                 parts.Add("With transformers' own image features the decoder agrees (or only near-ties): the difference comes from the image side "
-                          + $"(features cosine {features.Cosine:F6}, relative {features.Relative:G3}): the encoder's precision or a vision bug.");
+                          + string.Create(CultureInfo.InvariantCulture, $"(features cosine {features.Cosine:F6}, relative {features.Relative:G3}): the encoder's precision or a vision bug."));
             }
             else if (!referenceClean)
             {
@@ -540,16 +540,18 @@ internal sealed class VlmCheckCommand : Command
 
     private static string Mark(bool ok) => ok ? "ok  " : "DIFF";
 
-    private readonly record struct Comparison(float MaxAbs, float Relative, double Cosine, float MeanAbs);
+    // Differing: the values more than 1e-5 apart, counted in the same pass.
+    private readonly record struct Comparison(float MaxAbs, float Relative, double Cosine, float MeanAbs, int Differing);
 
     private static Comparison Compare(ReadOnlySpan<float> expected, ReadOnlySpan<float> actual)
     {
-        int n = Math.Min(expected.Length, actual.Length);
+        int n = Math.Min(expected.Length, actual.Length), differing = 0;
         float maxAbs = 0, scale = 0;
         double dot = 0, ee = 0, aa = 0, sum = 0;
         for (int i = 0; i < n; i++)
         {
             float d = Math.Abs(expected[i] - actual[i]);
+            differing += d > 1e-5f ? 1 : 0;
             maxAbs = Math.Max(maxAbs, d);
             scale = Math.Max(scale, Math.Abs(expected[i]));
             dot += (double)expected[i] * actual[i];
@@ -559,11 +561,23 @@ internal sealed class VlmCheckCommand : Command
         }
 
         double cosine = ee == 0 && aa == 0 ? 1 : ee == 0 || aa == 0 ? 0 : dot / Math.Sqrt(ee * aa);
-        return new Comparison(maxAbs, scale == 0 ? maxAbs : maxAbs / scale, cosine, n == 0 ? 0 : (float)(sum / n));
+        return new Comparison(maxAbs, scale == 0 ? maxAbs : maxAbs / scale, cosine, n == 0 ? 0 : (float)(sum / n), differing);
+    }
+
+    // The tensor's values in last when it holds exactly as many (one buffer for every decoding step), else a new array.
+    private static float[] Read(Tensor tensor, float[] last)
+    {
+        if (tensor.Size != last.Length)
+        {
+            return tensor.ToArray();
+        }
+
+        tensor.CopyTo(last);
+        return last;
     }
 
     private static string Describe(Comparison c) =>
-        $"max |Δ| {c.MaxAbs:G3}, relative {c.Relative:G3}, mean |Δ| {c.MeanAbs:G3}, cosine {c.Cosine:F6}";
+        string.Create(CultureInfo.InvariantCulture, $"max |Δ| {c.MaxAbs:G3}, relative {c.Relative:G3}, mean |Δ| {c.MeanAbs:G3}, cosine {c.Cosine:F6}");
 
     private static JsonObject CompareJson(Comparison c) => new() { ["max_abs"] = c.MaxAbs, ["relative"] = c.Relative, ["mean_abs"] = c.MeanAbs, ["cosine"] = c.Cosine };
 

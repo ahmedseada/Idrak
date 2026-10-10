@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Diagnostics;
+using System.Globalization;
 using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
 using Idrak.Diagnostics;
@@ -125,17 +126,17 @@ internal sealed class ProfileCommand : Command
         bool kernelTiming = kernels.Count > 0;
         double layerTotal = layers.Sum(l => l.Ms);
         context.Write($"{choice.Model} on {device} ({device.Name}), weights {choice.Weights ?? "as stored"}, KV cache {kv}: one decoding step after {promptTokens} tokens");
-        context.Write($"step {stepMs:F2} ms with each layer drained ({layerTotal:F2} ms in the layers)\n");
+        context.Write(string.Create(CultureInfo.InvariantCulture, $"step {stepMs:F2} ms with each layer drained ({layerTotal:F2} ms in the layers)\n"));
         context.Write("Layers of the network:");
         context.Table(["Layer", "Type", "ms", "Share"],
-            layers.Select(l => (IReadOnlyList<string>)[l.Name, l.Type, l.Ms.ToString("F3"), Share(l.Ms, layerTotal)]));
+            layers.Select(l => (IReadOnlyList<string>)[l.Name, l.Type, l.Ms.ToString("F3", CultureInfo.InvariantCulture), Share(l.Ms, layerTotal)]));
         WriteTable(context, "\nInner layers (by type and depth):", recorder.Layers, top);
         WriteTable(context, "\nOperations (by name and shape):", recorder.Operations, top);
         if (kernelTiming)
         {
             context.Write($"\nKernels ({kernels.Sum(k => k.Calls)} launches):");
             context.Table(["Kernel", "Calls", "ms", "Share"],
-                kernels.Take(top).Select(k => (IReadOnlyList<string>)[k.Name, k.Calls.ToString(), k.Milliseconds.ToString("F3"), Share(k.Milliseconds, kernels.Sum(e => e.Milliseconds))]));
+                kernels.Take(top).Select(k => (IReadOnlyList<string>)[k.Name, k.Calls.ToString(CultureInfo.InvariantCulture), k.Milliseconds.ToString("F3", CultureInfo.InvariantCulture), Share(k.Milliseconds, kernels.Sum(e => e.Milliseconds))]));
         }
         else
         {
@@ -163,15 +164,15 @@ internal sealed class ProfileCommand : Command
     private static void WriteTable(CommandContext context, string title, Dictionary<string, (int Count, double Ms)> table, int top)
     {
         double total = table.Values.Sum(v => v.Ms);
-        context.Write($"{title} {total:F2} ms in {table.Values.Sum(v => v.Count)} calls");
+        context.Write(string.Create(CultureInfo.InvariantCulture, $"{title} {total:F2} ms in {table.Values.Sum(v => v.Count)} calls"));
         context.Table(["Name", "Calls", "ms", "Share"], table.OrderByDescending(p => p.Value.Ms).Take(top)
-            .Select(p => (IReadOnlyList<string>)[p.Key, p.Value.Count.ToString(), p.Value.Ms.ToString("F3"), Share(p.Value.Ms, total)]));
+            .Select(p => (IReadOnlyList<string>)[p.Key, p.Value.Count.ToString(CultureInfo.InvariantCulture), p.Value.Ms.ToString("F3", CultureInfo.InvariantCulture), Share(p.Value.Ms, total)]));
     }
 
     private static JsonArray Rows(Dictionary<string, (int Count, double Ms)> table) =>
         [.. table.OrderByDescending(p => p.Value.Ms).Select(p => (JsonNode)new JsonObject { ["name"] = p.Key, ["calls"] = p.Value.Count, ["ms"] = p.Value.Ms })];
 
-    private static string Share(double part, double total) => total > 0 ? (part / total).ToString("P1") : "";
+    private static string Share(double part, double total) => total > 0 ? (part / total).ToString("P1", CultureInfo.InvariantCulture) : "";
 
     // Sums the time of each operation (by name and shape) and each inner layer (by type and depth), as the Chat sample's profile does.
     private sealed class Recorder : ITelemetryHook

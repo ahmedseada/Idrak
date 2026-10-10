@@ -253,7 +253,7 @@ internal sealed class ReportCommand : Command
                     gflops = 2.0 * n * n * n / times[2] / 1e9;
                 }
 
-                context.Detail($"{info.Device} matmul {n}: {gflops:F1} GFLOP/s");
+                context.Detail(string.Create(CultureInfo.InvariantCulture, $"{info.Device} matmul {n}: {gflops:F1} GFLOP/s"));
                 results.Add(new JsonObject { ["device"] = info.Device, ["benchmark"] = $"matmul {n}x{n}x{n} float32", ["gflops"] = Math.Round(gflops, 2) });
                 progress.Advance();
             }
