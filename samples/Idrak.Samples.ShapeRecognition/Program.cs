@@ -107,17 +107,21 @@ string SaveImages(Dataset images, string root)
         return root;
     }
 
+    byte[] header = System.Text.Encoding.ASCII.GetBytes(string.Create(System.Globalization.CultureInfo.InvariantCulture, $"P5\n{Size} {Size}\n255\n"));
     for (int i = 0; i < images.Count; i++)
     {
         string name = shapes[images.GetTargets(i).IndexOf(1f)];
         Directory.CreateDirectory(Path.Combine(root, name));
-        var bytes = new List<byte>(System.Text.Encoding.ASCII.GetBytes($"P5\n{Size} {Size}\n255\n"));
-        foreach (float v in images.GetFeatures(i))
+        // The header and the pixels in one array of the file's size (no list grown a byte at a time).
+        var pixels = images.GetFeatures(i);
+        var bytes = new byte[header.Length + pixels.Length];
+        header.CopyTo(bytes, 0);
+        for (int k = 0; k < pixels.Length; k++)
         {
-            bytes.Add((byte)Math.Clamp((int)MathF.Round(v * 255), 0, 255));
+            bytes[header.Length + k] = (byte)Math.Clamp((int)MathF.Round(pixels[k] * 255), 0, 255);
         }
 
-        File.WriteAllBytes(Path.Combine(root, name, $"{i:D4}.pgm"), [.. bytes]);
+        File.WriteAllBytes(Path.Combine(root, name, string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{i:D4}.pgm")), bytes);
     }
 
     return root;
