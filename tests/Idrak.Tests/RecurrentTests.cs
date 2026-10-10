@@ -380,6 +380,9 @@ internal static partial class Tests
         any.Release();
         if (!lstm && !gru)
         {
+            // CUDA has them on every device that launches cooperatively: say why they declined.
+            Check(device.Backend is not Idrak.Gpu.Cuda.CudaBackend, $"{device}: the sequence kernels do not run: "
+                  + (device.Backend as Idrak.Gpu.Cuda.CudaBackend)?.SequenceUnavailable);
             return;                                                                       // the device has no sequence kernels
         }
 
