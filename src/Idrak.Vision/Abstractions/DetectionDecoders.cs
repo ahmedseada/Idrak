@@ -154,6 +154,7 @@ internal static class BoxesScoresDecoder
             "logits" => true,
             var other => throw new NotSupportedException($"boxes-scores scores '{other}': \"probabilities\" or \"logits\"."),
         };
+        int kind = box switch { "xyxy" => 0, "xywh" => 1, _ => 2 };      // decided once, not per candidate
         bool normalized = context.Flag("normalized", false);
         float sx = normalized ? context.InputWidth : 1, sy = normalized ? context.InputHeight : 1;
         if (normalized && (sx <= 0 || sy <= 0))
@@ -174,18 +175,47 @@ internal static class BoxesScoresDecoder
                 throw new ArgumentException($"boxes-scores: {width} values per candidate for {(context.Classes > 0 ? context.Classes : "at least one")} classes (4 + classes).");
             }
 
+            // [4 + C, N]: each class's scores are a row, so the best class of every candidate is found row by row (in
+            // memory order, the same strict comparison in class order), not by striding down a column per candidate.
+            float[]? bestScores = null;
+            int[]? bestClasses = null;
+            if (columns && rows > 0)
+            {
+                bestScores = outputs.Slice(4 * rows, rows).ToArray();
+                bestClasses = new int[rows];
+                for (int c = 1; c < classes; c++)
+                {
+                    var scores = outputs.Slice((4 + c) * rows, rows);
+                    for (int r = 0; r < rows; r++)
+                    {
+                        if (scores[r] > bestScores[r])
+                        {
+                            (bestClasses[r], bestScores[r]) = (c, scores[r]);
+                        }
+                    }
+                }
+            }
+
             var found = new List<Detection>(rows);
             for (int r = 0; r < rows; r++)
             {
                 int step = columns ? rows : 1, first = columns ? r : r * width;     // value j of row r is outputs[first + j * step]
                 int best = 0;
-                float score = outputs[first + 4 * step];
-                for (int c = 1; c < classes; c++)
+                float score;
+                if (bestScores is not null)
                 {
-                    float s = outputs[first + (4 + c) * step];
-                    if (s > score)
+                    (best, score) = (bestClasses![r], bestScores[r]);
+                }
+                else
+                {
+                    score = outputs[first + 4];
+                    for (int c = 1; c < classes; c++)
                     {
-                        (best, score) = (c, s);
+                        float s = outputs[first + 4 + c];
+                        if (s > score)
+                        {
+                            (best, score) = (c, s);
+                        }
                     }
                 }
 
@@ -195,10 +225,10 @@ internal static class BoxesScoresDecoder
                 }
 
                 float a = outputs[first] * sx, b = outputs[first + step] * sy, c2 = outputs[first + 2 * step] * sx, d = outputs[first + 3 * step] * sy;
-                var rectangle = box switch
+                var rectangle = kind switch
                 {
-                    "xyxy" => BoundingBox.FromCorners(a, b, c2, d),
-                    "xywh" => new BoundingBox(a, b, c2, d),
+                    0 => BoundingBox.FromCorners(a, b, c2, d),
+                    1 => new BoundingBox(a, b, c2, d),
                     _ => BoundingBox.FromCenter(a, b, c2, d),
                 };
                 found.Add(new Detection(rectangle, best, score));
