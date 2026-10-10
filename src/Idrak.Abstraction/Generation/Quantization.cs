@@ -441,7 +441,7 @@ public sealed class Int8Weight : PackedWeight
     /// <summary>The float weights these bytes stand for, [rows, columns], on the same device.</summary>
     public override Tensor Dequantize()
     {
-        var w = Tensor.PersistentZeros([Rows, Columns], Packed.Device);
+        var w = Tensor.Empty([Rows, Columns], Packed.Device, track: false);   // the kernel writes every value: not zeroed first
         DequantizeInto(w.Storage);
         return w;
     }
@@ -650,7 +650,7 @@ public sealed class Int4Weight : PackedWeight
     /// <summary>The float weights these nibbles stand for, [rows, columns], on the same device.</summary>
     public override Tensor Dequantize()
     {
-        var w = Tensor.PersistentZeros([Rows, Columns], Packed.Device);
+        var w = Tensor.Empty([Rows, Columns], Packed.Device, track: false);   // the kernel writes every value: not zeroed first
         DequantizeInto(w.Storage);
         return w;
     }
@@ -790,7 +790,7 @@ public sealed class BFloat16Weight : PackedWeight
     /// <summary>The float weights, [rows, columns], on the same device.</summary>
     public override Tensor Dequantize()
     {
-        var w = Tensor.PersistentZeros([Rows, Columns], Packed.Device);
+        var w = Tensor.Empty([Rows, Columns], Packed.Device, track: false);   // the kernel writes every value: not zeroed first
         DequantizeInto(w.Storage);
         return w;
     }
