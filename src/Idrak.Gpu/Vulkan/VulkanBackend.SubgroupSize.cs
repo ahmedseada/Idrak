@@ -34,6 +34,9 @@ internal sealed unsafe partial class VulkanBackend
     private readonly Dictionary<VulkanKernel, VulkanKernel> _sized = [];
     private readonly Dictionary<(VulkanKernel, int), VulkanKernel> _sizeVariants = [];
 
+    // The sizes a kernel of each workgroup width may require (SizeCandidatesAt). Guarded by itself.
+    private readonly Dictionary<int, int[]> _sizeCandidates = [];
+
     /// <summary>Whether subgroup size control is enabled on this device.</summary>
     internal bool SubgroupSizeControl => _sizeControl.Enabled;
 
@@ -97,6 +100,21 @@ internal sealed unsafe partial class VulkanBackend
         return [.. sizes];
     }
 
+    // SubgroupSizeCandidates(width), built once per width (they follow from the device's fixed facts): a dispatch whose
+    // size is not measured (IDRAK_AUTOTUNE=0, or inside another measurement) looks them up on every call.
+    private int[] SizeCandidatesAt(int width)
+    {
+        lock (_sizeCandidates)
+        {
+            if (!_sizeCandidates.TryGetValue(width, out var sizes))
+            {
+                _sizeCandidates[width] = sizes = SubgroupSizeCandidates(width);
+            }
+
+            return sizes;
+        }
+    }
+
     /// <summary>The subgroup size chosen for kernel <paramref name="name"/> (0: the device's default), or null when none
     /// was chosen for it (for tests and diagnostics).</summary>
     internal int? ChosenSubgroupSize(string name)
@@ -144,7 +162,7 @@ internal sealed unsafe partial class VulkanBackend
         }
 
         int width = kernel.LocalSizeX;
-        int[] sizes = SubgroupSizeCandidates(width);
+        int[] sizes = SizeCandidatesAt(width);
         if (sizes.Length == 0)
         {
             return Remember(kernel, 0);
