@@ -35,6 +35,9 @@ internal static class TrainCommand
           --eval DIR           held-out lines: CER and WER every epoch; the best epoch is kept (else the lowest loss)
           -o, --out MODEL      the model folder (default: recognizer): recognizer.ikm + recognizer.json
           --epochs N           (30)        --batch N   lines per step (16)      --lr X   (0.001)      --seed N (1)
+          --schedule NAME      the learning rate over the run's steps (the library's FineTuningSchedules): cosine
+                               (default), linear, constant, wsd    --warmup F  warm-up share of the steps (0.03)
+                               --min-lr X  the rate at the end (0)
           --height N           line height, a multiple of 4 (48)    --channels A,B,C  (32,64,128)
           --hidden N           LSTM size each way (128)              --layers N        (2)
           --direction rtl|ltr  (rtl: lines are flipped so columns run in reading order)
@@ -50,7 +53,8 @@ internal static class TrainCommand
     public static int Run(string[] args, TextWriter output, TextWriter error)
     {
         if (OcrApp.Context(args, output, error,
-                ["--data", "--eval", "--out", "--epochs", "--batch", "--lr", "--seed", "--height", "--channels", "--hidden", "--layers", "--direction", "--augment", "--log", "--profile"],
+                ["--data", "--eval", "--out", "--epochs", "--batch", "--lr", "--seed", "--height", "--channels", "--hidden", "--layers", "--direction", "--augment", "--log", "--profile",
+                    "--schedule", "--warmup", "--min-lr"],
                 ["--include-drafts"], Help) is not { } context)
         {
             return 0;
@@ -61,6 +65,13 @@ internal static class TrainCommand
         string folder = a.Option("--out") ?? "recognizer";
         int epochs = a.Integer("--epochs", 30, 1), batchSize = a.Integer("--batch", 16, 1), seed = a.Integer("--seed", 1);
         float learningRate = (float)a.Number("--lr", 0.001, 1e-7);
+        string scheduleName = (a.Option("--schedule") ?? "cosine").ToLowerInvariant();
+        float warmup = (float)a.Number("--warmup", 0.03, 0), minLearningRate = (float)a.Number("--min-lr", 0, 0);
+        if (!FineTuningSchedules.Names.Contains(scheduleName) || warmup >= 1)
+        {
+            throw new UsageException($"--schedule {scheduleName}, --warmup {warmup.ToString(CultureInfo.InvariantCulture)}: use one of "
+                                     + $"{string.Join(", ", FineTuningSchedules.Names)} and a warm-up share under 1.");
+        }
         bool drafts = a.Flag("--include-drafts");
         string direction = a.Option("--direction") ?? "rtl";
         if (direction is not ("rtl" or "ltr"))
@@ -150,7 +161,7 @@ internal static class TrainCommand
         }
 
         context.Say($"Network   {recognizer.Network.ParameterCount:N0} parameters on {context.Device} · height {settings.Height} · {(settings.RightToLeft ? "right to left" : "left to right")} · "
-                    + $"batch {batchSize} · AdamW {learningRate.ToString("G", CultureInfo.InvariantCulture)} · {epochs} epochs · augment {settings.Augment}");
+                    + $"batch {batchSize} · AdamW {learningRate.ToString("G", CultureInfo.InvariantCulture)} ({scheduleName}, warm-up {warmup.ToString("P0", CultureInfo.InvariantCulture)}) · {epochs} epochs · augment {settings.Augment}");
 
         if (a.Option("--log") is { } logFolder && Path.GetDirectoryName(Path.GetFullPath(logFolder)) is { } parent)
         {
@@ -181,6 +192,9 @@ internal static class TrainCommand
         const int ProfileWarm = 20;
         long profileStart = 0, profiledLines = 0;
         TimeSpan profileData = default, profileCompute = default;
+        // The learning rate follows the schedule over every step of the run (warm-up, then the decay), stepped after each
+        // optimizer step.
+        var schedule = FineTuningSchedules.Create(scheduleName, warmup, minLearningRate)(optimizer, Math.Max(1, epochs * stepsPerEpoch));
         Telemetry.TrainingStarted(new TrainingStarted("ArabicOcr line recognizer", "AdamW", context.Device, epochs, train.Count, evaluation.Count, batchSize,
             stepsPerEpoch, recognizer.Network.ParameterCount, learningRate, Environment.ProcessorCount));
         for (int epoch = 1; epoch <= epochs; epoch++)
@@ -246,6 +260,7 @@ internal static class TrainCommand
 
                         optimizer.ClipGradientNorm(5f);
                         optimizer.Step();
+                        schedule.Step();
                         lossSum += batchLoss;
                         seen += batch.Length;
                         stepLoss = batchLoss / batch.Length;
@@ -275,11 +290,11 @@ internal static class TrainCommand
                 step++;
                 if (Telemetry.IsEnabled(TelemetryLevel.Batches))
                 {
-                    Telemetry.BatchCompleted(new BatchCompleted(epoch, done, stepsPerEpoch, step, batch.Length, stepLoss, learningRate, null, preparing, compute));
+                    Telemetry.BatchCompleted(new BatchCompleted(epoch, done, stepsPerEpoch, step, batch.Length, stepLoss, optimizer.LearningRate, null, preparing, compute));
                 }
 
                 int epochNow = epoch, doneNow = done, seenNow = seen;
-                double sumNow = lossSum, lastNow = stepLoss;
+                double sumNow = lossSum, lastNow = stepLoss, rateNow = optimizer.LearningRate;
                 live.Show(() =>
                 {
                     double fraction = doneNow / (double)Math.Max(1, stepsPerEpoch);
@@ -288,7 +303,7 @@ internal static class TrainCommand
                     var left = TimeSpan.FromSeconds(elapsed.TotalSeconds / Math.Max(fraction, 1e-9) * (1 - fraction));
                     // Most important first: a narrow console cuts the end of the line.
                     return FormattableString.Invariant($"epoch {epochNow}/{epochs} {LiveLine.Bar(fraction, 10)} {fraction * 100:F1}% {doneNow:N0}/{stepsPerEpoch:N0}")
-                           + FormattableString.Invariant($" | loss {sumNow / Math.Max(1, seenNow):F4} (step {lastNow:F4})")
+                           + FormattableString.Invariant($" | loss {sumNow / Math.Max(1, seenNow):F4} (step {lastNow:F4}) | lr {rateNow:G3}")
                            + $" | {LiveLine.Time(elapsed)}, {LiveLine.Time(left)} left"
                            + FormattableString.Invariant($" | {seenNow / Math.Max(1e-9, elapsed.TotalSeconds):F0} lines/s")
                            + FormattableString.Invariant($" | data {dataTime.TotalMilliseconds / doneNow:F0} + step {computeTime.TotalMilliseconds / doneNow:F0} ms")
@@ -319,12 +334,12 @@ internal static class TrainCommand
 
             lastLoss = trainLoss;
             var validation = epochCer is null ? null : new Dictionary<string, double> { ["cer"] = epochCer.Value, ["wer"] = epochWer!.Value };
-            Telemetry.EpochCompleted(new EpochCompleted(epoch, epochs, trainLoss, new Dictionary<string, double>(), null, validation, learningRate, epochClock.Elapsed,
+            Telemetry.EpochCompleted(new EpochCompleted(epoch, epochs, trainLoss, new Dictionary<string, double>(), null, validation, optimizer.LearningRate, epochClock.Elapsed,
                 seen / Math.Max(1e-9, epochClock.Elapsed.TotalSeconds), ComputeResources.GetMemoryUsage(context.Device), isBest));
-            history.Add(new JsonObject { ["epoch"] = epoch, ["loss"] = Round(trainLoss), ["cer"] = epochCer is null ? null : Round(epochCer.Value), ["wer"] = epochWer is null ? null : Round(epochWer.Value), ["seconds"] = Round(epochClock.Elapsed.TotalSeconds) });
+            history.Add(new JsonObject { ["epoch"] = epoch, ["loss"] = Round(trainLoss), ["cer"] = epochCer is null ? null : Round(epochCer.Value), ["wer"] = epochWer is null ? null : Round(epochWer.Value), ["seconds"] = Round(epochClock.Elapsed.TotalSeconds), ["lr"] = optimizer.LearningRate });
             Say(FormattableString.Invariant($"epoch {epoch,3}/{epochs}  loss {trainLoss,8:F4}")
                         + (epochCer is null ? "" : FormattableString.Invariant($"  cer {epochCer:F4}  wer {epochWer:F4}"))
-                        + FormattableString.Invariant($"  {epochClock.Elapsed.TotalSeconds,6:F1} s  {seen / Math.Max(1e-9, epochClock.Elapsed.TotalSeconds),6:F0} lines/s") + (isBest ? "  best" : ""));
+                        + FormattableString.Invariant($"  {epochClock.Elapsed.TotalSeconds,6:F1} s  {seen / Math.Max(1e-9, epochClock.Elapsed.TotalSeconds),6:F0} lines/s  lr {optimizer.LearningRate:G3}") + (isBest ? "  best" : ""));
         }
 
         live.Clear();
@@ -357,6 +372,10 @@ internal static class TrainCommand
             ["wer"] = double.IsNaN(bestWer) ? null : Round(bestWer),
             ["seconds_per_epoch"] = epochSeconds.Count == 0 ? null : Round(epochSeconds.Average()),
             ["micro_batch"] = micro,
+            ["learning_rate"] = learningRate,
+            ["schedule"] = scheduleName,
+            ["warmup"] = warmup,
+            ["min_learning_rate"] = minLearningRate,
             ["drafts"] = drafts,
             ["unknown_characters"] = new JsonObject([.. unknown.Select(u => KeyValuePair.Create(u.Key, (JsonNode?)u.Value))]),
         };

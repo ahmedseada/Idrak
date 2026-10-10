@@ -393,6 +393,27 @@ public static class FineTuningLosses
 /// </summary>
 public static class FineTuningSchedules
 {
+    /// <summary>The names <see cref="Create"/> accepts: cosine, linear, constant, wsd (warm-up, stable, decay).</summary>
+    public static IReadOnlyList<string> Names { get; } = ["cosine", "linear", "constant", "wsd"];
+
+    /// <summary>
+    /// The schedule <paramref name="name"/> (see <see cref="Names"/>, ignoring case) with a warm-up over
+    /// <paramref name="warmupFraction"/> of the steps and a decay to <paramref name="minLearningRate"/> (wsd: over the last
+    /// <paramref name="decayFraction"/> of the steps; constant: no decay). For command lines and settings files.
+    /// </summary>
+    public static Func<Optimizer, int, LearningRateScheduler> Create(string name, float warmupFraction = 0.03f, float minLearningRate = 0f, float decayFraction = 0.2f)
+    {
+        ArgumentNullException.ThrowIfNull(name);
+        return name.ToLowerInvariant() switch
+        {
+            "cosine" => Cosine(warmupFraction, minLearningRate),
+            "linear" => Linear(warmupFraction, minLearningRate),
+            "constant" => Constant(warmupFraction),
+            "wsd" => WarmupStableDecay(warmupFraction, decayFraction, minLearningRate),
+            _ => throw new ArgumentException($"Learning-rate schedule '{name}' is not registered; use {string.Join(", ", Names)}.", nameof(name)),
+        };
+    }
+
     /// <summary>Warm-up, then cosine decay to <paramref name="minLearningRate"/> at the last step (the default schedule).</summary>
     public static Func<Optimizer, int, LearningRateScheduler> Cosine(float warmupFraction = 0.03f, float minLearningRate = 0f) =>
         (optimizer, steps) => new CosineAnnealing(optimizer, Math.Max(1, steps), minLearningRate, Warmup(warmupFraction, steps));
