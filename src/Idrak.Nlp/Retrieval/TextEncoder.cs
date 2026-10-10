@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Buffers;
 using Idrak.Diagnostics;
 using Idrak.Generation;
 using Idrak.Layers;
@@ -65,11 +66,21 @@ public sealed class TextEncoder : IEmbedder
                 int count = Math.Min(batchSize, texts.Count - start);
                 using var noGrad = Autograd.NoGrad();
                 using var scope = new TensorScope();
-                var vectors = Forward(texts.Skip(start).Take(count).ToList()).ToArray();
-                int d = vectors.Length / count;
-                for (int i = 0; i < count; i++)
+                // The batch is downloaded once into a pooled buffer (returned in finally) and each vector copied out of it.
+                var vectors = Forward(texts.Skip(start).Take(count).ToList());
+                int size = vectors.Size, d = size / count;
+                float[] flat = ArrayPool<float>.Shared.Rent(size);
+                try
                 {
-                    result[start + i] = vectors.AsSpan(i * d, d).ToArray();
+                    vectors.CopyTo(flat.AsSpan(0, size));
+                    for (int i = 0; i < count; i++)
+                    {
+                        result[start + i] = flat.AsSpan(i * d, d).ToArray();
+                    }
+                }
+                finally
+                {
+                    ArrayPool<float>.Shared.Return(flat);
                 }
             }
         }
@@ -139,28 +150,42 @@ public sealed class TextEncoder : IEmbedder
     private Tensor Forward(IReadOnlyList<string> texts)
     {
         int n = texts.Count, t = MaxLength;
-        var ids = new float[n * t];
-        var weights = new float[n * t];
-        for (int i = 0; i < n; i++)
+
+        // The ids and weights are written into pooled buffers, uploaded (Tensor.From copies them), and returned in finally.
+        float[] ids = ArrayPool<float>.Shared.Rent(n * t);
+        float[] weights = ArrayPool<float>.Shared.Rent(n * t);
+        Tensor input, mean;
+        var device = Device;
+        try
         {
-            var tokens = Tokenizer.Encode(texts[i]);
-            int length = Math.Min(tokens.Count, t);
-            for (int j = 0; j < t; j++)
+            for (int i = 0; i < n; i++)
             {
-                ids[i * t + j] = j < length ? tokens[j] : PadId;
-                weights[i * t + j] = j < length ? 1f / Math.Max(length, 1) : 0f;
+                var tokens = Tokenizer.Encode(texts[i]);
+                int length = Math.Min(tokens.Count, t);
+                for (int j = 0; j < t; j++)
+                {
+                    ids[i * t + j] = j < length ? tokens[j] : PadId;
+                    weights[i * t + j] = j < length ? 1f / Math.Max(length, 1) : 0f;
+                }
+
+                if (length == 0)
+                {
+                    weights[i * t] = 1f;                      // an empty text averages the first (padding) position
+                }
             }
 
-            if (length == 0)
-            {
-                weights[i * t] = 1f;                      // an empty text averages the first (padding) position
-            }
+            input = Tensor.From(ids.AsSpan(0, n * t), [n, t], device);
+            mean = Tensor.From(weights.AsSpan(0, n * t), [n, 1, t], device);
+        }
+        finally
+        {
+            ArrayPool<float>.Shared.Return(ids);
+            ArrayPool<float>.Shared.Return(weights);
         }
 
-        var device = Device;
-        var hidden = Model.Forward(Tensor.From(ids, [n, t], device));                        // [N, T, D]
+        var hidden = Model.Forward(input);                                                   // [N, T, D]
         int d = hidden.Shape[^1];
-        var pooled = Tensor.From(weights, [n, 1, t], device).MatMul(hidden).Reshape(n, d);    // weighted mean over real tokens
+        var pooled = mean.MatMul(hidden).Reshape(n, d);                                      // weighted mean over real tokens
         var inverseNorm = ((pooled.Square().Sum(1) + 1e-12f).Log() * -0.5f).Exp();           // 1 / ‖x‖
         return inverseNorm.Reshape(n, 1, 1).MatMul(pooled.Reshape(n, 1, d)).Reshape(n, d);
     }
