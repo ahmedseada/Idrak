@@ -2514,6 +2514,8 @@ internal static partial class PtxKernels
             {
                 .reg .pred %p<16>;
                 .reg .f32 %f<24>;
+                .reg .f32 %a<16>;
+                .reg .f32 %w<2>;
                 .reg .b32 %r<24>;
                 .reg .b64 %rd<24>;
                 ld.param.u64 %rd1, [p_a];
@@ -2568,9 +2570,38 @@ internal static partial class PtxKernels
             s.AppendLine($"    setp.lt.u32 %p{r}, {r}, %r1;");
         }
 
+        // Two k a lane at a time (kk and kk + 32 while kk + 32 < k), then one: every row's value in a register of its own,
+        // so all the loads of a pass are in flight together (with one register shared by the rows and written under their
+        // predicates, each load waited for the previous row's fma). Each row adds its terms in k order either way.
         s.AppendLine("""
                 mov.u32 %r9, %r6;
                 mul.wide.u32 %rd12, %r3, 4;
+            K2:
+                add.u32 %r14, %r9, 32;
+                setp.ge.u32 %p10, %r14, %r3;
+                @%p10 bra KLOOP;
+                mul.wide.u32 %rd10, %r9, 4;
+                add.u64 %rd11, %rd10, %rd9;
+                ld.global.f32 %w0, [%rd11];
+                ld.global.f32 %w1, [%rd11+128];
+                add.u64 %rd11, %rd10, %rd1;
+            """);
+        for (int r = 0; r < GemvRows; r++)
+        {
+            s.AppendLine($"    @%p{r} ld.global.f32 %a{2 * r}, [%rd11];");
+            s.AppendLine($"    @%p{r} ld.global.f32 %a{2 * r + 1}, [%rd11+128];");
+            s.AppendLine("    add.u64 %rd11, %rd11, %rd12;");
+        }
+
+        for (int r = 0; r < GemvRows; r++)
+        {
+            s.AppendLine($"    @%p{r} fma.rn.f32 %f{r}, %a{2 * r}, %w0, %f{r};");
+            s.AppendLine($"    @%p{r} fma.rn.f32 %f{r}, %a{2 * r + 1}, %w1, %f{r};");
+        }
+
+        s.AppendLine("""
+                add.u32 %r9, %r9, 64;
+                bra K2;
             KLOOP:
                 setp.ge.u32 %p10, %r9, %r3;
                 @%p10 bra KEND;
@@ -2581,9 +2612,13 @@ internal static partial class PtxKernels
             """);
         for (int r = 0; r < GemvRows; r++)
         {
-            s.AppendLine($"    @%p{r} ld.global.f32 %f9, [%rd11];");
-            s.AppendLine($"    @%p{r} fma.rn.f32 %f{r}, %f9, %f8, %f{r};");
+            s.AppendLine($"    @%p{r} ld.global.f32 %a{r}, [%rd11];");
             s.AppendLine("    add.u64 %rd11, %rd11, %rd12;");
+        }
+
+        for (int r = 0; r < GemvRows; r++)
+        {
+            s.AppendLine($"    @%p{r} fma.rn.f32 %f{r}, %a{r}, %f8, %f{r};");
         }
 
         s.AppendLine("""
