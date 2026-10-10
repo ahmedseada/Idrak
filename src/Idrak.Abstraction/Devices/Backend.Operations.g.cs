@@ -3221,6 +3221,100 @@ public abstract partial class Backend
     }
 
     /// <summary>
+    /// One time step of a long short-term memory cell (PyTorch's gate order: input, forget, cell, output), for every row n
+    /// &lt; <paramref name="batch"/> and unit j &lt; H = <paramref name="hiddenSize"/>. The sequences are [batch, steps,
+    /// width] row-major and the step reads and writes their row (n, <paramref name="step"/>); the states are [batch, width].
+    /// With z_k = projected[n, step, k·H + j] + recurrent[n, k·H + j] (the step's input through the input weights and bias,
+    /// and the previous hidden state through the recurrent weights): i = σ(z_0), f = σ(z_1), g = tanh(z_2), o = σ(z_3);
+    /// c = f · cell[n, j] + i · g and h = o · tanh(c). Writes c into cell[n, j] (in place) and, when given, cells[n, step,
+    /// j]; h into hidden[n, j] and output[n, step, j]; and, when given, i, f, g and o into gates[n, step, k·H + j] (what
+    /// <see cref="LstmCellBackwardKernel"/> reads, with the cells). With <paramref name="batch"/> 0 nothing is read or
+    /// written: callers ask that way whether the device has the kernel. Returns false when the device has none (callers
+    /// then compose the step from products and element-wise operations).
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.LstmCell"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>LstmCellKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool LstmCell(Storage projected, Storage recurrent, Storage cell, Storage hidden, Storage output, Storage? gates, Storage? cells, int step, int steps, int batch, int hiddenSize)
+    {
+        return _kernels is null ? LstmCellKernel(projected, recurrent, cell, hidden, output, gates, cells, step, steps, batch, hiddenSize) : LstmCellRegistered(projected, recurrent, cell, hidden, output, gates, cells, step, steps, batch, hiddenSize);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool LstmCellRegistered(Storage projected, Storage recurrent, Storage cell, Storage hidden, Storage output, Storage? gates, Storage? cells, int step, int steps, int batch, int hiddenSize)
+    {
+        return Kernel(OperationIndex.LstmCell) is OperationKernels.LstmCell kernel ? kernel(this, projected, recurrent, cell, hidden, output, gates, cells, step, steps, batch, hiddenSize) : LstmCellKernel(projected, recurrent, cell, hidden, output, gates, cells, step, steps, batch, hiddenSize);
+    }
+
+    /// <summary>
+    /// The gradient of one step of <see cref="LstmCellKernel"/>, the steps taken from the last to the first. From the saved
+    /// gates (i, f, g, o) and cells of the step, the previous step's cell c_prev = cells[n, previous, j] (0 when
+    /// <paramref name="previous"/> is negative: the zero initial state), and the incoming dh = dHidden[n, j] + dOutput[n,
+    /// step, j] (no dOutput: 0) and dc = dCell[n, j]: with t = tanh(c), dc' = dc + dh · o · (1 - t²), the pre-activation
+    /// gradients dz = (dc'·g · i(1 - i), dc'·c_prev · f(1 - f), dc'·i · (1 - g²), dh·t · o(1 - o)) are written (not added)
+    /// into dGates[n, step, k·H + j] and dStep[n, k·H + j], and dc'·f into dCell[n, j] (the cell gradient the previous step
+    /// takes). dHidden is only read: the caller sets it to dStep · Uᵀ, the recurrent part of the previous step's dh. With
+    /// <paramref name="batch"/> 0 nothing is read or written. Returns false when the device has no such kernel.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.LstmCellBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>LstmCellBackwardKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool LstmCellBackward(Storage gates, Storage cells, Storage? dOutput, Storage dHidden, Storage dCell, Storage dGates, Storage dStep, int step, int previous, int steps, int batch, int hiddenSize)
+    {
+        return _kernels is null ? LstmCellBackwardKernel(gates, cells, dOutput, dHidden, dCell, dGates, dStep, step, previous, steps, batch, hiddenSize) : LstmCellBackwardRegistered(gates, cells, dOutput, dHidden, dCell, dGates, dStep, step, previous, steps, batch, hiddenSize);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool LstmCellBackwardRegistered(Storage gates, Storage cells, Storage? dOutput, Storage dHidden, Storage dCell, Storage dGates, Storage dStep, int step, int previous, int steps, int batch, int hiddenSize)
+    {
+        return Kernel(OperationIndex.LstmCellBackward) is OperationKernels.LstmCellBackward kernel ? kernel(this, gates, cells, dOutput, dHidden, dCell, dGates, dStep, step, previous, steps, batch, hiddenSize) : LstmCellBackwardKernel(gates, cells, dOutput, dHidden, dCell, dGates, dStep, step, previous, steps, batch, hiddenSize);
+    }
+
+    /// <summary>
+    /// One time step of a gated recurrent unit (PyTorch's gate order: reset, update, candidate; the reset gate scales the
+    /// candidate's recurrent term after its product, PyTorch's GRU and ONNX's linear_before_reset), for every row n &lt;
+    /// <paramref name="batch"/> and unit j &lt; H = <paramref name="hiddenSize"/>, with the layouts of
+    /// <see cref="LstmCellKernel"/>. With p_k = projected[n, step, k·H + j] and q_k = recurrent[n, k·H + j]: r = σ(p_0 +
+    /// q_0), u = σ(p_1 + q_1), a = q_2 + hiddenBias[j] (no hiddenBias: q_2), c = tanh(p_2 + r · a) and h = (1 - u) · c + u
+    /// · hidden[n, j]. Writes h into hidden[n, j] (in place) and output[n, step, j] and, when given, r, u, c and a into
+    /// gates[n, step, k·H + j] (a [batch, steps, 4H] sequence, what <see cref="GruCellBackwardKernel"/> reads). With
+    /// <paramref name="batch"/> 0 nothing is read or written. Returns false when the device has no such kernel.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.GruCell"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>GruCellKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool GruCell(Storage projected, Storage recurrent, Storage? hiddenBias, Storage hidden, Storage output, Storage? gates, int step, int steps, int batch, int hiddenSize)
+    {
+        return _kernels is null ? GruCellKernel(projected, recurrent, hiddenBias, hidden, output, gates, step, steps, batch, hiddenSize) : GruCellRegistered(projected, recurrent, hiddenBias, hidden, output, gates, step, steps, batch, hiddenSize);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool GruCellRegistered(Storage projected, Storage recurrent, Storage? hiddenBias, Storage hidden, Storage output, Storage? gates, int step, int steps, int batch, int hiddenSize)
+    {
+        return Kernel(OperationIndex.GruCell) is OperationKernels.GruCell kernel ? kernel(this, projected, recurrent, hiddenBias, hidden, output, gates, step, steps, batch, hiddenSize) : GruCellKernel(projected, recurrent, hiddenBias, hidden, output, gates, step, steps, batch, hiddenSize);
+    }
+
+    /// <summary>
+    /// The gradient of one step of <see cref="GruCellKernel"/>, the steps taken from the last to the first. From the saved
+    /// r, u, c and a of the step, the previous hidden state h_prev = output[n, previous, j] (0 when
+    /// <paramref name="previous"/> is negative) and the incoming dh = dHidden[n, j] + dOutput[n, step, j] (no dOutput: 0):
+    /// with dc = dh · (1 - u) · (1 - c²), the input part dp = (dc·a · r(1 - r), dh·(h_prev - c) · u(1 - u), dc) is written
+    /// (not added) into dGates[n, step, k·H + j], the recurrent part dq = (dp_0, dp_1, dc · r) (the gradient of the hidden
+    /// product, and of the candidate bias in its last third) into dRecurrent[n, step, k·H + j] and dStep[n, k·H + j], and
+    /// dh · u into dHidden[n, j] (the direct part of the previous step's dh; the caller adds dStep · Uᵀ to it). With
+    /// <paramref name="batch"/> 0 nothing is read or written. Returns false when the device has no such kernel.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.GruCellBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>GruCellBackwardKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool GruCellBackward(Storage gates, Storage output, Storage? dOutput, Storage dHidden, Storage dGates, Storage dRecurrent, Storage dStep, int step, int previous, int steps, int batch, int hiddenSize)
+    {
+        return _kernels is null ? GruCellBackwardKernel(gates, output, dOutput, dHidden, dGates, dRecurrent, dStep, step, previous, steps, batch, hiddenSize) : GruCellBackwardRegistered(gates, output, dOutput, dHidden, dGates, dRecurrent, dStep, step, previous, steps, batch, hiddenSize);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool GruCellBackwardRegistered(Storage gates, Storage output, Storage? dOutput, Storage dHidden, Storage dGates, Storage dRecurrent, Storage dStep, int step, int previous, int steps, int batch, int hiddenSize)
+    {
+        return Kernel(OperationIndex.GruCellBackward) is OperationKernels.GruCellBackward kernel ? kernel(this, gates, output, dOutput, dHidden, dGates, dRecurrent, dStep, step, previous, steps, batch, hiddenSize) : GruCellBackwardKernel(gates, output, dOutput, dHidden, dGates, dRecurrent, dStep, step, previous, steps, batch, hiddenSize);
+    }
+
+    /// <summary>
     /// Box overlap losses, torchvision's formulas: for each of <paramref name="count"/> pairs of boxes given by their corners
     /// (x1, y1, x2, y2; predicted and target are [count, 4]), losses[i] = 1 - IoU (<see cref="BoxOverlap.IoU"/>), plus the
     /// enclosing box's empty share (GIoU), plus the centres' squared distance over the enclosing box's squared diagonal

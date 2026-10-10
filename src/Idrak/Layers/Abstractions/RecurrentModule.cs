@@ -142,6 +142,19 @@ public abstract class RecurrentModule : Module
     /// </summary>
     protected abstract Tensor[] Cell(Tensor projected, IReadOnlyList<Tensor> state, RecurrentWeights weights);
 
+    /// <summary>
+    /// The whole time loop of one layer and direction as one operation, from the projected input [N, T, gates · hidden]
+    /// (every step's input through <see cref="RecurrentWeights.InputWeight"/> plus <see cref="RecurrentWeights.Bias"/>),
+    /// with zero initial states: every step's hidden state, [N, T, hidden] (<paramref name="reverse"/>: the steps are taken
+    /// from the last to the first, each state still at its own step). Null (the default) when the layer type or the device
+    /// has no such operation: the steps are then composed from <see cref="Cell"/>. An override returns what the composed
+    /// steps return, to float rounding, and their gradients.
+    /// </summary>
+    protected virtual Tensor? Sequence(Tensor projected, RecurrentWeights weights, bool reverse) => null;
+
+    // Tests: compose the steps from Cell even where Sequence has a fused loop (the reference the fused loop is checked against).
+    internal static bool ComposedOnly { get; set; }
+
     /// <inheritdoc />
     protected sealed override Tensor ForwardCore(Tensor input)
     {
@@ -163,6 +176,23 @@ public abstract class RecurrentModule : Module
 
                 // Project every time step's input at once (one large matrix product) instead of once per step.
                 var projected = x.MatMul(weights.InputWeight) + weights.Bias;
+
+                // The whole time loop as one operation where the layer type and the device have one; else step by step.
+                if (!ComposedOnly && Sequence(projected, weights, direction == 1) is { } fused)
+                {
+                    if (sequences)
+                    {
+                        outputs[direction] = fused;
+                    }
+                    else
+                    {
+                        // The last state: the forward direction's after the last step, the backward one's after the first.
+                        last[direction] = fused.Narrow(1, direction == 0 ? steps - 1 : 0, 1).Reshape(batch, HiddenSize);
+                    }
+
+                    continue;
+                }
+
                 Tensor[] state = [.. Enumerable.Range(0, States).Select(_ => Tensor.Zeros([batch, HiddenSize], input.Device))];
                 var hidden = sequences ? new Tensor[steps] : null;
                 for (int i = 0; i < steps; i++)
