@@ -80,9 +80,11 @@ internal static class CutCommand
             }
 
             // What each line already has (its corrected text, else its draft), and the lines that need a reading.
-            var texts = files.Select(f => LineFiles.IsCorrected(f) ? OcrText.ReadTranscription(LineFiles.Of(f, LineFiles.Corrected))
+            // Each file read once: the corrected text is what IsCorrected reads.
+            var corrected = files.Select(f => OcrText.ReadTranscription(LineFiles.Of(f, LineFiles.Corrected))).ToArray();
+            var texts = files.Select((f, i) => corrected[i].Length > 0 ? corrected[i]
                 : FirstFilled(OcrText.ReadTranscription(LineFiles.Of(f, LineFiles.Aligned)), OcrText.ReadTranscription(LineFiles.Of(f, LineFiles.Draft)))).ToArray();
-            int pageKept = files.Count(LineFiles.IsCorrected);
+            int pageKept = corrected.Count(c => c.Length > 0);
             var fresh = new List<int>();
             for (int i = 0; i < files.Count; i++)
             {
