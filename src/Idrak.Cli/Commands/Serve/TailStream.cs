@@ -23,19 +23,15 @@ internal sealed partial class TailStream(Stream inner) : Stream
     {
         get
         {
-            int count = (int)Math.Min(_written, Keep);
-            int start = (int)(_written % Keep);
-            var bytes = new byte[count];
             if (_written <= Keep)
             {
-                Array.Copy(_tail, bytes, count);
-            }
-            else
-            {
-                Array.Copy(_tail, start, bytes, 0, Keep - start);
-                Array.Copy(_tail, 0, bytes, Keep - start, start);
+                return Encoding.UTF8.GetString(_tail, 0, (int)_written);
             }
 
+            int start = (int)(_written % Keep);
+            var bytes = new byte[Keep];
+            Array.Copy(_tail, start, bytes, 0, Keep - start);
+            Array.Copy(_tail, 0, bytes, Keep - start, start);
             return Encoding.UTF8.GetString(bytes);
         }
     }
@@ -73,6 +69,13 @@ internal sealed partial class TailStream(Stream inner) : Stream
         Inner.Write(buffer, offset, count);
     }
 
+    // Without this override Stream copies a span into a rented array before calling the array overload.
+    public override void Write(ReadOnlySpan<byte> buffer)
+    {
+        Remember(buffer);
+        Inner.Write(buffer);
+    }
+
     public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
     {
         Remember(buffer.Span);
@@ -82,12 +85,19 @@ internal sealed partial class TailStream(Stream inner) : Stream
     public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
         WriteAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
 
+    // The last Keep bytes in the ring: at most two block copies per write (a streamed token is one or two).
     private void Remember(ReadOnlySpan<byte> data)
     {
-        foreach (byte b in data.Length > Keep ? data[^Keep..] : data)
+        if (data.Length > Keep)
         {
-            _tail[_written++ % Keep] = b;
+            data = data[^Keep..];
         }
+
+        int at = (int)(_written % Keep);
+        int first = Math.Min(data.Length, Keep - at);
+        data[..first].CopyTo(_tail.AsSpan(at));
+        data[first..].CopyTo(_tail);
+        _written += data.Length;
     }
 
     [GeneratedRegex("\"(?:prompt_tokens|prompt_eval_count)\"\\s*:\\s*(\\d+)")]
