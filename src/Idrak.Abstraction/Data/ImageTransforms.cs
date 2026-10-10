@@ -13,8 +13,11 @@ namespace Idrak.Abstraction.Data;
 /// One step done to a decoded image before a model's own preprocessing (turn it grey, shrink it, raise its contrast,
 /// re-encode it): decoded pixels in, decoded pixels out. Register one with <see cref="ImageTransforms.Register"/>; a
 /// pipeline (<see cref="ImageTransformPipeline"/>) names transforms in the order they run. The library's are Pillow's
-/// operations, byte for byte (core registers them): <c>grayscale</c>, <c>max_width</c>, <c>max_height</c>,
-/// <c>contrast</c>, <c>brightness</c>, <c>sharpness</c>, <c>autocontrast</c>, <c>invert</c>, <c>jpeg</c>. A transform knows nothing of
+/// operations, byte for byte (core registers them): <c>grayscale</c>, <c>max_width</c>, <c>max_height</c>, <c>scale</c>,
+/// <c>pad</c>, <c>contrast</c>, <c>brightness</c>, <c>sharpness</c>, <c>autocontrast</c>, <c>equalize</c>, <c>gamma</c>,
+/// <c>blur</c>, <c>unsharp</c>, <c>median</c>, <c>min_filter</c>, <c>max_filter</c>, <c>binarize</c>, <c>invert</c>,
+/// <c>jpeg</c>. Each describes its inputs (<see cref="Parameters"/>), so a program can offer them without knowing the
+/// transform. A transform knows nothing of
 /// models: a fine-tune that wants its scans prepared a certain way is given a pipeline by the application.
 /// </summary>
 public interface IImageTransform
@@ -33,6 +36,56 @@ public interface IImageTransform
 
     /// <summary>The image after this step (a new image, or <paramref name="image"/> itself when nothing changes).</summary>
     ImageData Apply(ImageData image, ImageTransformStep step);
+
+    /// <summary>A short name for people ("Thicken dark strokes"); <see cref="Name"/> unless the transform gives one.</summary>
+    string Label => Name;
+
+    /// <summary>
+    /// Its inputs, for a program that offers them as controls: the value (key "") and each option, with its kind and
+    /// range (the values to start from are the program's); none unless the transform describes them.
+    /// </summary>
+    IReadOnlyList<ImageTransformParameter> Parameters => [];
+}
+
+/// <summary>What kind of input an image transform's value or option is.</summary>
+public enum ImageTransformInput
+{
+    /// <summary>A number (a factor, a radius).</summary>
+    Number,
+
+    /// <summary>A whole number (pixels, a size, a percentage).</summary>
+    Integer,
+
+    /// <summary>One of <see cref="ImageTransformParameter.Choices"/>.</summary>
+    Choice,
+}
+
+/// <summary>
+/// One input of an image transform (<see cref="IImageTransform.Parameters"/>): its value (<see cref="Key"/> "") or an
+/// option, how it is entered and its range. What value to start from is the program's choice, not the transform's.
+/// </summary>
+/// <param name="Key">"" for the step's value (<c>contrast=1.5</c>), else the option's key (<c>resample</c>).</param>
+/// <param name="Label">A short name for people.</param>
+/// <param name="Input">How it is entered.</param>
+public sealed record ImageTransformParameter(string Key, string Label, ImageTransformInput Input)
+{
+    /// <summary>The smallest value taken, for numbers.</summary>
+    public double? Min { get; init; }
+
+    /// <summary>The largest value taken, for numbers.</summary>
+    public double? Max { get; init; }
+
+    /// <summary>A sensible increment for a number control.</summary>
+    public double? Step { get; init; }
+
+    /// <summary>The values taken, for <see cref="ImageTransformInput.Choice"/>.</summary>
+    public IReadOnlyList<string> Choices { get; init; } = [];
+
+    /// <summary>Whether it may be left out (the transform then does what its summary says, Otsu's threshold for binarize).</summary>
+    public bool Optional { get; init; }
+
+    /// <summary>One line on what it changes.</summary>
+    public string? Help { get; init; }
 }
 
 /// <summary>
@@ -367,6 +420,10 @@ public static class ImageTransforms
         public string Summary => app.Summary;
 
         public IReadOnlyCollection<string> Keys => app.Keys;
+
+        public string Label => app.Label;
+
+        public IReadOnlyList<ImageTransformParameter> Parameters => app.Parameters;
 
         public void Check(ImageTransformStep step) => app.Check(step);
 

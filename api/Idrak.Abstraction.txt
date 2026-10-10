@@ -172,6 +172,8 @@ public interface Idrak.Abstraction.Data.IImageCodec
   public string Name { get; }
 
 public interface Idrak.Abstraction.Data.IImageTransform
+  public (default) System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ImageTransformParameter> Parameters { get; }
+  public (default) string Label { get; }
   public Idrak.Abstraction.Data.ImageData Apply(Idrak.Abstraction.Data.ImageData image, Idrak.Abstraction.Data.ImageTransformStep step)
   public System.Collections.Generic.IReadOnlyCollection<string> Keys { get; }
   public string Name { get; }
@@ -235,6 +237,23 @@ public readonly record struct Idrak.Abstraction.Data.ImageInfo : System.IEquatab
   public int Height { get; init; }
   public int Width { get; init; }
   public string Format { get; init; }
+
+public enum Idrak.Abstraction.Data.ImageTransformInput : int
+  Choice = 2
+  Integer = 1
+  Number = 0
+
+public sealed record Idrak.Abstraction.Data.ImageTransformParameter : System.IEquatable<Idrak.Abstraction.Data.ImageTransformParameter>
+  public Idrak.Abstraction.Data.ImageTransformInput Input { get; init; }
+  public ImageTransformParameter(string Key, string Label, Idrak.Abstraction.Data.ImageTransformInput Input)
+  public System.Collections.Generic.IReadOnlyList<string> Choices { get; init; }
+  public bool Optional { get; init; }
+  public double? Max { get; init; }
+  public double? Min { get; init; }
+  public double? Step { get; init; }
+  public string Key { get; init; }
+  public string Label { get; init; }
+  public string? Help { get; init; }
 
 public sealed class Idrak.Abstraction.Data.ImageTransformPipeline : System.IEquatable<Idrak.Abstraction.Data.ImageTransformPipeline>
   public Idrak.Abstraction.Data.ImageData Apply(Idrak.Abstraction.Data.ImageData image)

@@ -40,7 +40,9 @@ internal static class ModelChoices
               --image-transform P image transforms run on every image first, in order, as Pillow does them (P such as
                                  grayscale,max_width=1024,contrast=1.5; also max_height=N, resample=lanczos|bicubic|
                                  bilinear|box|hamming after a size, brightness=F, sharpness=F, autocontrast[=CUT],
-                                 invert, jpeg=Q); "none" for none; an alias can keep them ("image_transforms")
+                                 invert, jpeg=Q; for poor scans scale=F, pad=N, equalize, gamma=G, blur=R,
+                                 unsharp=R, median=N, min_filter=N, max_filter=N, binarize[=T]); "none" for none; an
+                                 alias can keep them ("image_transforms")
         """;
 
     /// <summary>Their short forms.</summary>

@@ -230,7 +230,11 @@ string tinyGemma = Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data"
     ("legal api: status, models, pages, a page's image, a read, an evaluation and the tuning endpoints over HTTP, with the JSON the page reads", () =>
     {
         string data = EvaluationData(2);
-        var settings = Settings(("a", tinyGemma)) with { EvaluationData = data, EvaluationImages = Path.Combine(root, "images.zip"), AdaptersFolder = Path.Combine(root, "api-adapters") };
+        var settings = Settings(("a", tinyGemma)) with
+        {
+            EvaluationData = data, EvaluationImages = Path.Combine(root, "images.zip"), AdaptersFolder = Path.Combine(root, "api-adapters"),
+            PreprocessingDefaults = new(StringComparer.OrdinalIgnoreCase) { ["unsharp"] = "unsharp=2,percent=150,threshold=3", ["contrast"] = "contrast=x" },
+        };
         var builder = WebApplication.CreateSlimBuilder();
         builder.WebHost.UseUrls("http://127.0.0.1:0");
         builder.Logging.ClearProviders();
@@ -239,6 +243,7 @@ string tinyGemma = Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data"
         builder.Services.AddSingleton<ReaderService>();
         builder.Services.AddSingleton<TuningService>();
         builder.Services.AddSingleton<EvaluationPages>();
+        builder.Services.AddSingleton<Preprocessing>();
         builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter()));
         using var app = builder.Build();
         LegalOcrApi.Map(app);
@@ -269,6 +274,25 @@ string tinyGemma = Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data"
             Check(response.Content.Headers.ContentType?.MediaType == "text/event-stream", response.Content.Headers.ContentType?.ToString() ?? "no type");
             string body = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
             Check(body.Contains("event: image", StringComparison.Ordinal) && body.Contains("event: done", StringComparison.Ordinal), body.Length > 400 ? body[..400] : body);
+            // The preprocessing editor: every registered transform with its inputs; the app's suggested values (a bad one left out).
+            var transforms = http.GetFromJsonAsync<JsonArray>("/api/transforms").GetAwaiter().GetResult()!;
+            var unsharp = transforms.Single(t => t!["name"]!.GetValue<string>() == "unsharp")!;
+            var inputs = unsharp["inputs"]!.AsArray();
+            Check(transforms.Count >= 19 && inputs.Count == 3 && inputs[0]!["default"]!.GetValue<string>() == "2" && inputs[1]!["key"]!.GetValue<string>() == "percent"
+                  && inputs[1]!["default"]!.GetValue<string>() == "150" && inputs[1]!["input"]!.GetValue<string>() == "integer", unsharp.ToJsonString());
+            var binarize = transforms.Single(t => t!["name"]!.GetValue<string>() == "binarize")!["inputs"]![0]!;
+            Check(binarize["optional"]!.GetValue<bool>() && binarize["default"] is null, binarize.ToJsonString());
+            Check(transforms.Single(t => t!["name"]!.GetValue<string>() == "contrast")!["inputs"]![0]!["default"] is null, "a suggested value the library refuses is left out");
+
+            // The preview: the steps on a page, no model needed; a step the library refuses is a 400 naming it.
+            var previewed = http.PostAsJsonAsync("/api/preview", new { page = 0, preprocessing = "grayscale,scale=2,median=3,binarize" }).GetAwaiter().GetResult();
+            var shown = previewed.Content.ReadFromJsonAsync<JsonObject>().GetAwaiter().GetResult()!;
+            Check(previewed.IsSuccessStatusCode && shown["width"]!.GetValue<int>() == 64 && shown["height"]!.GetValue<int>() == 48 && shown["channels"]!.GetValue<int>() == 1
+                  && shown["image"]!.GetValue<string>().StartsWith("data:image/png;base64,", StringComparison.Ordinal), shown.ToJsonString()[..Math.Min(300, shown.ToJsonString().Length)]);
+            var refusedStep = http.PostAsJsonAsync("/api/preview", new { image = dataUrl, preprocessing = "median=4" }).GetAwaiter().GetResult();
+            Check(refusedStep.StatusCode == System.Net.HttpStatusCode.BadRequest && refusedStep.Content.ReadAsStringAsync().GetAwaiter().GetResult().Contains("median", StringComparison.Ordinal),
+                $"median=4: {refusedStep.StatusCode}");
+
             var bad = http.PostAsJsonAsync("/api/read", new { prompt = "x" }).GetAwaiter().GetResult();
             Check(bad.StatusCode == System.Net.HttpStatusCode.BadRequest, bad.StatusCode.ToString());
 

@@ -247,13 +247,24 @@ public sealed class Idrak.Data.NpySource : Idrak.Abstraction.Data.ISampleSource,
 
 public static class Idrak.Data.PillowImageOps
   public static Idrak.Abstraction.Data.ImageData Autocontrast(Idrak.Abstraction.Data.ImageData image, double cutoffLow = 0, double cutoffHigh = 0, int? ignore = null, bool preserveTone = false)
+  public static Idrak.Abstraction.Data.ImageData Binarize(Idrak.Abstraction.Data.ImageData image, int? threshold = null)
   public static Idrak.Abstraction.Data.ImageData Brightness(Idrak.Abstraction.Data.ImageData image, double factor)
   public static Idrak.Abstraction.Data.ImageData Contrast(Idrak.Abstraction.Data.ImageData image, double factor)
+  public static Idrak.Abstraction.Data.ImageData Equalize(Idrak.Abstraction.Data.ImageData image)
+  public static Idrak.Abstraction.Data.ImageData Gamma(Idrak.Abstraction.Data.ImageData image, double gamma)
+  public static Idrak.Abstraction.Data.ImageData GaussianBlur(Idrak.Abstraction.Data.ImageData image, double radius)
   public static Idrak.Abstraction.Data.ImageData Invert(Idrak.Abstraction.Data.ImageData image)
   public static Idrak.Abstraction.Data.ImageData JpegRoundTrip(Idrak.Abstraction.Data.ImageData image, int quality, Idrak.Data.JpegSubsampling subsampling = (Idrak.Data.JpegSubsampling)0)
+  public static Idrak.Abstraction.Data.ImageData MaxFilter(Idrak.Abstraction.Data.ImageData image, int size = 3)
+  public static Idrak.Abstraction.Data.ImageData Median(Idrak.Abstraction.Data.ImageData image, int size = 3)
+  public static Idrak.Abstraction.Data.ImageData MinFilter(Idrak.Abstraction.Data.ImageData image, int size = 3)
+  public static Idrak.Abstraction.Data.ImageData Pad(Idrak.Abstraction.Data.ImageData image, int border, byte fill = 255)
+  public static Idrak.Abstraction.Data.ImageData RankFilter(Idrak.Abstraction.Data.ImageData image, int size, int rank)
   public static Idrak.Abstraction.Data.ImageData Resize(Idrak.Abstraction.Data.ImageData image, int width, int height, Idrak.Data.ImageResampling resampling = (Idrak.Data.ImageResampling)1)
+  public static Idrak.Abstraction.Data.ImageData Scale(Idrak.Abstraction.Data.ImageData image, double factor, Idrak.Data.ImageResampling resampling = (Idrak.Data.ImageResampling)1)
   public static Idrak.Abstraction.Data.ImageData ScaleDown(Idrak.Abstraction.Data.ImageData image, int maxWidth, int maxHeight, Idrak.Data.ImageResampling resampling = (Idrak.Data.ImageResampling)1)
   public static Idrak.Abstraction.Data.ImageData Sharpness(Idrak.Abstraction.Data.ImageData image, double factor)
+  public static Idrak.Abstraction.Data.ImageData UnsharpMask(Idrak.Abstraction.Data.ImageData image, double radius = 2, int percent = 150, int threshold = 3)
 
 public sealed class Idrak.Data.RandomFlip : Idrak.Abstraction.Data.IAugmentation, Idrak.Abstraction.Data.ISampleTransform
   public Idrak.Abstraction.Data.AnnotatedImage Apply(Idrak.Abstraction.Data.AnnotatedImage sample, Idrak.Abstraction.Data.AugmentationContext context)

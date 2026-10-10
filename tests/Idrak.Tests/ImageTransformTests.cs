@@ -14,10 +14,10 @@ internal static partial class Tests
 {
     private static readonly (string Name, Action<Device> Run)[] ImageTransformGroup =
     [
-        ("image transforms: grayscale, max_width/max_height (every resample), contrast, brightness, sharpness, autocontrast, invert and jpeg give Pillow 12.3's bytes exactly (fixtures and a scan-like page)", TransformsMatchPillow),
+        ("image transforms: grayscale, max_width/max_height (every resample), scale, pad, contrast, brightness, sharpness, autocontrast, equalize, gamma, blur, unsharp, median, min_filter, max_filter, binarize, invert and jpeg give Pillow 12.3's bytes exactly (fixtures and a scan-like page)", TransformsMatchPillow),
         ("image transforms: the JPEG encoder's files decode to the pixels of Pillow's at the same quality (grey, 4:2:0, 4:2:2, 4:4:4, odd sizes, qualities 10 to 100)", JpegEncoderMatchesPillow),
         ("image transforms: pipelines parse from text and JSON in the user's order; unknown names, options and bad values name what is registered", TransformPipelineParsing),
-        ("image transforms: the library's are library defaults; an app's transform registers from outside, runs in a pipeline and unregisters", TransformRegistry),
+        ("image transforms: the library's are library defaults and describe their inputs (a label, the value and each option key, ranges and choices that their checks accept); an app's transform registers from outside, runs in a pipeline and unregisters", TransformRegistry),
         ("image transforms: a chat request's transforms give transformers' pixels, features and 20 greedy tokens on the same Pillow-transformed image (tiny Gemma 3, compare_real.py --image-transform)", TransformedRequestMatchesTransformers),
     ];
 
@@ -188,7 +188,7 @@ internal static partial class Tests
             throw new InvalidOperationException($"{what}: accepted");
         }
 
-        Refused(() => ImageTransformPipeline.Parse("grayscale,blur=2"), "Unknown image transform 'blur' (registered: grayscale, max_width, max_height, contrast", "unknown name");
+        Refused(() => ImageTransformPipeline.Parse("grayscale,warp=2"), "Unknown image transform 'warp' (registered: grayscale, max_width, max_height, scale, pad, contrast", "unknown name");
         Refused(() => ImageTransformPipeline.Parse("max_width=1024,resample=bicubic,colour=2"), "Unknown image transform 'colour'", "unknown after a step");
         Refused(() => ImageTransformPipeline.Parse("resample=bicubic"), "Unknown image transform 'resample'", "an option without its step");
         Refused(() => ImageTransformPipeline.Parse("contrast=1.5,resample=bicubic"), "Unknown image transform 'resample'", "an option of another step");
@@ -288,8 +288,40 @@ internal static partial class Tests
     private static void TransformRegistry(Device device)
     {
         _ = device;
-        string[] library = ["grayscale", "max_width", "max_height", "contrast", "brightness", "sharpness", "autocontrast", "invert", "jpeg"];
+        string[] library =
+        [
+            "grayscale", "max_width", "max_height", "scale", "pad", "contrast", "brightness", "sharpness", "autocontrast", "equalize", "gamma", "blur",
+            "unsharp", "median", "min_filter", "max_filter", "binarize", "invert", "jpeg",
+        ];
         Check(library.All(n => ImageTransforms.Origin(n) == Overrides.Library && ImageTransforms.Default(n) is not null), $"library defaults: {string.Join(", ", ImageTransforms.Names)}");
+        foreach (string name in library)
+        {
+            var transform = ImageTransforms.Get(name);
+            var keys = transform.Parameters.Select(p => p.Key).Where(k => k.Length > 0).ToHashSet(StringComparer.Ordinal);
+            Check(transform.Label.Length > 0 && keys.SetEquals(transform.Keys), $"{name}: label '{transform.Label}', inputs [{string.Join(", ", keys)}] for keys [{string.Join(", ", transform.Keys)}]");
+            foreach (var input in transform.Parameters)
+            {
+                // Each input's range or choices are values the transform's own check accepts.
+                var probes = input.Input == ImageTransformInput.Choice ? input.Choices
+                    : [.. new[] { input.Min, input.Max }.OfType<double>().Select(v => (input.Input == ImageTransformInput.Integer ? Math.Round(v) : v).ToString(System.Globalization.CultureInfo.InvariantCulture))];
+                Check(input.Input != ImageTransformInput.Choice || input.Choices.Count > 0, $"{name}.{input.Key}: a choice without choices");
+                foreach (string probe in probes)
+                {
+                    string value = input.Key.Length == 0 ? probe : transform.Parameters.FirstOrDefault(p => p.Key.Length == 0) is { } main
+                        ? (main.Input == ImageTransformInput.Choice ? main.Choices[0] : (main.Min ?? 1).ToString(System.Globalization.CultureInfo.InvariantCulture)) : "";
+                    string text = input.Key.Length == 0 ? $"{name}={value}" : value.Length > 0 ? $"{name}={value},{input.Key}={probe}" : $"{name},{input.Key}={probe}";
+                    try
+                    {
+                        ImageTransformPipeline.Parse(text);
+                    }
+                    catch (ArgumentException ex)
+                    {
+                        Check(false, $"{text}: the input's range is refused: {ex.Message}");
+                    }
+                }
+            }
+        }
+
         Check(ImageTransforms.Describe().Contains("contrast: contrast=F", StringComparison.Ordinal), "Describe");
         Check(ImageTransforms.Find("nope") is null, "Find");
         ImageTransforms.Register(new NegativeTransform());
