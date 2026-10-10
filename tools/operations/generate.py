@@ -216,7 +216,7 @@ def as_code(lines):
 
 
 def generate():
-    source = BACKEND.read_text()
+    source = BACKEND.read_text(encoding="utf-8")
     ops = operations(source)
     if not ops:
         sys.exit(f"no `public virtual ... NameKernel(` in {BACKEND}")
@@ -469,10 +469,10 @@ def generate():
     c.append("}")
 
     OPERATIONS.parent.mkdir(parents=True, exist_ok=True)
-    OPERATIONS.write_text("\n".join(o) + "\n")
-    DISPATCH.write_text("\n".join(d) + "\n")
+    OPERATIONS.write_text("\n".join(o) + "\n", encoding="utf-8", newline="\n")
+    DISPATCH.write_text("\n".join(d) + "\n", encoding="utf-8", newline="\n")
     CALLS.parent.mkdir(parents=True, exist_ok=True)
-    CALLS.write_text("\n".join(c) + "\n")
+    CALLS.write_text("\n".join(c) + "\n", encoding="utf-8", newline="\n")
     print(f"{len(named)} operations: {OPERATIONS.relative_to(ROOT)}, {DISPATCH.relative_to(ROOT)}, {CALLS.relative_to(ROOT)}")
 
 
