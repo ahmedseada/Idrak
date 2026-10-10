@@ -41,6 +41,9 @@ internal static partial class PtxKernels
 
     private static void BuildCtc(StringBuilder sb)
     {
+        // The shared-memory kernels' rows (CtcRows · states floats, sized at launch): dynamic shared memory is declared
+        // once, at module scope (ptxas takes no .extern inside a kernel), and both kernels address it.
+        sb.AppendLine(".extern .shared .align 4 .f32 ctc_rows[];");
         foreach (bool shared in new[] { true, false })
         {
             CtcLossKernel(sb, shared);
@@ -49,7 +52,7 @@ internal static partial class PtxKernels
     }
 
     // The common start of a CTC kernel: parameters, registers, the sequence's lengths and offset, its states.
-    private static StringBuilder CtcHeader(string name, string[] pointers, bool shared)
+    private static StringBuilder CtcHeader(string name, string[] pointers)
     {
         int threads = BlockSize;
         var p = new StringBuilder();
@@ -65,11 +68,6 @@ internal static partial class PtxKernels
         p.AppendLine("    .reg .u32 " + string.Join(", ", CtcScalars.Select(s => $"%s_{s}")) + ";");
         p.AppendLine("    .reg .u32 %n, %len, %labels, %offset, %S, %lane, %nt, %stride, %t, %wlane, %warp;");
         p.AppendLine("    .reg .u64 %rows, " + string.Join(", ", pointers.Select(q => $"%g_{q}")) + ";");
-        if (shared)
-        {
-            p.AppendLine("    .extern .shared .align 4 .f32 srows[];");                  // CtcRows · states floats, sized at launch
-        }
-
         p.AppendLine($"    .shared .align 4 .f32 red[{threads}];");
         p.AppendLine($"    .shared .align 4 .f32 wmax[{2 * (threads / 32)}];");
         p.AppendLine($"    .shared .align 4 .f32 wtop[{2 * (threads / 32)}];");
@@ -107,7 +105,7 @@ internal static partial class PtxKernels
     // The address of row element `index` (a register) into %rd2: the shared rows or the scratch rows at %rows (stride states).
     private static string RowAddress(bool shared, string index) => shared
         ? $"""
-            mov.u64 %rd2, srows;
+            mov.u64 %rd2, ctc_rows;
             mul.wide.u32 %rd3, {index}, 4;
             add.u64 %rd2, %rd2, %rd3;
             """
@@ -317,7 +315,7 @@ internal static partial class PtxKernels
     private static void CtcLossKernel(StringBuilder sb, bool shared)
     {
         string name = shared ? "ctc_loss_f32" : "ctc_loss_global_f32";
-        var p = CtcHeader(name, ["logprobs", "targets", "meta", "losses", "work"], shared);
+        var p = CtcHeader(name, ["logprobs", "targets", "meta", "losses", "work"]);
         p.AppendLine("    mov.u32 %stride, %s_states;");
         p.AppendLine(shared
             ? ""
@@ -412,7 +410,7 @@ internal static partial class PtxKernels
     private static void CtcBackwardKernel(StringBuilder sb, bool shared)
     {
         string name = shared ? "ctc_loss_bwd_f32" : "ctc_loss_bwd_global_f32";
-        var p = CtcHeader(name, ["logprobs", "targets", "meta", "lossgrads", "dlogprobs", "alpha", "work"], shared);
+        var p = CtcHeader(name, ["logprobs", "targets", "meta", "lossgrads", "dlogprobs", "alpha", "work"]);
 
         // %rows: β's two rows, the terms, then each label's class (from element %r2) and its next occurrence of that class
         // (from %r3; the top bit set on all but a class's first occurrence) (shared, or the scratch); %r9: the alpha rows'
