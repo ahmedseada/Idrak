@@ -2,7 +2,9 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Buffers.Binary;
+using System.Globalization;
 using System.IO.Compression;
+using System.Numerics;
 using System.Text;
 using Idrak.Data.Abstractions;
 
@@ -12,6 +14,33 @@ namespace Idrak.Data;
 internal static class ImageLevels
 {
     public static byte Level(float value) => (byte)Math.Clamp((int)MathF.Round(value * 255f), 0, 255);
+
+    // Bytes as values in [0, 1]: each byte times 1/255 in float32, as the decoders give them; a vector loop (bytes widened
+    // to whole numbers, which convert exactly) and a scalar tail.
+    public static void ToUnit(ReadOnlySpan<byte> bytes, Span<float> values)
+    {
+        int i = 0;
+        if (Vector.IsHardwareAccelerated && bytes.Length >= Vector<byte>.Count)
+        {
+            var scale = new Vector<float>(1f / 255f);
+            int step = Vector<byte>.Count, quarter = Vector<int>.Count;
+            for (; i <= bytes.Length - step; i += step)
+            {
+                Vector.Widen(new Vector<byte>(bytes[i..]), out var low, out var high);
+                Vector.Widen(low, out var a, out var b);
+                Vector.Widen(high, out var c, out var d);
+                (Vector.ConvertToSingle(Vector.AsVectorInt32(a)) * scale).CopyTo(values[i..]);
+                (Vector.ConvertToSingle(Vector.AsVectorInt32(b)) * scale).CopyTo(values[(i + quarter)..]);
+                (Vector.ConvertToSingle(Vector.AsVectorInt32(c)) * scale).CopyTo(values[(i + 2 * quarter)..]);
+                (Vector.ConvertToSingle(Vector.AsVectorInt32(d)) * scale).CopyTo(values[(i + 3 * quarter)..]);
+            }
+        }
+
+        for (; i < bytes.Length; i++)
+        {
+            values[i] = bytes[i] * (1f / 255f);
+        }
+    }
 
     // The pixels row by row, channels interleaved (grey: one byte a pixel, colour: three).
     public static byte[] Interleaved(ImageData image)
@@ -128,7 +157,7 @@ internal sealed class NetpbmEncoder : IImageEncoder
     {
         ArgumentNullException.ThrowIfNull(image);
         var pixels = ImageLevels.Interleaved(image);
-        var header = Encoding.ASCII.GetBytes($"{(image.Channels == 1 ? "P5" : "P6")}\n{image.Width} {image.Height}\n255\n");
+        var header = Encoding.ASCII.GetBytes(string.Create(CultureInfo.InvariantCulture, $"{(image.Channels == 1 ? "P5" : "P6")}\n{image.Width} {image.Height}\n255\n"));
         return [.. header, .. pixels];
     }
 }
