@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Renders text into OCR training pairs: page images with their text (a ShareGPT train.json / val.json for `idrak tune`)
     and line images with a .txt beside each (for the ArabicOcr sample's `train`).
