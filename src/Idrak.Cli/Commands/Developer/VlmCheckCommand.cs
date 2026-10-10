@@ -197,7 +197,7 @@ internal sealed class VlmCheckCommand : Command
 
             var p = Compare(refPixels, ownPixels);
             pixelDifference = p.MaxAbs;
-            int differing = refPixels.Where((v, i) => Math.Abs(v - ownPixels[i]) > 1e-5f).Count();
+            int differing = p.Differing;
             context.Write(string.Create(CultureInfo.InvariantCulture, $"  {Mark(p.MaxAbs <= 1e-5f)} {imagePath} ({decoded.Width} x {decoded.Height}) -> [{string.Join(", ", pixelShape)}]: max |Δ| {p.MaxAbs:G3}, ")
                           + $"{differing} of {refPixels.Length} values differ by more than 1e-5");
             json["pixels"] = new JsonObject { ["image"] = imagePath, ["max_abs"] = p.MaxAbs, ["differing"] = differing };
@@ -330,7 +330,7 @@ internal sealed class VlmCheckCommand : Command
                 {
                     using var next = Tensor.From([(float)generated[i]], [1, 1], model.Device);
                     using var logits = model.Network.ForwardCached(next, decoding);
-                    last = logits.ToArray();
+                    last = Read(logits, last);
                 }
             }
 
@@ -374,7 +374,7 @@ internal sealed class VlmCheckCommand : Command
                 {
                     using var next = Tensor.From([(float)greedy[^1]], [1, 1], model.Device);
                     using var logits = model.Network.ForwardCached(next, decoding);
-                    last = logits.ToArray();
+                    last = Read(logits, last);
                 }
             }
         }
@@ -540,16 +540,18 @@ internal sealed class VlmCheckCommand : Command
 
     private static string Mark(bool ok) => ok ? "ok  " : "DIFF";
 
-    private readonly record struct Comparison(float MaxAbs, float Relative, double Cosine, float MeanAbs);
+    // Differing: the values more than 1e-5 apart, counted in the same pass.
+    private readonly record struct Comparison(float MaxAbs, float Relative, double Cosine, float MeanAbs, int Differing);
 
     private static Comparison Compare(ReadOnlySpan<float> expected, ReadOnlySpan<float> actual)
     {
-        int n = Math.Min(expected.Length, actual.Length);
+        int n = Math.Min(expected.Length, actual.Length), differing = 0;
         float maxAbs = 0, scale = 0;
         double dot = 0, ee = 0, aa = 0, sum = 0;
         for (int i = 0; i < n; i++)
         {
             float d = Math.Abs(expected[i] - actual[i]);
+            differing += d > 1e-5f ? 1 : 0;
             maxAbs = Math.Max(maxAbs, d);
             scale = Math.Max(scale, Math.Abs(expected[i]));
             dot += (double)expected[i] * actual[i];
@@ -559,7 +561,19 @@ internal sealed class VlmCheckCommand : Command
         }
 
         double cosine = ee == 0 && aa == 0 ? 1 : ee == 0 || aa == 0 ? 0 : dot / Math.Sqrt(ee * aa);
-        return new Comparison(maxAbs, scale == 0 ? maxAbs : maxAbs / scale, cosine, n == 0 ? 0 : (float)(sum / n));
+        return new Comparison(maxAbs, scale == 0 ? maxAbs : maxAbs / scale, cosine, n == 0 ? 0 : (float)(sum / n), differing);
+    }
+
+    // The tensor's values in last when it holds exactly as many (one buffer for every decoding step), else a new array.
+    private static float[] Read(Tensor tensor, float[] last)
+    {
+        if (tensor.Size != last.Length)
+        {
+            return tensor.ToArray();
+        }
+
+        tensor.CopyTo(last);
+        return last;
     }
 
     private static string Describe(Comparison c) =>
