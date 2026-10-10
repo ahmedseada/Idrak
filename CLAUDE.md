@@ -21,11 +21,13 @@ These are the owner's standing rules. They hold in every session, after every co
 - **Tests.** Never run the full test suite, anywhere, by anyone but the owner. Only targeted runs: always
   `IDRAK_DEVICES=cpu` with an `IDRAK_FILTER` group or name for the code changed (sample test projects with their own
   filter). GPU tests, apps and training runs are the owner's: give the exact commands.
-- **Fix all, then test once.** Make every fix of a task first; never run tests after individual fixes. When all are
-  written: one build, then the targeted filtered tests once with `--no-build`.
-- **Builds.** Build only after a code change, and only the projects that changed; then run every filtered CPU test
-  with `--no-build` on that one build. A merge without conflicts gets no build and no tests (its branch was built and
-  tested already). At most two agents at a time, so builds do not compete for the machine.
+- **The fix workflow (the owner's, in this order).** 1. Fix every error of the task first; never run tests between
+  fixes. 2. Update the tests the fixes touch (expectations, and failure messages that name the cause, e.g. which
+  operation took a host fallback). 3. Build once, only the projects that changed. 4. Run the targeted filtered tests
+  once with `--no-build` (CPU here). 5. Merge and push; a merge without conflicts gets no build and no tests (its
+  branch was built and tested already). 6. Hand the owner one targeted command list for only what changed: one
+  `dotnet build -c Release tests\Idrak.Tests`, then the CUDA filters with `--no-build`. At most two agents at a time,
+  so builds do not compete for the machine.
 - **Keep the owner informed.** Before each step, say in a line what you are about to do and why; never go quiet while
   working. The same for the software: long work shows live progress (what it is doing, how far, how fast, time left).
 - **Commands for the owner** are exact PowerShell commands for Windows, with the repo at `D:\Projects\Idrak`.
