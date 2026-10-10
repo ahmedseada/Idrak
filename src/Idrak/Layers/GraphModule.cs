@@ -116,12 +116,13 @@ public sealed class GraphModule : Module
     internal Dictionary<string, object> Trace(Tensor input)
     {
         var values = new Dictionary<string, object> { [Input] = input };
+        Func<string, object?> lookup = name => values.TryGetValue(name, out var v) ? v           // one delegate for every node
+            : _constants.TryGetValue(name, out var c) ? c
+            : _integers.TryGetValue(name, out var h) ? h
+            : null;
         foreach (var node in _nodes)
         {
-            values[node.Output] = RunNode(node, name => values.TryGetValue(name, out var v) ? v
-                : _constants.TryGetValue(name, out var c) ? c
-                : _integers.TryGetValue(name, out var h) ? h
-                : null);
+            values[node.Output] = RunNode(node, lookup);
         }
 
         return values;
