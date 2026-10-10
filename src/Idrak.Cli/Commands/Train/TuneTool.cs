@@ -292,14 +292,9 @@ internal sealed class TuneTool(ToolConsole console)
             Optimizer = optimizerName == "adamw" ? null : FineTuningOptimizers.Names.Contains(optimizerName)
                 ? FineTuningOptimizers.Create(optimizerName, tuning.LearningRate, weightDecay, momentum)
                 : throw new ArgumentException($"--optimizer {optimizerName}: use {string.Join(", ", FineTuningOptimizers.Names)}."),
-            Scheduler = scheduleName switch
-            {
-                "cosine" => null,
-                "linear" => FineTuningSchedules.Linear(tuning.WarmupFraction, tuning.MinLearningRate),
-                "constant" => FineTuningSchedules.Constant(tuning.WarmupFraction),
-                "wsd" => FineTuningSchedules.WarmupStableDecay(tuning.WarmupFraction, decayFraction, tuning.MinLearningRate),
-                _ => throw new ArgumentException($"--schedule {scheduleName}: use cosine, linear, constant or wsd."),
-            },
+            Scheduler = scheduleName == "cosine" ? null : FineTuningSchedules.Names.Contains(scheduleName)
+                ? FineTuningSchedules.Create(scheduleName, tuning.WarmupFraction, tuning.MinLearningRate, decayFraction)
+                : throw new ArgumentException($"--schedule {scheduleName}: use {string.Join(", ", FineTuningSchedules.Names)}."),
             Loss = lossName switch
             {
                 "sft" => null,
