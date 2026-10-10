@@ -74,6 +74,11 @@ internal sealed unsafe partial class VulkanBackend
     // The blocks of the command being recorded (reused: dispatches allocate nothing).
     private readonly VulkanBlock[] _commandBlocks = new VulkanBlock[VulkanKernel.MaxBindings];
 
+    // The descriptors of the command being recorded, reused under _gate like _commandBlocks: a kernel binds up to
+    // MaxBindings storages (a plug-in decides how many), too many for the stack on every dispatch.
+    private readonly VkDescriptorBufferInfo[] _descriptorBuffers = new VkDescriptorBufferInfo[VulkanKernel.MaxBindings];
+    private readonly VkWriteDescriptorSet[] _descriptorWrites = new VkWriteDescriptorSet[VulkanKernel.MaxBindings];
+
     private readonly Dictionary<VulkanKernel, Pipeline> _pipelines = [];
     private readonly Dictionary<(int Bindings, bool Pushed), ulong> _setLayouts = [];
     private readonly Dictionary<(int Bindings, int PushBytes, bool Pushed), ulong> _pipelineLayouts = [];
@@ -148,12 +153,12 @@ internal sealed unsafe partial class VulkanBackend
         }
 
         int bindings = kernel.Bindings;
-        var buffers = stackalloc VkDescriptorBufferInfo[Math.Max(bindings, 1)];
-        var writes = stackalloc VkWriteDescriptorSet[Math.Max(bindings, 1)];
         lock (_gate)
         {
             var pipeline = PipelineOf(kernel);
             var blocks = _commandBlocks.AsSpan(0, bindings);
+            fixed (VkDescriptorBufferInfo* buffers = _descriptorBuffers)
+            fixed (VkWriteDescriptorSet* writes = _descriptorWrites)
             try
             {
                 for (int i = 0; i < bindings; i++)
