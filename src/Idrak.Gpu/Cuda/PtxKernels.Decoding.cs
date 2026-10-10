@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Globalization;
 using System.Text;
 
 namespace Idrak.Gpu.Cuda;
@@ -107,7 +108,7 @@ internal static partial class PtxKernels
             """));
 
         // dgamma / dbeta: thread = column (x = column block of BlockSize), grid y = chunks of `chunk` rows.
-        sb.AppendLine($$"""
+        sb.AppendLine(CultureInfo.InvariantCulture, $$"""
             .visible .entry layernorm_bwd_params_f32(
                 .param .u64 p_x, .param .u64 p_dy, .param .u64 p_stats, .param .u64 p_dgamma, .param .u64 p_dbeta,
                 .param .u32 p_rows, .param .u32 p_cols, .param .u32 p_chunk
@@ -680,7 +681,7 @@ internal static partial class PtxKernels
             var exclude = new StringBuilder("setp.gt.f32 %p2, %f5, %f16;\n");
             for (int prev = 0; prev < a; prev++)
             {
-                exclude.AppendLine($"setp.ne.s32 %p3, %r6, %r{13 + prev};");
+                exclude.AppendLine(CultureInfo.InvariantCulture, $"setp.ne.s32 %p3, %r6, %r{13 + prev};");
                 exclude.AppendLine("and.pred %p2, %p2, %p3;");
             }
 
@@ -690,9 +691,9 @@ internal static partial class PtxKernels
                 mov.s32 %r18, -1;
                 mov.f32 %f16, {Zero};
                 """);
-            body.AppendLine(Kept($"TOP{a}", exclude.ToString()));
-            body.AppendLine(BlockArgMax($"RTOP{a}", "%f16", "%r18"));
-            body.AppendLine($"""
+            body.AppendLine(Kept(string.Create(CultureInfo.InvariantCulture, $"TOP{a}"), exclude.ToString()));
+            body.AppendLine(BlockArgMax(string.Create(CultureInfo.InvariantCulture, $"RTOP{a}"), "%f16", "%r18"));
+            body.AppendLine(CultureInfo.InvariantCulture, $"""
                 mov.b32 %r{13 + a}, %r18;
                 setp.ge.s32 %p13, %r18, 0;
                 and.pred %p13, %p13, %p14;
@@ -715,7 +716,7 @@ internal static partial class PtxKernels
     {
         RowBlock(sb, "sample_rows_f32", ["logits", "ids", "stats", "step"],
             [("u32", "vocab"), ("u32", "rowstride"), ("u32", "rowoffset"), ("f32", "invt"), ("u32", "topk"), ("f32", "topp"), ("f32", "minp"), ("u32", "seed"), ("u32", "rows")],
-            SamplerBody(candidates: false), sharedFloats: SamplerThreads);
+            SamplerBody(candidates: false), sharedFloats: SamplerThreads, maxThreads: SamplerThreads);
         RowBlock(sb, "sample_candidates_f32", ["logits", "ids", "stats", "step", "candv", "candi", "flags"],
             [("u32", "vocab"), ("u32", "rowstride"), ("u32", "rowoffset"), ("f32", "invt"), ("u32", "topk"), ("f32", "topp"), ("f32", "minp"), ("u32", "seed"), ("u32", "rows"), ("u32", "slots")],
             SamplerBody(candidates: true), sharedFloats: SamplerThreads);
@@ -737,7 +738,7 @@ internal static partial class PtxKernels
     private static void TopKCandidates(StringBuilder sb)
     {
         var b = new StringBuilder();
-        b.AppendLine($"""
+        b.AppendLine(CultureInfo.InvariantCulture, $"""
             div.u32 %r7, %row, %s_bpr;
             rem.u32 %r8, %row, %s_bpr;
             mad.lo.u32 %r5, %r7, %s_rowstride, %s_rowoffset;
@@ -749,7 +750,7 @@ internal static partial class PtxKernels
             """);
         for (int i = 0; i < 8; i++)
         {
-            b.AppendLine($"""
+            b.AppendLine(CultureInfo.InvariantCulture, $"""
                 add.u32 %r11, %r10, {i};
                 setp.lt.u32 %p{1 + i}, %r11, %s_vocab;
                 mov.f32 %f{10 + i}, {NegInf};
@@ -770,7 +771,7 @@ internal static partial class PtxKernels
             """);
         for (int i = 0; i < 8; i++)
         {
-            b.AppendLine($"""
+            b.AppendLine(CultureInfo.InvariantCulture, $"""
                 setp.lt.f32 %p10, %f{10 + i}, %f3;
                 setp.gt.and.f32 %p10, %f{10 + i}, %f4, %p10;
                 selp.f32 %f4, %f{10 + i}, %f4, %p10;
@@ -788,11 +789,11 @@ internal static partial class PtxKernels
             mov.u32 %r13, 0;
             """);
         // Kept: at or above the threshold (%p13 set), or strictly above it (the retry after ties overflow the slots).
-        string Kept(int i) => $"""
+        string Kept(int i) => string.Create(CultureInfo.InvariantCulture, $"""
             setp.ge.and.f32 %p10, %f{10 + i}, %f3, %p13;
             setp.gt.or.f32 %p10, %f{10 + i}, %f3, %p10;
             setp.gt.and.f32 %p10, %f{10 + i}, {NegInf}, %p10;
-            """;
+            """);
         for (int i = 0; i < 8; i++)
         {
             b.AppendLine(Kept(i));
@@ -801,7 +802,7 @@ internal static partial class PtxKernels
         }
 
         // Exclusive prefix of the per-thread counts (thread 0, in order), so candidates keep vocabulary order.
-        b.AppendLine($"""
+        b.AppendLine(CultureInfo.InvariantCulture, $"""
             shl.b32 %r15, %tx, 2;
             add.u32 %r15, %r15, %spart;
             st.shared.u32 [%r15], %r13;
@@ -841,7 +842,7 @@ internal static partial class PtxKernels
         for (int i = 0; i < 8; i++)
         {
             b.AppendLine(Kept(i));
-            b.AppendLine($"""
+            b.AppendLine(CultureInfo.InvariantCulture, $"""
                 setp.lt.u32 %p11, %r20, {CandidateSlots};
                 and.pred %p12, %p10, %p11;
                 mul.wide.u32 %rd7, %r20, 4;
@@ -856,7 +857,7 @@ internal static partial class PtxKernels
                 """);
         }
 
-        b.AppendLine($"""
+        b.AppendLine(CultureInfo.InvariantCulture, $"""
             setp.lt.u32 %p10, %tx, {CandidateSlots};
             setp.ge.and.u32 %p10, %tx, %r21, %p10;
             mul.wide.u32 %rd7, %tx, 4;

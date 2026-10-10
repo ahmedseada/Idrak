@@ -1,7 +1,6 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.Text.RegularExpressions;
 using static Idrak.Gpu.Cuda.CudaDriver;
 
 namespace Idrak.Gpu.Cuda;
@@ -198,25 +197,97 @@ internal static partial class PtxKernels
     /// <summary>The largest block any main-module kernel is written for (gemv_nn_f32's 32 × 32 threads).</summary>
     public const int LargestFixedBlock = GemvThreads;
 
-    /// <summary>Static shared memory (bytes) of each kernel in <paramref name="ptx"/>, summed over its <c>.shared</c> arrays.</summary>
+    /// <summary>
+    /// Static shared memory (bytes) of each kernel in <paramref name="ptx"/>, summed over its <c>.shared</c> arrays
+    /// (".shared", an optional ".align n", ".type", the name and "[count]"; a dynamic array, "[]", counts nothing). The
+    /// module text is read this way on every load: span searches, no regular expressions.
+    /// </summary>
     public static IReadOnlyDictionary<string, int> StaticSharedBytes(string ptx)
     {
         var result = new Dictionary<string, int>();
-        var entries = Regex.Matches(ptx, @"\.entry\s+(\w+)\s*\(");
+        var entries = Entries(ptx);
         for (int i = 0; i < entries.Count; i++)
         {
-            int start = entries[i].Index, end = i + 1 < entries.Count ? entries[i + 1].Index : ptx.Length;
-            int bytes = 0;
-            foreach (Match array in Regex.Matches(ptx[start..end], @"\.shared\s+(?:\.align\s+\d+\s+)?\.(\w+)\s+\w+\[(\d+)\]"))
+            int start = entries[i].Start, end = i + 1 < entries.Count ? entries[i + 1].Start : ptx.Length;
+            ReadOnlySpan<char> kernel = ptx.AsSpan(start, end - start);
+            int bytes = 0, position = 0;
+            while (kernel[position..].IndexOf(".shared", StringComparison.Ordinal) is >= 0 and var found)
             {
-                int element = array.Groups[1].Value switch { "b8" or "u8" or "s8" => 1, "b16" or "u16" or "s16" or "f16" => 2, "b64" or "u64" or "s64" or "f64" => 8, _ => 4 };
-                bytes += element * int.Parse(array.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture);
+                int at = position + found + ".shared".Length;
+                position = position + found + 1;
+                if (SharedArray(kernel, at) is var (type, count, next))
+                {
+                    int element = kernel[type] switch { "b8" or "u8" or "s8" => 1, "b16" or "u16" or "s16" or "f16" => 2, "b64" or "u64" or "s64" or "f64" => 8, _ => 4 };
+                    bytes += element * int.Parse(kernel[count], System.Globalization.CultureInfo.InvariantCulture);
+                    position = next;
+                }
             }
 
-            result[entries[i].Groups[1].Value] = bytes;
+            result[entries[i].Name] = bytes;
         }
 
         return result;
+    }
+
+    // After ".shared" at `at`: white space, optionally ".align", white space, digits and white space, then the element
+    // type (".type"), white space, the name and "[count]". The type's and the count's ranges and the position after "]",
+    // or null when the text there is not such an array.
+    private static (Range Type, Range Count, int Next)? SharedArray(ReadOnlySpan<char> text, int at)
+    {
+        int position = SkipWhiteSpace(text, at);
+        if (position == at)
+        {
+            return null;
+        }
+
+        if (text[position..].StartsWith(".align", StringComparison.Ordinal))
+        {
+            int digits = SkipWhiteSpace(text, position + ".align".Length);
+            int digitsEnd = SkipDigits(text, digits);
+            int next = SkipWhiteSpace(text, digitsEnd);
+            if (digits > position + ".align".Length && digitsEnd > digits && next > digitsEnd && SharedArrayAfterAlign(text, next) is { } aligned)
+            {
+                return aligned;
+            }
+        }
+
+        return SharedArrayAfterAlign(text, position);
+    }
+
+    // ".type", white space, the name, "[count]" at `position`.
+    private static (Range Type, Range Count, int Next)? SharedArrayAfterAlign(ReadOnlySpan<char> text, int position)
+    {
+        if (position >= text.Length || text[position] != '.')
+        {
+            return null;
+        }
+
+        int typeEnd = SkipWord(text, position + 1);
+        int name = SkipWhiteSpace(text, typeEnd);
+        int nameEnd = SkipWord(text, name);
+        if (typeEnd == position + 1 || name == typeEnd || nameEnd == name || nameEnd >= text.Length || text[nameEnd] != '[')
+        {
+            return null;
+        }
+
+        int countEnd = SkipDigits(text, nameEnd + 1);
+        if (countEnd == nameEnd + 1 || countEnd >= text.Length || text[countEnd] != ']')
+        {
+            return null;
+        }
+
+        return (new Range(position + 1, typeEnd), new Range(nameEnd + 1, countEnd), countEnd + 1);
+    }
+
+    // The first position at or after `position` that is not a decimal digit (a regular expression's \d).
+    private static int SkipDigits(ReadOnlySpan<char> text, int position)
+    {
+        while (position < text.Length && char.IsDigit(text[position]))
+        {
+            position++;
+        }
+
+        return position;
     }
 
     /// <summary>Dynamic shared memory a tensor-core kernel asks for at launch (bytes; 0 for none).</summary>

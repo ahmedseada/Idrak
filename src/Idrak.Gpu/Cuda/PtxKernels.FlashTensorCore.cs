@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Globalization;
 using System.Text;
 
 namespace Idrak.Gpu.Cuda;
@@ -34,7 +35,7 @@ internal static partial class PtxKernels
     // ------------------------------------------------------------------ shared emitters
 
     // Declarations common to the three kernels.
-    private static string FlashRegisters(int d, int accumulators) => $$"""
+    private static string FlashRegisters(int d, int accumulators) => string.Create(CultureInfo.InvariantCulture, $$"""
             .reg .pred %p<32>;
             .reg .b32 %r<100>;
             .reg .b64 %rd<48>;
@@ -47,12 +48,12 @@ internal static partial class PtxKernels
             .reg .b32 %ta<4>;
             .reg .b32 %tb<4>;
             .reg .b32 %pa<4>;
-        """;
+        """);
 
     // Lane-invariant setup: %r1 = tid, %r2 = lane, %r3 = warp, %r4 = g (lane / 4), %r5 = t (lane % 4); ldmatrix lane
     // offsets: %r6 = (l & 15)·stride + (l >> 4)·16 (row-major A, and [k][n] B transposed), %r7 = ((l & 7) + 8 (l >> 4))·stride
     // + ((l >> 3) & 1)·16 ([n][k] B).
-    private static string FlashLanes(int stride) => $"""
+    private static string FlashLanes(int stride) => string.Create(CultureInfo.InvariantCulture, $"""
             mov.u32 %r1, %tid.x;
             and.b32 %r2, %r1, 31;
             shr.u32 %r3, %r1, 5;
@@ -71,7 +72,7 @@ internal static partial class PtxKernels
             and.b32 %r10, %r10, 1;
             shl.b32 %r10, %r10, 4;
             add.u32 %r7, %r7, %r10;
-        """;
+        """);
 
     // Layout of q-like tensors (q, dq; also the output and dOutput with their own strides): head hh = b · kv + h, row
     // i = g · steps + t sits at base + b·sB + h·sH + g·sG + t·sT (elements); key-like tensors (k, v, dk, dv): position c at
@@ -187,7 +188,7 @@ internal static partial class PtxKernels
     {
         int quadsPerRow = d / 4, rowStep = 128 / quadsPerRow, stride = FlashStride(d);
         var s = new StringBuilder();
-        s.AppendLine($"""
+        s.AppendLine(CultureInfo.InvariantCulture, $"""
                 shr.u32 %r11, %r1, {(int)Math.Log2(quadsPerRow)};
                 and.b32 %r12, %r1, {quadsPerRow - 1};
                 shl.b32 %r12, %r12, 2;
@@ -200,9 +201,9 @@ internal static partial class PtxKernels
             """);
         for (int it = 0; it < rows / rowStep; it++)
         {
-            s.AppendLine($"    add.u32 %r13, %r11, {it * rowStep};");
+            s.AppendLine(CultureInfo.InvariantCulture, $"    add.u32 %r13, %r11, {it * rowStep};");
             s.AppendLine(address("%r13", "%rd1"));
-            s.AppendLine($$"""
+            s.AppendLine(CultureInfo.InvariantCulture, $$"""
                     add.u64 %rd1, %rd1, %rd2;
                     setp.lt.u32 %p1, %r13, {{limit}};
                     mov.f32 %f0, 0f00000000;
@@ -220,25 +221,25 @@ internal static partial class PtxKernels
     }
 
     private static string Mma(string acc, int tile, string a, string b0, string b1) =>
-        $"mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {{{acc}{4 * tile}, {acc}{4 * tile + 1}, {acc}{4 * tile + 2}, {acc}{4 * tile + 3}}}, "
-        + $"{{{a}0, {a}1, {a}2, {a}3}}, {{{b0}, {b1}}}, {{{acc}{4 * tile}, {acc}{4 * tile + 1}, {acc}{4 * tile + 2}, {acc}{4 * tile + 3}}};";
+        string.Create(CultureInfo.InvariantCulture, $"mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {{{acc}{4 * tile}, {acc}{4 * tile + 1}, {acc}{4 * tile + 2}, {acc}{4 * tile + 3}}}, ")
+        + string.Create(CultureInfo.InvariantCulture, $"{{{a}0, {a}1, {a}2, {a}3}}, {{{b0}, {b1}}}, {{{acc}{4 * tile}, {acc}{4 * tile + 1}, {acc}{4 * tile + 2}, {acc}{4 * tile + 3}}};");
 
     private static string MmaA(string acc, int tile, string a0, string a1, string a2, string a3, string b0, string b1) =>
-        $"mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {{{acc}{4 * tile}, {acc}{4 * tile + 1}, {acc}{4 * tile + 2}, {acc}{4 * tile + 3}}}, "
-        + $"{{{a0}, {a1}, {a2}, {a3}}}, {{{b0}, {b1}}}, {{{acc}{4 * tile}, {acc}{4 * tile + 1}, {acc}{4 * tile + 2}, {acc}{4 * tile + 3}}};";
+        string.Create(CultureInfo.InvariantCulture, $"mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {{{acc}{4 * tile}, {acc}{4 * tile + 1}, {acc}{4 * tile + 2}, {acc}{4 * tile + 3}}}, ")
+        + string.Create(CultureInfo.InvariantCulture, $"{{{a0}, {a1}, {a2}, {a3}}}, {{{b0}, {b1}}}, {{{acc}{4 * tile}, {acc}{4 * tile + 1}, {acc}{4 * tile + 2}, {acc}{4 * tile + 3}}};");
 
     private static string LdMatrix(string dst, string address, int offset, bool transpose) =>
-        $"ldmatrix.sync.aligned.m8n8.x4{(transpose ? ".trans" : "")}.shared.b16 {{{dst}0, {dst}1, {dst}2, {dst}3}}, [{address}+{offset}];";
+        string.Create(CultureInfo.InvariantCulture, $"ldmatrix.sync.aligned.m8n8.x4{(transpose ? ".trans" : "")}.shared.b16 {{{dst}0, {dst}1, {dst}2, {dst}3}}, [{address}+{offset}];");
 
     // acc[tiles] (a 16 × 8·tiles block, rows g and g + 8) as the A operand of k-step j: tiles 2j and 2j + 1, in bfloat16.
-    private static string PackA(string acc, int j) => $"""
+    private static string PackA(string acc, int j) => string.Create(CultureInfo.InvariantCulture, $"""
             cvt.rn.bf16x2.f32 %pa0, {acc}{8 * j + 1}, {acc}{8 * j};
             cvt.rn.bf16x2.f32 %pa1, {acc}{8 * j + 3}, {acc}{8 * j + 2};
             cvt.rn.bf16x2.f32 %pa2, {acc}{8 * j + 5}, {acc}{8 * j + 4};
             cvt.rn.bf16x2.f32 %pa3, {acc}{8 * j + 7}, {acc}{8 * j + 6};
-        """;
+        """);
 
-    private static string Zeros(string acc, int count) => string.Concat(Enumerable.Range(0, count).Select(i => $"mov.f32 {acc}{i}, 0f00000000;\n"));
+    private static string Zeros(string acc, int count) => string.Concat(Enumerable.Range(0, count).Select(i => string.Create(CultureInfo.InvariantCulture, $"mov.f32 {acc}{i}, 0f00000000;\n")));
 
     // D[r] = Σ_d o[r, d] · dOutput[r, d] for rows r = hh · rowsPerHead + i (hh = b · kv + h) of output-layout tensors
     // (strides p_ysb … p_yst); one thread per row, four floats per load (dim a multiple of 4).
@@ -321,9 +322,9 @@ internal static partial class PtxKernels
     private static void FlashForward(StringBuilder sb, int d)
     {
         int stride = FlashStride(d), dTiles = d / 8, kSteps = d / 16, tileBytes = FlashTensorRows * stride;
-        string name = $"flash_tc_fwd_d{d}";
+        string name = string.Create(CultureInfo.InvariantCulture, $"flash_tc_fwd_d{d}");
         var s = new StringBuilder();
-        s.AppendLine($$"""
+        s.AppendLine(CultureInfo.InvariantCulture, $$"""
             .visible .entry {{name}}(
                 .param .u64 p_q, .param .u64 p_k, .param .u64 p_v, .param .u64 p_pos, .param .u64 p_y, .param .u64 p_lse,
                 .param .u32 p_rows, .param .u32 p_steps, .param .u32 p_cap, .param .f32 p_scale2, {{FlashLayoutParameters}}
@@ -363,7 +364,7 @@ internal static partial class PtxKernels
             """);
         // Q tile → shared (the K buffer) → fragments.
         s.AppendLine(FlashStage(FlashTensorRows, d, "%r26", "%r25", "%r20", (row, dst) => QRow(dst, "%rd10", row, "%r63", "%r64")));
-        s.AppendLine($"""
+        s.AppendLine(CultureInfo.InvariantCulture, $"""
                 bar.sync 0;
                 shl.b32 %r29, %r3, 4;
                 mul.lo.u32 %r29, %r29, {stride};
@@ -372,7 +373,7 @@ internal static partial class PtxKernels
             """);
         for (int ks = 0; ks < kSteps; ks++)
         {
-            s.AppendLine($"ldmatrix.sync.aligned.m8n8.x4.shared.b16 {{%qa{4 * ks}, %qa{4 * ks + 1}, %qa{4 * ks + 2}, %qa{4 * ks + 3}}}, [%r29+{ks * 32}];");
+            s.AppendLine(CultureInfo.InvariantCulture, $"ldmatrix.sync.aligned.m8n8.x4.shared.b16 {{%qa{4 * ks}, %qa{4 * ks + 1}, %qa{4 * ks + 2}, %qa{4 * ks + 3}}}, [%r29+{ks * 32}];");
         }
 
         // Rows of this thread: %r30 = i0, %r31 = i1; their last visible position %r32, %r33 (-1 when the row is past the end).
@@ -429,10 +430,10 @@ internal static partial class PtxKernels
             for (int nt2 = 0; nt2 < 4; nt2++)
             {
                 s.AppendLine(LdMatrix("%tb", "%r41", nt2 * 16 * stride + ks * 32, transpose: false));
-                s.AppendLine($"mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {{%s{8 * nt2}, %s{8 * nt2 + 1}, %s{8 * nt2 + 2}, %s{8 * nt2 + 3}}}, "
-                             + $"{{%qa{4 * ks}, %qa{4 * ks + 1}, %qa{4 * ks + 2}, %qa{4 * ks + 3}}}, {{%tb0, %tb1}}, {{%s{8 * nt2}, %s{8 * nt2 + 1}, %s{8 * nt2 + 2}, %s{8 * nt2 + 3}}};");
-                s.AppendLine($"mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {{%s{8 * nt2 + 4}, %s{8 * nt2 + 5}, %s{8 * nt2 + 6}, %s{8 * nt2 + 7}}}, "
-                             + $"{{%qa{4 * ks}, %qa{4 * ks + 1}, %qa{4 * ks + 2}, %qa{4 * ks + 3}}}, {{%tb2, %tb3}}, {{%s{8 * nt2 + 4}, %s{8 * nt2 + 5}, %s{8 * nt2 + 6}, %s{8 * nt2 + 7}}};");
+                s.AppendLine(string.Create(CultureInfo.InvariantCulture, $"mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {{%s{8 * nt2}, %s{8 * nt2 + 1}, %s{8 * nt2 + 2}, %s{8 * nt2 + 3}}}, ")
+                             + string.Create(CultureInfo.InvariantCulture, $"{{%qa{4 * ks}, %qa{4 * ks + 1}, %qa{4 * ks + 2}, %qa{4 * ks + 3}}}, {{%tb0, %tb1}}, {{%s{8 * nt2}, %s{8 * nt2 + 1}, %s{8 * nt2 + 2}, %s{8 * nt2 + 3}}};"));
+                s.AppendLine(string.Create(CultureInfo.InvariantCulture, $"mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {{%s{8 * nt2 + 4}, %s{8 * nt2 + 5}, %s{8 * nt2 + 6}, %s{8 * nt2 + 7}}}, ")
+                             + string.Create(CultureInfo.InvariantCulture, $"{{%qa{4 * ks}, %qa{4 * ks + 1}, %qa{4 * ks + 2}, %qa{4 * ks + 3}}}, {{%tb2, %tb3}}, {{%s{8 * nt2 + 4}, %s{8 * nt2 + 5}, %s{8 * nt2 + 6}, %s{8 * nt2 + 7}}};"));
             }
         }
 
@@ -446,7 +447,7 @@ internal static partial class PtxKernels
         {
             for (int j = 0; j < 2; j++)
             {
-                s.AppendLine($"""
+                s.AppendLine(CultureInfo.InvariantCulture, $"""
                         add.u32 %r46, %r45, {nt * 8 + j};
                         setp.le.s32 %p4, %r46, %r32;
                         setp.le.s32 %p5, %r46, %r33;
@@ -489,7 +490,7 @@ internal static partial class PtxKernels
             """);
         for (int nt = 0; nt < 8; nt++)
         {
-            s.AppendLine($"""
+            s.AppendLine(CultureInfo.InvariantCulture, $"""
                     sub.f32 %s{4 * nt}, %s{4 * nt}, %f49;
                     ex2.approx.ftz.f32 %s{4 * nt}, %s{4 * nt};
                     sub.f32 %s{4 * nt + 1}, %s{4 * nt + 1}, %f49;
@@ -519,7 +520,7 @@ internal static partial class PtxKernels
             """);
         for (int nt = 0; nt < dTiles; nt++)
         {
-            s.AppendLine($"""
+            s.AppendLine(CultureInfo.InvariantCulture, $"""
                     mul.f32 %acc{4 * nt}, %acc{4 * nt}, %f51;
                     mul.f32 %acc{4 * nt + 1}, %acc{4 * nt + 1}, %f51;
                     mul.f32 %acc{4 * nt + 2}, %acc{4 * nt + 2}, %f52;
@@ -562,7 +563,7 @@ internal static partial class PtxKernels
             """);
         for (int nt = 0; nt < dTiles; nt++)
         {
-            s.AppendLine($$"""
+            s.AppendLine(CultureInfo.InvariantCulture, $$"""
                     mul.f32 %f57, %acc{{4 * nt}}, %f55;
                     mul.f32 %f58, %acc{{4 * nt + 1}}, %f55;
                     @%p10 st.global.v2.f32 [%rd22+{{nt * 32}}], {%f57, %f58};
@@ -608,9 +609,9 @@ internal static partial class PtxKernels
     private static void FlashBackwardQ(StringBuilder sb, int d)
     {
         int stride = FlashStride(d), dTiles = d / 8, kSteps = d / 16, tile = FlashTensorRows * stride;
-        string name = $"flash_tc_bwd_q_d{d}";
+        string name = string.Create(CultureInfo.InvariantCulture, $"flash_tc_bwd_q_d{d}");
         var s = new StringBuilder();
-        s.AppendLine($$"""
+        s.AppendLine(CultureInfo.InvariantCulture, $$"""
             .extern .shared .align 16 .b8 {{name}}_smem[];
             .visible .entry {{name}}(
                 .param .u64 p_q, .param .u64 p_k, .param .u64 p_v, .param .u64 p_do, .param .u64 p_lse, .param .u64 p_delta, .param .u64 p_dq,
@@ -659,7 +660,7 @@ internal static partial class PtxKernels
         s.AppendLine(FlashStage(FlashTensorRows, d, "%r26", "%r25", "%r20", (row, dst) => QRow(dst, "%rd10", row, "%r63", "%r64")));
         s.AppendLine(FlashStage(FlashTensorRows, d, "%r27", "%r25", "%r20", (row, dst) => QRow(dst, "%rd13", row, "%r67", "%r68")));
         // Rows, visible limits (causal offset 0), -lse·log2 e and D per row; keys to walk %r34.
-        s.AppendLine($"""
+        s.AppendLine(CultureInfo.InvariantCulture, $"""
                 shl.b32 %r31, %r3, 4;
                 add.u32 %r31, %r31, %r25;
                 add.u32 %r31, %r31, %r4;
@@ -740,7 +741,7 @@ internal static partial class PtxKernels
         {
             for (int j = 0; j < 2; j++)
             {
-                s.AppendLine($"""
+                s.AppendLine(CultureInfo.InvariantCulture, $"""
                         add.u32 %r49, %r48, {nt * 8 + j};
                         setp.le.s32 %p6, %r49, %r33;
                         setp.le.s32 %p7, %r49, %r36;
@@ -786,7 +787,7 @@ internal static partial class PtxKernels
             """);
         for (int nt = 0; nt < dTiles; nt++)
         {
-            s.AppendLine($$"""
+            s.AppendLine(CultureInfo.InvariantCulture, $$"""
                     @%p10 ld.global.v2.f32 {%f45, %f46}, [%rd29+{{nt * 32}}];
                     fma.rn.f32 %f45, %acc{{4 * nt}}, %f39, %f45;
                     fma.rn.f32 %f46, %acc{{4 * nt + 1}}, %f39, %f46;
@@ -818,9 +819,9 @@ internal static partial class PtxKernels
     {
         const int R = FlashTensorBackwardRows;
         int stride = FlashStride(d), dTiles = d / 8, kSteps = d / 16, keyTile = FlashTensorRows * stride, rowTile = R * stride;
-        string name = $"flash_tc_bwd_kv_d{d}";
+        string name = string.Create(CultureInfo.InvariantCulture, $"flash_tc_bwd_kv_d{d}");
         var s = new StringBuilder();
-        s.AppendLine($$"""
+        s.AppendLine(CultureInfo.InvariantCulture, $$"""
             .extern .shared .align 16 .b8 {{name}}_smem[];
             .visible .entry {{name}}(
                 .param .u64 p_q, .param .u64 p_k, .param .u64 p_v, .param .u64 p_do, .param .u64 p_lse, .param .u64 p_delta,
@@ -877,7 +878,7 @@ internal static partial class PtxKernels
         s.AppendLine(FlashStage(FlashTensorRows, d, "%r27", "%r25", "%r22", (row, dst) => KRow(dst, "%rd12", row)));
         // Keys of this thread (%r32 = key g, %r33 = key g + 8; -1 when past the end so every row masks them... handled by
         // the capacity check), fragment addresses, first row tile.
-        s.AppendLine($"""
+        s.AppendLine(CultureInfo.InvariantCulture, $"""
                 shl.b32 %r32, %r3, 4;
                 add.u32 %r32, %r32, %r25;
                 add.u32 %r32, %r32, %r4;
@@ -934,7 +935,7 @@ internal static partial class PtxKernels
         s.AppendLine(FlashStage(R, d, "%r28", "%r43", "%r20", (row, dst) => QRow(dst, "%rd10", row, "%r63", "%r64")));
         s.AppendLine(FlashStage(R, d, "%r29", "%r43", "%r20", (row, dst) => QRow(dst, "%rd13", row, "%r67", "%r68")));
         // lse·log2 e (+inf past the end, so P = 0) and D of the tile's rows, by threads 0-31.
-        s.AppendLine($"""
+        s.AppendLine(CultureInfo.InvariantCulture, $"""
                 setp.lt.u32 %p4, %r1, {R};
                 @!%p4 bra STATS_DONE;
                 add.u32 %r49, %r43, %r1;
@@ -989,7 +990,7 @@ internal static partial class PtxKernels
         {
             for (int j = 0; j < 2; j++)
             {
-                s.AppendLine($"""
+                s.AppendLine(CultureInfo.InvariantCulture, $"""
                         add.u32 %r53, %r51, {nt * 8 + j};
                         rem.u32 %r54, %r53, %r21;
                         setp.le.u32 %p6, %r32, %r54;
@@ -1042,7 +1043,7 @@ internal static partial class PtxKernels
             }
         }
 
-        s.AppendLine($"""
+        s.AppendLine(CultureInfo.InvariantCulture, $"""
                 add.u32 %r43, %r43, {R};
                 bra ROWS;
             ROWS_NEXT:
@@ -1065,7 +1066,7 @@ internal static partial class PtxKernels
         {
             foreach (var (half, predicate, dk, dv) in new[] { (0, "%p10", "%rd32", "%rd33"), (2, "%p11", "%rd34", "%rd35") })
             {
-                s.AppendLine($$"""
+                s.AppendLine(CultureInfo.InvariantCulture, $$"""
                         @{{predicate}} ld.global.v2.f32 {%f45, %f46}, [{{dk}}+{{nt * 32}}];
                         fma.rn.f32 %f45, %acc{{4 * nt + half}}, %f39, %f45;
                         fma.rn.f32 %f46, %acc{{4 * nt + half + 1}}, %f39, %f46;

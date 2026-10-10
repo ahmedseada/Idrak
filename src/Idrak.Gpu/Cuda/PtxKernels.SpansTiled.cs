@@ -1,8 +1,8 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Globalization;
 using System.Text;
-using System.Text.RegularExpressions;
 
 namespace Idrak.Gpu.Cuda;
 
@@ -56,31 +56,27 @@ internal static partial class PtxKernels
     public static int SpanTensorDim(int dim) => dim > 0 && dim % 4 == 0 && dim <= FlashMaxDim ? (dim + 15) / 16 * 16 : 0;
 
     /// <summary>The float32 span kernel's name for padded head size <paramref name="d"/>.</summary>
-    public static string SpanFloatName(int d) => $"attention_spans_f32_d{d}";
+    public static string SpanFloatName(int d) => string.Create(CultureInfo.InvariantCulture, $"attention_spans_f32_d{d}");
 
     /// <summary>The tensor-core span kernel's name for padded head size <paramref name="d"/> and <paramref name="warps"/> warps.</summary>
-    public static string SpanTensorName(int d, int warps) => $"attention_spans_tc_d{d}_w{warps}";
+    public static string SpanTensorName(int d, int warps) => string.Create(CultureInfo.InvariantCulture, $"attention_spans_tc_d{d}_w{warps}");
 
     /// <summary>Dynamic shared memory of the float32 span kernel (bytes): Qᵀ, Kᵀ (then V), P and the block's range.</summary>
     public static int SpanFloatShared(int d) => 4 * (SpanFloatRows * d + SpanFloatKeys * d + SpanFloatRows * SpanPStride + 8);
 
     /// <summary>The float32 span module for padded head size <paramref name="d"/> (PTX 6.0, sm_50, as the main module).</summary>
     public static (string Name, string[] Kernels, string Source) SpanFloatModule(int d) =>
-        Module($"attention spans f32 d{d}", sb => SpanFloat(sb, d), version: "6.0", target: "sm_50");
+        Module(string.Create(CultureInfo.InvariantCulture, $"attention spans f32 d{d}"), sb => SpanFloat(sb, d), version: "6.0", target: "sm_50");
 
     /// <summary>The tensor-core span module for padded head size <paramref name="d"/> (PTX 7.0, sm_80; every warp count).</summary>
     public static (string Name, string[] Kernels, string Source) SpanTensorModule(int d) =>
-        Module($"attention spans tc d{d}", sb =>
+        Module(string.Create(CultureInfo.InvariantCulture, $"attention spans tc d{d}"), sb =>
         {
             foreach (int warps in SpanTensorWarps)
             {
                 SpanTensor(sb, d, warps);
             }
         });
-
-    /// <summary>Parameters each kernel of <paramref name="source"/> declares.</summary>
-    public static Dictionary<string, int> ParameterCountsOf(string source) =>
-        Regex.Matches(source, @"\.entry\s+(\w+)\s*\(([^)]*)\)").ToDictionary(m => m.Groups[1].Value, m => Regex.Count(m.Groups[2].Value, @"\.param\b"));
 
     // The parameters of both kernels (as attention_spans_f32's; the tensor-core kernel reads p_scale as scale · log2 e and
     // takes no soft-cap).
@@ -123,13 +119,13 @@ internal static partial class PtxKernels
             """);
         foreach (int offset in new[] { 16, 8, 4, 2, 1 })
         {
-            s.AppendLine($"    shfl.sync.bfly.b32 {t}, {from}, {offset}, 31, 0xffffffff;");
+            s.AppendLine(CultureInfo.InvariantCulture, $"    shfl.sync.bfly.b32 {t}, {from}, {offset}, 31, 0xffffffff;");
             s.AppendLine($"    min.u32 {from}, {from}, {t};");
-            s.AppendLine($"    shfl.sync.bfly.b32 {t}, {to}, {offset}, 31, 0xffffffff;");
+            s.AppendLine(CultureInfo.InvariantCulture, $"    shfl.sync.bfly.b32 {t}, {to}, {offset}, 31, 0xffffffff;");
             s.AppendLine($"    max.u32 {to}, {to}, {t};");
         }
 
-        s.AppendLine($"""
+        s.AppendLine(CultureInfo.InvariantCulture, $"""
                 setp.ne.u32 {p}, {lane}, 0;
                 shl.b32 {t}, {warp}, 2;
                 add.u32 {t}, {t}, {shared};
@@ -141,7 +137,7 @@ internal static partial class PtxKernels
             """);
         for (int w = 1; w < warps; w++)
         {
-            s.AppendLine($"""
+            s.AppendLine(CultureInfo.InvariantCulture, $"""
                     ld.shared.u32 {u}, [{shared}+{4 * w}];
                     min.u32 {from}, {from}, {u};
                     ld.shared.u32 {u}, [{shared}+{4 * (warps + w)}];
@@ -161,7 +157,7 @@ internal static partial class PtxKernels
         int qBytes = 4 * SpanFloatRows * d, kBytes = 4 * SpanFloatKeys * d, pBytes = 4 * SpanFloatRows * SpanPStride;
         int quads = d / 4;
         var s = new StringBuilder();
-        s.AppendLine($$"""
+        s.AppendLine(CultureInfo.InvariantCulture, $$"""
             .extern .shared .align 16 .b8 {{name}}_smem[];
             .visible .entry {{name}}(
                 {{SpanParameters}}, .param .f32 p_softcap
@@ -232,11 +228,11 @@ internal static partial class PtxKernels
         // Each thread's rows 4tr + i: their ranges, running maxima and sums.
         for (int i = 0; i < 4; i++)
         {
-            s.AppendLine($"""
+            s.AppendLine(CultureInfo.InvariantCulture, $"""
                     shl.b32 %r19, %r8, 2;
                     add.u32 %r19, %r19, %r9;
                     add.u32 %r19, %r19, {i};
-                {SpanRange("%r19", $"%lo{i}", $"%hi{i}", "%r1", "%r2", "%r13", "%rd4", "%rd5", "%r18", "%rd9", "%rd10", "%f2", "%f3", "%p1")}
+                {SpanRange("%r19", string.Create(CultureInfo.InvariantCulture, $"%lo{i}"), string.Create(CultureInfo.InvariantCulture, $"%hi{i}"), "%r1", "%r2", "%r13", "%rd4", "%rd5", "%r18", "%rd9", "%rd10", "%f2", "%f3", "%p1")}
                     mov.f32 %m{i}, 0fFF800000;
                     mov.f32 %l{i}, 0f00000000;
                 """);
@@ -244,7 +240,7 @@ internal static partial class PtxKernels
 
         for (int i = 0; i < 4 * j; i++)
         {
-            s.AppendLine($"    mov.f32 %o{i}, 0f00000000;");
+            s.AppendLine(CultureInfo.InvariantCulture, $"    mov.f32 %o{i}, 0f00000000;");
         }
 
         // The block's keys (thread t reads row t % 64's range).
@@ -260,7 +256,7 @@ internal static partial class PtxKernels
         // t / 64, +2, ... (a warp writes 32 consecutive floats of a Qᵀ row).
         for (int it = 0; it < d / 8; it++)
         {
-            s.AppendLine($$"""
+            s.AppendLine(CultureInfo.InvariantCulture, $$"""
                     add.u32 %r26, %r6, {{it * 128}};
                     and.b32 %r27, %r26, 63;
                     shr.u32 %r28, %r26, 6;
@@ -304,7 +300,7 @@ internal static partial class PtxKernels
         for (int it = 0; it < kIterations; it++)
         {
             // Kᵀ[d][c] = k[tile + c, d]: thread t takes key t % 32 of the quads t / 32, +4, ...
-            s.AppendLine($$"""
+            s.AppendLine(CultureInfo.InvariantCulture, $$"""
                     add.u32 %r26, %r6, {{it * 128}};
                     setp.lt.u32 %p4, %r26, {{kElements}};
                     and.b32 %r27, %r26, 31;
@@ -335,11 +331,11 @@ internal static partial class PtxKernels
         s.AppendLine("bar.sync 0;");
         for (int i = 0; i < 16; i++)
         {
-            s.AppendLine($"    mov.f32 %s{i}, 0f00000000;");
+            s.AppendLine(CultureInfo.InvariantCulture, $"    mov.f32 %s{i}, 0f00000000;");
         }
 
         // S[4tr + i, 4tc + jj] = Σ_d Qᵀ[d][4tr + i] · Kᵀ[d][4tc + jj], eight d per loop step.
-        s.AppendLine($"""
+        s.AppendLine(CultureInfo.InvariantCulture, $"""
                 shl.b32 %r32, %r8, 4;
                 add.u32 %r32, %r32, %r14;
                 shl.b32 %r33, %r7, 4;
@@ -351,18 +347,18 @@ internal static partial class PtxKernels
             """);
         for (int u = 0; u < 8; u++)
         {
-            s.AppendLine($"    ld.shared.v4.f32 {{%qv0, %qv1, %qv2, %qv3}}, [%r32+{u * 4 * SpanFloatRows}];");
-            s.AppendLine($"    ld.shared.v4.f32 {{%kv0, %kv1, %kv2, %kv3}}, [%r33+{u * 4 * SpanFloatKeys}];");
+            s.AppendLine(CultureInfo.InvariantCulture, $"    ld.shared.v4.f32 {{%qv0, %qv1, %qv2, %qv3}}, [%r32+{u * 4 * SpanFloatRows}];");
+            s.AppendLine(CultureInfo.InvariantCulture, $"    ld.shared.v4.f32 {{%kv0, %kv1, %kv2, %kv3}}, [%r33+{u * 4 * SpanFloatKeys}];");
             for (int i = 0; i < 4; i++)
             {
                 for (int c = 0; c < 4; c++)
                 {
-                    s.AppendLine($"    fma.rn.f32 %s{4 * i + c}, %qv{i}, %kv{c}, %s{4 * i + c};");
+                    s.AppendLine(CultureInfo.InvariantCulture, $"    fma.rn.f32 %s{4 * i + c}, %qv{i}, %kv{c}, %s{4 * i + c};");
                 }
             }
         }
 
-        s.AppendLine($"""
+        s.AppendLine(CultureInfo.InvariantCulture, $"""
                 add.u32 %r32, %r32, {8 * 4 * SpanFloatRows};
                 add.u32 %r33, %r33, {8 * 4 * SpanFloatKeys};
                 add.u32 %r34, %r34, 1;
@@ -375,7 +371,7 @@ internal static partial class PtxKernels
         int vIterations = (kElements + 127) / 128;
         for (int it = 0; it < vIterations; it++)
         {
-            s.AppendLine($$"""
+            s.AppendLine(CultureInfo.InvariantCulture, $$"""
                     add.u32 %r26, %r6, {{it * 128}};
                     setp.lt.u32 %p4, %r26, {{kElements}};
                     div.u32 %r27, %r26, {{quads}};
@@ -410,8 +406,8 @@ internal static partial class PtxKernels
             s.AppendLine("    mov.f32 %f8, 0fFF800000;");
             for (int c = 0; c < 4; c++)
             {
-                s.AppendLine($"""
-                        {SoftcapPtx($"%s{4 * i + c}", "%softcap", "%capped", "%captmp")}
+                s.AppendLine(CultureInfo.InvariantCulture, $"""
+                        {SoftcapPtx(string.Create(CultureInfo.InvariantCulture, $"%s{4 * i + c}"), "%softcap", "%capped", "%captmp")}
                         mul.f32 %s{4 * i + c}, %s{4 * i + c}, 0f3FB8AA3B;
                         add.u32 %r36, %r35, {c};
                         setp.lt.s32 %p6, %r36, %hi{i};
@@ -423,11 +419,11 @@ internal static partial class PtxKernels
 
             foreach (int offset in new[] { 1, 2, 4 })
             {
-                s.AppendLine($"    shfl.sync.bfly.b32 %f9, %f8, {offset}, 31, 0xffffffff;");
+                s.AppendLine(CultureInfo.InvariantCulture, $"    shfl.sync.bfly.b32 %f9, %f8, {offset}, 31, 0xffffffff;");
                 s.AppendLine("    max.f32 %f8, %f8, %f9;");
             }
 
-            s.AppendLine($"""
+            s.AppendLine(CultureInfo.InvariantCulture, $"""
                     max.f32 %f8, %f8, %m{i};
                     setp.eq.f32 %p7, %f8, 0fFF800000;
                     selp.f32 %f10, 0f00000000, %f8, %p7;
@@ -438,7 +434,7 @@ internal static partial class PtxKernels
                 """);
             for (int c = 0; c < 4; c++)
             {
-                s.AppendLine($"""
+                s.AppendLine(CultureInfo.InvariantCulture, $"""
                         sub.f32 %s{4 * i + c}, %s{4 * i + c}, %f10;
                         ex2.approx.ftz.f32 %s{4 * i + c}, %s{4 * i + c};
                         add.f32 %l{i}, %l{i}, %s{4 * i + c};
@@ -447,11 +443,11 @@ internal static partial class PtxKernels
 
             for (int c = 0; c < j; c++)
             {
-                s.AppendLine($"    mul.f32 %o{i * j + c}, %o{i * j + c}, %f11;");
+                s.AppendLine(CultureInfo.InvariantCulture, $"    mul.f32 %o{i * j + c}, %o{i * j + c}, %f11;");
             }
 
             // P[4tr + i][4tc .. 4tc + 3]
-            s.AppendLine($$"""
+            s.AppendLine(CultureInfo.InvariantCulture, $$"""
                     shl.b32 %r37, %r8, 2;
                     add.u32 %r37, %r37, {{i}};
                     mul.lo.u32 %r37, %r37, {{SpanPStride}};
@@ -464,7 +460,7 @@ internal static partial class PtxKernels
         }
 
         // O[4tr + i, tc + 8c] += Σ_key P[4tr + i, key] · V[key, tc + 8c], four keys per loop step (P read as float4).
-        s.AppendLine($"""
+        s.AppendLine(CultureInfo.InvariantCulture, $"""
                 bar.sync 0;
                 shl.b32 %r38, %r8, 2;
                 mul.lo.u32 %r38, %r38, {4 * SpanPStride};
@@ -478,22 +474,22 @@ internal static partial class PtxKernels
             """);
         for (int i = 0; i < 4; i++)
         {
-            s.AppendLine($"    ld.shared.v4.f32 {{%s{4 * i}, %s{4 * i + 1}, %s{4 * i + 2}, %s{4 * i + 3}}}, [%r38+{i * 4 * SpanPStride}];");
+            s.AppendLine(CultureInfo.InvariantCulture, $"    ld.shared.v4.f32 {{%s{4 * i}, %s{4 * i + 1}, %s{4 * i + 2}, %s{4 * i + 3}}}, [%r38+{i * 4 * SpanPStride}];");
         }
 
         for (int u = 0; u < 4; u++)
         {
             for (int c = 0; c < j; c++)
             {
-                s.AppendLine($"    ld.shared.f32 %f12, [%r39+{u * 4 * d + c * 32}];");
+                s.AppendLine(CultureInfo.InvariantCulture, $"    ld.shared.f32 %f12, [%r39+{u * 4 * d + c * 32}];");
                 for (int i = 0; i < 4; i++)
                 {
-                    s.AppendLine($"    fma.rn.f32 %o{i * j + c}, %s{4 * i + u}, %f12, %o{i * j + c};");
+                    s.AppendLine(CultureInfo.InvariantCulture, $"    fma.rn.f32 %o{i * j + c}, %s{4 * i + u}, %f12, %o{i * j + c};");
                 }
             }
         }
 
-        s.AppendLine($"""
+        s.AppendLine(CultureInfo.InvariantCulture, $"""
                 add.u32 %r38, %r38, 16;
                 add.u32 %r39, %r39, {4 * 4 * d};
                 add.u32 %r34, %r34, 1;
@@ -510,11 +506,11 @@ internal static partial class PtxKernels
         {
             foreach (int offset in new[] { 1, 2, 4 })
             {
-                s.AppendLine($"    shfl.sync.bfly.b32 %f13, %l{i}, {offset}, 31, 0xffffffff;");
-                s.AppendLine($"    add.f32 %l{i}, %l{i}, %f13;");
+                s.AppendLine(CultureInfo.InvariantCulture, $"    shfl.sync.bfly.b32 %f13, %l{i}, {offset}, 31, 0xffffffff;");
+                s.AppendLine(CultureInfo.InvariantCulture, $"    add.f32 %l{i}, %l{i}, %f13;");
             }
 
-            s.AppendLine($"""
+            s.AppendLine(CultureInfo.InvariantCulture, $"""
                     shl.b32 %r40, %r8, 2;
                     add.u32 %r40, %r40, %r9;
                     add.u32 %r40, %r40, {i};
@@ -529,7 +525,7 @@ internal static partial class PtxKernels
                 """);
             for (int c = 0; c < j; c++)
             {
-                s.AppendLine($"""
+                s.AppendLine(CultureInfo.InvariantCulture, $"""
                         add.u32 %r42, %r7, {8 * c};
                         setp.lt.u32 %p12, %r42, %r3;
                         mul.f32 %f15, %o{i * j + c}, %f14;
@@ -537,7 +533,7 @@ internal static partial class PtxKernels
                     """);
             }
 
-            s.AppendLine($"""
+            s.AppendLine(CultureInfo.InvariantCulture, $"""
                     setp.eq.u32 %p10, %r7, 0;
                     and.pred %p10, %p10, %p15;
                     @!%p10 bra WRITTEN{i};
@@ -577,7 +573,7 @@ internal static partial class PtxKernels
         // One step: element e = `index` (+ `offset` threads), row e / quads, float4 e % quads.
         void Step(string index, int offset, bool guard)
         {
-            s.AppendLine($$"""
+            s.AppendLine(CultureInfo.InvariantCulture, $$"""
                     add.u32 %r11, {{index}}, {{offset}};
                     div.u32 %r12, %r11, {{quads}};
                     rem.u32 %r13, %r11, {{quads}};
@@ -585,7 +581,7 @@ internal static partial class PtxKernels
                     shl.b32 %r15, %r13, 2;
                     setp.lt.u32 %p1, %r14, {{limit}};
                     setp.lt.and.u32 %p1, %r15, %r22, %p1;
-                    {{(guard ? $"setp.lt.and.u32 %p1, %r11, {elements}, %p1;" : "")}}
+                    {{(guard ? string.Create(CultureInfo.InvariantCulture, $"setp.lt.and.u32 %p1, %r11, {elements}, %p1;") : "")}}
                     cvt.u64.u32 %rd2, %r15;
                     mad.wide.u32 %rd1, %r14, %r22, %rd2;
                     shl.b64 %rd1, %rd1, 2;
@@ -602,13 +598,13 @@ internal static partial class PtxKernels
                     add.u32 %r18, %r18, %r19;
                 """);
             s.AppendLine(guard
-                ? $"setp.lt.u32 %p1, %r11, {elements};\n@%p1 st.shared.v2.b32 [%r18], {{%r16, %r17}};"
+                ? string.Create(CultureInfo.InvariantCulture, $"setp.lt.u32 %p1, %r11, {elements};\n@%p1 st.shared.v2.b32 [%r18], {{%r16, %r17}};")
                 : "st.shared.v2.b32 [%r18], {%r16, %r17};");
         }
 
         if (looped > 0)
         {
-            s.AppendLine($"""
+            s.AppendLine(CultureInfo.InvariantCulture, $"""
                     mov.u32 %r53, %r1;
                 {label}:
                     setp.ge.u32 %p20, %r53, {looped * threads};
@@ -619,7 +615,7 @@ internal static partial class PtxKernels
                 Step("%r53", u * threads, guard: false);
             }
 
-            s.AppendLine($"""
+            s.AppendLine(CultureInfo.InvariantCulture, $"""
                     add.u32 %r53, %r53, {Unroll * threads};
                     bra {label};
                 {label}_END:
@@ -640,7 +636,7 @@ internal static partial class PtxKernels
         int tileBytes = SpanTensorKeys * stride;
         string name = SpanTensorName(d, warps);
         var s = new StringBuilder();
-        s.AppendLine($$"""
+        s.AppendLine(CultureInfo.InvariantCulture, $$"""
             .visible .entry {{name}}(
                 {{SpanParameters}}
             )
@@ -690,7 +686,7 @@ internal static partial class PtxKernels
             """);
 
         // This thread's rows (g and g + 8 of its warp's 16): their ranges; then the block's keys.
-        s.AppendLine($"""
+        s.AppendLine(CultureInfo.InvariantCulture, $"""
                 shl.b32 %r30, %r3, 4;
                 add.u32 %r30, %r30, %r25;
                 add.u32 %r30, %r30, %r4;
@@ -705,7 +701,7 @@ internal static partial class PtxKernels
         // Q tile → shared → fragments (the range reduction's barrier also orders the staging).
         s.AppendLine(SpanTensorStage(rowsPerBlock, d, threads, "%r26", "%r25", "%r20", "%rd10", "QS"));
         s.AppendLine(SpanBlockRange("%r46", "%r47", "%r21", "%r2", "%r3", warps, "%r48", "%r36", "%r37", "%r44", "%r45", "%p3"));
-        s.AppendLine($"""
+        s.AppendLine(CultureInfo.InvariantCulture, $"""
                 shl.b32 %r29, %r3, 4;
                 mul.lo.u32 %r29, %r29, {stride};
                 add.u32 %r29, %r29, %r26;
@@ -713,7 +709,7 @@ internal static partial class PtxKernels
             """);
         for (int ks = 0; ks < kSteps; ks++)
         {
-            s.AppendLine($"ldmatrix.sync.aligned.m8n8.x4.shared.b16 {{%qa{4 * ks}, %qa{4 * ks + 1}, %qa{4 * ks + 2}, %qa{4 * ks + 3}}}, [%r29+{ks * 32}];");
+            s.AppendLine(CultureInfo.InvariantCulture, $"ldmatrix.sync.aligned.m8n8.x4.shared.b16 {{%qa{4 * ks}, %qa{4 * ks + 1}, %qa{4 * ks + 2}, %qa{4 * ks + 3}}}, [%r29+{ks * 32}];");
         }
 
         s.AppendLine($"""
@@ -740,10 +736,10 @@ internal static partial class PtxKernels
             for (int nt2 = 0; nt2 < 4; nt2++)
             {
                 s.AppendLine(LdMatrix("%tb", "%r41", nt2 * 16 * stride + ks * 32, transpose: false));
-                s.AppendLine($"mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {{%s{8 * nt2}, %s{8 * nt2 + 1}, %s{8 * nt2 + 2}, %s{8 * nt2 + 3}}}, "
-                             + $"{{%qa{4 * ks}, %qa{4 * ks + 1}, %qa{4 * ks + 2}, %qa{4 * ks + 3}}}, {{%tb0, %tb1}}, {{%s{8 * nt2}, %s{8 * nt2 + 1}, %s{8 * nt2 + 2}, %s{8 * nt2 + 3}}};");
-                s.AppendLine($"mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {{%s{8 * nt2 + 4}, %s{8 * nt2 + 5}, %s{8 * nt2 + 6}, %s{8 * nt2 + 7}}}, "
-                             + $"{{%qa{4 * ks}, %qa{4 * ks + 1}, %qa{4 * ks + 2}, %qa{4 * ks + 3}}}, {{%tb2, %tb3}}, {{%s{8 * nt2 + 4}, %s{8 * nt2 + 5}, %s{8 * nt2 + 6}, %s{8 * nt2 + 7}}};");
+                s.AppendLine(string.Create(CultureInfo.InvariantCulture, $"mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {{%s{8 * nt2}, %s{8 * nt2 + 1}, %s{8 * nt2 + 2}, %s{8 * nt2 + 3}}}, ")
+                             + string.Create(CultureInfo.InvariantCulture, $"{{%qa{4 * ks}, %qa{4 * ks + 1}, %qa{4 * ks + 2}, %qa{4 * ks + 3}}}, {{%tb0, %tb1}}, {{%s{8 * nt2}, %s{8 * nt2 + 1}, %s{8 * nt2 + 2}, %s{8 * nt2 + 3}}};"));
+                s.AppendLine(string.Create(CultureInfo.InvariantCulture, $"mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {{%s{8 * nt2 + 4}, %s{8 * nt2 + 5}, %s{8 * nt2 + 6}, %s{8 * nt2 + 7}}}, ")
+                             + string.Create(CultureInfo.InvariantCulture, $"{{%qa{4 * ks}, %qa{4 * ks + 1}, %qa{4 * ks + 2}, %qa{4 * ks + 3}}}, {{%tb2, %tb3}}, {{%s{8 * nt2 + 4}, %s{8 * nt2 + 5}, %s{8 * nt2 + 6}, %s{8 * nt2 + 7}}};"));
             }
         }
 
@@ -757,7 +753,7 @@ internal static partial class PtxKernels
         {
             for (int jj = 0; jj < 2; jj++)
             {
-                s.AppendLine($"""
+                s.AppendLine(CultureInfo.InvariantCulture, $"""
                         add.u32 %r50, %r49, {nt * 8 + jj};
                         setp.lt.s32 %p4, %r50, %r33;
                         setp.lt.s32 %p5, %r50, %r35;
@@ -799,7 +795,7 @@ internal static partial class PtxKernels
             """);
         for (int nt = 0; nt < 8; nt++)
         {
-            s.AppendLine($"""
+            s.AppendLine(CultureInfo.InvariantCulture, $"""
                     sub.f32 %s{4 * nt}, %s{4 * nt}, %f49;
                     ex2.approx.ftz.f32 %s{4 * nt}, %s{4 * nt};
                     sub.f32 %s{4 * nt + 1}, %s{4 * nt + 1}, %f49;
@@ -822,7 +818,7 @@ internal static partial class PtxKernels
             """);
         for (int nt = 0; nt < dTiles; nt++)
         {
-            s.AppendLine($"""
+            s.AppendLine(CultureInfo.InvariantCulture, $"""
                     mul.f32 %acc{4 * nt}, %acc{4 * nt}, %f51;
                     mul.f32 %acc{4 * nt + 1}, %acc{4 * nt + 1}, %f51;
                     mul.f32 %acc{4 * nt + 2}, %acc{4 * nt + 2}, %f52;
@@ -841,7 +837,7 @@ internal static partial class PtxKernels
             }
         }
 
-        s.AppendLine($"""
+        s.AppendLine(CultureInfo.InvariantCulture, $"""
                 bar.sync 0;
                 add.u32 %r43, %r43, {SpanTensorKeys};
                 bra TILE;
@@ -872,7 +868,7 @@ internal static partial class PtxKernels
         for (int nt = 0; nt < dTiles; nt++)
         {
             // Columns 8 nt + 2t and the next: written when inside the head size (a multiple of 4, so both or neither).
-            s.AppendLine($$"""
+            s.AppendLine(CultureInfo.InvariantCulture, $$"""
                     add.u32 %r52, %r42, {{nt * 8}};
                     setp.lt.u32 %p12, %r52, %r22;
                     and.pred %p13, %p12, %p10;
