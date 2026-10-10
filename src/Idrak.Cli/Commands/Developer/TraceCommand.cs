@@ -166,13 +166,14 @@ internal sealed class TraceCommand : Command
         return levels == TelemetryLevel.None ? throw new UsageException("--levels needs at least one level.") : levels;
     }
 
-    // Counts the events of each kind (for the summary line and the JSON).
+    // Counts the events of each kind (for the summary line and the JSON): a slot per kind, counted without a lock or a
+    // lookup, as every operation of the traced command reports here.
     private sealed class Counter(TelemetryLevel levels) : ITelemetryHook
     {
-        private readonly Dictionary<string, int> _counts = new()
-        {
-            ["training"] = 0, ["epochs"] = 0, ["batches"] = 0, ["layers"] = 0, ["operations"] = 0, ["inference"] = 0, ["tools"] = 0, ["engine"] = 0, ["devices"] = 0,
-        };
+        // The kinds in the order the summary and the JSON list them.
+        private static readonly string[] Kinds = ["training", "epochs", "batches", "layers", "operations", "inference", "tools", "engine", "devices"];
+
+        private readonly int[] _counts = new int[Kinds.Length];
 
         public TelemetryLevel Levels { get; } = levels;
 
@@ -180,37 +181,32 @@ internal sealed class TraceCommand : Command
         {
             get
             {
-                lock (_counts)
+                var counts = new Dictionary<string, int>(Kinds.Length);
+                for (int i = 0; i < Kinds.Length; i++)
                 {
-                    return new Dictionary<string, int>(_counts);
+                    counts[Kinds[i]] = Volatile.Read(ref _counts[i]);
                 }
+
+                return counts;
             }
         }
 
-        public void OnTrainingStarted(in TrainingStarted e) => Add("training");
+        public void OnTrainingStarted(in TrainingStarted e) => Interlocked.Increment(ref _counts[0]);
 
-        public void OnBatchCompleted(in BatchCompleted e) => Add("batches");
+        public void OnEpochCompleted(in EpochCompleted e) => Interlocked.Increment(ref _counts[1]);
 
-        public void OnEpochCompleted(in EpochCompleted e) => Add("epochs");
+        public void OnBatchCompleted(in BatchCompleted e) => Interlocked.Increment(ref _counts[2]);
 
-        public void OnLayerForward(in LayerForward e) => Add("layers");
+        public void OnLayerForward(in LayerForward e) => Interlocked.Increment(ref _counts[3]);
 
-        public void OnOperation(in OperationCompleted e) => Add("operations");
+        public void OnOperation(in OperationCompleted e) => Interlocked.Increment(ref _counts[4]);
 
-        public void OnInference(in InferenceCompleted e) => Add("inference");
+        public void OnInference(in InferenceCompleted e) => Interlocked.Increment(ref _counts[5]);
 
-        public void OnToolCall(in ToolCallCompleted e) => Add("tools");
+        public void OnToolCall(in ToolCallCompleted e) => Interlocked.Increment(ref _counts[6]);
 
-        public void OnEngine(in EngineEvent e) => Add("engine");
+        public void OnEngine(in EngineEvent e) => Interlocked.Increment(ref _counts[7]);
 
-        public void OnDeviceFailed(in DeviceFailed e) => Add("devices");
-
-        private void Add(string kind)
-        {
-            lock (_counts)
-            {
-                _counts[kind]++;
-            }
-        }
+        public void OnDeviceFailed(in DeviceFailed e) => Interlocked.Increment(ref _counts[8]);
     }
 }
