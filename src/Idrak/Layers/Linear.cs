@@ -188,11 +188,19 @@ public sealed partial class Linear : Module, ILinearLayer
         using var offload = Offloading.EnterMany(layers, input);       // offloaded weights of all the layers staged together
         int k = input.Shape[^1], rows = input.Size / Math.Max(1, k);
         var capabilities = input.Backend.Capabilities;
+        // The checks are plain loops: no closure or delegate is allocated per call (this runs per block and decoding step).
         bool fused = !Autograd.IsEnabled && layers.Length is > 1 and <= 3 && rows <= capabilities.FewRows && capabilities.FusedKernels
-            && layers.All(l => !l.Packed && l.TiedTo is null && l.Adapter is null && l.InFeatures == k && (long)l.OutFeatures * k >= 1 << 16);
+            && AllPlainFloat(layers, k);
         if (fused)
         {
-            return Tensor.MatMulMany(input, [.. layers.Select(l => l.Weight)], [.. layers.Select(l => l.Bias)]);
+            var weights = new Tensor[layers.Length];
+            var biases = new Tensor?[layers.Length];
+            for (int j = 0; j < layers.Length; j++)
+            {
+                (weights[j], biases[j]) = (layers[j].Weight, layers[j].Bias);
+            }
+
+            return Tensor.MatMulMany(input, weights, biases);
         }
 
         // Packed weights of one built-in kind (int8, int4, bfloat16): one pass where the device has one (few rows; for
@@ -200,15 +208,15 @@ public sealed partial class Linear : Module, ILinearLayer
         // pass: each layer runs its own product.
         var format = layers[0].PackedWeight?.Format;
         bool packed = format is not null && !Autograd.IsEnabled && layers.Length is > 1 and <= 3
-            && (rows <= capabilities.FewRows || layers.All(l => l.Bias is null))                  // prompts: one launch
-            && layers.All(l => l.Adapter is null && l.InFeatures == k && l.PackedWeight?.Format == format);
+            && (rows <= capabilities.FewRows || AllWithoutBias(layers))                            // prompts: one launch
+            && AllPacked(layers, k, format, withoutAdapters: true);
         if (packed && Linear.MatMulPackedMany(input, format!.Value, layers) is { } outputs)
         {
             return outputs;
         }
 
         // Adapters on every layer (LoRA / QLoRA, training or evaluation): one pass with each low-rank term inside its product.
-        if (layers.All(l => l.Lora is not null && l.Bias is not { RequiresGrad: true }) && Linear.LoraProducts(input, layers) is { } lora)
+        if (AllLora(layers) && Linear.LoraProducts(input, layers) is { } lora)
         {
             return lora;
         }
@@ -216,21 +224,94 @@ public sealed partial class Linear : Module, ILinearLayer
         // Training over frozen packed layers (LoRA / QLoRA): the base products still run as one pass, recorded, and each
         // layer's adapter adds its low-rank term into its output.
         bool training = format is not null && Autograd.IsEnabled && layers.Length is > 1 and <= 3 && capabilities.FusedKernels
-            && layers.All(l => l.Bias is null && l.InFeatures == k && l.PackedWeight?.Format == format);
+            && AllWithoutBias(layers) && AllPacked(layers, k, format, withoutAdapters: false);
         if (training && Linear.MatMulPackedManyRecorded(input, format!.Value, layers) is { } products)
         {
-            return [.. products.Select((product, j) => layers[j].Adapter is { } a ? a.Forward(layers[j], input, product) : product)];
+            for (int j = 0; j < products.Length; j++)
+            {
+                products[j] = layers[j].Adapter is { } a ? a.Forward(layers[j], input, products[j]) : products[j];
+            }
+
+            return products;
         }
+
+        var results = new Tensor[layers.Length];
 
         // Training: the layers read one flattened view of the input, so their input gradients add up in its one buffer
         // (each product adds into it) instead of each view's gradient being added into the input by a separate pass.
         if (Autograd.IsEnabled && input.RequiresGrad && layers.Length > 1 && input.Rank > 2)
         {
             var flat = input.Reshape(-1, k);
-            return [.. layers.Select(l => l.Forward(flat) is var y && y.Rank == 2 ? y.Reshape([.. input.Shape[..^1], l.OutFeatures]) : y)];
+            for (int j = 0; j < layers.Length; j++)
+            {
+                var y = layers[j].Forward(flat);
+                results[j] = y.Rank == 2 ? y.Reshape([.. input.Shape[..^1], layers[j].OutFeatures]) : y;
+            }
+
+            return results;
         }
 
-        return [.. layers.Select(l => l.Forward(input))];
+        for (int j = 0; j < layers.Length; j++)
+        {
+            results[j] = layers[j].Forward(input);
+        }
+
+        return results;
+    }
+
+    // Float32 weights of their own, no adapter, reading k features, and wide enough for the one-pass product.
+    private static bool AllPlainFloat(Linear[] layers, int k)
+    {
+        foreach (var l in layers)
+        {
+            if (l.Packed || l.TiedTo is not null || l.Adapter is not null || l.InFeatures != k || (long)l.OutFeatures * k < 1 << 16)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool AllWithoutBias(Linear[] layers)
+    {
+        foreach (var l in layers)
+        {
+            if (l.Bias is not null)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    // Packed weights of `format` reading k features (and no adapter, when asked).
+    private static bool AllPacked(Linear[] layers, int k, PackedFormat? format, bool withoutAdapters)
+    {
+        foreach (var l in layers)
+        {
+            if (withoutAdapters && l.Adapter is not null || l.InFeatures != k || l.PackedWeight?.Format != format)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    // A LoRA adapter on every layer, and no bias that trains.
+    private static bool AllLora(Linear[] layers)
+    {
+        foreach (var l in layers)
+        {
+            if (l.Lora is null || l.Bias is { RequiresGrad: true })
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>x·W, adapted by the adapter when one is attached.</summary>
