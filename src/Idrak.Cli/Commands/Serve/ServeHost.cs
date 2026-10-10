@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
@@ -648,20 +649,8 @@ internal sealed class ServeHost
             else
             {
                 http.Request.EnableBuffering();
-                body = await new StreamReader(http.Request.Body, leaveOpen: true).ReadToEndAsync(http.RequestAborted);
+                (asked, body) = await ReadBody(http.Request.Body, Settings.LogContent, http.RequestAborted);
                 http.Request.Body.Position = 0;
-                try
-                {
-                    using var document = JsonDocument.Parse(body);
-                    if (document.RootElement.ValueKind == JsonValueKind.Object && document.RootElement.TryGetProperty("model", out var model) && model.ValueKind == JsonValueKind.String)
-                    {
-                        asked = model.GetString();
-                    }
-                }
-                catch (JsonException)
-                {
-                    // The endpoint answers bad JSON with 400.
-                }
             }
         }
         catch (Exception e) when (e is BadHttpRequestException { StatusCode: StatusCodes.Status413PayloadTooLarge }
@@ -727,6 +716,98 @@ internal sealed class ServeHost
                 http.Response.Body = tail.Inner;
                 WriteLogLine(http, path, served?.Name ?? asked, body, tail, started, watch.Elapsed);
             }
+        }
+    }
+
+    // The body of a JSON request, read as bytes into a pooled buffer: the "model" it names, and its text only when the
+    // request log keeps the bodies (--log-content). Async shell: only reads and buffer moves.
+    private static async Task<(string? Model, string Body)> ReadBody(Stream body, bool keepText, CancellationToken token)
+    {
+        byte[] buffer = ArrayPool<byte>.Shared.Rent(16 * 1024);
+        int filled = 0;
+        try
+        {
+            while (true)
+            {
+                if (filled == buffer.Length)
+                {
+                    byte[] bigger = ArrayPool<byte>.Shared.Rent(buffer.Length * 2);
+                    buffer.AsSpan(0, filled).CopyTo(bigger);
+                    ArrayPool<byte>.Shared.Return(buffer);
+                    buffer = bigger;
+                }
+
+                int read = await body.ReadAsync(buffer.AsMemory(filled), token);
+                if (read == 0)
+                {
+                    break;
+                }
+
+                filled += read;
+            }
+
+            return InspectBody(buffer, filled, keepText);
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
+    }
+
+    // Sync core: the top-level "model" string of a JSON object (the last one, as JsonElement.TryGetProperty finds it),
+    // or null for any other body, bad JSON included (the endpoint answers it with 400). A body with a byte-order mark,
+    // or with bytes that are not UTF-8, is read as text first, as a StreamReader decodes it, so every body names the
+    // same model it did when every body was read as text.
+    internal static (string? Model, string Body) InspectBody(byte[] buffer, int count, bool keepText)
+    {
+        var bytes = buffer.AsSpan(0, count);
+        if (bytes.StartsWith(Utf8Bom) || bytes.StartsWith(Utf16BigEndianBom) || bytes.StartsWith(Utf16LittleEndianBom) || !System.Text.Unicode.Utf8.IsValid(bytes))
+        {
+            string text = new StreamReader(new MemoryStream(buffer, 0, count, writable: false)).ReadToEnd();
+            return (ModelOf(text), keepText ? text : "");
+        }
+
+        string? model = null;
+        try
+        {
+            var reader = new Utf8JsonReader(bytes);
+            while (reader.Read())
+            {
+                if (reader.CurrentDepth == 1 && reader.TokenType == JsonTokenType.PropertyName && reader.ValueTextEquals(ModelProperty))
+                {
+                    reader.Read();
+                    model = reader.TokenType == JsonTokenType.String ? reader.GetString() : null;
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            model = null;
+        }
+
+        return (model, keepText ? System.Text.Encoding.UTF8.GetString(bytes) : "");
+    }
+
+    private static ReadOnlySpan<byte> Utf8Bom => [0xEF, 0xBB, 0xBF];
+
+    private static ReadOnlySpan<byte> Utf16BigEndianBom => [0xFE, 0xFF];
+
+    private static ReadOnlySpan<byte> Utf16LittleEndianBom => [0xFF, 0xFE];
+
+    private static ReadOnlySpan<byte> ModelProperty => "model"u8;
+
+    // The "model" of a JSON body given as text (InspectBody's decoded path).
+    private static string? ModelOf(string body)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+            return document.RootElement.ValueKind == JsonValueKind.Object && document.RootElement.TryGetProperty("model", out var model) && model.ValueKind == JsonValueKind.String
+                ? model.GetString() : null;
+        }
+        catch (JsonException)
+        {
+            return null;
         }
     }
 

@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -104,7 +105,18 @@ internal static class DataPreparation
     };
 
     /// <summary>A JSON number (from a file or made in code) as a double.</summary>
-    public static double ParseNumber(JsonValue value) => double.Parse(value.ToJsonString(), NumberStyles.Float, CultureInfo.InvariantCulture);
+    /// <remarks>
+    /// Read without writing the number out as text: from the file's UTF-8 bytes (a value parsed from JSON), or the value
+    /// itself (a whole number or a finite double made in code). Anything else, and a number the bytes do not give as a
+    /// finite double, is parsed from its JSON text as before; every path gives the bits that parse gives.
+    /// </remarks>
+    public static double ParseNumber(JsonValue value) =>
+        value.TryGetValue(out JsonElement element) ? element.TryGetDouble(out double parsed) ? parsed : ParseText(value)
+        : value.TryGetValue(out long whole) ? whole
+        : value.TryGetValue(out double number) && double.IsFinite(number) ? number
+        : ParseText(value);
+
+    private static double ParseText(JsonValue value) => double.Parse(value.ToJsonString(), NumberStyles.Float, CultureInfo.InvariantCulture);
 
     /// <summary>The words of a text as the "words" tokenizer splits them.</summary>
     public static IEnumerable<string> Words(string text, bool lowercase = true)
@@ -148,27 +160,36 @@ internal static class DataPreparation
         var x = new List<float>();
         var y = new List<float>();
         var target = prep["target"]!.AsObject();
+        var targetSpec = new TargetSpec(target);
+        // Each feature's settings are read from prep.json once, when a row first needs them (not once per row).
+        var featureList = features.OfType<JsonObject>().ToList();
+        var specs = new FeatureSpec?[featureList.Count];
         int count = 0;
         foreach (var row in rows)
         {
-            if (!Target(target, row[(string)target["column"]!], y))
+            if (!targetSpec.Append(row[targetSpec.Column], y))
             {
                 continue;
             }
 
-            foreach (var f in features.OfType<JsonObject>())
+            for (int i = 0; i < featureList.Count; i++)
             {
-                var cell = row[(string)f["column"]!];
-                if ((string?)f["type"] == "onehot")
+                var f = specs[i] ??= new FeatureSpec(featureList[i]);
+                var cell = row[f.Column];
+                if (f.OneHot)
                 {
                     string? key = Key(cell);
-                    x.AddRange(f["values"]!.AsArray().Select(v => key is not null && (string?)v == key ? 1f : 0f));
+                    var values = f.ValueList;
+                    for (int k = 0; k < values.Count; k++)
+                    {
+                        x.Add(key is not null && f.Value(k) == key ? 1f : 0f);
+                    }
                 }
                 else
                 {
-                    double value = Number(cell) ?? (double?)f["fill"] ?? 0;
-                    double std = (double?)f["std"] ?? 1;
-                    x.Add((float)((value - ((double?)f["mean"] ?? 0)) / (std == 0 ? 1 : std)));
+                    double value = Number(cell) ?? f.Fill ?? 0;
+                    double std = f.Std ?? 1;
+                    x.Add((float)((value - (f.Mean ?? 0)) / (std == 0 ? 1 : std)));
                 }
             }
 
@@ -191,20 +212,47 @@ internal static class DataPreparation
         }
 
         var target = prep["target"]!.AsObject();
+        var targetSpec = new TargetSpec(target);
         string column = (string)prep["column"]!;
         var x = new List<float>();
         var y = new List<float>();
         int count = 0;
+        // Words are looked up as spans of one reused buffer (the "words" tokenizer's split), not a string per word.
+        var lookup = vocabulary.GetAlternateLookup<ReadOnlySpan<char>>();
+        var letters = new char[64];
         foreach (var row in rows)
         {
-            if (!Target(target, row[(string)target["column"]!], y))
+            if (!targetSpec.Append(row[targetSpec.Column], y))
             {
                 continue;
             }
 
-            var ids = Words(Key(row[column]) ?? "", lowercase).Take(length).Select(w => vocabulary.TryGetValue(w, out int i) ? i : 1).ToList();
-            x.AddRange(ids.Select(i => (float)i));
-            x.AddRange(Enumerable.Repeat(0f, length - ids.Count));
+            string text = Key(row[column]) ?? "";
+            int ids = 0, used = 0;
+            for (int i = 0; i <= text.Length && ids < length; i++)
+            {
+                if (i < text.Length && char.IsLetterOrDigit(text[i]))
+                {
+                    if (used == letters.Length)
+                    {
+                        Array.Resize(ref letters, letters.Length * 2);
+                    }
+
+                    letters[used++] = lowercase ? char.ToLowerInvariant(text[i]) : text[i];
+                }
+                else if (used > 0)
+                {
+                    x.Add(lookup.TryGetValue(letters.AsSpan(0, used), out int found) ? found : 1);
+                    ids++;
+                    used = 0;
+                }
+            }
+
+            for (; ids < length; ids++)
+            {
+                x.Add(0f);
+            }
+
             count++;
         }
 
@@ -239,14 +287,30 @@ internal static class DataPreparation
         var x = new List<float>();
         var y = new List<float>();
         int count = 0;
+        var lookup = vocabulary.GetAlternateLookup<ReadOnlySpan<char>>();        // each character looked up as a span, not a string
+        var ids = new List<int>();
         foreach (var conversation in conversations)
         {
-            var ids = DataProfile.Render(conversation).Select(ch => vocabulary.TryGetValue(ch.ToString(), out int i) ? i : 1).ToList();
-            ids.AddRange(Enumerable.Repeat(0, Math.Max(0, length + 1 - ids.Count)));     // short texts padded to one window
-            for (int start = 0; start + length + 1 <= ids.Count; start += length)
+            ids.Clear();
+            foreach (char ch in DataProfile.Render(conversation))
             {
-                x.AddRange(ids.Skip(start).Take(length).Select(i => (float)i));
-                y.AddRange(ids.Skip(start + 1).Take(length).Select(i => (float)i));
+                ids.Add(lookup.TryGetValue(new ReadOnlySpan<char>(in ch), out int i) ? i : 1);
+            }
+
+            ids.AddRange(Enumerable.Repeat(0, Math.Max(0, length + 1 - ids.Count)));     // short texts padded to one window
+            var all = CollectionsMarshal.AsSpan(ids);
+            for (int start = 0; start + length + 1 <= all.Length; start += length)
+            {
+                foreach (int i in all.Slice(start, length))
+                {
+                    x.Add(i);
+                }
+
+                foreach (int i in all.Slice(start + 1, length))
+                {
+                    y.Add(i);
+                }
+
                 count++;
             }
         }
@@ -255,39 +319,128 @@ internal static class DataPreparation
         return TensorData.FromFlat([.. x], [.. y], count, positions, positions).WithFeatureShape(length);
     }
 
-    // Appends the target of one row; false when it is missing (or not a known class).
-    private static bool Target(JsonObject target, JsonNode? cell, List<float> y)
+    // A number setting read once: kept with its flag set (a missing setting is kept as null too).
+    private static double? Read(ref double? value, ref bool read, JsonNode? node)
     {
-        if ((string?)target["type"] == "classes")
+        value = (double?)node;
+        read = true;
+        return value;
+    }
+
+    /// <summary>
+    /// A "target" of prep.json read once for every row: each setting is read the first time a row needs it (so a
+    /// setting no row needs is never read, as when it was read per row) and kept.
+    /// </summary>
+    private sealed class TargetSpec(JsonObject target)
+    {
+        private string? _column, _type;
+        private JsonArray? _classes;
+        private string?[]? _names;
+        private int _named;
+        private bool? _log;
+        private double? _std, _mean;
+        private bool _hasStd, _hasMean;
+
+        public string Column => _column ??= (string)target["column"]!;
+
+        private string? Type => _type ??= (string?)target["type"] ?? "";
+
+        // Appends the target of one row; false when it is missing (or not a known class).
+        public bool Append(JsonNode? cell, List<float> y)
         {
-            var classes = target["classes"]!.AsArray();
-            int index = ClassOf(cell, classes);
-            if (index < 0)
+            if (Type == "classes")
+            {
+                var classes = _classes ??= target["classes"]!.AsArray();
+                int index = ClassIndex(cell, classes);
+                if (index < 0)
+                {
+                    return false;
+                }
+
+                for (int i = 0; i < classes.Count; i++)
+                {
+                    y.Add(i == index ? 1 : 0);
+                }
+
+                return true;
+            }
+
+            if (Number(cell) is not { } value || Log && value <= 0)
             {
                 return false;
             }
 
-            for (int i = 0; i < classes.Count; i++)
+            if (Log)
             {
-                y.Add(i == index ? 1 : 0);
+                value = Math.Log(value);
             }
 
+            double std = Std ?? 1;
+            y.Add((float)((value - (Mean ?? 0)) / (std == 0 ? 1 : std)));
             return true;
         }
 
-        if (Number(cell) is not { } value || (bool?)target["log"] == true && value <= 0)
+        private bool Log => _log ??= (bool?)target["log"] == true;
+
+        private double? Std => _hasStd ? _std : Read(ref _std, ref _hasStd, target["std"]);
+
+        private double? Mean => _hasMean ? _mean : Read(ref _mean, ref _hasMean, target["mean"]);
+
+        // ClassOf with the class names read once (up to the furthest one a row reached, as the per-row reading did).
+        private int ClassIndex(JsonNode? cell, JsonArray classes)
         {
-            return false;
+            string? key = Key(cell);
+            _names ??= new string?[classes.Count];
+            for (int i = 0; key is not null && i < classes.Count; i++)
+            {
+                if (i == _named)
+                {
+                    _names[i] = (string?)classes[i];
+                    _named++;
+                }
+
+                if (_names[i] == key)
+                {
+                    return i;
+                }
+            }
+
+            return -1;
+        }
+    }
+
+    /// <summary>One feature of a "table" prep.json, its settings read once, the first time a row needs each.</summary>
+    private sealed class FeatureSpec(JsonObject feature)
+    {
+        private JsonArray? _values;
+        private string?[]? _names;
+        private int _named;
+        private double? _fill, _std, _mean;
+        private bool _hasFill, _hasStd, _hasMean;
+
+        public string Column { get; } = (string)feature["column"]!;
+
+        public bool OneHot { get; } = (string?)feature["type"] == "onehot";
+
+        public JsonArray ValueList => _values ??= feature["values"]!.AsArray();
+
+        // The k-th one-hot value as text (read in order, as the per-row reading did).
+        public string? Value(int k)
+        {
+            _names ??= new string?[ValueList.Count];
+            for (; _named <= k; _named++)
+            {
+                _names[_named] = (string?)ValueList[_named];
+            }
+
+            return _names[k];
         }
 
-        if ((bool?)target["log"] == true)
-        {
-            value = Math.Log(value);
-        }
+        public double? Fill => _hasFill ? _fill : Read(ref _fill, ref _hasFill, feature["fill"]);
 
-        double std = (double?)target["std"] ?? 1;
-        y.Add((float)((value - ((double?)target["mean"] ?? 0)) / (std == 0 ? 1 : std)));
-        return true;
+        public double? Std => _hasStd ? _std : Read(ref _std, ref _hasStd, feature["std"]);
+
+        public double? Mean => _hasMean ? _mean : Read(ref _mean, ref _hasMean, feature["mean"]);
     }
 
     private static List<string> TargetNames(JsonObject target) => (string?)target["type"] == "classes"

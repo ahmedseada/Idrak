@@ -2,8 +2,8 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Globalization;
-using System.Text;
 using System.Text.Json.Nodes;
+using Idrak.Cli.Commands.Run;
 using Idrak.Cli.Shared;
 using Idrak.Data;
 using Idrak.Inference;
@@ -166,13 +166,8 @@ internal static class ImageModelFiles
         int unpadded = 10 + header.Length + 1;                                  // magic, version, length, header, newline
         header = header.PadRight(header.Length + (64 - unpadded % 64) % 64) + "\n";
         using var file = File.Create(path);
-        file.Write([0x93, (byte)'N', (byte)'U', (byte)'M', (byte)'P', (byte)'Y', 1, 0]);
-        file.Write(BitConverter.GetBytes((ushort)header.Length));
-        file.Write(Encoding.ASCII.GetBytes(header));
-        foreach (float v in values)
-        {
-            file.Write(BitConverter.GetBytes(v));
-        }
+        Npy.WriteHeader(file, header);
+        Npy.WriteFloat32(file, values);                                         // little-endian whatever the machine's order
     }
 }
 

@@ -1,7 +1,11 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Buffers;
+using System.Buffers.Binary;
+using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
 using Idrak.Layers;
@@ -99,33 +103,68 @@ internal sealed class EmbedCommand : Command
         {
             Npy.Write(output, vectors, dimensions);
         }
+        else if (output is not null)
+        {
+            using var file = File.Create(output);
+            WriteJson(file, default, choice.Model, texts, vectors, dimensions);
+        }
         else
         {
-            var json = new JsonObject
+            // The vectors are the result: printed as JSON with or without --json.
+            var buffer = new ArrayBufferWriter<byte>();
+            var options = CommandContext.JsonOutput;
+            WriteJson(buffer, new JsonWriterOptions
             {
-                ["model"] = choice.Model,
-                ["dimensions"] = dimensions,
-                ["embeddings"] = new JsonArray([.. texts.Select((t, i) => (JsonNode)new JsonObject
-                {
-                    ["text"] = t,
-                    ["vector"] = new JsonArray([.. vectors[i].Select(v => (JsonNode)v)]),
-                })]),
-            };
-            if (output is not null)
-            {
-                File.WriteAllText(output, json.ToJsonString());
-            }
-            else
-            {
-                // The vectors are the result: printed as JSON with or without --json.
-                context.Output.WriteLine(json.ToJsonString(CommandContext.JsonOutput));
-                return ExitCodes.Ok;
-            }
+                Indented = options.WriteIndented, Encoder = options.Encoder, IndentCharacter = options.IndentCharacter, IndentSize = options.IndentSize,
+                NewLine = options.NewLine,
+            }, choice.Model, texts, vectors, dimensions);
+            context.Output.WriteLine(Encoding.UTF8.GetString(buffer.WrittenSpan));
+            return ExitCodes.Ok;
         }
 
         context.Write($"Wrote {texts.Count} vectors of {dimensions} dimensions to {output}.");
         context.WriteJson(new JsonObject { ["model"] = choice.Model, ["count"] = texts.Count, ["dimensions"] = dimensions, ["out"] = output });
         return ExitCodes.Ok;
+    }
+
+    /// <summary>
+    /// The embeddings document (<c>{"model", "dimensions", "embeddings": [{"text", "vector"}]}</c>) written as it goes:
+    /// the same bytes a JSON tree gave with the same writer options, without a node for every number.
+    /// </summary>
+    internal static void WriteJson(Stream stream, JsonWriterOptions options, string model, IReadOnlyList<string> texts, IReadOnlyList<float[]> vectors, int dimensions)
+    {
+        using var writer = new Utf8JsonWriter(stream, options);
+        Write(writer, model, texts, vectors, dimensions);
+    }
+
+    private static void WriteJson(IBufferWriter<byte> buffer, JsonWriterOptions options, string model, IReadOnlyList<string> texts, IReadOnlyList<float[]> vectors, int dimensions)
+    {
+        using var writer = new Utf8JsonWriter(buffer, options);
+        Write(writer, model, texts, vectors, dimensions);
+    }
+
+    private static void Write(Utf8JsonWriter writer, string model, IReadOnlyList<string> texts, IReadOnlyList<float[]> vectors, int dimensions)
+    {
+        writer.WriteStartObject();
+        writer.WriteString("model", model);
+        writer.WriteNumber("dimensions", dimensions);
+        writer.WriteStartArray("embeddings");
+        for (int i = 0; i < texts.Count; i++)
+        {
+            writer.WriteStartObject();
+            writer.WriteString("text", texts[i]);
+            writer.WriteStartArray("vector");
+            foreach (float value in vectors[i])
+            {
+                writer.WriteNumberValue(value);
+            }
+
+            writer.WriteEndArray();
+            writer.WriteEndObject();
+        }
+
+        writer.WriteEndArray();
+        writer.WriteEndObject();
     }
 }
 
@@ -145,7 +184,19 @@ internal static class Npy
     {
         var (bytes, start, shape) = Read(path, "<f4");
         var values = new float[(bytes.Length - start) / 4];
-        Buffer.BlockCopy(bytes, start, values, 0, values.Length * 4);
+        var source = bytes.AsSpan(start, values.Length * 4);
+        if (BitConverter.IsLittleEndian)
+        {
+            source.CopyTo(MemoryMarshal.AsBytes(values.AsSpan()));
+        }
+        else
+        {
+            for (int i = 0; i < values.Length; i++)
+            {
+                values[i] = BinaryPrimitives.ReadSingleLittleEndian(source[(i * 4)..]);
+            }
+        }
+
         return (values, shape);
     }
 
@@ -154,7 +205,19 @@ internal static class Npy
     {
         var (bytes, start, shape) = Read(path, "<i8");
         var values = new long[(bytes.Length - start) / 8];
-        Buffer.BlockCopy(bytes, start, values, 0, values.Length * 8);
+        var source = bytes.AsSpan(start, values.Length * 8);
+        if (BitConverter.IsLittleEndian)
+        {
+            source.CopyTo(MemoryMarshal.AsBytes(values.AsSpan()));
+        }
+        else
+        {
+            for (int i = 0; i < values.Length; i++)
+            {
+                values[i] = BinaryPrimitives.ReadInt64LittleEndian(source[(i * 8)..]);
+            }
+        }
+
         return (values, shape);
     }
 
@@ -167,7 +230,7 @@ internal static class Npy
         }
 
         int major = bytes[6];
-        int length = major == 1 ? BitConverter.ToUInt16(bytes, 8) : BitConverter.ToInt32(bytes, 8);
+        int length = major == 1 ? BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(8)) : BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(8));
         int start = (major == 1 ? 10 : 12) + length;
         string header = Encoding.ASCII.GetString(bytes, major == 1 ? 10 : 12, length);
         if (!header.Contains($"'descr': '{type}'", StringComparison.Ordinal) || !header.Contains("'fortran_order': False", StringComparison.Ordinal))
@@ -188,19 +251,52 @@ internal static class Npy
         int total = 10 + header.Length + 1;
         header = header.PadRight(header.Length + (64 - total % 64) % 64) + "\n";   // the data starts on a 64-byte boundary
         using var stream = File.Create(path);
-        using var writer = new BinaryWriter(stream);
-        writer.Write((byte)0x93);
-        writer.Write("NUMPY"u8);
-        writer.Write((byte)1);
-        writer.Write((byte)0);
-        writer.Write((ushort)header.Length);
-        writer.Write(Encoding.ASCII.GetBytes(header));
+        WriteHeader(stream, header);
         foreach (var row in rows)
         {
-            foreach (float value in row)
+            WriteFloat32(stream, row);
+        }
+    }
+
+    /// <summary>The magic, version 1.0, the header's length (little-endian) and the header (padded, ending in a newline).</summary>
+    public static void WriteHeader(Stream stream, string header)
+    {
+        Span<byte> start = [0x93, (byte)'N', (byte)'U', (byte)'M', (byte)'P', (byte)'Y', 1, 0, 0, 0];
+        BinaryPrimitives.WriteUInt16LittleEndian(start[8..], (ushort)header.Length);
+        stream.Write(start);
+        stream.Write(Encoding.ASCII.GetBytes(header));
+    }
+
+    /// <summary>
+    /// <paramref name="values"/> as little-endian float32 bytes: one block write on a little-endian machine, converted
+    /// through a pooled buffer on a big-endian one (the file's byte order never follows the machine's).
+    /// </summary>
+    public static void WriteFloat32(Stream stream, ReadOnlySpan<float> values)
+    {
+        if (BitConverter.IsLittleEndian)
+        {
+            stream.Write(MemoryMarshal.AsBytes(values));
+            return;
+        }
+
+        byte[] buffer = ArrayPool<byte>.Shared.Rent(Math.Min(values.Length, 16 * 1024) * 4);
+        try
+        {
+            int per = buffer.Length / 4;
+            for (int i = 0; i < values.Length; i += per)
             {
-                writer.Write(value);
+                int n = Math.Min(per, values.Length - i);
+                for (int k = 0; k < n; k++)
+                {
+                    BinaryPrimitives.WriteSingleLittleEndian(buffer.AsSpan(k * 4), values[i + k]);
+                }
+
+                stream.Write(buffer, 0, n * 4);
             }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
         }
     }
 }

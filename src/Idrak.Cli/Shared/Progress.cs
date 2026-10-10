@@ -223,10 +223,17 @@ internal sealed class ProgressLine : IProgress<long>, IDisposable
 /// <param name="before">Epochs done before it (a resumed run), for the numbers shown.</param>
 internal sealed class TrainingProgress(ProgressLine line, int epochs, int before = 0) : ITrainerCallback
 {
+    private int _labelled = int.MinValue;                                        // the epoch the label was made for
+
     public void OnBatchEnd(TrainerContext context, BatchCompleted batch)
     {
         line.Total = (long)epochs * batch.BatchesPerEpoch;
-        line.Label = $"epoch {batch.Epoch + before}/{epochs + before}";
+        if (batch.Epoch != _labelled)
+        {
+            line.Label = $"epoch {batch.Epoch + before}/{epochs + before}";   // once per epoch, not a string per step
+            _labelled = batch.Epoch;
+        }
+
         line.Report((long)(batch.Epoch - 1) * batch.BatchesPerEpoch + batch.Batch);
     }
 
