@@ -6,7 +6,9 @@ These are the owner's standing rules. They hold in every session, after every co
   over strings on hot paths, alternate lookups, `SearchValues`, `string.Create`, pooled buffers returned in `finally`,
   SIMD with a scalar tail, `InvariantCulture`) and Idrak's rules 70-79 (no platform dependence, results proven
   unchanged, memory walked in order, bytes parsed not strings, work done once, cold and warm measured apart, device
-  memory that does not grow, the library's telemetry, independent work spread) apply to every change and every agent.
+  memory that does not grow, the library's telemetry, independent work spread) apply to every change and every agent;
+  its PTX kernel rules 80-87 (independent loads, a full device, few launches, coalesced reads, the device's reported
+  limits, per-call work once, a fixed summation order, the declared block) apply to every GPU kernel.
 - **Speed and memory first.** They are the library's main goal. A slow or memory-heavy path found in the library is
   fixed in the library, without asking whether to; an app or sample never works around it.
 - **Card-agnostic.** Nothing is tuned for, or assumes, a specific GPU, card or memory size. Measure the device at run
