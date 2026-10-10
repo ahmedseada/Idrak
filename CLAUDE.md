@@ -18,9 +18,9 @@ These are the owner's standing rules. They hold in every session, after every co
   library defaults. Defaults are for things meant to work together (GPU falls back to CPU), not one family for another.
 - **Versions and releases.** Do not bump the version (`VersionPrefix` stays as it is), do not touch `CHANGELOG`, and do
   not publish or package.
-- **Tests.** The owner runs the tests, the training and the apps. Do not run them; build to check the code compiles,
-  then give the exact commands. (Agents working on library code may run targeted `IDRAK_FILTER` tests only when the
-  owner asks for it; never the full suite.)
+- **Tests.** Never run the full test suite, anywhere, by anyone but the owner. Only targeted runs: always
+  `IDRAK_DEVICES=cpu` with an `IDRAK_FILTER` group or name for the code changed (sample test projects with their own
+  filter). GPU tests, apps and training runs are the owner's: give the exact commands.
 - **Keep the owner informed.** Before each step, say in a line what you are about to do and why; never go quiet while
   working. The same for the software: long work shows live progress (what it is doing, how far, how fast, time left).
 - **Commands for the owner** are exact PowerShell commands for Windows, with the repo at `D:\Projects\Idrak`.
