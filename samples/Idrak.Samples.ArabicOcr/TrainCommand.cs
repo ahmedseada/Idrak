@@ -127,6 +127,11 @@ internal static class TrainCommand
         context.Say($"Network   {recognizer.Network.ParameterCount:N0} parameters on {context.Device} · height {settings.Height} · {(settings.RightToLeft ? "right to left" : "left to right")} · "
                     + $"batch {batchSize} · AdamW {learningRate.ToString("G", CultureInfo.InvariantCulture)} · {epochs} epochs · augment {settings.Augment}");
 
+        if (a.Option("--log") is { } logFolder && Path.GetDirectoryName(Path.GetFullPath(logFolder)) is { } parent)
+        {
+            Directory.CreateDirectory(parent);
+        }
+
         using var log = a.Option("--log") is { } logFile ? new JsonLinesLogger(logFile, TelemetryLevel.Training | TelemetryLevel.Batches | TelemetryLevel.Devices) : null;
         using var subscription = log is null ? null : Telemetry.Subscribe(log);
         var live = new LiveLine(error);
