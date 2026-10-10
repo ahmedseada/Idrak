@@ -57,7 +57,11 @@
   .pages small { display: block; color: var(--muted); direction: rtl; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .images { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .images figure { margin: 0; }
-  .images img { width: 100%; border: 1px solid var(--line); border-radius: 6px; background: var(--soft); min-height: 60px; }
+  .images img { width: 100%; border: 1px solid var(--line); border-radius: 6px; background: var(--soft); min-height: 60px; display: block; }
+  .seen { position: relative; }
+  .seen svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  .seen rect { fill: none; stroke: var(--warn); stroke-width: 2; vector-effect: non-scaling-stroke; stroke-dasharray: 6 4; }
+  .seen text { fill: var(--warn); font-weight: 600; }
   .images figcaption { font-size: 12px; color: var(--muted); margin-top: 4px; }
   .metrics { display: flex; flex-wrap: wrap; gap: 8px; }
   .metric { background: var(--soft); border-radius: 7px; padding: 6px 10px; font-variant-numeric: tabular-nums; }
@@ -147,6 +151,7 @@
         </select>
         <input type="text" id="pipeline" style="margin-top:6px" spellcheck="false">
         <label class="check" style="margin-top:6px"><input type="checkbox" id="invert"> Invert colours (light text on a dark page becomes dark on light)</label>
+        <label class="check" style="margin-top:4px"><input type="checkbox" id="panAndScan"> Pan and scan (a tall or wide page is also read as 2 to 4 crops, each its own image: finer detail, more prompt tokens)</label>
       </div>
       <div>
         <label for="prompt">Prompt</label>
@@ -205,7 +210,7 @@
       <div data-pane="images" class="hidden">
         <div class="images">
           <figure><img id="originalImage" alt=""><figcaption id="originalCaption">The page</figcaption></figure>
-          <figure><img id="seenImage" alt=""><figcaption id="seenCaption">After the preprocessing</figcaption></figure>
+          <figure><div class="seen"><img id="seenImage" alt=""><svg id="crops" preserveAspectRatio="none"></svg></div><figcaption id="seenCaption">After the preprocessing</figcaption></figure>
         </div>
       </div>
     </div>
@@ -371,6 +376,15 @@ function withInvert(text, on) {
 }
 $("preset").onchange = () => { if ($("preset").value !== "custom") $("pipeline").value = withInvert(presets[$("preset").value], $("invert").checked); };
 $("pipeline").oninput = () => setPipeline($("pipeline").value);
+// The crops pan and scan reads, outlined on the page as the model sees it.
+function showCrops(data) {
+  const svg = $("crops");
+  svg.setAttribute("viewBox", `0 0 ${data.width} ${data.height}`);
+  svg.innerHTML = (data.crops ?? []).map((c, i) => `<rect x="${c.left}" y="${c.top}" width="${c.width}" height="${c.height}"/>`
+    + `<text x="${c.left + 6}" y="${c.top + Math.max(14, data.height / 30)}" font-size="${Math.max(12, data.height / 40)}">${i + 1}</text>`).join("");
+}
+$("panAndScan").onchange = () => { try { localStorage.setItem("legal-ocr-pan-and-scan", $("panAndScan").checked ? "1" : ""); } catch { } };
+try { $("panAndScan").checked = localStorage.getItem("legal-ocr-pan-and-scan") === "1"; } catch { }
 $("invert").onchange = () => {
   $("pipeline").value = withInvert($("pipeline").value, $("invert").checked);
   try { localStorage.setItem("legal-ocr-invert", $("invert").checked ? "1" : ""); } catch { }
@@ -446,7 +460,7 @@ function refreshRead() { $("read").disabled = !(current && current.loaded && (im
 $("evaluate").onclick = evaluate;
 $("evaluateStop").onclick = () => evaluating && evaluating.abort();
 async function evaluate() {
-  const body = { prompt: $("prompt").value, preprocessing: $("pipeline").value, maxTokens: Number($("maxTokens").value) || null };
+  const body = { prompt: $("prompt").value, preprocessing: $("pipeline").value, maxTokens: Number($("maxTokens").value) || null, panAndScan: $("panAndScan").checked };
   const count = Math.max(0, Number($("evaluateCount").value) || 0);
   evaluating = new AbortController();
   $("evaluate").disabled = true; $("evaluateStop").disabled = false; refreshRead();
@@ -480,7 +494,7 @@ $("read").onclick = read;
 $("stop").onclick = () => reading && reading.abort();
 
 async function read() {
-  const body = { prompt: $("prompt").value, preprocessing: $("pipeline").value, maxTokens: Number($("maxTokens").value) || null };
+  const body = { prompt: $("prompt").value, preprocessing: $("pipeline").value, maxTokens: Number($("maxTokens").value) || null, panAndScan: $("panAndScan").checked };
   if (pageIndex == null) body.image = imageData;
   const url = pageIndex == null ? "/api/read" : `/api/pages/${pageIndex}/read`;
   reading = new AbortController();
@@ -497,7 +511,9 @@ async function read() {
     for await (const [event, data] of events(r.body)) {
       if (event === "image") {
         $("seenImage").src = data.image;
-        $("seenCaption").textContent = `After "${data.preprocessing || "no preprocessing"}": ${data.width}×${data.height}`;
+        showCrops(data);
+        $("seenCaption").textContent = `After "${data.preprocessing || "no preprocessing"}": ${data.width}×${data.height}`
+          + (!data.panAndScan ? "" : data.crops?.length ? ` · pan and scan: the page and ${data.crops.length} crops` : " · pan and scan: no crops (the page is not elongated enough, or a crop would be under 256 pixels)");
         $("originalCaption").textContent = `The page: ${data.originalWidth}×${data.originalHeight}`;
       } else if (event === "token") { $("answer").textContent += data.text; tokens++; }
       else if (event === "queued") $("readNote").textContent = data.message;
