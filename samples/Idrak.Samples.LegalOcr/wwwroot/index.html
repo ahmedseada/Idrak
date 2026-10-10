@@ -51,6 +51,7 @@
   .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
   .btn:disabled { opacity: .5; cursor: not-allowed; }
   .pages { max-height: 300px; overflow: auto; border: 1px solid var(--line); border-radius: 7px; }
+  .pages.tall { max-height: calc(100vh - 330px); min-height: 200px; }
   .pages div { padding: 7px 9px; border-bottom: 1px solid var(--line); cursor: pointer; }
   .pages div:last-child { border-bottom: 0; }
   .pages div.on { background: var(--soft); }
@@ -161,14 +162,8 @@
       <h2>Page</h2>
       <div class="drop" id="drop">
         <img id="dropImage" class="hidden" alt="">
-        <div id="dropText">Drop a scan here, or click to choose one</div>
+        <div id="dropText">Drop a scan here, or click to choose one (or pick one in the Evaluation pages tab)</div>
         <input type="file" id="file" accept="image/*" class="hidden">
-      </div>
-      <div id="pagesBox" class="hidden">
-        <label>Or an evaluation page (<span id="pagesSource"></span>)</label>
-        <div class="error hidden" id="pagesError" style="margin-bottom:6px;word-break:break-word"></div>
-        <input type="text" id="pagesFilter" placeholder="Filter by name or text">
-        <div class="pages" id="pages" style="margin-top:6px"></div>
       </div>
     </div>
 
@@ -210,19 +205,6 @@
       </div>
     </div>
 
-    <div class="card stack hidden" id="evaluateCard">
-      <h2>Evaluate the model</h2>
-      <div class="note">Reads the first evaluation pages in a row with the settings above and scores each by CER, to compare the models.</div>
-      <div class="row">
-        <label for="evaluateCount" style="margin:0">Pages</label>
-        <input type="number" id="evaluateCount" min="0" value="20" style="width:90px"> <span class="note">0: all</span>
-        <button class="btn primary" id="evaluate" disabled>Evaluate</button>
-        <button class="btn" id="evaluateStop" disabled>Stop</button>
-      </div>
-      <div class="wide hidden" id="evaluateBar"><div id="evaluateFill"></div></div>
-      <div class="note" id="evaluateNote"></div>
-      <div class="evaluation hidden" id="evaluation"><table><thead><tr><th>Page</th><th>CER</th><th>s</th><th>tokens</th><th></th></tr></thead><tbody id="evaluationRows"></tbody></table></div>
-    </div>
   </section>
 
   <section class="stack rightColumn sticky" id="rightColumn">
@@ -230,6 +212,7 @@
       <div class="tabs" id="paneTabs" style="margin:0;border:0">
         <button data-pane-tab="preview" class="on">As the model will see it</button>
         <button data-pane-tab="result">Result</button>
+        <button data-pane-tab="pages" id="pagesTab" class="hidden">Evaluation pages</button>
       </div>
     </div>
     <div class="card stack" id="previewPane">
@@ -274,6 +257,28 @@
           <figure><div class="seen"><img id="seenImage" alt=""><svg id="crops" preserveAspectRatio="none"></svg></div><figcaption id="seenCaption">After the preprocessing</figcaption></figure>
         </div>
       </div>
+    </div>
+    </div>
+    <div class="stack hidden" id="pagesPane">
+    <div class="card stack">
+      <h2>Evaluation pages <span id="pagesSource" style="text-transform:none;letter-spacing:0;font-weight:400"></span></h2>
+      <div class="note">Pick a page to see it as the model will, then Read: its answer is scored against the expected one.</div>
+      <div class="error hidden" id="pagesError" style="word-break:break-word"></div>
+      <input type="text" id="pagesFilter" placeholder="Filter by name or text">
+      <div class="pages tall" id="pages"></div>
+    </div>
+    <div class="card stack" id="evaluateCard">
+      <h2>Evaluate the model</h2>
+      <div class="note">Reads the first evaluation pages in a row with the settings on the left and scores each by CER, to compare the models and the steps.</div>
+      <div class="row">
+        <label for="evaluateCount" style="margin:0">Pages</label>
+        <input type="number" id="evaluateCount" min="0" value="20" style="width:90px"> <span class="note">0: all</span>
+        <button class="btn primary" id="evaluate" disabled>Evaluate</button>
+        <button class="btn" id="evaluateStop" disabled>Stop</button>
+      </div>
+      <div class="wide hidden" id="evaluateBar"><div id="evaluateFill"></div></div>
+      <div class="note" id="evaluateNote"></div>
+      <div class="evaluation hidden" id="evaluation"><table><thead><tr><th>Page</th><th>CER</th><th>s</th><th>tokens</th><th></th></tr></thead><tbody id="evaluationRows"></tbody></table></div>
     </div>
     </div>
   </section>
@@ -560,6 +565,7 @@ function showPane(which) {
   if (reading && which === "preview") return;                       // a read in progress keeps its result in view
   $("previewPane").classList.toggle("hidden", which !== "preview");
   $("resultPane").classList.toggle("hidden", which !== "result");
+  $("pagesPane").classList.toggle("hidden", which !== "pages");
   for (const b of document.querySelectorAll("#paneTabs button")) b.classList.toggle("on", b.dataset.paneTab === which);
   $("rightColumn").classList.toggle("sticky", which === "preview");    // the preview stays in view while the steps scroll
 }
@@ -638,11 +644,11 @@ async function loadPages() {
   const r = await fetch("/api/pages").then(r => r.json()).catch(() => null);
   if (!r || !r.configured) return;
   pages = r.pages;
-  $("pagesSource").textContent = `${pages.length} in ${r.source}`;
-  $("pagesBox").classList.remove("hidden");
+  $("pagesSource").textContent = `(${pages.length} in ${r.source})`;
+  $("pagesTab").classList.remove("hidden");
   $("pagesError").classList.toggle("hidden", !r.error);
   $("pagesError").textContent = r.error ? "The evaluation pages could not be read: " + r.error : "";
-  $("evaluateCard").classList.remove("hidden");
+
   renderPages();
 }
 
