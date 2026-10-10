@@ -350,7 +350,7 @@ public sealed class Predictor<TIn, TOut> : IPredictor<TIn, TOut>, IDisposable
     public IReadOnlyList<string>? Classes => _settings.Classes;
 
     /// <summary>Predicts one input.</summary>
-    public TOut Predict(TIn input) => Predict([input])[0];
+    public TOut Predict(TIn input) => _output(PredictRows([_input(input)])[0]);             // per request: no list of one
 
     /// <summary>
     /// Rows per batch when <see cref="PredictorBuilder{TIn, TOut}.BatchSize"/> is not set. A whole data set as one batch

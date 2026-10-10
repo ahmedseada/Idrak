@@ -21,6 +21,7 @@ public sealed class HostOptimizer : Optimizer
 
     private readonly Tensor[] _copies;                                  // the parameters on the CPU
     private readonly Optimizer[] _cpu;                                  // one per parameter, so each updates as it arrives
+    private readonly List<(int Parameter, int Offset, int Count)> _pieces = [];   // a step's downloads, reused every step
     private IHostStaging? _staging;
     private bool _stagingTried;
 
@@ -96,7 +97,8 @@ public sealed class HostOptimizer : Optimizer
     // is updated and its new values go up, while the next pieces download.
     private void Pipelined(IHostStaging staging, bool release)
     {
-        var pieces = new List<(int Parameter, int Offset, int Count)>();
+        var pieces = _pieces;
+        pieces.Clear();
         for (int i = 0; i < _copies.Length; i++)
         {
             if (Parameters[i].Grad is null)

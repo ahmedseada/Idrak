@@ -499,11 +499,12 @@ internal sealed class MicroBatcher<TIn, TOut> : IEngineBatcher<TIn, TOut>
     private async Task LoopAsync()
     {
         var reader = _pending.Reader;
+        var batch = new List<Pending>(_maxBatch);                                       // one list for every batch: _run gets a copy
         try
         {
             while (await reader.WaitToReadAsync(_stop.Token).ConfigureAwait(false))
             {
-                var batch = new List<Pending>(_maxBatch);
+                batch.Clear();
                 if (!reader.TryRead(out var first))
                 {
                     continue;
