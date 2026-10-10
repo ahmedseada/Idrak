@@ -106,15 +106,17 @@ internal sealed partial class CpuBackend
     // y = x - shift, whole vectors then the rest (in place too: each value is read before it is written).
     private static void Shift(ReadOnlySpan<float> x, Span<float> y, float shift)
     {
-        var xv = MemoryMarshal.Cast<float, Vector<float>>(x);
-        var yv = MemoryMarshal.Cast<float, Vector<float>>(y);
-        var s = new Vector<float>(shift);
-        for (int i = 0; i < xv.Length; i++)
+        int i = 0;
+        if (Vector.IsHardwareAccelerated)
         {
-            yv[i] = xv[i] - s;
+            var s = new Vector<float>(shift);
+            for (; i <= x.Length - Vector<float>.Count; i += Vector<float>.Count)
+            {
+                (new Vector<float>(x.Slice(i)) - s).CopyTo(y.Slice(i));
+            }
         }
 
-        for (int i = xv.Length * Vector<float>.Count; i < x.Length; i++)
+        for (; i < x.Length; i++)
         {
             y[i] = x[i] - shift;
         }
