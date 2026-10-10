@@ -61,6 +61,11 @@ public sealed class LSTM : RecurrentModule
     }
 
     /// <inheritdoc />
+    /// <remarks>On a device with fused LSTM cell kernels (<c>Backend.LstmCell</c>): two launches per step forward and two backward.</remarks>
+    protected override Tensor? Sequence(Tensor projected, RecurrentWeights weights, bool reverse) =>
+        RecurrentSequence.Run(projected, weights, HiddenSize, gru: false, reverse);
+
+    /// <inheritdoc />
     public override string ToString() => $"LSTM({InputSize} -> {HiddenSize}{Options})";
 }
 
@@ -125,6 +130,11 @@ public sealed class GRU : RecurrentModule
         var candidate = (projected.Narrow(1, 2 * h, h) + reset * recurrent).Tanh();
         return [(1f - update) * candidate + update * hidden];
     }
+
+    /// <inheritdoc />
+    /// <remarks>On a device with fused GRU cell kernels (<c>Backend.GruCell</c>): two launches per step forward and two backward.</remarks>
+    protected override Tensor? Sequence(Tensor projected, RecurrentWeights weights, bool reverse) =>
+        RecurrentSequence.Run(projected, weights, HiddenSize, gru: true, reverse);
 
     /// <inheritdoc />
     public override string ToString() => $"GRU({InputSize} -> {HiddenSize}{Options}{(CandidateBias ? ", candidate bias" : "")})";
