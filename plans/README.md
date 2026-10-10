@@ -28,6 +28,8 @@ Fine-tuning vision-language models (images in `FineTuner` and `idrak tune`, fami
 detection and segmentation training, augmentation, image model families as plug-ins; OCR is an application on top;
 built, CPU-checked): [13-vision.md](13-vision.md).
 GPU runs left for the owner after plans 12 and 13 (one PowerShell list): [gpu-checks.md](gpu-checks.md).
+Everything left unfinished (correctness, speed and memory items not fixed, audit areas not covered, checks never
+run), in one list for the refactor: [14-refactor-backlog.md](14-refactor-backlog.md).
 
 ## Not supported yet
 

@@ -1,0 +1,161 @@
+# Plan 14: the refactor backlog
+
+Everything left unfinished by plans 12 and 13, the fused recurrent work and the optimization-rules audit
+(`docs/optimization.md`, eleven areas R1-R11), in one place, so the refactor can be planned from it. Each item says
+where it is, why it was left, and what a fix needs. Nothing here is guessed: every entry comes from an agent's report,
+a measurement on the owner's card, or a count over the branch.
+
+## State at the time of writing
+
+| Work | State |
+|---|---|
+| Fused LSTM/GRU time loop (CPU and CUDA cell kernels, one autograd op per layer and direction) | merged; CPU tests pass; CUDA kernels never run on a GPU |
+| Measured kernel choices keyed by size class (`TuneSizes`) | merged; CUDA keys and the shared convolution key only |
+| Audit R1 CUDA, R2 Vulkan/HIP, R3 CPU devices, R5 Layers/Models, R9 CLI N-Z + Shared | finished and merged |
+| Audit R4, R6, R7, R8, R10, R11 | stopped part-way; their committed fixes merged; the rest of their areas not covered (below) |
+| Whole solution after the merges | builds, 0 errors, 0 warnings; tests after the merge are the owner's |
+
+## 1. Correctness and rule breaks (fix first)
+
+| # | Where | What | Fix needs |
+|---|---|---|---|
+| 1.1 | `src/Idrak.Gpu/Vulkan/VulkanKernels.Ctc.cs` | CTC loss is -∞ on the first step on Vulkan (the ArabicOcr sample's tests: 4 of 13 fail on vulkan; CPU and CUDA pass) | find the kernel bug (α rows, log-sum, meta reads); the conformance kit's CTC case on Vulkan should catch it |
+| 1.2 | `src/Idrak/Models/GgufModel.cs:297` | an unregistered `tokenizer.ggml.pre` silently gets Llama 3's pattern: a family fallback CLAUDE.md forbids | throw "pre-tokenizer '{pre}' is not registered; register its pattern with GgufPreTokenizers.Register", and change `CustomGgufPreTokenizer` in tests/Idrak.Tests/ModelPluginTests.cs, which asserts the fallback |
+| 1.3 | `src/Idrak.Gpu/Cuda/CudaBackend.Quantized.cs` (4), `CudaDeviceLimits.cs` (4), `TuningCache.cs` (1), `Vulkan/VulkanBackend.Dispatch.cs` (1) | card names in comments (card-agnostic rule) | reword as what was measured, without the card |
+| 1.4 | README.md (51), plans/*.md (~55), src/Idrak/README.md (3), docs/performance-notes.md, docs/optimization.md | card names in benchmark tables and notes | owner's decision: a results table names the machine it ran on; advice or defaults must not |
+| 1.5 | fused recurrent CUDA kernels (`PtxKernels.Recurrent.cs`, `CudaBackend.Recurrent.cs`) | never run on a GPU (no GPU here) | the owner's `recurrent` filter on cuda; then the OCR `train --profile` against the 411 ms step |
+| 1.6 | Vulkan recurrent | no fused cell kernels: Vulkan still runs ~13 launches a step | `LstmCell`/`GruCell` kernels for Vulkan when Vulkan is back in scope |
+| 1.7 | ArabicOcr sample `TrainCommand` | a non-finite loss crashes writing `recognizer.json` (JSON cannot hold ∞) | stop with a clear message on a non-finite loss (sample); 1.1 is the cause seen |
+
+## 2. Speed and memory left in the library
+
+### Tuning (measured choices)
+
+- **Per-class measuring cost:** each measurement is ~0.2-0.5 s (warm-up ≥ 25 ms of GPU time, 8 paired rounds,
+  a confirmation). With size classes a varying workload measures ~15 keys per class once; cheaper measuring (shorter
+  warm-up once the GPU is busy, fewer rounds for far-apart candidates) would shorten the first minute of a run.
+- **Exact keys still keyed by data sizes:** `TuneSizes` is applied to CUDA's FloatTile, TensorSplits, SpanWarps,
+  AttentionPath and the convolution key. Still exact: CUDA PackedSplits/PackedTile/PackedMulti/Gated (`m`),
+  DecodeSplits/DecodeMinChunk (`capacity`), and every Vulkan key with rows (Splits, Rows, MatMul, MixedMatMul,
+  TiledAttention, Attention, SpanAttention, PackedPrompt). Decide per key which sizes follow the data.
+- **Convolution choice per call** (`CudaBackend.Convolution.cs:84-150`): the candidate list and `cuMemGetInfo` run on
+  every convolution, because the composed path's candidacy depends on free memory at that moment. Make candidacy not
+  depend on the moment (a measured budget, or retry on allocation failure) so a known choice is a lookup.
+
+### CUDA (R1, not fixed)
+
+- `CudaBackend.Ctc.cs` `CtcMeta`: a `new float[3·batch]` per CTC call (also Vulkan's); pool it.
+- Prompt-sized packed products (`PackedMatMulLargeKernel`, `PackedManyLarge`, LowRank): a closure, delegate and small
+  copy per call; tensor-core callers' `Run` delegates (MatMulLowRank, BFloat16Transposed, GemmStrided,
+  `TensorCoreRows`): two small allocations per large product.
+- PTX generators interpolate numbers under the current culture; safe today (non-negative ints, floats through `F()`),
+  but rule 49 wants invariant formatting.
+
+### Vulkan / HIP (R2, not fixed)
+
+- HIP `Launch`: a lock and two dictionary lookups per launch.
+- `SupportsGraphs` reads an environment variable per recorded graph.
+- `ReductionFlags`, `MatCandidates`, `PowersOfTwo`, `GemvCandidates` allocate (only while measuring).
+
+### CPU backend (R3, not fixed)
+
+- `LayerNormTrainKernel` computes mean and variance twice (it calls the `LayerNormFused` wrapper so registered
+  overrides still apply); a fused training layer norm needs an override-aware operation.
+- `GroupMoments` merges per-chunk sums under a lock in completion order: run-to-run bit differences with several
+  threads. Deterministic order changes outputs once.
+- Vectorized loops without an `IsHardwareAccelerated` check (rule 34): `Moments`, `MultiplyAddInPlace`,
+  `GroupAffineCore`, `AddInPlace` (Advanced.cs) and loops in CpuBackend.cs. Correct in software mode; a scalar
+  fallback changes bits (FMA, lane order).
+- Depthwise convolution (Vision.cs) is scalar and runs its activation as a separate pass; vectorize across outputs and
+  fuse the activation (bits change: `Vector.Exp` vs `MathF.Exp`).
+- `MathF` loops in Pointwise (sin, cos, pow, sqrt, silu) and the gated-activation backward are scalar; the composed
+  convolution's bias and activation passes are not fused.
+- bfloat16 tiled kernel's leftover columns read weights column by column (< 2 vectors wide).
+- Small per-call arrays: norm scale/shift copies, `Enumerable.Repeat` in `GroupScaleShift`, CTC per-sequence tables,
+  `Permute`'s shape copies.
+
+### Layers and models (R5, not fixed)
+
+- `ActivationMemory.Release/Compress` take `params Tensor?[]`: an array per layer per step (also at inference, before
+  the early return). `params ReadOnlySpan<Tensor?>` fixes every caller; public API change (regenerate the dump).
+- `GraphModule.Binary` and `LibraryGraphOps.Scalar` read scalar constants back from the device every forward (a GPU
+  sync per node); BatchNorm in eval mode recomputes its inverse standard deviation every call. Both need a buffer
+  version or invalidation hook in Idrak.Abstraction (`Module.Load` can overwrite buffers in place).
+- `Conv2d.ForwardFused` refolds the batch norm into a weight-sized temporary on every inference call (deliberate: no
+  second copy of the weights). Owner's trade-off: cache the folded weights (memory) or keep refolding (time).
+- `ExactGELU` is ~20 element-wise passes: a fused erf kernel in the device contract.
+- GGUF F16 decode is scalar (the BCL's vectorized Half conversion is a NuGet package, which rule 0 forbids): write a
+  vectorized converter.
+- `Sequential` allocates one closure per whole-model forward.
+
+### CLI (R9, not fixed)
+
+- `TrainSession.cs:378-412` CSV relabelling for string classes: strings and `Split` per row (rule 74); move to bytes
+  with the library's CSV reader.
+- `ImageTraining.cs:906` uploads two tiny per-channel tensors per batch.
+- `ServeHost` auth: two small byte arrays per request with an API key.
+- The bidi algorithm allocates per right-to-left line.
+- `DataProfile` duplicate detection keeps each row's JSON string (hashing could change results).
+
+### Gaps the OCR sample showed (the library should offer them)
+
+- The `Augmentations` registry has no `noise` (core's `GaussianNoise` is only a sample transform): the sample
+  registers its own.
+- The measured batching `idrak predict` uses (`MeasuredBatches`) is internal to the CLI: the sample copies it. Make it
+  a library contract.
+- `ChatImage` carries no source path: pages from a data file are named by record number.
+- No training-step profile outside CUDA: the CLI's operation/layer `Recorder` (ProfileCommand) is internal; a library
+  hook would give every app the per-operation table on any device (rule 78).
+- The OCR sample's segmentation keeps touching lines as one line (sample).
+
+## 3. Audit areas not finished
+
+The agents of these areas were stopped part-way. "Untouched" = no fix committed: either not reviewed or reviewed and
+found clean; the stopped agents cannot say which, so each needs a review pass. Largest first.
+
+| Area | Files | Untouched | Lines | Largest untouched |
+|---|---|---|---|---|
+| R4 Abstraction (not Devices) | 75 | 59 | 11,093 | Tensor.Decoder.cs, ChatParts.cs, VisionLanguage.cs, Operations/Kernels.cs, Decoding.cs, RopeScalings.cs, KeyValueLayouts.cs, Data/ImageTransforms.cs, Telemetry.cs, DecoderSpec.cs, Tensor.Quantized.cs, SlotTable.cs, Augmentations.cs |
+| R6 core (not Layers/Models) | 57 | 37 | 6,099 | JpegEncoder.cs, OnnxBuiltIns.cs, InferenceEngine.cs, ModelPackage.cs, Offloading.cs, FileSources.cs, ChatImageDecoder.cs, TrainerCallbacks.cs, OnnxExport*.cs, CtcDecoders.cs, AdamW8Bit.cs |
+| R7 Nlp, AspNetCore, Mcp, Onnx.Runtime | 54 | 32 | 8,644 | Jinja.cs, JinjaBuiltins.cs, TextGenerator.cs, FineTuningLosses.cs, CodingAgent.cs, TuningVision.cs, AnswerScorer.cs, ChatGenerator.cs, FeatureCacheImplementations.cs, Conversation.cs, ChatApi.cs, TokenSamplers.cs |
+| R8 CLI commands A-M | 53 | 26 | 3,767 | DoctorCommand.cs, ConfigCommands.cs, InspectCommand.cs, TuningShowCommand.cs, CompletionCommand.cs, AliasCommands.cs, NewCommand.cs, LoginCommands.cs (mostly cold commands) |
+| R10 Data, Vision, Testing kit | 84 | 79 | 17,078 | ParquetFile.cs, DataFiles.cs, VisionAugmentations.cs, AnnotationFiles.cs, DatasetRows.cs, Sources.cs, DetectionMetrics.cs, ChatRows.cs, AugmentedImageLoader.cs, RegionClassifier.cs, DatasetRecipe.cs, Downloader.cs, ImageWarp.cs |
+| R11 samples and tools | 56 | 42 | 7,349 | Gemma3Vision.cs, Samples.Chat, Shared/Gpt/CharGpt.cs, Samples.Rag, Siglip.cs, GptService.cs, CodingAgent, Summarizer, ArabicOcr/Readers.cs |
+
+The hot ones, by the rules: R10's data readers and image code (rules 72-74 came from exactly this code), R7's
+tokenizer-adjacent paths (Jinja runs per chat turn, TextGenerator/ChatGenerator per token), R4's tensor and decoding
+code, R6's JPEG encoder and inference engine. R8's remaining files are cold commands.
+
+Also never audited: the analyzers of rule 65 (`AnalysisModePerformance` = All) are not on; turning them on for every
+project will list what the review missed (warnings are errors, so fix in the same pass).
+
+## 4. Checks never run
+
+- `plans/gpu-checks.md`: every CUDA and Vulkan run of plans 12 and 13 (conformance kit, attention spans, vision
+  tuning, image prefill, vision kernels, conv, vulkan cnn, vision layers/sequence/detection/augment, image families,
+  fine-tuning, packed, checkpoint) and the benchmarks (`--bench-spans train`, `--bench-conv`).
+- Plan 12 phase 5: the real Gemma 3 model (`tune evaluate`, `tune`, `run --adapter`).
+- The regression check against the library's starting numbers (docs/performance-notes.md: `--bench-gemm`,
+  `--bench-gemv`, the Chat sample's `profile Qwen/Qwen3-0.6B --cuda --int8 --kv16`): 78 TFLOPS, 474-493 tok/s,
+  177 launches per token, a 7.7 ms 180-token prompt pass.
+- The OCR training step after the fused recurrent loop: `train --profile 10` against 411 ms (measuring off) and
+  1.9-3 s (measuring per shape, before size classes).
+- docs/performance-notes.md "Next steps" 1-9 (delayed FP8 scaling by call order, FP8 fused into producers, persistent
+  decoding GEMVs, int8 prefill on int8 tensor cores, prompt-pass fusions, training step outside the products, decoding
+  attention at short contexts, cached CUDA modules, prompt-pass graphs) are all still open.
+
+## 5. Suggested order
+
+1. Correctness: 1.1 (Vulkan CTC), 1.2 (GGUF fallback), 1.3 (card names in code), 1.7.
+2. Measure before refactoring: the owner's GPU runs of section 4 (recurrent on CUDA, the OCR profile, the
+   regression benchmarks). Their numbers decide what is worth refactoring first.
+3. Library contracts the samples need (section 2, gaps): `MeasuredBatches`, a profiling hook on any device, `noise`
+   in `Augmentations`, a source path on `ChatImage`.
+4. Invalidation hook for buffers (GraphModule constants, BatchNorm eval, folded convolution) and `ActivationMemory`
+   spans: one public-API change, several speedups.
+5. Tuning: size classes for the remaining data-sized keys (CUDA packed/decode, Vulkan rows); convolution candidacy
+   independent of free memory; cheaper measuring.
+6. Finish the audit of the six unfinished areas (section 3), hottest first (R10, R7, R4, R6), then the analyzers.
+7. CPU kernel items of R3 that change bits (deterministic `GroupMoments`, scalar fallbacks, fused depthwise and
+   activations), each with before/after numbers and the owner's agreement that the new bits are the reference.
+8. Vulkan: fused recurrent kernels (1.6) when Vulkan is back in scope.
