@@ -221,7 +221,7 @@ public sealed partial class RagPipeline
     public static IReadOnlyList<Citation> CitedIn(string text, IReadOnlyList<Citation> passages)
     {
         var byNumber = passages.ToDictionary(p => p.Number);
-        return [.. CitationMarker().Matches(text).Select(m => int.Parse(m.Groups[1].ValueSpan, provider: null)).Distinct()
+        return [.. CitationMarker().Matches(text).Select(m => int.Parse(m.Groups[1].ValueSpan, System.Globalization.CultureInfo.InvariantCulture)).Distinct()
             .Where(byNumber.ContainsKey).Select(n => byNumber[n])];
     }
 
