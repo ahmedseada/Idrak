@@ -26,6 +26,9 @@ jobs:
         env:
           IDRAK_DEVICES: cpu
       - run: dotnet run -c Release --no-build --project samples/Idrak.Samples.Override.Tests
+      - run: dotnet run -c Release --no-build --project samples/Idrak.Samples.ArabicOcr.Tests
+        env:
+          IDRAK_DEVICES: cpu
       - name: Pack (every project under src/)
         run: for p in src/*/*.csproj; do dotnet pack "$p" -c Release --no-build -p:Version=$VERSION -o artifacts; done
       - name: Log in to nuget.org (Trusted Publishing)

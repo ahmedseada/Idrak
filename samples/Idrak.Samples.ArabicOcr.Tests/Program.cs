@@ -210,6 +210,18 @@ var timings = new List<string>();
         double characters = answers.Sum(a => OcrText.Normalize(OcrText.AnswerText(a, "values")).EnumerateRunes().Count());
         Check((double)json["total"]!["characters"]! == characters, $"characters {json["total"]!["characters"]} against {characters}");
         Check((string)pages[1]!["truth"]! == OcrText.Normalize(OcrText.AnswerText(answers[1], "values")), "the answer's values");
+
+        // The same pages as chat "messages" JSON Lines (as ocr-images-sft.jsonl): detected, read page by page.
+        string jsonl = Path.Combine(folder, "sft.jsonl");
+        File.WriteAllLines(jsonl, answers.Select((answer, i) => new JsonObject
+        {
+            ["messages"] = new JsonArray(
+                new JsonObject { ["role"] = "user", ["content"] = new JsonArray(new JsonObject { ["type"] = "image", ["path"] = $"images/scan-{i + 1}.png" }, new JsonObject { ["type"] = "text", ["text"] = "Read this document." }) },
+                new JsonObject { ["role"] = "assistant", ["content"] = answer }),
+        }.ToJsonString()));
+        (code, output, error) = App("eval", jsonl, "--images", zip, "--reader", "vlm", "--model", tinyGemma, "--max-tokens", "4", "--truth-text", "values", "-j");
+        Check(code == 0 && (double)JsonNode.Parse(output)!["total"]!["characters"]! == characters && (string)JsonNode.Parse(output)!["pages"]![1]!["source"]! == "sft.jsonl #2",
+            $"messages: {output} {error}");
     }),
     ("ocr cut: --prefill vlm writes drafts, snapped to a ShareGPT page's text; corrected lines kept", () =>
     {
