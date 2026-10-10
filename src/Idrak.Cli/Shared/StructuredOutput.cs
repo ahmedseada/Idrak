@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -67,7 +68,7 @@ internal static class StructuredOutput
         return (value, Validate(schema, value, "$"));
     }
 
-    private static bool LooksLikeScalar(string text) => text is "true" or "false" or "null" || text.StartsWith('"') || double.TryParse(text, out _);
+    private static bool LooksLikeScalar(string text) => text is "true" or "false" or "null" || text.StartsWith('"') || double.TryParse(text, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out _);
 
     // The first mismatch of value against schema, as "path: what" (null when it matches).
     internal static string? Validate(JsonNode? schema, JsonNode? value, string path)

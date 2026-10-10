@@ -1,7 +1,9 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Buffers;
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -63,18 +65,37 @@ internal static class RowFiles
             case "csv" or "tsv":
             {
                 char delimiter = format == "csv" ? ',' : '\t';
+                var quoted = format == "csv" ? CsvQuoted : TsvQuoted;
                 var all = rows.ToList();
                 var columns = new List<string>();
+                var seen = new HashSet<string>(StringComparer.Ordinal);
                 foreach (var row in all)
                 {
-                    columns.AddRange(row.Select(p => p.Key).Where(k => !columns.Contains(k)));
+                    foreach (var (key, _) in row)
+                    {
+                        if (seen.Add(key))
+                        {
+                            columns.Add(key);
+                        }
+                    }
                 }
 
+                // Cell by cell into the writer: no joined line per row.
                 using var writer = new StreamWriter(path, false, new UTF8Encoding(false));
-                writer.WriteLine(string.Join(delimiter, columns.Select(c => Quote(c, delimiter))));
+                for (int i = 0; i < columns.Count; i++)
+                {
+                    WriteCell(writer, i, columns[i], delimiter, quoted);
+                }
+
+                writer.WriteLine();
                 foreach (var row in all)
                 {
-                    writer.WriteLine(string.Join(delimiter, columns.Select(c => Quote(Raw(row[c]), delimiter))));
+                    for (int i = 0; i < columns.Count; i++)
+                    {
+                        WriteCell(writer, i, Raw(row[columns[i]]), delimiter, quoted);
+                    }
+
+                    writer.WriteLine();
                 }
 
                 return all.Count;
@@ -128,7 +149,7 @@ internal static class RowFiles
     /// <summary>A number from a value (a number, or text that parses as one), or null.</summary>
     public static double? Number(JsonNode? node) => node switch
     {
-        JsonValue v when v.GetValueKind() == JsonValueKind.Number => double.Parse(v.ToJsonString(), CultureInfo.InvariantCulture),
+        JsonValue v when v.GetValueKind() == JsonValueKind.Number => DataPreparation.ParseNumber(v),
         JsonValue v when v.TryGetValue(out string? s) && double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out double d) => d,
         JsonValue v when v.GetValueKind() is JsonValueKind.True or JsonValueKind.False => v.GetValue<bool>() ? 1 : 0,
         _ => null,
@@ -139,6 +160,7 @@ internal static class RowFiles
     {
         var order = new List<string>();
         var kinds = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        var filled = new Dictionary<string, long>(StringComparer.Ordinal);             // cells with a value, counted in the same pass
         foreach (var row in rows)
         {
             foreach (var (key, value) in row)
@@ -150,6 +172,10 @@ internal static class RowFiles
                 }
 
                 set.Add(TypeOf(value));
+                if (value is not null)
+                {
+                    CollectionsMarshal.GetValueRefOrAddDefault(filled, key, out _)++;
+                }
             }
         }
 
@@ -159,11 +185,32 @@ internal static class RowFiles
             set.Remove("null");
             string type = set.Count == 0 ? "null" : set.Count == 1 ? set.First()
                 : set.SetEquals(["integer", "number"]) ? "number" : "mixed (" + string.Join(", ", set.Order(StringComparer.Ordinal)) + ")";
-            long missing = rows.LongCount(r => r[name] is null);
+            long missing = rows.Count - filled.GetValueOrDefault(name);                // absent or null, as r[name] is null
             return (name, type, missing);
         })];
     }
 
-    private static string Quote(string text, char delimiter) =>
-        text.IndexOfAny([delimiter, '"', '\n', '\r']) >= 0 ? "\"" + text.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"" : text;
+    // The characters that put a cell in quotes, per delimiter.
+    private static readonly SearchValues<char> CsvQuoted = SearchValues.Create(",\"\n\r");
+    private static readonly SearchValues<char> TsvQuoted = SearchValues.Create("\t\"\n\r");
+
+    // A cell after its delimiter (none before the first), quoted when it holds the delimiter, a quote or a line break.
+    private static void WriteCell(TextWriter writer, int index, string text, char delimiter, SearchValues<char> quoted)
+    {
+        if (index > 0)
+        {
+            writer.Write(delimiter);
+        }
+
+        if (text.AsSpan().ContainsAny(quoted))
+        {
+            writer.Write('"');
+            writer.Write(text.Replace("\"", "\"\"", StringComparison.Ordinal));
+            writer.Write('"');
+        }
+        else
+        {
+            writer.Write(text);
+        }
+    }
 }

@@ -57,5 +57,13 @@ internal sealed class ToolHost(CommandContext context) : IToolHost
     public Downloader CreateDownloader(string? cacheFolder, bool refresh) => Http.Downloader(context, cacheFolder, refresh);
 
     // "training  loss 1.23" and "training  loss 1.20" are the same work with a new detail: the line is redrawn, not ended.
-    private static bool SameWork(string a, string b) => a.Split("  ")[0] == b.Split("  ")[0];
+    // Compared in place (asked on every report, a training step's): no split arrays.
+    private static bool SameWork(string a, string b) => Work(a).SequenceEqual(Work(b));
+
+    // The text before the first column gap ("  "), or all of it.
+    private static ReadOnlySpan<char> Work(string label)
+    {
+        int gap = label.IndexOf("  ", StringComparison.Ordinal);
+        return gap < 0 ? label : label.AsSpan(0, gap);
+    }
 }

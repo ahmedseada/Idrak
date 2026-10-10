@@ -752,6 +752,7 @@ internal sealed class TuneTool(ToolConsole console)
     {
         var watch = Stopwatch.StartNew();
         var sequences = new List<TrainingSequence>();
+        string label = $"tokenizing {what}";                                    // made once, not per conversation
         for (int i = 0; i < transcripts.Count; i++)
         {
             if (encoder.Encode(transcripts[i], tuning.MaxLength) is { } sequence)
@@ -759,7 +760,7 @@ internal sealed class TuneTool(ToolConsole console)
                 sequences.Add(sequence);
             }
 
-            console.Progress($"tokenizing {what}", i + 1, transcripts.Count, watch.Elapsed, unit: "conversations");
+            console.Progress(label, i + 1, transcripts.Count, watch.Elapsed, unit: "conversations");
         }
 
         console.Finish();

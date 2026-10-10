@@ -152,7 +152,9 @@ internal sealed class ServerPsCommand : Command
     }
 
 
-    private static string Count(long n) => n >= 1_000_000_000 ? $"{n / 1e9:0.#}B" : n >= 1_000_000 ? $"{n / 1e6:0.#}M" : n >= 1_000 ? $"{n / 1e3:0.#}K" : n.ToString(CultureInfo.InvariantCulture);
+    private static string Count(long n) => n >= 1_000_000_000 ? string.Create(CultureInfo.InvariantCulture, $"{n / 1e9:0.#}B")
+        : n >= 1_000_000 ? string.Create(CultureInfo.InvariantCulture, $"{n / 1e6:0.#}M")
+        : n >= 1_000 ? string.Create(CultureInfo.InvariantCulture, $"{n / 1e3:0.#}K") : n.ToString(CultureInfo.InvariantCulture);
 
     private static string? When(string? iso, bool future)
     {
@@ -163,7 +165,9 @@ internal sealed class ServerPsCommand : Command
 
         var span = DateTimeOffset.Parse(iso, CultureInfo.InvariantCulture) - DateTimeOffset.UtcNow;
         span = future ? span : -span;
-        string text = span.TotalSeconds < 60 ? $"{Math.Max(0, span.TotalSeconds):0} s" : span.TotalMinutes < 60 ? $"{span.TotalMinutes:0} min" : $"{span.TotalHours:0.#} h";
+        string text = span.TotalSeconds < 60 ? string.Create(CultureInfo.InvariantCulture, $"{Math.Max(0, span.TotalSeconds):0} s")
+            : span.TotalMinutes < 60 ? string.Create(CultureInfo.InvariantCulture, $"{span.TotalMinutes:0} min")
+            : string.Create(CultureInfo.InvariantCulture, $"{span.TotalHours:0.#} h");
         return future ? "in " + text : text + " ago";
     }
 }

@@ -219,10 +219,10 @@ internal sealed class TrainCommand : Command
     private static string NewRunFolder(CommandContext context, string name)
     {
         string safe = new([.. name.Select(c => char.IsLetterOrDigit(c) || c is '-' or '_' ? c : '-')]);
-        string folder = Path.Combine(RunLog.RunsFolder(context), $"{DateTime.Now:yyyyMMdd-HHmmss}-{safe}");
+        string folder = Path.Combine(RunLog.RunsFolder(context), string.Create(CultureInfo.InvariantCulture, $"{DateTime.Now:yyyyMMdd-HHmmss}-{safe}"));
         for (int i = 2; Directory.Exists(folder); i++)
         {
-            folder = Path.Combine(RunLog.RunsFolder(context), $"{DateTime.Now:yyyyMMdd-HHmmss}-{safe}-{i}");
+            folder = Path.Combine(RunLog.RunsFolder(context), string.Create(CultureInfo.InvariantCulture, $"{DateTime.Now:yyyyMMdd-HHmmss}-{safe}-{i}"));
         }
 
         return folder;
@@ -334,7 +334,7 @@ internal sealed class RunsListCommand : Command
             [
                 r.Name, r.Time?.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture) ?? "", r.Epochs.Count.ToString(CultureInfo.InvariantCulture),
                 r.Best?.Epoch.ToString(CultureInfo.InvariantCulture) ?? "-", RunLog.Format(r.Best is { } b ? b.ValidationLoss ?? b.Loss : null),
-                RunLog.Format(r.Epochs.Count > 0 ? r.Epochs[^1].Loss : null), $"{r.TotalSeconds:F1} s", r.Status,
+                RunLog.Format(r.Epochs.Count > 0 ? r.Epochs[^1].Loss : null), string.Create(CultureInfo.InvariantCulture, $"{r.TotalSeconds:F1} s"), r.Status,
             ]));
         }
 
@@ -446,7 +446,7 @@ internal sealed class RunsCompareCommand : Command
         [
             r.Name, r.Epochs.Count.ToString(CultureInfo.InvariantCulture), r.Best?.Epoch.ToString(CultureInfo.InvariantCulture) ?? "-",
             RunLog.Format(r.Best is { } b ? b.ValidationLoss ?? b.Loss : null), RunLog.Format(r.Epochs.Count > 0 ? r.Epochs[^1].Loss : null),
-            Setting(r, "learning_rate"), r.Settings?["batch"]?.ToString() ?? Setting(r, "batch_size"), Setting(r, "optimizer"), $"{r.TotalSeconds:F1} s",
+            Setting(r, "learning_rate"), r.Settings?["batch"]?.ToString() ?? Setting(r, "batch_size"), Setting(r, "optimizer"), string.Create(CultureInfo.InvariantCulture, $"{r.TotalSeconds:F1} s"),
         ]));
         var winner = runs.Where(r => r.Best is not null).MinBy(r => r.Best!.ValidationLoss ?? r.Best.Loss);
         if (winner is not null)

@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Buffers;
 using System.Globalization;
 using System.Text;
 
@@ -40,21 +41,30 @@ internal static class VisualText
     /// <summary>The code points of <paramref name="text"/> (a lone surrogate is kept as its own value).</summary>
     public static int[] CodePoints(string text)
     {
-        var points = new List<int>(text.Length);
-        for (int i = 0; i < text.Length; i++)
+        int count = 0;
+        for (int i = 0; i < text.Length; i++, count++)
         {
             if (char.IsHighSurrogate(text[i]) && i + 1 < text.Length && char.IsLowSurrogate(text[i + 1]))
             {
-                points.Add(char.ConvertToUtf32(text[i], text[i + 1]));
+                i++;
+            }
+        }
+
+        var points = new int[count];
+        for (int i = 0, k = 0; i < text.Length; i++, k++)
+        {
+            if (char.IsHighSurrogate(text[i]) && i + 1 < text.Length && char.IsLowSurrogate(text[i + 1]))
+            {
+                points[k] = char.ConvertToUtf32(text[i], text[i + 1]);
                 i++;
             }
             else
             {
-                points.Add(text[i]);
+                points[k] = text[i];
             }
         }
 
-        return [.. points];
+        return points;
     }
 
     /// <summary>Appends one code point (a lone surrogate as its own char).</summary>
@@ -73,8 +83,22 @@ internal static class VisualText
     /// <summary>Whether <paramref name="text"/> has anything this class would change: right-to-left text or Arabic letters.</summary>
     public static bool NeedsRendering(string text)
     {
-        foreach (int cp in CodePoints(text))
+        // Below U+0590 nothing needs it (surrogates are above it): a line of Latin text is one vectorized search.
+        int first = text.AsSpan().IndexOfAnyInRange('\u0590', '\uFFFF');
+        if (first < 0)
         {
+            return false;
+        }
+
+        for (int i = first; i < text.Length; i++)
+        {
+            int cp = text[i];
+            if (char.IsHighSurrogate(text[i]) && i + 1 < text.Length && char.IsLowSurrogate(text[i + 1]))
+            {
+                cp = char.ConvertToUtf32(text[i], text[i + 1]);
+                i++;
+            }
+
             if (cp < 0x0590)
             {
                 continue;
@@ -421,7 +445,7 @@ internal sealed class VisualWriter(TextWriter inner, int width = 0, bool rightAl
         if (_held.Length > 0)
         {
             // Leading spaces (right alignment) or a high surrogate were held to see what follows them.
-            bool spaces = _held.ToString().All(c => c == ' ');
+            bool spaces = _held[0] == ' ' && HeldIsSpaces();
             bool pair = _held.Length == 1 && char.IsHighSurrogate(_held[0]) && char.IsLowSurrogate(value);
             if (spaces && value != ' ' && !StartsHolding(value) || pair && !StartsHolding(char.ConvertToUtf32(_held[0], value)))
             {
@@ -447,6 +471,20 @@ internal sealed class VisualWriter(TextWriter inner, int width = 0, bool rightAl
         }
 
         Pass(value);
+    }
+
+    // Whether the held text is only spaces (right alignment), read in place: it is asked for every character of a held line.
+    private bool HeldIsSpaces()
+    {
+        foreach (var chunk in _held.GetChunks())
+        {
+            if (chunk.Span.ContainsAnyExcept(' '))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     // Whether a character begins the held part of a line: a right-to-left letter or number, or a direction control.
@@ -476,12 +514,67 @@ internal sealed class VisualWriter(TextWriter inner, int width = 0, bool rightAl
         }
     }
 
-    public override void Write(string? value)
+    public override void Write(string? value) => Write(value.AsSpan());
+
+    public override void Write(char[] buffer, int index, int count) => Write(buffer.AsSpan(index, count));
+
+    // While nothing is held and no escape sequence is open, a run of plain characters goes through in one write (a
+    // console writer flushes every write: one per character was a system call per character); every other character
+    // takes the character path, which decides what to hold.
+    public override void Write(ReadOnlySpan<char> buffer)
     {
-        foreach (char c in value ?? "")
+        while (buffer.Length > 0)
         {
-            Write(c);
+            if (_held.Length == 0 && _escape == 0 && !rightAlign)
+            {
+                int run = buffer.IndexOfAnyExcept(Plain);
+                run = run < 0 ? buffer.Length : run;
+                if (run > 0)
+                {
+                    PassRun(buffer[..run]);
+                    buffer = buffer[run..];
+                    continue;
+                }
+            }
+
+            Write(buffer[0]);
+            buffer = buffer[1..];
         }
+    }
+
+    // Characters that pass through as they are when nothing is held: below U+0590 (no right-to-left letter, no
+    // surrogate) but the line break and the escape character, which change the writer's state.
+    private static readonly SearchValues<char> Plain = SearchValues.Create(string.Create(0x0590 - 2, 0, (chars, _) =>
+    {
+        int k = 0;
+        for (char c = '\0'; c < '֐'; c++)
+        {
+            if (c is not '\n' and not '\u001b')
+            {
+                chars[k++] = c;
+            }
+        }
+    }));
+
+    // Writes a run of plain characters through, counting columns as Pass does for each (a carriage return goes back to
+    // the first column, control characters take none).
+    private void PassRun(ReadOnlySpan<char> run)
+    {
+        inner.Write(run);
+        int carriage = run.LastIndexOf('\r');
+        if (carriage >= 0)
+        {
+            _column = 0;
+            run = run[(carriage + 1)..];
+        }
+
+        int controls = 0;
+        foreach (char c in run)
+        {
+            controls += char.IsControl(c) ? 1 : 0;
+        }
+
+        _column += run.Length - controls;
     }
 
     public override void WriteLine(string? value)

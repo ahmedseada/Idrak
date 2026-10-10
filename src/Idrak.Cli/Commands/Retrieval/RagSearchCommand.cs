@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Globalization;
 using System.Text.Json.Nodes;
 
 namespace Idrak.Cli.Commands.Retrieval;
@@ -44,7 +45,7 @@ internal sealed class RagSearchCommand : Command
         var hits = opened.Index.SearchAsync(query, top).AsTask().GetAwaiter().GetResult();
         context.Write($"{hits.Count} of {opened.Index.Chunks.Count} chunks for \"{query}\" ({opened.Search}):");
         context.Table(["#", "Score", "Source", "Passage"], hits.Select((h, i) => (IReadOnlyList<string>)
-            [(i + 1).ToString(), h.Score.ToString("G4"), $"{h.Chunk.DocumentId}#{h.Chunk.Position}", RagIndexFile.Snippet(h.Chunk.Text)]));
+            [(i + 1).ToString(CultureInfo.InvariantCulture), h.Score.ToString("G4", CultureInfo.InvariantCulture), $"{h.Chunk.DocumentId}#{h.Chunk.Position}", RagIndexFile.Snippet(h.Chunk.Text)]));
         context.WriteJson(new JsonObject
         {
             ["query"] = query,
