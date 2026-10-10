@@ -229,8 +229,23 @@ public static class Losses
     {
         ArgumentNullException.ThrowIfNull(logProbs);
         ArgumentNullException.ThrowIfNull(labels);
-        float[] flat = [.. labels.SelectMany(l => l).Select(v => (float)v)];
-        int[] lengths = [.. labels.Select(l => l.Length)];
+        // Each sequence's labels one after another, in two plain passes (no enumerators: this runs every training step).
+        int[] lengths = new int[labels.Count];
+        int total = 0;
+        for (int i = 0; i < lengths.Length; i++)
+        {
+            total += lengths[i] = labels[i].Length;
+        }
+
+        float[] flat = new float[total];
+        for (int i = 0, at = 0; i < lengths.Length; at += lengths[i++])
+        {
+            var source = labels[i];
+            for (int j = 0; j < source.Length; j++)
+            {
+                flat[at + j] = source[j];
+            }
+        }
         // Not disposed here: the loss's backward pass reads the targets.
         var targets = Tensor.From(flat.Length == 0 ? [0f] : flat, [Math.Max(flat.Length, 1)], logProbs.Device);
         return Ctc(logProbs, targets, inputLengths, lengths, blank, reduction, zeroInfinity, batchFirst);

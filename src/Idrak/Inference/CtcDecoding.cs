@@ -68,6 +68,13 @@ internal static class CtcDecoding
         var next = new Dictionary<(int Parent, int Label), Score>();
         var candidates = new List<int>(classes);
 
+        // Made once per search and reused at every step: the heap and list of the best prefixes, and the scores and order
+        // the classes are pruned by.
+        var heap = new PriorityQueue<KeyValuePair<(int Parent, int Label), Score>, (double Total, int Parent, int Label)>(options.BeamWidth + 1, Worse);
+        var best = new List<KeyValuePair<(int Parent, int Label), Score>>(options.BeamWidth);
+        float[] scores = options.TopClasses is null ? [] : new float[classes];
+        Comparison<int> byScore = (a, b) => scores[b].CompareTo(scores[a]) is var order && order != 0 ? order : a.CompareTo(b);
+
         void Add((int Parent, int Label) key, double blankPart, double labelPart)
         {
             ref var score = ref System.Runtime.InteropServices.CollectionsMarshal.GetValueRefOrAddDefault(next, key, out bool found);
@@ -83,7 +90,7 @@ internal static class CtcDecoding
         for (int t = 0; t < steps; t++)
         {
             var row = values.Slice(t * classes, classes);
-            Candidates(row, options, candidates);
+            Candidates(row, options, candidates, scores, byScore);
             next.Clear();
             foreach (var (prefix, score) in beam)
             {
@@ -110,7 +117,7 @@ internal static class CtcDecoding
             }
 
             beam.Clear();
-            foreach (var (key, score) in Best(next, options.BeamWidth))
+            foreach (var (key, score) in Best(next, options.BeamWidth, heap, best))
             {
                 int node = key.Parent < 0 ? 0 : children.TryGetValue(key, out int known) ? known : -1;
                 if (node < 0)
@@ -141,7 +148,7 @@ internal static class CtcDecoding
     }
 
     // The classes of a step that extend prefixes: every class, or the most likely ones (the best always among them).
-    private static void Candidates(ReadOnlySpan<float> row, CtcDecodeOptions options, List<int> candidates)
+    private static void Candidates(ReadOnlySpan<float> row, CtcDecodeOptions options, List<int> candidates, float[] scores, Comparison<int> byScore)
     {
         candidates.Clear();
         int best = 0;
@@ -163,17 +170,19 @@ internal static class CtcDecoding
 
         if (options.TopClasses is { } top && candidates.Count > top)
         {
-            var scores = row.ToArray();
-            candidates.Sort((a, b) => scores[b].CompareTo(scores[a]) is var order && order != 0 ? order : a.CompareTo(b));
+            row.CopyTo(scores);                                                       // the scores byScore reads
+            candidates.Sort(byScore);
             candidates.RemoveRange(top, candidates.Count - top);
         }
     }
 
     // The `count` most likely prefixes, the most likely first (on a tie the one with the older parent, then the smaller
     // label, so results are stable): a heap of the best `count` seen, O(n log count).
-    private static List<KeyValuePair<(int Parent, int Label), Score>> Best(Dictionary<(int Parent, int Label), Score> prefixes, int count)
+    private static List<KeyValuePair<(int Parent, int Label), Score>> Best(Dictionary<(int Parent, int Label), Score> prefixes, int count,
+        PriorityQueue<KeyValuePair<(int Parent, int Label), Score>, (double Total, int Parent, int Label)> heap, List<KeyValuePair<(int Parent, int Label), Score>> best)
     {
-        var heap = new PriorityQueue<KeyValuePair<(int Parent, int Label), Score>, (double Total, int Parent, int Label)>(count + 1, Worse);
+        heap.Clear();
+        best.Clear();
         foreach (var entry in prefixes)
         {
             heap.Enqueue(entry, (entry.Value.Total, entry.Key.Parent, entry.Key.Label));
@@ -183,7 +192,6 @@ internal static class CtcDecoding
             }
         }
 
-        var best = new List<KeyValuePair<(int Parent, int Label), Score>>(heap.Count);
         while (heap.Count > 0)
         {
             best.Add(heap.Dequeue());

@@ -89,12 +89,7 @@ internal sealed class JpegCodec : IImageCodec
         {
             for (int row = first; row < last; row++)
             {
-                var source = planes[row / h].AsSpan(row % h * w, w);
-                var target = pixels.AsSpan(row * w, w);
-                for (int x = 0; x < source.Length; x++)
-                {
-                    target[x] = source[x] * (1f / 255f);
-                }
+                ImageLevels.ToUnit(planes[row / h].AsSpan(row % h * w, w), pixels.AsSpan(row * w, w));
             }
         });
         return new ImageData(pixels, planes.Length, h, w);
@@ -121,7 +116,8 @@ internal sealed class JpegDecoder
     // jdcolor.c's YCbCr to RGB tables (16 fractional bits, rounded as libjpeg rounds them).
     private static readonly int[] CrToR = new int[256], CbToB = new int[256], CrToG = new int[256], CbToG = new int[256];
 
-    private readonly byte[] data;
+    private readonly byte[] data;                                                       // pooled: its first `fileSize` bytes are the file
+    private readonly int fileSize;
     private readonly int[][] quant = new int[4][];                                       // natural order
     private readonly Huffman?[] dcTables = new Huffman?[4], acTables = new Huffman?[4];
     private Component[] components = [];
@@ -148,7 +144,7 @@ internal sealed class JpegDecoder
         static int Fix(double v) => (int)(v * (1 << scale) + 0.5);
     }
 
-    private JpegDecoder(byte[] data) => this.data = data;
+    private JpegDecoder(byte[] data, int fileSize) => (this.data, this.fileSize) = (data, fileSize);
 
     /// <summary>Whether <paramref name="marker"/> starts a frame (SOF0 to SOF15, but DHT, JPG and DAC).</summary>
     public static bool IsFrame(byte marker) => marker is >= 0xC0 and <= 0xCF and not 0xC4 and not 0xC8 and not 0xCC;
@@ -156,16 +152,25 @@ internal sealed class JpegDecoder
     /// <summary>Decodes a whole file to one 8-bit plane (grey) or three (red, green, blue), each height x width.</summary>
     public static (byte[][] Planes, int Height, int Width) Decode(ReadOnlySpan<byte> file)
     {
-        var decoder = new JpegDecoder(file.ToArray());
-        decoder.ReadSegments();
-        return (decoder.Output(), decoder.height, decoder.width);
+        byte[] data = ArrayPool<byte>.Shared.Rent(file.Length);
+        try
+        {
+            file.CopyTo(data);
+            var decoder = new JpegDecoder(data, file.Length);
+            decoder.ReadSegments();
+            return (decoder.Output(), decoder.height, decoder.width);
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(data);
+        }
     }
 
     // ---------------------------------------------------------------- segments
 
     private void ReadSegments()
     {
-        if (data.Length < 4 || data[0] != 0xFF || data[1] != 0xD8)
+        if (fileSize < 4 || data[0] != 0xFF || data[1] != 0xD8)
         {
             throw new InvalidDataException("not a JPEG file (no start-of-image marker).");
         }
@@ -185,13 +190,13 @@ internal sealed class JpegDecoder
                 continue;
             }
 
-            if (at + 2 > data.Length)
+            if (at + 2 > fileSize)
             {
                 break;
             }
 
             int length = data[at] << 8 | data[at + 1];
-            if (length < 2 || at + length > data.Length)
+            if (length < 2 || at + length > fileSize)
             {
                 if (scanned)
                 {
@@ -256,7 +261,7 @@ internal sealed class JpegDecoder
     // The next marker at or after `at`, skipping fill bytes and stray data; `at` is left after the marker byte. -1 at the end.
     private int NextMarker(ref int at)
     {
-        while (at + 1 < data.Length)
+        while (at + 1 < fileSize)
         {
             if (data[at] != 0xFF || data[at + 1] is 0x00 or 0xFF)
             {
@@ -670,12 +675,12 @@ internal sealed class JpegDecoder
         while (count <= 56)
         {
             int b = 0;
-            if (position < data.Length)
+            if (position < fileSize)
             {
                 b = data[position];
                 if (b == 0xFF)
                 {
-                    int next = position + 1 < data.Length ? data[position + 1] : 0xD9;
+                    int next = position + 1 < fileSize ? data[position + 1] : 0xD9;
                     if (next == 0x00)
                     {
                         position += 2;

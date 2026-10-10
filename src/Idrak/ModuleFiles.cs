@@ -190,6 +190,10 @@ public static class ModuleFiles
             throw new InvalidDataException($"The file has {count} parameter tensors but the model has {parameters.Count}.");
         }
 
+        // One buffer for the stored bytes and one for decoded values, grown to the largest tensor, instead of new arrays
+        // for every tensor.
+        byte[] buffer = [];
+        float[] decoded = [];
         foreach (var p in parameters)
         {
             var shape = new int[reader.ReadInt32()];
@@ -204,15 +208,29 @@ public static class ModuleFiles
             }
 
             var type = magic is FileMagic3 or FileMagic4 or FileMagic5 ? (WeightFormat)reader.ReadByte() : WeightFormat.Float32;
-            var bytes = new byte[p.Size * WeightCodec.For(type).BytesPerValue];
+            var codec = WeightCodec.For(type);
+            int length = p.Size * codec.BytesPerValue;
+            if (buffer.Length < length)
+            {
+                buffer = GC.AllocateUninitializedArray<byte>(length);
+            }
+
+            var bytes = buffer.AsSpan(0, length);
             reader.BaseStream.ReadExactly(bytes);
             if (type == WeightFormat.Float32 && BitConverter.IsLittleEndian)
             {
-                p.Load(MemoryMarshal.Cast<byte, float>(bytes.AsSpan()));             // the stored bytes are the values
+                p.Load(MemoryMarshal.Cast<byte, float>(bytes));                       // the stored bytes are the values
             }
             else
             {
-                p.Load(Decode(bytes, p.Size, type));
+                if (decoded.Length < p.Size)
+                {
+                    decoded = GC.AllocateUninitializedArray<float>(p.Size);
+                }
+
+                var values = decoded.AsSpan(0, p.Size);
+                codec.Decode(bytes, values);
+                p.Load(values);
             }
         }
     }
@@ -224,12 +242,5 @@ public static class ModuleFiles
         var bytes = new byte[values.Length * codec.BytesPerValue];
         codec.Encode(values, bytes);
         return bytes;
-    }
-
-    private static float[] Decode(byte[] bytes, int count, WeightFormat format)
-    {
-        var values = new float[count];
-        WeightCodec.For(format).Decode(bytes, values);
-        return values;
     }
 }

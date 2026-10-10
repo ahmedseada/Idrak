@@ -9,17 +9,19 @@ namespace Idrak.Data;
 /// <summary>Scales each column to zero mean and unit variance: (x - mean) / std.</summary>
 public sealed class StandardScaler : IScaler
 {
+    private readonly float[] _mean, _std;
+
     private StandardScaler(float[] mean, float[] std)
     {
-        Mean = mean;
-        Std = std;
+        _mean = mean;
+        _std = std;
     }
 
     /// <summary>Per-column means.</summary>
-    public IReadOnlyList<float> Mean { get; }
+    public IReadOnlyList<float> Mean => _mean;
 
     /// <summary>Per-column standard deviations (1 for constant columns).</summary>
-    public IReadOnlyList<float> Std { get; }
+    public IReadOnlyList<float> Std => _std;
 
     /// <summary>Computes column statistics of row-major <paramref name="data"/>.</summary>
     public static StandardScaler Fit(ReadOnlySpan<float> data, int columns)
@@ -60,10 +62,14 @@ public sealed class StandardScaler : IScaler
     public void Transform(Span<float> data, int columns)
     {
         Check(columns);
-        for (int i = 0; i < data.Length; i++)
+        int width = RowWidth(columns, data.Length);
+        for (int start = 0; start < data.Length; start += width)
         {
-            int c = i % columns;
-            data[i] = (data[i] - Mean[c]) / Std[c];
+            var row = data.Slice(start, Math.Min(width, data.Length - start));
+            for (int c = 0; c < row.Length; c++)
+            {
+                row[c] = (row[c] - _mean[c]) / _std[c];
+            }
         }
     }
 
@@ -71,10 +77,14 @@ public sealed class StandardScaler : IScaler
     public void InverseTransform(Span<float> data, int columns)
     {
         Check(columns);
-        for (int i = 0; i < data.Length; i++)
+        int width = RowWidth(columns, data.Length);
+        for (int start = 0; start < data.Length; start += width)
         {
-            int c = i % columns;
-            data[i] = data[i] * Std[c] + Mean[c];
+            var row = data.Slice(start, Math.Min(width, data.Length - start));
+            for (int c = 0; c < row.Length; c++)
+            {
+                row[c] = row[c] * _std[c] + _mean[c];
+            }
         }
     }
 
@@ -115,22 +125,31 @@ public sealed class StandardScaler : IScaler
             throw new ArgumentException($"The scaler was fitted on {Mean.Count} columns, not {columns}.");
         }
     }
+
+    // The values of a row: the column of value i is i % columns (row by row instead of a division per value, and the
+    // same answer for any columns, 0 failing as the division did).
+    internal static int RowWidth(int columns, int length) =>
+        columns == 0 && length > 0 ? throw new DivideByZeroException()
+        : columns == int.MinValue ? int.MaxValue
+        : Math.Max(Math.Abs(columns), 1);
 }
 
 /// <summary>Scales each column linearly into [0, 1] using the fitted minimum and maximum.</summary>
 public sealed class MinMaxScaler : IScaler
 {
+    private readonly float[] _min, _range;
+
     private MinMaxScaler(float[] min, float[] range)
     {
-        Min = min;
-        Range = range;
+        _min = min;
+        _range = range;
     }
 
     /// <summary>Per-column minimums.</summary>
-    public IReadOnlyList<float> Min { get; }
+    public IReadOnlyList<float> Min => _min;
 
     /// <summary>Per-column max - min (1 for constant columns).</summary>
-    public IReadOnlyList<float> Range { get; }
+    public IReadOnlyList<float> Range => _range;
 
     /// <summary>Computes column ranges of row-major <paramref name="data"/>.</summary>
     public static MinMaxScaler Fit(ReadOnlySpan<float> data, int columns)
@@ -156,20 +175,28 @@ public sealed class MinMaxScaler : IScaler
     /// <inheritdoc />
     public void Transform(Span<float> data, int columns)
     {
-        for (int i = 0; i < data.Length; i++)
+        int width = Width(columns, data.Length);
+        for (int start = 0; start < data.Length; start += width)
         {
-            int c = i % columns;
-            data[i] = (data[i] - Min[c]) / Range[c];
+            var row = data.Slice(start, Math.Min(width, data.Length - start));
+            for (int c = 0; c < row.Length; c++)
+            {
+                row[c] = (row[c] - _min[c]) / _range[c];
+            }
         }
     }
 
     /// <inheritdoc />
     public void InverseTransform(Span<float> data, int columns)
     {
-        for (int i = 0; i < data.Length; i++)
+        int width = Width(columns, data.Length);
+        for (int start = 0; start < data.Length; start += width)
         {
-            int c = i % columns;
-            data[i] = data[i] * Range[c] + Min[c];
+            var row = data.Slice(start, Math.Min(width, data.Length - start));
+            for (int c = 0; c < row.Length; c++)
+            {
+                row[c] = row[c] * _range[c] + _min[c];
+            }
         }
     }
 
@@ -193,6 +220,14 @@ public sealed class MinMaxScaler : IScaler
 
     /// <summary>Reads ranges written by <see cref="Save(TextWriter)"/>.</summary>
     public static MinMaxScaler Load(TextReader reader) => Parse(reader.ReadToEnd().Split('\n'));
+
+    // StandardScaler.RowWidth, with the error a column past the fitted ones gave when each value was looked up in the lists.
+    private int Width(int columns, int length)
+    {
+        int width = StandardScaler.RowWidth(columns, length);
+        return Math.Min(width, length) <= _min.Length ? width
+            : throw new ArgumentOutOfRangeException("index", "Index was out of range. Must be non-negative and less than the size of the collection.");
+    }
 
     private static MinMaxScaler Parse(IEnumerable<string> lines)
     {
