@@ -12,7 +12,8 @@ using Idrak.Models;
 // A page read profiled (plan 17, H3) through the library's profiler (Profiler, ProfileProbes, ProfileWriters): the app's
 // flow (the prepared page for the preview, then the read, greedy) on each device IDRAK_DEVICES names (default the CPU).
 // What the read is:
-//   IDRAK_BENCH_MODEL       a checkpoint folder (default tests' vlm/tiny-gemma3)
+//   IDRAK_BENCH_MODEL       a checkpoint folder, or a Hugging Face id ("bakrianoo/arabic-legal-documents-ocr-1.0": the copy the
+//                           app downloaded, from the same cache; HF_TOKEN for gated ones) (default tests' vlm/tiny-gemma3)
 //   IDRAK_BENCH_PAGE        an image file (default the seeded 1,654 x 2,339 scan of --bench-image, JPEG)
 //   IDRAK_BENCH_TRANSFORMS  the card's pipeline (default grayscale,max_width=1024,contrast=1.5)
 //   IDRAK_BENCH_PROMPT      the instruction (default "Extract details to JSON.")
@@ -33,6 +34,12 @@ internal static partial class Tests
         RegisterGemma3Vision();
         string Setting(string name, string fallback) => Environment.GetEnvironmentVariable(name) is { Length: > 0 } value ? value : fallback;
         string folder = Setting("IDRAK_BENCH_MODEL", TestData("vlm/tiny-gemma3"));
+        if (!Directory.Exists(folder) && folder.Count(ch => ch == '/') == 1 && !Path.IsPathRooted(folder))
+        {
+            folder = Idrak.Data.HuggingFaceModels.DownloadAsync(folder, token: Idrak.Data.HuggingFace.Token()).GetAwaiter().GetResult();   // cached once, as the app does
+            Console.WriteLine($"model: {folder}");
+        }
+
         string weights = Setting("IDRAK_BENCH_WEIGHTS", "f32").ToLowerInvariant();
         bool Bf16(string name) => Setting(name, "f32").ToLowerInvariant() is "bf16" or "bfloat16";
         int tokens = int.Parse(Setting("IDRAK_BENCH_TOKENS", "64"), CultureInfo.InvariantCulture);
