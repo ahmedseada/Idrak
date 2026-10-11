@@ -55,6 +55,14 @@ public sealed record ReaderStatus(ReaderState State, string Message, string? Mod
 public sealed record ModelInfo(string Id, string Name, string? About, string Source, string? Adapter, bool Usable, string? Unusable, string Preprocessing,
     string Prompt, int MaxTokens, bool Loaded, bool PanAndScan, string? FullText);
 
+/// <summary>
+/// How transformers' generate() reads with a model: its generation_config.json, with transformers' defaults for what the
+/// file leaves out (no sampling, temperature 1, top-k 50, top-p 1, no min-p, repetition penalty 1); what the Docker-Preset
+/// reads with, beside the weights the app loaded (the container's are bfloat16).
+/// </summary>
+public sealed record TransformersGeneration(bool Found, string? File, bool Sample, float Temperature, int TopK, float TopP, float MinP, float RepeatPenalty,
+    string Weights);
+
 /// <summary>A page to read: the image (a data URL or base64), and what replaces the model's own settings.</summary>
 /// <param name="Image">The scan as a data URL ("data:image/png;base64,…") or plain base64.</param>
 /// <param name="Prompt">The instruction; the model's own when null or empty.</param>
@@ -66,8 +74,15 @@ public sealed record ModelInfo(string Id, string Name, string? About, string Sou
 /// <param name="FrequencyPenalty">Subtracted once per recent occurrence (0 = off); the settings' when null.</param>
 /// <param name="RepeatLastN">How many recent tokens the penalties look at; the settings' when null.</param>
 /// <param name="RepeatStop">End the answer when one phrase repeats this many times in a row (0 = off); the settings' when null.</param>
+/// <param name="Sample">Sample the words instead of greedy reading; the settings' when null.</param>
+/// <param name="Temperature">Sampling's temperature; the settings' when null.</param>
+/// <param name="TopK">Sample among the k most likely words (0 = all); the settings' when null.</param>
+/// <param name="TopP">Sample among the most likely words holding this probability (1 = off); the settings' when null.</param>
+/// <param name="MinP">Drop words less than this fraction as likely as the best (0 = off); the settings' when null.</param>
+/// <param name="Seed">The sampling seed (a new one each read when null; the result reports it).</param>
 public sealed record ReadRequest(string? Image = null, string? Prompt = null, string? Preprocessing = null, int? MaxTokens = null, bool? PanAndScan = null,
-    float? RepeatPenalty = null, float? PresencePenalty = null, float? FrequencyPenalty = null, int? RepeatLastN = null, int? RepeatStop = null);
+    float? RepeatPenalty = null, float? PresencePenalty = null, float? FrequencyPenalty = null, int? RepeatLastN = null, int? RepeatStop = null,
+    bool? Sample = null, float? Temperature = null, int? TopK = null, float? TopP = null, float? MinP = null, int? Seed = null);
 
 /// <summary>
 /// The app's readers: the models of the settings, one on the device at a time (the library's
@@ -287,7 +302,7 @@ public sealed class ReaderService : IDisposable
                     {
                         index = page.Index, name = page.Name, cer = result.Cer, seconds = Math.Round(result.Reading.Elapsed.TotalSeconds, 2),
                         tokens = result.Reading.Stats?.GeneratedTokens ?? 0, truncated = result.Reading.Truncated,
-                        looped = result.Reading.DoneReason == "repetition", json = result.Json is not null, repaired = result.Repaired,
+                        looped = result.Reading.DoneReason == "repetition", json = result.Json is not null, repaired = result.Repaired, seed = result.Seed,
                         done = scores.Count, total = chosen.Count, meanCer = scores.Average(), secondsLeft = Math.Round(left),
                     }, "page"));
                 }
@@ -363,6 +378,22 @@ public sealed class ReaderService : IDisposable
     {
         _busy = null;
         SetStatus(ReaderState.Idle, "No model loaded: pick one.", null);
+    }
+
+    /// <summary>
+    /// How transformers' generate() would read with the model <paramref name="id"/>: its generation_config.json once its
+    /// files are on disk (after a load, or a local folder), else transformers' defaults alone.
+    /// </summary>
+    public TransformersGeneration TransformersGeneration(string id)
+    {
+        var model = Find(id);
+        string? folder = _folders.TryGetValue(model.Id, out var loaded) ? loaded : model.Folder;
+        string? file = folder is null ? null : Path.Combine(folder, "generation_config.json");
+        var config = file is not null && File.Exists(file) ? System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(file)) as System.Text.Json.Nodes.JsonObject : null;
+        T Value<T>(string key, T fallback) => config?[key] is System.Text.Json.Nodes.JsonValue v && v.TryGetValue(out T? x) ? x : fallback;
+        string weights = _settings.Weights + (LoadedReader.HeadFormat(_settings) is null ? "" : ", bf16 head");
+        return new TransformersGeneration(config is not null, config is null ? null : file, Value("do_sample", false), Value("temperature", 1f), Value("top_k", 50),
+            Value("top_p", 1f), Value("min_p", 0f), Value("repetition_penalty", 1f), weights);
     }
 
     /// <summary>The model of the switch with that id (the settings' or a tuned adapter).</summary>
@@ -471,6 +502,8 @@ public sealed class ReaderService : IDisposable
             tokensPerSecond = generated > 1 ? Math.Round((generated - 1) / decoding, 1) : (double?)null,
             truncated = reading.Truncated,
             doneReason = reading.DoneReason,
+            sampled = result.Seed is not null,
+            seed = result.Seed,
             model = loaded.Model.Id,
         }, "done"));
     }
@@ -496,6 +529,16 @@ public sealed class ReaderService : IDisposable
             FrequencyPenalty = request.FrequencyPenalty ?? g.FrequencyPenalty, RepeatLastN = Math.Clamp(request.RepeatLastN ?? g.RepeatLastN, 0, 4096),
             RepeatStop = Math.Clamp(request.RepeatStop ?? g.RepeatStop, 0, 100),
         };
+        if (request.Sample ?? g.Sample)
+        {
+            // A seed for every sampled read (the page's, else a new one), shown with the result so a read can be repeated.
+            read = read with
+            {
+                Sample = true, Temperature = request.Temperature ?? g.Temperature, TopK = request.TopK ?? g.TopK, TopP = request.TopP ?? g.TopP,
+                MinP = request.MinP ?? g.MinP, Seed = request.Seed ?? Random.Shared.Next(),
+            };
+        }
+
         if (output is not null)
         {
             SetStatus(ReaderState.Reading, $"{model.Name} is reading a page…", model.Id);
@@ -528,10 +571,11 @@ public sealed class ReaderService : IDisposable
         var (json, repaired) = AnswerJson.Show(reading.Text);
         double? cer = expected is null ? null
             : TuningMetrics.Get(TuningMetrics.CharacterErrorRate).Score(AnswerTexts.Of(reading.Text, AnswerTexts.Values), AnswerTexts.Of(expected, AnswerTexts.Values)).Value;
-        return new PageResult(reading, json, repaired, cer);
+        return new PageResult(reading, json, repaired, cer, read.Sample ? read.Seed : null);
     }
 
-    private sealed record PageResult(ImageReading Reading, string? Json, bool Repaired, double? Cer);
+    // One page's reading, with its seed when it was sampled.
+    private sealed record PageResult(ImageReading Reading, string? Json, bool Repaired, double? Cer, int? Seed);
 
     private void SetStatus(ReaderState state, string message, string? model, string? loading = null, DownloadInfo? download = null, double? seconds = null)
     {

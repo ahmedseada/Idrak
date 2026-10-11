@@ -18,7 +18,7 @@ internal static partial class Tests
         ("json repair: the registry has the library's lenient repair; an app's repair shadows it and is removed again; an unknown name is not registered", JsonRepairRegistry),
         ("answer texts: raw keeps the answer, values takes its JSON's values in document order (repaired JSON too; an answer without JSON as it is); Normalize composes and folds whitespace", AnswerTextModes),
         ("model host: MaxLoaded unloads the longest unused idle model before loading another, and never one in use", ModelHostMaxLoaded),
-        ("image reader: a vision checkpoint reads a page greedily (the same answer twice), streams it as Read returns it, prepares the page with its transforms or the read's own; no attention cache held between reads unless KeepCache", ImageReaderReads),
+        ("image reader: a vision checkpoint reads a page greedily (the same answer twice), streams it as Read returns it, prepares the page with its transforms or the read's own; no attention cache held between reads unless KeepCache; a sampled read with a seed repeats", ImageReaderReads),
         ("generation: the repetition stop finds an answer ending in one run of tokens repeated N times (runs from the minimum to 64 tokens; shorter runs such as a row of dots are text); a read says why it ended", RepetitionStop),
         ("image reader: a stopped read ends before its first token (the prompt's pass checks between layers; the step is withdrawn, the context's length unchanged) and the next read is unaffected", ImageReaderStops),
     ];
@@ -181,6 +181,20 @@ internal static partial class Tests
         var second = reader.Read(request);
         Check(first.Text == second.Text, $"greedy: \"{first.Text}\" then \"{second.Text}\"");
         Check(!reader.Chat.Generator.HoldsCache, "no attention cache held between reads");
+
+        // Sampling: a seed repeats a read exactly; impossible settings are refused.
+        var sampled = request with { Sample = true, Temperature = 1.5f, TopK = 0, TopP = 0.95f, Seed = 11 };
+        Check(reader.Read(sampled).Text == reader.Read(sampled).Text, "a sampled read with a seed repeats");
+        try
+        {
+            reader.Read(sampled with { Temperature = 0f });
+            Check(false, "sampling at temperature 0 must be refused");
+        }
+        catch (ArgumentException ex)
+        {
+            Check(ex.Message.Contains("temperature", StringComparison.Ordinal), ex.Message);
+        }
+
         using (var keeping = new ImageReader(model, new ImageReaderOptions { Transforms = ImageTransformPipeline.Parse("grayscale,max_width=8"), ContextLength = 256, KeepCache = true }))
         {
             Check(keeping.Read(request).Text == first.Text && keeping.Chat.Generator.HoldsCache, "KeepCache keeps it, the same answer");

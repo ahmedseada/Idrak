@@ -64,6 +64,28 @@ public sealed record ImageReadRequest(ChatImage Image, string Prompt)
     public int RepeatLastN { get; init; } = 64;
 
     /// <summary>
+    /// Sample each token from the model's probabilities (shaped by <see cref="Temperature"/>, <see cref="TopK"/>,
+    /// <see cref="TopP"/> and <see cref="MinP"/>) instead of taking the most likely one: answers vary from read to read
+    /// unless <see cref="Seed"/> is set. Off by default (greedy: the same answer every time).
+    /// </summary>
+    public bool Sample { get; init; }
+
+    /// <summary>With <see cref="Sample"/>: the softmax temperature (above 0; below 1 more predictable, above 1 more varied).</summary>
+    public float Temperature { get; init; } = 1f;
+
+    /// <summary>With <see cref="Sample"/>: sample only among the k most likely tokens (0 = all).</summary>
+    public int TopK { get; init; }
+
+    /// <summary>With <see cref="Sample"/>: the smallest set of likely tokens holding this probability (1 = off).</summary>
+    public float TopP { get; init; } = 1f;
+
+    /// <summary>With <see cref="Sample"/>: drop tokens less than this fraction as likely as the best one (0 = off).</summary>
+    public float MinP { get; init; }
+
+    /// <summary>With <see cref="Sample"/>: the random seed, so a read can be repeated exactly (null = a different one each read).</summary>
+    public int? Seed { get; init; }
+
+    /// <summary>
     /// Ends the answer when it repeats one run of tokens this many times in a row (0 = off; see
     /// <see cref="GenerationOptions.RepeatStop"/>): a read caught in a loop stops instead of filling <see cref="MaxTokens"/>.
     /// </summary>
@@ -147,9 +169,16 @@ public sealed class ImageReader : IDisposable
         }
 
         messages.Add(new ChatMessage("user", [request.Image, new ChatText(request.Prompt)]));
+        if (request.Sample && (!(request.Temperature > 0f) || request.TopK < 0 || !(request.TopP is > 0f and <= 1f) || !(request.MinP is >= 0f and < 1f)))
+        {
+            throw new ArgumentException($"Sampling takes a temperature above 0, top-k of 0 or more, top-p in (0, 1] and min-p in [0, 1); "
+                + $"got {request.Temperature}, {request.TopK}, {request.TopP}, {request.MinP}.", nameof(request));
+        }
+
         var options = new GenerationOptions
         {
-            Temperature = 1f, TopK = 1, TopP = 1f, Seed = 0,                                             // greedy
+            Temperature = request.Sample ? request.Temperature : 1f, TopK = request.Sample ? request.TopK : 1,   // greedy: the most likely token
+            TopP = request.Sample ? request.TopP : 1f, MinP = request.Sample ? request.MinP : 0f, Seed = request.Sample ? request.Seed : 0,
             RepeatPenalty = request.RepeatPenalty, PresencePenalty = request.PresencePenalty, FrequencyPenalty = request.FrequencyPenalty,
             RepeatLastN = request.RepeatLastN, RepeatStop = request.RepeatStop,
             NumCtx = _contextLength, NumPredict = Math.Max(1, request.MaxTokens),

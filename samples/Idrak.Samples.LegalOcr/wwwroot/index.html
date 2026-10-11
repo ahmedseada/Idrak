@@ -180,6 +180,7 @@
         <label for="preset">Start from</label>
         <select id="preset">
           <option value="model">This model's own steps</option>
+          <option value="docker">Docker-Preset: everything as the moustafas/arabic-legal-ocr container reads</option>
           <option value="card">Model card: grayscale, max width 1024, contrast 1.5</option>
           <option value="vllm">Model card, vLLM route: the same, then JPEG quality 95</option>
           <option value="none">No steps (the image as it is)</option>
@@ -196,7 +197,7 @@
       <label class="check"><input type="checkbox" id="panAndScan"> Pan and scan (a tall or wide page is also read as 2 to 4 crops, each its own image: finer detail, more prompt tokens)</label>
       <div class="row" style="justify-content:space-between"><h2 style="margin:0">Generation</h2><button class="btn" id="genReset" type="button" style="padding:3px 10px">Reset to the app's values</button></div>
       <div class="step-inputs" id="generation"></div>
-      <div class="note">Greedy reading: the most likely word each time. A penalty above its "off" value makes words already used less likely; the loop stop ends an answer that repeats one phrase.</div>
+      <div class="note">Greedy reading takes the most likely word each time; sampling draws it from the model's probabilities, as transformers' generate() does when the model's generation_config.json says do_sample. A penalty above its "off" value makes words already used less likely; the loop stop ends an answer that repeats one phrase.</div>
       <h2>Prompt</h2>
       <div>
         <textarea id="prompt" rows="2" aria-label="Prompt"></textarea>
@@ -362,7 +363,11 @@
 
 <script>
 const $ = id => document.getElementById(id);
-const presets = { card: "grayscale,max_width=1024,contrast=1.5", vllm: "grayscale,max_width=1024,contrast=1.5,jpeg=95", none: "" };
+// The container (moustafas/arabic-legal-ocr): PIL's convert("L"), resize to width 1024 with LANCZOS (height int(h * ratio)),
+// ImageEnhance.Contrast(1.5); its prompt and token limit; the processor's defaults (no pan and scan); generate() as the
+// model's generation_config.json says, with no penalty or loop stop of its own.
+const presets = { card: "grayscale,max_width=1024,contrast=1.5", vllm: "grayscale,max_width=1024,contrast=1.5,jpeg=95", none: "",
+  docker: "grayscale,max_width=1024,resample=lanczos,contrast=1.5" };
 let models = [], current = null, imageData = null, pageIndex = null, page = null, reading = null, pages = [], lastSeen = null, evaluating = null;
 
 // ---------------------------------------------------------------- the two views
@@ -565,7 +570,27 @@ $("preset").onchange = () => {
   const p = $("preset").value;
   if (p === "custom") { update(true); return; }
   setSteps(p === "model" ? current?.preprocessing ?? "" : presets[p], p);
+  if (p === "docker") dockerPreset();
 };
+
+// Docker-Preset: the container's prompt, token limit and pan and scan, and generate()'s sampling from the model's
+// generation_config.json (no penalties, no loop stop: the container has none).
+async function dockerPreset() {
+  $("prompt").value = "Extract details to JSON.";
+  $("maxTokens").value = 2048;
+  $("panAndScan").checked = false;
+  let t = null;
+  try { const r = await fetch(`/api/models/${encodeURIComponent(current?.id ?? "")}/transformers-generation`); if (r.ok) t = await r.json(); } catch { }
+  t ??= { found: false, sample: false, temperature: 1, topK: 50, topP: 1, minP: 0, repeatPenalty: 1, weights: "?" };
+  generation = { ...generation, repeatPenalty: t.repeatPenalty, presencePenalty: 0, frequencyPenalty: 0, repeatStop: 0,
+    sample: t.sample, temperature: t.temperature, topK: t.topK, topP: t.topP, minP: t.minP, seed: null };
+  saveGeneration();
+  renderGeneration();
+  const how = t.sample ? `sampling (temperature ${t.temperature}, top-k ${t.topK}, top-p ${t.topP}${t.minP ? `, min-p ${t.minP}` : ""})` : "greedy (do_sample is off)";
+  $("readNote").textContent = `Docker-Preset: the container's steps, prompt and 2048 tokens; ${how}, from `
+    + (t.found ? "the model's generation_config.json" : "transformers' defaults (the model's generation_config.json is not on disk yet: load the model, then pick the preset again)")
+    + `. Weights: the container runs bf16; this app loaded ${t.weights}${/^(bf16|bfloat16)$/i.test(t.weights) ? "" : " (start the app with --LegalOcr:Weights=bf16 to match them too)"}.`;
+}
 $("tPreFromRead").onclick = () => { $("tPre").value = pipelineOf(steps); };
 
 // ---------------------------------------------------------------- generation (penalties and the loop stop)
@@ -575,6 +600,10 @@ const generationInputs = [
   { key: "frequencyPenalty", label: "Frequency penalty (0 = off)", min: 0, max: 2, step: 0.05, help: "subtracted once per time a word was used in the last N tokens" },
   { key: "repeatLastN", label: "Penalties look back N tokens", min: 0, max: 1024, step: 16, integer: true, help: "how many recent tokens the penalties count" },
   { key: "repeatStop", label: "Stop when a phrase repeats (times; 0 = off)", min: 0, max: 20, step: 1, integer: true, help: "ends a looping answer early" },
+  { key: "temperature", label: "Temperature", min: 0.05, max: 2, step: 0.05, sampling: true, help: "below 1 more predictable, above 1 more varied" },
+  { key: "topK", label: "Top-k (0 = all words)", min: 0, max: 200, step: 1, integer: true, sampling: true, help: "sample among the k most likely words" },
+  { key: "topP", label: "Top-p (1 = off)", min: 0.05, max: 1, step: 0.01, sampling: true, help: "sample among the most likely words holding this probability" },
+  { key: "minP", label: "Min-p (0 = off)", min: 0, max: 0.5, step: 0.01, sampling: true, help: "drop words less than this fraction as likely as the best one" },
 ];
 let generationDefaults = {}, generation = {};
 async function loadGeneration() {
@@ -584,9 +613,27 @@ async function loadGeneration() {
   generation = { ...generationDefaults, ...(saved ?? {}) };
   renderGeneration();
 }
+function saveGeneration() { try { localStorage.setItem("legal-ocr-generation", JSON.stringify(generation)); } catch { } }
 function renderGeneration() {
   const box = $("generation"); box.innerHTML = "";
+  // How words are chosen: greedy, or sampled (with its inputs and a seed).
+  const mode = document.createElement("div");
+  mode.innerHTML = `<label>Choose words</label><select><option value="greedy">Greedy: the most likely word (the same answer every time)</option>`
+    + `<option value="sample">Sample: from the model's probabilities (answers vary; a seed repeats one)</option></select>`;
+  const select = mode.querySelector("select");
+  select.value = generation.sample ? "sample" : "greedy";
+  select.onchange = () => { generation.sample = select.value === "sample"; saveGeneration(); renderGeneration(); };
+  box.appendChild(mode);
+  if (generation.sample) {
+    const seed = document.createElement("div");
+    seed.innerHTML = `<label title="the same seed and settings give the same answer">Seed (empty: a new one each read)</label><input type="number" step="1" placeholder="random">`;
+    const input = seed.querySelector("input");
+    input.value = generation.seed ?? "";
+    input.oninput = () => { const v = parseInt(input.value, 10); generation.seed = Number.isFinite(v) ? v : null; saveGeneration(); };
+    box.appendChild(seed);
+  }
   for (const g of generationInputs) {
+    if (g.sampling && !generation.sample) continue;
     const wrap = document.createElement("div");
     const label = document.createElement("label"); label.textContent = g.label; label.title = g.help; wrap.appendChild(label);
     const pair = document.createElement("div"); pair.className = "pair";
@@ -601,8 +648,9 @@ function renderGeneration() {
 }
 $("genReset").onclick = () => { generation = { ...generationDefaults }; try { localStorage.removeItem("legal-ocr-generation"); } catch { } renderGeneration(); };
 function generationBody() {
-  const body = {};
-  for (const g of generationInputs) if (Number.isFinite(generation[g.key])) body[g.key] = generation[g.key];
+  const body = { sample: !!generation.sample };
+  for (const g of generationInputs) if ((!g.sampling || generation.sample) && Number.isFinite(generation[g.key])) body[g.key] = generation[g.key];
+  if (generation.sample && Number.isFinite(generation.seed)) body.seed = generation.seed;
   return body;
 }
 
@@ -821,6 +869,7 @@ function done(d) {
   if (d.cer != null) list.unshift({ label: "CER", value: (100 * d.cer).toFixed(2) + " %", tone: d.cer < 0.02 ? "good" : d.cer < 0.1 ? "warn" : "bad" });
   if (d.json && d.repaired) list.push({ label: "JSON", value: "repaired", tone: "warn" });
   if (!d.json) list.push({ label: "JSON", value: "none", tone: "bad" });
+  list.push(d.sampled ? { label: "sampled · seed", value: d.seed } : { label: "words", value: "greedy" });
   if (d.doneReason === "repetition") list.push({ label: "answer", value: "stopped: it was repeating", tone: "warn" });
   else if (d.truncated) list.push({ label: "answer", value: "cut at the limit", tone: "warn" });
   metrics(list);
