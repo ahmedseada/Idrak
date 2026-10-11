@@ -301,8 +301,8 @@ public sealed class ReaderService : IDisposable
                         ? $"{lease.Model.Model.Name} is evaluating: page {at + 1} of {chosen.Count}…"
                         : $"{lease.Model.Model.Name} is evaluating: pages {at + 1} to {at + group.Count} of {chosen.Count} together…", id);
                     var results = group.Count == 1
-                        ? [ReadPage(lease.Model, group[0].Image, request, group[0].Expected, null, cancellationToken)]
-                        : ReadPages(lease.Model, [.. group.Select(p => (p.Image, (string?)p.Expected))], request, cancellationToken);
+                        ? [ReadPage(lease.Model, group[0].Image, ForPage(request, group[0].Prompt), group[0].Expected, null, cancellationToken)]
+                        : ReadPages(lease.Model, [.. group.Select(p => (p.Image, (string?)p.Expected, ForPage(request, p.Prompt)))], cancellationToken);
                     for (int i = 0; i < group.Count; i++)
                     {
                         var (page, result) = (group[i], results[i]);
@@ -587,10 +587,10 @@ public sealed class ReaderService : IDisposable
 
     // Pages read together (ImageReader.ReadBatch), each scored as ReadPage scores it; when the device has no room for the
     // batch, the pages are read one by one.
-    private IReadOnlyList<PageResult> ReadPages(LoadedReader loaded, IReadOnlyList<(ChatImage Image, string? Expected)> pages, ReadRequest request,
+    private IReadOnlyList<PageResult> ReadPages(LoadedReader loaded, IReadOnlyList<(ChatImage Image, string? Expected, ReadRequest Request)> pages,
         CancellationToken cancellationToken)
     {
-        var reads = pages.Select(p => PageRequest(loaded, p.Image, request)).ToList();
+        var reads = pages.Select(p => PageRequest(loaded, p.Image, p.Request)).ToList();
         IReadOnlyList<ImageReading> readings;
         try
         {
@@ -600,7 +600,7 @@ public sealed class ReaderService : IDisposable
         {
             ComputeResources.ReleaseCachedMemory(Device);
             _logger.LogWarning("No room on the device to read {Pages} pages together; reading them one by one", pages.Count);
-            return [.. pages.Select(p => ReadPage(loaded, p.Image, request, p.Expected, null, cancellationToken))];
+            return [.. pages.Select(p => ReadPage(loaded, p.Image, p.Request, p.Expected, null, cancellationToken))];
         }
         catch
         {
@@ -619,6 +619,13 @@ public sealed class ReaderService : IDisposable
             : TuningMetrics.Get(TuningMetrics.CharacterErrorRate).Score(AnswerTexts.Of(reading.Text, AnswerTexts.Values), AnswerTexts.Of(expected, AnswerTexts.Values)).Value;
         return new PageResult(reading, json, repaired, cer, read.Sample ? read.Seed : null);
     }
+
+    /// <summary>
+    /// The read of an evaluation page: the request's prompt when it gives one, else the page's own (its data file's
+    /// instruction, as the model was tuned and as tuning's CER reads it), else the model's.
+    /// </summary>
+    public static ReadRequest ForPage(ReadRequest request, string? pagePrompt) =>
+        string.IsNullOrWhiteSpace(request.Prompt) && !string.IsNullOrWhiteSpace(pagePrompt) ? request with { Prompt = pagePrompt } : request;
 
     // Pan and scan as the read asks, else the model's setting (null: an adapter's tuned vision options stand).
     private static bool? PanAndScan(ReaderModel model, ReadRequest request) => request.PanAndScan ?? (model.PanAndScan ? true : null);

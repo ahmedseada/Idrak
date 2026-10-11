@@ -213,10 +213,10 @@ public static class LegalOcrApi
         api.MapPost("/pages/{index:int}/read", IResult (int index, ReadRequest request, EvaluationPages pages, ReaderService host, IHostApplicationLifetime lifetime,
             CancellationToken cancellationToken) =>
             pages.Get(index) is { } page
-                ? TypedResults.ServerSentEvents(UntilStopped(lifetime, cancellationToken, token => host.ReadAsync(page.Image, request, page.Expected, token)))
+                ? TypedResults.ServerSentEvents(UntilStopped(lifetime, cancellationToken, token => host.ReadAsync(page.Image, ReaderService.ForPage(request, page.Prompt), page.Expected, token)))
                 : TypedResults.NotFound());
 
-        // The first `count` evaluation pages (0: all) read and scored in a row.
+        // The first `count` evaluation pages (0: all) read and scored in a row, each with its own prompt unless the request gives one.
         api.MapPost("/pages/evaluate", IResult (ReadRequest request, int? count, EvaluationPages pages, ReaderService host, IHostApplicationLifetime lifetime,
             CancellationToken cancellationToken) =>
             pages.All is var all && pages.Error is { } error
