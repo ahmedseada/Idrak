@@ -57,6 +57,39 @@ internal static partial class Tests
         }
     }
 
+    // A step's images prefetched on a worker (decoded, transformed and made pixel values while the step before runs) give
+    // the features the step makes itself, bit for bit; nothing is prefetched before the first images went through the
+    // encoder, nor an image the cache holds; a prefetch no step took is dropped two prefetches later.
+    private static void VisionTuningPrefetch(Device device)
+    {
+        var (model, tuning) = LoadTuningModel("gemma3", device);
+        using var owned = model;
+        using var plain = TuningVision.Create(model, TuningImages.Parse(null));
+        using var ahead = TuningVision.Create(model, TuningImages.Parse(null));
+        var images = TuningSequences(model, tuning, plain).SelectMany(s => s.Images).DistinctBy(i => i.Image.Hash).ToList();
+        Check(images.Count >= 2, $"{images.Count} distinct images in the fixture");
+        using var scope = new TensorScope();
+
+        ahead.Prefetch([images[0]]);
+        Check(ahead.Prefetched == 0, "nothing prefetched before the first images went through the encoder");
+        var first = ahead.Features([images[0]])[0].ToArray();
+        Check(first.AsSpan().SequenceEqual(plain.Features([images[0]])[0].ToArray()), "the first image's features");
+
+        ahead.Prefetch([images[0], images[1]]);                              // the first is cached: only the second is made
+        var second = ahead.Features([images[1]])[0].ToArray();
+        Check(ahead.Prefetched == 1 && ahead.Encoded == 2, $"{ahead.Prefetched} prefetched, {ahead.Encoded} encoded (expected 1 and 2)");
+        Check(second.AsSpan().SequenceEqual(plain.Features([images[1]])[0].ToArray()), "prefetched pixel values give the step's own features bit for bit");
+
+        // A prefetch no step takes: kept through the next prefetch (its step runs after it), dropped by the one after.
+        using var other = TuningVision.Create(model, TuningImages.Parse(null));
+        _ = other.Features([images[0]]);
+        other.Prefetch([images[1]]);
+        other.Prefetch([]);
+        other.Prefetch([]);
+        _ = other.Features([images[1]]);
+        Check(other.Prefetched == 0, $"a prefetch two calls old is dropped ({other.Prefetched} taken)");
+    }
+
     private static void VisionTuningTrainerRun(string family, string run, Device device)
     {
         string what = $"{family} {run} through FineTuner.Train";
