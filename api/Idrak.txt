@@ -206,6 +206,7 @@ public sealed class Idrak.Data.ImagePreprocessor
   public int CropHeight { get; init; }
   public int CropWidth { get; init; }
   public int Height { get; init; }
+  public int Pixels(Idrak.Abstraction.Data.ImageData image, System.Span<float> destination)
   public int ShortestEdge { get; init; }
   public int Width { get; init; }
   public static Idrak.Data.ImagePreprocessor FromConfig(string path, bool grayscale = false, Idrak.Data.ImagePreprocessor? defaults = null)
