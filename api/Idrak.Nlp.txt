@@ -228,7 +228,12 @@ public sealed record Idrak.Generation.ImageReadRequest : System.IEquatable<Idrak
   public Idrak.Abstraction.Generation.ChatImage Image { get; init; }
   public Idrak.Abstraction.Generation.VisionOptions? VisionOptions { get; init; }
   public ImageReadRequest(Idrak.Abstraction.Generation.ChatImage Image, string Prompt)
+  public float FrequencyPenalty { get; init; }
+  public float PresencePenalty { get; init; }
+  public float RepeatPenalty { get; init; }
   public int MaxTokens { get; init; }
+  public int RepeatLastN { get; init; }
+  public int RepeatStop { get; init; }
   public string Prompt { get; init; }
   public string? System { get; init; }
 
@@ -257,6 +262,7 @@ public sealed record Idrak.Generation.ImageReading : System.IEquatable<Idrak.Gen
   public System.TimeSpan? FirstText { get; init; }
   public bool Truncated { get; init; }
   public string Text { get; init; }
+  public string? DoneReason { get; init; }
 
 public sealed record Idrak.Generation.LoadedModel : System.IEquatable<Idrak.Generation.LoadedModel>
   public LoadedModel(string Name, System.DateTimeOffset LoadedAt, System.DateTimeOffset? ExpiresAt, int ActiveUsers)

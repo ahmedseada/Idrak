@@ -43,6 +43,24 @@ public sealed record ImageReadRequest(ChatImage Image, string Prompt)
 
     /// <summary>This page's vision options instead of the reader's.</summary>
     public VisionOptions? VisionOptions { get; init; }
+
+    /// <summary>Divides the scores of tokens seen in the last <see cref="RepeatLastN"/> tokens (1 = off, as greedy reading is by default).</summary>
+    public float RepeatPenalty { get; init; } = 1f;
+
+    /// <summary>Subtracted from the score of every token seen in the last <see cref="RepeatLastN"/> tokens (0 = off).</summary>
+    public float PresencePenalty { get; init; }
+
+    /// <summary>Subtracted from a token's score once per time it was seen in the last <see cref="RepeatLastN"/> tokens (0 = off).</summary>
+    public float FrequencyPenalty { get; init; }
+
+    /// <summary>How many recent tokens (prompt included) the penalties look at.</summary>
+    public int RepeatLastN { get; init; } = 64;
+
+    /// <summary>
+    /// Ends the answer when it repeats one run of tokens this many times in a row (0 = off; see
+    /// <see cref="GenerationOptions.RepeatStop"/>): a read caught in a loop stops instead of filling <see cref="MaxTokens"/>.
+    /// </summary>
+    public int RepeatStop { get; init; }
 }
 
 /// <summary>A page read: the answer, the generation's figures and the time it took.</summary>
@@ -53,6 +71,9 @@ public sealed record ImageReading(string Text, GenerationStats? Stats, TimeSpan 
 
     /// <summary>Whether the answer stopped at its token limit.</summary>
     public bool Truncated { get; init; }
+
+    /// <summary>Why the answer ended: "stop" (the model finished), "length" (the token limit), "repetition" (a loop, see <see cref="ImageReadRequest.RepeatStop"/>).</summary>
+    public string? DoneReason { get; init; }
 }
 
 /// <summary>
@@ -117,7 +138,9 @@ public sealed class ImageReader : IDisposable
         messages.Add(new ChatMessage("user", [request.Image, new ChatText(request.Prompt)]));
         var options = new GenerationOptions
         {
-            Temperature = 1f, TopK = 1, TopP = 1f, RepeatPenalty = 1f, Seed = 0,                          // greedy
+            Temperature = 1f, TopK = 1, TopP = 1f, Seed = 0,                                             // greedy
+            RepeatPenalty = request.RepeatPenalty, PresencePenalty = request.PresencePenalty, FrequencyPenalty = request.FrequencyPenalty,
+            RepeatLastN = request.RepeatLastN, RepeatStop = request.RepeatStop,
             NumCtx = _contextLength, NumPredict = Math.Max(1, request.MaxTokens),
         };
         return _chat.Stream(new ChatRequest(messages, Options: options)
@@ -136,6 +159,7 @@ public sealed class ImageReader : IDisposable
         string text = "";
         GenerationStats? stats = null;
         TimeSpan? first = null;
+        string? reason = null;
         foreach (var chunk in Stream(request, cancellationToken))
         {
             if (chunk.Delta.Content.Length > 0)
@@ -148,12 +172,13 @@ public sealed class ImageReader : IDisposable
             {
                 text = chunk.Message?.Content ?? text;
                 stats = chunk.Stats;
+                reason = chunk.DoneReason;
             }
         }
 
         return new ImageReading(text.Trim(), stats, clock.Elapsed)
         {
-            FirstText = first, Truncated = stats?.GeneratedTokens >= request.MaxTokens,
+            FirstText = first, Truncated = reason == "length" || reason is null && stats?.GeneratedTokens >= request.MaxTokens, DoneReason = reason,
         };
     }
 

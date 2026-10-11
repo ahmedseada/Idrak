@@ -61,7 +61,13 @@ public sealed record ModelInfo(string Id, string Name, string? About, string Sou
 /// <param name="Preprocessing">The image transforms (the library's pipeline syntax, "" for none); the model's own when null.</param>
 /// <param name="MaxTokens">The most tokens the answer may take; the model's own when null.</param>
 /// <param name="PanAndScan">Gemma 3's pan and scan (<c>do_pan_and_scan</c>: an elongated page also read as crops, each its own image); the model's own when null.</param>
-public sealed record ReadRequest(string? Image = null, string? Prompt = null, string? Preprocessing = null, int? MaxTokens = null, bool? PanAndScan = null);
+/// <param name="RepeatPenalty">Divides recently seen tokens' scores (1 = off); the settings' when null.</param>
+/// <param name="PresencePenalty">Subtracted from every recently seen token's score (0 = off); the settings' when null.</param>
+/// <param name="FrequencyPenalty">Subtracted once per recent occurrence (0 = off); the settings' when null.</param>
+/// <param name="RepeatLastN">How many recent tokens the penalties look at; the settings' when null.</param>
+/// <param name="RepeatStop">End the answer when one phrase repeats this many times in a row (0 = off); the settings' when null.</param>
+public sealed record ReadRequest(string? Image = null, string? Prompt = null, string? Preprocessing = null, int? MaxTokens = null, bool? PanAndScan = null,
+    float? RepeatPenalty = null, float? PresencePenalty = null, float? FrequencyPenalty = null, int? RepeatLastN = null, int? RepeatStop = null);
 
 /// <summary>
 /// The app's readers: the models of the settings, one on the device at a time (the library's
@@ -261,7 +267,8 @@ public sealed class ReaderService : IDisposable
                     channel.Writer.TryWrite(new SseItem<object>(new
                     {
                         index = page.Index, name = page.Name, cer = result.Cer, seconds = Math.Round(result.Reading.Elapsed.TotalSeconds, 2),
-                        tokens = result.Reading.Stats?.GeneratedTokens ?? 0, truncated = result.Reading.Truncated, json = result.Json is not null, repaired = result.Repaired,
+                        tokens = result.Reading.Stats?.GeneratedTokens ?? 0, truncated = result.Reading.Truncated,
+                        looped = result.Reading.DoneReason == "repetition", json = result.Json is not null, repaired = result.Repaired,
                         done = scores.Count, total = chosen.Count, meanCer = scores.Average(), secondsLeft = Math.Round(left),
                     }, "page"));
                 }
@@ -444,6 +451,7 @@ public sealed class ReaderService : IDisposable
             generatedTokens = generated,
             tokensPerSecond = generated > 1 ? Math.Round((generated - 1) / decoding, 1) : (double?)null,
             truncated = reading.Truncated,
+            doneReason = reading.DoneReason,
             model = loaded.Model.Id,
         }, "done"));
     }
@@ -461,7 +469,14 @@ public sealed class ReaderService : IDisposable
         // Pan and scan as the read asks (else the model's setting; an adapter's tuned vision options otherwise stand).
         bool? pan = request.PanAndScan ?? (model.PanAndScan ? true : null);
         var vision = pan is { } on ? VisionOptions.Parse([$"{Gemma3PanAndScan.EnableKey}={(on ? "true" : "false")}"]) : null;
-        var read = new ImageReadRequest(image, prompt) { MaxTokens = maxTokens, Transforms = pipeline, VisionOptions = vision };
+        var g = _settings.Generation;
+        var read = new ImageReadRequest(image, prompt)
+        {
+            MaxTokens = maxTokens, Transforms = pipeline, VisionOptions = vision,
+            RepeatPenalty = Math.Clamp(request.RepeatPenalty ?? g.RepeatPenalty, 0.5f, 3f), PresencePenalty = request.PresencePenalty ?? g.PresencePenalty,
+            FrequencyPenalty = request.FrequencyPenalty ?? g.FrequencyPenalty, RepeatLastN = Math.Clamp(request.RepeatLastN ?? g.RepeatLastN, 0, 4096),
+            RepeatStop = Math.Clamp(request.RepeatStop ?? g.RepeatStop, 0, 100),
+        };
         if (output is not null)
         {
             SetStatus(ReaderState.Reading, $"{model.Name} is reading a page…", model.Id);

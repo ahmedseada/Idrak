@@ -76,11 +76,33 @@ public sealed record LegalOcrSettings
     /// <summary>The Fine-tune tab's defaults.</summary>
     public TuningDefaults Tuning { get; init; } = new();
 
+    /// <summary>The Read tab's generation settings to start from (repetition penalties, the loop stop).</summary>
+    public GenerationDefaults Generation { get; init; } = new();
+
     /// <summary>
     /// The values the Read tab's preprocessing steps start from, by transform: a step in the pipeline syntax
     /// (<c>"unsharp": "unsharp=2,percent=150,threshold=3"</c>). A transform without one starts empty.
     /// </summary>
     public Dictionary<string, string> PreprocessingDefaults { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+}
+
+/// <summary>How a read generates its answer (greedy throughout); each one the page can change for a read.</summary>
+public sealed record GenerationDefaults
+{
+    /// <summary>Divides the scores of tokens seen in the last <see cref="RepeatLastN"/> tokens (1 = off).</summary>
+    public float RepeatPenalty { get; init; } = 1f;
+
+    /// <summary>Subtracted from the score of every token seen recently (0 = off).</summary>
+    public float PresencePenalty { get; init; }
+
+    /// <summary>Subtracted from a token's score once per time it was seen recently (0 = off).</summary>
+    public float FrequencyPenalty { get; init; }
+
+    /// <summary>How many recent tokens the penalties look at.</summary>
+    public int RepeatLastN { get; init; } = 64;
+
+    /// <summary>End the answer when one phrase repeats this many times in a row (0 = off).</summary>
+    public int RepeatStop { get; init; } = 4;
 }
 
 /// <summary>The Fine-tune tab's settings, each one the page can change for a run.</summary>

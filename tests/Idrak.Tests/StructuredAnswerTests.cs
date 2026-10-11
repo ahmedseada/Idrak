@@ -19,6 +19,7 @@ internal static partial class Tests
         ("answer texts: raw keeps the answer, values takes its JSON's values in document order (repaired JSON too; an answer without JSON as it is); Normalize composes and folds whitespace", AnswerTextModes),
         ("model host: MaxLoaded unloads the longest unused idle model before loading another, and never one in use", ModelHostMaxLoaded),
         ("image reader: a vision checkpoint reads a page greedily (the same answer twice), streams it as Read returns it, prepares the page with its transforms or the read's own", ImageReaderReads),
+        ("generation: the repetition stop finds an answer ending in one run of tokens repeated N times (runs from the minimum to 64 tokens; shorter runs such as a row of dots are text); a read says why it ended", RepetitionStop),
         ("image reader: a stopped read ends before its first token (the prompt's pass checks between layers; the step is withdrawn, the context's length unchanged) and the next read is unaffected", ImageReaderStops),
     ];
 
@@ -240,5 +241,30 @@ internal static partial class Tests
         var after = reader.Read(request);
         using var fresh = new ImageReader(model, new ImageReaderOptions { Transforms = ImageTransformPipeline.Parse("grayscale"), ContextLength = 256 });
         Check(after.Text == fresh.Read(request).Text, $"after a stopped read: \"{after.Text}\"");
+    }
+
+    private static void RepetitionStop(Device device)
+    {
+        int[] phrase = [11, 12, 13, 14, 15];
+        int[] text = [1, 2, 3, 4, 5, 6, 7, 8];
+        int[] Times(int[] run, int n) => [.. Enumerable.Repeat(run, n).SelectMany(r => r)];
+        Check(TextGenerator.Looping([.. text, .. Times(phrase, 4)], 4, 4), "a 5-token phrase four times");
+        Check(!TextGenerator.Looping([.. text, .. Times(phrase, 3)], 4, 4), "three times is not yet four");
+        Check(!TextGenerator.Looping([.. text, .. Times([9], 40)], 4, 4), "a row of one token (dots) is text");
+        Check(!TextGenerator.Looping([.. text, .. Times([9, 10], 20)], 4, 4), "a two-token rule is text");
+        Check(TextGenerator.Looping([.. text, .. Times([.. Enumerable.Range(100, 64)], 2)], 2, 4), "a 64-token run twice");
+        Check(!TextGenerator.Looping([.. text, .. Times([.. Enumerable.Range(100, 65)], 2)], 2, 4), "runs longer than 64 tokens are not checked");
+        Check(!TextGenerator.Looping([.. Times(phrase, 3), 99], 2, 4), "the repeats must end the answer");
+
+        // A read says why its answer ended (the tiny model's answers stop at the limit or at its end token).
+        RegisterGemma3Vision();
+        using var model = PretrainedModel.Load(TestData("vlm/tiny-gemma3"), new PretrainedOptions { Device = device });
+        using var reader = new ImageReader(model, new ImageReaderOptions { ContextLength = 256 });
+        var pixels = new float[3 * 10 * 10];
+        Array.Fill(pixels, 0.5f);
+        var page = ChatImage.FromBytes(ImageEncoders.Get("png").Encode(new ImageData(pixels, 3, 10, 10)), "image/png");
+        var reading = reader.Read(new ImageReadRequest(page, "Read.") { MaxTokens = 3, RepeatPenalty = 1.3f, FrequencyPenalty = 0.5f, RepeatStop = 2 });
+        Check(reading.DoneReason is "length" or "stop" or "repetition" && reading.Truncated == (reading.DoneReason == "length"),
+            $"done reason {reading.DoneReason}, truncated {reading.Truncated}");
     }
 }

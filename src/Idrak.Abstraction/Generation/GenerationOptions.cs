@@ -54,4 +54,14 @@ public sealed record GenerationOptions
 
     /// <summary>Tokens generated between host synchronizations while streaming.</summary>
     public int ChunkSize { get; init; } = 8;
+
+    /// <summary>
+    /// Ends the answer when its last tokens are one run of <see cref="RepeatStopMinTokens"/> to 64 tokens repeated this
+    /// many times in a row (0 = off; at least 2): a model caught in a loop stops (done reason "repetition") instead of
+    /// filling its token limit. Checked as the tokens reach the host (every <see cref="ChunkSize"/>).
+    /// </summary>
+    public int RepeatStop { get; init; }
+
+    /// <summary>The shortest run <see cref="RepeatStop"/> counts (shorter ones, such as a row of dots or a table's rule, are text).</summary>
+    public int RepeatStopMinTokens { get; init; } = 4;
 }

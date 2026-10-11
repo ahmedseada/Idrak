@@ -63,6 +63,10 @@ string tinyGemma = Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data"
         var inverted = Read(service, Page(30, 50), new ReadRequest(Preprocessing: "grayscale,max_width=16,invert,jpeg=95", MaxTokens: 2), null);
         Check(inverted[0].Data["preprocessing"]!.GetValue<string>() == "grayscale,max_width=16,invert,jpeg=95" && inverted[^1].Event == "done", inverted[0].Data.ToJsonString());
 
+        // Generation settings reach the read; the answer says why it ended.
+        var penalized = Read(service, Page(30, 50), new ReadRequest(MaxTokens: 3, RepeatPenalty: 1.3f, PresencePenalty: 0.2f, FrequencyPenalty: 0.2f, RepeatLastN: 32, RepeatStop: 2), null);
+        Check(penalized[^1].Event == "done" && penalized[^1].Data["doneReason"]!.GetValue<string>() is "length" or "stop" or "repetition", penalized[^1].Data.ToJsonString());
+
         // Pan and scan: a tall page is also read as crops (two of 300 x 260 here), each its own image.
         var tall = Page(600, 260);
         var whole = Read(service, tall, new ReadRequest(Preprocessing: "grayscale", MaxTokens: 2, PanAndScan: false), null);
@@ -300,6 +304,9 @@ string tinyGemma = Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data"
             string evaluation = evaluated.Content.ReadAsStringAsync().GetAwaiter().GetResult();
             Check(evaluation.Split("event: page").Length == 3 && evaluation.Contains("event: done", StringComparison.Ordinal) && evaluation.Contains("\"meanCer\"", StringComparison.Ordinal),
                 evaluation.Length > 600 ? evaluation[..600] : evaluation);
+
+            var generation = http.GetFromJsonAsync<JsonObject>("/api/generation").GetAwaiter().GetResult()!;
+            Check(generation["repeatStop"]!.GetValue<int>() == 4 && generation["repeatPenalty"]!.GetValue<float>() == 1f, generation.ToJsonString());
 
             var defaults = http.GetFromJsonAsync<JsonObject>("/api/tuning/defaults").GetAwaiter().GetResult()!;
             Check(defaults["settings"]!["base"]!.GetValue<string>() == "gemma" && defaults["bases"]!.AsArray().Count == 1 && defaults["name"] is not null, defaults.ToJsonString());

@@ -191,6 +191,9 @@
       <div class="note">Sent as: <span class="mono" id="pipelineText"></span></div>
       <h2>Model options</h2>
       <label class="check"><input type="checkbox" id="panAndScan"> Pan and scan (a tall or wide page is also read as 2 to 4 crops, each its own image: finer detail, more prompt tokens)</label>
+      <div class="row" style="justify-content:space-between"><h2 style="margin:0">Generation</h2><button class="btn" id="genReset" type="button" style="padding:3px 10px">Reset to the app's values</button></div>
+      <div class="step-inputs" id="generation"></div>
+      <div class="note">Greedy reading: the most likely word each time. A penalty above its "off" value makes words already used less likely; the loop stop ends an answer that repeats one phrase.</div>
       <h2>Prompt</h2>
       <div>
         <textarea id="prompt" rows="2" aria-label="Prompt"></textarea>
@@ -557,6 +560,44 @@ $("preset").onchange = () => {
 };
 $("tPreFromRead").onclick = () => { $("tPre").value = pipelineOf(steps); };
 
+// ---------------------------------------------------------------- generation (penalties and the loop stop)
+const generationInputs = [
+  { key: "repeatPenalty", label: "Repetition penalty (1 = off)", min: 1, max: 2, step: 0.01, help: "divides the score of words used in the last N tokens" },
+  { key: "presencePenalty", label: "Presence penalty (0 = off)", min: 0, max: 2, step: 0.05, help: "subtracted once from every word used in the last N tokens" },
+  { key: "frequencyPenalty", label: "Frequency penalty (0 = off)", min: 0, max: 2, step: 0.05, help: "subtracted once per time a word was used in the last N tokens" },
+  { key: "repeatLastN", label: "Penalties look back N tokens", min: 0, max: 1024, step: 16, integer: true, help: "how many recent tokens the penalties count" },
+  { key: "repeatStop", label: "Stop when a phrase repeats (times; 0 = off)", min: 0, max: 20, step: 1, integer: true, help: "ends a looping answer early" },
+];
+let generationDefaults = {}, generation = {};
+async function loadGeneration() {
+  generationDefaults = await fetch("/api/generation").then(r => r.json()).catch(() => ({}));
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem("legal-ocr-generation") ?? "null"); } catch { }
+  generation = { ...generationDefaults, ...(saved ?? {}) };
+  renderGeneration();
+}
+function renderGeneration() {
+  const box = $("generation"); box.innerHTML = "";
+  for (const g of generationInputs) {
+    const wrap = document.createElement("div");
+    const label = document.createElement("label"); label.textContent = g.label; label.title = g.help; wrap.appendChild(label);
+    const pair = document.createElement("div"); pair.className = "pair";
+    const range = document.createElement("input"); range.type = "range"; range.min = g.min; range.max = g.max; range.step = g.step; range.setAttribute("aria-label", g.label);
+    const number = document.createElement("input"); number.type = "number"; number.min = g.min; number.max = g.max; number.step = g.step; number.title = g.help;
+    range.value = number.value = generation[g.key] ?? "";
+    const set = v => { generation[g.key] = g.integer ? parseInt(v, 10) : parseFloat(v); try { localStorage.setItem("legal-ocr-generation", JSON.stringify(generation)); } catch { } };
+    range.oninput = () => { number.value = range.value; set(range.value); };
+    number.oninput = () => { if (number.value !== "") { range.value = number.value; set(number.value); } };
+    pair.append(range, number); wrap.appendChild(pair); box.appendChild(wrap);
+  }
+}
+$("genReset").onclick = () => { generation = { ...generationDefaults }; try { localStorage.removeItem("legal-ocr-generation"); } catch { } renderGeneration(); };
+function generationBody() {
+  const body = {};
+  for (const g of generationInputs) if (Number.isFinite(generation[g.key])) body[g.key] = generation[g.key];
+  return body;
+}
+
 // ---------------------------------------------------------------- the live preview (the steps on the page, no model needed)
 let previewTimer = null, previewSeq = 0, processedImage = null, previewShows = "processed";
 // Any change to the steps or the page brings the preview back to the right column (the last result stays a click away).
@@ -686,7 +727,7 @@ function refreshRead() {
 $("evaluate").onclick = evaluate;
 $("evaluateStop").onclick = () => evaluating && evaluating.abort();
 async function evaluate() {
-  const body = { prompt: $("prompt").value, preprocessing: pipelineOf(steps), maxTokens: Number($("maxTokens").value) || null, panAndScan: $("panAndScan").checked };
+  const body = { prompt: $("prompt").value, preprocessing: pipelineOf(steps), maxTokens: Number($("maxTokens").value) || null, panAndScan: $("panAndScan").checked, ...generationBody() };
   const count = Math.max(0, Number($("evaluateCount").value) || 0);
   evaluating = new AbortController();
   $("evaluate").disabled = true; $("evaluateStop").disabled = false; refreshRead();
@@ -698,7 +739,7 @@ async function evaluate() {
     for await (const [event, d] of events(r.body)) {
       if (event === "page") {
         const tr = document.createElement("tr");
-        for (const v of [d.name, (100 * d.cer).toFixed(2) + " %", d.seconds, d.tokens, d.truncated ? "cut" : !d.json ? "no JSON" : d.repaired ? "repaired" : ""]) {
+        for (const v of [d.name, (100 * d.cer).toFixed(2) + " %", d.seconds, d.tokens, d.looped ? "looped" : d.truncated ? "cut" : !d.json ? "no JSON" : d.repaired ? "repaired" : ""]) {
           const td = document.createElement("td"); td.textContent = v; tr.appendChild(td);
         }
         $("evaluationRows").appendChild(tr);
@@ -719,7 +760,7 @@ async function evaluate() {
 $("read").onclick = () => reading ? reading.abort() : read();
 
 async function read() {
-  const body = { prompt: $("prompt").value, preprocessing: pipelineOf(steps), maxTokens: Number($("maxTokens").value) || null, panAndScan: $("panAndScan").checked };
+  const body = { prompt: $("prompt").value, preprocessing: pipelineOf(steps), maxTokens: Number($("maxTokens").value) || null, panAndScan: $("panAndScan").checked, ...generationBody() };
   if (pageIndex == null) body.image = imageData;
   const url = pageIndex == null ? "/api/read" : `/api/pages/${pageIndex}/read`;
   reading = new AbortController();
@@ -770,7 +811,8 @@ function done(d) {
   if (d.cer != null) list.unshift({ label: "CER", value: (100 * d.cer).toFixed(2) + " %", tone: d.cer < 0.02 ? "good" : d.cer < 0.1 ? "warn" : "bad" });
   if (d.json && d.repaired) list.push({ label: "JSON", value: "repaired", tone: "warn" });
   if (!d.json) list.push({ label: "JSON", value: "none", tone: "bad" });
-  if (d.truncated) list.push({ label: "answer", value: "cut at the limit", tone: "warn" });
+  if (d.doneReason === "repetition") list.push({ label: "answer", value: "stopped: it was repeating", tone: "warn" });
+  else if (d.truncated) list.push({ label: "answer", value: "cut at the limit", tone: "warn" });
   metrics(list);
   showTab(pageIndex != null ? "compare" : d.json ? "json" : "answer");
 }
@@ -975,6 +1017,7 @@ async function loadAdapters() {
 refresh();
 loadPages();
 loadTransforms();
+loadGeneration();
 loadTuning();
 followTuning();
 try { const v = localStorage.getItem("legal-ocr-view"); if (v === "tune") showView("tune"); } catch { }

@@ -15,7 +15,11 @@ namespace Idrak.Cli.Shared;
 internal sealed class GenerationSettings
 {
     /// <summary>The value options.</summary>
-    public static readonly string[] ValueOptions = ["--temperature", "--top-k", "--top-p", "--max-tokens", "--system", "--tools"];
+    public static readonly string[] ValueOptions =
+    [
+        "--temperature", "--top-k", "--top-p", "--max-tokens", "--system", "--tools", "--repeat-penalty", "--presence-penalty", "--frequency-penalty",
+        "--repeat-last-n", "--repeat-stop",
+    ];
 
     /// <summary>The flags.</summary>
     public static readonly string[] Flags = ["--think", "--no-think"];
@@ -31,11 +35,16 @@ internal sealed class GenerationSettings
         "      --top-p P          nucleus sampling (default 0.95; 1 = off)\n" +
         "      --max-tokens N     longest answer in tokens (default: until the model stops, at most 4096)\n" +
         "      --seed N           random seed for reproducible answers\n" +
+        "      --repeat-penalty F divides the scores of tokens seen in the last --repeat-last-n tokens (default 1 = off)\n" +
+        "      --presence-penalty F, --frequency-penalty F  subtracted once from each recent token's score, or once per\n" +
+        "                         time it was seen (default 0 = off); --repeat-last-n N: how far back they look (default 64)\n" +
+        "      --repeat-stop N    end the answer when one phrase repeats N times in a row (default 0 = off)\n" +
         "      --think            ask for reasoning (shown apart); --no-think: suppress it (default: the model's own)\n" +
         "      --tools FILE.dll   tools the model may call: the [Tool] methods of an assembly (repeatable)\n";
 
     /// <summary>The setting names <c>/set</c> knows.</summary>
-    public static readonly string[] Names = ["temperature", "top-k", "top-p", "max-tokens", "seed", "think"];
+    public static readonly string[] Names =
+        ["temperature", "top-k", "top-p", "max-tokens", "seed", "think", "repeat-penalty", "presence-penalty", "frequency-penalty", "repeat-last-n", "repeat-stop"];
 
     /// <summary>Softmax temperature; 0 means greedy.</summary>
     public float Temperature { get; set; } = 0.6f;
@@ -51,6 +60,21 @@ internal sealed class GenerationSettings
 
     /// <summary>Random seed (null: random).</summary>
     public int? Seed { get; set; }
+
+    /// <summary>Divides the scores of recently seen tokens (1 = off).</summary>
+    public float RepeatPenalty { get; set; } = 1f;
+
+    /// <summary>Subtracted once from every recently seen token's score (0 = off).</summary>
+    public float PresencePenalty { get; set; }
+
+    /// <summary>Subtracted once per recent occurrence (0 = off).</summary>
+    public float FrequencyPenalty { get; set; }
+
+    /// <summary>How many recent tokens the penalties look at.</summary>
+    public int RepeatLastN { get; set; } = 64;
+
+    /// <summary>End the answer when one phrase repeats this many times in a row (0 = off).</summary>
+    public int RepeatStop { get; set; }
 
     /// <summary>The system prompt, or null.</summary>
     public string? System { get; set; }
@@ -110,6 +134,29 @@ internal sealed class GenerationSettings
             case "seed" when Int(out int s):
                 Seed = s;
                 return null;
+            case "repeat-penalty" when Float(out float r) && r is >= 0.5f and <= 3f:
+                RepeatPenalty = r;
+                return null;
+            case "presence-penalty" when Float(out float pp) && pp is >= -2f and <= 2f:
+                PresencePenalty = pp;
+                return null;
+            case "frequency-penalty" when Float(out float fp) && fp is >= -2f and <= 2f:
+                FrequencyPenalty = fp;
+                return null;
+            case "repeat-last-n" when Int(out int last) && last >= 0:
+                RepeatLastN = last;
+                return null;
+            case "repeat-stop" when Int(out int times) && (times == 0 || times >= 2):
+                RepeatStop = times;
+                return null;
+            case "repeat-penalty":
+                return $"--repeat-penalty needs a number from 0.5 to 3 (1 = off), not '{value}'.";
+            case "presence-penalty" or "frequency-penalty":
+                return $"--{name} needs a number from -2 to 2 (0 = off), not '{value}'.";
+            case "repeat-last-n":
+                return $"--repeat-last-n needs a whole number of 0 or more, not '{value}'.";
+            case "repeat-stop":
+                return $"--repeat-stop needs 0 (off) or a whole number of 2 or more, not '{value}'.";
             case "think" when value is "on" or "true" or "off" or "false" or "default":
                 Think = value is "on" or "true" ? true : value is "off" or "false" ? false : null;
                 return null;
@@ -136,7 +183,11 @@ internal sealed class GenerationSettings
         Temperature = Temperature <= 0 ? 1f : Temperature,
         TopK = Temperature <= 0 ? 1 : TopK,
         TopP = Temperature <= 0 ? 1f : TopP,
-        RepeatPenalty = 1f,
+        RepeatPenalty = RepeatPenalty,
+        PresencePenalty = PresencePenalty,
+        FrequencyPenalty = FrequencyPenalty,
+        RepeatLastN = RepeatLastN,
+        RepeatStop = RepeatStop,
         Seed = Seed,
         NumCtx = context,
         NumPredict = MaxTokens,
@@ -152,6 +203,11 @@ internal sealed class GenerationSettings
         yield return ("max-tokens", MaxTokens < 0 ? "unlimited" : MaxTokens.ToString(invariant));
         yield return ("seed", Seed?.ToString(invariant) ?? "random");
         yield return ("think", Think switch { true => "on", false => "off", null => "default" });
+        yield return ("repeat-penalty", RepeatPenalty.ToString(invariant));
+        yield return ("presence-penalty", PresencePenalty.ToString(invariant));
+        yield return ("frequency-penalty", FrequencyPenalty.ToString(invariant));
+        yield return ("repeat-last-n", RepeatLastN.ToString(invariant));
+        yield return ("repeat-stop", RepeatStop == 0 ? "off" : RepeatStop.ToString(invariant));
     }
 
     /// <summary>A copy (compare runs two sets side by side).</summary>
